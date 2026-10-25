@@ -81,7 +81,7 @@ extern "system" {
 }
 #[cfg_attr(not(test), allow(dead_code))]
 const RUNTIME_READY_SCHEMA_SHA256: &str =
-    "5131125b6851bccb8da96150e12c2c50170ad45c2f4a31768404a5406ad8598f";
+    "5452631ce9d8eea48851a819530d94920a39f41350d5575df0f8f97f82171774";
 
 /// Why the HTTP server gave up, for the `<marker>.error` report. The error
 /// variant stays `HttpServer`; this only explains which path produced it.

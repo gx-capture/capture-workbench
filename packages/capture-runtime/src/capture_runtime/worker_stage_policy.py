@@ -69,11 +69,11 @@ def sanitize_worker_stage(stage: object) -> str | None:
         if stage.startswith(prefix):
             return sentinel
     model_failure = re.fullmatch(
-        r"whisper-model-load-(?P<device>cpu|cuda)-failed-.+",
+        r"speech-model-load-(?P<device>cpu|cuda)-failed-.+",
         stage,
     )
     if model_failure is not None:
-        return f"whisper-model-load-{model_failure.group('device')}-failed-unknown"
+        return f"speech-model-load-{model_failure.group('device')}-failed-unknown"
     return None
 
 
@@ -287,18 +287,16 @@ def ocr_stage_failure(stage: str, error: object) -> str:
     return f"ocr-{stage}-failed-{_exception_name(error)}"
 
 
-def whisper_import_stage(module: str, phase: str) -> str:
-    module_name = {
-        "ctranslate2": "ctranslate",
-        "av": "av",
-        "faster_whisper": "faster-whisper",
-    }.get(module)
+def speech_import_stage(module: str, phase: str) -> str:
+    module_name = {name: name for name in ("torch", "transformers", "librosa", "numpy", "av")}.get(
+        module
+    )
     if module_name is None or phase not in {"start", "complete"}:
-        return "python-import-faster-whisper-failed-unknown"
+        return "python-import-transformers-failed-unknown"
     return f"python-import-{module_name}-{phase}"
 
 
-def whisper_import_os_failure_stage(module: str, error: object) -> str:
+def speech_import_os_failure_stage(module: str, error: object) -> str:
     if module not in {"engine-adapters", "worker-contracts", "worker-server"}:
         return "python-import-engine-adapters-os-failed-winerror-unknown"
     winerror = getattr(error, "winerror", None)
@@ -307,7 +305,7 @@ def whisper_import_os_failure_stage(module: str, error: object) -> str:
     return f"python-import-{module}-os-failed"
 
 
-def whisper_stage(stage: str) -> str:
+def speech_stage(stage: str) -> str:
     if stage not in {
         "assets-probe-start",
         "assets-probe-complete",
@@ -322,22 +320,22 @@ def whisper_stage(stage: str) -> str:
         "output-empty-window",
         "transcription-complete",
     }:
-        return "whisper-output-empty"
-    return f"whisper-{stage}"
+        return "speech-output-empty"
+    return f"speech-{stage}"
 
 
-def whisper_output_stage(has_output: bool) -> str:
-    return whisper_stage("transcription-complete" if has_output else "output-empty-window")
+def speech_output_stage(has_output: bool) -> str:
+    return speech_stage("transcription-complete" if has_output else "output-empty-window")
 
 
-def whisper_model_load_stage(device: str, phase: str, error: object | None = None) -> str:
+def speech_model_load_stage(device: str, phase: str, error: object | None = None) -> str:
     if device not in {"cpu", "cuda"}:
-        return "whisper-model-load-cpu-failed-unknown"
+        return "speech-model-load-cpu-failed-unknown"
     if phase == "failed":
-        return f"whisper-model-load-{device}-failed-{_exception_name(error)}"
+        return f"speech-model-load-{device}-failed-{_exception_name(error)}"
     if phase in {"start", "complete", "reused"}:
-        return f"whisper-model-load-{device}-{phase}"
-    return f"whisper-model-load-{device}-failed-unknown"
+        return f"speech-model-load-{device}-{phase}"
+    return f"speech-model-load-{device}-failed-unknown"
 
 
 __all__ = [
@@ -355,9 +353,9 @@ __all__ = [
     "sanitize_worker_stage",
     "sanitize_worker_stage_sequence",
     "stage_builder_names",
-    "whisper_import_os_failure_stage",
-    "whisper_import_stage",
-    "whisper_model_load_stage",
-    "whisper_output_stage",
-    "whisper_stage",
+    "speech_import_os_failure_stage",
+    "speech_import_stage",
+    "speech_model_load_stage",
+    "speech_output_stage",
+    "speech_stage",
 ]

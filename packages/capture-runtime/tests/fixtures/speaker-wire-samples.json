@@ -36,16 +36,20 @@
     ],
     "sourceText": "Good morning\nHello there",
     "extractionEngine": {
-      "engine": "whisper-primary",
-      "model": "large-v3-turbo",
+      "engine": "speech-recognition",
+      "model": "tea-asr-1.1",
       "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "device": "cuda"
+      "device": "cuda",
+      "elapsedMs": null,
+      "stageMs": null
     },
     "diarizationEngine": {
       "engine": "speaker-diarization",
       "model": "nvidia-nemotron-3-diarization",
       "digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-      "device": "cpu"
+      "device": "cpu",
+      "elapsedMs": null,
+      "stageMs": null
     },
     "speakers": [
       {
@@ -105,10 +109,12 @@
     ],
     "sourceText": "Good morning\nHello there",
     "extractionEngine": {
-      "engine": "whisper-primary",
-      "model": "large-v3-turbo",
+      "engine": "speech-recognition",
+      "model": "tea-asr-1.1",
       "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "device": "cuda"
+      "device": "cuda",
+      "elapsedMs": null,
+      "stageMs": null
     },
     "diarizationEngine": null,
     "speakers": [],
@@ -184,16 +190,20 @@
     "sourceText": "Good morning\nHello there",
     "targetText": "Good morning\nHello there",
     "extractionEngine": {
-      "engine": "whisper-primary",
-      "model": "large-v3-turbo",
+      "engine": "speech-recognition",
+      "model": "tea-asr-1.1",
       "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "device": "cuda"
+      "device": "cuda",
+      "elapsedMs": null,
+      "stageMs": null
     },
     "diarizationEngine": {
       "engine": "speaker-diarization",
       "model": "nvidia-nemotron-3-diarization",
       "digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-      "device": "cpu"
+      "device": "cpu",
+      "elapsedMs": null,
+      "stageMs": null
     },
     "speakers": [
       {
@@ -216,7 +226,9 @@
       "engine": "host",
       "model": "deterministic",
       "digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
-      "device": "cpu"
+      "device": "cpu",
+      "elapsedMs": null,
+      "stageMs": null
     },
     "warnings": [],
     "createdAt": "2026-10-13T08:00:00Z",

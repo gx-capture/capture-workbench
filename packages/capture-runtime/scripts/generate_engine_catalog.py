@@ -15,6 +15,7 @@ from model_source_lock import (
     release_mode,
 )
 
+from capture_runtime.artifact_parts import JoinedParts, archive_parts
 from capture_runtime.constants import RUNTIME_VERSION
 from capture_runtime.engine_catalog import EngineCatalog, canonical_json_bytes
 from capture_runtime.worker_contracts import WORKER_PROTOCOL_VERSION
@@ -37,10 +38,12 @@ def descriptor(
     entry_point: str,
     release_base_url: str,
 ) -> dict[str, object]:
-    if not archive.is_file() or not manifest.is_file():
-        raise FileNotFoundError(archive if not archive.is_file() else manifest)
+    if not manifest.is_file():
+        raise FileNotFoundError(manifest)
+    # A split archive is read through its parts, in order.
+    parts = archive_parts(archive.parent, archive.name)
     manifest_bytes = manifest.read_bytes()
-    with zipfile.ZipFile(archive) as source:
+    with JoinedParts(parts) as joined, zipfile.ZipFile(joined) as source:
         inner = source.read("files-manifest.json")
         if inner != manifest_bytes:
             raise ValueError(f"{archive.name} inner files manifest does not match {manifest.name}")
@@ -50,6 +53,26 @@ def descriptor(
             prefix = f"{entry_point.rstrip('/')}/"
             if not any(name.startswith(prefix) for name in names):
                 raise ValueError(f"{archive.name} does not contain entryPoint {entry_point}")
+    whole = hashlib.sha256()
+    with JoinedParts(parts) as joined:
+        while chunk := joined.read(1024 * 1024):
+            whole.update(chunk)
+    base_url = release_base_url.rstrip("/")
+    source: dict[str, object] = (
+        {"url": f"{base_url}/{quote(archive.name)}"}
+        if len(parts) == 1
+        else {
+            "parts": [
+                {
+                    "fileName": part.name,
+                    "bytes": part.stat().st_size,
+                    "sha256": sha256_file(part),
+                    "url": f"{base_url}/{quote(part.name)}",
+                }
+                for part in parts
+            ]
+        }
+    )
     return {
         "role": role,
         "requirementId": requirement_id,
@@ -58,12 +81,12 @@ def descriptor(
         "platform": "windows",
         "arch": "x86_64",
         "fileName": archive.name,
-        "bytes": archive.stat().st_size,
-        "sha256": sha256_file(archive),
+        "bytes": sum(part.stat().st_size for part in parts),
+        "sha256": whole.hexdigest(),
         "extractedBytes": extracted_bytes,
         "entryPoint": entry_point,
         "filesManifestSha256": hashlib.sha256(manifest_bytes).hexdigest(),
-        "url": f"{release_base_url.rstrip('/')}/{quote(archive.name)}",
+        **source,
     }
 
 
@@ -114,8 +137,8 @@ def main() -> None:
     )
     parser.add_argument("--ocr-worker-archive", type=Path, required=True)
     parser.add_argument("--ocr-worker-manifest", type=Path, required=True)
-    parser.add_argument("--whisper-worker-archive", type=Path, required=True)
-    parser.add_argument("--whisper-worker-manifest", type=Path, required=True)
+    parser.add_argument("--speech-recognition-worker-archive", type=Path, required=True)
+    parser.add_argument("--speech-recognition-worker-manifest", type=Path, required=True)
     # Read only when the model source lock contains the speaker-diarization unit.
     parser.add_argument("--diarization-worker-archive", type=Path)
     parser.add_argument("--diarization-worker-manifest", type=Path)
@@ -142,7 +165,7 @@ def main() -> None:
             approval["status"] != "blocked"
             or approval["blockers"] != [PENDING_WHISPER_FREEZE_BLOCKER]
             or [item["requirementId"] for item in source_lock["requirements"]][:2]
-            != ["windowsml-ocr", "whisper-primary"]
+            != ["windowsml-ocr", "speech-recognition"]
             or len(source_lock["fixtures"]) != 2
             or [item["kind"] for item in source_lock["fixtures"]] != ["ocr", "whisper"]
         ):
@@ -159,7 +182,7 @@ def main() -> None:
         ):
             raise SystemExit("Pending preflight requires an unfrozen private Whisper fixture.")
     if (
-        arguments.whisper_worker_archive.parent.resolve()
+        arguments.speech_recognition_worker_archive.parent.resolve()
         != arguments.ocr_worker_archive.parent.resolve()
     ):
         raise SystemExit("OCR and Whisper worker archives must share one engine directory")
@@ -178,12 +201,14 @@ def main() -> None:
                 release_base_url=arguments.release_base_url,
             ),
             requirement(
-                requirement_id="whisper-primary",
-                worker_archive=arguments.whisper_worker_archive,
-                worker_manifest=arguments.whisper_worker_manifest,
-                worker_entry_point="capture-engine-whisper.exe",
+                requirement_id="speech-recognition",
+                worker_archive=arguments.speech_recognition_worker_archive,
+                worker_manifest=arguments.speech_recognition_worker_manifest,
+                worker_entry_point="capture-engine-speech-recognition.exe",
                 direct_model_files=(
-                    None if source_lock is None else model_delivery(source_lock, "whisper-primary")
+                    None
+                    if source_lock is None
+                    else model_delivery(source_lock, "speech-recognition")
                 ),
                 release_base_url=arguments.release_base_url,
             ),

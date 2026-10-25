@@ -436,7 +436,7 @@ export class CaptureWorkbenchStore {
     if (requirement.requirementId === 'windowsml-ocr') {
       return enabled.includes('pdf') || enabled.includes('image');
     }
-    if (requirement.requirementId === 'whisper-primary')
+    if (requirement.requirementId === 'speech-recognition')
       return enabled.includes('audio');
     // An optional unit is needed only by a host that asked for what it adds.
     if (requirement.requirementId === 'speaker-diarization') {

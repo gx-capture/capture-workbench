@@ -14,7 +14,6 @@ from capture_runtime.ocr_execution_proof import (
     acceptance_ocr_execution_evidence_sink_from_environment,
 )
 from capture_runtime.worker_client import InstalledEngine, OcrWorkerFailure, WorkerClient
-from capture_runtime.worker_contracts import WorkerResponse
 from capture_runtime.worker_process import (
     MAX_WORKER_DIAGNOSTIC_STAGES,
     WorkerExecutionError,
@@ -114,7 +113,7 @@ sys.stderr.write("capture-worker-stage:ocr-probe-modules-missing-2\\n")
 sys.stderr.write("capture-worker-stage:ocr-probe-assets-missing-4\\n")
 sys.stderr.write("capture-worker-stage:ocr-probe-providers-3-cpu-yes-dml-no\\n")
 sys.stderr.write("capture-worker-stage:ocr-provider-evidence-dml-5-cpu-2\\n")
-sys.stderr.write("capture-worker-stage:whisper-model-load-cpu-failed-permissionerror\\n")
+sys.stderr.write("capture-worker-stage:speech-model-load-cpu-failed-permissionerror\\n")
 sys.stderr.flush()
 os._exit(7)
 """.lstrip(),
@@ -129,7 +128,7 @@ os._exit(7)
             "ocr-probe-assets-missing-4",
             "ocr-probe-providers-3-cpu-yes-dml-no",
             "ocr-provider-evidence-dml-5-cpu-2",
-            "whisper-model-load-cpu-failed-permissionerror",
+            "speech-model-load-cpu-failed-permissionerror",
         )
 
     asyncio.run(run())
@@ -146,86 +145,43 @@ def test_unknown_ocr_module_suffix_is_redacted_to_a_safe_family_sentinel() -> No
     assert "secret-token" not in str(error.diagnostics.stage_sequence)
 
 
-def test_unknown_whisper_failure_suffix_is_redacted_without_losing_cpu_fallback(
+def test_unknown_speech_failure_suffix_is_redacted_without_repeating_cpu_fallback(
     tmp_path: Path,
 ) -> None:
-    class UnknownWhisperFailureProcess:
-        def __init__(self) -> None:
-            self.options: list[dict[str, object]] = []
+    calls = []
 
-        async def request(
-            self,
-            _executable: Path,
-            _operation: str,
-            payload: dict[str, object],
-            *,
-            cancel_event: asyncio.Event | None = None,
-            timeout_seconds: float,
-        ) -> WorkerResponse:
-            del cancel_event, timeout_seconds
-            options = payload["options"]
-            assert isinstance(options, dict)
-            self.options.append(options)
-            if len(self.options) == 1:
-                error = WorkerExecutionError(
-                    "worker failed at stage whisper-model-load-cpu-failed-secret-token"
-                )
-                assert error.diagnostics.stage_sequence == (
-                    "whisper-model-load-cpu-failed-unknown",
-                )
-                assert "secret-token" not in str(error.diagnostics.stage_sequence)
-                raise error
-            return WorkerResponse(
-                request_id="run",
-                ok=True,
-                result={
-                    "segments": [
-                        {
-                            "order": 0,
-                            "text": "words",
-                            "page": None,
-                            "startMs": 0,
-                            "endMs": 1000,
-                        }
-                    ],
-                    "provenance": {
-                        "engine": "whisper-primary",
-                        "model": "small",
-                        "digest": f"sha256:{'1' * 64}",
-                        "device": "cpu",
-                    },
-                    "warnings": [],
-                },
-                error=None,
+    class UnknownSpeechFailureProcess:
+        async def request(self, _executable, _operation, payload, **_options):
+            calls.append(payload["options"])
+            raise WorkerExecutionError(
+                "worker failed at stage speech-model-load-cpu-failed-secret-token"
             )
 
-    process = UnknownWhisperFailureProcess()
-    client = WorkerClient(process=process)  # type: ignore[arg-type]
+    client = WorkerClient(process=UnknownSpeechFailureProcess())  # type: ignore[arg-type]
     model_dir = tmp_path / "model"
     model_dir.mkdir()
     source = tmp_path / "audio.mp3"
     source.write_bytes(b"audio")
 
     async def run() -> None:
-        result = await client.run(
-            InstalledEngine(
-                requirement_id="whisper-primary",
-                artifact_version="engine-1",
-                executable=tmp_path / "whisper.exe",
-                model_dir=model_dir,
-            ),
-            source_path=source,
-            media_type="audio/mpeg",
-            options={"maxDurationMs": 60_000, "preferGpu": True},
-            cancel_event=asyncio.Event(),
-        )
-        assert result.device == "cpu"
+        with pytest.raises(WorkerExecutionError) as raised:
+            await client.run(
+                InstalledEngine(
+                    requirement_id="speech-recognition",
+                    artifact_version="engine-1",
+                    executable=tmp_path / "speech.exe",
+                    model_dir=model_dir,
+                ),
+                source_path=source,
+                media_type="audio/mpeg",
+                options={"maxDurationMs": 60_000, "preferGpu": True},
+                cancel_event=asyncio.Event(),
+            )
+        assert raised.value.diagnostics.stage_sequence == ("speech-model-load-cpu-failed-unknown",)
+        assert "secret-token" not in str(raised.value.diagnostics.stage_sequence)
 
     asyncio.run(run())
-    assert process.options == [
-        {"maxDurationMs": 60_000, "preferGpu": True},
-        {"maxDurationMs": 60_000, "preferGpu": False},
-    ]
+    assert calls == [{"maxDurationMs": 60_000, "preferGpu": True}]
 
 
 def test_worker_failure_diagnostics_rejects_unknown_stage_constructor_input() -> None:

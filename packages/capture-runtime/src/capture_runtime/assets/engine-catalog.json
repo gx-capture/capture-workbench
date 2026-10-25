@@ -10,8 +10,8 @@
     {
       "artifacts": [],
       "modelFiles": null,
-      "requirementId": "whisper-primary",
-      "unavailableReason": "A release catalog with an exact Whisper worker and approved direct model source lock was not injected."
+      "requirementId": "speech-recognition",
+      "unavailableReason": "A release catalog with an exact speech recognition worker and approved direct model source lock was not injected."
     }
   ],
   "runtimeVersion": "0.6.3"

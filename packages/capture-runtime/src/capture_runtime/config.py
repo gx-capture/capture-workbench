@@ -18,8 +18,7 @@ _CHILD_PROCESS_ENVIRONMENT_ALLOWLIST = frozenset(
         # which keeps derived vertical-reader models there.
         "CAPTURE_ENGINE_CACHE_DIR",
         "COMSPEC",
-        # CTranslate2 uses CUDA_PATH to locate the host CUDA toolkit's
-        # cuBLAS runtime. Keep this single, non-secret locator while
+        # Keep the non-secret CUDA toolkit locator for native workers while
         # continuing to exclude provider overrides and ambient credentials.
         "CUDA_PATH",
         "LOCALAPPDATA",
@@ -284,21 +283,23 @@ class RuntimeSettings:
             max_image_pixels=max_image_pixels,
             ocr_render_scale=ocr_render_scale,
             max_audio_duration_ms=max_audio_duration_ms,
-            whisper_primary_model=env.get("CAPTURE_WHISPER_PRIMARY_MODEL", "large-v3-turbo"),
-            whisper_fallback_model=env.get("CAPTURE_WHISPER_FALLBACK_MODEL", "small"),
-            # Prefer Nvidia CUDA when the bundled ctranslate2 runtime can
+            whisper_primary_model=env.get("CAPTURE_WHISPER_PRIMARY_MODEL", "tea-asr-1.1"),
+            whisper_fallback_model=env.get("CAPTURE_WHISPER_FALLBACK_MODEL", "tea-asr-1.1-mini"),
+            # Prefer Nvidia CUDA when the bundled PyTorch runtime can
             # initialize it. Diagnostics retain the bounded CPU fallback;
             # source-lock production verification can explicitly fail closed.
             whisper_prefer_gpu=_bool(env.get("CAPTURE_WHISPER_PREFER_GPU"), True),
             whisper_allow_cpu_fallback=_bool(env.get("CAPTURE_WHISPER_ALLOW_CPU_FALLBACK"), True),
             engine_resolution_timeout_seconds=engine_resolution_timeout_seconds,
         )
-        supported_whisper_models = {"large-v3-turbo", "small"}
+        supported_whisper_models = {"tea-asr-1.1", "tea-asr-1.1-mini"}
         if {
             extraction.whisper_primary_model,
             extraction.whisper_fallback_model,
         } - supported_whisper_models:
-            raise ValueError("Capture Whisper models must be large-v3-turbo or small in runtime v2")
+            raise ValueError(
+                "Capture speech models must be tea-asr-1.1 or tea-asr-1.1-mini in runtime v2"
+            )
 
         external_ollama = None
         if provider == "external-ollama":

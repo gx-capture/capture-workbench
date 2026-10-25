@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Engine provenance
+
+- Add optional `elapsedMs` and `stageMs` engine provenance fields for speech recognition and speaker diarization, alongside the device that produced the result; total time includes failed CUDA attempts and CPU fallback.
+
+### Breaking changes
+
+- Rename the public runtime requirement from `whisper-primary` to `speech-recognition`; replace Whisper with TEA-ASR-1.1 (CUDA), TEA-ASR-1.1-mini (CPU) and Qwen3 forced alignment. Clients and installed engine catalogs must migrate together.
+
+### Engine packaging
+
+- Publish a worker archive above 1.9 GB as ordered parts (`<archive>.001`, `.002`, ...) so every
+  release asset stays under GitHub's 2 GB limit; the catalog lists each part with its digest, and
+  the installer joins and verifies them. The CUDA speech-recognition worker ships this way, and
+  worker extraction is bounded at 8 GiB.
+- Speaker diarization runs CPU PyTorch again, which keeps its worker small; only speech
+  recognition uses CUDA PyTorch.
+
 ### Speaker diarization
 
 - Replace the optional speaker model with NVIDIA Nemotron-3-Diarization under

@@ -10,13 +10,20 @@ import pytest
 from capture_runtime.clock import SystemClock
 from capture_runtime.config import ExtractionRuntimeConfig
 from capture_runtime.constants import RUNTIME_VERSION
-from capture_runtime.contracts import CaptureSource, CaptureSpeaker, RawCapture, TimeLocator
+from capture_runtime.contracts import (
+    CaptureDocument,
+    CaptureSource,
+    CaptureSpeaker,
+    RawCapture,
+    TimeLocator,
+)
 from capture_runtime.engine_catalog import EngineCatalogError
 from capture_runtime.extractors import (
     ExtractionRuntimeUnavailableError,
     StandaloneRuntimeCaptureExtractor,
 )
 from capture_runtime.speaker_turns import SpeakerTurn
+from capture_runtime.structuring_provider import FakeCaptureStructuringProvider
 from capture_runtime.worker_client import (
     InstalledEngine,
     WorkerDiarizationResult,
@@ -59,11 +66,13 @@ class _WorkerClient:
                     words=words if with_words else (),
                 ),
             ),
-            engine="whisper-primary",
-            model="large-v3-turbo",
+            engine="speech-recognition",
+            model="tea-asr-1.1",
             digest=f"sha256:{'2' * 64}",
             device="cuda",
             warnings=(),
+            elapsed_ms=1500,
+            stage_ms={"modelLoad": 200, "transcription": 800, "alignerLoad": 100, "alignment": 300},
         )
 
     async def diarize(self, engine: InstalledEngine, **kwargs: Any) -> WorkerDiarizationResult:
@@ -81,6 +90,8 @@ class _WorkerClient:
             digest=f"sha256:{'3' * 64}",
             device="cpu",
             warnings=("Diarization GPU fallback: cuda_out_of_memory",),
+            elapsed_ms=2400,
+            stage_ms={"modelLoad": 300, "inference": 900, "postprocessing": 50},
         )
 
 
@@ -119,8 +130,8 @@ def _extract(
             max_image_pixels=100_000,
             ocr_render_scale=2,
             max_audio_duration_ms=60_000,
-            whisper_primary_model="large-v3-turbo",
-            whisper_fallback_model="small",
+            whisper_primary_model="tea-asr-1.1",
+            whisper_fallback_model="tea-asr-1.1-mini",
             whisper_prefer_gpu=True,
         ),
         engine_manager=manager,  # type: ignore[arg-type]
@@ -147,7 +158,7 @@ def test_identified_speakers_split_the_transcript_and_get_a_listening_sample(
     tmp_path: Path,
 ) -> None:
     raw, worker_client = _extract(
-        tmp_path, installed={"whisper-primary", "speaker-diarization"}, identify_speakers=True
+        tmp_path, installed={"speech-recognition", "speaker-diarization"}, identify_speakers=True
     )
 
     assert [
@@ -164,16 +175,43 @@ def test_identified_speakers_split_the_transcript_and_get_a_listening_sample(
     assert raw.source_text == "Good morning\nHello there"
     assert raw.diarization_engine is not None
     assert raw.diarization_engine.engine == "speaker-diarization"
-    assert raw.extraction_engine.engine == "whisper-primary"
+    assert raw.extraction_engine.engine == "speech-recognition"
+    assert raw.extraction_engine.elapsed_ms == 1500
+    assert raw.extraction_engine.stage_ms == {
+        "modelLoad": 200,
+        "transcription": 800,
+        "alignerLoad": 100,
+        "alignment": 300,
+    }
+    assert raw.diarization_engine.elapsed_ms == 2400
+    assert raw.diarization_engine.stage_ms == {
+        "modelLoad": 300,
+        "inference": 900,
+        "postprocessing": 50,
+    }
+    payload = asyncio.run(
+        FakeCaptureStructuringProvider(SystemClock()).structure(
+            raw, target_language=None, cancel_event=asyncio.Event()
+        )
+    )
+    document = CaptureDocument.model_validate(payload)
+    assert document.extraction_engine == raw.extraction_engine
+    assert document.diarization_engine == raw.diarization_engine
+    assert document.structuring_engine.elapsed_ms is None
+    assert document.structuring_engine.stage_ms is None
+    assert CaptureDocument.model_validate_json(document.model_dump_json(by_alias=True)) == document
     assert raw.warnings == ["Diarization GPU fallback: cuda_out_of_memory"]
-    assert [name for name, _ in worker_client.calls] == ["whisper-primary", "speaker-diarization"]
+    assert [name for name, _ in worker_client.calls] == [
+        "speech-recognition",
+        "speaker-diarization",
+    ]
     assert worker_client.calls[0][1]["wordTimestamps"] is True
     assert not any(path.exists() for path in worker_client.sources)
 
 
 def test_without_the_request_the_transcript_has_no_speakers(tmp_path: Path) -> None:
     raw, worker_client = _extract(
-        tmp_path, installed={"whisper-primary", "speaker-diarization"}, identify_speakers=False
+        tmp_path, installed={"speech-recognition", "speaker-diarization"}, identify_speakers=False
     )
 
     assert [(item.text, item.speaker) for item in raw.segments] == [
@@ -182,7 +220,10 @@ def test_without_the_request_the_transcript_has_no_speakers(tmp_path: Path) -> N
     assert raw.speakers == []
     assert raw.diarization_engine is None
     assert worker_client.calls == [
-        ("whisper-primary", {"maxDurationMs": 60_000, "preferGpu": True, "allowCpuFallback": True})
+        (
+            "speech-recognition",
+            {"maxDurationMs": 60_000, "preferGpu": True, "allowCpuFallback": True},
+        )
     ]
 
 
@@ -193,7 +234,7 @@ def test_requesting_speakers_without_the_unit_installed_fails_and_names_it(
     with pytest.raises(ExtractionRuntimeUnavailableError, match="speaker-diarization"):
         _extract(
             tmp_path,
-            installed={"whisper-primary"},
+            installed={"speech-recognition"},
             identify_speakers=True,
             in_catalog=in_catalog,
         )
@@ -204,7 +245,7 @@ def test_progress_covers_transcription_then_speaker_identification(tmp_path: Pat
 
     _extract(
         tmp_path,
-        installed={"whisper-primary", "speaker-diarization"},
+        installed={"speech-recognition", "speaker-diarization"},
         identify_speakers=True,
         speaker_progress=lambda stage, permille: reported.append((stage, permille)),
     )

@@ -224,7 +224,7 @@ override. It must check the post-install requirement state, non-empty raw and
 structured UI data, exact source-kind/provenance assertions, UUID-scoped
 document deletion, and owned-process cleanup. The PDF and image cases require
 `windowsml-ocr` and `windowsml-dml`; CPU is a failure for this model-enabled
-release gate. The audio case requires `whisper-primary`, non-empty segments
+release gate. The audio case requires `speech-recognition` (formerly `whisper-primary`), non-empty segments
 with time locators, and the exact source-lock-selected primary/fallback
 model/device expectation. Its fixture paths and tokens must not appear in the
   local evidence. This is distinct from the worker probe and from the current

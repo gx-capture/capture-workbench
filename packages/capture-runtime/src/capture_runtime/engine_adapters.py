@@ -1,4 +1,4 @@
-"""Standalone WindowsML OCR and faster-whisper engine adapters.
+"""Standalone WindowsML OCR engine adapters.
 
 The adapters deliberately own their dependency and model probes. They never import a host
 application package, never download during extraction, and report the exact missing runtime
@@ -8,7 +8,6 @@ asset instead of substituting deterministic content.
 from __future__ import annotations
 
 import copy
-import ctypes
 import hashlib
 import importlib.util
 import json
@@ -71,9 +70,6 @@ from capture_runtime.worker_stage_policy import (
     ocr_provider_evidence_stage,
     ocr_stage_failure,
     sanitize_worker_stage,
-    whisper_model_load_stage,
-    whisper_output_stage,
-    whisper_stage,
 )
 
 # Compatibility name retained for callers that imported the former identity
@@ -89,40 +85,6 @@ WINDOWSML_REQUIRED_MODEL_FILES = (
     "rec/ppocrv6_dict.txt",
     "pipeline.json",
 )
-WHISPER_REQUIRED_FILES = (
-    "config.json",
-    "model.bin",
-    "tokenizer.json",
-)
-# faster-whisper keeps every sound its VAD hears (minimum 0 ms; Silero's own
-# default is 250 ms). A click at the start of a phone recording then became a
-# speech chunk: Whisper heard "You" in it, and a word spoken minutes later
-# whose aligned span reached back into it was timed at 0:00.
-WHISPER_VAD_MIN_SPEECH_MS = 250
-LOAD_LIBRARY_SEARCH_SYSTEM32 = 0x00000800
-
-
-def _windows_cuda_device_count() -> int | None:
-    if sys.platform != "win32":
-        return None
-    try:
-        driver = ctypes.WinDLL("nvcuda.dll", winmode=LOAD_LIBRARY_SEARCH_SYSTEM32)
-        driver.cuInit.argtypes = [ctypes.c_uint]
-        driver.cuInit.restype = ctypes.c_int
-        if driver.cuInit(0) != 0:
-            return 0
-        count = ctypes.c_int()
-        driver.cuDeviceGetCount.argtypes = [ctypes.POINTER(ctypes.c_int)]
-        driver.cuDeviceGetCount.restype = ctypes.c_int
-        if driver.cuDeviceGetCount(ctypes.byref(count)) != 0:
-            return 0
-        return max(0, count.value)
-    except (AttributeError, OSError):
-        return 0
-
-
-class _WhisperModelLoadError(RuntimeError):
-    """Marks a CPU model-constructor failure for a bounded compatibility retry."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -461,6 +423,8 @@ class WhisperTranscriptionResult:
     model: str
     digest: str
     warning: str | None = None
+    elapsed_ms: int | None = None
+    stage_ms: dict[str, int] | None = None
 
 
 class VerticalReaderLine(Protocol):
@@ -2581,288 +2545,9 @@ def _install_offline_huggingface_stubs() -> None:
     sys.modules["huggingface_hub.utils"] = utils
 
 
-def _whisper_words(raw_segment: Any, duration_ms: int) -> tuple[WhisperWord, ...]:
-    words: list[WhisperWord] = []
-    for word in getattr(raw_segment, "words", None) or ():
-        text = str(word.word)
-        start_ms = min(duration_ms, max(0, round(float(word.start) * 1000)))
-        end_ms = min(duration_ms, max(start_ms, round(float(word.end) * 1000)))
-        if text:
-            words.append(WhisperWord(start_ms, end_ms, text))
-    return tuple(words)
-
-
-class FasterWhisperAdapter:
-    """Local-only faster-whisper adapter with explicit, bounded CPU fallback."""
-
-    def __init__(
-        self,
-        models_dir: Path,
-        *,
-        primary_model: str,
-        fallback_model: str,
-        primary_provenance_model: str | None = None,
-        fallback_provenance_model: str | None = None,
-        prefer_gpu: bool,
-        max_duration_ms: int,
-        allow_cpu_fallback: bool = True,
-        word_timestamps: bool = False,
-        model_factory: Callable[..., Any] | None = None,
-        cuda_count: Callable[[], int] | None = None,
-        stage_reporter: Callable[[str], None] | None = None,
-        progress_reporter: Callable[[int, int], None] | None = None,
-    ) -> None:
-        self.models_dir = models_dir
-        self._progress_reporter = progress_reporter
-        self.primary_model = primary_model
-        self.fallback_model = fallback_model
-        # Model directory names are intentionally independent from the
-        # lock-visible model identities.  Workers keep the stable
-        # ``primary``/``fallback`` layout while reporting the actual
-        # upstream model names in provenance.
-        self.primary_provenance_model = primary_provenance_model or primary_model
-        self.fallback_provenance_model = fallback_provenance_model or fallback_model
-        self.prefer_gpu = prefer_gpu
-        self.allow_cpu_fallback = allow_cpu_fallback
-        self.word_timestamps = word_timestamps
-        self.max_duration_ms = max_duration_ms
-        self._model_factory = model_factory
-        self._cuda_count = cuda_count
-        self._stage_reporter = stage_reporter
-        self._runtime_cache: dict[tuple[str, str, str], Any] = {}
-        self._digest_cache: dict[str, str] = {}
-
-    def _report_stage(self, stage: str) -> None:
-        safe_stage = sanitize_worker_stage(stage)
-        if safe_stage is not None and self._stage_reporter is not None:
-            self._stage_reporter(safe_stage)
-
-    def model_path(self, model: str) -> Path:
-        return self.models_dir / model
-
-    def probe(self) -> EngineProbe:
-        code_ready = (
-            self._model_factory is not None
-            or importlib.util.find_spec("faster_whisper") is not None
-        )
-        missing: list[str] = []
-        for model in {self.primary_model, self.fallback_model}:
-            model_root = self.model_path(model)
-            for relative in WHISPER_REQUIRED_FILES:
-                if not (model_root / relative).is_file():
-                    missing.append(f"{model}/{relative}")
-            if not any(model_root.glob("vocabulary.*")):
-                missing.append(f"{model}/vocabulary.*")
-        assets_ready = not missing
-        code_detail = None if code_ready else "Missing faster-whisper runtime dependency."
-        assets_detail = (
-            None if assets_ready else "Missing local Whisper model assets: " + ", ".join(missing)
-        )
-        if not code_ready:
-            detail = code_detail or "Whisper runtime dependency is unavailable."
-        elif missing:
-            detail = assets_detail or "Whisper model assets are unavailable."
-        else:
-            detail = "Primary and CPU fallback Whisper models are locally ready."
-        return EngineProbe(
-            code_ready and assets_ready,
-            code_ready,
-            assets_ready,
-            detail,
-            code_detail=code_detail,
-            assets_detail=assets_detail,
-        )
-
-    def transcribe(
-        self,
-        source_path: Path,
-        *,
-        should_cancel: Callable[[], bool],
-        allow_empty_output: bool = False,
-    ) -> WhisperTranscriptionResult:
-        self._report_stage(whisper_stage("assets-probe-start"))
-        probe = self.probe()
-        if not probe.ready:
-            raise EngineRuntimeUnavailableError(probe.detail)
-        self._report_stage(whisper_stage("assets-probe-complete"))
-        if should_cancel():
-            raise InterruptedError("Whisper transcription was cancelled.")
-        self._report_stage(whisper_stage("device-probe-start"))
-        cuda_devices = self._cuda_devices()
-        use_gpu = self.prefer_gpu and cuda_devices > 0
-        self._report_stage(whisper_stage("device-probe-complete"))
-        if self.prefer_gpu and not self.allow_cpu_fallback and cuda_devices <= 0:
-            raise EngineRuntimeUnavailableError("Whisper CUDA device is unavailable.")
-        if use_gpu:
-            try:
-                return self._run(
-                    source_path,
-                    model=self.primary_model,
-                    provenance_model=self.primary_provenance_model,
-                    device="cuda",
-                    compute_type="float16",
-                    should_cancel=should_cancel,
-                    allow_empty_output=allow_empty_output,
-                )
-            except InterruptedError:
-                raise
-            except Exception as error:
-                if not self.allow_cpu_fallback:
-                    raise
-                self._runtime_cache.pop((self.primary_model, "cuda", "float16"), None)
-                # A CUDA-capable driver is not proof that the bundled
-                # ctranslate2 build can initialize a CUDA model.  Keep the
-                # desktop product usable on machines that advertise CUDA but
-                # fail during model construction or the first transcription;
-                # the CPU model is the supported fallback for Whisper.  The
-                # warning is deliberately type-only so a model path or raw
-                # backend diagnostic cannot cross the worker boundary.
-                self._report_stage(whisper_stage("gpu-fallback"))
-                return self._run_cpu(
-                    source_path,
-                    should_cancel=should_cancel,
-                    warning=f"Whisper GPU fallback: {type(error).__name__}",
-                    allow_empty_output=allow_empty_output,
-                )
-        return self._run_cpu(
-            source_path,
-            should_cancel=should_cancel,
-            allow_empty_output=allow_empty_output,
-        )
-
-    def _run_cpu(
-        self,
-        source_path: Path,
-        *,
-        should_cancel: Callable[[], bool],
-        warning: str | None = None,
-        allow_empty_output: bool = False,
-    ) -> WhisperTranscriptionResult:
-        try:
-            return self._run(
-                source_path,
-                model=self.fallback_model,
-                provenance_model=self.fallback_provenance_model,
-                device="cpu",
-                # Use mixed int8 weights/float32 activations as the CPU
-                # default. It is supported by the bundled CTranslate2
-                # build while avoiding the pure-int8 constructor path that
-                # can fail on otherwise supported Windows CPUs.
-                compute_type="int8_float32",
-                should_cancel=should_cancel,
-                warning=warning,
-                allow_empty_output=allow_empty_output,
-            )
-        except _WhisperModelLoadError:
-            self._report_stage(whisper_stage("model-load-cpu-fallback-float32"))
-            return self._run(
-                source_path,
-                model=self.fallback_model,
-                provenance_model=self.fallback_provenance_model,
-                device="cpu",
-                compute_type="float32",
-                should_cancel=should_cancel,
-                warning=warning or "Whisper CPU int8_float32 compatibility fallback: RuntimeError",
-                allow_empty_output=allow_empty_output,
-            )
-
-    def _cuda_devices(self) -> int:
-        if self._cuda_count is not None:
-            return self._cuda_count()
-        windows_count = _windows_cuda_device_count()
-        if windows_count is not None:
-            return windows_count
-        try:
-            import ctranslate2
-
-            return int(ctranslate2.get_cuda_device_count())
-        except Exception:
-            return 0
-
-    def _run(
-        self,
-        source_path: Path,
-        *,
-        model: str,
-        provenance_model: str,
-        device: str,
-        compute_type: str,
-        should_cancel: Callable[[], bool],
-        warning: str | None = None,
-        allow_empty_output: bool = False,
-    ) -> WhisperTranscriptionResult:
-        factory = self._model_factory
-        if factory is None:
-            from faster_whisper import WhisperModel
-
-            factory = WhisperModel
-        model_root = self.model_path(model)
-        cache_key = (model, device, compute_type)
-        runtime = self._runtime_cache.get(cache_key)
-        if runtime is None:
-            self._report_stage(whisper_model_load_stage(device, "start"))
-            try:
-                runtime = factory(str(model_root), device=device, compute_type=compute_type)
-            except Exception as error:
-                self._report_stage(whisper_model_load_stage(device, "failed", error))
-                if device == "cpu" and isinstance(error, RuntimeError):
-                    raise _WhisperModelLoadError from error
-                raise
-            self._runtime_cache[cache_key] = runtime
-            self._report_stage(whisper_model_load_stage(device, "complete"))
-        else:
-            self._report_stage(whisper_model_load_stage(device, "reused"))
-        self._report_stage(whisper_stage("transcription-call-start"))
-        raw_segments, info = runtime.transcribe(
-            str(source_path),
-            beam_size=5,
-            vad_filter=True,
-            vad_parameters={"min_speech_duration_ms": WHISPER_VAD_MIN_SPEECH_MS},
-            word_timestamps=self.word_timestamps,
-        )
-        self._report_stage(whisper_stage("transcription-call-complete"))
-        self._report_stage(whisper_stage("transcription-iteration-start"))
-        duration_ms = max(0, round(float(info.duration) * 1000))
-        if duration_ms > self.max_duration_ms:
-            raise ValueError("Audio duration exceeds the configured limit.")
-        segments: list[WhisperTextSegment] = []
-        for raw in raw_segments:
-            if should_cancel():
-                raise InterruptedError("Whisper transcription was cancelled.")
-            text = str(raw.text).strip()
-            start_ms = max(0, round(float(raw.start) * 1000))
-            end_ms = min(duration_ms, max(0, round(float(raw.end) * 1000)))
-            if self._progress_reporter is not None:
-                self._progress_reporter(end_ms, duration_ms)
-            if text and start_ms < end_ms:
-                words = _whisper_words(raw, duration_ms) if self.word_timestamps else ()
-                if self.word_timestamps and not words:
-                    raise ValueError("Whisper returned speech without word timestamps.")
-                segments.append(WhisperTextSegment(start_ms, end_ms, text, words))
-        if should_cancel():
-            raise InterruptedError("Whisper transcription was cancelled.")
-        if not segments and not allow_empty_output:
-            self._report_stage(whisper_stage("output-empty"))
-            raise ValueError("Whisper produced no non-empty segments.")
-        self._report_stage(whisper_output_stage(bool(segments)))
-        digest = self._digest_cache.get(model)
-        if digest is None:
-            digest = _directory_digest(model_root)
-            self._digest_cache[model] = digest
-        return WhisperTranscriptionResult(
-            segments=tuple(segments),
-            duration_ms=duration_ms,
-            device=device,
-            model=provenance_model,
-            digest=digest,
-            warning=warning,
-        )
-
-
 __all__ = [
     "EngineProbe",
     "EngineRuntimeUnavailableError",
-    "FasterWhisperAdapter",
     "OcrAdapter",
     "OcrExecutionEvidence",
     "OcrExecutionEvidenceAdapter",

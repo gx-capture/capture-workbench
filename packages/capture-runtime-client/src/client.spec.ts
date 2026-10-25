@@ -1260,7 +1260,12 @@ describe('CaptureRuntimeClient', () => {
     expect(received).toEqual(['', '1']);
   });
 
-  it('opens, pulls, and submits strict pull-session batches with matching idempotency', async () => {
+  it.each([
+    {},
+    { elapsedMs: null, stageMs: null },
+    { elapsedMs: 0, stageMs: {} },
+    { elapsedMs: 1500, stageMs: { inference: 1200 } },
+  ])('opens, pulls, and submits strict pull-session batches with optional engine timings %j', async (timings) => {
     const session = {
       protocolVersion: '2',
       sessionId: 'session-1',
@@ -1268,7 +1273,7 @@ describe('CaptureRuntimeClient', () => {
       rawSourceSha256: 'a'.repeat(64),
       contractSetSha256: CAPTURE_CONTRACT_SET_SHA256,
       providerCapability: {
-        provider: { engine: 'ollama', model: 'model-1', digest: `sha256:${'b'.repeat(64)}` },
+        provider: { engine: 'ollama', model: 'model-1', digest: `sha256:${'b'.repeat(64)}`, ...timings },
         capability: 'capture-structuring',
         schemaDialect: 'https://json-schema.org/draft/2020-12/schema',
       },
@@ -1342,6 +1347,7 @@ describe('CaptureRuntimeClient', () => {
     expect((await client.openStructuringSession('cap', request)).sessionId).toBe('session-1');
     expect(openHeaders?.get('X-Idempotency-Key')).toBe('session-key');
     expect((await client.getStructuringSession('cap')).sessionId).toBe('session-1');
+    expect((await client.getStructuringSession('cap')).providerCapability.provider).toEqual(session.providerCapability.provider);
     expect((await client.pullStructuringBatch('cap', 0)).batchDigest).toBe(batch.batchDigest);
     await client.submitStructuringBatch(
       'cap',

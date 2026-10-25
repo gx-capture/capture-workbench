@@ -16,8 +16,8 @@ from capture_runtime.clock import Clock
 from capture_runtime.config import ExtractionRuntimeConfig
 from capture_runtime.constants import (
     DIARIZATION_REQUIREMENT_ID,
+    SPEECH_RECOGNITION_REQUIREMENT_ID,
     VERTICAL_READER_REQUIREMENT_ID,
-    WHISPER_REQUIREMENT_ID,
     WINDOWSML_REQUIREMENT_ID,
 )
 from capture_runtime.contracts import (
@@ -582,7 +582,7 @@ class StandaloneRuntimeCaptureExtractor:
                 if pdf_page_numbers is not None:
                     raise ValueError("PDF page selection is only valid for PDF sources.")
                 result = await self._run_worker(
-                    WHISPER_REQUIREMENT_ID,
+                    SPEECH_RECOGNITION_REQUIREMENT_ID,
                     content,
                     sniffed.media_type,
                     {
@@ -597,7 +597,7 @@ class StandaloneRuntimeCaptureExtractor:
                         content, self.config.max_audio_duration_ms
                     ),
                 )
-                engine = self._capture_engine(result, expected_engine="whisper-primary")
+                engine = self._capture_engine(result, expected_engine="speech-recognition")
                 warnings = list(result.warnings)
                 if identify_speakers:
                     diarization = await self._run_diarization(
@@ -615,6 +615,8 @@ class StandaloneRuntimeCaptureExtractor:
                         model=diarization.model,
                         digest=diarization.digest,
                         device=diarization.device,
+                        elapsed_ms=diarization.elapsed_ms,
+                        stage_ms=diarization.stage_ms,
                     )
                     warnings.extend(diarization.warnings)
                 else:
@@ -1099,6 +1101,8 @@ class StandaloneRuntimeCaptureExtractor:
             model=result.model,
             digest=result.digest,
             device=result.device,
+            elapsed_ms=result.elapsed_ms if expected_engine == "speech-recognition" else None,
+            stage_ms=result.stage_ms if expected_engine == "speech-recognition" else None,
         )
 
     def _capture_ocr_provenance(self, result: WorkerRunResult) -> OcrProvenanceV3:
@@ -1380,10 +1384,12 @@ class StandaloneRuntimeCaptureExtractor:
         return (
             segments,
             CaptureEngine(
-                engine="whisper-primary",
+                engine="speech-recognition",
                 model=result.model,
                 digest=result.digest,
                 device=result.device,
+                elapsed_ms=result.elapsed_ms,
+                stage_ms=result.stage_ms,
             ),
             warnings,
         )
@@ -1629,9 +1635,9 @@ class DeterministicCaptureExtractor:
                 for index, part in enumerate(parts)
             ]
             engine = CaptureEngine(
-                engine="whisper-primary",
+                engine="speech-recognition",
                 model="deterministic-whisper-v1",
-                digest=_engine_digest("whisper-primary", "deterministic-whisper-v1"),
+                digest=_engine_digest("speech-recognition", "deterministic-whisper-v1"),
                 device="fake",
             )
         else:

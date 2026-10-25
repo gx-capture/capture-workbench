@@ -37,7 +37,7 @@ export const REAL_MODEL_DEPENDENCY_ORDER_SCOPE = 'source-lock-model-requirements
 export const REAL_MODEL_SOURCE_IMPORT_MODE = 'deterministic-feature-gated-picker-bypass';
 export const REAL_MODEL_REQUIREMENT_ORDER = [
   'windowsml-ocr',
-  'whisper-primary',
+  'speech-recognition',
 ] as const;
 export const REAL_MODEL_RUNTIME_READY_TIMEOUT_MS = 3 * 60_000;
 export const REAL_MODEL_INSTALL_TIMEOUT_MS = 90 * 60_000;
@@ -118,9 +118,9 @@ const SAFE_UI_STATE_STATUSES = new Set([
   'ready',
   'unavailable',
 ]);
-const SAFE_UI_STATE_REQUIREMENTS = new Set(['windowsml-ocr', 'whisper-primary', 'ollama-runtime']);
+const SAFE_UI_STATE_REQUIREMENTS = new Set(['windowsml-ocr', 'speech-recognition', 'ollama-runtime']);
 const SAFE_UI_STATE_SOURCE_KINDS = new Set(['pdf', 'image', 'audio']);
-const SAFE_UI_STATE_ENGINES = new Set(['windowsml-ocr', 'whisper-primary']);
+const SAFE_UI_STATE_ENGINES = new Set(['windowsml-ocr', 'speech-recognition']);
 const SAFE_UI_STATE_DEVICES = new Set(['windowsml-dml', 'cpu']);
 const SAFE_TERMINAL_DOCUMENT_STATUSES = new Set(['failed', 'canceled']);
 const SAFE_TERMINAL_DOCUMENT_STAGES = new Set([
@@ -159,7 +159,7 @@ const SAFE_TERMINAL_DOCUMENT_ERROR_CODES = new Set([
   'structuring_failed',
   'structuring_invalid_output',
 ]);
-const SAFE_WORKER_STAGE_TOKEN = '(?:worker-entry(?:-[a-z0-9-]+)?|python-import-[a-z0-9-]+|ocr-[a-z0-9-]+|whisper-[a-z0-9-]+|worker-process-[a-z0-9-]+|worker-stage-sequence-truncated)';
+const SAFE_WORKER_STAGE_TOKEN = '(?:worker-entry(?:-[a-z0-9-]+)?|python-import-[a-z0-9-]+|ocr-[a-z0-9-]+|speech-[a-z0-9-]+|worker-process-[a-z0-9-]+|worker-stage-sequence-truncated)';
 const SAFE_WORKER_STAGE_SEQUENCE = `${SAFE_WORKER_STAGE_TOKEN}(?:>${SAFE_WORKER_STAGE_TOKEN})*`;
 const SAFE_TERMINAL_DOCUMENT_FAILURE = new RegExp(
   `^Desktop capture terminated\\. status=(?:failed|canceled); stage=(?:queued|extracting|awaiting_structuring|structuring|persisting|completed|failed|cancelled|unknown); errorCode=(?:capture_cancelled|extraction_failed|requirement_unavailable|progressive_failed|progressive_no_text_at_sample|progressive_stall|progressive_worker_exit|progressive_decode_failed|progressive_engine_resolution_failed|progressive_decoder_init_failed|progressive_decoder_process_failed|progressive_decoder_finish_failed|progressive_worker_start_failed|progressive_worker_input_failed|progressive_worker_finish_failed|progressive_worker_event_invalid|progressive_event_persist_failed|progressive_partial_invalid|progressive_output_invalid|progressive_session_failed|session_failed|session_cancelled|structuring_failed|structuring_invalid_output|unknown)(?:; mediaKind=(?:pdf|image|audio))?(?:; (?:workerStage=${SAFE_WORKER_STAGE_SEQUENCE}|failureReason=(?:no-non-empty-output|validation-failed|runtime-boundary|worker-boundary)))?\\.$`,
@@ -190,7 +190,7 @@ const SAFE_INSTALLATION_STAGES = new Set([
   'manual_action_required',
 ]);
 const SAFE_TERMINAL_INSTALLATION_FAILURE = new RegExp(
-  `^Desktop runtime installation terminated\\. requirement=whisper-primary; status=(?:failed|cancelled|manual_action_required); stage=(?:queued|running|preparing|downloading|verifying|installing|probing|activating|failed|cancelled|manual_action_required|unknown); errorCode=[a-z][a-z0-9_-]{1,63}; progressBand=(?:early|download|late|unknown)(?:; workerStage=worker-process-[a-z0-9-]+(?:>worker-process-[a-z0-9-]+)*)?(?:; failureReason=(?:direct-model-retries-exhausted|direct-model-http-nonretryable|direct-model-content-length|direct-model-byte-count|direct-model-checksum|direct-model-redirect|runtime-install-unexpected))?\\.$`,
+  `^Desktop runtime installation terminated\\. requirement=speech-recognition; status=(?:failed|cancelled|manual_action_required); stage=(?:queued|running|preparing|downloading|verifying|installing|probing|activating|failed|cancelled|manual_action_required|unknown); errorCode=[a-z][a-z0-9_-]{1,63}; progressBand=(?:early|download|late|unknown)(?:; workerStage=worker-process-[a-z0-9-]+(?:>worker-process-[a-z0-9-]+)*)?(?:; failureReason=(?:direct-model-retries-exhausted|direct-model-http-nonretryable|direct-model-content-length|direct-model-byte-count|direct-model-checksum|direct-model-redirect|runtime-install-unexpected))?\\.$`,
   'u',
 );
 const SAFE_TERMINAL_MODEL_INSTALLATION_FAILURE = /^Desktop model installation terminated\. status=(?:failed|cancelled|manual_action_required); errorCode=[a-z][a-z0-9_-]{1,63}; progressBand=(?:early|download|late|unknown)\.$/u;
@@ -294,7 +294,7 @@ interface ExpectedProvenance {
   readonly ocrEngine: 'windowsml-ocr';
   readonly ocrModel: string;
   readonly ocrDevice: 'windowsml-dml';
-  readonly whisperEngine: 'whisper-primary';
+  readonly whisperEngine: 'speech-recognition';
   readonly whisperModel: string;
   readonly whisperDevice: string;
   readonly whisperPreferGpu: boolean;
@@ -535,7 +535,7 @@ function validateSourceLockAndCatalog(
     throw new Error('OCR fixture does not pin exact DirectML provenance and text.');
   }
   if (
-    whisperFixture.expectedEngine !== 'whisper-primary' ||
+    whisperFixture.expectedEngine !== 'speech-recognition' ||
     typeof whisperFixture.expectedModel !== 'string' ||
     typeof whisperFixture.expectedDevice !== 'string' ||
     typeof whisperFixture.preferGpu !== 'boolean' ||
@@ -567,7 +567,7 @@ function validateSourceLockAndCatalog(
     ocrEngine: 'windowsml-ocr',
     ocrModel: ocrFixture.expectedModel,
     ocrDevice: 'windowsml-dml',
-    whisperEngine: 'whisper-primary',
+    whisperEngine: 'speech-recognition',
     whisperModel: whisperFixture.expectedModel,
     whisperDevice: whisperFixture.expectedDevice,
     whisperPreferGpu: whisperFixture.preferGpu,
@@ -2755,7 +2755,7 @@ export function safeTerminalInstallationFailure(
   progress: number | null,
   errorMessage: string | null = null,
 ): string | undefined {
-  if (requirementId !== 'whisper-primary' || status === null || !SAFE_INSTALLATION_STATUSES.has(status)) {
+  if (requirementId !== 'speech-recognition' || status === null || !SAFE_INSTALLATION_STATUSES.has(status)) {
     return undefined;
   }
   const safeStage = stage !== null && SAFE_INSTALLATION_STAGES.has(stage) ? stage : 'unknown';
@@ -2783,7 +2783,7 @@ export function safeTerminalInstallationFailure(
             : errorMessage?.includes('redirect')
               ? 'direct-model-redirect'
               : 'runtime-install-unexpected';
-  return `Desktop runtime installation terminated. requirement=whisper-primary; status=${status}; stage=${safeStage}; errorCode=${safeErrorCode}; progressBand=${progressBand}${workerStage ? `; workerStage=${workerStage}` : ''}; failureReason=${failureReason}.`;
+  return `Desktop runtime installation terminated. requirement=speech-recognition; status=${status}; stage=${safeStage}; errorCode=${safeErrorCode}; progressBand=${progressBand}${workerStage ? `; workerStage=${workerStage}` : ''}; failureReason=${failureReason}.`;
 }
 
 async function requirementStatus(page: Page, requirementId: SetupRequirementId): Promise<string> {
@@ -3207,7 +3207,7 @@ async function assertVisibleCapture(
       durationMs: extractionDurationMs,
     };
   }
-  assert.match(provenance, /whisper-primary/iu);
+  assert.match(provenance, /speech-recognition/iu);
   assert.match(provenance, new RegExp(expected.whisperModel.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'), 'u'));
   if (expected.whisperPreferGpu) {
     assert.match(provenance, /(?:cuda|cpu)/iu);
@@ -3526,7 +3526,7 @@ export function assertRealMediaModelEvidence(value: unknown): asserts value is R
       assert.equal(media.device, 'windowsml-dml');
       assert.ok(Number.isSafeInteger(media.pageLocators) && Number(media.pageLocators) > 0);
     } else {
-      assert.equal(media.extractionEngine, 'whisper-primary');
+      assert.equal(media.extractionEngine, 'speech-recognition');
       assert.ok(Number.isSafeInteger(media.timeLocators) && Number(media.timeLocators) > 0);
     }
   }
@@ -3641,7 +3641,7 @@ async function run(): Promise<void> {
         'windowsml-ocr',
         'ollama-runtime',
         'capture-ollama-model',
-        'whisper-primary',
+        'speech-recognition',
       ]);
       await waitForRuntimeModelOptionActive(page, expected.selectedModelOptionId);
     } else {
@@ -3651,10 +3651,10 @@ async function run(): Promise<void> {
       }, REAL_MODEL_RUNTIME_READY_TIMEOUT_MS, 'Desktop runtime setup UI did not load.');
     }
     if (installationOnly) {
-      await installConsentedRequirementThroughTauri(page, 'whisper-primary', {
+      await installConsentedRequirementThroughTauri(page, 'speech-recognition', {
         waitForVisibleRequirement: false,
       });
-      installationOrder.push('whisper-primary');
+      installationOrder.push('speech-recognition');
     } else {
       if (!audioOnly) {
         assert(inputs && pdf && image);
@@ -3693,7 +3693,7 @@ async function run(): Promise<void> {
       // the renderer callback that reveals the optional Whisper setup row. Keep
       // consent on the existing authenticated Tauri/runtime installation path.
       if (!useBackendReuseReadiness) {
-        await installConsentedRequirementThroughTauri(page, 'whisper-primary', {
+        await installConsentedRequirementThroughTauri(page, 'speech-recognition', {
           waitForVisibleRequirement: !audioOnly,
         });
       }
@@ -3703,12 +3703,12 @@ async function run(): Promise<void> {
         // cache before capture starts. Without this bounded readiness wait,
         // the first capture performs the multi-gigabyte cold verification
         // while remaining indistinguishable from a stuck extraction.
-        await waitForRuntimeRequirementsReady(page, ['whisper-primary']);
+        await waitForRuntimeRequirementsReady(page, ['speech-recognition']);
       }
-      installationOrder.push('whisper-primary');
+      installationOrder.push('speech-recognition');
       if (!audioOnly && (installationOrder.indexOf('windowsml-ocr') < 0
-        || installationOrder.indexOf('whisper-primary') < 0
-        || installationOrder.indexOf('windowsml-ocr') > installationOrder.indexOf('whisper-primary'))) {
+        || installationOrder.indexOf('speech-recognition') < 0
+        || installationOrder.indexOf('windowsml-ocr') > installationOrder.indexOf('speech-recognition'))) {
         throw new Error('Consented model installation did not complete OCR before Whisper.');
       }
       await startInjectedCapture(page, injectedAudio.documentId);

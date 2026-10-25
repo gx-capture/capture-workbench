@@ -104,7 +104,7 @@ def _assert_pending_preflight_lock(lock: dict[str, Any]) -> None:
         or [item.get("requirementId") for item in requirements][:2]
         != [
             "windowsml-ocr",
-            "whisper-primary",
+            "speech-recognition",
         ]
         or not isinstance(fixtures, list)
         or [item.get("kind") for item in fixtures] != ["ocr", "whisper"]
@@ -219,12 +219,12 @@ async def _verify_whisper_preflight(
         )
         try:
             await manager.install(
-                "whisper-primary",
+                "speech-recognition",
                 cancel_event=asyncio.Event(),
                 report_progress=lambda _value: None,
                 probe_options={"preferGpu": True},
             )
-            engine = manager.active_engine("whisper-primary")
+            engine = manager.active_engine("speech-recognition")
             if engine is None:
                 raise EngineInstallationError("private Whisper preflight did not activate")
             run = await worker_client.run(
@@ -261,7 +261,7 @@ async def _verify_whisper_preflight(
                         "fixtureSha256": whisper_fixture["sha256"],
                         "model": run.model,
                         "normalizedOutputSha256": normalized_digest,
-                        "requirementId": "whisper-primary",
+                        "requirementId": "speech-recognition",
                         "segmentCount": len(run.segments),
                         "segmentsMonotonic": monotonic,
                     }
@@ -363,7 +363,7 @@ async def verify_candidate(
         try:
             for requirement_id, fixture_kind in (
                 ("windowsml-ocr", "ocr"),
-                ("whisper-primary", "whisper"),
+                ("speech-recognition", "whisper"),
             ):
                 await manager.install(
                     requirement_id,
@@ -470,7 +470,7 @@ def main() -> None:
     )
     parser.add_argument("--private-whisper-fixture", type=Path)
     parser.add_argument(
-        "--preflight-whisper",
+        "--preflight-speech-recognition",
         action="store_true",
         help="Run one privacy-safe private-audio preflight while expectations are pending.",
     )
@@ -487,7 +487,7 @@ def main() -> None:
             source_lock_path=arguments.source_lock,
             output=arguments.output,
             private_whisper_fixture=arguments.private_whisper_fixture,
-            preflight=arguments.preflight_whisper,
+            preflight=arguments.preflight_speech_recognition,
         )
     )
 

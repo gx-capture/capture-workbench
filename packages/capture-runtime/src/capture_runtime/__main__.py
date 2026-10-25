@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 from collections.abc import Sequence
 from dataclasses import replace
-from pathlib import Path
 
 import uvicorn
 
@@ -20,19 +19,11 @@ def build_parser() -> argparse.ArgumentParser:
     serve = subparsers.add_parser("serve", help="Run the loopback FastAPI sidecar")
     serve.add_argument("--host", default=None)
     serve.add_argument("--port", type=int, default=None)
-    download = subparsers.add_parser("_download-whisper", help=argparse.SUPPRESS)
-    download.add_argument("--model", required=True)
-    download.add_argument("--output", required=True)
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> None:
     arguments = build_parser().parse_args(argv)
-    if arguments.command == "_download-whisper":
-        from capture_runtime.whisper_download import download_model
-
-        download_model(arguments.model, Path(arguments.output))
-        return
     settings = RuntimeSettings.from_env()
     host = arguments.host or settings.host
     port = arguments.port or settings.port

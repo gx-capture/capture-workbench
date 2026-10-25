@@ -7,10 +7,10 @@ from typing import Any
 
 import pytest
 
-import capture_runtime.workers.whisper_main as whisper_main
+import capture_runtime.workers.speech_recognition_main as whisper_main
 from capture_runtime.constants import RUNTIME_VERSION
-from capture_runtime.engine_adapters import FasterWhisperAdapter
 from capture_runtime.speaker_turns import SpeakerTurn
+from capture_runtime.speech_recognition import TeaAsrAdapter
 from capture_runtime.worker_client import (
     WorkerResultError,
     WorkerWord,
@@ -18,6 +18,7 @@ from capture_runtime.worker_client import (
     parse_run_result,
 )
 from capture_runtime.worker_contracts import WorkerRequest
+from tests.speech_model_fakes import FakeModels, model_tree
 
 DIGEST = "sha256:" + "a" * 64
 
@@ -25,33 +26,41 @@ DIGEST = "sha256:" + "a" * 64
 def _whisper_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, options: dict[str, Any], words: Any
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    for name in ("primary", "fallback"):
-        (tmp_path / "models" / name).mkdir(parents=True, exist_ok=True)
-        for filename in ("config.json", "model.bin", "tokenizer.json", "vocabulary.json"):
-            (tmp_path / "models" / name / filename).write_bytes(b"fixture")
+    model_tree(tmp_path / "models")
     source = tmp_path / "fixture.wav"
     source.write_bytes(b"fixture")
     transcribe_options: list[dict[str, Any]] = []
+    fake = FakeModels(monkeypatch, cuda=False)
+    fake.transcript = "worker words"
+    fake.alignment = (
+        []
+        if words is None
+        else [
+            {"text": word.word.strip(), "start_time": word.start, "end_time": word.end}
+            for word in words
+        ]
+    )
 
-    class Model:
-        def transcribe(self, _path: str, **kwargs: Any) -> Any:
-            transcribe_options.append(kwargs)
-            segment = SimpleNamespace(start=0.0, end=1.0, text=" worker words", words=words)
-            return [segment], SimpleNamespace(duration=1.0)
-
-    class TestAdapter(FasterWhisperAdapter):
+    class TestAdapter(TeaAsrAdapter):
         def __init__(self, model_path: Path, **kwargs: Any) -> None:
+            transcribe_options.append({"word_timestamps": kwargs.get("word_timestamps", False)})
+            if not kwargs.get("word_timestamps"):
+                fake.alignment = None
             super().__init__(
-                model_path, model_factory=lambda *_a, **_k: Model(), cuda_count=lambda: 0, **kwargs
+                model_path,
+                torch_module=fake._torch(),
+                transformers_module=fake._transformers(),
+                decoder=lambda *_a, **_k: [0.0] * 16_000,
+                **kwargs,
             )
 
-    monkeypatch.setattr(whisper_main, "FasterWhisperAdapter", TestAdapter)
-    monkeypatch.setattr(whisper_main, "_import_whisper_runtime", lambda: None)
+    monkeypatch.setattr(whisper_main, "TeaAsrAdapter", TestAdapter)
+    monkeypatch.setattr(whisper_main, "_import_speech_runtime", lambda: None)
     request = WorkerRequest(
         request_id="whisper-words-test",
         operation="run",
         payload={
-            "requirementId": "whisper-primary",
+            "requirementId": "speech-recognition",
             "artifactVersion": RUNTIME_VERSION,
             "modelPath": str(tmp_path / "models"),
             "sourcePath": str(source),
@@ -62,7 +71,7 @@ def _whisper_run(
     return whisper_main._run(request, Event()), transcribe_options
 
 
-def test_whisper_worker_returns_word_times_only_when_asked(
+def test_speech_recognition_worker_returns_word_times_only_when_asked(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     words = [
@@ -74,16 +83,16 @@ def test_whisper_worker_returns_word_times_only_when_asked(
 
     assert options[0]["word_timestamps"] is True
     assert result["segments"][0]["words"] == [
-        {"startMs": 0, "endMs": 400, "text": " worker"},
-        {"startMs": 400, "endMs": 1_000, "text": " words"},
+        {"startMs": 0, "endMs": 400, "text": "worker "},
+        {"startMs": 400, "endMs": 1_000, "text": "words"},
     ]
     assert parse_run_result(result).segments[0].words == (
-        WorkerWord(0, 400, " worker"),
-        WorkerWord(400, 1_000, " words"),
+        WorkerWord(0, 400, "worker "),
+        WorkerWord(400, 1_000, "words"),
     )
 
 
-def test_whisper_worker_omits_words_by_default(
+def test_speech_recognition_worker_omits_words_by_default(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     result, options = _whisper_run(tmp_path, monkeypatch, {}, None)
@@ -93,7 +102,82 @@ def test_whisper_worker_omits_words_by_default(
     assert parse_run_result(result).segments[0].words == ()
 
 
-def test_whisper_worker_rejects_speech_without_requested_word_times(
+def test_speech_worker_emits_processing_times(tmp_path, monkeypatch):
+    clock = iter(range(0, 1000, 5))
+    monkeypatch.setattr("capture_runtime.speech_recognition.time.perf_counter", lambda: next(clock))
+    result, _ = _whisper_run(tmp_path, monkeypatch, {}, None)
+    assert result["provenance"]["elapsedMs"] == 45000
+    assert result["provenance"]["stageMs"] == {
+        "modelLoad": 5000,
+        "transcription": 5000,
+        "alignerLoad": 5000,
+        "alignment": 5000,
+    }
+    parsed = parse_run_result(result)
+    assert parsed.elapsed_ms == 45000
+    assert parsed.stage_ms == result["provenance"]["stageMs"]
+
+
+@pytest.mark.parametrize("kind", ["speech", "diarization"])
+@pytest.mark.parametrize(
+    "timings",
+    [
+        {},
+        {"elapsedMs": None, "stageMs": None},
+        {"elapsedMs": 0, "stageMs": {}},
+        {"elapsedMs": 1500, "stageMs": {"modelLoad": 200, "inference": 0}},
+        {"elapsedMs": 1500},
+        {"stageMs": {"modelLoad": 200}},
+    ],
+)
+def test_worker_parsers_preserve_optional_processing_times(kind, timings):
+    payload = _diarization_payload()
+    parser = parse_diarization_result
+    if kind == "speech":
+        payload = {
+            "segments": [],
+            "provenance": dict(payload["provenance"], engine="speech-recognition"),
+            "warnings": [],
+        }
+        parser = parse_run_result
+    payload["provenance"].update(timings)
+    result = parser(payload)
+    assert result.elapsed_ms == timings.get("elapsedMs")
+    assert result.stage_ms == timings.get("stageMs")
+
+
+@pytest.mark.parametrize("kind", ["speech", "diarization"])
+@pytest.mark.parametrize(
+    "timings",
+    [
+        {"elapsedMs": -1},
+        {"elapsedMs": True},
+        {"elapsedMs": 1.5},
+        {"elapsedMs": "1"},
+        {"stageMs": []},
+        {"stageMs": {"": 1}},
+        {"stageMs": {" ": 1}},
+        {"stageMs": {1: 1}},
+        *({"stageMs": {"inference": value}} for value in [-1, True, 1.5, "1", None]),
+        {"unexpected": 1},
+    ],
+)
+def test_worker_parsers_reject_invalid_processing_times(kind, timings):
+    payload = _diarization_payload()
+    parser = parse_diarization_result
+    if kind == "speech":
+        payload = {
+            "segments": [],
+            "provenance": dict(payload["provenance"], engine="speech-recognition"),
+            "warnings": [],
+        }
+        parser = parse_run_result
+    payload["provenance"].update(timings)
+    with pytest.raises(WorkerResultError):
+        parser(payload)
+
+
+def test_speech_recognition_worker_rejects_speech_without_requested_word_times(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     with pytest.raises(ValueError, match="word timestamps"):
@@ -158,7 +242,7 @@ def test_diarization_result_is_parsed_into_turns_and_provenance() -> None:
         },
         {
             "provenance": {
-                "engine": "whisper-primary",
+                "engine": "speech-recognition",
                 "model": "m",
                 "digest": DIGEST,
                 "device": "cpu",
@@ -195,8 +279,8 @@ def test_malformed_segment_words_are_rejected(words: Any) -> None:
             {"order": 0, "text": "x", "page": None, "startMs": 0, "endMs": 10, "words": words}
         ],
         "provenance": {
-            "engine": "whisper-primary",
-            "model": "small",
+            "engine": "speech-recognition",
+            "model": "tea-asr-1.1-mini",
             "digest": DIGEST,
             "device": "cpu",
         },
@@ -211,8 +295,8 @@ def _ocr_payload(**extra: Any) -> dict[str, Any]:
     return {
         "segments": [{"order": 0, "text": "x", "page": None, "startMs": 0, "endMs": 10}],
         "provenance": {
-            "engine": "whisper-primary",
-            "model": "small",
+            "engine": "speech-recognition",
+            "model": "tea-asr-1.1-mini",
             "digest": DIGEST,
             "device": "cpu",
         },
@@ -229,7 +313,7 @@ def test_worker_result_may_name_an_optional_unit_that_was_missed() -> None:
 
 @pytest.mark.parametrize(
     "value",
-    [[], "vertical-japanese-reader", ["whisper-primary"], ["vertical-japanese-reader"] * 2, [7]],
+    [[], "vertical-japanese-reader", ["speech-recognition"], ["vertical-japanese-reader"] * 2, [7]],
 )
 def test_worker_result_rejects_malformed_or_unknown_unit_suggestions(value: Any) -> None:
     with pytest.raises(WorkerResultError):

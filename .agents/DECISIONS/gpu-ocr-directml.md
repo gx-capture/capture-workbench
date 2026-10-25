@@ -1,5 +1,8 @@
 # Decision: DirectML-first OCR
 
+The faster-whisper exclusion below is obsolete since speech recognition moved to
+TEA-ASR (`speech-recognition-tea-asr.md`); the DirectML OCR decision stands.
+
 ## Decision
 
 Use `onnxruntime-directml==1.24.4` for Windows OCR and Whisper's Windows extra. Remove the

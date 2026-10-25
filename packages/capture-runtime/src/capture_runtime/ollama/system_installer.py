@@ -1,6 +1,6 @@
 """System-backed runtime requirement installer.
 
-Optional OCR/Whisper artifacts are delegated to the engine installation owner;
+Optional OCR/speech recognition artifacts are delegated to the engine installation owner;
 this module retains the existing app-managed Ollama lifecycle.
 """
 
@@ -22,8 +22,8 @@ from capture_runtime.constants import (
     DIARIZATION_REQUIREMENT_ID,
     OLLAMA_MODEL_REQUIREMENT_ID,
     OLLAMA_RUNTIME_REQUIREMENT_ID,
+    SPEECH_RECOGNITION_REQUIREMENT_ID,
     VERTICAL_READER_REQUIREMENT_ID,
-    WHISPER_REQUIREMENT_ID,
     WINDOWSML_REQUIREMENT_ID,
 )
 from capture_runtime.contracts import (
@@ -107,7 +107,13 @@ class SystemRuntimeInstaller:
         requirements: list[RuntimeRequirementV2] = []
         for requirement_id, kind, display_name, required_for, optional in (
             (WINDOWSML_REQUIREMENT_ID, "OCR", "WindowsML OCR", ["pdf", "image"], False),
-            (WHISPER_REQUIREMENT_ID, "transcription", "Whisper transcription", ["audio"], False),
+            (
+                SPEECH_RECOGNITION_REQUIREMENT_ID,
+                "transcription",
+                "Speech recognition",
+                ["audio"],
+                False,
+            ),
             (
                 DIARIZATION_REQUIREMENT_ID,
                 "speaker-identification",
@@ -240,7 +246,7 @@ class SystemRuntimeInstaller:
     ) -> None:
         if requirement_id in {
             WINDOWSML_REQUIREMENT_ID,
-            WHISPER_REQUIREMENT_ID,
+            SPEECH_RECOGNITION_REQUIREMENT_ID,
             DIARIZATION_REQUIREMENT_ID,
             VERTICAL_READER_REQUIREMENT_ID,
         }:

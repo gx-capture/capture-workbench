@@ -7,7 +7,7 @@ export const API_VERSION = "2.0" as const;
 export const CAPTURE_API_VERSION = API_VERSION;
 export const CAPTURE_DOCUMENT_SCHEMA_VERSION = "2" as const;
 export const CAPTURE_DOCUMENT_SCHEMA_ID = "https://github.com/gx-capture/capture-workbench/schema/capture-document-v2.schema.json" as const;
-export const CAPTURE_DOCUMENT_SCHEMA_SHA256 = "5131125b6851bccb8da96150e12c2c50170ad45c2f4a31768404a5406ad8598f" as const;
+export const CAPTURE_DOCUMENT_SCHEMA_SHA256 = "5452631ce9d8eea48851a819530d94920a39f41350d5575df0f8f97f82171774" as const;
 
 /** Wire enum. */
 export type CaptureSourceKind = "pdf" | "image" | "audio";
@@ -68,7 +68,7 @@ export type StructuringSessionStatus = "open" | "completed" | "failed" | "cancel
 
 export type CaptureLocator = PageLocator | TimeLocator;
 
-export type CaptureRequirementId = 'windowsml-ocr' | 'whisper-primary' | 'ollama-runtime' | 'capture-ollama-model';
+export type CaptureRequirementId = 'windowsml-ocr' | 'speech-recognition' | 'ollama-runtime' | 'capture-ollama-model';
 
 export interface CaptureBlock {
   readonly blockId: string;
@@ -92,7 +92,7 @@ export interface CaptureDocument {
   readonly sourceText: string;
   readonly speakers?: readonly (CaptureSpeaker)[];
   readonly structuringEngine: CaptureEngine;
-  readonly suggestedUnits?: readonly ("windowsml-ocr" | "whisper-primary" | "speaker-diarization" | "vertical-japanese-reader" | "ollama-runtime" | "capture-ollama-model")[];
+  readonly suggestedUnits?: readonly ("windowsml-ocr" | "speech-recognition" | "speaker-diarization" | "vertical-japanese-reader" | "ollama-runtime" | "capture-ollama-model")[];
   readonly targetText: string;
   readonly warnings?: readonly (string)[];
 }
@@ -102,6 +102,8 @@ export interface CaptureEngine {
   readonly model: string;
   readonly digest: string;
   readonly device?: string | null;
+  readonly elapsedMs?: number | null;
+  readonly stageMs?: Record<string, number> | null;
 }
 
 export interface CaptureEventV2 {
@@ -327,7 +329,7 @@ export interface RawCapture {
   readonly extractionEngine: CaptureEngine;
   readonly diarizationEngine?: CaptureEngine | null;
   readonly speakers?: readonly (CaptureSpeaker)[];
-  readonly suggestedUnits?: readonly ("windowsml-ocr" | "whisper-primary" | "speaker-diarization" | "vertical-japanese-reader" | "ollama-runtime" | "capture-ollama-model")[];
+  readonly suggestedUnits?: readonly ("windowsml-ocr" | "speech-recognition" | "speaker-diarization" | "vertical-japanese-reader" | "ollama-runtime" | "capture-ollama-model")[];
   readonly warnings?: readonly (string)[];
   readonly ocrPageScope?: OcrPageScopeV2 | null;
   readonly createdAt: string;
@@ -357,7 +359,7 @@ export interface RuntimeArtifactDescriptorV2 {
 
 export interface RuntimeInstallationV2 {
   readonly installationId: string;
-  readonly requirementId: "windowsml-ocr" | "whisper-primary" | "speaker-diarization" | "vertical-japanese-reader" | "ollama-runtime" | "capture-ollama-model";
+  readonly requirementId: "windowsml-ocr" | "speech-recognition" | "speaker-diarization" | "vertical-japanese-reader" | "ollama-runtime" | "capture-ollama-model";
   readonly status: RuntimeInstallationStatus;
   readonly progress: number;
   readonly error?: CaptureFailureV2 | null;
@@ -416,7 +418,7 @@ export interface RuntimeReady {
 }
 
 export interface RuntimeRequirementV2 {
-  readonly requirementId: "windowsml-ocr" | "whisper-primary" | "speaker-diarization" | "vertical-japanese-reader" | "ollama-runtime" | "capture-ollama-model";
+  readonly requirementId: "windowsml-ocr" | "speech-recognition" | "speaker-diarization" | "vertical-japanese-reader" | "ollama-runtime" | "capture-ollama-model";
   readonly kind: string;
   readonly displayName: string;
   readonly status: RuntimeRequirementStatus;
@@ -454,7 +456,7 @@ export interface StartCaptureV2 {
 }
 
 export interface StartRuntimeInstallationV2 {
-  readonly requirementId: "windowsml-ocr" | "whisper-primary" | "speaker-diarization" | "vertical-japanese-reader" | "ollama-runtime" | "capture-ollama-model";
+  readonly requirementId: "windowsml-ocr" | "speech-recognition" | "speaker-diarization" | "vertical-japanese-reader" | "ollama-runtime" | "capture-ollama-model";
   readonly consent: true;
 }
 

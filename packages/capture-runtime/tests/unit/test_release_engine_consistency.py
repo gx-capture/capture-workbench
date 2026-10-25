@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from capture_runtime.artifact_parts import split_archive
 from capture_runtime.constants import RUNTIME_VERSION
 from capture_runtime.engine_catalog import canonical_json_bytes
 from capture_runtime.release import build_release_artifacts, write_capture_document_schema
@@ -22,9 +23,10 @@ def artifact(
     requirement_id: str,
     file_name: str,
     entry_point: str,
+    part_bytes: int | None = None,
 ) -> dict[str, object]:
     payload_name = entry_point
-    payload = f"{requirement_id}-worker".encode()
+    payload = f"{requirement_id}-worker".encode() * (200 if part_bytes else 1)
     manifest = canonical_json_bytes(
         {
             "manifestVersion": "1",
@@ -45,6 +47,21 @@ def artifact(
         output.writestr(payload_name, payload)
     with zipfile.ZipFile(archive) as source:
         extracted_bytes = sum(item.file_size for item in source.infolist())
+    whole_bytes, whole_sha256 = archive.stat().st_size, sha256(archive)
+    url = f"https://example.invalid/v{RUNTIME_VERSION}"
+    source: dict[str, object] = {"url": f"{url}/{file_name}"}
+    if part_bytes is not None:
+        source = {
+            "parts": [
+                {
+                    "fileName": part.name,
+                    "bytes": part.stat().st_size,
+                    "sha256": sha256(part),
+                    "url": f"{url}/{part.name}",
+                }
+                for part in split_archive(archive, part_bytes=part_bytes)
+            ]
+        }
     return {
         "role": "worker",
         "requirementId": requirement_id,
@@ -53,16 +70,18 @@ def artifact(
         "platform": "windows",
         "arch": "x86_64",
         "fileName": file_name,
-        "bytes": archive.stat().st_size,
-        "sha256": sha256(archive),
+        "bytes": whole_bytes,
+        "sha256": whole_sha256,
         "extractedBytes": extracted_bytes,
         "entryPoint": entry_point,
         "filesManifestSha256": hashlib.sha256(manifest).hexdigest(),
-        "url": f"https://example.invalid/v{RUNTIME_VERSION}/{file_name}",
+        **source,
     }
 
 
-def complete_catalog(engine_dir: Path, catalog_path: Path) -> None:
+def complete_catalog(
+    engine_dir: Path, catalog_path: Path, *, speech_part_bytes: int | None = None
+) -> None:
     source_lock, _content = approved_source_lock()
     source_lock_sha256 = hashlib.sha256(canonical_json_bytes(source_lock)).hexdigest()
     requirements = []
@@ -73,9 +92,9 @@ def complete_catalog(engine_dir: Path, catalog_path: Path) -> None:
             "capture-engine-ocr.exe",
         ),
         (
-            "whisper-primary",
-            "capture-engine-whisper.zip",
-            "capture-engine-whisper.exe",
+            "speech-recognition",
+            "capture-engine-speech-recognition.zip",
+            "capture-engine-speech-recognition.exe",
         ),
         # Models only: the OCR profile is derived from this unit's files.
         ("vertical-japanese-reader", None, None),
@@ -100,6 +119,9 @@ def complete_catalog(engine_dir: Path, catalog_path: Path) -> None:
                         requirement_id=requirement_id,
                         file_name=worker_name,
                         entry_point=entry_point,
+                        part_bytes=speech_part_bytes
+                        if requirement_id == "speech-recognition"
+                        else None,
                     ),
                 ],
                 "modelFiles": {
@@ -173,3 +195,47 @@ def test_release_rejects_catalog_archive_drift_before_copying(tmp_path: Path) ->
         )
 
     assert not output.exists()
+
+
+def test_release_publishes_a_split_worker_archive_as_its_checked_parts(tmp_path: Path) -> None:
+    executable = tmp_path / "capture-runtime.exe"
+    executable.write_bytes(b"runtime")
+    schema = write_capture_document_schema(tmp_path / "capture-document-v2.schema.json")
+    engine_dir = tmp_path / "engines"
+    engine_dir.mkdir()
+    catalog = tmp_path / "capture-engine-catalog.json"
+    complete_catalog(engine_dir, catalog, speech_part_bytes=300)
+
+    build_release_artifacts(
+        executable=executable,
+        schema=schema,
+        output_dir=tmp_path / "release",
+        engine_dir=engine_dir,
+        engine_catalog=catalog,
+    )
+
+    released = {item.name for item in (tmp_path / "release").iterdir()}
+    speech = "capture-engine-speech-recognition.zip"
+    assert speech not in released
+    assert {f"{speech}.001", f"{speech}.001.sha256", f"{speech}.002"} <= released
+
+
+def test_release_rejects_a_drifted_archive_part(tmp_path: Path) -> None:
+    executable = tmp_path / "capture-runtime.exe"
+    executable.write_bytes(b"runtime")
+    schema = write_capture_document_schema(tmp_path / "capture-document-v2.schema.json")
+    engine_dir = tmp_path / "engines"
+    engine_dir.mkdir()
+    catalog = tmp_path / "capture-engine-catalog.json"
+    complete_catalog(engine_dir, catalog, speech_part_bytes=300)
+    part = engine_dir / "capture-engine-speech-recognition.zip.002"
+    part.write_bytes(b"\x00" * part.stat().st_size)
+
+    with pytest.raises(ValueError, match="part mismatch"):
+        build_release_artifacts(
+            executable=executable,
+            schema=schema,
+            output_dir=tmp_path / "release",
+            engine_dir=engine_dir,
+            engine_catalog=catalog,
+        )

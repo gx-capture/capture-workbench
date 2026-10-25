@@ -58,8 +58,8 @@ def _source() -> CaptureSource:
 
 def _engine(device: str = "cuda") -> CaptureEngine:
     return CaptureEngine(
-        engine="whisper-primary",
-        model="large-v3-turbo" if device == "cuda" else "small",
+        engine="speech-recognition",
+        model="tea-asr-1.1" if device == "cuda" else "tea-asr-1.1-mini",
         digest=f"sha256:{'b' * 64}",
         device=device,
     )

@@ -141,7 +141,7 @@ async def _test_dependency_installations_are_serialized(tmp_path: Path) -> None:
     whisper = service.create(
         idempotency_key="whisper-key",
         request_fingerprint="whisper-fingerprint",
-        requirement_id="whisper-primary",
+        requirement_id="speech-recognition",
     )
     await asyncio.gather(
         _wait_for_terminal(service, ocr.installation_id),
@@ -153,6 +153,6 @@ async def _test_dependency_installations_are_serialized(tmp_path: Path) -> None:
     assert installer.events == [
         "start:windowsml-ocr",
         "end:windowsml-ocr",
-        "start:whisper-primary",
-        "end:whisper-primary",
+        "start:speech-recognition",
+        "end:speech-recognition",
     ]

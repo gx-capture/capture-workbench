@@ -1395,3 +1395,28 @@ def test_capture_upload_asks_for_speakers_only_when_told() -> None:
         CaptureUpload("meeting.wav", b"audio", "audio", identify_speakers=True).identify_speakers
         is True
     )
+
+
+@pytest.mark.parametrize(
+    "timings",
+    [
+        {},
+        {"elapsedMs": None, "stageMs": None},
+        {"elapsedMs": 0, "stageMs": {}},
+        {"elapsedMs": 1500, "stageMs": {"modelLoad": 200, "inference": 1000}},
+    ],
+)
+def test_engine_processing_times_round_trip_through_public_client_model(timings) -> None:
+    from capture_runtime_client import CaptureEngine
+
+    payload = {
+        "engine": "speaker-diarization",
+        "model": "nemotron",
+        "digest": "sha256:" + "a" * 64,
+        "device": "cpu",
+        **timings,
+    }
+    engine = CaptureEngine.model_validate(payload)
+    assert engine.elapsed_ms == timings.get("elapsedMs")
+    assert engine.stage_ms == timings.get("stageMs")
+    assert CaptureEngine.model_validate_json(engine.model_dump_json(by_alias=True)) == engine

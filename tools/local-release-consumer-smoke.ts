@@ -44,7 +44,7 @@ export const RUNTIME_SIZE_REPORT_NAMES = Object.freeze([
 const ENGINE_CATALOG_NAME = 'capture-engine-catalog.json';
 const ENGINE_CATALOG_CHECKSUM_NAME = `${ENGINE_CATALOG_NAME}.sha256`;
 const WORKER_PROTOCOL_VERSION = '1';
-const MODEL_REQUIREMENT_IDS = ['windowsml-ocr', 'whisper-primary'] as const;
+const MODEL_REQUIREMENT_IDS = ['windowsml-ocr', 'speech-recognition'] as const;
 // Units a release may or may not carry; when present they are checked like the others.
 const OPTIONAL_MODEL_REQUIREMENT_IDS: readonly unknown[] = [
   'speaker-diarization',
@@ -125,13 +125,70 @@ function assertSafeAssetName(
   }
 }
 
+type CatalogWorkerPart = {
+  readonly fileName: string;
+  readonly bytes: number;
+  readonly sha256: string;
+};
+
 type CatalogWorkerDescriptor = {
   readonly requirementId: string;
   readonly fileName: string;
   readonly bytes: number;
   readonly sha256: string;
   readonly filesManifestSha256: string;
+  // Empty for one archive; otherwise the ordered parts published in its place.
+  readonly parts: readonly CatalogWorkerPart[];
 };
+
+// GitHub release assets must stay under 2 GB; larger archives ship as parts.
+const MAX_WORKER_PART_BYTES = 2_000_000_000;
+
+function catalogWorkerParts(
+  artifact: Record<string, unknown>,
+  fileName: string,
+  bytes: number,
+): CatalogWorkerPart[] {
+  if (!('parts' in artifact)) {
+    if (typeof artifact.url !== 'string' || !artifact.url.startsWith('https://')) {
+      throw new Error('Engine catalog worker artifact is invalid.');
+    }
+    return [];
+  }
+  const raw = artifact.parts;
+  if (!Array.isArray(raw) || raw.length < 2) {
+    throw new Error('Engine catalog worker parts are invalid.');
+  }
+  const parts = raw.map((item: unknown, index): CatalogWorkerPart => {
+    if (!isRecord(item)) throw new Error('Engine catalog worker part is invalid.');
+    exactKeys(item, ['fileName', 'bytes', 'sha256', 'url'], 'Engine catalog worker part');
+    const expectedName = `${fileName}.${String(index + 1).padStart(3, '0')}`;
+    if (
+      item.fileName !== expectedName ||
+      typeof item.bytes !== 'number' ||
+      !Number.isSafeInteger(item.bytes) ||
+      item.bytes < 1 ||
+      item.bytes > MAX_WORKER_PART_BYTES ||
+      typeof item.url !== 'string' ||
+      !item.url.startsWith('https://')
+    ) {
+      throw new Error('Engine catalog worker part is invalid.');
+    }
+    assertSha256(item.sha256, 'Engine catalog worker part digest');
+    return { fileName: expectedName, bytes: item.bytes, sha256: item.sha256 };
+  });
+  if (parts.reduce((total, part) => total + part.bytes, 0) !== bytes) {
+    throw new Error('Engine catalog worker parts do not add up to the archive.');
+  }
+  return parts;
+}
+
+/** The files published for a worker archive: itself, or its parts. */
+function workerAssetFiles(worker: CatalogWorkerDescriptor): string[] {
+  return worker.parts.length
+    ? worker.parts.map((part) => part.fileName)
+    : [worker.fileName];
+}
 
 function catalogWorkers(
   raw: unknown,
@@ -223,7 +280,7 @@ function catalogWorkers(
         'extractedBytes',
         'entryPoint',
         'filesManifestSha256',
-        'url',
+        'parts' in artifact ? 'parts' : 'url',
       ],
       'Engine catalog worker artifact',
     );
@@ -243,13 +300,12 @@ function catalogWorkers(
       artifactBytes < 1 ||
       typeof artifactExtractedBytes !== 'number' ||
       !Number.isSafeInteger(artifactExtractedBytes) ||
-      artifactExtractedBytes < 1 ||
-      typeof artifact.url !== 'string' ||
-      !artifact.url.startsWith('https://')
+      artifactExtractedBytes < 1
     ) {
       throw new Error('Engine catalog worker artifact is invalid.');
     }
     assertSafeAssetName(artifact.fileName, 'Engine catalog worker archive');
+    const parts = catalogWorkerParts(artifact, artifact.fileName, artifactBytes);
     if (
       !artifact.fileName.endsWith('.zip') ||
       artifact.fileName.toLowerCase().includes('model')
@@ -310,6 +366,7 @@ function catalogWorkers(
       bytes: artifactBytes,
       sha256: artifact.sha256,
       filesManifestSha256: artifact.filesManifestSha256,
+      parts,
     });
   }
   return workers;
@@ -374,13 +431,21 @@ function assertExactAssetNames(
   }
 }
 
+/** SHA-256 of files read in order as one stream, without holding them in memory. */
+async function sha256Files(paths: readonly string[]): Promise<string> {
+  const hash = createHash('sha256');
+  for (const path of paths) {
+    for await (const chunk of createReadStream(path)) hash.update(chunk as Buffer);
+  }
+  return hash.digest('hex');
+}
+
 async function verifyChecksum(
   directory: string,
   name: string,
   expectedDigest?: string,
 ): Promise<string> {
-  const bytes = await readFile(join(directory, name));
-  const digest = sha256(bytes);
+  const digest = await sha256Files([join(directory, name)]);
   if (expectedDigest !== undefined && digest !== expectedDigest) {
     throw new Error(`Release asset digest does not match catalog: ${name}.`);
   }
@@ -443,12 +508,10 @@ async function inspectRuntimeRelease(
     for (const worker of workers) {
       const filesManifestName = `${worker.fileName.slice(0, -'.zip'.length)}-files.json`;
       assertSafeAssetName(filesManifestName, 'Engine worker files manifest');
-      assetNames.push(
-        worker.fileName,
-        `${worker.fileName}.sha256`,
-        filesManifestName,
-        `${filesManifestName}.sha256`,
-      );
+      for (const file of workerAssetFiles(worker)) {
+        assetNames.push(file, `${file}.sha256`);
+      }
+      assetNames.push(filesManifestName, `${filesManifestName}.sha256`);
     }
   }
   assertExactAssetNames(names, assetNames);
@@ -493,7 +556,19 @@ async function inspectRuntimeRelease(
     await verifyChecksum(directory, ENGINE_CATALOG_NAME);
     for (const worker of workers) {
       const filesManifestName = `${worker.fileName.slice(0, -'.zip'.length)}-files.json`;
-      await verifyChecksum(directory, worker.fileName, worker.sha256);
+      if (worker.parts.length) {
+        for (const part of worker.parts) {
+          await verifyChecksum(directory, part.fileName, part.sha256);
+        }
+        const joined = await sha256Files(
+          worker.parts.map((part) => join(directory, part.fileName)),
+        );
+        if (joined !== worker.sha256) {
+          throw new Error(`Release asset parts do not join into ${worker.fileName}.`);
+        }
+      } else {
+        await verifyChecksum(directory, worker.fileName, worker.sha256);
+      }
       await verifyChecksum(
         directory,
         filesManifestName,

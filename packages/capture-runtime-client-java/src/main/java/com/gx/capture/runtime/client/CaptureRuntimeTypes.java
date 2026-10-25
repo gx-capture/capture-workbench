@@ -27,7 +27,7 @@ public final class CaptureRuntimeTypes {
   public static final String CONTRACT_SET_VERSION = "2";
   /** Updated only as part of a coordinated runtime/client release. */
   public static final String CONTRACT_SET_SHA256 =
-      "02a67c8bc3ba579944d29751579fa76159ac1134b201559702d72dcbafa50c66";
+      "60c622670b00e144b174c210e96773e07e7d94ec7c721b33ac65ff6c722c1d93";
 
   private static final Pattern SHA256 = Pattern.compile("^[0-9a-f]{64}$");
   private static final Pattern FAILURE_CODE = Pattern.compile("^[a-z][a-z0-9_]{1,63}$");
@@ -401,7 +401,7 @@ public final class CaptureRuntimeTypes {
     }
   }
 
-  public record Engine(String engine, String model, String digest, String device) {
+  public record Engine(String engine, String model, String digest, String device, Long elapsedMs, Map<String, Long> stageMs) {
     public Engine {
       engine = text(engine, "engine");
       model = text(model, "model");
@@ -410,6 +410,18 @@ public final class CaptureRuntimeTypes {
         throw new IllegalArgumentException("digest must use sha256:<hex>");
       }
       device = device == null ? null : text(device, "device");
+      if (elapsedMs != null) nonNegative(elapsedMs, "elapsedMs");
+      if (stageMs != null) {
+        stageMs.forEach((stage, elapsed) -> {
+          text(stage, "stageMs key");
+          nonNegative(Objects.requireNonNull(elapsed, "stageMs value"), "stageMs value");
+        });
+        stageMs = Map.copyOf(stageMs);
+      }
+    }
+
+    public Engine(String engine, String model, String digest, String device) {
+      this(engine, model, digest, device, null, null);
     }
   }
 

@@ -97,7 +97,7 @@ def test_session_protocol_adds_only_allowlisted_failure_context() -> None:
 
     protocol = WhisperSessionProtocol(
         FailingBackend(),
-        failure_context=lambda: "whisper-transcription-call-complete",
+        failure_context=lambda: "speech-transcription-call-complete",
     )
     decoder = SessionFrameDecoder()
     for frame in decoder.feed(_start() + encode_credit(1)):
@@ -109,7 +109,8 @@ def test_session_protocol_adds_only_allowlisted_failure_context() -> None:
     payload = json.loads(output[0][5:].decode("utf-8"))
     assert payload["code"] == "session_failed"
     assert payload["message"] == (
-        "Whisper session failed at ValueError after stage whisper-transcription-call-complete."
+        "Speech recognition session failed at ValueError "
+        "after stage speech-transcription-call-complete."
     )
     assert "private backend detail" not in payload["message"]
 

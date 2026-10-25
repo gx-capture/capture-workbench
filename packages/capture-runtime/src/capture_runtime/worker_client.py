@@ -9,7 +9,6 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
-from time import monotonic
 from typing import Any, Literal, cast
 
 from capture_runtime.constants import VERTICAL_READER_REQUIREMENT_ID
@@ -95,6 +94,8 @@ class WorkerDiarizationResult:
     digest: str
     device: str
     warnings: tuple[str, ...]
+    elapsed_ms: int | None = None
+    stage_ms: dict[str, int] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -174,6 +175,8 @@ class WorkerRunResult:
     execution_proof: OcrExecutionDeviceProofV1 | None = None
     # Optional units that are not installed and would have read part of the source.
     suggested_units: tuple[str, ...] = ()
+    elapsed_ms: int | None = None
+    stage_ms: dict[str, int] | None = None
 
 
 def _string(value: object, label: str, *, maximum: int = 500) -> str:
@@ -292,6 +295,20 @@ def _milliseconds(value: object) -> int:
     return value
 
 
+def _parse_engine_timings(provenance: dict[str, Any]) -> tuple[int | None, dict[str, int] | None]:
+    elapsed = provenance.get("elapsedMs")
+    stages = provenance.get("stageMs")
+    if stages is not None and (
+        not isinstance(stages, dict)
+        or any(not isinstance(name, str) or not name.strip() for name in stages)
+    ):
+        raise WorkerResultError("worker stage times must use non-empty names")
+    return (
+        None if elapsed is None else _milliseconds(elapsed),
+        None if stages is None else {name: _milliseconds(value) for name, value in stages.items()},
+    )
+
+
 def _parse_words(value: object, *, time_locator: bool) -> tuple[WorkerWord, ...]:
     if value is None:
         return ()
@@ -343,13 +360,14 @@ def parse_diarization_result(payload: dict[str, Any]) -> WorkerDiarizationResult
     ):
         raise WorkerResultError("exclusive diarization turns must not overlap")
     provenance = payload["provenance"]
-    if not isinstance(provenance, dict) or set(provenance) != {
+    if not isinstance(provenance, dict) or set(provenance) - {"elapsedMs", "stageMs"} != {
         "engine",
         "model",
         "digest",
         "device",
     }:
         raise WorkerResultError("worker provenance has unexpected fields")
+    elapsed_ms, stage_ms = _parse_engine_timings(provenance)
     digest = provenance["digest"]
     if not isinstance(digest, str) or SHA256_PROVENANCE.fullmatch(digest) is None:
         raise WorkerResultError("worker provenance digest is invalid")
@@ -370,6 +388,8 @@ def parse_diarization_result(payload: dict[str, Any]) -> WorkerDiarizationResult
         digest=digest,
         device=provenance["device"],
         warnings=tuple(_string(item, "worker warning") for item in warnings),
+        elapsed_ms=elapsed_ms,
+        stage_ms=stage_ms,
     )
 
 
@@ -448,13 +468,15 @@ def parse_run_result(payload: dict[str, Any]) -> WorkerRunResult:
         else None
     )
     if ocr_provenance is None:
-        if set(provenance) != {"engine", "model", "digest", "device"}:
+        if set(provenance) - {"elapsedMs", "stageMs"} != {"engine", "model", "digest", "device"}:
             raise WorkerResultError("worker provenance has unexpected fields")
         engine = provenance.get("engine")
         model = provenance.get("model")
         digest = provenance.get("digest")
         device = provenance.get("device")
+        elapsed_ms, stage_ms = _parse_engine_timings(provenance)
     else:
+        elapsed_ms, stage_ms = None, None
         if not ocr_provenance.is_resolved:
             raise WorkerResultError("worker OCR result requires resolved provenance")
         engine = ocr_provenance.engine
@@ -486,6 +508,8 @@ def parse_run_result(payload: dict[str, Any]) -> WorkerRunResult:
         ocr_provenance=ocr_provenance,
         execution_proof=execution_proof,
         suggested_units=_parse_suggested_units(payload.get("suggestedUnits")),
+        elapsed_ms=elapsed_ms,
+        stage_ms=stage_ms,
     )
 
 
@@ -874,7 +898,6 @@ class WorkerClient:
     ) -> WorkerRunResult:
         if not source_path.is_file() or not source_path.is_absolute():
             raise ValueError("worker source path must be an existing absolute file")
-        started_at = monotonic()
         payload: dict[str, object] = {
             "requirementId": engine.requirement_id,
             "artifactVersion": engine.artifact_version,
@@ -950,11 +973,6 @@ class WorkerClient:
                 ) from error
             raise
         except WorkerExecutionError as error:
-            # A failed CUDA constructor can poison the native ctranslate2
-            # process before its in-process CPU fallback is attempted. Start
-            # a clean worker for that narrow Whisper boundary instead of
-            # retrying inside the contaminated process. The stage is already
-            # allowlisted and contains no source path or backend detail.
             if is_ocr:
                 if isinstance(error, OcrWorkerFailure):
                     raise
@@ -964,28 +982,9 @@ class WorkerClient:
                     diagnostics=error.diagnostics,
                     worker_sha256=engine.worker_sha256,
                 ) from error
-            if (
-                engine.requirement_id != "whisper-primary"
-                or options.get("preferGpu") is not True
-                or options.get("allowCpuFallback", True) is not True
-                or cancel_event.is_set()
-                or not any(
-                    stage.startswith("whisper-model-load-cpu-failed-")
-                    for stage in error.diagnostics.stage_sequence
-                )
-            ):
-                raise
-            remaining_seconds = timeout_seconds - max(0.0, monotonic() - started_at)
-            if remaining_seconds <= 0:
-                raise
-            cpu_options = {**options, "preferGpu": False}
-            response = await self.process.request(
-                engine.executable,
-                "run",
-                {**payload, "options": cpu_options},
-                cancel_event=cancel_event,
-                timeout_seconds=remaining_seconds,
-            )
+            # The speech worker owns its single classified CUDA-to-CPU retry.
+            # Repeating a failed CPU constructor here would exceed that bound.
+            raise
         assert response.result is not None
         try:
             result = parse_run_result(response.result)

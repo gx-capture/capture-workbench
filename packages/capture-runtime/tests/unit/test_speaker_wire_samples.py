@@ -53,7 +53,7 @@ def _raw(*, speakers: bool) -> RawCapture:
         ),
         segments=segments,
         source_text=project_source_text(segments),
-        extraction_engine=_engine("whisper-primary", "large-v3-turbo", "b", "cuda"),
+        extraction_engine=_engine("speech-recognition", "tea-asr-1.1", "b", "cuda"),
         diarization_engine=(
             _engine("speaker-diarization", "nvidia-nemotron-3-diarization", "c", "cpu")
             if speakers

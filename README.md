@@ -36,7 +36,7 @@ are ephemeral and are deleted after the host has copied the data it needs.
    with cancellation, retry, and reconciliation support.
 4. Capture Runtime extracts raw text or time-based audio segments. PDF and
    image extraction can use the runtime-managed OCR engine; audio extraction
-   uses the runtime-managed Whisper engine. Optional requirements are installed
+   uses the runtime-managed TEA-ASR engine. Optional requirements are installed
    through an explicit, checksum-verified setup flow.
 5. Structuring can be owned by the runtime's isolated Ollama process or by the
    host's provider. The runtime validates the resulting `CaptureDocument`,
@@ -56,7 +56,7 @@ page.
 After launching the application:
 
 1. Complete the runtime setup shown by the application.
-2. Approve optional OCR, Whisper, or model requirements when a workflow needs
+2. Approve optional OCR, TEA-ASR, or model requirements when a workflow needs
    them. Downloads are verified before activation, and a failed replacement
    does not discard the last working installation.
 3. Import a PDF, image, or audio file.
@@ -200,7 +200,7 @@ corepack pnpm dev:deterministic
 ```
 
 The deterministic lane is for repeatable development and diagnostics. It does
-not prove that WindowsML, Whisper, Ollama, or a packaged release is working.
+not prove that WindowsML, TEA-ASR, Ollama, or a packaged release is working.
 
 To run the runtime directly for backend development, set a private
 `CAPTURE_API_TOKEN` with at least 32 characters and start the runtime target:

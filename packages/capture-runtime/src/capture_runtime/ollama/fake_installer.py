@@ -8,7 +8,7 @@ from collections.abc import Callable, Collection
 from capture_runtime.constants import (
     OLLAMA_MODEL_REQUIREMENT_ID,
     OLLAMA_RUNTIME_REQUIREMENT_ID,
-    WHISPER_REQUIREMENT_ID,
+    SPEECH_RECOGNITION_REQUIREMENT_ID,
     WINDOWSML_REQUIREMENT_ID,
 )
 from capture_runtime.contracts import RuntimeRequirementStatus, RuntimeRequirementV2
@@ -33,7 +33,11 @@ class FakeRuntimeInstaller:
     ) -> list[RuntimeRequirementV2]:
         descriptions = {
             WINDOWSML_REQUIREMENT_ID: ("OCR", "WindowsML OCR", ["pdf", "image"]),
-            WHISPER_REQUIREMENT_ID: ("transcription", "Whisper transcription", ["audio"]),
+            SPEECH_RECOGNITION_REQUIREMENT_ID: (
+                "transcription",
+                "Speech recognition",
+                ["audio"],
+            ),
             OLLAMA_RUNTIME_REQUIREMENT_ID: (
                 "runtime",
                 "Ollama application",

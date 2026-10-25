@@ -61,7 +61,7 @@ test('real-media preflight names every unavailable requirement', () => {
       );
       assert.match(
         error instanceof Error ? error.message : String(error),
-        /unavailable requirements: windowsml-ocr \([\s\S]*whisper-primary/u,
+        /unavailable requirements: windowsml-ocr \([\s\S]*speech-recognition/u,
       );
       assert.match(
         error instanceof Error ? error.message : String(error),
@@ -111,7 +111,7 @@ test('real-media runtime environment removes ambient provider and model override
     't'.repeat(64),
     {
       ocrModel: 'pp-ocrv6-medium-windowsml',
-      whisperModel: 'small',
+      whisperModel: 'tea-asr-1.1-mini',
       whisperDevice: 'cpu',
       whisperPreferGpu: true,
     },
@@ -145,15 +145,15 @@ test('source-lock Whisper role is the production worker model provenance', () =>
       },
       {
         kind: 'whisper',
-        expectedEngine: 'whisper-primary',
-        expectedModel: 'fallback',
+        expectedEngine: 'speech-recognition',
+        expectedModel: 'tea-asr-1.1-mini',
         expectedDevice: 'cpu',
         preferGpu: true,
       },
     ],
   });
 
-  assert.equal(expected.whisperModel, 'fallback');
+  assert.equal(expected.whisperModel, 'tea-asr-1.1-mini');
   assert.equal(expected.whisperDevice, 'cpu');
   assert.equal(expected.whisperPreferGpu, true);
 });
@@ -217,8 +217,8 @@ test('real-media diagnostic cannot claim release or consumer E2E acceptance', ()
         pageLocators: 1,
       },
       audio: {
-        extractionEngine: 'whisper-primary',
-        model: 'small',
+        extractionEngine: 'speech-recognition',
+        model: 'tea-asr-1.1-mini',
         device: 'cpu',
         segmentCount: 1,
         timeLocators: 1,

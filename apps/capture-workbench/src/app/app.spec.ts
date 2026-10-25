@@ -315,7 +315,7 @@ it('lists the speakers of a transcript, plays a sample and stores a name', async
         { speakerId: 'SPEAKER_00', sample: { kind: 'time', startMs: 0, endMs: 900 } },
         { speakerId: 'SPEAKER_01', sample: null, displayName: 'Ms. Lin' },
       ],
-      extractionEngine: { engine: 'whisper-primary', model: 'm', device: 'cpu', digest: `sha256:${'a'.repeat(64)}` },
+      extractionEngine: { engine: 'speech-recognition', model: 'm', device: 'cpu', digest: `sha256:${'a'.repeat(64)}` },
       structuringEngine: { engine: 'ollama', model: 'm', digest: `sha256:${'b'.repeat(64)}` },
     },
   });
@@ -473,8 +473,8 @@ it('lists a recording as timed lines and plays it from a line', async () => {
       ],
       sourceText: '謝謝\n請陳述您的姓名',
       extractionEngine: {
-        engine: 'whisper-primary',
-        model: 'large-v3-turbo',
+        engine: 'speech-recognition',
+        model: 'tea-asr-1.1',
         device: 'cuda',
         digest: `sha256:${'a'.repeat(64)}`,
       },
@@ -484,7 +484,7 @@ it('lists a recording as timed lines and plays it from a line', async () => {
       targetText: '謝謝\n請陳述您的姓名',
       speakers: [{ speakerId: 'SPEAKER_01', sample: null, displayName: '法官' }],
       extractionEngine: {
-        engine: 'whisper-primary',
+        engine: 'speech-recognition',
         model: 'm',
         device: 'cuda',
         digest: `sha256:${'a'.repeat(64)}`,

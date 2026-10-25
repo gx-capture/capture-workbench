@@ -19,17 +19,19 @@ OCR_TEST_DEPENDENCIES = {
     "pypdfium2": "pypdfium2>=5.0.0,<6.0.0",
 }
 PRODUCTION_ONLY_DEPENDENCIES = {
-    "ctranslate2",
-    "faster-whisper",
+    "torch",
+    "transformers",
     "huggingface-hub",
     "onnxruntime-directml",
     "paddleocr",
     "paddlex",
 }
 
-WHISPER_EXACT_DEPENDENCIES = {
-    "ctranslate2": "ctranslate2==4.8.1",
-    "faster-whisper": "faster-whisper==1.2.1",
+SPEECH_EXACT_DEPENDENCIES = {
+    "transformers": "transformers==5.20.2",
+    "torch": "torch==2.11.0",
+    "librosa": "librosa==1.0.0",
+    "numpy": "numpy>=2.0.0,<3.0.0",
 }
 
 
@@ -56,8 +58,8 @@ def test_default_dev_dependencies_cover_ocr_typecheck_without_entering_core() ->
         assert _requirements_named(base, name) == []
     for name in PRODUCTION_ONLY_DEPENDENCIES:
         assert _requirements_named(dev, name) == []
-    whisper = project["project"]["optional-dependencies"]["whisper"]
-    for name, exact_requirement in WHISPER_EXACT_DEPENDENCIES.items():
+    whisper = project["project"]["optional-dependencies"]["speech-recognition"]
+    for name, exact_requirement in SPEECH_EXACT_DEPENDENCIES.items():
         assert _requirements_named(whisper, name) == [exact_requirement]
 
 
@@ -144,7 +146,7 @@ def test_exact_dependency_ownership_rejects_duplicate_or_broader_entries() -> No
 
 def test_canonical_names_catch_alternate_spellings_and_direct_references() -> None:
     dev = [
-        "faster_whisper>=1.2.0",
+        "transformers>=5.20.2",
         "onnxruntime_directml==1.24.4",
         "huggingface.hub>=1.18.0",
     ]
@@ -153,7 +155,7 @@ def test_canonical_names_catch_alternate_spellings_and_direct_references() -> No
         "pypdfium2 @ https://example.invalid/pypdfium2.whl",
     ]
 
-    for name in ("faster-whisper", "onnxruntime-directml", "huggingface-hub"):
+    for name in ("transformers", "onnxruntime-directml", "huggingface-hub"):
         assert len(_requirements_named(dev, name)) == 1
     assert _requirements_named(base, "pillow") == [base[0]]
     assert _requirements_named(base, "pypdfium2") == [base[1]]

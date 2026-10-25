@@ -38,7 +38,7 @@ const requirements = {
       detail: 'must not be retained',
     },
     {
-      requirementId: 'whisper-primary',
+      requirementId: 'speech-recognition',
       status: 'ready',
       secretPath: 'C:/private',
     },

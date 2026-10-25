@@ -23,7 +23,7 @@ import { CaptureWorkbenchStoreHelpers } from '../capture-workbench-store/capture
 
 const INSTALLATION_ORDER = new Map([
   ['windowsml-ocr', 0],
-  ['whisper-primary', 1],
+  ['speech-recognition', 1],
   ['speaker-diarization', 2],
   ['vertical-japanese-reader', 3],
   ['ollama-runtime', 4],

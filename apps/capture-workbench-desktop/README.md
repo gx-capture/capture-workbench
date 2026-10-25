@@ -68,7 +68,7 @@ It accepts only that source PDF and records no source path or bearer token in it
 ## Opt-in staged-runtime three-media diagnostic
 
 This preliminary diagnostic starts a staged runtime, then installs
-`windowsml-ocr` and `whisper-primary` in host-controlled order and exercises a
+`windowsml-ocr` and `speech-recognition` in host-controlled order and exercises a
 real scanned PDF, image, and audio file through host structuring. It requires a
 complete approved catalog for an unused successor version; immutable v0.3.8
 fails closed before staging because both dependencies are unavailable.
@@ -82,7 +82,7 @@ corepack pnpm nx run capture-workbench-desktop:smoke-real-media
 ```
 
 The diagnostic strips ambient provider/model overrides, verifies DirectML OCR
-and lock-selected Whisper provenance, proves UUID-scoped capture deletion, and
+and lock-selected TEA-ASR provenance, proves UUID-scoped capture deletion, and
 checks its owned runtime process is gone. Its report always records
 `releaseGateSatisfied=false` and `consumerE2e=false`: it is not the pending
 Tauri/WebView scanned-PDF/image/audio acceptance harness and is not candidate
@@ -94,7 +94,7 @@ release evidence input.
 the packaged Tauri WebView with fresh app-data, performs consented catalog
 installation, imports a private cert-prep PDF, the project-owned image, and a
 private cert-prep audio fixture through the UI, and verifies raw/result,
-provenance, DirectML OCR, lock-selected Whisper segments, UUID-scoped deletion,
+provenance, DirectML OCR, lock-selected TEA-ASR segments, UUID-scoped deletion,
 and owned process cleanup. The preflight selects `qwen3.5-0.8b-v1` through the
 runtime model-options API; the release installer contains no Qwen model bytes.
 The report is redacted by construction and records
@@ -140,7 +140,7 @@ entries, and isolated data are gone before the target succeeds.
 
 The resulting `tmp/capture-workbench-desktop/installed-smoke/installed-smoke.json`
 is explicitly marked deterministic and diagnostic only. It does not certify
-real WindowsML, Whisper, Ollama, or licensed-fixture behavior.
+real WindowsML, TEA-ASR, Ollama, or licensed-fixture behavior.
 
 ## Loopback ownership boundary
 

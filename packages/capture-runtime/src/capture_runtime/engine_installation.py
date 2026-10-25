@@ -605,9 +605,16 @@ class EngineInstallationManager:
                     url=self._pdf_ocr_e2e_local_worker_url,
                 )
             elif self._smoke_worker_mirror_url is not None:
+                mirror = self._smoke_worker_mirror_url
                 download_descriptor = replace(
                     worker_descriptor,
-                    url=f"{self._smoke_worker_mirror_url}/{worker_descriptor.file_name}",
+                    url=None
+                    if worker_descriptor.parts
+                    else f"{mirror}/{worker_descriptor.file_name}",
+                    parts=tuple(
+                        replace(part, url=f"{mirror}/{part.file_name}")
+                        for part in worker_descriptor.parts
+                    ),
                 )
             await self.downloader.download(
                 download_descriptor,

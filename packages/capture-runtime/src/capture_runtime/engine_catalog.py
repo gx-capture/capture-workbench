@@ -103,8 +103,52 @@ def _artifact_url(value: object) -> str:
     return value
 
 
+# One release asset; GitHub release assets must stay under 2 GB.
+MAX_ARTIFACT_PART_BYTES = 2_000_000_000
+# A worker archive and what it extracts to; larger archives are published as parts.
+MAX_SINGLE_ARTIFACT_BYTES = 2 * 1024**3
+MAX_PARTED_ARTIFACT_BYTES = 8 * 1024**3
+MAX_ARTIFACT_EXTRACTED_BYTES = 8 * 1024**3
+
+
+@dataclass(frozen=True, slots=True)
+class EngineArtifactPart:
+    file_name: str
+    bytes: int
+    sha256: str
+    url: str
+
+    @classmethod
+    def from_dict(cls, value: object, *, archive_name: str, index: int) -> EngineArtifactPart:
+        payload = _mapping(value, "engine artifact part")
+        _exact_keys(payload, {"fileName", "bytes", "sha256", "url"}, "engine artifact part")
+        if payload["fileName"] != f"{archive_name}.{index:03d}":
+            raise EngineCatalogError(
+                "engine artifact parts must be named <fileName>.001, .002, ..."
+            )
+        return cls(
+            file_name=payload["fileName"],
+            bytes=_positive_int(payload["bytes"], "part bytes", maximum=MAX_ARTIFACT_PART_BYTES),
+            sha256=_sha256(payload["sha256"], "part sha256"),
+            url=_artifact_url(payload["url"]),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "fileName": self.file_name,
+            "bytes": self.bytes,
+            "sha256": self.sha256,
+            "url": self.url,
+        }
+
+
 @dataclass(frozen=True, slots=True)
 class EngineArtifactDescriptor:
+    """A worker archive, downloaded from `url` or joined from ordered `parts`.
+
+    `bytes` and `sha256` always describe the whole archive.
+    """
+
     role: EngineArtifactRole
     requirement_id: str
     artifact_version: str
@@ -117,30 +161,28 @@ class EngineArtifactDescriptor:
     extracted_bytes: int
     entry_point: str
     files_manifest_sha256: str
-    url: str
+    url: str | None
+    parts: tuple[EngineArtifactPart, ...] = ()
 
     @classmethod
     def from_dict(cls, value: object) -> EngineArtifactDescriptor:
         payload = _mapping(value, "engine artifact")
-        _exact_keys(
-            payload,
-            {
-                "role",
-                "requirementId",
-                "artifactVersion",
-                "workerProtocolVersion",
-                "platform",
-                "arch",
-                "fileName",
-                "bytes",
-                "sha256",
-                "extractedBytes",
-                "entryPoint",
-                "filesManifestSha256",
-                "url",
-            },
-            "engine artifact",
-        )
+        common = {
+            "role",
+            "requirementId",
+            "artifactVersion",
+            "workerProtocolVersion",
+            "platform",
+            "arch",
+            "fileName",
+            "bytes",
+            "sha256",
+            "extractedBytes",
+            "entryPoint",
+            "filesManifestSha256",
+        }
+        parted = "parts" in payload
+        _exact_keys(payload, common | {"parts" if parted else "url"}, "engine artifact")
         role = payload["role"]
         if role != "worker":
             raise EngineCatalogError("release engine artifacts may contain only worker archives")
@@ -157,6 +199,22 @@ class EngineArtifactDescriptor:
         file_name = _safe_relative_path(payload["fileName"], "fileName")
         if "/" in file_name:
             raise EngineCatalogError("fileName must contain only a file name")
+        size = _positive_int(
+            payload["bytes"],
+            "bytes",
+            maximum=MAX_PARTED_ARTIFACT_BYTES if parted else MAX_SINGLE_ARTIFACT_BYTES,
+        )
+        parts: tuple[EngineArtifactPart, ...] = ()
+        if parted:
+            raw_parts = payload["parts"]
+            if not isinstance(raw_parts, list) or len(raw_parts) < 2:
+                raise EngineCatalogError("engine artifact parts must list at least two parts")
+            parts = tuple(
+                EngineArtifactPart.from_dict(item, archive_name=file_name, index=index)
+                for index, item in enumerate(raw_parts, start=1)
+            )
+            if sum(part.bytes for part in parts) != size:
+                raise EngineCatalogError("engine artifact parts must add up to its bytes")
         return cls(
             role=role,
             requirement_id=requirement_id,
@@ -165,17 +223,21 @@ class EngineArtifactDescriptor:
             platform=payload["platform"],
             arch=payload["arch"],
             file_name=file_name,
-            bytes=_positive_int(payload["bytes"], "bytes", maximum=2 * 1024**3),
+            bytes=size,
             sha256=_sha256(payload["sha256"], "sha256"),
             extracted_bytes=_positive_int(
-                payload["extractedBytes"], "extractedBytes", maximum=2 * 1024**3
+                payload["extractedBytes"], "extractedBytes", maximum=MAX_ARTIFACT_EXTRACTED_BYTES
             ),
             entry_point=_safe_relative_path(payload["entryPoint"], "entryPoint"),
             files_manifest_sha256=_sha256(payload["filesManifestSha256"], "filesManifestSha256"),
-            url=_artifact_url(payload["url"]),
+            url=None if parted else _artifact_url(payload["url"]),
+            parts=parts,
         )
 
     def to_dict(self) -> dict[str, Any]:
+        source: dict[str, Any] = (
+            {"parts": [part.to_dict() for part in self.parts]} if self.parts else {"url": self.url}
+        )
         return {
             "role": self.role,
             "requirementId": self.requirement_id,
@@ -189,7 +251,7 @@ class EngineArtifactDescriptor:
             "extractedBytes": self.extracted_bytes,
             "entryPoint": self.entry_point,
             "filesManifestSha256": self.files_manifest_sha256,
-            "url": self.url,
+            **source,
         }
 
 
@@ -236,7 +298,7 @@ class EngineModelFileDescriptor:
         size = _positive_int(
             payload["bytes"],
             "direct model file bytes",
-            maximum=2 * 1024**3,
+            maximum=4 * 1024**3,
         )
         if size > 512 * 1024**2 and not (
             kind in {"source", "derived"} and path.startswith("model/")
@@ -397,7 +459,7 @@ class EngineModelDeliveryDescriptor:
         extracted_bytes = _positive_int(
             payload["extractedBytes"],
             "direct model extractedBytes",
-            maximum=2 * 1024**3,
+            maximum=8 * 1024**3,
         )
         if sum(item.bytes for item in files) != extracted_bytes:
             raise EngineCatalogError("direct model extractedBytes does not match files")
@@ -730,6 +792,7 @@ __all__ = [
     "ActiveEngineState",
     "ActivatedArtifact",
     "EngineArtifactDescriptor",
+    "EngineArtifactPart",
     "EngineCatalog",
     "EngineCatalogError",
     "EngineModelDeliveryDescriptor",

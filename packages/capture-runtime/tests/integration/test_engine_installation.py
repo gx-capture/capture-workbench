@@ -1048,11 +1048,11 @@ def test_core_only_catalog_reports_models_unavailable_without_downloading(
         _Lifecycle(_LifecycleConfig(tmp_path / "app-data")),  # type: ignore[arg-type]
         engine_manager=manager,
         clock=SystemClock(),
-        enabled_requirement_ids={"windowsml-ocr", "whisper-primary"},
+        enabled_requirement_ids={"windowsml-ocr", "speech-recognition"},
     )
 
     requirements = {item.requirement_id: item for item in installer.requirements()}
-    for requirement_id in ("windowsml-ocr", "whisper-primary"):
+    for requirement_id in ("windowsml-ocr", "speech-recognition"):
         requirement = requirements[requirement_id]
         assert requirement.status.value == "unavailable"
         assert requirement.artifact is None
@@ -1088,8 +1088,8 @@ def test_system_installer_passes_nonzero_directml_device_to_model_probe(tmp_path
         max_image_pixels=100_000,
         ocr_render_scale=2,
         max_audio_duration_ms=60_000,
-        whisper_primary_model="large-v3-turbo",
-        whisper_fallback_model="small",
+        whisper_primary_model="tea-asr-1.1",
+        whisper_fallback_model="tea-asr-1.1-mini",
         whisper_prefer_gpu=False,
     )
     installer = SystemRuntimeInstaller(
@@ -1176,8 +1176,8 @@ def test_pdf_ocr_e2e_local_worker_url_maps_only_ocr_worker_transport(
     catalog, sources = _catalog(tmp_path)
     payload = catalog.to_dict()
     whisper = json.loads(json.dumps(payload["requirements"][0]))
-    whisper["requirementId"] = "whisper-primary"
-    whisper["artifacts"][0]["requirementId"] = "whisper-primary"
+    whisper["requirementId"] = "speech-recognition"
+    whisper["artifacts"][0]["requirementId"] = "speech-recognition"
     payload["requirements"].append(whisper)
     catalog = EngineCatalog.from_dict(payload)
     ocr_worker = catalog.requirement("windowsml-ocr").worker_artifact()
@@ -1218,7 +1218,7 @@ def test_pdf_ocr_e2e_local_worker_url_maps_only_ocr_worker_transport(
         downloader=downloader,
         model_downloader=model_downloader,
     )
-    for requirement_id in ("windowsml-ocr", "whisper-primary"):
+    for requirement_id in ("windowsml-ocr", "speech-recognition"):
         asyncio.run(
             manager.install(
                 requirement_id,
@@ -1229,11 +1229,11 @@ def test_pdf_ocr_e2e_local_worker_url_maps_only_ocr_worker_transport(
 
     assert downloader.seen_urls == [
         dedicated_url,
-        catalog.requirement("whisper-primary").worker_artifact().url,
+        catalog.requirement("speech-recognition").worker_artifact().url,
     ]
     assert model_downloader.seen_urls == [
         item.url
-        for requirement_id in ("windowsml-ocr", "whisper-primary")
+        for requirement_id in ("windowsml-ocr", "speech-recognition")
         for item in catalog.requirement(requirement_id).model_delivery().files
     ]
     assert all(url.startswith("https://") for url in model_downloader.seen_urls)
@@ -1295,7 +1295,7 @@ def test_speaker_identification_is_listed_as_an_optional_unit(tmp_path: Path) ->
         _Lifecycle(_LifecycleConfig(tmp_path / "app-data")),  # type: ignore[arg-type]
         engine_manager=manager,
         clock=SystemClock(),
-        enabled_requirement_ids={"windowsml-ocr", "whisper-primary", "speaker-diarization"},
+        enabled_requirement_ids={"windowsml-ocr", "speech-recognition", "speaker-diarization"},
     )
 
     requirements = {item.requirement_id: item for item in installer.requirements()}
@@ -1303,7 +1303,7 @@ def test_speaker_identification_is_listed_as_an_optional_unit(tmp_path: Path) ->
     assert requirements["speaker-diarization"].optional is True
     assert requirements["speaker-diarization"].required_for == ["audio"]
     assert requirements["speaker-diarization"].status.value == "unavailable"
-    assert requirements["whisper-primary"].optional is False
+    assert requirements["speech-recognition"].optional is False
     assert requirements["windowsml-ocr"].optional is False
 
 
