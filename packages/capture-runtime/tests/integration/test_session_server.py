@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import threading
 from typing import Any
 
@@ -93,17 +94,76 @@ class _ImmediateBackend:
         return None
 
 
+def test_session_server_heartbeats_carry_the_workers_stage() -> None:
+    wire = (
+        encode_control(
+            SessionFrameType.START,
+            {
+                "protocolVersion": "3",
+                "sessionId": "session-stage",
+                "sampleRate": 16_000,
+                "channels": 1,
+                "windowMs": 120_000,
+                "overlapMs": 30_000,
+                "source": {
+                    "sha256": "a" * 64,
+                    "fileName": "sample.wav",
+                    "mediaType": "audio/wav",
+                    "bytes": 1_000,
+                },
+            },
+        )
+        + encode_credit(1)
+        + encode_audio_input(DecodedAudioWindow(0, 1_000, b"pcm"))
+    )
+    source = _BlockingInput(wire)
+    output = _RecordingOutput()
+    backend = _BlockingBackend()
+    thread = threading.Thread(
+        target=serve_session,
+        args=(backend,),
+        kwargs={
+            "stdin": source,
+            "stdout": output,
+            "heartbeat_interval_seconds": 0.02,
+            "stage": lambda: "loading-model",
+        },
+        daemon=True,
+    )
+
+    thread.start()
+    assert output.heartbeat.wait(timeout=1)
+    backend.release.set()
+    source.close()
+    thread.join(timeout=2)
+
+    decoder = SessionFrameDecoder()
+    frames = [frame for payload in output.writes for frame in decoder.feed(payload)]
+    stages = {
+        json.loads(frame.payload)["stage"]
+        for frame in frames
+        if frame.frame_type is SessionFrameType.HEARTBEAT
+    }
+    assert "loading-model" in stages
+
+
 def test_session_server_emits_heartbeat_while_window_transcription_is_running() -> None:
     wire = (
         encode_control(
             SessionFrameType.START,
             {
-                "protocolVersion": "2",
+                "protocolVersion": "3",
                 "sessionId": "session-1",
                 "sampleRate": 16_000,
                 "channels": 1,
                 "windowMs": 120_000,
                 "overlapMs": 30_000,
+                "source": {
+                    "sha256": "a" * 64,
+                    "fileName": "sample.wav",
+                    "mediaType": "audio/wav",
+                    "bytes": 1_000,
+                },
             },
         )
         + encode_credit(1)
@@ -142,12 +202,18 @@ def test_session_server_reads_short_final_pipe_chunk_without_waiting_for_eof() -
         encode_control(
             SessionFrameType.START,
             {
-                "protocolVersion": "2",
+                "protocolVersion": "3",
                 "sessionId": "session-read1",
                 "sampleRate": 16_000,
                 "channels": 1,
                 "windowMs": 120_000,
                 "overlapMs": 30_000,
+                "source": {
+                    "sha256": "a" * 64,
+                    "fileName": "sample.wav",
+                    "mediaType": "audio/wav",
+                    "bytes": 1_000,
+                },
             },
         )
         + encode_credit(1)

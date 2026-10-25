@@ -82,6 +82,10 @@ impl DesktopState {
         }
     }
 
+    pub(crate) fn data_dir(&self) -> &std::path::Path {
+        &self.inner.data_dir
+    }
+
     pub(crate) fn start(&self, assets: RuntimeAssets) {
         let generation = match self.begin_launch() {
             Ok(generation) => generation,

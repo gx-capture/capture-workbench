@@ -2821,6 +2821,83 @@ class _StaticOcrEvidenceAdapter:
         return self.evidence
 
 
+def _warm_ocr_adapters(tmp_path: Path):
+    model_dir = tmp_path / "windowsml"
+    _write_windowsml_models(model_dir)
+    plan = _gpu_plan_kwargs()["execution_plan"]
+    assert isinstance(plan, OcrExecutionPlan)
+    built: list[object] = []
+    adapter_map = [(plan.adapter_map_sha256, plan.identity.luid, True)]
+    map_checks: list[object] = []
+
+    class Result:
+        json = {"res": {"rec_texts": ["Warm"], "rec_scores": [0.9], "rec_boxes": [[0, 0, 9, 9]]}}
+
+    class Pipeline:
+        def predict(self, _source: str) -> list[Result]:
+            return [Result()]
+
+    def factory(**_kwargs: object) -> Pipeline:
+        built.append(Pipeline())
+        return built[-1]
+
+    def resolver() -> tuple[str, str, bool]:
+        map_checks.append(adapter_map[0])
+        return adapter_map[0]  # type: ignore[return-value]
+
+    def make(reusable=None, evidence=None, **options):  # type: ignore[no-untyped-def]
+        return WindowsMLOcrAdapter(
+            model_dir,
+            execution_plan=plan,
+            adapter_map_resolver=resolver,
+            pipeline_factory=factory,
+            provider_resolver=lambda: ["DmlExecutionProvider", "CPUExecutionProvider"],
+            provider_evidence_adapter=evidence
+            or _StaticOcrEvidenceAdapter(OcrExecutionEvidence(dml_node_count=2, cpu_node_count=1)),
+            reusable_session=reusable,
+            **options,
+        )
+
+    return make, built, adapter_map, map_checks
+
+
+def test_a_warm_ocr_worker_reuses_the_evidenced_pipeline_and_still_checks_the_adapter(
+    tmp_path: Path,
+) -> None:
+    make, built, adapter_map, map_checks = _warm_ocr_adapters(tmp_path)
+    first = make()
+    assert first.extract_png(b"page").text == "Warm"
+    reusable = first.reusable_session()
+    assert reusable is not None and reusable.evidence is not None
+
+    evidence = _StaticOcrEvidenceAdapter(OcrExecutionEvidence(dml_node_count=2, cpu_node_count=1))
+    checks = len(map_checks)
+    second = make(reusable, evidence)
+    result = second.extract_png(b"page")
+
+    assert (result.text, result.device) == ("Warm", "windowsml-dml")
+    assert len(built) == 1
+    assert (evidence.prepare_calls, evidence.finalize_calls) == (0, 0)
+    assert len(map_checks) == checks + 1
+    assert second.provenance().device == "windowsml-dml"
+
+    adapter_map[0] = ("0" * 64, adapter_map[0][1], True)
+    with pytest.raises(EngineRuntimeUnavailableError, match="identity drifted"):
+        make(second.reusable_session()).extract_png(b"page")
+    assert len(built) == 1
+
+
+def test_an_ocr_run_with_an_execution_proof_never_reuses_a_pipeline(tmp_path: Path) -> None:
+    make, built, _adapter_map, _map_checks = _warm_ocr_adapters(tmp_path)
+    first = make()
+    first.extract_png(b"page")
+    proof_run = make(first.reusable_session(), runtime_sha256="c" * 64, source_sha256="d" * 64)
+
+    assert proof_run._reusable is None
+    assert proof_run.reusable_session() is None
+    assert len(built) == 1
+
+
 def test_windowsml_adapter_is_unavailable_without_dml_or_cpu(tmp_path: Path) -> None:
     model_dir = tmp_path / "windowsml"
     _write_windowsml_models(model_dir)
@@ -3974,6 +4051,74 @@ def test_manifest_build_failure_is_typed_before_page_count_is_known(
                 asyncio.Event(),
             )
         )
+
+
+def test_ocr_enlarges_only_an_image_whose_enlarged_long_side_fits_the_cap() -> None:
+    from capture_runtime.image_normalization import OCR_MAX_ENLARGED_LONG_SIDE, ocr_image_scale
+
+    assert ocr_image_scale(800, 600, 2) == 2
+    assert ocr_image_scale(OCR_MAX_ENLARGED_LONG_SIDE // 2, 10, 2) == 2
+    assert ocr_image_scale(10, OCR_MAX_ENLARGED_LONG_SIDE // 2 + 1, 2) == 1
+    assert ocr_image_scale(1654, 2339, 2) == 1
+    assert ocr_image_scale(800, 600, 1) == 1
+
+
+@pytest.mark.parametrize(
+    ("size", "render_scale", "raster"),
+    [((100, 50), 2.0, (200, 100)), ((2500, 30), 1.0, (2500, 30))],
+)
+def test_worker_backed_image_is_enlarged_as_its_manifest_says(
+    tmp_path: Path,
+    size: tuple[int, int],
+    render_scale: float,
+    raster: tuple[int, int],
+) -> None:
+    class Recorded(Exception):
+        pass
+
+    class RecordingWorkerClient:
+        def __init__(self) -> None:
+            self.options: dict[str, object] | None = None
+
+        async def run(self, _engine: InstalledEngine, **kwargs: object) -> WorkerRunResult:
+            self.options = kwargs["options"]  # type: ignore[assignment]
+            raise Recorded
+
+    worker_client = RecordingWorkerClient()
+
+    class EngineManager:
+        async def ocr_compute_selection(self, *, contract_sha256: str) -> object:
+            del contract_sha256
+            return _worker_ocr_plan_selection()
+
+        async def resolve_active_engine(self, _requirement_id: str) -> InstalledEngine:
+            return InstalledEngine(
+                requirement_id="windowsml-ocr",
+                artifact_version=RUNTIME_VERSION,
+                executable=tmp_path / "ocr.exe",
+                model_dir=tmp_path / "models",
+            )
+
+    manager = EngineManager()
+    manager.worker_client = worker_client  # type: ignore[attr-defined]
+    extractor = StandaloneRuntimeCaptureExtractor(
+        SystemClock(),
+        _config(tmp_path),
+        engine_manager=manager,  # type: ignore[arg-type]
+    )
+    image = BytesIO()
+    Image.new("RGB", size, "white").save(image, format="PNG")
+    content = image.getvalue()
+
+    with pytest.raises(Recorded):
+        asyncio.run(
+            extractor.extract(content, _source(content, "page.png", "image/png"), asyncio.Event())
+        )
+
+    assert worker_client.options is not None
+    assert worker_client.options["renderScale"] == render_scale
+    manifest = worker_client.options["pageManifest"]
+    assert [(page["raster"]["width"], page["raster"]["height"]) for page in manifest] == [raster]
 
 
 def test_worker_backed_pdf_dispatches_every_page_to_ocr(tmp_path: Path) -> None:

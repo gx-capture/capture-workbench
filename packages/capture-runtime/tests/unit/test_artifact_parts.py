@@ -211,3 +211,54 @@ def test_downloader_rejects_a_corrupted_part_and_removes_the_download(tmp_path: 
             )
         )
     assert not (tmp_path / "download.zip").exists()
+
+
+def test_a_failed_cleanup_does_not_hide_why_the_download_failed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Another process holding the partial file made the cleanup raise
+    # PermissionError, which the host saw instead of the real failure.
+    whole = bytes(range(256)) * 40
+    pieces = [whole[:5_000], whole[5_000:]]
+    descriptor = EngineArtifactDescriptor.from_dict(_payload(pieces, whole))
+    files = {
+        descriptor.parts[0].file_name: pieces[0],
+        descriptor.parts[1].file_name: b"\x00" * len(pieces[1]),
+    }
+    downloader = HttpArtifactDownloader(
+        lambda: httpx.AsyncClient(transport=_transport(files, ranges=False, requested=[])),
+    )
+    original_unlink = Path.unlink
+
+    def held_open(path: Path, *args: object, **kwargs: object) -> None:
+        if path.name == "download.zip":
+            raise PermissionError(13, "The process cannot access the file")
+        original_unlink(path, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Path, "unlink", held_open)
+    with pytest.raises(EngineInstallationError, match="part checksum"):
+        asyncio.run(
+            downloader.download(
+                descriptor,
+                tmp_path / "download.zip",
+                cancel_event=asyncio.Event(),
+                progress=lambda _copied: None,
+            )
+        )
+
+
+def test_a_rebuild_replaces_the_parts_an_earlier_build_left(tmp_path: Path) -> None:
+    archive = tmp_path / "worker.zip"
+    archive.write_bytes(b"x" * 25)
+    split_archive(archive, part_bytes=10)
+    archive.write_bytes(b"y" * 15)
+
+    parts = split_archive(archive, part_bytes=10)
+
+    assert [part.name for part in parts] == ["worker.zip.001", "worker.zip.002"]
+    assert b"".join(part.read_bytes() for part in parts) == b"y" * 15
+    assert not (tmp_path / "worker.zip.003").exists()
+
+    archive.write_bytes(b"z" * 5)
+    assert split_archive(archive, part_bytes=10) == [archive]
+    assert not list(tmp_path.glob("worker.zip.0*"))

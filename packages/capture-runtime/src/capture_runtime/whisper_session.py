@@ -16,7 +16,7 @@ from capture_runtime.progressive_audio import (
     ProgressiveSessionEvent,
 )
 
-SESSION_PROTOCOL_VERSION = "2"
+SESSION_PROTOCOL_VERSION = "3"
 MAX_SESSION_FRAME_PAYLOAD = 4 * 1024 * 1024
 MAX_SESSION_BUFFER_BYTES = MAX_SESSION_FRAME_PAYLOAD + 5
 MAX_SESSION_CREDITS = 32
@@ -180,6 +180,7 @@ class WhisperSessionProtocol:
             "channels",
             "windowMs",
             "overlapMs",
+            "source",
         }
         if set(metadata) != expected or metadata["protocolVersion"] != SESSION_PROTOCOL_VERSION:
             raise WhisperSessionProtocolError(
@@ -198,6 +199,21 @@ class WhisperSessionProtocol:
         if metadata["overlapMs"] >= metadata["windowMs"]:
             raise WhisperSessionProtocolError(
                 "session_start_invalid", "Speech recognition session overlap is invalid."
+            )
+        source = metadata["source"]
+        if (
+            not isinstance(source, dict)
+            or set(source) != {"sha256", "fileName", "mediaType", "bytes"}
+            or not all(
+                isinstance(source[field], str) and source[field]
+                for field in ("sha256", "fileName", "mediaType")
+            )
+            or not isinstance(source["bytes"], int)
+            or isinstance(source["bytes"], bool)
+            or source["bytes"] <= 0
+        ):
+            raise WhisperSessionProtocolError(
+                "session_start_invalid", "Speech recognition session source is invalid."
             )
         self.backend.start(metadata)
         self._started = True
@@ -235,13 +251,19 @@ class WhisperSessionProtocol:
 
     def _finish(self) -> list[bytes]:
         output = self._event_frames(self.backend.finish())
-        self._terminal = True
         terminal_frames = {
             ord(SessionFrameType.COMPLETED.value),
             ord(SessionFrameType.ERROR.value),
         }
         if not output or not any(frame[0] in terminal_frames for frame in output):
             output.append(_frame(SessionFrameType.COMPLETED, b"{}"))
+        if any(frame[0] == ord(SessionFrameType.ERROR.value) for frame in output):
+            self._terminal = True
+        else:
+            # A completed session leaves the worker ready for the next START, so
+            # a warm worker keeps its loaded models for the next capture.
+            self._started = False
+            self._credits = 0
         return output
 
     @staticmethod

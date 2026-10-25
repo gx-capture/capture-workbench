@@ -1,13 +1,15 @@
-"""Minimal one-run JSON-lines worker server."""
+"""Minimal JSON-lines worker server: one run per process, or runs until stdin closes."""
 
 from __future__ import annotations
 
 import json
 import os
+import queue
 import sys
 import threading
 import time
 from collections.abc import Callable
+from functools import partial
 from typing import Any
 
 from capture_runtime.worker_contracts import (
@@ -102,7 +104,17 @@ def _wait_for_input() -> bool:
         time.sleep(INPUT_POLL_SECONDS)
 
 
-def serve(handler: WorkerHandler, *, prepare: WorkerPreparer | None = None) -> None:
+def serve(
+    handler: WorkerHandler,
+    *,
+    prepare: WorkerPreparer | None = None,
+    persistent: bool = False,
+) -> None:
+    """Serve one run, or with `persistent` one run after another until stdin closes."""
+
+    if persistent:
+        _serve_persistent(handler, prepare)
+        return
     first = sys.stdin.buffer.readline(MAX_WORKER_INPUT_BYTES + 2)
     if not first or len(first) > MAX_WORKER_INPUT_BYTES or not first.endswith(b"\n"):
         _failure(
@@ -205,6 +217,130 @@ def serve(handler: WorkerHandler, *, prepare: WorkerPreparer | None = None) -> N
         )
         code = 1
     os._exit(code)
+
+
+_MALFORMED = object()
+
+
+class _Inbox:
+    """Reads stdin on one thread: cancel frames reach the active run, requests queue.
+
+    Like the one-run listener it waits with PeekNamedPipe before each read, so
+    no read is pending while a run's native libraries touch stdin.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._active: tuple[str, threading.Event] | None = None
+        self._requests: queue.Queue[object] = queue.Queue()
+
+    def activate(self, request_id: str) -> threading.Event:
+        cancellation = threading.Event()
+        with self._lock:
+            self._active = (request_id, cancellation)
+        return cancellation
+
+    def deactivate(self) -> None:
+        with self._lock:
+            self._active = None
+
+    def next(self) -> object:
+        """The next request, _MALFORMED, or None once stdin has closed."""
+
+        return self._requests.get()
+
+    def read(self) -> None:
+        while _wait_for_input():
+            line = sys.stdin.buffer.readline(MAX_WORKER_INPUT_BYTES + 2)
+            if not line:
+                break
+            try:
+                if len(line) > MAX_WORKER_INPUT_BYTES or not line.endswith(b"\n"):
+                    raise WorkerProtocolError("worker request framing is invalid")
+                message = WorkerRequest.from_dict(json.loads(line.decode("utf-8")))
+            except (UnicodeDecodeError, json.JSONDecodeError, WorkerProtocolError):
+                with self._lock:
+                    active = self._active
+                if active is not None:
+                    active[1].set()
+                else:
+                    self._requests.put(_MALFORMED)
+                continue
+            if message.operation == "cancel":
+                with self._lock:
+                    active = self._active
+                # A cancel that arrives after its run finished is stale.
+                if active is not None and message.payload == {"requestId": active[0]}:
+                    active[1].set()
+                continue
+            self._requests.put(message)
+        self._requests.put(None)
+
+
+def _serve_persistent(handler: WorkerHandler, prepare: WorkerPreparer | None) -> None:
+    """Runs one after another, so a warm worker keeps its loaded models.
+
+    A failed or cancelled run ends the process as in one-run mode: what it left
+    loaded is not trusted for the next run.
+    """
+
+    inbox = _Inbox()
+    threading.Thread(target=inbox.read, name="capture-worker-input", daemon=True).start()
+    prepared = False
+    while True:
+        message = inbox.next()
+        if message is None:
+            os._exit(0)
+        if message is _MALFORMED:
+            _failure("invalid", "malformed_request", "Worker request is invalid.", retryable=False)
+            os._exit(0)
+        assert isinstance(message, WorkerRequest)
+        request = message
+        if request.operation in {"probe", "preflight"}:
+            try:
+                result = handler(request, threading.Event(), lambda _payload: None)
+            except Exception:
+                _failure(request.request_id, "probe_failed", "Worker probe failed.", retryable=True)
+            else:
+                _write(WorkerResponse(request.request_id, True, result, None))
+            continue
+        if prepare is not None and not prepared:
+            try:
+                prepare(request)
+            except Exception:
+                _failure(
+                    request.request_id,
+                    "worker_failed",
+                    "Worker preparation failed.",
+                    retryable=True,
+                )
+                os._exit(0)
+            prepared = True
+        cancellation = inbox.activate(request.request_id)
+        try:
+            result = handler(
+                request,
+                cancellation,
+                partial(_progress, request.request_id),
+            )
+        except InterruptedError:
+            _failure(
+                request.request_id,
+                "worker_cancelled",
+                "Worker operation was cancelled.",
+                retryable=True,
+            )
+            os._exit(0)
+        except Exception:
+            _failure(
+                request.request_id,
+                "worker_failed",
+                "Worker operation failed.",
+                retryable=True,
+            )
+            os._exit(1)
+        inbox.deactivate()
+        _write(WorkerResponse(request.request_id, True, result, None))
 
 
 __all__ = ["permille_reporter", "serve"]

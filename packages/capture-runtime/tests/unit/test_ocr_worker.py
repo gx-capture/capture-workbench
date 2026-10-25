@@ -2313,6 +2313,65 @@ def test_ocr_worker_passes_the_reader_unit_on_and_reports_when_it_is_missed(
     assert result.get("suggestedUnits") == (["vertical-japanese-reader"] if wanted else None)
 
 
+def test_a_warm_ocr_worker_hands_each_runs_session_to_the_next(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    model_path = tmp_path / "model"
+    model_path.mkdir()
+    source = tmp_path / "source.png"
+    Image.new("RGB", (1, 1), "white").save(source, format="PNG")
+    received: list[object] = []
+    sessions: list[object] = []
+
+    class Adapter:
+        def __init__(self, *_args: object, **kwargs: object) -> None:
+            received.append(kwargs.get("reusable_session"))
+
+        def extract_png(self, _image: bytes) -> OcrTextResult:
+            return OcrTextResult(
+                text="public fixture text",
+                model="test-model",
+                digest="1" * 64,
+                device="windowsml-dml",
+                warning=None,
+                raster_width=1,
+                raster_height=1,
+                provenance=_resolved_test_provenance(),
+            )
+
+        def reusable_session(self) -> object:
+            sessions.append(object())
+            return sessions[-1]
+
+    monkeypatch.setattr(ocr_main, "WindowsMLOcrAdapter", Adapter)
+    monkeypatch.setattr(ocr_main, "_reusable_session", None)
+    payload: dict[str, object] = {
+        "requirementId": "windowsml-ocr",
+        "artifactVersion": RUNTIME_VERSION,
+        "modelPath": str(model_path),
+        "sourcePath": str(source),
+        "mediaType": "image/png",
+        "options": {
+            "computePlan": _gpu_plan_dict(),
+            "pageManifest": [
+                {
+                    "page": 1,
+                    "raster": {"width": 1, "height": 1, "scale": 1, "coordinateSystem": "pixel"},
+                }
+            ],
+            "maxImagePixels": 1,
+            "renderScale": 1,
+        },
+    }
+    for index in range(3):
+        ocr_main.handle(
+            WorkerRequest(request_id=f"ocr-warm-{index}", operation="run", payload=payload),
+            Event(),
+        )
+
+    assert received == [None, sessions[0], sessions[1]]
+
+
 @pytest.mark.parametrize("value", [None, 7, "relative/reader", "C:/does/not/exist/reader"])
 def test_ocr_worker_rejects_an_invalid_reader_unit_path(tmp_path: Path, value: object) -> None:
     model_path = tmp_path / "model"

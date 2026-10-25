@@ -100,12 +100,67 @@ def test_idle_entries_are_evicted_when_a_new_entry_is_stored(tmp_path: Path) -> 
     downloader = CachingDownloader(CountingDownloader(old_payload), cache)
     fetch(downloader, tmp_path / "old.zip", descriptor(old_payload))
     old_entry = cache_root / descriptor(old_payload).sha256[:2] / descriptor(old_payload).sha256
+    (tmp_path / "old.zip").unlink()  # the install that linked it was removed
     stale = time.time() - 3600
     os.utime(old_entry, (stale, stale))
 
     fetch(CachingDownloader(CountingDownloader(), cache), tmp_path / "new.zip")
 
     assert not old_entry.exists()
+
+
+def test_entries_share_bytes_with_installs_through_hard_links(tmp_path: Path) -> None:
+    cache_root = tmp_path / "cache"
+    downloader = CachingDownloader(CountingDownloader(), VerifiedDownloadCache(cache_root))
+    entry = cache_root / descriptor().sha256[:2] / descriptor().sha256
+
+    fetch(downloader, tmp_path / "first.zip")
+    reported = fetch(downloader, tmp_path / "second.zip")
+
+    assert os.path.samefile(tmp_path / "first.zip", entry)
+    assert os.path.samefile(tmp_path / "second.zip", entry)
+    assert reported[-1] == len(PAYLOAD)
+
+
+def test_bytes_are_copied_where_links_are_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def no_links(*_args: object) -> None:
+        raise OSError("cross-device link")
+
+    monkeypatch.setattr(os, "link", no_links)
+    inner = CountingDownloader()
+    downloader = CachingDownloader(inner, VerifiedDownloadCache(tmp_path / "cache"))
+
+    fetch(downloader, tmp_path / "first.zip")
+    fetch(downloader, tmp_path / "second.zip")
+
+    assert inner.calls == 1
+    assert (tmp_path / "second.zip").read_bytes() == PAYLOAD
+    assert not os.path.samefile(tmp_path / "first.zip", tmp_path / "second.zip")
+
+
+def test_an_entry_an_install_links_to_is_kept_however_idle(tmp_path: Path) -> None:
+    # It costs no space; a worker archive, deleted once extracted, does.
+    cache_root = tmp_path / "cache"
+    cache = VerifiedDownloadCache(cache_root, max_idle_seconds=60)
+    archive, model = b"worker archive", b"model weights"
+    for payload, name in ((archive, "archive.zip"), (model, "model.bin")):
+        downloader = CachingDownloader(CountingDownloader(payload), cache)
+        fetch(downloader, tmp_path / name, descriptor(payload))
+    (tmp_path / "archive.zip").unlink()
+    entries = {
+        payload: cache_root / descriptor(payload).sha256[:2] / descriptor(payload).sha256
+        for payload in (archive, model)
+    }
+    stale = time.time() - 3600
+    for entry in entries.values():
+        os.utime(entry, (stale, stale))
+
+    fetch(CachingDownloader(CountingDownloader(), cache), tmp_path / "new.zip")
+
+    assert not entries[archive].exists()
+    assert entries[model].exists()
 
 
 def test_cache_root_honors_the_override_and_can_be_disabled(tmp_path: Path) -> None:

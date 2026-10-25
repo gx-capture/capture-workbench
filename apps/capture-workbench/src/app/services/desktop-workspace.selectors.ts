@@ -32,6 +32,13 @@ export const INSTALLATION_ORDER = new Map<CaptureRequirementId, number>([
 export function modelInstallationPercent(
   installation: RuntimeModelInstallation | null,
 ): number {
+  return installationPercent(installation);
+}
+
+/** An installation's progress as a whole percentage. */
+export function installationPercent(
+  installation: { readonly progress: number } | null,
+): number {
   const progress = installation?.progress ?? 0;
   return Math.round(Math.min(Math.max(progress, 0), 1) * 100);
 }

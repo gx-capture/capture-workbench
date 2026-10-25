@@ -5,6 +5,7 @@ import { provideNoopAnimations } from '@angular/platform-browser/animations';
 import type {
   OcrComputePreflight,
   RawCapture,
+  RuntimeInstallation,
   RuntimeModelInstallation,
   RuntimeModelOption,
 } from '@gx-capture/capture-workbench-ui';
@@ -95,6 +96,32 @@ describe('App', () => {
       });
     }),
   );
+
+  it('shows a component installation as a rounded progress bar', async () => {
+    const store = workspaceStub();
+    store.state.set('needs-setup');
+    store.activeInstallation.set({
+      installationId: 'installation-1',
+      requirementId: 'speech-recognition',
+      status: 'running',
+      progress: 1 / 3,
+      createdAt: '2026-10-25T00:00:00Z',
+      updatedAt: '2026-10-25T00:00:00Z',
+    });
+    store.installationPercent.set(33);
+    await TestBed.configureTestingModule({
+      imports: [App],
+      providers: [provideNoopAnimations(), { provide: DesktopWorkspaceStore, useValue: store }],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(App);
+    fixture.detectChanges();
+
+    const progress = fixture.nativeElement.querySelector(
+      '[data-testid="runtime-install-progress"]',
+    ) as HTMLElement;
+    expect(progress.textContent).toContain('33%');
+    expect(progress.querySelector('progress')?.getAttribute('value')).toBe('33');
+  });
 
   it('shows visible model download progress and phase while the selected model installs', async () => {
     const store = workspaceStub(null, {
@@ -359,7 +386,8 @@ function workspaceStub(selected: unknown = null, modelInstallation: RuntimeModel
     query: signal(''),
     statusFilter: signal(''),
     installing: signal(false),
-    activeInstallation: signal(null),
+    activeInstallation: signal<RuntimeInstallation | null>(null),
+    installationPercent: signal(0),
     activeModelInstallation: signal<RuntimeModelInstallation | null>(modelInstallation),
     modelInstallationPhase: signal(''),
     modelInstallationPercent: signal(0),
@@ -370,6 +398,9 @@ function workspaceStub(selected: unknown = null, modelInstallation: RuntimeModel
     selectedModelOptionId: signal<string | null>(null),
     busyIds: signal(new Set<string>()),
     identifySpeakers: signal(false),
+    speechGpu: signal<{ cudaAvailable: boolean; preferGpu: boolean } | null>(null),
+    canChangeCompute: signal(true),
+    setPreferGpu: vi.fn(),
     sampleSources: signal(new Map<string, string>()),
     loadSpeakerSamples: vi.fn(),
     isRecording: (mediaType: string) =>
@@ -435,6 +466,31 @@ function cpuFallback(): OcrComputePreflight {
     noticeCode: 'ocr_cpu_fallback',
   };
 }
+
+it('offers the GPU setting for speech recognition only when a CUDA driver is present', async () => {
+  const store = workspaceStub();
+  await TestBed.configureTestingModule({
+    imports: [App],
+    providers: [provideNoopAnimations(), { provide: DesktopWorkspaceStore, useValue: store }],
+  }).compileComponents();
+  const fixture = TestBed.createComponent(App);
+  fixture.detectChanges();
+  const root = fixture.nativeElement as HTMLElement;
+  expect(root.querySelector('[data-testid="prefer-gpu"]')).toBeNull();
+
+  store.speechGpu.set({ cudaAvailable: true, preferGpu: true });
+  fixture.detectChanges();
+  const option = root.querySelector('[data-testid="prefer-gpu"]') as HTMLInputElement;
+  expect(option.checked).toBe(true);
+  expect(option.parentElement?.textContent).toContain('用 GPU 加速語音辨識');
+  option.checked = false;
+  option.dispatchEvent(new Event('change'));
+  expect(store.setPreferGpu).toHaveBeenCalledWith(false);
+
+  store.canChangeCompute.set(false);
+  fixture.detectChanges();
+  expect(option.disabled).toBe(true);
+});
 
 it('lists a recording as timed lines and plays it from a line', async () => {
   const store = workspaceStub({

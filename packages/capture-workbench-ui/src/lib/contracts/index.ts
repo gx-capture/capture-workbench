@@ -112,6 +112,7 @@ export type CaptureTaskStage =
   | 'queued'
   | 'uploading'
   | 'preprocessing'
+  | 'loading-model'
   | 'transcribing'
   | 'identifying-speakers';
 

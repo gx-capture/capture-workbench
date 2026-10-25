@@ -33,6 +33,11 @@ from capture_runtime.worker_process import (
 
 SHA256_PROVENANCE = re.compile(r"^sha256:[a-f0-9]{64}$")
 SUGGESTABLE_UNITS = frozenset({VERTICAL_READER_REQUIREMENT_ID})
+# DirectML keeps the GPU buffers of every run in a worker's sessions: after a
+# 12 MP photo a warm worker held 7.8 GB of an 8 GB GPU and its next page read
+# as empty. Only runs whose pages are at most this large use a warm worker; a
+# larger one gets fresh sessions and the GPU memory a warm worker would hold.
+OCR_WARM_MAX_PAGE_PIXELS = 2048 * 2048
 
 
 class WorkerResultError(ValueError):
@@ -802,8 +807,16 @@ def parse_ocr_progress(payloads: list[dict[str, object]]) -> WorkerOcrProgress |
 
 
 class WorkerClient:
-    def __init__(self, process: WorkerProcess | None = None) -> None:
+    def __init__(
+        self,
+        process: WorkerProcess | None = None,
+        *,
+        ocr_idle_seconds: float = 0.0,
+    ) -> None:
         self.process = process or WorkerProcess()
+        # An OCR worker keeps its DirectML sessions this long for the next run;
+        # 0 starts a worker for each run.
+        self.ocr_idle_seconds = ocr_idle_seconds
 
     async def probe(
         self,
@@ -935,15 +948,42 @@ class WorkerClient:
             ocr_progress(len(progress.pages), progress.page_count)
 
         progress_handler = collect_ocr_progress if is_ocr else _permille_handler(on_permille)
+        # Acceptance runs bind an execution proof to each run's own sessions.
+        largest_page = _largest_manifest_page_pixels(options.get("pageManifest"))
+        keep_warm = (
+            is_ocr
+            and self.ocr_idle_seconds > 0
+            and "runtimeSha256" not in options
+            and largest_page is not None
+            and largest_page <= OCR_WARM_MAX_PAGE_PIXELS
+        )
+        release_warm = getattr(self.process, "release_warm", None)
+        if is_ocr and not keep_warm and release_warm is not None:
+            await release_warm()
         try:
-            response = await self.process.request(
-                engine.executable,
-                "run",
-                payload,
-                cancel_event=cancel_event,
-                **({"progress_handler": progress_handler} if progress_handler is not None else {}),
-                timeout_seconds=timeout_seconds,
-            )
+            if keep_warm:
+                response = await self.process.request_warm(
+                    engine.executable,
+                    "run",
+                    payload,
+                    idle_seconds=self.ocr_idle_seconds,
+                    cancel_event=cancel_event,
+                    progress_handler=progress_handler,
+                    timeout_seconds=timeout_seconds,
+                )
+            else:
+                response = await self.process.request(
+                    engine.executable,
+                    "run",
+                    payload,
+                    cancel_event=cancel_event,
+                    **(
+                        {"progress_handler": progress_handler}
+                        if progress_handler is not None
+                        else {}
+                    ),
+                    timeout_seconds=timeout_seconds,
+                )
         except WorkerTimeoutError as error:
             if is_ocr:
                 raise OcrWorkerFailure(
@@ -1154,6 +1194,22 @@ def _canonical_page(page: WorkerOcrPage) -> tuple[object, ...]:
         _canonical_number(page.raster_scale),
         _canonical_failure(page.failure),
     )
+
+
+def _largest_manifest_page_pixels(manifest: object) -> int | None:
+    """The largest page raster a run's manifest asks for, or None when it is malformed."""
+
+    if not isinstance(manifest, list) or not manifest:
+        return None
+    largest = 0
+    for page in manifest:
+        raster = page.get("raster") if isinstance(page, dict) else None
+        width = raster.get("width") if isinstance(raster, dict) else None
+        height = raster.get("height") if isinstance(raster, dict) else None
+        if not isinstance(width, int) or not isinstance(height, int):
+            return None
+        largest = max(largest, width * height)
+    return largest
 
 
 def _canonical_manifest_page(page: WorkerOcrPage) -> tuple[object, ...]:

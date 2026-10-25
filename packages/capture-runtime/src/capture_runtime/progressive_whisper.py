@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import tempfile
 import wave
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path
+from typing import Any
 
 from capture_runtime.contracts import CaptureEngine
 from capture_runtime.engine_adapters import WhisperAdapter
@@ -90,13 +91,22 @@ class DirectWindowDecoder:
 
 
 class ProgressiveWhisperWorkerBackend:
-    """Bind the binary worker protocol to the progressive session deep module."""
+    """Bind the binary worker protocol to one progressive session per START."""
 
-    def __init__(self, session: ProgressiveAudioSession) -> None:
-        self.session = session
+    def __init__(
+        self, session_factory: Callable[[dict[str, Any]], ProgressiveAudioSession]
+    ) -> None:
+        self._session_factory = session_factory
+        self._session: ProgressiveAudioSession | None = None
 
-    def start(self, _metadata: dict[str, object]) -> None:
-        return None
+    @property
+    def session(self) -> ProgressiveAudioSession:
+        if self._session is None:
+            raise RuntimeError("progressive session has not started")
+        return self._session
+
+    def start(self, metadata: dict[str, Any]) -> None:
+        self._session = self._session_factory(metadata)
 
     def input(self, window: DecodedAudioWindow) -> Iterable[ProgressiveSessionEvent]:
         return tuple(self._with_provenance(self.session.consume_window(window)))

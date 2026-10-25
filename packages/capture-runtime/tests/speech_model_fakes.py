@@ -25,6 +25,16 @@ class _Inputs(dict):
         return self
 
 
+class _Ids:
+    """One sequence of token ids, indexed like a [1, length] tensor."""
+
+    def __init__(self, tokens):
+        self.tokens = tokens
+
+    def __getitem__(self, index):
+        return self.tokens[index[1]]
+
+
 class _Output:
     """Generated ids; slicing off the prompt keeps the fake decode independent of it."""
 
@@ -63,6 +73,8 @@ class FakeModels:
         # One frame per second of 16 kHz audio keeps the expected turns readable.
         self.hop_length = 16_000
         self.gpu_models = []
+        # Tokens each generation produced before it ended or a criterion stopped it.
+        self.generated = []
         self.failed = False
         self.on_load = None
         monkeypatch.setitem(sys.modules, "torch", self._torch())
@@ -138,12 +150,19 @@ class FakeModels:
 
             def generate(self, **inputs):
                 assert inputs["do_sample"] is False
-                for stop in inputs["stopping_criteria"]:
-                    stop(None, None)
-                fake.events.append(("generate", self.device, inputs["max_new_tokens"]))
-                fake._fail("asr", "inference", self.device)
                 looping = fake.runaway(fake.requested)
-                return _Output(inputs["max_new_tokens"] if looping else 3)
+                tokens = [7] * inputs["max_new_tokens"] if looping else [1, 2, 3]
+                generated = []
+                for token in tokens:
+                    generated.append(token)
+                    stops = [stop(_Ids(generated), None) for stop in inputs["stopping_criteria"]]
+                    if len(generated) == 1:
+                        fake.events.append(("generate", self.device, inputs["max_new_tokens"]))
+                        fake._fail("asr", "inference", self.device)
+                    if any(stops):
+                        break
+                fake.generated.append(len(generated))
+                return _Output(len(generated))
 
         class Aligner(Model):
             engine = "aligner"

@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from capture_runtime import speech_recognition as speech
-from tests.speech_model_fakes import FakeModels, adapter
+from tests.speech_model_fakes import FakeModels, OutOfMemoryError, _Ids, adapter
 
 
 @pytest.mark.parametrize("device", ["cpu", "cuda"])
@@ -68,9 +68,7 @@ def test_transcription_time_includes_all_chunks_and_split_retries(tmp_path, monk
     assert result.elapsed_ms == calls * 125
 
 
-def test_loader_preserves_tea_tokenizer_and_local_architecture_and_releases_gpu(
-    tmp_path, monkeypatch
-):
+def test_loader_preserves_tea_tokenizer_and_local_architecture(tmp_path, monkeypatch):
     fake = FakeModels(monkeypatch)
     fake.transcript = "你好！台灣。"
     fake.alignment = [
@@ -80,13 +78,6 @@ def test_loader_preserves_tea_tokenizer_and_local_architecture_and_releases_gpu(
     stages = []
     recognizer = adapter(tmp_path, fake, word_timestamps=True, stage_reporter=stages.append)
 
-    def check_release():
-        if fake.loads("aligner"):
-            gc.collect()
-            assert all(ref() is None for ref in fake.gpu_models)
-            assert ("empty_cache",) in fake.events
-
-    fake.on_load = check_release
     result = recognizer.transcribe(tmp_path / "source.wav", should_cancel=lambda: False)
     assert [x.text for x in result.segments] == ["你好！", "台灣。"]
     assert "".join(w.text for s in result.segments for w in s.words) == fake.transcript
@@ -101,6 +92,42 @@ def test_loader_preserves_tea_tokenizer_and_local_architecture_and_releases_gpu(
             assert options["trust_remote_code"] is False
             assert "token" not in options
     assert all(speech.sanitize_worker_stage(stage) == stage for stage in stages)
+
+
+def test_models_stay_loaded_for_the_next_window(tmp_path, monkeypatch):
+    # A streaming capture transcribes 120 s windows; 0.7.1 reloaded both models for each.
+    fake = FakeModels(monkeypatch)
+    recognizer = adapter(tmp_path, fake)
+
+    for _ in range(3):
+        result = recognizer.transcribe(tmp_path / "source.wav", should_cancel=lambda: False)
+
+    assert (result.model, result.device) == ("tea-asr-1.1", "cuda")
+    assert len(fake.loads("asr")) == 1
+    assert len(fake.loads("aligner")) == 1
+    assert result.stage_ms is not None and set(result.stage_ms) >= {"modelLoad", "alignerLoad"}
+
+
+def test_the_recognizer_makes_room_when_the_aligner_does_not_fit_beside_it(tmp_path, monkeypatch):
+    fake = FakeModels(monkeypatch)
+    recognizer = adapter(tmp_path, fake)
+    attempts = []
+
+    def aligner_fits_alone():
+        if fake.loads("aligner") and not attempts:
+            attempts.append("first")
+            fake.failures[("aligner", "transfer")] = OutOfMemoryError("CUDA out of memory")
+        elif len(fake.loads("aligner")) > 1:
+            gc.collect()
+            assert all(ref() is None or ref().engine != "asr" for ref in fake.gpu_models)
+            fake.failures.pop(("aligner", "transfer"), None)
+
+    fake.on_load = aligner_fits_alone
+    result = recognizer.transcribe(tmp_path / "source.wav", should_cancel=lambda: False)
+
+    assert (result.model, result.device) == ("tea-asr-1.1", "cuda")
+    assert len(fake.loads("aligner")) == 2
+    assert ("empty_cache",) in fake.events
 
 
 @pytest.mark.parametrize("engine", ["asr", "aligner"])
@@ -208,6 +235,36 @@ def test_chunk_splitting_covers_audio_and_loop_retry_is_bounded(tmp_path, monkey
     assert [s.start_ms for s in result.segments] == [0, 5000, 10000, 15000]
 
 
+def test_a_repeating_generation_stops_early_and_halves_its_chunk(tmp_path, monkeypatch):
+    # 0.7.1 generated one character 564 times (20 s) before halving a 25 s chunk.
+    fake = FakeModels(monkeypatch)
+    monkeypatch.setattr(speech, "_quiet_point", lambda _a, left, right: (left + right) // 2)
+    fake.runaway = lambda samples: samples > speech.SAMPLE_RATE * 15
+    result = adapter(tmp_path, fake, audio=[0.0] * (speech.SAMPLE_RATE * 20)).transcribe(
+        tmp_path / "source.wav", should_cancel=lambda: False
+    )
+
+    requests = [e[2] for e in fake.events if e[0] == "request"]
+    assert requests[0] == 320000 and len(requests) == 3 and sum(requests[1:]) == 320000
+    assert fake.generated == [speech.LOOP_REPEATS, 3, 3]
+    assert result.warning is None
+    assert len(result.segments) == 2
+
+
+def test_a_pattern_must_repeat_many_times_to_stop_a_generation():
+    loop = speech._LoopStop()
+    tokens = []
+    stopped_at = None
+    # Speech such as "對對對對" repeats a little; a loop repeats until stopped.
+    for index, token in enumerate([5, 5, 5, 5, 6, 7] + [8, 9, 10] * 40):
+        tokens.append(token)
+        if loop(_Ids(tokens)):
+            stopped_at = index + 1
+            break
+    assert stopped_at == 6 + 3 * speech.LOOP_REPEATS
+    assert loop.stopped
+
+
 def test_quiet_point_and_short_tail_padding(tmp_path, monkeypatch):
     np = pytest.importorskip("numpy")
     audio = np.ones(speech.SAMPLE_RATE * 3, dtype=np.float32)
@@ -238,6 +295,50 @@ def test_empty_progressive_window_keeps_provenance_and_digest_covers_aligner(tmp
     assert first.digest != second.digest
     with pytest.raises(ValueError, match="no non-empty"):
         recognizer.transcribe(tmp_path / "source.wav", should_cancel=lambda: False)
+
+
+def test_models_are_hashed_once_per_worker_beside_the_model_load(tmp_path, monkeypatch):
+    fake = FakeModels(monkeypatch)
+    hashed = []
+
+    def digest(root, paths):
+        hashed.append(list(paths))
+        return "sha256:" + "d" * 64
+
+    monkeypatch.setattr(speech, "_directory_digest", digest)
+    recognizer = adapter(tmp_path, fake)
+    results = [
+        recognizer.transcribe(tmp_path / "source.wav", should_cancel=lambda: False)
+        for _ in range(2)
+    ]
+
+    assert [result.digest for result in results] == ["sha256:" + "d" * 64] * 2
+    assert len(hashed) == 1
+    assert {Path(path).parts[0] for path in hashed[0]} == {
+        "primary",
+        "primary-architecture",
+        "aligner",
+    }
+
+
+def test_a_failed_model_hash_fails_the_capture_and_is_retried(tmp_path, monkeypatch):
+    fake = FakeModels(monkeypatch)
+    calls = []
+
+    def digest(root, paths):
+        calls.append(root)
+        if len(calls) == 1:
+            raise FileNotFoundError("primary/model.safetensors")
+        return "sha256:" + "e" * 64
+
+    monkeypatch.setattr(speech, "_directory_digest", digest)
+    recognizer = adapter(tmp_path, fake)
+    with pytest.raises(FileNotFoundError):
+        recognizer.transcribe(tmp_path / "source.wav", should_cancel=lambda: False)
+
+    result = recognizer.transcribe(tmp_path / "source.wav", should_cancel=lambda: False)
+    assert result.digest == "sha256:" + "e" * 64
+    assert len(calls) == 2
 
 
 @pytest.mark.parametrize("bf16,expected", [(True, "bfloat16"), (False, "float16")])

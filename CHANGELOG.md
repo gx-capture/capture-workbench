@@ -21,6 +21,77 @@ Capture Workbench follows an explicit 0.x compatibility policy:
 The consumer consistency check is a permanent CI gate for the declared
 runtime, package lock, Python host, desktop host, and browser host versions.
 
+### Speed
+
+Measured on a Windows laptop with an RTX 4060 Laptop GPU (8 GB). Contracts,
+the capture document schema and transcripts are unchanged; OCR text changes
+only for images over 1024 px, which are no longer enlarged.
+
+Speech recognition:
+
+- A speech recognition worker keeps TEA-ASR and its aligner loaded across a
+  capture's 120 s windows (0.7.1 loaded both again for each window) and, for
+  five idle minutes, for the next capture (`CAPTURE_SPEECH_WORKER_IDLE_SECONDS`,
+  0 to close it after each capture). It frees its GPU memory when OCR or
+  speaker identification needs it.
+- A TEA-ASR generation whose last 32 patterns of up to 16 tokens repeat is
+  stopped, and its chunk is halved as at the length limit. On the 40-minute
+  private fixture 5 of 82 chunks repeated one character 564-727 times and took
+  45% of the generation time. The parsed transcript already collapsed such
+  runs, so transcripts are unchanged (the fixture's normalized output hash is
+  the same).
+- The first capture of a worker hashes the models for the provenance digest
+  beside its model load instead of after it, 5-7 s sooner.
+- A 30 s clip took 21-29 s each time in 0.7.1; it now takes 24 s for the
+  first capture and 6 s after. A 40-minute recording took 819 s
+  through a streaming capture; it now takes 339 s.
+
+OCR:
+
+- An image is enlarged for OCR only when its enlarged long side stays within
+  2048 px; a larger one is read as is. A 1654 x 2339 page took 23-25 s and now
+  takes 8 s, with fewer errors (character error rate 0.26% -> 0.20%); dense
+  11 px text in a 1080p screenshot reads as well as before. PDF pages still
+  render at the full scale.
+- An OCR worker keeps its DirectML sessions between captures whose pages are
+  at most 2048 x 2048 px, for two idle minutes
+  (`CAPTURE_OCR_WORKER_IDLE_SECONDS`, 0 to start a worker for each capture)
+  and at most 20 captures. A screenshot took 7-8 s and now takes 3 s, a short
+  PDF 5-6 s and now 1 s, a 5-page PDF 12 s and now 8 s; the text is the same.
+  The sessions are the ones whose DirectML execution the first capture
+  evidenced; the selected GPU adapter is checked again before each capture,
+  and acceptance runs with an execution proof always start a new worker.
+- A larger image runs on fresh sessions: DirectML keeps the GPU buffers of
+  every capture, and after a 12 MP photo a warm worker held 7.8 GB of the 8 GB
+  and read its next page as empty.
+
+### Downloads and progress
+
+- Installing an engine hard-links its files from the download cache instead
+  of copying them, saving about 10.5 GB for speech recognition, and the cache
+  drops entries no install uses after seven idle days.
+- A streaming capture reports `loading-model` while the speech model loads and
+  its progress from the recording's covered time, instead of staying at its
+  start until the end.
+- A download that failed while its partial files were being removed reported
+  the cleanup error instead of the download's; a rebuild of a worker that
+  ships in parts left an earlier build's parts behind.
+
+### Capture lifecycle
+
+- A streaming capture published the speech session's `completed` while the
+  capture was still extracting, so a host that stopped at `completed` read a
+  snapshot without the result. Only the capture's own end is published now.
+
+### Desktop
+
+- The desktop app offers "Use the GPU for speech recognition" when an NVIDIA
+  CUDA driver is present; turning it off restarts the runtime with speech on
+  the CPU (TEA-ASR mini). It cannot change while a capture or installation
+  runs.
+- A component installation shows a rounded percentage and a progress bar; it
+  showed the raw fraction times 100 (for example 33.33333333333333%).
+
 ## 0.7.1
 
 A patch release that makes 0.7.0's speech recognition usable from a host.

@@ -16,6 +16,7 @@ import {
 } from '@gx-capture/capture-workbench-ui';
 import type { CaptureDocument, RawCapture } from '@gx-capture/capture-workbench-ui';
 import type {
+  DesktopComputeStatus,
   DesktopLibraryDetail,
   DesktopLibrarySummary,
 } from '../contracts';
@@ -27,6 +28,7 @@ import { DesktopWorkspaceInstallationService } from './desktop-workspace-install
 import {
   activeModelOption as selectActiveModelOption,
   errorMessage,
+  installationPercent,
   isAudioMediaType,
   modelInstallationPercent,
   modelInstallationPhase,
@@ -59,6 +61,8 @@ export class DesktopWorkspaceStore {
   readonly installing = this.installation.installing;
   readonly activeInstallation = this.installation.activeInstallation;
   readonly activeModelInstallation = this.installation.activeModelInstallation;
+  readonly installationPercent = computed(() =>
+    installationPercent(this.activeInstallation()));
   readonly modelInstallationPercent = computed(() =>
     modelInstallationPercent(this.activeModelInstallation()));
   readonly modelInstallationPhase = computed(() =>
@@ -113,6 +117,16 @@ export class DesktopWorkspaceStore {
   });
 
   readonly canCapture = computed(() => this.state() === 'ready' && !this.installing());
+  /** The GPU setting for speech recognition, offered only when a CUDA driver is present. */
+  readonly speechGpu = computed<DesktopComputeStatus | null>(() => {
+    const status = this.computeResource.hasValue() ? this.computeResource.value() : undefined;
+    return status?.cudaAvailable ? status : null;
+  });
+  readonly savingCompute = signal(false);
+  /** Changing it relaunches the runtime, which would stop a capture or installation. */
+  readonly canChangeCompute = computed(
+    () => !this.savingCompute() && !this.installing() && this.busyIds().size === 0,
+  );
   readonly coreMissing = computed(() =>
     selectCoreMissing(this.requirements(), this.requestedRequirements()));
   readonly installableCoreRequirements = computed(() =>
@@ -125,6 +139,10 @@ export class DesktopWorkspaceStore {
   );
 
   private dropListenerStarted = false;
+
+  private readonly computeResource = rxResource<DesktopComputeStatus, undefined>({
+    stream: ({ abortSignal }) => this.runtime.getComputeStatus(abortSignal),
+  });
 
   private readonly requirementsResource = rxResource<
     readonly RuntimeRequirement[],
@@ -209,9 +227,25 @@ export class DesktopWorkspaceStore {
         });
     }
     this.runtime.reload();
+    this.computeResource.reload();
     this.requirementsResource.reload();
     this.modelOptionsResource.reload();
     this.documentsResource.reload();
+  }
+
+  /** Lets speech recognition use the GPU or not, then waits for the relaunched runtime. */
+  setPreferGpu(preferGpu: boolean): void {
+    if (!this.canChangeCompute() || this.speechGpu()?.preferGpu === preferGpu) return;
+    this.savingCompute.set(true);
+    this.runtime.setPreferGpu(preferGpu).pipe(
+      finalize(() => this.savingCompute.set(false)),
+    ).subscribe({
+      next: () => this.initialize(),
+      error: (error: unknown) => {
+        this.computeResource.reload();
+        this.message.set(errorMessage(error));
+      },
+    });
   }
 
   /** Reloads the document list without changing the current selection. */

@@ -3,7 +3,10 @@ use std::sync::Arc;
 #[cfg(feature = "acceptance-app-data")]
 use serde::Serialize;
 
+use tauri::Manager;
+
 use crate::{
+    compute::{ComputeSettings, DesktopComputeStatus},
     config::DesktopRuntimeStatus,
     contracts::{
         LibraryCaptureUpdate, LibraryDocumentDetail, LibraryDocumentRequest,
@@ -13,12 +16,38 @@ use crate::{
         RuntimeStreamingCaptureInput, RuntimeStreamingEventsInput,
     },
     library::LibraryStore,
+    resources::RuntimeAssets,
     runtime_client,
     state::DesktopState,
 };
 
 #[cfg(feature = "model-smoke-app-data")]
 use crate::model_smoke_fixtures::{ModelSmokeFixtureRegistry, ModelSmokeImportFixtureRequest};
+
+/// Whether a CUDA driver is present and speech recognition may use the GPU.
+#[tauri::command]
+pub fn desktop_compute_status(state: tauri::State<'_, DesktopState>) -> DesktopComputeStatus {
+    DesktopComputeStatus::read(state.data_dir())
+}
+
+/// Save whether speech recognition may use the GPU and relaunch the runtime,
+/// which reads it at launch. A capture in progress is stopped by the relaunch.
+#[tauri::command]
+pub fn desktop_set_prefer_gpu(
+    prefer_gpu: bool,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, DesktopState>,
+) -> Result<DesktopComputeStatus, String> {
+    let settings = ComputeSettings { prefer_gpu };
+    if settings != ComputeSettings::load(state.data_dir()) {
+        settings.save(state.data_dir())?;
+        let assets = app
+            .try_state::<RuntimeAssets>()
+            .ok_or_else(|| "Capture runtime assets are unavailable.".to_string())?;
+        state.start(assets.inner().clone());
+    }
+    Ok(DesktopComputeStatus::read(state.data_dir()))
+}
 
 /// Returns redacted launcher state for runtime setup and diagnostics UI.
 #[tauri::command]

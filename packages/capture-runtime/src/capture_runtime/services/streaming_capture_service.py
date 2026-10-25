@@ -66,6 +66,13 @@ from capture_runtime.structuring_provider import CaptureStructuringProvider
 from capture_runtime.worker_client import OcrWorkerFailure
 
 MAX_EVENT_SEGMENTS = 1_000
+# A speech session's end is not the capture's: the capture publishes its next
+# state (awaiting structuring, completed, failed or cancelled) once its status
+# has moved. Forwarding the session's end let hosts read `completed` while the
+# capture was still extracting.
+_SESSION_END_EVENTS = frozenset(
+    {StreamingEventType.COMPLETED, StreamingEventType.FAILED, StreamingEventType.CANCELLED}
+)
 
 
 class StreamingCaptureService:
@@ -355,6 +362,21 @@ class StreamingCaptureService:
         self._tasks.clear()
         self._cancellations.clear()
         self._pending_execution_proofs.clear()
+        await self._release_warm_speech_worker(shutdown=True)
+
+    async def _release_warm_speech_worker(self, *, shutdown: bool = False) -> None:
+        # A warm speech worker holds about 6 GB of GPU memory; buffered speech,
+        # speaker and OCR extraction need it, and shutdown must not leave it.
+        release = getattr(self._processor, "shutdown" if shutdown else "release_warm_worker", None)
+        if release is not None:
+            await release()
+
+    async def _release_warm_ocr_worker(self) -> None:
+        # A warm OCR worker holds its DirectML sessions in GPU memory, which
+        # speech recognition needs.
+        release = getattr(self._extractor, "release_warm_workers", None)
+        if release is not None:
+            await release()
 
     def _schedule(self, capture_id: str) -> None:
         if (
@@ -388,6 +410,8 @@ class StreamingCaptureService:
                     code="invalid_speaker_identification",
                     retryable=False,
                 )
+            if operation.kind is CaptureSourceKind.AUDIO:
+                await self._release_warm_ocr_worker()
             if identify_speakers and self._extractor is not None:
                 # Speakers are decided over the whole recording, so this path
                 # transcribes it in one pass instead of progressive windows.
@@ -570,6 +594,7 @@ class StreamingCaptureService:
             )
         if cancellation.is_set():
             raise asyncio.CancelledError
+        await self._release_warm_speech_worker()
         try:
             content = await asyncio.to_thread(source_path.read_bytes)
             sniffed = extractor.sniff(content[:SNIFF_BYTES])
@@ -726,6 +751,8 @@ class StreamingCaptureService:
         if partial is not None:
             self.repository.write_partial(partial)
         for event in events:
+            if event.event_type in _SESSION_END_EVENTS:
+                continue
             self.repository.append_event(
                 capture_id,
                 event_type=event.event_type,
@@ -734,6 +761,7 @@ class StreamingCaptureService:
                 covered_until_ms=event.covered_until_ms,
                 segments=list(event.segments),
                 error=event.error,
+                progress=event.progress,
             )
 
     def _fail(

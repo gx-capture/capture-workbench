@@ -9,6 +9,7 @@ from __future__ import annotations
 import gc
 import importlib.util
 import itertools
+import threading
 import time
 from collections.abc import Callable
 from contextlib import contextmanager
@@ -34,6 +35,14 @@ from capture_runtime.worker_stage_policy import (
 SAMPLE_RATE = 16_000
 ASR_CHUNK_SECONDS = 30
 RETRY_MIN_SECONDS = 5
+# A generation whose last LOOP_REPEATS patterns of up to LOOP_MAX_PERIOD tokens are the
+# same is stopped and treated as reaching the length limit. Greedy decoding that starts
+# repeating keeps on until the limit: 0.7.1 generated one character 564 times (20 s) for
+# a 25 s chunk before halving it. The parsed transcript already collapses a character
+# repeated over 20 times, or a pattern repeated 20 times, to one, so stopping later than
+# that changes when the chunk is halved, not what it reads.
+LOOP_REPEATS = 32
+LOOP_MAX_PERIOD = 16
 SENTENCE_ENDINGS = ("。", "！", "？", "!", "?", "；", ";", "…", ".")
 ASR_KEY_MAPPING = {
     r"^thinker\.audio_tower\.proj1\.": "model.multi_modal_projector.linear_1.",
@@ -145,6 +154,63 @@ def _clear_fallback_error(error: BaseException) -> None:
             item for item in (current.__cause__, current.__context__) if item is not None
         )
         current.__traceback__ = current.__cause__ = current.__context__ = None
+
+
+def _out_of_memory(error: BaseException, torch: Any) -> bool:
+    kinds = tuple(
+        kind
+        for kind in (
+            getattr(torch, "OutOfMemoryError", None),
+            getattr(torch.cuda, "OutOfMemoryError", None),
+        )
+        if isinstance(kind, type)
+    )
+    return bool(kinds) and isinstance(error, kinds)
+
+
+class _LoopStop:
+    """Stopping criterion for one generation: true once its tail repeats one pattern."""
+
+    def __init__(self) -> None:
+        self.tokens: list[int] = []
+        self.stopped = False
+
+    def __call__(self, input_ids: Any, *_args: Any, **_kwargs: Any) -> bool:
+        tokens = self.tokens
+        tokens.append(int(input_ids[0, -1]))
+        for period in range(1, LOOP_MAX_PERIOD + 1):
+            span = period * LOOP_REPEATS
+            if len(tokens) < span:
+                break
+            if (
+                tokens[-1] == tokens[-1 - period]
+                and tokens[-span:] == tokens[-period:] * LOOP_REPEATS
+            ):
+                self.stopped = True
+                return True
+        return False
+
+
+class _Background:
+    """A call on a daemon thread, so a cancelled capture's worker can still exit."""
+
+    def __init__(self, call: Callable[[], Any]) -> None:
+        self._result: Any = None
+        self._error: BaseException | None = None
+        self._thread = threading.Thread(target=self._run, args=(call,), daemon=True)
+        self._thread.start()
+
+    def _run(self, call: Callable[[], Any]) -> None:
+        try:
+            self._result = call()
+        except BaseException as error:
+            self._error = error
+
+    def result(self) -> Any:
+        self._thread.join()
+        if self._error is not None:
+            raise self._error
+        return self._result
 
 
 def _release(torch: Any, device: str) -> None:
@@ -306,7 +372,47 @@ class TeaAsrAdapter:
         self._torch, self._transformers = torch_module, transformers_module
         self._decoder, self._stage_reporter = decoder, stage_reporter
         self._progress_reporter = progress_reporter
-        self._digest_cache: dict[str, str] = {}
+        # Model digests by model folder. Hashing about 6 GB took 5-7 s after the
+        # first capture's alignment, so it runs beside the model load instead.
+        self._digests: dict[str, _Background] = {}
+        # Loaded models by role, kept for the worker's next window: a streaming
+        # capture transcribes 120 s windows, and 0.7.1 reloaded both models for
+        # each (about 10 s a window).
+        self._models: dict[str, tuple[tuple[str, str, str], Any, Any]] = {}
+
+    def _resident(
+        self,
+        role: str,
+        key: tuple[str, str, str],
+        load: Callable[[], tuple[Any, Any]],
+        device: str,
+        torch: Any,
+    ) -> tuple[Any, Any]:
+        """Load a model once per worker; drop the other one if both do not fit on the GPU."""
+
+        cached = self._models.get(role)
+        if cached is not None and cached[0] == key:
+            return cached[1], cached[2]
+        self._models.pop(role, None)
+        try:
+            processor, model = load()
+        except Exception as error:
+            if device != "cuda" or not self._models or not _out_of_memory(error, torch):
+                raise
+            self._models.clear()
+            _release(torch, device)
+            processor, model = load()
+        self._models[role] = (key, processor, model)
+        return processor, model
+
+    def _model_digest(self, selected: str) -> str:
+        paths = sorted(
+            str(path.relative_to(self.models_dir).as_posix())
+            for folder in (selected, f"{selected}-architecture", "aligner")
+            for path in (self.models_dir / folder).rglob("*")
+            if path.is_file()
+        )
+        return _directory_digest(self.models_dir, paths)
 
     def _report_stage(self, stage: str) -> None:
         safe = sanitize_worker_stage(stage)
@@ -439,6 +545,7 @@ class TeaAsrAdapter:
                     raise
                 warning = f"Speech recognition GPU fallback: {type(error).__name__}"
                 _clear_fallback_error(error)
+                self._models.clear()
                 try:
                     _release(torch, device)
                 except BaseException:
@@ -481,16 +588,28 @@ class TeaAsrAdapter:
             dtype = getattr(torch, _asr_dtype("auto", device, torch))
             duration_ms = round(len(audio) / SAMPLE_RATE * 1000)
             check_cancel()
+            digest_job = self._digests.get(selected)
+            if digest_job is None:
+                digest_job = self._digests[selected] = _Background(
+                    lambda: self._model_digest(selected)
+                )
             self._report_stage(speech_model_load_stage(device, "start"))
             started = time.perf_counter()
-            try:
-                processor, model = _load_asr(
+
+            def load_recognizer() -> tuple[Any, Any]:
+                loaded_processor, loaded = _load_asr(
                     self.models_dir / selected,
                     self.models_dir / f"{selected}-architecture",
                     transformers,
                     dtype,
                 )
-                model.to(torch.device(device))
+                loaded.to(torch.device(device))
+                return loaded_processor, loaded
+
+            try:
+                processor, model = self._resident(
+                    "recognizer", (selected, device, str(dtype)), load_recognizer, device, torch
+                )
             except Exception as error:
                 self._report_stage(speech_model_load_stage(device, "failed", error))
                 raise
@@ -511,16 +630,17 @@ class TeaAsrAdapter:
                     audio=request, language=self.language
                 ).to(torch.device(device), dtype)
                 limit = int(len(request) / SAMPLE_RATE * 20) + 64
+                loop = _LoopStop()
                 with torch.inference_mode():
                     output = model.generate(
                         **inputs,
                         do_sample=False,
                         max_new_tokens=limit,
-                        stopping_criteria=transformers.StoppingCriteriaList([check_cancel]),
+                        stopping_criteria=transformers.StoppingCriteriaList([check_cancel, loop]),
                     )
                 check_cancel()
                 generated = output[:, inputs["input_ids"].shape[1] :]
-                if generated.shape[1] >= limit:
+                if generated.shape[1] >= limit or loop.stopped:
                     if len(chunk) >= 2 * RETRY_MIN_SECONDS * SAMPLE_RATE:
                         pending.extend(
                             [(start + offset, half) for offset, half in _halve(chunk)][::-1]
@@ -533,7 +653,8 @@ class TeaAsrAdapter:
                 self._progress(round((start + len(chunk)) / SAMPLE_RATE * 500), duration_ms)
             stage_ms["transcription"] = round((time.perf_counter() - started) * 1000)
             self._report_stage(speech_stage("transcription-call-complete"))
-            # Release the recognizer, its inputs and token tensor before alignment.
+            # Release this window's inputs and token tensor before alignment. The
+            # recognizer stays loaded unless the aligner needs its GPU memory.
             try:
                 cleanup()
             except Exception as error:
@@ -541,11 +662,20 @@ class TeaAsrAdapter:
             check_cancel()
             started = time.perf_counter()
             aligner_dir = str(self.models_dir / "aligner")
-            aligner = transformers.AutoProcessor.from_pretrained(aligner_dir, **LOCAL_OPTIONS)
-            model = transformers.Qwen3ASRForTokenClassification.from_pretrained(
-                aligner_dir, dtype=dtype, **LOCAL_OPTIONS
+
+            def load_aligner() -> tuple[Any, Any]:
+                loaded_processor = transformers.AutoProcessor.from_pretrained(
+                    aligner_dir, **LOCAL_OPTIONS
+                )
+                loaded = transformers.Qwen3ASRForTokenClassification.from_pretrained(
+                    aligner_dir, dtype=dtype, **LOCAL_OPTIONS
+                )
+                loaded.to(torch.device(device))
+                return loaded_processor, loaded
+
+            aligner, model = self._resident(
+                "aligner", ("aligner", device, str(dtype)), load_aligner, device, torch
             )
-            model.to(torch.device(device))
             stage_ms["alignerLoad"] = round((time.perf_counter() - started) * 1000)
             started = time.perf_counter()
             segments: list[WhisperTextSegment] = []
@@ -602,16 +732,11 @@ class TeaAsrAdapter:
                     f"Speech recognition generation limit reached in {len(unfinished)} chunk(s)."
                 )
                 warning = f"{warning}; {detail}" if warning else detail
-            digest = self._digest_cache.get(selected)
-            if digest is None:
-                paths = sorted(
-                    str(path.relative_to(self.models_dir).as_posix())
-                    for folder in (selected, f"{selected}-architecture", "aligner")
-                    for path in (self.models_dir / folder).rglob("*")
-                    if path.is_file()
-                )
-                digest = _directory_digest(self.models_dir, paths)
-                self._digest_cache[selected] = digest
+            try:
+                digest = digest_job.result()
+            except BaseException:
+                self._digests.pop(selected, None)
+                raise
             return WhisperTranscriptionResult(
                 tuple(segments), duration_ms, device, identity, digest, warning, stage_ms=stage_ms
             )

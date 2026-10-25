@@ -42,6 +42,9 @@ DEFAULT_RUN_TIMEOUT_SECONDS = 15 * 60.0
 WORKER_CANCEL_GRACE_SECONDS = 2.0
 WORKER_TERMINATE_GRACE_SECONDS = 3.0
 MAX_WORKER_STDERR_BYTES = 64 * 1024
+# A warm worker is retired after this many requests, bounding what it gathers
+# (DirectML keeps buffers for every input shape it has seen).
+WARM_WORKER_MAX_REQUESTS = 20
 WORKER_ERROR_STAGE_PATTERN = re.compile(
     r"(?:^| at stage | at stages )([a-z0-9]+(?:-[a-z0-9]+)*(?:>[a-z0-9]+(?:-[a-z0-9]+)*)*)$"
 )
@@ -149,6 +152,37 @@ def _subprocess_path(path: Path) -> str:
     return value
 
 
+class _StderrTail:
+    """The bounded stderr of a persistent worker, cleared at each request."""
+
+    def __init__(self) -> None:
+        self._data = bytearray()
+
+    async def drain(self, stream: asyncio.StreamReader) -> None:
+        while chunk := await stream.read(16 * 1024):
+            self._data.extend(chunk)
+            if len(self._data) > MAX_WORKER_STDERR_BYTES:
+                del self._data[:-MAX_WORKER_STDERR_BYTES]
+
+    def clear(self) -> None:
+        self._data.clear()
+
+    def text(self) -> str:
+        return self._data.decode("utf-8", errors="replace").strip()
+
+
+@dataclass(slots=True)
+class _WarmWorker:
+    """A persistent worker process between requests."""
+
+    key: str
+    process: asyncio.subprocess.Process
+    stderr: _StderrTail
+    stderr_task: asyncio.Task[None]
+    expiry: asyncio.Task[None] | None = None
+    requests: int = 0
+
+
 class WorkerProcess:
     """Launch and clean up only subprocesses created by this owner."""
 
@@ -161,6 +195,8 @@ class WorkerProcess:
         self._active: set[asyncio.subprocess.Process] = set()
         self._windows_job_handles: dict[int, int] = {}
         self._lock = asyncio.Lock()
+        # Idle persistent workers by executable, kept for the next request.
+        self._warm: dict[str, _WarmWorker] = {}
 
     @property
     def active_process_count(self) -> int:
@@ -187,30 +223,7 @@ class WorkerProcess:
         if timeout_seconds <= 0:
             raise ValueError("worker timeout must be positive")
         request = WorkerRequest(_request_id(), operation, payload)  # type: ignore[arg-type]
-        executable_path = _subprocess_path(executable)
-        command = (
-            [sys.executable, executable_path]
-            if executable.suffix.casefold() in {".py", ".pyw"}
-            else [executable_path]
-        )
-        process = await asyncio.create_subprocess_exec(
-            *command,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=dict(self._base_environment),
-            cwd=_subprocess_path(executable.parent),
-            limit=MAX_WORKER_OUTPUT_BYTES + 2,
-            creationflags=(subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0),
-        )
-        if os.name == "nt":
-            try:
-                self._windows_job_handles[process.pid] = _create_windows_kill_on_close_job(process)
-            except BaseException:
-                await self._stop(process, initial_grace=0)
-                raise
-        async with self._lock:
-            self._active.add(process)
+        process = await self._spawn(executable)
         try:
             assert process.stdin is not None
             assert process.stdout is not None
@@ -335,6 +348,9 @@ class WorkerProcess:
                 response = WorkerResponse.from_dict(raw_response)
                 if response.request_id != request.request_id:
                     raise WorkerProtocolError("worker response requestId does not match request")
+            # A persistent worker serves until its input closes; a one-run
+            # worker has already exited.
+            process.stdin.close()
             try:
                 if os.name == "nt" and process.pid in self._windows_job_handles:
                     parent_exited = await asyncio.to_thread(
@@ -415,7 +431,287 @@ class WorkerProcess:
             async with self._lock:
                 self._active.discard(process)
 
+    async def _spawn(self, executable: Path) -> asyncio.subprocess.Process:
+        executable_path = _subprocess_path(executable)
+        command = (
+            [sys.executable, executable_path]
+            if executable.suffix.casefold() in {".py", ".pyw"}
+            else [executable_path]
+        )
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=dict(self._base_environment),
+            cwd=_subprocess_path(executable.parent),
+            limit=MAX_WORKER_OUTPUT_BYTES + 2,
+            creationflags=(subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0),
+        )
+        if os.name == "nt":
+            try:
+                self._windows_job_handles[process.pid] = _create_windows_kill_on_close_job(process)
+            except BaseException:
+                await self._stop(process, initial_grace=0)
+                raise
+        async with self._lock:
+            self._active.add(process)
+        return process
+
+    async def request_warm(
+        self,
+        executable: Path,
+        operation: str,
+        payload: dict[str, object],
+        *,
+        idle_seconds: float,
+        cancel_event: asyncio.Event | None = None,
+        progress_handler: Callable[[dict[str, object]], None] | None = None,
+        timeout_seconds: float,
+    ) -> WorkerResponse:
+        """One request to a persistent worker, kept for the next while it idles.
+
+        The worker serves until its input closes. A failure, timeout or
+        cancellation ends it, so the next request starts a fresh worker.
+        """
+
+        if not executable.is_file():
+            raise WorkerExecutionError(
+                "installed worker entry point is missing at stage worker-process-entry-missing",
+                diagnostics=WorkerFailureDiagnostics(
+                    stage_sequence=("worker-process-entry-missing",),
+                    failure_class="entry-point-missing",
+                ),
+            )
+        if timeout_seconds <= 0:
+            raise ValueError("worker timeout must be positive")
+        request = WorkerRequest(_request_id(), operation, payload)  # type: ignore[arg-type]
+        key = os.path.normcase(os.fspath(executable))
+        warm = self._take_warm(key)
+        if warm is not None and warm.process.returncode is not None:
+            # It ended while idle; a fresh worker serves this request.
+            await self._retire(warm)
+            warm = None
+        if warm is None:
+            process = await self._spawn(executable)
+            assert process.stderr is not None
+            stderr = _StderrTail()
+            warm = _WarmWorker(
+                key, process, stderr, asyncio.create_task(stderr.drain(process.stderr))
+            )
+        warm.stderr.clear()
+        keep = False
+        try:
+            response = await self._exchange(
+                warm, request, cancel_event, progress_handler, timeout_seconds
+            )
+            if not response.ok:
+                assert response.error is not None
+                with suppress(TimeoutError):
+                    await asyncio.wait_for(
+                        warm.process.wait(), timeout=WORKER_TERMINATE_GRACE_SECONDS
+                    )
+                stderr_text = await self._settled_stderr(warm)
+                raise WorkerExecutionError(
+                    f"{response.error.code}: {response.error.message}"
+                    f"{_stage_suffix(stderr_text, 'worker-process-response-error')}",
+                    diagnostics=_worker_diagnostics(
+                        stderr_text,
+                        failure_class="response-error",
+                        fallback_stage="worker-process-response-error",
+                        exit_code=warm.process.returncode,
+                    ),
+                )
+            warm.requests += 1
+            keep = (
+                idle_seconds > 0
+                and warm.process.returncode is None
+                and warm.requests < WARM_WORKER_MAX_REQUESTS
+            )
+            return response
+        finally:
+            if keep:
+                await self._park(warm, idle_seconds)
+            else:
+                await self._retire(warm)
+
+    async def _exchange(
+        self,
+        warm: _WarmWorker,
+        request: WorkerRequest,
+        cancel_event: asyncio.Event | None,
+        progress_handler: Callable[[dict[str, object]], None] | None,
+        timeout_seconds: float,
+    ) -> WorkerResponse:
+        process = warm.process
+        assert process.stdin is not None
+        assert process.stdout is not None
+        try:
+            process.stdin.write(_frame(request))
+            await process.stdin.drain()
+        except (BrokenPipeError, ConnectionResetError) as error:
+            stderr_text = await self._settled_stderr(warm)
+            raise WorkerExecutionError(
+                f"worker exited before a response with code {process.returncode}"
+                f"{_stage_suffix(stderr_text, 'worker-process-exit-before-response')}",
+                diagnostics=_worker_diagnostics(
+                    stderr_text,
+                    failure_class="exit-before-response",
+                    fallback_stage="worker-process-exit-before-response",
+                    exit_code=process.returncode,
+                ),
+            ) from error
+        read_task = asyncio.create_task(process.stdout.readline())
+        exit_task = asyncio.create_task(process.wait())
+        cancel_task = asyncio.create_task(cancel_event.wait()) if cancel_event is not None else None
+        timeout_task = asyncio.create_task(asyncio.sleep(timeout_seconds))
+        try:
+            while True:
+                waiters: set[asyncio.Task[object]] = {read_task, exit_task, timeout_task}
+                if cancel_task is not None:
+                    waiters.add(cancel_task)
+                done, _pending = await asyncio.wait(waiters, return_when=asyncio.FIRST_COMPLETED)
+                if cancel_task is not None and cancel_task in done:
+                    cancel = WorkerRequest(
+                        _request_id(), "cancel", {"requestId": request.request_id}
+                    )
+                    with suppress(BrokenPipeError, ConnectionResetError):
+                        process.stdin.write(_frame(cancel))
+                        await process.stdin.drain()
+                    await self._stop(process, initial_grace=WORKER_CANCEL_GRACE_SECONDS)
+                    raise WorkerCancelledError
+                if timeout_task in done:
+                    await self._stop(process, initial_grace=0)
+                    stderr_text = await self._settled_stderr(warm)
+                    raise WorkerTimeoutError(
+                        "worker request timed out"
+                        f"{_stage_suffix(stderr_text, 'worker-process-timeout')}",
+                        diagnostics=_worker_diagnostics(
+                            stderr_text,
+                            failure_class="timeout",
+                            fallback_stage="worker-process-timeout",
+                        ),
+                    )
+                if exit_task in done and not read_task.done():
+                    with suppress(TimeoutError):
+                        await asyncio.wait_for(
+                            asyncio.shield(read_task), timeout=WORKER_TERMINATE_GRACE_SECONDS
+                        )
+                if not read_task.done():
+                    stderr_text = await self._settled_stderr(warm)
+                    raise WorkerExecutionError(
+                        f"worker exited before a response with code {process.returncode}"
+                        f"{_stage_suffix(stderr_text, 'worker-process-exit-before-response')}",
+                        diagnostics=_worker_diagnostics(
+                            stderr_text,
+                            failure_class="exit-before-response",
+                            fallback_stage="worker-process-exit-before-response",
+                            exit_code=process.returncode,
+                        ),
+                    )
+                try:
+                    line = read_task.result()
+                except ValueError as error:
+                    raise WorkerProtocolError(
+                        "worker response exceeds the framing limit"
+                    ) from error
+                if not line:
+                    await self._stop(process, initial_grace=WORKER_TERMINATE_GRACE_SECONDS)
+                    stderr_text = await self._settled_stderr(warm)
+                    raise WorkerExecutionError(
+                        f"worker returned no response"
+                        f"{_stage_suffix(stderr_text, 'worker-process-no-response')}",
+                        diagnostics=_worker_diagnostics(
+                            stderr_text,
+                            failure_class="no-response",
+                            fallback_stage="worker-process-no-response",
+                            exit_code=process.returncode,
+                        ),
+                    )
+                if len(line) > MAX_WORKER_OUTPUT_BYTES or not line.endswith(b"\n"):
+                    raise WorkerProtocolError("worker response exceeds the framing limit")
+                try:
+                    raw_response = json.loads(line.decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError) as error:
+                    raise WorkerProtocolError(
+                        "worker response is not one UTF-8 JSON line"
+                    ) from error
+                if isinstance(raw_response, dict) and raw_response.get("kind") == "progress":
+                    progress = WorkerProgress.from_dict(raw_response)
+                    if progress.request_id != request.request_id:
+                        raise WorkerProtocolError(
+                            "worker progress requestId does not match request"
+                        )
+                    if progress_handler is not None:
+                        progress_handler(progress.payload)
+                    read_task = asyncio.create_task(process.stdout.readline())
+                    continue
+                response = WorkerResponse.from_dict(raw_response)
+                if response.request_id != request.request_id:
+                    raise WorkerProtocolError("worker response requestId does not match request")
+                return response
+        finally:
+            for task in (read_task, exit_task, cancel_task, timeout_task):
+                if task is not None and not task.done():
+                    task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await task
+
+    async def _settled_stderr(self, warm: _WarmWorker) -> str:
+        """The request's stderr, after an exiting worker's last lines have drained."""
+
+        if warm.process.returncode is not None:
+            with suppress(TimeoutError):
+                await asyncio.wait_for(
+                    asyncio.shield(warm.stderr_task), timeout=WORKER_TERMINATE_GRACE_SECONDS
+                )
+        return warm.stderr.text()
+
+    def _take_warm(self, key: str) -> _WarmWorker | None:
+        warm = self._warm.pop(key, None)
+        if warm is not None and warm.expiry is not None:
+            warm.expiry.cancel()
+            warm.expiry = None
+        return warm
+
+    async def _park(self, warm: _WarmWorker, idle_seconds: float) -> None:
+        previous = self._take_warm(warm.key)
+        if previous is not None:
+            await self._retire(previous)
+        warm.expiry = asyncio.create_task(self._expire(warm, idle_seconds))
+        self._warm[warm.key] = warm
+
+    async def _expire(self, warm: _WarmWorker, idle_seconds: float) -> None:
+        await asyncio.sleep(idle_seconds)
+        if self._warm.get(warm.key) is warm:
+            del self._warm[warm.key]
+            warm.expiry = None
+            await self._retire(warm)
+
+    async def _retire(self, warm: _WarmWorker) -> None:
+        process = warm.process
+        if process.stdin is not None and process.returncode is None:
+            # End of input asks a persistent worker to exit; the Job ensures it.
+            process.stdin.close()
+        await self._stop(process, initial_grace=WORKER_TERMINATE_GRACE_SECONDS)
+        if not warm.stderr_task.done():
+            warm.stderr_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await warm.stderr_task
+        async with self._lock:
+            self._active.discard(process)
+
+    async def release_warm(self) -> None:
+        """Close idle persistent workers, freeing what they hold for another engine."""
+
+        idle = [self._take_warm(key) for key in list(self._warm)]
+        await asyncio.gather(
+            *(self._retire(warm) for warm in idle if warm is not None),
+            return_exceptions=True,
+        )
+
     async def shutdown(self) -> None:
+        await self.release_warm()
         async with self._lock:
             processes = list(self._active)
         await asyncio.gather(

@@ -1,4 +1,12 @@
-import { captureResultText } from './desktop-workspace.selectors';
+import { captureResultText, installationPercent } from './desktop-workspace.selectors';
+
+describe('installationPercent', () => {
+  it('rounds and clamps an installation progress', () => {
+    expect(installationPercent({ progress: 1 / 3 })).toBe(33);
+    expect(installationPercent({ progress: 1.2 })).toBe(100);
+    expect(installationPercent(null)).toBe(0);
+  });
+});
 
 describe('captureResultText', () => {
   const spoken = {

@@ -2,7 +2,10 @@ use std::{collections::HashSet, path::PathBuf};
 
 use capture_sidecar_launcher::{generate_bearer_token, reserve_distinct_loopback_port};
 
-use crate::constants::{DEFAULT_MAX_UPLOAD_BYTES, DEFAULT_RETENTION_HOURS, LOOPBACK_HOST};
+use crate::{
+    compute::ComputeSettings,
+    constants::{DEFAULT_MAX_UPLOAD_BYTES, DEFAULT_RETENTION_HOURS, LOOPBACK_HOST},
+};
 
 pub(crate) struct LaunchPolicy {
     pub(crate) runtime_port: u16,
@@ -53,7 +56,10 @@ impl LaunchPolicy {
                 self.runtime_data_dir().to_string_lossy().into_owned(),
             ),
             ("CAPTURE_STRUCTURING_PROVIDER", "ollama".into()),
-            ("CAPTURE_WHISPER_PREFER_GPU", "true".into()),
+            (
+                "CAPTURE_WHISPER_PREFER_GPU",
+                ComputeSettings::load(&self.data_dir).prefer_gpu.to_string(),
+            ),
             (
                 "CAPTURE_WHISPER_ALLOW_CPU_FALLBACK",
                 whisper_cpu_fallback.to_string(),
@@ -223,6 +229,7 @@ mod tests {
         configured_cuda_path, local_ocr_model_override, smoke_worker_mirror_url,
         whisper_cpu_fallback_enabled, LaunchPolicy,
     };
+    use crate::compute::ComputeSettings;
 
     #[test]
     fn runtime_environment_explicitly_prefers_whisper_gpu() {
@@ -237,6 +244,25 @@ mod tests {
         assert!(environment
             .iter()
             .any(|(name, value)| { *name == "CAPTURE_WHISPER_PREFER_GPU" && value == "true" }));
+    }
+
+    #[test]
+    fn the_runtime_uses_the_gpu_only_while_the_user_allows_it() {
+        let directory = tempfile::tempdir().unwrap();
+        ComputeSettings { prefer_gpu: false }
+            .save(directory.path())
+            .unwrap();
+        let environment = LaunchPolicy {
+            runtime_port: 43123,
+            ollama_port: 43124,
+            token: "a".repeat(64),
+            data_dir: directory.path().to_path_buf(),
+        }
+        .environment();
+
+        assert!(environment
+            .iter()
+            .any(|(name, value)| { *name == "CAPTURE_WHISPER_PREFER_GPU" && value == "false" }));
     }
 
     #[test]

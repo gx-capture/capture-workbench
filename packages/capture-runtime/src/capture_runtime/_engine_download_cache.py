@@ -5,6 +5,11 @@ with its own app data, and tests start from fresh app data. Without a shared
 cache each of them downloads the same worker archives and model files again.
 Entries are named by their SHA-256 and re-verified on every read, so a
 modified or partial entry is discarded instead of installed.
+
+An entry is a hard link to the file it was stored from, and a restore links
+it into the install, so a cached model costs no space beside its install
+(0.7.1 kept a second 7.5 GB copy of the speech models). Where a link is not
+possible, as across volumes, the bytes are copied as before.
 """
 
 from __future__ import annotations
@@ -20,7 +25,11 @@ from typing import Protocol
 from uuid import uuid4
 
 CACHE_DIR_ENV = "CAPTURE_ENGINE_CACHE_DIR"
-CACHE_ENTRY_MAX_IDLE_SECONDS = 60 * 24 * 60 * 60
+# An entry an install still links to costs no space and is kept. One that no
+# install links to holds bytes of its own (a worker archive, deleted once
+# extracted, or a file whose install was removed or lives on another volume):
+# it is evicted after a week of disuse.
+CACHE_ENTRY_MAX_IDLE_SECONDS = 7 * 24 * 60 * 60
 _CHUNK_BYTES = 1024 * 1024
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
@@ -60,6 +69,16 @@ def default_cache_root(environ: dict[str, str] | None = None) -> Path | None:
     return Path.home() / ".cache" / "gx-capture" / "engine-cache"
 
 
+def _link(source: Path, target: Path) -> bool:
+    """Hard-link `target` to `source`; False where the file system will not."""
+
+    try:
+        os.link(source, target)
+    except OSError:
+        return False
+    return True
+
+
 class VerifiedDownloadCache:
     def __init__(
         self, root: Path, *, max_idle_seconds: float = CACHE_ENTRY_MAX_IDLE_SECONDS
@@ -81,7 +100,7 @@ class VerifiedDownloadCache:
         cancel_event: asyncio.Event,
         progress: Callable[[int], None],
     ) -> bool:
-        """Copy a matching entry to `destination`; return False on any miss."""
+        """Link or copy a matching entry to `destination`; return False on any miss."""
 
         entry = self._entry(sha256)
         if entry is None or not entry.is_file() or entry.is_symlink():
@@ -93,22 +112,36 @@ class VerifiedDownloadCache:
             digest = hashlib.sha256()
             copied = 0
             destination.parent.mkdir(parents=True, exist_ok=True)
-            with entry.open("rb") as reader, destination.open("xb") as writer:
-                while chunk := reader.read(_CHUNK_BYTES):
-                    if cancel_event.is_set():
-                        raise asyncio.CancelledError
-                    writer.write(chunk)
-                    digest.update(chunk)
-                    copied += len(chunk)
-                    progress(copied)
-                writer.flush()
-                os.fsync(writer.fileno())
+            linked = _link(entry, destination)
+            if linked:
+                with destination.open("rb") as reader:
+                    while chunk := reader.read(_CHUNK_BYTES):
+                        if cancel_event.is_set():
+                            raise asyncio.CancelledError
+                        digest.update(chunk)
+                        copied += len(chunk)
+                        progress(copied)
+            else:
+                with entry.open("rb") as reader, destination.open("xb") as writer:
+                    while chunk := reader.read(_CHUNK_BYTES):
+                        if cancel_event.is_set():
+                            raise asyncio.CancelledError
+                        writer.write(chunk)
+                        digest.update(chunk)
+                        copied += len(chunk)
+                        progress(copied)
+                    writer.flush()
+                    os.fsync(writer.fileno())
             if copied != size or digest.hexdigest() != sha256:
                 destination.unlink(missing_ok=True)
                 entry.unlink(missing_ok=True)
                 return False
-            # A read refreshes the entry so idle eviction keeps it.
-            os.utime(entry)
+            # A copy refreshes the entry so idle eviction keeps it. A link
+            # already keeps it, and touching it would change the install's
+            # timestamps, which the active-engine check watches.
+            if not linked:
+                os.utime(entry)
+            self._evict_idle(keep=entry)
             return True
         except asyncio.CancelledError:
             destination.unlink(missing_ok=True)
@@ -118,7 +151,7 @@ class VerifiedDownloadCache:
             return False
 
     def store(self, sha256: str, source: Path) -> None:
-        """Keep a copy of already verified bytes. Failures never fail an install."""
+        """Keep already verified bytes, linked where possible. Failures never fail an install."""
 
         entry = self._entry(sha256)
         if entry is None:
@@ -127,11 +160,12 @@ class VerifiedDownloadCache:
         try:
             entry.parent.mkdir(parents=True, exist_ok=True)
             if not entry.is_file():
-                with source.open("rb") as reader, temporary.open("xb") as writer:
-                    while chunk := reader.read(_CHUNK_BYTES):
-                        writer.write(chunk)
-                    writer.flush()
-                    os.fsync(writer.fileno())
+                if not _link(source, temporary):
+                    with source.open("rb") as reader, temporary.open("xb") as writer:
+                        while chunk := reader.read(_CHUNK_BYTES):
+                            writer.write(chunk)
+                        writer.flush()
+                        os.fsync(writer.fileno())
                 os.replace(temporary, entry)
             self._evict_idle(keep=entry)
         except OSError:
@@ -143,7 +177,10 @@ class VerifiedDownloadCache:
         cutoff = time.time() - self._max_idle_seconds
         for path in self._root.glob("*/*"):
             try:
-                if path != keep and path.is_file() and path.stat().st_mtime < cutoff:
+                if path == keep or not path.is_file():
+                    continue
+                details = path.stat()
+                if details.st_nlink == 1 and details.st_mtime < cutoff:
                     path.unlink()
             except OSError:
                 pass

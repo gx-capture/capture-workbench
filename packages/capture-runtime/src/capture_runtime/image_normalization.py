@@ -4,6 +4,21 @@ from __future__ import annotations
 
 import math
 
+# OCR enlarges an image only while its enlarged long side stays within this. Enlarging helps
+# a small image; a larger one it only slows. On an RTX 4060 laptop a 1654 x 2339 page took
+# 23 s at 2x and 6 s as is, reading no less (CER 0.26% / 0.20%), and dense 11 px text in a
+# 1080p screenshot read best as is (character recall 0.986; 0.984 at 2x, 0.980 at 1.07x).
+# PDF pages still render at the full scale.
+OCR_MAX_ENLARGED_LONG_SIDE = 2048
+
+
+def ocr_image_scale(width: int, height: int, scale: float) -> float:
+    """The enlargement OCR applies to a width x height image: all of `scale`, or none."""
+
+    if max(width, height) * scale <= OCR_MAX_ENLARGED_LONG_SIDE:
+        return scale
+    return min(scale, 1.0)
+
 
 def bounded_scaled_dimensions(
     width: int,

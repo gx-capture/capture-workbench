@@ -49,6 +49,7 @@ _report_stage("python-import-pillow-complete")
 
 _report_stage("python-import-capture-runtime-start")
 from capture_runtime.engine_adapters import (
+    ReusableOcrSession,
     WindowsMLOcrAdapter,
     _install_offline_aistudio_stubs,
     _install_offline_huggingface_stubs,
@@ -78,6 +79,8 @@ _report_stage("python-import-capture-runtime-complete")
 
 MAX_SOURCE_BYTES = 50 * 1024 * 1024
 _OCR_PIPELINE = OcrPipeline()
+# The last successful run's evidenced pipeline, for this warm worker's next run.
+_reusable_session: ReusableOcrSession | None = None
 
 
 class _WorkerOcrEngineAdapter:
@@ -591,6 +594,8 @@ def _run(
         raise ValueError("OCR runtime SHA-256 is invalid")
     runtime_sha256 = runtime_sha256_value if isinstance(runtime_sha256_value, str) else None
     requested_page_scope = page_numbers
+    global _reusable_session
+    reusable, _reusable_session = _reusable_session, None
     adapter = WindowsMLOcrAdapter(
         model_path,
         execution_plan=compute_plan,
@@ -599,6 +604,7 @@ def _run(
         requested_page_scope=requested_page_scope,
         runtime_sha256=runtime_sha256,
         vertical_reader_dir=vertical_reader_dir,
+        reusable_session=reusable,
     )
     ocr_request = OcrRequest(
         capture_id=source_sha256,
@@ -634,6 +640,8 @@ def _run(
         final_payload["executionProof"] = worker_engine.execution_proof.to_dict()
     if getattr(adapter, "vertical_reader_wanted", False):
         final_payload["suggestedUnits"] = [VERTICAL_READER_REQUIREMENT_ID]
+    reusable_session = getattr(adapter, "reusable_session", None)
+    _reusable_session = reusable_session() if callable(reusable_session) else None
     return final_payload
 
 
@@ -657,4 +665,4 @@ def prepare(request: WorkerRequest) -> None:
 
 
 if __name__ == "__main__":
-    serve(handle, prepare=prepare)
+    serve(handle, prepare=prepare, persistent=True)

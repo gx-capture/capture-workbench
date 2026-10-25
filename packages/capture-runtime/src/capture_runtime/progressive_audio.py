@@ -87,6 +87,8 @@ class ProgressiveSessionEvent:
     segments: tuple[RawCaptureSegment, ...] = ()
     error: CaptureFailureV2 | None = None
     extraction_engine: CaptureEngine | None = None
+    # The capture's progress, which the runtime sets from covered time.
+    progress: float | None = None
 
 
 class ProgressiveAudioSession:

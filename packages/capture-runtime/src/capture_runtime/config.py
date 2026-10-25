@@ -141,6 +141,12 @@ class ExtractionRuntimeConfig:
     whisper_prefer_gpu: bool
     whisper_allow_cpu_fallback: bool = True
     engine_resolution_timeout_seconds: float = 60.0
+    # An idle speech recognition worker keeps its models loaded this long for
+    # the next capture; 0 closes it after each capture.
+    speech_worker_idle_seconds: float = 300.0
+    # An idle OCR worker keeps its DirectML sessions (about 3 GB of GPU memory)
+    # this long for the next capture; 0 starts a worker for each capture.
+    ocr_worker_idle_seconds: float = 120.0
 
 
 def _external_ollama_endpoint(value: str) -> str:
@@ -270,6 +276,12 @@ class RuntimeSettings:
             raise ValueError("Capture extraction limits must be positive")
         if not 0 < engine_resolution_timeout_seconds <= 300:
             raise ValueError("CAPTURE_ENGINE_RESOLUTION_TIMEOUT_SECONDS must be between 0 and 300")
+        speech_worker_idle_seconds = float(env.get("CAPTURE_SPEECH_WORKER_IDLE_SECONDS", "300"))
+        if not 0 <= speech_worker_idle_seconds <= 3600:
+            raise ValueError("CAPTURE_SPEECH_WORKER_IDLE_SECONDS must be between 0 and 3600")
+        ocr_worker_idle_seconds = float(env.get("CAPTURE_OCR_WORKER_IDLE_SECONDS", "120"))
+        if not 0 <= ocr_worker_idle_seconds <= 3600:
+            raise ValueError("CAPTURE_OCR_WORKER_IDLE_SECONDS must be between 0 and 3600")
         if not 1 <= ocr_render_scale <= 4:
             raise ValueError("CAPTURE_OCR_RENDER_SCALE must be between 1 and 4")
 
@@ -294,6 +306,8 @@ class RuntimeSettings:
             whisper_prefer_gpu=_bool(env.get("CAPTURE_WHISPER_PREFER_GPU"), True),
             whisper_allow_cpu_fallback=_bool(env.get("CAPTURE_WHISPER_ALLOW_CPU_FALLBACK"), True),
             engine_resolution_timeout_seconds=engine_resolution_timeout_seconds,
+            speech_worker_idle_seconds=speech_worker_idle_seconds,
+            ocr_worker_idle_seconds=ocr_worker_idle_seconds,
         )
         supported_whisper_models = {"tea-asr-1.1", "tea-asr-1.1-mini"}
         if {

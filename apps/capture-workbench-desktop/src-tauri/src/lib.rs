@@ -1,4 +1,5 @@
 mod commands;
+mod compute;
 mod config;
 mod constants;
 mod contracts;
@@ -25,6 +26,8 @@ macro_rules! desktop_invoke_handler {
     ($($extra:path),* $(,)?) => {
         tauri::generate_handler![
             commands::desktop_runtime_status,
+            commands::desktop_compute_status,
+            commands::desktop_set_prefer_gpu,
             commands::runtime_ready,
             commands::library_import_source,
             commands::library_update_capture,
@@ -111,7 +114,11 @@ pub fn run() {
             #[cfg(feature = "model-smoke-app-data")]
             app.manage(model_smoke_fixtures);
             match resources::resolve_runtime_assets(app) {
-                Ok(assets) => state.start(assets),
+                Ok(assets) => {
+                    // Kept to relaunch the runtime when a setting it reads changes.
+                    app.manage(assets.clone());
+                    state.start(assets);
+                }
                 Err(error) => state.fail(error),
             }
             Ok(())
