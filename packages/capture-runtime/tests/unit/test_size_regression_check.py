@@ -8,6 +8,7 @@ import pytest
 from capture_runtime.constants import RUNTIME_VERSION
 
 MODULE_PATH = Path(__file__).resolve().parents[2] / "scripts" / "size_regression_check.py"
+REPORT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "report_bundle_size.py"
 SPEC = importlib.util.spec_from_file_location("capture_size_regression_check", MODULE_PATH)
 assert SPEC is not None and SPEC.loader is not None
 size_regression_check = importlib.util.module_from_spec(SPEC)
@@ -49,7 +50,7 @@ def valid_report() -> dict[str, object]:
                 "ocr": 0,
                 "other": 0,
                 "pdf": 0,
-                "whisper": 0,
+                "speech-recognition": 0,
             },
             "files": [],
             "topFiles": [],
@@ -63,6 +64,26 @@ def valid_report() -> dict[str, object]:
             "sha256": "a" * 64,
         },
     }
+
+
+def test_report_accepts_the_categories_the_size_report_writes() -> None:
+    # 0.7.0 renamed the report's speech category, but not this checker's.
+    spec = importlib.util.spec_from_file_location("capture_report_bundle_size", REPORT_PATH)
+    assert spec is not None and spec.loader is not None
+    report_bundle_size = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(report_bundle_size)
+    report = valid_report()
+    report["pyinstaller"] = report_bundle_size.pyinstaller_inventory(None) | {"blocker": None}
+
+    size_regression_check.validate_report(report, evidence_budget())
+
+
+def test_report_accepts_a_pre_0_7_candidate_speech_category() -> None:
+    report = valid_report()
+    categories = report["pyinstaller"]["categories"]  # type: ignore[index]
+    categories["whisper"] = categories.pop("speech-recognition")
+
+    size_regression_check.validate_report(report, evidence_budget())
 
 
 def test_budget_requires_exact_declared_headroom() -> None:
