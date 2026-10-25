@@ -57,7 +57,8 @@ boundary and preflight flags `--speech-recognition-*`; stages `speech-*`. Intern
   8 GiB per unit, 10 GiB across the lock).
 - The `whisper-private-reference` fixture keeps its audio but its expected normalized output
   hash still records the Whisper measurement; two identical production TEA runs must replace it.
-- Size budgets must be re-baselined from the measured speech worker parts, installed tree and
-  bundle report before `verify-worker-boundaries` and the size regression checks.
+- Size budgets cover only the runtime executable and the NSIS installer, which hold no worker,
+  so they are unchanged. Worker archives are bounded by the catalog: under 2 GB per part and
+  8 GiB per archive and extracted tree.
 - Consumers that install `whisper-primary` (for example law-prep's AI service) change the id
   when they move to the release that contains this decision.

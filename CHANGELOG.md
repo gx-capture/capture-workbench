@@ -2,30 +2,6 @@
 
 ## Unreleased
 
-### Engine provenance
-
-- Add optional `elapsedMs` and `stageMs` engine provenance fields for speech recognition and speaker diarization, alongside the device that produced the result; total time includes failed CUDA attempts and CPU fallback.
-
-### Breaking changes
-
-- Rename the public runtime requirement from `whisper-primary` to `speech-recognition`; replace Whisper with TEA-ASR-1.1 (CUDA), TEA-ASR-1.1-mini (CPU) and Qwen3 forced alignment. Clients and installed engine catalogs must migrate together.
-
-### Engine packaging
-
-- Publish a worker archive above 1.9 GB as ordered parts (`<archive>.001`, `.002`, ...) so every
-  release asset stays under GitHub's 2 GB limit; the catalog lists each part with its digest, and
-  the installer joins and verifies them. The CUDA speech-recognition worker ships this way, and
-  worker extraction is bounded at 8 GiB.
-- Speaker diarization runs CPU PyTorch again, which keeps its worker small; only speech
-  recognition uses CUDA PyTorch.
-
-### Speaker diarization
-
-- Replace the optional speaker model with NVIDIA Nemotron-3-Diarization under
-  OpenMDW-1.1, using native Transformers offline inference. Preserve GPU preference,
-  bounded CPU fallback, overlapping/exclusive speaker turns and worker isolation.
-  Remove the internal speaker-count option. Model-source lock needs re-approval.
-
 ### Compatibility policy
 
 Capture Workbench follows an explicit 0.x compatibility policy:
@@ -44,6 +20,43 @@ Capture Workbench follows an explicit 0.x compatibility policy:
 
 The consumer consistency check is a permanent CI gate for the declared
 runtime, package lock, Python host, desktop host, and browser host versions.
+
+## 0.7.0
+
+A minor release with breaking changes, which the 0.x policy allows. Clients
+require the same runtime minor, so a 0.7.0 runtime needs 0.7.0 clients, and
+consumers move together. The contract set changes (SHA-256
+`60c622670b00e144b174c210e96773e07e7d94ec7c721b33ac65ff6c722c1d93`): the speech
+requirement is renamed, engine provenance gains timing, and the schemas describe
+PDF page selection. The OCR profile id becomes
+`capture-workbench-ocr-7680a930bb89b381`, since the profile carries the release
+version.
+
+### Breaking changes
+
+- Rename the public runtime requirement from `whisper-primary` to `speech-recognition`; replace Whisper with TEA-ASR-1.1 (CUDA), TEA-ASR-1.1-mini (CPU) and Qwen3 forced alignment. Clients and installed engine catalogs must migrate together.
+- Speech is always transcribed as Chinese (Traditional, Taiwan vocabulary), as the model card
+  recommends; recordings in other languages need another model.
+
+### Speaker diarization
+
+- Replace the optional speaker model with NVIDIA Nemotron-3-Diarization under
+  OpenMDW-1.1, using native Transformers offline inference. Preserve GPU preference,
+  bounded CPU fallback, overlapping/exclusive speaker turns and worker isolation.
+  Remove the internal speaker-count option.
+
+### Engine packaging
+
+- Publish a worker archive above 1.9 GB as ordered parts (`<archive>.001`, `.002`, ...) so every
+  release asset stays under GitHub's 2 GB limit; the catalog lists each part with its digest, and
+  the installer joins and verifies them. The CUDA speech-recognition worker ships this way, and
+  worker extraction is bounded at 8 GiB.
+- Speaker diarization runs CPU PyTorch again, which keeps its worker small; only speech
+  recognition uses CUDA PyTorch.
+
+### Engine provenance
+
+- Add optional `elapsedMs` and `stageMs` engine provenance fields for speech recognition and speaker diarization, alongside the device that produced the result; total time includes failed CUDA attempts and CPU fallback.
 
 ### PDF page selection
 
@@ -68,10 +81,8 @@ runtime, package lock, Python host, desktop host, and browser host versions.
   uploading, and the TypeScript `CaptureUpload` gains `pdfPageNumbers`.
 
 The OCR engine renders the selected pages, so the change reaches users with a
-rebuilt `capture-engine-ocr` artifact. The contract set changes (SHA-256
-`02a67c8bc3ba579944d29751579fa76159ac1134b201559702d72dcbafa50c66`): its
-schemas describe the selection and require positive page numbers, so clients
-need the release that carries it.
+rebuilt `capture-engine-ocr` artifact. The contract schemas describe the
+selection and require positive page numbers.
 
 ## 0.6.3
 

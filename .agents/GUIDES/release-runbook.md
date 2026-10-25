@@ -6,18 +6,6 @@ actually shipped (0.5.1 followed the same steps); workflow files remain the sour
 
 ## Current state
 
-- Unreleased speaker worker: NVIDIA Nemotron-3-Diarization (OpenMDW-1.1),
-  revision `f667ed73aee57d40cc39428eb768b4fd87a0a29e`, with Transformers 5.20.2.
-  Re-approve the changed release model-source lock before publishing; regenerate
-  `uv.lock` and verify the rebuilt packaged diarization worker offline.
-- Unreleased speech recognition: TEA-ASR-1.1 (CUDA) / TEA-ASR-1.1-mini (CPU) with
-  Qwen3-ForcedAligner under the renamed requirement `speech-recognition` (was
-  `whisper-primary`; see `.agents/DECISIONS/speech-recognition-tea-asr.md`). Before
-  publishing: re-approve the lock, re-measure the `whisper-private-reference` output
-  hash, and measure the `capture-engine-speech-recognition` worker sizes. Its archive (about
-  2.95 GB, CUDA PyTorch) is published as parts `.001`, `.002` under 2 GB each; diarization is
-  back on CPU PyTorch.
-
 - Capture Runtime and Workbench **0.5.1** are published: npm
   (`@gx-capture/capture-workbench-ui`, `@gx-capture/capture-runtime-client` on
   GitHub Packages), Maven (`com.gx.capture:capture-runtime-client`, GitHub
@@ -56,6 +44,30 @@ actually shipped (0.5.1 followed the same steps); workflow files remain the sour
   installed OCR worker paths beyond Windows MAX_PATH crash the worker; page
   structure of dense vertical periodical scans and pages that mix directions;
   about a fifth of furigana on textbook pages is not set aside.
+
+## Prepared: 0.7.0 (minor, breaking)
+
+- 0.6.3 is published (GitHub release `v0.6.3`, 2026-10-16).
+- Speech recognition: TEA-ASR-1.1 (CUDA) / TEA-ASR-1.1-mini (CPU) with
+  Qwen3-ForcedAligner-0.6B under the renamed requirement `speech-recognition`
+  (was `whisper-primary`; see `.agents/DECISIONS/speech-recognition-tea-asr.md`).
+- Speaker diarization: NVIDIA Nemotron-3-Diarization (OpenMDW-1.1), revision
+  `f667ed73aee57d40cc39428eb768b4fd87a0a29e`, Transformers 5.20.2, CPU PyTorch.
+- Worker archives: speech recognition about 2.95 GB (CUDA PyTorch), published
+  as parts `.001`, `.002` under 2 GB each; diarization about 315 MB. The size
+  budgets cover only the runtime executable and the NSIS installer, which hold
+  no worker, so they are unchanged.
+- Breaking: contract-set SHA-256 `60c62267…` (0.6.3: `fc8a994e…`). Consumers
+  (Cert Prep; LAW's Java engine and AI service) change `whisper-primary` to
+  `speech-recognition` with the version bump.
+- Model-source Commit A `d4b95bf` (annotated tag
+  `capture-runtime-model-sources-v0.7.0`). The lock (34 files, about 7.5 GB)
+  was approved by the owner on 2026-10-25. OCR profile
+  `capture-workbench-ocr-7680a930bb89b381`.
+- **Open**: the `whisper-private-reference` fixture's expected normalized
+  output hash still records the Whisper measurement. Replace it with two
+  identical production TEA-ASR runs of the private recording
+  (`CAPTURE_PRIVATE_WHISPER_FIXTURE`) before the model candidate is verified.
 
 ## Published: 0.6.3 (patch, Route A then full route)
 
