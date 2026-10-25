@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from capture_runtime import speech_recognition as speech
-from tests.speech_model_fakes import FakeModels, OutOfMemoryError, adapter
+from tests.speech_model_fakes import FakeModels, OutOfMemoryError, _Ids, adapter
 
 
 @pytest.mark.parametrize("device", ["cpu", "cuda"])
@@ -233,6 +233,36 @@ def test_chunk_splitting_covers_audio_and_loop_retry_is_bounded(tmp_path, monkey
     assert "4 chunk(s)" in result.warning
     assert len(result.segments) == 4
     assert [s.start_ms for s in result.segments] == [0, 5000, 10000, 15000]
+
+
+def test_a_repeating_generation_stops_early_and_halves_its_chunk(tmp_path, monkeypatch):
+    # 0.7.1 generated one character 564 times (20 s) before halving a 25 s chunk.
+    fake = FakeModels(monkeypatch)
+    monkeypatch.setattr(speech, "_quiet_point", lambda _a, left, right: (left + right) // 2)
+    fake.runaway = lambda samples: samples > speech.SAMPLE_RATE * 15
+    result = adapter(tmp_path, fake, audio=[0.0] * (speech.SAMPLE_RATE * 20)).transcribe(
+        tmp_path / "source.wav", should_cancel=lambda: False
+    )
+
+    requests = [e[2] for e in fake.events if e[0] == "request"]
+    assert requests[0] == 320000 and len(requests) == 3 and sum(requests[1:]) == 320000
+    assert fake.generated == [speech.LOOP_REPEATS, 3, 3]
+    assert result.warning is None
+    assert len(result.segments) == 2
+
+
+def test_a_pattern_must_repeat_many_times_to_stop_a_generation():
+    loop = speech._LoopStop()
+    tokens = []
+    stopped_at = None
+    # Speech such as "對對對對" repeats a little; a loop repeats until stopped.
+    for index, token in enumerate([5, 5, 5, 5, 6, 7] + [8, 9, 10] * 40):
+        tokens.append(token)
+        if loop(_Ids(tokens)):
+            stopped_at = index + 1
+            break
+    assert stopped_at == 6 + 3 * speech.LOOP_REPEATS
+    assert loop.stopped
 
 
 def test_quiet_point_and_short_tail_padding(tmp_path, monkeypatch):

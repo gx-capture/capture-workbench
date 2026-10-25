@@ -35,6 +35,14 @@ from capture_runtime.worker_stage_policy import (
 SAMPLE_RATE = 16_000
 ASR_CHUNK_SECONDS = 30
 RETRY_MIN_SECONDS = 5
+# A generation whose last LOOP_REPEATS patterns of up to LOOP_MAX_PERIOD tokens are the
+# same is stopped and treated as reaching the length limit. Greedy decoding that starts
+# repeating keeps on until the limit: 0.7.1 generated one character 564 times (20 s) for
+# a 25 s chunk before halving it. The parsed transcript already collapses a character
+# repeated over 20 times, or a pattern repeated 20 times, to one, so stopping later than
+# that changes when the chunk is halved, not what it reads.
+LOOP_REPEATS = 32
+LOOP_MAX_PERIOD = 16
 SENTENCE_ENDINGS = ("。", "！", "？", "!", "?", "；", ";", "…", ".")
 ASR_KEY_MAPPING = {
     r"^thinker\.audio_tower\.proj1\.": "model.multi_modal_projector.linear_1.",
@@ -158,6 +166,29 @@ def _out_of_memory(error: BaseException, torch: Any) -> bool:
         if isinstance(kind, type)
     )
     return bool(kinds) and isinstance(error, kinds)
+
+
+class _LoopStop:
+    """Stopping criterion for one generation: true once its tail repeats one pattern."""
+
+    def __init__(self) -> None:
+        self.tokens: list[int] = []
+        self.stopped = False
+
+    def __call__(self, input_ids: Any, *_args: Any, **_kwargs: Any) -> bool:
+        tokens = self.tokens
+        tokens.append(int(input_ids[0, -1]))
+        for period in range(1, LOOP_MAX_PERIOD + 1):
+            span = period * LOOP_REPEATS
+            if len(tokens) < span:
+                break
+            if (
+                tokens[-1] == tokens[-1 - period]
+                and tokens[-span:] == tokens[-period:] * LOOP_REPEATS
+            ):
+                self.stopped = True
+                return True
+        return False
 
 
 class _Background:
@@ -599,16 +630,17 @@ class TeaAsrAdapter:
                     audio=request, language=self.language
                 ).to(torch.device(device), dtype)
                 limit = int(len(request) / SAMPLE_RATE * 20) + 64
+                loop = _LoopStop()
                 with torch.inference_mode():
                     output = model.generate(
                         **inputs,
                         do_sample=False,
                         max_new_tokens=limit,
-                        stopping_criteria=transformers.StoppingCriteriaList([check_cancel]),
+                        stopping_criteria=transformers.StoppingCriteriaList([check_cancel, loop]),
                     )
                 check_cancel()
                 generated = output[:, inputs["input_ids"].shape[1] :]
-                if generated.shape[1] >= limit:
+                if generated.shape[1] >= limit or loop.stopped:
                     if len(chunk) >= 2 * RETRY_MIN_SECONDS * SAMPLE_RATE:
                         pending.extend(
                             [(start + offset, half) for offset, half in _halve(chunk)][::-1]
