@@ -17,8 +17,13 @@ import pytest
 import capture_runtime.engine_installation as engine_installation_module
 from capture_runtime.clock import SystemClock
 from capture_runtime.config import ExtractionRuntimeConfig
-from capture_runtime.constants import RUNTIME_VERSION
-from capture_runtime.contracts import OcrAdapterClass, OcrComputeMode, OcrComputePreflightV2
+from capture_runtime.constants import MAX_RUNTIME_ARTIFACT_BYTES, RUNTIME_VERSION
+from capture_runtime.contracts import (
+    OcrAdapterClass,
+    OcrComputeMode,
+    OcrComputePreflightV2,
+    RuntimeRequirementsV2,
+)
 from capture_runtime.engine_catalog import EngineCatalog, EngineCatalogError
 from capture_runtime.engine_installation import (
     ArtifactDownloader,
@@ -393,6 +398,87 @@ def test_code_probe_failure_is_wrapped_without_worker_details(tmp_path: Path) ->
         )
     assert "private" not in str(failure.value)
     assert "should-not-escape" not in str(failure.value)
+
+
+class ModelProbeFailureWorkerClient(FakeWorkerClient):
+    async def probe(
+        self,
+        engine: InstalledEngine,
+        *,
+        include_model: bool,
+        options: dict[str, object] | None = None,
+        timeout_seconds: float = 30,
+    ) -> WorkerProbeResult:
+        if include_model:
+            raise WorkerExecutionError("probe_failed: Worker probe failed.")
+        return await super().probe(
+            engine,
+            include_model=include_model,
+            options=options,
+            timeout_seconds=timeout_seconds,
+        )
+
+
+def test_post_install_probe_failure_keeps_the_worker_reason(tmp_path: Path) -> None:
+    catalog, sources = _catalog(tmp_path)
+    manager = EngineInstallationManager(
+        tmp_path / "engines",
+        catalog,
+        worker_client=ModelProbeFailureWorkerClient(),  # type: ignore[arg-type]
+        downloader=CopyDownloader(sources),
+        model_downloader=CopyModelDownloader(sources),
+    )
+
+    with pytest.raises(
+        EngineInstallationError,
+        match="^engine post-install probe failed: probe_failed: Worker probe failed.$",
+    ):
+        asyncio.run(
+            manager.install(
+                "windowsml-ocr",
+                cancel_event=asyncio.Event(),
+                report_progress=lambda _value: None,
+            )
+        )
+    assert manager.active_engine("windowsml-ocr") is None
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="MAX_PATH is a Windows limit")
+def test_worker_beyond_max_path_fails_before_the_model_download(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 0.7.0 downloaded about 10 GB for speech recognition, then its model probe
+    # failed: the worker's native libraries cannot load from beyond MAX_PATH.
+    catalog, sources = _catalog(tmp_path)
+    worker = FakeWorkerClient()
+    model_downloader = CopyModelDownloader(sources)
+    root = tmp_path / "engines"
+    manager = EngineInstallationManager(
+        root,
+        catalog,
+        worker_client=worker,  # type: ignore[arg-type]
+        downloader=CopyDownloader(sources),
+        model_downloader=model_downloader,
+    )
+    installed = root / "windowsml-ocr" / "versions" / "engine-1" / "worker"
+    installed /= "capture-engine-test.exe"
+    monkeypatch.setattr(
+        engine_installation_module, "MAX_WORKER_FILE_PATH_CHARACTERS", len(str(installed)) - 1
+    )
+
+    with pytest.raises(
+        EngineInstallationError, match=f"reach {len(str(installed))} characters, beyond Windows"
+    ):
+        asyncio.run(
+            manager.install(
+                "windowsml-ocr",
+                cancel_event=asyncio.Event(),
+                report_progress=lambda _value: None,
+            )
+        )
+    assert model_downloader.calls == 0
+    assert worker.probes == []
+    assert manager.active_engine("windowsml-ocr") is None
 
 
 def test_engine_installation_is_atomic_offline_ready_and_idempotent(
@@ -1068,6 +1154,50 @@ def test_core_only_catalog_reports_models_unavailable_without_downloading(
         )
     assert worker_downloader.calls == 0
     assert model_downloader.calls == 0
+
+
+@pytest.mark.parametrize("shape", ["parts", "oversized"])
+def test_requirements_list_a_worker_the_contract_cannot_describe_without_an_artifact(
+    tmp_path: Path, shape: str
+) -> None:
+    # 0.7.0 answered 500 for every requirement: the speech worker ships as parts of 2.95 GB.
+    payload = _catalog(tmp_path)[0].to_dict()
+    worker = payload["requirements"][0]["artifacts"][0]
+    if shape == "parts":
+        del worker["url"]
+        worker["bytes"] = 2_954_313_000
+        worker["parts"] = [
+            {
+                "fileName": f"{worker['fileName']}.{index:03d}",
+                "bytes": size,
+                "sha256": str(index) * 64,
+                "url": f"https://downloads.example.test/{worker['fileName']}.{index:03d}",
+            }
+            for index, size in ((1, 1_900_000_000), (2, 1_054_313_000))
+        ]
+    else:
+        worker["bytes"] = MAX_RUNTIME_ARTIFACT_BYTES + 1
+    manager = EngineInstallationManager(
+        tmp_path / "engines",
+        EngineCatalog.from_dict(payload),
+        worker_client=FakeWorkerClient(),  # type: ignore[arg-type]
+        downloader=CopyDownloader({}, fail=True),
+        model_downloader=CopyModelDownloader({}),
+    )
+    installer = SystemRuntimeInstaller(
+        _Lifecycle(_LifecycleConfig(tmp_path / "app-data")),  # type: ignore[arg-type]
+        engine_manager=manager,
+        clock=SystemClock(),
+        enabled_requirement_ids={"windowsml-ocr", "speech-recognition"},
+    )
+
+    items = installer.requirements()
+
+    requirements = {item.requirement_id: item for item in items}
+    assert requirements["windowsml-ocr"].status.value == "installable"
+    assert requirements["windowsml-ocr"].artifact is None
+    assert requirements["speech-recognition"].status.value == "unavailable"
+    RuntimeRequirementsV2(items=items)
 
 
 def test_system_installer_passes_nonzero_directml_device_to_model_probe(tmp_path: Path) -> None:

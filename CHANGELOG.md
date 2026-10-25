@@ -21,6 +21,44 @@ Capture Workbench follows an explicit 0.x compatibility policy:
 The consumer consistency check is a permanent CI gate for the declared
 runtime, package lock, Python host, desktop host, and browser host versions.
 
+## 0.7.1
+
+A patch release that makes 0.7.0's speech recognition usable from a host.
+Clients still require the exact runtime version, so a 0.7.1 runtime needs 0.7.1
+clients; the contract set hash (`60c62267…`) and the capture document schema
+are unchanged, so moving a consumer from 0.7.0 is a version bump. The OCR
+profile id becomes `capture-workbench-ocr-e012547f1f9da4da`, since the profile
+carries the release version.
+
+### Speech recognition
+
+Found by driving the published 0.7.0 runtime the way LAW's AI service does:
+list the requirements, install speech recognition and speaker identification
+through the API, then transcribe.
+
+- `GET /v2/runtime/requirements` answered 500 for every host, so nothing could
+  be installed. The speech recognition worker ships as two parts of 2.95 GB,
+  which the public artifact descriptor (one URL, at most 512 MiB) cannot
+  describe. Such a requirement now carries no `artifact`, like a models-only
+  unit, and installs from the runtime's catalog as before.
+- Every capture failed while loading the speech model ("session failed at
+  OSError"). Engine workers did not receive `USERNAME`, and PyTorch names its
+  compile cache after it when Transformers loads a model.
+- A capture with speakers timed out after 15 minutes while loading the speech
+  model. The worker's cancellation listener held a blocked read of stdin, which
+  on Windows holds a lock that the model load waited on. The listener now waits
+  without a pending read; cancelling still stops a worker cooperatively.
+- An install whose worker files would land beyond Windows MAX_PATH (a long
+  `CAPTURE_APP_DATA_DIR`) failed only after about 10 GB had downloaded, as a
+  bare "installation failed". It now stops before the model download and names
+  the path length; a failed post-install probe keeps the worker's reason.
+- Progressive transcriptions report `elapsedMs` and `stageMs` for the whole
+  recording; they reported none.
+
+The fixes are in the runtime and in rebuilt speech recognition and speaker
+diarization workers. The release consumer smoke now reads the packaged
+runtime's requirements, which would have caught the first defect.
+
 ## 0.7.0
 
 A minor release with breaking changes, which the 0.x policy allows. Clients

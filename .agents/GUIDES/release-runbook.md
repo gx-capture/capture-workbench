@@ -45,8 +45,40 @@ actually shipped (0.5.1 followed the same steps); workflow files remain the sour
   structure of dense vertical periodical scans and pages that mix directions;
   about a fifth of furigana on textbook pages is not set aside.
 
-## Prepared: 0.7.0 (minor, breaking)
+## Prepared: 0.7.1 (patch)
 
+- 0.7.0 could not be used from a host. LAW found `GET /v2/runtime/requirements`
+  answering 500. Driving the published runtime through the API with the
+  published Python client then found three more defects; all four are fixed
+  here (see the changelog):
+  - the parted speech worker cannot be described by the artifact descriptor;
+  - workers lacked `USERNAME`;
+  - a blocked stdin read in the worker server stalled model loading;
+  - an install beyond MAX_PATH failed only after the downloads.
+- Verified before release:
+  - The fixed runtime, with the published 0.7.0 catalog and workers, lists its
+    requirements, installs speech recognition (140 s) and speaker
+    identification (109 s) from the release assets and Hugging Face, and
+    transcribes a 30 s recording on CUDA with `tea-asr-1.1`.
+  - Locally built 0.7.1 workers, run through the runtime's `WorkerClient` as a
+    capture with speakers does, load and transcribe instead of hanging.
+- Compatible with 0.7.x clients. Contract-set SHA-256 unchanged (`60c62267…`);
+  capture document schema unchanged (`5452631c…`). Model-source Commit A
+  `61c7ecd` (annotated tag `capture-runtime-model-sources-v0.7.1`). The lock
+  pins the same models as 0.7.0, and its approval record is unchanged. OCR
+  profile `capture-workbench-ocr-e012547f1f9da4da`.
+- Hosts: keep `CAPTURE_APP_DATA_DIR` to about 130 characters. The speech
+  worker's longest DLL path is 78 characters below its install folder.
+- **Open**: as for 0.7.0, the `whisper-private-reference` expected output hash.
+
+## Published through Route A: 0.7.0 (minor, breaking)
+
+- Published on 2026-10-25 through Route A only: npm, Maven, PyPI, crates.io and
+  GitHub release `v0.7.0` (runtime exe `0fefcce9…`; speech recognition worker
+  as parts `.001`/`.002`, diarization, OCR). Not usable from a host; see 0.7.1.
+- Runs: package candidate 40153882801, runtime candidate 40154057525
+  (`model-enabled`), package promote 40155316510, runtime promote 40155490467
+  (`registries`). Source commit `cd3c805` (merge of PR #106).
 - 0.6.3 is published (GitHub release `v0.6.3`, 2026-10-16).
 - Speech recognition: TEA-ASR-1.1 (CUDA) / TEA-ASR-1.1-mini (CPU) with
   Qwen3-ForcedAligner-0.6B under the renamed requirement `speech-recognition`

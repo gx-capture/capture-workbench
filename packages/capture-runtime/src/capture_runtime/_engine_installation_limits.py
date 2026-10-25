@@ -16,6 +16,9 @@ FILES_MANIFEST_NAME = "files-manifest.json"
 # A manifest entry takes about 190 bytes, so this admits MAX_ARCHIVE_FILES
 # entries with long paths.
 MAX_FILES_MANIFEST_BYTES = 4 * 1024 * 1024
+# Windows loads a DLL only from a path shorter than MAX_PATH, even with long
+# paths enabled, so an installed worker file must fit in 259 characters.
+MAX_WORKER_FILE_PATH_CHARACTERS = 259
 DOWNLOAD_CHUNK_BYTES = 1024 * 1024
 # Artifacts at least this large download as concurrent byte ranges when the
 # host supports them; release CDNs throttle each connection.

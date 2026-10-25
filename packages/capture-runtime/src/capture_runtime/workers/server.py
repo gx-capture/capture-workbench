@@ -6,6 +6,7 @@ import json
 import os
 import sys
 import threading
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -21,6 +22,7 @@ from capture_runtime.worker_contracts import (
 WorkerProgressReporter = Callable[[dict[str, Any]], None]
 WorkerHandler = Callable[[WorkerRequest, threading.Event, WorkerProgressReporter], dict[str, Any]]
 WorkerPreparer = Callable[[WorkerRequest], None]
+INPUT_POLL_SECONDS = 0.05
 
 
 def _write(response: WorkerResponse) -> None:
@@ -70,6 +72,34 @@ def _failure(request_id: str, code: str, message: str, *, retryable: bool) -> No
             error=WorkerError(code, message[:500], retryable),
         )
     )
+
+
+def _wait_for_input() -> bool:
+    """Wait until stdin has data without a pending read; False once the pipe is closed.
+
+    On Windows a blocked read of stdin holds the C runtime's lock on that file
+    descriptor, and any other use of it waits. Loading TEA-ASR's processor and
+    model hung that way beside a cancellation listener blocked in readline.
+    """
+
+    if os.name != "nt":
+        return True
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+
+    try:
+        handle = msvcrt.get_osfhandle(sys.stdin.fileno())
+    except (OSError, ValueError):
+        return False
+    available = wintypes.DWORD()
+    peek = ctypes.windll.kernel32.PeekNamedPipe
+    while True:
+        if not peek(wintypes.HANDLE(handle), None, 0, None, ctypes.byref(available), None):
+            return False
+        if available.value:
+            return True
+        time.sleep(INPUT_POLL_SECONDS)
 
 
 def serve(handler: WorkerHandler, *, prepare: WorkerPreparer | None = None) -> None:
@@ -129,6 +159,8 @@ def serve(handler: WorkerHandler, *, prepare: WorkerPreparer | None = None) -> N
 
     def listen_for_cancellation() -> None:
         while True:
+            if not _wait_for_input():
+                return
             line = sys.stdin.buffer.readline(MAX_WORKER_INPUT_BYTES + 2)
             if not line:
                 return

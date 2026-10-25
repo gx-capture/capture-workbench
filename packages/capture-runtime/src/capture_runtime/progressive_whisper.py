@@ -8,7 +8,7 @@ from collections.abc import Iterable
 from pathlib import Path
 
 from capture_runtime.contracts import CaptureEngine
-from capture_runtime.engine_adapters import WhisperAdapter, WhisperTranscriptionResult
+from capture_runtime.engine_adapters import WhisperAdapter
 from capture_runtime.progressive_audio import (
     DecodedAudioWindow,
     ProgressiveAudioSession,
@@ -33,6 +33,9 @@ class SpeechRecognitionWindowTranscriber:
         self.adapter = adapter
         self.temp_dir = temp_dir
         self.sample_rate = sample_rate
+        # Provenance times the whole recording, so add up every window.
+        self._elapsed_ms = 0
+        self._stage_ms: dict[str, int] = {}
 
     def transcribe(self, window: DecodedAudioWindow) -> WhisperWindowResult:
         self.temp_dir.mkdir(parents=True, exist_ok=True)
@@ -54,12 +57,22 @@ class SpeechRecognitionWindowTranscriber:
                 should_cancel=lambda: False,
                 allow_empty_output=True,
             )
+            self._elapsed_ms += result.elapsed_ms or 0
+            for stage, milliseconds in (result.stage_ms or {}).items():
+                self._stage_ms[stage] = self._stage_ms.get(stage, 0) + milliseconds
             return WhisperWindowResult(
                 segments=tuple(
                     WhisperWindowSegment(item.start_ms, item.end_ms, item.text)
                     for item in result.segments
                 ),
-                extraction_engine=_engine_from_result(result),
+                extraction_engine=CaptureEngine(
+                    engine="speech-recognition",
+                    model=result.model,
+                    digest=result.digest,
+                    device=result.device,
+                    elapsed_ms=self._elapsed_ms if result.elapsed_ms is not None else None,
+                    stage_ms=dict(self._stage_ms) or None,
+                ),
                 warnings=(result.warning,) if result.warning else (),
             )
         finally:
@@ -108,15 +121,6 @@ class ProgressiveWhisperWorkerBackend:
                 error=event.error,
                 extraction_engine=self.session.extraction_engine,
             )
-
-
-def _engine_from_result(result: WhisperTranscriptionResult) -> CaptureEngine:
-    return CaptureEngine(
-        engine="speech-recognition",
-        model=result.model,
-        digest=result.digest,
-        device=result.device,
-    )
 
 
 __all__ = [

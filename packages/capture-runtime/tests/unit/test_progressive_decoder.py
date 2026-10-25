@@ -140,3 +140,34 @@ def test_progressive_whisper_adapter_cleans_window_and_preserves_provenance(
     assert result.extraction_engine.model == "tea-asr-1.1-mini"
     assert result.extraction_engine.device == "cpu"
     assert not list(tmp_path.glob("capture-progressive-window-*.wav"))
+
+
+class TimedWhisper:
+    """Loads its model in the first window only, like the TEA-ASR adapter."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def transcribe(self, source_path: Path, *, should_cancel, **_kwargs):
+        self.calls += 1
+        first = self.calls == 1
+        return WhisperTranscriptionResult(
+            segments=(WhisperTextSegment(0, 100, "window text"),),
+            duration_ms=100,
+            device="cuda",
+            model="tea-asr-1.1",
+            digest=f"sha256:{'c' * 64}",
+            elapsed_ms=900 if first else 300,
+            stage_ms={"modelLoad": 600, "transcription": 300} if first else {"transcription": 300},
+        )
+
+
+def test_progressive_whisper_adapter_times_the_whole_recording(tmp_path: Path) -> None:
+    transcriber = SpeechRecognitionWindowTranscriber(TimedWhisper(), temp_dir=tmp_path)
+    window = DecodedAudioWindow(0, 100, b"\x00\x00" * 100)
+
+    transcriber.transcribe(window)
+    engine = transcriber.transcribe(window).extraction_engine
+
+    assert engine.elapsed_ms == 1200
+    assert engine.stage_ms == {"modelLoad": 600, "transcription": 600}

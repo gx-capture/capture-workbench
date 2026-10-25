@@ -14,6 +14,7 @@ from capture_runtime.contracts import OcrAdapterClass, OcrComputeMode
 from capture_runtime.worker_client import InstalledEngine, OcrWorkerFailure, WorkerClient
 from capture_runtime.worker_contracts import WorkerProtocolError, WorkerResponse
 from capture_runtime.worker_process import (
+    WORKER_CANCEL_GRACE_SECONDS,
     WorkerCancelledError,
     WorkerExecutionError,
     WorkerProcess,
@@ -1534,6 +1535,49 @@ def test_worker_server_runs_native_handler_on_main_thread() -> None:
             "operation": "run",
             "preparedOnMainThread": True,
         }
+        assert owner.active_process_count == 0
+
+    asyncio.run(run())
+
+
+def test_worker_server_run_leaves_stdin_free_for_native_libraries() -> None:
+    # 0.7.0's speech worker hung loading TEA-ASR: the cancellation listener's
+    # blocked read held the C runtime's lock on stdin.
+    owner = WorkerProcess()
+
+    async def run() -> None:
+        response = await owner.request(
+            SERVER_WORKER, "run", {"mode": "stdin-free"}, timeout_seconds=10
+        )
+        assert response.result == {"stdinFree": True}
+
+    asyncio.run(run())
+
+
+def test_worker_server_still_cancels_cooperatively() -> None:
+    owner = WorkerProcess()
+
+    async def run() -> None:
+        cancellation = asyncio.Event()
+        waiting = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        task = asyncio.create_task(
+            owner.request(
+                SERVER_WORKER,
+                "run",
+                {"mode": "cancel"},
+                cancel_event=cancellation,
+                progress_handler=lambda _payload: loop.call_soon_threadsafe(waiting.set),
+                timeout_seconds=10,
+            )
+        )
+        await asyncio.wait_for(waiting.wait(), timeout=10)
+        started = loop.time()
+        cancellation.set()
+        with pytest.raises(WorkerCancelledError):
+            await task
+        # The worker saw the cancel line; it was not stopped after the grace period.
+        assert loop.time() - started < WORKER_CANCEL_GRACE_SECONDS
         assert owner.active_process_count == 0
 
     asyncio.run(run())

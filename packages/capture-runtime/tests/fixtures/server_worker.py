@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import threading
 
 from capture_runtime.worker_contracts import WorkerRequest
@@ -25,6 +26,17 @@ def handle(
             "adapterClass": "dedicated",
             "userNoticeRequired": False,
         }
+    if request.operation == "run" and request.payload.get("mode") == "stdin-free":
+        # A native library touching stdin mid-run must not wait on the listener.
+        done = threading.Event()
+        threading.Thread(target=lambda: (os.close(os.dup(0)), done.set()), daemon=True).start()
+        return {"stdinFree": done.wait(2)}
+    if request.operation == "run" and request.payload.get("mode") == "cancel":
+        assert callable(progress)
+        progress({"type": "waiting-for-cancel"})
+        if _cancellation.wait(5):
+            raise InterruptedError
+        return {"cancelled": False}
     if request.operation == "run" and request.payload.get("mode") == "progress":
         assert callable(progress)
         progress({"type": "progress-fixture", "completed": 1})
