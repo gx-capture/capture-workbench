@@ -88,8 +88,11 @@
             [attr.data-status]="installation.status"
             aria-live="polite"
           >
-            <strong>{{ installation.status === 'completed' ? m().installDone : installation.status === 'failed' ? m().installFailed : m().installRunning }}</strong>
-            <span>{{ installation.progress * 100 }}%</span>
+            <div class="model-install-progress-heading">
+              <strong>{{ installation.status === 'completed' ? m().installDone : installation.status === 'failed' ? m().installFailed : m().installRunning }}</strong>
+              <span>{{ store.installationPercent() }}%</span>
+            </div>
+            <progress max="100" [value]="store.installationPercent()" [attr.aria-label]="m().installProgress"></progress>
             @if (installation.error; as error) {
               <small data-testid="runtime-install-error">{{ error.code }}: {{ error.message }}</small>
             }

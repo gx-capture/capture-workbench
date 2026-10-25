@@ -16,11 +16,11 @@ nav { display: grid; gap: .35rem; } nav span { display: flex; justify-content: s
 .streaming-partial { border: 1px solid #b8c9bd; padding: .75rem; background: #f0f4ee; }.streaming-partial-heading { display: flex; align-items: baseline; justify-content: space-between; gap: .75rem; }.streaming-partial-heading h3 { margin-bottom: 0; }.streaming-partial pre { max-height: 10rem; padding: .65rem; border-left-color: #23865e; }
 @media (max-width: 1050px) { .workbench-shell { grid-template-columns: 13rem minmax(0, 1fr); }.library-rail { grid-row: 1 / -1; }.detail-pane { grid-column: 2; border-top: 1px solid #d6d1c3; }.detail-empty { min-height: 18rem; }.workspace { border-right: 0; } }
 @media (max-width: 700px) { .workbench-shell { display: block; }.library-rail { min-height: auto; padding: 1rem; }.library-rail nav { grid-template-columns: 1fr 1fr; }.rail-footer { display: none; }.workspace,.detail-pane { padding: 1.4rem; }.topbar,.section-heading,.setup-card { flex-direction: column; }.section-heading > p { text-align: left; }.setup-card { align-items: stretch; }.setup-card > [mat-flat-button] { align-self: stretch; }.intake-hint { display: block; margin: .65rem 0 0; }.intake [mat-flat-button] { width: 100%; }.document-card { grid-template-columns: 2.5rem minmax(0, 1fr); }.document-card .status { grid-column: 2; justify-self: start; }.stage-line { font-size: .5rem; } }
-.model-install-progress { display: grid; gap: .45rem; min-width: min(22rem, 100%); margin-top: .75rem; padding: .8rem; color: #426158; background: #f0f2e8; border: 1px solid #d4dcca; }
+.model-install-progress, .runtime-install-progress { display: grid; gap: .45rem; min-width: min(22rem, 100%); margin-top: .75rem; padding: .8rem; color: #426158; background: #f0f2e8; border: 1px solid #d4dcca; }
 .model-install-progress-heading { display: flex; justify-content: space-between; gap: .75rem; font-size: .78rem; }
 .model-install-progress-heading span { font: 800 .72rem var(--mono); }
-.model-install-progress progress { width: 100%; height: .55rem; accent-color: #23865e; }
-.model-install-progress small { color: #64726a; line-height: 1.45; }
+.model-install-progress progress, .runtime-install-progress progress { width: 100%; height: .55rem; accent-color: #23865e; }
+.model-install-progress small, .runtime-install-progress small { color: #64726a; line-height: 1.45; }
 .setup-card { flex-wrap: wrap; }
 .setup-card > div:first-child { flex: 1 1 22rem; min-width: 0; }
 .setup-status { margin: .45rem 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

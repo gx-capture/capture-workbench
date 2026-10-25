@@ -32,6 +32,7 @@ export interface DesktopMessages {
   readonly installDone: string;
   readonly installFailed: string;
   readonly installRunning: string;
+  readonly installProgress: string;
   readonly model: string;
   readonly downloadingModel: string;
   readonly agreeAndDownloadModel: string;
@@ -127,6 +128,7 @@ const ZH_TW: DesktopMessages = {
   installDone: '安裝完成',
   installFailed: '安裝失敗',
   installRunning: '正在安裝',
+  installProgress: '安裝進度',
   model: '模型',
   downloadingModel: '下載模型中…',
   agreeAndDownloadModel: '同意並下載模型',
@@ -244,6 +246,7 @@ const EN: DesktopMessages = {
   installDone: 'Installed',
   installFailed: 'Installation failed',
   installRunning: 'Installing',
+  installProgress: 'Installation progress',
   model: 'Model',
   downloadingModel: 'Downloading model…',
   agreeAndDownloadModel: 'Agree and download model',

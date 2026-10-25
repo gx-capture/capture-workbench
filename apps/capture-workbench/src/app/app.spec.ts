@@ -5,6 +5,7 @@ import { provideNoopAnimations } from '@angular/platform-browser/animations';
 import type {
   OcrComputePreflight,
   RawCapture,
+  RuntimeInstallation,
   RuntimeModelInstallation,
   RuntimeModelOption,
 } from '@gx-capture/capture-workbench-ui';
@@ -95,6 +96,32 @@ describe('App', () => {
       });
     }),
   );
+
+  it('shows a component installation as a rounded progress bar', async () => {
+    const store = workspaceStub();
+    store.state.set('needs-setup');
+    store.activeInstallation.set({
+      installationId: 'installation-1',
+      requirementId: 'speech-recognition',
+      status: 'running',
+      progress: 1 / 3,
+      createdAt: '2026-10-25T00:00:00Z',
+      updatedAt: '2026-10-25T00:00:00Z',
+    });
+    store.installationPercent.set(33);
+    await TestBed.configureTestingModule({
+      imports: [App],
+      providers: [provideNoopAnimations(), { provide: DesktopWorkspaceStore, useValue: store }],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(App);
+    fixture.detectChanges();
+
+    const progress = fixture.nativeElement.querySelector(
+      '[data-testid="runtime-install-progress"]',
+    ) as HTMLElement;
+    expect(progress.textContent).toContain('33%');
+    expect(progress.querySelector('progress')?.getAttribute('value')).toBe('33');
+  });
 
   it('shows visible model download progress and phase while the selected model installs', async () => {
     const store = workspaceStub(null, {
@@ -359,7 +386,8 @@ function workspaceStub(selected: unknown = null, modelInstallation: RuntimeModel
     query: signal(''),
     statusFilter: signal(''),
     installing: signal(false),
-    activeInstallation: signal(null),
+    activeInstallation: signal<RuntimeInstallation | null>(null),
+    installationPercent: signal(0),
     activeModelInstallation: signal<RuntimeModelInstallation | null>(modelInstallation),
     modelInstallationPhase: signal(''),
     modelInstallationPercent: signal(0),

@@ -28,6 +28,7 @@ import { DesktopWorkspaceInstallationService } from './desktop-workspace-install
 import {
   activeModelOption as selectActiveModelOption,
   errorMessage,
+  installationPercent,
   isAudioMediaType,
   modelInstallationPercent,
   modelInstallationPhase,
@@ -60,6 +61,8 @@ export class DesktopWorkspaceStore {
   readonly installing = this.installation.installing;
   readonly activeInstallation = this.installation.activeInstallation;
   readonly activeModelInstallation = this.installation.activeModelInstallation;
+  readonly installationPercent = computed(() =>
+    installationPercent(this.activeInstallation()));
   readonly modelInstallationPercent = computed(() =>
     modelInstallationPercent(this.activeModelInstallation()));
   readonly modelInstallationPhase = computed(() =>
