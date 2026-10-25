@@ -309,12 +309,8 @@ def _session() -> None:
     temp_dir = Path(os.environ.get("CAPTURE_SESSION_TEMP_DIR", ""))
     if not model_path.is_absolute() or not model_path.is_dir() or not temp_dir.is_absolute():
         raise ValueError("Speech recognition session paths are invalid")
-    source = CaptureSource(
-        sha256=os.environ["CAPTURE_SESSION_SOURCE_SHA256"],
-        file_name=os.environ["CAPTURE_SESSION_FILE_NAME"],
-        media_type=os.environ["CAPTURE_SESSION_MEDIA_TYPE"],
-        bytes=int(os.environ["CAPTURE_SESSION_SOURCE_BYTES"]),
-    )
+    # One adapter for the worker's life: a warm worker serves several captures
+    # with its models loaded.
     adapter = TeaAsrAdapter(
         model_path,
         primary_model="primary",
@@ -327,16 +323,24 @@ def _session() -> None:
         stage_reporter=_report_stage,
     )
     _import_speech_runtime()
-    decoder = DirectWindowDecoder()
-    session = ProgressiveAudioSession(
-        source,
-        capture_id=os.environ["CAPTURE_SESSION_ID"],
-        decoder=decoder,
-        transcriber=SpeechRecognitionWindowTranscriber(adapter, temp_dir=temp_dir),
-        clock=SystemClock(),
-    )
+
+    def new_session(metadata: dict[str, Any]) -> ProgressiveAudioSession:
+        source = metadata["source"]
+        return ProgressiveAudioSession(
+            CaptureSource(
+                sha256=source["sha256"],
+                file_name=source["fileName"],
+                media_type=source["mediaType"],
+                bytes=source["bytes"],
+            ),
+            capture_id=metadata["sessionId"],
+            decoder=DirectWindowDecoder(),
+            transcriber=SpeechRecognitionWindowTranscriber(adapter, temp_dir=temp_dir),
+            clock=SystemClock(),
+        )
+
     serve_session(
-        ProgressiveWhisperWorkerBackend(session),
+        ProgressiveWhisperWorkerBackend(new_session),
         failure_context=_last_worker_stage,
     )
 

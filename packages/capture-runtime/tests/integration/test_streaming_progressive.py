@@ -4,12 +4,14 @@ import asyncio
 import hashlib
 import json
 import struct
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
 from capture_runtime.clock import Clock
+from capture_runtime.config import ExtractionRuntimeConfig
 from capture_runtime.contracts import (
     CaptureEngine,
     CaptureSource,
@@ -25,9 +27,11 @@ from capture_runtime.contracts import (
 from capture_runtime.extractors import DeterministicCaptureExtractor
 from capture_runtime.progressive_audio import DecodedAudioWindow, ProgressiveSessionEvent
 from capture_runtime.progressive_capture import (
+    ProgressiveCaptureProcessor,
     _ProgressiveState,
     _session_worker_launch,
     _SessionWorker,
+    _worker_key,
 )
 from capture_runtime.progressive_decoder import ProgressiveDecoderError
 from capture_runtime.services import StreamingCaptureService
@@ -35,6 +39,7 @@ from capture_runtime.storage import StreamingRepository
 from capture_runtime.structuring import StructuringValidationError
 from capture_runtime.structuring_provider import FakeCaptureStructuringProvider
 from capture_runtime.whisper_session import SessionFrameType
+from capture_runtime.worker_client import InstalledEngine
 
 
 def test_progressive_worker_launch_strips_windows_extended_path_prefix(
@@ -45,6 +50,102 @@ def test_progressive_worker_launch_strips_windows_extended_path_prefix(
 
     assert command == [r"C:\capture-workbench\runtime\worker.exe", "session"]
     assert cwd == r"C:\capture-workbench\runtime"
+
+
+class _FakeSessionWorker:
+    def __init__(self) -> None:
+        self.alive = True
+        self.closed = False
+
+    async def close(self) -> None:
+        self.alive = False
+        self.closed = True
+
+
+def _warm_processor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, idle: float
+) -> tuple[ProgressiveCaptureProcessor, list[_FakeSessionWorker]]:
+    spawned: list[_FakeSessionWorker] = []
+
+    async def start(*, engine, config):
+        spawned.append(_FakeSessionWorker())
+        return spawned[-1]
+
+    monkeypatch.setattr(_SessionWorker, "start", start)
+    config = ExtractionRuntimeConfig(
+        windowsml_model_dir=tmp_path / "windowsml",
+        whisper_models_dir=tmp_path / "whisper",
+        temp_dir=tmp_path / "temp",
+        max_pdf_pages=10,
+        max_image_pixels=100_000,
+        ocr_render_scale=2,
+        max_audio_duration_ms=60_000,
+        whisper_primary_model="tea-asr-1.1",
+        whisper_fallback_model="tea-asr-1.1-mini",
+        whisper_prefer_gpu=True,
+        speech_worker_idle_seconds=idle,
+    )
+    processor = ProgressiveCaptureProcessor(
+        clock=FixedClock(),
+        config=config,
+        engine_manager=None,  # type: ignore[arg-type]
+        staging_root=tmp_path,
+    )
+    return processor, spawned
+
+
+def _engine(tmp_path: Path, name: str = "speech") -> InstalledEngine:
+    return InstalledEngine(
+        requirement_id="speech-recognition",
+        artifact_version="0.7.2",
+        executable=tmp_path / name / "capture-engine-speech-recognition.exe",
+        model_dir=tmp_path / name / "model",
+        worker_sha256="b" * 64,
+    )
+
+
+def test_a_completed_capture_leaves_its_worker_warm_for_the_next(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def scenario() -> None:
+        processor, spawned = _warm_processor(tmp_path, monkeypatch, idle=60)
+        engine = _engine(tmp_path)
+        first = await processor._acquire(engine)
+        await processor._park(_worker_key(engine, processor.config), first)  # type: ignore[arg-type]
+
+        assert await processor._acquire(engine) is first
+        assert len(spawned) == 1 and not first.closed  # type: ignore[union-attr]
+
+        await processor._park(_worker_key(engine, processor.config), first)  # type: ignore[arg-type]
+        other = await processor._acquire(_engine(tmp_path, "upgraded"))
+        assert first.closed  # type: ignore[union-attr]
+        assert other is spawned[1]
+        await processor.shutdown()
+
+    asyncio.run(scenario())
+
+
+def test_a_warm_worker_closes_when_idle_released_or_disabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def scenario() -> None:
+        processor, spawned = _warm_processor(tmp_path, monkeypatch, idle=0.01)
+        engine = _engine(tmp_path)
+        key = _worker_key(engine, processor.config)
+        await processor._park(key, await processor._acquire(engine))  # type: ignore[arg-type]
+        await asyncio.sleep(0.1)
+        assert spawned[0].closed and processor._warm is None
+
+        processor.config = replace(processor.config, speech_worker_idle_seconds=60)
+        await processor._park(key, await processor._acquire(engine))  # type: ignore[arg-type]
+        await processor.release_warm_worker()
+        assert spawned[1].closed and processor._warm is None
+
+        processor.config = replace(processor.config, speech_worker_idle_seconds=0)
+        await processor._park(key, await processor._acquire(engine))  # type: ignore[arg-type]
+        assert spawned[2].closed and processor._warm is None
+
+    asyncio.run(scenario())
 
 
 def test_progressive_state_reorders_segments_from_overlapping_worker_events() -> None:

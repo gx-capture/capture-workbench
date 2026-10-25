@@ -98,12 +98,18 @@ def test_session_server_emits_heartbeat_while_window_transcription_is_running() 
         encode_control(
             SessionFrameType.START,
             {
-                "protocolVersion": "2",
+                "protocolVersion": "3",
                 "sessionId": "session-1",
                 "sampleRate": 16_000,
                 "channels": 1,
                 "windowMs": 120_000,
                 "overlapMs": 30_000,
+                "source": {
+                    "sha256": "a" * 64,
+                    "fileName": "sample.wav",
+                    "mediaType": "audio/wav",
+                    "bytes": 1_000,
+                },
             },
         )
         + encode_credit(1)
@@ -142,12 +148,18 @@ def test_session_server_reads_short_final_pipe_chunk_without_waiting_for_eof() -
         encode_control(
             SessionFrameType.START,
             {
-                "protocolVersion": "2",
+                "protocolVersion": "3",
                 "sessionId": "session-read1",
                 "sampleRate": 16_000,
                 "channels": 1,
                 "windowMs": 120_000,
                 "overlapMs": 30_000,
+                "source": {
+                    "sha256": "a" * 64,
+                    "fileName": "sample.wav",
+                    "mediaType": "audio/wav",
+                    "bytes": 1_000,
+                },
             },
         )
         + encode_credit(1)

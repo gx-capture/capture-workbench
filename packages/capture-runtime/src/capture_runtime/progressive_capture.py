@@ -41,6 +41,7 @@ from capture_runtime.progressive_audio import (
 )
 from capture_runtime.progressive_decoder import ProgressiveDecoderError, PyAVIncrementalDecoder
 from capture_runtime.whisper_session import (
+    SESSION_PROTOCOL_VERSION,
     SessionFrameType,
     encode_audio_input,
     encode_control,
@@ -159,8 +160,30 @@ def _state_segment_end(segment: RawCaptureSegment) -> int:
     return locator.end_ms
 
 
+@dataclass(slots=True)
+class _WarmWorker:
+    key: tuple[str, ...]
+    worker: _SessionWorker
+    expiry: asyncio.Task[None]
+
+
+def _worker_key(engine: InstalledEngine, config: ExtractionRuntimeConfig) -> tuple[str, ...]:
+    return (
+        str(engine.executable),
+        str(engine.model_dir),
+        str(engine.worker_sha256),
+        str(config.whisper_prefer_gpu),
+        str(config.whisper_allow_cpu_fallback),
+    )
+
+
 class ProgressiveCaptureProcessor:
-    """Decode bounded windows and drive the framed Whisper session worker."""
+    """Decode bounded windows and drive the framed Whisper session worker.
+
+    A worker that completes a capture stays warm, with its models loaded, for
+    `speech_worker_idle_seconds`: loading TEA-ASR and its aligner takes about
+    12 s, and a fresh worker spends about as long again on first use.
+    """
 
     def __init__(
         self,
@@ -174,6 +197,42 @@ class ProgressiveCaptureProcessor:
         self.config = config
         self.engine_manager = engine_manager
         self.staging_root = staging_root
+        self._warm: _WarmWorker | None = None
+
+    async def _acquire(self, engine: InstalledEngine) -> _SessionWorker:
+        key = _worker_key(engine, self.config)
+        warm, self._warm = self._warm, None
+        if warm is not None:
+            warm.expiry.cancel()
+            if warm.key == key and warm.worker.alive:
+                return warm.worker
+            await warm.worker.close()
+        return await _SessionWorker.start(engine=engine, config=self.config)
+
+    async def _park(self, key: tuple[str, ...], worker: _SessionWorker) -> None:
+        idle = self.config.speech_worker_idle_seconds
+        if idle <= 0 or not worker.alive:
+            await worker.close()
+            return
+        await self.release_warm_worker()
+        self._warm = _WarmWorker(key, worker, asyncio.create_task(self._expire(worker, idle)))
+
+    async def _expire(self, worker: _SessionWorker, idle: float) -> None:
+        await asyncio.sleep(idle)
+        if self._warm is not None and self._warm.worker is worker:
+            self._warm = None
+            await worker.close()
+
+    async def release_warm_worker(self) -> None:
+        """Close the warm worker, freeing its GPU memory for another engine."""
+
+        warm, self._warm = self._warm, None
+        if warm is not None:
+            warm.expiry.cancel()
+            await warm.worker.close()
+
+    async def shutdown(self) -> None:
+        await self.release_warm_worker()
 
     async def process(
         self,
@@ -235,12 +294,7 @@ class ProgressiveCaptureProcessor:
                 ) from error
 
         try:
-            worker = await _SessionWorker.start(
-                engine=engine,
-                source=source,
-                capture_id=capture_id,
-                config=self.config,
-            )
+            worker = await self._acquire(engine)
         except ProgressiveCaptureError:
             raise
         except Exception as error:
@@ -248,7 +302,15 @@ class ProgressiveCaptureProcessor:
                 "Progressive Whisper worker could not be started.",
                 code="progressive_worker_start_failed",
             ) from error
+        reusable = False
         try:
+            try:
+                await worker.begin(capture_id=capture_id, source=source)
+            except Exception as error:
+                raise ProgressiveCaptureError(
+                    "Progressive Whisper worker could not be started.",
+                    code="progressive_worker_start_failed",
+                ) from error
             try:
                 source_file = source_path.open("rb")
             except OSError as error:
@@ -327,9 +389,14 @@ class ProgressiveCaptureProcessor:
                 )
             if not any(event.event_type is StreamingEventType.COMPLETED for event in events):
                 raise ProgressiveCaptureError("Progressive audio worker ended without completion.")
-            return state.raw()
+            raw = state.raw()
+            reusable = not cancellation.is_set()
+            return raw
         finally:
-            await worker.close()
+            if reusable:
+                await self._park(_worker_key(engine, self.config), worker)
+            else:
+                await worker.close()
             spool_path.unlink(missing_ok=True)
 
     async def _resolve_engine(self) -> InstalledEngine:
@@ -371,13 +438,15 @@ class _SessionWorker:
         self.stdout = process.stdout
         self._stderr_task = stderr_task
 
+    @property
+    def alive(self) -> bool:
+        return self.process.returncode is None
+
     @classmethod
     async def start(
         cls,
         *,
         engine: InstalledEngine,
-        source: CaptureSource,
-        capture_id: str,
         config: ExtractionRuntimeConfig,
     ) -> _SessionWorker:
         executable = engine.executable
@@ -385,13 +454,8 @@ class _SessionWorker:
         environment = dict(sanitized_child_environment())
         environment.update(
             {
-                "CAPTURE_SESSION_ID": capture_id,
                 "CAPTURE_SESSION_MODEL_PATH": _subprocess_path(engine.model_dir),
                 "CAPTURE_SESSION_TEMP_DIR": _subprocess_path(config.temp_dir),
-                "CAPTURE_SESSION_SOURCE_SHA256": source.sha256,
-                "CAPTURE_SESSION_FILE_NAME": source.file_name,
-                "CAPTURE_SESSION_MEDIA_TYPE": source.media_type,
-                "CAPTURE_SESSION_SOURCE_BYTES": str(source.bytes),
                 "CAPTURE_SESSION_PREFER_GPU": "1" if config.whisper_prefer_gpu else "0",
                 "CAPTURE_SESSION_ALLOW_CPU_FALLBACK": (
                     "1" if config.whisper_allow_cpu_fallback else "0"
@@ -409,25 +473,30 @@ class _SessionWorker:
             creationflags=(subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0),
         )
         assert process.stderr is not None
-        worker = cls(process, asyncio.create_task(_drain_stderr(process.stderr)))
-        try:
-            await worker._send(
-                encode_control(
-                    SessionFrameType.START,
-                    {
-                        "protocolVersion": "2",
-                        "sessionId": capture_id,
-                        "sampleRate": 16_000,
-                        "channels": 1,
-                        "windowMs": DEFAULT_WINDOW_MS,
-                        "overlapMs": DEFAULT_OVERLAP_MS,
+        return cls(process, asyncio.create_task(_drain_stderr(process.stderr)))
+
+    async def begin(self, *, capture_id: str, source: CaptureSource) -> None:
+        """Start one capture's session; a warm worker serves one after another."""
+
+        await self._send(
+            encode_control(
+                SessionFrameType.START,
+                {
+                    "protocolVersion": SESSION_PROTOCOL_VERSION,
+                    "sessionId": capture_id,
+                    "sampleRate": 16_000,
+                    "channels": 1,
+                    "windowMs": DEFAULT_WINDOW_MS,
+                    "overlapMs": DEFAULT_OVERLAP_MS,
+                    "source": {
+                        "sha256": source.sha256,
+                        "fileName": source.file_name,
+                        "mediaType": source.media_type,
+                        "bytes": source.bytes,
                     },
-                )
+                },
             )
-        except BaseException:
-            await worker.close()
-            raise
-        return worker
+        )
 
     async def input(
         self,

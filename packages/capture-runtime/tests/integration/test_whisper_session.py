@@ -40,16 +40,22 @@ class FakeBackend:
         self.cancelled = True
 
 
-def _start() -> bytes:
+def _start(session_id: str = "session-1", *, version: str = "3") -> bytes:
     return encode_control(
         SessionFrameType.START,
         {
-            "protocolVersion": "2",
-            "sessionId": "session-1",
+            "protocolVersion": version,
+            "sessionId": session_id,
             "sampleRate": 16_000,
             "channels": 1,
             "windowMs": 120_000,
             "overlapMs": 30_000,
+            "source": {
+                "sha256": "a" * 64,
+                "fileName": "sample.wav",
+                "mediaType": "audio/wav",
+                "bytes": 1_000,
+            },
         },
     )
 
@@ -78,7 +84,8 @@ def test_session_protocol_requires_credit_and_accepts_fragmented_binary_input() 
     assert error[0][0] == ord(SessionFrameType.ERROR.value)
 
 
-def test_session_protocol_finish_and_cancel_are_terminal() -> None:
+def test_a_completed_session_accepts_the_next_start_and_cancel_is_terminal() -> None:
+    # A warm worker serves one capture after another with its models loaded.
     backend = FakeBackend()
     protocol = WhisperSessionProtocol(backend)
     decoder = SessionFrameDecoder()
@@ -86,8 +93,43 @@ def test_session_protocol_finish_and_cancel_are_terminal() -> None:
         protocol.handle(frame)
     finished = protocol.handle(next(iter(decoder.feed(encode_control(SessionFrameType.FINISH)))))
     assert finished[-1][0] == ord(SessionFrameType.COMPLETED.value)
+
+    assert protocol.handle(next(iter(decoder.feed(_start("session-2"))))) == []
+    assert backend.started is not None and backend.started["sessionId"] == "session-2"
+    assert backend.started["source"]["fileName"] == "sample.wav"
+
     closed = protocol.handle(next(iter(decoder.feed(encode_control(SessionFrameType.CANCEL)))))
     assert closed[0][0] == ord(SessionFrameType.ERROR.value)
+    after_cancel = protocol.handle(next(iter(decoder.feed(_start("session-3")))))
+    assert after_cancel[0][0] == ord(SessionFrameType.ERROR.value)
+    assert backend.started["sessionId"] == "session-2"
+
+
+def test_session_protocol_rejects_a_previous_version_or_a_missing_source() -> None:
+    for wire in (
+        _start(version="2"),
+        encode_control(
+            SessionFrameType.START,
+            {
+                "protocolVersion": "3",
+                "sessionId": "session-1",
+                "sampleRate": 16_000,
+                "channels": 1,
+                "windowMs": 120_000,
+                "overlapMs": 30_000,
+                "source": {
+                    "sha256": "a" * 64,
+                    "fileName": "",
+                    "mediaType": "audio/wav",
+                    "bytes": 1,
+                },
+            },
+        ),
+    ):
+        backend = FakeBackend()
+        error = WhisperSessionProtocol(backend).handle(next(iter(SessionFrameDecoder().feed(wire))))
+        assert error[0][0] == ord(SessionFrameType.ERROR.value)
+        assert backend.started is None
 
 
 def test_session_protocol_adds_only_allowlisted_failure_context() -> None:

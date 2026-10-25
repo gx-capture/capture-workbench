@@ -362,6 +362,14 @@ class StreamingCaptureService:
         self._tasks.clear()
         self._cancellations.clear()
         self._pending_execution_proofs.clear()
+        await self._release_warm_speech_worker(shutdown=True)
+
+    async def _release_warm_speech_worker(self, *, shutdown: bool = False) -> None:
+        # A warm speech worker holds about 6 GB of GPU memory; buffered speech,
+        # speaker and OCR extraction need it, and shutdown must not leave it.
+        release = getattr(self._processor, "shutdown" if shutdown else "release_warm_worker", None)
+        if release is not None:
+            await release()
 
     def _schedule(self, capture_id: str) -> None:
         if (
@@ -577,6 +585,7 @@ class StreamingCaptureService:
             )
         if cancellation.is_set():
             raise asyncio.CancelledError
+        await self._release_warm_speech_worker()
         try:
             content = await asyncio.to_thread(source_path.read_bytes)
             sniffed = extractor.sniff(content[:SNIFF_BYTES])
