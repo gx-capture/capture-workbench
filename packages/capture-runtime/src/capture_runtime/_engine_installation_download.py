@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import os
 from collections.abc import Callable
+from contextlib import suppress
 from pathlib import Path, PurePosixPath
 from typing import Protocol
 from urllib.parse import urlsplit
@@ -227,7 +228,7 @@ class HttpArtifactDownloader:
             if digest != descriptor.sha256:
                 raise EngineInstallationError("engine artifact checksum does not match catalog")
         except BaseException:
-            destination.unlink(missing_ok=True)
+            _discard(destination)
             raise
 
     async def _uses_ranges(self, client: httpx.AsyncClient, url: str, size: int) -> bool:
@@ -379,6 +380,13 @@ class HttpArtifactDownloader:
         return copied, digest.hexdigest()
 
 
+def _discard(path: Path) -> None:
+    """Remove a partial download; a failure here must not hide why the download failed."""
+
+    with suppress(OSError):
+        path.unlink(missing_ok=True)
+
+
 async def _supports_byte_ranges(client: httpx.AsyncClient, url: str, size: int) -> bool:
     """Probe one byte; any failure falls back to a single sequential stream."""
 
@@ -508,7 +516,7 @@ class LocalModelFileDownloader:
                     "local OCR model file checksum does not match catalog"
                 )
         except BaseException:
-            destination.unlink(missing_ok=True)
+            _discard(destination)
             raise
 
 
@@ -608,7 +616,7 @@ class HttpModelFileDownloader:
                 # integrity checks still run after a complete retry succeeds.
                 last_error = error
             except BaseException:
-                destination.unlink(missing_ok=True)
+                _discard(destination)
                 raise
             finally:
                 if attempt + 1 == len(self._retry_delays) and last_error is not None:
@@ -705,7 +713,7 @@ class HttpModelFileDownloader:
             if digest.hexdigest() != descriptor.sha256:
                 raise EngineInstallationError("direct model file checksum does not match catalog")
         except BaseException:
-            destination.unlink(missing_ok=True)
+            _discard(destination)
             raise
 
 

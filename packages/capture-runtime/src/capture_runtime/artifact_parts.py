@@ -24,6 +24,9 @@ def part_file_name(file_name: str, index: int) -> str:
 def split_archive(archive: Path, *, part_bytes: int = PART_BYTES) -> list[Path]:
     """Replace an archive above `part_bytes` with its parts; return the published files."""
 
+    # A rebuild in the same directory replaces the parts an earlier build left.
+    for stale in archive.parent.glob(f"{glob.escape(archive.name)}.[0-9][0-9][0-9]"):
+        stale.unlink()
     if archive.stat().st_size <= part_bytes:
         return [archive]
     parts: list[Path] = []
