@@ -66,6 +66,13 @@ from capture_runtime.structuring_provider import CaptureStructuringProvider
 from capture_runtime.worker_client import OcrWorkerFailure
 
 MAX_EVENT_SEGMENTS = 1_000
+# A speech session's end is not the capture's: the capture publishes its next
+# state (awaiting structuring, completed, failed or cancelled) once its status
+# has moved. Forwarding the session's end let hosts read `completed` while the
+# capture was still extracting.
+_SESSION_END_EVENTS = frozenset(
+    {StreamingEventType.COMPLETED, StreamingEventType.FAILED, StreamingEventType.CANCELLED}
+)
 
 
 class StreamingCaptureService:
@@ -726,6 +733,8 @@ class StreamingCaptureService:
         if partial is not None:
             self.repository.write_partial(partial)
         for event in events:
+            if event.event_type in _SESSION_END_EVENTS:
+                continue
             self.repository.append_event(
                 capture_id,
                 event_type=event.event_type,

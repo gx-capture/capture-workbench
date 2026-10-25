@@ -163,6 +163,21 @@ class FakeProgressiveProcessor:
         )
 
 
+class SessionEndingProcessor(FakeProgressiveProcessor):
+    """Ends its session with `completed`, as the speech recognition worker does."""
+
+    async def process(self, *, capture_id, source, source_path, cancellation, sink):
+        raw = await super().process(
+            capture_id=capture_id,
+            source=source,
+            source_path=source_path,
+            cancellation=cancellation,
+            sink=sink,
+        )
+        await sink((ProgressiveSessionEvent(StreamingEventType.COMPLETED, "completed"),), None)
+        return raw
+
+
 class FailingStructurer:
     engine_identity = None
 
@@ -236,6 +251,45 @@ def test_progressive_runtime_materializes_partial_raw_result_and_terminal_events
         ]
         assert StreamingEventType.SEGMENT in event_types
         assert StreamingEventType.COMPLETED in event_types
+        await service.shutdown()
+
+    asyncio.run(scenario())
+
+
+def test_progressive_runtime_does_not_publish_the_session_end_as_the_capture_end(
+    tmp_path: Path,
+) -> None:
+    # 0.7.1 streamed the session's `completed` while the capture was still
+    # extracting, so hosts that stop at `completed` read a stale snapshot.
+    async def scenario() -> None:
+        clock = FixedClock()
+        repository = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+        repository.initialize()
+        ingestion_id, _ = _open(repository)
+        service = StreamingCaptureService(
+            repository,
+            clock=clock,
+            processor=SessionEndingProcessor(clock),  # type: ignore[arg-type]
+            structurer=FakeCaptureStructuringProvider(clock),
+        )
+        operation = service.start_capture(
+            StartCaptureV2(
+                client_request_id="progressive-host-capture",
+                ingestion_id=ingestion_id,
+                structuring_mode=StructuringMode.HOST,
+            )
+        )
+        for _ in range(100):
+            if service.get_capture(operation.capture_id).status.value == "awaiting_structuring":
+                break
+            await asyncio.sleep(0.01)
+        assert service.get_capture(operation.capture_id).status.value == "awaiting_structuring"
+        events = repository.read_events(operation.capture_id, after_sequence=-1)
+        assert StreamingEventType.COMPLETED not in [event.event_type for event in events]
+        assert (events[-1].event_type, events[-1].stage) == (
+            StreamingEventType.CHECKPOINT,
+            "awaiting_structuring",
+        )
         await service.shutdown()
 
     asyncio.run(scenario())
