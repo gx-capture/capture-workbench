@@ -47,6 +47,7 @@ export function streamingStage(stage: string): CaptureTaskView['stage'] {
   switch (stage) {
     case 'queued':
     case 'extracting':
+    case 'loading-model':
     case 'transcribing':
     case 'identifying-speakers':
     case 'awaiting_structuring':

@@ -44,6 +44,13 @@ def _last_worker_stage() -> str:
     return _WORKER_STAGES[-1] if _WORKER_STAGES else ""
 
 
+def _heartbeat_stage() -> str:
+    """What a session heartbeat tells the host: the model is loading, or speech is transcribed."""
+
+    last = _last_worker_stage()
+    return "loading-model" if "model-load" in last and last.endswith("-start") else "transcribing"
+
+
 def _report_import_os_failure(module: str, error: OSError) -> None:
     _report_stage(speech_import_os_failure_stage(module, error))
 
@@ -342,6 +349,7 @@ def _session() -> None:
     serve_session(
         ProgressiveWhisperWorkerBackend(new_session),
         failure_context=_last_worker_stage,
+        stage=_heartbeat_stage,
     )
 
 

@@ -29,6 +29,7 @@ def serve_session(
     stdout: BinaryIO | None = None,
     heartbeat_interval_seconds: float = HEARTBEAT_INTERVAL_SECONDS,
     failure_context: Callable[[], str] | None = None,
+    stage: Callable[[], str] | None = None,
 ) -> None:
     """Serve framed session messages with bounded reads and sanitized errors."""
 
@@ -53,6 +54,7 @@ def serve_session(
                         frame,
                         output_stream,
                         heartbeat_interval_seconds,
+                        stage,
                     )
                     for response in responses:
                         output_stream.write(response)
@@ -80,13 +82,14 @@ def _handle_with_heartbeats(
     frame: SessionFrame,
     output_stream: BinaryIO,
     heartbeat_interval_seconds: float,
+    stage: Callable[[], str] | None = None,
 ) -> list[bytes]:
     future: Future[list[bytes]] = executor.submit(protocol.handle, frame)
     while True:
         try:
             return future.result(timeout=heartbeat_interval_seconds)
         except FutureTimeoutError:
-            output_stream.write(encode_heartbeat("transcribing"))
+            output_stream.write(encode_heartbeat(stage() if stage is not None else "transcribing"))
             output_stream.flush()
 
 

@@ -31,6 +31,7 @@ from capture_runtime.progressive_capture import (
     _ProgressiveState,
     _session_worker_launch,
     _SessionWorker,
+    _with_progress,
     _worker_key,
 )
 from capture_runtime.progressive_decoder import ProgressiveDecoderError
@@ -50,6 +51,61 @@ def test_progressive_worker_launch_strips_windows_extended_path_prefix(
 
     assert command == [r"C:\capture-workbench\runtime\worker.exe", "session"]
     assert cwd == r"C:\capture-workbench\runtime"
+
+
+def test_streaming_progress_follows_the_covered_time() -> None:
+    # 0.7.1 left a streaming capture's progress unchanged until it ended.
+    checkpoint = ProgressiveSessionEvent(
+        StreamingEventType.CHECKPOINT, "checkpoint", covered_until_ms=60_000
+    )
+
+    assert _with_progress(checkpoint, 120_000).progress == 0.475
+    assert _with_progress(checkpoint, 30_000).progress == 0.9
+    assert _with_progress(checkpoint, None).progress is None
+    heartbeat = ProgressiveSessionEvent(StreamingEventType.HEARTBEAT, "transcribing")
+    assert _with_progress(heartbeat, 120_000).progress is None
+
+
+def test_runtime_heartbeats_repeat_the_workers_last_stage() -> None:
+    async def scenario() -> None:
+        process_stdout = asyncio.StreamReader()
+
+        def heartbeat(stage: bytes) -> bytes:
+            return struct.pack(">BI", ord(SessionFrameType.HEARTBEAT.value), len(stage)) + stage
+
+        process_stdout.feed_data(
+            heartbeat(json.dumps({"stage": "loading-model"}).encode())
+            + heartbeat(json.dumps({"stage": "input_ack"}).encode())
+        )
+        process_stdout.feed_eof()
+
+        class Stdin:
+            def write(self, _value: bytes) -> None:
+                return None
+
+            async def drain(self) -> None:
+                return None
+
+        class Process:
+            stdin = Stdin()
+            stdout = process_stdout
+            returncode = 0
+
+            async def wait(self) -> int:
+                return 0
+
+        worker = _SessionWorker(Process(), asyncio.create_task(asyncio.sleep(0)))
+        seen: list[ProgressiveSessionEvent] = []
+
+        async def on_event(event: ProgressiveSessionEvent) -> None:
+            seen.append(event)
+
+        await worker.input(DecodedAudioWindow(0, 1_000, b"pcm"), asyncio.Event(), on_event)
+        assert [event.stage for event in seen] == ["loading-model"]
+        assert worker._stage == "loading-model"
+        await worker.close()
+
+    asyncio.run(scenario())
 
 
 class _FakeSessionWorker:

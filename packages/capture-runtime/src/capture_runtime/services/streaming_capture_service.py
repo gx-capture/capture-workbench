@@ -752,6 +752,7 @@ class StreamingCaptureService:
                 covered_until_ms=event.covered_until_ms,
                 segments=list(event.segments),
                 error=event.error,
+                progress=event.progress,
             )
 
     def _fail(

@@ -11,7 +11,7 @@ import sys
 import time
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -167,6 +167,31 @@ class _WarmWorker:
     expiry: asyncio.Task[None]
 
 
+def _source_duration_ms(path: Path) -> int | None:
+    """The recording's length, for progress; None when its container does not say."""
+
+    try:
+        import av
+
+        with av.open(str(path)) as container:
+            if container.duration:
+                return max(1, int(container.duration) // 1000)
+    except Exception:
+        return None
+    return None
+
+
+def _with_progress(
+    event: ProgressiveSessionEvent, duration_ms: int | None
+) -> ProgressiveSessionEvent:
+    """Progress from covered time: 5-90%, the last 10% left for structuring as for OCR."""
+
+    if duration_ms is None or event.covered_until_ms is None:
+        return event
+    covered = min(1.0, event.covered_until_ms / duration_ms)
+    return replace(event, progress=round(0.05 + 0.85 * covered, 4))
+
+
 def _worker_key(engine: InstalledEngine, config: ExtractionRuntimeConfig) -> tuple[str, ...]:
     return (
         str(engine.executable),
@@ -268,8 +293,10 @@ class ProgressiveCaptureProcessor:
             ) from error
         state = _ProgressiveState(source, capture_id, self.clock)
         events: list[ProgressiveSessionEvent] = []
+        duration_ms = await asyncio.to_thread(_source_duration_ms, source_path)
 
         async def emit_event(event: ProgressiveSessionEvent) -> None:
+            event = _with_progress(event, duration_ms)
             state.apply(event)
             try:
                 partial = (
@@ -437,6 +464,8 @@ class _SessionWorker:
         self.stdin = process.stdin
         self.stdout = process.stdout
         self._stderr_task = stderr_task
+        # The worker's last stage; the runtime's own heartbeats repeat it.
+        self._stage = "transcribing"
 
     @property
     def alive(self) -> bool:
@@ -539,7 +568,7 @@ class _SessionWorker:
                             code="progressive_stall",
                             stage="watchdog",
                         )
-                    heartbeat = ProgressiveSessionEvent(StreamingEventType.HEARTBEAT, "extracting")
+                    heartbeat = ProgressiveSessionEvent(StreamingEventType.HEARTBEAT, self._stage)
                     events.append(heartbeat)
                     await on_event(heartbeat)
                     continue
@@ -565,10 +594,9 @@ class _SessionWorker:
                     payload_object = _json_object(payload)
                     if until_ack and payload_object.get("stage") == "input_ack":
                         return events
-                    heartbeat = ProgressiveSessionEvent(
-                        StreamingEventType.HEARTBEAT,
-                        str(payload_object.get("stage") or "extracting"),
-                    )
+                    if payload_object.get("stage") not in (None, "", "input_ack"):
+                        self._stage = str(payload_object["stage"])
+                    heartbeat = ProgressiveSessionEvent(StreamingEventType.HEARTBEAT, self._stage)
                     events.append(heartbeat)
                     await on_event(heartbeat)
                     continue
