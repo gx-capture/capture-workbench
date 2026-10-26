@@ -4,7 +4,7 @@
   "projectType": "application",
   "prefix": "app",
   "sourceRoot": "apps/capture-workbench/src",
-  "tags": [],
+  "tags": ["scope:capture", "type:app"],
   "targets": {
     "build": {
       "executor": "@angular/build:application",

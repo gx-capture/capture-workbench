@@ -15,10 +15,41 @@ export default [
         {
           enforceBuildableLibDependency: true,
           allow: ['^.*/eslint(\\.base)?\\.config\\.[cm]?[jt]s$'],
+          // Projects depend only downstream: app → ui → sdk (DDD refactor W1).
+          // '*' keeps untagged files (workspace tooling) lintable; every
+          // constraint that matches a project applies.
           depConstraints: [
             {
               sourceTag: '*',
               onlyDependOnLibsWithTags: ['*'],
+            },
+            {
+              sourceTag: 'type:sdk',
+              onlyDependOnLibsWithTags: ['type:sdk'],
+            },
+            {
+              sourceTag: 'type:ui',
+              onlyDependOnLibsWithTags: ['type:ui', 'type:sdk'],
+            },
+            {
+              sourceTag: 'type:app',
+              onlyDependOnLibsWithTags: ['type:ui', 'type:sdk'],
+            },
+            {
+              sourceTag: 'type:desktop',
+              onlyDependOnLibsWithTags: ['type:app', 'type:tool'],
+            },
+            {
+              sourceTag: 'type:e2e',
+              onlyDependOnLibsWithTags: ['type:app', 'type:tool'],
+            },
+            {
+              sourceTag: 'type:backend',
+              onlyDependOnLibsWithTags: ['type:tool'],
+            },
+            {
+              sourceTag: 'type:tool',
+              onlyDependOnLibsWithTags: ['type:tool'],
             },
           ],
         },
