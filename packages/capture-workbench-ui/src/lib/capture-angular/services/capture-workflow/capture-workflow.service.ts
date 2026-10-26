@@ -35,7 +35,8 @@ import {
   type RawCapture,
   type StartStreamingCaptureRequest,
 } from '../../../contracts';
-import type { ResolvedCaptureWorkbenchConfig } from '../../../contracts/workbench';
+import type { ResolvedCaptureWorkbenchConfig } from '../../../contracts';
+// eslint-disable-next-line @softarc/sheriff/encapsulation -- Known before W7: the workflow shares the store's internal task types; W7 puts both in one capture feature module.
 import type {
   CaptureWorkflowContext,
   InternalCaptureTask,

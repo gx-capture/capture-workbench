@@ -32,6 +32,7 @@ import {
   createCaptureWorkbenchCustomEvent,
   type CaptureWorkbenchCustomEventName,
 } from '../capture-workbench-events/capture-workbench-events';
+// eslint-disable-next-line @softarc/sheriff/dependency-rule -- Known before W7: the custom-element service registers the facade component; W7 moves the registration next to the component.
 import { CaptureWorkbenchElementFacadeComponent } from '../../components/capture-workbench-element-facade/capture-workbench-element-facade';
 
 export const CAPTURE_WORKBENCH_ELEMENT_TAG = 'capture-workbench';

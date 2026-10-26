@@ -24,13 +24,14 @@ import type {
   ResolvedCaptureWorkbenchConfig,
   RuntimeHandshake,
   RuntimeViewState,
-} from '../../../contracts/workbench';
+} from '../../../contracts';
 import type { RuntimeRequest } from './internal-contracts';
-import { DEFAULT_CAPTURE_WORKBENCH_CONFIG } from '../../../constants/workbench';
+import { DEFAULT_CAPTURE_WORKBENCH_CONFIG } from '../../../constants';
 import { CaptureHelpersService } from '../../../capture-helpers';
 import { CaptureRuntimeInstallationService } from '../capture-runtime-installation/capture-runtime-installation.service';
 import { CaptureWorkflowService } from '../capture-workflow/capture-workflow.service';
 import { CaptureWorkbenchStoreHelpers } from './capture-workbench-store-helpers';
+// eslint-disable-next-line @softarc/sheriff/dependency-rule -- Known before W7: the store resolves the UI messages; W7 moves message resolution to the components.
 import { resolveCaptureWorkbenchMessages } from '../../i18n/messages';
 
 @Injectable()

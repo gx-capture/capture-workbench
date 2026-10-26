@@ -50,12 +50,32 @@
     "lint": {
       "cache": true,
       "executor": "nx:run-commands",
+      "dependsOn": [
+        "lint-architecture"
+      ],
       "inputs": [
         "default"
       ],
       "options": {
         "cwd": "packages/capture-runtime",
         "command": "uv run --python 3.13 ruff check src scripts tests && uv run --python 3.13 ruff format --check src scripts tests"
+      }
+    },
+    "lint-architecture": {
+      "cache": true,
+      "executor": "nx:run-commands",
+      "metadata": {
+        "description": "import-linter contracts for the DDD refactor (.agents/PLANS/ddd-refactor/), run as a pinned uv tool so the runtime lock does not change."
+      },
+      "inputs": [
+        "default"
+      ],
+      "options": {
+        "cwd": "packages/capture-runtime",
+        "env": {
+          "PYTHONPATH": "src"
+        },
+        "command": "uvx --from import-linter==2.5.2 lint-imports --config importlinter.toml"
       }
     },
     "typecheck": {

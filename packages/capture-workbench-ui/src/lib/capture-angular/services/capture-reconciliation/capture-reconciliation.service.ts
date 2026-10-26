@@ -29,6 +29,7 @@ import {
   type PartialCapture,
   type RawCapture,
 } from '../../../contracts';
+// eslint-disable-next-line @softarc/sheriff/encapsulation -- Known before W7: reconciliation shares the store's internal task types; W7 puts both in one capture feature module.
 import type { CaptureReconciliationContext } from '../capture-workbench-store/internal-contracts';
 import {
   HOST_PROVIDER_FAILURE_CODE,

@@ -6,8 +6,8 @@ import type {
   CaptureStructuringProvider,
   CaptureTaskView,
   RawCapture,
+  ResolvedCaptureWorkbenchConfig,
 } from '../../../contracts';
-import type { ResolvedCaptureWorkbenchConfig } from '../../../contracts/workbench';
 
 export interface RuntimeRequest {
   readonly client: CaptureClient | null;
