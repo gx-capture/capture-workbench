@@ -639,8 +639,15 @@ class CaptureRuntimeClient:
         )
 
     def delete_streaming_capture(self, capture_id: str) -> None:
-        """Delete a capture and its stored artifacts from the runtime."""
+        """Delete a capture and its stored artifacts from the runtime.
+
+        The uploaded source goes with it once no other capture uses it.
+        """
         decode_response(self._request("DELETE", f"/v2/captures/{_safe_id(capture_id)}"))
+
+    def delete_streaming_ingestion(self, ingestion_id: str) -> None:
+        """Delete an uploaded source; refused while a capture using it is unfinished."""
+        decode_response(self._request("DELETE", f"/v2/ingestions/{_safe_id(ingestion_id)}"))
 
     def close(self) -> None:
         """Close the underlying transport."""

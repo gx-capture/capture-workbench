@@ -240,7 +240,7 @@ public final class CaptureRuntimeClient {
     json("DELETE", "/v2/captures/" + pathPart(id), null, Void.class, Map.of());
   }
 
-  /** Delete an unfinished upload ingestion. */
+  /** Delete an uploaded source; refused while a capture using it is unfinished. */
   public void deleteStreamingIngestion(String id) {
     json("DELETE", "/v2/ingestions/" + pathPart(id), null, Void.class, Map.of());
   }

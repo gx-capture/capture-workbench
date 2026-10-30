@@ -21,6 +21,26 @@ Capture Workbench follows an explicit 0.x compatibility policy:
 The consumer consistency check is a permanent CI gate for the declared
 runtime, package lock, Python host, desktop host, and browser host versions.
 
+### Uploaded sources are deleted with their capture
+
+Uploaded sources are host documents, often confidential, and the runtime now
+keeps one only while a capture uses it:
+
+- `DELETE /v2/captures/{id}` also deletes the capture's uploaded source
+  (`jobs/streaming/ingestions/<id>/`) once no other capture refers to it. Before,
+  the source stayed until its two-hour expiry, and expiry runs only at startup
+  or on a request, so an idle runtime kept it longer. The first-party clients
+  open one upload per capture, so cancelling and deleting a capture now removes
+  the uploaded bytes at once.
+- An unfinished capture with no activity for the retention period
+  (`CAPTURE_RETENTION_HOURS`, default 24) is treated as abandoned and deleted
+  with its source, like a finished one. Before, an OCR-only host-mode capture
+  left in `awaiting_structuring`, or a capture interrupted by a runtime stop,
+  kept its source forever. Running work records page checkpoints and other
+  events, which keeps it fresh.
+- The Python client adds `delete_streaming_ingestion()`, like the Java client's
+  `deleteStreamingIngestion()`, for an upload that never got a capture.
+
 ## 0.7.2
 
 A patch release that makes speech recognition and OCR faster and shows their
