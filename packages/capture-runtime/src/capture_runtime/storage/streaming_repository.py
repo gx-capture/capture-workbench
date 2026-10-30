@@ -589,24 +589,36 @@ class StreamingRepository:
             return record.operation
 
     def delete_capture(self, capture_id: str) -> None:
+        """Delete a capture, and its uploaded source once no capture uses it.
+
+        Sources are confidential host documents: the runtime keeps one only
+        while a capture still refers to it.
+        """
         with self._lock:
             record = self._get_capture(capture_id)
-            self._captures.pop(capture_id, None)
+            normalized = record.operation.capture_id
+            self._captures.pop(normalized, None)
             self._capture_idempotency.pop(record.request.client_request_id, None)
-            directory = self._capture_directory(capture_id)
+            directory = self._capture_directory(normalized)
             self._persistence.delete_capture_directory(directory)
+            ingestion_id = record.operation.ingestion_id
+            if ingestion_id in self._ingestions and not any(
+                other.operation.ingestion_id == ingestion_id for other in self._captures.values()
+            ):
+                self.delete_ingestion(ingestion_id)
 
     def prune_expired(self) -> None:
         with self._lock:
             now = self._clock.now()
             cutoff = now - self._retention
+            # A terminal capture expires one retention period after it ended. An
+            # unfinished one with no activity for that long is abandoned (a host
+            # that never structured it, or work a runtime stop interrupted);
+            # running work records events, which keeps it fresh.
             expired_captures = [
                 capture_id
                 for capture_id, record in self._captures.items()
-                if (
-                    record.operation.status in _TERMINAL_CAPTURE_STATUSES
-                    and record.operation.updated_at < cutoff
-                )
+                if record.operation.updated_at < cutoff
             ]
             for capture_id in expired_captures:
                 self.delete_capture(capture_id)

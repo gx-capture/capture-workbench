@@ -1420,3 +1420,17 @@ def test_engine_processing_times_round_trip_through_public_client_model(timings)
     assert engine.elapsed_ms == timings.get("elapsedMs")
     assert engine.stage_ms == timings.get("stageMs")
     assert CaptureEngine.model_validate_json(engine.model_dump_json(by_alias=True)) == engine
+
+
+def test_delete_streaming_ingestion_deletes_the_uploaded_source() -> None:
+    deleted: list[str] = []
+
+    def delete(request: httpx.Request) -> httpx.Response:
+        deleted.append(request.url.path)
+        return httpx.Response(204, request=request)
+
+    transport = _transport({("DELETE", "/v2/ingestions/ingestion-1"): delete})
+
+    CaptureRuntimeClient(transport=transport).delete_streaming_ingestion("ingestion-1")
+
+    assert deleted == ["/v2/ingestions/ingestion-1"]
