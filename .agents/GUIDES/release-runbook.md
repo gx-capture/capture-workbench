@@ -1,51 +1,51 @@
 # Capture Workbench release runbook
 
-Current as of 2026-10-07. This is the operational procedure for publishing a
-Capture Workbench release and moving its consumers. It reflects how 0.5.0 was
-actually shipped (0.5.1 followed the same steps); workflow files remain the source of truth for inputs.
+Current as of 2026-10-31. This is the operational procedure for publishing a
+Capture Workbench release and moving its consumers. Workflow files remain the
+source of truth for inputs.
 
 ## Current state
 
-- Capture Runtime and Workbench **0.5.1** are published: npm
-  (`@gx-capture/capture-workbench-ui`, `@gx-capture/capture-runtime-client` on
-  GitHub Packages), Maven (`com.gx.capture:capture-runtime-client`, GitHub
+- **0.7.2** is the latest published release, through Route A only (2026-10-26):
+  npm (`@gx-capture/capture-workbench-ui`, `@gx-capture/capture-runtime-client`
+  on GitHub Packages), Maven (`com.gx.capture:capture-runtime-client`, GitHub
   Packages), PyPI (`capture-runtime-client`), crates.io
-  (`capture-sidecar-launcher`), and GitHub release `v0.5.1` (runtime exe
-  `8a5c3b2e…`, OCR/Whisper engine zips, desktop installer, release manifest).
-  `release-index/stable.json` on the `release-index` branch points at `v0.5.1`.
-- Source commit of the 0.5.1 candidates: `1fa4924` (merge of PR #71).
-  Contract-set SHA-256:
-  `f72e22229bbc726f1feff4c8ea99ab7e68c64dfa893b038bb731a99255b6495c`.
-  Model-source Commit A `cad865f` (annotated tag
-  `capture-runtime-model-sources-v0.5.1`). OCR profile
-  `capture-workbench-ocr-1dc18ff680549aa9`.
-  Runs: package candidate 37559860991, runtime candidate 37560144704, package
-  promote 37561007340, runtime promote 37561498532, release candidate
-  37562803807, consumer gates 37565455444, release promote 37566342753.
-- 0.5.1 sends a vertical page to the NDLOCR-Lite reader only when the page has
-  kana; 0.5.0 sent vertical Chinese there too and read it worse. A 0.5.1 runtime
-  needs 0.5.1 clients: the contract set carries the release version, so its hash
-  changes with every release, and the OCR profile id changed with the rule.
-- Consumers on their `main` branches pin 0.5.1: Cert Prep
-  (`WodenWang820118/cert-prep`, PR #39) and LAW
-  (`WodenWang820118/gx.law-prep`, PR #98). Both consumer gates passed on the
-  release candidate. The published-mode practical OCR journeys passed on
-  2026-10-07 before the consumer merges: Cert Prep's packaged app with the
-  canonical JPEG, and LAW's engine, AI service and runtime with the canonical
-  JPEG and page 1 of the private PDF.
-- The online-package PDF OCR E2E was last run against published 0.5.0 (ten-page
-  development PDF, ten anchors, four on pages read by the vertical reader); it
-  was not repeated for 0.5.1.
-- The OCR engine now also installs the NDLOCR-Lite models (about 157 MB from
-  `raw.githubusercontent.com/ndl-lab/ndlocr-lite` at a pinned commit, no mirror).
-  **Open**: the licence lineage of its line detector's weights; see
+  (`capture-sidecar-launcher`), and GitHub release `v0.7.2` (runtime exe, OCR,
+  speech recognition and diarization engines, catalog). 0.7.0 and 0.7.1 also
+  went through Route A only; the last full route (desktop installer, stable
+  pointer, consumer gates) was 0.6.3.
+- Consumers on their `main` branches pin 0.7.2: Cert Prep
+  (`WodenWang820118/cert-prep`) and LAW (`WodenWang820118/gx.law-prep`).
+- The contract set no longer carries the release version: a patch release keeps
+  its hash, and only a contract change moves it.
+- **Open**: the licence lineage of the NDLOCR-Lite line detector's weights; see
   `.agents/RESEARCH/ndlocr-lite-detector-licence-lineage-2026-10-06.md`.
-- Known limitations: handwriting OCR quality (printed text is the floor);
-  installed OCR worker paths beyond Windows MAX_PATH crash the worker; page
+- Known limitations: handwriting OCR quality (printed text is the floor); page
   structure of dense vertical periodical scans and pages that mix directions;
   about a fifth of furigana on textbook pages is not set aside.
 
-## Prepared: 0.7.2 (patch)
+## Prepared: 0.8.0 (minor)
+
+- A host can name the language spoken in an audio capture
+  (`StartCaptureV2.spokenLanguage`, PR #115), and deleting a capture deletes its
+  uploaded source (PR #114). The owner approved the release on 2026-10-31.
+- Measured with this source: on a 45-minute JLPT N1 listening test (RTX 4060),
+  the speech worker with `ja` covered 87.2% of the official script in order,
+  against 77.9% with the default Chinese, in 350 s instead of 385 s.
+- Breaking for clients: contract-set SHA-256 `664b2b32…` (0.7.x: `60c62267…`).
+  Capture document schema unchanged (`5452631c…`). Model-source Commit A
+  `b4b62e3` (annotated tag `capture-runtime-model-sources-v0.8.0`). The lock
+  pins the same models as 0.7.2, with the same approval record. OCR profile
+  `capture-workbench-ocr-cea24c3eb2bcce57`.
+- Consumers: Cert Prep migrates first and sends `ja` for Japanese audio; LAW
+  then bumps `apps/law-prep-ai-service/src/app/capture_version.py` and its test
+  samples. LAW does not need `spokenLanguage`.
+
+## Published through Route A: 0.7.2 (patch)
+
+- Published on 2026-10-26 through Route A only. Runs: package candidate
+  40245444531, runtime candidate 40245677878, package promote 40246889088,
+  runtime promote 40247082290. Source commit `d600d42` (merge of PR #111).
 
 - Speed, progress and a desktop GPU switch (see the changelog). Measured on an
   RTX 4060 Laptop (8 GB) with locally built 0.7.2 workers installed through the

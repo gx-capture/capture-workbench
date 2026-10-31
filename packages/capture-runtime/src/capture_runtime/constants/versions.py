@@ -2,7 +2,7 @@
 
 from typing import Final
 
-RUNTIME_VERSION: Final = "0.7.2"
+RUNTIME_VERSION: Final = "0.8.0"
 API_VERSION: Final = "2.0"
 CAPTURE_DOCUMENT_SCHEMA_VERSION: Final = "2"
 MAX_RUNTIME_ARTIFACT_BYTES: Final = 536_870_912
