@@ -38,7 +38,7 @@ on:
       - '!**/*.md'
       - '!**/.agents/**'
   push:
-    branches: [main, develop]
+    branches: [main]
     paths: *code-paths
 
 permissions:
@@ -52,14 +52,112 @@ concurrency:
   group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('{0}-{1}', github.ref, github.sha) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# PR and main run the same complete verification. The four jobs are
-# independent and run in parallel; a release candidate requires the whole
-# run to succeed on main (tools/verify-main-ci.ts). A docs-only commit on main
-# gets no run, so dispatch candidates at the latest commit that changed code.
+# Only main runs the full verification: the four jobs after `checks`, which
+# also build the packages, engine workers, installer, and desktop product and
+# run the reference flow. They are independent and run in parallel; a release
+# candidate requires the whole run to succeed on main
+# (tools/verify-main-ci.ts). A docs-only commit on main gets no run, so
+# dispatch candidates at the latest commit that changed code. Pull requests
+# run only `checks`.
 jobs:
+  # Pull requests: lint, type checks, and unit tests of every project, without
+  # builds, packaging, engine workers, the installer, the desktop product, or
+  # the reference flow. A failure only those catch shows on main's push run.
+  checks:
+    if: github.event_name == 'pull_request'
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install Java 25 for the Maven SDK
+        uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+
+      - name: Install uv and Python 3.13
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          python-version: '3.13'
+          enable-cache: true
+
+      - name: Prepare Rust target
+        shell: pwsh
+        run: rustup target add x86_64-pc-windows-msvc
+
+      - name: Install workspace dependencies
+        shell: pwsh
+        run: pnpm install --frozen-lockfile
+
+      - name: Check packages
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          pnpm nx run capture-runtime:classify-release-model-mode
+          pnpm nx run capture-runtime:check-contracts
+          pnpm nx run capture-runtime-client:lint
+          pnpm nx run capture-runtime-client:typecheck
+          pnpm nx run capture-runtime-client:test
+          pnpm nx run capture-runtime-client-python:lint
+          pnpm nx run capture-runtime-client-python:typecheck
+          pnpm nx run capture-runtime-client-python:test
+          pnpm nx run capture-runtime-client-java:test
+          pnpm nx run capture-runtime-client-java:verify-contract-hash
+          pnpm nx run capture-sidecar-launcher:cargo-fmt-check
+          pnpm nx run capture-sidecar-launcher:cargo-test
+          pnpm nx run capture-angular:lint
+          pnpm nx run capture-angular:test
+
+      - name: Check capture runtime
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          pnpm nx run capture-runtime:python-version-check
+          pnpm nx run capture-runtime:lint
+          pnpm nx run capture-runtime:typecheck
+          pnpm nx run capture-runtime:test
+
+      - name: Check reference app, desktop scripts, and release tooling
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          pnpm nx run capture-workbench:lint
+          pnpm nx run capture-workbench:test
+          pnpm nx run capture-workbench-desktop:cargo-fmt-check
+          pnpm nx run capture-workbench-desktop:package-qa-test
+          pnpm nx run capture-tools:test
+          pnpm nx run capture-tools:release-version-test
+          pnpm nx run capture-tools:release-candidate-test
+          pnpm nx run capture-tools:contract-impact-test
+          pnpm nx run capture-tools:release-contract-test
+          pnpm nx run capture-tools:consumer-gate-test
+          pnpm nx run capture-tools:promotion-evidence-test
+          pnpm nx run capture-tools:promotion-registry-test
+          pnpm nx run capture-tools:release-manifest-test
+          pnpm nx run capture-tools:release-index-test
+
   # Published packages: TypeScript, Python, and Java clients, the sidecar
   # launcher crate, and the Angular Web Component package.
   packages:
+    if: github.event_name == 'push'
     runs-on: windows-latest
     timeout-minutes: 60
     steps:
@@ -134,6 +232,7 @@ jobs:
 
   # Capture Runtime (Python) and the optional OCR and speech recognition worker builds.
   runtime:
+    if: github.event_name == 'push'
     runs-on: windows-latest
     timeout-minutes: 60
     steps:
@@ -200,6 +299,7 @@ jobs:
   # Production core runtime, the desktop contract check against it, and the
   # core-only NSIS installer.
   installer:
+    if: github.event_name == 'push'
     runs-on: windows-latest
     timeout-minutes: 60
     steps:
@@ -258,6 +358,7 @@ jobs:
   # Reference app, desktop product, release tooling, and the browser
   # reference flow.
   desktop:
+    if: github.event_name == 'push'
     runs-on: windows-latest
     timeout-minutes: 60
     steps:

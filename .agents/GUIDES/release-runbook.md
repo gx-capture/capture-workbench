@@ -417,9 +417,12 @@ candidate with `node tools/install-capture-workbench-dependencies.mts
   Passing this check is not candidate publication or installed acceptance.
   Keep negative versions and historical byte/digest evidence independent;
   ordinary current-version fixtures reference the scoped shared constant.
-- Every pull request runs full CI, docs-only ones included; a docs-only skip
-  once let `main` go red for three merges. Tests never assert documentation
-  prose, so docs edits alone cannot fail CI.
+- Pull requests run only the quick `checks` job of `ci.yml` (lint, type
+  checks, unit tests); docs-only ones run nothing. Only `main` runs the full
+  verification, so a build, packaging, or installer failure first shows on
+  `main`'s push run: run the affected build targets locally before merging such
+  a change, and fix `main` before dispatching a candidate. Tests never assert
+  documentation prose, so docs edits alone cannot fail CI.
 - Engine downloads are served from the machine-wide cache
   (`%LOCALAPPDATA%\gx-capture\engine-cache`) once any host has installed
   them. Set `CAPTURE_ENGINE_CACHE_DIR=off` to time or debug a cold download.
