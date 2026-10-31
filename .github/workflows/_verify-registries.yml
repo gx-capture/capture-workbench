@@ -33,16 +33,8 @@ on:
         required: false
         default: ''
         type: string
-      java_candidate_id:
-        description: 'Java SDK Candidate ID expected for the Maven ledger'
-        required: true
-        type: string
       package_candidate_manifest_sha256:
         description: 'Package Candidate manifest digest expected for npm'
-        required: true
-        type: string
-      java_candidate_manifest_sha256:
-        description: 'Java SDK Candidate manifest digest expected for Maven'
         required: true
         type: string
       runtime_candidate_manifest_sha256:
@@ -88,8 +80,6 @@ jobs:
             --release-candidate-id '${{ inputs.release_candidate_id }}' \
             --package-candidate-id '${{ inputs.package_candidate_id }}' \
             --runtime-candidate-id '${{ inputs.runtime_candidate_id }}' \
-            --java-candidate-id '${{ inputs.java_candidate_id }}' \
             --package-candidate-manifest-sha256 '${{ inputs.package_candidate_manifest_sha256 }}' \
-            --java-candidate-manifest-sha256 '${{ inputs.java_candidate_manifest_sha256 }}' \
             --runtime-candidate-manifest-sha256 '${{ inputs.runtime_candidate_manifest_sha256 }}' \
             --contract-set-sha256 '${{ inputs.contract_set_sha256 }}'

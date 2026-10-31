@@ -12,6 +12,7 @@
 # Release and CI guidance
 
 - Follow `.agents/GUIDES/release-runbook.md` for the current release state, the publish procedure, and known pitfalls.
+- Releases publish npm (GitHub Packages), PyPI, and crates.io packages. There is no Java SDK: hosts reach the runtime through the npm packages, the Python client, or the launcher crate.
 - Push CI on `main` is release evidence: release candidates verify it for their source commit, so never skip or weaken it. Only `main` runs the full verification (builds, packaging, engine workers, installer, desktop product, reference flow); a pull request runs the quick `checks` job of lint, type checks, and unit tests. Before merging a change to builds or packaging, run the affected build targets locally, since its pull request does not.
 - Tests check behavior and workflow contracts, never documentation prose (a TODO checkbox or README wording must not fail CI) and never implementation text alone: a test that only regex-matches a script's source breaks on harmless refactors and passes when behavior breaks.
 - Real OCR journeys (desktop acceptance, practical installed OCR, runtime PDF OCR E2E) are local and manual; their file headers describe the steps and inputs.

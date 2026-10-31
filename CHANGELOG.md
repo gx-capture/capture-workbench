@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Java SDK no longer published
+
+The Java SDK (`com.gx.capture:capture-runtime-client`) had no consumer, so it
+is removed and no longer published. LAW's Java engine never calls Capture: its
+OCR and ASR go through LAW's Python AI service and the Python client. Cert Prep
+has no Java code.
+
+- Releases publish npm (GitHub Packages), PyPI, and crates.io packages only.
+  Versions through 0.8.0 stay on GitHub Packages Maven.
+- The package candidate no longer carries Maven artifacts. The release
+  candidate checks the contract set recorded in the package candidate manifest
+  instead of the Java SDK manifest.
+- Consumer gates no longer send `package_candidate_run_id`; LAW's gate dropped
+  its Java SDK check.
+- The contract set is unchanged: the Java SDK only projected it.
+
 ### Compatibility policy
 
 Capture Workbench follows an explicit 0.x compatibility policy:
@@ -11,7 +27,7 @@ Capture Workbench follows an explicit 0.x compatibility policy:
   version during the readiness handshake; patch updates remain compatible.
 - The in-scope consumers for the current `0.4.x` line are the published
   Web Component package, Cert Prep's Angular, Python, and desktop hosts, and
-  LAW's Java engine and Python AI service. They must be deployed on the same
+  LAW's web app and Python AI service. They must be deployed on the same
   minor before a runtime release is enabled.
 - `compatibleRuntimeMinor` is a temporary, explicit break-glass setting for a
   coordinated rollback or split-minor migration. Remove the override after the

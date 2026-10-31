@@ -82,7 +82,7 @@ async function main(): Promise<void> {
     );
   }
   const registryLedgers: Record<string, unknown> = {};
-  for (const name of ['npm', 'pypi', 'crates.io', 'maven']) {
+  for (const name of ['npm', 'pypi', 'crates.io']) {
     const path = join(registryDirectory, `registry-ledger-${name}.json`);
     registryLedgers[name] = JSON.parse(await readFile(path, 'utf8')) as unknown;
   }

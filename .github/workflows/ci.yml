@@ -83,13 +83,6 @@ jobs:
           node-version: 24
           cache: pnpm
 
-      - name: Install Java 25 for the Maven SDK
-        uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
-        with:
-          distribution: temurin
-          java-version: '25'
-          cache: maven
-
       - name: Install uv and Python 3.13
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
         with:
@@ -117,8 +110,6 @@ jobs:
           pnpm nx run capture-runtime-client-python:lint
           pnpm nx run capture-runtime-client-python:typecheck
           pnpm nx run capture-runtime-client-python:test
-          pnpm nx run capture-runtime-client-java:test
-          pnpm nx run capture-runtime-client-java:verify-contract-hash
           pnpm nx run capture-sidecar-launcher:cargo-fmt-check
           pnpm nx run capture-sidecar-launcher:cargo-test
           pnpm nx run capture-angular:lint
@@ -154,7 +145,7 @@ jobs:
           pnpm nx run capture-tools:release-manifest-test
           pnpm nx run capture-tools:release-index-test
 
-  # Published packages: TypeScript, Python, and Java clients, the sidecar
+  # Published packages: TypeScript and Python clients, the sidecar
   # launcher crate, and the Angular Web Component package.
   packages:
     if: github.event_name == 'push'
@@ -175,13 +166,6 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
-
-      - name: Install Java 25 for the Maven SDK
-        uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
-        with:
-          distribution: temurin
-          java-version: '25'
-          cache: maven
 
       - name: Install uv and Python 3.13
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
@@ -219,8 +203,6 @@ jobs:
           pnpm nx run capture-runtime-client-python:typecheck
           pnpm nx run capture-runtime-client-python:test
           pnpm nx run capture-runtime-client-python:build
-          pnpm nx run capture-runtime-client-java:test
-          pnpm nx run capture-runtime-client-java:verify-contract-hash
           pnpm nx run capture-sidecar-launcher:cargo-fmt-check
           pnpm nx run capture-sidecar-launcher:cargo-check
           pnpm nx run capture-sidecar-launcher:cargo-test

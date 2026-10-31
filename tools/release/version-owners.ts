@@ -8,7 +8,6 @@ export interface VersionOwner {
   readonly pattern: RegExp;
   readonly jsonField?: string;
   readonly tomlSection?: 'project' | 'package';
-  readonly xmlProjectVersion?: boolean;
 }
 
 const packageVersion = /^([\t ]*version[\t ]*=[\t ]*")([^"\r\n]+)(")/gmu;
@@ -44,12 +43,6 @@ export const RELEASE_VERSION_OWNERS: readonly VersionOwner[] = [
     'version',
   ),
   {
-    path: 'packages/capture-runtime-client-java/pom.xml',
-    label: 'Java SDK project version',
-    xmlProjectVersion: true,
-    pattern: /^(\x20{2}<version>)([^<\r\n]+)(<\/version>)/gmu,
-  },
-  {
     path: 'packages/capture-runtime/src/capture_runtime/constants/versions.py',
     label: 'Python runtime shared version',
     pattern: /^(RUNTIME_VERSION:\s*Final\s*=\s*")([^"\r\n]+)(")/gmu,
@@ -59,41 +52,6 @@ export const RELEASE_VERSION_OWNERS: readonly VersionOwner[] = [
     'runtimeVersion',
   ),
 ];
-
-/** Maven indentation is cosmetic: only a direct project/version is an owner. */
-function projectVersionRange(content: string): { start: number; end: number } {
-  const stack: string[] = [];
-  const ranges: { start: number; end: number }[] = [];
-  let start: number | undefined;
-  const tags = content.matchAll(
-    /<!--[\s\S]*?-->|<\?[\s\S]*?\?>|<\/?[A-Za-z_][\w:.-]*(?:[^>"']|"[^"]*"|'[^']*')*>/gu,
-  );
-  for (const tag of tags) {
-    if (tag[0].startsWith('<!--') || tag[0].startsWith('<?')) continue;
-    const name = /^<\/?([\w:.-]+)/u.exec(tag[0])?.[1];
-    if (!name) throw new Error('Invalid Maven XML tag.');
-    if (tag[0].startsWith('</')) {
-      if (stack.at(-1) !== name) throw new Error('Unbalanced Maven XML.');
-      if (
-        name === 'version' &&
-        stack.length === 2 &&
-        stack[0] === 'project' &&
-        start !== undefined
-      ) {
-        ranges.push({ start, end: tag.index });
-        start = undefined;
-      }
-      stack.pop();
-    } else if (!tag[0].endsWith('/>')) {
-      if (name === 'version' && stack.length === 1 && stack[0] === 'project')
-        start = tag.index + tag[0].length;
-      stack.push(name);
-    }
-  }
-  if (stack.length || ranges.length !== 1)
-    throw new Error('Maven requires exactly one direct project/version owner.');
-  return ranges[0];
-}
 
 export function assertReleaseVersion(version: string): void {
   if (
@@ -122,19 +80,6 @@ export function readOwner(
     );
   }
   const content = readFileSync(path, 'utf8');
-  if (owner.xmlProjectVersion) {
-    const range = projectVersionRange(content);
-    const value = content.slice(range.start, range.end);
-    const version = value.trim();
-    assertReleaseVersion(version);
-    const valueStart = range.start + value.indexOf(version);
-    return {
-      content,
-      version,
-      valueStart,
-      valueEnd: valueStart + version.length,
-    };
-  }
   let scope = content;
   let offset = 0;
   if (owner.tomlSection) {

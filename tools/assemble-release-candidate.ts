@@ -86,6 +86,19 @@ async function copyMatching(
   return names;
 }
 
+export async function verifyPackageContractSet(
+  packageCandidate: string,
+  contractSetSha256: string,
+): Promise<void> {
+  const manifestPath = join(resolve(packageCandidate), 'candidate-manifest.json');
+  const manifest = JSON.parse(
+    await readFile(manifestPath, 'utf8'),
+  ) as { contractSetSha256?: unknown };
+  if (manifest.contractSetSha256 !== contractSetSha256) {
+    throw new Error('Package candidate is bound to a different contract set.');
+  }
+}
+
 async function main(): Promise<void> {
   const {
     output,
@@ -243,12 +256,7 @@ async function main(): Promise<void> {
     );
   }
   if (packageCandidate) {
-    const packageManifest = JSON.parse(
-      await readFile(join(resolve(packageCandidate), 'java-candidate-manifest.json'), 'utf8'),
-    ) as { contractSetSha256?: unknown };
-    if (packageManifest.contractSetSha256 !== contractSetSha256) {
-      throw new Error('Package Candidate Java SDK is bound to a different contract set.');
-    }
+    await verifyPackageContractSet(packageCandidate, contractSetSha256);
   }
   await cp(contractSetJson, join(contracts, 'contract-set.json'));
   await cp(contractSetDigestPath, join(contracts, 'contract-set.sha256'));

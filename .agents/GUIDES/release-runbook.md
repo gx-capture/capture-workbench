@@ -14,6 +14,9 @@ source of truth for inputs.
   speech recognition and diarization engines, catalog). 0.7.x also went
   through Route A only; the last full route (desktop installer, stable
   pointer, consumer gates) was 0.6.3.
+- Releases after 0.8.0 publish no Java SDK. Maven publication was removed on
+  2026-10-31 (no consumer used it); versions through 0.8.0 stay on GitHub
+  Packages.
 - Consumers on their `main` branches pin 0.7.2 until their 0.8.0 migrations
   merge: Cert Prep (`WodenWang820118/cert-prep`) first, then LAW
   (`WodenWang820118/gx.law-prep`).
@@ -296,7 +299,7 @@ source of truth for inputs.
 
 | Stage             | Workflow                                          | Produces                                                            |
 | ----------------- | ------------------------------------------------- | ------------------------------------------------------------------- |
-| Package candidate | `package-candidate.yml`                           | npm/Maven/PyPI/crate candidate bytes                                |
+| Package candidate | `package-candidate.yml`                           | npm/PyPI/crate candidate bytes                                      |
 | Runtime candidate | `runtime-candidate.yml`                           | runtime exe, engine zips, catalog                                   |
 | Route A publish   | `package-promote.yml`, then `runtime-promote.yml` | registries, runtime seed GitHub release                             |
 | Release candidate | `release-candidate.yml`                           | desktop installer + full candidate                                  |
@@ -306,7 +309,7 @@ source of truth for inputs.
 Route A alone publishes the libraries and runtime. The full route reuses the
 Route A candidate runs at the same source commit and is required for the
 desktop installer and the stable pointer. Every publish step is idempotent:
-npm/crates/Maven compare remote bytes, PyPI uses `skip-existing`, and
+npm and crates.io compare remote bytes, PyPI uses `skip-existing`, and
 `tools/create-github-release.ts` keeps runtime seed assets and uploads only
 missing ones.
 
@@ -374,7 +377,7 @@ candidate with `node tools/install-capture-workbench-dependencies.mts
   installs a broken pnpm v11 shim. Gate check steps need GitHub Packages auth
   because pnpm 12 re-verifies `@gx-capture` lockfile entries.
 - pnpm 12 rejects `pnpm install --lockfile=false`.
-- GitHub Packages npm and Maven need a token even for public packages.
+- GitHub Packages npm needs a token even for public packages.
 - Launcher `cargo test` runs through `tools/cargo-test-retry-failed.ts`.
 - Local practical OCR runs: keep `CAPTURE_APP_DATA_DIR` short (installed OCR
   worker paths beyond Windows MAX_PATH crash the worker) and set `CAPTURE_PORT`
@@ -437,12 +440,12 @@ candidate with `node tools/install-capture-workbench-dependencies.mts
 - Pin upstream model and configuration digests from git blobs or a real download,
   never from a checkout with `autocrlf`: text files there are CRLF copies.
 - `capture-tools:promotion-registry-test` fails under Git Bash on Windows (its
-  `tar` reads `C:` as a remote host); run it from PowerShell.
+  `tar` reads `C:` as a remote host). Run it where `tar` resolves to
+  `C:\Windows\System32\tar.exe` (`Get-Command tar`): a PowerShell started from
+  Git Bash inherits Git's `tar` first.
 - Consumer migrations in a fresh worktree: Nx can hang or pick the wrong
   workspace unless `NX_WORKSPACE_ROOT_PATH` is unset and `NX_DAEMON=false`.
-  LAW's pre-commit builds the Java engine (fetch the new SDK into `~/.m2` with a
-  temporary Maven settings file that reads `MAVEN_USERNAME`/`MAVEN_PASSWORD`) and
-  runs `cargo check` (create the sidecar placeholder with
+  LAW's pre-commit runs `cargo check` (create the sidecar placeholder with
   `tauri:prepare-sidecar-placeholder` and `resources/.ci-placeholder` as CI
   does). GitHub Packages npm auth for a local `pnpm install`: a temporary
   `NPM_CONFIG_USERCONFIG` file, deleted afterwards.

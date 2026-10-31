@@ -23,7 +23,6 @@ function parseArguments(args: readonly string[]): Map<string, string> {
         '--promotion-evidence',
         '--consumer-gate-ledger',
         '--registry-directory',
-        '--java-candidate-id',
         '--output',
       ].includes(name) ||
       !value ||
@@ -33,7 +32,7 @@ function parseArguments(args: readonly string[]): Map<string, string> {
     }
     values.set(name, value);
   }
-  if (values.size !== 7)
+  if (values.size !== 6)
     throw new Error('Release manifest arguments are incomplete.');
   return values;
 }
@@ -128,10 +127,6 @@ async function main(): Promise<void> {
     typeof candidate.runtimeCandidateId === 'string'
       ? candidate.runtimeCandidateId
       : undefined;
-  const javaCandidateId = requireSha256(
-    values.get('--java-candidate-id'),
-    'Java candidate ID',
-  );
   const snapshotPath = join(
     candidateRoot,
     'contracts',
@@ -164,7 +159,7 @@ async function main(): Promise<void> {
   }
   const registryDirectory = resolve(values.get('--registry-directory')!);
   const registryArtifacts: JsonRecord[] = [];
-  for (const registry of ['npm', 'pypi', 'crates.io', 'maven']) {
+  for (const registry of ['npm', 'pypi', 'crates.io']) {
     const ledger = JSON.parse(
       await readFile(
         join(registryDirectory, `registry-ledger-${registry}.json`),
@@ -174,9 +169,7 @@ async function main(): Promise<void> {
     const expectedSourceCandidateId =
       registry === 'npm'
         ? packageCandidateId
-        : registry === 'maven'
-          ? javaCandidateId
-          : runtimeCandidateId;
+        : runtimeCandidateId;
     if (!expectedSourceCandidateId) {
       throw new Error(
         `Release candidate is missing the ${registry} source candidate binding.`,
