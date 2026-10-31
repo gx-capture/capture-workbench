@@ -53,22 +53,6 @@ jobs:
       contract_set_sha256: ${{ inputs.contract_set_sha256 }}
     secrets: inherit
 
-  publish-maven:
-    uses: ./.github/workflows/_publish-maven.yml
-    permissions:
-      actions: read
-      contents: read
-      packages: write
-    with:
-      candidate_id: ${{ inputs.candidate_id }}
-      candidate_run_id: ${{ inputs.candidate_run_id }}
-      candidate_manifest_sha256: ${{ inputs.candidate_manifest_sha256 }}
-      source_commit: ${{ inputs.source_commit }}
-      release_version: ${{ inputs.release_version }}
-      release_candidate_id: ${{ inputs.candidate_id }}
-      contract_set_sha256: ${{ inputs.contract_set_sha256 }}
-    secrets: inherit
-
   # PyPI Trusted Publishing binds both the upload token and the upload
   # attestation to the workflow that runs the publish action, and does not
   # support reusable workflows. Keep this job inline so both identities are

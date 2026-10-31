@@ -27,10 +27,6 @@ const EXPECTED_NPM_REGISTRY = 'https://npm.pkg.github.com';
 const EXPECTED_PYPI_PROJECT = 'capture-runtime-client';
 const EXPECTED_PYPI_METADATA_URL =
   'https://pypi.org/pypi/${project}/${version}/json';
-const EXPECTED_MAVEN_REPOSITORY =
-  'https://maven.pkg.github.com/gx-capture/capture-workbench';
-const EXPECTED_MAVEN_WORKFLOW_REPOSITORY =
-  'https://maven.pkg.github.com/gx-capture/capture-workbench/com/gx/capture/capture-runtime-client/${{ inputs.release_version }}';
 const EXPECTED_CRATES_REGISTRY = 'https://crates.io/api/v1/crates';
 
 const CONTRACT_HASH_PATHS = [
@@ -45,10 +41,6 @@ const CONTRACT_HASH_PATHS = [
   [
     'contract.asset.python.sha256',
     'packages/capture-runtime-client-python/src/capture_runtime_client/private/assets/contract-set.sha256',
-  ],
-  [
-    'contract.asset.java.sha256',
-    'packages/capture-runtime-client-java/src/main/resources/capture-runtime-contract-set.sha256',
   ],
 ] as const;
 
@@ -70,7 +62,6 @@ const CONTRACT_BUNDLE_PATHS = [
 const RELEASE_CHANNELS = [
   'npm-github-packages',
   'pypi',
-  'maven-github-packages',
   'crates-io',
   'github-releases',
 ] as const;
@@ -87,12 +78,6 @@ const CHANNEL_OWNER_SPECS = [
     role: 'publisher',
     workflowPath: '.github/workflows/_publish-pypi.yml',
     orchestrators: ['.github/workflows/runtime-promote.yml'],
-  },
-  {
-    channels: ['maven-github-packages'],
-    role: 'publisher',
-    workflowPath: '.github/workflows/_publish-maven.yml',
-    orchestrators: ['.github/workflows/release-promote.yml'],
   },
   {
     channels: ['crates-io'],
@@ -159,7 +144,6 @@ export interface InventoryEntry {
 export type ReleaseChannel =
   | 'npm-github-packages'
   | 'pypi'
-  | 'maven-github-packages'
   | 'crates-io'
   | 'github-releases';
 
@@ -546,10 +530,6 @@ export function collectReleaseVersionEntries(
       'packages/capture-runtime-client-python/src/capture_runtime_client/private/generated_models.py',
       /^RUNTIME_VERSION:\s*Final\s*=\s*['"]([^'"]+)['"]/mu,
     ],
-    [
-      'packages/capture-runtime-client-java/src/main/java/com/gx/capture/runtime/client/CaptureRuntimeTypes.java',
-      /public static final String RUNTIME_VERSION\s*=\s*"([^"]+)"/u,
-    ],
   ] as const)
     addRegex(entries, path + ':runtime version', text(root, path), expression);
   return entries;
@@ -710,15 +690,6 @@ function addReleasePackageEntries(
     root,
     'apps/capture-workbench-desktop/src-tauri/tauri.conf.json',
     'version',
-    loadReleaseIntent(root).releaseVersion,
-  );
-  addExpectedMatch(
-    entries,
-    'release.source.java-client',
-    'release',
-    root,
-    'packages/capture-runtime-client-java/pom.xml',
-    /^\s{2}<version>(\d+\.\d+\.\d+(?:-[^<]+)?)<\/version>/mu,
     loadReleaseIntent(root).releaseVersion,
   );
 }
@@ -1178,52 +1149,6 @@ function addProjectionEntries(entries: InventoryEntry[], root: string): void {
     ['properties', 'schemaVersion', 'const'],
     EXPECTED_PROJECTION_SCHEMA_VERSION,
   );
-  addExpectedMatch(
-    entries,
-    'ocr.projection.schema.java',
-    'projection',
-    root,
-    'packages/capture-runtime-client-java/src/main/java/com/gx/capture/runtime/client/CaptureRuntimeTypes.java',
-    /BEGIN GENERATED OCR PROJECTION[\s\S]*?schemaVersion = ocrText\(schemaVersion, 1, 1, "schemaVersion"\); if \(!"([^"]+)"\.equals\(schemaVersion\)/u,
-    EXPECTED_PROJECTION_SCHEMA_VERSION,
-  );
-  addExpectedMatch(
-    entries,
-    'runtime.version.java',
-    'release',
-    root,
-    'packages/capture-runtime-client-java/src/main/java/com/gx/capture/runtime/client/CaptureRuntimeTypes.java',
-    /public static final String RUNTIME_VERSION\s*=\s*"([^"]+)"/u,
-    loadReleaseIntent(root).releaseVersion,
-  );
-  addExpectedMatch(
-    entries,
-    'runtime.api.java',
-    'api',
-    root,
-    'packages/capture-runtime-client-java/src/main/java/com/gx/capture/runtime/client/CaptureRuntimeTypes.java',
-    /public static final String API_VERSION\s*=\s*"([^"]+)"/u,
-    EXPECTED_RUNTIME_API_VERSION,
-  );
-  addExpectedMatch(
-    entries,
-    'document.schema.java',
-    'document-schema',
-    root,
-    'packages/capture-runtime-client-java/src/main/java/com/gx/capture/runtime/client/CaptureRuntimeTypes.java',
-    /public static final String PROTOCOL_VERSION\s*=\s*"([^"]+)"/u,
-    EXPECTED_DOCUMENT_SCHEMA_VERSION,
-  );
-  addExpectedOccurrences(
-    entries,
-    'document.schema.java-raw',
-    'document-schema',
-    root,
-    'packages/capture-runtime-client-java/src/main/java/com/gx/capture/runtime/client/CaptureRuntimeTypes.java',
-    /if \(!"(2)"\.equals\(schemaVersion\)\)/gu,
-    EXPECTED_DOCUMENT_SCHEMA_VERSION,
-    2,
-  );
 
   for (const [id, sourcePath] of [
     [
@@ -1442,42 +1367,6 @@ function addChannelIdentityEntries(
     EXPECTED_PYPI_METADATA_URL,
   );
 
-  addExpectedMatch(
-    entries,
-    'channel.maven.package.group',
-    'channel',
-    root,
-    'packages/capture-runtime-client-java/pom.xml',
-    /^<project[\s\S]*?^\s*<groupId>([^<]+)<\/groupId>/mu,
-    'com.gx.capture',
-  );
-  addExpectedMatch(
-    entries,
-    'channel.maven.package.artifact',
-    'channel',
-    root,
-    'packages/capture-runtime-client-java/pom.xml',
-    /^<project[\s\S]*?^\s*<artifactId>([^<]+)<\/artifactId>/mu,
-    'capture-runtime-client',
-  );
-  addExpectedMatch(
-    entries,
-    'channel.maven.package.repository',
-    'channel',
-    root,
-    'packages/capture-runtime-client-java/pom.xml',
-    /<distributionManagement>[\s\S]*?<url>(https:\/\/maven\.pkg\.github\.com\/gx-capture\/capture-workbench)<\/url>/u,
-    EXPECTED_MAVEN_REPOSITORY,
-  );
-  addExpectedMatch(
-    entries,
-    'channel.maven.workflow.repository',
-    'channel',
-    root,
-    '.github/workflows/_publish-maven.yml',
-    /repository_url="([^"]+)"/u,
-    EXPECTED_MAVEN_WORKFLOW_REPOSITORY,
-  );
 
   addExpectedMatch(
     entries,

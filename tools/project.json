@@ -78,7 +78,6 @@
         "{workspaceRoot}/packages/**/package.json",
         "{workspaceRoot}/packages/**/Cargo.toml",
         "{workspaceRoot}/packages/**/pyproject.toml",
-        "{workspaceRoot}/packages/**/pom.xml",
         "{workspaceRoot}/packages/**/src/**/*",
         "{workspaceRoot}/packages/capture-runtime/model-sources/**/*",
         "{workspaceRoot}/packages/capture-runtime/scripts/**/*",
@@ -96,7 +95,7 @@
       "cache": true,
       "executor": "nx:run-commands",
       "options": {
-        "command": "node --test tools/verify-release-candidate.test.ts"
+        "command": "node --test tools/verify-release-candidate.test.ts tools/assemble-release-candidate.test.ts"
       }
     },
     "contract-impact-test": {
@@ -131,7 +130,7 @@
       "cache": true,
       "executor": "nx:run-commands",
       "options": {
-        "command": "node --test tools/package-candidate-workflow.test.ts tools/publish-npm-candidate.test.ts tools/publish-crate-candidate.test.ts tools/verify-package-candidate.test.ts tools/verify-java-sdk-candidate.test.ts tools/verify-runtime-candidate.test.ts tools/verify-runtime-candidate-binding.test.ts tools/verify-registry-ledgers.test.ts tools/record-pypi-candidate.test.ts tools/assemble-runtime-candidate.test.ts"
+        "command": "node --test tools/package-candidate-workflow.test.ts tools/publish-npm-candidate.test.ts tools/publish-crate-candidate.test.ts tools/verify-package-candidate.test.ts tools/verify-runtime-candidate.test.ts tools/verify-runtime-candidate-binding.test.ts tools/verify-registry-ledgers.test.ts tools/record-pypi-candidate.test.ts tools/assemble-runtime-candidate.test.ts"
       }
     },
     "release-manifest-test": {

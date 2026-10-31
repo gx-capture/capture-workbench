@@ -281,11 +281,6 @@ export async function verifyPackageCandidate(input: {
     'contracts/contract-snapshot.json',
     'contracts/contract-set.json',
     'contracts/contract-set.sha256',
-    'java-candidate-manifest.json',
-    `maven/capture-runtime-client-${input.version}.jar`,
-    `maven/capture-runtime-client-${input.version}-sources.jar`,
-    'maven/pom.xml',
-    'maven/capture-runtime-contract-set.sha256',
   ]);
   assert.deepEqual(
     artifactPaths,

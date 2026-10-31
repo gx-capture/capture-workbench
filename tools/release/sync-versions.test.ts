@@ -357,33 +357,6 @@ test('apply restores every attempted file after a partial write failure', (t) =>
   }
 });
 
-test('Maven updates only the direct project version regardless of indentation', (t) => {
-  const root = fixture(t);
-  const owner = RELEASE_VERSION_OWNERS.find((item) => item.xmlProjectVersion);
-  assert.ok(owner);
-  const path = join(root, owner.path);
-  const foreign = `<dependencies><dependency><version>${RELEASE_VERSION}</version></dependency></dependencies>`;
-  const original = `<project><version>${RELEASE_VERSION}</version>${foreign}</project>`;
-  writeFileSync(path, original);
-  const plan = planReleaseVersion(root, '7.8.9');
-  assert.equal(
-    plan.changes.find((change) => change.path === owner.path)?.after,
-    `<project><version>7.8.9</version>${foreign}</project>`,
-  );
-  for (const invalid of [
-    `<project>${foreign}</project>`,
-    `<project><version>${RELEASE_VERSION}</version><version>${RELEASE_VERSION}</version>${foreign}</project>`,
-  ]) {
-    writeFileSync(path, invalid);
-    const before = snapshot(root);
-    assert.throws(
-      () => synchronizeReleaseVersion(root, { version: '7.8.9' }),
-      /exactly one direct project\/version/u,
-    );
-    assert.deepEqual(snapshot(root), before);
-  }
-});
-
 for (const [lineEnding, newline] of [
   ['LF', '\n'],
   ['CRLF', '\r\n'],

@@ -125,11 +125,6 @@ test('async boundary permits only the exact approved CLI paths', async () => {
     'lib',
     'http-capture-client.ts',
   );
-  const javaCandidateToolPath = join(
-    workspaceRoot,
-    'tools',
-    'assemble-java-sdk-candidate.ts',
-  );
   const realOcrAssertionsPath = join(
     workspaceRoot,
     'apps',
@@ -253,11 +248,6 @@ test('async boundary permits only the exact approved CLI paths', async () => {
     await writeFile(
       angularSdkAdapterPath,
       'export async function bridgeSdk() { await Promise.resolve(); }\n',
-      'utf8',
-    );
-    await writeFile(
-      javaCandidateToolPath,
-      'export async function runJavaCandidateTool() { await Promise.resolve(); }\n',
       'utf8',
     );
     await writeFile(
