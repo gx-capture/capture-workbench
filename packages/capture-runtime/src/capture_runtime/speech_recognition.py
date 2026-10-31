@@ -257,6 +257,16 @@ def _quiet_point(audio: Any, left: int, right: int) -> int:
     return left + quiet + int(np.argmin(magnitude[quiet : quiet + window]))
 
 
+def _aligner_language(language: str) -> str | None:
+    """Return the language the forced aligner splits words by.
+
+    For Japanese and Korean the aligner would import a tokenizer package the worker does not
+    ship (nagisa, soynlp). Its default split, each kanji alone and other runs whole, is enough
+    to time the segments.
+    """
+    return None if language in {"ja", "ko"} else language
+
+
 def _split_audio(audio: Any) -> list[tuple[int, Any]]:
     """Qwen-ASR quiet-point splitter (Apache-2.0), without gaps or overlap."""
     limit = ASR_CHUNK_SECONDS * SAMPLE_RATE
@@ -366,8 +376,9 @@ class TeaAsrAdapter:
         self.fallback_provenance_model = fallback_provenance_model
         self.prefer_gpu, self.allow_cpu_fallback = prefer_gpu, allow_cpu_fallback
         self.max_duration_ms, self.word_timestamps = max_duration_ms, word_timestamps
-        # TEA-ASR is a Taiwan Mandarin model; its card recommends forcing Chinese, which also
-        # keeps dense Chinese-English code-switching from being translated into English.
+        # The default spoken language. TEA-ASR is a Taiwan Mandarin model; its card recommends
+        # forcing Chinese, which also keeps dense Chinese-English code-switching from being
+        # translated into English. A capture can name another language per call.
         self.language = "zh"
         self._torch, self._transformers = torch_module, transformers_module
         self._decoder, self._stage_reporter = decoder, stage_reporter
@@ -483,12 +494,17 @@ class TeaAsrAdapter:
         *,
         should_cancel: Callable[[], bool],
         allow_empty_output: bool = False,
+        language: str | None = None,
     ) -> WhisperTranscriptionResult:
+        """Transcribe ``source_path``; ``language`` is the spoken language (default Chinese)."""
         started = time.perf_counter()
         callback_error: BaseException | None = None
         try:
             result = self._transcribe(
-                source_path, should_cancel=should_cancel, allow_empty_output=allow_empty_output
+                source_path,
+                should_cancel=should_cancel,
+                allow_empty_output=allow_empty_output,
+                language=language or self.language,
             )
             return replace(result, elapsed_ms=round((time.perf_counter() - started) * 1000))
         except _ProgressError as error:
@@ -503,6 +519,7 @@ class TeaAsrAdapter:
         *,
         should_cancel: Callable[[], bool],
         allow_empty_output: bool,
+        language: str,
     ) -> WhisperTranscriptionResult:
         self._report_stage(speech_stage("assets-probe-start"))
         probe = self.probe()
@@ -537,7 +554,14 @@ class TeaAsrAdapter:
         if device == "cuda":
             try:
                 return self._attempt(
-                    audio, device, torch, transformers, should_cancel, allow_empty_output, warning
+                    audio,
+                    device,
+                    torch,
+                    transformers,
+                    should_cancel,
+                    allow_empty_output,
+                    warning,
+                    language=language,
                 )
             except Exception as error:
                 reason = _cuda_failure_reason(error)
@@ -552,7 +576,14 @@ class TeaAsrAdapter:
                     raise error from None
             self._report_stage(speech_stage("gpu-fallback"))
         return self._attempt(
-            audio, "cpu", torch, transformers, should_cancel, allow_empty_output, warning
+            audio,
+            "cpu",
+            torch,
+            transformers,
+            should_cancel,
+            allow_empty_output,
+            warning,
+            language=language,
         )
 
     def _attempt(
@@ -564,6 +595,8 @@ class TeaAsrAdapter:
         should_cancel: Callable[[], bool],
         allow_empty_output: bool,
         warning: str | None,
+        *,
+        language: str,
     ) -> WhisperTranscriptionResult:
         model = inputs = output = generated = None
 
@@ -626,9 +659,9 @@ class TeaAsrAdapter:
                     import numpy as np
 
                     request = np.pad(chunk, (0, SAMPLE_RATE // 2 - len(chunk)))
-                inputs = processor.apply_transcription_request(
-                    audio=request, language=self.language
-                ).to(torch.device(device), dtype)
+                inputs = processor.apply_transcription_request(audio=request, language=language).to(
+                    torch.device(device), dtype
+                )
                 limit = int(len(request) / SAMPLE_RATE * 20) + 64
                 loop = _LoopStop()
                 with torch.inference_mode():
@@ -685,10 +718,9 @@ class TeaAsrAdapter:
                 text = result["transcription"].strip()
                 if not text:
                     continue
-                language = self.language or result["language"]
                 offset, chunk_end = start / SAMPLE_RATE, (start + len(chunk)) / SAMPLE_RATE
                 inputs, word_lists = aligner.prepare_forced_aligner_inputs(
-                    audio=chunk, transcript=text, language=language
+                    audio=chunk, transcript=text, language=_aligner_language(language)
                 )
                 inputs = inputs.to(torch.device(device), dtype)
                 with torch.inference_mode():

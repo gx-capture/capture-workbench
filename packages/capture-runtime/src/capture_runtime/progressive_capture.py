@@ -267,6 +267,7 @@ class ProgressiveCaptureProcessor:
         source_path: Path,
         cancellation: asyncio.Event,
         sink: EventSink,
+        spoken_language: str | None = None,
     ) -> RawCapture:
         try:
             engine = await self._resolve_engine()
@@ -332,7 +333,9 @@ class ProgressiveCaptureProcessor:
         reusable = False
         try:
             try:
-                await worker.begin(capture_id=capture_id, source=source)
+                await worker.begin(
+                    capture_id=capture_id, source=source, spoken_language=spoken_language
+                )
             except Exception as error:
                 raise ProgressiveCaptureError(
                     "Progressive Whisper worker could not be started.",
@@ -504,7 +507,9 @@ class _SessionWorker:
         assert process.stderr is not None
         return cls(process, asyncio.create_task(_drain_stderr(process.stderr)))
 
-    async def begin(self, *, capture_id: str, source: CaptureSource) -> None:
+    async def begin(
+        self, *, capture_id: str, source: CaptureSource, spoken_language: str | None = None
+    ) -> None:
         """Start one capture's session; a warm worker serves one after another."""
 
         await self._send(
@@ -523,6 +528,7 @@ class _SessionWorker:
                         "mediaType": source.media_type,
                         "bytes": source.bytes,
                     },
+                    **({"spokenLanguage": spoken_language} if spoken_language else {}),
                 },
             )
         )

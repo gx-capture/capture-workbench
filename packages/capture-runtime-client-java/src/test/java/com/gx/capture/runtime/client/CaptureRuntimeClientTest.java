@@ -368,7 +368,7 @@ class CaptureRuntimeClientTest {
             "eager");
     assertThat(legacy.pdfPageNumbers()).isNull();
     assertThat(CaptureRuntimeTypes.CONTRACT_SET_SHA256)
-        .isEqualTo("60c622670b00e144b174c210e96773e07e7d94ec7c721b33ac65ff6c722c1d93");
+        .isEqualTo("664b2b3244d338dd4de39cbc2f1ee83104d21ee454a11f1d65fd8309d3599670");
 
     assertThatThrownBy(
             () ->
@@ -1043,6 +1043,32 @@ class CaptureRuntimeClientTest {
     assertThat(upload.identifySpeakers()).isFalse();
     assertThat(upload.identifyingSpeakers().identifySpeakers()).isTrue();
     assertThat(upload.identifyingSpeakers().fileName()).isEqualTo("meeting.wav");
+  }
+
+  @Test
+  void namesTheSpokenLanguageOnlyWhenTheUploadSaysSo() throws Exception {
+    var upload = new CaptureRuntimeClient.CaptureUpload("listening.mp3", new byte[] {1}, CaptureRuntimeTypes.SourceKind.AUDIO, "request-1");
+    assertThat(upload.spokenLanguage()).isNull();
+    var japanese = upload.spokenIn("ja").identifyingSpeakers();
+    assertThat(japanese.spokenLanguage()).isEqualTo("ja");
+    assertThat(japanese.identifySpeakers()).isTrue();
+    assertThatThrownBy(() -> upload.spokenIn("jp"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("spokenLanguage");
+
+    var start =
+        new CaptureRuntimeTypes.StartCapture(
+            "2", "request-1", "ingestion-1", CaptureRuntimeTypes.StructuringMode.RUNTIME, null, "eager", null, false, "ja");
+    assertThat(MAPPER.readTree(MAPPER.writeValueAsBytes(start)).path("spokenLanguage").asText()).isEqualTo("ja");
+    var legacy =
+        new CaptureRuntimeTypes.StartCapture(
+            "2", "request-1", "ingestion-1", CaptureRuntimeTypes.StructuringMode.RUNTIME, null, "eager", null, true);
+    assertThat(legacy.spokenLanguage()).isNull();
+    assertThatThrownBy(
+            () ->
+                new CaptureRuntimeTypes.StartCapture(
+                    "2", "request-1", "ingestion-1", CaptureRuntimeTypes.StructuringMode.RUNTIME, null, "eager", null, false, "JA"))
+        .isInstanceOf(IllegalArgumentException.class);
   }
 
   @Test

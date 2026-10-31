@@ -40,10 +40,11 @@ class FakeBackend:
         self.cancelled = True
 
 
-def _start(session_id: str = "session-1", *, version: str = "3") -> bytes:
+def _start(session_id: str = "session-1", *, version: str = "3", **extra: Any) -> bytes:
     return encode_control(
         SessionFrameType.START,
         {
+            **extra,
             "protocolVersion": version,
             "sessionId": session_id,
             "sampleRate": 16_000,
@@ -130,6 +131,23 @@ def test_session_protocol_rejects_a_previous_version_or_a_missing_source() -> No
         error = WhisperSessionProtocol(backend).handle(next(iter(SessionFrameDecoder().feed(wire))))
         assert error[0][0] == ord(SessionFrameType.ERROR.value)
         assert backend.started is None
+
+
+def test_session_start_carries_an_optional_spoken_language() -> None:
+    for wire, language in ((_start(), None), (_start(spokenLanguage="ja"), "ja")):
+        backend = FakeBackend()
+        WhisperSessionProtocol(backend).handle(next(iter(SessionFrameDecoder().feed(wire))))
+        assert backend.started is not None
+        assert backend.started.get("spokenLanguage") == language
+
+
+@pytest.mark.parametrize("language", ["jp", "JA", "", 7, None])
+def test_session_start_rejects_a_spoken_language_outside_the_list(language: object) -> None:
+    backend = FakeBackend()
+    wire = _start(spokenLanguage=language)
+    error = WhisperSessionProtocol(backend).handle(next(iter(SessionFrameDecoder().feed(wire))))
+    assert error[0][0] == ord(SessionFrameType.ERROR.value)
+    assert backend.started is None
 
 
 def test_session_protocol_adds_only_allowlisted_failure_context() -> None:

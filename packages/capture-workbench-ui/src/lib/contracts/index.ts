@@ -15,6 +15,7 @@ import type {
   RuntimeInstallation,
   RuntimeReady as GeneratedRuntimeReady,
   RuntimeRequirement,
+  SpokenLanguage,
   StructuringMode,
   TimeLocator,
 } from '@gx-capture/capture-runtime-client';
@@ -141,6 +142,8 @@ export interface StartStreamingCaptureRequest {
   readonly targetLanguage?: string;
   /** Audio only: label who speaks each segment. */
   readonly identifySpeakers?: boolean;
+  /** Audio only: the language spoken in the recording. */
+  readonly spokenLanguage?: SpokenLanguage;
   readonly signal?: AbortSignal;
 }
 
@@ -352,6 +355,11 @@ export interface CaptureWorkbenchConfig {
    * Needs the optional `speaker-diarization` unit installed in the runtime.
    */
   readonly identifySpeakers?: boolean;
+  /**
+   * The language spoken in audio captures, such as `ja`. Omit it for Chinese,
+   * the speech model's default.
+   */
+  readonly spokenLanguage?: SpokenLanguage;
   readonly width?: string;
   readonly height?: string;
   readonly density?: CaptureDensity;

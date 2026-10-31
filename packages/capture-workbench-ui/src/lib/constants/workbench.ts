@@ -15,6 +15,7 @@ export const DEFAULT_CAPTURE_WORKBENCH_CONFIG: ResolvedCaptureWorkbenchConfig = 
   reviewBeforeCommit: false,
   reviewEditable: false,
   identifySpeakers: false,
+  spokenLanguage: undefined,
   width: '100%',
   height: 'auto',
   density: 'comfortable',

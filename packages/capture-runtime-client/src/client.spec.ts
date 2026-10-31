@@ -1047,6 +1047,82 @@ describe('CaptureRuntimeClient', () => {
     expect(opened).toBe(2);
   });
 
+  it('names the spoken language of an audio capture only when given', async () => {
+    const body = new TextEncoder().encode('abc');
+    const digest = createHash('sha256').update(body).digest('hex');
+    const ingestion = (received: number, nextChunkIndex: number, status = 'open') => ({
+      protocolVersion: '2',
+      kind: 'audio',
+      ingestionId: 'ingestion-1',
+      status,
+      fileName: 'listening.mp3',
+      mediaType: 'audio/mpeg',
+      totalBytes: body.byteLength,
+      receivedBytes: received,
+      contiguousBytes: received,
+      nextChunkIndex,
+      nextOffset: received,
+      sourceSha256: digest,
+      finalizedSha256: status === 'ready' ? digest : null,
+      expiresAt: '2026-01-01T00:00:00Z',
+    });
+    const starts: Record<string, unknown>[] = [];
+    const transport = new InMemoryRuntimeTransport(
+      withDiscovery([
+        {
+          method: 'POST',
+          path: '/v2/ingestions',
+          handle: () => Response.json(ingestion(0, 0), { status: 201 }),
+        },
+        {
+          method: 'PUT',
+          path: '/v2/ingestions/ingestion-1/chunks/0',
+          handle: () => Response.json(ingestion(body.byteLength, 1)),
+        },
+        {
+          method: 'POST',
+          path: '/v2/ingestions/ingestion-1/finalize',
+          handle: () => Response.json(ingestion(body.byteLength, 1, 'ready')),
+        },
+        {
+          method: 'POST',
+          path: '/v2/captures',
+          handle: (request) => {
+            starts.push(JSON.parse(String(request.body)) as Record<string, unknown>);
+            return Response.json(
+              {
+                protocolVersion: '2',
+                captureId: 'capture-1',
+                ingestionId: 'ingestion-1',
+                kind: 'audio',
+                status: 'extracting',
+                partialRevision: 0,
+                lastEventSequence: 0,
+                createdAt: '2026-01-01T00:00:00Z',
+                updatedAt: '2026-01-01T00:00:00Z',
+              },
+              { status: 202 },
+            );
+          },
+        },
+      ]),
+    );
+    const client = new CaptureRuntimeClient({ baseUrl: 43123, transport });
+    const upload = {
+      fileName: 'listening.mp3',
+      body,
+      mediaType: 'audio/mpeg',
+      sourceKind: 'audio' as const,
+      clientRequestId: 'request-spoken-language',
+    };
+
+    await client.startStreamingCapture({ ...upload, spokenLanguage: 'ja' });
+    await client.startStreamingCapture(upload);
+
+    expect(starts[0]?.['spokenLanguage']).toBe('ja');
+    expect(starts[1]).not.toHaveProperty('spokenLanguage');
+  });
+
   it('rejects a tampered contract bundle before parsing operations', async () => {
     const bytes = new TextEncoder().encode('{"tampered":true}');
     const digest = Array.from(

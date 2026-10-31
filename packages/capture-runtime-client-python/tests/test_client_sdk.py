@@ -306,6 +306,86 @@ def test_start_capture_sends_a_non_contiguous_pdf_page_selection() -> None:
     assert operation.capture_id == "capture-1"
 
 
+@pytest.mark.parametrize("spoken_language", [None, "ja"])
+def test_start_capture_names_the_spoken_language_only_when_given(
+    spoken_language: str | None,
+) -> None:
+    content = b"audio-bytes"
+    digest = hashlib.sha256(content).hexdigest()
+    sent: list[dict[str, object]] = []
+
+    def ingestion(request: httpx.Request, *, received: int, status: str = "open") -> httpx.Response:
+        return httpx.Response(
+            201 if received == 0 else 200,
+            json={
+                "protocolVersion": "2",
+                "kind": "audio",
+                "ingestionId": "ingestion-1",
+                "status": status,
+                "fileName": "listening.mp3",
+                "mediaType": "audio/mpeg",
+                "totalBytes": len(content),
+                "receivedBytes": received,
+                "contiguousBytes": received,
+                "nextChunkIndex": 1 if received else 0,
+                "nextOffset": received,
+                "sourceSha256": digest,
+                "finalizedSha256": digest if status == "ready" else None,
+                "expiresAt": "2026-01-01T00:00:00+00:00",
+            },
+            request=request,
+        )
+
+    def start(request: httpx.Request) -> httpx.Response:
+        sent.append(json.loads(request.content))
+        return httpx.Response(
+            202,
+            json={
+                "protocolVersion": "2",
+                "captureId": "capture-1",
+                "ingestionId": "ingestion-1",
+                "kind": "audio",
+                "status": "extracting",
+                "progress": 0.0,
+                "partialRevision": 0,
+                "lastEventSequence": 0,
+                "source": None,
+                "error": None,
+                "createdAt": "2026-01-01T00:00:00+00:00",
+                "updatedAt": "2026-01-01T00:00:00+00:00",
+                "completedAt": None,
+            },
+            request=request,
+        )
+
+    transport = _transport(
+        {
+            ("POST", "/v2/ingestions"): lambda request: ingestion(request, received=0),
+            ("PUT", "/v2/ingestions/ingestion-1/chunks/0"): lambda request: ingestion(
+                request, received=len(content)
+            ),
+            ("POST", "/v2/ingestions/ingestion-1/finalize"): lambda request: ingestion(
+                request, received=len(content), status="ready"
+            ),
+            ("POST", "/v2/captures"): start,
+        }
+    )
+
+    CaptureRuntimeClient(transport=transport).start_capture(
+        CaptureUpload(
+            "listening.mp3",
+            content,
+            "audio",
+            media_type="audio/mpeg",
+            spoken_language=spoken_language,
+        ),
+        client_request_id="request-language-1",
+    )
+
+    assert sent[0].get("spokenLanguage") == spoken_language
+    assert ("spokenLanguage" in sent[0]) is (spoken_language is not None)
+
+
 def _ocr_projection(*, status: str = "completed") -> dict[str, object]:
     engine = {
         "status": "resolved",

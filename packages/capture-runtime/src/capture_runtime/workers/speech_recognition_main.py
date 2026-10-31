@@ -224,14 +224,22 @@ def _run(request: WorkerRequestModel, cancellation: Event, progress: Any = None)
     prefer_gpu = options.get("preferGpu")
     allow_cpu_fallback = options.get("allowCpuFallback", True)
     word_timestamps = options.get("wordTimestamps", False)
+    language = options.get("language")
+    from capture_runtime.contracts import SPOKEN_LANGUAGES
+
+    language_valid = "language" not in options or (
+        isinstance(language, str) and language in SPOKEN_LANGUAGES
+    )
     if (
-        set(options) - {"maxDurationMs", "preferGpu", "allowCpuFallback", "wordTimestamps"}
+        set(options)
+        - {"maxDurationMs", "preferGpu", "allowCpuFallback", "wordTimestamps", "language"}
         or not isinstance(max_duration_ms, int)
         or isinstance(max_duration_ms, bool)
         or max_duration_ms <= 0
         or not isinstance(prefer_gpu, bool)
         or not isinstance(allow_cpu_fallback, bool)
         or not isinstance(word_timestamps, bool)
+        or not language_valid
     ):
         raise ValueError("Speech recognition run options are invalid")
     adapter = TeaAsrAdapter(
@@ -248,7 +256,7 @@ def _run(request: WorkerRequestModel, cancellation: Event, progress: Any = None)
         progress_reporter=None if progress is None else permille_reporter(progress),
     )
     _import_speech_runtime()
-    result = adapter.transcribe(source, should_cancel=cancellation.is_set)
+    result = adapter.transcribe(source, should_cancel=cancellation.is_set, language=language)
 
     def words(item: Any) -> dict[str, Any]:
         if not word_timestamps:
@@ -342,7 +350,9 @@ def _session() -> None:
             ),
             capture_id=metadata["sessionId"],
             decoder=DirectWindowDecoder(),
-            transcriber=SpeechRecognitionWindowTranscriber(adapter, temp_dir=temp_dir),
+            transcriber=SpeechRecognitionWindowTranscriber(
+                adapter, temp_dir=temp_dir, language=metadata.get("spokenLanguage")
+            ),
             clock=SystemClock(),
         )
 

@@ -71,6 +71,31 @@
       "default": false,
       "title": "Identifyspeakers",
       "type": "boolean"
+    },
+    "spokenLanguage": {
+      "anyOf": [
+        {
+          "enum": [
+            "zh",
+            "yue",
+            "en",
+            "ja",
+            "ko",
+            "fr",
+            "de",
+            "it",
+            "pt",
+            "ru",
+            "es"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Spokenlanguage"
     }
   },
   "required": [

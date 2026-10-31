@@ -74,6 +74,9 @@ class CaptureUpload:
     # Audio only: label who speaks each segment. Needs the optional
     # speaker-diarization unit; the capture then reports no partial transcript.
     identify_speakers: bool = False
+    # Audio only: the language spoken in the recording, one of zh, yue, en, ja,
+    # ko, fr, de, it, pt, ru or es. Omit it for Chinese, the speech model's default.
+    spoken_language: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -233,6 +236,7 @@ class CaptureRuntimeClient:
         target_language: str | None = None,
         pdf_page_numbers: Sequence[int] | None = None,
         identify_speakers: bool = False,
+        spoken_language: str | None = None,
     ) -> CaptureOperation:
         """Read a local file and start a capture for it (see :meth:`start_capture`)."""
         return self.start_capture(
@@ -244,6 +248,7 @@ class CaptureRuntimeClient:
                 target_language=target_language,
                 pdf_page_numbers=pdf_page_numbers,
                 identify_speakers=identify_speakers,
+                spoken_language=spoken_language,
             ),
             client_request_id=client_request_id,
         )
@@ -480,6 +485,8 @@ class CaptureRuntimeClient:
                 start_payload["pdfPageNumbers"] = list(upload.pdf_page_numbers)
             if upload.identify_speakers:
                 start_payload["identifySpeakers"] = True
+            if upload.spoken_language is not None:
+                start_payload["spokenLanguage"] = upload.spoken_language
             return decode_model(
                 self._request(
                     "POST",

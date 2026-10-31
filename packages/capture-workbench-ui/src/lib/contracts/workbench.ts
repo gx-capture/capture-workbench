@@ -1,3 +1,4 @@
+import type { SpokenLanguage } from '@gx-capture/capture-runtime-client';
 import type {
   CaptureClient,
   CaptureCompletedEvent,
@@ -24,6 +25,7 @@ export interface ResolvedCaptureWorkbenchConfig {
   readonly reviewBeforeCommit: boolean;
   readonly reviewEditable: boolean;
   readonly identifySpeakers: boolean;
+  readonly spokenLanguage?: SpokenLanguage;
   readonly width: string;
   readonly height: string;
   readonly density: 'compact' | 'comfortable';

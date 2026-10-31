@@ -73,6 +73,7 @@ export type TimeLocator = Generated.TimeLocator;
 export type CaptureRequirementId = Generated.CaptureRequirementId;
 export type CaptureSourceKind = Generated.CaptureSourceKind;
 export type StructuringMode = Generated.StructuringMode;
+export type SpokenLanguage = NonNullable<Generated.StartCaptureV2['spokenLanguage']>;
 export type StructuringSessionStatus = Generated.StructuringSessionStatus;
 export type StructuringBatchStatus = Generated.StructuringBatchStatus;
 export type StreamingCaptureStatus = Generated.StreamingCaptureStatus;
@@ -105,7 +106,7 @@ export {
 
 /** Approved current runtime contract-set identity; update only with a release. */
 export const CAPTURE_CONTRACT_SET_SHA256 =
-  '60c622670b00e144b174c210e96773e07e7d94ec7c721b33ac65ff6c722c1d93';
+  '664b2b3244d338dd4de39cbc2f1ee83104d21ee454a11f1d65fd8309d3599670';
 
 export interface RuntimeDiscovery {
   readonly ready: RuntimeReady;
@@ -133,6 +134,11 @@ export interface CaptureUpload {
    * `speaker-diarization` unit; the capture then reports no partial transcript.
    */
   readonly identifySpeakers?: boolean;
+  /**
+   * Audio only: the language spoken in the recording. Omit it for Chinese, the
+   * speech model's default.
+   */
+  readonly spokenLanguage?: SpokenLanguage;
   readonly clientRequestId: string;
   readonly signal?: AbortSignal;
 }

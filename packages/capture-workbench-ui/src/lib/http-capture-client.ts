@@ -154,6 +154,7 @@ export class HttpCaptureClient implements CaptureClient {
         structuringMode: request.structuringMode,
         targetLanguage: request.targetLanguage,
         identifySpeakers: request.identifySpeakers,
+        spokenLanguage: request.spokenLanguage,
         signal: request.signal,
       }),
     );

@@ -480,6 +480,8 @@ export class CaptureWorkflowService {
           targetLanguage: config.targetLanguage,
           identifySpeakers:
             config.identifySpeakers && task.sourceKind === 'audio',
+          spokenLanguage:
+            task.sourceKind === 'audio' ? config.spokenLanguage : undefined,
           signal,
         };
         return this.helpers.retryUncertainResponse(
