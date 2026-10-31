@@ -21,6 +21,13 @@ Capture Workbench follows an explicit 0.x compatibility policy:
 The consumer consistency check is a permanent CI gate for the declared
 runtime, package lock, Python host, desktop host, and browser host versions.
 
+## 0.8.0
+
+A minor release: a host can name the language spoken in an audio capture, and
+deleting a capture deletes its uploaded source. The contract set changes
+(`664b2b32…`), so a 0.8.0 runtime needs 0.8.0 clients and every consumer moves
+with it. The capture document schema and the models are unchanged from 0.7.2.
+
 ### Uploaded sources are deleted with their capture
 
 Uploaded sources are host documents, often confidential, and the runtime now
@@ -65,7 +72,7 @@ were transcribed as if spoken in Chinese. A host can now name the language:
 - The contract set changes (SHA-256
   `664b2b3244d338dd4de39cbc2f1ee83104d21ee454a11f1d65fd8309d3599670`). Clients
   allowlist the contract set, so this runtime needs matching clients: under the
-  0.x policy the next release is a minor one.
+  0.x policy this is a minor release.
 
 ## 0.7.2
 

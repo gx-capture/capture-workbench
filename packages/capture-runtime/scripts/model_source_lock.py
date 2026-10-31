@@ -12,7 +12,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 LOCK_VERSION = "2"
-COMMIT_A_SHA = "954f19f6c642cfb2f180935fdc3f9283b48ad649"
+COMMIT_A_SHA = "b4b62e3c1ce2ff9da9b344259127fcfc5f0a9078"
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 # Release CI invokes this script with --no-project before installing the runtime.
 # Read the repository's declared owner without importing the runtime package.
