@@ -21,6 +21,25 @@ Capture Workbench follows an explicit 0.x compatibility policy:
 The consumer consistency check is a permanent CI gate for the declared
 runtime, package lock, Python host, desktop host, and browser host versions.
 
+### Japanese transcripts use Japanese kanji forms
+
+TEA-ASR learned Taiwan Mandarin, so when a capture names Japanese it still
+writes many kanji in their old (Traditional) forms. Speech recognition now
+converts them to their Japanese forms: 會議 becomes 会議, 天氣 becomes 天気.
+
+- On the 45-minute JLPT N1 listening test, this changed 161 of 8,755
+  characters (1.8%), and the share of the official script transcribed in order
+  rose from 87.2% to 89.2%. No character of the official script was changed.
+- The table (`capture_runtime/japanese_kanji`) maps 348 old forms. It comes
+  from OpenCC's `JPShinjitaiCharacters.txt` (Apache License 2.0; its licence
+  ships with the speech recognition engine), narrowed to pairs whose Japanese
+  form is a jōyō kanji and whose old form is not, so a kanji standard Japanese
+  writes never changes. `scripts/generate_japanese_kanji.py` rebuilds it from
+  the pinned upstream files.
+- Names written in old forms are converted too: 龍 becomes 竜, 澤 becomes 沢.
+- Other languages, and captures that name none, are unchanged. The contract
+  does not change.
+
 ## 0.8.0
 
 A minor release: a host can name the language spoken in an audio capture, and

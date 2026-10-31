@@ -54,6 +54,7 @@ forbidden_modules = [
   "capture_runtime.ocr_region_lineage",
   "capture_runtime.image_normalization",
   "capture_runtime.speech_recognition",
+  "capture_runtime.japanese_kanji",
   "capture_runtime.progressive_capture",
   "capture_runtime.progressive_audio",
   "capture_runtime.progressive_decoder",
@@ -132,6 +133,7 @@ forbidden_modules = [
   "capture_runtime.ocr_region_lineage",
   "capture_runtime.image_normalization",
   "capture_runtime.speech_recognition",
+  "capture_runtime.japanese_kanji",
   "capture_runtime.progressive_capture",
   "capture_runtime.progressive_audio",
   "capture_runtime.progressive_decoder",
@@ -208,6 +210,7 @@ forbidden_modules = [
   "capture_runtime.ocr_region_lineage",
   "capture_runtime.image_normalization",
   "capture_runtime.speech_recognition",
+  "capture_runtime.japanese_kanji",
   "capture_runtime.progressive_capture",
   "capture_runtime.progressive_audio",
   "capture_runtime.progressive_decoder",
@@ -283,6 +286,7 @@ forbidden_modules = [
   "capture_runtime.ocr_region_lineage",
   "capture_runtime.image_normalization",
   "capture_runtime.speech_recognition",
+  "capture_runtime.japanese_kanji",
   "capture_runtime.progressive_capture",
   "capture_runtime.progressive_audio",
   "capture_runtime.progressive_decoder",
@@ -349,6 +353,7 @@ source_modules = [
 ]
 forbidden_modules = [
   "capture_runtime.speech_recognition",
+  "capture_runtime.japanese_kanji",
   "capture_runtime.progressive_capture",
   "capture_runtime.progressive_audio",
   "capture_runtime.progressive_decoder",
@@ -393,6 +398,7 @@ name = "Speech transcription does not depend on its downstream contexts"
 type = "forbidden"
 source_modules = [
   "capture_runtime.speech_recognition",
+  "capture_runtime.japanese_kanji",
   "capture_runtime.progressive_capture",
   "capture_runtime.progressive_audio",
   "capture_runtime.progressive_decoder",
@@ -494,6 +500,7 @@ forbidden_modules = [
   "capture_runtime.ocr_region_lineage",
   "capture_runtime.image_normalization",
   "capture_runtime.speech_recognition",
+  "capture_runtime.japanese_kanji",
   "capture_runtime.progressive_capture",
   "capture_runtime.progressive_audio",
   "capture_runtime.progressive_decoder",
@@ -616,6 +623,7 @@ source_modules = [
   "capture_runtime.ocr_region_lineage",
   "capture_runtime.image_normalization",
   "capture_runtime.speech_recognition",
+  "capture_runtime.japanese_kanji",
   "capture_runtime.progressive_capture",
   "capture_runtime.progressive_audio",
   "capture_runtime.progressive_decoder",

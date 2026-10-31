@@ -225,6 +225,24 @@ def test_a_named_spoken_language_is_forced_for_recognition(
     assert next(e for e in fake.events if e[0] == "align_request")[1] == aligned_as
 
 
+@pytest.mark.parametrize(
+    ("language", "written"), [("ja", "会議の天気"), ("zh", "會議の天氣"), ("en", "會議の天氣")]
+)
+def test_only_a_japanese_transcript_takes_japanese_kanji_forms(
+    tmp_path, monkeypatch, language, written
+):
+    # TEA-ASR learned Taiwan Mandarin and keeps old kanji forms when it transcribes Japanese.
+    fake = FakeModels(monkeypatch)
+    fake.transcript = "會議の天氣"
+    result = adapter(tmp_path, fake, word_timestamps=True).transcribe(
+        tmp_path / "source.wav", should_cancel=lambda: False, language=language
+    )
+    assert result.segments
+    for segment in result.segments:
+        assert segment.text == written
+        assert "".join(word.text for word in segment.words) == written
+
+
 def test_chunk_splitting_covers_audio_and_loop_retry_is_bounded(tmp_path, monkeypatch):
     fake = FakeModels(monkeypatch)
     monkeypatch.setattr(speech, "_quiet_point", lambda _a, left, right: (left + right + 1) // 2)

@@ -25,6 +25,7 @@ from capture_runtime.engine_adapters import (
     WhisperWord,
     _directory_digest,
 )
+from capture_runtime.japanese_kanji import TABLE as JAPANESE_KANJI
 from capture_runtime.worker_stage_policy import (
     sanitize_worker_stage,
     speech_model_load_stage,
@@ -718,6 +719,10 @@ class TeaAsrAdapter:
                 text = result["transcription"].strip()
                 if not text:
                     continue
+                if language == "ja":
+                    # TEA-ASR learned Taiwan Mandarin and keeps many kanji in their old forms
+                    # (會議 for 会議); align the Japanese forms so the words carry them too.
+                    text = text.translate(JAPANESE_KANJI)
                 offset, chunk_end = start / SAMPLE_RATE, (start + len(chunk)) / SAMPLE_RATE
                 inputs, word_lists = aligner.prepare_forced_aligner_inputs(
                     audio=chunk, transcript=text, language=_aligner_language(language)
