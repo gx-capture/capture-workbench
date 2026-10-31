@@ -6,16 +6,17 @@ source of truth for inputs.
 
 ## Current state
 
-- **0.7.2** is the latest published release, through Route A only (2026-10-26):
+- **0.8.0** is the latest published release, through Route A only (2026-10-31):
   npm (`@gx-capture/capture-workbench-ui`, `@gx-capture/capture-runtime-client`
   on GitHub Packages), Maven (`com.gx.capture:capture-runtime-client`, GitHub
   Packages), PyPI (`capture-runtime-client`), crates.io
-  (`capture-sidecar-launcher`), and GitHub release `v0.7.2` (runtime exe, OCR,
-  speech recognition and diarization engines, catalog). 0.7.0 and 0.7.1 also
-  went through Route A only; the last full route (desktop installer, stable
+  (`capture-sidecar-launcher`), and GitHub release `v0.8.0` (runtime exe, OCR,
+  speech recognition and diarization engines, catalog). 0.7.x also went
+  through Route A only; the last full route (desktop installer, stable
   pointer, consumer gates) was 0.6.3.
-- Consumers on their `main` branches pin 0.7.2: Cert Prep
-  (`WodenWang820118/cert-prep`) and LAW (`WodenWang820118/gx.law-prep`).
+- Consumers on their `main` branches pin 0.7.2 until their 0.8.0 migrations
+  merge: Cert Prep (`WodenWang820118/cert-prep`) first, then LAW
+  (`WodenWang820118/gx.law-prep`).
 - The contract set no longer carries the release version: a patch release keeps
   its hash, and only a contract change moves it.
 - **Open**: the licence lineage of the NDLOCR-Lite line detector's weights; see
@@ -24,8 +25,12 @@ source of truth for inputs.
   structure of dense vertical periodical scans and pages that mix directions;
   about a fifth of furigana on textbook pages is not set aside.
 
-## Prepared: 0.8.0 (minor)
+## Published through Route A: 0.8.0 (minor)
 
+- Published on 2026-10-31 through Route A only. Runs: package candidate
+  41181447228, runtime candidate 41181635905 (`model-enabled`), package promote
+  41183372874, runtime promote 41183508942 (`registries`). Source commit
+  `97bb151` (merge of PR #116).
 - A host can name the language spoken in an audio capture
   (`StartCaptureV2.spokenLanguage`, PR #115), and deleting a capture deletes its
   uploaded source (PR #114). The owner approved the release on 2026-10-31.
@@ -313,8 +318,12 @@ missing ones.
    latest `main` commit that changed code.
 2. Dispatch `package-candidate.yml` and `runtime-candidate.yml` for the exact
    commit. Record each run ID, `candidateId`, and the SHA-256 of its
-   `candidate-manifest.json` (download the small package artifact; the runtime
-   manifest hash is also printed in promotion logs).
+   `candidate-manifest.json`. Download the small package artifact. The runtime
+   candidate prints its `candidateId` ("Assembled runtime candidate") but not
+   the manifest hash, and its artifact is about 3.5 GB: read only
+   `candidate-manifest.json` from the artifact zip with HTTP range requests
+   (Python `zipfile` over a range-reading file object, on the blob URL that
+   `GET /repos/{repo}/actions/artifacts/{id}/zip` redirects to).
 3. Route A: dispatch `package-promote.yml`, then `runtime-promote.yml`. The
    runtime promotion requires a successful `workflow_dispatch` package promotion
    on `main` whose commit contains the candidate source.
