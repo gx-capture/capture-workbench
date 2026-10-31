@@ -15,6 +15,7 @@ from capture_runtime.config import ExtractionRuntimeConfig
 from capture_runtime.contracts import (
     CaptureEngine,
     CaptureSource,
+    CaptureSourceKind,
     OpenIngestionV2,
     PartialCaptureV2,
     RawCapture,
@@ -39,7 +40,7 @@ from capture_runtime.services import StreamingCaptureService
 from capture_runtime.storage import StreamingRepository
 from capture_runtime.structuring import StructuringValidationError
 from capture_runtime.structuring_provider import FakeCaptureStructuringProvider
-from capture_runtime.whisper_session import SessionFrameType
+from capture_runtime.whisper_session import SessionFrameDecoder, SessionFrameType
 from capture_runtime.worker_client import InstalledEngine
 
 
@@ -347,14 +348,17 @@ class FailingDecoderProcessor:
         raise ProgressiveDecoderError("decoder failed")
 
 
-def _open(repository: StreamingRepository) -> tuple[str, str]:
+def _open(
+    repository: StreamingRepository, kind: CaptureSourceKind = CaptureSourceKind.AUDIO
+) -> tuple[str, str]:
     source = b"audio-fixture"
     digest = hashlib.sha256(source).hexdigest()
     ingestion = repository.create_ingestion(
         OpenIngestionV2(
             client_request_id="progressive-ingestion",
-            file_name="sample.mp3",
-            media_type="audio/mpeg",
+            kind=kind,
+            file_name="sample.mp3" if kind is CaptureSourceKind.AUDIO else "sample.png",
+            media_type="audio/mpeg" if kind is CaptureSourceKind.AUDIO else "image/png",
             total_bytes=len(source),
             source_sha256=digest,
         )
@@ -597,6 +601,97 @@ def test_streaming_runtime_fails_when_audio_processor_is_unavailable(
     asyncio.run(scenario())
 
 
+class LanguageRecordingProcessor(FakeProgressiveProcessor):
+    def __init__(self, clock: Clock) -> None:
+        super().__init__(clock)
+        self.languages: list[str | None] = []
+
+    async def process(self, *, spoken_language=None, **kwargs):
+        self.languages.append(spoken_language)
+        return await super().process(**kwargs)
+
+
+async def _finish(service: StreamingCaptureService, capture_id: str) -> str:
+    for _ in range(100):
+        status = service.get_capture(capture_id).status.value
+        if status in {"completed", "failed"}:
+            return status
+        await asyncio.sleep(0.01)
+    return service.get_capture(capture_id).status.value
+
+
+@pytest.mark.parametrize("language", [None, "ja"])
+def test_an_audio_capture_hands_its_spoken_language_to_recognition(
+    tmp_path: Path, language: str | None
+) -> None:
+    async def scenario() -> None:
+        clock = FixedClock()
+        repository = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+        repository.initialize()
+        ingestion_id, _ = _open(repository)
+        processor = LanguageRecordingProcessor(clock)
+        service = StreamingCaptureService(
+            repository,
+            clock=clock,
+            processor=processor,  # type: ignore[arg-type]
+            structurer=FakeCaptureStructuringProvider(clock),
+        )
+        operation = service.start_capture(
+            StartCaptureV2(
+                client_request_id="spoken-language",
+                ingestion_id=ingestion_id,
+                structuring_mode=StructuringMode.RUNTIME,
+                spoken_language=language,
+            )
+        )
+        assert await _finish(service, operation.capture_id) == "completed"
+        assert processor.languages == [language]
+        await service.shutdown()
+
+    asyncio.run(scenario())
+
+
+def test_a_spoken_language_on_a_non_audio_capture_fails_it(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        clock = FixedClock()
+        repository = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+        repository.initialize()
+        ingestion_id, _ = _open(repository, CaptureSourceKind.IMAGE)
+        service = StreamingCaptureService(
+            repository,
+            clock=clock,
+            processor=LanguageRecordingProcessor(clock),  # type: ignore[arg-type]
+            extractor=DeterministicCaptureExtractor(clock),
+            structurer=FakeCaptureStructuringProvider(clock),
+        )
+        operation = service.start_capture(
+            StartCaptureV2(
+                client_request_id="spoken-language-image",
+                ingestion_id=ingestion_id,
+                structuring_mode=StructuringMode.RUNTIME,
+                spoken_language="ja",
+            )
+        )
+        assert await _finish(service, operation.capture_id) == "failed"
+        failed = service.get_capture(operation.capture_id)
+        assert failed.error is not None
+        assert failed.error.code == "invalid_spoken_language"
+        await service.shutdown()
+
+    asyncio.run(scenario())
+
+
+def test_start_capture_accepts_only_listed_spoken_languages() -> None:
+    for language in ("jp", "JA", "japanese", ""):
+        with pytest.raises(ValueError):
+            StartCaptureV2(
+                client_request_id="spoken-language-invalid",
+                ingestion_id="ingestion",
+                structuring_mode=StructuringMode.RUNTIME,
+                spoken_language=language,
+            )
+
+
 def test_deterministic_audio_extractor_does_not_leak_pdf_page_scope() -> None:
     async def scenario() -> None:
         clock = FixedClock()
@@ -661,3 +756,39 @@ def test_session_worker_sinks_worker_heartbeat_before_input_ack() -> None:
         await worker.close()
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("language", [None, "ja"])
+def test_session_start_names_the_spoken_language_only_when_given(language: str | None) -> None:
+    async def scenario() -> list[bytes]:
+        written: list[bytes] = []
+
+        class Stdin:
+            def write(self, value: bytes) -> None:
+                written.append(value)
+
+            async def drain(self) -> None:
+                return None
+
+        class Process:
+            stdin = Stdin()
+            stdout = asyncio.StreamReader()
+            returncode = 0
+
+            async def wait(self) -> int:
+                return 0
+
+        worker = _SessionWorker(Process(), asyncio.create_task(asyncio.sleep(0)))
+        source = CaptureSource(
+            sha256="a" * 64, file_name="sample.mp3", media_type="audio/mpeg", bytes=10
+        )
+        await worker.begin(capture_id="capture-1", source=source, spoken_language=language)
+        await worker.close()
+        return written
+
+    written = asyncio.run(scenario())
+    frame = next(iter(SessionFrameDecoder().feed(b"".join(written))))
+    assert frame.frame_type is SessionFrameType.START
+    start = json.loads(frame.payload)
+    assert start.get("spokenLanguage") == language
+    assert ("spokenLanguage" in start) is (language is not None)

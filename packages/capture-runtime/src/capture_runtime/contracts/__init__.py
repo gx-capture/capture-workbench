@@ -6,7 +6,7 @@ import math
 from datetime import datetime
 from enum import StrEnum
 from itertools import pairwise
-from typing import Annotated, Any, Literal, Self
+from typing import Annotated, Any, Final, Literal, Self, get_args
 
 from pydantic import (
     BaseModel,
@@ -43,6 +43,10 @@ SpeakerName = Annotated[str, StringConstraints(strip_whitespace=True, min_length
 # A one-based page number of the source PDF. OCR pages, page locators and page
 # selections all use it, so a selected page keeps its number in every result.
 PdfPageNumber = Annotated[int, Field(ge=1)]
+# The languages speech recognition can be told an audio capture is spoken in: those the
+# forced aligner can time, as lower-case ISO 639 codes ("yue" is Cantonese).
+SpokenLanguage = Literal["zh", "yue", "en", "ja", "ko", "fr", "de", "it", "pt", "ru", "es"]
+SPOKEN_LANGUAGES: Final[frozenset[str]] = frozenset(get_args(SpokenLanguage))
 
 
 def _ascending_page_numbers(values: list[int]) -> bool:
@@ -668,6 +672,9 @@ class StartCaptureV2(StrictModel):
     # Audio only: label who speaks each segment. Needs the speaker-diarization
     # unit, and the capture reports no partial transcript while it runs.
     identify_speakers: bool = False
+    # Audio only: the language spoken in the recording. Omit it for Chinese, the
+    # speech model's default.
+    spoken_language: SpokenLanguage | None = None
 
     @field_validator("target_language")
     @classmethod

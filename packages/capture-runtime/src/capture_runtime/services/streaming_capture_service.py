@@ -7,6 +7,7 @@ import hashlib
 import json
 from contextlib import suppress
 from pathlib import Path
+from typing import TypedDict
 
 from pydantic import ValidationError
 
@@ -403,11 +404,19 @@ class StreamingCaptureService:
                 raise ProgressiveCaptureError("finalized streaming source is unavailable")
             source_path = self.repository.source_path(operation.ingestion_id)
             processor = self._processor
-            identify_speakers = self.repository.capture_request(capture_id).identify_speakers
+            request = self.repository.capture_request(capture_id)
+            identify_speakers = request.identify_speakers
             if identify_speakers and operation.kind is not CaptureSourceKind.AUDIO:
                 raise ProgressiveCaptureError(
                     "Speaker identification is only valid for audio sources.",
                     code="invalid_speaker_identification",
+                    retryable=False,
+                )
+            spoken_language = request.spoken_language
+            if spoken_language is not None and operation.kind is not CaptureSourceKind.AUDIO:
+                raise ProgressiveCaptureError(
+                    "A spoken language is only valid for audio sources.",
+                    code="invalid_spoken_language",
                     retryable=False,
                 )
             if operation.kind is CaptureSourceKind.AUDIO:
@@ -432,6 +441,7 @@ class StreamingCaptureService:
                         sink=lambda events, session: self._persist_events(
                             capture_id, events, session
                         ),
+                        **_spoken_language(request),
                     )
                 )
             elif operation.kind is not CaptureSourceKind.AUDIO and self._extractor is not None:
@@ -656,10 +666,15 @@ class StreamingCaptureService:
                 cancellation,
                 identify_speakers=True,
                 speaker_progress=lambda stage, permille: report_ocr_progress(permille, 1000, stage),
+                **_spoken_language(request),
             )
         elif request.pdf_page_numbers is None:
             extraction = await extractor.extract(
-                content, source, cancellation, ocr_progress=report_ocr_progress
+                content,
+                source,
+                cancellation,
+                ocr_progress=report_ocr_progress,
+                **_spoken_language(request),
             )
         else:
             extraction = await extractor.extract(
@@ -804,6 +819,17 @@ class StreamingCaptureService:
             self.repository.get_capture(capture_id)
             for capture_id in self.repository.capture_ids_for_ingestion(ingestion_id)
         ]
+
+
+class _SpokenLanguageArgument(TypedDict, total=False):
+    spoken_language: str
+
+
+def _spoken_language(request: StartCaptureV2) -> _SpokenLanguageArgument:
+    """The spoken-language argument, only when the host named one."""
+    if request.spoken_language is None:
+        return {}
+    return {"spoken_language": request.spoken_language}
 
 
 def _validate_runtime_document(candidate: object, raw: RawCapture) -> CaptureDocument:

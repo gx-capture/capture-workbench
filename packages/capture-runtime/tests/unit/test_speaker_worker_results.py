@@ -54,6 +54,10 @@ def _whisper_run(
                 **kwargs,
             )
 
+        def transcribe(self, source_path: Path, **kwargs: Any) -> Any:
+            transcribe_options[-1]["language"] = kwargs.get("language")
+            return super().transcribe(source_path, **kwargs)
+
     monkeypatch.setattr(whisper_main, "TeaAsrAdapter", TestAdapter)
     monkeypatch.setattr(whisper_main, "_import_speech_runtime", lambda: None)
     request = WorkerRequest(
@@ -175,6 +179,23 @@ def test_worker_parsers_reject_invalid_processing_times(kind, timings):
     payload["provenance"].update(timings)
     with pytest.raises(WorkerResultError):
         parser(payload)
+
+
+@pytest.mark.parametrize(("options", "language"), [({}, None), ({"language": "ja"}, "ja")])
+def test_speech_recognition_worker_recognizes_the_requested_language(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, options: dict[str, Any], language: str | None
+) -> None:
+    _, transcribe_options = _whisper_run(tmp_path, monkeypatch, options, None)
+
+    assert transcribe_options[0]["language"] == language
+
+
+@pytest.mark.parametrize("language", ["jp", "JA", None, 7])
+def test_speech_recognition_worker_rejects_a_language_outside_the_list(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, language: object
+) -> None:
+    with pytest.raises(ValueError, match="options"):
+        _whisper_run(tmp_path, monkeypatch, {"language": language}, None)
 
 
 def test_speech_recognition_worker_rejects_speech_without_requested_word_times(

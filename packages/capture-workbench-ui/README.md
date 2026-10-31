@@ -283,3 +283,11 @@ values stay the anonymous labels; the names are in `speakers[].displayName`.
 
 While such a capture runs, the task shows two stages with progress, "transcribing"
 and "identifying speakers", and no partial transcript.
+
+## Spoken language of audio captures
+
+Speech recognition assumes Chinese. When the recordings are in another language,
+set `spokenLanguage` in the configuration to one of `zh`, `yue`, `en`, `ja`, `ko`,
+`fr`, `de`, `it`, `pt`, `ru` or `es`, for example `spokenLanguage: 'ja'` for
+Japanese listening tests. The workbench sends it only with audio files; PDFs and
+images are captured as before. Omitting it keeps Chinese.

@@ -125,6 +125,7 @@ class CaptureExtractor(Protocol):
         ocr_progress: Callable[[int, int], None] | None = None,
         identify_speakers: bool = False,
         speaker_progress: Callable[[str, int], None] | None = None,
+        spoken_language: str | None = None,
     ) -> CaptureExtractionOutcome: ...
 
 
@@ -442,6 +443,7 @@ class StandaloneRuntimeCaptureExtractor:
         ocr_progress: Callable[[int, int], None] | None = None,
         identify_speakers: bool = False,
         speaker_progress: Callable[[str, int], None] | None = None,
+        spoken_language: str | None = None,
     ) -> CaptureExtractionOutcome:
         if self.engine_manager is not None:
             return await self._extract_with_workers(
@@ -452,6 +454,7 @@ class StandaloneRuntimeCaptureExtractor:
                 ocr_progress=ocr_progress,
                 identify_speakers=identify_speakers,
                 speaker_progress=speaker_progress,
+                spoken_language=spoken_language,
             )
         if identify_speakers:
             raise ExtractionRuntimeUnavailableError(
@@ -464,6 +467,7 @@ class StandaloneRuntimeCaptureExtractor:
                 source,
                 cancel_event,
                 pdf_page_numbers,
+                spoken_language,
             )
         except InterruptedError as error:
             raise asyncio.CancelledError from error
@@ -478,6 +482,7 @@ class StandaloneRuntimeCaptureExtractor:
         ocr_progress: Callable[[int, int], None] | None = None,
         identify_speakers: bool = False,
         speaker_progress: Callable[[str, int], None] | None = None,
+        spoken_language: str | None = None,
     ) -> CaptureExtractionOutcome:
         sniffed = self.sniff(content)
         self._checkpoint(cancel_event)
@@ -598,6 +603,7 @@ class StandaloneRuntimeCaptureExtractor:
                         "preferGpu": self.config.whisper_prefer_gpu,
                         "allowCpuFallback": self.config.whisper_allow_cpu_fallback,
                         **({"wordTimestamps": True} if identify_speakers else {}),
+                        **({"language": spoken_language} if spoken_language else {}),
                     },
                     cancel_event,
                     progress=_stage_progress(speaker_progress, "transcribing", 0, 450),
@@ -1182,6 +1188,7 @@ class StandaloneRuntimeCaptureExtractor:
         source: CaptureSource,
         cancel_event: asyncio.Event,
         pdf_page_numbers: tuple[int, ...] | None = None,
+        spoken_language: str | None = None,
     ) -> CaptureExtractionOutcome:
         sniffed = self.sniff(content)
         self._checkpoint(cancel_event)
@@ -1222,7 +1229,7 @@ class StandaloneRuntimeCaptureExtractor:
             if pdf_page_numbers is not None:
                 raise ValueError("PDF page selection is only valid for PDF sources.")
             segments, engine, warnings = self._extract_audio(
-                content, source.media_type, cancel_event
+                content, source.media_type, cancel_event, spoken_language
             )
             ocr_projection = None
         self._checkpoint(cancel_event)
@@ -1361,7 +1368,11 @@ class StandaloneRuntimeCaptureExtractor:
         return _projection_segments(projection), projection
 
     def _extract_audio(
-        self, content: bytes, media_type: str, cancel_event: asyncio.Event
+        self,
+        content: bytes,
+        media_type: str,
+        cancel_event: asyncio.Event,
+        spoken_language: str | None = None,
     ) -> tuple[list[RawCaptureSegment], CaptureEngine, list[str]]:
         suffix = _SOURCE_SUFFIXES.get(media_type, ".audio")
         self.config.temp_dir.mkdir(parents=True, exist_ok=True)
@@ -1376,7 +1387,9 @@ class StandaloneRuntimeCaptureExtractor:
         try:
             if self.whisper_adapter is None:
                 raise ExtractionRuntimeUnavailableError("Whisper worker is not configured.")
-            result = self.whisper_adapter.transcribe(path, should_cancel=cancel_event.is_set)
+            result = self.whisper_adapter.transcribe(
+                path, should_cancel=cancel_event.is_set, language=spoken_language
+            )
         finally:
             path.unlink(missing_ok=True)
         segments = [
@@ -1628,6 +1641,7 @@ class DeterministicCaptureExtractor:
         ocr_progress: Callable[[int, int], None] | None = None,
         identify_speakers: bool = False,
         speaker_progress: Callable[[str, int], None] | None = None,
+        spoken_language: str | None = None,
     ) -> CaptureExtractionOutcome:
         sniffed = self.sniff(content)
         if self._delay_seconds:

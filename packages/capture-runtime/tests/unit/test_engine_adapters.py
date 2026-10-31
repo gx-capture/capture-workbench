@@ -2984,7 +2984,7 @@ class FakeWhisperAdapter:
     def probe(self) -> EngineProbe:
         return EngineProbe(True, True, True, "ready")
 
-    def transcribe(self, source_path: Path, *, should_cancel):
+    def transcribe(self, source_path: Path, *, should_cancel, language=None):
         assert not should_cancel()
         assert source_path.is_file()
         self.paths.append(source_path)

@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CompletionStage;
 import java.util.regex.Pattern;
 
@@ -27,7 +28,11 @@ public final class CaptureRuntimeTypes {
   public static final String CONTRACT_SET_VERSION = "2";
   /** Updated only as part of a coordinated runtime/client release. */
   public static final String CONTRACT_SET_SHA256 =
-      "60c622670b00e144b174c210e96773e07e7d94ec7c721b33ac65ff6c722c1d93";
+      "664b2b3244d338dd4de39cbc2f1ee83104d21ee454a11f1d65fd8309d3599670";
+
+  /** The languages an audio capture can name as spoken; without one the runtime assumes Chinese. */
+  public static final Set<String> SPOKEN_LANGUAGES =
+      Set.of("zh", "yue", "en", "ja", "ko", "fr", "de", "it", "pt", "ru", "es");
 
   private static final Pattern SHA256 = Pattern.compile("^[0-9a-f]{64}$");
   private static final Pattern FAILURE_CODE = Pattern.compile("^[a-z][a-z0-9_]{1,63}$");
@@ -45,6 +50,13 @@ public final class CaptureRuntimeTypes {
     value = text(value, field);
     if (value.codePointCount(0, value.length()) > max) {
       throw new IllegalArgumentException(field + " exceeds its maximum length");
+    }
+    return value;
+  }
+
+  static String spokenLanguage(String value) {
+    if (value != null && !SPOKEN_LANGUAGES.contains(value)) {
+      throw new IllegalArgumentException("spokenLanguage must be one of " + SPOKEN_LANGUAGES);
     }
     return value;
   }
@@ -759,7 +771,8 @@ public final class CaptureRuntimeTypes {
       String targetLanguage,
       String startPolicy,
       List<Integer> pdfPageNumbers,
-      boolean identifySpeakers) {
+      boolean identifySpeakers,
+      String spokenLanguage) {
     public StartCapture {
       protocolVersion = protocolVersion == null ? PROTOCOL_VERSION : text(protocolVersion, "protocolVersion");
       if (!PROTOCOL_VERSION.equals(protocolVersion)) throw new IllegalArgumentException("protocolVersion must equal 2");
@@ -770,6 +783,19 @@ public final class CaptureRuntimeTypes {
       startPolicy = startPolicy == null ? "eager" : text(startPolicy, "startPolicy");
       if (!"eager".equals(startPolicy)) throw new IllegalArgumentException("startPolicy must equal eager");
       pdfPageNumbers = CaptureRuntimeTypes.pdfPageNumbers(pdfPageNumbers);
+      spokenLanguage = CaptureRuntimeTypes.spokenLanguage(spokenLanguage);
+    }
+
+    public StartCapture(
+        String protocolVersion,
+        String clientRequestId,
+        String ingestionId,
+        StructuringMode structuringMode,
+        String targetLanguage,
+        String startPolicy,
+        List<Integer> pdfPageNumbers,
+        boolean identifySpeakers) {
+      this(protocolVersion, clientRequestId, ingestionId, structuringMode, targetLanguage, startPolicy, pdfPageNumbers, identifySpeakers, null);
     }
 
     public StartCapture(
@@ -780,7 +806,7 @@ public final class CaptureRuntimeTypes {
         String targetLanguage,
         String startPolicy,
         List<Integer> pdfPageNumbers) {
-      this(protocolVersion, clientRequestId, ingestionId, structuringMode, targetLanguage, startPolicy, pdfPageNumbers, false);
+      this(protocolVersion, clientRequestId, ingestionId, structuringMode, targetLanguage, startPolicy, pdfPageNumbers, false, null);
     }
 
     public StartCapture(
@@ -790,7 +816,7 @@ public final class CaptureRuntimeTypes {
         StructuringMode structuringMode,
         String targetLanguage,
         String startPolicy) {
-      this(protocolVersion, clientRequestId, ingestionId, structuringMode, targetLanguage, startPolicy, null, false);
+      this(protocolVersion, clientRequestId, ingestionId, structuringMode, targetLanguage, startPolicy, null, false, null);
     }
   }
 

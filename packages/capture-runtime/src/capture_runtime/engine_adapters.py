@@ -457,6 +457,7 @@ class WhisperAdapter(Protocol):
         *,
         should_cancel: Callable[[], bool],
         allow_empty_output: bool = False,
+        language: str | None = None,
     ) -> WhisperTranscriptionResult: ...
 
 

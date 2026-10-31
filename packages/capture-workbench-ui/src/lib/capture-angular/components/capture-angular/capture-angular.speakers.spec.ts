@@ -139,6 +139,22 @@ describe('CaptureWorkbenchComponent speakers', () => {
     expect(startStreamingCapture.mock.calls[0][0].identifySpeakers).toBe(false);
   });
 
+  it('names the spoken language only for audio and only when configured', async () => {
+    inputSource.config.set({ showRuntimeSetup: false, spokenLanguage: 'ja' });
+    await capture(audio());
+    expect(startStreamingCapture.mock.calls[0][0].spokenLanguage).toBe('ja');
+
+    selectFiles(fixture, [
+      new File(['pdf'], 'scan.pdf', { type: 'application/pdf' }),
+    ]);
+    await fixture.whenStable();
+    expect(startStreamingCapture.mock.calls[1][0].spokenLanguage).toBeUndefined();
+
+    inputSource.config.set({ showRuntimeSetup: false });
+    await capture(audio());
+    expect(startStreamingCapture.mock.calls[2][0].spokenLanguage).toBeUndefined();
+  });
+
   it('lets the user listen to a sample, name a speaker, and uses the name', async () => {
     inputSource.config.set({
       showRuntimeSetup: false,

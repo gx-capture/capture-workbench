@@ -203,7 +203,7 @@ public final class CaptureRuntimeClient {
         ingestion = json("PUT", "/v2/ingestions/" + pathPart(ingestion.ingestionId()) + "/chunks/" + ingestion.nextChunkIndex(), chunk, Ingestion.class, chunkHeaders);
       }
       ingestion = json("POST", "/v2/ingestions/" + pathPart(ingestion.ingestionId()) + "/finalize", object(new FinalizeIngestion("2", upload.body().length, digest)), Ingestion.class, Map.of());
-      return json("POST", "/v2/captures", object(new StartCapture("2", upload.clientRequestId(), ingestion.ingestionId(), upload.structuringMode(), upload.targetLanguage(), "eager", upload.pdfPageNumbers(), upload.identifySpeakers())), CaptureOperation.class, headers("X-Idempotency-Key", requiredKey(upload.clientRequestId())));
+      return json("POST", "/v2/captures", object(new StartCapture("2", upload.clientRequestId(), ingestion.ingestionId(), upload.structuringMode(), upload.targetLanguage(), "eager", upload.pdfPageNumbers(), upload.identifySpeakers(), upload.spokenLanguage())), CaptureOperation.class, headers("X-Idempotency-Key", requiredKey(upload.clientRequestId())));
     } catch (RuntimeException error) {
       try { json("DELETE", "/v2/ingestions/" + pathPart(ingestion.ingestionId()), null, Void.class, Map.of()); } catch (RuntimeException ignored) { }
       throw error;
@@ -481,7 +481,7 @@ public final class CaptureRuntimeClient {
     public static ClientOptions defaults() { return new ClientOptions("2", Set.of(CaptureRuntimeTypes.CONTRACT_SET_SHA256), 1); }
   }
 
-  public record CaptureUpload(String fileName, byte[] body, String mediaType, SourceKind sourceKind, String targetLanguage, StructuringMode structuringMode, String clientRequestId, List<Integer> pdfPageNumbers, boolean identifySpeakers) {
+  public record CaptureUpload(String fileName, byte[] body, String mediaType, SourceKind sourceKind, String targetLanguage, StructuringMode structuringMode, String clientRequestId, List<Integer> pdfPageNumbers, boolean identifySpeakers, String spokenLanguage) {
     public CaptureUpload {
       fileName = requireHeader(fileName, "fileName");
       body = Objects.requireNonNull(body, "body").clone();
@@ -492,12 +492,16 @@ public final class CaptureRuntimeClient {
       structuringMode = structuringMode == null ? StructuringMode.RUNTIME : structuringMode;
       clientRequestId = requiredKey(clientRequestId);
       pdfPageNumbers = CaptureRuntimeTypes.pdfPageNumbers(pdfPageNumbers);
+      spokenLanguage = CaptureRuntimeTypes.spokenLanguage(spokenLanguage);
     }
-    public CaptureUpload(String fileName, byte[] body, String mediaType, SourceKind sourceKind, String targetLanguage, StructuringMode structuringMode, String clientRequestId, List<Integer> pdfPageNumbers) { this(fileName, body, mediaType, sourceKind, targetLanguage, structuringMode, clientRequestId, pdfPageNumbers, false); }
-    public CaptureUpload(String fileName, byte[] body, String mediaType, SourceKind sourceKind, String targetLanguage, StructuringMode structuringMode, String clientRequestId) { this(fileName, body, mediaType, sourceKind, targetLanguage, structuringMode, clientRequestId, null, false); }
-    public CaptureUpload(String fileName, byte[] body, SourceKind sourceKind, String clientRequestId) { this(fileName, body, "application/octet-stream", sourceKind, null, StructuringMode.RUNTIME, clientRequestId, null, false); }
+    public CaptureUpload(String fileName, byte[] body, String mediaType, SourceKind sourceKind, String targetLanguage, StructuringMode structuringMode, String clientRequestId, List<Integer> pdfPageNumbers, boolean identifySpeakers) { this(fileName, body, mediaType, sourceKind, targetLanguage, structuringMode, clientRequestId, pdfPageNumbers, identifySpeakers, null); }
+    public CaptureUpload(String fileName, byte[] body, String mediaType, SourceKind sourceKind, String targetLanguage, StructuringMode structuringMode, String clientRequestId, List<Integer> pdfPageNumbers) { this(fileName, body, mediaType, sourceKind, targetLanguage, structuringMode, clientRequestId, pdfPageNumbers, false, null); }
+    public CaptureUpload(String fileName, byte[] body, String mediaType, SourceKind sourceKind, String targetLanguage, StructuringMode structuringMode, String clientRequestId) { this(fileName, body, mediaType, sourceKind, targetLanguage, structuringMode, clientRequestId, null, false, null); }
+    public CaptureUpload(String fileName, byte[] body, SourceKind sourceKind, String clientRequestId) { this(fileName, body, "application/octet-stream", sourceKind, null, StructuringMode.RUNTIME, clientRequestId, null, false, null); }
     /** Ask the runtime to label who speaks each segment of an audio source. */
-    public CaptureUpload identifyingSpeakers() { return new CaptureUpload(fileName, body, mediaType, sourceKind, targetLanguage, structuringMode, clientRequestId, pdfPageNumbers, true); }
+    public CaptureUpload identifyingSpeakers() { return new CaptureUpload(fileName, body, mediaType, sourceKind, targetLanguage, structuringMode, clientRequestId, pdfPageNumbers, true, spokenLanguage); }
+    /** Name the language spoken in an audio source, one of {@link CaptureRuntimeTypes#SPOKEN_LANGUAGES}; without it the runtime assumes Chinese. */
+    public CaptureUpload spokenIn(String language) { return new CaptureUpload(fileName, body, mediaType, sourceKind, targetLanguage, structuringMode, clientRequestId, pdfPageNumbers, identifySpeakers, language); }
     private static String requireHeader(String value, String field) { return requiredKey(value).strip(); }
   }
 }

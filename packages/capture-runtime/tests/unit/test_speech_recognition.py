@@ -208,6 +208,23 @@ def test_chinese_is_forced_for_recognition_and_alignment(tmp_path, monkeypatch):
     assert next(e for e in fake.events if e[0] == "align_request")[1] == "zh"
 
 
+@pytest.mark.parametrize(
+    ("language", "aligned_as"),
+    [("en", "en"), ("yue", "yue"), ("ja", None), ("ko", None)],
+)
+def test_a_named_spoken_language_is_forced_for_recognition(
+    tmp_path, monkeypatch, language, aligned_as
+):
+    # The aligner would need nagisa or soynlp for Japanese or Korean words; the worker
+    # ships neither, so those align with the default split.
+    fake = FakeModels(monkeypatch)
+    adapter(tmp_path, fake).transcribe(
+        tmp_path / "source.wav", should_cancel=lambda: False, language=language
+    )
+    assert next(e for e in fake.events if e[0] == "request")[1] == language
+    assert next(e for e in fake.events if e[0] == "align_request")[1] == aligned_as
+
+
 def test_chunk_splitting_covers_audio_and_loop_retry_is_bounded(tmp_path, monkeypatch):
     fake = FakeModels(monkeypatch)
     monkeypatch.setattr(speech, "_quiet_point", lambda _a, left, right: (left + right + 1) // 2)

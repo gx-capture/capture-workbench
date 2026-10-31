@@ -28,12 +28,14 @@ class SpeechRecognitionWindowTranscriber:
         *,
         temp_dir: Path,
         sample_rate: int = 16_000,
+        language: str | None = None,
     ) -> None:
         if sample_rate <= 0:
             raise ValueError("Whisper sample rate must be positive")
         self.adapter = adapter
         self.temp_dir = temp_dir
         self.sample_rate = sample_rate
+        self.language = language
         # Provenance times the whole recording, so add up every window.
         self._elapsed_ms = 0
         self._stage_ms: dict[str, int] = {}
@@ -57,6 +59,7 @@ class SpeechRecognitionWindowTranscriber:
                 path,
                 should_cancel=lambda: False,
                 allow_empty_output=True,
+                language=self.language,
             )
             self._elapsed_ms += result.elapsed_ms or 0
             for stage, milliseconds in (result.stage_ms or {}).items():

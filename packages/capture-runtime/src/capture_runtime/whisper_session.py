@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Protocol
 
-from capture_runtime.contracts import StreamingEventType
+from capture_runtime.contracts import SPOKEN_LANGUAGES, StreamingEventType
 from capture_runtime.progressive_audio import (
     DecodedAudioWindow,
     ProgressiveSessionEvent,
@@ -182,7 +182,11 @@ class WhisperSessionProtocol:
             "overlapMs",
             "source",
         }
-        if set(metadata) != expected or metadata["protocolVersion"] != SESSION_PROTOCOL_VERSION:
+        # spokenLanguage is optional; without it the speech model's default applies.
+        if (
+            not expected <= set(metadata) <= expected | {"spokenLanguage"}
+            or metadata["protocolVersion"] != SESSION_PROTOCOL_VERSION
+        ):
             raise WhisperSessionProtocolError(
                 "session_start_invalid", "Speech recognition session start is invalid."
             )
@@ -214,6 +218,13 @@ class WhisperSessionProtocol:
         ):
             raise WhisperSessionProtocolError(
                 "session_start_invalid", "Speech recognition session source is invalid."
+            )
+        language = metadata.get("spokenLanguage")
+        if "spokenLanguage" in metadata and (
+            not isinstance(language, str) or language not in SPOKEN_LANGUAGES
+        ):
+            raise WhisperSessionProtocolError(
+                "session_start_invalid", "Speech recognition session language is invalid."
             )
         self.backend.start(metadata)
         self._started = True

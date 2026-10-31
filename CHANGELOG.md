@@ -41,6 +41,32 @@ keeps one only while a capture uses it:
 - The Python client adds `delete_streaming_ingestion()`, like the Java client's
   `deleteStreamingIngestion()`, for an upload that never got a capture.
 
+### Spoken language of an audio capture
+
+Speech recognition always told TEA-ASR the audio was Chinese, so other languages
+were transcribed as if spoken in Chinese. A host can now name the language:
+
+- `StartCaptureV2.spokenLanguage` is one of `zh`, `yue` (Cantonese), `en`, `ja`,
+  `ko`, `fr`, `de`, `it`, `pt`, `ru` or `es`: the languages the forced aligner
+  can time. Omit it to keep Chinese, the model's default. A capture of another
+  kind that names one fails with `invalid_spoken_language`.
+- On a 45-minute JLPT N1 listening test (RTX 4060), naming Japanese raised the
+  share of the official script transcribed in order from 77.9% to 87.2%. The
+  transcription took 311 s instead of 385 s.
+- Japanese and Korean transcripts are aligned with the aligner's default word
+  split, since the worker ships neither tokenizer package it would load for
+  them (nagisa, soynlp).
+- TEA-ASR still writes some kanji in Traditional forms in Japanese (學, 會, 畫),
+  about 1.5% of the characters in that test.
+- Hosts set it as `spokenLanguage` in the TypeScript client and the Workbench
+  configuration (sent only with audio files), `CaptureUpload.spoken_language` in
+  the Python client, and `CaptureUpload.spokenIn("ja")` in the Java client, which
+  lists the values in `CaptureRuntimeTypes.SPOKEN_LANGUAGES`.
+- The contract set changes (SHA-256
+  `664b2b3244d338dd4de39cbc2f1ee83104d21ee454a11f1d65fd8309d3599670`). Clients
+  allowlist the contract set, so this runtime needs matching clients: under the
+  0.x policy the next release is a minor one.
+
 ## 0.7.2
 
 A patch release that makes speech recognition and OCR faster and shows their

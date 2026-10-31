@@ -128,6 +128,7 @@ export async function startStreamingCapture(
           startPolicy: 'eager',
           ...(pdfPageNumbers === undefined ? {} : { pdfPageNumbers }),
           ...(upload.identifySpeakers ? { identifySpeakers: true } : {}),
+          ...(upload.spokenLanguage ? { spokenLanguage: upload.spokenLanguage } : {}),
         }),
       },
       'CaptureOperation',

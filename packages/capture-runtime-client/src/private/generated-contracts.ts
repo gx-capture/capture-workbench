@@ -453,6 +453,7 @@ export interface StartCaptureV2 {
   /** PDF only: the source pages to read, one-based, ascending and without duplicates, for example [3, 7, 8, 20]. OCR results keep these page numbers. Omit it to read every page. */
   readonly pdfPageNumbers?: readonly (number)[] | null;
   readonly identifySpeakers?: boolean;
+  readonly spokenLanguage?: "zh" | "yue" | "en" | "ja" | "ko" | "fr" | "de" | "it" | "pt" | "ru" | "es" | null;
 }
 
 export interface StartRuntimeInstallationV2 {
