@@ -40,6 +40,13 @@ try:
     datas += copy_metadata("accelerate")
 except PackageNotFoundError:
     pass
+# Attribution for the OpenCC-derived Japanese kanji table travels with the worker.
+datas += [
+    (
+        str(root / "src" / "capture_runtime" / "japanese_kanji" / "LICENSE"),
+        "capture_runtime/japanese_kanji",
+    )
+]
 binaries = (
     collect_dynamic_libs("av")
     + collect_dynamic_libs("_soundfile_data")
