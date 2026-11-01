@@ -220,7 +220,6 @@ pub(crate) struct RecoveryAuthorization {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ReconcileAttempt {
-    Complete,
     Failed,
 }
 
@@ -875,10 +874,6 @@ impl RuntimeSessionJournalV1 {
             .ok_or(JournalError::InvalidField("journalRevision"))?;
         candidate.updated_at = timestamp;
         match attempt {
-            ReconcileAttempt::Complete => {
-                let _ = proof;
-                return Err(JournalError::InvalidBinding("terminalObservation"));
-            }
             ReconcileAttempt::Failed => {
                 if proof.is_some() {
                     return Err(JournalError::InvalidBinding("reconcileProof"));
@@ -1175,20 +1170,6 @@ fn validate_job_binding(binding: Option<&JobBinding>) -> Result<(), JournalError
         opaque(&binding.job_nonce, "jobNonce")?;
     }
     Ok(())
-}
-
-fn require_committed_job(binding: Option<&JobBinding>) -> Result<(), JournalError> {
-    if matches!(
-        binding,
-        Some(JobBinding {
-            setup_state: JobSetupState::Committed,
-            ..
-        })
-    ) {
-        Ok(())
-    } else {
-        Err(JournalError::InvalidBinding("jobBinding"))
-    }
 }
 
 fn validate_staging_binding(binding: Option<&StagingBinding>) -> Result<(), JournalError> {
@@ -2499,30 +2480,5 @@ mod tests {
             ),
             Err(JournalError::StaleCas)
         );
-    }
-
-    #[test]
-    fn complete_reconcile_requires_terminal_proof() {
-        let mut journal = ready_journal();
-        let expected = journal.cas_snapshot();
-        journal
-            .cas_transition(
-                &expected,
-                JournalState::ReconcileRequired,
-                None,
-                "2026-09-11T00:00:03Z".into(),
-            )
-            .expect("reconcile required");
-        let expected = journal.cas_snapshot();
-        assert_eq!(
-            journal.cas_reconcile_attempt(
-                &expected,
-                ReconcileAttempt::Complete,
-                None,
-                "2026-09-11T00:00:04Z".into()
-            ),
-            Err(JournalError::InvalidBinding("terminalObservation"))
-        );
-        assert_eq!(journal.state, JournalState::ReconcileRequired);
     }
 }
