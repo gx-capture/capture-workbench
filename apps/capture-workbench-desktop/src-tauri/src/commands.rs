@@ -26,14 +26,16 @@ use crate::model_smoke_fixtures::{ModelSmokeFixtureRegistry, ModelSmokeImportFix
 
 /// Whether a CUDA driver is present and speech recognition may use the GPU.
 #[tauri::command]
-pub fn desktop_compute_status(state: tauri::State<'_, DesktopState>) -> DesktopComputeStatus {
+pub(crate) fn desktop_compute_status(
+    state: tauri::State<'_, DesktopState>,
+) -> DesktopComputeStatus {
     DesktopComputeStatus::read(state.data_dir())
 }
 
 /// Save whether speech recognition may use the GPU and relaunch the runtime,
 /// which reads it at launch. A capture in progress is stopped by the relaunch.
 #[tauri::command]
-pub fn desktop_set_prefer_gpu(
+pub(crate) fn desktop_set_prefer_gpu(
     prefer_gpu: bool,
     app: tauri::AppHandle,
     state: tauri::State<'_, DesktopState>,
@@ -51,7 +53,9 @@ pub fn desktop_set_prefer_gpu(
 
 /// Returns redacted launcher state for runtime setup and diagnostics UI.
 #[tauri::command]
-pub fn desktop_runtime_status(state: tauri::State<'_, DesktopState>) -> DesktopRuntimeStatus {
+pub(crate) fn desktop_runtime_status(
+    state: tauri::State<'_, DesktopState>,
+) -> DesktopRuntimeStatus {
     state.status()
 }
 
@@ -59,7 +63,7 @@ pub fn desktop_runtime_status(state: tauri::State<'_, DesktopState>) -> DesktopR
 /// has authenticated the sidecar. The renderer receives the redacted payload
 /// through this command; the sidecar URL and bearer token stay native-owned.
 #[tauri::command]
-pub async fn runtime_ready(
+pub(crate) async fn runtime_ready(
     state: tauri::State<'_, DesktopState>,
 ) -> Result<serde_json::Value, String> {
     let state = state.inner().clone();
@@ -69,13 +73,13 @@ pub async fn runtime_ready(
 #[cfg(feature = "acceptance-app-data")]
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct DesktopRuntimeProcessProbe {
+pub(crate) struct DesktopRuntimeProcessProbe {
     pub process_id: Option<u32>,
 }
 
 #[cfg(feature = "acceptance-app-data")]
 #[tauri::command]
-pub fn desktop_runtime_process_probe(
+pub(crate) fn desktop_runtime_process_probe(
     state: tauri::State<'_, DesktopState>,
 ) -> DesktopRuntimeProcessProbe {
     DesktopRuntimeProcessProbe {
@@ -86,7 +90,7 @@ pub fn desktop_runtime_process_probe(
 /// Requests the normal Tauri close lifecycle. The window event handler owns
 /// the native runtime shutdown, including the OwnedRuntimeSession Job.
 #[tauri::command]
-pub fn desktop_acceptance_close_window(window: tauri::Window) -> Result<(), String> {
+pub(crate) fn desktop_acceptance_close_window(window: tauri::Window) -> Result<(), String> {
     window
         .close()
         .map_err(|error| format!("Capture Workbench window close failed: {error}"))
@@ -97,7 +101,7 @@ pub fn desktop_acceptance_close_window(window: tauri::Window) -> Result<(), Stri
 /// by the host itself, so the acceptance harness cannot race a reused PID.
 #[cfg(feature = "acceptance-app-data")]
 #[tauri::command]
-pub fn desktop_acceptance_terminate_root() -> Result<(), String> {
+pub(crate) fn desktop_acceptance_terminate_root() -> Result<(), String> {
     #[cfg(windows)]
     {
         use windows_sys::Win32::Foundation::GetLastError;
@@ -129,7 +133,7 @@ where
 }
 
 #[tauri::command]
-pub async fn library_import_source(
+pub(crate) async fn library_import_source(
     library: tauri::State<'_, Arc<LibraryStore>>,
     request: LibraryImportSourceRequest,
 ) -> Result<LibraryDocumentSummary, String> {
@@ -156,7 +160,7 @@ pub async fn model_smoke_import_fixture(
 }
 
 #[tauri::command]
-pub async fn library_update_capture(
+pub(crate) async fn library_update_capture(
     library: tauri::State<'_, Arc<LibraryStore>>,
     update: LibraryCaptureUpdate,
 ) -> Result<LibraryDocumentSummary, String> {
@@ -165,7 +169,7 @@ pub async fn library_update_capture(
 }
 
 #[tauri::command]
-pub async fn library_list(
+pub(crate) async fn library_list(
     library: tauri::State<'_, Arc<LibraryStore>>,
     request: LibraryListRequest,
 ) -> Result<Vec<LibraryDocumentSummary>, String> {
@@ -174,7 +178,7 @@ pub async fn library_list(
 }
 
 #[tauri::command]
-pub async fn library_get(
+pub(crate) async fn library_get(
     library: tauri::State<'_, Arc<LibraryStore>>,
     request: LibraryDocumentRequest,
 ) -> Result<LibraryDocumentDetail, String> {
@@ -183,7 +187,7 @@ pub async fn library_get(
 }
 
 #[tauri::command]
-pub async fn library_export(
+pub(crate) async fn library_export(
     library: tauri::State<'_, Arc<LibraryStore>>,
     request: LibraryExportRequest,
 ) -> Result<LibraryExportPayload, String> {
@@ -192,7 +196,7 @@ pub async fn library_export(
 }
 
 #[tauri::command]
-pub async fn library_source_bytes(
+pub(crate) async fn library_source_bytes(
     library: tauri::State<'_, Arc<LibraryStore>>,
     request: LibraryDocumentRequest,
 ) -> Result<tauri::ipc::Response, String> {
@@ -203,7 +207,7 @@ pub async fn library_source_bytes(
 }
 
 #[tauri::command]
-pub async fn library_delete(
+pub(crate) async fn library_delete(
     library: tauri::State<'_, Arc<LibraryStore>>,
     request: LibraryDocumentRequest,
 ) -> Result<(), String> {
@@ -212,7 +216,7 @@ pub async fn library_delete(
 }
 
 #[tauri::command]
-pub async fn runtime_requirements(
+pub(crate) async fn runtime_requirements(
     state: tauri::State<'_, DesktopState>,
 ) -> Result<serde_json::Value, String> {
     let state = state.inner().clone();
@@ -220,7 +224,7 @@ pub async fn runtime_requirements(
 }
 
 #[tauri::command]
-pub async fn runtime_start_installation(
+pub(crate) async fn runtime_start_installation(
     state: tauri::State<'_, DesktopState>,
     input: RuntimeInstallationStartInput,
 ) -> Result<serde_json::Value, String> {
@@ -229,7 +233,7 @@ pub async fn runtime_start_installation(
 }
 
 #[tauri::command]
-pub async fn runtime_get_installation(
+pub(crate) async fn runtime_get_installation(
     state: tauri::State<'_, DesktopState>,
     input: RuntimeIdInput,
 ) -> Result<serde_json::Value, String> {
@@ -238,7 +242,7 @@ pub async fn runtime_get_installation(
 }
 
 #[tauri::command]
-pub async fn runtime_model_options(
+pub(crate) async fn runtime_model_options(
     state: tauri::State<'_, DesktopState>,
 ) -> Result<serde_json::Value, String> {
     let state = state.inner().clone();
@@ -246,7 +250,7 @@ pub async fn runtime_model_options(
 }
 
 #[tauri::command]
-pub async fn runtime_start_model_installation(
+pub(crate) async fn runtime_start_model_installation(
     state: tauri::State<'_, DesktopState>,
     input: RuntimeModelInstallationStartInput,
 ) -> Result<serde_json::Value, String> {
@@ -255,7 +259,7 @@ pub async fn runtime_start_model_installation(
 }
 
 #[tauri::command]
-pub async fn runtime_get_model_installation(
+pub(crate) async fn runtime_get_model_installation(
     state: tauri::State<'_, DesktopState>,
     input: RuntimeIdInput,
 ) -> Result<serde_json::Value, String> {
@@ -264,7 +268,7 @@ pub async fn runtime_get_model_installation(
 }
 
 #[tauri::command]
-pub async fn runtime_create_capture(
+pub(crate) async fn runtime_create_capture(
     state: tauri::State<'_, DesktopState>,
     library: tauri::State<'_, Arc<LibraryStore>>,
     input: RuntimeCreateCaptureInput,
@@ -275,7 +279,7 @@ pub async fn runtime_create_capture(
 }
 
 #[tauri::command]
-pub async fn runtime_start_streaming_capture(
+pub(crate) async fn runtime_start_streaming_capture(
     state: tauri::State<'_, DesktopState>,
     library: tauri::State<'_, Arc<LibraryStore>>,
     input: RuntimeStreamingCaptureInput,
@@ -287,7 +291,7 @@ pub async fn runtime_start_streaming_capture(
 }
 
 #[tauri::command]
-pub async fn runtime_get_capture(
+pub(crate) async fn runtime_get_capture(
     state: tauri::State<'_, DesktopState>,
     input: RuntimeIdInput,
 ) -> Result<serde_json::Value, String> {
@@ -296,7 +300,7 @@ pub async fn runtime_get_capture(
 }
 
 #[tauri::command]
-pub async fn runtime_get_streaming_capture(
+pub(crate) async fn runtime_get_streaming_capture(
     state: tauri::State<'_, DesktopState>,
     input: RuntimeIdInput,
 ) -> Result<serde_json::Value, String> {
@@ -305,7 +309,7 @@ pub async fn runtime_get_streaming_capture(
 }
 
 #[tauri::command]
-pub async fn runtime_get_streaming_events(
+pub(crate) async fn runtime_get_streaming_events(
     state: tauri::State<'_, DesktopState>,
     input: RuntimeStreamingEventsInput,
 ) -> Result<serde_json::Value, String> {
@@ -314,7 +318,7 @@ pub async fn runtime_get_streaming_events(
 }
 
 #[tauri::command]
-pub async fn runtime_get_streaming_partial(
+pub(crate) async fn runtime_get_streaming_partial(
     state: tauri::State<'_, DesktopState>,
     input: RuntimeIdInput,
 ) -> Result<serde_json::Value, String> {
@@ -323,7 +327,7 @@ pub async fn runtime_get_streaming_partial(
 }
 
 #[tauri::command]
-pub async fn runtime_get_streaming_result(
+pub(crate) async fn runtime_get_streaming_result(
     state: tauri::State<'_, DesktopState>,
     input: RuntimeIdInput,
 ) -> Result<serde_json::Value, String> {
@@ -332,7 +336,7 @@ pub async fn runtime_get_streaming_result(
 }
 
 #[tauri::command]
-pub async fn runtime_structure_streaming_capture(
+pub(crate) async fn runtime_structure_streaming_capture(
     state: tauri::State<'_, DesktopState>,
     input: RuntimeIdInput,
 ) -> Result<serde_json::Value, String> {
@@ -341,7 +345,7 @@ pub async fn runtime_structure_streaming_capture(
 }
 
 #[tauri::command]
-pub async fn runtime_cancel_capture(
+pub(crate) async fn runtime_cancel_capture(
     state: tauri::State<'_, DesktopState>,
     input: RuntimeIdInput,
 ) -> Result<serde_json::Value, String> {
@@ -350,7 +354,7 @@ pub async fn runtime_cancel_capture(
 }
 
 #[tauri::command]
-pub async fn runtime_cancel_streaming_capture(
+pub(crate) async fn runtime_cancel_streaming_capture(
     state: tauri::State<'_, DesktopState>,
     input: RuntimeIdInput,
 ) -> Result<serde_json::Value, String> {
@@ -359,7 +363,7 @@ pub async fn runtime_cancel_streaming_capture(
 }
 
 #[tauri::command]
-pub async fn runtime_get_raw(
+pub(crate) async fn runtime_get_raw(
     state: tauri::State<'_, DesktopState>,
     input: RuntimeIdInput,
 ) -> Result<serde_json::Value, String> {
@@ -368,7 +372,7 @@ pub async fn runtime_get_raw(
 }
 
 #[tauri::command]
-pub async fn runtime_get_ocr(
+pub(crate) async fn runtime_get_ocr(
     state: tauri::State<'_, DesktopState>,
     input: RuntimeIdInput,
 ) -> Result<serde_json::Value, String> {
@@ -377,7 +381,7 @@ pub async fn runtime_get_ocr(
 }
 
 #[tauri::command]
-pub async fn runtime_get_result(
+pub(crate) async fn runtime_get_result(
     state: tauri::State<'_, DesktopState>,
     input: RuntimeIdInput,
 ) -> Result<serde_json::Value, String> {
@@ -386,7 +390,7 @@ pub async fn runtime_get_result(
 }
 
 #[tauri::command]
-pub async fn runtime_delete_capture(
+pub(crate) async fn runtime_delete_capture(
     state: tauri::State<'_, DesktopState>,
     input: RuntimeIdInput,
 ) -> Result<serde_json::Value, String> {
@@ -395,7 +399,7 @@ pub async fn runtime_delete_capture(
 }
 
 #[tauri::command]
-pub async fn runtime_delete_streaming_capture(
+pub(crate) async fn runtime_delete_streaming_capture(
     state: tauri::State<'_, DesktopState>,
     input: RuntimeIdInput,
 ) -> Result<serde_json::Value, String> {

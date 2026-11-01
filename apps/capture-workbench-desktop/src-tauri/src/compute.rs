@@ -45,7 +45,7 @@ impl ComputeSettings {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct DesktopComputeStatus {
+pub(crate) struct DesktopComputeStatus {
     pub cuda_available: bool,
     pub prefer_gpu: bool,
 }

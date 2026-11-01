@@ -10,7 +10,7 @@ const MAX_OCR_EVIDENCE_COUNT: u64 = 8_000_000;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct OcrEvidenceFailureV1 {
+pub(crate) struct OcrEvidenceFailureV1 {
     pub code: String,
     pub message: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -21,7 +21,7 @@ pub struct OcrEvidenceFailureV1 {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct OcrEvidenceConfidenceSummaryV1 {
+pub(crate) struct OcrEvidenceConfidenceSummaryV1 {
     pub score_state: String,
     pub numeric_count: u64,
     pub min: Option<f64>,
@@ -31,14 +31,14 @@ pub struct OcrEvidenceConfidenceSummaryV1 {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct OcrEvidenceRasterV1 {
+pub(crate) struct OcrEvidenceRasterV1 {
     pub width: u64,
     pub height: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct OcrEvidencePageV1 {
+pub(crate) struct OcrEvidencePageV1 {
     pub page: u64,
     pub status: String,
     pub raster: OcrEvidenceRasterV1,
@@ -52,7 +52,7 @@ pub struct OcrEvidencePageV1 {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct OcrEvidenceProvenanceV1 {
+pub(crate) struct OcrEvidenceProvenanceV1 {
     pub status: String,
     pub runtime_version: String,
     pub contract_sha256: String,
@@ -67,7 +67,7 @@ pub struct OcrEvidenceProvenanceV1 {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct OcrEvidenceV1 {
+pub(crate) struct OcrEvidenceV1 {
     pub schema_version: u8,
     pub capture_id: String,
     pub source_sha256: String,
@@ -83,14 +83,14 @@ pub struct OcrEvidenceV1 {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct OcrEvidenceSummaryV1 {
+pub(crate) struct OcrEvidenceSummaryV1 {
     pub normalized_char_count: u64,
     pub box_count: u64,
     pub confidence_summary: OcrEvidenceConfidenceSummaryV1,
 }
 
 impl OcrEvidenceV1 {
-    pub fn validate(&self) -> Result<(), String> {
+    pub(crate) fn validate(&self) -> Result<(), String> {
         let encoded = serde_json::to_vec(self)
             .map_err(|error| format!("OCR evidence cannot be encoded: {error}"))?;
         if encoded.len() > MAX_OCR_EVIDENCE_BYTES {
@@ -491,7 +491,7 @@ fn format_bounded_confidence(value: f64) -> String {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct LibrarySourceInput {
+pub(crate) struct LibrarySourceInput {
     pub file_name: String,
     pub media_type: String,
     pub bytes: Vec<u8>,
@@ -499,13 +499,13 @@ pub struct LibrarySourceInput {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct LibraryImportSourceRequest {
+pub(crate) struct LibraryImportSourceRequest {
     pub source_path: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct LibraryCaptureUpdate {
+pub(crate) struct LibraryCaptureUpdate {
     pub document_id: String,
     pub capture_id: Option<String>,
     #[serde(default)]
@@ -524,34 +524,34 @@ pub struct LibraryCaptureUpdate {
 
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct LibraryListRequest {
+pub(crate) struct LibraryListRequest {
     pub query: Option<String>,
     pub status: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct LibraryDocumentRequest {
+pub(crate) struct LibraryDocumentRequest {
     pub document_id: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct LibraryExportRequest {
+pub(crate) struct LibraryExportRequest {
     pub document_id: String,
     pub format: LibraryExportFormat,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum LibraryExportFormat {
+pub(crate) enum LibraryExportFormat {
     Json,
     Text,
 }
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct LibraryDocumentSummary {
+pub(crate) struct LibraryDocumentSummary {
     pub document_id: String,
     pub file_name: String,
     pub media_type: String,
@@ -569,7 +569,7 @@ pub struct LibraryDocumentSummary {
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct LibraryDocumentDetail {
+pub(crate) struct LibraryDocumentDetail {
     #[serde(flatten)]
     pub summary: LibraryDocumentSummary,
     pub raw: Option<Value>,
@@ -580,7 +580,7 @@ pub struct LibraryDocumentDetail {
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct LibrarySourcePayload {
+pub(crate) struct LibrarySourcePayload {
     pub document_id: String,
     pub file_name: String,
     pub media_type: String,
@@ -589,7 +589,7 @@ pub struct LibrarySourcePayload {
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct LibraryExportPayload {
+pub(crate) struct LibraryExportPayload {
     pub file_name: String,
     pub media_type: String,
     pub content: String,
