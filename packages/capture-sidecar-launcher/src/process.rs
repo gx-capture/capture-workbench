@@ -61,7 +61,6 @@ use crate::prepare::ActivationCancelHandle;
 
 #[cfg(all(test, windows))]
 thread_local! {
-    static CANCEL_AFTER_LAUNCHING_CAS: Cell<bool> = const { Cell::new(false) };
     static CANCEL_AFTER_READY_HELPER: Cell<bool> = const { Cell::new(false) };
     static CANCEL_AFTER_RESUME_ALL: Cell<bool> = const { Cell::new(false) };
     static CANCEL_BEFORE_RESUME_ROOT: Cell<Option<usize>> = const { Cell::new(None) };
@@ -299,11 +298,9 @@ fn same_process_identity(expected: OwnedProcessIdentity, observed: OwnedProcessI
 const PROCESS_WAIT_TIMEOUT_MS: u32 = 5_000;
 
 #[cfg(windows)]
-#[allow(dead_code)]
 const GROUP_CLEANUP_BUDGET_MS: u32 = 5_000;
 
 #[cfg(windows)]
-#[allow(dead_code)]
 const DROP_CLEANUP_WAIT_MS: u32 = 250;
 
 #[cfg(windows)]
@@ -317,7 +314,6 @@ const NATIVE_NONCE_ATTEMPTS: usize = 32;
 
 #[cfg(windows)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 enum GroupNativeFailureKind {
     Setup,
     Spawn,
@@ -325,7 +321,6 @@ enum GroupNativeFailureKind {
     Assignment,
     Membership,
     Resume,
-    Cleanup,
 }
 
 /// Read-only restart observations.  These values deliberately contain no
@@ -350,7 +345,6 @@ pub(crate) enum RestartNativeObservationError {
 
 #[cfg(windows)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 enum SuspendedRootState {
     Unassigned,
     AssignedSuspended,
@@ -361,7 +355,6 @@ enum SuspendedRootState {
 /// The Job and every Child remain together so a partial native operation can
 /// never return a cleanup-free error.
 #[cfg(windows)]
-#[allow(dead_code)]
 struct SuspendedGroup {
     job: Option<WindowsJob>,
     job_nonce: NativeNonce,
@@ -389,7 +382,6 @@ struct SuspendedGroup {
 }
 
 #[cfg(windows)]
-#[allow(dead_code)]
 struct SuspendedGroupRoot {
     child: Child,
     root_nonce: NativeNonce,
@@ -399,7 +391,6 @@ struct SuspendedGroupRoot {
 }
 
 #[cfg(windows)]
-#[allow(dead_code)]
 struct PreallocatedNativeNonces {
     job_nonce: NativeNonce,
     root_nonces: Vec<NativeNonce>,
@@ -410,14 +401,12 @@ struct PreallocatedNativeNonces {
 /// it is deliberately not a readiness or terminal proof and has no
 /// serialization or Debug authority.
 #[cfg(windows)]
-#[allow(dead_code)]
 struct NativeBindingSnapshot {
     job_nonce: NativeNonce,
     roots: Vec<NativeRootObservation>,
 }
 
 #[cfg(windows)]
-#[allow(dead_code)]
 struct NativeRootObservation {
     ordinal: u32,
     root_nonce: NativeNonce,
@@ -430,14 +419,12 @@ struct NativeRootObservation {
 /// caller nor Job membership alone can create this value.
 #[cfg(windows)]
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(dead_code)]
 struct NativeListenerObservation {
     roots: Vec<NativeListenerRootObservation>,
 }
 
 #[cfg(windows)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 struct NativeListenerRootObservation {
     ordinal: u32,
     identity: OwnedProcessIdentity,
@@ -445,12 +432,13 @@ struct NativeListenerRootObservation {
 }
 
 #[cfg(windows)]
-#[allow(dead_code)]
 impl NativeListenerObservation {
+    #[cfg(test)]
     fn root_count(&self) -> usize {
         self.roots.len()
     }
 
+    #[cfg(test)]
     fn root(&self, ordinal: usize) -> Option<&NativeListenerRootObservation> {
         self.roots.get(ordinal)
     }
@@ -520,7 +508,6 @@ where
 }
 
 #[cfg(windows)]
-#[allow(dead_code)]
 fn native_nonce_text(nonce: &NativeNonce) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut text = String::with_capacity(nonce.len() * 2);
@@ -532,21 +519,10 @@ fn native_nonce_text(nonce: &NativeNonce) -> String {
 }
 
 #[cfg(windows)]
-#[allow(dead_code)]
 struct GroupNativeFailure {
     kind: GroupNativeFailureKind,
-    #[allow(dead_code)]
     detail: String,
     owner: Option<SuspendedGroup>,
-}
-
-#[cfg(windows)]
-#[allow(dead_code)]
-struct GroupCleanupFailure {
-    kind: GroupNativeFailureKind,
-    detail: String,
-    #[allow(dead_code)]
-    owner: SuspendedGroup,
 }
 
 /// The immutable journal context retained alongside a native owner.  Staging
@@ -624,9 +600,11 @@ pub(crate) enum ActivationReconcileFailureKind {
 #[cfg(windows)]
 pub(crate) struct ActivationReconcileFailure {
     kind: ActivationReconcileFailureKind,
+    #[cfg(test)]
     detail: String,
     owner: SuspendedActivationOwner,
     committed_candidate: Option<RuntimeSessionJournalV1>,
+    #[cfg(test)]
     candidate_disposition: Option<CasDisposition>,
 }
 
@@ -637,26 +615,7 @@ pub(crate) struct ReconciledActivationOwner {
 }
 
 #[cfg(windows)]
-impl ActivationReconcileFailure {
-    pub(crate) fn into_owner(self) -> SuspendedActivationOwner {
-        self.owner
-    }
-
-    #[cfg(test)]
-    pub(crate) fn kind_for_test(&self) -> ActivationReconcileFailureKind {
-        self.kind
-    }
-
-    #[cfg(test)]
-    pub(crate) fn detail_for_test(&self) -> &str {
-        &self.detail
-    }
-
-    #[cfg(test)]
-    pub(crate) fn committed_candidate_for_test(&self) -> Option<&RuntimeSessionJournalV1> {
-        self.committed_candidate.as_ref()
-    }
-}
+impl ActivationReconcileFailure {}
 
 #[cfg(windows)]
 impl ReconciledActivationOwner {
@@ -687,7 +646,6 @@ pub(crate) struct SuspendedActivationOwner {
 }
 
 #[cfg(windows)]
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SuspendedActivationFailureKind {
     Staging,
@@ -698,7 +656,6 @@ enum SuspendedActivationFailureKind {
 }
 
 #[cfg(windows)]
-#[allow(dead_code)]
 pub(crate) struct SuspendedActivationFailure {
     kind: SuspendedActivationFailureKind,
     detail: String,
@@ -706,14 +663,6 @@ pub(crate) struct SuspendedActivationFailure {
 }
 
 #[cfg(windows)]
-#[allow(dead_code)]
-pub(crate) struct SuspendedActivationCleanupFailure {
-    detail: String,
-    owner: SuspendedActivationOwner,
-}
-
-#[cfg(windows)]
-#[allow(dead_code)]
 pub(crate) struct ReadySuspendedActivationOwner {
     owner: SuspendedActivationOwner,
     ready_journal: RuntimeSessionJournalV1,
@@ -723,7 +672,6 @@ pub(crate) struct ReadySuspendedActivationOwner {
 /// The journal is intentionally still Launching: the live listener/readiness
 /// observation and Running transition belong to the next lifecycle slice.
 #[cfg(windows)]
-#[allow(dead_code)]
 pub(crate) struct LaunchingActivationOwner {
     owner: SuspendedActivationOwner,
     launching_journal: RuntimeSessionJournalV1,
@@ -797,7 +745,6 @@ pub(crate) struct ClosingActivationOwner {
 /// later listener-release observation; it is not a TerminalProof.
 #[cfg(windows)]
 #[derive(Clone, PartialEq, Eq)]
-#[allow(dead_code)]
 struct NativeCleanupProof {
     job_nonce: NativeNonce,
     roots: Vec<NativeCleanupRootProof>,
@@ -810,38 +757,16 @@ struct NativeCleanupProof {
 
 #[cfg(windows)]
 #[derive(Clone, PartialEq, Eq)]
-#[allow(dead_code)]
 struct NativeCleanupRootProof {
     ordinal: u32,
     root_nonce: NativeNonce,
     identity: OwnedProcessIdentity,
 }
 
-/// Private listener-release evidence bound to the Closing journal identity
-/// and to the same retained native cleanup proof.  Absence of a target row is
-/// the only successful observation; a foreign row remains ambiguous and is
-/// never touched.
+/// Marker that the Closing listener-release checks succeeded. Terminalization
+/// freshly validates the retained native identities and listener absence.
 #[cfg(windows)]
-#[allow(dead_code)]
-struct NativeListenerReleaseProof {
-    session_nonce: String,
-    plan_digest: String,
-    closing_revision: u64,
-    native: NativeCleanupProof,
-    roots: Vec<NativeListenerReleaseRootProof>,
-}
-
-#[cfg(windows)]
-#[derive(Clone, PartialEq, Eq)]
-#[allow(dead_code)]
-struct NativeListenerReleaseRootProof {
-    ordinal: u32,
-    root_nonce: String,
-    creation_identity: CreationIdentity,
-    reserved_listener_identity: String,
-    readiness: String,
-    port: u16,
-}
+struct NativeListenerReleaseProof {}
 
 #[cfg(windows)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -856,6 +781,7 @@ pub(crate) enum ClosingCleanupFailureKind {
 #[cfg(windows)]
 pub(crate) struct ClosingCleanupFailure {
     kind: ClosingCleanupFailureKind,
+    #[cfg(test)]
     detail: String,
     owner: ClosingActivationOwner,
 }
@@ -873,6 +799,7 @@ pub(crate) enum ClosingStagingReleaseFailureKind {
 #[cfg(windows)]
 pub(crate) struct ClosingStagingReleaseFailure {
     kind: ClosingStagingReleaseFailureKind,
+    #[cfg(test)]
     detail: String,
     owner: ClosingActivationOwner,
 }
@@ -908,6 +835,7 @@ pub(crate) struct TerminalizedActivationOwner {
 
 #[cfg(windows)]
 impl TerminalJoinFailure {
+    #[cfg(test)]
     pub(crate) fn into_owner(self) -> ClosingActivationOwner {
         self.owner
     }
@@ -933,6 +861,7 @@ impl TerminalizedActivationOwner {
 
 #[cfg(windows)]
 impl ClosingStagingReleaseFailure {
+    #[cfg(test)]
     pub(crate) fn into_owner(self) -> ClosingActivationOwner {
         self.owner
     }
@@ -950,6 +879,7 @@ impl ClosingStagingReleaseFailure {
 
 #[cfg(windows)]
 impl ClosingCleanupFailure {
+    #[cfg(test)]
     pub(crate) fn into_owner(self) -> ClosingActivationOwner {
         self.owner
     }
@@ -978,17 +908,25 @@ pub(crate) enum ClosingTransitionFailureKind {
 #[cfg(windows)]
 pub(crate) struct ClosingTransitionFailure {
     kind: ClosingTransitionFailureKind,
+    #[cfg(test)]
     detail: String,
     owner: RunningActivationOwner,
     /// The exact Closing value when the CAS committed before authority was
     /// withheld. Retry adopts it only after full read-back, without a second
     /// CAS.
     committed_candidate: Option<RuntimeSessionJournalV1>,
+    #[cfg(test)]
     candidate_disposition: Option<CasDisposition>,
 }
 
 #[cfg(windows)]
 impl ClosingTransitionFailure {
+    #[cfg(test)]
+    pub(crate) fn candidate_disposition_for_test(&self) -> Option<CasDisposition> {
+        self.candidate_disposition
+    }
+
+    #[cfg(test)]
     pub(crate) fn into_owner(self) -> RunningActivationOwner {
         self.owner
     }
@@ -1008,7 +946,6 @@ impl ClosingTransitionFailure {
 /// store error after an atomic replacement is never inferred to have produced
 /// a valid Running authority from a later read.
 #[cfg(windows)]
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RunningPromotionFailureKind {
     Cancelled,
@@ -1019,7 +956,6 @@ pub(crate) enum RunningPromotionFailureKind {
 }
 
 #[cfg(windows)]
-#[allow(dead_code)]
 pub(crate) struct RunningPromotionFailure {
     kind: RunningPromotionFailureKind,
     detail: String,
@@ -1033,6 +969,7 @@ pub(crate) struct RunningPromotionFailure {
 
 #[cfg(windows)]
 impl RunningPromotionFailure {
+    #[cfg(test)]
     pub(crate) fn into_owner(self) -> LaunchingActivationOwner {
         self.owner
     }
@@ -1054,14 +991,12 @@ impl RunningPromotionFailure {
 }
 
 #[cfg(windows)]
-#[allow(dead_code)]
 pub(crate) enum ActivationLaunchOwner {
     Ready(ReadySuspendedActivationOwner),
     Launching(LaunchingActivationOwner),
 }
 
 #[cfg(windows)]
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ActivationLaunchFailureKind {
     Cancellation,
@@ -1072,24 +1007,10 @@ enum ActivationLaunchFailureKind {
 }
 
 #[cfg(windows)]
-#[allow(dead_code)]
 pub(crate) struct ActivationLaunchFailure {
     kind: ActivationLaunchFailureKind,
     detail: String,
     owner: Option<ActivationLaunchOwner>,
-}
-
-#[cfg(windows)]
-impl ActivationLaunchOwner {
-    pub(crate) fn cleanup_and_reconcile(
-        self,
-        budget: &ActivationBudget,
-    ) -> Result<ReconciledActivationOwner, ActivationReconcileFailure> {
-        match self {
-            Self::Ready(owner) => owner.cleanup_and_reconcile(budget),
-            Self::Launching(owner) => owner.cleanup_and_reconcile(budget),
-        }
-    }
 }
 
 #[cfg(windows)]
@@ -1113,6 +1034,7 @@ pub(crate) enum PrivateActivationFailureOwner {
 #[cfg(windows)]
 pub(crate) struct PrivateActivationFailure {
     kind: PrivateActivationFailureKind,
+    #[cfg(test)]
     detail: String,
     owner: Option<PrivateActivationFailureOwner>,
     committed_candidate: Option<RuntimeSessionJournalV1>,
@@ -1120,6 +1042,7 @@ pub(crate) struct PrivateActivationFailure {
 
 #[cfg(windows)]
 impl PrivateActivationFailure {
+    #[cfg(test)]
     pub(crate) fn into_owner(self) -> Option<PrivateActivationFailureOwner> {
         self.owner
     }
@@ -1156,6 +1079,7 @@ pub(crate) fn activate_for_launch_with_budget(
         };
         return Err(PrivateActivationFailure {
             kind,
+            #[cfg(test)]
             detail: activation_budget_error_detail(error),
             owner: None,
             committed_candidate: None,
@@ -1164,6 +1088,7 @@ pub(crate) fn activate_for_launch_with_budget(
     let activation = match prepared.consume_for_activation_with_budget(budget) {
         Ok(activation) => activation,
         Err(error) => {
+            #[cfg_attr(not(test), allow(unused_variables))]
             let (kind, detail) = match budget.check() {
                 Err(budget_error @ JournalStoreError::AdmissionCancelled)
                 | Err(budget_error @ JournalStoreError::AdmissionDeadline) => {
@@ -1185,6 +1110,7 @@ pub(crate) fn activate_for_launch_with_budget(
             };
             return Err(PrivateActivationFailure {
                 kind,
+                #[cfg(test)]
                 detail,
                 owner: None,
                 committed_candidate: None,
@@ -1234,6 +1160,7 @@ pub(crate) fn activate_prepared_group_with_budget(
     if !Arc::ptr_eq(&prepared_cancellation, &budget_cancellation) {
         return Err(PrivateActivationFailure {
             kind: PrivateActivationFailureKind::Preparation,
+            #[cfg(test)]
             detail:
                 "Capture runtime activation budget did not carry the prepared cancellation source."
                     .into(),
@@ -1301,6 +1228,7 @@ fn private_failure_from_suspended_failure(
     let Some(owner) = failure.owner else {
         return PrivateActivationFailure {
             kind,
+            #[cfg(test)]
             detail,
             owner: None,
             committed_candidate: None,
@@ -1325,6 +1253,7 @@ fn private_failure_from_launch_failure(
     let Some(owner) = failure.owner else {
         return PrivateActivationFailure {
             kind,
+            #[cfg(test)]
             detail,
             owner: None,
             committed_candidate: None,
@@ -1343,19 +1272,21 @@ fn private_failure_from_launch_failure(
 #[cfg(windows)]
 fn private_failure_after_cleanup(
     original_kind: PrivateActivationFailureKind,
-    detail: String,
+    #[cfg_attr(not(test), allow(unused_variables))] detail: String,
     owner: SuspendedActivationOwner,
     budget: &ActivationBudget,
 ) -> PrivateActivationFailure {
     match owner.cleanup_and_reconcile(budget) {
         Ok(reconciled) => PrivateActivationFailure {
             kind: original_kind,
+            #[cfg(test)]
             detail,
             owner: Some(PrivateActivationFailureOwner::Reconciled(reconciled)),
             committed_candidate: None,
         },
         Err(failure) => PrivateActivationFailure {
             kind: PrivateActivationFailureKind::Reconcile,
+            #[cfg(test)]
             detail: format!(
                 "{detail} Activation cleanup/reconcile remained owned: {}.",
                 failure.detail
@@ -1367,8 +1298,8 @@ fn private_failure_after_cleanup(
 }
 
 #[cfg(windows)]
-#[allow(dead_code)]
 impl ActivationLaunchFailure {
+    #[cfg(test)]
     pub(crate) fn into_owner(self) -> Option<ActivationLaunchOwner> {
         self.owner
     }
@@ -1376,82 +1307,24 @@ impl ActivationLaunchFailure {
 
 #[cfg(windows)]
 impl SuspendedActivationFailure {
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(crate) fn into_owner(self) -> Option<SuspendedActivationOwner> {
         self.owner
     }
 }
 
-#[cfg(windows)]
-impl SuspendedActivationCleanupFailure {
-    #[allow(dead_code)]
-    pub(crate) fn into_owner(self) -> SuspendedActivationOwner {
-        self.owner
+#[cfg(all(test, windows))]
+pub(crate) fn cleanup_activation_for_test(
+    owner: SuspendedActivationOwner,
+) -> SuspendedActivationOwner {
+    match owner.cleanup_and_reconcile(&crate::journal_store::activation_budget_for_test()) {
+        Ok(reconciled) => reconciled.owner,
+        Err(failure) => failure.owner,
     }
 }
 
 #[cfg(windows)]
 impl SuspendedActivationOwner {
-    #[allow(dead_code)]
-    pub(crate) fn persist_ready(
-        mut self,
-    ) -> Result<ReadySuspendedActivationOwner, SuspendedActivationFailure> {
-        let observation = match self.resource_observation() {
-            Ok(observation) => observation,
-            Err(detail) => {
-                return Err(SuspendedActivationFailure {
-                    kind: SuspendedActivationFailureKind::Native(
-                        GroupNativeFailureKind::Membership,
-                    ),
-                    detail,
-                    owner: Some(self),
-                });
-            }
-        };
-        let timestamp = match self.staging.next_timestamp() {
-            Ok(timestamp) => timestamp,
-            Err(detail) => {
-                return Err(SuspendedActivationFailure {
-                    kind: SuspendedActivationFailureKind::Journal,
-                    detail,
-                    owner: Some(self),
-                });
-            }
-        };
-        // `started_at` records when the producer observed the native root
-        // identity, while this separate timestamp records the Ready CAS.  A
-        // producer clock may advance equally, but it must not move backwards
-        // between those two observations.
-        if observation
-            .roots
-            .iter()
-            .any(|root| timestamp < root.started_at)
-        {
-            return Err(SuspendedActivationFailure {
-                kind: SuspendedActivationFailureKind::Journal,
-                detail: "Capture runtime producer clock moved backwards before Ready CAS.".into(),
-                owner: Some(self),
-            });
-        }
-        let ready_journal = match self.staging.persist_ready(observation, timestamp) {
-            Ok(ready_journal) => ready_journal,
-            Err(detail) => {
-                return Err(SuspendedActivationFailure {
-                    kind: SuspendedActivationFailureKind::Journal,
-                    detail,
-                    owner: Some(self),
-                });
-            }
-        };
-        if let Some(context) = self.failure_context.as_mut() {
-            context.candidate = ready_journal.clone();
-        }
-        Ok(ReadySuspendedActivationOwner {
-            owner: self,
-            ready_journal,
-        })
-    }
-
     /// Budget-aware Ready handoff.  The store/index operations inside the
     /// staging owner inherit the same scoped lock budget; a cancellation or
     /// deadline observed after a durable Ready result is converted back to an
@@ -1558,7 +1431,6 @@ impl SuspendedActivationOwner {
         self.resource_observation_with_started_at(None)
     }
 
-    #[allow(dead_code)]
     fn resource_observation_for_journal(
         &mut self,
         expected: &RuntimeSessionJournalV1,
@@ -1656,13 +1528,11 @@ impl SuspendedActivationOwner {
     }
 
     #[cfg(test)]
-    #[allow(dead_code)]
     pub(crate) fn native_root_count_for_test(&self) -> Option<usize> {
         self.native.as_ref().map(|native| native.roots.len())
     }
 
     #[cfg(test)]
-    #[allow(dead_code)]
     pub(crate) fn native_is_suspended_for_test(&mut self) -> bool {
         self.native
             .as_mut()
@@ -1717,18 +1587,6 @@ impl SuspendedActivationOwner {
 
 #[cfg(windows)]
 impl ReadySuspendedActivationOwner {
-    /// Consume the Ready owner, durably record Launching, then resume each
-    /// already-assigned root through the existing native loop.  Cancellation
-    /// is accepted only through this private crate seam; no caller can supply
-    /// replacement commands or native identity.
-    #[allow(dead_code)]
-    pub(crate) fn launch_with_cancellation(
-        self,
-        cancellation: Option<&AtomicBool>,
-    ) -> Result<LaunchingActivationOwner, ActivationLaunchFailure> {
-        self.launch_inner(cancellation, None)
-    }
-
     /// Budget-aware private Launching handoff.  It shares the caller's
     /// absolute budget with journal/index locks and the native resume loop.
     #[cfg(windows)]
@@ -1936,13 +1794,6 @@ impl ReadySuspendedActivationOwner {
             context.disposition = CasDisposition::Committed;
         }
 
-        #[cfg(all(test, windows))]
-        if CANCEL_AFTER_LAUNCHING_CAS.with(|cancel| cancel.replace(false)) {
-            if let Some(cancellation) = cancellation {
-                cancellation.store(true, Ordering::Release);
-            }
-        }
-
         let mut launching = LaunchingActivationOwner {
             owner: ready.owner,
             launching_journal,
@@ -2028,28 +1879,6 @@ impl ReadySuspendedActivationOwner {
         self.owner
     }
 
-    /// Failure cleanup is native-first and never claims terminal proof. The
-    /// Ready journal remains for the later reconciliation transition when the
-    /// pre-native staging cleanup rejects its PreparedBound-only boundary.
-    #[allow(dead_code)]
-    pub(crate) fn cleanup_without_terminal_proof(
-        self,
-    ) -> Result<(), SuspendedActivationCleanupFailure> {
-        self.owner.cleanup()
-    }
-
-    /// Failure path for the budgeted private activation seam.  It always
-    /// closes the retained native owner before attempting the exact journal
-    /// reconcile transition; the staging scope remains owned for later
-    /// reconciliation.
-    #[cfg(windows)]
-    pub(crate) fn cleanup_and_reconcile(
-        self,
-        budget: &ActivationBudget,
-    ) -> Result<ReconciledActivationOwner, ActivationReconcileFailure> {
-        self.owner.cleanup_and_reconcile(budget)
-    }
-
     #[cfg(test)]
     pub(crate) fn ready_journal_for_test(&self) -> &RuntimeSessionJournalV1 {
         &self.ready_journal
@@ -2078,14 +1907,9 @@ impl ReadySuspendedActivationOwner {
 
 #[cfg(windows)]
 impl LaunchingActivationOwner {
-    /// Reconcile a failed private activation while retaining this same native
-    /// and staging owner.  No Running or lease authority is created here.
-    #[cfg(windows)]
-    pub(crate) fn cleanup_and_reconcile(
-        self,
-        budget: &ActivationBudget,
-    ) -> Result<ReconciledActivationOwner, ActivationReconcileFailure> {
-        self.owner.cleanup_and_reconcile(budget)
+    #[cfg(test)]
+    pub(crate) fn into_suspended_owner(self) -> SuspendedActivationOwner {
+        self.owner
     }
 
     /// Promote an already-resumed Launching owner after strict service and
@@ -2595,31 +2419,14 @@ impl LaunchingActivationOwner {
         }
     }
 
-    /// Cleanup remains native-first.  Staging is deliberately retained for
-    /// reconciliation because the current journal is Launching, not
-    /// PreparedBound, and this slice has no terminal proof.
-    #[allow(dead_code)]
-    pub(crate) fn cleanup_without_terminal_proof(
-        self,
-    ) -> Result<(), SuspendedActivationCleanupFailure> {
-        self.owner.cleanup()
-    }
-
     #[cfg(test)]
     pub(crate) fn launching_journal_for_test(&self) -> &RuntimeSessionJournalV1 {
         &self.launching_journal
     }
 
     #[cfg(test)]
-    #[allow(dead_code)]
     pub(crate) fn native_root_count_for_test(&self) -> Option<usize> {
         self.owner.native_root_count_for_test()
-    }
-
-    #[cfg(test)]
-    #[allow(dead_code)]
-    pub(crate) fn native_is_suspended_for_test(&mut self) -> bool {
-        self.owner.native_is_suspended_for_test()
     }
 
     #[cfg(test)]
@@ -2708,15 +2515,15 @@ impl LaunchingActivationOwner {
     pub(crate) fn inject_native_cleanup_failure_for_test(&mut self) {
         self.owner.inject_native_cleanup_failure_for_test();
     }
-
-    #[cfg(all(test, windows))]
-    pub(crate) fn inject_job_termination_failure_for_test(&mut self) {
-        self.owner.inject_job_termination_failure_for_test();
-    }
 }
 
 #[cfg(windows)]
 impl RunningActivationOwner {
+    #[cfg(test)]
+    pub(crate) fn into_suspended_owner(self) -> SuspendedActivationOwner {
+        self.owner
+    }
+
     /// Consume the Running owner and persist only teardown intent.  This
     /// boundary deliberately does not require a live root, listener, HTTP
     /// readiness, or unchanged executable/schema bytes: those observations
@@ -2846,6 +2653,7 @@ impl RunningActivationOwner {
         let closing_journal = match result.disposition() {
             CasDisposition::Committed => result.attempt().cloned().expect("closing candidate"),
             CasDisposition::ConfirmedLate => {
+                #[cfg_attr(not(test), allow(unused_variables))]
                 let detail = if cancellation.load(Ordering::Acquire) {
                     "Capture runtime Closing CAS completed after cancellation; the durable Closing record remains for reconciliation."
                 } else {
@@ -2857,9 +2665,11 @@ impl RunningActivationOwner {
                     } else {
                         ClosingTransitionFailureKind::Deadline
                     },
+                    #[cfg(test)]
                     detail: detail.into(),
                     owner: self,
                     committed_candidate: result.attempt().cloned(),
+                    #[cfg(test)]
                     candidate_disposition: Some(CasDisposition::ConfirmedLate),
                 });
             }
@@ -2871,6 +2681,7 @@ impl RunningActivationOwner {
                 ));
             }
         };
+        #[cfg_attr(not(test), allow(unused_variables))]
         if let Err(detail) = check_running_promotion_budget(deadline, cancellation.as_ref()) {
             // The complete Closing candidate is already durable, but the
             // owner boundary has not been issued.  Keep the original Running
@@ -2882,9 +2693,11 @@ impl RunningActivationOwner {
                 } else {
                     ClosingTransitionFailureKind::Deadline
                 },
+                #[cfg(test)]
                 detail,
                 owner: self,
                 committed_candidate: Some(closing_journal),
+                #[cfg(test)]
                 candidate_disposition: Some(CasDisposition::ConfirmedLate),
             });
         }
@@ -2904,16 +2717,6 @@ impl RunningActivationOwner {
             #[cfg(all(test, windows))]
             terminal_foreign_listener: None,
         })
-    }
-
-    /// The Running owner keeps the exact durable CAS value for the next
-    /// lifecycle slice.  Cleanup is still native-first; staging is retained
-    /// for reconciliation because this slice has no Closing/Terminal proof.
-    #[allow(dead_code)]
-    pub(crate) fn cleanup_without_terminal_proof(
-        self,
-    ) -> Result<(), SuspendedActivationCleanupFailure> {
-        self.owner.cleanup()
     }
 
     #[cfg(test)]
@@ -2954,7 +2757,6 @@ impl ClosingActivationOwner {
     /// checked before the first destructive operation.  A successful native
     /// proof stays inside this same owner so a later listener-query failure
     /// can be retried without reacquiring or reconstructing native state.
-    #[allow(dead_code)]
     pub(crate) fn cleanup_native_and_observe_listener_release(
         mut self,
         deadline: std::time::Instant,
@@ -3086,7 +2888,7 @@ impl ClosingActivationOwner {
                 format!("Capture runtime Closing listener proof budget ended: {cause:?}."),
             ));
         }
-        let release_roots = match self
+        let _release_roots = match self
             .closing_journal
             .roots
             .iter()
@@ -3100,14 +2902,7 @@ impl ClosingActivationOwner {
                 {
                     return None;
                 }
-                Some(NativeListenerReleaseRootProof {
-                    ordinal: journal_root.ordinal,
-                    root_nonce: journal_root.root_nonce.clone(),
-                    creation_identity: journal_root.creation_identity.clone(),
-                    reserved_listener_identity: journal_root.reserved_listener_identity.clone(),
-                    readiness: journal_root.live_listener_readiness.clone()?,
-                    port: journal_root.loopback_port,
-                })
+                Some(())
             })
             .collect::<Option<Vec<_>>>()
         {
@@ -3125,13 +2920,7 @@ impl ClosingActivationOwner {
             deadline,
             Some(cancellation.as_ref()),
         ) {
-            Ok(()) => NativeListenerReleaseProof {
-                session_nonce: self.closing_journal.session_nonce.clone(),
-                plan_digest: self.closing_journal.plan_digest.clone(),
-                closing_revision: self.closing_journal.journal_revision,
-                native: native_proof,
-                roots: release_roots,
-            },
+            Ok(()) => NativeListenerReleaseProof {},
             Err(detail) => return Err(closing_cleanup_failure(self, detail)),
         };
         if let Err(cause) = cleanup_admission.check_budget() {
@@ -3150,7 +2939,6 @@ impl ClosingActivationOwner {
     /// listener absence observation, every staging mutation, and the final
     /// listener absence observation.  A failure retains this exact owner,
     /// including any native proof and partial staging-release progress.
-    #[allow(dead_code)]
     pub(crate) fn release_staging_after_native_cleanup(
         mut self,
         deadline: std::time::Instant,
@@ -3337,7 +3125,6 @@ impl ClosingActivationOwner {
     /// Closing -> Terminal CAS.  Native cleanup and staging release have
     /// already happened; this seam only re-observes their exact identities,
     /// confirms absence, and persists the canonical terminal proof.
-    #[allow(dead_code)]
     pub(crate) fn terminalize_after_release(
         mut self,
         deadline: std::time::Instant,
@@ -3708,20 +3495,6 @@ impl ClosingActivationOwner {
     }
 
     #[cfg(test)]
-    pub(crate) fn staging_release_binding_matches_for_test(&self) -> bool {
-        self.staging_release_proof.as_ref().is_some_and(|proof| {
-            proof.matches_identity(
-                &self.closing_journal.session_nonce,
-                &self.closing_journal.plan_digest,
-                self.owner
-                    .staging
-                    .activation_descriptor()
-                    .group_staging_identity(),
-            )
-        })
-    }
-
-    #[cfg(test)]
     pub(crate) fn inject_listener_query_failure_after_staging_for_test(&mut self) {
         self.listener_query_failure_after_staging = true;
     }
@@ -3830,6 +3603,7 @@ fn closing_cleanup_failure(
     };
     ClosingCleanupFailure {
         kind,
+        #[cfg(test)]
         detail,
         owner,
     }
@@ -3849,6 +3623,7 @@ fn closing_cleanup_failure_for_admission(
         ClosingCasError::Conflict => ClosingCleanupFailureKind::Validation,
         ClosingCasError::Storage => ClosingCleanupFailureKind::Native,
     };
+    #[cfg_attr(not(test), allow(unused_variables))]
     let detail = match cause {
         ClosingCasError::Cancelled => {
             "Capture runtime Closing cleanup admission was cancelled before native cleanup."
@@ -3865,6 +3640,7 @@ fn closing_cleanup_failure_for_admission(
     };
     ClosingCleanupFailure {
         kind,
+        #[cfg(test)]
         detail: detail.into(),
         owner,
     }
@@ -3874,10 +3650,11 @@ fn closing_cleanup_failure_for_admission(
 fn closing_staging_release_failure(
     owner: ClosingActivationOwner,
     kind: ClosingStagingReleaseFailureKind,
-    detail: impl Into<String>,
+    #[cfg_attr(not(test), allow(unused_variables))] detail: impl Into<String>,
 ) -> ClosingStagingReleaseFailure {
     ClosingStagingReleaseFailure {
         kind,
+        #[cfg(test)]
         detail: detail.into(),
         owner,
     }
@@ -3984,14 +3761,7 @@ fn listener_release_proof_for_closing(
             {
                 return None;
             }
-            Some(NativeListenerReleaseRootProof {
-                ordinal: journal_root.ordinal,
-                root_nonce: journal_root.root_nonce.clone(),
-                creation_identity: journal_root.creation_identity.clone(),
-                reserved_listener_identity: journal_root.reserved_listener_identity.clone(),
-                readiness: journal_root.live_listener_readiness.clone()?,
-                port: journal_root.loopback_port,
-            })
+            Some(())
         })
         .collect::<Option<Vec<_>>>()
         .ok_or_else(|| {
@@ -4000,13 +3770,7 @@ fn listener_release_proof_for_closing(
     if roots.len() != closing.roots.len() || roots.is_empty() {
         return Err("Capture runtime listener release tuple was incomplete or reordered.".into());
     }
-    Ok(NativeListenerReleaseProof {
-        session_nonce: closing.session_nonce.clone(),
-        plan_digest: closing.plan_digest.clone(),
-        closing_revision: closing.journal_revision,
-        native,
-        roots,
-    })
+    Ok(NativeListenerReleaseProof {})
 }
 
 #[cfg(windows)]
@@ -4027,6 +3791,7 @@ fn closing_transition_failure(
     } else {
         ClosingTransitionFailureKind::Validation
     };
+    #[cfg_attr(not(test), allow(unused_variables))]
     let (committed_candidate, candidate_disposition) = pending_successor(
         &owner.owner.failure_context,
         &owner.running_journal,
@@ -4034,9 +3799,11 @@ fn closing_transition_failure(
     );
     ClosingTransitionFailure {
         kind,
+        #[cfg(test)]
         detail,
         owner,
         committed_candidate,
+        #[cfg(test)]
         candidate_disposition,
     }
 }
@@ -4045,7 +3812,7 @@ fn closing_transition_failure(
 fn closing_transition_failure_for_cas(
     owner: RunningActivationOwner,
     cause: ClosingCasError,
-    detail: &str,
+    #[cfg_attr(not(test), allow(unused_variables))] detail: &str,
 ) -> ClosingTransitionFailure {
     let kind = match cause {
         ClosingCasError::Cancelled => ClosingTransitionFailureKind::Cancelled,
@@ -4053,6 +3820,7 @@ fn closing_transition_failure_for_cas(
         ClosingCasError::Conflict => ClosingTransitionFailureKind::Conflict,
         ClosingCasError::Storage => ClosingTransitionFailureKind::Storage,
     };
+    #[cfg_attr(not(test), allow(unused_variables))]
     let (committed_candidate, candidate_disposition) = pending_successor(
         &owner.owner.failure_context,
         &owner.running_journal,
@@ -4060,9 +3828,11 @@ fn closing_transition_failure_for_cas(
     );
     ClosingTransitionFailure {
         kind,
+        #[cfg(test)]
         detail: detail.to_owned(),
         owner,
         committed_candidate,
+        #[cfg(test)]
         candidate_disposition,
     }
 }
@@ -4071,7 +3841,7 @@ fn closing_transition_failure_for_cas(
 fn closing_transition_failure_for_owned(
     mut owner: RunningActivationOwner,
     outcome: OwnedCasResult,
-    detail: &str,
+    #[cfg_attr(not(test), allow(unused_variables))] detail: &str,
 ) -> ClosingTransitionFailure {
     if let Some(context) = owner.owner.failure_context.as_mut() {
         record_owned_cas_context(context, &outcome);
@@ -4082,6 +3852,7 @@ fn closing_transition_failure_for_owned(
         Some(JournalStoreError::Conflict) => ClosingTransitionFailureKind::Conflict,
         _ => ClosingTransitionFailureKind::Storage,
     };
+    #[cfg_attr(not(test), allow(unused_variables))]
     let (committed_candidate, candidate_disposition) = pending_successor(
         &owner.owner.failure_context,
         &owner.running_journal,
@@ -4089,9 +3860,11 @@ fn closing_transition_failure_for_owned(
     );
     ClosingTransitionFailure {
         kind,
+        #[cfg(test)]
         detail: detail.to_owned(),
         owner,
         committed_candidate,
+        #[cfg(test)]
         candidate_disposition,
     }
 }
@@ -4426,11 +4199,6 @@ fn cancellation_requested(cancellation: Option<&AtomicBool>) -> bool {
 }
 
 #[cfg(all(test, windows))]
-pub(crate) fn inject_cancellation_after_launching_cas_for_test() {
-    CANCEL_AFTER_LAUNCHING_CAS.with(|cancel| cancel.set(true));
-}
-
-#[cfg(all(test, windows))]
 pub(crate) fn inject_cancellation_after_ready_helper_for_test() {
     CANCEL_AFTER_READY_HELPER.with(|cancel| cancel.set(true));
 }
@@ -4446,20 +4214,17 @@ pub(crate) fn expire_after_spawn_before_assignment_for_test() {
 }
 
 #[cfg(all(test, windows))]
-#[allow(dead_code)]
 pub(crate) fn inject_cancellation_before_resume_root_for_test(index: usize) {
     CANCEL_BEFORE_RESUME_ROOT.with(|cancel_at| cancel_at.set(Some(index)));
 }
 
 #[cfg(all(test, windows))]
-#[allow(dead_code)]
 pub(crate) fn inject_cancellation_after_resume_root_for_test(index: usize) {
     CANCEL_AFTER_RESUME_ROOT.with(|cancel_at| cancel_at.set(Some(index)));
 }
 
 #[cfg(windows)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 struct GroupCleanupProof {
     roots_reaped: bool,
     descendants_terminated: bool,
@@ -4488,17 +4253,6 @@ impl fmt::Debug for GroupNativeFailure {
 }
 
 #[cfg(windows)]
-impl fmt::Debug for GroupCleanupFailure {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("GroupCleanupFailure")
-            .field("kind", &self.kind)
-            .finish()
-    }
-}
-
-#[cfg(windows)]
-#[allow(dead_code)]
 impl GroupNativeFailure {
     fn with_owner(
         kind: GroupNativeFailureKind,
@@ -4527,24 +4281,7 @@ impl GroupNativeFailure {
 }
 
 #[cfg(windows)]
-#[allow(dead_code)]
-impl GroupCleanupFailure {
-    #[cfg(test)]
-    fn retry(self) -> Result<GroupCleanupProof, Self> {
-        match self.owner.cleanup_and_prove() {
-            Ok(proof) => Ok(proof),
-            Err(next) => Err(next),
-        }
-    }
-}
-
-#[cfg(windows)]
-#[allow(dead_code)]
 impl SuspendedGroup {
-    fn spawn(commands: &mut [Command]) -> Result<Self, GroupNativeFailure> {
-        Self::spawn_with_prespawn_check(commands, |_, _| Ok(()))
-    }
-
     /// Shared native acquisition loop with a private last-moment check.  The
     /// connected activation path uses this hook to replace each command from
     /// the frozen descriptor immediately before CreateProcess; legacy tests
@@ -4895,7 +4632,6 @@ impl SuspendedGroup {
             .verify_membership_set(&expected)
     }
 
-    #[allow(dead_code)]
     fn binding_snapshot(&mut self) -> Result<NativeBindingSnapshot, String> {
         self.verify_all_assigned_suspended()?;
         if !self.unacquired_root_nonces.is_empty() {
@@ -5182,7 +4918,6 @@ impl SuspendedGroup {
     /// This is intentionally private until the activation journal has a
     /// canonical place for the resulting observation.  In particular, this
     /// method never opens or terminates a process by a PID from the table.
-    #[allow(dead_code)]
     fn observe_root_listeners(
         &mut self,
         ports: &[u16],
@@ -5338,12 +5073,6 @@ impl SuspendedGroup {
         terminate_child_by_exact_handle(&mut root.child, PROCESS_WAIT_TIMEOUT_MS)
     }
 
-    /// Consumes the owner. On failure the returned error contains the same
-    /// owner, so the caller can reconcile without reconstructing native state.
-    fn resume_all(self) -> Result<Self, GroupNativeFailure> {
-        self.resume_all_with_cancellation(None)
-    }
-
     fn resume_all_with_cancellation(
         mut self,
         cancellation: Option<&AtomicBool>,
@@ -5452,12 +5181,6 @@ impl SuspendedGroup {
             }
         }
         Ok(self)
-    }
-
-    fn cleanup_inner(&mut self) -> Result<GroupCleanupProof, String> {
-        let deadline = std::time::Instant::now()
-            + std::time::Duration::from_millis(u64::from(GROUP_CLEANUP_BUDGET_MS));
-        self.cleanup_inner_with_budget(deadline, None)
     }
 
     fn cleanup_inner_with_budget(
@@ -5599,20 +5322,6 @@ impl SuspendedGroup {
             roots_reaped: true,
             descendants_terminated: true,
         })
-    }
-
-    fn cleanup_and_prove(mut self) -> Result<GroupCleanupProof, GroupCleanupFailure> {
-        match self.cleanup_inner() {
-            Ok(proof) => {
-                self.cleanup_complete = true;
-                Ok(proof)
-            }
-            Err(detail) => Err(GroupCleanupFailure {
-                kind: GroupNativeFailureKind::Cleanup,
-                detail,
-                owner: self,
-            }),
-        }
     }
 
     #[cfg(test)]
@@ -6193,26 +5902,6 @@ impl fmt::Debug for SuspendedActivationFailure {
 }
 
 #[cfg(windows)]
-impl fmt::Debug for SuspendedActivationCleanupFailure {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("SuspendedActivationCleanupFailure")
-            .finish()
-    }
-}
-
-#[cfg(windows)]
-/// Connects the already-consumed prepared context to the existing native
-/// suspended-group owner.  The returned value is intentionally private and
-/// contains no readiness or lease claim.
-#[allow(dead_code)]
-pub(crate) fn acquire_suspended_for_activation(
-    activation: ValidatedActivationContext,
-) -> Result<SuspendedActivationOwner, SuspendedActivationFailure> {
-    acquire_suspended_for_activation_inner(activation, None)
-}
-
-#[cfg(windows)]
 /// Budget-aware private native handoff.  The activation context is consumed
 /// exactly once and all partial native owners remain attached to the staging
 /// owner on failure.
@@ -6349,23 +6038,6 @@ fn acquire_suspended_for_activation_inner(
     );
     #[cfg(not(all(test, windows)))]
     acquire_suspended_from_staging_with_permit(staging, failure_context, budget)
-}
-
-#[cfg(windows)]
-/// Continues only from a staging owner returned by `materialize`; callers
-/// cannot construct that owner or substitute an activation path themselves.
-#[allow(dead_code)]
-pub(crate) fn acquire_suspended_from_staging(
-    staging: RunStagingOwner,
-) -> Result<SuspendedActivationOwner, SuspendedActivationFailure> {
-    #[cfg(all(test, windows))]
-    {
-        acquire_suspended_from_staging_with_permit(staging, None, None, None)
-    }
-    #[cfg(not(all(test, windows)))]
-    {
-        acquire_suspended_from_staging_with_permit(staging, None, None)
-    }
 }
 
 #[cfg(windows)]
@@ -6533,16 +6205,19 @@ impl SuspendedActivationOwner {
     ) -> Result<ReconciledActivationOwner, ActivationReconcileFailure> {
         if !self.native_cleanup_proven {
             if let Some(native) = self.native.as_mut() {
+                #[cfg_attr(not(test), allow(unused_variables))]
                 if let Err(detail) =
                     native.cleanup_and_retain_proof_after_activation_failure(budget.deadline())
                 {
                     return Err(ActivationReconcileFailure {
                         kind: ActivationReconcileFailureKind::Cleanup,
+                        #[cfg(test)]
                         detail,
                         committed_candidate: self
                             .failure_context
                             .as_ref()
                             .map(|c| c.candidate.clone()),
+                        #[cfg(test)]
                         candidate_disposition: self.failure_context.as_ref().map(|c| c.disposition),
                         owner: self,
                     });
@@ -6558,45 +6233,57 @@ impl SuspendedActivationOwner {
         self.release_http_fixture_permit_after_native_cleanup();
 
         let no_cancellation = AtomicBool::new(false);
+        #[cfg_attr(not(test), allow(unused_variables))]
         if let Err(detail) = self
             .staging
             .validate_reconcile_retained_scope(budget.deadline(), &no_cancellation)
         {
             return Err(ActivationReconcileFailure {
                 kind: ActivationReconcileFailureKind::Cleanup,
+                #[cfg(test)]
                 detail,
                 committed_candidate: self.failure_context.as_ref().map(|c| c.candidate.clone()),
+                #[cfg(test)]
                 candidate_disposition: self.failure_context.as_ref().map(|c| c.disposition),
                 owner: self,
             });
         }
 
+        #[cfg_attr(not(test), allow(unused_variables))]
         if let Err(error) = budget.check_deadline() {
             return Err(ActivationReconcileFailure {
                 kind: ActivationReconcileFailureKind::Deadline,
+                #[cfg(test)]
                 detail: activation_budget_error_detail(error),
                 committed_candidate: self.failure_context.as_ref().map(|c| c.candidate.clone()),
+                #[cfg(test)]
                 candidate_disposition: self.failure_context.as_ref().map(|c| c.disposition),
                 owner: self,
             });
         }
         let timestamp = match self.staging.next_timestamp() {
             Ok(timestamp) => timestamp,
+            #[cfg_attr(not(test), allow(unused_variables))]
             Err(detail) => {
                 return Err(ActivationReconcileFailure {
                     kind: ActivationReconcileFailureKind::Validation,
+                    #[cfg(test)]
                     detail,
                     committed_candidate: self.failure_context.as_ref().map(|c| c.candidate.clone()),
+                    #[cfg(test)]
                     candidate_disposition: self.failure_context.as_ref().map(|c| c.disposition),
                     owner: self,
                 });
             }
         };
+        #[cfg_attr(not(test), allow(unused_variables))]
         if let Err(error) = budget.check_deadline() {
             return Err(ActivationReconcileFailure {
                 kind: ActivationReconcileFailureKind::Deadline,
+                #[cfg(test)]
                 detail: activation_budget_error_detail(error),
                 committed_candidate: self.failure_context.as_ref().map(|c| c.candidate.clone()),
+                #[cfg(test)]
                 candidate_disposition: self.failure_context.as_ref().map(|c| c.disposition),
                 owner: self,
             });
@@ -6604,8 +6291,10 @@ impl SuspendedActivationOwner {
         let Some(context) = self.failure_context.clone() else {
             return Err(ActivationReconcileFailure {
                 kind: ActivationReconcileFailureKind::Validation,
+                #[cfg(test)]
                 detail: "Capture runtime activation reconcile context was unavailable.".into(),
                 committed_candidate: self.failure_context.as_ref().map(|c| c.candidate.clone()),
+                #[cfg(test)]
                 candidate_disposition: self.failure_context.as_ref().map(|c| c.disposition),
                 owner: self,
             });
@@ -6620,8 +6309,10 @@ impl SuspendedActivationOwner {
             Err(error) => {
                 return Err(ActivationReconcileFailure {
                     kind: activation_reconcile_failure_kind(&error),
+                    #[cfg(test)]
                     detail: "Capture runtime activation reconcile could not validate its durable predecessor or candidate.".into(),
                     committed_candidate: self.failure_context.as_ref().map(|c| c.candidate.clone()),
+                    #[cfg(test)]
                     candidate_disposition: self.failure_context.as_ref().map(|c| c.disposition),
                     owner: self,
                 });
@@ -6637,8 +6328,10 @@ impl SuspendedActivationOwner {
         } else {
             return Err(ActivationReconcileFailure {
                 kind: ActivationReconcileFailureKind::Conflict,
+                #[cfg(test)]
                 detail: "Capture runtime activation reconcile found an unknown or conflicting durable journal state.".into(),
                 committed_candidate: self.failure_context.as_ref().map(|c| c.candidate.clone()),
+                #[cfg(test)]
                 candidate_disposition: self.failure_context.as_ref().map(|c| c.disposition),
                 owner: self,
             });
@@ -6648,11 +6341,14 @@ impl SuspendedActivationOwner {
         // adoption; repeating Reconcile -> Reconcile CAS would create a
         // second authority edge.
         if expected.state == JournalState::ReconcileRequired {
+            #[cfg_attr(not(test), allow(unused_variables))]
             if let Err(error) = budget.check_deadline() {
                 return Err(ActivationReconcileFailure {
                     kind: ActivationReconcileFailureKind::Deadline,
+                    #[cfg(test)]
                     detail: activation_budget_error_detail(error),
                     committed_candidate: Some(expected),
+                    #[cfg(test)]
                     candidate_disposition: self.failure_context.as_ref().map(|c| c.disposition),
                     owner: self,
                 });
@@ -6672,10 +6368,12 @@ impl SuspendedActivationOwner {
             Err(error) => {
                 return Err(ActivationReconcileFailure {
                     kind: activation_reconcile_failure_kind(&error),
+                    #[cfg(test)]
                     detail: format!(
                         "Capture runtime activation reconcile admission failed: {error:?}."
                     ),
                     committed_candidate: self.failure_context.as_ref().map(|c| c.candidate.clone()),
+                    #[cfg(test)]
                     candidate_disposition: self.failure_context.as_ref().map(|c| c.disposition),
                     owner: self,
                 });
@@ -6698,6 +6396,7 @@ impl SuspendedActivationOwner {
                     Some(error) => activation_reconcile_failure_kind(error),
                     None => ActivationReconcileFailureKind::Deadline,
                 };
+                #[cfg_attr(not(test), allow(unused_variables))]
                 let detail = match outcome.disposition() {
                     CasDisposition::ConfirmedLate => "Capture runtime activation reconcile committed after its absolute deadline; durable state is retained without reconcile authority.".into(),
                     CasDisposition::AmbiguousWrite => "Capture runtime activation reconcile write remained unconfirmed; durable state is retained without reconcile authority.".into(),
@@ -6706,47 +6405,14 @@ impl SuspendedActivationOwner {
                 };
                 Err(ActivationReconcileFailure {
                     kind,
+                    #[cfg(test)]
                     detail,
                     committed_candidate: self.failure_context.as_ref().map(|c| c.candidate.clone()),
+                    #[cfg(test)]
                     candidate_disposition: self.failure_context.as_ref().map(|c| c.disposition),
                     owner: self,
                 })
             }
-        }
-    }
-
-    /// Cleanup is native-first.  A staging retry after successful native
-    /// proof retains only the staging owner and never recreates the group.
-    #[allow(dead_code)]
-    pub(crate) fn cleanup(mut self) -> Result<(), SuspendedActivationCleanupFailure> {
-        if !self.native_cleanup_proven {
-            if let Some(native) = self.native.take() {
-                match native.cleanup_and_prove() {
-                    Ok(_proof) => self.native_cleanup_proven = true,
-                    Err(failure) => {
-                        self.native = Some(failure.owner);
-                        return Err(SuspendedActivationCleanupFailure {
-                            detail: failure.detail,
-                            owner: self,
-                        });
-                    }
-                }
-            } else {
-                // No Job was ever acquired.  This is a valid staging-only
-                // owner, so native cleanup is already vacuously complete.
-                self.native_cleanup_proven = true;
-            }
-        }
-
-        #[cfg(all(test, windows))]
-        self.release_http_fixture_permit_after_native_cleanup();
-
-        match self.staging.cleanup_pre_native() {
-            Ok(_observation) => Ok(()),
-            Err(error) => Err(SuspendedActivationCleanupFailure {
-                detail: format!("Capture runtime staging cleanup stopped: {error:?}."),
-                owner: self,
-            }),
         }
     }
 }
@@ -9258,7 +8924,6 @@ impl WindowsJob {
         Ok(())
     }
 
-    #[allow(dead_code)]
     fn verify_membership_set(&mut self, expected: &[OwnedProcessIdentity]) -> Result<(), String> {
         let observed = self.owned_processes(None)?;
         let expected_set: HashSet<_> = expected.iter().copied().collect();
@@ -9421,7 +9086,6 @@ impl WindowsJob {
         )
     }
 
-    #[allow(dead_code)]
     fn terminate_remaining_owned_processes(
         &mut self,
         deadline: std::time::Instant,
@@ -9572,7 +9236,6 @@ impl WindowsJob {
     }
 
     #[cfg(all(test, windows))]
-    #[allow(dead_code)]
     fn breakaway_allowed(&self) -> Result<bool, String> {
         let mut information: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
         let queried = unsafe {
@@ -9644,7 +9307,6 @@ fn terminate_assigned_suspended_child(
 }
 
 #[cfg(windows)]
-#[allow(dead_code)]
 fn remaining_timeout_ms(deadline: std::time::Instant) -> u32 {
     let millis = deadline
         .saturating_duration_since(std::time::Instant::now())
@@ -9653,7 +9315,6 @@ fn remaining_timeout_ms(deadline: std::time::Instant) -> u32 {
 }
 
 #[cfg(windows)]
-#[allow(dead_code)]
 fn reap_child_by_exact_handle(child: &mut Child, wait_timeout_ms: u32) -> Result<(), String> {
     let handle = child.as_raw_handle() as *mut c_void;
     let wait_state = unsafe { WaitForSingleObject(handle, wait_timeout_ms) };
@@ -9683,7 +9344,6 @@ fn reap_child_by_exact_handle(child: &mut Child, wait_timeout_ms: u32) -> Result
 }
 
 #[cfg(windows)]
-#[allow(dead_code)]
 fn terminate_child_by_exact_handle(child: &mut Child, wait_timeout_ms: u32) -> Result<(), String> {
     if child
         .try_wait()
@@ -9781,7 +9441,6 @@ fn open_suspended_primary_thread(child: &Child) -> Result<ScopedWindowsHandle, S
 }
 
 #[cfg(windows)]
-#[allow(dead_code)]
 fn verify_suspended_primary_thread(child: &Child) -> Result<(), String> {
     // CREATE_SUSPENDED provides the initial native suspension. Re-observe the
     // exact primary thread and temporarily move its count 1 -> 2 -> 1 so the
@@ -9899,6 +9558,9 @@ fn taskkill_args(pid: u32) -> [String; 4] {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(windows)]
+    use crate::journal_store::activation_budget_for_test;
+
     use super::*;
 
     /// Upper bound for waiting on fixture processes, markers and listeners to
@@ -10367,10 +10029,8 @@ mod tests {
             for path in &fixture.listener_checkpoint_paths {
                 wait_for_exact_checkpoint(path, b"listener-bound\n");
             }
-            let cleanup = running
-                .cleanup_without_terminal_proof()
-                .expect_err("Running owner retains cleanup ownership");
-            assert!(cleanup.into_owner().native_cleanup_proven_for_test());
+            let cleanup = cleanup_activation_for_test(running.into_suspended_owner());
+            assert!(cleanup.native_cleanup_proven_for_test());
         }
     }
 
@@ -11650,11 +11310,130 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    fn budgeted_native_handoff_rejects_invalid_staging_before_job_setup() {
+        for fault in [
+            "artifact",
+            "partial-marker",
+            "partial-root",
+            "foreign-entry",
+        ] {
+            let (fixture, prepared) = CoordinatorActivationFixture::new().prepare();
+            let budget = activation_budget_for_test();
+            let activation = prepared
+                .consume_for_activation_with_budget(&budget)
+                .expect("validated activation context");
+            let group_path = activation.descriptor.planned_group_staging_path();
+            let executable_path = activation
+                .descriptor
+                .producer_root()
+                .join("capture-runtime.exe");
+            let failure_context = Some(ActivationFailureJournalContext {
+                store: Arc::clone(&activation.context.store),
+                plan: activation.journal_plan.clone(),
+                predecessor: activation.expected_journal.clone(),
+                candidate: activation.expected_journal.clone(),
+                disposition: CasDisposition::Prewrite,
+            });
+            match fault {
+                "partial-marker" => crate::staging::fail_next_marker_flush_for_test(),
+                "partial-root" => crate::staging::fail_next_root_mkdir_for_test(0),
+                _ => {}
+            }
+            let staging = match crate::staging::materialize(activation) {
+                Ok(owner) if matches!(fault, "artifact" | "foreign-entry") => owner,
+                Err(crate::staging::StagingFailure::Owned { owner, .. })
+                    if matches!(fault, "partial-marker" | "partial-root") =>
+                {
+                    owner
+                }
+                _ => panic!("expected owned staging fixture for {fault}"),
+            };
+            let foreign = group_path.join("foreign.txt");
+            if fault == "artifact" {
+                let mut bytes = fs::read(&executable_path).expect("fixture bytes");
+                bytes[0] ^= 0xff;
+                fs::write(&executable_path, bytes).expect("artifact drift");
+            } else if fault == "foreign-entry" {
+                fs::write(&foreign, b"preserve").expect("foreign entry");
+            }
+            let failure = acquire_suspended_from_staging_with_permit(
+                staging,
+                fixture.admission.take(),
+                failure_context,
+                Some(&budget),
+            )
+            .err()
+            .expect("invalid staging must stop before Job setup");
+            assert_eq!(failure.kind, SuspendedActivationFailureKind::Staging);
+            let owner = failure.owner.expect("staging owner retained");
+            assert!(owner.native.is_none());
+            assert!(owner.native_cleanup_proven);
+            assert!(owner.failure_context.is_some());
+            assert!(group_path.is_dir());
+            if fault == "foreign-entry" {
+                assert_eq!(
+                    fs::read(&foreign).expect("foreign entry retained"),
+                    b"preserve"
+                );
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn budgeted_root_n_journal_drift_retains_native_owner_through_cleanup() {
+        let ports = [free_loopback_port(), free_loopback_port()];
+        let (fixture, prepared) =
+            CoordinatorHttpFixture::new(&ports, &["ready", "ready"]).prepare();
+        let budget = activation_budget_for_test();
+        let activation = prepared
+            .consume_for_activation_with_budget(&budget)
+            .expect("activation");
+        let group_path = activation.descriptor.planned_group_staging_path();
+        let failure_context = Some(ActivationFailureJournalContext {
+            store: Arc::clone(&activation.context.store),
+            plan: activation.journal_plan.clone(),
+            predecessor: activation.expected_journal.clone(),
+            candidate: activation.expected_journal.clone(),
+            disposition: CasDisposition::Prewrite,
+        });
+        let staging = crate::staging::materialize(activation).expect("materialized scope");
+        staging
+            .inject_journal_drift_before_root_for_test(1)
+            .expect("drift injection");
+        let failure = acquire_suspended_from_staging_with_permit(
+            staging,
+            None,
+            failure_context,
+            Some(&budget),
+        )
+        .err()
+        .expect("root-n drift must stop acquisition");
+        let owner = failure.owner.expect("partial native owner retained");
+        assert_eq!(owner.native_root_count_for_test(), Some(1));
+        let owner = cleanup_activation_for_test(owner);
+        assert!(owner.native_cleanup_proven);
+        assert_eq!(owner.native_root_count_for_test(), Some(1));
+        assert!(group_path.is_dir());
+        assert_eq!(
+            fixture
+                .plan
+                .context
+                .store
+                .read(&fixture.plan.value)
+                .expect("journal")
+                .state,
+            JournalState::ReconcileRequired
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
     fn staging_to_native_budget_failure_retains_scope_and_fixture_permit() {
         let fixture = CoordinatorActivationFixture::new();
         let (fixture, prepared) = fixture.prepare();
         let activation = prepared
-            .consume_for_activation()
+            .consume_for_activation_with_budget(&activation_budget_for_test())
             .expect("validated activation context");
         let failure_context = Some(ActivationFailureJournalContext {
             store: Arc::clone(&activation.context.store),
@@ -11692,8 +11471,9 @@ mod tests {
         assert!(owner.native_cleanup_proven);
         assert!(owner.failure_context.is_some());
         assert!(owner._http_fixture_permit.is_some());
-        owner.cleanup().expect("retained scope cleanup");
-        assert!(!fixture
+        let owner = cleanup_activation_for_test(owner);
+        assert!(owner.native_cleanup_proven_for_test());
+        assert!(fixture
             .plan
             .context
             .activation_descriptor
@@ -12451,12 +12231,12 @@ mod tests {
 
     #[cfg(windows)]
     fn cleanup_group_failure(failure: GroupNativeFailure) -> GroupCleanupProof {
-        let owner = failure
+        let mut owner = failure
             .owner
             .expect("native failure must retain group owner");
         owner
-            .cleanup_and_prove()
-            .unwrap_or_else(|failure| panic!("group cleanup proof: {}", failure.detail))
+            .cleanup_inner_with_budget(activation_budget_for_test().deadline(), None)
+            .unwrap_or_else(|failure| panic!("group cleanup proof: {failure}"))
     }
 
     #[cfg(windows)]
@@ -12492,10 +12272,14 @@ mod tests {
     fn listener_observation_requires_cancellation_before_native_query() {
         let marker = group_marker_path("listener-cancelled");
         let mut commands = [marker_command(&marker, true)];
-        let mut group = SuspendedGroup::spawn(&mut commands)
-            .expect("suspended group")
-            .resume_all()
-            .expect("resumed group");
+        let mut group = SuspendedGroup::spawn_with_budget(
+            &mut commands,
+            &activation_budget_for_test(),
+            |_, _| Ok(()),
+        )
+        .expect("suspended group")
+        .resume_all_with_budget(&activation_budget_for_test())
+        .expect("resumed group");
         let cancelled = std::sync::atomic::AtomicBool::new(true);
         let error = group
             .observe_root_listeners(
@@ -12507,7 +12291,7 @@ mod tests {
             .expect("cancelled observation");
         assert!(error.contains("cancelled"));
         let proof = group
-            .cleanup_and_prove()
+            .cleanup_inner_with_budget(activation_budget_for_test().deadline(), None)
             .expect("cleanup after cancelled observation");
         assert!(proof.roots_reaped);
         let _ = std::fs::remove_file(marker);
@@ -12518,10 +12302,14 @@ mod tests {
     fn direct_root_loopback_listener_is_observed_by_retained_identity() {
         let port = free_loopback_port();
         let mut commands = [listener_command(port, "127.0.0.1")];
-        let mut group = SuspendedGroup::spawn(&mut commands)
-            .expect("suspended listener root")
-            .resume_all()
-            .expect("resumed listener root");
+        let mut group = SuspendedGroup::spawn_with_budget(
+            &mut commands,
+            &activation_budget_for_test(),
+            |_, _| Ok(()),
+        )
+        .expect("suspended listener root")
+        .resume_all_with_budget(&activation_budget_for_test())
+        .expect("resumed listener root");
         let expected_identity = group.roots[0].identity.expect("root identity");
         let observation = wait_for_listener_observation(&mut group, &[port]);
         assert_eq!(observation.root_count(), 1);
@@ -12529,7 +12317,9 @@ mod tests {
         assert_eq!(root.ordinal, 0);
         assert_eq!(root.port, port);
         assert_eq!(root.identity, expected_identity);
-        let proof = group.cleanup_and_prove().expect("listener group cleanup");
+        let proof = group
+            .cleanup_inner_with_budget(activation_budget_for_test().deadline(), None)
+            .expect("listener group cleanup");
         assert!(proof.roots_reaped);
         assert!(proof.descendants_terminated);
     }
@@ -12544,10 +12334,14 @@ mod tests {
             listener_command(first_port, "127.0.0.1"),
             listener_command(second_port, "127.0.0.1"),
         ];
-        let mut group = SuspendedGroup::spawn(&mut commands)
-            .expect("suspended listener roots")
-            .resume_all()
-            .expect("resumed listener roots");
+        let mut group = SuspendedGroup::spawn_with_budget(
+            &mut commands,
+            &activation_budget_for_test(),
+            |_, _| Ok(()),
+        )
+        .expect("suspended listener roots")
+        .resume_all_with_budget(&activation_budget_for_test())
+        .expect("resumed listener roots");
         let expected = group
             .roots
             .iter()
@@ -12566,7 +12360,7 @@ mod tests {
             assert_eq!(root.identity, identity);
         }
         let proof = group
-            .cleanup_and_prove()
+            .cleanup_inner_with_budget(activation_budget_for_test().deadline(), None)
             .expect("multi-root listener cleanup");
         assert!(proof.roots_reaped);
         assert!(proof.descendants_terminated);
@@ -12579,15 +12373,19 @@ mod tests {
         let port = foreign.local_addr().expect("foreign address").port();
         let marker = group_marker_path("listener-foreign");
         let mut commands = [marker_command(&marker, true)];
-        let mut group = SuspendedGroup::spawn(&mut commands)
-            .expect("suspended group")
-            .resume_all()
-            .expect("resumed group");
+        let mut group = SuspendedGroup::spawn_with_budget(
+            &mut commands,
+            &activation_budget_for_test(),
+            |_, _| Ok(()),
+        )
+        .expect("suspended group")
+        .resume_all_with_budget(&activation_budget_for_test())
+        .expect("resumed group");
         let error = wait_for_listener_error(&mut group, &[port], "foreign");
         assert!(error.contains("foreign"));
         assert!(TcpStream::connect(("127.0.0.1", port)).is_ok());
         let proof = group
-            .cleanup_and_prove()
+            .cleanup_inner_with_budget(activation_budget_for_test().deadline(), None)
             .expect("foreign listener group cleanup");
         assert!(proof.roots_reaped);
         drop(foreign);
@@ -12601,10 +12399,14 @@ mod tests {
         let port = foreign.local_addr().expect("foreign address").port();
         let marker = group_marker_path("listener-release-foreign");
         let mut commands = [marker_command(&marker, true)];
-        let mut group = SuspendedGroup::spawn(&mut commands)
-            .expect("suspended group")
-            .resume_all()
-            .expect("resumed group");
+        let mut group = SuspendedGroup::spawn_with_budget(
+            &mut commands,
+            &activation_budget_for_test(),
+            |_, _| Ok(()),
+        )
+        .expect("suspended group")
+        .resume_all_with_budget(&activation_budget_for_test())
+        .expect("resumed group");
         let cleanup_proof = group
             .cleanup_and_retain_proof(std::time::Instant::now() + Duration::from_secs(5), None)
             .expect("native cleanup proof");
@@ -12629,14 +12431,18 @@ mod tests {
         let port = wildcard.local_addr().expect("wildcard address").port();
         let marker = group_marker_path("listener-wildcard");
         let mut commands = [marker_command(&marker, true)];
-        let mut group = SuspendedGroup::spawn(&mut commands)
-            .expect("suspended group")
-            .resume_all()
-            .expect("resumed group");
+        let mut group = SuspendedGroup::spawn_with_budget(
+            &mut commands,
+            &activation_budget_for_test(),
+            |_, _| Ok(()),
+        )
+        .expect("suspended group")
+        .resume_all_with_budget(&activation_budget_for_test())
+        .expect("resumed group");
         let error = wait_for_listener_error(&mut group, &[port], "wildcard");
         assert!(error.contains("wildcard"));
         let proof = group
-            .cleanup_and_prove()
+            .cleanup_inner_with_budget(activation_budget_for_test().deadline(), None)
             .expect("wildcard listener group cleanup");
         assert!(proof.roots_reaped);
         drop(wildcard);
@@ -12648,10 +12454,14 @@ mod tests {
     fn dead_root_cannot_supply_a_listener_observation() {
         let marker = group_marker_path("listener-dead");
         let mut commands = [marker_command(&marker, false)];
-        let mut group = SuspendedGroup::spawn(&mut commands)
-            .expect("suspended short-lived root")
-            .resume_all()
-            .expect("resumed short-lived root");
+        let mut group = SuspendedGroup::spawn_with_budget(
+            &mut commands,
+            &activation_budget_for_test(),
+            |_, _| Ok(()),
+        )
+        .expect("suspended short-lived root")
+        .resume_all_with_budget(&activation_budget_for_test())
+        .expect("resumed short-lived root");
         let deadline = std::time::Instant::now() + FIXTURE_EVENTUAL_WAIT;
         while group.roots[0]
             .child
@@ -12676,7 +12486,9 @@ mod tests {
             .err()
             .expect("dead root listener observation");
         assert!(error.contains("no longer live"));
-        let proof = group.cleanup_and_prove().expect("dead root cleanup");
+        let proof = group
+            .cleanup_inner_with_budget(activation_budget_for_test().deadline(), None)
+            .expect("dead root cleanup");
         assert!(proof.roots_reaped);
         let _ = std::fs::remove_file(marker);
     }
@@ -12691,10 +12503,14 @@ mod tests {
             marker_command(&first_marker, true),
             marker_command(&second_marker, true),
         ];
-        let mut group = SuspendedGroup::spawn(&mut commands)
-            .expect("suspended group")
-            .resume_all()
-            .expect("resumed group");
+        let mut group = SuspendedGroup::spawn_with_budget(
+            &mut commands,
+            &activation_budget_for_test(),
+            |_, _| Ok(()),
+        )
+        .expect("suspended group")
+        .resume_all_with_budget(&activation_budget_for_test())
+        .expect("resumed group");
         let error = group
             .observe_root_listeners(
                 &[port, port],
@@ -12705,7 +12521,7 @@ mod tests {
             .expect("duplicate listener ports");
         assert!(error.contains("distinct nonzero"));
         let proof = group
-            .cleanup_and_prove()
+            .cleanup_inner_with_budget(activation_budget_for_test().deadline(), None)
             .expect("duplicate listener cleanup");
         assert!(proof.roots_reaped);
         let _ = std::fs::remove_file(first_marker);
@@ -12721,10 +12537,14 @@ mod tests {
             marker_command(&first_marker, true),
             marker_command(&second_marker, true),
         ];
-        let mut group = SuspendedGroup::spawn(&mut commands)
-            .expect("suspended group")
-            .resume_all()
-            .expect("resumed group");
+        let mut group = SuspendedGroup::spawn_with_budget(
+            &mut commands,
+            &activation_budget_for_test(),
+            |_, _| Ok(()),
+        )
+        .expect("suspended group")
+        .resume_all_with_budget(&activation_budget_for_test())
+        .expect("resumed group");
         group.roots[1].ordinal = 2;
         let first_port = free_loopback_port();
         let second_port = free_loopback_port();
@@ -12738,7 +12558,7 @@ mod tests {
             .expect("noncontiguous listener ordinals");
         assert!(error.contains("contiguous and ordered"));
         let proof = group
-            .cleanup_and_prove()
+            .cleanup_inner_with_budget(activation_budget_for_test().deadline(), None)
             .expect("ordinal validation cleanup");
         assert!(proof.roots_reaped);
         let _ = std::fs::remove_file(first_marker);
@@ -12751,10 +12571,14 @@ mod tests {
         let marker = group_marker_path("listener-query-failure");
         let port = free_loopback_port();
         let mut commands = [marker_command(&marker, true)];
-        let mut group = SuspendedGroup::spawn(&mut commands)
-            .expect("suspended group")
-            .resume_all()
-            .expect("resumed group");
+        let mut group = SuspendedGroup::spawn_with_budget(
+            &mut commands,
+            &activation_budget_for_test(),
+            |_, _| Ok(()),
+        )
+        .expect("suspended group")
+        .resume_all_with_budget(&activation_budget_for_test())
+        .expect("resumed group");
         group.inject_listener_query_failure_for_test();
         let error = group
             .observe_root_listeners(
@@ -12767,7 +12591,7 @@ mod tests {
         assert!(error.contains("Injected listener table query failure"));
         assert_eq!(group.roots.len(), 1);
         let proof = group
-            .cleanup_and_prove()
+            .cleanup_inner_with_budget(activation_budget_for_test().deadline(), None)
             .expect("listener query failure cleanup");
         assert!(proof.roots_reaped);
         let _ = std::fs::remove_file(marker);
@@ -12782,8 +12606,12 @@ mod tests {
             marker_command(&first_marker, true),
             marker_command(&second_marker, true),
         ];
-        let mut group = SuspendedGroup::spawn(&mut commands)
-            .expect("group roots should be assigned while suspended");
+        let mut group = SuspendedGroup::spawn_with_budget(
+            &mut commands,
+            &activation_budget_for_test(),
+            |_, _| Ok(()),
+        )
+        .expect("group roots should be assigned while suspended");
         wait_for_marker(&first_marker, false);
         wait_for_marker(&second_marker, false);
         let snapshot = group
@@ -12806,13 +12634,13 @@ mod tests {
         );
         wait_for_marker(&first_marker, false);
         wait_for_marker(&second_marker, false);
-        let group = group
-            .resume_all()
+        let mut group = group
+            .resume_all_with_budget(&activation_budget_for_test())
             .expect("all roots should resume together");
         wait_for_marker(&first_marker, true);
         wait_for_marker(&second_marker, true);
         let proof = group
-            .cleanup_and_prove()
+            .cleanup_inner_with_budget(activation_budget_for_test().deadline(), None)
             .expect("resumed group cleanup proof");
         assert!(proof.roots_reaped);
         assert!(proof.descendants_terminated);
@@ -12963,13 +12791,13 @@ mod tests {
         })
         .expect_err("callback cancellation must block the first child");
         assert_eq!(failure.kind(), GroupNativeFailureKind::Setup);
-        let owner = failure
+        let mut owner = failure
             .owner
             .expect("Job owner retained after callback cancel");
         assert!(owner.roots.is_empty());
         assert_eq!(owner.unacquired_root_nonces.len(), 1);
         let proof = owner
-            .cleanup_and_prove()
+            .cleanup_inner_with_budget(activation_budget_for_test().deadline(), None)
             .expect("empty Job cleanup after callback cancellation");
         assert!(proof.roots_reaped);
         assert!(proof.descendants_terminated);
@@ -13033,13 +12861,13 @@ mod tests {
         .expect_err("callback deadline expiry must block the first child");
         assert!(callback_called.load(Ordering::Acquire));
         assert_eq!(failure.kind(), GroupNativeFailureKind::Setup);
-        let owner = failure
+        let mut owner = failure
             .owner
             .expect("Job owner retained after callback expiry");
         assert!(owner.roots.is_empty());
         assert_eq!(owner.unacquired_root_nonces.len(), 1);
         let proof = owner
-            .cleanup_and_prove()
+            .cleanup_inner_with_budget(activation_budget_for_test().deadline(), None)
             .expect("empty Job cleanup after callback expiry");
         assert!(proof.roots_reaped);
         assert!(proof.descendants_terminated);
@@ -13193,12 +13021,19 @@ mod tests {
     fn single_root_private_group_uses_the_same_suspend_resume_boundary() {
         let marker = group_marker_path("single-root");
         let mut commands = [marker_command(&marker, true)];
-        let group = SuspendedGroup::spawn(&mut commands).expect("single group root should spawn");
+        let group = SuspendedGroup::spawn_with_budget(
+            &mut commands,
+            &activation_budget_for_test(),
+            |_, _| Ok(()),
+        )
+        .expect("single group root should spawn");
         wait_for_marker(&marker, false);
-        let group = group.resume_all().expect("single group root should resume");
+        let mut group = group
+            .resume_all_with_budget(&activation_budget_for_test())
+            .expect("single group root should resume");
         wait_for_marker(&marker, true);
         let proof = group
-            .cleanup_and_prove()
+            .cleanup_inner_with_budget(activation_budget_for_test().deadline(), None)
             .expect("single group root cleanup proof");
         assert!(proof.roots_reaped);
         assert!(proof.descendants_terminated);
@@ -13214,7 +13049,12 @@ mod tests {
             marker_command(&first_marker, true),
             marker_command(&second_marker, true),
         ];
-        let group = SuspendedGroup::spawn(&mut commands).expect("group roots should spawn");
+        let group = SuspendedGroup::spawn_with_budget(
+            &mut commands,
+            &activation_budget_for_test(),
+            |_, _| Ok(()),
+        )
+        .expect("group roots should spawn");
         let thread = open_suspended_primary_thread(&group.roots[1].child)
             .expect("second root primary thread");
         assert_eq!(unsafe { SuspendThread(thread.raw()) }, 1);
@@ -13222,7 +13062,7 @@ mod tests {
         assert_eq!(unsafe { ResumeThread(thread.raw()) }, 1);
 
         let failure = group
-            .resume_all()
+            .resume_all_with_budget(&activation_budget_for_test())
             .expect_err("unexpectedly resumed root must reject the whole group");
         assert_eq!(failure.kind(), GroupNativeFailureKind::Membership);
         wait_for_marker(&first_marker, false);
@@ -13243,13 +13083,17 @@ mod tests {
             .spawn()
             .expect("unrelated baseline process");
         let mut commands = [marker_command(&group_marker, true)];
-        let group = SuspendedGroup::spawn(&mut commands)
-            .expect("group root should spawn")
-            .resume_all()
-            .expect("group root should resume");
+        let mut group = SuspendedGroup::spawn_with_budget(
+            &mut commands,
+            &activation_budget_for_test(),
+            |_, _| Ok(()),
+        )
+        .expect("group root should spawn")
+        .resume_all_with_budget(&activation_budget_for_test())
+        .expect("group root should resume");
         wait_for_marker(&group_marker, true);
         group
-            .cleanup_and_prove()
+            .cleanup_inner_with_budget(activation_budget_for_test().deadline(), None)
             .expect("group cleanup proof should succeed");
         assert!(
             baseline.try_wait().expect("baseline status").is_none(),
@@ -13276,10 +13120,14 @@ mod tests {
                 .stdout(Stdio::null())
                 .stderr(Stdio::null());
         }
-        let group = SuspendedGroup::spawn(&mut commands)
-            .expect("group root should spawn")
-            .resume_all()
-            .expect("group root should resume");
+        let mut group = SuspendedGroup::spawn_with_budget(
+            &mut commands,
+            &activation_budget_for_test(),
+            |_, _| Ok(()),
+        )
+        .expect("group root should spawn")
+        .resume_all_with_budget(&activation_budget_for_test())
+        .expect("group root should resume");
         wait_for_marker(&marker, true);
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         while group
@@ -13304,7 +13152,7 @@ mod tests {
             "the group should observe its descendant before cleanup"
         );
         let proof = group
-            .cleanup_and_prove()
+            .cleanup_inner_with_budget(activation_budget_for_test().deadline(), None)
             .expect("group descendant cleanup proof");
         assert!(proof.descendants_terminated);
         let _ = std::fs::remove_file(marker);
@@ -13383,7 +13231,12 @@ mod tests {
                 .stderr(Stdio::null());
             command
         }];
-        let failure = SuspendedGroup::spawn(&mut commands).expect_err("second spawn failure");
+        let failure = SuspendedGroup::spawn_with_budget(
+            &mut commands,
+            &activation_budget_for_test(),
+            |_, _| Ok(()),
+        )
+        .expect_err("second spawn failure");
         assert_eq!(failure.kind(), GroupNativeFailureKind::Spawn);
         let owner = failure.owner.as_ref().expect("prior owner");
         assert_eq!(owner.roots.len(), 1);
@@ -13403,8 +13256,12 @@ mod tests {
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
-        let failure = SuspendedGroup::spawn(std::slice::from_mut(&mut command))
-            .expect_err("first CreateProcess failure");
+        let failure = SuspendedGroup::spawn_with_budget(
+            std::slice::from_mut(&mut command),
+            &activation_budget_for_test(),
+            |_, _| Ok(()),
+        )
+        .expect_err("first CreateProcess failure");
         assert_eq!(failure.kind(), GroupNativeFailureKind::Spawn);
         let mut owner = failure
             .owner
@@ -13482,7 +13339,12 @@ mod tests {
                 .stderr(Stdio::null());
             command
         }];
-        let failure = SuspendedGroup::spawn(&mut commands).expect_err("second spawn failure");
+        let failure = SuspendedGroup::spawn_with_budget(
+            &mut commands,
+            &activation_budget_for_test(),
+            |_, _| Ok(()),
+        )
+        .expect_err("second spawn failure");
         let mut owner = failure.owner.expect("partial group owner");
         assert_eq!(owner.roots.len(), 1);
         assert_eq!(owner.unacquired_root_nonces.len(), 1);
@@ -13522,7 +13384,9 @@ mod tests {
             },
         )
         .expect("suspended group");
-        let failure = failure.resume_all().expect_err("second resume failure");
+        let failure = failure
+            .resume_all_with_budget(&activation_budget_for_test())
+            .expect_err("second resume failure");
         assert_eq!(failure.kind(), GroupNativeFailureKind::Resume);
         wait_for_marker(&first_marker, true);
         wait_for_marker(&second_marker, false);
@@ -13542,10 +13406,14 @@ mod tests {
             marker_command(&first_marker, true),
             marker_command(&second_marker, true),
         ];
-        let group = SuspendedGroup::spawn(&mut commands)
-            .expect("suspended group")
-            .resume_all()
-            .expect("resumed group");
+        let group = SuspendedGroup::spawn_with_budget(
+            &mut commands,
+            &activation_budget_for_test(),
+            |_, _| Ok(()),
+        )
+        .expect("suspended group")
+        .resume_all_with_budget(&activation_budget_for_test())
+        .expect("resumed group");
         group
             .job
             .as_ref()
@@ -13558,15 +13426,31 @@ mod tests {
         let root_identity = group.roots[0].identity.expect("root identity");
         group.inject_cleanup_failure_after_first_for_test();
         let cleanup_failure = group
-            .cleanup_and_prove()
-            .expect_err("injected cleanup failure");
-        assert_eq!(cleanup_failure.kind, GroupNativeFailureKind::Cleanup);
-        assert_eq!(cleanup_failure.owner.job_nonce, job_nonce);
-        assert_eq!(cleanup_failure.owner.roots[0].root_nonce, root_nonce);
-        assert_eq!(cleanup_failure.owner.roots[0].identity, Some(root_identity));
-        let proof = cleanup_failure.retry().expect("cleanup retry proof");
-        assert!(proof.roots_reaped);
-        assert!(proof.descendants_terminated);
+            .cleanup_and_retain_proof(activation_budget_for_test().deadline(), None)
+            .err()
+            .expect("injected cleanup failure");
+        assert!(cleanup_failure.contains("Injected suspended group cleanup failure"));
+        assert_eq!(group.job_nonce, job_nonce);
+        assert_eq!(group.roots[0].root_nonce, root_nonce);
+        assert_eq!(group.roots[0].identity, Some(root_identity));
+        let proof = group
+            .cleanup_and_retain_proof(activation_budget_for_test().deadline(), None)
+            .expect("cleanup retry proof");
+        assert!(group.cleanup_complete);
+        assert_eq!(proof.roots.len(), 2);
+        assert_eq!(proof.roots[0].identity, root_identity);
+        assert_eq!(
+            group
+                .job
+                .as_ref()
+                .expect("retained Job")
+                .active_processes()
+                .expect("Job query"),
+            0
+        );
+        for root in &mut group.roots {
+            assert!(root.child.try_wait().expect("root reaped").is_some());
+        }
         let _ = std::fs::remove_file(first_marker);
         let _ = std::fs::remove_file(second_marker);
     }
@@ -13576,10 +13460,14 @@ mod tests {
     fn activation_cleanup_job_failure_retains_owner_for_a_fresh_retry() {
         let marker = group_marker_path("activation-job-failure");
         let mut commands = [marker_command(&marker, true)];
-        let mut group = SuspendedGroup::spawn(&mut commands)
-            .expect("suspended group")
-            .resume_all()
-            .expect("resumed group");
+        let mut group = SuspendedGroup::spawn_with_budget(
+            &mut commands,
+            &activation_budget_for_test(),
+            |_, _| Ok(()),
+        )
+        .expect("suspended group")
+        .resume_all_with_budget(&activation_budget_for_test())
+        .expect("resumed group");
         wait_for_marker(&marker, true);
         group
             .job

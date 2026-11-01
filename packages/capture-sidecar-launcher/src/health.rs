@@ -32,7 +32,6 @@ pub(crate) const CANONICAL_CAPTURE_DOCUMENT_V2_SHA256: &str =
 /// A schema identity is created only from the bounded bytes of the explicit
 /// regular file named by the frozen manifest.  The path and bytes are not
 /// retained across the readiness call.
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) struct VerifiedReadinessSchema {
     file_name: String,
     sha256: String,
@@ -47,7 +46,6 @@ impl VerifiedReadinessSchema {
 /// Strict service-only readiness facts.  This value contains digests for
 /// open-ended contract fields so no response body or bearer token crosses the
 /// private adapter boundary.
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) struct ServiceReadinessFacts {
     runtime_version: String,
     api_version: String,
@@ -79,7 +77,6 @@ impl ServiceReadinessFacts {
     }
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) enum StrictProbeResult {
     Ready(ServiceReadinessFacts),
     NotReady,
@@ -106,7 +103,6 @@ fn validate_r3_manifest(manifest: &SidecarManifest) -> Result<(), String> {
 
 /// Verifies the explicit RuntimeReady schema file against the frozen
 /// manifest before a service response can be accepted.
-#[allow(dead_code)]
 pub(crate) fn verify_readiness_schema(
     schema_path: &Path,
     manifest: &SidecarManifest,
@@ -153,7 +149,6 @@ pub(crate) fn verify_readiness_schema(
 /// Probes the strict RuntimeReady contract against one caller-owned absolute
 /// deadline.  It never refreshes a per-root timeout and checks cancellation at
 /// every boundary that can otherwise turn a late response into readiness.
-#[allow(dead_code)]
 pub(crate) fn probe_service_ready(
     port: u16,
     token: &str,

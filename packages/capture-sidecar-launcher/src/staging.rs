@@ -43,8 +43,8 @@ use crate::{
 
 #[cfg(windows)]
 use crate::journal_store::{
-    install_running_read_budget, ClosingCasAdmission, ClosingCasError, ClosingCasResult,
-    ClosingCleanupAdmission, RunningCasAdmission, RunningCasError, RunningCasResult,
+    install_running_read_budget, ClosingCasAdmission, ClosingCasError, ClosingCleanupAdmission,
+    RunningCasAdmission, RunningCasError,
 };
 
 const MARKER_FILE_NAME: &str = ".capture-run-staging-v1";
@@ -84,25 +84,10 @@ pub(crate) struct StagingReleasedObservation {
 }
 
 impl StagingReleasedObservation {
-    pub(crate) fn staging_released_matches(&self, activation: &ValidatedActivationContext) -> bool {
-        self.matches_activation(activation)
-    }
-
     fn matches_activation(&self, activation: &ValidatedActivationContext) -> bool {
         self.session_nonce == activation.descriptor.session_nonce()
             && self.plan_digest == activation.journal_plan.plan_digest
             && self.group_staging_identity == activation.descriptor.group_staging_identity()
-    }
-
-    pub(crate) fn matches_identity(
-        &self,
-        session_nonce: &str,
-        plan_digest: &str,
-        group_staging_identity: &str,
-    ) -> bool {
-        self.session_nonce == session_nonce
-            && self.plan_digest == plan_digest
-            && self.group_staging_identity == group_staging_identity
     }
 }
 
@@ -119,7 +104,6 @@ pub(crate) enum StagingFailureKind {
     RootIdentity,
     Reparse,
     Durability,
-    CleanupRequired,
     Cancelled,
     Deadline,
 }
@@ -167,10 +151,6 @@ impl StagingBudgetFailure {
             detail,
             cas_outcome: Some(cas_outcome),
         }
-    }
-
-    pub(crate) fn kind(&self) -> StagingFailureKind {
-        self.kind
     }
 
     pub(crate) fn into_cas_parts(self) -> (StagingFailureKind, String, Option<OwnedCasResult>) {
@@ -274,10 +254,12 @@ pub(crate) struct RestartStagingObservation {
 
 #[cfg(windows)]
 impl RestartStagingObservation {
+    #[cfg(test)]
     pub(crate) fn binding(&self) -> &StagingBinding {
         &self.binding
     }
 
+    #[cfg(test)]
     pub(crate) fn group_path(&self) -> &Path {
         &self.group_path
     }
@@ -821,23 +803,6 @@ impl RunStagingOwner {
         Ok(())
     }
 
-    pub(crate) fn revalidate_launching_snapshot(
-        &self,
-        expected: &RuntimeSessionJournalV1,
-    ) -> Result<(), String> {
-        self.validate_launching_journal(expected)?;
-        let current = self
-            .activation
-            .context
-            .store
-            .read(&self.activation.journal_plan)
-            .map_err(|_| "Capture runtime Launching journal could not be re-read.".to_string())?;
-        if current != *expected {
-            return Err("Capture runtime Launching journal changed before Running.".into());
-        }
-        Ok(())
-    }
-
     pub(crate) fn activation_descriptor(&self) -> Arc<crate::launcher::FrozenActivationDescriptor> {
         Arc::clone(&self.activation.descriptor)
     }
@@ -1002,15 +967,6 @@ impl RunStagingOwner {
             root_digest,
             scope: "run".into(),
         })
-    }
-
-    pub(crate) fn persist_ready(
-        &self,
-        observation: ResourceObservation,
-        timestamp: String,
-    ) -> Result<crate::journal::RuntimeSessionJournalV1, String> {
-        self.persist_ready_impl(observation, timestamp, &StagingBudget::unbounded())
-            .map_err(|error| error.detail)
     }
 
     /// Persist Ready under one absolute activation budget.  The old string
@@ -1352,56 +1308,6 @@ impl RunStagingOwner {
     }
 
     #[cfg(windows)]
-    pub(crate) fn persist_running_admission(
-        &self,
-        admission: RunningCasAdmission,
-        expected_launching: &RuntimeSessionJournalV1,
-        observation: ResourceObservation,
-        timestamp: String,
-    ) -> Result<RunningCasResult, RunningCasError> {
-        let result = admission
-            .commit_running(observation.clone(), timestamp.clone())
-            .map_err(|error| match error {
-                crate::journal_store::JournalStoreError::AdmissionCancelled => {
-                    RunningCasError::Cancelled
-                }
-                crate::journal_store::JournalStoreError::AdmissionDeadline => {
-                    RunningCasError::Deadline
-                }
-                crate::journal_store::JournalStoreError::Conflict => RunningCasError::Conflict,
-                _ => RunningCasError::Storage,
-            })?;
-        let running = match &result {
-            RunningCasResult::Committed(journal)
-            | RunningCasResult::CommittedAfterBudget(journal) => journal,
-        };
-        let expected_revision = expected_launching
-            .journal_revision
-            .checked_add(1)
-            .ok_or(RunningCasError::Storage)?;
-        let expected_updated_at = timestamp;
-        if running.state != JournalState::Running
-            || running.journal_revision != expected_revision
-            || running.schema_version != expected_launching.schema_version
-            || running.producer != expected_launching.producer
-            || running.session_nonce != expected_launching.session_nonce
-            || running.plan_digest != expected_launching.plan_digest
-            || running.created_at != expected_launching.created_at
-            || running.updated_at != expected_updated_at
-            || running.attempt != expected_launching.attempt
-            || running.recovery_epoch != expected_launching.recovery_epoch
-            || running.binding != expected_launching.binding
-            || running.job_binding.as_ref() != Some(&observation.job_binding)
-            || running.staging_binding.as_ref() != observation.staging_binding.as_ref()
-            || running.roots != observation.roots
-            || running.proof.is_some()
-        {
-            return Err(RunningCasError::Storage);
-        }
-        Ok(result)
-    }
-
-    #[cfg(windows)]
     pub(crate) fn persist_running_admission_owned(
         &self,
         admission: RunningCasAdmission,
@@ -1439,59 +1345,6 @@ impl RunStagingOwner {
             result = result.mark_ambiguous(crate::journal_store::JournalStoreError::CorruptJournal);
         }
         result
-    }
-
-    #[cfg(windows)]
-    pub(crate) fn persist_closing_admission(
-        &self,
-        admission: ClosingCasAdmission,
-        expected_running: &RuntimeSessionJournalV1,
-        observation: ResourceObservation,
-        timestamp: String,
-    ) -> Result<ClosingCasResult, ClosingCasError> {
-        let result = admission
-            .commit_closing(observation.clone(), timestamp.clone())
-            .map_err(map_closing_cas_error)?;
-        let closing = match &result {
-            ClosingCasResult::Committed(journal)
-            | ClosingCasResult::CommittedAfterBudget(journal) => journal,
-        };
-        let expected_revision = expected_running
-            .journal_revision
-            .checked_add(1)
-            .ok_or(ClosingCasError::Storage)?;
-        if closing.state != JournalState::Closing
-            || closing.journal_revision != expected_revision
-            || closing.schema_version != expected_running.schema_version
-            || closing.producer != expected_running.producer
-            || closing.session_nonce != expected_running.session_nonce
-            || closing.plan_digest != expected_running.plan_digest
-            || closing.created_at != expected_running.created_at
-            || closing.updated_at != timestamp
-            || closing.attempt != expected_running.attempt
-            || closing.recovery_epoch != expected_running.recovery_epoch
-            || closing.binding != expected_running.binding
-            || closing.job_binding.as_ref() != Some(&observation.job_binding)
-            || closing.staging_binding.as_ref() != observation.staging_binding.as_ref()
-            || closing.roots != observation.roots
-            || closing.proof.is_some()
-        {
-            return Err(ClosingCasError::Storage);
-        }
-        #[cfg(test)]
-        if let Some(cancellation) = self
-            .activation
-            .context
-            .store
-            .take_cancel_after_closing_readback_for_test()
-        {
-            // This test-only rendezvous is deliberately after the complete
-            // candidate readback and wrapper validation.  The process owner
-            // must still perform its final egress check before issuing a
-            // Closing authority.
-            cancellation.store(true, std::sync::atomic::Ordering::Release);
-        }
-        Ok(result)
     }
 
     #[cfg(windows)]
@@ -1559,52 +1412,6 @@ impl RunStagingOwner {
         }
         *command = self.activation.descriptor.checked_command(ordinal)?;
         Ok(())
-    }
-
-    /// Validate and remove only the complete owned empty scope.  No deletion
-    /// occurs until every entry, identity, and reparse check has succeeded.
-    pub(crate) fn cleanup_pre_native(
-        &mut self,
-    ) -> Result<StagingReleasedObservation, StagingCleanupError> {
-        if self.scope_state == StagingScopeState::Released {
-            return Err(StagingCleanupError::OwnershipUnknown);
-        }
-        if !journal_is_exactly_prepared(&self.activation) {
-            return Err(StagingCleanupError::JournalChanged);
-        }
-        self.validate_empty_scope()?;
-
-        while let Some(root) = self.roots.pop() {
-            if !self.scope_chain_is_owned() {
-                self.roots.push(root);
-                return Err(StagingCleanupError::IdentityChanged);
-            }
-            if fs::remove_dir(&root.path).is_err() {
-                self.roots.push(root);
-                return Err(StagingCleanupError::DeleteFailed);
-            }
-        }
-        if let Some(marker) = &self.marker {
-            if !self.scope_chain_is_owned() {
-                return Err(StagingCleanupError::IdentityChanged);
-            }
-            fs::remove_file(&marker.path).map_err(|_| StagingCleanupError::DeleteFailed)?;
-            self.marker = None;
-        }
-        if !self.scope_chain_is_owned() {
-            return Err(StagingCleanupError::IdentityChanged);
-        }
-        fs::remove_dir(&self.group.path).map_err(|_| StagingCleanupError::DeleteFailed)?;
-        self.scope_state = StagingScopeState::Released;
-        Ok(StagingReleasedObservation {
-            session_nonce: self.activation.descriptor.session_nonce().to_owned(),
-            plan_digest: self.activation.journal_plan.plan_digest.clone(),
-            group_staging_identity: self
-                .activation
-                .descriptor
-                .group_staging_identity()
-                .to_owned(),
-        })
     }
 
     /// Release the producer-owned run subtree after the exact native and
@@ -1918,7 +1725,10 @@ impl RunStagingOwner {
     }
 
     #[cfg(windows)]
-    fn before_release_delete(&self, mutation_index: usize) -> Result<(), StagingCleanupError> {
+    fn before_release_delete(
+        &self,
+        #[cfg_attr(not(test), allow(unused))] mutation_index: usize,
+    ) -> Result<(), StagingCleanupError> {
         #[cfg(test)]
         if self.release_delete_failure_at.get() == Some(mutation_index) {
             self.release_delete_failure_at.set(None);
@@ -1928,7 +1738,11 @@ impl RunStagingOwner {
     }
 
     #[cfg(windows)]
-    fn after_release_delete(&self, mutation_index: usize, cancellation: &AtomicBool) {
+    fn after_release_delete(
+        &self,
+        #[cfg_attr(not(test), allow(unused))] mutation_index: usize,
+        #[cfg_attr(not(test), allow(unused))] cancellation: &AtomicBool,
+    ) {
         #[cfg(test)]
         if self.release_cancel_after_delete_at.get() == Some(mutation_index) {
             self.release_cancel_after_delete_at.set(None);
@@ -2190,16 +2004,6 @@ impl RunStagingOwner {
     }
 
     #[cfg(test)]
-    fn group_path(&self) -> &Path {
-        &self.group.path
-    }
-
-    #[cfg(test)]
-    fn expected_root_paths(&self) -> &[PathBuf] {
-        &self.expected_root_paths
-    }
-
-    #[cfg(test)]
     pub(crate) fn inject_release_delete_failure_at_for_test(&self, mutation: usize) {
         self.release_delete_failure_at.set(Some(mutation));
     }
@@ -2247,12 +2051,12 @@ impl RunStagingOwner {
         else {
             return;
         };
-        let _ = self.activation.context.store.compare_and_swap(
+        let _ = self.activation.context.store.compare_and_swap_owned(
             &self.activation.journal_plan,
-            &current.cas_snapshot(),
+            &current,
             crate::journal_store::JournalStoreCommand::Transition {
                 next_state: JournalState::ReconcileRequired,
-                timestamp: current.updated_at,
+                timestamp: current.updated_at.clone(),
             },
         );
     }
@@ -2270,12 +2074,12 @@ impl RunStagingOwner {
         else {
             return;
         };
-        let _ = self.activation.context.store.compare_and_swap(
+        let _ = self.activation.context.store.compare_and_swap_owned(
             &self.activation.journal_plan,
-            &current.cas_snapshot(),
+            &current,
             crate::journal_store::JournalStoreCommand::Transition {
                 next_state: JournalState::ReconcileRequired,
-                timestamp: current.updated_at,
+                timestamp: current.updated_at.clone(),
             },
         );
     }
@@ -3054,20 +2858,6 @@ fn create_marker(
     })
 }
 
-fn write_confirmed_prefix<W: Write>(writer: &mut W, bytes: &[u8]) -> (Vec<u8>, bool) {
-    let mut offset = 0;
-    while offset < bytes.len() {
-        match writer.write(&bytes[offset..]) {
-            Ok(0) => return (bytes[..offset].to_vec(), false),
-            Ok(count) if count <= bytes.len() - offset => offset += count,
-            Ok(_) => return (bytes[..offset].to_vec(), false),
-            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
-            Err(_) => return (bytes[..offset].to_vec(), false),
-        }
-    }
-    (bytes.to_vec(), true)
-}
-
 fn write_confirmed_prefix_with_budget<W: Write>(
     writer: &mut W,
     bytes: &[u8],
@@ -3531,6 +3321,9 @@ pub(crate) fn cancel_after_launching_cas_for_test() {
 #[cfg(test)]
 mod tests {
     #[cfg(windows)]
+    use crate::journal_store::activation_budget_for_test;
+
+    #[cfg(windows)]
     use std::{
         process::Command,
         sync::atomic::AtomicBool,
@@ -3677,7 +3470,7 @@ mod tests {
             let prepared = OwnedRuntimeSession::prepare_group(&plan, &sink)
                 .expect("prepared activation group");
             let activation = prepared
-                .consume_for_activation()
+                .consume_for_activation_with_budget(&activation_budget_for_test())
                 .expect("validated activation context");
             Self {
                 _directory: directory,
@@ -3903,7 +3696,12 @@ mod tests {
         let observation = suspended_observation(&owner);
         let ready_timestamp = owner.next_timestamp().expect("Ready timestamp");
         let ready = owner
-            .persist_ready(observation.clone(), ready_timestamp)
+            .persist_ready_with_budget(
+                observation.clone(),
+                ready_timestamp,
+                Instant::now() + Duration::from_secs(5),
+                Arc::new(AtomicBool::new(false)),
+            )
             .expect("Ready transition");
         let launching_timestamp = owner.next_timestamp().expect("Launching timestamp");
         let cancellation = Arc::new(AtomicBool::new(false));
@@ -4007,7 +3805,9 @@ mod tests {
             first_chunk: 2,
         };
 
-        let (confirmed, complete) = write_confirmed_prefix(&mut writer, b"abcdef");
+        let (confirmed, complete) =
+            write_confirmed_prefix_with_budget(&mut writer, b"abcdef", &StagingBudget::unbounded())
+                .expect("write budget");
 
         assert_eq!(confirmed, b"ab");
         assert!(!complete);

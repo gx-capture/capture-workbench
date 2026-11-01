@@ -246,7 +246,6 @@ fn public_activation_root(
 
 /// Frozen producer-owned command inputs. This foundation is intentionally not
 /// wired into the legacy launch path until the activation owner can consume it.
-#[allow(dead_code)]
 struct FrozenLaunchCommand {
     executable_path: PathBuf,
     working_directory: PathBuf,
@@ -269,7 +268,6 @@ pub(crate) struct FrozenReadinessContext {
 }
 
 impl FrozenReadinessContext {
-    #[allow(dead_code)]
     pub(crate) fn schema(&self) -> &VerifiedReadinessSchema {
         &self.schema
     }
@@ -320,7 +318,6 @@ pub(crate) struct FrozenActivationDescriptor {
     roots: Vec<FrozenActivationRoot>,
 }
 
-#[allow(dead_code)]
 struct ActivationRootInput {
     ordinal: u32,
     role: String,
@@ -343,7 +340,6 @@ const RUN_STAGING_ENVIRONMENT_NAME: &str = "CAPTURE_RUN_STAGING_DIR";
 const PRIVATE_RUN_STAGING_DIRECTORY: &str = "private-run-staging";
 
 impl FrozenActivationDescriptor {
-    #[allow(dead_code)]
     fn from_activation_inputs(
         producer_root: PathBuf,
         session_nonce: String,
@@ -451,7 +447,7 @@ impl FrozenActivationDescriptor {
         self.roots.get(ordinal).map(|root| root.command.port)
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub(crate) fn readiness_schema_context(
         &self,
         ordinal: usize,
@@ -534,7 +530,6 @@ fn validate_activation_scope(producer_root: &Path, session_nonce: &str) -> Resul
     .map_err(|_| "Capture runtime activation producer context was invalid.".to_string())
 }
 
-#[allow(dead_code)]
 fn validate_activation_root_inputs(roots: &[ActivationRootInput]) -> Result<(), String> {
     if roots.is_empty() {
         return Err("Capture runtime activation roots were incomplete.".into());
@@ -568,7 +563,6 @@ fn planned_root_staging_path(
         .join(format!("root-{ordinal:08}")))
 }
 
-#[allow(dead_code)]
 fn freeze_activation_root(
     producer_root: &Path,
     group_staging_identity: &str,
@@ -605,7 +599,6 @@ fn freeze_activation_root(
     })
 }
 
-#[allow(dead_code)]
 fn bind_planned_staging_environment(
     mut spec: SidecarLaunchSpec,
     expected_path: &str,
@@ -658,14 +651,12 @@ fn frozen_command_has_staging_path(
 /// Builds the prepare plan through the typed activation descriptor. The
 /// value-only draft builder remains available for its existing foundation
 /// fixtures and is not an activation input path.
-#[allow(dead_code)]
 fn build_activation_plan(
     descriptor: FrozenActivationDescriptor,
 ) -> Result<crate::prepare::ImmutableGroupPlan, crate::prepare::PrepareError> {
     crate::prepare::build_immutable_group_plan_from_activation(std::sync::Arc::new(descriptor))
 }
 
-#[allow(dead_code)]
 impl FrozenLaunchCommand {
     fn command(&self) -> Command {
         let mut command = Command::new(&self.executable_path);
@@ -689,7 +680,6 @@ impl FrozenLaunchCommand {
     /// Revalidates the frozen executable immediately before command creation.
     /// All launch values remain from this immutable snapshot; no ambient
     /// environment or mutable launch specification is consulted here.
-    #[allow(dead_code)]
     fn checked_command(&self) -> Result<Command, String> {
         let canonical_path = fs::canonicalize(&self.executable_path)
             .map_err(|_| "Capture runtime frozen executable was unavailable.".to_string())?;
@@ -879,22 +869,7 @@ fn freeze_readiness_context(
     })
 }
 
-/// Captures ambient environment values once and binds the resulting command
-/// to the previously verified executable. The existing `VerifiedSidecar`
-/// remains the provenance authority supplied by `verify_sidecar`; because its
-/// fields are public, this helper reuses the artifact verifier but does not
-/// claim to establish upstream manifest provenance from an arbitrary struct
-/// literal.
-#[allow(dead_code)]
-fn freeze_launch_command(
-    verified: &VerifiedSidecar,
-    spec: &SidecarLaunchSpec,
-) -> Result<FrozenLaunchCommand, String> {
-    let captured_environment: Vec<_> = std::env::vars_os().collect();
-    freeze_launch_command_from_environment(verified, spec, &captured_environment)
-}
-
-#[allow(dead_code)]
+#[cfg(test)]
 fn freeze_launch_command_from_environment(
     verified: &VerifiedSidecar,
     spec: &SidecarLaunchSpec,
@@ -941,7 +916,6 @@ fn freeze_launch_command_from_environment_with_schema(
     })
 }
 
-#[allow(dead_code)]
 fn validate_frozen_launch_inputs(
     verified: &VerifiedSidecar,
     spec: &SidecarLaunchSpec,
@@ -999,7 +973,6 @@ fn validate_frozen_launch_inputs(
     Ok(canonical_verified)
 }
 
-#[allow(dead_code)]
 fn resolve_frozen_environment(
     captured_environment: &[(OsString, OsString)],
     spec: &SidecarLaunchSpec,
@@ -1053,7 +1026,6 @@ fn resolve_frozen_environment(
 /// The frozen boundary accepts the portable ASCII environment name grammar;
 /// this is narrower than arbitrary Windows Unicode names so case identity is
 /// deterministic without claiming a non-native case-folding implementation.
-#[allow(dead_code)]
 fn validate_environment_name(name: &OsStr) -> Result<(), String> {
     let bytes = name.as_encoded_bytes();
     let valid = !bytes.is_empty() && (bytes[0].is_ascii_alphabetic() || bytes[0] == b'_');
@@ -1068,7 +1040,6 @@ fn validate_environment_name(name: &OsStr) -> Result<(), String> {
     }
 }
 
-#[allow(dead_code)]
 fn validate_environment_value(value: &OsStr) -> Result<(), String> {
     if value.as_encoded_bytes().contains(&0) {
         Err("Capture runtime launch environment value was invalid.".into())
@@ -1077,7 +1048,6 @@ fn validate_environment_value(value: &OsStr) -> Result<(), String> {
     }
 }
 
-#[allow(dead_code)]
 fn environment_key(name: &OsStr) -> Vec<u8> {
     name.as_encoded_bytes()
         .iter()
@@ -1085,7 +1055,6 @@ fn environment_key(name: &OsStr) -> Vec<u8> {
         .collect()
 }
 
-#[allow(dead_code)]
 fn compare_environment_pair(
     left: &(OsString, OsString),
     right: &(OsString, OsString),
@@ -1096,7 +1065,6 @@ fn compare_environment_pair(
         .then(left.1.as_encoded_bytes().cmp(right.1.as_encoded_bytes()))
 }
 
-#[allow(dead_code)]
 fn frozen_command_digest(
     executable_path: &Path,
     working_directory: &Path,
@@ -1153,7 +1121,6 @@ fn frozen_command_digest(
     digest_bytes(&encoded)
 }
 
-#[allow(dead_code)]
 fn append_bytes(output: &mut Vec<u8>, label: &[u8], value: &[u8]) {
     output.extend_from_slice(&(label.len() as u64).to_be_bytes());
     output.extend_from_slice(label);
@@ -1161,7 +1128,6 @@ fn append_bytes(output: &mut Vec<u8>, label: &[u8], value: &[u8]) {
     output.extend_from_slice(value);
 }
 
-#[allow(dead_code)]
 fn digest_bytes(bytes: &[u8]) -> String {
     use sha2::{Digest, Sha256};
 
@@ -1170,7 +1136,6 @@ fn digest_bytes(bytes: &[u8]) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-#[allow(dead_code)]
 fn fresh_private_nonce() -> Result<String, String> {
     let mut bytes = [0_u8; 16];
     OsRng
@@ -1438,6 +1403,12 @@ fn wait_before_retry(
 
 #[cfg(test)]
 mod tests {
+    #[cfg(windows)]
+    use crate::process::cleanup_activation_for_test;
+
+    #[cfg(windows)]
+    use crate::journal_store::activation_budget_for_test;
+
     use super::*;
     use std::{
         collections::{BTreeMap, HashSet},
@@ -1939,13 +1910,18 @@ mod tests {
         };
         let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
         let activation = prepared
-            .consume_for_activation()
+            .consume_for_activation_with_budget(&activation_budget_for_test())
             .expect("validated activation context");
-        let owner =
-            crate::process::acquire_suspended_for_activation(activation).expect("suspended owner");
-        let ready = owner.persist_ready().expect("durable Ready");
+        let owner = crate::process::acquire_suspended_for_activation_with_budget(
+            activation,
+            &activation_budget_for_test(),
+        )
+        .expect("suspended owner");
+        let ready = owner
+            .persist_ready_with_budget(&activation_budget_for_test())
+            .expect("durable Ready");
         drop(reservations);
-        let launching = match ready.launch_with_cancellation(None) {
+        let launching = match ready.launch_with_budget(&activation_budget_for_test()) {
             Ok(owner) => owner,
             Err(_) => panic!("durable Launching and native resume"),
         };
@@ -1986,14 +1962,19 @@ mod tests {
         };
         let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
         let activation = prepared
-            .consume_for_activation()
+            .consume_for_activation_with_budget(&activation_budget_for_test())
             .expect("validated activation context");
-        let owner =
-            crate::process::acquire_suspended_for_activation(activation).expect("suspended owner");
-        let ready = owner.persist_ready().expect("durable Ready");
+        let owner = crate::process::acquire_suspended_for_activation_with_budget(
+            activation,
+            &activation_budget_for_test(),
+        )
+        .expect("suspended owner");
+        let ready = owner
+            .persist_ready_with_budget(&activation_budget_for_test())
+            .expect("durable Ready");
         drop(reservations);
         let launching = ready
-            .launch_with_cancellation(None)
+            .launch_with_budget(&activation_budget_for_test())
             .unwrap_or_else(|_| panic!("durable Launching and native resume"));
         let launching_journal = plan
             .context
@@ -3307,7 +3288,7 @@ mod tests {
             1
         );
         let validated = prepared
-            .consume_for_activation()
+            .consume_for_activation_with_budget(&activation_budget_for_test())
             .expect("validated activation context");
         assert_eq!(validated.journal_plan, plan.value);
         assert_eq!(validated.expected.journal_revision, 1);
@@ -3392,20 +3373,24 @@ mod tests {
             .store
             .read(&plan.value)
             .expect("prepared journal");
-        plan.context
-            .store
-            .compare_and_swap(
+        {
+            let outcome = plan.context.store.compare_and_swap_owned(
                 &plan.value,
-                &current.cas_snapshot(),
+                &current,
                 crate::journal_store::JournalStoreCommand::Transition {
                     next_state: crate::journal::JournalState::ReconcileRequired,
                     timestamp: current.updated_at.clone(),
                 },
-            )
-            .expect("state transition");
+            );
+            assert_eq!(
+                outcome.disposition(),
+                crate::journal_store::CasDisposition::Committed
+            );
+            outcome.attempt().cloned().expect("state transition")
+        };
 
         assert!(matches!(
-            prepared.consume_for_activation(),
+            prepared.consume_for_activation_with_budget(&activation_budget_for_test()),
             Err(crate::prepare::PrepareError::JournalConflict)
         ));
     }
@@ -3435,7 +3420,7 @@ mod tests {
         };
         let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
         assert!(matches!(
-            prepared.consume_for_activation(),
+            prepared.consume_for_activation_with_budget(&activation_budget_for_test()),
             Err(crate::prepare::PrepareError::InvalidPlan)
         ));
 
@@ -3466,7 +3451,7 @@ mod tests {
         fs::write(&index_path, serde_json::to_vec(&index).unwrap()).expect("tampered index");
 
         assert!(matches!(
-            prepared.consume_for_activation(),
+            prepared.consume_for_activation_with_budget(&activation_budget_for_test()),
             Err(crate::prepare::PrepareError::InvalidPlan)
         ));
     }
@@ -3498,7 +3483,7 @@ mod tests {
         fs::remove_file(index_path).expect("remove index");
 
         assert!(matches!(
-            prepared.consume_for_activation(),
+            prepared.consume_for_activation_with_budget(&activation_budget_for_test()),
             Err(crate::prepare::PrepareError::JournalUnavailable)
         ));
     }
@@ -3542,15 +3527,19 @@ mod tests {
             };
             let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
             let activation = prepared
-                .consume_for_activation()
+                .consume_for_activation_with_budget(&activation_budget_for_test())
                 .expect("validated activation context");
-            let mut owner = crate::process::acquire_suspended_for_activation(activation)
-                .expect("real executable roots should be acquired suspended");
+            let mut owner = crate::process::acquire_suspended_for_activation_with_budget(
+                activation,
+                &activation_budget_for_test(),
+            )
+            .expect("real executable roots should be acquired suspended");
             assert_eq!(owner.native_root_count_for_test(), Some(ports.len()));
             assert!(owner.native_is_suspended_for_test());
 
-            owner.cleanup().expect("native then empty staging cleanup");
-            assert!(!group_path.exists());
+            let owner = cleanup_activation_for_test(owner);
+            assert!(owner.native_cleanup_proven_for_test());
+            assert!(group_path.exists());
         }
     }
 
@@ -3569,11 +3558,16 @@ mod tests {
             };
             let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
             let activation = prepared
-                .consume_for_activation()
+                .consume_for_activation_with_budget(&activation_budget_for_test())
                 .expect("validated activation context");
-            let owner = crate::process::acquire_suspended_for_activation(activation)
-                .expect("suspended owner");
-            let mut ready = owner.persist_ready().expect("durable Ready observation");
+            let owner = crate::process::acquire_suspended_for_activation_with_budget(
+                activation,
+                &activation_budget_for_test(),
+            )
+            .expect("suspended owner");
+            let mut ready = owner
+                .persist_ready_with_budget(&activation_budget_for_test())
+                .expect("durable Ready observation");
 
             let journal = plan.context.store.read(&plan.value).expect("Ready journal");
             assert_eq!(journal.state, crate::journal::JournalState::Ready);
@@ -3620,11 +3614,9 @@ mod tests {
             assert_eq!(ready.native_root_count_for_test(), Some(ports.len()));
             assert!(ready.native_is_suspended_for_test());
 
-            let cleanup_failure = ready
-                .cleanup_without_terminal_proof()
-                .expect_err("Ready cleanup must retain staging for reconciliation");
-            let owner = cleanup_failure.into_owner();
-            assert_eq!(owner.native_root_count_for_test(), None);
+            let cleanup_failure = cleanup_activation_for_test(ready.into_suspended_owner());
+            let owner = cleanup_failure;
+            assert!(owner.native_cleanup_proven_for_test());
             assert!(owner.native_cleanup_proven_for_test());
             assert!(group_path.exists());
         }
@@ -3644,13 +3636,18 @@ mod tests {
             };
             let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
             let activation = prepared
-                .consume_for_activation()
+                .consume_for_activation_with_budget(&activation_budget_for_test())
                 .expect("validated activation context");
-            let owner = crate::process::acquire_suspended_for_activation(activation)
-                .expect("suspended owner");
-            let ready = owner.persist_ready().expect("durable Ready");
+            let owner = crate::process::acquire_suspended_for_activation_with_budget(
+                activation,
+                &activation_budget_for_test(),
+            )
+            .expect("suspended owner");
+            let ready = owner
+                .persist_ready_with_budget(&activation_budget_for_test())
+                .expect("durable Ready");
 
-            let launching = match ready.launch_with_cancellation(None) {
+            let launching = match ready.launch_with_budget(&activation_budget_for_test()) {
                 Ok(owner) => owner,
                 Err(_) => panic!("durable Launching followed by native resume"),
             };
@@ -3667,10 +3664,8 @@ mod tests {
                 .iter()
                 .all(|root| root.state == crate::journal::RootState::Suspended));
 
-            let cleanup = launching
-                .cleanup_without_terminal_proof()
-                .expect_err("Launching cleanup must retain staging for reconciliation");
-            assert!(cleanup.into_owner().native_cleanup_proven_for_test());
+            let cleanup = cleanup_activation_for_test(launching.into_suspended_owner());
+            assert!(cleanup.native_cleanup_proven_for_test());
         }
     }
 
@@ -3688,14 +3683,19 @@ mod tests {
         };
         let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
         let activation = prepared
-            .consume_for_activation()
+            .consume_for_activation_with_budget(&activation_budget_for_test())
             .expect("validated activation context");
-        let owner =
-            crate::process::acquire_suspended_for_activation(activation).expect("suspended owner");
-        let ready = owner.persist_ready().expect("durable Ready");
+        let owner = crate::process::acquire_suspended_for_activation_with_budget(
+            activation,
+            &activation_budget_for_test(),
+        )
+        .expect("suspended owner");
+        let ready = owner
+            .persist_ready_with_budget(&activation_budget_for_test())
+            .expect("durable Ready");
         assert!(marker_paths.iter().all(|path| !path.exists()));
 
-        let launching = match ready.launch_with_cancellation(None) {
+        let launching = match ready.launch_with_budget(&activation_budget_for_test()) {
             Ok(owner) => owner,
             Err(_) => panic!("fixture roots should observe durable Launching"),
         };
@@ -3715,10 +3715,8 @@ mod tests {
             );
         }
 
-        let cleanup = launching
-            .cleanup_without_terminal_proof()
-            .expect_err("Launching cleanup retains staging for reconciliation");
-        assert!(cleanup.into_owner().native_cleanup_proven_for_test());
+        let cleanup = cleanup_activation_for_test(launching.into_suspended_owner());
+        assert!(cleanup.native_cleanup_proven_for_test());
     }
 
     #[cfg(windows)]
@@ -3757,15 +3755,20 @@ mod tests {
             };
             let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
             let activation = prepared
-                .consume_for_activation()
+                .consume_for_activation_with_budget(&activation_budget_for_test())
                 .expect("validated activation context");
-            let owner = crate::process::acquire_suspended_for_activation(activation)
-                .expect("suspended owner");
-            let ready = owner.persist_ready().expect("durable Ready");
+            let owner = crate::process::acquire_suspended_for_activation_with_budget(
+                activation,
+                &activation_budget_for_test(),
+            )
+            .expect("suspended owner");
+            let ready = owner
+                .persist_ready_with_budget(&activation_budget_for_test())
+                .expect("durable Ready");
             assert!(marker_paths.iter().all(|path| !path.exists()));
             drop(reservations);
 
-            let mut launching = match ready.launch_with_cancellation(None) {
+            let mut launching = match ready.launch_with_budget(&activation_budget_for_test()) {
                 Ok(owner) => owner,
                 Err(_) => panic!("fixture roots should launch"),
             };
@@ -3855,10 +3858,8 @@ mod tests {
                 root_count
             );
 
-            let cleanup = launching
-                .cleanup_without_terminal_proof()
-                .expect_err("Launching cleanup retains staging for reconciliation");
-            assert!(cleanup.into_owner().native_cleanup_proven_for_test());
+            let cleanup = cleanup_activation_for_test(launching.into_suspended_owner());
+            assert!(cleanup.native_cleanup_proven_for_test());
         }
     }
 
@@ -3878,14 +3879,19 @@ mod tests {
             };
             let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
             let activation = prepared
-                .consume_for_activation()
+                .consume_for_activation_with_budget(&activation_budget_for_test())
                 .expect("validated activation context");
-            let owner = crate::process::acquire_suspended_for_activation(activation)
-                .expect("suspended owner");
-            let ready = owner.persist_ready().expect("durable Ready");
+            let owner = crate::process::acquire_suspended_for_activation_with_budget(
+                activation,
+                &activation_budget_for_test(),
+            )
+            .expect("suspended owner");
+            let ready = owner
+                .persist_ready_with_budget(&activation_budget_for_test())
+                .expect("durable Ready");
             drop(reservations);
 
-            let launching = match ready.launch_with_cancellation(None) {
+            let launching = match ready.launch_with_budget(&activation_budget_for_test()) {
                 Ok(owner) => owner,
                 Err(_) => panic!("durable Launching and native resume"),
             };
@@ -3965,10 +3971,8 @@ mod tests {
             );
             assert_eq!(running.native_root_count_for_test(), Some(root_count));
 
-            let cleanup = running
-                .cleanup_without_terminal_proof()
-                .expect_err("Running cleanup retains staging for reconciliation");
-            let retained = cleanup.into_owner();
+            let cleanup = cleanup_activation_for_test(running.into_suspended_owner());
+            let retained = cleanup;
             assert!(retained.native_cleanup_proven_for_test());
             assert!(group_staging_path.is_dir());
             for (ordinal, root_staging_path) in root_staging_paths.iter().enumerate() {
@@ -3996,14 +4000,19 @@ mod tests {
             };
             let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
             let activation = prepared
-                .consume_for_activation()
+                .consume_for_activation_with_budget(&activation_budget_for_test())
                 .expect("validated activation context");
-            let owner = crate::process::acquire_suspended_for_activation(activation)
-                .expect("suspended owner");
-            let ready = owner.persist_ready().expect("durable Ready");
+            let owner = crate::process::acquire_suspended_for_activation_with_budget(
+                activation,
+                &activation_budget_for_test(),
+            )
+            .expect("suspended owner");
+            let ready = owner
+                .persist_ready_with_budget(&activation_budget_for_test())
+                .expect("durable Ready");
             drop(reservations);
             let launching = ready
-                .launch_with_cancellation(None)
+                .launch_with_budget(&activation_budget_for_test())
                 .unwrap_or_else(|_| panic!("durable Launching and native resume"));
             let launching_journal = plan
                 .context
@@ -4118,14 +4127,19 @@ mod tests {
         };
         let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
         let activation = prepared
-            .consume_for_activation()
+            .consume_for_activation_with_budget(&activation_budget_for_test())
             .expect("validated activation context");
-        let owner =
-            crate::process::acquire_suspended_for_activation(activation).expect("suspended owner");
-        let ready = owner.persist_ready().expect("durable Ready");
+        let owner = crate::process::acquire_suspended_for_activation_with_budget(
+            activation,
+            &activation_budget_for_test(),
+        )
+        .expect("suspended owner");
+        let ready = owner
+            .persist_ready_with_budget(&activation_budget_for_test())
+            .expect("durable Ready");
         drop(reservations);
         let launching = ready
-            .launch_with_cancellation(None)
+            .launch_with_budget(&activation_budget_for_test())
             .unwrap_or_else(|_| panic!("durable Launching and native resume"));
         let launching_journal = plan
             .context
@@ -4168,6 +4182,7 @@ mod tests {
             failure.kind_for_test(),
             crate::process::ClosingTransitionFailureKind::Cancelled
         );
+        assert_eq!(failure.candidate_disposition_for_test(), None);
         let running = failure.into_owner();
         assert_eq!(
             plan.context.store.read(&plan.value).expect("journal").state,
@@ -4179,17 +4194,21 @@ mod tests {
             .store
             .read(&plan.value)
             .expect("Running journal");
-        plan.context
-            .store
-            .compare_and_swap(
+        {
+            let outcome = plan.context.store.compare_and_swap_owned(
                 &plan.value,
-                &current.cas_snapshot(),
+                &current,
                 crate::journal_store::JournalStoreCommand::Transition {
                     next_state: crate::journal::JournalState::ReconcileRequired,
                     timestamp: current.updated_at.clone(),
                 },
-            )
-            .expect("test journal drift");
+            );
+            assert_eq!(
+                outcome.disposition(),
+                crate::journal_store::CasDisposition::Committed
+            );
+            outcome.attempt().cloned().expect("test journal drift")
+        };
         let stale_failure = match running
             .begin_closing_with_cancellation(Instant::now() + Duration::from_secs(5), None)
         {
@@ -4205,10 +4224,8 @@ mod tests {
             plan.context.store.read(&plan.value).expect("journal").state,
             crate::journal::JournalState::ReconcileRequired
         );
-        let cleanup = running
-            .cleanup_without_terminal_proof()
-            .expect_err("Running cleanup remains outside this slice");
-        assert!(cleanup.into_owner().native_cleanup_proven_for_test());
+        let cleanup = cleanup_activation_for_test(running.into_suspended_owner());
+        assert!(cleanup.native_cleanup_proven_for_test());
     }
 
     #[cfg(windows)]
@@ -4322,7 +4339,6 @@ mod tests {
             assert!(!group_path.exists());
             assert!(root_paths.iter().all(|path| !path.exists()));
             assert!(released.staging_release_proven_for_test());
-            assert!(released.staging_release_binding_matches_for_test());
             assert!(released.listener_release_proven_for_test());
             assert_eq!(released.native_cleanup_attempts_for_test(), 1);
 
@@ -4906,7 +4922,6 @@ mod tests {
                     failure.detail_for_test()
                 )
             });
-        assert!(released.staging_release_binding_matches_for_test());
         assert!(released.listener_release_proven_for_test());
         assert_eq!(released.native_cleanup_attempts_for_test(), 1);
         assert!(!group_path.exists());
@@ -5562,17 +5577,21 @@ mod tests {
             .store
             .read(&plan.value)
             .expect("Closing journal");
-        plan.context
-            .store
-            .compare_and_swap(
+        {
+            let outcome = plan.context.store.compare_and_swap_owned(
                 &plan.value,
-                &current.cas_snapshot(),
+                &current,
                 crate::journal_store::JournalStoreCommand::Transition {
                     next_state: crate::journal::JournalState::ReconcileRequired,
                     timestamp: current.updated_at.clone(),
                 },
-            )
-            .expect("reconciliation drift");
+            );
+            assert_eq!(
+                outcome.disposition(),
+                crate::journal_store::CasDisposition::Committed
+            );
+            outcome.attempt().cloned().expect("reconciliation drift")
+        };
 
         let failure = match closing.cleanup_native_and_observe_listener_release(
             Instant::now() + Duration::from_secs(10),
@@ -5614,14 +5633,19 @@ mod tests {
         };
         let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
         let activation = prepared
-            .consume_for_activation()
+            .consume_for_activation_with_budget(&activation_budget_for_test())
             .expect("validated activation context");
-        let owner =
-            crate::process::acquire_suspended_for_activation(activation).expect("suspended owner");
-        let ready = owner.persist_ready().expect("durable Ready");
+        let owner = crate::process::acquire_suspended_for_activation_with_budget(
+            activation,
+            &activation_budget_for_test(),
+        )
+        .expect("suspended owner");
+        let ready = owner
+            .persist_ready_with_budget(&activation_budget_for_test())
+            .expect("durable Ready");
         drop(reservations);
         let launching = ready
-            .launch_with_cancellation(None)
+            .launch_with_budget(&activation_budget_for_test())
             .unwrap_or_else(|_| panic!("durable Launching and native resume"));
         let launching_journal = plan
             .context
@@ -5664,6 +5688,10 @@ mod tests {
             crate::process::ClosingTransitionFailureKind::Storage
         );
         assert!(failure.detail_for_test().contains("possibly Closing"));
+        assert_eq!(
+            failure.candidate_disposition_for_test(),
+            Some(crate::journal_store::CasDisposition::AmbiguousWrite)
+        );
         let owner = failure.into_owner();
         let disk = plan
             .context
@@ -5673,10 +5701,8 @@ mod tests {
         assert_eq!(disk.state, crate::journal::JournalState::Closing);
         assert_eq!(disk.journal_revision, running_journal.journal_revision + 1);
         assert_eq!(owner.running_journal_for_test(), &running_journal);
-        let cleanup = owner
-            .cleanup_without_terminal_proof()
-            .expect_err("ambiguous Closing state retains staging for reconciliation");
-        assert!(cleanup.into_owner().native_cleanup_proven_for_test());
+        let cleanup = cleanup_activation_for_test(owner.into_suspended_owner());
+        assert!(cleanup.native_cleanup_proven_for_test());
     }
 
     #[cfg(windows)]
@@ -5753,10 +5779,8 @@ mod tests {
             .read(&plan.value)
             .expect("Running journal");
         assert_eq!(disk, running_journal);
-        let cleanup = owner
-            .cleanup_without_terminal_proof()
-            .expect_err("contention failure retains native/staging owner");
-        assert!(cleanup.into_owner().native_cleanup_proven_for_test());
+        let cleanup = cleanup_activation_for_test(owner.into_suspended_owner());
+        assert!(cleanup.native_cleanup_proven_for_test());
     }
 
     #[cfg(windows)]
@@ -5814,10 +5838,8 @@ mod tests {
                 assert_eq!(disk.journal_revision, running_journal.journal_revision + 1);
             }
             assert_eq!(owner.running_journal_for_test(), &running_journal);
-            let cleanup = owner
-                .cleanup_without_terminal_proof()
-                .expect_err("Closing failure retains native/staging owner");
-            assert!(cleanup.into_owner().native_cleanup_proven_for_test());
+            let cleanup = cleanup_activation_for_test(owner.into_suspended_owner());
+            assert!(cleanup.native_cleanup_proven_for_test());
         }
     }
 
@@ -5850,13 +5872,18 @@ mod tests {
             };
             let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
             let activation = prepared
-                .consume_for_activation()
+                .consume_for_activation_with_budget(&activation_budget_for_test())
                 .expect("validated activation context");
-            let owner = crate::process::acquire_suspended_for_activation(activation)
-                .expect("suspended owner");
-            let ready = owner.persist_ready().expect("durable Ready");
+            let owner = crate::process::acquire_suspended_for_activation_with_budget(
+                activation,
+                &activation_budget_for_test(),
+            )
+            .expect("suspended owner");
+            let ready = owner
+                .persist_ready_with_budget(&activation_budget_for_test())
+                .expect("durable Ready");
             drop(reservations);
-            let launching = match ready.launch_with_cancellation(None) {
+            let launching = match ready.launch_with_budget(&activation_budget_for_test()) {
                 Ok(owner) => owner,
                 Err(_) => panic!("durable Launching and native resume"),
             };
@@ -5902,10 +5929,8 @@ mod tests {
                 plan.context.store.read(&plan.value).expect("journal").state,
                 crate::journal::JournalState::Launching
             );
-            let cleanup = launching
-                .cleanup_without_terminal_proof()
-                .expect_err("Launching cleanup retains staging for reconciliation");
-            assert!(cleanup.into_owner().native_cleanup_proven_for_test());
+            let cleanup = cleanup_activation_for_test(launching.into_suspended_owner());
+            assert!(cleanup.native_cleanup_proven_for_test());
         }
 
         let directory = tempfile::tempdir().expect("tempdir");
@@ -5920,13 +5945,18 @@ mod tests {
         };
         let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
         let activation = prepared
-            .consume_for_activation()
+            .consume_for_activation_with_budget(&activation_budget_for_test())
             .expect("validated activation context");
-        let owner =
-            crate::process::acquire_suspended_for_activation(activation).expect("suspended owner");
-        let ready = owner.persist_ready().expect("durable Ready");
+        let owner = crate::process::acquire_suspended_for_activation_with_budget(
+            activation,
+            &activation_budget_for_test(),
+        )
+        .expect("suspended owner");
+        let ready = owner
+            .persist_ready_with_budget(&activation_budget_for_test())
+            .expect("durable Ready");
         drop(reservations);
-        let launching = match ready.launch_with_cancellation(None) {
+        let launching = match ready.launch_with_budget(&activation_budget_for_test()) {
             Ok(owner) => owner,
             Err(_) => panic!("durable Launching and native resume"),
         };
@@ -5958,10 +5988,8 @@ mod tests {
             plan.context.store.read(&plan.value).expect("journal").state,
             crate::journal::JournalState::Launching
         );
-        let cleanup = launching
-            .cleanup_without_terminal_proof()
-            .expect_err("Launching cleanup retains staging for reconciliation");
-        assert!(cleanup.into_owner().native_cleanup_proven_for_test());
+        let cleanup = cleanup_activation_for_test(launching.into_suspended_owner());
+        assert!(cleanup.native_cleanup_proven_for_test());
     }
 
     #[cfg(windows)]
@@ -6018,10 +6046,8 @@ mod tests {
             plan.context.store.read(&plan.value).expect("journal").state,
             crate::journal::JournalState::Launching
         );
-        let cleanup = launching
-            .cleanup_without_terminal_proof()
-            .expect_err("partial readiness retains staging for reconciliation");
-        let retained = cleanup.into_owner();
+        let cleanup = cleanup_activation_for_test(launching.into_suspended_owner());
+        let retained = cleanup;
         assert!(retained.native_cleanup_proven_for_test());
         assert!(group_staging_path.is_dir());
         assert!(marker_paths.iter().all(|path| path.is_file()));
@@ -6044,10 +6070,8 @@ mod tests {
             started.elapsed() >= Duration::from_secs(5),
             "delayed fixture did not exercise the former five-second startup boundary"
         );
-        let cleanup = launching
-            .cleanup_without_terminal_proof()
-            .expect_err("Launching cleanup retains staging for reconciliation");
-        assert!(cleanup.into_owner().native_cleanup_proven_for_test());
+        let cleanup = cleanup_activation_for_test(launching.into_suspended_owner());
+        assert!(cleanup.native_cleanup_proven_for_test());
         drop(plan);
     }
 
@@ -6064,12 +6088,17 @@ mod tests {
         };
         let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
         let activation = prepared
-            .consume_for_activation()
+            .consume_for_activation_with_budget(&activation_budget_for_test())
             .expect("validated activation context");
-        let owner =
-            crate::process::acquire_suspended_for_activation(activation).expect("suspended owner");
-        let ready = owner.persist_ready().expect("durable Ready");
-        let launching = match ready.launch_with_cancellation(None) {
+        let owner = crate::process::acquire_suspended_for_activation_with_budget(
+            activation,
+            &activation_budget_for_test(),
+        )
+        .expect("suspended owner");
+        let ready = owner
+            .persist_ready_with_budget(&activation_budget_for_test())
+            .expect("durable Ready");
+        let launching = match ready.launch_with_budget(&activation_budget_for_test()) {
             Ok(owner) => owner,
             Err(_) => panic!("durable Launching and native resume"),
         };
@@ -6084,10 +6113,8 @@ mod tests {
             plan.context.store.read(&plan.value).expect("journal").state,
             crate::journal::JournalState::Launching
         );
-        let cleanup = launching
-            .cleanup_without_terminal_proof()
-            .expect_err("Launching cleanup retains staging for reconciliation");
-        assert!(cleanup.into_owner().native_cleanup_proven_for_test());
+        let cleanup = cleanup_activation_for_test(launching.into_suspended_owner());
+        assert!(cleanup.native_cleanup_proven_for_test());
 
         let directory = tempfile::tempdir().expect("tempdir");
         let (reservations, ports) = held_distinct_loopback_ports(1);
@@ -6101,13 +6128,18 @@ mod tests {
         };
         let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
         let activation = prepared
-            .consume_for_activation()
+            .consume_for_activation_with_budget(&activation_budget_for_test())
             .expect("validated activation context");
-        let owner =
-            crate::process::acquire_suspended_for_activation(activation).expect("suspended owner");
-        let ready = owner.persist_ready().expect("durable Ready");
+        let owner = crate::process::acquire_suspended_for_activation_with_budget(
+            activation,
+            &activation_budget_for_test(),
+        )
+        .expect("suspended owner");
+        let ready = owner
+            .persist_ready_with_budget(&activation_budget_for_test())
+            .expect("durable Ready");
         drop(reservations);
-        let launching = match ready.launch_with_cancellation(None) {
+        let launching = match ready.launch_with_budget(&activation_budget_for_test()) {
             Ok(owner) => owner,
             Err(_) => panic!("durable Launching and native resume"),
         };
@@ -6149,10 +6181,8 @@ mod tests {
             plan.context.store.read(&plan.value).expect("journal").state,
             crate::journal::JournalState::Launching
         );
-        let cleanup = launching
-            .cleanup_without_terminal_proof()
-            .expect_err("Launching cleanup retains staging for reconciliation");
-        assert!(cleanup.into_owner().native_cleanup_proven_for_test());
+        let cleanup = cleanup_activation_for_test(launching.into_suspended_owner());
+        assert!(cleanup.native_cleanup_proven_for_test());
     }
 
     #[cfg(windows)]
@@ -6169,13 +6199,18 @@ mod tests {
         };
         let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
         let activation = prepared
-            .consume_for_activation()
+            .consume_for_activation_with_budget(&activation_budget_for_test())
             .expect("validated activation context");
-        let owner =
-            crate::process::acquire_suspended_for_activation(activation).expect("suspended owner");
-        let ready = owner.persist_ready().expect("durable Ready");
+        let owner = crate::process::acquire_suspended_for_activation_with_budget(
+            activation,
+            &activation_budget_for_test(),
+        )
+        .expect("suspended owner");
+        let ready = owner
+            .persist_ready_with_budget(&activation_budget_for_test())
+            .expect("durable Ready");
         drop(reservations);
-        let mut launching = match ready.launch_with_cancellation(None) {
+        let mut launching = match ready.launch_with_budget(&activation_budget_for_test()) {
             Ok(owner) => owner,
             Err(_) => panic!("durable Launching and native resume"),
         };
@@ -6221,10 +6256,8 @@ mod tests {
             plan.context.store.read(&plan.value).expect("journal").state,
             crate::journal::JournalState::Launching
         );
-        let cleanup = launching
-            .cleanup_without_terminal_proof()
-            .expect_err("Launching cleanup retains staging for reconciliation");
-        assert!(cleanup.into_owner().native_cleanup_proven_for_test());
+        let cleanup = cleanup_activation_for_test(launching.into_suspended_owner());
+        assert!(cleanup.native_cleanup_proven_for_test());
 
         let directory = tempfile::tempdir().expect("tempdir");
         let (reservations, ports) = held_distinct_loopback_ports(1);
@@ -6237,13 +6270,18 @@ mod tests {
         };
         let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
         let activation = prepared
-            .consume_for_activation()
+            .consume_for_activation_with_budget(&activation_budget_for_test())
             .expect("validated activation context");
-        let owner =
-            crate::process::acquire_suspended_for_activation(activation).expect("suspended owner");
-        let ready = owner.persist_ready().expect("durable Ready");
+        let owner = crate::process::acquire_suspended_for_activation_with_budget(
+            activation,
+            &activation_budget_for_test(),
+        )
+        .expect("suspended owner");
+        let ready = owner
+            .persist_ready_with_budget(&activation_budget_for_test())
+            .expect("durable Ready");
         drop(reservations);
-        let launching = match ready.launch_with_cancellation(None) {
+        let launching = match ready.launch_with_budget(&activation_budget_for_test()) {
             Ok(owner) => owner,
             Err(_) => panic!("durable Launching and native resume"),
         };
@@ -6292,10 +6330,8 @@ mod tests {
             crate::journal::JournalState::Launching
         );
         fs::write(&marker_path, marker).expect("restore marker");
-        let cleanup = launching
-            .cleanup_without_terminal_proof()
-            .expect_err("Launching cleanup retains staging for reconciliation");
-        assert!(cleanup.into_owner().native_cleanup_proven_for_test());
+        let cleanup = cleanup_activation_for_test(launching.into_suspended_owner());
+        assert!(cleanup.native_cleanup_proven_for_test());
 
         let directory = tempfile::tempdir().expect("tempdir");
         let (reservations, ports) = held_distinct_loopback_ports(1);
@@ -6308,13 +6344,18 @@ mod tests {
         };
         let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
         let activation = prepared
-            .consume_for_activation()
+            .consume_for_activation_with_budget(&activation_budget_for_test())
             .expect("validated activation context");
-        let owner =
-            crate::process::acquire_suspended_for_activation(activation).expect("suspended owner");
-        let ready = owner.persist_ready().expect("durable Ready");
+        let owner = crate::process::acquire_suspended_for_activation_with_budget(
+            activation,
+            &activation_budget_for_test(),
+        )
+        .expect("suspended owner");
+        let ready = owner
+            .persist_ready_with_budget(&activation_budget_for_test())
+            .expect("durable Ready");
         drop(reservations);
-        let launching = match ready.launch_with_cancellation(None) {
+        let launching = match ready.launch_with_budget(&activation_budget_for_test()) {
             Ok(owner) => owner,
             Err(_) => panic!("durable Launching and native resume"),
         };
@@ -6362,10 +6403,8 @@ mod tests {
             plan.context.store.read(&plan.value).expect("journal").state,
             crate::journal::JournalState::Running
         );
-        let cleanup = launching
-            .cleanup_without_terminal_proof()
-            .expect_err("ambiguous Running CAS retains staging for reconciliation");
-        assert!(cleanup.into_owner().native_cleanup_proven_for_test());
+        let cleanup = cleanup_activation_for_test(launching.into_suspended_owner());
+        assert!(cleanup.native_cleanup_proven_for_test());
     }
 
     #[cfg(windows)]
@@ -6392,13 +6431,18 @@ mod tests {
         };
         let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
         let activation = prepared
-            .consume_for_activation()
+            .consume_for_activation_with_budget(&activation_budget_for_test())
             .expect("validated activation context");
-        let owner =
-            crate::process::acquire_suspended_for_activation(activation).expect("suspended owner");
-        let ready = owner.persist_ready().expect("durable Ready");
+        let owner = crate::process::acquire_suspended_for_activation_with_budget(
+            activation,
+            &activation_budget_for_test(),
+        )
+        .expect("suspended owner");
+        let ready = owner
+            .persist_ready_with_budget(&activation_budget_for_test())
+            .expect("durable Ready");
         drop(reservations);
-        let launching = match ready.launch_with_cancellation(None) {
+        let launching = match ready.launch_with_budget(&activation_budget_for_test()) {
             Ok(owner) => owner,
             Err(_) => panic!("durable Launching and native resume"),
         };
@@ -6441,10 +6485,8 @@ mod tests {
             plan.context.store.read(&plan.value).expect("journal").state,
             crate::journal::JournalState::Launching
         );
-        let cleanup = launching
-            .cleanup_without_terminal_proof()
-            .expect_err("Launching cleanup retains staging for reconciliation");
-        assert!(cleanup.into_owner().native_cleanup_proven_for_test());
+        let cleanup = cleanup_activation_for_test(launching.into_suspended_owner());
+        assert!(cleanup.native_cleanup_proven_for_test());
     }
 
     #[cfg(windows)]
@@ -6543,10 +6585,8 @@ mod tests {
             plan.context.store.read(&plan.value).expect("journal").state,
             crate::journal::JournalState::Launching
         );
-        let cleanup = launching
-            .cleanup_without_terminal_proof()
-            .expect_err("Launching cleanup retains staging for reconciliation");
-        assert!(cleanup.into_owner().native_cleanup_proven_for_test());
+        let cleanup = cleanup_activation_for_test(launching.into_suspended_owner());
+        assert!(cleanup.native_cleanup_proven_for_test());
 
         let directory = tempfile::tempdir().expect("tempdir");
         let (reservations, ports) = held_distinct_loopback_ports(1);
@@ -6645,10 +6685,8 @@ mod tests {
             plan.context.store.read(&plan.value).expect("journal").state,
             crate::journal::JournalState::Launching
         );
-        let cleanup = launching
-            .cleanup_without_terminal_proof()
-            .expect_err("Launching cleanup retains staging for reconciliation");
-        assert!(cleanup.into_owner().native_cleanup_proven_for_test());
+        let cleanup = cleanup_activation_for_test(launching.into_suspended_owner());
+        assert!(cleanup.native_cleanup_proven_for_test());
     }
 
     #[cfg(windows)]
@@ -6683,10 +6721,8 @@ mod tests {
             plan.context.store.read(&plan.value).expect("journal").state,
             crate::journal::JournalState::Running
         );
-        let cleanup = launching
-            .cleanup_without_terminal_proof()
-            .expect_err("ambiguous post-CAS owner retains staging for reconciliation");
-        assert!(cleanup.into_owner().native_cleanup_proven_for_test());
+        let cleanup = cleanup_activation_for_test(launching.into_suspended_owner());
+        assert!(cleanup.native_cleanup_proven_for_test());
     }
 
     #[cfg(windows)]
@@ -6717,10 +6753,8 @@ mod tests {
             plan.context.store.read(&plan.value).expect("journal").state,
             crate::journal::JournalState::Launching
         );
-        let cleanup = launching
-            .cleanup_without_terminal_proof()
-            .expect_err("pre-CAS cancellation retains staging for reconciliation");
-        assert!(cleanup.into_owner().native_cleanup_proven_for_test());
+        let cleanup = cleanup_activation_for_test(launching.into_suspended_owner());
+        assert!(cleanup.native_cleanup_proven_for_test());
     }
 
     #[cfg(windows)]
@@ -6750,10 +6784,8 @@ mod tests {
             plan.context.store.read(&plan.value).expect("journal").state,
             crate::journal::JournalState::Launching
         );
-        let cleanup = launching
-            .cleanup_without_terminal_proof()
-            .expect_err("Launching cleanup retains staging for reconciliation");
-        assert!(cleanup.into_owner().native_cleanup_proven_for_test());
+        let cleanup = cleanup_activation_for_test(launching.into_suspended_owner());
+        assert!(cleanup.native_cleanup_proven_for_test());
     }
 
     #[cfg(windows)]
@@ -6788,10 +6820,8 @@ mod tests {
             plan.context.store.read(&plan.value).expect("journal").state,
             crate::journal::JournalState::Launching
         );
-        let cleanup = launching
-            .cleanup_without_terminal_proof()
-            .expect_err("last observation failure retains staging for reconciliation");
-        assert!(cleanup.into_owner().native_cleanup_proven_for_test());
+        let cleanup = cleanup_activation_for_test(launching.into_suspended_owner());
+        assert!(cleanup.native_cleanup_proven_for_test());
     }
 
     #[cfg(windows)]
@@ -6825,10 +6855,8 @@ mod tests {
             plan.context.store.read(&plan.value).expect("journal").state,
             crate::journal::JournalState::Launching
         );
-        let cleanup = launching
-            .cleanup_without_terminal_proof()
-            .expect_err("Launching cleanup retains staging for reconciliation");
-        assert!(cleanup.into_owner().native_cleanup_proven_for_test());
+        let cleanup = cleanup_activation_for_test(launching.into_suspended_owner());
+        assert!(cleanup.native_cleanup_proven_for_test());
     }
 
     #[cfg(windows)]
@@ -6845,15 +6873,20 @@ mod tests {
         };
         let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
         let activation = prepared
-            .consume_for_activation()
+            .consume_for_activation_with_budget(&activation_budget_for_test())
             .expect("validated activation context");
-        let owner =
-            crate::process::acquire_suspended_for_activation(activation).expect("suspended owner");
-        let ready = owner.persist_ready().expect("durable Ready");
+        let owner = crate::process::acquire_suspended_for_activation_with_budget(
+            activation,
+            &activation_budget_for_test(),
+        )
+        .expect("suspended owner");
+        let ready = owner
+            .persist_ready_with_budget(&activation_budget_for_test())
+            .expect("durable Ready");
         let mut ready = ready;
         ready.inject_resume_failure_at_for_test(1);
 
-        let failure = match ready.launch_with_cancellation(None) {
+        let failure = match ready.launch_with_budget(&activation_budget_for_test()) {
             Ok(_) => panic!("root N resume failure"),
             Err(failure) => failure,
         };
@@ -6877,10 +6910,8 @@ mod tests {
         );
         assert!(!marker_paths[1].exists(), "root N must remain suspended");
         assert_eq!(owner.native_root_count_for_test(), Some(2));
-        let cleanup = owner
-            .cleanup_without_terminal_proof()
-            .expect_err("partial Launching cleanup retains staging for reconciliation");
-        assert!(cleanup.into_owner().native_cleanup_proven_for_test());
+        let cleanup = cleanup_activation_for_test(owner.into_suspended_owner());
+        assert!(cleanup.native_cleanup_proven_for_test());
     }
 
     #[cfg(windows)]
@@ -6896,14 +6927,22 @@ mod tests {
         };
         let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
         let activation = prepared
-            .consume_for_activation()
+            .consume_for_activation_with_budget(&activation_budget_for_test())
             .expect("validated activation context");
-        let owner =
-            crate::process::acquire_suspended_for_activation(activation).expect("suspended owner");
-        let ready = owner.persist_ready().expect("durable Ready");
-        let cancellation = AtomicBool::new(true);
+        let owner = crate::process::acquire_suspended_for_activation_with_budget(
+            activation,
+            &activation_budget_for_test(),
+        )
+        .expect("suspended owner");
+        let ready = owner
+            .persist_ready_with_budget(&activation_budget_for_test())
+            .expect("durable Ready");
+        let cancellation = Arc::new(AtomicBool::new(true));
 
-        let failure = match ready.launch_with_cancellation(Some(&cancellation)) {
+        let failure = match ready.launch_with_budget(&crate::journal_store::ActivationBudget::new(
+            std::time::Instant::now() + std::time::Duration::from_secs(60),
+            Arc::clone(&cancellation),
+        )) {
             Ok(_) => panic!("pre-CAS cancellation"),
             Err(failure) => failure,
         };
@@ -6923,15 +6962,17 @@ mod tests {
         );
         let mut owner = owner;
         assert!(owner.native_is_suspended_for_test());
-        let cleanup = owner
-            .cleanup_without_terminal_proof()
-            .expect_err("Ready cleanup retains staging for reconciliation");
-        assert!(cleanup.into_owner().native_cleanup_proven_for_test());
+        let cleanup = cleanup_activation_for_test(owner.into_suspended_owner());
+        assert!(cleanup.native_cleanup_proven_for_test());
     }
 
     #[cfg(windows)]
     #[test]
-    fn launching_cancellation_after_cas_retains_launching_owner_without_resume() {
+    // Budgeted launch checks cancellation inside the Launching CAS step, before a
+    // LaunchingActivationOwner exists. The durable journal is already Launching, so the
+    // retained owner is the Ready one: still suspended, never resumed, and cleanable.
+    // (The deleted launch_with_cancellation path returned a Launching owner instead.)
+    fn launching_cancellation_after_cas_keeps_journal_launching_without_resume() {
         let directory = tempfile::tempdir().expect("tempdir");
         let (descriptor, _) = real_activation_test_descriptor(directory.path(), &[42159]);
         let plan = build_activation_plan(descriptor).expect("activation plan");
@@ -6942,22 +6983,30 @@ mod tests {
         };
         let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
         let activation = prepared
-            .consume_for_activation()
+            .consume_for_activation_with_budget(&activation_budget_for_test())
             .expect("validated activation context");
-        let owner =
-            crate::process::acquire_suspended_for_activation(activation).expect("suspended owner");
-        let ready = owner.persist_ready().expect("durable Ready");
-        let cancellation = AtomicBool::new(false);
-        crate::process::inject_cancellation_after_launching_cas_for_test();
+        let owner = crate::process::acquire_suspended_for_activation_with_budget(
+            activation,
+            &activation_budget_for_test(),
+        )
+        .expect("suspended owner");
+        let ready = owner
+            .persist_ready_with_budget(&activation_budget_for_test())
+            .expect("durable Ready");
+        let cancellation = Arc::new(AtomicBool::new(false));
+        crate::staging::cancel_after_launching_cas_for_test();
 
-        let failure = match ready.launch_with_cancellation(Some(&cancellation)) {
+        let failure = match ready.launch_with_budget(&crate::journal_store::ActivationBudget::new(
+            std::time::Instant::now() + std::time::Duration::from_secs(60),
+            Arc::clone(&cancellation),
+        )) {
             Ok(_) => panic!("post-CAS cancellation"),
             Err(failure) => failure,
         };
-        let owner = match failure.into_owner().expect("Launching owner retained") {
-            crate::process::ActivationLaunchOwner::Launching(owner) => owner,
-            crate::process::ActivationLaunchOwner::Ready(_) => {
-                panic!("post-CAS cancellation must retain the Launching snapshot")
+        let mut owner = match failure.into_owner().expect("owner retained") {
+            crate::process::ActivationLaunchOwner::Ready(owner) => owner,
+            crate::process::ActivationLaunchOwner::Launching(_) => {
+                panic!("budgeted post-CAS cancellation fails before a Launching owner exists")
             }
         };
         let journal = plan
@@ -6966,11 +7015,12 @@ mod tests {
             .read(&plan.value)
             .expect("Launching journal");
         assert_eq!(journal.state, crate::journal::JournalState::Launching);
-        assert_eq!(owner.launching_journal_for_test(), &journal);
-        let cleanup = owner
-            .cleanup_without_terminal_proof()
-            .expect_err("Launching cleanup retains staging for reconciliation");
-        assert!(cleanup.into_owner().native_cleanup_proven_for_test());
+        assert!(
+            owner.native_is_suspended_for_test(),
+            "post-CAS cancellation must not resume the native group"
+        );
+        let cleanup = cleanup_activation_for_test(owner.into_suspended_owner());
+        assert!(cleanup.native_cleanup_proven_for_test());
     }
 
     #[cfg(windows)]
@@ -6986,15 +7036,23 @@ mod tests {
         };
         let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
         let activation = prepared
-            .consume_for_activation()
+            .consume_for_activation_with_budget(&activation_budget_for_test())
             .expect("validated activation context");
-        let owner =
-            crate::process::acquire_suspended_for_activation(activation).expect("suspended owner");
-        let ready = owner.persist_ready().expect("durable Ready");
-        let cancellation = AtomicBool::new(false);
+        let owner = crate::process::acquire_suspended_for_activation_with_budget(
+            activation,
+            &activation_budget_for_test(),
+        )
+        .expect("suspended owner");
+        let ready = owner
+            .persist_ready_with_budget(&activation_budget_for_test())
+            .expect("durable Ready");
+        let cancellation = Arc::new(AtomicBool::new(false));
         crate::process::inject_cancellation_before_resume_root_for_test(1);
 
-        let failure = match ready.launch_with_cancellation(Some(&cancellation)) {
+        let failure = match ready.launch_with_budget(&crate::journal_store::ActivationBudget::new(
+            std::time::Instant::now() + std::time::Duration::from_secs(60),
+            Arc::clone(&cancellation),
+        )) {
             Ok(_) => panic!("mid-group cancellation"),
             Err(failure) => failure,
         };
@@ -7013,10 +7071,8 @@ mod tests {
                 .state,
             crate::journal::JournalState::Launching
         );
-        let cleanup = owner
-            .cleanup_without_terminal_proof()
-            .expect_err("partial Launching cleanup retains staging for reconciliation");
-        assert!(cleanup.into_owner().native_cleanup_proven_for_test());
+        let cleanup = cleanup_activation_for_test(owner.into_suspended_owner());
+        assert!(cleanup.native_cleanup_proven_for_test());
     }
 
     #[cfg(windows)]
@@ -7032,16 +7088,21 @@ mod tests {
         };
         let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
         let activation = prepared
-            .consume_for_activation()
+            .consume_for_activation_with_budget(&activation_budget_for_test())
             .expect("validated activation context");
-        let owner =
-            crate::process::acquire_suspended_for_activation(activation).expect("suspended owner");
-        let ready = owner.persist_ready().expect("durable Ready");
+        let owner = crate::process::acquire_suspended_for_activation_with_budget(
+            activation,
+            &activation_budget_for_test(),
+        )
+        .expect("suspended owner");
+        let ready = owner
+            .persist_ready_with_budget(&activation_budget_for_test())
+            .expect("durable Ready");
         plan.context
             .store
             .fail_after_replace_and_durability_recheck();
 
-        let failure = match ready.launch_with_cancellation(None) {
+        let failure = match ready.launch_with_budget(&activation_budget_for_test()) {
             Ok(_) => panic!("ambiguous Launching write must not resume"),
             Err(failure) => failure,
         };
@@ -7061,10 +7122,8 @@ mod tests {
         );
         let mut owner = owner;
         assert!(owner.native_is_suspended_for_test());
-        let cleanup = owner
-            .cleanup_without_terminal_proof()
-            .expect_err("Ready cleanup retains staging for reconciliation");
-        assert!(cleanup.into_owner().native_cleanup_proven_for_test());
+        let cleanup = cleanup_activation_for_test(owner.into_suspended_owner());
+        assert!(cleanup.native_cleanup_proven_for_test());
     }
 
     #[cfg(windows)]
@@ -7089,12 +7148,17 @@ mod tests {
         };
         let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
         let activation = prepared
-            .consume_for_activation()
+            .consume_for_activation_with_budget(&activation_budget_for_test())
             .expect("validated activation context");
-        let owner =
-            crate::process::acquire_suspended_for_activation(activation).expect("suspended owner");
-        let ready = owner.persist_ready().expect("durable Ready");
-        let failure = match ready.launch_with_cancellation(None) {
+        let owner = crate::process::acquire_suspended_for_activation_with_budget(
+            activation,
+            &activation_budget_for_test(),
+        )
+        .expect("suspended owner");
+        let ready = owner
+            .persist_ready_with_budget(&activation_budget_for_test())
+            .expect("durable Ready");
+        let failure = match ready.launch_with_budget(&activation_budget_for_test()) {
             Ok(_) => panic!("Launching clock failure"),
             Err(failure) => failure,
         };
@@ -7114,10 +7178,8 @@ mod tests {
         );
         let mut owner = owner;
         assert!(owner.native_is_suspended_for_test());
-        let cleanup = owner
-            .cleanup_without_terminal_proof()
-            .expect_err("Ready cleanup retains staging for reconciliation");
-        assert!(cleanup.into_owner().native_cleanup_proven_for_test());
+        let cleanup = cleanup_activation_for_test(owner.into_suspended_owner());
+        assert!(cleanup.native_cleanup_proven_for_test());
     }
 
     #[cfg(windows)]
@@ -7134,16 +7196,21 @@ mod tests {
         };
         let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
         let activation = prepared
-            .consume_for_activation()
+            .consume_for_activation_with_budget(&activation_budget_for_test())
             .expect("validated activation context");
-        let owner =
-            crate::process::acquire_suspended_for_activation(activation).expect("suspended owner");
-        let ready = owner.persist_ready().expect("durable Ready");
+        let owner = crate::process::acquire_suspended_for_activation_with_budget(
+            activation,
+            &activation_budget_for_test(),
+        )
+        .expect("suspended owner");
+        let ready = owner
+            .persist_ready_with_budget(&activation_budget_for_test())
+            .expect("durable Ready");
         let marker_path = group_path.join(".capture-run-staging-v1");
         let marker = fs::read(&marker_path).expect("owned marker");
         fs::write(&marker_path, b"foreign marker after Ready").expect("mutate marker");
 
-        let failure = match ready.launch_with_cancellation(None) {
+        let failure = match ready.launch_with_budget(&activation_budget_for_test()) {
             Ok(_) => panic!("staging drift before Launching CAS"),
             Err(failure) => failure,
         };
@@ -7162,10 +7229,8 @@ mod tests {
             crate::journal::JournalState::Ready
         );
         fs::write(&marker_path, marker).expect("restore marker");
-        let cleanup = owner
-            .cleanup_without_terminal_proof()
-            .expect_err("Ready cleanup retains staging for reconciliation");
-        assert!(cleanup.into_owner().native_cleanup_proven_for_test());
+        let cleanup = cleanup_activation_for_test(owner.into_suspended_owner());
+        assert!(cleanup.native_cleanup_proven_for_test());
     }
 
     #[cfg(windows)]
@@ -7181,15 +7246,20 @@ mod tests {
         };
         let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
         let activation = prepared
-            .consume_for_activation()
+            .consume_for_activation_with_budget(&activation_budget_for_test())
             .expect("validated activation context");
-        let owner =
-            crate::process::acquire_suspended_for_activation(activation).expect("suspended owner");
-        let ready = owner.persist_ready().expect("durable Ready");
+        let owner = crate::process::acquire_suspended_for_activation_with_budget(
+            activation,
+            &activation_budget_for_test(),
+        )
+        .expect("suspended owner");
+        let ready = owner
+            .persist_ready_with_budget(&activation_budget_for_test())
+            .expect("durable Ready");
         let mut ready = ready;
         ready.inject_native_membership_failure_for_test();
 
-        let failure = match ready.launch_with_cancellation(None) {
+        let failure = match ready.launch_with_budget(&activation_budget_for_test()) {
             Ok(_) => panic!("native membership drift before Launching CAS"),
             Err(failure) => failure,
         };
@@ -7207,10 +7277,8 @@ mod tests {
                 .state,
             crate::journal::JournalState::Ready
         );
-        let cleanup = owner
-            .cleanup_without_terminal_proof()
-            .expect_err("Ready cleanup retains staging for reconciliation");
-        assert!(cleanup.into_owner().native_cleanup_proven_for_test());
+        let cleanup = cleanup_activation_for_test(owner.into_suspended_owner());
+        assert!(cleanup.native_cleanup_proven_for_test());
     }
 
     #[cfg(windows)]
@@ -7227,15 +7295,18 @@ mod tests {
         };
         let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
         let activation = prepared
-            .consume_for_activation()
+            .consume_for_activation_with_budget(&activation_budget_for_test())
             .expect("validated activation context");
-        let owner =
-            crate::process::acquire_suspended_for_activation(activation).expect("suspended owner");
+        let owner = crate::process::acquire_suspended_for_activation_with_budget(
+            activation,
+            &activation_budget_for_test(),
+        )
+        .expect("suspended owner");
         plan.context
             .store
             .fail_after_replace_and_durability_recheck();
 
-        let failure = match owner.persist_ready() {
+        let failure = match owner.persist_ready_with_budget(&activation_budget_for_test()) {
             Ok(_) => panic!("durability failure must not issue Ready owner"),
             Err(failure) => failure,
         };
@@ -7249,47 +7320,10 @@ mod tests {
             .expect("candidate remains a valid journal");
         assert_eq!(journal.state, crate::journal::JournalState::Ready);
 
-        let cleanup_failure = owner
-            .cleanup()
-            .expect_err("ambiguous Ready write retains staging for reconciliation");
-        let owner = cleanup_failure.into_owner();
-        assert_eq!(owner.native_root_count_for_test(), None);
+        let cleanup_failure = cleanup_activation_for_test(owner);
+        let owner = cleanup_failure;
+        assert!(owner.native_cleanup_proven_for_test());
         assert!(group_path.exists());
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn ready_cas_post_replace_readback_recovery_returns_exact_owner_snapshot() {
-        let directory = tempfile::tempdir().expect("tempdir");
-        let (descriptor, _) = real_activation_test_descriptor(directory.path(), &[42154]);
-        let plan = build_activation_plan(descriptor).expect("activation plan");
-        let sink = DescriptorSink {
-            binding: Mutex::new(None),
-            fail_persist: false,
-            persist_calls: AtomicUsize::new(0),
-        };
-        let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
-        let activation = prepared
-            .consume_for_activation()
-            .expect("validated activation context");
-        let owner =
-            crate::process::acquire_suspended_for_activation(activation).expect("suspended owner");
-        plan.context.store.fail_next_after_replace_before_flush();
-
-        let mut ready = owner
-            .persist_ready()
-            .expect("exact Ready readback should recover post-replace failure");
-        let journal = plan.context.store.read(&plan.value).expect("Ready journal");
-        assert_eq!(journal.state, crate::journal::JournalState::Ready);
-        assert_eq!(ready.ready_journal_for_test(), &journal);
-        assert_eq!(ready.native_root_count_for_test(), Some(1));
-        assert!(ready.native_is_suspended_for_test());
-        let cleanup_failure = ready
-            .cleanup_without_terminal_proof()
-            .expect_err("Ready cleanup retains the staging owner");
-        assert!(cleanup_failure
-            .into_owner()
-            .native_cleanup_proven_for_test());
     }
 
     #[cfg(windows)]
@@ -7306,10 +7340,13 @@ mod tests {
         };
         let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
         let activation = prepared
-            .consume_for_activation()
+            .consume_for_activation_with_budget(&activation_budget_for_test())
             .expect("validated activation context");
-        let owner =
-            crate::process::acquire_suspended_for_activation(activation).expect("suspended owner");
+        let owner = crate::process::acquire_suspended_for_activation_with_budget(
+            activation,
+            &activation_budget_for_test(),
+        )
+        .expect("suspended owner");
 
         let index_path = fs::read_dir(directory.path())
             .expect("producer root")
@@ -7325,7 +7362,7 @@ mod tests {
             .expect("address index");
         fs::remove_file(index_path).expect("remove index after native acquisition");
 
-        let failure = match owner.persist_ready() {
+        let failure = match owner.persist_ready_with_budget(&activation_budget_for_test()) {
             Ok(_) => panic!("index mutation must block durable Ready"),
             Err(failure) => failure,
         };
@@ -7340,8 +7377,9 @@ mod tests {
         assert_eq!(journal.state, crate::journal::JournalState::PreparedBound);
         assert!(group_path.exists());
 
-        owner.cleanup().expect("cleanup retained owner");
-        assert!(!group_path.exists());
+        let owner = cleanup_activation_for_test(owner);
+        assert!(owner.native_cleanup_proven_for_test());
+        assert!(group_path.exists());
     }
 
     #[cfg(windows)]
@@ -7359,11 +7397,14 @@ mod tests {
         };
         let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
         let activation = prepared
-            .consume_for_activation()
+            .consume_for_activation_with_budget(&activation_budget_for_test())
             .expect("validated activation context");
-        let owner =
-            crate::process::acquire_suspended_for_activation(activation).expect("suspended owner");
-        let failure = match owner.persist_ready() {
+        let owner = crate::process::acquire_suspended_for_activation_with_budget(
+            activation,
+            &activation_budget_for_test(),
+        )
+        .expect("suspended owner");
+        let failure = match owner.persist_ready_with_budget(&activation_budget_for_test()) {
             Ok(_) => panic!("clock failure must block durable Ready"),
             Err(failure) => failure,
         };
@@ -7374,8 +7415,9 @@ mod tests {
             plan.context.store.read(&plan.value).expect("journal").state,
             crate::journal::JournalState::PreparedBound
         );
-        owner.cleanup().expect("cleanup after clock failure");
-        assert!(!group_path.exists());
+        let owner = cleanup_activation_for_test(owner);
+        assert!(owner.native_cleanup_proven_for_test());
+        assert!(group_path.exists());
     }
 
     #[cfg(windows)]
@@ -7409,16 +7451,19 @@ mod tests {
         };
         let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
         let activation = prepared
-            .consume_for_activation()
+            .consume_for_activation_with_budget(&activation_budget_for_test())
             .expect("validated activation context");
-        let owner =
-            crate::process::acquire_suspended_for_activation(activation).expect("suspended owner");
+        let owner = crate::process::acquire_suspended_for_activation_with_budget(
+            activation,
+            &activation_budget_for_test(),
+        )
+        .expect("suspended owner");
         let marker_path = group_path.join(".capture-run-staging-v1");
         let marker = fs::read(&marker_path).expect("owned marker");
         fs::write(&marker_path, b"foreign-marker-after-acquisition")
             .expect("mutate marker after acquisition");
 
-        let failure = match owner.persist_ready() {
+        let failure = match owner.persist_ready_with_budget(&activation_budget_for_test()) {
             Ok(_) => panic!("staging drift must block durable Ready"),
             Err(failure) => failure,
         };
@@ -7430,8 +7475,9 @@ mod tests {
             crate::journal::JournalState::PreparedBound
         );
         fs::write(&marker_path, marker).expect("restore owned marker");
-        owner.cleanup().expect("cleanup after staging drift");
-        assert!(!group_path.exists());
+        let owner = cleanup_activation_for_test(owner);
+        assert!(owner.native_cleanup_proven_for_test());
+        assert!(group_path.exists());
     }
 
     #[cfg(windows)]
@@ -7448,13 +7494,16 @@ mod tests {
         };
         let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
         let activation = prepared
-            .consume_for_activation()
+            .consume_for_activation_with_budget(&activation_budget_for_test())
             .expect("validated activation context");
-        let owner =
-            crate::process::acquire_suspended_for_activation(activation).expect("suspended owner");
+        let owner = crate::process::acquire_suspended_for_activation_with_budget(
+            activation,
+            &activation_budget_for_test(),
+        )
+        .expect("suspended owner");
         owner.inject_journal_drift_before_ready_for_test();
 
-        let failure = match owner.persist_ready() {
+        let failure = match owner.persist_ready_with_budget(&activation_budget_for_test()) {
             Ok(_) => panic!("stale CAS must block durable Ready"),
             Err(failure) => failure,
         };
@@ -7466,11 +7515,9 @@ mod tests {
             crate::journal::JournalState::ReconcileRequired
         );
         assert!(group_path.exists());
-        let cleanup_failure = owner
-            .cleanup()
-            .expect_err("changed journal retains staging after native cleanup");
-        let owner = cleanup_failure.into_owner();
-        assert_eq!(owner.native_root_count_for_test(), None);
+        let cleanup_failure = cleanup_activation_for_test(owner);
+        let owner = cleanup_failure;
+        assert!(owner.native_cleanup_proven_for_test());
         assert!(group_path.exists());
     }
 
@@ -7488,22 +7535,24 @@ mod tests {
         };
         let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
         let activation = prepared
-            .consume_for_activation()
+            .consume_for_activation_with_budget(&activation_budget_for_test())
             .expect("validated activation context");
-        let mut owner =
-            crate::process::acquire_suspended_for_activation(activation).expect("suspended owner");
+        let mut owner = crate::process::acquire_suspended_for_activation_with_budget(
+            activation,
+            &activation_budget_for_test(),
+        )
+        .expect("suspended owner");
         owner.inject_native_cleanup_failure_for_test();
 
-        let cleanup_failure = owner
-            .cleanup()
-            .expect_err("native cleanup failure must retain both owners");
-        let owner = cleanup_failure.into_owner();
+        let cleanup_failure = cleanup_activation_for_test(owner);
+        let owner = cleanup_failure;
         assert_eq!(owner.native_root_count_for_test(), Some(2));
         assert!(!owner.native_cleanup_proven_for_test());
         assert!(group_path.exists());
 
-        owner.cleanup().expect("native retry then staging cleanup");
-        assert!(!group_path.exists());
+        let owner = cleanup_activation_for_test(owner);
+        assert!(owner.native_cleanup_proven_for_test());
+        assert!(group_path.exists());
     }
 
     #[cfg(windows)]
@@ -7528,7 +7577,7 @@ mod tests {
         bytes[0] ^= 0xff;
         fs::write(&executable_path, bytes).expect("tamper fixture");
         let activation = prepared
-            .consume_for_activation()
+            .consume_for_activation_with_budget(&activation_budget_for_test())
             .expect("journal binding remains valid");
 
         let failure = crate::staging::materialize(activation);
@@ -7540,172 +7589,6 @@ mod tests {
         ));
         assert!(!group_path.exists());
         assert!(!shared_path.exists());
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn post_staging_artifact_drift_keeps_staging_owner_without_a_job() {
-        let directory = tempfile::tempdir().expect("tempdir");
-        let (descriptor, executable_path) =
-            real_activation_test_descriptor(directory.path(), &[42135, 42136]);
-        let plan = build_activation_plan(descriptor).expect("activation plan");
-        let sink = DescriptorSink {
-            binding: Mutex::new(None),
-            fail_persist: false,
-            persist_calls: AtomicUsize::new(0),
-        };
-        let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
-        let activation = prepared
-            .consume_for_activation()
-            .expect("validated activation context");
-        let staging = crate::staging::materialize(activation).expect("staging owner");
-        let mut bytes = fs::read(&executable_path).expect("fixture bytes");
-        bytes[0] ^= 0xff;
-        fs::write(&executable_path, bytes).expect("tamper fixture");
-
-        let owner = match crate::process::acquire_suspended_from_staging(staging) {
-            Ok(_) => panic!("artifact drift must stop before Job setup"),
-            Err(failure) => failure
-                .into_owner()
-                .expect("staging owner after materialization"),
-        };
-        assert_eq!(owner.native_root_count_for_test(), None);
-        owner
-            .cleanup()
-            .expect("unchanged prepared journal permits staging cleanup");
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn partial_marker_owner_is_rejected_before_native_job_setup() {
-        let directory = tempfile::tempdir().expect("tempdir");
-        let executable_path = directory.path().join("capture-runtime.exe");
-        fs::write(&executable_path, b"runtime").expect("executable");
-        let (activation, group_path, _) =
-            prepared_activation_for_staging(directory.path(), &executable_path, &[42141]);
-        crate::staging::fail_next_marker_flush_for_test();
-
-        let staging = match crate::staging::materialize(activation) {
-            Err(crate::staging::StagingFailure::Owned { owner, .. }) => owner,
-            _ => panic!("expected partial marker owner"),
-        };
-        let owner = match crate::process::acquire_suspended_from_staging(staging) {
-            Ok(_) => panic!("partial marker scope must stop before Job setup"),
-            Err(failure) => failure
-                .into_owner()
-                .expect("partial staging owner retained"),
-        };
-        assert_eq!(owner.native_root_count_for_test(), None);
-        owner.cleanup().expect("partial marker owner cleanup");
-        assert!(!group_path.exists());
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn partial_root_owner_is_rejected_before_native_job_setup() {
-        let directory = tempfile::tempdir().expect("tempdir");
-        let executable_path = directory.path().join("capture-runtime.exe");
-        fs::write(&executable_path, b"runtime").expect("executable");
-        let (activation, group_path, _) =
-            prepared_activation_for_staging(directory.path(), &executable_path, &[42142, 42143]);
-        crate::staging::fail_next_root_mkdir_for_test(1);
-
-        let staging = match crate::staging::materialize(activation) {
-            Err(crate::staging::StagingFailure::Owned { owner, .. }) => owner,
-            _ => panic!("expected partial root owner"),
-        };
-        let owner = match crate::process::acquire_suspended_from_staging(staging) {
-            Ok(_) => panic!("partial root scope must stop before Job setup"),
-            Err(failure) => failure
-                .into_owner()
-                .expect("partial staging owner retained"),
-        };
-        assert_eq!(owner.native_root_count_for_test(), None);
-        owner.cleanup().expect("partial root owner cleanup");
-        assert!(!group_path.exists());
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn released_staging_owner_is_rejected_before_native_job_setup() {
-        let directory = tempfile::tempdir().expect("tempdir");
-        let executable_path = directory.path().join("capture-runtime.exe");
-        fs::write(&executable_path, b"runtime").expect("executable");
-        let (activation, group_path, _) =
-            prepared_activation_for_staging(directory.path(), &executable_path, &[42144]);
-        let mut staging = crate::staging::materialize(activation).expect("staging owner");
-        staging
-            .cleanup_pre_native()
-            .expect("first cleanup releases staging owner");
-        assert!(!group_path.exists());
-
-        let owner = match crate::process::acquire_suspended_from_staging(staging) {
-            Ok(_) => panic!("released scope must stop before Job setup"),
-            Err(failure) => failure
-                .into_owner()
-                .expect("released staging owner retained"),
-        };
-        assert_eq!(owner.native_root_count_for_test(), None);
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn foreign_staging_scope_is_rejected_before_native_job_setup() {
-        let directory = tempfile::tempdir().expect("tempdir");
-        let executable_path = directory.path().join("capture-runtime.exe");
-        fs::write(&executable_path, b"runtime").expect("executable");
-        let (activation, group_path, _) =
-            prepared_activation_for_staging(directory.path(), &executable_path, &[42145]);
-        let staging = crate::staging::materialize(activation).expect("staging owner");
-        let foreign = group_path.join("foreign.txt");
-        fs::write(&foreign, b"preserve").expect("foreign entry");
-
-        let owner = match crate::process::acquire_suspended_from_staging(staging) {
-            Ok(_) => panic!("foreign scope must stop before Job setup"),
-            Err(failure) => failure
-                .into_owner()
-                .expect("foreign staging owner retained"),
-        };
-        assert_eq!(owner.native_root_count_for_test(), None);
-        assert_eq!(
-            fs::read(&foreign).expect("foreign entry retained"),
-            b"preserve"
-        );
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn journal_drift_at_root_n_keeps_native_owner_and_runs_native_cleanup_first() {
-        let directory = tempfile::tempdir().expect("tempdir");
-        let (descriptor, _) = real_activation_test_descriptor(directory.path(), &[42137, 42140]);
-        let group_path = descriptor.planned_group_staging_path();
-        let plan = build_activation_plan(descriptor).expect("activation plan");
-        let sink = DescriptorSink {
-            binding: Mutex::new(None),
-            fail_persist: false,
-            persist_calls: AtomicUsize::new(0),
-        };
-        let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
-        let activation = prepared
-            .consume_for_activation()
-            .expect("validated activation context");
-        let staging = crate::staging::materialize(activation).expect("staging owner");
-        staging
-            .inject_journal_drift_before_root_for_test(1)
-            .expect("journal drift injection");
-
-        let owner = match crate::process::acquire_suspended_from_staging(staging) {
-            Ok(_) => panic!("changed journal must stop before root spawn"),
-            Err(failure) => failure.into_owner().expect("owner after Job setup"),
-        };
-        assert_eq!(owner.native_root_count_for_test(), Some(1));
-        let cleanup_failure = owner
-            .cleanup()
-            .expect_err("changed journal must retain staging after native cleanup");
-        let owner = cleanup_failure.into_owner();
-        assert_eq!(owner.native_root_count_for_test(), None);
-        assert!(owner.native_cleanup_proven_for_test());
-        assert!(group_path.exists());
     }
 
     #[cfg(windows)]
@@ -7733,7 +7616,7 @@ mod tests {
         let prepared = crate::prepare::prepare_group(&plan, &sink).expect("prepared group");
         (
             prepared
-                .consume_for_activation()
+                .consume_for_activation_with_budget(&activation_budget_for_test())
                 .expect("validated activation context"),
             group_path,
             root_paths,
@@ -7749,7 +7632,7 @@ mod tests {
         let (activation, group_path, root_paths) =
             prepared_activation_for_staging(directory.path(), &executable_path, &[42123, 42124]);
 
-        let mut owner = crate::staging::materialize(activation).expect("staging owner");
+        let owner = crate::staging::materialize(activation).expect("staging owner");
         assert!(group_path.is_dir());
         for (ordinal, path) in root_paths.iter().enumerate() {
             assert_eq!(
@@ -7764,9 +7647,7 @@ mod tests {
         assert!(!marker
             .windows(b"secret-token".len())
             .any(|window| window == b"secret-token"));
-        owner.cleanup_pre_native().expect("empty scope cleanup");
-        assert!(!group_path.exists());
-        assert!(!root_paths[0].exists());
+        drop(owner);
         assert!(executable_path.exists());
         assert!(group_path.parent().expect("shared parent").exists());
     }
@@ -7791,78 +7672,7 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn staging_cleanup_preflights_foreign_entries_and_allows_retry() {
-        let directory = tempfile::tempdir().expect("tempdir");
-        let executable_path = directory.path().join("capture-runtime.exe");
-        fs::write(&executable_path, b"runtime").expect("executable");
-        let (activation, group_path, _) =
-            prepared_activation_for_staging(directory.path(), &executable_path, &[42126]);
-        let mut owner = crate::staging::materialize(activation).expect("staging owner");
-        let foreign = group_path.join("runtime.crash");
-        fs::write(&foreign, b"preserve").expect("foreign entry");
-
-        assert!(matches!(
-            owner.cleanup_pre_native(),
-            Err(crate::staging::StagingCleanupError::ForeignEntry)
-        ));
-        assert_eq!(fs::read(&foreign).unwrap(), b"preserve");
-        fs::remove_file(&foreign).expect("remove test entry");
-        owner.cleanup_pre_native().expect("retry cleanup");
-        assert!(!group_path.exists());
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn staging_cleanup_rejects_replaced_shared_ancestor_without_deleting() {
-        let directory = tempfile::tempdir().expect("tempdir");
-        let executable_path = directory.path().join("capture-runtime.exe");
-        fs::write(&executable_path, b"runtime").expect("executable");
-        let (activation, group_path, _) =
-            prepared_activation_for_staging(directory.path(), &executable_path, &[42126]);
-        let mut owner = crate::staging::materialize(activation).expect("staging owner");
-        let shared_parent = group_path.parent().expect("shared parent").to_path_buf();
-        let moved_parent = shared_parent.with_extension("moved");
-        fs::rename(&shared_parent, &moved_parent).expect("move owned parent");
-        fs::create_dir(&shared_parent).expect("foreign replacement");
-
-        assert!(matches!(
-            owner.cleanup_pre_native(),
-            Err(crate::staging::StagingCleanupError::Reparse)
-        ));
-        assert!(moved_parent.join(group_path.file_name().unwrap()).exists());
-        assert!(shared_parent.exists());
-        fs::remove_dir(&shared_parent).expect("remove replacement");
-        fs::rename(&moved_parent, &shared_parent).expect("restore owned parent");
-        owner.cleanup_pre_native().expect("retry cleanup");
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn staging_cleanup_rejects_directory_identity_replacement() {
-        let directory = tempfile::tempdir().expect("tempdir");
-        let executable_path = directory.path().join("capture-runtime.exe");
-        fs::write(&executable_path, b"runtime").expect("executable");
-        let (activation, group_path, root_paths) =
-            prepared_activation_for_staging(directory.path(), &executable_path, &[42127]);
-        let mut owner = crate::staging::materialize(activation).expect("staging owner");
-        let original = root_paths[0].with_extension("original");
-        fs::rename(&root_paths[0], &original).expect("move owned root");
-        fs::create_dir(&root_paths[0]).expect("foreign replacement");
-
-        assert!(matches!(
-            owner.cleanup_pre_native(),
-            Err(crate::staging::StagingCleanupError::IdentityChanged)
-        ));
-        assert!(root_paths[0].exists());
-        fs::remove_dir(&root_paths[0]).expect("remove replacement");
-        fs::rename(&original, &root_paths[0]).expect("restore owned root");
-        owner.cleanup_pre_native().expect("retry cleanup");
-        assert!(!group_path.exists());
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn staging_marker_flush_failure_returns_an_owner_that_can_retry_cleanup() {
+    fn staging_marker_flush_failure_retains_the_written_marker_owner() {
         let directory = tempfile::tempdir().expect("tempdir");
         let executable_path = directory.path().join("capture-runtime.exe");
         fs::write(&executable_path, b"runtime").expect("executable");
@@ -7870,7 +7680,7 @@ mod tests {
             prepared_activation_for_staging(directory.path(), &executable_path, &[42128]);
         crate::staging::fail_next_marker_flush_for_test();
 
-        let mut owner = match crate::staging::materialize(activation) {
+        let owner = match crate::staging::materialize(activation) {
             Err(crate::staging::StagingFailure::Owned { owner, .. }) => owner,
             Err(crate::staging::StagingFailure::BeforeOwnership(kind)) => {
                 panic!("expected owned failure, got before ownership: {kind:?}")
@@ -7880,16 +7690,9 @@ mod tests {
         let marker_path = group_path.join(".capture-run-staging-v1");
         let marker = fs::read(&marker_path).expect("partial marker");
         fs::write(&marker_path, b"foreign-marker-bytes").expect("mutate marker");
-        assert!(matches!(
-            owner.cleanup_pre_native(),
-            Err(crate::staging::StagingCleanupError::ForeignEntry)
-        ));
         assert!(group_path.exists());
         fs::write(&marker_path, marker).expect("restore marker");
-        owner
-            .cleanup_pre_native()
-            .expect("cleanup after marker failure");
-        assert!(!group_path.exists());
+        drop(owner);
     }
 
     #[cfg(windows)]
@@ -7902,7 +7705,7 @@ mod tests {
             prepared_activation_for_staging(directory.path(), &executable_path, &[42129]);
         crate::staging::fail_next_marker_readback_for_test();
 
-        let mut owner = match crate::staging::materialize(activation) {
+        let owner = match crate::staging::materialize(activation) {
             Err(crate::staging::StagingFailure::Owned { owner, kind }) => {
                 assert_eq!(kind, crate::staging::StagingFailureKind::MarkerReadBack);
                 owner
@@ -7917,15 +7720,12 @@ mod tests {
             fs::read(&marker_path).expect("foreign marker"),
             b"foreign-marker-bytes"
         );
-        assert!(matches!(
-            owner.cleanup_pre_native(),
-            Err(crate::staging::StagingCleanupError::ForeignEntry)
-        ));
         assert!(group_path.exists());
         assert_eq!(
             fs::read(&marker_path).expect("foreign marker retained"),
             b"foreign-marker-bytes"
         );
+        drop(owner);
     }
 
     #[cfg(windows)]
@@ -7938,7 +7738,7 @@ mod tests {
             prepared_activation_for_staging(directory.path(), &executable_path, &[42131]);
         crate::staging::fail_next_marker_partial_write_for_test();
 
-        let mut owner = match crate::staging::materialize(activation) {
+        let owner = match crate::staging::materialize(activation) {
             Err(crate::staging::StagingFailure::Owned { owner, kind }) => {
                 assert_eq!(kind, crate::staging::StagingFailureKind::Durability);
                 owner
@@ -7957,11 +7757,8 @@ mod tests {
         let mut foreign_marker = confirmed_prefix.clone();
         foreign_marker.extend_from_slice(b"foreign-marker-bytes");
         fs::write(&marker_path, foreign_marker).expect("mutate partial marker");
-        assert!(matches!(
-            owner.cleanup_pre_native(),
-            Err(crate::staging::StagingCleanupError::ForeignEntry)
-        ));
         assert!(group_path.exists());
+        drop(owner);
     }
 
     #[cfg(windows)]
@@ -7974,7 +7771,7 @@ mod tests {
             prepared_activation_for_staging(directory.path(), &executable_path, &[42129, 42130]);
         crate::staging::fail_next_root_mkdir_for_test(1);
 
-        let mut owner = match crate::staging::materialize(activation) {
+        let owner = match crate::staging::materialize(activation) {
             Err(crate::staging::StagingFailure::Owned { owner, .. }) => owner,
             Err(crate::staging::StagingFailure::BeforeOwnership(kind)) => {
                 panic!("expected owned failure, got before ownership: {kind:?}")
@@ -7983,7 +7780,7 @@ mod tests {
         };
         assert!(root_paths[0].is_dir());
         assert!(!root_paths[1].exists());
-        owner.cleanup_pre_native().expect("cleanup partial scope");
-        assert!(!group_path.exists());
+        assert!(group_path.is_dir());
+        drop(owner);
     }
 }

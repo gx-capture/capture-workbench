@@ -5,8 +5,6 @@
 //! to the private journal codec; the context and the future native launch
 //! inputs are never serialized.
 
-#![allow(dead_code)]
-
 use std::{
     collections::{HashMap, HashSet},
     path::PathBuf,
@@ -104,6 +102,7 @@ impl PreparePlanContext {
     /// Resolves a producer reference to the already-bound store and its
     /// group/root slot. The store owns the session/plan-derived journal
     /// address; the reference never becomes a user-controlled path.
+    #[cfg(test)]
     pub(crate) fn resolve_address(
         &self,
         reference: &ReconcileRef,
@@ -157,6 +156,7 @@ impl PrepareClock for SystemPrepareClock {
 /// Builds the producer-only opaque plan. External plan construction is a
 /// later integration slice; this private builder is the only foundation
 /// constructor in the current crate.
+#[cfg(test)]
 pub(crate) fn build_immutable_group_plan(
     draft: PreparePlanDraft,
     producer_root: PathBuf,
@@ -192,6 +192,7 @@ pub(crate) fn build_immutable_group_plan_from_activation_with_clock(
     )
 }
 
+#[cfg(test)]
 fn build_immutable_group_plan_with_clock(
     draft: PreparePlanDraft,
     producer_root: PathBuf,
@@ -405,6 +406,7 @@ impl ReconcileRef {
         Self(value)
     }
 
+    #[cfg(test)]
     fn fresh() -> Result<Self, ()> {
         Ok(Self(random_hex(16)?))
     }
@@ -857,9 +859,7 @@ pub(crate) struct ValidatedActivationContext {
     pub(crate) binding: JournalBinding,
     pub(crate) expected: CasSnapshot,
     pub(crate) expected_journal: RuntimeSessionJournalV1,
-    pub(crate) verified: VerifiedGroupBinding,
     pub(crate) descriptor: Arc<crate::launcher::FrozenActivationDescriptor>,
-    permit: ActivationPermitV1,
 }
 
 impl ValidatedActivationContext {
@@ -928,12 +928,6 @@ impl PreparedGroup {
     #[cfg(windows)]
     pub(crate) fn cancellation_arc(&self) -> Arc<AtomicBool> {
         Arc::clone(&self.cancellation)
-    }
-
-    /// Consume a prepared group only after revalidating its immutable
-    /// activation identity and the exact durable prepared-bound snapshot.
-    pub(crate) fn consume_for_activation(self) -> Result<ValidatedActivationContext, PrepareError> {
-        self.consume_for_activation_inner()
     }
 
     /// Budget-aware private handoff used by the activation owner.  The scope
@@ -1030,9 +1024,7 @@ impl PreparedGroup {
             binding,
             expected,
             expected_journal: reopened.journal,
-            verified,
             descriptor,
-            permit,
         })
     }
 }
@@ -1223,8 +1215,9 @@ fn map_store_error(error: JournalStoreError) -> PrepareError {
         | JournalStoreError::LockTimeout
         | JournalStoreError::Io(_)
         | JournalStoreError::Durability(_)
-        | JournalStoreError::AtomicReplace
-        | JournalStoreError::Injected(_) => PrepareError::JournalUnavailable,
+        | JournalStoreError::AtomicReplace => PrepareError::JournalUnavailable,
+        #[cfg(test)]
+        JournalStoreError::Injected(_) => PrepareError::JournalUnavailable,
         JournalStoreError::AdmissionCancelled | JournalStoreError::AdmissionDeadline => {
             PrepareError::JournalUnavailable
         }
@@ -1812,7 +1805,7 @@ mod tests {
         let prepared = OwnedRuntimeSession::prepare_group(&plan, &sink).expect("prepare");
 
         assert!(matches!(
-            prepared.consume_for_activation(),
+            prepared.consume_for_activation_inner(),
             Err(PrepareError::InvalidPlan)
         ));
         assert_eq!(
