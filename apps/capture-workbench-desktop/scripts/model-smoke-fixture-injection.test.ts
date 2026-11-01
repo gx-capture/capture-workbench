@@ -21,7 +21,7 @@ test('model smoke fixture command is absent unless model-smoke-app-data is compi
   );
   assert.match(
     commands,
-    /#\[cfg\(feature = "model-smoke-app-data"\)\]\s*#\[tauri::command\]\s*pub async fn model_smoke_import_fixture/u,
+    /#\[cfg\(feature = "model-smoke-app-data"\)\]\s*#\[tauri::command\]\s*pub(?:\(crate\))? async fn model_smoke_import_fixture/u,
   );
   assert.match(
     app,

@@ -432,7 +432,7 @@ test('renderer IPC never receives the sidecar bearer token', async () => {
       'utf8',
     ),
   ]);
-  assert.doesNotMatch(commands, /pub fn backend_config/u);
+  assert.doesNotMatch(commands, /pub(?:\(crate\))? fn backend_config/u);
   assert.doesNotMatch(desktopHost, /backend_config|bearerToken|Authorization/u);
   assert.match(commands, /runtime_create_capture/u);
   assert.match(desktopHost, /runtime_create_capture/u);
@@ -466,9 +466,9 @@ test('blocking native I/O is isolated behind async Tauri commands', async () => 
     'runtime_get_result',
     'runtime_delete_capture',
   ]) {
-    assert.match(commands, new RegExp(`pub async fn ${command}`, 'u'));
+    assert.match(commands, new RegExp(`pub(?:\\(crate\\))? async fn ${command}`, 'u'));
   }
-  assert.match(commands, /pub fn desktop_runtime_status/u);
+  assert.match(commands, /pub(?:\(crate\))? fn desktop_runtime_status/u);
 });
 
 test('native source import keeps renderer IPC path-only and responses path-free', async () => {
@@ -518,7 +518,7 @@ test('native source import keeps renderer IPC path-only and responses path-free'
     /arrayBuffer\(|Array\.from\(|Uint8Array|FileList/u,
   );
   const summary = contracts.match(
-    /pub struct LibraryDocumentSummary \{(?<body>[\s\S]*?)\r?\n\}/u,
+    /pub(?:\(crate\))? struct LibraryDocumentSummary \{(?<body>[\s\S]*?)\r?\n\}/u,
   )?.groups?.['body'];
   assert.ok(summary);
   assert.doesNotMatch(summary, /path|bytes/u);

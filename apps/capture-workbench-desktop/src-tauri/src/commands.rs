@@ -143,7 +143,7 @@ pub(crate) async fn library_import_source(
 
 #[cfg(feature = "model-smoke-app-data")]
 #[tauri::command]
-pub async fn model_smoke_import_fixture(
+pub(crate) async fn model_smoke_import_fixture(
     library: tauri::State<'_, Arc<LibraryStore>>,
     fixtures: tauri::State<'_, ModelSmokeFixtureRegistry>,
     request: ModelSmokeImportFixtureRequest,
