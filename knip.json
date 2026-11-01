@@ -1,0 +1,49 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": [
+    "apps/capture-workbench/src/main.ts!",
+    "apps/*/eslint.config.mjs",
+    "apps/*/playwright*.config.ts",
+    "apps/capture-workbench-desktop/scripts/progressive-audio-oracle.ts",
+    "packages/capture-runtime/scripts/*.mjs",
+    "packages/capture-runtime/tests/e2e/**/*.e2e.ts",
+    "packages/capture-runtime/tests/unit/*.test.ts",
+    "tools/verify-main-ci.ts",
+    "tools/clean-angular-consumer-smoke.ts",
+    "**/*.test.ts",
+    "sheriff.config.ts"
+  ],
+  "project": [
+    "apps/capture-workbench/src/**/*.ts!",
+    "apps/capture-workbench/*.mjs",
+    "apps/capture-workbench/tests/**/*.ts",
+    "apps/capture-workbench-desktop/**/*.{ts,mts,mjs}",
+    "apps/capture-workbench-e2e/**/*.{ts,mts}",
+    "packages/capture-runtime/**/*.{ts,mts,mjs}",
+    "packages/capture-acceptance-contract/**/*.ts",
+    "packages/capture-runtime-client-java/**/*.{ts,mjs}",
+    "tools/**/*.{ts,mts,mjs}",
+    "!**/*.{spec,test,e2e}.ts!",
+    "!**/testing/**!"
+  ],
+  "ignore": [
+    "**/src-tauri/target/**",
+    "**/*.d.ts"
+  ],
+  "ignoreExportsUsedInFile": true,
+  "ignoreDependencies": [
+    "@angular/cli",
+    "@angular/language-service",
+    "@nx/.*",
+    "@tauri-apps/cli"
+  ],
+  "ignoreBinaries": [
+    "netstat",
+    "taskkill.exe",
+    "tasklist.exe",
+    "uv"
+  ],
+  "ignoreUnresolved": [
+    "^\\*$"
+  ]
+}
