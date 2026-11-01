@@ -8,6 +8,7 @@ import type {
   RuntimeInstallation,
   RuntimeModelInstallation,
   RuntimeModelOption,
+  RuntimeRequirement,
 } from '@gx-capture/capture-workbench-ui';
 import { App } from './app';
 import {
@@ -401,6 +402,8 @@ function workspaceStub(selected: unknown = null, modelInstallation: RuntimeModel
     speechGpu: signal<{ cudaAvailable: boolean; preferGpu: boolean } | null>(null),
     canChangeCompute: signal(true),
     setPreferGpu: vi.fn(),
+    speechPack: signal<readonly RuntimeRequirement[]>([]),
+    installSpeechUnit: vi.fn(),
     sampleSources: signal(new Map<string, string>()),
     loadSpeakerSamples: vi.fn(),
     isRecording: (mediaType: string) =>
@@ -466,6 +469,97 @@ function cpuFallback(): OcrComputePreflight {
     noticeCode: 'ocr_cpu_fallback',
   };
 }
+
+function speechUnit(
+  requirementId: 'speech-recognition' | 'speaker-diarization',
+  status: RuntimeRequirement['status'],
+): RuntimeRequirement {
+  return {
+    requirementId,
+    kind: requirementId === 'speech-recognition' ? 'transcription' : 'speaker-identification',
+    displayName: requirementId === 'speech-recognition' ? 'Speech recognition' : 'Speaker identification',
+    status,
+    requiredFor: ['audio'],
+    installStrategy: 'runtime-catalog',
+    optional: true,
+  };
+}
+
+it('describes each optional speech unit and downloads only the one the user picks', async () => {
+  const store = workspaceStub();
+  store.speechPack.set([
+    speechUnit('speech-recognition', 'installable'),
+    speechUnit('speaker-diarization', 'installable'),
+  ]);
+  await TestBed.configureTestingModule({
+    imports: [App],
+    providers: [provideNoopAnimations(), { provide: DesktopWorkspaceStore, useValue: store }],
+  }).compileComponents();
+  const fixture = TestBed.createComponent(App);
+  fixture.detectChanges();
+  const root = fixture.nativeElement as HTMLElement;
+
+  const pack = root.querySelector('[data-testid="speech-pack"]') as HTMLDetailsElement;
+  expect(pack.open).toBe(true);
+  expect(pack.textContent).toContain('台灣語音包（選用）');
+  const units = [...root.querySelectorAll<HTMLElement>('[data-testid="speech-pack-unit"]')];
+  expect(units.map((unit) => unit.dataset['requirementId'])).toEqual([
+    'speech-recognition',
+    'speaker-diarization',
+  ]);
+  const speech = units[0].textContent ?? '';
+  expect(speech).toContain('TEA-ASR 1.1');
+  expect(speech).toContain('台灣華語');
+  expect(speech).toContain('10.5 GB');
+  expect(speech).toContain('MIT');
+  expect(units[1].textContent).toContain('最多分出 8 位說話者');
+
+  (units[1].querySelector('[data-testid="speech-pack-install"]') as HTMLButtonElement).click();
+  expect(store.installSpeechUnit).toHaveBeenCalledExactlyOnceWith('speaker-diarization');
+});
+
+it('folds the speech pack away once both units are installed', async () => {
+  const store = workspaceStub();
+  store.speechPack.set([
+    speechUnit('speech-recognition', 'ready'),
+    speechUnit('speaker-diarization', 'ready'),
+  ]);
+  await TestBed.configureTestingModule({
+    imports: [App],
+    providers: [provideNoopAnimations(), { provide: DesktopWorkspaceStore, useValue: store }],
+  }).compileComponents();
+  const fixture = TestBed.createComponent(App);
+  fixture.detectChanges();
+  const root = fixture.nativeElement as HTMLElement;
+
+  expect((root.querySelector('[data-testid="speech-pack"]') as HTMLDetailsElement).open).toBe(false);
+  expect(root.querySelector('[data-testid="speech-pack-install"]')).toBeNull();
+});
+
+it('shows a speech unit download in the pack while documents stay usable', async () => {
+  const store = workspaceStub();
+  store.speechPack.set([speechUnit('speech-recognition', 'installable')]);
+  store.activeInstallation.set({
+    installationId: 'installation-2',
+    requirementId: 'speech-recognition',
+    status: 'running',
+    progress: 0.5,
+    createdAt: '2026-11-01T00:00:00Z',
+    updatedAt: '2026-11-01T00:00:00Z',
+  });
+  store.installationPercent.set(50);
+  await TestBed.configureTestingModule({
+    imports: [App],
+    providers: [provideNoopAnimations(), { provide: DesktopWorkspaceStore, useValue: store }],
+  }).compileComponents();
+  const fixture = TestBed.createComponent(App);
+  fixture.detectChanges();
+  const root = fixture.nativeElement as HTMLElement;
+
+  const progress = root.querySelector('[data-testid="speech-pack-progress"]') as HTMLElement;
+  expect(progress.textContent).toContain('50%');
+  expect(root.querySelector('[data-testid="runtime-setup"]')).toBeNull();
+});
 
 it('offers the GPU setting for speech recognition only when a CUDA driver is present', async () => {
   const store = workspaceStub();

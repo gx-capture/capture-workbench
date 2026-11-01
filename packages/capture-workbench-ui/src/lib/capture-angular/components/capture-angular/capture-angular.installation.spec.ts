@@ -152,6 +152,42 @@ describe('CaptureWorkbenchComponent', () => {
     expect(client.startInstallation).not.toHaveBeenCalled();
   });
 
+  it('tells the user what the speech model is before it is installed', async () => {
+    inputSource.client.set(
+      fakeClient({
+        getReady: vi.fn(() => of({ ...READY, ready: false })),
+        getRequirements: vi.fn(() =>
+          of([
+            {
+              requirementId: 'speech-recognition',
+              kind: 'transcription',
+              displayName: 'Speech recognition',
+              status: 'installable',
+              requiredFor: ['audio'],
+              installStrategy: 'runtime-catalog',
+              optional: true,
+            } satisfies RuntimeRequirement,
+          ]),
+        ),
+      }),
+    );
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const row = captureWorkbenchRoot(fixture).querySelector(
+      '[data-testid="capture-runtime-requirement"][data-requirement-id="speech-recognition"]',
+    ) as HTMLElement;
+    expect(row.querySelector('strong')?.textContent).toContain(
+      '台灣語音轉文字（TEA-ASR 1.1）',
+    );
+    const guide = row.querySelector('[data-testid="capture-unit-guide"]')
+      ?.textContent;
+    expect(guide).toContain('台灣華語');
+    expect(guide).toContain('10.5 GB');
+    expect(guide).toContain('錄音不會上傳');
+  });
+
   it('installs OCR before Whisper even when the runtime lists dependencies in reverse order', async () => {
     const requirements: readonly RuntimeRequirement[] = [
       {

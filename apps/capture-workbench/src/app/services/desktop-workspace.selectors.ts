@@ -28,6 +28,24 @@ export const INSTALLATION_ORDER = new Map<CaptureRequirementId, number>([
   ['ollama-runtime', 4],
 ]);
 
+/**
+ * The optional Taiwan speech pack: speech-to-text first, then speaker
+ * identification, which only adds to a transcript. The user downloads either
+ * one when they want it; neither is needed for documents.
+ */
+export const SPEECH_PACK_UNITS: readonly CaptureRequirementId[] = [
+  'speech-recognition',
+  'speaker-diarization',
+];
+
+/** The speech pack units this runtime reports, in pack order. */
+export function selectSpeechPack(
+  requirements: readonly RuntimeRequirement[],
+): readonly RuntimeRequirement[] {
+  return SPEECH_PACK_UNITS.flatMap((requirementId) =>
+    requirements.filter((requirement) => requirement.requirementId === requirementId));
+}
+
 /** Converts model installation progress to the percentage shown by the UI. */
 export function modelInstallationPercent(
   installation: RuntimeModelInstallation | null,

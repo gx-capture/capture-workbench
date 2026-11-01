@@ -158,6 +158,15 @@ p {
   font-size: 0.8rem;
 }
 
+.requirements .unit-guide {
+  display: grid;
+  gap: 0.2rem;
+  margin-top: 0.25rem;
+  color: var(--capture-muted);
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
 .requirements .requirement-guidance,
 .requirement-guidance {
   margin-top: 0.2rem;

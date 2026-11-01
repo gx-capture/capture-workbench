@@ -1,4 +1,50 @@
-import { captureResultText, installationPercent } from './desktop-workspace.selectors';
+import type { RuntimeRequirement } from '@gx-capture/capture-workbench-ui';
+import {
+  captureResultText,
+  installationPercent,
+  selectCoreMissing,
+  selectSpeechPack,
+} from './desktop-workspace.selectors';
+
+function requirement(
+  requirementId: RuntimeRequirement['requirementId'],
+  status: RuntimeRequirement['status'] = 'installable',
+): RuntimeRequirement {
+  return {
+    requirementId,
+    kind: requirementId,
+    displayName: requirementId,
+    status,
+    requiredFor: [],
+    installStrategy: 'runtime-catalog',
+    optional: requirementId !== 'windowsml-ocr',
+  };
+}
+
+describe('speech pack', () => {
+  const requirements = [
+    requirement('vertical-japanese-reader'),
+    requirement('speaker-diarization'),
+    requirement('windowsml-ocr', 'ready'),
+    requirement('speech-recognition'),
+  ];
+
+  it('lists speech-to-text before speaker identification and nothing else', () => {
+    expect(selectSpeechPack(requirements).map((item) => item.requirementId)).toEqual([
+      'speech-recognition',
+      'speaker-diarization',
+    ]);
+  });
+
+  it('never holds up documents until the user asks for a speech unit', () => {
+    expect(selectCoreMissing(requirements, new Set())).toEqual([]);
+    expect(
+      selectCoreMissing(requirements, new Set(['speech-recognition'])).map(
+        (item) => item.requirementId,
+      ),
+    ).toEqual(['speech-recognition']);
+  });
+});
 
 describe('installationPercent', () => {
   it('rounds and clamps an installation progress', () => {

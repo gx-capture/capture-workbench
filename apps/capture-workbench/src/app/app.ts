@@ -2,6 +2,7 @@ import {
   ChangeDetectionStrategy,
   Component,
   ElementRef,
+  computed,
   inject,
   viewChild,
 } from '@angular/core';
@@ -12,7 +13,10 @@ import { MatFormField, MatLabel } from '@angular/material/form-field';
 import { MatInput } from '@angular/material/input';
 import { MatOption, MatSelect } from '@angular/material/select';
 import { MatSpinner } from '@angular/material/progress-spinner';
-import { CaptureRuntimeComputeStatusComponent } from '@gx-capture/capture-workbench-ui';
+import {
+  CAPTURE_UNIT_GUIDES,
+  CaptureRuntimeComputeStatusComponent,
+} from '@gx-capture/capture-workbench-ui';
 import {
   DESKTOP_LOCALES,
   DESKTOP_MESSAGES,
@@ -48,6 +52,11 @@ export class App {
   protected readonly locale = desktopLocale;
   protected readonly locales = DESKTOP_LOCALES;
   protected readonly formatTime = formatRecordingTime;
+  /** What each optional unit's model does, in the language in use. */
+  protected readonly guides = computed(() => CAPTURE_UNIT_GUIDES[this.locale()]);
+  /** Folds the speech pack away once everything in it is installed. */
+  protected readonly speechPackReady = computed(() =>
+    this.store.speechPack().every((unit) => unit.status === 'ready'));
   private readonly recordingPlayer =
     viewChild<ElementRef<HTMLMediaElement>>('recordingPlayer');
   private pendingPlayFromMs: number | null = null;
