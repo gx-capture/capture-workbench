@@ -61,7 +61,6 @@ use crate::prepare::ActivationCancelHandle;
 
 #[cfg(all(test, windows))]
 thread_local! {
-    static CANCEL_AFTER_LAUNCHING_CAS: Cell<bool> = const { Cell::new(false) };
     static CANCEL_AFTER_READY_HELPER: Cell<bool> = const { Cell::new(false) };
     static CANCEL_AFTER_RESUME_ALL: Cell<bool> = const { Cell::new(false) };
     static CANCEL_BEFORE_RESUME_ROOT: Cell<Option<usize>> = const { Cell::new(None) };
@@ -1793,13 +1792,6 @@ impl ReadySuspendedActivationOwner {
         if let Some(context) = ready.owner.failure_context.as_mut() {
             context.candidate = launching_journal.clone();
             context.disposition = CasDisposition::Committed;
-        }
-
-        #[cfg(all(test, windows))]
-        if CANCEL_AFTER_LAUNCHING_CAS.with(|cancel| cancel.replace(false)) {
-            if let Some(cancellation) = cancellation {
-                cancellation.store(true, Ordering::Release);
-            }
         }
 
         let mut launching = LaunchingActivationOwner {
@@ -4204,11 +4196,6 @@ fn digest_field(hasher: &mut Sha256, value: &[u8]) {
 #[cfg(windows)]
 fn cancellation_requested(cancellation: Option<&AtomicBool>) -> bool {
     cancellation.is_some_and(|flag| flag.load(Ordering::Acquire))
-}
-
-#[cfg(all(test, windows))]
-pub(crate) fn inject_cancellation_after_launching_cas_for_test() {
-    CANCEL_AFTER_LAUNCHING_CAS.with(|cancel| cancel.set(true));
 }
 
 #[cfg(all(test, windows))]

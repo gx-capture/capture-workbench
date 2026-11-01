@@ -6968,7 +6968,11 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn launching_cancellation_after_cas_retains_launching_owner_without_resume() {
+    // Budgeted launch checks cancellation inside the Launching CAS step, before a
+    // LaunchingActivationOwner exists. The durable journal is already Launching, so the
+    // retained owner is the Ready one: still suspended, never resumed, and cleanable.
+    // (The deleted launch_with_cancellation path returned a Launching owner instead.)
+    fn launching_cancellation_after_cas_keeps_journal_launching_without_resume() {
         let directory = tempfile::tempdir().expect("tempdir");
         let (descriptor, _) = real_activation_test_descriptor(directory.path(), &[42159]);
         let plan = build_activation_plan(descriptor).expect("activation plan");
@@ -6990,7 +6994,7 @@ mod tests {
             .persist_ready_with_budget(&activation_budget_for_test())
             .expect("durable Ready");
         let cancellation = Arc::new(AtomicBool::new(false));
-        crate::process::inject_cancellation_after_launching_cas_for_test();
+        crate::staging::cancel_after_launching_cas_for_test();
 
         let failure = match ready.launch_with_budget(&crate::journal_store::ActivationBudget::new(
             std::time::Instant::now() + std::time::Duration::from_secs(60),
@@ -6999,10 +7003,10 @@ mod tests {
             Ok(_) => panic!("post-CAS cancellation"),
             Err(failure) => failure,
         };
-        let owner = match failure.into_owner().expect("Launching owner retained") {
-            crate::process::ActivationLaunchOwner::Launching(owner) => owner,
-            crate::process::ActivationLaunchOwner::Ready(_) => {
-                panic!("post-CAS cancellation must retain the Launching snapshot")
+        let mut owner = match failure.into_owner().expect("owner retained") {
+            crate::process::ActivationLaunchOwner::Ready(owner) => owner,
+            crate::process::ActivationLaunchOwner::Launching(_) => {
+                panic!("budgeted post-CAS cancellation fails before a Launching owner exists")
             }
         };
         let journal = plan
@@ -7011,7 +7015,10 @@ mod tests {
             .read(&plan.value)
             .expect("Launching journal");
         assert_eq!(journal.state, crate::journal::JournalState::Launching);
-        assert_eq!(owner.launching_journal_for_test(), &journal);
+        assert!(
+            owner.native_is_suspended_for_test(),
+            "post-CAS cancellation must not resume the native group"
+        );
         let cleanup = cleanup_activation_for_test(owner.into_suspended_owner());
         assert!(cleanup.native_cleanup_proven_for_test());
     }
