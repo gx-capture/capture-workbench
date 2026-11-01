@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Clarification (2026-11-01): the 0.4.2 launcher durability and verified staging release apply to explicit live R3 use; restart reconciliation is not wired, and desktop, cert-prep and LAW still use legacy launch paths with native Windows Job containment (`KILL_ON_JOB_CLOSE`).
+
 ### Compatibility policy
 
 Capture Workbench follows an explicit 0.x compatibility policy:
