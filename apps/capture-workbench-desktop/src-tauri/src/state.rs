@@ -453,6 +453,9 @@ impl DesktopState {
             })
     }
 
+    /// Only the acceptance-only `desktop_runtime_process_probe` command and the
+    /// tests read the process id, so it is compiled only for them.
+    #[cfg(any(test, feature = "acceptance-app-data"))]
     pub(crate) fn runtime_process_id(&self) -> Option<u32> {
         self.inner.runtime.lock().ok().and_then(|runtime| {
             runtime

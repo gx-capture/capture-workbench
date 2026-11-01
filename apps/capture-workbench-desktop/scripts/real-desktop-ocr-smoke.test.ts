@@ -1587,7 +1587,7 @@ test('real desktop teardown delegates ownership to native Tauri seams', async ()
   assert.doesNotMatch(source, /taskkill(?:\.exe)?/u);
   assert.doesNotMatch(source, /process\.kill/u);
   assert.doesNotMatch(source, /terminateOwnedTree/u);
-  assert.match(commandsSource, /pub fn desktop_acceptance_close_window\(window: tauri::Window\)/u);
+  assert.match(commandsSource, /pub(?:\(crate\))? fn desktop_acceptance_close_window\(window: tauri::Window\)/u);
   assert.match(commandsSource, /GetCurrentProcess/u);
   assert.match(commandsSource, /TerminateProcess/u);
   assert.match(host, /commands::desktop_acceptance_close_window/u);

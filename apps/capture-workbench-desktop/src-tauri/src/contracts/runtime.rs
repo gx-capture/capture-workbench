@@ -2,21 +2,21 @@ use serde::Deserialize;
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RuntimeInstallationStartInput {
+pub(crate) struct RuntimeInstallationStartInput {
     pub client_request_id: String,
     pub requirement_id: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RuntimeModelInstallationStartInput {
+pub(crate) struct RuntimeModelInstallationStartInput {
     pub client_request_id: String,
     pub option_id: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RuntimeCreateCaptureInput {
+pub(crate) struct RuntimeCreateCaptureInput {
     pub document_id: String,
     pub client_request_id: String,
     #[serde(default)]
@@ -25,7 +25,7 @@ pub struct RuntimeCreateCaptureInput {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RuntimeStreamingCaptureInput {
+pub(crate) struct RuntimeStreamingCaptureInput {
     pub document_id: String,
     pub client_request_id: String,
     pub structuring_mode: String,
@@ -36,13 +36,13 @@ pub struct RuntimeStreamingCaptureInput {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RuntimeStreamingEventsInput {
+pub(crate) struct RuntimeStreamingEventsInput {
     pub id: String,
     pub last_event_id: Option<u64>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RuntimeIdInput {
+pub(crate) struct RuntimeIdInput {
     pub id: String,
 }
