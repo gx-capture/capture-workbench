@@ -71,6 +71,16 @@ export interface DesktopMessages {
   readonly verticalReaderMissed: string;
   readonly offerInstall: string;
   readonly identifySpeakers: string;
+  readonly speechPackTitle: string;
+  readonly speechPackHint: string;
+  readonly agreeAndDownload: string;
+  readonly unitReady: string;
+  readonly unitUnavailable: string;
+  readonly guideSummary: string;
+  readonly guideLanguages: string;
+  readonly guideHardware: string;
+  readonly guideDownload: string;
+  readonly guideLicense: string;
   readonly useGpuForSpeech: string;
   readonly speakers: string;
   readonly speakersHint: string;
@@ -162,11 +172,21 @@ const ZH_TW: DesktopMessages = {
   startTimeout: (detail) => `啟動逾時：${detail}`,
   canceled: '處理已取消。',
   desktopOnly: 'Capture Workbench 僅能在 Windows 桌面 App 中使用。',
-  whisperNeeded: '選取的音訊需要額外安裝 TEA-ASR。',
+  whisperNeeded: '處理錄音需要先下載台灣語音轉文字（TEA-ASR 1.1）。',
   speakerUnitNeeded: '辨識說話者需要額外安裝一個元件。',
   verticalReaderMissed: '這份文件有直書日文的頁面。安裝直書日文閱讀器後重新處理，這些頁面會讀得更準。',
   offerInstall: '安裝',
   identifySpeakers: '辨識音訊中的說話者',
+  speechPackTitle: '台灣語音包（選用）',
+  speechPackHint: '處理錄音時才需要，PDF 與圖片不受影響。看完說明，依需要下載。',
+  agreeAndDownload: '同意並下載',
+  unitReady: '已安裝',
+  unitUnavailable: '無法下載',
+  guideSummary: '特性',
+  guideLanguages: '適用語言',
+  guideHardware: '硬體',
+  guideDownload: '下載量',
+  guideLicense: '授權',
   useGpuForSpeech: '用 GPU 加速語音辨識',
   speakers: '說話者',
   speakersHint: '聽一段聲音後填上名字，匯出的文字會改用這個名字。',
@@ -280,11 +300,21 @@ const EN: DesktopMessages = {
   startTimeout: (detail) => `Start-up timed out: ${detail}`,
   canceled: 'Processing was canceled.',
   desktopOnly: 'Capture Workbench runs only in the Windows desktop app.',
-  whisperNeeded: 'Audio needs TEA-ASR installed first.',
+  whisperNeeded: 'Recordings need Taiwan speech-to-text (TEA-ASR 1.1) downloaded first.',
   speakerUnitNeeded: 'Telling speakers apart needs one more component installed.',
   verticalReaderMissed: 'This document has pages of vertical Japanese. Install the vertical Japanese reader and process it again to read them more accurately.',
   offerInstall: 'Install',
   identifySpeakers: 'Tell speakers apart in audio',
+  speechPackTitle: 'Taiwan speech pack (optional)',
+  speechPackHint: 'Only recordings need it; PDFs and images work without it. Read about each part, then download what you want.',
+  agreeAndDownload: 'Agree and download',
+  unitReady: 'Installed',
+  unitUnavailable: 'Not downloadable',
+  guideSummary: 'What it does',
+  guideLanguages: 'Languages',
+  guideHardware: 'Hardware',
+  guideDownload: 'Download',
+  guideLicense: 'License',
   useGpuForSpeech: 'Use the GPU for speech recognition',
   speakers: 'Speakers',
   speakersHint: 'Listen to a sample, then type a name. Exported text will use it.',

@@ -130,7 +130,7 @@ class SystemRuntimeInstaller:
                 "transcription",
                 "Speech recognition",
                 ["audio"],
-                False,
+                True,
             ),
             (
                 DIARIZATION_REQUIREMENT_ID,

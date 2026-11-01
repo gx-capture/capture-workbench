@@ -35,6 +35,7 @@ import {
   modelSelectionRequired as selectModelSelectionRequired,
   selectCoreMissing,
   selectInstallableCoreRequirements,
+  selectSpeechPack,
   captureResultText,
   stageLabel as selectStageLabel,
   statusLabel as selectStatusLabel,
@@ -131,6 +132,7 @@ export class DesktopWorkspaceStore {
     selectCoreMissing(this.requirements(), this.requestedRequirements()));
   readonly installableCoreRequirements = computed(() =>
     selectInstallableCoreRequirements(this.requirements(), this.requestedRequirements()));
+  readonly speechPack = computed(() => selectSpeechPack(this.requirements()));
   readonly modelSelectionRequired = computed(
     () => selectModelSelectionRequired(this.modelOptions()),
   );
@@ -271,8 +273,21 @@ export class DesktopWorkspaceStore {
 
   /** Installs all currently available core requirements in deterministic order. */
   installCoreRequirements(): void {
+    this.installRequirements(this.installableCoreRequirements());
+  }
+
+  /** Downloads one speech pack unit the user chose after reading its guide. */
+  installSpeechUnit(requirementId: CaptureRequirementId): void {
+    this.installRequirements(
+      this.speechPack().filter(
+        (requirement) =>
+          requirement.requirementId === requirementId && requirement.status === 'installable',
+      ),
+    );
+  }
+
+  private installRequirements(installable: readonly RuntimeRequirement[]): void {
     if (!this.runtimeStarted() || this.installing()) return;
-    const installable = this.installableCoreRequirements();
     if (installable.length === 0) return;
     this.installation.installCoreRequirements$(installable).subscribe({
       complete: () => {

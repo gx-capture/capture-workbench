@@ -1,4 +1,5 @@
 import type { CaptureWorkbenchLabels } from '../../contracts';
+import { CAPTURE_UNIT_GUIDES, type CaptureUnitGuide } from './unit-guides';
 
 /** Languages the workbench ships text for. */
 export type CaptureWorkbenchLocale = 'zh-TW' | 'en';
@@ -48,6 +49,8 @@ export interface CaptureWorkbenchMessages {
   readonly rawText: string;
   readonly suggestedUnit: Readonly<Record<string, string | undefined>>;
   readonly installSuggestedUnit: string;
+  /** What each optional unit's model does, shown before it is downloaded. */
+  readonly unitGuide: Readonly<Record<string, CaptureUnitGuide | undefined>>;
   readonly speakersTitle: string;
   readonly speakersHint: string;
   readonly speakerNamePlaceholder: string;
@@ -100,6 +103,7 @@ const ZH_TW: CaptureWorkbenchMessages = {
       '這份文件有直書日文的頁面。安裝直書日文閱讀器後重新擷取，這些頁面會讀得更準。',
   },
   installSuggestedUnit: '安裝',
+  unitGuide: CAPTURE_UNIT_GUIDES['zh-TW'],
   speakersTitle: '說話者',
   speakersHint: '聽一段聲音後填上名字，逐字稿會改用這個名字。',
   speakerNamePlaceholder: '這位說話者的名字',
@@ -180,6 +184,7 @@ const EN: CaptureWorkbenchMessages = {
       'This document has pages of vertical Japanese. Install the vertical Japanese reader and capture again to read them more accurately.',
   },
   installSuggestedUnit: 'Install',
+  unitGuide: CAPTURE_UNIT_GUIDES.en,
   speakersTitle: 'Speakers',
   speakersHint:
     'Listen to a sample, then type a name. The transcript will use it.',
