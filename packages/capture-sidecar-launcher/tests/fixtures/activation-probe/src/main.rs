@@ -79,7 +79,6 @@ extern "system" {
         information: *mut Win32ByHandleFileInformation,
     ) -> i32;
 }
-#[cfg_attr(not(test), allow(dead_code))]
 const RUNTIME_READY_SCHEMA_SHA256: &str =
     "5452631ce9d8eea48851a819530d94920a39f41350d5575df0f8f97f82171774";
 

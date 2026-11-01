@@ -18,8 +18,8 @@ from capture_runtime.contract_set import (
 from capture_runtime.contracts import RawCapture
 from capture_runtime.release import (
     CAPTURE_DOCUMENT_SCHEMA_RELEASE_SHA256,
-    capture_document_schema_release_sha256,
 )
+from tests.support.schema_release import capture_document_schema_release_sha256
 
 ROOT = Path(__file__).resolve().parents[4]
 GENERATOR = ROOT / "packages" / "capture-runtime" / "scripts" / "generate_contracts.py"

@@ -23,20 +23,7 @@ import type {
 export type {
   AcceptanceScopeListenerObservation,
   AcceptanceScopeProbe,
-  AcceptanceScopeProbeAdapter,
-  AcceptanceScopeProbeFileAdapter,
-  AcceptanceScopeProbeFileStat,
-  AcceptanceScopeProbeOptions,
-  AcceptanceScopeProcessObservation,
   AcceptanceScopeSnapshot,
-  AcceptanceScopeProbeSpawnOptions,
-  AcceptanceScopeProbeSpawnResult,
-  WindowsAcceptanceScopeProbeAdapter,
-  WindowsAcceptanceScopeProbeFileAdapter,
-  WindowsAcceptanceScopeProbeFileStat,
-  WindowsAcceptanceScopeProbeOptions,
-  WindowsAcceptanceScopeProbeSpawnOptions,
-  WindowsAcceptanceScopeProbeSpawnResult,
 } from './windows-acceptance-scope-probe.ts';
 
 export {

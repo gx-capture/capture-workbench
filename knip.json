@@ -28,7 +28,8 @@
   ],
   "ignore": [
     "**/src-tauri/target/**",
-    "**/*.d.ts"
+    "**/*.d.ts",
+    "packages/*/src/**/testing/**"
   ],
   "ignoreExportsUsedInFile": true,
   "ignoreDependencies": [

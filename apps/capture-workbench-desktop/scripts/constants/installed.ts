@@ -6,12 +6,6 @@ export const UNINSTALL_REGISTRY_KEY =
   'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Capture Workbench';
 export const REGISTRY_VIEWS = ['64', '32'];
 
-export const EXPECTED_REQUIREMENT_IDS = [
-  'windowsml-ocr',
-  'speech-recognition',
-  'ollama-runtime',
-  'capture-ollama-model',
-];
 export const CAPTURE_BLOCK_TYPES = new Set([
   'heading',
   'paragraph',

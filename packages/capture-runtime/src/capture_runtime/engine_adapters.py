@@ -692,43 +692,6 @@ def normalize_paddle_results(
     )
 
 
-def _paddle_texts(results: Any) -> list[str]:
-    normalized = normalize_paddle_results(results, raster_width=None, raster_height=None)
-    return [region.text for region in normalized.regions]
-
-
-def _paddle_regions(
-    results: Any,
-    *,
-    raster_width: int | None,
-    raster_height: int | None,
-) -> list[OcrRegion]:
-    """Compatibility wrapper around the canonical Paddle normalizer."""
-
-    return list(
-        normalize_paddle_results(
-            results,
-            raster_width=raster_width,
-            raster_height=raster_height,
-        ).regions
-    )
-
-
-def _bound_box(
-    box: tuple[int, int, int, int] | None,
-    raster_width: int | None,
-    raster_height: int | None,
-) -> tuple[int, int, int, int] | None:
-    if box is None or raster_width is None or raster_height is None:
-        return box
-    x, y, width, height = box
-    x = min(max(0, x), max(0, raster_width - 1))
-    y = min(max(0, y), max(0, raster_height - 1))
-    right = min(raster_width, max(x + 1, x + width))
-    bottom = min(raster_height, max(y + 1, y + height))
-    return x, y, max(1, right - x), max(1, bottom - y)
-
-
 def _png_dimensions(image_png: bytes) -> tuple[int, int] | tuple[None, None]:
     try:
         from PIL import Image

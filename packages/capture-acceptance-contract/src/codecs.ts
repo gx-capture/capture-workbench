@@ -1016,10 +1016,6 @@ function decodeCanonical<T>(input: string | Uint8Array, decoder: Decoder<T>): T 
   return decoder(parseJson(input).value);
 }
 
-export function encodeCanonicalRecord(value: unknown): string {
-  return canonicalJson(value);
-}
-
 export function decodeProducerChildScope(
   input: string | Uint8Array,
   expectedBinding?: ExpectedBindingContext,

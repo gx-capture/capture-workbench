@@ -151,10 +151,6 @@ class ProgressiveAudioSession:
         return self._terminal and self._finished and bool(self._segments)
 
     @property
-    def partial_available(self) -> bool:
-        return self._engine is not None and bool(self._segments)
-
-    @property
     def extraction_engine(self) -> CaptureEngine | None:
         return self._engine
 
@@ -190,25 +186,6 @@ class ProgressiveAudioSession:
             self._buffered_bytes = 0
         for window in windows:
             self._consume(window)
-        return self.drain_events()
-
-    def tick(self) -> list[ProgressiveSessionEvent]:
-        if self._terminal:
-            return self.drain_events()
-        now = self.clock.now()
-        elapsed_heartbeat = _elapsed_ms(self._last_heartbeat_at, now)
-        if elapsed_heartbeat >= self.heartbeat_ms:
-            self._pending_events.append(
-                ProgressiveSessionEvent(StreamingEventType.HEARTBEAT, "extracting")
-            )
-            self._last_heartbeat_at = now
-        if _elapsed_ms(self._last_progress_at, now) >= self.stall_timeout_ms:
-            self._fail(
-                code="progressive_stall",
-                message="Progressive audio extraction stopped producing observable progress.",
-                retryable=True,
-                stage="watchdog",
-            )
         return self.drain_events()
 
     def consume_window(self, window: DecodedAudioWindow) -> list[ProgressiveSessionEvent]:

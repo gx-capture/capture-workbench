@@ -17,10 +17,10 @@ from capture_runtime.worker_process import (
     WORKER_CANCEL_GRACE_SECONDS,
     WorkerCancelledError,
     WorkerExecutionError,
-    WorkerProcess,
     _stage_suffix,
     _subprocess_path,
 )
+from tests.support.worker_process import WorkerProcess
 
 WORKER = Path(__file__).parents[1] / "fixtures" / "deterministic_worker.py"
 SERVER_WORKER = Path(__file__).parents[1] / "fixtures" / "server_worker.py"

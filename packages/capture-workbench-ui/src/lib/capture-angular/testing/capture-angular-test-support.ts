@@ -13,7 +13,7 @@ import type {
   CaptureStructuringProvider,
   CaptureWorkbenchConfig,
   CaptureWorkbenchInputSource,
-} from '../../../contracts';
+} from '../../contracts';
 import { of } from 'rxjs';
 
 export const READY: RuntimeReady = {

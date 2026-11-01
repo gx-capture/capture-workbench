@@ -1032,14 +1032,6 @@ class _OcrProjectionBuilder:
             retryable=False,
         )
 
-    def require_success(self, projection: CaptureOcrProjectionV3) -> CaptureOcrProjectionV3:
-        if projection.failure is not None:
-            raise OcrExtractionFailure(
-                failure=projection.failure,
-                projection=projection,
-            )
-        return projection
-
     def worker_failure(
         self,
         *,

@@ -135,10 +135,6 @@ def capture_document_schema_release_bytes() -> bytes:
     return (serialized.replace("\n", "\r\n") + "\r\n").encode("utf-8")
 
 
-def capture_document_schema_release_sha256() -> str:
-    return hashlib.sha256(capture_document_schema_release_bytes()).hexdigest()
-
-
 def write_capture_document_schema(output: Path) -> Path:
     schema_bytes = capture_document_schema_release_bytes()
     digest = hashlib.sha256(schema_bytes).hexdigest()
