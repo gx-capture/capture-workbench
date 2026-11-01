@@ -154,6 +154,12 @@ jobs:
           pnpm nx run capture-tools:release-manifest-test
           pnpm nx run capture-tools:release-index-test
 
+      # knip (TypeScript) and vulture (Python) dead-code ratchet. --ci also
+      # fails when a baseline entry is gone, so the baseline only shrinks.
+      - name: Dead-code gate
+        shell: pwsh
+        run: node tools/dead-code-gate.ts --ci
+
   # Published packages: TypeScript, Python, and Java clients, the sidecar
   # launcher crate, and the Angular Web Component package.
   packages:
