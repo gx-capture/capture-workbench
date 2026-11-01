@@ -10,8 +10,19 @@ release procedure. This file is the only executable Phase 2 checklist.
 Capture Runtime 0.4.2 was published on 2026-09-27 and promoted to stable
 through the [release runbook](../GUIDES/release-runbook.md): Route A, then the
 full route. The D-numbered sections below keep the implementation checklist;
-each completed item names its evidence. The only open item is D2.5.1 (usable
-iGPU selection when the dGPU is positively unavailable).
+each completed item names its evidence. D2.4 remains partial; Option W covers
+restart reconciliation and host migration. D2.5.1 (usable iGPU selection when
+the dGPU is positively unavailable) also remains open.
+
+### Option W
+
+- [ ] **Option W: wire producer-owned restart reconciliation, then move hosts
+  (desktop, cert-prep, LAW) to the R3 one-root lifecycle.** See the
+  [SPEC status banner](../SPECS/capture-runtime-042-p2-hardening.md#implementation-status-2026-11-01)
+  and [DECISION status banner](../DECISIONS/capture-runtime-042-p2-hardening.md#implementation-status-2026-11-01).
+  This later reliability epic must wire the shared 60 s budget, third-failure
+  manual review, authorized recovery, and proof-backed stale-record
+  terminalization/staging release before migrating the legacy hosts.
 
 ## D0 - DocsCommitted
 
@@ -168,8 +179,9 @@ diagnostic and is not D4.
 
 ### D2.4 OwnedRuntimeSession convergence slice
 
-- [x] **Converge the producer lifecycle owner and preserve its exports.** Owner
-  paths/symbols:
+- [ ] **Converge the producer lifecycle owner and preserve its exports.**
+  Partial: live R3 journal CAS is implemented; restart reconciliation and host
+  migration remain [Option W](#option-w). Owner paths/symbols:
   `packages/capture-sidecar-launcher/src/process.rs:OwnedRuntimeSession`,
   `OwnedRuntimeSessionState`, `RuntimeTerminationProof`,
   `RuntimeCleanupError`, `ReconcileRefSink`, `ActivationPermit`,
@@ -212,20 +224,25 @@ diagnostic and is not D4.
   resume, or listener-readiness failure closes the entire Job, returns no
   `GroupLease`, and reconciles the whole group. The host cannot construct a
   permit, activate first, replay a prepared value, or activate one root. A
-  single-root convenience call is group size one and uses this same path; no
-  per-root activation exists. Reconciliation returns semantic cleanup and
-  `proofSha256`; no native identity crosses the seam. The live `GroupLease`
+  single-root convenience call is group size one and uses this same path
+  (target host path; migration pending — see status banner); no per-root
+  activation exists. Restart reconciliation returns semantic cleanup and
+  `proofSha256` (specified; not yet wired in production — see status banner);
+  no native identity crosses the seam. The live `GroupLease`
   carries a private one-use token invalidated on close, cancel, readiness
   failure, or drop; replay and a second close are rejected.
 
-  The producer journal graph is exhaustive:
+  The specified producer journal graph is exhaustive (transition foundation
+  implemented; restart/no-resource recovery has no production driver — see
+  status banner):
   `planned_unbound -> prepared_bound -> ready -> launching -> running ->
   closing -> terminal`, plus no-resource `planned_unbound -> terminal`,
   `planned_unbound -> reconcile-required`, every bound live state to
   `reconcile-required`, timed/failed reconcile attempts one and two back to
   `reconcile-required`, attempt three to `manual-review`, and explicit
   producer-authorized `manual-review -> reconcile-required`. A later complete
-  observe-only proof alone may move `reconcile-required -> terminal`.
+  observe-only proof alone may move `reconcile-required -> terminal`
+  (specified; not yet wired in production — see status banner).
   Every CAS guards state, `journalRevision`, attempt, recovery epoch, and the
   complete binding; journal revision/attempt increment together, while
   immutable group/root generations never change. Manual review never launches
@@ -238,7 +255,7 @@ diagnostic and is not D4.
   descendant escapes, baseline processes are killed, a multi-root close is
   partial, a sink persist/read-back/verify step is missing, a stale or forged
   prepared value activates, a partial resume or listener readiness failure
-  leaves a lease, or live `terminate_and_prove` does not produce terminal
+  leaves a lease, or live R3 `close` does not produce terminal
   proof. GREEN verification:
 
   ~~~powershell
@@ -270,7 +287,10 @@ diagnostic and is not D4.
   desktop coordinator would be required. Rollback: additive revert to the
   prior launcher and retain failed cleanup proof. Commit boundary:
   `feat(desktop): own runtime session lifecycle`.
-  Done: launcher lifecycle with `RuntimeSessionJournalV1` (2f232b9).
+  Partial: launcher lifecycle with `RuntimeSessionJournalV1` (2f232b9).
+  Live R3 Running/Closing/Terminal and activation-failure CAS commits are
+  implemented; restart reconciliation and desktop/cert-prep/LAW migration remain
+  [Option W](#option-w).
 
 ### D2.5 Acceptance evidence and measured baseline slice
 

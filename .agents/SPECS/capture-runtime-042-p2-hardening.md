@@ -4,7 +4,17 @@ Status: canonical Phase 2 design and acceptance policy. Capture Runtime 0.4.2
 was published on 2026-09-27 and promoted to stable through the
 [release runbook](../GUIDES/release-runbook.md); the
 [TODO](../TODOS/capture-runtime-042-p2-hardening.md) records the evidence for
-each completed item and the one open item (usable iGPU selection).
+each completed item and the open lifecycle and iGPU work.
+
+## Implementation status (2026-11-01)
+
+Live R3 journal CAS (Running/Closing/Terminal and activation-failure
+reconciliation) is implemented. Restart reconciliation (automatic attempts
+within 60 s, third-failure manual review, authorized recovery, and proof-backed
+stale-record terminalization or staging release) is specified but not wired
+into production. No host uses the R3 lifecycle yet: desktop, cert-prep and LAW
+launch via the legacy path with native Windows Job containment
+(`KILL_ON_JOB_CLOSE`). See [TODO: Option W](../TODOS/capture-runtime-042-p2-hardening.md#option-w).
 
 ## Purpose and non-goals
 
@@ -63,7 +73,8 @@ results and owns domain persistence only.
 
 Runtime/model caches are durable only where explicitly declared. Run-scoped
 staging, listeners, and owned processes are ephemeral and are reconciled by the
-producer. Tauri may request a semantic operation but never owns or mutates a
+producer (restart reconciliation specified; not yet wired in production — see
+status banner). Tauri may request a semantic operation but never owns or mutates a
 runtime journal or native Job.
 
 ## Repository-grounded discovery
@@ -494,14 +505,17 @@ resumes, listener readiness failure after partial resume, concurrent group
 activation with one CAS winner, and valid group-size-one/multi-root paths.
 
 Capture, Cert, and candidate journeys use the same group protocol with one
-root. The LAW journey may put Capture, Python, and Java roots in one
+root (target host path; migration pending — see status banner). The LAW journey
+may put Capture, Python, and Java roots in one
 producer-owned group. A `GroupLease` is an opaque, move-only, one-use semantic
 lease returned only after whole-group activation; no raw `Job`, process handle,
 PID, native error, child object, or activation permit crosses the seam.
 
 The hidden module owns one current unnamed no-breakaway Job configured with
 `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, root identity, readiness, listener
-bindings, descendants, journal/reconciler, bounded retry, and terminal proof.
+bindings, descendants, journal/reconciler, bounded retry, and terminal proof
+(restart reconciliation and retry specified; not yet wired in production — see
+status banner).
 It never uses a named Job takeover and never weakens close/crash cleanup.
 Dependencies are the existing native launcher/process adapter, the existing
 `SidecarLaunchSpec`/readiness adapter, and a deterministic native failure
@@ -531,18 +545,21 @@ Extend that owner rather than adding a desktop coordinator. `src/lib.rs` keeps
 the crate export boundary; `src/launcher.rs` adapts `SidecarLaunchSpec` and
 `LaunchedSidecar`; desktop `src/state.rs` and `src/launcher.rs` become
 semantic adapters. The current `spawn`/`id`/`try_wait` methods and PID-bearing
-proof are convergence surface, not a second public contract. A future
+proof are convergence surface, not a second target contract; the legacy public
+interfaces remain available and used pending host migration. A future
 implementation may retain an internal PID for native verification, but public
 proof and errors are opaque and privacy-safe.
 
-The R3 journal seam is addressable and observe-only after restart:
+The R3 journal seam is specified as addressable and observe-only after restart
+(not yet exported or wired in production — see status banner):
 `RuntimeSessionJournal::reconcile(ReconcileRef) -> ReconcileResult`. The
 producer allocates a distinct opaque `ReconcileRef` for every candidate or
 prior session; it is a journal index/address only, not a job, process, PID,
 path, or takeover lease. `ReconcileResult` contains semantic state, a
 sanitized cleanup result, and `proofSha256` when proof exists, never native
 identifiers. A restart observer may terminalize only the exact ref whose full
-absence/listener/staging proof is complete; present, reused, unqueryable, or
+absence/listener/staging proof is complete (specified; not yet wired in
+production — see status banner); present, reused, unqueryable, or
 ambiguous observations return `reconcile-required` and do not touch resources.
 Candidate and prior refs are always distinct. If `prior=null` (the first
 sequence item), `priorSessionRef` and `predecessorCleanupProofSha256` are both
@@ -723,11 +740,13 @@ observe-only code supplies the native evidence that justifies each proof.
 
 The cleanup policy is also fixed: one recovery epoch receives at most three
 identity-scoped automatic reconciliation attempts within a 60-second monotonic
-budget. A reconciliation attempt is one producer-observed timeout, failed
+budget (specified; not yet wired in production — see status banner). A
+reconciliation attempt is one producer-observed timeout, failed
 proof, or complete proof. With expected
 `{state: "reconcile-required", journalRevision: J, attempt: A, recoveryEpoch: E}`,
 the writer increments `attempt` and `journalRevision` together in the same CAS
-record. The immutable group/root generations and binding-attempt identity do
+record (transition foundation implemented; no production restart driver — see
+status banner). The immutable group/root generations and binding-attempt identity do
 not change. A complete observe-only proof may transition to `terminal` with
 `{attempt: A + 1, journalRevision: J + 1, recoveryEpoch: E}`. A timeout or failed
 proof may remain `reconcile-required` with the same binding while `A + 1 < 3`;
@@ -736,7 +755,8 @@ the third timeout or failed proof must transition to `manual-review` with
 is possible only on a later complete observe-only proof, never on timeout,
 failure, stale data, or a boolean-only claim. A timeout or third failed
 automatic attempt transitions to `manual-review`, remains promotion-blocked,
-and never pretends to be terminal or starts a replacement root. A terminal `proof` must
+and never pretends to be terminal or starts a replacement root (specified; not
+yet wired in production — see status banner). A terminal `proof` must
 contain `rootReaped`, `descendantsTerminated`, `listenersReleased`,
 `stagingReleased`, and the committed `proofGeneration`, all true and tied to
 the same session/root nonces. A boolean without matching identity evidence is
@@ -745,7 +765,8 @@ invalid proof.
 `manual-review` is a blocked nonterminal state. It has no automatic recovery
 and cannot transition directly to `terminal`, `launching`, `running`, or
 `closing`. Only an explicitly producer-authorized operator recovery may move
-it to `reconcile-required`: the recovery record must carry a fresh opaque
+it to `reconcile-required` (specified; not yet wired in production — see status
+banner): the recovery record must carry a fresh opaque
 `recoveryNonce`, a durable `recoveryAuthorizationDigest`, and expected
 `{state: "manual-review", journalRevision: J, attempt: 3, recoveryEpoch: E}`. That
 CAS increments `journalRevision` and `recoveryEpoch`, resets `attempt` to
@@ -782,11 +803,13 @@ port alone.
 
 While the producer process is alive, `OwnedRuntimeSession` keeps the private
 handle for the current unnamed no-breakaway Job, its in-memory membership
-proof, and the root/session nonces. Its `terminate_and_prove` path may close
+proof, and the root/session nonces. Its live R3 `close` path may close
 only that live session: it requests termination through the private Job handle,
 reaps the roots and descendants, checks each reserved listener identity and
 post-resume live-readiness identity, checks staging bindings, and commits
-terminal proof. `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` remains enabled for normal
+terminal proof. Legacy `terminate_and_prove` supplies native cleanup proof only;
+it does not commit R3 Terminal or release verified staging.
+`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` remains enabled for normal
 close, crash, and handle-loss cleanup; no named takeover or weakened cleanup
 path is permitted. A successful activation consumes the prepared value and
 returns one `GroupLease` carrying a private one-use live lease token. The token
@@ -795,9 +818,11 @@ replayed token or a second close cannot operate on the group.
 
 After a producer restart, the observer has only the committed journal. It has
 no Job handle, no live membership query, and no right to claim or adopt the old
-Job or any recorded nonce. Restart reconciliation is therefore observe-only.
+Job or any recorded nonce. Restart reconciliation is therefore observe-only
+(specified; not yet wired in production — see status banner).
 It may terminalize a stale record and remove only that record's exact
-run-scoped staging when, and only when, the journal has a trustworthy committed
+run-scoped staging (specified; not yet wired in production — see status banner)
+when, and only when, the journal has a trustworthy committed
 Job setup, every root's exact PID plus process-creation identity is absent (not
 reused and not unqueryable), every recorded listener is proven absent, and the
 staging binding resolves inside the same producer-owned run scope. It never
@@ -805,7 +830,8 @@ terminates a process during this observe-only path.
 
 If a PID is reused, present, or unqueryable; a listener is ambiguous; a root or
 staging identity mismatches; the Job setup was not durably committed; or any
-other binding is unknown, the whole session becomes `reconcile-required`, the
+other binding is unknown, the whole session becomes `reconcile-required`
+(specified; not yet wired in production — see status banner), the
 observer touches nothing, and promotion is blocked. No process-name, PID-only,
 or port-only kill is ever valid. For a multi-root group, all roots must satisfy
 the observe-only rule before the group may terminalize or its exact staging may
@@ -813,8 +839,9 @@ be removed; one ambiguous root blocks the entire group.
 
 ### Atomic transitions and reconciler
 
-Only the producer writer may transition a journal. The exhaustive transition
-graph is:
+Only the producer writer may transition a journal. The exhaustive specified
+transition graph is (restart and no-resource recovery transitions are not yet
+wired in production — see status banner):
 
 ```text
 planned_unbound -> prepared_bound -> ready -> launching -> running -> closing -> terminal
@@ -834,10 +861,12 @@ tuple. The writer rejects any mismatch
 and never merges concurrent updates. A later `reconcile-required -> terminal`
 requires a complete, identity-bound observe-only proof, increments `attempt`
 and `journalRevision` in the same record, and succeeds only when the expected
-CAS matches. A timed or failed attempt increments `attempt` and
+CAS matches (transition foundation implemented; no production restart driver —
+see status banner). A timed or failed attempt increments `attempt` and
 `journalRevision` atomically; attempts one and two
 remain `reconcile-required`, while attempt three takes the guarded
-`reconcile-required -> manual-review` transition. No automatic transition from
+`reconcile-required -> manual-review` transition (specified; not yet wired in
+production — see status banner). No automatic transition from
 `manual-review` is allowed. A direct `planned_unbound -> terminal` is valid only with
 durable proof that no resource could ever have existed: Job setup was not
 committed, no root was resumed or launched, no listener was bound, no staging
@@ -851,21 +880,25 @@ the platform adapter. A torn or unknown-revision write is a hard failure;
 the previous valid journal is retained. There is no best-effort terminal
 state.
 
-On a live producer close, the reconciler reads only producer-owned journals and
+On a live R3 close, the producer reads only producer-owned journals and
 validates schema, producer, session nonce, state, group/root generations, the
 complete group/root ref tuple, private Job handle/membership, root identity, listener binding nonce, and run-scoped
 staging nonce before terminating the current group. On producer startup after a
 restart it reads only committed journals and performs the observe-only checks
-above; it does not reconstruct, claim, or query Job membership. Exact PID plus
+above (specified; not yet wired in production — see status banner); it does not
+reconstruct, claim, or query Job membership. Exact PID plus
 creation identity being absent, listener absence, and an exact staging binding
-may permit stale-record terminalization and cleanup of that staging only. PID
+may permit stale-record terminalization and cleanup of that staging only
+(specified; not yet wired in production — see status banner). PID
 reuse, a present or unqueryable PID, missing creation identity, root/staging
 mismatch, Job-setup ambiguity, listener ambiguity, access denial, or malformed
-journal sets `reconcile-required` and leaves process/listener/staging in place.
+journal sets `reconcile-required` and leaves process/listener/staging in place
+(specified; not yet wired in production — see status banner).
 It never kills by executable name, PID alone, port alone, parent PID alone, or
 directory name.
 
-Cleanup retry is bounded and identity-scoped. The producer does not launch a
+Restart cleanup retry is bounded and identity-scoped (specified; not yet wired
+in production — see status banner). The producer does not launch a
 replacement root while an old root is unresolved. A terminal proof requires
 the root reaped, all owned descendants absent, exact listeners released, and
 run-scoped staging removed; durable runtime/model caches are retained. The
