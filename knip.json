@@ -28,6 +28,7 @@
   ],
   "ignore": [
     "**/src-tauri/target/**",
+    "**/.build/**",
     "**/*.d.ts",
     "packages/*/src/**/testing/**"
   ],
