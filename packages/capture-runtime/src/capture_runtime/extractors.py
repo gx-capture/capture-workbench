@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import math
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -12,6 +11,15 @@ from io import BytesIO
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Protocol
 
+from capture_runtime._pdf_source import (
+    PdfPageSelectionError,
+    checkpoint,
+    pdf_page_count,
+    pdf_page_manifest,
+    pdf_page_raster_dimensions,
+    render_pdf_page,
+    selected_pdf_pages,
+)
 from capture_runtime.clock import Clock
 from capture_runtime.config import ExtractionRuntimeConfig
 from capture_runtime.constants import (
@@ -87,13 +95,6 @@ class OcrSourcePreflightError(RuntimeError):
 
     def __init__(self) -> None:
         super().__init__("OCR source preflight failed.")
-
-
-class PdfPageSelectionError(ValueError):
-    """The requested PDF pages are not all in the source, or are too many to read.
-
-    The message names only page numbers and counts, so it is safe to report.
-    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -880,73 +881,19 @@ class StandaloneRuntimeCaptureExtractor:
             cancel_event,
             selected_page_numbers,
         )
-        if len(raster_dimensions) != len(selected_page_numbers):
-            raise ValueError("OCR PDF page metadata cardinality is invalid.")
-        pages: list[OcrPageManifest] = []
-        for page_number, (width, height) in zip(
-            selected_page_numbers, raster_dimensions, strict=True
-        ):
-            self._checkpoint(cancel_event)
-            if (
-                isinstance(width, bool)
-                or isinstance(height, bool)
-                or not isinstance(width, int | float)
-                or not isinstance(height, int | float)
-                or not math.isfinite(float(width))
-                or not math.isfinite(float(height))
-                or width <= 0
-                or height <= 0
-            ):
-                raise ValueError(f"OCR raster metadata is invalid for PDF page {page_number}.")
-            try:
-                raster_width = math.ceil(float(width) * self.config.ocr_render_scale)
-                raster_height = math.ceil(float(height) * self.config.ocr_render_scale)
-            except (OverflowError, ValueError) as error:
-                raise ValueError(
-                    f"OCR raster metadata is invalid for PDF page {page_number}."
-                ) from error
-            if raster_width <= 0 or raster_height <= 0:
-                raise ValueError(f"OCR raster metadata is invalid for PDF page {page_number}.")
-            pages.append(
-                OcrPageManifest(
-                    page=page_number,
-                    raster_width=raster_width,
-                    raster_height=raster_height,
-                    raster_scale=self.config.ocr_render_scale,
-                )
-            )
-        return tuple(pages)
+        return pdf_page_manifest(
+            selected_page_numbers,
+            raster_dimensions,
+            cancel_event,
+            self.config.ocr_render_scale,
+        )
 
     def _selected_pdf_pages(
         self,
         page_count: int,
         page_numbers: tuple[int, ...] | None,
     ) -> tuple[int, ...]:
-        """The source pages OCR reads: every page, or the requested selection.
-
-        The page limit bounds the pages that are read. Without a selection that
-        is every page of the source; with one, the source may be longer.
-        """
-
-        limit = self.config.max_pdf_pages
-        if page_numbers is None:
-            if page_count > limit:
-                raise ValueError(f"PDF has {page_count} pages; limit is {limit}.")
-            return tuple(range(1, page_count + 1))
-        if not is_pdf_page_selection(page_numbers):
-            raise PdfPageSelectionError(
-                "PDF page selection must list source pages in ascending order without duplicates."
-            )
-        if len(page_numbers) > limit:
-            raise PdfPageSelectionError(
-                f"PDF page selection has {len(page_numbers)} pages; limit is {limit}."
-            )
-        if page_numbers[-1] > page_count:
-            raise PdfPageSelectionError(
-                f"PDF page selection includes page {page_numbers[-1]}, "
-                f"but the PDF has {page_count} pages."
-            )
-        return tuple(page_numbers)
+        return selected_pdf_pages(page_count, page_numbers, self.config.max_pdf_pages)
 
     def _preflight_pdf_manifest(
         self,
@@ -972,34 +919,7 @@ class StandaloneRuntimeCaptureExtractor:
         cancel_event: asyncio.Event,
         page_numbers: tuple[int, ...],
     ) -> tuple[tuple[float, float], ...]:
-        """Read PDFium's effective page sizes without creating raster bytes.
-
-        ``get_size`` is the size PDFium will use for a default render.  It
-        already reflects the page's crop box and intrinsic rotation, so the
-        metadata path must not reconstruct geometry from the media box.
-        """
-
-        import pypdfium2 as pdfium  # type: ignore[import-untyped]
-
-        document = None
-        try:
-            document = pdfium.PdfDocument(BytesIO(content))
-            dimensions: list[tuple[float, float]] = []
-            for page_number in page_numbers:
-                self._checkpoint(cancel_event)
-                page = None
-                try:
-                    page = document[page_number - 1]
-                    width, height = page.get_size()
-                    dimensions.append((width, height))
-                finally:
-                    if page is not None:
-                        page.close()
-                self._checkpoint(cancel_event)
-            return tuple(dimensions)
-        finally:
-            if document is not None:
-                document.close()
+        return pdf_page_raster_dimensions(content, cancel_event, page_numbers)
 
     def _ocr_image_page_manifest(
         self,
@@ -1284,52 +1204,10 @@ class StandaloneRuntimeCaptureExtractor:
 
     @staticmethod
     def _pdf_page_count(content: bytes) -> int:
-        import pypdfium2 as pdfium
-
-        document = None
-        try:
-            document = pdfium.PdfDocument(BytesIO(content))
-            page_count = len(document)
-        except Exception as error:
-            raise ValueError("Uploaded PDF is not readable.") from error
-        finally:
-            if document is not None:
-                document.close()
-        if page_count < 1:
-            raise ValueError("Uploaded PDF has no pages.")
-        return page_count
+        return pdf_page_count(content)
 
     def _render_pdf_page(self, content: bytes, page_index: int) -> bytes:
-        import pypdfium2 as pdfium
-
-        document = None
-        bitmap = None
-        image = None
-        output = None
-        try:
-            document = pdfium.PdfDocument(BytesIO(content))
-            bitmap = document[page_index].render(scale=self.config.ocr_render_scale)
-            image = bitmap.to_pil().convert("RGB")
-            output = BytesIO()
-            image.save(output, format="PNG")
-            return output.getvalue()
-        except Exception as error:
-            raise ValueError(f"Could not render PDF page {page_index + 1}.") from error
-        finally:
-            # Clear conversion locals as well as native handles so a raised
-            # traceback cannot retain a completed page buffer.
-            image = None
-            output = None
-            try:
-                if bitmap is not None:
-                    bitmap.close()
-            finally:
-                bitmap = None
-                try:
-                    if document is not None:
-                        document.close()
-                finally:
-                    document = None
+        return render_pdf_page(content, page_index, self.config.ocr_render_scale)
 
     def _extract_image(
         self,
@@ -1417,8 +1295,7 @@ class StandaloneRuntimeCaptureExtractor:
 
     @staticmethod
     def _checkpoint(cancel_event: asyncio.Event) -> None:
-        if cancel_event.is_set():
-            raise InterruptedError("Capture extraction was cancelled.")
+        checkpoint(cancel_event)
 
 
 def _normalize_image_png(
