@@ -3,11 +3,7 @@
   "$schema": "../node_modules/nx/schemas/project-schema.json",
   "projectType": "application",
   "sourceRoot": "tools",
-  "tags": [
-    "scope:capture",
-    "type:tool",
-    "platform:node"
-  ],
+  "tags": ["scope:capture", "type:tool", "platform:node"],
   "targets": {
     "lint": {
       "cache": true,
@@ -65,7 +61,7 @@
       "cache": true,
       "executor": "nx:run-commands",
       "options": {
-        "command": "node --test tools/release/version-sources.test.ts tools/release/sync-versions.test.ts"
+        "command": "node --test tools/release/version-sources.test.ts tools/release/pnpm-lock-reader.test.ts tools/release/sync-versions.test.ts"
       },
       "dependsOn": [
         "release-version-typecheck",
@@ -144,9 +140,7 @@
     "python-candidate-index-test": {
       "cache": false,
       "executor": "nx:run-commands",
-      "dependsOn": [
-        "python-candidate-index-http-integration"
-      ],
+      "dependsOn": ["python-candidate-index-http-integration"],
       "options": {
         "env": {
           "PYTHON_INDEX_UNIT_ONLY": "1"
