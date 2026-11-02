@@ -345,6 +345,44 @@ missing ones.
    candidate, Route A candidates, the consumer gate run ID, and the contract-set
    hash. Verify `gh release view v<version>` and `release-index/stable.json`.
 
+## Consumer bump workflows: `resolve-capture-release`
+
+Consumers find and verify the next release with the composite action
+`.github/actions/resolve-capture-release` (implementation
+`tools/resolve-capture-release.ts`). It fails closed on a digest mismatch, a
+missing or wrong-signer attestation, a superseded release or a malformed
+manifest.
+
+- `mode: route-a` (bump PRs, step 4): the newest published release that
+  `release-index/releases.json` does not mark superseded. It verifies
+  `capture-runtime-candidate-manifest.json` against
+  `_publish-runtime-github-release.yml`. Route A records no contract
+  classification: the output is `no-impact` when `current-contract-set-sha256`
+  matches, else `manual-review`.
+- `mode: stable` (gate before an app release): the tag `stable.json` names. It
+  checks `capture-release-manifest-v1.json` against `stable.json`'s
+  `manifestSha256`, verifies it against `_publish-github-release.yml`, and takes
+  `contract_classification` from the manifest's
+  `contractClassification.classification` and `contract_set_sha256` from the
+  digest-bound `candidate-manifest.json`.
+- Outputs: `tag`, `version`, `manifest_sha256`, `contract_classification`,
+  `contract_set_sha256`, `changed` (`false` when equal to `current-version`).
+
+```yaml
+- id: capture
+  uses: gx-capture/capture-workbench/.github/actions/resolve-capture-release@<commit-sha>
+  with:
+    mode: route-a
+    current-version: ${{ steps.pin.outputs.version }}
+    current-contract-set-sha256: ${{ steps.pin.outputs.contract_set_sha256 }}
+- if: steps.capture.outputs.changed == 'true'
+  run: pnpm capture-version apply "${{ steps.capture.outputs.version }}"
+```
+
+Open a draft PR when `contract_classification` is `breaking` or
+`manual-review`. Locally: `node tools/resolve-capture-release.ts --mode stable
+--current-version 0.7.2` (needs `gh` signed in).
+
 ## Consumer gate pre-run
 
 The gates run rarely and drift with toolchain upgrades; each CI round-trip
