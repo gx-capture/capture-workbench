@@ -491,6 +491,14 @@ def _invariants() -> list[dict[str, str]]:
             "models": "RawCapture, CaptureDocument, CaptureOperationV2, RuntimeInstallationV2",
             "description": "timestamp fields must include a timezone.",
         },
+        {
+            "id": "installation-download-bytes-paired",
+            "models": "RuntimeInstallationV2",
+            "description": (
+                "downloadBytes and downloadedBytes are both present or both absent, "
+                "and downloadedBytes never exceeds downloadBytes."
+            ),
+        },
     ]
 
 

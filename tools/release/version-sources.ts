@@ -20,7 +20,7 @@ const EXPECTED_CONTRACT_SET_VERSION = '2';
 const EXPECTED_NX_VERSION = '23.1.2';
 const EXPECTED_PROJECTION_SCHEMA_VERSION = '3';
 const EXPECTED_CONTRACT_SET_SHA256 =
-  '664b2b3244d338dd4de39cbc2f1ee83104d21ee454a11f1d65fd8309d3599670';
+  '009b6c2748aa71f9dfe0a54b9c30c25948c0bd01bada39e9ee630957e6c514f8';
 const EXPECTED_REPOSITORY = 'https://github.com/gx-capture/capture-workbench';
 const EXPECTED_GIT_REPOSITORY =
   'git+https://github.com/gx-capture/capture-workbench.git';

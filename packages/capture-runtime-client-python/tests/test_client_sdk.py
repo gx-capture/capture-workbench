@@ -1443,6 +1443,7 @@ def test_decodes_what_the_runtime_sends_for_speakers() -> None:
     from capture_runtime_client.private.generated_models import (
         CaptureDocument,
         RawCapture,
+        RuntimeInstallationV2,
         RuntimeRequirementsV2,
     )
 
@@ -1467,6 +1468,12 @@ def test_decodes_what_the_runtime_sends_for_speakers() -> None:
     assert plain.diarization_engine is None
     requirements = RuntimeRequirementsV2.model_validate(samples["runtimeRequirements"])
     assert requirements.items[0].optional is True
+    assert requirements.items[1].download_bytes == 10_480_000_000
+    installation = RuntimeInstallationV2.model_validate(samples["runtimeInstallation"])
+    assert (installation.downloaded_bytes, installation.download_bytes) == (
+        2_950_000_000,
+        10_480_000_000,
+    )
 
 
 def test_capture_upload_asks_for_speakers_only_when_told() -> None:

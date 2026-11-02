@@ -366,6 +366,8 @@ export interface RuntimeInstallationV2 {
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly completedAt?: string | null;
+  readonly downloadBytes?: number | null;
+  readonly downloadedBytes?: number | null;
 }
 
 export interface RuntimeInstallationsV2 {
@@ -427,6 +429,7 @@ export interface RuntimeRequirementV2 {
   readonly optional?: boolean;
   readonly detail?: string | null;
   readonly artifact?: RuntimeArtifactDescriptorV2 | null;
+  readonly downloadBytes?: number | null;
 }
 
 export interface RuntimeRequirementsV2 {
@@ -606,6 +609,11 @@ export const CAPTURE_CONTRACT_INVARIANTS = [
     id: "timestamps-timezone-aware",
     models: "RawCapture, CaptureDocument, CaptureOperationV2, RuntimeInstallationV2",
     description: "timestamp fields must include a timezone.",
+  },
+  {
+    id: "installation-download-bytes-paired",
+    models: "RuntimeInstallationV2",
+    description: "downloadBytes and downloadedBytes are both present or both absent, and downloadedBytes never exceeds downloadBytes.",
   },
 ] as const satisfies readonly CaptureContractInvariant[];
 

@@ -247,8 +247,35 @@
         "installStrategy": "runtime-catalog",
         "optional": true,
         "detail": "No downloadable model is published for this runtime release.",
-        "artifact": null
+        "artifact": null,
+        "downloadBytes": null
+      },
+      {
+        "requirementId": "speech-recognition",
+        "kind": "transcription",
+        "displayName": "Speech recognition",
+        "status": "installable",
+        "requiredFor": [
+          "audio"
+        ],
+        "installStrategy": "runtime-catalog",
+        "optional": true,
+        "detail": null,
+        "artifact": null,
+        "downloadBytes": 10480000000
       }
     ]
+  },
+  "runtimeInstallation": {
+    "installationId": "installation-1",
+    "requirementId": "speech-recognition",
+    "status": "running",
+    "progress": 0.3,
+    "error": null,
+    "createdAt": "2026-10-13T08:00:00Z",
+    "updatedAt": "2026-10-13T08:00:00Z",
+    "completedAt": null,
+    "downloadBytes": 10480000000,
+    "downloadedBytes": 2950000000
   }
 }

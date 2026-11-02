@@ -21,6 +21,7 @@ from capture_runtime.engine_catalog import (
     EngineModelDeliveryDescriptor,
     EngineRequirementDescriptor,
 )
+from capture_runtime.install_progress import DownloadedBytes, DownloadProgress
 from capture_runtime.ocr_preflight import OcrComputeSelection
 from capture_runtime.worker_client import InstalledEngine, WorkerClient, WorkerProbeResult
 from capture_runtime.worker_process import WorkerExecutionError
@@ -523,6 +524,7 @@ class EngineInstallationManager:
         cancel_event: asyncio.Event,
         report_progress: Callable[[float], None],
         probe_options: dict[str, object] | None = None,
+        report_download: DownloadProgress | None = None,
     ) -> None:
         requirement = self.requirement(requirement_id)
         if not requirement.complete:
@@ -538,6 +540,7 @@ class EngineInstallationManager:
                     cancel_event=cancel_event,
                     report_progress=report_progress,
                     probe_options=probe_options,
+                    report_download=report_download,
                 )
 
     async def _install_locked(
@@ -547,6 +550,7 @@ class EngineInstallationManager:
         cancel_event: asyncio.Event,
         report_progress: Callable[[float], None],
         probe_options: dict[str, object] | None,
+        report_download: DownloadProgress | None,
     ) -> None:
         assert requirement.artifact_version is not None
         requirement_root = self._requirement_root(requirement.requirement_id)
@@ -559,6 +563,7 @@ class EngineInstallationManager:
                     self.model_downloader,
                     cancel_event=cancel_event,
                     report_progress=report_progress,
+                    report_download=report_download,
                 )
             else:
                 report_progress(1)
@@ -587,9 +592,15 @@ class EngineInstallationManager:
             worker_descriptor = requirement.worker_artifact()
             model_descriptor = requirement.model_delivery()
             worker_archive = staging / worker_descriptor.file_name
+            download_bytes = worker_descriptor.bytes + model_descriptor.extracted_bytes
+
+            def downloaded(done: int) -> None:
+                if report_download is not None:
+                    report_download(DownloadedBytes(min(done, download_bytes), download_bytes))
 
             def worker_progress(copied: int) -> None:
                 report_progress(0.25 * (copied / worker_descriptor.bytes))
+                downloaded(copied)
 
             # Keep the catalog descriptor (and therefore all integrity checks)
             # untouched. The PDF OCR local-package E2E maps one exact OCR worker
@@ -686,6 +697,7 @@ class EngineInstallationManager:
                     report_progress(
                         0.35 + 0.5 * ((completed + copied) / model_descriptor.extracted_bytes)
                     )
+                    downloaded(worker_descriptor.bytes + completed + copied)
 
                 await self.model_downloader.download(
                     file_descriptor,

@@ -6,6 +6,7 @@ from pathlib import Path
 
 from capture_runtime.clock import SystemClock
 from capture_runtime.engine_installation import EngineInstallationError
+from capture_runtime.install_progress import DownloadedBytes, DownloadProgress
 from capture_runtime.services.installation_service import (
     TERMINAL_INSTALLATION_STATUSES,
     InstallationService,
@@ -30,7 +31,9 @@ class RecordingInstaller:
         *,
         cancel_event: asyncio.Event,
         report_progress: Callable[[float], None],
+        report_download: DownloadProgress | None = None,
     ) -> None:
+        del report_download
         self.active += 1
         self.max_active = max(self.max_active, self.active)
         self.events.append(f"start:{requirement_id}")
@@ -53,9 +56,36 @@ class FailingInstaller:
         *,
         cancel_event: asyncio.Event,
         report_progress: Callable[[float], None],
+        report_download: DownloadProgress | None = None,
     ) -> None:
-        del cancel_event, report_progress
+        del cancel_event, report_progress, report_download
         raise EngineInstallationError("engine archive checksum does not match catalog")
+
+
+class DownloadingInstaller:
+    """Downloads 400 of 1000 bytes, waits for the test, then finishes."""
+
+    def __init__(self) -> None:
+        self.resume = asyncio.Event()
+
+    def requirements(self, _enabled_requirement_ids=None):
+        return []
+
+    async def install(
+        self,
+        _requirement_id: str,
+        *,
+        cancel_event: asyncio.Event,
+        report_progress: Callable[[float], None],
+        report_download: DownloadProgress | None = None,
+    ) -> None:
+        del cancel_event
+        assert report_download is not None
+        report_progress(0.1)
+        report_download(DownloadedBytes(400, 1000))
+        await self.resume.wait()
+        report_download(DownloadedBytes(1000, 1000))
+        report_progress(1)
 
 
 async def _wait_for_terminal(service: InstallationService, installation_id: str) -> None:
@@ -156,3 +186,39 @@ async def _test_dependency_installations_are_serialized(tmp_path: Path) -> None:
         "start:speech-recognition",
         "end:speech-recognition",
     ]
+
+
+def test_installation_reports_downloaded_bytes_and_keeps_them(tmp_path: Path) -> None:
+    asyncio.run(_test_installation_reports_downloaded_bytes(tmp_path))
+
+
+async def _test_installation_reports_downloaded_bytes(tmp_path: Path) -> None:
+    root = tmp_path / "installations"
+    repository = InstallationRepository(root, clock=SystemClock(), retention_hours=24)
+    repository.initialize()
+    installer = DownloadingInstaller()
+    service = InstallationService(repository, installer=installer, clock=SystemClock())
+    job = service.create(
+        idempotency_key="speech-key",
+        request_fingerprint="speech-fingerprint",
+        requirement_id="speech-recognition",
+    )
+    for _ in range(100):
+        if service.get(job.installation_id).downloaded_bytes is not None:
+            break
+        await asyncio.sleep(0.005)
+    running = service.get(job.installation_id)
+    assert running.status.value == "running"
+    assert (running.downloaded_bytes, running.download_bytes) == (400, 1000)
+
+    installer.resume.set()
+    await _wait_for_terminal(service, job.installation_id)
+    await service.shutdown()
+    completed = service.get(job.installation_id)
+    assert completed.status.value == "completed"
+    assert (completed.downloaded_bytes, completed.download_bytes) == (1000, 1000)
+
+    reloaded = InstallationRepository(root, clock=SystemClock(), retention_hours=24)
+    reloaded.initialize()
+    stored = reloaded.get(job.installation_id).job
+    assert (stored.downloaded_bytes, stored.download_bytes) == (1000, 1000)

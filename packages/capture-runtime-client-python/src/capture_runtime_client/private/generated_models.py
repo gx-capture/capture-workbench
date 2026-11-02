@@ -504,6 +504,10 @@ class RuntimeRequirementV2(StrictModel):
     optional: bool = False
     detail: str | None = None
     artifact: RuntimeArtifactDescriptorV2 | None = None
+    # Bytes a fresh install downloads (worker archive plus model files), so a
+    # host can show the size before the user agrees. Absent when the install
+    # strategy has no size the runtime knows, such as winget or a manual step.
+    download_bytes: int | None = Field(default=None, ge=1)
 
 
 class RuntimeRequirementsV2(StrictModel):
@@ -564,10 +568,26 @@ class RuntimeInstallationV2(StrictModel):
     created_at: datetime
     updated_at: datetime
     completed_at: datetime | None = None
+    # Bytes downloaded so far out of downloadBytes, once the install has
+    # started downloading. Installs without a known size never set them.
+    download_bytes: int | None = Field(default=None, ge=1)
+    downloaded_bytes: int | None = Field(default=None, ge=0)
 
     _aware_times = field_validator("created_at", "updated_at", "completed_at")(
         lambda value: None if value is None else _require_aware(value)
     )
+
+    @model_validator(mode="after")
+    def _validate_download(self) -> Self:
+        if (self.download_bytes is None) != (self.downloaded_bytes is None):
+            raise ValueError("downloadBytes and downloadedBytes are set together")
+        if (
+            self.download_bytes is not None
+            and self.downloaded_bytes is not None
+            and self.downloaded_bytes > self.download_bytes
+        ):
+            raise ValueError("downloadedBytes cannot exceed downloadBytes")
+        return self
 
 
 class RuntimeInstallationsV2(StrictModel):

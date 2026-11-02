@@ -19,6 +19,8 @@ from capture_runtime.contracts import (
     CaptureSpeaker,
     RawCapture,
     RawCaptureSegment,
+    RuntimeInstallationStatus,
+    RuntimeInstallationV2,
     RuntimeRequirementStatus,
     RuntimeRequirementsV2,
     RuntimeRequirementV2,
@@ -113,8 +115,28 @@ def wire_samples() -> dict[str, Any]:
                 install_strategy="runtime-catalog",
                 optional=True,
                 detail="No downloadable model is published for this runtime release.",
-            )
+            ),
+            RuntimeRequirementV2(
+                requirement_id="speech-recognition",
+                kind="transcription",
+                display_name="Speech recognition",
+                status=RuntimeRequirementStatus.INSTALLABLE,
+                required_for=["audio"],
+                install_strategy="runtime-catalog",
+                optional=True,
+                download_bytes=10_480_000_000,
+            ),
         ]
+    )
+    installation = RuntimeInstallationV2(
+        installation_id="installation-1",
+        requirement_id="speech-recognition",
+        status=RuntimeInstallationStatus.RUNNING,
+        progress=0.3,
+        created_at=CREATED,
+        updated_at=CREATED,
+        download_bytes=10_480_000_000,
+        downloaded_bytes=2_950_000_000,
     )
     return {
         name: model.model_dump(mode="json", by_alias=True)
@@ -123,6 +145,7 @@ def wire_samples() -> dict[str, Any]:
             ("rawCaptureWithoutSpeakers", _raw(speakers=False)),
             ("captureDocument", document),
             ("runtimeRequirements", requirements),
+            ("runtimeInstallation", installation),
         )
     }
 

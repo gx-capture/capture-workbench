@@ -34,6 +34,7 @@ from capture_runtime.contracts import (
 )
 from capture_runtime.engine_catalog import EngineArtifactDescriptor, EngineCatalogError
 from capture_runtime.engine_installation import EngineInstallationManager, sha256_file
+from capture_runtime.install_progress import DownloadProgress
 from capture_runtime.model_catalog import (
     ActiveModelSelectionStore,
     RuntimeModelOption,
@@ -158,6 +159,7 @@ class SystemRuntimeInstaller:
                     else None
                 )
                 artifact = _artifact_descriptor(worker) if worker is not None else None
+                download_bytes = descriptor.download_bytes
                 status = (
                     RuntimeRequirementStatus.READY
                     if active is not None
@@ -175,6 +177,7 @@ class SystemRuntimeInstaller:
             except EngineCatalogError:
                 status = RuntimeRequirementStatus.UNAVAILABLE
                 artifact = None
+                download_bytes = None
                 detail = "No downloadable model is published for this runtime release."
             requirements.append(
                 RuntimeRequirementV2(
@@ -187,6 +190,7 @@ class SystemRuntimeInstaller:
                     optional=optional,
                     detail=detail,
                     artifact=artifact,
+                    download_bytes=download_bytes,
                 )
             )
 
@@ -250,6 +254,7 @@ class SystemRuntimeInstaller:
         *,
         cancel_event: asyncio.Event,
         report_progress: Callable[[float], None],
+        report_download: DownloadProgress | None = None,
     ) -> None:
         if requirement_id in {
             WINDOWSML_REQUIREMENT_ID,
@@ -263,6 +268,7 @@ class SystemRuntimeInstaller:
                 requirement_id,
                 cancel_event=cancel_event,
                 report_progress=report_progress,
+                report_download=report_download,
             )
             return
         if requirement_id == OLLAMA_RUNTIME_REQUIREMENT_ID:
