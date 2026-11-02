@@ -7,6 +7,7 @@ import {
   CAPTURE_CONTRACT_SET_SHA256,
   CAPTURE_DOCUMENT_SCHEMA_SHA256,
   RUNTIME_VERSION,
+  type RuntimeInstallation,
 } from './contracts';
 import { decodeJson } from './codec';
 import {
@@ -552,6 +553,43 @@ describe('CaptureRuntimeClient', () => {
     await expect(
       new CaptureRuntimeClient({ baseUrl: 43123, transport }).getOcr('cap'),
     ).rejects.toBeInstanceOf(errorType);
+  });
+
+  it('reads download bytes on an installation and rejects an inconsistent pair', async () => {
+    const installation = {
+      installationId: 'install-1',
+      requirementId: 'speech-recognition',
+      status: 'running',
+      progress: 0.4,
+      createdAt: '2026-11-02T00:00:00Z',
+      updatedAt: '2026-11-02T00:00:00Z',
+    };
+    const decode = (body: object) =>
+      decodeJson<RuntimeInstallation>(
+        new Response(JSON.stringify(body)),
+        undefined,
+        'RuntimeInstallation',
+      );
+
+    const downloading = await decode({
+      ...installation,
+      downloadBytes: 1000,
+      downloadedBytes: 400,
+    });
+    expect([downloading.downloadedBytes, downloading.downloadBytes]).toEqual([400, 1000]);
+    expect((await decode(installation)).downloadBytes).toBeUndefined();
+
+    for (const download of [
+      { downloadBytes: 1000 },
+      { downloadedBytes: 400 },
+      { downloadBytes: 1000, downloadedBytes: 1001 },
+      { downloadBytes: 0, downloadedBytes: 0 },
+      { downloadBytes: 1000, downloadedBytes: 1.5 },
+    ]) {
+      await expect(decode({ ...installation, ...download })).rejects.toBeInstanceOf(
+        CaptureRuntimeProtocolError,
+      );
+    }
   });
 
   it('rejects OCR projections with invalid page, box, provenance, and terminal invariants', async () => {

@@ -35,7 +35,7 @@ const MODEL_FIELDS: Record<RuntimeResponseModel, { readonly required: readonly s
   RuntimeReady: { required: ['ready', 'service', 'apiVersion', 'runtimeVersion', 'captureDocumentSchemaVersion', 'capabilities'], optional: ['message', 'captureDocumentSchemaSha256', 'schemaSha256', 'contractSetVersion', 'ocrCompute'] },
   RuntimeStreamingCapabilities: { required: ['protocolVersion', 'maxChunkBytes', 'checkpointIntervalMs', 'heartbeatIntervalMs', 'stallTimeoutMs'], optional: ['captureKinds', 'supportsProgressiveAudio'] },
   RuntimeRequirements: { required: ['items'], optional: [] },
-  RuntimeInstallation: { required: ['installationId', 'requirementId', 'status', 'progress', 'createdAt', 'updatedAt'], optional: ['error', 'completedAt'] },
+  RuntimeInstallation: { required: ['installationId', 'requirementId', 'status', 'progress', 'createdAt', 'updatedAt'], optional: ['error', 'completedAt', 'downloadBytes', 'downloadedBytes'] },
   RuntimeInstallations: { required: ['items'], optional: [] },
   RuntimeModelInstallation: { required: ['installationId', 'optionId', 'status', 'progress', 'createdAt', 'updatedAt'], optional: ['error', 'completedAt'] },
   RuntimeModelOptions: { required: ['catalogSha256', 'items'], optional: [] },
@@ -87,6 +87,7 @@ function validateModelShape(value: unknown, model: RuntimeResponseModel): void {
   }
   if (model === 'CaptureOcrProjection') validateCaptureOcrProjection(record);
   if (model === 'RuntimeReady') validateRuntimeReady(record);
+  if (model === 'RuntimeInstallation') validateRuntimeInstallationDownload(record);
   if (model === 'StructuringSession') validateStructuringSession(record);
   if (model === 'StructuringBatch') validateStructuringBatch(record);
 }
@@ -610,6 +611,18 @@ function sameOcrProvenance(left: unknown, right: unknown): boolean {
     leftRecord['profileSpecSha256'] === rightRecord['profileSpecSha256'] &&
     leftRecord['reason'] === rightRecord['reason']
   );
+}
+
+/** Download bytes come as a pair, and the count never passes the total. */
+function validateRuntimeInstallationDownload(record: Record<string, unknown>): void {
+  const total = record['downloadBytes'] ?? null;
+  const done = record['downloadedBytes'] ?? null;
+  if (total === null && done === null) return;
+  if (!isSafeIntegerAtLeast(total, 1) || !isSafeIntegerAtLeast(done, 0) || done > total) {
+    throw new CaptureRuntimeProtocolError(
+      'Capture Runtime returned invalid RuntimeInstallation download bytes.',
+    );
+  }
 }
 
 function validateStructuringSession(record: Record<string, unknown>): void {

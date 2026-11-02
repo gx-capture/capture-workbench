@@ -112,6 +112,19 @@
             }
           ],
           "default": null
+        },
+        "downloadBytes": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Downloadbytes"
         }
       },
       "required": [

@@ -606,6 +606,14 @@ class EngineRequirementDescriptor:
             return None
         return self.model_files.artifact_version
 
+    @property
+    def download_bytes(self) -> int | None:
+        """Bytes a fresh install downloads: the worker archive and model files."""
+        if not self.complete or self.model_files is None:
+            return None
+        worker = 0 if self.model_only else self.artifacts[0].bytes
+        return worker + self.model_files.extracted_bytes
+
     def worker_artifact(self) -> EngineArtifactDescriptor:
         if not self.complete or not self.artifacts:
             raise EngineCatalogError(f"{self.requirement_id} does not have a worker artifact")

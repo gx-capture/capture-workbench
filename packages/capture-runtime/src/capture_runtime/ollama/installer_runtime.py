@@ -15,6 +15,7 @@ from typing import Protocol
 
 from capture_runtime.contracts import RuntimeRequirementV2
 from capture_runtime.engine_adapters import WINDOWSML_REQUIRED_MODEL_FILES
+from capture_runtime.install_progress import DownloadProgress
 
 
 def _atomic_json(path: Path, payload: object) -> None:
@@ -194,6 +195,7 @@ class RuntimeInstaller(Protocol):
         *,
         cancel_event: asyncio.Event,
         report_progress: Callable[[float], None],
+        report_download: DownloadProgress | None = None,
     ) -> None: ...
 
     async def install_model_option(

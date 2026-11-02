@@ -12,6 +12,7 @@ from capture_runtime.constants import (
     WINDOWSML_REQUIREMENT_ID,
 )
 from capture_runtime.contracts import RuntimeRequirementStatus, RuntimeRequirementV2
+from capture_runtime.install_progress import DownloadProgress
 from capture_runtime.ollama.lifecycle_impl import ManualActionRequiredError
 
 
@@ -77,6 +78,7 @@ class FakeRuntimeInstaller:
         *,
         cancel_event: asyncio.Event,
         report_progress: Callable[[float], None],
+        report_download: DownloadProgress | None = None,
     ) -> None:
         if requirement_id in self.manual_requirements:
             raise ManualActionRequiredError(f"{requirement_id} requires manual action")

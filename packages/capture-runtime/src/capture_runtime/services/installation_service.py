@@ -12,6 +12,7 @@ from capture_runtime.contracts import (
     RuntimeInstallationV2,
 )
 from capture_runtime.engine_installation import EngineInstallationError
+from capture_runtime.install_progress import DownloadedBytes
 from capture_runtime.ollama import ManualActionRequiredError, RuntimeInstaller
 from capture_runtime.storage import InstallationRepository
 from capture_runtime.worker_process import WorkerExecutionError
@@ -154,11 +155,27 @@ class InstallationService:
                     ),
                 )
 
+            def downloaded(value: DownloadedBytes) -> None:
+                job = self.get(installation_id)
+                if job.status in TERMINAL_INSTALLATION_STATUSES:
+                    return
+                self.repository.update_job(
+                    installation_id,
+                    job.model_copy(
+                        update={
+                            "download_bytes": value.total,
+                            "downloaded_bytes": max(0, min(value.done, value.total)),
+                            "updated_at": self._clock.now(),
+                        }
+                    ),
+                )
+
             async with self._install_lock:
                 await self.installer.install(
                     current.requirement_id,
                     cancel_event=cancellation,
                     report_progress=progress,
+                    report_download=downloaded,
                 )
             now = self._clock.now()
             completed = self.get(installation_id).model_copy(

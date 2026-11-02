@@ -58,6 +58,21 @@ Mandarin–English), the hardware it uses, its download size and its license. Th
 shows the same guide when its host asks for a speech unit. The runtime now reports
 `speech-recognition` as `optional`.
 
+### Download size and downloaded bytes (contract change)
+
+The runtime now says how big a download is and how much of it has arrived, so
+hosts no longer hard-code sizes.
+
+- `RuntimeRequirementV2.downloadBytes`: bytes a fresh install downloads (worker
+  archive plus model files). Units whose install has no size the runtime knows
+  (winget, manual, unavailable) omit it.
+- `RuntimeInstallationV2.downloadBytes` and `downloadedBytes`: total and bytes
+  so far, set together once the install starts downloading. `downloadedBytes`
+  never exceeds `downloadBytes`; `progress` is unchanged.
+- The contract set hash changes. The TypeScript client accepts and checks the
+  two installation fields; clients older than this release reject them, so
+  LAW and Cert move to it together with the runtime.
+
 ### Japanese transcripts use Japanese kanji forms
 
 TEA-ASR learned Taiwan Mandarin, so when a capture names Japanese it still

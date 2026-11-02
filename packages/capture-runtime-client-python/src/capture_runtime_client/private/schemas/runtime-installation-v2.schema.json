@@ -113,6 +113,32 @@
       ],
       "default": null,
       "title": "Completedat"
+    },
+    "downloadBytes": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Downloadbytes"
+    },
+    "downloadedBytes": {
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Downloadedbytes"
     }
   },
   "required": [

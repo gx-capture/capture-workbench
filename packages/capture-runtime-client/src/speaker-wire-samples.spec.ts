@@ -2,7 +2,13 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { decodeJson, type RuntimeResponseModel } from './codec';
-import type { CaptureDocument, RawCapture, StructuringSession } from './contracts';
+import type {
+  CaptureDocument,
+  RawCapture,
+  RuntimeInstallation,
+  RuntimeRequirements,
+  StructuringSession,
+} from './contracts';
 
 const samples = JSON.parse(
   readFileSync(
@@ -107,5 +113,24 @@ describe('what the runtime sends for speakers', () => {
       requirementId: 'speaker-diarization',
       optional: true,
     });
+  });
+
+  it('decodes the download size and the bytes an install has downloaded', async () => {
+    const requirements = await decode<RuntimeRequirements>(
+      'runtimeRequirements',
+      'RuntimeRequirements',
+    );
+    expect(requirements.items[1]).toMatchObject({
+      requirementId: 'speech-recognition',
+      downloadBytes: 10_480_000_000,
+    });
+
+    const installation = await decode<RuntimeInstallation>(
+      'runtimeInstallation',
+      'RuntimeInstallation',
+    );
+    expect([installation.downloadedBytes, installation.downloadBytes]).toEqual([
+      2_950_000_000, 10_480_000_000,
+    ]);
   });
 });

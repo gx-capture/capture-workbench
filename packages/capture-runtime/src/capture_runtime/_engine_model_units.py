@@ -24,6 +24,7 @@ from capture_runtime.engine_catalog import (
 from ._engine_installation_artifacts import verify_direct_model_files
 from ._engine_installation_download import ModelFileDownloader
 from ._engine_installation_errors import EngineInstallationError
+from .install_progress import DownloadedBytes, DownloadProgress
 
 STATE_FILE_NAME = "active-model.json"
 STATE_VERSION = "1"
@@ -103,6 +104,7 @@ async def install_model_unit(
     *,
     cancel_event: asyncio.Event,
     report_progress: Callable[[float], None],
+    report_download: DownloadProgress | None = None,
 ) -> None:
     delivery = _delivery(requirement)
     final = root / "versions" / delivery.artifact_version
@@ -121,6 +123,9 @@ async def install_model_unit(
 
             def progress(copied: int, *, done: int = completed) -> None:
                 report_progress(0.95 * (done + copied) / delivery.extracted_bytes)
+                if report_download is not None:
+                    total = delivery.extracted_bytes
+                    report_download(DownloadedBytes(min(done + copied, total), total))
 
             await downloader.download(
                 descriptor, destination, cancel_event=cancel_event, progress=progress

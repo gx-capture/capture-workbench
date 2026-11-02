@@ -32,6 +32,7 @@ from capture_runtime.engine_installation import (
     EngineInstallBusyError,
     ModelFileDownloader,
 )
+from capture_runtime.install_progress import DownloadedBytes
 from capture_runtime.ollama import SystemRuntimeInstaller
 from capture_runtime.worker_client import InstalledEngine, WorkerProbeResult
 from capture_runtime.worker_process import WorkerExecutionError, WorkerTimeoutError
@@ -1433,6 +1434,7 @@ def test_speaker_identification_is_listed_as_an_optional_unit(tmp_path: Path) ->
     assert requirements["speaker-diarization"].optional is True
     assert requirements["speaker-diarization"].required_for == ["audio"]
     assert requirements["speaker-diarization"].status.value == "unavailable"
+    assert requirements["speaker-diarization"].download_bytes is None
     assert requirements["speech-recognition"].optional is True
     assert requirements["windowsml-ocr"].optional is False
 
@@ -1612,3 +1614,58 @@ def test_installed_models_only_unit_is_listed_as_a_ready_optional_unit(tmp_path:
     )
 
     assert unit().status.value == "ready"  # type: ignore[attr-defined]
+
+
+def test_install_counts_downloaded_bytes_up_to_the_size_it_lists(tmp_path: Path) -> None:
+    catalog, sources = _catalog(tmp_path)
+    manager = EngineInstallationManager(
+        tmp_path / "engines",
+        catalog,
+        worker_client=FakeWorkerClient(),  # type: ignore[arg-type]
+        downloader=CopyDownloader(sources),
+        model_downloader=CopyModelDownloader(sources),
+    )
+    installer = SystemRuntimeInstaller(
+        _Lifecycle(_LifecycleConfig(tmp_path / "app-data")),  # type: ignore[arg-type]
+        engine_manager=manager,
+        clock=SystemClock(),
+        enabled_requirement_ids={"windowsml-ocr"},
+    )
+    requirement = catalog.requirement("windowsml-ocr")
+    expected = requirement.worker_artifact().bytes + requirement.model_delivery().extracted_bytes
+
+    listed = {item.requirement_id: item for item in installer.requirements()}["windowsml-ocr"]
+    downloaded: list[DownloadedBytes] = []
+    asyncio.run(
+        installer.install(
+            "windowsml-ocr",
+            cancel_event=asyncio.Event(),
+            report_progress=lambda _value: None,
+            report_download=downloaded.append,
+        )
+    )
+
+    assert listed.download_bytes == expected
+    assert {item.total for item in downloaded} == {expected}
+    done = [item.done for item in downloaded]
+    assert done == sorted(done)
+    assert done[-1] == expected
+
+
+def test_a_models_only_unit_counts_its_model_bytes(tmp_path: Path) -> None:
+    catalog, sources = _model_unit_catalog(tmp_path)
+    manager = _model_unit_manager(tmp_path, CopyModelDownloader(sources))
+    total = catalog.requirement("vertical-japanese-reader").download_bytes
+    downloaded: list[DownloadedBytes] = []
+
+    asyncio.run(
+        manager.install(
+            "vertical-japanese-reader",
+            cancel_event=asyncio.Event(),
+            report_progress=lambda _value: None,
+            report_download=downloaded.append,
+        )
+    )
+
+    assert total == catalog.requirement("vertical-japanese-reader").model_delivery().extracted_bytes
+    assert downloaded[-1] == DownloadedBytes(total, total)
