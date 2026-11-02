@@ -291,16 +291,6 @@ export function assertNsisTargetsOnlyVariant(script: string, variant: PracticalV
   }
 }
 
-export function assertStrictChild(parent: string, candidate: string, label: string): string {
-  const resolvedParent = resolve(parent);
-  const resolvedCandidate = resolve(candidate);
-  const path = relative(resolvedParent, resolvedCandidate);
-  if (!path || path.startsWith('..') || isAbsolute(path) || /[\0\r\n]/u.test(resolvedCandidate)) {
-    throw new Error(`${label} must be a strict descendant of its owned root.`);
-  }
-  return resolvedCandidate;
-}
-
 /**
  * The variant's Roaming/Local roots are where the unmodified production
  * build stores library, runtime, worker and model state. They must be named

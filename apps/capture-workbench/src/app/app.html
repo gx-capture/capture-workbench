@@ -67,7 +67,12 @@
           <ul>
             @for (requirement of store.coreMissing(); track requirement.requirementId) {
               <li data-testid="runtime-requirement" [attr.data-requirement-id]="requirement.requirementId" [attr.data-status]="requirement.status">
-                <span>{{ requirement.displayName }}</span>
+                @if (guides()[requirement.requirementId]; as guide) {
+                  <span>{{ guide.name }}</span>
+                  <small>{{ guide.summary }} {{ guide.download }}</small>
+                } @else {
+                  <span>{{ requirement.displayName }}</span>
+                }
                 <small>{{ requirement.status === 'manual_action_required' ? m().manualRepair : (requirement.detail ?? m().awaitingInstall) }}</small>
               </li>
             }
@@ -181,6 +186,10 @@
         </label>
       }
     </mat-card>
+
+    @if (store.speechPack().length > 0) {
+      <app-speech-pack />
+    }
 
     <section class="queue-section" aria-labelledby="queue-title">
       <div class="section-heading">

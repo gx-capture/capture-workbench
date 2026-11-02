@@ -87,14 +87,17 @@ pub(crate) struct RestartNativeObservationEvidence {
 
 #[cfg(windows)]
 impl RestartNativeObservationEvidence {
+    #[cfg(test)]
     pub(crate) fn plan(&self) -> &JournalPlanValue {
         &self.plan
     }
 
+    #[cfg(test)]
     pub(crate) fn journal(&self) -> &RuntimeSessionJournalV1 {
         &self.journal
     }
 
+    #[cfg(test)]
     pub(crate) fn snapshot(&self) -> &CasSnapshot {
         &self.snapshot
     }
@@ -494,7 +497,7 @@ mod tests {
         root_refs: Vec<ReconcileRef>,
         plan: JournalPlanValue,
         store: std::sync::Arc<JournalStore>,
-        retained_roots: Vec<RestartObservationChild>,
+        _retained_roots: Vec<RestartObservationChild>,
     }
 
     fn fixture(root_count: usize) -> Fixture {
@@ -548,7 +551,7 @@ mod tests {
             root_refs,
             plan: plan.value,
             store: plan.context.store.clone(),
-            retained_roots: Vec::new(),
+            _retained_roots: Vec::new(),
         }
     }
 
@@ -786,7 +789,7 @@ mod tests {
             root_refs,
             plan: plan.value,
             store: plan.context.store.clone(),
-            retained_roots,
+            _retained_roots: retained_roots,
         }
     }
 

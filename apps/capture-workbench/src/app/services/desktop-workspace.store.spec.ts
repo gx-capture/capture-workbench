@@ -209,6 +209,51 @@ describe('DesktopWorkspaceStore', () => {
     ]);
   });
 
+  it('downloads only the speech unit the user picked, without asking for OCR', () => {
+    const startInstallation = vi.fn((request: { requirementId: string }) =>
+      of({
+        installationId: `install-${request.requirementId}`,
+        requirementId: request.requirementId,
+        status: 'completed' as const,
+        progress: 1,
+        createdAt: '2026-11-01T00:00:00Z',
+        updatedAt: '2026-11-01T00:00:00Z',
+        completedAt: '2026-11-01T00:00:00Z',
+      }),
+    );
+    const unit = (requirementId: string, status: string) => ({
+      requirementId,
+      displayName: requirementId,
+      status,
+      kind: 'engine',
+      requiredFor: ['audio'],
+      installStrategy: 'runtime-catalog',
+      optional: true,
+    });
+    const store = initializeStore(
+      libraryStub(),
+      runtimeStub({
+        getRequirements: vi.fn(() => of([
+          unit('windowsml-ocr', 'installable'),
+          unit('speaker-diarization', 'installable'),
+          unit('speech-recognition', 'installable'),
+        ])),
+        startInstallation,
+      }),
+    );
+
+    expect(store.speechPack().map((item) => item.requirementId)).toEqual([
+      'speech-recognition',
+      'speaker-diarization',
+    ]);
+    store.installSpeechUnit('speaker-diarization');
+    TestBed.tick();
+
+    expect(startInstallation.mock.calls.map(([request]) => request.requirementId)).toEqual([
+      'speaker-diarization',
+    ]);
+  });
+
   it('polls queued and running installations until the first terminal status', () => {
     const observedStatuses: string[] = [];
     const startInstallation = vi.fn(() => {

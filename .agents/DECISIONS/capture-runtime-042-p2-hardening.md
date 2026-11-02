@@ -7,6 +7,16 @@ compute truth, acceptance, identity, and D0-D8 gates. The
 [TODO](../TODOS/capture-runtime-042-p2-hardening.md) owns executable work; the
 [release runbook](../GUIDES/release-runbook.md) owns the release procedure.
 
+## Implementation status (2026-11-01)
+
+Live R3 journal CAS (Running/Closing/Terminal and activation-failure
+reconciliation) is implemented. Restart reconciliation (automatic attempts
+within 60 s, third-failure manual review, authorized recovery, and proof-backed
+stale-record terminalization or staging release) is specified but not wired
+into production. No host uses the R3 lifecycle yet: desktop, cert-prep and LAW
+launch via the legacy path with native Windows Job containment
+(`KILL_ON_JOB_CLOSE`). See [TODO: Option W](../TODOS/capture-runtime-042-p2-hardening.md#option-w).
+
 ## Checkpoint and authority
 
 This closure starts from expected HEAD
@@ -83,7 +93,8 @@ worker may delete superseded policy only after residual scans and deletion tests
 Choose R3 in the existing Rust owner
 packages/capture-sidecar-launcher/src/process.rs::OwnedRuntimeSession.
 Its native implementation may retain a private size-one `start_one` helper
-that delegates to the group path. Capture, Cert, and candidate journeys use one root; LAW may
+that delegates to the group path. Capture, Cert, and candidate journeys use one
+root (target R3 host path; migration pending — see status banner); LAW may
 place Capture/Python/Java roots in one producer-owned group. That group uses
 the current unnamed no-breakaway Job with
 `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`; it never uses a named Job takeover and
@@ -94,7 +105,8 @@ explicit convergence/deletion surface, not a reason to add another
 coordinator.
 
 R3 is a whole-group protocol with a required `ReconcileRefSink`. The only
-public lifecycle interface is
+public R3 lifecycle interface (legacy launch interfaces remain public and used —
+see status banner) is
 `prepare_group(plan, sink) -> PreparedGroup` followed by
 `activate_group(PreparedGroup) -> GroupLease`. `PreparedGroup` is opaque,
 move-only, and nonserializable; it contains exactly one producer-private
@@ -120,8 +132,10 @@ identity before resume is distinct from live listener readiness after resume.
 A failed or partial assignment, partial resume, or listener-readiness failure
 closes the entire Job, issues no lease, and marks/reconciles the whole group;
 it never continues one root independently. Single-root convenience is group
-size one and uses the same path. Reconciliation returns semantic cleanup and
-`proofSha256`, never native identifiers. Focused red/green cases cover
+size one and uses the same path (target host path; migration pending — see
+status banner). Restart reconciliation returns semantic cleanup and
+`proofSha256` (specified; not yet wired in production — see status banner),
+never native identifiers. Focused red/green cases cover
 unbound-binding absence, sink persist/read-back/verify failure, every binding
 identity mismatch, stale prepared values, partial assignment with zero resumes,
 listener readiness failure after partial resume, and one CAS activation winner.
@@ -129,11 +143,13 @@ The returned `GroupLease` carries a private live lease token that is invalidated
 on close, cancel, readiness failure, or drop; replay or a second close is
 rejected.
 
-   The addressable restart seam is the exact producer API
+   The addressable restart seam is the specified producer API (not yet exported
+   or wired in production — see status banner)
    `RuntimeSessionJournal::reconcile(ReconcileRef) -> ReconcileResult`.
    `ReconcileRef` is an opaque journal index/address, never a PID, Job handle,
    path, process id, or takeover lease. Candidate and prior sessions each get a
-   distinct ref. `ReconcileResult` is semantic and observe-only after restart:
+   distinct ref. `ReconcileResult` is semantic and observe-only after restart
+   (specified; not yet wired in production — see status banner):
    only exact full absence/listener/staging proof may terminalize that ref;
    present, reused, unqueryable, or ambiguous observations return
    `reconcile-required` and touch nothing. Candidate and prior refs are
@@ -181,16 +197,20 @@ rejected.
    membership, root/session nonce, exact PID plus creation identity, listener
    binding nonce, and run-scoped staging nonce must match before the producer
    terminates and proves the current group. `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`
-   remains enabled. After restart the observer has no Job handle, membership
+   remains enabled. After restart the specified observer (not yet wired in
+   production — see status banner) has no Job handle, membership
    query, or nonce claim and is observe-only: only a trustworthy committed Job
    setup plus every root's absent exact PID/creation identity, absent listeners,
    and exact staging binding may terminalize the stale record and clean that
-   staging. PID reuse, a present or unqueryable PID, root mismatch, listener
+   staging (specified; not yet wired in production — see status banner). PID
+   reuse, a present or unqueryable PID, root mismatch, listener
    ambiguity, missing identity, port-only evidence, access denial, malformed
    journal, or a torn write leaves all residue untouched and records
-   reconcile-required. No process-name, PID-only, or port-only kill is valid.
+   reconcile-required (specified; not yet wired in production — see status
+   banner). No process-name, PID-only, or port-only kill is valid.
 
-   The exhaustive journal graph is
+   The exhaustive specified journal graph (restart and no-resource recovery
+   transitions are not yet wired in production — see status banner) is
    `planned_unbound -> prepared_bound -> ready -> launching -> running ->
    closing -> terminal`, plus `planned_unbound -> terminal` only for a durable
    no-resource proof, `planned_unbound -> reconcile-required`,
@@ -204,7 +224,8 @@ rejected.
     `journalRevision`/attempt atomically; immutable group/root generations never
     change. `manual-review` has no automatic recovery,
    cannot launch a replacement, and cannot transition directly to terminal.
-   Recovery requires a fresh opaque nonce and durable authorization receipt,
+   Recovery requires a fresh opaque nonce and durable authorization receipt
+   (specified; not yet wired in production — see status banner),
     increments recovery epoch/journal revision, resets the attempt window, and makes
    no resource mutation; the next full observe-only attempt remains required.
    A stale guard/receipt leaves the record untouched. A direct

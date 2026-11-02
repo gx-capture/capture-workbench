@@ -1,6 +1,11 @@
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import {
+  exactKeys,
+  requireFullSha,
+  requireSha256,
+} from './release/evidence-values.ts';
 
 export type ConsumerGateExpectation = {
   readonly repository: string;
@@ -42,35 +47,6 @@ export type ConsumerGateResultDigest = {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function exactKeys(
-  value: Record<string, unknown>,
-  keys: readonly string[],
-  label: string,
-): void {
-  const actual = Object.keys(value).sort();
-  const expected = [...keys].sort();
-  if (
-    actual.length !== expected.length ||
-    actual.some((key, index) => key !== expected[index])
-  ) {
-    throw new Error(`${label} fields are not canonical.`);
-  }
-}
-
-function requireSha256(value: unknown, label: string): string {
-  if (typeof value !== 'string' || !/^[0-9a-f]{64}$/u.test(value)) {
-    throw new Error(`${label} must be a lowercase SHA-256 digest.`);
-  }
-  return value;
-}
-
-function requireFullSha(value: unknown, label: string): string {
-  if (typeof value !== 'string' || !/^[0-9a-f]{40}$/u.test(value)) {
-    throw new Error(`${label} must be a full lowercase Git SHA.`);
-  }
-  return value;
 }
 
 function requireTimestamp(value: unknown, label: string): string {

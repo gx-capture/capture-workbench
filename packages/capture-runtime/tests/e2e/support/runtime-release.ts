@@ -21,8 +21,6 @@ export type RuntimeReleaseManifest = {
   readonly schemaSha256: string;
 };
 
-export type RuntimeReleaseVerificationMode = RuntimeIdentityMode;
-
 function sha256(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex');
 }

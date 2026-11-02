@@ -7,7 +7,7 @@ export {
   decodeSse,
   parseJsonFrame,
 } from '../codec.js';
-export type { RuntimeResponseModel, SseFrame } from '../codec.js';
+export type { RuntimeResponseModel } from '../codec.js';
 
 /** Decode a response through the package's strict wire-model validation. */
 export async function decodeRuntimeJson<T>(

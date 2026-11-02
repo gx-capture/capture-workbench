@@ -16,7 +16,7 @@ import {
   fakeClient,
   streamingEvent,
   streamingOperation,
-} from '../../components/capture-angular/capture-angular-test-support';
+} from '../../testing/capture-angular-test-support';
 import { CaptureWorkflowService } from './capture-workflow.service';
 
 describe('CaptureWorkflowService', () => {

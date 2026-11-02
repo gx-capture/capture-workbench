@@ -89,10 +89,6 @@ class SessionFrameDecoder:
             frames.append(SessionFrame(frame_type, payload))
         return frames
 
-    @property
-    def buffered_bytes(self) -> int:
-        return len(self._buffer)
-
 
 class WhisperSessionBackend(Protocol):
     def start(self, metadata: dict[str, Any]) -> None: ...

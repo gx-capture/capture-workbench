@@ -173,6 +173,11 @@ function exceptionReason(relativePath) {
   if (relativePath === 'tools/python-candidate-index.ts') {
     return 'Python candidate artifact index CLI boundary';
   }
+  if (relativePath === 'tools/dead-code-gate.ts') {
+    // The Claude Code Stop hook payload arrives on stdin; a sync read can throw
+    // EAGAIN on a non-blocking pipe, so the CLI entry reads it as a stream.
+    return 'dead-code gate CLI stdin boundary';
+  }
   if (relativePath === 'tools/windows-built-in-process-resolver.ts') {
     return 'Windows process observation CLI boundary';
   }

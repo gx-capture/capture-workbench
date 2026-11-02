@@ -43,7 +43,18 @@ import { CaptureRuntimeComputeStatusComponent } from '../capture-runtime-compute
           @for (requirement of store.requiredRequirements(); track requirement.requirementId) {
             <li data-testid="capture-runtime-requirement" [attr.data-requirement-id]="requirement.requirementId" [attr.data-status]="requirement.status">
               <div>
-                <strong>{{ requirement.displayName }}</strong>
+                @if (m().unitGuide[requirement.requirementId]; as guide) {
+                  <strong>{{ guide.name }}</strong>
+                  <div class="unit-guide" data-testid="capture-unit-guide">
+                    <span>{{ guide.summary }}</span>
+                    <span>{{ guide.languages }}</span>
+                    <span>{{ guide.hardware }}</span>
+                    <span>{{ guide.download }}</span>
+                    <span>{{ guide.license }}</span>
+                  </div>
+                } @else {
+                  <strong>{{ requirement.displayName }}</strong>
+                }
                 @if (requirement.detail) {
                   <span>{{ requirement.detail }}</span>
                 }
@@ -100,6 +111,7 @@ export class CaptureRuntimeSetupComponent {
 
   protected requirementName(requirementId: string): string {
     return (
+      this.m().unitGuide[requirementId]?.name ??
       this.store
         .requiredRequirements()
         .find((requirement) => requirement.requirementId === requirementId)

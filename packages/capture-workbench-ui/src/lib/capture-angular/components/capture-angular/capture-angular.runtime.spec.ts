@@ -13,7 +13,7 @@ import {
   captureWorkbenchRoot,
   createCaptureWorkbenchTestInputSource,
   fakeClient,
-} from './capture-angular-test-support';
+} from '../../testing/capture-angular-test-support';
 
 describe('CaptureWorkbenchComponent', () => {
   let fixture: ComponentFixture<CaptureWorkbenchComponent>;

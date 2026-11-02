@@ -16,7 +16,7 @@ import {
   fakeClient,
   selectFiles,
   streamingOperation,
-} from './capture-angular-test-support';
+} from '../../testing/capture-angular-test-support';
 
 const SEGMENTS: RawCapture['segments'] = [
   {

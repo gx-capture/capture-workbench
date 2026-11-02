@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass, replace
@@ -81,16 +80,7 @@ from ._engine_installation_errors import (
 )
 from ._engine_installation_lock import ExclusiveInstallFile
 from ._engine_installation_residue import (
-    is_reparse_point as _is_reparse_point_impl,
-)
-from ._engine_installation_residue import (
-    is_temporary_version_name as _is_temporary_version_name_impl,
-)
-from ._engine_installation_residue import (
     remove_inactive_versions as _remove_inactive_versions_impl,
-)
-from ._engine_installation_residue import (
-    remove_residue_path as _remove_residue_path_impl,
 )
 from ._engine_installation_residue import (
     remove_stale_install_residue as _remove_stale_install_residue_impl,
@@ -160,10 +150,6 @@ def _artifact_validation_limits() -> ArtifactValidationLimits:
 
 def sha256_file(path: Path) -> str:
     return _sha256_file_impl(path, chunk_bytes=DOWNLOAD_CHUNK_BYTES)
-
-
-def _entry_size_limit(_descriptor: EngineArtifactDescriptor, _path: str) -> int:
-    return MAX_SINGLE_EXTRACTED_FILE_BYTES
 
 
 def safe_extract_artifact(
@@ -824,18 +810,6 @@ class EngineInstallationManager:
     @staticmethod
     def _remove_inactive_versions(root: Path, active_version: str) -> None:
         _remove_inactive_versions_impl(root, active_version)
-
-    @staticmethod
-    def _is_reparse_point(path: Path, metadata: os.stat_result) -> bool:
-        return _is_reparse_point_impl(path, metadata)
-
-    @classmethod
-    def _remove_residue_path(cls, path: Path) -> None:
-        _remove_residue_path_impl(path)
-
-    @staticmethod
-    def _is_temporary_version_name(name: str) -> bool:
-        return _is_temporary_version_name_impl(name)
 
     @classmethod
     def _remove_stale_install_residue(cls, root: Path) -> None:

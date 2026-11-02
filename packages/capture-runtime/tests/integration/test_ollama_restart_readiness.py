@@ -26,6 +26,7 @@ from capture_runtime.ollama import (
     SystemRuntimeInstaller,
 )
 from tests.conftest import TOKEN
+from tests.support.ollama_legacy import install_legacy_model
 
 
 class ProbeAdapter:
@@ -284,7 +285,8 @@ def test_profile_marker_hashes_the_exact_windows_modelfile_bytes(tmp_path: Path)
     installer._runner = SuccessfulRunner()  # noqa: SLF001
 
     asyncio.run(
-        installer._install_model(  # noqa: SLF001
+        install_legacy_model(
+            installer,
             asyncio.Event(),
             lambda _progress: None,
         )

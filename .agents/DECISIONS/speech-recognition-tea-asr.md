@@ -64,3 +64,17 @@ boundary and preflight flags `--speech-recognition-*`; stages `speech-*`. Intern
   8 GiB per archive and extracted tree.
 - Consumers that install `whisper-primary` (for example law-prep's AI service) change the id
   when they move to the release that contains this decision.
+
+## Optional Taiwan speech pack (2026-11-01)
+
+Speech recognition and speaker identification are an optional pack the user downloads by
+choice; documents never wait for them. The runtime reports `speech-recognition` with
+`optional: true`, like `speaker-diarization`. Capture Workbench lists both units in a
+"Taiwan speech pack (optional)" panel, each with its own download button, and still asks for a
+unit when a recording arrives without it.
+
+Before downloading, the user sees what each model is: a guide per unit (what it does, which
+languages it suits, the hardware it runs on, the download size and the license), kept in
+`capture-workbench-ui` as `CAPTURE_UNIT_GUIDES` and shown by both the desktop app and the Web
+Component setup list. The guide's facts come from the pinned model cards and the published
+worker archives; change them together with the model-source lock.

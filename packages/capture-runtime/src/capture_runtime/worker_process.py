@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from capture_runtime._windows_job import create_kill_on_close_job, terminate_and_close_job
 from capture_runtime.config import sanitized_child_environment
 from capture_runtime.worker_contracts import (
     MAX_WORKER_INPUT_BYTES,
@@ -197,10 +198,6 @@ class WorkerProcess:
         self._lock = asyncio.Lock()
         # Idle persistent workers by executable, kept for the next request.
         self._warm: dict[str, _WarmWorker] = {}
-
-    @property
-    def active_process_count(self) -> int:
-        return len(self._active)
 
     async def request(
         self,
@@ -766,77 +763,7 @@ class WorkerProcess:
 
 
 def _create_windows_kill_on_close_job(process: asyncio.subprocess.Process) -> int:
-    import ctypes
-    from ctypes import wintypes
-
-    class BasicLimitInformation(ctypes.Structure):
-        _fields_ = [
-            ("per_process_user_time_limit", ctypes.c_longlong),
-            ("per_job_user_time_limit", ctypes.c_longlong),
-            ("limit_flags", wintypes.DWORD),
-            ("minimum_working_set_size", ctypes.c_size_t),
-            ("maximum_working_set_size", ctypes.c_size_t),
-            ("active_process_limit", wintypes.DWORD),
-            ("affinity", ctypes.c_size_t),
-            ("priority_class", wintypes.DWORD),
-            ("scheduling_class", wintypes.DWORD),
-        ]
-
-    class IoCounters(ctypes.Structure):
-        _fields_ = [
-            ("read_operation_count", ctypes.c_ulonglong),
-            ("write_operation_count", ctypes.c_ulonglong),
-            ("other_operation_count", ctypes.c_ulonglong),
-            ("read_transfer_count", ctypes.c_ulonglong),
-            ("write_transfer_count", ctypes.c_ulonglong),
-            ("other_transfer_count", ctypes.c_ulonglong),
-        ]
-
-    class ExtendedLimitInformation(ctypes.Structure):
-        _fields_ = [
-            ("basic_limit_information", BasicLimitInformation),
-            ("io_info", IoCounters),
-            ("process_memory_limit", ctypes.c_size_t),
-            ("job_memory_limit", ctypes.c_size_t),
-            ("peak_process_memory_used", ctypes.c_size_t),
-            ("peak_job_memory_used", ctypes.c_size_t),
-        ]
-
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    kernel32.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
-    kernel32.CreateJobObjectW.restype = ctypes.c_void_p
-    kernel32.SetInformationJobObject.argtypes = [
-        ctypes.c_void_p,
-        ctypes.c_int,
-        ctypes.c_void_p,
-        wintypes.DWORD,
-    ]
-    kernel32.SetInformationJobObject.restype = wintypes.BOOL
-    kernel32.AssignProcessToJobObject.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
-    kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
-    kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
-    kernel32.CloseHandle.restype = wintypes.BOOL
-
-    native_handle = _native_windows_process_handle(process)
-    job = kernel32.CreateJobObjectW(None, None)
-    if not job:
-        raise ctypes.WinError(ctypes.get_last_error())
-    try:
-        information = ExtendedLimitInformation()
-        information.basic_limit_information.limit_flags = 0x00002000
-        if not kernel32.SetInformationJobObject(
-            job,
-            9,
-            ctypes.byref(information),
-            ctypes.sizeof(information),
-        ):
-            raise ctypes.WinError(ctypes.get_last_error())
-        if not kernel32.AssignProcessToJobObject(job, ctypes.c_void_p(native_handle)):
-            raise ctypes.WinError(ctypes.get_last_error())
-        return int(job)
-    except BaseException:
-        kernel32.CloseHandle(job)
-        raise
+    return create_kill_on_close_job(_native_windows_process_handle(process))
 
 
 def _native_windows_process_handle(process: asyncio.subprocess.Process) -> int:
@@ -876,27 +803,9 @@ def _wait_for_windows_process_exit(
 
 
 def _terminate_windows_job(handle: int) -> None:
-    import ctypes
-    from ctypes import wintypes
-
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    kernel32.TerminateJobObject.argtypes = [ctypes.c_void_p, wintypes.UINT]
-    kernel32.TerminateJobObject.restype = wintypes.BOOL
-    kernel32.WaitForSingleObject.argtypes = [ctypes.c_void_p, wintypes.DWORD]
-    kernel32.WaitForSingleObject.restype = wintypes.DWORD
-    kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
-    kernel32.CloseHandle.restype = wintypes.BOOL
-    job = ctypes.c_void_p(handle)
-    try:
-        if not kernel32.TerminateJobObject(job, 1):
-            raise ctypes.WinError(ctypes.get_last_error())
-        wait_result = int(kernel32.WaitForSingleObject(job, 15_000))
-        if wait_result == 0x00000102:
-            raise TimeoutError("worker Windows job did not terminate within 15 seconds")
-        if wait_result == 0xFFFFFFFF:
-            raise ctypes.WinError(ctypes.get_last_error())
-    finally:
-        kernel32.CloseHandle(job)
+    terminate_and_close_job(
+        handle, timeout_message="worker Windows job did not terminate within 15 seconds"
+    )
 
 
 def _bounded_stage_sequence(stages: tuple[str, ...] | list[str]) -> tuple[str, ...]:

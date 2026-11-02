@@ -14,9 +14,9 @@ from capture_runtime.release import (
     build_release_artifacts,
     capture_document_schema,
     capture_document_schema_release_bytes,
-    capture_document_schema_release_sha256,
     write_capture_document_schema,
 )
+from tests.support.schema_release import capture_document_schema_release_sha256
 
 ROOT = Path(__file__).resolve().parents[4]
 

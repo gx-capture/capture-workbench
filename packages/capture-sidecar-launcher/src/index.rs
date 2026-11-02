@@ -5,8 +5,6 @@
 //! reopened index is cross-validated against the complete immutable plan and
 //! the journal before it is usable.
 
-#![allow(dead_code)]
-
 use std::path::PathBuf;
 
 use rand::{rngs::OsRng, RngCore};

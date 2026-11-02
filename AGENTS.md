@@ -9,6 +9,13 @@
 - Runtime jobs are ephemeral; host applications own durable source and domain persistence.
 - Tests must not leave temporary files. A TypeScript test file that creates temp files imports `tools/test-temp-root.ts` first (a private temp root removed on exit); pytest uses `tmp_path_retention_policy = "failed"` (passed tests' dirs are removed; only failed ones from the last 3 sessions stay). Never use `"none"`: it disables pytest's session lock, so concurrent pytest runs delete each other's temp dirs.
 
+# Dead code
+
+- Dead code is gated as a ratchet. `tools/quality/dead-code-baseline.json` lists the known findings of knip (TypeScript; `knip.json`), vulture (`capture-runtime` and `capture-runtime-client-python` `src`) and every Rust `#[allow(dead_code)]` (100 were frozen when the gate was added; most are in `capture-sidecar-launcher`). A new `allow(dead_code)` fails: delete the dead code, or put test-only code under `#[cfg(test)]`. `pnpm run dead-code:check` fails only on new findings. CI's `checks` job runs it with `--ci`, which also fails when a baseline entry is gone, so run `pnpm run dead-code:update` after deleting dead code. `production` and `python` entries mean only tests still use that code. The Python client is a published library, so only its high-confidence findings count.
+- In `knip.json`, keep production (`!`) and non-production project globs disjoint; an overlap silently drops those files from the production pass. `capture-runtime-client` and `capture-workbench-ui` are their own knip workspaces (their `package.json` exports are the entries).
+- When a design or release channel is replaced, delete the old path, its config, CI and release steps, and its docs in the same change. Do not keep it "for compatibility" unless a named consumer still needs it. When a tool cannot see a real use (a CLI entry, a framework callback), add a `knip.json` entry or a vulture decorator ignore in `tools/dead-code-gate.ts`; never add new dead code to the baseline.
+- `.claude/settings.json` runs the check as a Claude Code Stop hook before a turn that changed code ends.
+
 # Release and CI guidance
 
 - Follow `.agents/GUIDES/release-runbook.md` for the current release state, the publish procedure, and known pitfalls.

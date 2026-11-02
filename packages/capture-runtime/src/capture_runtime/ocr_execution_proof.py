@@ -506,14 +506,6 @@ class OcrExecutionEvidenceArtifact:
     def name(self) -> str:
         return self.relative_name
 
-    @property
-    def byte_count(self) -> int:
-        return self.bytes
-
-    @property
-    def artifact_sha256(self) -> str:
-        return self.sha256
-
 
 class OcrExecutionEvidenceSink(Protocol):
     """One private operation for ephemeral or acceptance-only proof sinks."""

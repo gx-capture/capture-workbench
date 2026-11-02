@@ -13,7 +13,7 @@ import {
   streamingEvent,
   streamingOperation,
   streamingResult,
-} from '../../components/capture-angular/capture-angular-test-support';
+} from '../../testing/capture-angular-test-support';
 
 describe('CaptureReconciliationService', () => {
   let service: CaptureReconciliationService;

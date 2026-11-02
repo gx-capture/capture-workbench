@@ -10,8 +10,8 @@ from capture_runtime.ocr_alignment import (
     AlignmentCollector,
     AlignmentContractError,
     UnsupportedAlignmentPipeline,
-    alignment_available,
 )
+from tests.support.ocr_alignment import alignment_available
 
 cv2 = pytest.importorskip("cv2", reason="Pixel alignment tests require WindowsML OpenCV extras.")
 np = pytest.importorskip("numpy", reason="Pixel alignment tests require WindowsML NumPy extras.")

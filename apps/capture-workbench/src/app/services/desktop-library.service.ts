@@ -15,8 +15,6 @@ import type {
 } from '../contracts';
 import { DesktopTauriCommandService } from './desktop-tauri-command.service';
 
-export const MAX_DESKTOP_SOURCE_BYTES = 50 * 1024 * 1024;
-
 /**
  * Recordings the runtime transcribes: audio, and video whose audio track is
  * transcribed. The native library checks each file's signature.

@@ -56,9 +56,4 @@ export interface SettledResource {
   readonly isLoading: () => boolean;
 }
 
-export interface CaptureTaskPatch {
-  readonly taskId: string;
-  readonly patch: Partial<CaptureTaskView>;
-}
 
-export type CaptureWorkflowFailure = CaptureFailure;

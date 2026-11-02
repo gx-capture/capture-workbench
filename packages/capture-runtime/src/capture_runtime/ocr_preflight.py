@@ -199,10 +199,6 @@ class OcrGpuAdapter:
     def dml_device_id(self) -> int:
         return self.index
 
-    @property
-    def capability_status(self) -> str | None:
-        return self.assessment
-
     def identity(self) -> OcrSelectedDeviceIdentityV1:
         if self.luid is None:
             raise ValueError("GPU adapter has no LUID")
@@ -524,10 +520,6 @@ class OcrComputeSelection:
     @property
     def plan(self) -> OcrExecutionPlan:
         return self.execution_plan
-
-    @property
-    def public(self) -> OcrComputePreflightV2:
-        return self.readiness
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -1347,12 +1339,6 @@ def _native_enumerate_adapters(
         if owns_factory and factory is not None:
             _release_com(factory)
     return tuple(adapters)
-
-
-def _native_adapter_enumerator() -> tuple[OcrGpuAdapter, ...]:
-    """Enumerate ordinary ``EnumAdapters1`` records."""
-
-    return _native_enumerate_adapters(high_performance=False)
 
 
 class _NativeOcrAdapterMapLease:

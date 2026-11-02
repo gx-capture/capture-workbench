@@ -10,6 +10,11 @@ import {
   type ConsumerGateResult,
 } from './consumer-gate.ts';
 import { verifyContractImpact } from './classify-release-contract.ts';
+import {
+  exactKeys,
+  requireFullSha,
+  requireSha256,
+} from './release/evidence-values.ts';
 
 type ReleaseMode = 'core-only' | 'model-enabled';
 type ContractClassification =
@@ -57,35 +62,6 @@ const CONTRACT_CLASSIFICATIONS = new Set<ContractClassification>([
 
 function isRecord(value: unknown): value is JsonRecord {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function exactKeys(
-  value: JsonRecord,
-  keys: readonly string[],
-  label: string,
-): void {
-  const actual = Object.keys(value).sort();
-  const expected = [...keys].sort();
-  if (
-    actual.length !== expected.length ||
-    actual.some((key, index) => key !== expected[index])
-  ) {
-    throw new Error(`${label} fields are not canonical.`);
-  }
-}
-
-function requireSha256(value: unknown, label: string): string {
-  if (typeof value !== 'string' || !/^[0-9a-f]{64}$/u.test(value)) {
-    throw new Error(`${label} must be a lowercase SHA-256 digest.`);
-  }
-  return value;
-}
-
-function requireFullSha(value: unknown, label: string): string {
-  if (typeof value !== 'string' || !/^[0-9a-f]{40}$/u.test(value)) {
-    throw new Error(`${label} must be a full lowercase Git SHA.`);
-  }
-  return value;
 }
 
 function requireReleaseVersion(value: unknown): string {

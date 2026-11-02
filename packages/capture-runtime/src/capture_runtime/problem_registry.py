@@ -79,18 +79,8 @@ class ProblemRegistry:
     def definitions(self) -> Mapping[str, ProblemDefinition]:
         return self._definitions
 
-    @property
-    def codes(self) -> tuple[str, ...]:
-        return tuple(self._definitions)
-
     def get(self, code: str) -> ProblemDefinition | None:
         return self._definitions.get(code)
-
-    def require(self, code: str) -> ProblemDefinition:
-        definition = self.get(code)
-        if definition is None:
-            raise ProblemRegistryError(f"unknown problem code: {code}")
-        return definition
 
     def as_dicts(self) -> list[dict[str, Any]]:
         return [definition.as_dict() for definition in self._definitions.values()]

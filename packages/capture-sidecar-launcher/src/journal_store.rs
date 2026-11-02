@@ -102,6 +102,7 @@ pub(crate) enum JournalStoreError {
     Io(&'static str),
     Durability(&'static str),
     AtomicReplace,
+    #[cfg(test)]
     Injected(&'static str),
     TooLarge,
     UnsupportedPlatform,
@@ -205,22 +206,10 @@ impl OwnedCasResult {
         }
     }
 
-    pub(crate) fn with_error(mut self, error: JournalStoreError) -> Self {
-        self.error = Some(error);
-        self
-    }
-
     pub(crate) fn mark_ambiguous(mut self, error: JournalStoreError) -> Self {
         self.disposition = CasDisposition::AmbiguousWrite;
         self.error = Some(error);
         self
-    }
-
-    fn into_legacy_result(self) -> Result<RuntimeSessionJournalV1, JournalStoreError> {
-        if let Some(error) = self.error {
-            return Err(error);
-        }
-        self.attempt.ok_or(JournalStoreError::CorruptJournal)
     }
 }
 
@@ -402,6 +391,14 @@ impl ActivationBudget {
     }
 }
 
+#[cfg(all(test, windows))]
+pub(crate) fn activation_budget_for_test() -> ActivationBudget {
+    ActivationBudget::new(
+        Instant::now() + Duration::from_secs(60),
+        Arc::new(AtomicBool::new(false)),
+    )
+}
+
 /// The only journal mutation seam for the Running promotion.  The lock and
 /// the expected Launching value stay together while the native owner performs
 /// its final observations; callers cannot replace the journal command or
@@ -458,30 +455,6 @@ pub(crate) struct ActivationReconcileAdmission {
     current: RuntimeSessionJournalV1,
     deadline: Instant,
     _lock: JournalFileLock,
-}
-
-#[cfg(windows)]
-pub(crate) enum RunningCasResult {
-    Committed(RuntimeSessionJournalV1),
-    CommittedAfterBudget(RuntimeSessionJournalV1),
-}
-
-#[cfg(windows)]
-pub(crate) enum ClosingCasResult {
-    Committed(RuntimeSessionJournalV1),
-    CommittedAfterBudget(RuntimeSessionJournalV1),
-}
-
-#[cfg(windows)]
-pub(crate) enum TerminalCasResult {
-    Committed(RuntimeSessionJournalV1),
-    CommittedAfterBudget(RuntimeSessionJournalV1),
-}
-
-#[cfg(windows)]
-pub(crate) enum ActivationReconcileCasResult {
-    Committed(RuntimeSessionJournalV1),
-    CommittedAfterBudget(RuntimeSessionJournalV1),
 }
 
 #[cfg(test)]
@@ -925,24 +898,6 @@ impl JournalStore {
         );
     }
 
-    pub(crate) fn compare_and_swap(
-        &self,
-        plan: &JournalPlanValue,
-        expected: &CasSnapshot,
-        command: JournalStoreCommand,
-    ) -> Result<RuntimeSessionJournalV1, JournalStoreError> {
-        self.validate_plan_identity(plan)?;
-        self.with_lock(|store| {
-            let predecessor = store.read_unlocked(plan)?;
-            if predecessor.cas_snapshot() != *expected {
-                return Err(JournalStoreError::Conflict);
-            }
-            store
-                .compare_and_swap_owned_locked(plan, &predecessor, command)
-                .into_legacy_result()
-        })
-    }
-
     /// The production CAS seam.  The complete predecessor and attempted
     /// candidate travel together through every post-readback branch, so a
     /// caller can retain its owner without inferring a phase from a later
@@ -1302,10 +1257,6 @@ impl JournalStore {
         }
     }
 
-    fn temp_path(&self) -> PathBuf {
-        self.temp_path_for_target(&self.journal_path)
-    }
-
     fn temp_path_for_target(&self, target_path: &Path) -> PathBuf {
         #[cfg(test)]
         if let Some(path) = self.faults.forced_temp_path.lock().unwrap().take() {
@@ -1518,30 +1469,6 @@ impl RunningCasAdmission {
         &self.current
     }
 
-    /// Apply only the canonical Launching -> Running transition while the
-    /// admission lock is still held.  The deadline/cancellation check directly
-    /// before the replacement is intentionally duplicated after encoding: it
-    /// closes the last pre-write window without changing other journal APIs.
-    pub(crate) fn commit_running(
-        self,
-        observation: ResourceObservation,
-        timestamp: String,
-    ) -> Result<RunningCasResult, JournalStoreError> {
-        let result = self.commit_running_owned(observation, timestamp);
-        match result.disposition() {
-            CasDisposition::Committed => Ok(RunningCasResult::Committed(
-                result.attempt().cloned().expect("committed candidate"),
-            )),
-            CasDisposition::ConfirmedLate => Ok(RunningCasResult::CommittedAfterBudget(
-                result.attempt().cloned().expect("late candidate"),
-            )),
-            CasDisposition::Prewrite | CasDisposition::AmbiguousWrite => Err(result
-                .error()
-                .cloned()
-                .unwrap_or(JournalStoreError::CorruptJournal)),
-        }
-    }
-
     pub(crate) fn commit_running_owned(
         mut self,
         observation: ResourceObservation,
@@ -1637,35 +1564,6 @@ impl RunningCasAdmission {
 
 #[cfg(windows)]
 impl ActivationReconcileAdmission {
-    pub(crate) fn current(&self) -> &RuntimeSessionJournalV1 {
-        &self.current
-    }
-
-    /// Convert the retained exact phase to ReconcileRequired while the same
-    /// journal lock remains held.  This keeps the resource tuple, binding,
-    /// attempt and recovery epoch unchanged; a stale or ambiguous candidate
-    /// returns an error and never issues a reconcile authority.
-    pub(crate) fn commit_reconcile_required(
-        self,
-        timestamp: String,
-    ) -> Result<ActivationReconcileCasResult, JournalStoreError> {
-        let result = self.commit_reconcile_required_owned(timestamp);
-        match result.disposition() {
-            CasDisposition::Committed => Ok(ActivationReconcileCasResult::Committed(
-                result.attempt().cloned().expect("reconcile candidate"),
-            )),
-            CasDisposition::ConfirmedLate => {
-                Ok(ActivationReconcileCasResult::CommittedAfterBudget(
-                    result.attempt().cloned().expect("late reconcile candidate"),
-                ))
-            }
-            CasDisposition::Prewrite | CasDisposition::AmbiguousWrite => Err(result
-                .error()
-                .cloned()
-                .unwrap_or(JournalStoreError::CorruptJournal)),
-        }
-    }
-
     pub(crate) fn commit_reconcile_required_owned(mut self, timestamp: String) -> OwnedCasResult {
         #[cfg(test)]
         self.store
@@ -1731,30 +1629,6 @@ impl ActivationReconcileAdmission {
 impl ClosingCasAdmission {
     pub(crate) fn current(&self) -> &RuntimeSessionJournalV1 {
         &self.current
-    }
-
-    /// Apply only the canonical Running -> Closing transition while the
-    /// admission lock remains held.  Closing is teardown intent: it retains
-    /// the observed readiness/resource tuple and does not query liveness,
-    /// listeners, commands, or staging.
-    pub(crate) fn commit_closing(
-        self,
-        observation: ResourceObservation,
-        timestamp: String,
-    ) -> Result<ClosingCasResult, JournalStoreError> {
-        let result = self.commit_closing_owned(observation, timestamp);
-        match result.disposition() {
-            CasDisposition::Committed => Ok(ClosingCasResult::Committed(
-                result.attempt().cloned().expect("closing candidate"),
-            )),
-            CasDisposition::ConfirmedLate => Ok(ClosingCasResult::CommittedAfterBudget(
-                result.attempt().cloned().expect("late closing candidate"),
-            )),
-            CasDisposition::Prewrite | CasDisposition::AmbiguousWrite => Err(result
-                .error()
-                .cloned()
-                .unwrap_or(JournalStoreError::CorruptJournal)),
-        }
     }
 
     pub(crate) fn commit_closing_owned(
@@ -1850,30 +1724,6 @@ impl ClosingCleanupAdmission {
 
     pub(crate) fn check_budget(&self) -> Result<(), JournalStoreError> {
         check_running_admission_budget(self.deadline, self.cancellation.as_ref())
-    }
-
-    /// Apply only the canonical Closing -> Terminal transition while this
-    /// exact Closing snapshot remains under the journal lock.  The caller has
-    /// already completed native and staging cleanup; this method performs no
-    /// resource operation and accepts only the typed terminal observation.
-    pub(crate) fn commit_terminal(
-        self,
-        observation: TerminalObservation,
-        timestamp: String,
-    ) -> Result<TerminalCasResult, JournalStoreError> {
-        let result = self.commit_terminal_owned(observation, timestamp);
-        match result.disposition() {
-            CasDisposition::Committed => Ok(TerminalCasResult::Committed(
-                result.attempt().cloned().expect("terminal candidate"),
-            )),
-            CasDisposition::ConfirmedLate => Ok(TerminalCasResult::CommittedAfterBudget(
-                result.attempt().cloned().expect("late terminal candidate"),
-            )),
-            CasDisposition::Prewrite | CasDisposition::AmbiguousWrite => Err(result
-                .error()
-                .cloned()
-                .unwrap_or(JournalStoreError::CorruptJournal)),
-        }
     }
 
     pub(crate) fn commit_terminal_owned(
@@ -2432,16 +2282,21 @@ mod tests {
 
     fn advance_to_reconcile(store: &JournalStore) -> RuntimeSessionJournalV1 {
         let current = store.read(&plan()).expect("read planned");
-        store
-            .compare_and_swap(
+        {
+            let outcome = store.compare_and_swap_owned(
                 &plan(),
-                &current.cas_snapshot(),
+                &current,
                 JournalStoreCommand::Transition {
                     next_state: JournalState::ReconcileRequired,
                     timestamp: "2026-09-11T00:00:01Z".into(),
                 },
-            )
-            .expect("reconcile transition")
+            );
+            assert_eq!(
+                outcome.disposition(),
+                crate::journal_store::CasDisposition::Committed
+            );
+            outcome.attempt().cloned().expect("reconcile transition")
+        }
     }
 
     fn running_observation(readiness: Option<&str>, state: RootState) -> ResourceObservation {
@@ -2522,7 +2377,7 @@ mod tests {
         let first = Arc::new(store(directory.path()));
         create_initial(&first);
         let second = Arc::new(JournalStore::new(config(directory.path())).expect("second store"));
-        let expected = first.read(&plan()).expect("read expected").cas_snapshot();
+        let expected = first.read(&plan()).expect("read expected");
         let barrier = Arc::new(Barrier::new(2));
         let first_thread = {
             let first = Arc::clone(&first);
@@ -2530,7 +2385,7 @@ mod tests {
             let expected = expected.clone();
             thread::spawn(move || {
                 barrier.wait();
-                first.compare_and_swap(
+                first.compare_and_swap_owned(
                     &plan(),
                     &expected,
                     JournalStoreCommand::Transition {
@@ -2545,7 +2400,7 @@ mod tests {
             let barrier = Arc::clone(&barrier);
             thread::spawn(move || {
                 barrier.wait();
-                second.compare_and_swap(
+                second.compare_and_swap_owned(
                     &plan(),
                     &expected,
                     JournalStoreCommand::Transition {
@@ -2557,8 +2412,8 @@ mod tests {
         };
         let first_result = first_thread.join().expect("first CAS thread");
         let second_result = second_thread.join().expect("second CAS thread");
-        let first_won = first_result.is_ok();
-        let second_won = second_result.is_ok();
+        let first_won = first_result.disposition() == CasDisposition::Committed;
+        let second_won = second_result.disposition() == CasDisposition::Committed;
         let winners = [first_won, second_won]
             .into_iter()
             .filter(|won| *won)
@@ -2569,8 +2424,9 @@ mod tests {
                 second_result
             } else {
                 first_result
-            },
-            Err(JournalStoreError::Conflict)
+            }
+            .error(),
+            Some(JournalStoreError::Conflict)
         ));
         assert_eq!(
             first.read(&plan()).expect("winner read").state,
@@ -2587,47 +2443,58 @@ mod tests {
         let before_flush = advance_to_reconcile(&store);
         store.fail_next_before_flush();
         assert_eq!(
-            store.compare_and_swap(
-                &plan(),
-                &before_flush.cas_snapshot(),
-                JournalStoreCommand::ReconcileAttempt {
-                    attempt: ReconcileAttempt::Failed,
-                    proof: None,
-                    timestamp: "2026-09-11T00:00:02Z".into(),
-                },
-            ),
-            Err(JournalStoreError::Injected("beforeFlush"))
+            store
+                .compare_and_swap_owned(
+                    &plan(),
+                    &before_flush,
+                    JournalStoreCommand::ReconcileAttempt {
+                        attempt: ReconcileAttempt::Failed,
+                        proof: None,
+                        timestamp: "2026-09-11T00:00:02Z".into(),
+                    }
+                )
+                .error()
+                .cloned(),
+            Some(JournalStoreError::Injected("beforeFlush"))
         );
         assert_eq!(store.read(&plan()).expect("old record"), before_flush);
 
         let before_replace = store.read(&plan()).expect("read before replace");
         store.fail_next_before_replace_for_test();
         assert_eq!(
-            store.compare_and_swap(
-                &plan(),
-                &before_replace.cas_snapshot(),
-                JournalStoreCommand::ReconcileAttempt {
-                    attempt: ReconcileAttempt::Failed,
-                    proof: None,
-                    timestamp: "2026-09-11T00:00:02Z".into(),
-                },
-            ),
-            Err(JournalStoreError::Injected("beforeReplace"))
+            store
+                .compare_and_swap_owned(
+                    &plan(),
+                    &before_replace,
+                    JournalStoreCommand::ReconcileAttempt {
+                        attempt: ReconcileAttempt::Failed,
+                        proof: None,
+                        timestamp: "2026-09-11T00:00:02Z".into(),
+                    }
+                )
+                .error()
+                .cloned(),
+            Some(JournalStoreError::Injected("beforeReplace"))
         );
         assert_eq!(store.read(&plan()).expect("old record"), before_replace);
 
         let current = store.read(&plan()).expect("read current");
-        let committed = store
-            .compare_and_swap(
+        let committed = {
+            let outcome = store.compare_and_swap_owned(
                 &plan(),
-                &current.cas_snapshot(),
+                &current,
                 JournalStoreCommand::ReconcileAttempt {
                     attempt: ReconcileAttempt::Failed,
                     proof: None,
                     timestamp: "2026-09-11T00:00:02Z".into(),
                 },
-            )
-            .expect("complete replacement");
+            );
+            assert_eq!(
+                outcome.disposition(),
+                crate::journal_store::CasDisposition::Committed
+            );
+            outcome.attempt().cloned().expect("complete replacement")
+        };
         assert_eq!(store.read(&plan()).expect("new record"), committed);
     }
 
@@ -2638,18 +2505,21 @@ mod tests {
         create_initial(&store);
         let before = store.read(&plan()).expect("initial record");
 
-        let mut stale = before.cas_snapshot();
+        let mut stale = before.clone();
         stale.journal_revision += 1;
         assert_eq!(
-            store.compare_and_swap(
-                &plan(),
-                &stale,
-                JournalStoreCommand::Transition {
-                    next_state: JournalState::ReconcileRequired,
-                    timestamp: "2026-09-11T00:00:01Z".into(),
-                },
-            ),
-            Err(JournalStoreError::Conflict)
+            store
+                .compare_and_swap_owned(
+                    &plan(),
+                    &stale,
+                    JournalStoreCommand::Transition {
+                        next_state: JournalState::ReconcileRequired,
+                        timestamp: "2026-09-11T00:00:01Z".into(),
+                    }
+                )
+                .error()
+                .cloned(),
+            Some(JournalStoreError::Conflict)
         );
         assert_eq!(
             store.read(&plan()).expect("stale rejection is unchanged"),
@@ -2657,15 +2527,18 @@ mod tests {
         );
 
         assert_eq!(
-            store.compare_and_swap(
-                &plan(),
-                &before.cas_snapshot(),
-                JournalStoreCommand::Transition {
-                    next_state: JournalState::Running,
-                    timestamp: "2026-09-11T00:00:01Z".into(),
-                },
-            ),
-            Err(JournalStoreError::Journal(JournalError::InvalidTransition))
+            store
+                .compare_and_swap_owned(
+                    &plan(),
+                    &before,
+                    JournalStoreCommand::Transition {
+                        next_state: JournalState::Running,
+                        timestamp: "2026-09-11T00:00:01Z".into(),
+                    }
+                )
+                .error()
+                .cloned(),
+            Some(JournalStoreError::Journal(JournalError::InvalidTransition))
         );
         assert_eq!(
             store.read(&plan()).expect("illegal rejection is unchanged"),
@@ -2687,28 +2560,28 @@ mod tests {
         store
             .create_initial(&plan, &initial)
             .expect("initial journal");
-        let prepared = store
-            .compare_and_swap(
+        let prepared = {
+            let outcome = store.compare_and_swap_owned(
                 &plan,
-                &initial.cas_snapshot(),
+                &initial,
                 JournalStoreCommand::PrepareBound {
                     binding: large_binding(&plan),
                     timestamp: "2026-09-11T00:00:01Z".into(),
                 },
-            )
-            .expect("prepared journal");
+            );
+            assert_eq!(
+                outcome.disposition(),
+                crate::journal_store::CasDisposition::Committed
+            );
+            outcome.attempt().cloned().expect("prepared journal")
+        };
 
         let reconciled = store
             .begin_activation_reconcile(&plan, &prepared, Instant::now() + Duration::from_secs(5))
             .expect("exact prepared candidate admission")
-            .commit_reconcile_required("2026-09-11T00:00:02Z".into())
-            .expect("reconcile transition");
-        let reconciled = match reconciled {
-            ActivationReconcileCasResult::Committed(journal) => journal,
-            ActivationReconcileCasResult::CommittedAfterBudget(_) => {
-                panic!("reconcile transition exceeded its test budget")
-            }
-        };
+            .commit_reconcile_required_owned("2026-09-11T00:00:02Z".into());
+        assert_eq!(reconciled.disposition(), CasDisposition::Committed);
+        let reconciled = reconciled.attempt().cloned().expect("reconcile candidate");
         assert_eq!(reconciled.state, JournalState::ReconcileRequired);
         assert_eq!(reconciled.journal_revision, prepared.journal_revision + 1);
         assert_eq!(reconciled.binding, prepared.binding);
@@ -2731,27 +2604,37 @@ mod tests {
         store
             .create_initial(&plan, &initial)
             .expect("initial journal");
-        let prepared = store
-            .compare_and_swap(
+        let prepared = {
+            let outcome = store.compare_and_swap_owned(
                 &plan,
-                &initial.cas_snapshot(),
+                &initial,
                 JournalStoreCommand::PrepareBound {
                     binding: large_binding(&plan),
                     timestamp: "2026-09-11T00:00:01Z".into(),
                 },
-            )
-            .expect("prepared journal");
-        let ready = store
-            .compare_and_swap(
+            );
+            assert_eq!(
+                outcome.disposition(),
+                crate::journal_store::CasDisposition::Committed
+            );
+            outcome.attempt().cloned().expect("prepared journal")
+        };
+        let ready = {
+            let outcome = store.compare_and_swap_owned(
                 &plan,
-                &prepared.cas_snapshot(),
+                &prepared,
                 JournalStoreCommand::TransitionWithObservation {
                     next_state: JournalState::Ready,
                     observation: running_observation(None, RootState::Suspended),
                     timestamp: "2026-09-11T00:00:02Z".into(),
                 },
-            )
-            .expect("ready journal");
+            );
+            assert_eq!(
+                outcome.disposition(),
+                crate::journal_store::CasDisposition::Committed
+            );
+            outcome.attempt().cloned().expect("ready journal")
+        };
         let mut drifted = ready.clone();
         drifted.updated_at = "2026-09-11T00:00:03Z".into();
         assert_eq!(drifted.cas_snapshot(), ready.cas_snapshot());
@@ -2793,42 +2676,57 @@ mod tests {
         store
             .create_initial(&plan, &initial)
             .expect("initial journal");
-        let prepared = store
-            .compare_and_swap(
+        let prepared = {
+            let outcome = store.compare_and_swap_owned(
                 &plan,
-                &initial.cas_snapshot(),
+                &initial,
                 JournalStoreCommand::PrepareBound {
                     binding: large_binding(&plan),
                     timestamp: "2026-09-11T00:00:01Z".into(),
                 },
-            )
-            .expect("prepared journal");
-        let ready = store
-            .compare_and_swap(
+            );
+            assert_eq!(
+                outcome.disposition(),
+                crate::journal_store::CasDisposition::Committed
+            );
+            outcome.attempt().cloned().expect("prepared journal")
+        };
+        let ready = {
+            let outcome = store.compare_and_swap_owned(
                 &plan,
-                &prepared.cas_snapshot(),
+                &prepared,
                 JournalStoreCommand::TransitionWithObservation {
                     next_state: JournalState::Ready,
                     observation: running_observation(None, RootState::Suspended),
                     timestamp: "2026-09-11T00:00:01Z".into(),
                 },
-            )
-            .expect("Ready journal");
-        let launching = store
-            .compare_and_swap(
+            );
+            assert_eq!(
+                outcome.disposition(),
+                crate::journal_store::CasDisposition::Committed
+            );
+            outcome.attempt().cloned().expect("Ready journal")
+        };
+        let launching = {
+            let outcome = store.compare_and_swap_owned(
                 &plan,
-                &ready.cas_snapshot(),
+                &ready,
                 JournalStoreCommand::TransitionWithObservation {
                     next_state: JournalState::Launching,
                     observation: running_observation(None, RootState::Suspended),
                     timestamp: "2026-09-11T00:00:01Z".into(),
                 },
-            )
-            .expect("Launching journal");
-        let running = store
-            .compare_and_swap(
+            );
+            assert_eq!(
+                outcome.disposition(),
+                crate::journal_store::CasDisposition::Committed
+            );
+            outcome.attempt().cloned().expect("Launching journal")
+        };
+        let running = {
+            let outcome = store.compare_and_swap_owned(
                 &plan,
-                &launching.cas_snapshot(),
+                &launching,
                 JournalStoreCommand::TransitionWithObservation {
                     next_state: JournalState::Running,
                     observation: running_observation(
@@ -2837,8 +2735,13 @@ mod tests {
                     ),
                     timestamp: "2026-09-11T00:00:01Z".into(),
                 },
-            )
-            .expect("Running journal");
+            );
+            assert_eq!(
+                outcome.disposition(),
+                crate::journal_store::CasDisposition::Committed
+            );
+            outcome.attempt().cloned().expect("Running journal")
+        };
         let expected_snapshot = running.cas_snapshot();
         let mut drifted = running.clone();
         drifted.roots[0].live_listener_readiness =
@@ -2876,42 +2779,57 @@ mod tests {
         store
             .create_initial(&plan, &initial)
             .expect("initial journal");
-        let prepared = store
-            .compare_and_swap(
+        let prepared = {
+            let outcome = store.compare_and_swap_owned(
                 &plan,
-                &initial.cas_snapshot(),
+                &initial,
                 JournalStoreCommand::PrepareBound {
                     binding: large_binding(&plan),
                     timestamp: "2026-09-11T00:00:01Z".into(),
                 },
-            )
-            .expect("prepared journal");
-        let ready = store
-            .compare_and_swap(
+            );
+            assert_eq!(
+                outcome.disposition(),
+                crate::journal_store::CasDisposition::Committed
+            );
+            outcome.attempt().cloned().expect("prepared journal")
+        };
+        let ready = {
+            let outcome = store.compare_and_swap_owned(
                 &plan,
-                &prepared.cas_snapshot(),
+                &prepared,
                 JournalStoreCommand::TransitionWithObservation {
                     next_state: JournalState::Ready,
                     observation: running_observation(None, RootState::Suspended),
                     timestamp: "2026-09-11T00:00:01Z".into(),
                 },
-            )
-            .expect("Ready journal");
-        let launching = store
-            .compare_and_swap(
+            );
+            assert_eq!(
+                outcome.disposition(),
+                crate::journal_store::CasDisposition::Committed
+            );
+            outcome.attempt().cloned().expect("Ready journal")
+        };
+        let launching = {
+            let outcome = store.compare_and_swap_owned(
                 &plan,
-                &ready.cas_snapshot(),
+                &ready,
                 JournalStoreCommand::TransitionWithObservation {
                     next_state: JournalState::Launching,
                     observation: running_observation(None, RootState::Suspended),
                     timestamp: "2026-09-11T00:00:01Z".into(),
                 },
-            )
-            .expect("Launching journal");
-        let running = store
-            .compare_and_swap(
+            );
+            assert_eq!(
+                outcome.disposition(),
+                crate::journal_store::CasDisposition::Committed
+            );
+            outcome.attempt().cloned().expect("Launching journal")
+        };
+        let running = {
+            let outcome = store.compare_and_swap_owned(
                 &plan,
-                &launching.cas_snapshot(),
+                &launching,
                 JournalStoreCommand::TransitionWithObservation {
                     next_state: JournalState::Running,
                     observation: running_observation(
@@ -2920,12 +2838,17 @@ mod tests {
                     ),
                     timestamp: "2026-09-11T00:00:01Z".into(),
                 },
-            )
-            .expect("Running journal");
-        let closing = store
-            .compare_and_swap(
+            );
+            assert_eq!(
+                outcome.disposition(),
+                crate::journal_store::CasDisposition::Committed
+            );
+            outcome.attempt().cloned().expect("Running journal")
+        };
+        let closing = {
+            let outcome = store.compare_and_swap_owned(
                 &plan,
-                &running.cas_snapshot(),
+                &running,
                 JournalStoreCommand::TransitionWithObservation {
                     next_state: JournalState::Closing,
                     observation: running_observation(
@@ -2934,8 +2857,13 @@ mod tests {
                     ),
                     timestamp: "2026-09-11T00:00:01Z".into(),
                 },
-            )
-            .expect("Closing journal");
+            );
+            assert_eq!(
+                outcome.disposition(),
+                crate::journal_store::CasDisposition::Committed
+            );
+            outcome.attempt().cloned().expect("Closing journal")
+        };
 
         let contention = Arc::new(AtomicBool::new(false));
         store.set_running_lock_contention_signal_for_test(Some(Arc::clone(&contention)));
@@ -3003,15 +2931,18 @@ mod tests {
         store.force_next_temp_path(collision.clone());
         let current = store.read(&plan()).expect("current record");
         assert_eq!(
-            store.compare_and_swap(
-                &plan(),
-                &current.cas_snapshot(),
-                JournalStoreCommand::Transition {
-                    next_state: JournalState::ReconcileRequired,
-                    timestamp: "2026-09-11T00:00:01Z".into(),
-                },
-            ),
-            Err(JournalStoreError::Io("createTemp"))
+            store
+                .compare_and_swap_owned(
+                    &plan(),
+                    &current,
+                    JournalStoreCommand::Transition {
+                        next_state: JournalState::ReconcileRequired,
+                        timestamp: "2026-09-11T00:00:01Z".into(),
+                    }
+                )
+                .error()
+                .cloned(),
+            Some(JournalStoreError::Io("createTemp"))
         );
         assert_eq!(
             fs::read(&collision).expect("collision retained"),
@@ -3030,18 +2961,19 @@ mod tests {
         create_initial(&store);
         let before = store.read(&plan()).expect("initial record");
         store.fail_next_after_replace_before_flush();
-        let result = store.compare_and_swap(
+        let result = store.compare_and_swap_owned(
             &plan(),
-            &before.cas_snapshot(),
+            &before,
             JournalStoreCommand::Transition {
                 next_state: JournalState::ReconcileRequired,
                 timestamp: "2026-09-11T00:00:01Z".into(),
             },
         );
         assert_eq!(
-            result.as_ref().map(|journal| journal.state),
-            Ok(JournalState::ReconcileRequired)
+            result.attempt().map(|journal| journal.state),
+            Some(JournalState::ReconcileRequired)
         );
+        assert_eq!(result.disposition(), CasDisposition::Committed);
         let after = store.read(&plan()).expect("complete replacement");
         assert_eq!(after.state, JournalState::ReconcileRequired);
         assert_eq!(after.journal_revision, before.journal_revision + 1);
@@ -3126,15 +3058,18 @@ mod tests {
             "fixture did not exceed the store limit"
         );
         assert_eq!(
-            store.compare_and_swap(
-                &large_plan,
-                &initial.cas_snapshot(),
-                JournalStoreCommand::PrepareBound {
-                    binding,
-                    timestamp: "2026-09-11T00:00:01Z".into(),
-                },
-            ),
-            Err(JournalStoreError::TooLarge)
+            store
+                .compare_and_swap_owned(
+                    &large_plan,
+                    &initial,
+                    JournalStoreCommand::PrepareBound {
+                        binding,
+                        timestamp: "2026-09-11T00:00:01Z".into(),
+                    }
+                )
+                .error()
+                .cloned(),
+            Some(JournalStoreError::TooLarge)
         );
         assert_eq!(
             fs::read(&store.journal_path).expect("original bytes retained"),
@@ -3240,15 +3175,18 @@ mod tests {
         fs::write(&store.journal_path, br#"{"schemaVersion":"#).expect("inject torn record");
         assert_eq!(store.read(&plan()), Err(JournalStoreError::CorruptJournal));
         assert_eq!(
-            store.compare_and_swap(
-                &plan(),
-                &initial_journal().cas_snapshot(),
-                JournalStoreCommand::Transition {
-                    next_state: JournalState::ReconcileRequired,
-                    timestamp: "2026-09-11T00:00:01Z".into(),
-                },
-            ),
-            Err(JournalStoreError::CorruptJournal)
+            store
+                .compare_and_swap_owned(
+                    &plan(),
+                    &initial_journal(),
+                    JournalStoreCommand::Transition {
+                        next_state: JournalState::ReconcileRequired,
+                        timestamp: "2026-09-11T00:00:01Z".into(),
+                    }
+                )
+                .error()
+                .cloned(),
+            Some(JournalStoreError::CorruptJournal)
         );
         assert_eq!(
             fs::read(&store.journal_path).expect("torn bytes"),
@@ -3264,7 +3202,7 @@ mod tests {
         let index = env::var("CAPTURE_JOURNAL_STORE_WORKER_INDEX").expect("worker index");
         let root = Path::new(&root);
         let store = store(root);
-        let expected = store.read(&plan()).expect("worker read").cas_snapshot();
+        let expected = store.read(&plan()).expect("worker read");
         fs::write(root.join(format!("worker-{index}.ready")), b"ready").expect("ready marker");
         let deadline = Instant::now() + Duration::from_secs(5);
         while !root.join("worker.start").exists() {
@@ -3272,7 +3210,7 @@ mod tests {
             thread::sleep(Duration::from_millis(10));
         }
 
-        let result = store.compare_and_swap(
+        let result = store.compare_and_swap_owned(
             &plan(),
             &expected,
             JournalStoreCommand::Transition {
@@ -3280,10 +3218,10 @@ mod tests {
                 timestamp: "2026-09-11T00:00:01Z".into(),
             },
         );
-        let outcome = match result {
-            Ok(_) => "winner",
-            Err(JournalStoreError::Conflict) => "conflict",
-            Err(error) => panic!("unexpected worker result: {error:?}"),
+        let outcome = match (result.disposition(), result.error()) {
+            (CasDisposition::Committed, None) => "winner",
+            (CasDisposition::Prewrite, Some(JournalStoreError::Conflict)) => "conflict",
+            _ => panic!("unexpected worker result: {result:?}"),
         };
         fs::write(
             root.join(format!("worker-{index}.outcome")),

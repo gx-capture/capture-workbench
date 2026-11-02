@@ -1433,7 +1433,7 @@ def test_speaker_identification_is_listed_as_an_optional_unit(tmp_path: Path) ->
     assert requirements["speaker-diarization"].optional is True
     assert requirements["speaker-diarization"].required_for == ["audio"]
     assert requirements["speaker-diarization"].status.value == "unavailable"
-    assert requirements["speech-recognition"].optional is False
+    assert requirements["speech-recognition"].optional is True
     assert requirements["windowsml-ocr"].optional is False
 
 

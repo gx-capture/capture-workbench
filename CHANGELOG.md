@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Clarification (2026-11-01): the 0.4.2 launcher durability and verified staging release apply to explicit live R3 use; restart reconciliation is not wired, and desktop, cert-prep and LAW still use legacy launch paths with native Windows Job containment (`KILL_ON_JOB_CLOSE`).
+
 ### Java SDK no longer published
 
 The Java SDK (`com.gx.capture:capture-runtime-client`) had no consumer, so it
@@ -36,6 +38,16 @@ Capture Workbench follows an explicit 0.x compatibility policy:
 
 The consumer consistency check is a permanent CI gate for the declared
 runtime, package lock, Python host, desktop host, and browser host versions.
+
+### Taiwan speech pack is optional and explains its models
+
+Speech-to-text (TEA-ASR 1.1) and speaker identification (Nemotron 3 Diarization) form an
+optional Taiwan speech pack. Capture Workbench lists both with a download button each, so users
+add them when they want them; PDFs and images never wait for them. Before downloading, each
+unit says what it does, which languages it suits (Taiwan Mandarin, including mixed
+Mandarin–English), the hardware it uses, its download size and its license. The Web Component
+shows the same guide when its host asks for a speech unit. The runtime now reports
+`speech-recognition` as `optional`.
 
 ### Japanese transcripts use Japanese kanji forms
 

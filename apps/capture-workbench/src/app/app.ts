@@ -2,6 +2,7 @@ import {
   ChangeDetectionStrategy,
   Component,
   ElementRef,
+  computed,
   inject,
   viewChild,
 } from '@angular/core';
@@ -12,7 +13,10 @@ import { MatFormField, MatLabel } from '@angular/material/form-field';
 import { MatInput } from '@angular/material/input';
 import { MatOption, MatSelect } from '@angular/material/select';
 import { MatSpinner } from '@angular/material/progress-spinner';
-import { CaptureRuntimeComputeStatusComponent } from '@gx-capture/capture-workbench-ui';
+import {
+  CAPTURE_UNIT_GUIDES,
+  CaptureRuntimeComputeStatusComponent,
+} from '@gx-capture/capture-workbench-ui';
 import {
   DESKTOP_LOCALES,
   DESKTOP_MESSAGES,
@@ -23,6 +27,7 @@ import {
 } from './i18n/desktop-messages';
 import { formatRecordingTime } from './services/desktop-workspace.selectors';
 import { DesktopWorkspaceStore } from './services/desktop-workspace.store';
+import { SpeechPack } from './speech-pack/speech-pack';
 
 @Component({
   selector: 'app-root',
@@ -39,6 +44,7 @@ import { DesktopWorkspaceStore } from './services/desktop-workspace.store';
     MatSelect,
     MatSpinner,
     CaptureRuntimeComputeStatusComponent,
+    SpeechPack,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
@@ -48,6 +54,8 @@ export class App {
   protected readonly locale = desktopLocale;
   protected readonly locales = DESKTOP_LOCALES;
   protected readonly formatTime = formatRecordingTime;
+  /** What each optional unit's model does, in the language in use. */
+  protected readonly guides = computed(() => CAPTURE_UNIT_GUIDES[this.locale()]);
   private readonly recordingPlayer =
     viewChild<ElementRef<HTMLMediaElement>>('recordingPlayer');
   private pendingPlayFromMs: number | null = null;
