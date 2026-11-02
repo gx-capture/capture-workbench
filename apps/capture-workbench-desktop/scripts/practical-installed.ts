@@ -1,6 +1,12 @@
 import { createHash } from 'node:crypto';
 import { lstatSync, readFileSync } from 'node:fs';
 import { basename, isAbsolute, join, relative, resolve, win32 } from 'node:path';
+// eslint-disable-next-line @nx/enforce-module-boundaries -- the catalog's `parts` reading is shared with the release tooling.
+import {
+  type EngineCatalogWorkerPart,
+  engineCatalogWorkerSource,
+  workerPublishedFiles,
+} from '../../../tools/release/engine-catalog-parts.ts';
 
 // Practical installed OCR verifies a normal production build of Capture
 // Workbench side by side with any existing installation. Only the Tauri
@@ -33,9 +39,14 @@ export interface VerifiedFile {
   readonly sha256: string;
 }
 
+/**
+ * `fileName`, `bytes` and `sha256` describe the whole archive. It is published
+ * at `url`, or, above one release asset, as ordered `parts` with `url` null.
+ */
 export interface WorkerArtifact extends VerifiedFile {
   readonly requirementId: string;
-  readonly url: string;
+  readonly url: string | null;
+  readonly parts: readonly EngineCatalogWorkerPart[];
 }
 
 export interface VerifiedRuntimeRelease {
@@ -207,8 +218,7 @@ export function verifyRuntimeReleaseDirectory(
         artifact.role !== 'worker' ||
         typeof artifact.fileName !== 'string' ||
         basename(artifact.fileName) !== artifact.fileName ||
-        typeof artifact.url !== 'string' ||
-        artifact.url !== `${RELEASE_URL_PREFIX}v${expectedVersion}/${artifact.fileName}` ||
+        typeof artifact.bytes !== 'number' ||
         !Number.isSafeInteger(artifact.bytes) ||
         typeof artifact.sha256 !== 'string' ||
         !SHA256.test(artifact.sha256) ||
@@ -216,12 +226,22 @@ export function verifyRuntimeReleaseDirectory(
       ) {
         throw new Error('Runtime engine catalog worker artifact is malformed.');
       }
+      const source = engineCatalogWorkerSource(artifact, artifact.fileName, artifact.bytes);
+      const releaseUrl = (fileName: string) => `${RELEASE_URL_PREFIX}v${expectedVersion}/${fileName}`;
+      if (
+        source.url === null
+          ? source.parts.some((part) => part.url !== releaseUrl(part.fileName))
+          : source.url !== releaseUrl(artifact.fileName)
+      ) {
+        throw new Error('Runtime engine catalog worker artifact is malformed.');
+      }
       workers.push({
         requirementId: requirement.requirementId,
         fileName: artifact.fileName,
-        bytes: Number(artifact.bytes),
+        bytes: artifact.bytes,
         sha256: artifact.sha256,
-        url: artifact.url,
+        url: source.url,
+        parts: source.parts,
       });
     }
   }
@@ -239,13 +259,29 @@ export function verifyRuntimeReleaseDirectory(
   };
 }
 
-/** Reads a worker from the verified directory and checks it against the catalog. */
-export function readVerifiedWorker(release: VerifiedRuntimeRelease, worker: WorkerArtifact): Buffer {
-  const bytes = regularFile(join(release.directory, worker.fileName), worker.fileName);
-  if (bytes.length !== worker.bytes || sha256Hex(bytes) !== worker.sha256) {
-    throw new Error(`${worker.fileName} differs from the release engine catalog.`);
+/**
+ * Reads the files published for a worker (its archive, or each of its parts)
+ * from the verified directory. Every file must match its catalog name, size
+ * and digest, and parts must also join into the catalog's whole archive.
+ */
+export function readVerifiedWorkerFiles(
+  release: VerifiedRuntimeRelease,
+  worker: WorkerArtifact,
+): ReadonlyMap<string, Buffer> {
+  const files = new Map<string, Buffer>();
+  const joined = createHash('sha256');
+  for (const expected of workerPublishedFiles(worker)) {
+    const bytes = regularFile(join(release.directory, expected.fileName), expected.fileName);
+    if (bytes.length !== expected.bytes || sha256Hex(bytes) !== expected.sha256) {
+      throw new Error(`${expected.fileName} differs from the release engine catalog.`);
+    }
+    joined.update(bytes);
+    files.set(expected.fileName, bytes);
   }
-  return bytes;
+  if (joined.digest('hex') !== worker.sha256) {
+    throw new Error(`Release parts do not join into ${worker.fileName}.`);
+  }
+  return files;
 }
 
 function nsisDefines(script: string): Map<string, string> {

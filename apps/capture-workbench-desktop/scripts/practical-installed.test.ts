@@ -24,12 +24,16 @@ import {
   practicalKnownFolderRoots,
   practicalRegistryKeys,
   practicalVariant,
+  readVerifiedWorkerFiles,
   sha256Hex,
   verifyRuntimeReleaseDirectory,
   type PracticalOcrEvidence,
 } from './practical-installed.ts';
 
 const variant = practicalVariant('r20260924a');
+const RELEASE_DOWNLOAD = `https://github.com/gx-capture/capture-workbench/releases/download/v${RELEASE_VERSION}`;
+const SPEECH_ARCHIVE = `capture-engine-speech-recognition-${RELEASE_VERSION}-windows-x64.zip`;
+const SPEECH_PARTS = [Buffer.from('speech worker part one'), Buffer.from('speech worker part two')];
 const sha = (seed: string) => sha256Hex(Buffer.from(seed));
 
 test('practical variant changes only the Tauri identity triple and derived keys', () => {
@@ -124,6 +128,25 @@ async function releaseFixture(mutate: (files: Map<string, Buffer>) => void = () 
           },
         ],
       },
+      {
+        // Published like the 0.8.0 speech worker: above one release asset, so
+        // as ordered parts with no single `url`.
+        requirementId: 'speech-recognition',
+        artifacts: [
+          {
+            role: 'worker',
+            fileName: SPEECH_ARCHIVE,
+            bytes: SPEECH_PARTS.reduce((total, part) => total + part.length, 0),
+            sha256: sha256Hex(Buffer.concat(SPEECH_PARTS)),
+            parts: SPEECH_PARTS.map((part, index) => ({
+              fileName: `${SPEECH_ARCHIVE}.00${index + 1}`,
+              bytes: part.length,
+              sha256: sha256Hex(part),
+              url: `${RELEASE_DOWNLOAD}/${SPEECH_ARCHIVE}.00${index + 1}`,
+            })),
+          },
+        ],
+      },
     ],
   };
   const files = new Map<string, Buffer>([
@@ -132,6 +155,7 @@ async function releaseFixture(mutate: (files: Map<string, Buffer>) => void = () 
     [RUNTIME_MANIFEST_NAME, Buffer.from(JSON.stringify(manifest))],
     [RUNTIME_CATALOG_NAME, Buffer.from(JSON.stringify(catalog))],
     [`capture-engine-ocr-${RELEASE_VERSION}-windows-x64.zip`, worker],
+    ...SPEECH_PARTS.map((part, index): [string, Buffer] => [`${SPEECH_ARCHIVE}.00${index + 1}`, part]),
   ]);
   for (const name of [RUNTIME_EXECUTABLE_NAME, RUNTIME_CATALOG_NAME]) {
     files.set(`${name}.sha256`, Buffer.from(`${sha256Hex(files.get(name) ?? Buffer.alloc(0))}  ${name}\n`));
@@ -176,6 +200,67 @@ test('runtime release directory is verified against an independent digest, sidec
   });
   t.after(() => rm(wrongUrl.directory, { recursive: true, force: true }));
   assert.throws(() => verifyRuntimeReleaseDirectory(wrongUrl.directory, good.runtimeSha256, RELEASE_VERSION), /worker artifact/u);
+});
+
+/** Edits the fixture catalog and re-signs its sidecar, as a release would. */
+function editCatalog(files: Map<string, Buffer>, edit: (speech: Record<string, unknown> & { parts: Array<Record<string, unknown>> }) => void) {
+  const catalog = JSON.parse(String(files.get(RUNTIME_CATALOG_NAME)));
+  edit(catalog.requirements[1].artifacts[0]);
+  files.set(RUNTIME_CATALOG_NAME, Buffer.from(JSON.stringify(catalog)));
+  files.set(`${RUNTIME_CATALOG_NAME}.sha256`, Buffer.from(`${sha256Hex(files.get(RUNTIME_CATALOG_NAME) ?? Buffer.alloc(0))}  ${RUNTIME_CATALOG_NAME}\n`));
+}
+
+test('a worker published as parts is accepted and each part is verified like a single archive', async (t) => {
+  const good = await releaseFixture();
+  t.after(() => rm(good.directory, { recursive: true, force: true }));
+  const release = verifyRuntimeReleaseDirectory(good.directory, good.runtimeSha256, RELEASE_VERSION);
+  const [ocr, speech] = release.workers;
+  assert.equal(ocr.url, `${RELEASE_DOWNLOAD}/capture-engine-ocr-${RELEASE_VERSION}-windows-x64.zip`);
+  assert.deepEqual(ocr.parts, []);
+  assert.equal(speech.requirementId, 'speech-recognition');
+  assert.equal(speech.url, null);
+  assert.deepEqual(speech.parts.map((part) => part.fileName), [`${SPEECH_ARCHIVE}.001`, `${SPEECH_ARCHIVE}.002`]);
+  assert.deepEqual([...readVerifiedWorkerFiles(release, ocr).keys()], [ocr.fileName]);
+  const parts = readVerifiedWorkerFiles(release, speech);
+  assert.deepEqual([...parts.keys()], [`${SPEECH_ARCHIVE}.001`, `${SPEECH_ARCHIVE}.002`]);
+  assert.ok(Buffer.concat([...parts.values()]).equals(Buffer.concat(SPEECH_PARTS)));
+
+  // Part files on disk that are missing or differ from the catalog.
+  const fileCases: Array<[string, (files: Map<string, Buffer>) => void, RegExp]> = [
+    ['missing part file', (files) => files.delete(`${SPEECH_ARCHIVE}.002`), /\.002 must be a regular file/u],
+    [
+      'part with the catalog size but a wrong sha256',
+      (files) => files.set(`${SPEECH_ARCHIVE}.001`, Buffer.from('speech worker part ONE')),
+      /\.001 differs from the release engine catalog/u,
+    ],
+    ['part with a wrong size', (files) => files.set(`${SPEECH_ARCHIVE}.002`, Buffer.from('short')), /\.002 differs/u],
+    [
+      'parts that match their entries but not the whole archive digest',
+      (files) => editCatalog(files, (speech) => (speech.sha256 = sha('another archive'))),
+      /do not join/u,
+    ],
+  ];
+  for (const [label, mutate, expected] of fileCases) {
+    const fixture = await releaseFixture(mutate);
+    t.after(() => rm(fixture.directory, { recursive: true, force: true }));
+    const verified = verifyRuntimeReleaseDirectory(fixture.directory, good.runtimeSha256, RELEASE_VERSION);
+    assert.throws(() => readVerifiedWorkerFiles(verified, verified.workers[1]), expected, label);
+  }
+
+  // Catalog part entries that the runtime's catalog schema would reject.
+  const catalogCases: Array<[string, Parameters<typeof editCatalog>[1], RegExp]> = [
+    ['a missing part entry', (speech) => speech.parts.pop(), /parts are invalid/u],
+    ['parts that do not add up to the archive', (speech) => (speech.bytes = Number(speech.bytes) + 1), /do not add up/u],
+    ['a malformed part sha256', (speech) => (speech.parts[0].sha256 = 'NOT-A-DIGEST'), /part digest/u],
+    ['a part named out of order', (speech) => (speech.parts[1].fileName = `${SPEECH_ARCHIVE}.003`), /part is invalid/u],
+    ['a part outside the release', (speech) => (speech.parts[1].url = 'https://example.invalid/part'), /worker artifact is malformed/u],
+    ['both url and parts', (speech) => (speech.url = `${RELEASE_DOWNLOAD}/${SPEECH_ARCHIVE}`), /worker artifact is invalid/u],
+  ];
+  for (const [label, edit, expected] of catalogCases) {
+    const fixture = await releaseFixture((files) => editCatalog(files, edit));
+    t.after(() => rm(fixture.directory, { recursive: true, force: true }));
+    assert.throws(() => verifyRuntimeReleaseDirectory(fixture.directory, good.runtimeSha256, RELEASE_VERSION), expected, label);
+  }
 });
 
 test('application environment is allowlisted and only rehearsal adds the loopback worker mirror', () => {
