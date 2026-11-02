@@ -7,6 +7,11 @@ export const DESKTOP_LOCALES: readonly DesktopLocale[] = ['zh-TW', 'en'];
 export const DESKTOP_LOCALE_STORAGE_KEY = 'capture-workbench.locale';
 const DEFAULT_DESKTOP_LOCALE: DesktopLocale = 'zh-TW';
 
+/** Pages the shell's left navigation leads to. */
+export type ShellRoute = 'ocr' | 'asr' | 'history' | 'settings';
+/** Pages that are not built yet and point to the history page meanwhile. */
+export type PlaceholderRoute = Exclude<ShellRoute, 'history'>;
+
 /** Every piece of text the desktop app shows. */
 export interface DesktopMessages {
   readonly languageName: string;
@@ -22,6 +27,12 @@ export interface DesktopMessages {
   readonly ready: string;
   readonly notReady: string;
   readonly title: string;
+  readonly mainNavigation: string;
+  readonly nav: Readonly<Record<ShellRoute, string>>;
+  readonly comingSoon: string;
+  readonly placeholder: Readonly<
+    Record<PlaceholderRoute, { readonly summary: string; readonly action: string }>
+  >;
   readonly noModel: string;
   readonly setupTitle: string;
   readonly needsSetup: string;
@@ -128,6 +139,14 @@ const ZH_TW: DesktopMessages = {
   ready: '已就緒',
   notReady: '尚未就緒',
   title: '文件擷取工作台',
+  mainNavigation: '主要功能',
+  nav: { ocr: '文件轉文字', asr: '錄音轉逐字稿', history: '紀錄', settings: '設定' },
+  comingSoon: '即將推出',
+  placeholder: {
+    ocr: { summary: '讀出掃描檔、PDF 和照片裡的文字。', action: '前往紀錄加入文件' },
+    asr: { summary: '把錄音轉成標有時間的逐字稿。', action: '前往紀錄加入錄音' },
+    settings: { summary: '辨識功能、運算裝置和介面語言都會集中在這裡。', action: '前往紀錄調整設定' },
+  },
   noModel: '未選擇模型',
   setupTitle: '首次設定',
   needsSetup: '處理文件前，需要先下載必要元件。',
@@ -256,6 +275,14 @@ const EN: DesktopMessages = {
   ready: 'Ready',
   notReady: 'Not ready',
   title: 'Capture Workbench',
+  mainNavigation: 'Main',
+  nav: { ocr: 'Document to text', asr: 'Recording to transcript', history: 'History', settings: 'Settings' },
+  comingSoon: 'Coming soon',
+  placeholder: {
+    ocr: { summary: 'Read the text in scans, PDFs and photos.', action: 'Add documents in History' },
+    asr: { summary: 'Turn recordings into timed transcripts.', action: 'Add recordings in History' },
+    settings: { summary: 'Recognition features, compute devices and the interface language will live here.', action: 'Change settings in History' },
+  },
   noModel: 'No model selected',
   setupTitle: 'First-time setup',
   needsSetup: 'Required components must be downloaded before processing.',

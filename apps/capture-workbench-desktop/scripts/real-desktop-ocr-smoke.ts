@@ -27,6 +27,7 @@ import { basename, dirname, extname, join, relative, resolve, sep } from 'node:p
 import { pathToFileURL } from 'node:url';
 
 import { chromium, type Browser, type Locator, type Page } from '@playwright/test';
+import { firstValueFrom } from 'rxjs';
 
 // eslint-disable-next-line @nx/enforce-module-boundaries -- acceptance artifacts are a workspace-level test contract.
 import {
@@ -41,6 +42,11 @@ import {
   type AcceptanceRun,
 } from '../../../tools/acceptance-contract.ts';
 import { assertStagedRuntime } from './assert-staged-runtime.ts';
+import {
+  isPackagedWorkbenchUrl,
+  SHOW_HISTORY_WORKSPACE_EXPRESSION,
+  showHistoryWorkspace,
+} from './packaged-workbench-page.ts';
 import {
   nativeClickWebViewElement,
   nativeOpenDialogUiAutomation,
@@ -2807,7 +2813,8 @@ export async function queryPackagedUiState(cdpPort: number): Promise<PackagedUiS
   const targets = await response.json() as Array<{ type?: unknown; url?: unknown; webSocketDebuggerUrl?: unknown }>;
   const target = targets.find((candidate) => (
     candidate.type === 'page' &&
-    candidate.url === 'http://tauri.localhost/' &&
+    typeof candidate.url === 'string' &&
+    isPackagedWorkbenchUrl(candidate.url) &&
     typeof candidate.webSocketDebuggerUrl === 'string'
   ));
   if (!target || typeof target.webSocketDebuggerUrl !== 'string') return undefined;
@@ -2838,7 +2845,8 @@ export async function queryPackagedUiState(cdpPort: number): Promise<PackagedUiS
         method: 'Runtime.evaluate',
         params: {
           returnByValue: true,
-          expression: `JSON.stringify({
+          expression: `${SHOW_HISTORY_WORKSPACE_EXPRESSION}
+          JSON.stringify({
             runtimeState: document.querySelector('[data-testid="workbench-root"]')?.getAttribute('data-runtime-state') ?? null,
             sourceImportEnabled: (() => {
               const element = document.querySelector('[data-testid="source-import"]');
@@ -2894,9 +2902,19 @@ export async function waitForPackagedRuntimeReadySignal(cdpPort: number): Promis
   }
 }
 
+/** Attaches to the packaged app's page and opens the history workspace the smokes drive. */
 export async function connectToPackagedPage(
   cdpPort: number,
   options: PackagedPageAcquisitionOptions = {},
+): Promise<{ browser: CdpBrowser; page: Page }> {
+  const attached = await acquirePackagedPage(cdpPort, options);
+  await firstValueFrom(showHistoryWorkspace(attached.page));
+  return attached;
+}
+
+async function acquirePackagedPage(
+  cdpPort: number,
+  options: PackagedPageAcquisitionOptions,
 ): Promise<{ browser: CdpBrowser; page: Page }> {
   const timeoutMs = options.timeoutMs ?? 30_000;
   const pollIntervalMs = options.pollIntervalMs ?? 250;
@@ -2936,7 +2954,7 @@ export async function connectToPackagedPage(
 
 function findPackagedPage(browser: CdpBrowser): Page | undefined {
   return browser.contexts().flatMap((context) => context.pages())
-    .find((candidate) => candidate.url() === 'http://tauri.localhost/');
+    .find((candidate) => isPackagedWorkbenchUrl(candidate.url()));
 }
 
 export async function closePackagedBrowser(browser: CdpBrowser): Promise<void> {

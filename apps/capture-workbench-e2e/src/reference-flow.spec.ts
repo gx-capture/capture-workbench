@@ -1,10 +1,37 @@
 // Browser reference flow (CI): the reference app in a browser with a fake
 // Tauri bridge and scripted runtime responses. It checks the Traditional
-// Chinese setup wizard, install actions against the runtime catalog, and the
-// document queue, without real OCR.
+// Chinese shell navigation, the setup wizard, install actions against the
+// runtime catalog, and the document queue on the history page, without real OCR.
 import { expect, test, type Page } from '@playwright/test';
 // eslint-disable-next-line @nx/enforce-module-boundaries -- repository browser fixture shares release intent.
 import { RELEASE_VERSION } from '../../../tools/release/release-intent.ts';
+
+test('navigates the Traditional Chinese shell to each page from the left navigation', async ({ page }) => {
+  await openDesktop(page, [], '/');
+
+  await expect(page).toHaveURL(/\/ocr$/u);
+  const nav = page.getByRole('navigation', { name: '主要功能' });
+  await expect(nav.getByRole('link')).toHaveText(['文件轉文字', '錄音轉逐字稿', '紀錄', '設定']);
+  await expect(nav.getByTestId('runtime-status')).toHaveText('已就緒');
+  await expect(nav.getByTestId('runtime-status')).toHaveAttribute('data-state', 'ready');
+
+  const pages = [
+    { link: '錄音轉逐字稿', path: /\/asr$/u, heading: '錄音轉逐字稿' },
+    { link: '紀錄', path: /\/history$/u, heading: '文件擷取工作台' },
+    { link: '設定', path: /\/settings$/u, heading: '設定' },
+    { link: '文件轉文字', path: /\/ocr$/u, heading: '文件轉文字' },
+  ];
+  for (const target of pages) {
+    await nav.getByRole('link', { name: target.link }).click();
+    await expect(page).toHaveURL(target.path);
+    await expect(nav.getByRole('link', { name: target.link })).toHaveAttribute('aria-current', 'page');
+    await expect(page.getByRole('heading', { level: 1, name: target.heading })).toBeVisible();
+  }
+
+  await page.getByRole('link', { name: '前往紀錄加入文件' }).click();
+  await expect(page).toHaveURL(/\/history$/u);
+  await expect(page.getByText('history.pdf')).toBeVisible();
+});
 
 test('shows one explicit Traditional Chinese setup wizard for missing core requirements', async ({ page }) => {
   await openDesktop(page, [
@@ -31,14 +58,14 @@ test('does not offer an install action when the runtime catalog marks OCR unavai
   await expect(page.locator('[data-testid="source-import"]')).toBeDisabled();
 });
 
-test('renders the Material desktop queue and history filter through the authenticated runtime client', async ({ page }) => {
+test('renders the desktop queue and history filter through the authenticated runtime client', async ({ page }) => {
   await openDesktop(page, []);
 
   await expect(page.getByText('已就緒', { exact: true })).toBeVisible();
   await expect(page.getByText('history.pdf')).toBeVisible();
   await expect(page.getByText('Ollama · qwen3.5:0.8b')).toBeVisible();
-  await expect(page.locator('.mat-mdc-form-field')).toHaveCount(2);
-  await expect(page.locator('.mat-mdc-button-base').first()).toBeVisible();
+  await expect(page.getByRole('combobox', { name: '處理狀態' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '選擇檔案' })).toBeEnabled();
   await page.getByLabel('搜尋文件').fill('history');
 
   const commands = await page.evaluate(() => {
@@ -54,14 +81,18 @@ test('renders the Material desktop queue and history filter through the authenti
 });
 
 test('does not run a deterministic provider in an unconfigured browser', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/history');
 
   await expect(page.getByRole('heading', { name: '文件擷取工作台' })).toBeVisible();
   await expect(page.getByRole('alert')).toContainText('Windows 桌面 App');
   await expect(page.getByText(/deterministic/i)).toHaveCount(0);
 });
 
-async function openDesktop(page: Page, requirements: readonly Record<string, unknown>[]): Promise<void> {
+async function openDesktop(
+  page: Page,
+  requirements: readonly Record<string, unknown>[],
+  path = '/history',
+): Promise<void> {
   await page.addInitScript(({ runtimeRequirements, runtimeVersion }) => {
     interface TauriTestGlobal {
       isTauri: boolean;
@@ -156,7 +187,7 @@ async function openDesktop(page: Page, requirements: readonly Record<string, unk
       unregisterListener: () => undefined,
     };
   }, { runtimeRequirements: requirements, runtimeVersion: RELEASE_VERSION });
-  await page.goto('/');
+  await page.goto(path);
 }
 
 function requirement(requirementId: string, displayName: string, status: string) {

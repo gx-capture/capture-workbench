@@ -36,8 +36,12 @@
     "@angular/cli",
     "@angular/language-service",
     "@nx/.*",
+    "@spartan-ng/cli",
     "@tauri-apps/cli"
   ],
+  "postcss": {
+    "config": ["apps/capture-workbench/.postcssrc.json"]
+  },
   "ignoreBinaries": [
     "netstat",
     "taskkill.exe",

@@ -34,6 +34,15 @@ export default [
     },
   },
   {
+    // Spartan helm primitives keep the code the Spartan CLI generates.
+    files: ['**/src/app/ui/**/*.ts'],
+    rules: {
+      '@angular-eslint/directive-selector': 'off',
+      '@angular-eslint/component-selector': 'off',
+      '@typescript-eslint/no-non-null-assertion': 'off',
+    },
+  },
+  {
     files: ['**/*.html'],
     // Override or add rules here
     rules: {},

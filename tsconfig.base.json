@@ -19,6 +19,15 @@
       ],
       "@gx-capture/capture-runtime-client": [
         "./packages/capture-runtime-client/src/index.ts"
+      ],
+      "@spartan-ng/helm/button": [
+        "./apps/capture-workbench/src/app/ui/button/src/index.ts"
+      ],
+      "@spartan-ng/helm/card": [
+        "./apps/capture-workbench/src/app/ui/card/src/index.ts"
+      ],
+      "@spartan-ng/helm/utils": [
+        "./apps/capture-workbench/src/app/ui/utils/src/index.ts"
       ]
     },
     "strict": false,

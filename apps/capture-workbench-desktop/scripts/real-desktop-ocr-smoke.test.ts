@@ -1253,8 +1253,8 @@ test('acceptance NSIS packaging is feature-gated and output-separated from relea
 test('packaged desktop entrypoint renders canonical OCR compute state before source import', async () => {
   const [tauriConfig, appSource, appTemplate, runtimeClient, bundleVerifier] = await Promise.all([
     readFile(new URL('../src-tauri/tauri.conf.json', import.meta.url), 'utf8'),
-    readFile(new URL('../../../apps/capture-workbench/src/app/app.ts', import.meta.url), 'utf8'),
-    readFile(new URL('../../../apps/capture-workbench/src/app/app.html', import.meta.url), 'utf8'),
+    readFile(new URL('../../../apps/capture-workbench/src/app/history/history-page.ts', import.meta.url), 'utf8'),
+    readFile(new URL('../../../apps/capture-workbench/src/app/history/history-page.html', import.meta.url), 'utf8'),
     readFile(new URL('../../../apps/capture-workbench/src/app/services/desktop-runtime-client.service.ts', import.meta.url), 'utf8'),
     readFile(new URL('../../../tools/verify-capture-workbench-production-bundle.ts', import.meta.url), 'utf8'),
   ]);
@@ -1269,7 +1269,8 @@ test('packaged desktop entrypoint renders canonical OCR compute state before sou
 });
 
 test('desktop page acquisition reconnects after a CDP attachment has no Tauri page', async () => {
-  const page = { url: () => 'http://tauri.localhost/' } as unknown as Page;
+  // Already on the history workspace, so attaching navigates nowhere.
+  const page = { url: () => 'http://tauri.localhost/history' } as unknown as Page;
   let staleClosed = 0;
   let connectionCount = 0;
   const connections: Browser[] = [
@@ -1671,7 +1672,7 @@ test('OCR screenshot evidence masks whole raw/result cards before capture', asyn
   const [smokeSource, acceptanceSource, appSource] = await Promise.all([
     readFile(new URL('./real-desktop-ocr-smoke.ts', import.meta.url), 'utf8'),
     readFile(new URL('./real-desktop-ocr-acceptance.spec.ts', import.meta.url), 'utf8'),
-    readFile(new URL('../../../apps/capture-workbench/src/app/app.html', import.meta.url), 'utf8'),
+    readFile(new URL('../../../apps/capture-workbench/src/app/history/history-page.html', import.meta.url), 'utf8'),
   ]);
   assert.match(
     appSource,

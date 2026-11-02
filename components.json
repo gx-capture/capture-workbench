@@ -1,0 +1,5 @@
+{
+  "componentsPath": "apps/capture-workbench/src/app/ui",
+  "importAlias": "@spartan-ng/helm",
+  "style": "vega"
+}
