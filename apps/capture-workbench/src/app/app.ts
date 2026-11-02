@@ -27,6 +27,7 @@ import {
 } from './i18n/desktop-messages';
 import { formatRecordingTime } from './services/desktop-workspace.selectors';
 import { DesktopWorkspaceStore } from './services/desktop-workspace.store';
+import { SpeechPack } from './speech-pack/speech-pack';
 
 @Component({
   selector: 'app-root',
@@ -43,6 +44,7 @@ import { DesktopWorkspaceStore } from './services/desktop-workspace.store';
     MatSelect,
     MatSpinner,
     CaptureRuntimeComputeStatusComponent,
+    SpeechPack,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
@@ -54,9 +56,6 @@ export class App {
   protected readonly formatTime = formatRecordingTime;
   /** What each optional unit's model does, in the language in use. */
   protected readonly guides = computed(() => CAPTURE_UNIT_GUIDES[this.locale()]);
-  /** Folds the speech pack away once everything in it is installed. */
-  protected readonly speechPackReady = computed(() =>
-    this.store.speechPack().every((unit) => unit.status === 'ready'));
   private readonly recordingPlayer =
     viewChild<ElementRef<HTMLMediaElement>>('recordingPlayer');
   private pendingPlayFromMs: number | null = null;

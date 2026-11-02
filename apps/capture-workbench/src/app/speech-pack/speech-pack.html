@@ -1,0 +1,48 @@
+<details class="speech-pack" data-testid="speech-pack" [open]="!speechPackReady()">
+  <summary>
+    <strong>{{ m().speechPackTitle }}</strong>
+    <small>{{ m().speechPackHint }}</small>
+  </summary>
+  <ul>
+    @for (unit of store.speechPack(); track unit.requirementId) {
+      <li data-testid="speech-pack-unit" [attr.data-requirement-id]="unit.requirementId" [attr.data-status]="unit.status">
+        <div class="speech-pack-heading">
+          <h3>{{ guides()[unit.requirementId]?.name ?? unit.displayName }}</h3>
+          @if (unit.status === 'ready') {
+            <span class="status" data-status="completed">{{ m().unitReady }}</span>
+          } @else if (unit.status === 'installable') {
+            <button mat-stroked-button type="button" data-testid="speech-pack-install" [disabled]="store.installing()" (click)="store.installSpeechUnit(unit.requirementId)">{{ m().agreeAndDownload }}</button>
+          } @else {
+            <span class="status" data-status="failed">{{ m().unitUnavailable }}</span>
+          }
+        </div>
+        @if (guides()[unit.requirementId]; as guide) {
+          <dl class="unit-guide" data-testid="speech-pack-guide">
+            <div><dt>{{ m().guideSummary }}</dt><dd>{{ guide.summary }}</dd></div>
+            <div><dt>{{ m().guideLanguages }}</dt><dd>{{ guide.languages }}</dd></div>
+            <div><dt>{{ m().guideHardware }}</dt><dd>{{ guide.hardware }}</dd></div>
+            <div><dt>{{ m().guideDownload }}</dt><dd>{{ guide.download }}</dd></div>
+            <div><dt>{{ m().guideLicense }}</dt><dd>{{ guide.license }}</dd></div>
+          </dl>
+        }
+        @if (unit.status !== 'ready' && unit.status !== 'installable' && unit.detail) {
+          <small>{{ unit.detail }}</small>
+        }
+        @if (store.activeInstallation(); as installation) {
+          @if (installation.requirementId === unit.requirementId && store.state() !== 'needs-setup') {
+            <div class="install-progress" data-testid="speech-pack-progress" [attr.data-status]="installation.status" aria-live="polite">
+              <div class="install-progress-heading">
+                <strong>{{ installation.status === 'completed' ? m().installDone : installation.status === 'failed' ? m().installFailed : m().installRunning }}</strong>
+                <span>{{ store.installationPercent() }}%</span>
+              </div>
+              <progress max="100" [value]="store.installationPercent()" [attr.aria-label]="m().installProgress"></progress>
+              @if (installation.error; as error) {
+                <small>{{ error.code }}: {{ error.message }}</small>
+              }
+            </div>
+          }
+        }
+      </li>
+    }
+  </ul>
+</details>
