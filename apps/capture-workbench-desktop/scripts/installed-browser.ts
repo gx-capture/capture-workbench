@@ -27,6 +27,10 @@ import {
 
 import { INSTALLED_FIXTURES } from './constants/installed.ts';
 import {
+  isPackagedWorkbenchUrl,
+  showHistoryWorkspace,
+} from './packaged-workbench-page.ts';
+import {
   nativeClickWebViewElement,
   nativeOpenDialogUiAutomation,
 } from './real-media-model-smoke.ts';
@@ -278,9 +282,10 @@ export function installedPage(browser: Browser, appProcess: ChildProcess): Obser
     const page = browser
       .contexts()
       .flatMap((context) => context.pages())
-      .find((candidate) => candidate.url() === 'http://tauri.localhost/');
+      .find((candidate) => isPackagedWorkbenchUrl(candidate.url()));
     if (page)
       return defer(() => from(page.waitForLoadState('domcontentloaded'))).pipe(
+        concatMap(() => showHistoryWorkspace(page)),
         map(() => page),
       );
     if (Date.now() >= deadline)

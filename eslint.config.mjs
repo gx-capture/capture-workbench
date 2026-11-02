@@ -14,7 +14,13 @@ export default [
         'error',
         {
           enforceBuildableLibDependency: true,
-          allow: ['^.*/eslint(\\.base)?\\.config\\.[cm]?[jt]s$'],
+          // The Spartan helm primitives are copied into the desktop app
+          // (apps/capture-workbench/src/app/ui) and keep the CLI's
+          // '@spartan-ng/helm/*' import aliases.
+          allow: [
+            '^.*/eslint(\\.base)?\\.config\\.[cm]?[jt]s$',
+            '^@spartan-ng/helm/.+$',
+          ],
           // Projects depend only downstream: app → ui → sdk (DDD refactor W1).
           // '*' keeps untagged files (workspace tooling) lintable; every
           // constraint that matches a project applies.

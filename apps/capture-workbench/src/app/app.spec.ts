@@ -1,697 +1,121 @@
-import { RUNTIME_VERSION } from '@gx-capture/capture-runtime-client';
-import { signal, type WritableSignal } from '@angular/core';
+import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
-import { provideNoopAnimations } from '@angular/platform-browser/animations';
-import type {
-  OcrComputePreflight,
-  RawCapture,
-  RuntimeInstallation,
-  RuntimeModelInstallation,
-  RuntimeModelOption,
-  RuntimeRequirement,
-} from '@gx-capture/capture-workbench-ui';
-import { App } from './app';
 import {
-  DESKTOP_LOCALE_STORAGE_KEY,
-  setDesktopLocale,
-} from './i18n/desktop-messages';
-import { transcriptLines } from './services/desktop-workspace.selectors';
+  provideRouter,
+  Router,
+  withComponentInputBinding,
+} from '@angular/router';
+import { App } from './app';
+import { appRoutes } from './app.routes';
+import { HistoryPage } from './history/history-page';
+import { setDesktopLocale } from './i18n/desktop-messages';
 import { DesktopWorkspaceStore } from './services/desktop-workspace.store';
 
-describe('App', () => {
-  it('mounts Angular Material controls in the Traditional Chinese desktop workbench', () =>
-    TestBed.configureTestingModule({
-      imports: [App],
-      providers: [
-        provideNoopAnimations(),
-        {
-          provide: DesktopWorkspaceStore,
-          useValue: workspaceStub(),
-        },
-      ],
-    }).compileComponents().then(() => {
-      const fixture = TestBed.createComponent(App);
-      fixture.detectChanges();
-      return fixture.whenStable().then(() => {
-        expect(fixture.nativeElement.querySelector('h1')?.textContent).toContain('文件擷取工作台');
-        expect(fixture.nativeElement.textContent).toContain('支援 PDF、圖片、音訊');
-        expect(fixture.nativeElement.querySelector('.mat-mdc-form-field')).not.toBeNull();
-        expect(fixture.nativeElement.querySelector('.mat-mdc-button-base')).not.toBeNull();
-        expect(fixture.nativeElement.querySelector('[data-testid="source-import"]')).not.toBeNull();
-      });
-    }),
-  );
+describe('App shell', () => {
+  beforeEach(() => setDesktopLocale('zh-TW'));
 
-  it('exposes the exact extraction provenance digest without source paths or credentials', () =>
-    TestBed.configureTestingModule({
-      imports: [App],
-      providers: [
-        provideNoopAnimations(),
-        {
-          provide: DesktopWorkspaceStore,
-          useValue: workspaceStub({
-            documentId: 'a'.repeat(32),
-            fileName: 'fixture.pdf',
-            mediaType: 'application/pdf',
-            byteLength: 16,
-            createdAtMs: 1,
-            updatedAtMs: 1,
-            status: 'completed',
-            stage: 'completed',
-            raw: { sourceText: 'OCR text', segments: [] },
-            result: {
-              targetText: 'translated text',
-              extractionEngine: {
-                engine: 'windowsml',
-                model: 'ocr-v1',
-                device: 'windowsml-dml',
-                digest: `sha256:${'a'.repeat(64)}`,
-              },
-              structuringEngine: {
-                engine: 'ollama',
-                model: 'capture-test',
-                digest: `sha256:${'b'.repeat(64)}`,
-              },
-            },
-          }),
-        },
-      ],
-    }).compileComponents().then(() => {
-      const fixture = TestBed.createComponent(App);
-      fixture.detectChanges();
-      return fixture.whenStable().then(() => {
-        const provenance = fixture.nativeElement.querySelector(
-          '[data-testid="document-extraction-provenance"]',
-        ) as HTMLElement | null;
-        expect(provenance).not.toBeNull();
-        expect(provenance?.dataset).toMatchObject({
-          engine: 'windowsml',
-          model: 'ocr-v1',
-          device: 'windowsml-dml',
-          digest: `sha256:${'a'.repeat(64)}`,
-        });
-        expect(provenance?.textContent).toContain('ocr-v1');
-        expect(provenance?.textContent).not.toMatch(
-          /Bearer|secret-token|C:\\private/iu,
-        );
-      });
-    }),
-  );
+  it('starts the workspace once and lists the four pages in Traditional Chinese', async () => {
+    const { fixture, store } = await renderShell('/');
 
-  it('shows a component installation as a rounded progress bar', async () => {
-    const store = workspaceStub();
-    store.state.set('needs-setup');
-    store.activeInstallation.set({
-      installationId: 'installation-1',
-      requirementId: 'speech-recognition',
-      status: 'running',
-      progress: 1 / 3,
-      createdAt: '2026-10-25T00:00:00Z',
-      updatedAt: '2026-10-25T00:00:00Z',
-    });
-    store.installationPercent.set(33);
-    await TestBed.configureTestingModule({
-      imports: [App],
-      providers: [provideNoopAnimations(), { provide: DesktopWorkspaceStore, useValue: store }],
-    }).compileComponents();
-    const fixture = TestBed.createComponent(App);
-    fixture.detectChanges();
-
-    const progress = fixture.nativeElement.querySelector(
-      '[data-testid="runtime-install-progress"]',
-    ) as HTMLElement;
-    expect(progress.textContent).toContain('33%');
-    expect(progress.querySelector('progress')?.getAttribute('value')).toBe('33');
+    expect(store.initialize).toHaveBeenCalledTimes(1);
+    const links = [
+      ...fixture.nativeElement.querySelectorAll('[data-testid="shell-nav"] a'),
+    ] as HTMLAnchorElement[];
+    expect(links.map((link) => link.textContent?.trim())).toEqual([
+      '文件轉文字',
+      '錄音轉逐字稿',
+      '紀錄',
+      '設定',
+    ]);
+    expect(links.map((link) => link.getAttribute('href'))).toEqual([
+      '/ocr',
+      '/asr',
+      '/history',
+      '/settings',
+    ]);
   });
 
-  it('shows visible model download progress and phase while the selected model installs', async () => {
-    const store = workspaceStub(null, {
-      installationId: 'model-installation',
-      optionId: 'qwen3.5-0.8b-v1',
-      status: 'running',
-      progress: 0.42,
-      createdAt: '2026-07-20T00:00:00Z',
-      updatedAt: '2026-07-20T00:00:00Z',
-    });
-    store.state.set('needs-setup');
-    store.modelSelectionRequired.set(true);
-    store.modelInstallationPhase.set('下載與驗證模型');
-    store.modelInstallationPercent.set(42);
-    await TestBed.configureTestingModule({
-      imports: [App],
-      providers: [
-        provideNoopAnimations(),
-        {
-          provide: DesktopWorkspaceStore,
-          useValue: store,
-        },
-      ],
-    }).compileComponents();
-    const fixture = TestBed.createComponent(App);
-    fixture.detectChanges();
-    expect(fixture.nativeElement.querySelector('[data-testid="model-install-progress"]')).not.toBeNull();
-    expect(fixture.nativeElement.querySelector('progress')?.getAttribute('value')).toBe('42');
-    expect(fixture.nativeElement.textContent).toContain('下載與驗證模型');
+  it('opens document to text by default and marks its link as the current page', async () => {
+    const { fixture } = await renderShell('/');
+
+    expect(TestBed.inject(Router).url).toBe('/ocr');
+    expect(
+      fixture.nativeElement.querySelector('[data-testid="page-ocr"] h1')
+        ?.textContent,
+    ).toContain('文件轉文字');
+    expect(
+      fixture.nativeElement
+        .querySelector('[data-testid="nav-ocr"]')
+        ?.getAttribute('aria-current'),
+    ).toBe('page');
+    expect(
+      fixture.nativeElement
+        .querySelector('[data-testid="nav-asr"]')
+        ?.getAttribute('aria-current'),
+    ).toBeNull();
   });
 
-  it('starts the exact model selected through the setup UI', async () => {
-    const store = workspaceStub();
-    store.state.set('needs-setup');
-    store.modelSelectionRequired.set(true);
-    store.modelOptions.set([{
-      optionId: 'qwen3.5-0.8b-v1',
-      displayName: 'Qwen 3.5 0.8B',
-      modelReference: 'qwen3.5:0.8b',
-      expectedDigest: null,
-      expectedBytes: null,
-      profileId: 'capture-workbench-qwen3.5-0.8b-structure-v1',
-      profileSpecSha256: 'a'.repeat(64),
-      status: 'not-installed',
-    }]);
-    store.selectModelOption.mockImplementation((optionId: string) => {
-      store.selectedModelOptionId.set(optionId);
-    });
-    await TestBed.configureTestingModule({
-      imports: [App],
-      providers: [
-        provideNoopAnimations(),
-        {
-          provide: DesktopWorkspaceStore,
-          useValue: store,
-        },
-      ],
-    }).compileComponents();
-    const fixture = TestBed.createComponent(App);
-    fixture.detectChanges();
+  it.each([
+    ['/asr', 'page-asr', '錄音轉逐字稿', '前往紀錄加入錄音'],
+    ['/settings', 'page-settings', '設定', '前往紀錄調整設定'],
+  ])(
+    'renders %s as a page that leads to the history page',
+    async (url, testId, title, action) => {
+      const { fixture } = await renderShell(url);
 
-    const option = fixture.nativeElement.querySelector(
-      '[data-testid="model-option"][value="qwen3.5-0.8b-v1"]',
-    ) as HTMLInputElement | null;
-    expect(option).not.toBeNull();
-    option?.click();
-    fixture.detectChanges();
-
-    const install = fixture.nativeElement.querySelector(
-      '[data-testid="model-install"]',
-    ) as HTMLButtonElement;
-    expect(option?.checked).toBe(true);
-    expect(install.disabled).toBe(false);
-    install.click();
-    expect(store.selectModelOption).toHaveBeenCalledWith('qwen3.5-0.8b-v1');
-    expect(store.installSelectedModel).toHaveBeenCalledOnce();
-  });
-
-  it('renders the GPU compute status before the source import control', async () => {
-    await TestBed.configureTestingModule({
-      imports: [App],
-      providers: [
-        provideNoopAnimations(),
-        {
-          provide: DesktopWorkspaceStore,
-          useValue: workspaceStub(),
-        },
-      ],
-    }).compileComponents();
-    const fixture = TestBed.createComponent(App);
-    fixture.detectChanges();
-
-    const status = fixture.nativeElement.querySelector(
-      '[data-testid="ocr-compute-status"]',
-    ) as HTMLElement | null;
-    const sourceImport = fixture.nativeElement.querySelector(
-      '[data-testid="source-import"]',
-    ) as HTMLElement | null;
-    expect(status?.textContent).toContain('GPU 加速');
-    expect(status?.getAttribute('data-mode')).toBe('gpu-dml');
-    expect(status).not.toBeNull();
-    expect(sourceImport).not.toBeNull();
-    if (!status || !sourceImport) throw new Error('Expected compute status and source import controls.');
-    expect(status.compareDocumentPosition(sourceImport)
-      & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  });
-
-  it('renders the CPU fallback notice before import when the runtime reports no usable GPU', async () => {
-    const store = workspaceStub();
-    store.ocrCompute.set(cpuFallback());
-    await TestBed.configureTestingModule({
-      imports: [App],
-      providers: [
-        provideNoopAnimations(),
-        {
-          provide: DesktopWorkspaceStore,
-          useValue: store,
-        },
-      ],
-    }).compileComponents();
-    const fixture = TestBed.createComponent(App);
-    fixture.detectChanges();
-
-    const notice = fixture.nativeElement.querySelector(
-      '[data-testid="ocr-compute-notice"]',
-    ) as HTMLElement | null;
-    const sourceImport = fixture.nativeElement.querySelector(
-      '[data-testid="source-import"]',
-    ) as HTMLElement | null;
-    expect(notice?.textContent).toContain(
-      '沒有可用的 GPU，文字辨識會比較慢。',
-    );
-    expect(notice?.getAttribute('data-mode')).toBe('cpu-fallback');
-    expect(notice).not.toBeNull();
-    expect(sourceImport).not.toBeNull();
-    if (!notice || !sourceImport) throw new Error('Expected CPU notice and source import controls.');
-    expect(notice.compareDocumentPosition(sourceImport)
-      & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  });
-
-  it('switches to English from the language control and remembers the choice', async () => {
-    await TestBed.configureTestingModule({
-      imports: [App],
-      providers: [
-        provideNoopAnimations(),
-        {
-          provide: DesktopWorkspaceStore,
-          useValue: workspaceStub(),
-        },
-      ],
-    }).compileComponents();
-    const fixture = TestBed.createComponent(App);
-    fixture.detectChanges();
-
-    try {
-      const english = fixture.nativeElement.querySelector(
-        '[data-testid="language-option"][data-locale="en"]',
-      ) as HTMLButtonElement;
-      english.click();
-      fixture.detectChanges();
-
-      expect(fixture.nativeElement.querySelector('h1')?.textContent).toContain(
-        'Capture Workbench',
-      );
-      expect(
-        fixture.nativeElement.querySelector('[data-testid="source-import"]')
-          ?.textContent,
-      ).toContain('Choose files');
-      expect(english.getAttribute('aria-pressed')).toBe('true');
-      expect(localStorage.getItem(DESKTOP_LOCALE_STORAGE_KEY)).toBe('en');
-    } finally {
-      setDesktopLocale('zh-TW');
-      localStorage.removeItem(DESKTOP_LOCALE_STORAGE_KEY);
-    }
-  });
-
-  it('keeps import disabled and shows the typed preflight error', async () => {
-    const store = workspaceStub();
-    store.state.set('error');
-    store.ocrCompute.set(null);
-    store.canCapture.set(false);
-    store.message.set(
-      'Capture Runtime OCR compute preflight is unavailable; import is disabled.',
-    );
-    await TestBed.configureTestingModule({
-      imports: [App],
-      providers: [
-        provideNoopAnimations(),
-        {
-          provide: DesktopWorkspaceStore,
-          useValue: store,
-        },
-      ],
-    }).compileComponents();
-    const fixture = TestBed.createComponent(App);
-    fixture.detectChanges();
-
-    expect(fixture.nativeElement.querySelector('[data-testid="runtime-error-message"]')?.textContent)
-      .toContain('OCR compute preflight is unavailable');
-    expect((fixture.nativeElement.querySelector('[data-testid="source-import"]') as HTMLButtonElement).disabled)
-      .toBe(true);
-  });
-});
-
-it('lists the speakers of a transcript, plays a sample and stores a name', async () => {
-  const store = workspaceStub({
-    documentId: 'c'.repeat(32),
-    fileName: 'meeting.wav',
-    mediaType: 'audio/wav',
-    byteLength: 16,
-    createdAtMs: 1,
-    updatedAtMs: 1,
-    status: 'completed',
-    stage: 'completed',
-    result: {
-      targetText: 'Good morning',
-      speakers: [
-        { speakerId: 'SPEAKER_00', sample: { kind: 'time', startMs: 0, endMs: 900 } },
-        { speakerId: 'SPEAKER_01', sample: null, displayName: 'Ms. Lin' },
-      ],
-      extractionEngine: { engine: 'speech-recognition', model: 'm', device: 'cpu', digest: `sha256:${'a'.repeat(64)}` },
-      structuringEngine: { engine: 'ollama', model: 'm', digest: `sha256:${'b'.repeat(64)}` },
+      const page = fixture.nativeElement.querySelector(
+        `[data-testid="${testId}"]`,
+      ) as HTMLElement;
+      expect(page.querySelector('h1')?.textContent).toContain(title);
+      expect(page.textContent).toContain('即將推出');
+      const link = page.querySelector('a[href="/history"]');
+      expect(link?.textContent?.trim()).toBe(action);
     },
+  );
+
+  it('keeps the existing workspace on the history route and sends unknown paths home', async () => {
+    expect(appRoutes.find((route) => route.path === 'history')?.component).toBe(
+      HistoryPage,
+    );
+    await renderShell('/no-such-page');
+
+    expect(TestBed.inject(Router).url).toBe('/ocr');
   });
-  await TestBed.configureTestingModule({
-    imports: [App],
-    providers: [provideNoopAnimations(), { provide: DesktopWorkspaceStore, useValue: store }],
-  }).compileComponents();
-  const fixture = TestBed.createComponent(App);
-  fixture.detectChanges();
-  await fixture.whenStable();
-  const root = fixture.nativeElement as HTMLElement;
 
-  const rows = root.querySelectorAll('[data-testid="document-speaker"]');
-  expect(rows).toHaveLength(2);
-  expect(rows[0].querySelector('audio')?.getAttribute('src')).toBe('blob:recording#t=0,0.9');
-  expect(rows[1].querySelector('audio')).toBeNull();
-  expect((rows[1].querySelector('input') as HTMLInputElement).value).toBe('Ms. Lin');
+  it('shows the runtime state at the bottom of the navigation', async () => {
+    const { fixture, store } = await renderShell('/');
+    const status = () =>
+      fixture.nativeElement.querySelector(
+        '[data-testid="runtime-status"]',
+      ) as HTMLElement;
 
-  const input = rows[0].querySelector('input') as HTMLInputElement;
-  input.value = 'Mr. Chen';
-  input.dispatchEvent(new Event('change'));
-  expect(store.nameSpeaker).toHaveBeenCalledWith('c'.repeat(32), 'SPEAKER_00', 'Mr. Chen');
+    expect(status().dataset['state']).toBe('starting');
+    expect(status().textContent).toContain('尚未就緒');
 
-  (root.querySelector('[data-testid="load-speaker-samples"]') as HTMLButtonElement).click();
-  expect(store.loadSpeakerSamples).toHaveBeenCalledWith('c'.repeat(32), 'audio/wav');
-
-  const option = root.querySelector('[data-testid="identify-speakers"]') as HTMLInputElement;
-  option.checked = true;
-  option.dispatchEvent(new Event('change'));
-  expect(store.identifySpeakers()).toBe(true);
+    store.state.set('ready');
+    fixture.detectChanges();
+    expect(status().dataset['state']).toBe('ready');
+    expect(status().textContent).toContain('已就緒');
+  });
 });
 
-function workspaceStub(selected: unknown = null, modelInstallation: RuntimeModelInstallation | null = null) {
-  return {
-    state: signal<'ready' | 'needs-setup' | 'error'>('ready'),
-    message: signal(''),
-    requirements: signal([]),
-    documents: signal([]),
-    selectedId: signal<string | null>(null),
-    selected: signal(selected),
-    query: signal(''),
-    statusFilter: signal(''),
-    installing: signal(false),
-    activeInstallation: signal<RuntimeInstallation | null>(null),
-    installationPercent: signal(0),
-    activeModelInstallation: signal<RuntimeModelInstallation | null>(modelInstallation),
-    modelInstallationPhase: signal(''),
-    modelInstallationPercent: signal(0),
-    activeModelOption: signal(null),
-    ocrCompute: signal<OcrComputePreflight | null>(gpuCompute()),
-    modelSelectionRequired: signal(false),
-    modelOptions: signal<readonly RuntimeModelOption[]>([]),
-    selectedModelOptionId: signal<string | null>(null),
-    busyIds: signal(new Set<string>()),
-    identifySpeakers: signal(false),
-    speechGpu: signal<{ cudaAvailable: boolean; preferGpu: boolean } | null>(null),
-    canChangeCompute: signal(true),
-    setPreferGpu: vi.fn(),
-    speechPack: signal<readonly RuntimeRequirement[]>([]),
-    installSpeechUnit: vi.fn(),
-    sampleSources: signal(new Map<string, string>()),
-    loadSpeakerSamples: vi.fn(),
-    isRecording: (mediaType: string) =>
-      mediaType.startsWith('audio/') || mediaType.startsWith('video/'),
-    recordingUrl: signal<string | null>(null) as unknown as (
-      documentId: string,
-    ) => string | null,
-    transcriptLines: (item: {
-      raw?: RawCapture;
-      result?: { speakers?: { speakerId: string; displayName?: string | null }[] };
-    }) => (item.raw ? transcriptLines(item.raw, item.result?.speakers ?? []) : []),
-    speakerSampleUrl: (_documentId: string, sample?: unknown) =>
-      sample ? 'blob:recording#t=0,0.9' : null,
-    nameSpeaker: vi.fn(),
-    missedUnits: () => [],
-    requestUnit: vi.fn(),
-    resultText: (result: { targetText: string }) => result.targetText,
-    canCapture: signal(true),
-    coreMissing: signal([]),
-    installableCoreRequirements: signal([]),
+async function renderShell(url: string) {
+  const store = {
+    state: signal<'starting' | 'needs-setup' | 'ready' | 'error'>('starting'),
     initialize: vi.fn(),
-    installCoreRequirements: vi.fn(),
-    selectModelOption: vi.fn(),
-    installSelectedModel: vi.fn(),
-    chooseSources: vi.fn(),
-    select: vi.fn(),
-    updateQuery: vi.fn(),
-    updateStatusFilter: vi.fn(),
-    retry: vi.fn(),
-    cancel: vi.fn(),
-    export: vi.fn(),
-    delete: vi.fn(),
-    formatBytes: (bytes: number) => `${bytes} B`,
-    formatDate: () => '2026 年 7 月 28 日 11:18',
-    stageLabel: () => '已完成',
-    statusLabel: () => '已完成',
   };
-}
-
-function gpuCompute(): OcrComputePreflight {
-  return {
-    apiVersion: '2.0',
-    schemaVersion: '1',
-    service: 'capture-runtime',
-    runtimeVersion: RUNTIME_VERSION,
-    contractSetVersion: '2',
-    contractSha256: 'a'.repeat(64),
-    mode: 'gpu-dml',
-    adapterClass: 'dedicated',
-    reasonCode: null,
-    userNoticeRequired: false,
-    noticeCode: null,
-  };
-}
-
-function cpuFallback(): OcrComputePreflight {
-  return {
-    ...gpuCompute(),
-    mode: 'cpu-fallback',
-    adapterClass: 'unknown',
-    reasonCode: 'no_compatible_gpu',
-    userNoticeRequired: true,
-    noticeCode: 'ocr_cpu_fallback',
-  };
-}
-
-function speechUnit(
-  requirementId: 'speech-recognition' | 'speaker-diarization',
-  status: RuntimeRequirement['status'],
-): RuntimeRequirement {
-  return {
-    requirementId,
-    kind: requirementId === 'speech-recognition' ? 'transcription' : 'speaker-identification',
-    displayName: requirementId === 'speech-recognition' ? 'Speech recognition' : 'Speaker identification',
-    status,
-    requiredFor: ['audio'],
-    installStrategy: 'runtime-catalog',
-    optional: true,
-  };
-}
-
-it('describes each optional speech unit and downloads only the one the user picks', async () => {
-  const store = workspaceStub();
-  store.speechPack.set([
-    speechUnit('speech-recognition', 'installable'),
-    speechUnit('speaker-diarization', 'installable'),
-  ]);
-  await TestBed.configureTestingModule({
-    imports: [App],
-    providers: [provideNoopAnimations(), { provide: DesktopWorkspaceStore, useValue: store }],
-  }).compileComponents();
-  const fixture = TestBed.createComponent(App);
-  fixture.detectChanges();
-  const root = fixture.nativeElement as HTMLElement;
-
-  const pack = root.querySelector('[data-testid="speech-pack"]') as HTMLDetailsElement;
-  expect(pack.open).toBe(true);
-  expect(pack.textContent).toContain('台灣語音包（選用）');
-  const units = [...root.querySelectorAll<HTMLElement>('[data-testid="speech-pack-unit"]')];
-  expect(units.map((unit) => unit.dataset['requirementId'])).toEqual([
-    'speech-recognition',
-    'speaker-diarization',
-  ]);
-  const speech = units[0].textContent ?? '';
-  expect(speech).toContain('TEA-ASR 1.1');
-  expect(speech).toContain('台灣華語');
-  expect(speech).toContain('10.5 GB');
-  expect(speech).toContain('MIT');
-  expect(units[1].textContent).toContain('最多分出 8 位說話者');
-
-  (units[1].querySelector('[data-testid="speech-pack-install"]') as HTMLButtonElement).click();
-  expect(store.installSpeechUnit).toHaveBeenCalledExactlyOnceWith('speaker-diarization');
-});
-
-it('folds the speech pack away once both units are installed', async () => {
-  const store = workspaceStub();
-  store.speechPack.set([
-    speechUnit('speech-recognition', 'ready'),
-    speechUnit('speaker-diarization', 'ready'),
-  ]);
-  await TestBed.configureTestingModule({
-    imports: [App],
-    providers: [provideNoopAnimations(), { provide: DesktopWorkspaceStore, useValue: store }],
-  }).compileComponents();
-  const fixture = TestBed.createComponent(App);
-  fixture.detectChanges();
-  const root = fixture.nativeElement as HTMLElement;
-
-  expect((root.querySelector('[data-testid="speech-pack"]') as HTMLDetailsElement).open).toBe(false);
-  expect(root.querySelector('[data-testid="speech-pack-install"]')).toBeNull();
-});
-
-it('shows a speech unit download in the pack while documents stay usable', async () => {
-  const store = workspaceStub();
-  store.speechPack.set([speechUnit('speech-recognition', 'installable')]);
-  store.activeInstallation.set({
-    installationId: 'installation-2',
-    requirementId: 'speech-recognition',
-    status: 'running',
-    progress: 0.5,
-    createdAt: '2026-11-01T00:00:00Z',
-    updatedAt: '2026-11-01T00:00:00Z',
-  });
-  store.installationPercent.set(50);
-  await TestBed.configureTestingModule({
-    imports: [App],
-    providers: [provideNoopAnimations(), { provide: DesktopWorkspaceStore, useValue: store }],
-  }).compileComponents();
-  const fixture = TestBed.createComponent(App);
-  fixture.detectChanges();
-  const root = fixture.nativeElement as HTMLElement;
-
-  const progress = root.querySelector('[data-testid="speech-pack-progress"]') as HTMLElement;
-  expect(progress.textContent).toContain('50%');
-  expect(root.querySelector('[data-testid="runtime-setup"]')).toBeNull();
-});
-
-it('offers the GPU setting for speech recognition only when a CUDA driver is present', async () => {
-  const store = workspaceStub();
-  await TestBed.configureTestingModule({
-    imports: [App],
-    providers: [provideNoopAnimations(), { provide: DesktopWorkspaceStore, useValue: store }],
-  }).compileComponents();
-  const fixture = TestBed.createComponent(App);
-  fixture.detectChanges();
-  const root = fixture.nativeElement as HTMLElement;
-  expect(root.querySelector('[data-testid="prefer-gpu"]')).toBeNull();
-
-  store.speechGpu.set({ cudaAvailable: true, preferGpu: true });
-  fixture.detectChanges();
-  const option = root.querySelector('[data-testid="prefer-gpu"]') as HTMLInputElement;
-  expect(option.checked).toBe(true);
-  expect(option.parentElement?.textContent).toContain('用 GPU 加速語音辨識');
-  option.checked = false;
-  option.dispatchEvent(new Event('change'));
-  expect(store.setPreferGpu).toHaveBeenCalledWith(false);
-
-  store.canChangeCompute.set(false);
-  fixture.detectChanges();
-  expect(option.disabled).toBe(true);
-});
-
-it('lists a recording as timed lines and plays it from a line', async () => {
-  const store = workspaceStub({
-    documentId: 'd'.repeat(32),
-    fileName: 'hearing.mp4',
-    mediaType: 'video/x-matroska',
-    byteLength: 10,
-    createdAtMs: 1,
-    updatedAtMs: 1,
-    status: 'completed',
-    stage: 'completed',
-    raw: {
-      schemaVersion: '2',
-      diagnosticOnly: true,
-      source: {
-        sha256: 'a'.repeat(64),
-        fileName: 'hearing.mp4',
-        mediaType: 'video/x-matroska',
-        bytes: 10,
-      },
-      segments: [
-        {
-          segmentId: 's1',
-          order: 0,
-          locator: { kind: 'time', startMs: 284_050, endMs: 285_400 },
-          text: '謝謝',
-          speaker: 'SPEAKER_00',
-        },
-        {
-          segmentId: 's2',
-          order: 1,
-          locator: { kind: 'time', startMs: 3_725_000, endMs: 3_731_000 },
-          text: '請陳述您的姓名',
-          speaker: 'SPEAKER_01',
-        },
-      ],
-      sourceText: '謝謝\n請陳述您的姓名',
-      extractionEngine: {
-        engine: 'speech-recognition',
-        model: 'tea-asr-1.1',
-        device: 'cuda',
-        digest: `sha256:${'a'.repeat(64)}`,
-      },
-      createdAt: '2026-10-15T00:00:00Z',
-    },
-    result: {
-      targetText: '謝謝\n請陳述您的姓名',
-      speakers: [{ speakerId: 'SPEAKER_01', sample: null, displayName: '法官' }],
-      extractionEngine: {
-        engine: 'speech-recognition',
-        model: 'm',
-        device: 'cuda',
-        digest: `sha256:${'a'.repeat(64)}`,
-      },
-      structuringEngine: {
-        engine: 'ollama',
-        model: 'm',
-        digest: `sha256:${'b'.repeat(64)}`,
-      },
-      blocks: [],
-    },
-  });
   await TestBed.configureTestingModule({
     imports: [App],
     providers: [
-      provideNoopAnimations(),
+      provideRouter(appRoutes, withComponentInputBinding()),
       { provide: DesktopWorkspaceStore, useValue: store },
     ],
   }).compileComponents();
   const fixture = TestBed.createComponent(App);
   fixture.detectChanges();
-  await fixture.whenStable();
-  const root = fixture.nativeElement as HTMLElement;
-
-  const lines = root.querySelectorAll('[data-testid="transcript-line"]');
-  expect(lines).toHaveLength(2);
-  expect(lines[0].textContent).toContain('4:44');
-  expect(lines[0].textContent).toContain('SPEAKER_00');
-  expect(lines[1].textContent).toContain('1:02:05');
-  expect(lines[1].textContent).toContain('法官');
-  expect(root.querySelector('[data-testid="recording-player"]')).toBeNull();
-
-  // The recording is loaded on the first request to play it.
-  (lines[1].querySelector('button') as HTMLButtonElement).click();
-  expect(store.loadSpeakerSamples).toHaveBeenCalledWith(
-    'd'.repeat(32),
-    'video/x-matroska',
-  );
-
-  (store.recordingUrl as unknown as WritableSignal<string | null>).set('blob:hearing');
+  await TestBed.inject(Router).navigateByUrl(url);
   fixture.detectChanges();
-  const player = root.querySelector(
-    'video[data-testid="recording-player"]',
-  ) as HTMLVideoElement;
-  expect(player.getAttribute('src')).toBe('blob:hearing');
-  let currentTime = 0;
-  Object.defineProperty(player, 'currentTime', {
-    get: () => currentTime,
-    set: (value: number) => {
-      currentTime = value;
-    },
-  });
-  Object.defineProperty(player, 'play', { value: vi.fn(() => Promise.resolve()) });
-
-  player.dispatchEvent(new Event('loadedmetadata'));
-  expect(currentTime).toBe(3725);
-
-  (lines[0].querySelector('button') as HTMLButtonElement).click();
-  expect(currentTime).toBe(284.05);
-});
+  await fixture.whenStable();
+  fixture.detectChanges();
+  return { fixture, store };
+}

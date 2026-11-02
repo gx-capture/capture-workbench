@@ -1,6 +1,59 @@
+/* Tailwind and the Spartan helm tokens (.agents/DECISIONS/tailwind-spartan-ui.md).
+   Layered, so the unlayered Material theme and component styles of the
+   workspace still win until later phases remove them. */
+@layer theme, base, components, utilities;
+@import 'tailwindcss/theme.css' layer(theme);
+@import 'tailwindcss/preflight.css' layer(base);
+@import 'tailwindcss/utilities.css' layer(utilities) source(none);
+@import '@spartan-ng/brain/hlm-tailwind-preset.css';
+@source './app/**/*.{html,ts}';
+
+/* The workspace on /history was styled against browser defaults, not
+   Tailwind's preflight; undo preflight inside it until phase 7 of
+   .agents/PLANS/workbench-ocr-asr-ux.md deletes that workspace. */
+@layer base {
+  app-history-page {
+    line-height: normal;
+  }
+
+  app-history-page :where(*) {
+    all: revert-layer;
+  }
+}
+
+:root {
+  --radius: 0.625rem;
+  --background: #f2efe7;
+  --foreground: #17231f;
+  --card: #fffdf8;
+  --card-foreground: #17231f;
+  --popover: #fffdf8;
+  --popover-foreground: #17231f;
+  --primary: #23865e;
+  --primary-foreground: #ffffff;
+  --secondary: #e5e8d9;
+  --secondary-foreground: #18332b;
+  --muted: #e9e5da;
+  --muted-foreground: #5f6d66;
+  --accent: #e5e8d9;
+  --accent-foreground: #18332b;
+  --destructive: #b5452c;
+  --border: #d6d1c3;
+  --input: #d6d1c3;
+  --ring: #5f9c83;
+  --sidebar: #fbf9f3;
+  --sidebar-foreground: #17231f;
+  --sidebar-primary: #23865e;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #e5e8d9;
+  --sidebar-accent-foreground: #18332b;
+  --sidebar-border: #d6d1c3;
+  --sidebar-ring: #5f9c83;
+}
+
 html {
   color-scheme: light;
-  background: #f2efe7;
+  background: var(--background);
   font-family: 'Microsoft JhengHei UI', 'Microsoft JhengHei', ui-sans-serif, system-ui, sans-serif;
 }
 
@@ -14,7 +67,7 @@ body {
   min-width: 20rem;
   min-height: 100vh;
   margin: 0;
-  background: #f2efe7;
+  background: var(--background);
 }
 
 button,

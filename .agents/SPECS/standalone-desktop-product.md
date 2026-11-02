@@ -52,10 +52,12 @@ installation error rather than fake readiness or deterministic OCR.
   a result, export it, reopen it from history, retry it, and delete it.
 - The product UI is Traditional Chinese, keyboard accessible, and reports
   actionable setup/runtime errors.
-- The desktop renderer uses Angular Material 22 with its global theme and
-  animation provider loaded at bootstrap; the workbench uses Material form
-  fields, buttons, cards, dividers, and progress feedback rather than an
-  unused dependency.
+- The desktop shell uses Tailwind tokens and Spartan helm components
+  (`.agents/DECISIONS/tailwind-spartan-ui.md`): a fixed left navigation with
+  文件轉文字 (`/ocr`, the home page), 錄音轉逐字稿 (`/asr`), 紀錄 (`/history`)
+  and 設定 (`/settings`), and the runtime status at its foot. The document
+  workspace on 紀錄 keeps its Material controls until the plan in
+  `.agents/PLANS/workbench-ocr-asr-ux.md` replaces it.
 - Product builds contain only verified release runtime assets; deterministic
   assets remain test-only.
 - `pnpm run dev` and the opt-in real Ollama smoke require no WindowsML bundle

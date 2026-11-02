@@ -26,6 +26,7 @@ export const config: SheriffConfig = {
     'apps/capture-workbench/src/app/services': ['shell:service'],
     'apps/capture-workbench/src/app/contracts': ['shell:contract'],
     'apps/capture-workbench/src/app/i18n': ['shell:i18n'],
+    'apps/capture-workbench/src/app/ui/<primitive>/src': ['shell:ui'],
     'packages/capture-runtime-client/src': ['sdk'],
   },
   depRules: {
@@ -60,6 +61,8 @@ export const config: SheriffConfig = {
     ],
     'shell:contract': ['shell:contract', 'ui:public-api', 'sdk'],
     'shell:i18n': ['shell:i18n', 'shell:contract'],
+    // Spartan helm primitives (Tailwind + Spartan brain) depend only on each other.
+    'shell:ui': ['shell:ui'],
     sdk: ['sdk', 'noTag'],
     noTag: ['noTag', 'root', 'sdk', 'ui:*', 'shell:*'],
   },
