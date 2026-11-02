@@ -161,6 +161,47 @@ test('rejects durable OCR segment, page locator, and bounding-box drift', () => 
   }
 });
 
+test('treats absent and schema-default speaker fields on OCR segments as equal', () => {
+  const visible = view().rawSegments;
+  const withDefaults = cloneDurableOcrSegments().map((segment) => ({
+    ...segment,
+    speaker: null,
+    speakerOverlap: false,
+  }));
+  assert.doesNotThrow(() => assertDurableOcrSegmentsEqual(withDefaults, visible));
+  assert.doesNotThrow(() =>
+    assertDurableOcrSegmentsEqual(
+      cloneDurableOcrSegments(),
+      visible.map((segment) => ({ ...segment, speaker: null, speakerOverlap: false })),
+    ),
+  );
+});
+
+test('a real speaker value or overlap still has to match', () => {
+  const visible = view().rawSegments;
+  const cases: Array<[string, Record<string, unknown>, typeof visible]> = [
+    ['speaker absent from the projection', { speaker: 'SPEAKER_00', speakerOverlap: false }, visible],
+    ['overlap absent from the projection', { speaker: null, speakerOverlap: true }, visible],
+    [
+      'different speaker',
+      { speaker: 'SPEAKER_01', speakerOverlap: false },
+      visible.map((segment) => ({ ...segment, speaker: 'SPEAKER_00' })),
+    ],
+  ];
+  for (const [name, fields, expected] of cases) {
+    const actual = cloneDurableOcrSegments().map((segment) => ({ ...segment, ...fields }));
+    assert.throws(
+      () => assertDurableOcrSegmentsEqual(actual, expected),
+      /durable raw OCR segments must equal the public UI projection/u,
+      name,
+    );
+  }
+  const matching = cloneDurableOcrSegments().map((segment) => ({ ...segment, speaker: 'SPEAKER_00', speakerOverlap: false }));
+  assert.doesNotThrow(() =>
+    assertDurableOcrSegmentsEqual(matching, visible.map((segment) => ({ ...segment, speaker: 'SPEAKER_00' }))),
+  );
+});
+
 test('rejects a nullable bounding box on a time locator', () => {
   const expected = [{
     segmentId: 'segment-time',
