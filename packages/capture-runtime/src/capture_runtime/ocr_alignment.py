@@ -108,15 +108,6 @@ def _operations(pipeline: Any) -> tuple[Any, ...]:
     return owner, cropper, recognizer, reader, resize, batch, decoder
 
 
-def alignment_available(pipeline: Any) -> bool:
-    """Probe injected/custom pipelines; canonical attachment must still raise."""
-    try:
-        _operations(pipeline)
-    except UnsupportedAlignmentPipeline:
-        return False
-    return True
-
-
 class AlignmentCollector:
     """Collect immutable alignment evidence from exactly one inference context."""
 
@@ -426,7 +417,7 @@ class AlignmentCollector:
         self,
         exc_type: type[BaseException] | None,
         exc_value: BaseException | None,
-        traceback: TracebackType | None,
+        _traceback: TracebackType | None,
     ) -> Literal[False]:
         failures: list[BaseException] = []
         try:

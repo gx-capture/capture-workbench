@@ -17,6 +17,7 @@ from capture_runtime.progressive_audio import (
     WhisperWindowResult,
     WhisperWindowSegment,
 )
+from tests.support.progressive_audio import tick
 
 
 class MutableClock(Clock):
@@ -264,10 +265,10 @@ def test_progressive_session_emits_heartbeat_then_stall_failure() -> None:
     )
 
     clock.current += timedelta(seconds=5)
-    heartbeat = session.tick()
+    heartbeat = tick(session)
     assert heartbeat[0].event_type is StreamingEventType.HEARTBEAT
     clock.current += timedelta(seconds=86)
-    failure = session.tick()
+    failure = tick(session)
     assert failure[-1].event_type is StreamingEventType.FAILED
     assert failure[-1].error is not None
     assert failure[-1].error.code == "progressive_stall"

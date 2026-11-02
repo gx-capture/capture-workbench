@@ -29,14 +29,12 @@ from capture_runtime.constants import (
 )
 from capture_runtime.contracts import (
     RuntimeArtifactDescriptorV2,
-    RuntimeModelOptionV2,
     RuntimeRequirementStatus,
     RuntimeRequirementV2,
 )
 from capture_runtime.engine_catalog import EngineArtifactDescriptor, EngineCatalogError
 from capture_runtime.engine_installation import EngineInstallationManager, sha256_file
 from capture_runtime.model_catalog import (
-    MODEL_OPTIONS,
     ActiveModelSelectionStore,
     RuntimeModelOption,
     model_option,
@@ -274,33 +272,7 @@ class SystemRuntimeInstaller:
             raise ManualActionRequiredError(
                 "Select a model option through the model-installation API."
             )
-            return
         raise ValueError(f"unknown requirementId: {requirement_id}")
-
-    def model_options(self) -> list[RuntimeModelOptionV2]:
-        """Return the immutable allowlist with the local active status."""
-
-        from capture_runtime.contracts import RuntimeModelOptionStatus
-
-        active = self._model_selection.load()
-        active_option_id = active.get("optionId") if active is not None else None
-        return [
-            RuntimeModelOptionV2(
-                option_id=option.option_id,
-                display_name=option.display_name,
-                model_reference=option.model_reference,
-                expected_digest=option.expected_digest,
-                expected_bytes=option.expected_bytes,
-                profile_id=option.profile_id,
-                profile_spec_sha256=option.profile_spec_sha256,
-                status=(
-                    RuntimeModelOptionStatus.ACTIVE
-                    if option.option_id == active_option_id
-                    else RuntimeModelOptionStatus.NOT_INSTALLED
-                ),
-            )
-            for option in MODEL_OPTIONS
-        ]
 
     async def install_model_option(
         self,
@@ -447,62 +419,6 @@ class SystemRuntimeInstaller:
         )
         if result.return_code != 0:
             raise RuntimeError(f"winget Ollama installation failed ({result.return_code})")
-        report_progress(1)
-
-    async def _install_model(
-        self,
-        cancel_event: asyncio.Event,
-        report_progress: Callable[[float], None],
-    ) -> None:
-        executable = self._lifecycle.executable()
-        if executable is None:
-            raise ManualActionRequiredError("Install the Ollama application first")
-        self._lifecycle.start()
-        environment = self._lifecycle.config.process_environment()
-        report_progress(0.1)
-        pull = await self._runner.run(
-            [executable, "pull", self._lifecycle.config.base_model],
-            environment=environment,
-            cwd=self._lifecycle.config.app_data_dir,
-            cancel_event=cancel_event,
-            timeout_seconds=3600,
-        )
-        if pull.return_code != 0:
-            raise RuntimeError(f"Ollama model pull failed ({pull.return_code})")
-        report_progress(0.75)
-        modelfile = self._lifecycle.config.app_data_dir / "Capture.Modelfile"
-        modelfile_text = (
-            f"FROM {self._lifecycle.config.base_model}\n"
-            "PARAMETER temperature 0\n"
-            "SYSTEM Return only JSON matching the supplied schema. "
-            "Preserve source provenance exactly.\n"
-        )
-        modelfile_bytes = modelfile_text.encode("utf-8")
-        modelfile.write_bytes(modelfile_bytes)
-        create = await self._runner.run(
-            [
-                executable,
-                "create",
-                self._lifecycle.config.profile_id,
-                "-f",
-                str(modelfile),
-            ],
-            environment=environment,
-            cwd=self._lifecycle.config.app_data_dir,
-            cancel_event=cancel_event,
-            timeout_seconds=600,
-        )
-        if create.return_code != 0:
-            raise RuntimeError(f"Ollama capture profile creation failed ({create.return_code})")
-        _atomic_json(
-            self._marker(OLLAMA_MODEL_REQUIREMENT_ID),
-            {
-                "profileId": self._lifecycle.config.profile_id,
-                "baseModel": self._lifecycle.config.base_model,
-                "modelfileSha256": hashlib.sha256(modelfile_bytes).hexdigest(),
-                "installedAt": self._clock.now().isoformat(),
-            },
-        )
         report_progress(1)
 
     def _recorded_model_profile_matches(self) -> bool:

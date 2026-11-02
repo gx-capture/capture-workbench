@@ -198,10 +198,6 @@ class WorkerProcess:
         # Idle persistent workers by executable, kept for the next request.
         self._warm: dict[str, _WarmWorker] = {}
 
-    @property
-    def active_process_count(self) -> int:
-        return len(self._active)
-
     async def request(
         self,
         executable: Path,

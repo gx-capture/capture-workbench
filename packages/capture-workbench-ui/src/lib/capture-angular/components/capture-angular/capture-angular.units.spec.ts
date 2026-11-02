@@ -12,7 +12,7 @@ import {
   fakeClient,
   selectFiles,
   streamingOperation,
-} from './capture-angular-test-support';
+} from '../../testing/capture-angular-test-support';
 
 const READER: RuntimeRequirement = {
   requirementId: 'vertical-japanese-reader',

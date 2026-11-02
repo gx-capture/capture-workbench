@@ -5,7 +5,6 @@ import type { AcceptanceProcessIdentity } from '../../../tools/three-project-acc
 import {
   resolveWindowsBuiltInPowerShell,
   type WindowsBuiltInProcessFileAdapter,
-  type WindowsBuiltInProcessFileStat,
 } from '../../../tools/windows-built-in-process-resolver.ts';
 
 /**
@@ -37,7 +36,6 @@ export interface AcceptanceScopeProbe {
   snapshot(): Promise<AcceptanceScopeSnapshot>;
 }
 
-export type WindowsAcceptanceScopeProbeFileStat = WindowsBuiltInProcessFileStat;
 export type WindowsAcceptanceScopeProbeFileAdapter =
   WindowsBuiltInProcessFileAdapter;
 
@@ -401,13 +399,3 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object';
 }
 
-/** Compatibility aliases for callers of the original acceptance-scope seam. */
-export type AcceptanceScopeProbeFileStat = WindowsAcceptanceScopeProbeFileStat;
-export type AcceptanceScopeProbeFileAdapter =
-  WindowsAcceptanceScopeProbeFileAdapter;
-export type AcceptanceScopeProbeSpawnResult =
-  WindowsAcceptanceScopeProbeSpawnResult;
-export type AcceptanceScopeProbeSpawnOptions =
-  WindowsAcceptanceScopeProbeSpawnOptions;
-export type AcceptanceScopeProbeAdapter = WindowsAcceptanceScopeProbeAdapter;
-export type AcceptanceScopeProbeOptions = WindowsAcceptanceScopeProbeOptions;
