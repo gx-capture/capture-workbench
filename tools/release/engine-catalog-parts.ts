@@ -1,6 +1,3 @@
-import { createHash } from 'node:crypto';
-import { createReadStream } from 'node:fs';
-
 // The TypeScript reading of a worker artifact's source in the release engine
 // catalog. It mirrors `EngineArtifactDescriptor`/`EngineArtifactPart` in
 // packages/capture-runtime/src/capture_runtime/engine_catalog.py: a worker
@@ -118,14 +115,4 @@ export function workerPublishedFiles(worker: {
           sha256: worker.sha256,
         },
       ];
-}
-
-/** SHA-256 of the concatenation of `paths`, streamed so parts above 2 GB in total fit. */
-export async function sha256OfFiles(paths: readonly string[]): Promise<string> {
-  const hash = createHash('sha256');
-  for (const path of paths) {
-    for await (const chunk of createReadStream(path))
-      hash.update(chunk as Buffer);
-  }
-  return hash.digest('hex');
 }

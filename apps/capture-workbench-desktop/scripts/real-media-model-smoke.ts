@@ -4,7 +4,6 @@ import { RELEASE_VERSION } from '../../../tools/release/release-intent.ts';
 import {
   type EngineCatalogWorkerPart,
   engineCatalogWorkerSource,
-  sha256OfFiles,
   workerPublishedFiles,
 } from '../../../tools/release/engine-catalog-parts.ts';
 import assert from 'node:assert/strict';
@@ -806,6 +805,15 @@ interface CandidateWorkerMirror {
   readonly port: number;
   readonly requests: () => number;
   readonly close: () => Promise<void>;
+}
+
+/** SHA-256 of the concatenation of `paths`, streamed so parts above 2 GB in total fit. */
+async function sha256OfFiles(paths: readonly string[]): Promise<string> {
+  const hash = createHash('sha256');
+  for (const path of paths) {
+    for await (const chunk of createReadStream(path)) hash.update(chunk as Buffer);
+  }
+  return hash.digest('hex');
 }
 
 async function startCandidateWorkerMirror(expected: ExpectedProvenance): Promise<CandidateWorkerMirror> {

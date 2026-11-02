@@ -18,7 +18,6 @@ import { Readable } from 'node:stream';
 import {
   type EngineCatalogWorkerPart,
   engineCatalogWorkerSource,
-  sha256OfFiles,
   workerPublishedFiles,
 } from './release/engine-catalog-parts.ts';
 
@@ -389,12 +388,21 @@ function assertExactAssetNames(
 }
 
 /** SHA-256 of files read in order as one stream, without holding them in memory. */
+async function sha256Files(paths: readonly string[]): Promise<string> {
+  const hash = createHash('sha256');
+  for (const path of paths) {
+    for await (const chunk of createReadStream(path))
+      hash.update(chunk as Buffer);
+  }
+  return hash.digest('hex');
+}
+
 async function verifyChecksum(
   directory: string,
   name: string,
   expectedDigest?: string,
 ): Promise<string> {
-  const digest = await sha256OfFiles([join(directory, name)]);
+  const digest = await sha256Files([join(directory, name)]);
   if (expectedDigest !== undefined && digest !== expectedDigest) {
     throw new Error(`Release asset digest does not match catalog: ${name}.`);
   }
@@ -509,7 +517,7 @@ async function inspectRuntimeRelease(
         for (const part of worker.parts) {
           await verifyChecksum(directory, part.fileName, part.sha256);
         }
-        const joined = await sha256OfFiles(
+        const joined = await sha256Files(
           worker.parts.map((part) => join(directory, part.fileName)),
         );
         if (joined !== worker.sha256) {
