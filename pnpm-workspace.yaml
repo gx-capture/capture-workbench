@@ -18,6 +18,3 @@ allowBuilds:
   msgpackr-extract: true
   nx: true
 
-minimumReleaseAgeExclude:
-  - react-dom@19.2.8
-  - react@19.2.8
