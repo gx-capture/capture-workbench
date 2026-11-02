@@ -1,5 +1,11 @@
 // eslint-disable-next-line @nx/enforce-module-boundaries -- repository tooling reads shared release intent.
 import { RELEASE_VERSION } from '../../../tools/release/release-intent.ts';
+// eslint-disable-next-line @nx/enforce-module-boundaries -- the catalog's `parts` reading is shared with the release tooling.
+import {
+  type EngineCatalogWorkerPart,
+  engineCatalogWorkerSource,
+  workerPublishedFiles,
+} from '../../../tools/release/engine-catalog-parts.ts';
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
@@ -311,6 +317,8 @@ interface WorkerArchive {
   readonly fileName: string;
   readonly bytes: number;
   readonly sha256: string;
+  // Empty for one archive; otherwise the ordered parts published in its place.
+  readonly parts: readonly EngineCatalogWorkerPart[];
 }
 
 interface MediaSummary {
@@ -482,9 +490,10 @@ function validateSourceLockAndCatalog(
     }
     if (!Number.isSafeInteger(artifact.bytes) || Number(artifact.bytes) < 1
       || !Number.isSafeInteger(artifact.extractedBytes) || Number(artifact.extractedBytes) < 1
-      || typeof artifact.fileName !== 'string' || typeof artifact.url !== 'string') {
+      || typeof artifact.fileName !== 'string') {
       throw new Error(`${requirementId} worker artifact metadata is malformed.`);
     }
+    const { parts } = engineCatalogWorkerSource(artifact, artifact.fileName, Number(artifact.bytes));
     if (modelFiles.artifactVersion !== REAL_MODEL_RELEASE_VERSION) {
       throw new Error(`${requirementId} model artifact version drifted.`);
     }
@@ -514,6 +523,7 @@ function validateSourceLockAndCatalog(
       fileName: requiredString(artifact.fileName, `${requirementId} worker file name`),
       bytes: Number(artifact.bytes),
       sha256: requiredString(artifact.sha256, `${requirementId} worker SHA-256`),
+      parts,
     });
   }
 
@@ -797,30 +807,47 @@ interface CandidateWorkerMirror {
   readonly close: () => Promise<void>;
 }
 
+/** SHA-256 of the concatenation of `paths`, streamed so parts above 2 GB in total fit. */
+async function sha256OfFiles(paths: readonly string[]): Promise<string> {
+  const hash = createHash('sha256');
+  for (const path of paths) {
+    for await (const chunk of createReadStream(path)) hash.update(chunk as Buffer);
+  }
+  return hash.digest('hex');
+}
+
 async function startCandidateWorkerMirror(expected: ExpectedProvenance): Promise<CandidateWorkerMirror> {
+  // Served by published file name: the runtime rewrites the archive URL, or
+  // each part URL, to `<mirror>/<fileName>`.
   const archives = new Map<string, { path: string; bytes: number; sha256: string }>();
   for (const archive of expected.workerArchives) {
     if (!archive.fileName || /[\\/]/u.test(archive.fileName) || archive.fileName === '.' || archive.fileName === '..') {
       throw new Error('Candidate worker archive file name is unsafe.');
     }
-    if (archives.has(archive.fileName)) {
-      throw new Error('Candidate worker archive file names are not unique.');
+    const paths: string[] = [];
+    for (const file of workerPublishedFiles(archive)) {
+      if (archives.has(file.fileName)) {
+        throw new Error('Candidate worker archive file names are not unique.');
+      }
+      const filePath = join(workerMirrorRoot, file.fileName);
+      let metadata;
+      try {
+        metadata = await lstat(filePath);
+      } catch {
+        throw new Error('Candidate worker archive is missing from the release staging directory.');
+      }
+      if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size !== file.bytes) {
+        throw new Error('Candidate worker archive does not match the generated catalog bytes.');
+      }
+      if ((await sha256OfFiles([filePath])) !== file.sha256) {
+        throw new Error('Candidate worker archive does not match the generated catalog digest.');
+      }
+      archives.set(file.fileName, { path: filePath, bytes: file.bytes, sha256: file.sha256 });
+      paths.push(filePath);
     }
-    const archivePath = join(workerMirrorRoot, archive.fileName);
-    let metadata;
-    try {
-      metadata = await lstat(archivePath);
-    } catch {
-      throw new Error('Candidate worker archive is missing from the release staging directory.');
+    if (archive.parts.length && (await sha256OfFiles(paths)) !== archive.sha256) {
+      throw new Error('Candidate worker archive parts do not join into the generated catalog digest.');
     }
-    if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size !== archive.bytes) {
-      throw new Error('Candidate worker archive does not match the generated catalog bytes.');
-    }
-    const archiveBytes = await readFile(archivePath);
-    if (sha256(archiveBytes) !== archive.sha256) {
-      throw new Error('Candidate worker archive does not match the generated catalog digest.');
-    }
-    archives.set(archive.fileName, { path: archivePath, bytes: archive.bytes, sha256: archive.sha256 });
   }
   let requestCount = 0;
   const sockets = new Set<net.Socket>();

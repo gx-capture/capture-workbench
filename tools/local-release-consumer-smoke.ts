@@ -15,6 +15,11 @@ import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { pipeline } from 'node:stream/promises';
 import { Readable } from 'node:stream';
+import {
+  type EngineCatalogWorkerPart,
+  engineCatalogWorkerSource,
+  workerPublishedFiles,
+} from './release/engine-catalog-parts.ts';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const packageManifest = JSON.parse(
@@ -127,12 +132,6 @@ function assertSafeAssetName(
   }
 }
 
-type CatalogWorkerPart = {
-  readonly fileName: string;
-  readonly bytes: number;
-  readonly sha256: string;
-};
-
 type CatalogWorkerDescriptor = {
   readonly requirementId: string;
   readonly fileName: string;
@@ -140,67 +139,8 @@ type CatalogWorkerDescriptor = {
   readonly sha256: string;
   readonly filesManifestSha256: string;
   // Empty for one archive; otherwise the ordered parts published in its place.
-  readonly parts: readonly CatalogWorkerPart[];
+  readonly parts: readonly EngineCatalogWorkerPart[];
 };
-
-// GitHub release assets must stay under 2 GB; larger archives ship as parts.
-const MAX_WORKER_PART_BYTES = 2_000_000_000;
-
-function catalogWorkerParts(
-  artifact: Record<string, unknown>,
-  fileName: string,
-  bytes: number,
-): CatalogWorkerPart[] {
-  if (!('parts' in artifact)) {
-    if (
-      typeof artifact.url !== 'string' ||
-      !artifact.url.startsWith('https://')
-    ) {
-      throw new Error('Engine catalog worker artifact is invalid.');
-    }
-    return [];
-  }
-  const raw = artifact.parts;
-  if (!Array.isArray(raw) || raw.length < 2) {
-    throw new Error('Engine catalog worker parts are invalid.');
-  }
-  const parts = raw.map((item: unknown, index): CatalogWorkerPart => {
-    if (!isRecord(item))
-      throw new Error('Engine catalog worker part is invalid.');
-    exactKeys(
-      item,
-      ['fileName', 'bytes', 'sha256', 'url'],
-      'Engine catalog worker part',
-    );
-    const expectedName = `${fileName}.${String(index + 1).padStart(3, '0')}`;
-    if (
-      item.fileName !== expectedName ||
-      typeof item.bytes !== 'number' ||
-      !Number.isSafeInteger(item.bytes) ||
-      item.bytes < 1 ||
-      item.bytes > MAX_WORKER_PART_BYTES ||
-      typeof item.url !== 'string' ||
-      !item.url.startsWith('https://')
-    ) {
-      throw new Error('Engine catalog worker part is invalid.');
-    }
-    assertSha256(item.sha256, 'Engine catalog worker part digest');
-    return { fileName: expectedName, bytes: item.bytes, sha256: item.sha256 };
-  });
-  if (parts.reduce((total, part) => total + part.bytes, 0) !== bytes) {
-    throw new Error(
-      'Engine catalog worker parts do not add up to the archive.',
-    );
-  }
-  return parts;
-}
-
-/** The files published for a worker archive: itself, or its parts. */
-function workerAssetFiles(worker: CatalogWorkerDescriptor): string[] {
-  return worker.parts.length
-    ? worker.parts.map((part) => part.fileName)
-    : [worker.fileName];
-}
 
 function catalogWorkers(
   raw: unknown,
@@ -317,7 +257,7 @@ function catalogWorkers(
       throw new Error('Engine catalog worker artifact is invalid.');
     }
     assertSafeAssetName(artifact.fileName, 'Engine catalog worker archive');
-    const parts = catalogWorkerParts(
+    const { parts } = engineCatalogWorkerSource(
       artifact,
       artifact.fileName,
       artifactBytes,
@@ -525,7 +465,7 @@ async function inspectRuntimeRelease(
     for (const worker of workers) {
       const filesManifestName = `${worker.fileName.slice(0, -'.zip'.length)}-files.json`;
       assertSafeAssetName(filesManifestName, 'Engine worker files manifest');
-      for (const file of workerAssetFiles(worker)) {
+      for (const { fileName: file } of workerPublishedFiles(worker)) {
         assetNames.push(file, `${file}.sha256`);
       }
       assetNames.push(filesManifestName, `${filesManifestName}.sha256`);

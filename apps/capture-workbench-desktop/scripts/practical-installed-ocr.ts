@@ -37,7 +37,7 @@ import {
   practicalKnownFolderRoots,
   practicalRegistryKeys,
   practicalSourceKind,
-  readVerifiedWorker,
+  readVerifiedWorkerFiles,
   sha256Hex,
   verifyRuntimeReleaseDirectory,
   type PracticalCleanupEvidence,
@@ -172,9 +172,12 @@ class OwnedProcessSampler {
   }
 }
 
-async function startWorkerMirror(fileName: string, bytes: Buffer): Promise<{ server: Server; origin: string }> {
+// Serves the worker's published files by name: the runtime rewrites the
+// archive URL, or each part URL, to `<mirror>/<fileName>`.
+async function startWorkerMirror(files: ReadonlyMap<string, Buffer>): Promise<{ server: Server; origin: string }> {
   const server = createServer((request, response) => {
-    if (request.method !== 'GET' || request.url !== `/${fileName}`) {
+    const bytes = request.method === 'GET' && request.url?.startsWith('/') ? files.get(request.url.slice(1)) : undefined;
+    if (!bytes) {
       response.writeHead(404).end();
       return;
     }
@@ -256,7 +259,7 @@ export async function runPracticalInstalledOcr(args: PracticalRunArguments): Pro
     if (!releaseWorker || releaseWorker.sha256 !== ocrWorker.sha256) {
       throw new Error('Runtime release OCR worker differs from the installer provenance.');
     }
-    workerMirror = await startWorkerMirror(ocrWorker.fileName, readVerifiedWorker(release, releaseWorker));
+    workerMirror = await startWorkerMirror(readVerifiedWorkerFiles(release, releaseWorker));
   }
 
   const folders = await knownFolders();
