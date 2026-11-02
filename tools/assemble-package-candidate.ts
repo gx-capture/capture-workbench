@@ -17,13 +17,6 @@ const PACKAGE_FILES = new Map([
   ['gx-capture-capture-runtime-client', '@gx-capture/capture-runtime-client'],
 ]);
 
-const MAVEN_FILES = [
-  'maven/capture-runtime-client-{version}.jar',
-  'maven/capture-runtime-client-{version}-sources.jar',
-  'maven/pom.xml',
-  'maven/capture-runtime-contract-set.sha256',
-] as const;
-
 export type PackageCandidateManifest = {
   readonly schemaVersion: '1';
   readonly candidateKind: 'npm-package-set';
@@ -216,8 +209,6 @@ async function main(): Promise<void> {
     'contracts/contract-snapshot.json',
     'contracts/contract-set.json',
     'contracts/contract-set.sha256',
-    'java-candidate-manifest.json',
-    ...MAVEN_FILES.map((path) => path.replace('{version}', version)),
   ];
   const artifacts = (await inventory(output, artifactPaths)).sort(
     (left, right) => left.path.localeCompare(right.path),

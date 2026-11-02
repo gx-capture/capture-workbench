@@ -47,7 +47,6 @@ async function makeCandidate(
   await mkdir(join(root, 'package'));
   await mkdir(join(root, 'python'));
   await mkdir(join(root, 'contracts'));
-  await mkdir(join(root, 'maven'));
   await mkdir(join(root, 'checksums'));
   const candidateContractSetBytes =
     options.contractSetBytes ?? contractSetBytes;
@@ -127,59 +126,6 @@ async function makeCandidate(
   );
   artifactValues.set('contracts/contract-set.json', candidateContractSetBytes);
   artifactValues.set('contracts/contract-set.sha256', contractSetShaBytes);
-
-  const javaArtifacts = [
-    `capture-runtime-client-${version}.jar`,
-    `capture-runtime-client-${version}-sources.jar`,
-    'pom.xml',
-    'capture-runtime-contract-set.sha256',
-  ];
-  const javaEntries = [];
-  for (const name of javaArtifacts) {
-    const path = `maven/${name}`;
-    const value = Buffer.from(
-      name === 'capture-runtime-contract-set.sha256'
-        ? `${contractSetSha256}\n`
-        : `${name}\n`,
-      'utf8',
-    );
-    await writeFile(join(root, path), value);
-    artifactValues.set(path, value);
-    javaEntries.push({ path, bytes: value.length, sha256: digest(value) });
-  }
-  const javaBaseManifest = {
-    schemaVersion: '1',
-    candidateKind: 'maven-java-sdk',
-    sourceCommit,
-    releaseVersion: version,
-    producerRunId,
-    coordinates: {
-      groupId: 'com.gx.capture',
-      artifactId: 'capture-runtime-client',
-      packaging: 'jar',
-    },
-    contractSetSha256,
-    artifacts: javaEntries.sort((left, right) =>
-      left.path.localeCompare(right.path),
-    ),
-    toolchains: { java: 'test', maven: 'test' },
-  };
-  const javaManifestBytes = Buffer.from(
-    `${JSON.stringify(
-      {
-        ...javaBaseManifest,
-        candidateId: digest(JSON.stringify(javaBaseManifest)),
-      },
-      null,
-      2,
-    )}\n`,
-    'utf8',
-  );
-  await writeFile(
-    join(root, 'java-candidate-manifest.json'),
-    javaManifestBytes,
-  );
-  artifactValues.set('java-candidate-manifest.json', javaManifestBytes);
 
   const artifacts = [...artifactValues.entries()]
     .map(([path, value]) => ({
@@ -292,11 +238,11 @@ test('package candidate verification rejects changed archive bytes', async () =>
   }
 });
 
-test('package candidate verification rejects changed Maven artifact bytes', async () => {
+test('package candidate verification rejects changed Python artifact bytes', async () => {
   const candidate = await makeCandidate();
   try {
     await writeFile(
-      join(candidate.root, 'maven', ("capture-runtime-client-" + RELEASE_VERSION + ".jar")),
+      join(candidate.root, 'python', ("capture_runtime_client-" + RELEASE_VERSION + "-py3-none-any.whl")),
       'tampered',
     );
     await assert.rejects(

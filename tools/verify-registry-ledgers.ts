@@ -2,7 +2,7 @@ import { readdir, readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-const REGISTRIES = ['npm', 'pypi', 'crates.io', 'maven'] as const;
+const REGISTRIES = ['npm', 'pypi', 'crates.io'] as const;
 type Registry = (typeof REGISTRIES)[number];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -23,17 +23,15 @@ function parseArguments(args: readonly string[]): Map<string, string> {
         '--release-candidate-id',
         '--package-candidate-id',
         '--runtime-candidate-id',
-        '--java-candidate-id',
         '--contract-set-sha256',
         '--package-candidate-manifest-sha256',
-        '--java-candidate-manifest-sha256',
         '--runtime-candidate-manifest-sha256',
       ].includes(name) ||
       !value ||
       values.has(name)
     ) {
       throw new Error(
-        'Use --directory <path> --candidate-id <sha256> --release-version <semver> --scope <all|npm|pypi|pypi-client|crates|maven> --release-candidate-id <sha256> --package-candidate-id <sha256> --runtime-candidate-id <sha256> --java-candidate-id <sha256> --package-candidate-manifest-sha256 <sha256> --java-candidate-manifest-sha256 <sha256> --runtime-candidate-manifest-sha256 <sha256> --contract-set-sha256 <sha256>.',
+        'Use --directory <path> --candidate-id <sha256> --release-version <semver> --scope <all|npm|pypi|pypi-client|crates> --release-candidate-id <sha256> --package-candidate-id <sha256> --runtime-candidate-id <sha256> --package-candidate-manifest-sha256 <sha256> --runtime-candidate-manifest-sha256 <sha256> --contract-set-sha256 <sha256>.',
       );
     }
     values.set(name, value);
@@ -53,7 +51,6 @@ export function requiredRegistries(scope: string): readonly Registry[] {
   if (scope === 'pypi') return ['pypi'];
   if (scope === 'pypi-client') return ['pypi'];
   if (scope === 'crates') return ['crates.io'];
-  if (scope === 'maven') return ['maven'];
   throw new Error('Publication scope is invalid.');
 }
 
@@ -127,15 +124,10 @@ async function main(): Promise<void> {
     values.get('--package-candidate-id') || candidateId;
   const runtimeCandidateId =
     values.get('--runtime-candidate-id') || candidateId;
-  const javaCandidateId = required(values, '--java-candidate-id');
   const contractSetSha256 = required(values, '--contract-set-sha256');
   const packageCandidateManifestSha256 = required(
     values,
     '--package-candidate-manifest-sha256',
-  );
-  const javaCandidateManifestSha256 = required(
-    values,
-    '--java-candidate-manifest-sha256',
   );
   const runtimeCandidateManifestSha256 = required(
     values,
@@ -145,10 +137,8 @@ async function main(): Promise<void> {
     !/^[0-9a-f]{64}$/u.test(releaseCandidateId) ||
     !/^[0-9a-f]{64}$/u.test(packageCandidateId) ||
     !/^[0-9a-f]{64}$/u.test(runtimeCandidateId) ||
-    !/^[0-9a-f]{64}$/u.test(javaCandidateId) ||
     !/^[0-9a-f]{64}$/u.test(contractSetSha256) ||
     !/^[0-9a-f]{64}$/u.test(packageCandidateManifestSha256) ||
-    !/^[0-9a-f]{64}$/u.test(javaCandidateManifestSha256) ||
     !/^[0-9a-f]{64}$/u.test(runtimeCandidateManifestSha256)
   ) {
     throw new Error('Registry ledger binding identities are invalid.');
@@ -174,16 +164,12 @@ async function main(): Promise<void> {
         sourceCandidateId:
           registry === 'npm'
             ? packageCandidateId
-            : registry === 'maven'
-              ? javaCandidateId
-              : runtimeCandidateId,
+            : runtimeCandidateId,
         contractSetSha256,
         sourceCandidateManifestSha256:
           registry === 'npm'
             ? packageCandidateManifestSha256
-            : registry === 'maven'
-              ? javaCandidateManifestSha256
-              : runtimeCandidateManifestSha256,
+            : runtimeCandidateManifestSha256,
       },
     );
   }

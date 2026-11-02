@@ -40,7 +40,6 @@ const INVENTORY_FILES = [
   'apps/capture-workbench-desktop/scripts/fixtures/deterministic-runtime/Cargo.toml',
   'apps/capture-workbench-desktop/src-tauri/Cargo.toml',
   'apps/capture-workbench-desktop/src-tauri/tauri.conf.json',
-  'packages/capture-runtime-client-java/pom.xml',
   'packages/capture-runtime/src/capture_runtime/constants/versions.py',
   'packages/capture-runtime/scripts/model_source_lock.py',
   'packages/capture-runtime/scripts/generate_commit_a_fixtures.py',
@@ -69,16 +68,13 @@ const INVENTORY_FILES = [
   'packages/capture-runtime-client-python/src/capture_runtime_client/private/schemas/capture-document.schema.json',
   'packages/capture-runtime-client-python/src/capture_runtime_client/private/schemas/raw-capture.schema.json',
   'packages/capture-runtime-client-python/src/capture_runtime_client/private/schemas/capture-ocr-projection-v3.schema.json',
-  'packages/capture-runtime-client-java/src/main/java/com/gx/capture/runtime/client/CaptureRuntimeTypes.java',
   'packages/capture-runtime/src/capture_runtime/assets/contract-set.sha256',
   'packages/capture-runtime-client/src/private/assets/contract-set.sha256',
   'packages/capture-runtime-client-python/src/capture_runtime_client/private/assets/contract-set.sha256',
-  'packages/capture-runtime-client-java/src/main/resources/capture-runtime-contract-set.sha256',
   '.github/workflows/release-promote.yml',
   '.github/workflows/runtime-promote.yml',
   '.github/workflows/_publish-npm.yml',
   '.github/workflows/_publish-pypi.yml',
-  '.github/workflows/_publish-maven.yml',
   '.github/workflows/_publish-crates.yml',
   '.github/workflows/_publish-github-release.yml',
   '.github/workflows/_publish-runtime-github-release.yml',
@@ -131,23 +127,14 @@ test('release intent is the synchronized source for all release-managed versions
     'packages/capture-workbench-ui/package.json',
     'packages/capture-runtime-client/package.json',
     'packages/capture-runtime-client-python/pyproject.toml',
-    'packages/capture-runtime-client-java/pom.xml',
     'packages/capture-sidecar-launcher/Cargo.toml',
     'apps/capture-workbench-desktop/src-tauri/Cargo.toml',
   ])
     assert.ok(
-      entries.some(
-        (entry) =>
-          entry.label.includes(path) ||
-          (path.endsWith('pom.xml') &&
-            entry.label === 'Java SDK project version'),
-      ),
+      entries.some((entry) => entry.label.includes(path)),
       `missing owner ${path}`,
     );
   assert.ok(entries.every((entry) => entry.value === intent.releaseVersion));
-  assert.ok(
-    entries.some((entry) => entry.label === 'Java SDK project version'),
-  );
   assert.deepEqual(loadReleaseIntent(workspaceRoot), {
     releaseVersion: RELEASE_VERSION,
     runtimeApiVersion: '2.0',
@@ -169,7 +156,6 @@ test('typed release inventory reports every D2.1 identity without mutation', () 
     'contract.asset.runtime.sha256',
     'contract.asset.typescript.sha256',
     'contract.asset.python.sha256',
-    'contract.asset.java.sha256',
   ]) {
     requiredEntry(
       inventory,
@@ -180,7 +166,6 @@ test('typed release inventory reports every D2.1 identity without mutation', () 
   for (const channel of [
     'npm-github-packages',
     'pypi',
-    'maven-github-packages',
     'crates-io',
     'github-releases',
   ] as const) {
@@ -189,7 +174,7 @@ test('typed release inventory reports every D2.1 identity without mutation', () 
       `missing logical channel ${channel}`,
     );
   }
-  assert.equal(inventory.channelOwners.length, 9);
+  assert.equal(inventory.channelOwners.length, 8);
 });
 
 const R3_HEALTH_PATH = 'packages/capture-sidecar-launcher/src/health.rs';
@@ -376,7 +361,6 @@ test('inventory rejects an all-equal but incorrect contract hash', async () => {
       'packages/capture-runtime/src/capture_runtime/assets/contract-set.sha256',
       'packages/capture-runtime-client/src/private/assets/contract-set.sha256',
       'packages/capture-runtime-client-python/src/capture_runtime_client/private/assets/contract-set.sha256',
-      'packages/capture-runtime-client-java/src/main/resources/capture-runtime-contract-set.sha256',
     ];
     const wrong = `${'0'.repeat(64)}\n`;
     const before = await Promise.all(
@@ -464,7 +448,6 @@ test('inventory rejects a self-consistent release and API drift against Phase2 d
       'packages/capture-sidecar-launcher/Cargo.toml',
       'apps/capture-workbench-desktop/src-tauri/Cargo.toml',
       'apps/capture-workbench-desktop/src-tauri/tauri.conf.json',
-      'packages/capture-runtime-client-java/pom.xml',
     ];
     for (const relativePath of paths) {
       const path = join(root, relativePath);
@@ -570,21 +553,6 @@ test('inventory rejects every channel destination and package identity mutation'
       find: "const PROJECTS = ['capture-runtime-client'] as const",
       replace: "const PROJECTS = ['capture-runtime-client-wrong'] as const",
       expected: /channel\.pypi|project/u,
-    },
-    {
-      name: 'Maven destination suffix',
-      sourcePath: '.github/workflows/_publish-maven.yml',
-      find: 'repository_url="https://maven.pkg.github.com/gx-capture/capture-workbench/com/gx/capture/capture-runtime-client/${{ inputs.release_version }}"',
-      replace:
-        'repository_url="https://maven.pkg.github.com/gx-capture/capture-workbench/com/gx/capture/capture-runtime-client/${{ inputs.release_version }}/other"',
-      expected: /channel\.maven|Maven/u,
-    },
-    {
-      name: 'Maven artifact name',
-      sourcePath: 'packages/capture-runtime-client-java/pom.xml',
-      find: '<artifactId>capture-runtime-client</artifactId>',
-      replace: '<artifactId>capture-runtime-client-wrong</artifactId>',
-      expected: /channel\.maven|artifact/u,
     },
     {
       name: 'crates.io destination suffix',

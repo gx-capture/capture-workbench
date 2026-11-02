@@ -20,7 +20,6 @@ are ephemeral and are deleted after the host has copied the data it needs.
 | Capture Runtime | `packages/capture-runtime` | Authenticated loopback service for ingestion, extraction, OCR, transcription, streaming, setup, and structuring |
 | TypeScript SDK | `packages/capture-runtime-client` | Framework-neutral runtime client with discovery, authentication, v2 operations, SSE, retries, and typed errors |
 | Python SDK | `packages/capture-runtime-client-python` | Typed backend client for the same runtime contract |
-| Java SDK | `packages/capture-runtime-client-java` | Typed JVM client for the same runtime contract |
 | Sidecar launcher | `packages/capture-sidecar-launcher` | Shared Windows process and authenticated loopback lifecycle support |
 | Browser and package verification | `apps/capture-workbench-e2e`, `tools` | Consumer, packaging, contract, and end-to-end verification |
 
@@ -154,7 +153,6 @@ When the UI is not the right boundary, use the client for the host language:
 | --- | --- |
 | TypeScript | `@gx-capture/capture-runtime-client` |
 | Python | `capture-runtime-client` |
-| Java | `com.gx.capture:capture-runtime-client` |
 
 Each SDK exposes typed readiness and contract discovery, runtime setup,
 ingestion and capture operations, streaming events, retries/idempotency, and

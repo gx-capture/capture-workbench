@@ -131,12 +131,6 @@ function exceptionReason(relativePath) {
   ) {
     return 'RxJS adapter over the framework-neutral Capture Runtime SDK boundary';
   }
-  if (
-    relativePath === 'tools/assemble-java-sdk-candidate.ts' ||
-    relativePath === 'tools/verify-java-sdk-candidate.ts'
-  ) {
-    return 'Java SDK candidate tooling process boundary';
-  }
   if (/^apps[\\/]capture-workbench-e2e[\\/]/u.test(relativePath)) {
     return 'Playwright test API boundary';
   }

@@ -741,7 +741,7 @@ describe('CaptureRuntimeClient', () => {
     ).rejects.toBeInstanceOf(CaptureRuntimeProtocolError);
   });
 
-  it('shares the canonical perspective corpus with Python and Java validators', async () => {
+  it('shares the canonical perspective corpus with the Python validators', async () => {
     const perspective = sharedPerspectiveOcrFixture();
     const decoded = await decodeJson<Record<string, unknown>>(
       new Response(JSON.stringify(perspective)),
@@ -779,7 +779,7 @@ describe('CaptureRuntimeClient', () => {
     ).rejects.toBeInstanceOf(CaptureRuntimeProtocolError);
   });
 
-  it('shares referenced DTO invalid corpus rejections with Python and Java validators', async () => {
+  it('shares referenced DTO invalid corpus rejections with the Python validators', async () => {
     const corpus = sharedReferencedInvalidCorpus();
     expect(corpus).toHaveLength(12);
     for (const invalid of corpus) {
@@ -929,7 +929,7 @@ describe('CaptureRuntimeClient', () => {
     );
   });
 
-  it('keeps source page numbers of the shared page selection like Python and Java', async () => {
+  it('keeps source page numbers of the shared page selection like Python', async () => {
     const fixture = sharedPageSelectionFixture();
     const decoded = (await decodeJson(
       new Response(JSON.stringify(fixture.projection)),

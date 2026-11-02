@@ -5,6 +5,39 @@ import test from 'node:test';
 
 const root = join(import.meta.dirname, '..');
 
+test('publication workflows expose only the active package registry lanes', async () => {
+  const [packages, release] = await Promise.all(
+    ['package-promote.yml', 'release-promote.yml'].map((name) =>
+      readFile(join(root, '.github/workflows', name), 'utf8'),
+    ),
+  );
+  const jobNames = (workflow: string) =>
+    [
+      ...workflow
+        .split(/\r?\njobs:\r?\n/u)[1]
+        .matchAll(/^ {2}([\w-]+):\r?$/gmu),
+    ].map((match) => match[1]);
+  assert.deepEqual(jobNames(packages), ['publish-npm', 'publish-pypi']);
+  assert.deepEqual(jobNames(release), [
+    'prepare-candidate',
+    'publish-npm',
+    'publish-pypi',
+    'publish-crates',
+    'verify-registries',
+    'tag-release',
+    'publish-github-release',
+    'promotion-ledger',
+    'publish-stable-pointer',
+  ]);
+  const scope = release
+    .split('      publication_scope:')[1]
+    .split('      pypi_project:')[0];
+  assert.deepEqual(
+    [...scope.matchAll(/^ {10}- ([\w-]+)\r?$/gmu)].map((match) => match[1]),
+    ['all', 'npm', 'pypi', 'crates'],
+  );
+});
+
 function toolCommands(workflow: string, tool: string): readonly string[] {
   const lines = workflow.split(/\r?\n/u);
   return lines.flatMap((line, index) => {
@@ -45,7 +78,6 @@ test('package candidate workflow is independent from the desktop product lane', 
       /capture-workbench-desktop|tauri|nsis|windows-install|ollama|whisper|model/iu,
     );
   }
-  assert.match(candidateWorkflow, /capture-runtime-client-java:build/u);
   assert.match(candidateWorkflow, /capture-runtime-client-python:build/u);
   assert.doesNotMatch(candidateWorkflow, /capture-structuring/u);
   assert.match(
@@ -58,12 +90,6 @@ test('package candidate workflow is independent from the desktop product lane', 
       candidateWorkflow.indexOf('capture-runtime-client-python:build'),
     'uv and Python must be installed before the Python package builds run.',
   );
-  assert.match(candidateWorkflow, /assemble-java-sdk-candidate\.ts/u);
-  assert(
-    candidateWorkflow.indexOf('assemble-java-sdk-candidate.ts') <
-      candidateWorkflow.indexOf('assemble-package-candidate.ts'),
-    'The Java candidate must exist before the Package Candidate seals its complete artifact inventory.',
-  );
   assert.match(candidateWorkflow, /capture-angular:clean-consumer-smoke/u);
   assert.match(candidateWorkflow, /pnpm exec playwright install chromium/u);
   assert.equal(
@@ -75,7 +101,6 @@ test('package candidate workflow is independent from the desktop product lane', 
     3,
   );
   assert.match(promoteWorkflow, /candidate_kind: package/u);
-  assert.match(promoteWorkflow, /publish-maven/u);
   assert.match(promoteWorkflow, /publish-pypi/u);
   assert.match(releasePromoteWorkflow, /pypi_project/u);
   assert.match(
@@ -106,51 +131,6 @@ test('package candidate workflow is independent from the desktop product lane', 
   assert.match(pypiWorkflow, /capture_runtime_client/u);
   assert.match(pypiWorkflow, /ledger_candidate_id/u);
   assert.match(pypiWorkflow, /client bootstrap ledger/u);
-});
-
-test('Maven publication and registry verification use the Java candidate identity', async () => {
-  const publishMaven = await readFile(
-    join(root, '.github/workflows/_publish-maven.yml'),
-    'utf8',
-  );
-  const verifyRegistries = await readFile(
-    join(root, '.github/workflows/_verify-registries.yml'),
-    'utf8',
-  );
-  const releasePromote = await readFile(
-    join(root, '.github/workflows/release-promote.yml'),
-    'utf8',
-  );
-  assert.match(publishMaven, /candidateId:process\.env\.JAVA_CANDIDATE_ID/u);
-  assert.match(
-    publishMaven,
-    /publish:\r?\n\s+runs-on: ubuntu-latest\r?\n\s+environment: capture-registry-maven\r?\n\s+env:\r?\n\s+MAVEN_USERNAME: \$\{\{ github\.actor \}\}\r?\n\s+MAVEN_PASSWORD: \$\{\{ secrets\.MAVEN_TOKEN \}\}/u,
-  );
-  assert.match(publishMaven, /Probe GitHub Packages Maven authentication/u);
-  assert.match(
-    publishMaven,
-    /GitHub Packages Maven authentication failed \(HTTP 401\)/u,
-  );
-  assert.match(publishMaven, /--location/u);
-  assert.match(publishMaven, /MAVEN_ARTIFACT_EXISTS=true/u);
-  assert.match(
-    publishMaven,
-    /Maven version is already published with exact immutable bytes/u,
-  );
-  assert.match(
-    publishMaven,
-    /cp promotion-input\/candidate\/maven-ledger\.json registry-ledger-maven\.json/u,
-  );
-  assert.match(publishMaven, /path: registry-ledger-maven\.json/u);
-  assert.match(verifyRegistries, /^\s{6}java_candidate_id:\s*$/mu);
-  assert.match(
-    verifyRegistries,
-    /--java-candidate-id '\$\{\{ inputs\.java_candidate_id \}\}'/u,
-  );
-  assert.match(
-    releasePromote,
-    /^\s{6}java_candidate_id: \$\{\{ needs\.prepare-candidate\.outputs\.java_candidate_id \}\}\s*$/mu,
-  );
 });
 
 test('npm publication accepts a package candidate without making it a desktop candidate', async () => {
@@ -439,10 +419,6 @@ test('desktop candidate consumes an exact Runtime Candidate', async () => {
     join(root, '.github/workflows/release-promote.yml'),
     'utf8',
   );
-  const githubReleaseWorkflow = await readFile(
-    join(root, '.github/workflows/_publish-github-release.yml'),
-    'utf8',
-  );
   assert.match(candidateWorkflow, /runtime_candidate_run_id/u);
   assert.match(candidateWorkflow, /capture-runtime-candidate-/u);
   assert.match(candidateWorkflow, /verify-runtime-candidate\.ts/u);
@@ -457,14 +433,6 @@ test('desktop candidate consumes an exact Runtime Candidate', async () => {
   );
   assert.match(promoteWorkflow, /runtime_candidate_manifest_sha256/u);
   assert.match(promoteWorkflow, /verify-runtime-candidate-binding\.ts/u);
-  assert.match(
-    promoteWorkflow,
-    /java_candidate_id: \$\{\{ needs\.prepare-candidate\.outputs\.java_candidate_id \}\}/u,
-  );
-  assert.match(
-    githubReleaseWorkflow,
-    /--java-candidate-id '\$\{\{ inputs\.java_candidate_id \}\}'/u,
-  );
   const promotedRuntimeVerifications = toolCommands(
     promoteWorkflow,
     'verify-runtime-candidate.ts',

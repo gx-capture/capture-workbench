@@ -12,7 +12,6 @@ const candidateId = 'a'.repeat(64);
 const sourceCommit = 'b'.repeat(40);
 const packageCandidateId = 'c'.repeat(64);
 const runtimeCandidateId = 'd'.repeat(64);
-const javaCandidateId = '9'.repeat(64);
 const contractSetSha256 = 'e'.repeat(64);
 
 function digest(bytes: Buffer): string {
@@ -161,25 +160,6 @@ test('release manifest is immutable, candidate-bound, and records registry and g
         ],
       }),
     );
-    await writeFile(
-      join(registries, 'registry-ledger-maven.json'),
-      JSON.stringify({
-        schemaVersion: '1',
-        registry: 'maven',
-        candidateId: javaCandidateId,
-        sourceCandidateManifestSha256: '3'.repeat(64),
-        releaseCandidateId: candidateId,
-        contractSetSha256,
-        releaseVersion: RELEASE_VERSION,
-        status: 'published',
-        artifacts: [
-          {
-            name: ("capture-runtime-client-" + RELEASE_VERSION + ".jar"),
-            sha256: 'f'.repeat(64),
-          },
-        ],
-      }),
-    );
     const output = join(root, 'capture-release-manifest-v1.json');
     const result = spawnSync(
       process.execPath,
@@ -195,8 +175,6 @@ test('release manifest is immutable, candidate-bound, and records registry and g
         gatePath,
         '--registry-directory',
         registries,
-        '--java-candidate-id',
-        javaCandidateId,
         '--output',
         output,
       ],
@@ -207,7 +185,17 @@ test('release manifest is immutable, candidate-bound, and records registry and g
     assert.equal(manifest.status, 'released');
     assert.equal(manifest.candidateId, candidateId);
     assert.equal(manifest.releaseTag, ("v" + RELEASE_VERSION));
-    assert.equal(manifest.registryArtifacts.length, 4);
+    assert.equal(manifest.registryArtifacts.length, 3);
+    assert.deepEqual(
+      [
+        ...new Set(
+          manifest.registryArtifacts.map(
+            (item: { registry: string }) => item.registry,
+          ),
+        ),
+      ].sort(),
+      ['crates.io', 'npm', 'pypi'],
+    );
     assert.equal(manifest.consumerGates.gates[0].verdict, 'passed');
     assert.match(
       await readFile(`${output}.sha256`, 'utf8'),

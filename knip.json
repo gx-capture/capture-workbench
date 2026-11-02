@@ -21,7 +21,6 @@
     "apps/capture-workbench-e2e/**/*.{ts,mts}",
     "packages/capture-runtime/**/*.{ts,mts,mjs}",
     "packages/capture-acceptance-contract/**/*.ts",
-    "packages/capture-runtime-client-java/**/*.{ts,mjs}",
     "tools/**/*.{ts,mts,mjs}",
     "!**/*.{spec,test,e2e}.ts!",
     "!**/testing/**!"

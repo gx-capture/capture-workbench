@@ -1,7 +1,7 @@
 """The PDF page selection rule and its shared golden case.
 
 ``tests/fixtures/ocr-page-selection-v3.json`` is read by the runtime, the
-Python, TypeScript and Java clients alike: pages 3, 7, 8 and 20 of a 46-page
+Python and TypeScript clients alike: pages 3, 7, 8 and 20 of a 46-page
 source keep those numbers everywhere, and the invalid cases fail everywhere.
 """
 

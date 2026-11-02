@@ -38,11 +38,7 @@ fails closed.
 `src/capture_runtime/assets/contract-set.json` is the canonical byte-stable
 bundle. Its adjacent `contract-set.sha256` file contains the lowercase SHA-256
 of those exact bytes. `scripts/generate_contracts.py --check` verifies the
-asset and fails when model, operation, problem, or route metadata drifts. The
-same generator renders the marked OCR v3 DTO/validator region in the Java SDK
-directly from the `CaptureOcrProjectionV3` schema embedded in the canonical
-contract-set bytes; hand-editing that Java region is therefore a contract
-drift. There is no second Java OCR semantic digest.
+asset and fails when model, operation, problem, or route metadata drifts.
 
 ## Local verification
 

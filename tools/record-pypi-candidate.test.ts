@@ -63,11 +63,6 @@ async function packageFixture(
     ("package/gx-capture-capture-workbench-ui-" + RELEASE_VERSION + ".tgz"),
     ("package/gx-capture-capture-runtime-client-" + RELEASE_VERSION + ".tgz"),
     'package-manifest.json',
-    'java-candidate-manifest.json',
-    ("maven/capture-runtime-client-" + RELEASE_VERSION + ".jar"),
-    ("maven/capture-runtime-client-" + RELEASE_VERSION + "-sources.jar"),
-    'maven/pom.xml',
-    'maven/capture-runtime-contract-set.sha256',
   ];
   const runtimeFiles = [
     'runtime/capture-runtime.exe',
