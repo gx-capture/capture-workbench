@@ -58,7 +58,7 @@ function assertCandidateId(value: string): void {
   assertSha(value, 'Candidate ID');
 }
 
-function assertIndexes(stable: StableIndex, releases: ReleaseIndex): void {
+export function assertIndexes(stable: StableIndex, releases: ReleaseIndex): void {
   if (
     stable.schemaVersion !== '1' ||
     stable.channel !== 'stable' ||

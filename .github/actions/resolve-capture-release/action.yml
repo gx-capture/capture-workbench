@@ -1,0 +1,72 @@
+name: Resolve Capture release
+description: >-
+  Finds the Capture Runtime release a consumer should pin next, verifies its
+  manifest digest and GitHub attestation (signer workflow), skips superseded
+  releases, and reports whether it differs from the current pin. Fails closed.
+
+inputs:
+  mode:
+    description: >-
+      route-a: the newest published, unsuperseded runtime GitHub release
+      (signer _publish-runtime-github-release.yml). stable: the release that
+      release-index/stable.json names (signer _publish-github-release.yml).
+    required: true
+  current-version:
+    description: The Capture version the consumer pins now, e.g. 0.7.2.
+    required: true
+  current-contract-set-sha256:
+    description: >-
+      Optional contract-set SHA-256 of the current pin. In route-a mode a
+      matching candidate reports no-impact; otherwise manual-review.
+    required: false
+    default: ''
+  github-token:
+    description: Token for gh (public reads and attestation lookups only).
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  tag:
+    description: Release tag, e.g. v0.8.0.
+    value: ${{ steps.resolve.outputs.tag }}
+  version:
+    description: Release version without the leading v.
+    value: ${{ steps.resolve.outputs.version }}
+  manifest_sha256:
+    description: >-
+      SHA-256 of the verified manifest (capture-release-manifest-v1.json in
+      stable mode, capture-runtime-candidate-manifest.json in route-a mode).
+    value: ${{ steps.resolve.outputs.manifest_sha256 }}
+  contract_classification:
+    description: no-impact | additive | breaking | manual-review.
+    value: ${{ steps.resolve.outputs.contract_classification }}
+  contract_set_sha256:
+    description: Contract-set SHA-256 of the release.
+    value: ${{ steps.resolve.outputs.contract_set_sha256 }}
+  changed:
+    description: false when the release equals current-version.
+    value: ${{ steps.resolve.outputs.changed }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Node.js for the TypeScript resolver
+      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+      with:
+        node-version: 24
+
+    - name: Resolve and verify the Capture release
+      id: resolve
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        MODE: ${{ inputs.mode }}
+        CURRENT_VERSION: ${{ inputs.current-version }}
+        CURRENT_CONTRACT_SET_SHA256: ${{ inputs.current-contract-set-sha256 }}
+      run: |
+        set -euo pipefail
+        args=(--mode "$MODE" --current-version "$CURRENT_VERSION" --github-output "$GITHUB_OUTPUT")
+        if [ -n "$CURRENT_CONTRACT_SET_SHA256" ]; then
+          args+=(--current-contract-set-sha256 "$CURRENT_CONTRACT_SET_SHA256")
+        fi
+        node "$GITHUB_ACTION_PATH/../../../tools/resolve-capture-release.ts" "${args[@]}"

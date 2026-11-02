@@ -10,6 +10,8 @@
     "./three-project-acceptance.test.ts",
     "./three-project-cleanup-verifier.test.ts",
     "./windows-built-in-process-resolver.ts",
-    "./windows-built-in-process-resolver.test.ts"
+    "./windows-built-in-process-resolver.test.ts",
+    "./resolve-capture-release.ts",
+    "./resolve-capture-release.test.ts"
   ]
 }

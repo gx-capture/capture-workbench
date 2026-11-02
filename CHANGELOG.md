@@ -4,6 +4,15 @@
 
 - Clarification (2026-11-01): the 0.4.2 launcher durability and verified staging release apply to explicit live R3 use; restart reconciliation is not wired, and desktop, cert-prep and LAW still use legacy launch paths with native Windows Job containment (`KILL_ON_JOB_CLOSE`).
 
+### Release resolver action for consumer bump workflows
+
+The composite action `.github/actions/resolve-capture-release` finds the
+release a consumer should pin next (`route-a`: newest unsuperseded runtime
+release; `stable`: the release `stable.json` names), verifies its manifest
+digest and signer-workflow attestation, and outputs the tag, manifest and
+contract-set digests, contract classification and whether it differs from the
+current pin. See the release runbook.
+
 ### Java SDK no longer published
 
 The Java SDK (`com.gx.capture:capture-runtime-client`) had no consumer, so it
