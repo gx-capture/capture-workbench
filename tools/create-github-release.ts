@@ -1,5 +1,3 @@
-import { spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import {
   mkdtemp,
   readdir,
@@ -11,50 +9,12 @@ import {
 import { basename, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
-
-type RemoteAsset = { name?: unknown };
-
-function run(command: string, args: readonly string[], allowFailure = false) {
-  const result = spawnSync(command, args, {
-    encoding: 'utf8',
-    env: { ...process.env },
-    shell: false,
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  if (result.error) throw result.error;
-  if (result.status !== 0 && !allowFailure) {
-    throw new Error(`${command} failed with status ${String(result.status)}.`);
-  }
-  return result;
-}
-
-function sha256(bytes: Uint8Array): string {
-  return createHash('sha256').update(bytes).digest('hex');
-}
-
-function parseArguments(args: readonly string[]): Map<string, string> {
-  const values = new Map<string, string>();
-  for (let index = 0; index < args.length; index += 2) {
-    const name = args[index];
-    const value = args[index + 1];
-    if (
-      !['--candidate', '--tag', '--source-commit', '--output'].includes(name) ||
-      !value ||
-      values.has(name)
-    ) {
-      throw new Error(
-        'Use --candidate <directory> --tag <tag> --source-commit <sha> --output <file>.',
-      );
-    }
-    values.set(name, value);
-  }
-  if (values.size !== 4) {
-    throw new Error(
-      'Use --candidate <directory> --tag <tag> --source-commit <sha> --output <file>.',
-    );
-  }
-  return values;
-}
+import {
+  parseReleaseArguments,
+  parseRemoteReleaseInventory,
+  run,
+  sha256,
+} from './release/github-release-support.ts';
 
 async function assetPaths(candidate: string): Promise<string[]> {
   const runtime = join(candidate, 'runtime');
@@ -153,7 +113,7 @@ async function assertRemoteAssetMatches(
 }
 
 async function main(): Promise<void> {
-  const values = parseArguments(process.argv.slice(2));
+  const values = parseReleaseArguments(process.argv.slice(2));
   const candidate = resolve(values.get('--candidate')!);
   const tag = values.get('--tag')!;
   const sourceCommit = values.get('--source-commit')!;
@@ -195,25 +155,9 @@ async function main(): Promise<void> {
   let isDraft = false;
   let remoteNames = new Set<string>();
   if (remote.status === 0) {
-    const payload = JSON.parse(remote.stdout) as {
-      isDraft?: unknown;
-      assets?: unknown;
-    };
-    isDraft = payload.isDraft === true;
-    if (
-      !Array.isArray(payload.assets) ||
-      payload.assets.some(
-        (item) =>
-          !item ||
-          typeof item !== 'object' ||
-          typeof (item as RemoteAsset).name !== 'string',
-      )
-    ) {
-      throw new Error('GitHub Release returned an invalid asset inventory.');
-    }
-    remoteNames = new Set(
-      (payload.assets as RemoteAsset[]).map((item) => item.name as string),
-    );
+    const inventory = parseRemoteReleaseInventory(remote.stdout);
+    isDraft = inventory.isDraft;
+    remoteNames = inventory.remoteNames;
     const unexpected = [...remoteNames].filter(
       (name) =>
         !expectedAssetNames.has(name) && !allowedRuntimeSeedAssets.has(name),
