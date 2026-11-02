@@ -13,7 +13,18 @@ export interface RealOcrUiSegment {
   readonly order: number;
   readonly locator: RealOcrLocator;
   readonly text: string;
+  // Optional in the capture document schema; the UI projection omits them.
+  readonly speaker?: string | null;
+  readonly speakerOverlap?: boolean;
 }
+
+// Capture document schema defaults (CaptureDocument segment `speaker` and
+// `speakerOverlap`). The runtime writes them on every durable segment, OCR
+// included; an absent field means the same value.
+const SEGMENT_FIELD_DEFAULTS: Readonly<Record<string, unknown>> = Object.freeze({
+  speaker: null,
+  speakerOverlap: false,
+});
 
 export type RealOcrLocator =
   | { readonly kind: 'page'; readonly page: number }
@@ -109,16 +120,27 @@ export function assertDurableOcrSegmentsEqual(
 ): void {
   assert.deepEqual(
     normalizeDurableOcrSegments(durableSegments),
-    visibleSegments,
+    normalizeDurableOcrSegments(visibleSegments),
     message,
   );
+}
+
+/** Drops a speaker field only when it holds the schema default, so a real speaker must still match. */
+function withoutDefaultSegmentFields(record: Record<string, unknown>): Record<string, unknown> {
+  const normalized = { ...record };
+  for (const [field, value] of Object.entries(SEGMENT_FIELD_DEFAULTS)) {
+    if (Object.prototype.hasOwnProperty.call(normalized, field) && normalized[field] === value) {
+      delete normalized[field];
+    }
+  }
+  return normalized;
 }
 
 function normalizeDurableOcrSegments(value: unknown): unknown {
   if (!Array.isArray(value)) return value;
   return value.map((segment) => {
     if (segment === null || typeof segment !== 'object' || Array.isArray(segment)) return segment;
-    const record = segment as Record<string, unknown>;
+    const record = withoutDefaultSegmentFields(segment as Record<string, unknown>);
     const locator = record.locator;
     if (
       locator !== null
@@ -132,7 +154,7 @@ function normalizeDurableOcrSegments(value: unknown): unknown {
       delete normalizedLocator.boundingBox;
       return { ...record, locator: normalizedLocator };
     }
-    return segment;
+    return record;
   });
 }
 
