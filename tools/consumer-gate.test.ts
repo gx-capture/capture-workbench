@@ -128,3 +128,33 @@ test('downloaded candidate manifest is verified by exact digest and identity', a
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('consumer gate result validation keeps its exact evidence-value messages', () => {
+  assert.throws(
+    () => verifyConsumerGateResult({ ...result(), extra: 1 }, expectation),
+    { message: 'Consumer gate result fields are not canonical.' },
+  );
+  const { checks: _checks, ...missing } = result();
+  assert.throws(() => verifyConsumerGateResult(missing, expectation), {
+    message: 'Consumer gate result fields are not canonical.',
+  });
+  for (const consumerCommit of ['C'.repeat(40), 'c'.repeat(39), 7]) {
+    assert.throws(
+      () => verifyConsumerGateResult(result({ consumerCommit }), expectation),
+      { message: 'Consumer commit must be a full lowercase Git SHA.' },
+    );
+  }
+});
+
+test('aggregate ledger keeps its exact SHA-256 messages', () => {
+  const run = (id: unknown, manifest: unknown) => () =>
+    aggregateConsumerGateResults([], id as string, manifest as string, 'x');
+  for (const bad of ['A'.repeat(64), 'a'.repeat(63), undefined]) {
+    assert.throws(run(bad, manifestSha256), {
+      message: 'Candidate ID must be a lowercase SHA-256 digest.',
+    });
+    assert.throws(run(candidateId, bad), {
+      message: 'Candidate manifest digest must be a lowercase SHA-256 digest.',
+    });
+  }
+});
