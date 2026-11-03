@@ -27,7 +27,8 @@ RUNTIME_ROOT = Path(__file__).parents[2]
 PRODUCER_FILES = (
     RUNTIME_ROOT / "src/capture_runtime/workers/ocr_main.py",
     RUNTIME_ROOT / "src/capture_runtime/workers/speech_recognition_main.py",
-    RUNTIME_ROOT / "src/capture_runtime/engine_adapters.py",
+    RUNTIME_ROOT / "src/capture_runtime/ocr_windowsml_adapter.py",
+    RUNTIME_ROOT / "src/capture_runtime/ocr_execution_evidence.py",
     RUNTIME_ROOT / "src/capture_runtime/workers/diarization_main.py",
     RUNTIME_ROOT / "src/capture_runtime/speaker_diarization.py",
 )

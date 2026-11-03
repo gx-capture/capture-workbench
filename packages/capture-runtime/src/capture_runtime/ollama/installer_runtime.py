@@ -14,8 +14,8 @@ from pathlib import Path
 from typing import Protocol
 
 from capture_runtime.contracts import RuntimeRequirementV2
-from capture_runtime.engine_adapters import WINDOWSML_REQUIRED_MODEL_FILES
 from capture_runtime.install_progress import DownloadProgress
+from capture_runtime.ocr_profile import WINDOWSML_REQUIRED_MODEL_FILES
 
 
 def _atomic_json(path: Path, payload: object) -> None:

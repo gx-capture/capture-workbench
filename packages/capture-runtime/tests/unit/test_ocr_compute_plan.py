@@ -5,14 +5,18 @@ from types import SimpleNamespace
 
 import pytest
 
-from capture_runtime import engine_adapters
 from capture_runtime.contracts import OcrAdapterClass, OcrComputeMode
+from capture_runtime.ocr_execution_evidence import (
+    OcrSessionDeviceProof,
+    PaddleOcrExecutionEvidenceAdapter,
+)
 from capture_runtime.ocr_preflight import (
     OcrComputePlan,
     OcrExecutionPlan,
     OcrGpuAdapter,
     OcrGpuCapabilitySnapshot,
 )
+from capture_runtime.worker_probe import EngineRuntimeUnavailableError
 
 CONTRACT_SHA256 = "a" * 64
 WORKER_SHA256 = "b" * 64
@@ -257,10 +261,10 @@ def test_plan_evidence_rejects_a_session_with_wrong_or_noncanonical_device_id(
         def disable_fallback(self) -> None:
             return None
 
-    adapter = engine_adapters._PaddleOcrExecutionEvidenceAdapter(
+    adapter = PaddleOcrExecutionEvidenceAdapter(
         tmp_path / "ocr-profile", stage_reporter=stages.append
     )
-    with pytest.raises(engine_adapters.EngineRuntimeUnavailableError):
+    with pytest.raises(EngineRuntimeUnavailableError):
         adapter.prepare(_pipeline_for_session(Session()), expected_device_id=1)
     assert "ocr-dml-device-id-mismatch" in stages
 
@@ -286,7 +290,7 @@ def test_plan_evidence_allows_unobservable_dml_device_id_readback(
             self.disabled = True
 
     session = Session()
-    adapter = engine_adapters._PaddleOcrExecutionEvidenceAdapter(tmp_path / "ocr-profile")
+    adapter = PaddleOcrExecutionEvidenceAdapter(tmp_path / "ocr-profile")
 
     adapter.prepare(_pipeline_for_session(session), expected_device_id=1)
 
@@ -321,7 +325,7 @@ def test_plan_evidence_keeps_configured_identity_separate_from_unobservable_read
         def end_profiling(self) -> str:
             return str(profile_path)
 
-    adapter = engine_adapters._PaddleOcrExecutionEvidenceAdapter(tmp_path / "ocr-profile")
+    adapter = PaddleOcrExecutionEvidenceAdapter(tmp_path / "ocr-profile")
     adapter.prepare(_pipeline_for_session(Session()), expected_device_id=1)
     evidence = adapter.finalize(_pipeline_for_session(Session()))
 
@@ -356,12 +360,12 @@ def test_plan_evidence_requires_fallback_disable_and_keeps_same_session_proof(tm
             return str(profile_path)
 
     session = Session()
-    adapter = engine_adapters._PaddleOcrExecutionEvidenceAdapter(tmp_path / "ocr-profile")
+    adapter = PaddleOcrExecutionEvidenceAdapter(tmp_path / "ocr-profile")
     adapter.prepare(_pipeline_for_session(session), expected_device_id=1)
     evidence = adapter.finalize(_pipeline_for_session(session))
     assert evidence.dml_node_count == 2
     assert evidence.session_device_proofs == (
-        engine_adapters.OcrSessionDeviceProof(
+        OcrSessionDeviceProof(
             session_index=0,
             providers=("DmlExecutionProvider", "CPUExecutionProvider"),
             dml_device_id=1,
@@ -383,9 +387,9 @@ def test_plan_evidence_rejects_fallback_disable_failure(tmp_path) -> None:
         def disable_fallback(self) -> None:
             raise RuntimeError("fallback control failed")
 
-    adapter = engine_adapters._PaddleOcrExecutionEvidenceAdapter(tmp_path / "ocr-profile")
+    adapter = PaddleOcrExecutionEvidenceAdapter(tmp_path / "ocr-profile")
     with pytest.raises(
-        engine_adapters.EngineRuntimeUnavailableError,
+        EngineRuntimeUnavailableError,
         match="could not disable ONNX Runtime fallback",
     ):
         adapter.prepare(_pipeline_for_session(Session()), expected_device_id=1)
@@ -399,6 +403,6 @@ def test_plan_evidence_rejects_missing_fallback_disable(tmp_path) -> None:
         def get_provider_options(self) -> dict[str, dict[str, object]]:
             return {"DmlExecutionProvider": {"device_id": 1}}
 
-    adapter = engine_adapters._PaddleOcrExecutionEvidenceAdapter(tmp_path / "profile")
-    with pytest.raises(engine_adapters.EngineRuntimeUnavailableError):
+    adapter = PaddleOcrExecutionEvidenceAdapter(tmp_path / "profile")
+    with pytest.raises(EngineRuntimeUnavailableError):
         adapter.prepare(_pipeline_for_session(Session()), expected_device_id=1)

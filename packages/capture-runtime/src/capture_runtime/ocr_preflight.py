@@ -1341,7 +1341,7 @@ def _native_enumerate_adapters(
     return tuple(adapters)
 
 
-class _NativeOcrAdapterMapLease:
+class NativeOcrAdapterMapLease:
     """Own one DXGI factory across a complete map/construction bracket."""
 
     def __init__(self) -> None:
@@ -1411,7 +1411,7 @@ class _NativeOcrAdapterMapLease:
 def _native_adapter_tables() -> tuple[tuple[OcrGpuAdapter, ...], tuple[OcrGpuAdapter, ...]]:
     """Enumerate ordinary and HIGH_PERFORMANCE tables for one capability probe."""
 
-    lease = _NativeOcrAdapterMapLease()
+    lease = NativeOcrAdapterMapLease()
     try:
         if not lease.is_current():
             raise RuntimeError("DXGI factory became stale before adapter enumeration")
@@ -1424,6 +1424,7 @@ def _native_adapter_tables() -> tuple[tuple[OcrGpuAdapter, ...], tuple[OcrGpuAda
 
 
 __all__ = [
+    "NativeOcrAdapterMapLease",
     "NativeOcrGpuCapabilityProbe",
     "OcrComputePlan",
     "OcrComputePreflight",

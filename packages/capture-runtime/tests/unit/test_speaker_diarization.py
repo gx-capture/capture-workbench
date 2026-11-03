@@ -10,7 +10,6 @@ from typing import Any
 import pytest
 
 from capture_runtime import speaker_diarization as diarization
-from capture_runtime.engine_adapters import EngineRuntimeUnavailableError
 from capture_runtime.speaker_diarization import (
     DIARIZATION_REQUIRED_FILES,
     NemotronDiarizationAdapter,
@@ -19,6 +18,7 @@ from capture_runtime.speaker_diarization import (
     decode_mono_16k,
 )
 from capture_runtime.speaker_turns import SpeakerTurn
+from capture_runtime.worker_probe import EngineRuntimeUnavailableError
 
 
 class OutOfMemoryError(RuntimeError):

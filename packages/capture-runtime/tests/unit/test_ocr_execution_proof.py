@@ -14,10 +14,10 @@ import capture_runtime.workers.ocr_main as ocr_main
 from capture_runtime.config import sanitized_child_environment
 from capture_runtime.constants import RUNTIME_VERSION
 from capture_runtime.contracts import OcrProvenanceV3
-from capture_runtime.engine_adapters import (
+from capture_runtime.ocr_execution_evidence import (
     OcrExecutionEvidence,
     OcrSessionDeviceProof,
-    OcrTextResult,
+    PaddleOcrExecutionEvidenceAdapter,
 )
 from capture_runtime.ocr_execution_proof import (
     AcceptanceOcrExecutionEvidenceSink,
@@ -29,6 +29,7 @@ from capture_runtime.ocr_execution_proof import (
     acceptance_ocr_execution_evidence_sink_from_environment,
     acceptance_ocr_execution_runtime_sha256_from_environment,
 )
+from capture_runtime.ocr_page_result import OcrTextResult
 from capture_runtime.ocr_preflight import (
     OcrAdapterClass,
     OcrComputePlan,
@@ -535,8 +536,6 @@ def test_execution_evidence_keeps_same_session_graph_counts(tmp_path: Path) -> N
             path.write_text("[]", encoding="utf-8")
             return str(path)
 
-    from capture_runtime.engine_adapters import _PaddleOcrExecutionEvidenceAdapter
-
     sessions = (Session(0), Session(1))
     pipeline = SimpleNamespace(
         paddlex_pipeline=SimpleNamespace(
@@ -544,7 +543,7 @@ def test_execution_evidence_keeps_same_session_graph_counts(tmp_path: Path) -> N
             text_rec_model=SimpleNamespace(runner=SimpleNamespace(session=sessions[1])),
         )
     )
-    adapter = _PaddleOcrExecutionEvidenceAdapter(tmp_path / "profile")
+    adapter = PaddleOcrExecutionEvidenceAdapter(tmp_path / "profile")
     adapter.prepare(pipeline, expected_device_id=1)
     evidence = adapter.finalize(pipeline)
     assert [

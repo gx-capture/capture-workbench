@@ -9,15 +9,15 @@ from types import SimpleNamespace
 import pytest
 from PIL import Image
 
-import capture_runtime.engine_adapters as engine_adapters
-from capture_runtime.engine_adapters import (
-    EngineRuntimeUnavailableError,
+import capture_runtime.ocr_windowsml_adapter as windowsml_adapter
+from capture_runtime.ocr_paddle_normalization import (
     PaddleResultNormalizationError,
-    WindowsMLOcrAdapter,
     normalize_paddle_results,
 )
 from capture_runtime.ocr_preflight import OcrComputePlan, OcrGpuCapabilitySnapshot
 from capture_runtime.ocr_profile import CANONICAL_PROFILE_PATH, canonical_json_bytes
+from capture_runtime.ocr_windowsml_adapter import WindowsMLOcrAdapter
+from capture_runtime.worker_probe import EngineRuntimeUnavailableError
 
 
 def _write_windowsml_models(root: Path) -> None:
@@ -125,13 +125,13 @@ def test_adapter_passes_original_slots_to_reading_plan(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     observed = []
-    original = engine_adapters.plan_reading_order
+    original = windowsml_adapter.plan_reading_order
 
     def observe(regions, **kwargs):
         observed.append(kwargs.get("raw_source_slots"))
         return original(regions, **kwargs)
 
-    monkeypatch.setattr(engine_adapters, "plan_reading_order", observe)
+    monkeypatch.setattr(windowsml_adapter, "plan_reading_order", observe)
     result = _extract(
         tmp_path,
         {

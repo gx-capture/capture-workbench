@@ -340,7 +340,7 @@ def test_models_are_hashed_once_per_worker_beside_the_model_load(tmp_path, monke
         hashed.append(list(paths))
         return "sha256:" + "d" * 64
 
-    monkeypatch.setattr(speech, "_directory_digest", digest)
+    monkeypatch.setattr(speech, "directory_digest", digest)
     recognizer = adapter(tmp_path, fake)
     results = [
         recognizer.transcribe(tmp_path / "source.wav", should_cancel=lambda: False)
@@ -366,7 +366,7 @@ def test_a_failed_model_hash_fails_the_capture_and_is_retried(tmp_path, monkeypa
             raise FileNotFoundError("primary/model.safetensors")
         return "sha256:" + "e" * 64
 
-    monkeypatch.setattr(speech, "_directory_digest", digest)
+    monkeypatch.setattr(speech, "directory_digest", digest)
     recognizer = adapter(tmp_path, fake)
     with pytest.raises(FileNotFoundError):
         recognizer.transcribe(tmp_path / "source.wav", should_cancel=lambda: False)

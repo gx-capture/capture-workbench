@@ -48,7 +48,7 @@ from capture_runtime.whisper_session import (
     encode_credit,
 )
 from capture_runtime.worker_client import InstalledEngine
-from capture_runtime.worker_process import _subprocess_path
+from capture_runtime.worker_process import subprocess_path
 from capture_runtime.worker_stage_policy import (
     MAX_WORKER_DIAGNOSTIC_STAGES,
     WORKER_STAGE_PATTERN,
@@ -450,13 +450,13 @@ class ProgressiveCaptureProcessor:
 def _session_worker_launch(executable: Path) -> tuple[list[str], str]:
     """Build a native-child command from a Windows-safe canonical path."""
 
-    subprocess_executable = _subprocess_path(executable)
+    subprocess_executable = subprocess_path(executable)
     command = (
         [sys.executable, subprocess_executable, "session"]
         if executable.suffix.casefold() in {".py", ".pyw"}
         else [subprocess_executable, "session"]
     )
-    return command, _subprocess_path(executable.parent)
+    return command, subprocess_path(executable.parent)
 
 
 class _SessionWorker:
@@ -490,8 +490,8 @@ class _SessionWorker:
         environment = dict(sanitized_child_environment())
         environment.update(
             {
-                "CAPTURE_SESSION_MODEL_PATH": _subprocess_path(engine.model_dir),
-                "CAPTURE_SESSION_TEMP_DIR": _subprocess_path(config.temp_dir),
+                "CAPTURE_SESSION_MODEL_PATH": subprocess_path(engine.model_dir),
+                "CAPTURE_SESSION_TEMP_DIR": subprocess_path(config.temp_dir),
                 "CAPTURE_SESSION_PREFER_GPU": "1" if config.whisper_prefer_gpu else "0",
                 "CAPTURE_SESSION_ALLOW_CPU_FALLBACK": (
                     "1" if config.whisper_allow_cpu_fallback else "0"

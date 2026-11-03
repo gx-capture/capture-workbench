@@ -48,12 +48,11 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 _report_stage("python-import-pillow-complete")
 
 _report_stage("python-import-capture-runtime-start")
-from capture_runtime.engine_adapters import (
-    ReusableOcrSession,
-    WindowsMLOcrAdapter,
-    _install_offline_aistudio_stubs,
-    _install_offline_huggingface_stubs,
+from capture_runtime.ocr_offline_stubs import (
+    install_offline_aistudio_stubs,
+    install_offline_huggingface_stubs,
 )
+from capture_runtime.ocr_windowsml_adapter import ReusableOcrSession, WindowsMLOcrAdapter
 from capture_runtime.constants import VERTICAL_READER_REQUIREMENT_ID
 from capture_runtime.contracts import CaptureSource
 from capture_runtime.image_normalization import bounded_scaled_dimensions
@@ -174,8 +173,8 @@ class _WorkerOcrEngineAdapter:
 
 
 def _import_ocr_runtime() -> None:
-    _install_offline_aistudio_stubs()
-    _install_offline_huggingface_stubs()
+    install_offline_aistudio_stubs()
+    install_offline_huggingface_stubs()
     for module in ("onnxruntime", "paddleocr"):
         _report_stage(ocr_import_stage(module, "start"))
         try:

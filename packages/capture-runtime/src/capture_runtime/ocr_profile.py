@@ -17,6 +17,7 @@ from typing import Any, cast
 
 from capture_runtime.constants import RUNTIME_VERSION
 from capture_runtime.ocr_vertical_routing import vertical_reader_declaration
+from capture_runtime.worker_probe import EngineRuntimeUnavailableError
 
 CANONICAL_PROFILE_PATH = Path(__file__).resolve().parent / "assets" / "ocr-profile.json"
 PROFILE_ALGORITHM = "capture-workbench-ocr-profile-v3"
@@ -28,13 +29,11 @@ MODEL_ARTIFACT_PATHS = (
     "rec/inference.yml",
     "rec/ppocrv6_dict.txt",
 )
+# Every file of an installed WindowsML OCR model directory: the artifacts and the profile.
+WINDOWSML_REQUIRED_MODEL_FILES = (*MODEL_ARTIFACT_PATHS, "pipeline.json")
 EXPECTED_DET_REVISION = "61323801669c338b7891481ec7bac61ce31b576a"
 EXPECTED_REC_REVISION = "50c7eacafc52fa7bcf4194e8cd08e46f8558504b"
 EXPECTED_DICTIONARY_REVISION = "b03f46425e8ff4442b268ce449e3eef758146cd4"
-
-
-class EngineRuntimeUnavailableError(RuntimeError):
-    """Raised when the canonical OCR profile or its local assets are invalid."""
 
 
 def canonical_json_bytes(value: object) -> bytes:
@@ -389,10 +388,10 @@ def validate_model_artifacts(model_dir: Path, profile: OcrProfileSpec) -> None:
 
 __all__ = [
     "CANONICAL_PROFILE_PATH",
-    "EngineRuntimeUnavailableError",
     "MODEL_ARTIFACT_PATHS",
     "OcrModelArtifact",
     "OcrProfileSpec",
+    "WINDOWSML_REQUIRED_MODEL_FILES",
     "canonical_json_bytes",
     "canonical_profile_bytes",
     "derive_profile_id",

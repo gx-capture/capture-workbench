@@ -20,24 +20,9 @@ ENTRY_POINTS = {
     "capture_runtime.workers.speech_recognition_main": "Speech transcription",
     "capture_runtime.workers.diarization_main": "Speaker diarization",
 }
-# Known before the refactor (W2-W5 remove them); this list may only shrink. Names are relative
-# to capture_runtime: (importing module, defining module, private name).
-_KNOWN = {
-    ("progressive_capture", "worker_process", "_subprocess_path"),
-    ("speaker_diarization", "engine_adapters", "_directory_digest"),
-    ("speech_recognition", "engine_adapters", "_directory_digest"),
-    ("storage.installation_repository", "storage.common", "_atomic_json"),
-    ("storage.installation_repository", "storage.common", "_dump_model"),
-    ("storage.installation_repository", "storage.common", "_identifier"),
-    ("storage.model_installation_repository", "storage.common", "_atomic_json"),
-    ("storage.model_installation_repository", "storage.common", "_dump_model"),
-    ("storage.model_installation_repository", "storage.common", "_identifier"),
-    ("storage.structuring_session_repository", "storage.common", "_atomic_json"),
-}
-KNOWN = {
-    (f"capture_runtime.{importer}", f"capture_runtime.{source}", name)
-    for importer, source, name in _KNOWN
-}
+# Known exceptions as (importing module, defining module, private name). W2 removed the
+# last ones; give a name a public interface instead of adding it here.
+KNOWN: set[tuple[str, str, str]] = set()
 
 
 def _contexts() -> dict[str, str]:

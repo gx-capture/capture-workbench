@@ -202,14 +202,16 @@ def run_baseline(
 ) -> None:
     import onnxruntime as ort
 
-    from capture_runtime.engine_adapters import (
-        WindowsMLOcrAdapter,
-        _default_paddle_pipeline,
+    from capture_runtime.ocr_execution_evidence import PaddleOcrExecutionEvidenceAdapter
+    from capture_runtime.ocr_paddle_normalization import (
         _paddle_payload,
-        _paddle_results_sequence,
-        _PaddleOcrExecutionEvidenceAdapter,
+        paddle_results_sequence,
     )
     from capture_runtime.ocr_profile import load_profile_spec, validate_model_artifacts
+    from capture_runtime.ocr_windowsml_adapter import (
+        WindowsMLOcrAdapter,
+        _default_paddle_pipeline,
+    )
 
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     cases = manifest["cases"] if isinstance(manifest, dict) else manifest
@@ -228,7 +230,7 @@ def run_baseline(
         if digest(Path(case["image_path"])) != case["image_sha256"]:
             raise ValueError("input image changed after material freeze")
     output.mkdir(parents=True, exist_ok=False)
-    evidence = _PaddleOcrExecutionEvidenceAdapter(output / "ort-profile") if dml else None
+    evidence = PaddleOcrExecutionEvidenceAdapter(output / "ort-profile") if dml else None
     snapshot = source_snapshot(output)
     head = subprocess.run(
         ["git", "rev-parse", "HEAD"],
@@ -298,7 +300,7 @@ def run_baseline(
                     start = time.perf_counter()
                     raw = [
                         _paddle_payload(result)
-                        for result in _paddle_results_sequence(
+                        for result in paddle_results_sequence(
                             WindowsMLOcrAdapter._predict(pipeline, image_bytes)
                         )
                     ]

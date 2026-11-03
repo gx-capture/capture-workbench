@@ -43,7 +43,6 @@ from capture_runtime.contracts import (
     TimeLocator,
     project_source_text,
 )
-from capture_runtime.engine_adapters import PaddleResultNormalizationError
 from capture_runtime.engine_catalog import EngineCatalogError
 from capture_runtime.engine_installation import EngineInstallationManager
 from capture_runtime.image_normalization import bounded_scaled_dimensions, ocr_image_scale
@@ -51,7 +50,7 @@ from capture_runtime.ocr_execution_proof import (
     OcrExecutionDeviceProofV1,
     acceptance_ocr_execution_runtime_sha256_from_environment,
 )
-from capture_runtime.ocr_profile import EngineRuntimeUnavailableError
+from capture_runtime.ocr_paddle_normalization import PaddleResultNormalizationError
 from capture_runtime.ocr_projection import (
     OcrEngineFailure,
     OcrEngineRequest,
@@ -74,12 +73,14 @@ from capture_runtime.worker_client import (
     WorkerOcrProgress,
     WorkerRunResult,
 )
+from capture_runtime.worker_probe import EngineRuntimeUnavailableError
 from capture_runtime.worker_process import DEFAULT_RUN_TIMEOUT_SECONDS, WorkerCancelledError
 
 if TYPE_CHECKING:
     from PIL import Image
 
-    from capture_runtime.engine_adapters import OcrAdapter, WhisperAdapter
+    from capture_runtime.ocr_page_result import OcrAdapter
+    from capture_runtime.speech_transcript import WhisperAdapter
 
 
 class UnsupportedMediaError(ValueError):

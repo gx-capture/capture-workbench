@@ -15,12 +15,12 @@ from pathlib import Path
 from typing import Any
 
 from capture_runtime.constants import DIARIZATION_REQUIREMENT_ID
-from capture_runtime.engine_adapters import (
+from capture_runtime.speaker_turns import SPEAKER_LABEL, SpeakerTurn
+from capture_runtime.worker_probe import (
     EngineProbe,
     EngineRuntimeUnavailableError,
-    _directory_digest,
+    directory_digest,
 )
-from capture_runtime.speaker_turns import SPEAKER_LABEL, SpeakerTurn
 from capture_runtime.worker_stage_policy import sanitize_worker_stage
 
 DIARIZATION_MODEL = "nvidia-nemotron-3-diarization"
@@ -239,7 +239,7 @@ class NemotronDiarizationAdapter:
             duration_ms=duration_ms,
             device=device,
             model=DIARIZATION_MODEL,
-            digest=_directory_digest(self.model_dir, DIARIZATION_REQUIRED_FILES),
+            digest=directory_digest(self.model_dir, DIARIZATION_REQUIRED_FILES),
             warning=warning,
             elapsed_ms=round((time.perf_counter() - started) * 1000),
             stage_ms=stage_ms,

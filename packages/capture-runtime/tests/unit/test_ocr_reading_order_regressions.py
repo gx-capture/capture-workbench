@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from capture_runtime.engine_adapters import OcrRegion
+from capture_runtime.ocr_page_result import OcrRegion
 from capture_runtime.ocr_reading_order import plan_reading_order
 
 FIXTURE = Path(__file__).parents[1] / "fixtures/vertical-ocr/reading-order-real-pages.json"
