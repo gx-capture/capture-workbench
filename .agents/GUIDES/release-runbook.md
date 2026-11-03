@@ -17,14 +17,16 @@ source of truth for inputs.
   `cdbee11`), which publishes `capture-release-manifest-v1.json`, the desktop
   installer and the stable pointer. Consumers' release workflows that attest
   the release manifest need that full route.
-- **0.9.0** is the latest published release, through Route A only (2026-11-03):
-  npm (GitHub Packages), PyPI, crates.io and GitHub release `v0.9.0`.
+- **0.9.0** is the latest published release (2026-11-03): Route A first, then
+  the full route (release candidate 41649253900, consumer gates 41659676388,
+  release promotion 41666190542), so `v0.9.0` carries
+  `capture-release-manifest-v1.json` and the desktop installer, and the stable
+  pointer names it.
 - Releases after 0.8.0 publish no Java SDK. Maven publication was removed on
   2026-10-31 (no consumer used it); versions through 0.8.0 stay on GitHub
   Packages.
-- Consumers on their `main` branches pin 0.8.0: Cert Prep
-  (`WodenWang820118/cert-prep`) and LAW (`WodenWang820118/gx.law-prep`). They
-  move to 0.9.0 in that order.
+- Consumers on their `main` branches pin 0.9.0: Cert Prep
+  (`WodenWang820118/cert-prep#116`) and LAW (`WodenWang820118/gx.law-prep#336`).
 - The workspace runs Nx 24 with task-based affected; the pull request `checks`
   job type-checks every TypeScript project.
 - The contract set no longer carries the release version: a patch release keeps
@@ -35,9 +37,13 @@ source of truth for inputs.
   structure of dense vertical periodical scans and pages that mix directions;
   about a fifth of furigana on textbook pages is not set aside.
 
-## Published through Route A: 0.9.0 (minor)
+## Published: 0.9.0 (minor)
 
-- Published on 2026-11-03 through Route A only (issue #181). Runs: package
+- Published on 2026-11-03 through Route A (issue #181), then the full route
+  (issue #237): release candidate 41649253900 (candidate `bc3a03ef…`, manifest
+  `f7ff7286…`), consumer gates 41659676388 (the first run, 41652701739, failed
+  on LAW's e2e web-server timeout, fixed in `gx.law-prep#339`), release promotion
+  41666190542 (`all`); release manifest `a5e9a77f…`. Route A runs: package
   candidate 41603006054 (candidate `dbf64d07…`, manifest `5160231a…`), runtime
   candidate 41603269848 (`model-enabled`; candidate `c064d8d4…`, manifest
   `2e924341…`), package promote 41605327337, runtime promote 41605563992
@@ -47,8 +53,8 @@ source of truth for inputs.
   progress (PR #148), the TypeScript client reading raw captures again
   (PR #229), the optional Taiwan speech pack (PR #123), Japanese kanji forms in
   Japanese transcripts, and Angular `^22.0.0` ranges for the Web Component's
-  compiler and elements (PR #195). The desktop app's UI phase 2 (PR #149) ships
-  with the next full route. No Java SDK.
+  compiler and elements (PR #195). The desktop installer includes UI phase 2
+  (PR #149). No Java SDK.
 - Breaking for clients: contract-set SHA-256 `91ff5ff5…` (0.8.0: `664b2b32…`).
   0.8.x clients reject the new response fields
   (`RuntimeRequirementV2.downloadBytes`, `RuntimeInstallationV2.downloadBytes`
