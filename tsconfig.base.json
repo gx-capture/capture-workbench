@@ -26,6 +26,9 @@
       "@spartan-ng/helm/card": [
         "./apps/capture-workbench/src/app/ui/card/src/index.ts"
       ],
+      "@spartan-ng/helm/table": [
+        "./apps/capture-workbench/src/app/ui/table/src/index.ts"
+      ],
       "@spartan-ng/helm/utils": [
         "./apps/capture-workbench/src/app/ui/utils/src/index.ts"
       ]

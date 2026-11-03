@@ -25,9 +25,12 @@ import {
   setDesktopLocale,
   type DesktopLocale,
 } from '../i18n/desktop-messages';
-import { formatRecordingTime } from '../services/desktop-workspace.selectors';
+import {
+  formatApproximateBytes,
+  formatRecordingTime,
+} from '../services/desktop-workspace.selectors';
 import { DesktopWorkspaceStore } from '../services/desktop-workspace.store';
-import { SpeechPack } from '../speech-pack/speech-pack';
+import { EngineCard } from '../engine-card/engine-card';
 
 /**
  * The document workspace (queue, intake, detail) as it was before the shell
@@ -49,7 +52,7 @@ import { SpeechPack } from '../speech-pack/speech-pack';
     MatSelect,
     MatSpinner,
     CaptureRuntimeComputeStatusComponent,
-    SpeechPack,
+    EngineCard,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
@@ -59,8 +62,13 @@ export class HistoryPage {
   protected readonly locale = desktopLocale;
   protected readonly locales = DESKTOP_LOCALES;
   protected readonly formatTime = formatRecordingTime;
+  /** Download sizes come from the runtime, never from the guide text (plan §2). */
+  protected readonly approxSize = formatApproximateBytes;
   /** What each optional unit's model does, in the language in use. */
   protected readonly guides = computed(() => CAPTURE_UNIT_GUIDES[this.locale()]);
+  protected readonly speechPackOpen = computed(() =>
+    this.store.speechPack().some((unit) => unit.status !== 'ready'),
+  );
   private readonly recordingPlayer =
     viewChild<ElementRef<HTMLMediaElement>>('recordingPlayer');
   private pendingPlayFromMs: number | null = null;

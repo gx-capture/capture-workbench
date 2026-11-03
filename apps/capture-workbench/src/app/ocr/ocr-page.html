@@ -1,0 +1,159 @@
+<section
+  class="mx-auto flex max-w-2xl flex-col gap-6 px-8 py-10"
+  data-testid="page-ocr"
+>
+  <h1 class="text-2xl font-semibold">{{ m().nav.ocr }}</h1>
+
+  @if (features.showFirstRunCard() && features.firstRunInstallableUnits().length > 0) {
+    <div hlmCard data-testid="first-run-card">
+      <div hlmCardHeader>
+        <h2 hlmCardTitle>{{ m().firstRunTitle }}</h2>
+      </div>
+      <div hlmCardContent class="flex flex-col gap-3">
+        @if (ocrUnit(); as ocr) {
+          <label
+            class="flex cursor-pointer items-center justify-between gap-4 rounded-lg border p-3 text-sm"
+            data-testid="first-run-option"
+            data-requirement-id="windowsml-ocr"
+          >
+            <span class="flex items-center gap-3">
+              <input
+                type="checkbox"
+                data-testid="first-run-checkbox-ocr"
+                [checked]="isSelected('windowsml-ocr')"
+                [disabled]="features.installing()"
+                (change)="toggleUnit('windowsml-ocr', $any($event.target).checked)"
+              />
+              <span>
+                <strong class="font-medium">{{ m().firstRunOcrLabel }}</strong>
+                <span class="text-muted-foreground ml-2">{{ m().firstRunOcrSummary }}</span>
+              </span>
+            </span>
+            @if (sizeFor(ocr); as size) {
+              <span class="text-muted-foreground shrink-0 text-xs" data-testid="first-run-size-ocr">
+                {{ size }}
+              </span>
+            }
+          </label>
+        }
+
+        @if (asrUnit(); as asr) {
+          <div class="flex flex-col gap-2 rounded-lg border p-3">
+            <label
+              class="flex cursor-pointer items-center justify-between gap-4 text-sm"
+              data-testid="first-run-option"
+              data-requirement-id="speech-recognition"
+            >
+              <span class="flex items-center gap-3">
+                <input
+                  type="checkbox"
+                  data-testid="first-run-checkbox-asr"
+                  [checked]="isSelected('speech-recognition')"
+                  [disabled]="features.installing()"
+                  (change)="toggleUnit('speech-recognition', $any($event.target).checked)"
+                />
+                <span>
+                  <strong class="font-medium">{{ m().firstRunAsrLabel }}</strong>
+                  <span class="text-muted-foreground ml-2">{{ m().firstRunAsrSummary }}</span>
+                </span>
+              </span>
+              @if (sizeFor(asr); as size) {
+                <span class="text-muted-foreground shrink-0 text-xs" data-testid="first-run-size-asr">
+                  {{ size }}
+                </span>
+              }
+            </label>
+
+            @if (speakersUnit(); as speakers) {
+              <label
+                class="ml-6 flex cursor-pointer items-center justify-between gap-4 border-l pl-3 text-sm"
+                data-testid="first-run-option"
+                data-requirement-id="speaker-diarization"
+              >
+                <span class="flex items-center gap-3">
+                  <input
+                    type="checkbox"
+                    data-testid="first-run-checkbox-speakers"
+                    [checked]="isSelected('speaker-diarization')"
+                    [disabled]="features.installing()"
+                    (change)="toggleUnit('speaker-diarization', $any($event.target).checked)"
+                  />
+                  <span>
+                    <strong class="font-medium">{{ m().firstRunSpeakersLabel }}</strong>
+                    <span class="text-muted-foreground ml-2">{{ m().firstRunSpeakersSummary }}</span>
+                  </span>
+                </span>
+                @if (sizeFor(speakers); as size) {
+                  <span class="text-muted-foreground shrink-0 text-xs" data-testid="first-run-size-speakers">
+                    {{ size }}
+                  </span>
+                }
+              </label>
+            }
+          </div>
+        }
+      </div>
+      <div hlmCardFooter class="justify-end gap-2">
+        <button
+          hlmBtn
+          variant="default"
+          type="button"
+          data-testid="first-run-install"
+          [disabled]="selectedIds().length === 0 || features.installing()"
+          (click)="installSelected()"
+        >
+          {{ m().installSelectedWithSize(selectedSizeLabel()) }}
+        </button>
+        <button
+          hlmBtn
+          variant="outline"
+          type="button"
+          data-testid="first-run-dismiss"
+          [disabled]="features.installing()"
+          (click)="dismiss()"
+        >
+          {{ m().later }}
+        </button>
+      </div>
+    </div>
+  }
+
+  @if (activeRunningInstallation(); as running) {
+    <div
+      hlmCard
+      size="sm"
+      data-testid="ocr-install-progress"
+      [attr.data-installation-id]="running.installationId"
+      [attr.data-requirement-id]="running.requirementId"
+      aria-live="polite"
+    >
+      <div hlmCardContent class="flex items-center justify-between gap-4">
+        <div class="flex flex-1 flex-col gap-1.5">
+          <div class="flex items-center justify-between text-xs font-medium">
+            <span>{{ m().downloadingProgress(activePercent()) }}</span>
+            <span>{{ activePercent() }}%</span>
+          </div>
+          <progress
+            class="h-2 w-full overflow-hidden rounded-full"
+            max="100"
+            [value]="activePercent()"
+          >
+            {{ activePercent() }}%
+          </progress>
+        </div>
+        <button
+          hlmBtn
+          variant="outline"
+          size="sm"
+          type="button"
+          data-testid="ocr-install-cancel"
+          (click)="features.cancelInstallation(running.installationId)"
+        >
+          {{ m().cancelInstall }}
+        </button>
+      </div>
+    </div>
+  }
+
+  <app-placeholder-page page="ocr" />
+</section>

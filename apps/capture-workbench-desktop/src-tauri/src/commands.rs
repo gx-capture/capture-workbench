@@ -233,12 +233,29 @@ pub(crate) async fn runtime_start_installation(
 }
 
 #[tauri::command]
+pub(crate) async fn runtime_list_installations(
+    state: tauri::State<'_, DesktopState>,
+) -> Result<serde_json::Value, String> {
+    let state = state.inner().clone();
+    run_blocking(move || runtime_client::list_installations(&state)).await
+}
+
+#[tauri::command]
 pub(crate) async fn runtime_get_installation(
     state: tauri::State<'_, DesktopState>,
     input: RuntimeIdInput,
 ) -> Result<serde_json::Value, String> {
     let state = state.inner().clone();
     run_blocking(move || runtime_client::installation(&state, input)).await
+}
+
+#[tauri::command]
+pub(crate) async fn runtime_cancel_installation(
+    state: tauri::State<'_, DesktopState>,
+    input: RuntimeIdInput,
+) -> Result<serde_json::Value, String> {
+    let state = state.inner().clone();
+    run_blocking(move || runtime_client::cancel_installation(&state, input)).await
 }
 
 #[tauri::command]

@@ -1,0 +1,156 @@
+<section
+  class="mx-auto flex max-w-4xl flex-col gap-6 px-8 py-10"
+  data-testid="page-settings"
+>
+  <div class="flex flex-col gap-1" data-testid="page-settings-engines">
+    <h1 class="text-2xl font-semibold">{{ m().nav.settings }}</h1>
+    <h2 class="text-muted-foreground text-base font-medium">
+      {{ m().settingsEnginesTitle }}
+    </h2>
+  </div>
+
+  <div hlmCard>
+    <div hlmCardContent>
+      <div hlmTableContainer>
+        <table hlmTable data-testid="engines-table">
+          <thead hlmTHead>
+            <tr hlmTr>
+              <th hlmTh>{{ m().engineColFeature }}</th>
+              <th hlmTh>{{ m().engineColStatus }}</th>
+              <th hlmTh>{{ m().engineColSize }}</th>
+              <th hlmTh>{{ m().engineColPurpose }}</th>
+              <th hlmTh class="text-right">{{ m().engineColAction }}</th>
+            </tr>
+          </thead>
+          <tbody hlmTBody>
+            @for (unit of features.engines(); track unit.requirementId) {
+              <tr
+                hlmTr
+                data-testid="engine-row"
+                [attr.data-requirement-id]="unit.requirementId"
+                [attr.data-status]="rowStatus(unit)"
+              >
+                <td hlmTd class="font-medium">
+                  <button
+                    type="button"
+                    class="inline-flex items-center gap-2 text-left font-medium hover:underline"
+                    data-testid="engine-row-toggle"
+                    [attr.aria-expanded]="isExpanded(unit.requirementId)"
+                    (click)="toggleExpand(unit.requirementId)"
+                  >
+                    <span aria-hidden="true" class="text-muted-foreground text-xs">
+                      {{ isExpanded(unit.requirementId) ? '▾' : '▸' }}
+                    </span>
+                    <span>
+                      {{ m().engineName[unit.requirementId] ?? unit.displayName }}
+                    </span>
+                  </button>
+                </td>
+                <td hlmTd data-testid="engine-row-status">
+                  @if (isRunning(unit)) {
+                    <div
+                      class="flex min-w-36 flex-col gap-1"
+                      data-testid="engine-row-progress"
+                      aria-live="polite"
+                    >
+                      <span class="text-xs">
+                        {{ m().downloadingProgress(percentFor(unit)) }}
+                      </span>
+                      <progress
+                        class="h-1.5 w-full overflow-hidden rounded-full"
+                        max="100"
+                        [value]="percentFor(unit)"
+                      >
+                        {{ percentFor(unit) }}%
+                      </progress>
+                    </div>
+                  } @else {
+                    <span>{{ statusLabel(unit) }}</span>
+                  }
+                </td>
+                <td hlmTd data-testid="engine-row-size">
+                  {{ sizeLabel(unit) ?? '—' }}
+                </td>
+                <td hlmTd class="whitespace-normal">
+                  {{ m().enginePurpose[unit.requirementId] ?? guides()[unit.requirementId]?.summary ?? '' }}
+                </td>
+                <td hlmTd class="text-right">
+                  @if (isRunning(unit)) {
+                    <button
+                      hlmBtn
+                      variant="outline"
+                      size="sm"
+                      type="button"
+                      data-testid="engine-row-cancel"
+                      (click)="features.cancelInstallation(installationFor(unit)!.installationId)"
+                    >
+                      {{ m().cancelInstall }}
+                    </button>
+                  } @else if (isFailed(unit)) {
+                    <button
+                      hlmBtn
+                      variant="default"
+                      size="sm"
+                      type="button"
+                      data-testid="engine-row-retry"
+                      [disabled]="features.installing()"
+                      (click)="features.retryInstallation(unit.requirementId)"
+                    >
+                      {{ m().retryInstall }}
+                    </button>
+                  } @else if (unit.status === 'installable') {
+                    <button
+                      hlmBtn
+                      variant="default"
+                      size="sm"
+                      type="button"
+                      data-testid="engine-row-install"
+                      [disabled]="features.installing()"
+                      (click)="features.installUnit(unit.requirementId)"
+                    >
+                      {{ installLabel(unit) }}
+                    </button>
+                  }
+                </td>
+              </tr>
+
+              @if (isExpanded(unit.requirementId)) {
+                <tr
+                  hlmTr
+                  data-testid="engine-row-details"
+                  [attr.data-requirement-id]="unit.requirementId"
+                >
+                  <td hlmTd colspan="5" class="bg-muted/30 whitespace-normal p-4">
+                    @if (guides()[unit.requirementId]; as guide) {
+                      <dl class="grid grid-cols-[5rem_1fr] gap-x-3 gap-y-1.5 text-xs leading-relaxed">
+                        <dt class="text-muted-foreground font-medium">{{ m().model }}</dt>
+                        <dd>{{ guide.name }}</dd>
+                        <dt class="text-muted-foreground font-medium">{{ m().guideSummary }}</dt>
+                        <dd>{{ guide.summary }}</dd>
+                        <dt class="text-muted-foreground font-medium">{{ m().guideLanguages }}</dt>
+                        <dd>{{ guide.languages }}</dd>
+                        <dt class="text-muted-foreground font-medium">{{ m().guideHardware }}</dt>
+                        <dd>{{ guide.hardware }}</dd>
+                        <dt class="text-muted-foreground font-medium">{{ m().guideLicense }}</dt>
+                        <dd>{{ guide.license }}</dd>
+                      </dl>
+                    }
+                    @if (isFailed(unit) && installationFor(unit)?.error; as error) {
+                      <p
+                        class="text-destructive mt-2 text-xs"
+                        role="alert"
+                        data-testid="engine-row-error"
+                      >
+                        {{ error.message }}
+                      </p>
+                    }
+                  </td>
+                </tr>
+              }
+            }
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</section>

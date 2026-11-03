@@ -1,0 +1,122 @@
+<article
+  hlmCard
+  size="sm"
+  data-testid="engine-card"
+  [attr.data-requirement-id]="requirement().requirementId"
+  [attr.data-status]="requirement().status"
+>
+  <div hlmCardHeader>
+    <div class="flex flex-col gap-0.5">
+      <h3 hlmCardTitle>
+        {{ guide()?.name ?? requirement().displayName }}{{ optional() ? m().optionalSuffix : '' }}
+      </h3>
+      @if (sizeLabel(); as size) {
+        <span class="text-muted-foreground text-xs" data-testid="engine-card-size">
+          {{ size }}
+        </span>
+      }
+    </div>
+    <div hlmCardAction>
+      @if (requirement().status === 'ready') {
+        <span
+          class="bg-secondary text-secondary-foreground inline-flex items-center rounded-md px-2 py-1 text-xs font-medium"
+          data-testid="engine-card-status"
+        >
+          {{ m().unitReady }}
+        </span>
+      } @else if (isRunning()) {
+        <button
+          hlmBtn
+          variant="outline"
+          size="sm"
+          type="button"
+          data-testid="engine-card-cancel"
+          (click)="cancelInstall.emit(installation()!.installationId)"
+        >
+          {{ m().cancelInstall }}
+        </button>
+      } @else if (isFailed()) {
+        <button
+          hlmBtn
+          variant="default"
+          size="sm"
+          type="button"
+          data-testid="engine-card-retry"
+          [disabled]="installing()"
+          (click)="retry.emit(requirement().requirementId)"
+        >
+          {{ m().retryInstall }}
+        </button>
+      } @else if (requirement().status === 'installable') {
+        <button
+          hlmBtn
+          variant="default"
+          size="sm"
+          type="button"
+          data-testid="engine-card-install"
+          [disabled]="installing()"
+          (click)="install.emit(requirement().requirementId)"
+        >
+          {{ installLabel() }}
+        </button>
+      } @else {
+        <span
+          class="text-muted-foreground text-xs"
+          data-testid="engine-card-status"
+        >
+          {{ m().unitUnavailable }}
+        </span>
+      }
+    </div>
+  </div>
+
+  <div hlmCardContent class="flex flex-col gap-3">
+    @if (guide(); as g) {
+      <dl
+        class="grid grid-cols-[4.5rem_1fr] gap-x-3 gap-y-1.5 text-xs leading-relaxed"
+        data-testid="engine-card-guide"
+      >
+        <dt class="text-muted-foreground font-medium">{{ m().guideSummary }}</dt>
+        <dd>{{ g.summary }}</dd>
+        <dt class="text-muted-foreground font-medium">{{ m().guideLanguages }}</dt>
+        <dd>{{ g.languages }}</dd>
+        <dt class="text-muted-foreground font-medium">{{ m().guideHardware }}</dt>
+        <dd>{{ g.hardware }}</dd>
+        <dt class="text-muted-foreground font-medium">{{ m().guideLicense }}</dt>
+        <dd>{{ g.license }}</dd>
+      </dl>
+    } @else if (requirement().detail) {
+      <p class="text-muted-foreground text-xs">{{ requirement().detail }}</p>
+    }
+
+    @if (isRunning()) {
+      <div
+        class="flex flex-col gap-1.5"
+        data-testid="engine-card-progress"
+        aria-live="polite"
+      >
+        <div class="flex items-center justify-between text-xs font-medium">
+          <span>{{ m().downloadingProgress(percent()) }}</span>
+          <span>{{ percent() }}%</span>
+        </div>
+        <progress
+          class="h-2 w-full overflow-hidden rounded-full"
+          max="100"
+          [value]="percent()"
+        >
+          {{ percent() }}%
+        </progress>
+      </div>
+    }
+
+    @if (isFailed() && installation()?.error; as error) {
+      <p
+        class="text-destructive text-xs"
+        role="alert"
+        data-testid="engine-card-error"
+      >
+        {{ error.message }}
+      </p>
+    }
+  </div>
+</article>

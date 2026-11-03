@@ -467,6 +467,16 @@ impl DesktopState {
     }
 
     #[cfg(test)]
+    pub(crate) fn with_backend_config_for_test(config: BackendConfig) -> Self {
+        let state = Self::new(PathBuf::from("workbench-data"));
+        if let Ok(mut runtime) = state.inner.runtime.lock() {
+            runtime.status = DesktopRuntimeStatus::ready(&config);
+            runtime.config = Some(config);
+        }
+        state
+    }
+
+    #[cfg(test)]
     fn active_identity(&self) -> Option<RuntimeIdentity> {
         self.inner
             .runtime

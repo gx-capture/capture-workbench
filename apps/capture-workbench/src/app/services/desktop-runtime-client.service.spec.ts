@@ -271,7 +271,7 @@ describe('DesktopRuntimeClientService', () => {
     );
   });
 
-  it('keeps setup available when the OCR worker has not been installed yet', () => {
+  it('marks the runtime ready as soon as it starts, even when the OCR worker is not installed yet', () => {
     const commands = {
       invoke: vi.fn((command: string) => command === 'desktop_runtime_status'
         ? of({ status: 'ready', detail: 'Runtime ready' })
@@ -291,9 +291,64 @@ describe('DesktopRuntimeClientService', () => {
 
     expect(service.readiness.status()).toBe('resolved');
     expect(service.started()).toBe(true);
-    expect(service.ready()).toBe(false);
+    expect(service.ready()).toBe(true);
     expect(service.ocrCompute()).toBeNull();
     expect(service.error()).toBeUndefined();
+  });
+
+  it('lists and cancels runtime installations through the native Tauri commands', () => {
+    const runningInstall = {
+      installationId: 'install-1',
+      requirementId: 'speech-recognition',
+      status: 'running',
+      progress: 0.5,
+    };
+    const cancelledInstall = {
+      ...runningInstall,
+      status: 'cancelled',
+    };
+    const commands = {
+      invoke: vi.fn((command: string) => {
+        if (command === 'desktop_runtime_status') {
+          return of({ status: 'ready', detail: 'Runtime ready' });
+        }
+        if (command === 'runtime_ready') {
+          return of(readyPayload);
+        }
+        if (command === 'runtime_list_installations') {
+          return of({ items: [runningInstall] });
+        }
+        if (command === 'runtime_cancel_installation') {
+          return of(cancelledInstall);
+        }
+        return of({ items: [] });
+      }),
+    };
+    TestBed.configureTestingModule({
+      providers: [
+        { provide: DesktopTauriCommandService, useValue: commands },
+        DesktopRuntimeClientService,
+      ],
+    });
+
+    const service = TestBed.inject(DesktopRuntimeClientService);
+    let listed: readonly unknown[] | undefined;
+    let cancelled: unknown;
+    service.listInstallations().subscribe((value) => (listed = value));
+    service.cancelInstallation('install-1').subscribe((value) => (cancelled = value));
+
+    expect(listed).toEqual([runningInstall]);
+    expect(cancelled).toEqual(cancelledInstall);
+    expect(commands.invoke).toHaveBeenCalledWith(
+      'runtime_list_installations',
+      {},
+      undefined,
+    );
+    expect(commands.invoke).toHaveBeenCalledWith(
+      'runtime_cancel_installation',
+      { input: { id: 'install-1' } },
+      undefined,
+    );
   });
 
   it('keeps the OCR compute accessor safe when readiness is errored', () => {

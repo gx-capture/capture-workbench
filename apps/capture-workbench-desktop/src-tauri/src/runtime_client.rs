@@ -57,12 +57,30 @@ pub(crate) fn start_installation(
     )
 }
 
+pub(crate) fn list_installations(state: &DesktopState) -> Result<Value, String> {
+    request_json(state, "GET", "/v2/runtime/installations", None, None)
+}
+
 pub(crate) fn installation(state: &DesktopState, input: RuntimeIdInput) -> Result<Value, String> {
     validate_opaque_id(&input.id)?;
     request_json(
         state,
         "GET",
         &format!("/v2/runtime/installations/{}", input.id),
+        None,
+        None,
+    )
+}
+
+pub(crate) fn cancel_installation(
+    state: &DesktopState,
+    input: RuntimeIdInput,
+) -> Result<Value, String> {
+    validate_opaque_id(&input.id)?;
+    request_json(
+        state,
+        "POST",
+        &format!("/v2/runtime/installations/{}/cancel", input.id),
         None,
         None,
     )
@@ -847,5 +865,76 @@ mod tests {
             request.extend_from_slice(&chunk[..count]);
         }
         String::from_utf8(request).expect("utf8")
+    }
+
+    #[test]
+    fn list_and_cancel_installations_proxy_authenticated_runtime_routes() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("listener");
+        let port = listener.local_addr().expect("address").port();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept list");
+            let mut request = [0_u8; 4096];
+            let count = stream.read(&mut request).expect("request list");
+            let request = String::from_utf8_lossy(&request[..count]);
+            assert!(request.starts_with("GET /v2/runtime/installations HTTP/1.1"));
+            assert!(request.contains("Authorization: Bearer secret-token"));
+            let body = r#"{"items":[{"installationId":"install-1","requirementId":"speech-recognition","status":"running","progress":0.5,"downloadedBytes":1400000000,"downloadBytes":2800000000}]}"#;
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .expect("response list");
+            // The client reads until the server closes the connection.
+            drop(stream);
+
+            let (mut stream, _) = listener.accept().expect("accept cancel");
+            let mut request = [0_u8; 4096];
+            let count = stream.read(&mut request).expect("request cancel");
+            let request = String::from_utf8_lossy(&request[..count]);
+            assert!(request.starts_with("POST /v2/runtime/installations/install-1/cancel HTTP/1.1"));
+            assert!(request.contains("Authorization: Bearer secret-token"));
+            let body = r#"{"installationId":"install-1","requirementId":"speech-recognition","status":"cancelled","progress":0.5}"#;
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .expect("response cancel");
+        });
+
+        let state = DesktopState::with_backend_config_for_test(BackendConfig {
+            base_url: format!("http://127.0.0.1:{port}"),
+            token: "secret-token".into(),
+            runtime_version: env!("CARGO_PKG_VERSION").into(),
+            api_version: "2.0".into(),
+            capture_document_schema_version: "2".into(),
+        });
+
+        let listed = list_installations(&state).expect("list installations");
+        assert_eq!(listed["items"][0]["installationId"], "install-1");
+        assert_eq!(listed["items"][0]["status"], "running");
+
+        let cancelled = cancel_installation(
+            &state,
+            RuntimeIdInput {
+                id: "install-1".into(),
+            },
+        )
+        .expect("cancel installation");
+        assert_eq!(cancelled["installationId"], "install-1");
+        assert_eq!(cancelled["status"], "cancelled");
+
+        assert!(cancel_installation(
+            &state,
+            RuntimeIdInput {
+                id: "../install-1".into(),
+            },
+        )
+        .is_err());
+
+        server.join().expect("server");
     }
 }

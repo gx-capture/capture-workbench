@@ -9,8 +9,8 @@ const DEFAULT_DESKTOP_LOCALE: DesktopLocale = 'zh-TW';
 
 /** Pages the shell's left navigation leads to. */
 export type ShellRoute = 'ocr' | 'asr' | 'history' | 'settings';
-/** Pages that are not built yet and point to the history page meanwhile. */
-export type PlaceholderRoute = Exclude<ShellRoute, 'history'>;
+/** Pages whose intake still links to the history workspace. */
+export type PlaceholderRoute = 'ocr' | 'asr';
 
 /** Every piece of text the desktop app shows. */
 export interface DesktopMessages {
@@ -84,13 +84,11 @@ export interface DesktopMessages {
   readonly identifySpeakers: string;
   readonly speechPackTitle: string;
   readonly speechPackHint: string;
-  readonly agreeAndDownload: string;
   readonly unitReady: string;
   readonly unitUnavailable: string;
   readonly guideSummary: string;
   readonly guideLanguages: string;
   readonly guideHardware: string;
-  readonly guideDownload: string;
   readonly guideLicense: string;
   readonly useGpuForSpeech: string;
   readonly speakers: string;
@@ -123,6 +121,31 @@ export interface DesktopMessages {
   };
   readonly stage: Readonly<Record<string, string | undefined>>;
   readonly status: Readonly<Record<string, string | undefined>>;
+  readonly approxSize: (size: string) => string;
+  readonly installWithSize: (size?: string | null) => string;
+  readonly installSelectedWithSize: (size?: string | null) => string;
+  readonly downloadingProgress: (percent: number) => string;
+  readonly cancelInstall: string;
+  readonly retryInstall: string;
+  readonly later: string;
+  readonly optionalSuffix: string;
+  readonly firstRunTitle: string;
+  readonly firstRunOcrLabel: string;
+  readonly firstRunOcrSummary: string;
+  readonly firstRunAsrLabel: string;
+  readonly firstRunAsrSummary: string;
+  readonly firstRunSpeakersLabel: string;
+  readonly firstRunSpeakersSummary: string;
+  readonly asrPanelHint: string;
+  readonly settingsEnginesTitle: string;
+  readonly engineColFeature: string;
+  readonly engineColStatus: string;
+  readonly engineColSize: string;
+  readonly engineColPurpose: string;
+  readonly engineColAction: string;
+  readonly engineName: Readonly<Record<string, string | undefined>>;
+  readonly enginePurpose: Readonly<Record<string, string | undefined>>;
+  readonly engineStatus: Readonly<Record<string, string | undefined>>;
 }
 
 const ZH_TW: DesktopMessages = {
@@ -145,7 +168,6 @@ const ZH_TW: DesktopMessages = {
   placeholder: {
     ocr: { summary: '讀出掃描檔、PDF 和照片裡的文字。', action: '前往紀錄加入文件' },
     asr: { summary: '把錄音轉成標有時間的逐字稿。', action: '前往紀錄加入錄音' },
-    settings: { summary: '辨識功能、運算裝置和介面語言都會集中在這裡。', action: '前往紀錄調整設定' },
   },
   noModel: '未選擇模型',
   setupTitle: '首次設定',
@@ -198,13 +220,11 @@ const ZH_TW: DesktopMessages = {
   identifySpeakers: '辨識音訊中的說話者',
   speechPackTitle: '台灣語音包（選用）',
   speechPackHint: '處理錄音時才需要，PDF 與圖片不受影響。看完說明，依需要下載。',
-  agreeAndDownload: '同意並下載',
   unitReady: '已安裝',
   unitUnavailable: '無法下載',
   guideSummary: '特性',
   guideLanguages: '適用語言',
   guideHardware: '硬體',
-  guideDownload: '下載量',
   guideLicense: '授權',
   useGpuForSpeech: '用 GPU 加速語音辨識',
   speakers: '說話者',
@@ -259,6 +279,51 @@ const ZH_TW: DesktopMessages = {
     failed: '處理失敗',
     canceled: '已取消',
   },
+  approxSize: (size) => `約 ${size}`,
+  installWithSize: (size) => (size ? `安裝（${size}）` : '安裝'),
+  installSelectedWithSize: (size) => (size ? `安裝所選（${size}）` : '安裝所選'),
+  downloadingProgress: (percent) => `正在下載 ${percent}%`,
+  cancelInstall: '取消',
+  retryInstall: '再試一次',
+  later: '稍後再說',
+  optionalSuffix: '（選用）',
+  firstRunTitle: '需要時再安裝辨識功能',
+  firstRunOcrLabel: '文字辨識',
+  firstRunOcrSummary: '讀出掃描檔與照片的文字',
+  firstRunAsrLabel: '錄音轉文字',
+  firstRunAsrSummary: '把錄音轉成逐字稿',
+  firstRunSpeakersLabel: '說話者辨識',
+  firstRunSpeakersSummary: '標出每段話是誰說的',
+  asrPanelHint: '下載完成後即可將錄音轉為逐字稿；下載期間仍可使用其他功能。',
+  settingsEnginesTitle: '辨識功能',
+  engineColFeature: '功能',
+  engineColStatus: '狀態',
+  engineColSize: '大小',
+  engineColPurpose: '用途',
+  engineColAction: '動作',
+  engineName: {
+    'windowsml-ocr': '文字辨識',
+    'speech-recognition': '錄音轉文字',
+    'speaker-diarization': '說話者辨識',
+    'vertical-japanese-reader': '直書日文',
+  },
+  enginePurpose: {
+    'windowsml-ocr': '讀出掃描檔與照片的文字',
+    'speech-recognition': '台灣華語與中英夾雜語音轉逐字稿',
+    'speaker-diarization': '標出每段話是誰說的',
+    'vertical-japanese-reader': '讀出直排日文頁面',
+  },
+  engineStatus: {
+    ready: '已安裝',
+    installable: '未安裝',
+    missing: '未安裝',
+    running: '安裝中',
+    queued: '等待安裝',
+    failed: '安裝失敗',
+    cancelled: '已取消',
+    manual_action_required: '需手動處理',
+    unavailable: '無法安裝',
+  },
 };
 
 const EN: DesktopMessages = {
@@ -281,7 +346,6 @@ const EN: DesktopMessages = {
   placeholder: {
     ocr: { summary: 'Read the text in scans, PDFs and photos.', action: 'Add documents in History' },
     asr: { summary: 'Turn recordings into timed transcripts.', action: 'Add recordings in History' },
-    settings: { summary: 'Recognition features, compute devices and the interface language will live here.', action: 'Change settings in History' },
   },
   noModel: 'No model selected',
   setupTitle: 'First-time setup',
@@ -334,13 +398,11 @@ const EN: DesktopMessages = {
   identifySpeakers: 'Tell speakers apart in audio',
   speechPackTitle: 'Taiwan speech pack (optional)',
   speechPackHint: 'Only recordings need it; PDFs and images work without it. Read about each part, then download what you want.',
-  agreeAndDownload: 'Agree and download',
   unitReady: 'Installed',
   unitUnavailable: 'Not downloadable',
   guideSummary: 'What it does',
   guideLanguages: 'Languages',
   guideHardware: 'Hardware',
-  guideDownload: 'Download',
   guideLicense: 'License',
   useGpuForSpeech: 'Use the GPU for speech recognition',
   speakers: 'Speakers',
@@ -394,6 +456,54 @@ const EN: DesktopMessages = {
     completed: 'Done',
     failed: 'Failed',
     canceled: 'Canceled',
+  },
+  approxSize: (size) => `~${size}`,
+  installWithSize: (size) => (size ? `Install (${size})` : 'Install'),
+  installSelectedWithSize: (size) =>
+    size ? `Install selected (${size})` : 'Install selected',
+  downloadingProgress: (percent) => `Downloading ${percent}%`,
+  cancelInstall: 'Cancel',
+  retryInstall: 'Try again',
+  later: 'Maybe later',
+  optionalSuffix: ' (optional)',
+  firstRunTitle: 'Install recognition features when you need them',
+  firstRunOcrLabel: 'Text recognition',
+  firstRunOcrSummary: 'Read text from scans and photos',
+  firstRunAsrLabel: 'Speech to text',
+  firstRunAsrSummary: 'Turn recordings into transcripts',
+  firstRunSpeakersLabel: 'Speaker identification',
+  firstRunSpeakersSummary: 'Mark who said each segment',
+  asrPanelHint:
+    'Once downloaded, you can transcribe recordings. The rest of the app stays usable during the download.',
+  settingsEnginesTitle: 'Recognition features',
+  engineColFeature: 'Feature',
+  engineColStatus: 'Status',
+  engineColSize: 'Size',
+  engineColPurpose: 'Purpose',
+  engineColAction: 'Action',
+  engineName: {
+    'windowsml-ocr': 'Text recognition',
+    'speech-recognition': 'Speech to text',
+    'speaker-diarization': 'Speaker identification',
+    'vertical-japanese-reader': 'Vertical Japanese',
+  },
+  enginePurpose: {
+    'windowsml-ocr': 'Read text from scans and photos',
+    'speech-recognition':
+      'Taiwan Mandarin and mixed Mandarin-English speech to transcript',
+    'speaker-diarization': 'Mark who said each segment',
+    'vertical-japanese-reader': 'Read vertical Japanese pages',
+  },
+  engineStatus: {
+    ready: 'Installed',
+    installable: 'Not installed',
+    missing: 'Not installed',
+    running: 'Installing',
+    queued: 'Queued',
+    failed: 'Failed',
+    cancelled: 'Canceled',
+    manual_action_required: 'Manual step required',
+    unavailable: 'Unavailable',
   },
 };
 
