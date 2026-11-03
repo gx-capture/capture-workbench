@@ -12,8 +12,11 @@ source of truth for inputs.
   Packages), PyPI (`capture-runtime-client`), crates.io
   (`capture-sidecar-launcher`), and GitHub release `v0.8.0` (runtime exe, OCR,
   speech recognition and diarization engines, catalog). 0.7.x also went
-  through Route A only; the last full route (desktop installer, stable
-  pointer, consumer gates) was 0.6.3.
+  through Route A first; 0.8.0 then completed the full route (release
+  candidate 41185624191, release promotion 41411635581 on 2026-11-02 at
+  `cdbee11`), which publishes `capture-release-manifest-v1.json`, the desktop
+  installer and the stable pointer. Consumers' release workflows that attest
+  the release manifest need that full route.
 - **0.9.0** is the latest published release, through Route A only (2026-11-03):
   npm (GitHub Packages), PyPI, crates.io and GitHub release `v0.9.0`.
 - Releases after 0.8.0 publish no Java SDK. Maven publication was removed on
