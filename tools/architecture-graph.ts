@@ -14,6 +14,7 @@
  *   node tools/architecture-graph.ts            # print the JSON graph
  *   node tools/architecture-graph.ts --write    # regenerate docs/architecture/*.md
  *   node tools/architecture-graph.ts --check    # fail when those files are stale
+ *   node tools/architecture-graph.ts --hook     # Claude Code Stop hook (.claude/settings.json)
  *   node tools/architecture-graph.ts --root <dir>  # read another checkout (a PR's base)
  *
  * The graph-building functions are pure; everything that spawns a process or
@@ -33,6 +34,14 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join, posix, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { stripVTControlCharacters } from 'node:util';
+
+import { ARCHITECTURE_EXCEPTIONS } from './architecture-exceptions-gate.ts';
+import {
+  changedPaths,
+  checkRatchet,
+  readHookPayload,
+} from './dead-code-gate.ts';
 
 const ts = createRequire(import.meta.url)(
   'typescript',
@@ -520,10 +529,12 @@ interface CliIo {
 }
 
 const USAGE =
-  'Usage: node tools/architecture-graph.ts [--write | --check] [--root <dir>]\n' +
+  'Usage: node tools/architecture-graph.ts [--write | --check | --hook] [--root <dir>]\n' +
   '  (no flag)     print the architecture graph as JSON\n' +
   '  --write       regenerate docs/architecture/*.md\n' +
   '  --check       exit 1 when docs/architecture/*.md are stale\n' +
+  '  --hook        Claude Code Stop hook: --check, the exception gate and the\n' +
+  '                runtime import-linter contracts, only after relevant changes\n' +
   '  --root <dir>  read the workspace at <dir> instead of this checkout\n' +
   '                (it needs its own node_modules for nx)\n';
 
@@ -573,6 +584,46 @@ export function runCli(
   return 0;
 }
 
+// ---- Claude Code Stop hook -------------------------------------------------
+
+/** Changed paths that can move a diagram or add a boundary exception. */
+const ARCHITECTURE_CHANGE =
+  /\.(?:ts|tsx|mts|cts|js|mjs|cjs|py)$|(?:^|\/)(?:package|project|nx|tsconfig[^/]*|[^/]*eslint-suppressions)\.json$|(?:^|\/)importlinter\.toml$/u;
+
+/** Changed paths that the runtime's import-linter contracts check. */
+const RUNTIME_RULES_CHANGE =
+  /(?:^|\s)packages\/capture-runtime\/(?:src\/.+\.py|importlinter\.toml)$/u;
+
+interface HookChecks {
+  checkDocs: () => number;
+  checkExceptions: () => number;
+  lintRuntime: () => number;
+}
+
+/**
+ * Stop hook decision. Nothing runs unless the turn changed a path that can
+ * affect the architecture (`changed` comes from the dead-code gate's
+ * `changedPaths`); then the docs check and the exception gate run, plus the
+ * runtime import-linter contracts when runtime Python or its rules changed.
+ * The Sheriff and Nx rules run with each project's `lint`, which is too slow
+ * for the hook. Exit 2 shows stderr to the model; `stop_hook_active` means it
+ * already had one round of feedback, so it may stop (no loops).
+ */
+export function runHook(
+  stopHookActive: boolean,
+  changed: string[],
+  checks: HookChecks,
+): number {
+  if (stopHookActive) return 0;
+  const paths = changed.map((path) => path.trim().replaceAll('\\', '/'));
+  if (!paths.some((path) => ARCHITECTURE_CHANGE.test(path))) return 0;
+  const results = [checks.checkDocs(), checks.checkExceptions()];
+  if (paths.some((path) => RUNTIME_RULES_CHANGE.test(path))) {
+    results.push(checks.lintRuntime());
+  }
+  return results.every((result) => result === 0) ? 0 : 2;
+}
+
 // ---- Process boundary: spawning tools and touching the filesystem ----------
 
 /** This checkout: its tools/ run against `--root`, which may be an older tree without them. */
@@ -617,7 +668,7 @@ function runChecked(
   return result.stdout;
 }
 
-function collectProjects(root: string): GraphLevel {
+function nxBinary(root: string): string {
   // Resolve the bin from nx's own package.json: its location moved between majors.
   const nxPackage = join(root, 'node_modules', 'nx', 'package.json');
   if (!existsSync(nxPackage)) {
@@ -625,10 +676,21 @@ function collectProjects(root: string): GraphLevel {
       `nx is not installed (${nxPackage} is missing). Run \`pnpm install\` first.`,
     );
   }
-  const nxBin = join(
+  return join(
     dirname(nxPackage),
     JSON.parse(readFileSync(nxPackage, 'utf8')).bin.nx,
   );
+}
+
+/**
+ * A daemon that nx starts here inherits our output pipes on Windows, so a
+ * piped run or the Stop hook would wait for it to exit (never). Without the
+ * daemon nx computes the graph in a few seconds.
+ */
+const NX_ENV = { ...process.env, NX_DAEMON: 'false' };
+
+function collectProjects(root: string): GraphLevel {
+  const nxBin = nxBinary(root);
   const directory = mkdtempSync(join(tmpdir(), 'architecture-graph-'));
   try {
     const file = join(directory, 'graph.json');
@@ -636,15 +698,7 @@ function collectProjects(root: string): GraphLevel {
       'nx graph',
       process.execPath,
       [nxBin, 'graph', `--file=${file}`],
-      {
-        cwd: root,
-        // A daemon started for a throwaway tree (a PR's base worktree) would
-        // outlive the run and keep that directory locked.
-        env:
-          root === workspaceRoot
-            ? process.env
-            : { ...process.env, NX_DAEMON: 'false' },
-      },
+      { cwd: root, env: NX_ENV },
     );
     return projectsLevel(JSON.parse(readFileSync(file, 'utf8')));
   } finally {
@@ -747,14 +801,49 @@ function processIo(root: string): CliIo {
   };
 }
 
+/** Runs the runtime's import-linter contracts through Nx (cached when unchanged). */
+function lintRuntimeArchitecture(root: string): number {
+  const result = spawnSync(
+    process.execPath,
+    [
+      nxBinary(root),
+      'run',
+      'capture-runtime:lint-architecture',
+      '--outputStyle=static',
+    ],
+    { cwd: root, env: NX_ENV, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 },
+  );
+  if (result.error) throw result.error;
+  if (result.status === 0) return 0;
+  // The model reads this output: drop the colour codes import-linter prints.
+  process.stderr.write(
+    stripVTControlCharacters(
+      `capture-runtime:lint-architecture failed (contracts in packages/capture-runtime/importlinter.toml):\n${result.stdout}${result.stderr}\n`,
+    ),
+  );
+  return 1;
+}
+
+async function runAsStopHook(root: string): Promise<number> {
+  const payload = await readHookPayload();
+  return runHook(Boolean(payload.stop_hook_active), changedPaths(root), {
+    checkDocs: () => runCli(['--check'], () => processIo(root)),
+    checkExceptions: () => checkRatchet(root, ARCHITECTURE_EXCEPTIONS, false),
+    lintRuntime: () => lintRuntimeArchitecture(root),
+  });
+}
+
 if (
   process.argv[1] &&
   resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 ) {
+  const argv = process.argv.slice(2);
   try {
-    process.exitCode = runCli(process.argv.slice(2), (root) =>
-      processIo(root === undefined ? workspaceRoot : resolve(root)),
-    );
+    process.exitCode = argv.includes('--hook')
+      ? await runAsStopHook(workspaceRoot)
+      : runCli(argv, (root) =>
+          processIo(root === undefined ? workspaceRoot : resolve(root)),
+        );
   } catch (error) {
     process.stderr.write(`architecture-graph: ${(error as Error).message}\n`);
     process.exitCode = 1;

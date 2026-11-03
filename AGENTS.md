@@ -16,6 +16,13 @@
 - When a design or release channel is replaced, delete the old path, its config, CI and release steps, and its docs in the same change. Do not keep it "for compatibility" unless a named consumer still needs it. When a tool cannot see a real use (a CLI entry, a framework callback), add a `knip.json` entry or a vulture decorator ignore in `tools/dead-code-gate.ts`; never add new dead code to the baseline.
 - `.claude/settings.json` runs the check as a Claude Code Stop hook before a turn that changed code ends.
 
+# Architecture
+
+- `docs/architecture/` holds generated diagrams of today's dependencies (Nx projects, runtime contexts, UI modules). Never edit them by hand: run `pnpm run architecture:update` after changing dependencies; CI's `checks` job fails when they are stale (`architecture:check`).
+- The rules live in `packages/capture-runtime/importlinter.toml` (runtime contexts, `capture-runtime:lint-architecture`), `sheriff.config.ts` (UI modules) and the `depConstraints` of `@nx/enforce-module-boundaries` in `eslint.config.mjs` (Nx `type:*` tags). Decisions are in `.agents/PLANS/ddd-refactor/` and `.agents/DECISIONS/`.
+- Known exceptions (`ignore_imports`, ESLint disables or bulk suppressions of the Nx and Sheriff rules) are a ratchet in `tools/quality/architecture-exceptions-baseline.json`: a new one fails; fix the import instead. After removing one, run `pnpm run architecture-exceptions:update` (CI runs the gate with `--ci`).
+- The Stop hook also runs `node tools/architecture-graph.ts --hook`: the diagram check and the exception gate, plus the runtime contracts when runtime Python changed.
+
 # Release and CI guidance
 
 - Follow `.agents/GUIDES/release-runbook.md` for the current release state, the publish procedure, and known pitfalls.

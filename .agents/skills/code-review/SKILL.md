@@ -79,6 +79,14 @@ Present the two reports under `## Standards` and `## Spec` headings, verbatim or
 
 End with a one-line summary: total findings per axis, and the worst issue _within each axis_ (if any). Don't pick a single winner across axes — that's the reranking the separation exists to prevent.
 
+## Architecture review
+
+Run this alongside the two axes when the diff adds or moves imports, modules, or projects. It is local only, not part of CI.
+
+1. Read the diff, the `.agents/DECISIONS/*.md` and `.agents/PLANS/ddd-refactor/` records that cover the touched code, the boundary rules in `AGENTS.md`, and the current-state diagrams in `docs/architecture/`.
+2. Report under `## Architecture` only code that violates a recorded decision or rule — never taste or a rule you inferred. Each finding quotes the hunk and cites its source file (and the rule's line or heading). No source, no finding.
+3. Keep each fix small and focused on the violation. After fixing, rerun `pnpm run architecture:check`, `pnpm run architecture-exceptions:check`, `pnpm nx run capture-runtime:lint-architecture`, and the affected projects' `lint`.
+
 ## Why two axes
 
 A change can pass one axis and fail the other:
