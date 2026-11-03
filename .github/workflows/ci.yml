@@ -113,6 +113,7 @@ jobs:
           pnpm nx run capture-sidecar-launcher:cargo-fmt-check
           pnpm nx run capture-sidecar-launcher:cargo-test
           pnpm nx run capture-angular:lint
+          pnpm nx run capture-angular:typecheck
           pnpm nx run capture-angular:test
 
       - name: Check capture runtime
@@ -131,9 +132,14 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
           pnpm nx run capture-workbench:lint
+          pnpm nx run capture-workbench:typecheck
           pnpm nx run capture-workbench:test
           pnpm nx run capture-workbench-desktop:cargo-fmt-check
+          pnpm nx run capture-workbench-desktop:typecheck-scripts
           pnpm nx run capture-workbench-desktop:package-qa-test
+          pnpm nx run capture-tools:typecheck
+          pnpm nx run capture-tools:release-version-typecheck
+          pnpm nx run capture-tools:python-candidate-index-typecheck
           pnpm nx run capture-tools:test
           pnpm nx run capture-tools:release-version-test
           pnpm nx run capture-tools:release-candidate-test
