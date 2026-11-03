@@ -56,6 +56,21 @@ test('projectsLevel keeps Nx projects, type tags, roots and internal edges, sort
   });
 });
 
+test('projectsLevel labels nodes with the configured tag prefix', () => {
+  const level = projectsLevel(
+    {
+      nodes: {
+        web: { data: { tags: ['type:app', 'scope:web'], root: 'apps/web' } },
+        engine: { data: { tags: ['scope:desktop'], root: 'apps/engine' } },
+        tools: { data: { root: 'tools' } },
+      },
+      dependencies: { web: [{ target: 'engine' }] },
+    },
+    'scope:',
+  );
+  assert.deepEqual(level.tags, { engine: 'scope:desktop', web: 'scope:web' });
+});
+
 const pythonReport = {
   package: 'capture_runtime',
   modules: [
@@ -165,6 +180,82 @@ test('parseSheriffModules reads the modules map without running the config', () 
     () => parseSheriffModules('export const config = {};'),
     /no `modules`/u,
   );
+});
+
+test('parseSheriffModules flattens nested module maps and single-string tags', () => {
+  const modules = parseSheriffModules(`
+    export const config: SheriffConfig = {
+      enableBarrelLess: true,
+      modules: {
+        'apps/web/src/app': {
+          'pages/<page>': ['layer:page'],
+          stores: 'layer:store',
+          '<context>': { feature: ['context:<context>', 'layer:feature'] },
+        },
+        'libs/ui/<component>/src': ['layer:shared-ui'],
+      },
+      depRules: { root: ['layer:*'] },
+    };
+  `);
+  assert.deepEqual(modules, {
+    'apps/web/src/app/pages/<page>': ['layer:page'],
+    'apps/web/src/app/stores': ['layer:store'],
+    'apps/web/src/app/<context>/feature': [
+      'context:<context>',
+      'layer:feature',
+    ],
+    'libs/ui/<component>/src': ['layer:shared-ui'],
+  });
+  assert.throws(
+    () =>
+      parseSheriffModules(
+        'export const config = { modules: { a: () => ["x"] } };',
+      ),
+    /Unsupported Sheriff `modules` entry/u,
+  );
+});
+
+test('uiModulesLevel fills <name> placeholders in tags with the matched directory', () => {
+  const level = uiModulesLevel({
+    modules: {
+      'app/<context>/feature': ['context:<context>', 'layer:feature'],
+      'app/<context>/data-<kind>': ['context:<context>', 'data:<kind>'],
+    },
+    sources: {
+      'app/practice/feature/page.ts':
+        "import { load } from '../data-http/load.ts';",
+      'app/practice/data-http/load.ts': 'export const load = 1;',
+      'app/practice/other/x.ts': 'export const x = 1;',
+    },
+    aliases: {},
+    sourceRoots: ['app'],
+  });
+  assert.deepEqual(level.tags, {
+    'app/practice/data-http': 'context:practice, data:http',
+    'app/practice/feature': 'context:practice, layer:feature',
+    root: 'root',
+  });
+  assert.deepEqual(level.edges, [
+    ['app/practice/feature', 'app/practice/data-http'],
+  ]);
+});
+
+test('uiModulesLevel takes the tags of the first matching pattern, as Sheriff does', () => {
+  const level = uiModulesLevel({
+    modules: {
+      'app/components/ui': ['layer:ui'],
+      'app/components/<component>': ['layer:component'],
+    },
+    sources: {
+      'app/components/ui/button.ts': 'export const b = 1;',
+      'app/components/card/card.ts': "import { b } from '../ui/button.ts';",
+    },
+    aliases: {},
+  });
+  assert.deepEqual(level.tags, {
+    'app/components/card': 'layer:component',
+    'app/components/ui': 'layer:ui',
+  });
 });
 
 test('uiModulesLevel computes module edges from imports of an in-memory module map', () => {
@@ -321,6 +412,7 @@ test('parseArchitectureConfig fills defaults for each level kind', () => {
         label: 'Nx projects',
         output: 'projects.md',
         intro: undefined,
+        tagPrefix: 'type:',
       },
       {
         id: 'runtimeContexts',
@@ -364,6 +456,39 @@ test('parseArchitectureConfig fills defaults for each level kind', () => {
       },
     ],
   });
+  const inline = parseArchitectureConfig({
+    levels: [
+      {
+        id: 'web',
+        kind: 'typescript',
+        title: 'Web modules',
+        output: 'web.md',
+        intro: 'Web.',
+        modules: { 'web/src/app/features/<feature>': ['feature'] },
+        sourceRoots: ['web/src'],
+      },
+      {
+        id: 'projects',
+        kind: 'nx',
+        title: 'Nx',
+        output: 'projects.md',
+        intro: 'Nx.',
+        tagPrefix: 'scope:',
+      },
+    ],
+  });
+  assert.deepEqual(
+    inline.levels[0].kind === 'typescript' && inline.levels[0].modules,
+    { 'web/src/app/features/<feature>': ['feature'] },
+  );
+  assert.equal(
+    inline.levels[0].kind === 'typescript' && inline.levels[0].sheriffConfig,
+    undefined,
+  );
+  assert.equal(
+    inline.levels[1].kind === 'nx' && inline.levels[1].tagPrefix,
+    'scope:',
+  );
   assert.equal(java.levels[0].label, '引擎套件');
   assert.equal(
     java.levels[0].kind === 'java' && java.levels[0].collapseDepth,
@@ -443,6 +568,41 @@ test('parseArchitectureConfig names the offending key in every error', () => {
         ],
       },
       /levels\[0\]\.sourceRoots must be a non-empty array/u,
+    ],
+    [
+      { levels: [{ ...nx, tagPrefix: 'scope' }] },
+      /levels\[0\]\.tagPrefix must be a tag prefix ending in `:`/u,
+    ],
+    [
+      { levels: [{ ...nx, kind: 'typescript', sourceRoots: ['src'] }] },
+      /levels\[0\] needs exactly one of `sheriffConfig`, `modules`/u,
+    ],
+    [
+      {
+        levels: [
+          {
+            ...nx,
+            kind: 'typescript',
+            sheriffConfig: 's.ts',
+            modules: { src: ['a'] },
+            sourceRoots: ['src'],
+          },
+        ],
+      },
+      /levels\[0\] needs exactly one of `sheriffConfig`, `modules`/u,
+    ],
+    [
+      {
+        levels: [
+          {
+            ...nx,
+            kind: 'typescript',
+            modules: { src: [] },
+            sourceRoots: ['src'],
+          },
+        ],
+      },
+      /levels\[0\]\.modules\.src must be a non-empty array of strings/u,
     ],
     [
       { levels: [{ ...nx, kind: 'java', sourceRoots: ['src'] }] },
@@ -753,6 +913,10 @@ test('runHook runs the docs check and exception gate for TypeScript and config c
     ['apps/capture-workbench/project.json'],
     ['tsconfig.base.json'],
     ['packages/ui/eslint-suppressions.json'],
+    ['apps/web/.dependency-cruiser-known-violations.json'],
+    ['apps/web/.dependency-cruiser.cjs'],
+    ['.oxlintrc.json'],
+    ['libs/other/importlinter.toml'],
     ['sheriff.config.ts'],
     ['architecture-graph.config.json'],
   ]) {

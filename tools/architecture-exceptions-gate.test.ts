@@ -8,7 +8,9 @@ import { test } from 'node:test';
 
 import {
   formatException,
+  parseArchUnitIgnores,
   parseBoundaryDisables,
+  parseDependencyCruiserBaseline,
   parseEslintSuppressions,
   parseIgnoreImports,
 } from './architecture-exceptions-gate.ts';
@@ -53,8 +55,44 @@ test('parseIgnoreImports keys every ignore_imports entry by contract, multi-line
   assert.deepEqual(parseIgnoreImports('', TOML), []);
 });
 
-test('parseBoundaryDisables keeps only directives that name an architecture rule', () => {
+test('parseIgnoreImports reads only the import-linter tables of a pyproject.toml', () => {
+  const pyproject = [
+    '[project]',
+    'name = "backend"',
+    'dependencies = [',
+    '  "fastapi>=0.124.0,<1.0.0",',
+    ']',
+    '',
+    '[tool.importlinter]',
+    'root_package = "app"',
+    '',
+    '[[tool.importlinter.contracts]]',
+    'name = "Contexts are independent"',
+    'type = "independence"',
+    'modules = ["app.a", "app.b"]',
+    'ignore_imports = [',
+    '  "app.a.api -> app.b.api",',
+    ']',
+    '',
+    '[tool.ruff]',
+    'line-length = 100',
+  ].join('\n');
+  assert.deepEqual(parseIgnoreImports(pyproject, TOML), [
+    `import-linter|Contexts are independent|${TOML}|app.a.api -> app.b.api`,
+  ]);
+  // Every table header resets the contract name, not only `[[...]]`.
+  assert.deepEqual(
+    parseIgnoreImports(
+      '[project]\nname = "x"\n[tool.importlinter.contract]\nignore_imports = ["a -> b"]\n',
+      TOML,
+    ),
+    [`import-linter||${TOML}|a -> b`],
+  );
+});
+
+test('parseBoundaryDisables keeps eslint and oxlint directives that name an architecture rule', () => {
   const disable = 'eslint-' + 'disable';
+  const oxlint = 'oxlint-' + 'disable';
   const output = [
     `apps/desktop/a.test.ts:1:// ${disable}-next-line @nx/enforce-module-boundaries -- shared temp root.`,
     `apps/desktop/a.test.ts:3:// ${disable}-next-line @nx/enforce-module-boundaries`,
@@ -62,12 +100,16 @@ test('parseBoundaryDisables keeps only directives that name an architecture rule
     `libs/ui/x.ts:9:/* ${disable} @softarc/sheriff/encapsulation */`,
     `libs/ui/y.ts:5:// ${disable}-next-line no-unsafe-finally`,
     `libs/ui/z.ts:7:const s = '${disable} @nx/enforce-module-boundaries-ish';`,
+    `libs/web/store.ts:12:// ${oxlint}-next-line no-console, @nx/enforce-module-boundaries -- R3g.`,
+    `libs/web/x.ts:9:/* ${oxlint} @nx/enforce-module-boundaries */`,
   ].join('\n');
   assert.deepEqual(parseBoundaryDisables(output), [
     'eslint|@nx/enforce-module-boundaries|apps/desktop/a.test.ts|eslint-disable',
     'eslint|@nx/enforce-module-boundaries|apps/desktop/a.test.ts|eslint-disable#2',
     'eslint|@softarc/sheriff/dependency-rule|libs/ui/store.ts|eslint-disable',
     'eslint|@softarc/sheriff/encapsulation|libs/ui/x.ts|eslint-disable',
+    'oxlint|@nx/enforce-module-boundaries|libs/web/store.ts|oxlint-disable',
+    'oxlint|@nx/enforce-module-boundaries|libs/web/x.ts|oxlint-disable',
   ]);
   assert.deepEqual(parseBoundaryDisables(''), []);
 });
@@ -90,7 +132,68 @@ test('parseEslintSuppressions turns each suppressed architecture violation into 
   );
 });
 
-test('formatException names the file, the rule and, for import-linter, the import', () => {
+const ARCH_TEST =
+  'engine/src/test/java/com/example/SampleArchitectureTest.java';
+
+test('parseArchUnitIgnores keys each ignoreDependency by rule and class pair, skipping comments', () => {
+  const source = [
+    'package com.example;',
+    '',
+    'class SampleArchitectureTest {',
+    '  @ArchTest',
+    '  static final ArchRule layers_follow_direction =',
+    '      layeredArchitecture()',
+    '          // Still returned by the controller. .ignoreDependency(Old.class, Gone.class)',
+    '          .ignoreDependency(OrderController.class, Order.class)',
+    '          .ignoreDependency(OrderController.class, Order.Line.class)',
+    '          /* .ignoreDependency(Commented.class, Out.class) */',
+    '          .ignoreDependency(OrderController.class, Order.class);',
+    '',
+    '  @ArchTest',
+    '  static void reads_through_public_apis(JavaClasses classes) {',
+    '    rule()',
+    '        .ignoreDependency(',
+    '            "com.example.orders.Generator$Context",',
+    '            Ledger.class.getName())',
+    '        .ignoreDependency(name("a, b"), equivalentTo(X.class))',
+    '        .check(classes);',
+    '  }',
+    '}',
+  ].join('\n');
+  assert.deepEqual(parseArchUnitIgnores(source, ARCH_TEST), [
+    `archunit|layers_follow_direction|${ARCH_TEST}|OrderController -> Order`,
+    `archunit|layers_follow_direction|${ARCH_TEST}|OrderController -> Order#2`,
+    `archunit|layers_follow_direction|${ARCH_TEST}|OrderController -> Order.Line`,
+    `archunit|reads_through_public_apis|${ARCH_TEST}|com.example.orders.Generator$Context -> Ledger`,
+    `archunit|reads_through_public_apis|${ARCH_TEST}|name("a,b") -> equivalentTo(X.class)`,
+  ]);
+  assert.deepEqual(parseArchUnitIgnores('class Empty {}', ARCH_TEST), []);
+});
+
+test('parseDependencyCruiserBaseline resolves paths against the baseline file', () => {
+  const violation = {
+    type: 'dependency',
+    from: 'src/app/features/orders/list.ts',
+    to: 'src/app/features/billing/state/billing.store.ts',
+    rule: { severity: 'error', name: 'feature-only-through-public-entry' },
+  };
+  const json = JSON.stringify([
+    violation,
+    { ...violation, from: 'src\\app\\features\\orders\\list.ts' },
+  ]);
+  const key =
+    'dependency-cruiser|feature-only-through-public-entry|apps/web/src/app/features/orders/list.ts|apps/web/src/app/features/billing/state/billing.store.ts';
+  assert.deepEqual(
+    parseDependencyCruiserBaseline(
+      json,
+      'apps/web/.dependency-cruiser-known-violations.json',
+    ),
+    [key, `${key}#2`],
+  );
+  assert.deepEqual(parseDependencyCruiserBaseline('[]', 'a/b.json'), []);
+});
+
+test('formatException names the file, the rule and what the exception allows', () => {
   assert.equal(
     formatException(
       `import-linter|Engines are independent|${TOML}|app.ocr -> app.asr`,
@@ -102,6 +205,24 @@ test('formatException names the file, the rule and, for import-linter, the impor
       'eslint|@softarc/sheriff/encapsulation|libs/ui/x.ts|eslint-disable#2',
     ),
     '  - [eslint-disable] libs/ui/x.ts :: @softarc/sheriff/encapsulation',
+  );
+  assert.equal(
+    formatException(
+      'oxlint|@nx/enforce-module-boundaries|libs/web/x.ts|oxlint-disable#2',
+    ),
+    '  - [oxlint-disable] libs/web/x.ts :: @nx/enforce-module-boundaries',
+  );
+  assert.equal(
+    formatException(
+      `archunit|layers_follow_direction|${ARCH_TEST}|OrderController -> Order#2`,
+    ),
+    `  - [ArchUnit ignoreDependency] ${ARCH_TEST} :: OrderController -> Order#2 (layers_follow_direction)`,
+  );
+  assert.equal(
+    formatException(
+      'dependency-cruiser|feature-only-through-public-entry|apps/web/a.ts|apps/web/b.ts',
+    ),
+    '  - [dependency-cruiser known violation] apps/web/a.ts :: -> apps/web/b.ts (feature-only-through-public-entry)',
   );
 });
 
