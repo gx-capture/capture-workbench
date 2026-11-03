@@ -1,6 +1,6 @@
 {
   "name": "@gx-capture/capture-runtime-client",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "Framework-neutral Capture Runtime client SDK and private wire codecs.",
   "contractSetSha256": "91ff5ff5cef6d68774cf036878843503f171044bf8c4a9f6a62e7fb418ce2380",
   "license": "MIT",

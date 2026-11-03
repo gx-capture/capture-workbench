@@ -2,7 +2,125 @@
 
 ## Unreleased
 
-- Clarification (2026-11-01): the 0.4.2 launcher durability and verified staging release apply to explicit live R3 use; restart reconciliation is not wired, and desktop, cert-prep and LAW still use legacy launch paths with native Windows Job containment (`KILL_ON_JOB_CLOSE`).
+### Compatibility policy
+
+Capture Workbench follows an explicit 0.x compatibility policy:
+
+- While the runtime is `0.x`, a minor-version change may be breaking.
+- Capture Workbench clients therefore require the same runtime major and minor
+  version during the readiness handshake; patch updates remain compatible.
+- The in-scope consumers for the current `0.4.x` line are the published
+  Web Component package, Cert Prep's Angular, Python, and desktop hosts, and
+  LAW's web app and Python AI service. They must be deployed on the same
+  minor before a runtime release is enabled.
+- `compatibleRuntimeMinor` is a temporary, explicit break-glass setting for a
+  coordinated rollback or split-minor migration. Remove the override after the
+  consumer and runtime are aligned; reverting the consumer package is the
+  rollback path if an undiscovered incompatibility is found.
+
+The consumer consistency check is a permanent CI gate for the declared
+runtime, package lock, Python host, desktop host, and browser host versions.
+
+## 0.9.0
+
+A minor release that is breaking for clients. Hosts can show how big an engine
+download is and how much has arrived, uninstall an engine, and show page and
+recording progress; interrupted engine downloads resume; the TypeScript client
+reads raw captures again; and Japanese transcripts use Japanese kanji forms.
+The contract set changes (`91ff5ff5…`), so a 0.9.0 runtime needs 0.9.0 clients
+and every consumer moves with it. The capture document schema (`5452631c…`) and
+the models are unchanged from 0.8.0. No Java SDK is published from this release
+on.
+
+### Breaking for clients
+
+- Contract-set SHA-256
+  `91ff5ff5cef6d68774cf036878843503f171044bf8c4a9f6a62e7fb418ce2380` (0.8.0:
+  `664b2b32…`). Clients allowlist the contract set and require the same runtime
+  minor, so 0.8.x clients refuse a 0.9.0 runtime at the readiness handshake.
+- Both 0.8.x clients reject unknown response fields (the TypeScript client
+  through its contract-set field lists, the Python client through
+  `extra="forbid"`). Even with an override they would fail on fields this
+  runtime sends: `RuntimeRequirementV2.downloadBytes`,
+  `RuntimeInstallationV2.downloadBytes` and `downloadedBytes`, and
+  `CaptureOperationV2.pagesTotal`, `pagesDone`, `durationMs` and
+  `coveredUntilMs`. The 0.8.0 TypeScript client also rejects every raw capture
+  (see below).
+- The new fields are optional, so a host's own fakes and recorded samples stay
+  valid. Nothing is removed or renamed.
+
+### Consumers
+
+Cert Prep moves first, then LAW, each together with the runtime:
+
+- Cert Prep: bump every Capture pin (`@gx-capture/capture-workbench-ui`,
+  `@gx-capture/capture-runtime-client`, the Python client and, where used,
+  `capture-sidecar-launcher`) to exactly 0.9.0, and refresh the pinned
+  contract-set SHA-256. Tests that quote runtime minor 8 move to 9. The Web
+  Component now accepts any Angular 22 compiler and elements (`^22.0.0`)
+  instead of exact 22.0.7, so pnpm reuses the host's. Optional: show download
+  sizes and progress from `downloadBytes`/`downloadedBytes`, page and recording
+  progress from `pagesDone`/`pagesTotal` and `durationMs`/`coveredUntilMs`, and
+  offer `uninstallRequirement()`.
+- LAW: bump the Python client with
+  `apps/law-prep-ai-service/src/app/capture_version.py`, the npm packages its
+  web app uses, and their test samples (contract-set hash, runtime minor).
+  LAW's TypeScript path could not read raw captures on 0.8.0; on 0.9.0 it can.
+  The new fields need no LAW change.
+
+### Download size and downloaded bytes (contract change)
+
+The runtime now says how big a download is and how much of it has arrived, so
+hosts no longer hard-code sizes.
+
+- `RuntimeRequirementV2.downloadBytes`: bytes a fresh install downloads (worker
+  archive plus model files). Units whose install has no size the runtime knows
+  (winget, manual, unavailable) omit it.
+- `RuntimeInstallationV2.downloadBytes` and `downloadedBytes`: total and bytes
+  so far, set together once the install starts downloading. `downloadedBytes`
+  never exceeds `downloadBytes`; `progress` is unchanged.
+- The contract set hash changes. The TypeScript client accepts and checks the
+  two installation fields; clients older than this release reject them, so
+  LAW and Cert move to it together with the runtime.
+
+### Uninstall an engine (contract change)
+
+Hosts can remove an installed engine to free disk space.
+
+- `DELETE /v2/runtime/requirements/{requirementId}/installation` removes the
+  engine's files and the cached downloads no other engine uses, then returns
+  the `RuntimeRequirementV2`, now not installed. Uninstalling a requirement
+  that is not installed returns it unchanged; no idempotency key is needed.
+- Errors: `requirement_not_found` (404), `requirement_disabled` (422, a
+  requirement this process delegates), `requirement_not_uninstallable` (422,
+  anything the engine installer does not own, such as the Ollama model) and
+  `requirement_in_use` (409, while its installation or any capture has not
+  finished, or while its files are still open).
+- The TypeScript client adds `uninstallRequirement(requirementId)` and the
+  Python client `uninstall_requirement(requirement_id)`. The operation is
+  additive, but the contract set hash changes and clients pin it, so LAW and
+  Cert move to this release together with the runtime.
+
+### Page and recording progress (contract change)
+
+Hosts can show "page 9 of 12" for a document and "12:04 of 41:30" for a
+recording without guessing from `progress`.
+
+- `CaptureOperationV2.pagesTotal` and `pagesDone` (pdf and image captures):
+  the pages to process (the selected PDF pages, 1 for an image) and the pages
+  done, set together once the count is known, before the first page finishes.
+  `pagesDone` never exceeds `pagesTotal` and equals it once extraction ends.
+- `CaptureOperationV2.durationMs` and `coveredUntilMs` (audio captures): the
+  recording's length from its container, and how far transcription has got
+  (the value the partial and events already carry). A container that does not
+  state its length leaves `durationMs` absent; a capture that identifies
+  speakers transcribes in one pass and reports neither.
+- `CaptureEventV2` gains `pagesDone`, `pagesTotal` and `durationMs`, set on the
+  events that change them, so SSE consumers see them without polling.
+- The values are stored with the operation and survive a runtime restart.
+- The contract set hash changes. The TypeScript client accepts and checks the
+  new fields on operations and events; clients older than this release reject
+  them on operations, so LAW and Cert move to it together with the runtime.
 
 ### TypeScript client reads raw captures again
 
@@ -28,50 +146,6 @@ that ignores the resume request makes that region restart cleanly. A checksum
 or byte-count failure deletes the partial. Direct model files resume the same
 way, with every redirect still checked. No contract change.
 
-### Release resolver action for consumer bump workflows
-
-The composite action `.github/actions/resolve-capture-release` finds the
-release a consumer should pin next (`route-a`: newest unsuperseded runtime
-release; `stable`: the release `stable.json` names), verifies its manifest
-digest and signer-workflow attestation, and outputs the tag, manifest and
-contract-set digests, contract classification and whether it differs from the
-current pin. See the release runbook.
-
-### Java SDK no longer published
-
-The Java SDK (`com.gx.capture:capture-runtime-client`) had no consumer, so it
-is removed and no longer published. LAW's Java engine never calls Capture: its
-OCR and ASR go through LAW's Python AI service and the Python client. Cert Prep
-has no Java code.
-
-- Releases publish npm (GitHub Packages), PyPI, and crates.io packages only.
-  Versions through 0.8.0 stay on GitHub Packages Maven.
-- The package candidate no longer carries Maven artifacts. The release
-  candidate checks the contract set recorded in the package candidate manifest
-  instead of the Java SDK manifest.
-- Consumer gates no longer send `package_candidate_run_id`; LAW's gate dropped
-  its Java SDK check.
-- The contract set is unchanged: the Java SDK only projected it.
-
-### Compatibility policy
-
-Capture Workbench follows an explicit 0.x compatibility policy:
-
-- While the runtime is `0.x`, a minor-version change may be breaking.
-- Capture Workbench clients therefore require the same runtime major and minor
-  version during the readiness handshake; patch updates remain compatible.
-- The in-scope consumers for the current `0.4.x` line are the published
-  Web Component package, Cert Prep's Angular, Python, and desktop hosts, and
-  LAW's web app and Python AI service. They must be deployed on the same
-  minor before a runtime release is enabled.
-- `compatibleRuntimeMinor` is a temporary, explicit break-glass setting for a
-  coordinated rollback or split-minor migration. Remove the override after the
-  consumer and runtime are aligned; reverting the consumer package is the
-  rollback path if an undiscovered incompatibility is found.
-
-The consumer consistency check is a permanent CI gate for the declared
-runtime, package lock, Python host, desktop host, and browser host versions.
-
 ### Taiwan speech pack is optional and explains its models
 
 Speech-to-text (TEA-ASR 1.1) and speaker identification (Nemotron 3 Diarization) form an
@@ -81,60 +155,6 @@ unit says what it does, which languages it suits (Taiwan Mandarin, including mix
 Mandarin–English), the hardware it uses, its download size and its license. The Web Component
 shows the same guide when its host asks for a speech unit. The runtime now reports
 `speech-recognition` as `optional`.
-
-### Page and recording progress (contract change)
-
-Hosts can show "page 9 of 12" for a document and "12:04 of 41:30" for a
-recording without guessing from `progress`.
-
-- `CaptureOperationV2.pagesTotal` and `pagesDone` (pdf and image captures):
-  the pages to process (the selected PDF pages, 1 for an image) and the pages
-  done, set together once the count is known, before the first page finishes.
-  `pagesDone` never exceeds `pagesTotal` and equals it once extraction ends.
-- `CaptureOperationV2.durationMs` and `coveredUntilMs` (audio captures): the
-  recording's length from its container, and how far transcription has got
-  (the value the partial and events already carry). A container that does not
-  state its length leaves `durationMs` absent; a capture that identifies
-  speakers transcribes in one pass and reports neither.
-- `CaptureEventV2` gains `pagesDone`, `pagesTotal` and `durationMs`, set on the
-  events that change them, so SSE consumers see them without polling.
-- The values are stored with the operation and survive a runtime restart.
-- The contract set hash changes. The TypeScript client accepts and checks the
-  new fields on operations and events; clients older than this release reject
-  them on operations, so LAW and Cert move to it together with the runtime.
-
-### Uninstall an engine (contract change)
-
-Hosts can remove an installed engine to free disk space.
-
-- `DELETE /v2/runtime/requirements/{requirementId}/installation` removes the
-  engine's files and the cached downloads no other engine uses, then returns
-  the `RuntimeRequirementV2`, now not installed. Uninstalling a requirement
-  that is not installed returns it unchanged; no idempotency key is needed.
-- Errors: `requirement_not_found` (404), `requirement_disabled` (422, a
-  requirement this process delegates), `requirement_not_uninstallable` (422,
-  anything the engine installer does not own, such as the Ollama model) and
-  `requirement_in_use` (409, while its installation or any capture has not
-  finished, or while its files are still open).
-- The TypeScript client adds `uninstallRequirement(requirementId)` and the
-  Python client `uninstall_requirement(requirement_id)`. The operation is
-  additive, but the contract set hash changes and clients pin it, so LAW and
-  Cert move to this release together with the runtime.
-
-### Download size and downloaded bytes (contract change)
-
-The runtime now says how big a download is and how much of it has arrived, so
-hosts no longer hard-code sizes.
-
-- `RuntimeRequirementV2.downloadBytes`: bytes a fresh install downloads (worker
-  archive plus model files). Units whose install has no size the runtime knows
-  (winget, manual, unavailable) omit it.
-- `RuntimeInstallationV2.downloadBytes` and `downloadedBytes`: total and bytes
-  so far, set together once the install starts downloading. `downloadedBytes`
-  never exceeds `downloadBytes`; `progress` is unchanged.
-- The contract set hash changes. The TypeScript client accepts and checks the
-  two installation fields; clients older than this release reject them, so
-  LAW and Cert move to it together with the runtime.
 
 ### Japanese transcripts use Japanese kanji forms
 
@@ -154,6 +174,38 @@ converts them to their Japanese forms: 會議 becomes 会議, 天氣 becomes 天
 - Names written in old forms are converted too: 龍 becomes 竜, 澤 becomes 沢.
 - Other languages, and captures that name none, are unchanged. The contract
   does not change.
+
+### Java SDK no longer published
+
+The Java SDK (`com.gx.capture:capture-runtime-client`) had no consumer, so it
+is removed and no longer published. LAW's Java engine never calls Capture: its
+OCR and ASR go through LAW's Python AI service and the Python client. Cert Prep
+has no Java code.
+
+- Releases publish npm (GitHub Packages), PyPI, and crates.io packages only.
+  Versions through 0.8.0 stay on GitHub Packages Maven.
+- The package candidate no longer carries Maven artifacts. The release
+  candidate checks the contract set recorded in the package candidate manifest
+  instead of the Java SDK manifest.
+- Consumer gates no longer send `package_candidate_run_id`; LAW's gate dropped
+  its Java SDK check.
+- The contract set is unchanged: the Java SDK only projected it.
+
+### Release resolver action for consumer bump workflows
+
+The composite action `.github/actions/resolve-capture-release` finds the
+release a consumer should pin next (`route-a`: newest unsuperseded runtime
+release; `stable`: the release `stable.json` names), verifies its manifest
+digest and signer-workflow attestation, and outputs the tag, manifest and
+contract-set digests, contract classification and whether it differs from the
+current pin. See the release runbook.
+
+### Launcher restart guarantees (clarification)
+
+The 0.4.2 launcher durability and verified staging release apply to explicit
+live R3 use; restart reconciliation is not wired, and desktop, Cert Prep and
+LAW still use legacy launch paths with native Windows Job containment
+(`KILL_ON_JOB_CLOSE`).
 
 ## 0.8.0
 

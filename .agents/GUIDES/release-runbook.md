@@ -1,6 +1,6 @@
 # Capture Workbench release runbook
 
-Current as of 2026-10-31. This is the operational procedure for publishing a
+Current as of 2026-11-03. This is the operational procedure for publishing a
 Capture Workbench release and moving its consumers. Workflow files remain the
 source of truth for inputs.
 
@@ -14,12 +14,16 @@ source of truth for inputs.
   speech recognition and diarization engines, catalog). 0.7.x also went
   through Route A only; the last full route (desktop installer, stable
   pointer, consumer gates) was 0.6.3.
+- **0.9.0** is prepared (issue #181, approved by the owner on 2026-11-03) and
+  goes through Route A only; see below.
 - Releases after 0.8.0 publish no Java SDK. Maven publication was removed on
   2026-10-31 (no consumer used it); versions through 0.8.0 stay on GitHub
   Packages.
-- Consumers on their `main` branches pin 0.7.2 until their 0.8.0 migrations
-  merge: Cert Prep (`WodenWang820118/cert-prep`) first, then LAW
-  (`WodenWang820118/gx.law-prep`).
+- Consumers on their `main` branches pin 0.8.0: Cert Prep
+  (`WodenWang820118/cert-prep`) and LAW (`WodenWang820118/gx.law-prep`). They
+  move to 0.9.0 in that order.
+- The workspace runs Nx 24 with task-based affected; the pull request `checks`
+  job type-checks every TypeScript project.
 - The contract set no longer carries the release version: a patch release keeps
   its hash, and only a contract change moves it.
 - **Open**: the licence lineage of the NDLOCR-Lite line detector's weights; see
@@ -27,6 +31,32 @@ source of truth for inputs.
 - Known limitations: handwriting OCR quality (printed text is the floor); page
   structure of dense vertical periodical scans and pages that mix directions;
   about a fifth of furigana on textbook pages is not set aside.
+
+## Prepared: 0.9.0 (minor)
+
+- Prepared on 2026-11-03 for Route A only (issue #181). Runs: package candidate
+  `<run>`, runtime candidate `<run>` (`model-enabled`), package promote
+  `<run>`, runtime promote `<run>` (`registries`). Source commit `<sha>` (merge
+  of the release PR).
+- Contents: download size and downloaded bytes (PR #141), resumable engine
+  downloads (PR #151), uninstalling an engine (PR #145), page and recording
+  progress (PR #148), the TypeScript client reading raw captures again
+  (PR #229), the optional Taiwan speech pack (PR #123), Japanese kanji forms in
+  Japanese transcripts, and Angular `^22.0.0` ranges for the Web Component's
+  compiler and elements (PR #195). The desktop app's UI phase 2 (PR #149) ships
+  with the next full route. No Java SDK.
+- Breaking for clients: contract-set SHA-256 `91ff5ff5…` (0.8.0: `664b2b32…`).
+  0.8.x clients reject the new response fields
+  (`RuntimeRequirementV2.downloadBytes`, `RuntimeInstallationV2.downloadBytes`
+  and `downloadedBytes`, `CaptureOperationV2.pagesTotal`, `pagesDone`,
+  `durationMs` and `coveredUntilMs`), besides the handshake's minor and
+  contract-set checks. Capture document schema unchanged (`5452631c…`).
+- Model-source Commit A `e2c41ae` (annotated tag
+  `capture-runtime-model-sources-v0.9.0`, pushed before the candidates). The
+  lock pins the same models as 0.8.0, with the same approval record. OCR
+  profile `capture-workbench-ocr-8a80b428fa4968ac`.
+- Consumers: Cert Prep first, then LAW; both bump every Capture pin, the
+  contract-set hash and tests that quote runtime minor 8 (see the changelog).
 
 ## Published through Route A: 0.8.0 (minor)
 
