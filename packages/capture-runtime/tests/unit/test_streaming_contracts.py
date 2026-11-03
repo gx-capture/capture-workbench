@@ -9,13 +9,16 @@ import pytest
 from capture_runtime.contracts import (
     CaptureEngine,
     CaptureEventV2,
+    CaptureOperationV2,
     CaptureSource,
+    CaptureSourceKind,
     OcrPageScopeV2,
     OpenIngestionV2,
     PartialCaptureV2,
     RawCaptureSegment,
     ReportStructuringFailureV2,
     StartCaptureV2,
+    StreamingCaptureStatus,
     StreamingEventType,
     StructuringMode,
 )
@@ -301,3 +304,94 @@ def test_memory_ingestion_rejects_gap_checksum_and_conflicting_retry() -> None:
         assert conflict.value.code == "chunk_conflict"
 
     asyncio.run(scenario())
+
+
+def _operation(kind: CaptureSourceKind, **progress: int) -> CaptureOperationV2:
+    return CaptureOperationV2.model_validate(
+        {
+            "captureId": "capture-1",
+            "ingestionId": "ingestion-1",
+            "kind": kind.value,
+            "status": "extracting",
+            "partialRevision": 0,
+            "lastEventSequence": 1,
+            "createdAt": NOW.isoformat(),
+            "updatedAt": NOW.isoformat(),
+            **progress,
+        }
+    )
+
+
+def _event(kind: CaptureSourceKind, **progress: int) -> CaptureEventV2:
+    return CaptureEventV2.model_validate(
+        {
+            "eventId": "capture-1/1",
+            "sequence": 1,
+            "captureId": "capture-1",
+            "kind": kind.value,
+            "eventType": "checkpoint",
+            "stage": "extracting",
+            "createdAt": NOW.isoformat(),
+            **progress,
+        }
+    )
+
+
+@pytest.mark.parametrize("build", [_operation, _event])
+@pytest.mark.parametrize("kind", [CaptureSourceKind.PDF, CaptureSourceKind.IMAGE])
+def test_document_captures_report_pages_done_out_of_pages_total(build, kind) -> None:
+    progress = build(kind, pagesDone=9, pagesTotal=12)
+
+    assert (progress.pages_done, progress.pages_total) == (9, 12)
+    assert progress.model_dump(mode="json", by_alias=True)["pagesDone"] == 9
+    assert build(kind, pagesDone=12, pagesTotal=12).pages_done == 12
+
+
+@pytest.mark.parametrize("build", [_operation, _event])
+@pytest.mark.parametrize(
+    ("kind", "progress", "message"),
+    [
+        (CaptureSourceKind.PDF, {"pagesDone": 3}, "set together"),
+        (CaptureSourceKind.PDF, {"pagesTotal": 3}, "set together"),
+        (CaptureSourceKind.PDF, {"pagesDone": 4, "pagesTotal": 3}, "cannot exceed"),
+        (CaptureSourceKind.PDF, {"pagesDone": 0, "pagesTotal": 0}, "greater than or equal to 1"),
+        (CaptureSourceKind.AUDIO, {"pagesDone": 1, "pagesTotal": 2}, "document captures"),
+        (CaptureSourceKind.PDF, {"durationMs": 1_000}, "audio captures"),
+        (CaptureSourceKind.IMAGE, {"durationMs": 1_000}, "audio captures"),
+    ],
+)
+def test_capture_progress_fields_are_paired_and_kind_bound(build, kind, progress, message) -> None:
+    with pytest.raises(ValueError, match=message):
+        build(kind, **progress)
+
+
+def test_audio_operations_report_duration_and_covered_time() -> None:
+    operation = _operation(CaptureSourceKind.AUDIO, durationMs=2_490_000, coveredUntilMs=724_000)
+
+    wire = operation.model_dump(mode="json", by_alias=True)
+    assert (wire["durationMs"], wire["coveredUntilMs"]) == (2_490_000, 724_000)
+    assert wire["pagesDone"] is None and wire["pagesTotal"] is None
+    with pytest.raises(ValueError, match="audio captures"):
+        _operation(CaptureSourceKind.PDF, coveredUntilMs=1_000)
+
+
+def test_audio_events_report_duration_beside_covered_time() -> None:
+    event = _event(CaptureSourceKind.AUDIO, durationMs=2_490_000, coveredUntilMs=724_000)
+
+    assert (event.duration_ms, event.covered_until_ms) == (2_490_000, 724_000)
+
+
+def test_terminal_operation_rules_still_hold_with_progress_fields() -> None:
+    with pytest.raises(ValueError, match="completedAt"):
+        CaptureOperationV2(
+            capture_id="capture-1",
+            ingestion_id="ingestion-1",
+            kind=CaptureSourceKind.PDF,
+            status=StreamingCaptureStatus.COMPLETED,
+            partial_revision=1,
+            last_event_sequence=3,
+            created_at=NOW,
+            updated_at=NOW,
+            pages_done=2,
+            pages_total=2,
+        )

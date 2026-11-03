@@ -7,6 +7,8 @@ import {
   CAPTURE_CONTRACT_SET_SHA256,
   CAPTURE_DOCUMENT_SCHEMA_SHA256,
   RUNTIME_VERSION,
+  type CaptureEvent,
+  type CaptureOperation,
   type RuntimeInstallation,
 } from './contracts';
 import { decodeJson } from './codec';
@@ -590,6 +592,104 @@ describe('CaptureRuntimeClient', () => {
         CaptureRuntimeProtocolError,
       );
     }
+  });
+
+  it('reads page and media progress on an operation and rejects what does not fit its kind', async () => {
+    const operation = {
+      protocolVersion: '2',
+      captureId: 'cap',
+      ingestionId: 'ing',
+      status: 'extracting',
+      partialRevision: 0,
+      lastEventSequence: 4,
+      createdAt: '2026-11-03T00:00:00Z',
+      updatedAt: '2026-11-03T00:00:00Z',
+    };
+    const decode = (body: object) =>
+      decodeJson<CaptureOperation>(
+        new Response(JSON.stringify(body)),
+        undefined,
+        'CaptureOperation',
+      );
+
+    const pdf = await decode({ ...operation, kind: 'pdf', pagesDone: 9, pagesTotal: 12 });
+    expect([pdf.pagesDone, pdf.pagesTotal]).toEqual([9, 12]);
+    const audio = await decode({
+      ...operation,
+      kind: 'audio',
+      durationMs: 2_490_000,
+      coveredUntilMs: 724_000,
+      pagesDone: null,
+      pagesTotal: null,
+    });
+    expect([audio.coveredUntilMs, audio.durationMs]).toEqual([724_000, 2_490_000]);
+    expect((await decode({ ...operation, kind: 'image' })).pagesTotal).toBeUndefined();
+
+    for (const progress of [
+      { kind: 'pdf', pagesDone: 3 },
+      { kind: 'pdf', pagesTotal: 3 },
+      { kind: 'pdf', pagesDone: 4, pagesTotal: 3 },
+      { kind: 'pdf', pagesDone: 0, pagesTotal: 0 },
+      { kind: 'image', pagesDone: 0.5, pagesTotal: 1 },
+      { kind: 'audio', pagesDone: 1, pagesTotal: 2 },
+      { pagesDone: 1, pagesTotal: 2 },
+      { kind: 'pdf', durationMs: 1000 },
+      { kind: 'image', coveredUntilMs: 1000 },
+      { kind: 'audio', durationMs: -1 },
+    ]) {
+      await expect(decode({ ...operation, ...progress })).rejects.toBeInstanceOf(
+        CaptureRuntimeProtocolError,
+      );
+    }
+  });
+
+  it('checks page and media progress on SSE capture events', async () => {
+    const stream = (events: object[]) =>
+      new InMemoryRuntimeTransport(
+        withDiscovery([
+          {
+            path: '/v2/captures/cap/events',
+            handle: () =>
+              new Response(
+                events
+                  .map((event, index) => `id: ${index + 1}
+data: ${JSON.stringify(event)}
+
+`)
+                  .join(''),
+                { headers: { 'Content-Type': 'text/event-stream' } },
+              ),
+          },
+        ]),
+      );
+    const read = async (events: object[]) => {
+      const seen: CaptureEvent[] = [];
+      for await (const event of new CaptureRuntimeClient({
+        baseUrl: 43123,
+        transport: stream(events),
+      }).captureEvents('cap', { maxReconnects: 0 }))
+        seen.push(event);
+      return seen;
+    };
+    const event = { captureId: 'cap', kind: 'pdf', eventType: 'checkpoint', stage: 'extracting' };
+
+    const seen = await read([
+      { ...event, sequence: 1, pagesDone: 0, pagesTotal: 12 },
+      { ...event, sequence: 2, pagesDone: 1, pagesTotal: 12 },
+      { ...event, sequence: 3, eventType: 'completed' },
+    ]);
+    expect(seen.map((item) => item.pagesDone ?? null)).toEqual([0, 1, null]);
+    const audio = await read([
+      { ...event, kind: 'audio', sequence: 1, coveredUntilMs: 60_000, durationMs: 120_000 },
+      { ...event, kind: 'audio', sequence: 2, eventType: 'completed' },
+    ]);
+    expect(audio[0]?.durationMs).toBe(120_000);
+    await expect(
+      read([{ ...event, sequence: 1, pagesDone: 13, pagesTotal: 12 }]),
+    ).rejects.toBeInstanceOf(CaptureRuntimeProtocolError);
+    await expect(
+      read([{ ...event, sequence: 1, durationMs: 1000 }]),
+    ).rejects.toBeInstanceOf(CaptureRuntimeProtocolError);
   });
 
   it('rejects OCR projections with invalid page, box, provenance, and terminal invariants', async () => {

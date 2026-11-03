@@ -21,6 +21,7 @@ from capture_runtime.contracts import (
     CaptureOcrProjectionV3,
     CaptureOperationV2,
     CaptureSource,
+    CaptureSourceKind,
     IngestionV2,
     OpenIngestionV2,
     PartialCaptureV2,
@@ -79,6 +80,26 @@ def _identifier(value: str) -> str:
     if normalized != value.lower() or _SAFE_ID.fullmatch(normalized) is None:
         raise StreamingRecordNotFoundError(value)
     return normalized
+
+
+def _progress_update(operation: CaptureOperationV2, event: CaptureEventV2) -> dict[str, int]:
+    """The page and media progress an event moves the operation to.
+
+    Counts only move forward, so a late or repeated checkpoint never shows a
+    host fewer pages or less covered time than it already saw.
+    """
+    update: dict[str, int] = {}
+    if event.pages_total is not None and event.pages_done is not None:
+        done = event.pages_done
+        if operation.pages_total == event.pages_total and operation.pages_done is not None:
+            done = max(done, operation.pages_done)
+        update["pages_total"] = event.pages_total
+        update["pages_done"] = done
+    if event.duration_ms is not None:
+        update["duration_ms"] = event.duration_ms
+    if event.covered_until_ms is not None and operation.kind is CaptureSourceKind.AUDIO:
+        update["covered_until_ms"] = max(operation.covered_until_ms or 0, event.covered_until_ms)
+    return update
 
 
 class StreamingRepository:
@@ -293,7 +314,15 @@ class StreamingRepository:
         segments: list[Any] | None = None,
         error: CaptureFailureV2 | None = None,
         progress: float | None = None,
+        pages: tuple[int, int] | None = None,
+        duration_ms: int | None = None,
     ) -> CaptureEventV2:
+        """Append an event and fold its progress into the operation.
+
+        `pages` is (pagesDone, pagesTotal) for a document; `duration_ms` and
+        `covered_until_ms` describe an audio source. The event validates them
+        against the capture kind before anything is written.
+        """
         with self._lock:
             record = self._get_capture(capture_id)
             sequence = record.operation.last_event_sequence + 1
@@ -310,25 +339,31 @@ class StreamingRepository:
                 segments=segments or [],
                 error=error,
                 created_at=self._clock.now(),
+                pages_done=None if pages is None else pages[0],
+                pages_total=None if pages is None else pages[1],
+                duration_ms=duration_ms,
+            )
+            operation = record.operation
+            # Validate before the event is written, so the persisted operation
+            # never holds a combination a reload would reject.
+            updated = CaptureOperationV2.model_validate(
+                {
+                    **operation.model_dump(),
+                    "last_event_sequence": sequence,
+                    "partial_revision": max(operation.partial_revision, partial_revision or 0),
+                    "progress": (
+                        operation.progress
+                        if progress is None
+                        else max(operation.progress or 0, progress)
+                    ),
+                    **_progress_update(operation, event),
+                    "updated_at": self._clock.now(),
+                }
             )
             self._persistence.append_event(
                 self._capture_directory(capture_id) / "events.jsonl", event
             )
-            now = self._clock.now()
-            record.operation = record.operation.model_copy(
-                update={
-                    "last_event_sequence": sequence,
-                    "partial_revision": max(
-                        record.operation.partial_revision, partial_revision or 0
-                    ),
-                    "progress": (
-                        record.operation.progress
-                        if progress is None
-                        else max(record.operation.progress or 0, progress)
-                    ),
-                    "updated_at": now,
-                }
-            )
+            record.operation = updated
             self._persist_capture(record)
             return event
 
@@ -364,6 +399,10 @@ class StreamingRepository:
                     kind=record.operation.kind,
                     progress=record.operation.progress,
                     partial_revision=record.operation.partial_revision,
+                    covered_until_ms=record.operation.covered_until_ms,
+                    pages_done=record.operation.pages_done,
+                    pages_total=record.operation.pages_total,
+                    duration_ms=record.operation.duration_ms,
                     created_at=self._clock.now(),
                 )
             ]

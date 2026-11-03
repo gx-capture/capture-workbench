@@ -178,6 +178,8 @@ def test_pdf_page_progress_reaches_http_before_worker_terminal(
         current = client.get(f"/v2/captures/{capture_id}").json()
         assert current["status"] == "extracting"
         assert current["progress"] == pytest.approx(0.45)
+        assert (current["pagesDone"], current["pagesTotal"]) == (1, 2)
+        assert current["durationMs"] is None and current["coveredUntilMs"] is None
         assert current["partialRevision"] == 0
         assert client.get(f"/v2/captures/{capture_id}/raw").status_code == 409
         checkpoints = [
@@ -185,7 +187,12 @@ def test_pdf_page_progress_reaches_http_before_worker_terminal(
             for event in service.events(capture_id, after_sequence=0)
             if event.event_type.value == "checkpoint"
         ]
-        assert [event.progress for event in checkpoints] == [0.45]
+        # The page count arrives before the first page, then each page moves it.
+        assert [event.progress for event in checkpoints] == [0.0, 0.45]
+        assert [(event.pages_done, event.pages_total) for event in checkpoints] == [
+            (0, 2),
+            (1, 2),
+        ]
         assert all(not event.segments for event in checkpoints)
         assert "private page" not in checkpoints[0].model_dump_json()
         if terminal == "cancel":
@@ -211,6 +218,14 @@ def test_pdf_page_progress_reaches_http_before_worker_terminal(
                 "private page 1",
                 "private page 2",
             ]
+            final = client.get(f"/v2/captures/{capture_id}").json()
+            assert (final["pagesDone"], final["pagesTotal"]) == (2, 2)
+            pages = [
+                (event.pages_done, event.pages_total)
+                for event in service.events(capture_id, after_sequence=0)
+                if event.pages_total is not None
+            ]
+            assert pages == [(0, 2), (1, 2), (2, 2)]
         else:
             assert client.get(f"/v2/captures/{capture_id}/raw").status_code == 409
     finally:
@@ -825,13 +840,18 @@ def test_non_contiguous_pdf_page_selection_keeps_source_page_numbers_end_to_end(
     assert [page["text"] for page in ocr.json()["pages"]] == [
         f"text of source page {page}" for page in selection
     ]
-    checkpoints = [
-        event.progress
-        for event in service.events(capture_id, after_sequence=0)
-        if event.event_type.value == "checkpoint"
-    ]
-    # Progress counts the selected pages: 1 of 4 is a quarter of extraction.
-    assert checkpoints[:4] == pytest.approx([0.225, 0.45, 0.675, 0.9])
+    events = service.events(capture_id, after_sequence=0)
+    checkpoints = [event for event in events if event.event_type.value == "checkpoint"]
+    # Progress counts the selected pages: 1 of 4 is a quarter of extraction,
+    # after a first checkpoint that only says how many pages there are.
+    assert [event.progress for event in checkpoints[:5]] == pytest.approx(
+        [0.0, 0.225, 0.45, 0.675, 0.9]
+    )
+    assert [
+        (event.pages_done, event.pages_total) for event in events if event.pages_total is not None
+    ] == [(0, 4), (1, 4), (2, 4), (3, 4), (4, 4)]
+    operation = client.get(f"/v2/captures/{capture_id}").json()
+    assert (operation["pagesDone"], operation["pagesTotal"]) == (4, 4)
 
 
 def test_all_page_capture_still_rejects_a_source_past_the_page_limit(

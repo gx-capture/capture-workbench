@@ -1522,6 +1522,34 @@ def test_decodes_what_the_runtime_sends_for_speakers() -> None:
     )
 
 
+def test_decodes_page_and_media_progress_the_runtime_sends() -> None:
+    from capture_runtime_client.private.generated_models import (
+        CaptureEventV2,
+        CaptureOperationV2,
+    )
+
+    samples = json.loads(
+        (
+            Path(__file__).resolve().parents[3]
+            / "packages/capture-runtime/tests/fixtures/speaker-wire-samples.json"
+        ).read_text(encoding="utf-8")
+    )
+    document = CaptureOperationV2.model_validate(samples["documentCaptureOperation"])
+    assert (document.pages_done, document.pages_total) == (9, 12)
+    recording = CaptureOperationV2.model_validate(samples["audioCaptureOperation"])
+    assert (recording.covered_until_ms, recording.duration_ms) == (724_000, 2_490_000)
+    event = CaptureEventV2.model_validate(samples["documentCaptureEvent"])
+    assert (event.pages_done, event.pages_total) == (9, 12)
+
+    for progress in (
+        {"pagesDone": 13, "pagesTotal": 12},
+        {"pagesDone": 3, "pagesTotal": None},
+        {"durationMs": 1_000},
+    ):
+        with pytest.raises(ValidationError):
+            CaptureOperationV2.model_validate({**samples["documentCaptureOperation"], **progress})
+
+
 def test_capture_upload_asks_for_speakers_only_when_told() -> None:
     assert CaptureUpload("meeting.wav", b"audio", "audio").identify_speakers is False
     assert (

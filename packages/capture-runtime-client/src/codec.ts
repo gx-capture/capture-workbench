@@ -44,7 +44,7 @@ const MODEL_FIELDS: Record<RuntimeResponseModel, { readonly required: readonly s
   RawCapture: { required: ['schemaVersion', 'diagnosticOnly', 'source', 'segments', 'sourceText', 'extractionEngine', 'createdAt'], optional: ['warnings'] },
   CaptureOcrProjection: { required: ['apiVersion', 'schemaVersion', 'captureId', 'status', 'pages', 'pageCount', 'runtimeVersion', 'contractSha256', 'provenance', 'createdAt'], optional: ['source', 'warnings', 'failure'] },
   CaptureDocument: { required: ['blocks', 'completedAt', 'createdAt', 'extractionEngine', 'rawSegments', 'schemaVersion', 'source', 'sourceText', 'structuringEngine', 'targetText'], optional: ['warnings'] },
-  CaptureOperation: { required: ['protocolVersion', 'captureId', 'ingestionId', 'status', 'partialRevision', 'lastEventSequence', 'createdAt', 'updatedAt'], optional: ['kind', 'progress', 'source', 'error', 'completedAt'] },
+  CaptureOperation: { required: ['protocolVersion', 'captureId', 'ingestionId', 'status', 'partialRevision', 'lastEventSequence', 'createdAt', 'updatedAt'], optional: ['kind', 'progress', 'source', 'error', 'completedAt', 'pagesTotal', 'pagesDone', 'durationMs', 'coveredUntilMs'] },
   Ingestion: { required: ['protocolVersion', 'ingestionId', 'status', 'fileName', 'mediaType', 'totalBytes', 'receivedBytes', 'contiguousBytes', 'nextChunkIndex', 'nextOffset', 'expiresAt'], optional: ['kind', 'sourceSha256', 'finalizedSha256'] },
   PartialCapture: { required: ['protocolVersion', 'captureId', 'source', 'revision', 'coveredUntilMs', 'updatedAt'], optional: ['segments', 'sourceText', 'extractionEngine'] },
   StreamingResult: { required: ['operation', 'raw', 'result'], optional: [] },
@@ -90,6 +90,7 @@ function validateModelShape(value: unknown, model: RuntimeResponseModel): void {
   if (model === 'CaptureOcrProjection') validateCaptureOcrProjection(record);
   if (model === 'RuntimeReady') validateRuntimeReady(record);
   if (model === 'RuntimeInstallation') validateRuntimeInstallationDownload(record);
+  if (model === 'CaptureOperation') assertCaptureProgress(record, 'CaptureOperation');
   if (model === 'StructuringSession') validateStructuringSession(record);
   if (model === 'StructuringBatch') validateStructuringBatch(record);
 }
@@ -613,6 +614,36 @@ function sameOcrProvenance(left: unknown, right: unknown): boolean {
     leftRecord['profileSpecSha256'] === rightRecord['profileSpecSha256'] &&
     leftRecord['reason'] === rightRecord['reason']
   );
+}
+
+/**
+ * Page counts come as a pair for a document capture, and the count never passes
+ * the total; media times belong to an audio capture. Used for operations and
+ * for SSE capture events, which carry the same progress fields.
+ */
+export function assertCaptureProgress(record: Record<string, unknown>, label: string): void {
+  const kind = record['kind'] ?? 'audio';
+  const done = record['pagesDone'] ?? null;
+  const total = record['pagesTotal'] ?? null;
+  if (done !== null || total !== null) {
+    if (
+      (kind !== 'pdf' && kind !== 'image') ||
+      !isSafeIntegerAtLeast(total, 1) ||
+      !isSafeIntegerAtLeast(done, 0) ||
+      done > total
+    ) {
+      throw new CaptureRuntimeProtocolError(`Capture Runtime returned invalid ${label} page progress.`);
+    }
+  }
+  // Events carried coveredUntilMs before the kind rule; operations follow it.
+  const mediaFields = label === 'CaptureOperation' ? ['durationMs', 'coveredUntilMs'] : ['durationMs'];
+  for (const field of mediaFields) {
+    const value = record[field] ?? null;
+    if (value === null) continue;
+    if (kind !== 'audio' || !isSafeIntegerAtLeast(value, 0)) {
+      throw new CaptureRuntimeProtocolError(`Capture Runtime returned invalid ${label} ${field}.`);
+    }
+  }
 }
 
 /** Download bytes come as a pair, and the count never passes the total. */

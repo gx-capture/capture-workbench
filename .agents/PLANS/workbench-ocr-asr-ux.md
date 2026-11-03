@@ -74,7 +74,7 @@ The `Cargo.toml` description "Tauri verification harness" and `apps/capture-work
 1. **First-run card** on `/ocr` (the LAW `recognition-setup-card` pattern). It offers two choices, 文字辨識 (約 144 MB) and 錄音轉文字 (約 2.8 GB) + 說話者辨識 (約 0.3 GB), plus 稍後再說. Nothing downloads until the user clicks.
 2. **Drop or choose files.** If OCR is missing, the file still enters the queue and its row shows the LAW `recognition-feature-prompt`: 「需要文字辨識（約 144 MB）」[安裝]. The file starts by itself once the install finishes.
 3. **Options are part of the drop step, shown only for PDFs:** 頁數範圍 and 直書日文 (when the vertical reader is installed). Until the `1..K` validators are relaxed and the page count is probed, the range is 前 K 頁. A crop for images can come later (Cert Prep `source-image-crop-dialog`).
-4. **Progress:** a row per file showing the stage, a percentage and a 取消 button, with 重試 after a failure. A count like 第 9/12 頁 needs page fields in `CaptureOperationV2`. After a reload, the app re-attaches to running captures. After a full restart, unfinished files show 已中斷 with 重新開始.
+4. **Progress:** a row per file showing the stage, a percentage and a 取消 button, with 重試 after a failure. A count like 第 9/12 頁 comes from `pagesDone` and `pagesTotal` in `CaptureOperationV2` (also on SSE events). After a reload, the app re-attaches to running captures. After a full restart, unfinished files show 已中斷 with 重新開始.
 5. **Review:** source page on the left, editable text on the right, synced by page. Images are shown as they are; PDF pages need a rasteriser (Q5). Edits are a separate layer; the recognized text is kept, and 還原 restores it.
 6. **Export:** .txt and .md (with page headings), plus 複製全部. Both are built from the raw text plus the edits layer, so export works without Ollama. JSON moves to 診斷.
 
@@ -82,7 +82,7 @@ The `Cargo.toml` description "Tauri verification harness" and `apps/capture-work
 
 1. **Install panel.** Without the engine, `/asr` shows this panel in place of the drop zone. It lists 語音轉文字 (required) and 說話者辨識 (optional), each with its size and the facts from `CAPTURE_UNIT_GUIDES` (台灣華語、中英夾雜；不支援台語、客語；錄音不會離開這台電腦). The rest of the app stays usable while it downloads.
 2. **Drop a recording.** Before starting, a compact options row offers 語言 (default 中文; needs `spokenLanguage` wired through Tauri) and 分辨說話者 (only if diarization is installed; otherwise 「安裝說話者辨識（約 0.3 GB）」). It notes that turning on speakers removes the live partial transcript, as the contract says.
-3. **Progress:** 已聽到 mm:ss (`coveredUntilMs`; showing the total length needs a duration probe), the live partial transcript (`streaming-partial`) and 取消. Formats that WebView2 cannot play still get a transcript; the player shows 「這種格式無法在這裡播放」.
+3. **Progress:** 已聽到 mm:ss / total (`coveredUntilMs` and `durationMs` in `CaptureOperationV2`; absent with speaker identification), the live partial transcript (`streaming-partial`) and 取消. Formats that WebView2 cannot play still get a transcript; the player shows 「這種格式無法在這裡播放」.
 4. **Review:** a player stays fixed at the top, and below it is a table of timed lines (時間 · 說話者 · 文字). Clicking a time seeks the player; double-clicking the text edits it. 說話者 is a sub-page with a sample clip and a name field for each speaker, so a name is entered once and applied to every line.
 5. **Export:** .txt (with times and names), .srt and .vtt subtitles, .md, and 複製全部.
 

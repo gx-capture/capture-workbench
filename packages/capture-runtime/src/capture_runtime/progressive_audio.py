@@ -89,6 +89,8 @@ class ProgressiveSessionEvent:
     extraction_engine: CaptureEngine | None = None
     # The capture's progress, which the runtime sets from covered time.
     progress: float | None = None
+    # The recording's length, which the runtime sets from its container probe.
+    duration_ms: int | None = None
 
 
 class ProgressiveAudioSession:
