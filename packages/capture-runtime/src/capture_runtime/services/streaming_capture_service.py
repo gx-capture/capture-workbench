@@ -107,6 +107,10 @@ class StreamingCaptureService:
         # retained here while waiting for a host-owned commit.
         self._pending_execution_proofs: dict[str, OcrExecutionDeviceProofV1] = {}
         self._shutting_down = False
+        # Cleared while an engine is uninstalled: a capture started meanwhile
+        # waits here instead of reaching an engine whose files are going away.
+        self._engines_available = asyncio.Event()
+        self._engines_available.set()
 
     def open_ingestion(self, request: OpenIngestionV2) -> IngestionV2:
         return self.repository.create_ingestion(request)
@@ -365,6 +369,26 @@ class StreamingCaptureService:
         self._pending_execution_proofs.clear()
         await self._release_warm_speech_worker(shutdown=True)
 
+    def has_active_capture(self) -> bool:
+        return self.repository.has_active_capture()
+
+    def hold_new_captures(self) -> bool:
+        """Keep new captures from reaching an engine; False, holding nothing, while one runs."""
+
+        if self.repository.has_active_capture():
+            return False
+        self._engines_available.clear()
+        return True
+
+    async def release_warm_workers(self) -> None:
+        """Close the idle speech and OCR workers, which keep engine files open."""
+
+        await self._release_warm_speech_worker()
+        await self._release_warm_ocr_worker()
+
+    def resume_captures(self) -> None:
+        self._engines_available.set()
+
     async def _release_warm_speech_worker(self, *, shutdown: bool = False) -> None:
         # A warm speech worker holds about 6 GB of GPU memory; buffered speech,
         # speaker and OCR extraction need it, and shutdown must not leave it.
@@ -397,6 +421,7 @@ class StreamingCaptureService:
     async def _process(self, capture_id: str, cancellation: asyncio.Event) -> None:
         raw_written = False
         try:
+            await self._engines_available.wait()
             operation = self.repository.get_capture(capture_id)
             if operation.status is StreamingCaptureStatus.CANCELLED:
                 return

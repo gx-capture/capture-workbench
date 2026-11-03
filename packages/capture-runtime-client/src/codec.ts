@@ -16,6 +16,7 @@ import type {
 export type RuntimeResponseModel =
   | 'RuntimeReady'
   | 'RuntimeStreamingCapabilities'
+  | 'RuntimeRequirement'
   | 'RuntimeRequirements'
   | 'RuntimeInstallation'
   | 'RuntimeInstallations'
@@ -34,6 +35,7 @@ export type RuntimeResponseModel =
 const MODEL_FIELDS: Record<RuntimeResponseModel, { readonly required: readonly string[]; readonly optional: readonly string[] }> = {
   RuntimeReady: { required: ['ready', 'service', 'apiVersion', 'runtimeVersion', 'captureDocumentSchemaVersion', 'capabilities'], optional: ['message', 'captureDocumentSchemaSha256', 'schemaSha256', 'contractSetVersion', 'ocrCompute'] },
   RuntimeStreamingCapabilities: { required: ['protocolVersion', 'maxChunkBytes', 'checkpointIntervalMs', 'heartbeatIntervalMs', 'stallTimeoutMs'], optional: ['captureKinds', 'supportsProgressiveAudio'] },
+  RuntimeRequirement: { required: ['requirementId', 'kind', 'displayName', 'status', 'requiredFor', 'installStrategy'], optional: ['optional', 'detail', 'artifact', 'downloadBytes'] },
   RuntimeRequirements: { required: ['items'], optional: [] },
   RuntimeInstallation: { required: ['installationId', 'requirementId', 'status', 'progress', 'createdAt', 'updatedAt'], optional: ['error', 'completedAt', 'downloadBytes', 'downloadedBytes'] },
   RuntimeInstallations: { required: ['items'], optional: [] },

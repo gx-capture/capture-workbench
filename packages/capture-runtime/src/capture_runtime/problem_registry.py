@@ -177,6 +177,25 @@ DEFAULT_PROBLEM_REGISTRY = ProblemRegistry(
             "validation",
         ),
         _definition(
+            "requirement_not_found",
+            404,
+            "The requested runtime requirement is unknown.",
+            "not_found",
+        ),
+        _definition(
+            "requirement_not_uninstallable",
+            422,
+            "The requested runtime requirement is not an engine that can be uninstalled.",
+            "validation",
+        ),
+        _definition(
+            "requirement_in_use",
+            409,
+            "The requirement cannot be uninstalled while an installation or capture is active.",
+            "conflict",
+            retryable=True,
+        ),
+        _definition(
             "requirement_unavailable",
             503,
             "The requested runtime requirement is unavailable.",

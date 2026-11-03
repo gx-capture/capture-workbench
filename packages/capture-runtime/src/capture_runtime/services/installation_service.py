@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import suppress
+from typing import Protocol
 
 from capture_runtime.clock import Clock
 from capture_runtime.contracts import (
@@ -54,6 +55,24 @@ def installation_failure_code(error: BaseException) -> str:
     return "installation_failed"
 
 
+class RequirementInUseError(RuntimeError):
+    """An installation of the requirement or a capture has not finished."""
+
+
+class CaptureGate(Protocol):
+    """The captures an uninstall must not run beside."""
+
+    def has_active_capture(self) -> bool: ...
+
+    def hold_new_captures(self) -> bool:
+        """Keep new captures from reaching an engine; False, holding nothing, while one runs."""
+        ...
+
+    async def release_warm_workers(self) -> None: ...
+
+    def resume_captures(self) -> None: ...
+
+
 class InstallationService:
     def __init__(
         self,
@@ -97,6 +116,35 @@ class InstallationService:
 
     def list(self) -> list[RuntimeInstallationV2]:
         return self.repository.list()
+
+    async def uninstall(self, requirement_id: str, *, captures: CaptureGate) -> None:
+        """Remove an installed engine unit while no installation or capture can use it.
+
+        Raises RequirementInUseError while an installation of the requirement or
+        any capture has not finished: which engine a capture uses is not
+        tracked. Uninstalling holds the install lock, so it never runs beside an
+        installation, and the last check and holding new captures happen without
+        yielding to the event loop, so nothing can start in between.
+        """
+
+        if self._has_active_installation(requirement_id) or captures.has_active_capture():
+            raise RequirementInUseError(requirement_id)
+        async with self._install_lock:
+            # Checked again: a job or capture may have started while this waited.
+            if self._has_active_installation(requirement_id) or not captures.hold_new_captures():
+                raise RequirementInUseError(requirement_id)
+            try:
+                await captures.release_warm_workers()
+                await self.installer.uninstall(requirement_id)
+            finally:
+                captures.resume_captures()
+
+    def _has_active_installation(self, requirement_id: str) -> bool:
+        return any(
+            job.requirement_id == requirement_id
+            and job.status not in TERMINAL_INSTALLATION_STATUSES
+            for job in self.repository.list()
+        )
 
     async def cancel(self, installation_id: str) -> RuntimeInstallationV2:
         job = self.get(installation_id)
@@ -278,4 +326,4 @@ class InstallationService:
         )
 
 
-__all__ = ["InstallationService"]
+__all__ = ["CaptureGate", "InstallationService", "RequirementInUseError"]

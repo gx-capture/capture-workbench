@@ -58,6 +58,24 @@ Mandarin–English), the hardware it uses, its download size and its license. Th
 shows the same guide when its host asks for a speech unit. The runtime now reports
 `speech-recognition` as `optional`.
 
+### Uninstall an engine (contract change)
+
+Hosts can remove an installed engine to free disk space.
+
+- `DELETE /v2/runtime/requirements/{requirementId}/installation` removes the
+  engine's files and the cached downloads no other engine uses, then returns
+  the `RuntimeRequirementV2`, now not installed. Uninstalling a requirement
+  that is not installed returns it unchanged; no idempotency key is needed.
+- Errors: `requirement_not_found` (404), `requirement_disabled` (422, a
+  requirement this process delegates), `requirement_not_uninstallable` (422,
+  anything the engine installer does not own, such as the Ollama model) and
+  `requirement_in_use` (409, while its installation or any capture has not
+  finished, or while its files are still open).
+- The TypeScript client adds `uninstallRequirement(requirementId)` and the
+  Python client `uninstall_requirement(requirement_id)`. The operation is
+  additive, but the contract set hash changes and clients pin it, so LAW and
+  Cert move to this release together with the runtime.
+
 ### Download size and downloaded bytes (contract change)
 
 The runtime now says how big a download is and how much of it has arrived, so

@@ -29,7 +29,7 @@ def test_default_contract_set_is_deterministic_and_covers_v2() -> None:
     assert first.sha256 == hashlib.sha256(first.bundle_bytes).hexdigest()
     assert first.index["sha256"] == first.sha256
     assert {surface["id"] for surface in first.bundle["surfaces"]} == {"v2"}
-    assert len(first.bundle["operations"]) == 32
+    assert len(first.bundle["operations"]) == 33
     assert {operation["surface"] for operation in first.bundle["operations"]} == {"v2"}
     assert any(
         operation["path"] == "/v2/captures/{capture_id}/events"
@@ -48,6 +48,23 @@ def test_default_contract_set_is_deterministic_and_covers_v2() -> None:
     }
     assert statuses["v2.ingestions.open"] == (201,)
     assert statuses["v2.captures.start"] == (202,)
+    uninstall = next(
+        operation
+        for operation in first.bundle["operations"]
+        if operation["id"] == "v2.runtime.requirements.uninstall"
+    )
+    assert (uninstall["method"], uninstall["path"], uninstall["responseSchema"]) == (
+        "DELETE",
+        "/v2/runtime/requirements/{requirement_id}/installation",
+        "RuntimeRequirementV2",
+    )
+    assert uninstall["idempotency"]["mode"] == "none"
+    assert {
+        "requirement_not_found",
+        "requirement_disabled",
+        "requirement_not_uninstallable",
+        "requirement_in_use",
+    } <= set(uninstall["problems"])
     assert any(schema["name"] == "CaptureDocument" for schema in first.bundle["schemas"])
     unauthorized = next(
         problem for problem in first.bundle["problems"] if problem["code"] == "unauthorized"

@@ -205,3 +205,11 @@ class RuntimeInstaller(Protocol):
         cancel_event: asyncio.Event,
         report_progress: Callable[[float], None],
     ) -> None: ...
+
+    def is_uninstallable(self, requirement_id: str) -> bool:
+        """Whether the requirement is an engine install unit this installer can remove."""
+        ...
+
+    async def uninstall(self, requirement_id: str) -> None:
+        """Remove an installed engine unit; a unit that is not installed is a no-op."""
+        ...

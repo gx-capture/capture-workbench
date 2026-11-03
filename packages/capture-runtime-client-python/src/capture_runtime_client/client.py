@@ -49,6 +49,7 @@ from .contracts import (
     RuntimeModelInstallation,
     RuntimeModelOptions,
     RuntimeReady,
+    RuntimeRequirement,
     RuntimeRequirements,
     RuntimeStreamingCapabilities,
     StructuringBatch,
@@ -196,6 +197,18 @@ class CaptureRuntimeClient:
         return decode_model(
             self._request("POST", f"/v2/runtime/installations/{_safe_id(installation_id)}/cancel"),
             RuntimeInstallation,
+        )
+
+    def uninstall_requirement(self, requirement_id: str) -> RuntimeRequirement:
+        """Remove an installed engine to free disk space; return the requirement, not installed.
+
+        Uninstalling a requirement that is not installed returns it unchanged.
+        """
+        return decode_model(
+            self._request(
+                "DELETE", f"/v2/runtime/requirements/{_safe_id(requirement_id)}/installation"
+            ),
+            RuntimeRequirement,
         )
 
     def get_model_options(self) -> RuntimeModelOptions:

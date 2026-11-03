@@ -177,3 +177,126 @@ def test_v2_contract_discovery_is_immutable_and_authenticated(client: TestClient
     assert bundle.status_code == 200
     assert bundle.headers["etag"] == index.headers["etag"]
     assert client.get(href, headers={"If-None-Match": bundle.headers["etag"]}).status_code == 304
+
+
+def _uninstall(client: TestClient, requirement_id: str):
+    return client.delete(f"/v2/runtime/requirements/{requirement_id}/installation")
+
+
+def test_v2_uninstall_returns_the_requirement_not_installed_and_repeats_safely(
+    settings_factory,
+) -> None:
+    settings = settings_factory()
+    installer = FakeRuntimeInstaller(initially_ready={"windowsml-ocr"})
+    with TestClient(
+        create_app(settings, installer=installer),
+        base_url=f"http://127.0.0.1:{settings.port}",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+    ) as client:
+        first = _uninstall(client, "windowsml-ocr")
+        second = _uninstall(client, "windowsml-ocr")
+
+    assert first.status_code == 200, first.text
+    assert first.json()["requirementId"] == "windowsml-ocr"
+    assert first.json()["status"] == "installable"
+    assert "windowsml-ocr" not in installer.ready
+    assert second.status_code == 200
+    assert second.json() == first.json()
+
+
+def test_v2_uninstall_rejects_unknown_disabled_and_non_engine_requirements(
+    settings_factory,
+) -> None:
+    settings = settings_factory()
+    with TestClient(
+        create_app(settings, installer=FakeRuntimeInstaller()),
+        base_url=f"http://127.0.0.1:{settings.port}",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+    ) as client:
+        unknown = _uninstall(client, "no-such-engine")
+        model = _uninstall(client, "capture-ollama-model")
+    host_settings = settings_factory(CAPTURE_STRUCTURING_PROVIDER="host")
+    with TestClient(
+        create_app(host_settings, installer=FakeRuntimeInstaller()),
+        base_url=f"http://127.0.0.1:{host_settings.port}",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+    ) as client:
+        disabled = _uninstall(client, "capture-ollama-model")
+
+    assert (unknown.status_code, unknown.json()["error"]["code"]) == (
+        404,
+        "requirement_not_found",
+    )
+    assert (model.status_code, model.json()["error"]["code"]) == (
+        422,
+        "requirement_not_uninstallable",
+    )
+    assert (disabled.status_code, disabled.json()["error"]["code"]) == (
+        422,
+        "requirement_disabled",
+    )
+
+
+def test_v2_uninstall_conflicts_while_its_installation_runs(settings_factory) -> None:
+    settings = settings_factory()
+    installer = FakeRuntimeInstaller(initially_ready={"windowsml-ocr"}, delay_seconds=30)
+    with TestClient(
+        create_app(settings, installer=installer),
+        base_url=f"http://127.0.0.1:{settings.port}",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+    ) as client:
+        created = client.post(
+            "/v2/runtime/installations",
+            headers=idempotency_headers(),
+            json={"requirementId": "windowsml-ocr", "consent": True},
+        )
+        assert created.status_code == 202, created.text
+        in_use = _uninstall(client, "windowsml-ocr")
+        cancelled = client.post(
+            f"/v2/runtime/installations/{created.json()['installationId']}/cancel"
+        )
+        assert cancelled.status_code == 200, cancelled.text
+        after = _uninstall(client, "windowsml-ocr")
+
+    assert (in_use.status_code, in_use.json()["error"]["code"]) == (409, "requirement_in_use")
+    assert after.status_code == 200, after.text
+    assert after.json()["status"] == "installable"
+
+
+def test_v2_uninstall_conflicts_while_a_capture_is_active(settings_factory) -> None:
+    settings = settings_factory()
+    installer = FakeRuntimeInstaller(initially_ready={"speech-recognition"})
+    with TestClient(
+        create_app(settings, installer=installer),
+        base_url=f"http://127.0.0.1:{settings.port}",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+    ) as client:
+        ingestion = client.post(
+            "/v2/ingestions",
+            json={
+                "clientRequestId": "uninstall-ingestion",
+                "fileName": "sample.mp3",
+                "mediaType": "audio/mpeg",
+                "totalBytes": 4,
+            },
+            headers={"X-Idempotency-Key": "uninstall-ingestion"},
+        )
+        assert ingestion.status_code == 201, ingestion.text
+        capture = client.post(
+            "/v2/captures",
+            json={
+                "clientRequestId": "uninstall-capture",
+                "ingestionId": ingestion.json()["ingestionId"],
+                "structuringMode": "host",
+            },
+            headers={"X-Idempotency-Key": "uninstall-capture"},
+        )
+        assert capture.status_code == 202, capture.text
+        in_use = _uninstall(client, "speech-recognition")
+        cancelled = client.post(f"/v2/captures/{capture.json()['captureId']}/cancel")
+        assert cancelled.status_code == 200, cancelled.text
+        after = _uninstall(client, "speech-recognition")
+
+    assert (in_use.status_code, in_use.json()["error"]["code"]) == (409, "requirement_in_use")
+    assert after.status_code == 200, after.text
+    assert "speech-recognition" not in installer.ready

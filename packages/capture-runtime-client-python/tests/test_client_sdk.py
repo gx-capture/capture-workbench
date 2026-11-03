@@ -1131,6 +1131,52 @@ def test_model_installation_operations_and_failure_idempotency_header() -> None:
     assert captured_headers["x-idempotency-key"] == "failure-1"
 
 
+def test_uninstall_requirement_deletes_its_installation_and_checks_the_reply() -> None:
+    requirement = {
+        "requirementId": "speech-recognition",
+        "kind": "transcription",
+        "displayName": "Speech recognition",
+        "status": "installable",
+        "requiredFor": ["audio"],
+        "installStrategy": "runtime-artifact",
+        "downloadBytes": 1024,
+    }
+    replies: list[httpx.Response] = [
+        httpx.Response(200, json=requirement),
+        httpx.Response(200, json={**requirement, "installedAt": "2026-01-01T00:00:00+00:00"}),
+        httpx.Response(
+            409,
+            json={
+                "error": {
+                    "code": "requirement_in_use",
+                    "message": "An installation or capture is active.",
+                    "details": {"category": "conflict", "retryable": False},
+                }
+            },
+        ),
+    ]
+    methods: list[str] = []
+
+    def reply(request: httpx.Request) -> httpx.Response:
+        methods.append(request.method)
+        return replies.pop(0)
+
+    transport = _transport(
+        {("DELETE", "/v2/runtime/requirements/speech-recognition/installation"): reply}
+    )
+    client = CaptureRuntimeClient(transport=transport)
+
+    uninstalled = client.uninstall_requirement("speech-recognition")
+    assert uninstalled.requirement_id == "speech-recognition"
+    assert uninstalled.status.value == "installable"
+    assert methods == ["DELETE"]
+    with pytest.raises(CaptureProtocolError):
+        client.uninstall_requirement("speech-recognition")
+    with pytest.raises(CaptureRemoteError) as in_use:
+        client.uninstall_requirement("speech-recognition")
+    assert in_use.value.code == "requirement_in_use"
+
+
 def test_public_python_sdk_is_v2_only_and_hides_generated_wire_module() -> None:
     import capture_runtime_client as sdk
     import capture_runtime_client.contracts as contracts

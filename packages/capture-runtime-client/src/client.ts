@@ -192,6 +192,24 @@ export class CaptureRuntimeClient {
     );
   }
 
+  /**
+   * Remove an installed engine to free disk space and return the requirement,
+   * now not installed. Uninstalling one that is not installed returns it as is.
+   */
+  uninstallRequirement(
+    requirementId: string,
+    signal?: AbortSignal,
+  ): Promise<RuntimeRequirement> {
+    return this.json(
+      {
+        path: `/v2/runtime/requirements/${encodeURIComponent(requirementId)}/installation`,
+        method: 'DELETE',
+        signal,
+      },
+      'RuntimeRequirement',
+    );
+  }
+
   /** List the structuring model options the runtime allows. */
   getModelOptions(signal?: AbortSignal): Promise<RuntimeModelOptions> {
     return this.json(

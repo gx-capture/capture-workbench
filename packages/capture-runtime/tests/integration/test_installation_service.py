@@ -4,12 +4,15 @@ import asyncio
 from collections.abc import Callable
 from pathlib import Path
 
+import pytest
+
 from capture_runtime.clock import SystemClock
 from capture_runtime.engine_installation import EngineInstallationError
 from capture_runtime.install_progress import DownloadedBytes, DownloadProgress
 from capture_runtime.services.installation_service import (
     TERMINAL_INSTALLATION_STATUSES,
     InstallationService,
+    RequirementInUseError,
     installation_failure_code,
 )
 from capture_runtime.storage import InstallationRepository
@@ -222,3 +225,130 @@ async def _test_installation_reports_downloaded_bytes(tmp_path: Path) -> None:
     reloaded.initialize()
     stored = reloaded.get(job.installation_id).job
     assert (stored.downloaded_bytes, stored.download_bytes) == (1000, 1000)
+
+
+class UninstallingInstaller:
+    def __init__(self, events: list[str]) -> None:
+        self.events = events
+
+    def requirements(self, _enabled_requirement_ids=None):
+        return []
+
+    async def install(
+        self,
+        requirement_id: str,
+        *,
+        cancel_event: asyncio.Event,
+        report_progress: Callable[[float], None],
+        report_download: DownloadProgress | None = None,
+    ) -> None:
+        del cancel_event, report_download
+        self.events.append(f"install:{requirement_id}")
+        report_progress(1)
+
+    def is_uninstallable(self, _requirement_id: str) -> bool:
+        return True
+
+    async def uninstall(self, requirement_id: str) -> None:
+        self.events.append(f"uninstall:{requirement_id}")
+
+
+class RecordingCaptureGate:
+    def __init__(self, events: list[str], *, active: bool = False, holdable: bool = True) -> None:
+        self.events = events
+        self.active = active
+        self.holdable = holdable
+
+    def has_active_capture(self) -> bool:
+        return self.active
+
+    def hold_new_captures(self) -> bool:
+        self.events.append("hold" if self.holdable else "hold-refused")
+        return self.holdable
+
+    async def release_warm_workers(self) -> None:
+        self.events.append("release")
+
+    def resume_captures(self) -> None:
+        self.events.append("resume")
+
+
+def _uninstall_service(tmp_path: Path, events: list[str]) -> InstallationService:
+    repository = InstallationRepository(
+        tmp_path / "installations", clock=SystemClock(), retention_hours=24
+    )
+    repository.initialize()
+    return InstallationService(
+        repository, installer=UninstallingInstaller(events), clock=SystemClock()
+    )
+
+
+def test_uninstall_holds_new_captures_around_the_removal(tmp_path: Path) -> None:
+    events: list[str] = []
+    service = _uninstall_service(tmp_path, events)
+
+    asyncio.run(service.uninstall("windowsml-ocr", captures=RecordingCaptureGate(events)))
+
+    assert events == ["hold", "release", "uninstall:windowsml-ocr", "resume"]
+
+
+def test_uninstall_refuses_while_a_capture_is_active_or_starts_meanwhile(tmp_path: Path) -> None:
+    events: list[str] = []
+    service = _uninstall_service(tmp_path, events)
+
+    with pytest.raises(RequirementInUseError):
+        asyncio.run(
+            service.uninstall("windowsml-ocr", captures=RecordingCaptureGate(events, active=True))
+        )
+    with pytest.raises(RequirementInUseError):
+        asyncio.run(
+            service.uninstall(
+                "windowsml-ocr", captures=RecordingCaptureGate(events, holdable=False)
+            )
+        )
+
+    assert events == ["hold-refused"]
+
+
+def test_uninstall_waits_for_another_installation_and_then_runs_alone(tmp_path: Path) -> None:
+    asyncio.run(_test_uninstall_waits_for_another_installation(tmp_path))
+
+
+async def _test_uninstall_waits_for_another_installation(tmp_path: Path) -> None:
+    events: list[str] = []
+
+    class SlowInstaller(DownloadingInstaller):
+        async def uninstall(self, requirement_id: str) -> None:
+            events.append(f"uninstall:{requirement_id}")
+
+    installer = SlowInstaller()
+    repository = InstallationRepository(
+        tmp_path / "installations", clock=SystemClock(), retention_hours=24
+    )
+    repository.initialize()
+    service = InstallationService(
+        repository,
+        installer=installer,
+        clock=SystemClock(),
+    )
+    job = service.create(
+        idempotency_key="other-install",
+        request_fingerprint="other-install",
+        requirement_id="speech-recognition",
+    )
+    await asyncio.sleep(0.01)
+    with pytest.raises(RequirementInUseError):
+        await service.uninstall("speech-recognition", captures=RecordingCaptureGate(events))
+
+    uninstall = asyncio.create_task(
+        service.uninstall("windowsml-ocr", captures=RecordingCaptureGate(events))
+    )
+    await asyncio.sleep(0.01)
+    assert not uninstall.done()
+    installer.resume.set()
+    await uninstall
+    await _wait_for_terminal(service, job.installation_id)
+    await service.shutdown()
+
+    assert service.get(job.installation_id).status.value == "completed"
+    assert events == ["hold", "release", "uninstall:windowsml-ocr", "resume"]

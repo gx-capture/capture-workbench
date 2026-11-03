@@ -1,6 +1,9 @@
 """Public service facade for capture and runtime-installation jobs."""
 
-from capture_runtime.services.installation_service import InstallationService
+from capture_runtime.services.installation_service import (
+    InstallationService,
+    RequirementInUseError,
+)
 from capture_runtime.services.model_installation_service import ModelInstallationService
 from capture_runtime.services.streaming_capture_service import StreamingCaptureService
 from capture_runtime.services.structuring_session_service import StructuringSessionService
@@ -12,6 +15,7 @@ __all__ = [
     "InstallationService",
     "ModelInstallationService",
     "RecordNotFoundError",
+    "RequirementInUseError",
     "StreamingCaptureService",
     "StructuringSessionService",
     "StructuringValidationError",

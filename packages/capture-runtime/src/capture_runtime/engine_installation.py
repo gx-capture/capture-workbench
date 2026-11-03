@@ -27,7 +27,7 @@ from capture_runtime.worker_client import InstalledEngine, WorkerClient, WorkerP
 from capture_runtime.worker_process import WorkerExecutionError
 
 from . import _engine_installation_limits as _installation_limits
-from ._engine_download_cache import with_shared_cache
+from ._engine_download_cache import VerifiedDownloadCache, default_cache_root, with_shared_cache
 from ._engine_installation_activation import (
     InstalledFileSnapshot as _InstalledFileSnapshot,
 )
@@ -96,6 +96,12 @@ from ._engine_model_units import (
     model_unit_snapshot,
     model_unit_state,
     requirement_model_dir,
+)
+from ._engine_uninstall import (
+    has_unit_files,
+    remove_cached_downloads,
+    remove_installed_markers,
+    remove_unit_files,
 )
 
 DEFAULT_ACTIVE_ENGINE_RESOLUTION_TIMEOUT_SECONDS = (
@@ -262,6 +268,7 @@ class EngineInstallationManager:
         active_engine_resolution_timeout_seconds: float = (
             DEFAULT_ACTIVE_ENGINE_RESOLUTION_TIMEOUT_SECONDS
         ),
+        download_cache: VerifiedDownloadCache | None = None,
     ) -> None:
         if not 0 < active_engine_resolution_timeout_seconds <= 300:
             raise ValueError("active engine resolution timeout must be between 0 and 300 seconds")
@@ -277,6 +284,13 @@ class EngineInstallationManager:
             if local_model_root is not None
             else with_shared_cache(HttpModelFileDownloader())
         )
+        # Uninstall frees the cached downloads of the unit. Only the cache the
+        # default downloaders use is touched on its own; an injected downloader
+        # has its cache passed in, so a test never reaches the machine cache.
+        if download_cache is None and downloader is None and model_downloader is None:
+            cache_root = default_cache_root()
+            download_cache = None if cache_root is None else VerifiedDownloadCache(cache_root)
+        self._download_cache = download_cache
         self._smoke_worker_mirror_url = _smoke_worker_mirror_url()
         self._pdf_ocr_e2e_local_worker_url = _pdf_ocr_e2e_local_worker_url()
         self._locks: dict[str, asyncio.Lock] = {}
@@ -804,6 +818,45 @@ class EngineInstallationManager:
                 version=version,
                 activated=activated,
             )
+
+    async def uninstall(self, requirement_id: str) -> None:
+        """Remove the installed unit and its cached downloads; a unit not installed is a no-op.
+
+        The caller guarantees that no capture or installation is running. The
+        installed marker goes first, so a crash midway leaves the unit reported
+        as not installed; uninstalling again or installing removes what is left.
+        """
+
+        lock = self._locks.setdefault(requirement_id, asyncio.Lock())
+        async with lock:
+            requirement_root = self._requirement_root(requirement_id)
+            if requirement_root.is_dir():
+                with _ExclusiveInstallFile(requirement_root / ".install.lock"):
+                    await asyncio.to_thread(remove_installed_markers, requirement_root)
+                    self._forget_verified(requirement_id)
+                    if await asyncio.to_thread(has_unit_files, requirement_root):
+                        # An idle OCR worker may still hold the files open.
+                        await self.worker_client.shutdown()
+                        await asyncio.to_thread(remove_unit_files, requirement_root)
+            try:
+                requirement = self.requirement(requirement_id)
+            except EngineCatalogError:
+                # A catalog without the unit lists no downloads of it to free.
+                return
+            await asyncio.to_thread(
+                remove_cached_downloads,
+                self._download_cache,
+                requirement,
+                self.catalog.requirements,
+            )
+
+    def _forget_verified(self, requirement_id: str) -> None:
+        with self._verified_active_engines_lock:
+            self._verified_active_engines.pop(requirement_id, None)
+            self._verified_model_units.pop(requirement_id, None)
+        for cache in (self._ocr_compute_preflight_cache, self._ocr_compute_selection_cache):
+            for key in [key for key in cache if key[0].requirement_id == requirement_id]:
+                del cache[key]
 
     async def shutdown(self) -> None:
         await self.worker_client.shutdown()

@@ -676,6 +676,20 @@ def _operation_definitions() -> list[dict[str, Any]]:
                 problems=_COMMON_PROBLEMS + ("installation_not_found",),
             ),
             _operation(
+                "v2.runtime.requirements.uninstall",
+                "v2",
+                "DELETE",
+                f"{v2}/runtime/requirements/{{requirement_id}}/installation",
+                response_schema="RuntimeRequirementV2",
+                problems=_COMMON_PROBLEMS
+                + (
+                    "requirement_not_found",
+                    "requirement_disabled",
+                    "requirement_not_uninstallable",
+                    "requirement_in_use",
+                ),
+            ),
+            _operation(
                 "v2.runtime.model-installations.create",
                 "v2",
                 "POST",

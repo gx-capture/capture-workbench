@@ -93,6 +93,12 @@ class FakeRuntimeInstaller:
         self.ready.add(requirement_id)
         report_progress(1)
 
+    def is_uninstallable(self, requirement_id: str) -> bool:
+        return requirement_id in {WINDOWSML_REQUIREMENT_ID, SPEECH_RECOGNITION_REQUIREMENT_ID}
+
+    async def uninstall(self, requirement_id: str) -> None:
+        self.ready.discard(requirement_id)
+
     async def install_model_option(
         self,
         option_id: str,
