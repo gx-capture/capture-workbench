@@ -501,6 +501,7 @@ class StandaloneRuntimeCaptureExtractor:
                     cancel_event,
                     page_numbers=pdf_page_numbers,
                 )
+                _report_pages_known(ocr_progress, expected_ocr_pages)
                 source_page_count = self._pdf_page_count(content)
                 try:
                     result = await self._extract_pdf_with_worker(
@@ -549,6 +550,7 @@ class StandaloneRuntimeCaptureExtractor:
                 if pdf_page_numbers is not None:
                     raise ValueError("PDF page selection is only valid for PDF sources.")
                 expected_ocr_pages = self._preflight_image_manifest(content, cancel_event)
+                _report_pages_known(ocr_progress, expected_ocr_pages)
                 try:
                     result = await self._run_worker(
                         WINDOWSML_REQUIREMENT_ID,
@@ -1414,6 +1416,16 @@ def _audio_duration_seconds(content: bytes) -> float | None:
             return container.duration / 1_000_000
     except Exception:
         return None
+
+
+def _report_pages_known(
+    ocr_progress: Callable[[int, int], None] | None,
+    page_manifest: tuple[OcrPageManifest, ...],
+) -> None:
+    """Report the pages OCR will read before the first one finishes."""
+
+    if ocr_progress is not None:
+        ocr_progress(0, len(page_manifest))
 
 
 def _stage_progress(

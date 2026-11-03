@@ -31,7 +31,7 @@
  */
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join, posix, relative, resolve } from 'node:path';
+import { dirname, join, posix, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 interface PythonTarget {
@@ -55,7 +55,11 @@ const CONFIG: GateConfig = {
   repoRoot: '..',
   pythonTargets: [
     { cwd: 'packages/capture-runtime', paths: ['src'], library: false },
-    { cwd: 'packages/capture-runtime-client-python', paths: ['src'], library: true },
+    {
+      cwd: 'packages/capture-runtime-client-python',
+      paths: ['src'],
+      library: true,
+    },
   ],
   rust: true,
 };
@@ -93,7 +97,11 @@ const VULTURE_IGNORE_DECORATORS = [
 ];
 
 /** Generated contracts and vendored third-party code are not ours to trim. */
-const VULTURE_EXCLUDE = ['*/generated/*', '*/_vendor/*', '*generated_models.py'];
+const VULTURE_EXCLUDE = [
+  '*/generated/*',
+  '*/_vendor/*',
+  '*generated_models.py',
+];
 
 /**
  * vulture flags every pydantic/dataclass field as an "unused variable" at
@@ -162,7 +170,7 @@ function issueNames(value: unknown): string[] {
 }
 
 /** Gives the n-th repeat of a key an ordinal (`x#2`) so a second identical finding still counts as new. */
-function numbered(keys: string[]): string[] {
+export function numbered(keys: string[]): string[] {
   const seen = new Map<string, number>();
   return keys.map((key) => {
     const count = (seen.get(key) ?? 0) + 1;
@@ -337,7 +345,9 @@ function runRustAllows(repoRoot: string): string[] {
   );
   // git grep exits 1 when nothing matches.
   if (result.status !== 0 && result.status !== 1) {
-    throw new Error(`git grep failed with status ${result.status}:\n${result.stderr}`);
+    throw new Error(
+      `git grep failed with status ${result.status}:\n${result.stderr}`,
+    );
   }
   return parseRustAllows(result.stdout);
 }
@@ -359,27 +369,45 @@ function git(repoRoot: string, args: string[]): string[] {
   return result.stdout.split('\n').filter(Boolean);
 }
 
-function baselinePathOf(repoRoot: string): string {
-  return join(repoRoot, 'tools/quality/dead-code-baseline.json');
+/** One ratchet: a collector of stable keys and the baseline that freezes them. */
+export interface Ratchet {
+  /** Message prefix: `<label> gate:` and `<label> baseline written`. */
+  label: string;
+  /** Singular noun for one key, such as `finding`. */
+  noun: string;
+  /** Baseline path relative to the repo root. */
+  baseline: string;
+  /** Script that owns the baseline, relative to the repo root (for the `--update` hint). */
+  script: string;
+  collect: (repoRoot: string) => string[];
+  formatKey: (key: string) => string;
+  /** Printed after the list of new keys: how to fix them. */
+  fixHint: string[];
 }
 
-function selfCommand(repoRoot: string): string {
-  return `node ${relative(repoRoot, fileURLToPath(import.meta.url)).replace(/\\/g, '/')}`;
-}
-
-function writeBaseline(repoRoot: string): number {
-  const current = collect(repoRoot);
+export function writeRatchetBaseline(
+  repoRoot: string,
+  ratchet: Ratchet,
+): number {
+  const current = ratchet.collect(repoRoot);
   writeFileSync(
-    baselinePathOf(repoRoot),
+    join(repoRoot, ratchet.baseline),
     `${JSON.stringify(current, null, 2)}\n`,
   );
-  console.log(`dead-code baseline written: ${current.length} known findings`);
+  console.log(
+    `${ratchet.label} baseline written: ${current.length} known ${ratchet.noun}s`,
+  );
   return 0;
 }
 
-function check(repoRoot: string, ci: boolean): number {
-  const baselinePath = baselinePathOf(repoRoot);
-  const current = collect(repoRoot);
+export function checkRatchet(
+  repoRoot: string,
+  ratchet: Ratchet,
+  ci: boolean,
+): number {
+  const { label, noun } = ratchet;
+  const baselinePath = join(repoRoot, ratchet.baseline);
+  const current = ratchet.collect(repoRoot);
   const baseline = existsSync(baselinePath)
     ? (JSON.parse(readFileSync(baselinePath, 'utf8')) as string[])
     : [];
@@ -388,30 +416,42 @@ function check(repoRoot: string, ci: boolean): number {
   if (added.length > 0) {
     console.error(
       [
-        `dead-code gate: ${added.length} new finding(s) not in the baseline:`,
-        ...added.map(formatKey),
+        `${label} gate: ${added.length} new ${noun}(s) not in the baseline:`,
+        ...added.map(ratchet.formatKey),
         '',
-        'Fix: delete the unused code (or its leftover export/dependency).',
-        'If it is used in a way the tool cannot see (a CLI entry, DI by string,',
-        'a framework callback), add a knip.json entry or a vulture decorator',
-        'ignore in this script; never add new dead code to the baseline.',
+        ...ratchet.fixHint,
       ].join('\n'),
     );
   }
   if (stale.length > 0) {
     console.error(
       [
-        `dead-code gate: ${stale.length} baseline finding(s) are gone. Shrink the baseline:`,
-        `  ${selfCommand(repoRoot)} --update`,
-        ...stale.map(formatKey),
+        `${label} gate: ${stale.length} baseline ${noun}(s) are gone. Shrink the baseline:`,
+        `  node ${ratchet.script} --update`,
+        ...stale.map(ratchet.formatKey),
       ].join('\n'),
     );
   }
   if (added.length > 0) return 1;
   if (stale.length > 0 && ci) return 1;
-  console.log(`dead-code gate: OK (${current.length} known findings, none new)`);
+  console.log(`${label} gate: OK (${current.length} known ${noun}s, none new)`);
   return 0;
 }
+
+const DEAD_CODE: Ratchet = {
+  label: 'dead-code',
+  noun: 'finding',
+  baseline: 'tools/quality/dead-code-baseline.json',
+  script: 'tools/dead-code-gate.ts',
+  collect,
+  formatKey,
+  fixHint: [
+    'Fix: delete the unused code (or its leftover export/dependency).',
+    'If it is used in a way the tool cannot see (a CLI entry, DI by string,',
+    'a framework callback), add a knip.json entry or a vulture decorator',
+    'ignore in this script; never add new dead code to the baseline.',
+  ],
+};
 
 /**
  * Parses the Stop hook payload. Empty or malformed input counts as a normal
@@ -429,15 +469,25 @@ export function parseHookPayload(raw: string): { stop_hook_active?: boolean } {
 }
 
 /**
- * Reads stdin as a stream. `readFileSync(0)` can throw EAGAIN on a
- * non-blocking pipe (Linux/WSL) before Claude Code has written the payload,
- * which would lose `stop_hook_active` and loop the hook.
+ * Reads the Stop hook payload from stdin as a stream. `readFileSync(0)` can
+ * throw EAGAIN on a non-blocking pipe (Linux/WSL) before Claude Code has
+ * written the payload, which would lose `stop_hook_active` and loop the hook.
  */
-async function readStdin(): Promise<string> {
-  if (process.stdin.isTTY) return '';
+export async function readHookPayload(): Promise<{
+  stop_hook_active?: boolean;
+}> {
+  if (process.stdin.isTTY) return {};
   let raw = '';
   for await (const chunk of process.stdin) raw += String(chunk);
-  return raw;
+  return parseHookPayload(raw);
+}
+
+/** Paths this checkout changed: uncommitted, or in commits not on the upstream. */
+export function changedPaths(repoRoot: string): string[] {
+  return [
+    ...git(repoRoot, ['status', '--porcelain']).map((line) => line.slice(3)),
+    ...git(repoRoot, ['diff', '--name-only', '@{upstream}...HEAD']),
+  ];
 }
 
 /**
@@ -448,14 +498,10 @@ async function readStdin(): Promise<string> {
  * feedback, so it may stop (no loops).
  */
 async function runAsStopHook(repoRoot: string): Promise<number> {
-  const payload = parseHookPayload(await readStdin());
+  const payload = await readHookPayload();
   if (payload.stop_hook_active) return 0;
-  const changed = [
-    ...git(repoRoot, ['status', '--porcelain']).map((line) => line.slice(3)),
-    ...git(repoRoot, ['diff', '--name-only', '@{upstream}...HEAD']),
-  ];
-  if (!touchesCode(changed)) return 0;
-  return check(repoRoot, false) === 0 ? 0 : 2;
+  if (!touchesCode(changedPaths(repoRoot))) return 0;
+  return checkRatchet(repoRoot, DEAD_CODE, false) === 0 ? 0 : 2;
 }
 
 export async function main(argv: string[]): Promise<number> {
@@ -464,8 +510,9 @@ export async function main(argv: string[]): Promise<number> {
     CONFIG.repoRoot,
   );
   if (argv.includes('--hook')) return runAsStopHook(repoRoot);
-  if (argv.includes('--update')) return writeBaseline(repoRoot);
-  return check(repoRoot, argv.includes('--ci'));
+  if (argv.includes('--update'))
+    return writeRatchetBaseline(repoRoot, DEAD_CODE);
+  return checkRatchet(repoRoot, DEAD_CODE, argv.includes('--ci'));
 }
 
 if (

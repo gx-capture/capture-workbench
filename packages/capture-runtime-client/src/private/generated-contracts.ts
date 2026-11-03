@@ -120,6 +120,9 @@ export interface CaptureEventV2 {
   readonly segments?: readonly (RawCaptureSegment)[];
   readonly error?: CaptureFailureV2 | null;
   readonly createdAt: string;
+  readonly pagesDone?: number | null;
+  readonly pagesTotal?: number | null;
+  readonly durationMs?: number | null;
 }
 
 export interface CaptureFailureV2 {
@@ -159,6 +162,10 @@ export interface CaptureOperationV2 {
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly completedAt?: string | null;
+  readonly pagesTotal?: number | null;
+  readonly pagesDone?: number | null;
+  readonly durationMs?: number | null;
+  readonly coveredUntilMs?: number | null;
 }
 
 export interface CaptureSource {
@@ -614,6 +621,16 @@ export const CAPTURE_CONTRACT_INVARIANTS = [
     id: "installation-download-bytes-paired",
     models: "RuntimeInstallationV2",
     description: "downloadBytes and downloadedBytes are both present or both absent, and downloadedBytes never exceeds downloadBytes.",
+  },
+  {
+    id: "capture-pages-paired-for-documents",
+    models: "CaptureOperationV2, CaptureEventV2",
+    description: "pagesDone and pagesTotal are both present or both absent, only for pdf and image captures, and pagesDone never exceeds pagesTotal.",
+  },
+  {
+    id: "capture-media-time-for-audio",
+    models: "CaptureOperationV2, CaptureEventV2",
+    description: "durationMs, and coveredUntilMs on a capture operation, are only for audio captures.",
   },
 ] as const satisfies readonly CaptureContractInvariant[];
 

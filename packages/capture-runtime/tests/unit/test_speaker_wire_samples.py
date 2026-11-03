@@ -15,7 +15,10 @@ from capture_runtime.contracts import (
     CaptureBlock,
     CaptureDocument,
     CaptureEngine,
+    CaptureEventV2,
+    CaptureOperationV2,
     CaptureSource,
+    CaptureSourceKind,
     CaptureSpeaker,
     RawCapture,
     RawCaptureSegment,
@@ -24,6 +27,8 @@ from capture_runtime.contracts import (
     RuntimeRequirementStatus,
     RuntimeRequirementsV2,
     RuntimeRequirementV2,
+    StreamingCaptureStatus,
+    StreamingEventType,
     TimeLocator,
     project_source_text,
 )
@@ -138,6 +143,44 @@ def wire_samples() -> dict[str, Any]:
         download_bytes=10_480_000_000,
         downloaded_bytes=2_950_000_000,
     )
+    document_operation = CaptureOperationV2(
+        capture_id="capture-document",
+        ingestion_id="ingestion-document",
+        kind=CaptureSourceKind.PDF,
+        status=StreamingCaptureStatus.EXTRACTING,
+        progress=0.675,
+        partial_revision=0,
+        last_event_sequence=11,
+        created_at=CREATED,
+        updated_at=CREATED,
+        pages_total=12,
+        pages_done=9,
+    )
+    audio_operation = CaptureOperationV2(
+        capture_id="capture-audio",
+        ingestion_id="ingestion-audio",
+        kind=CaptureSourceKind.AUDIO,
+        status=StreamingCaptureStatus.EXTRACTING,
+        progress=0.3,
+        partial_revision=3,
+        last_event_sequence=8,
+        created_at=CREATED,
+        updated_at=CREATED,
+        duration_ms=2_490_000,
+        covered_until_ms=724_000,
+    )
+    page_event = CaptureEventV2(
+        event_id="capture-document/11",
+        sequence=11,
+        capture_id="capture-document",
+        kind=CaptureSourceKind.PDF,
+        event_type=StreamingEventType.CHECKPOINT,
+        stage="extracting",
+        progress=0.675,
+        created_at=CREATED,
+        pages_done=9,
+        pages_total=12,
+    )
     return {
         name: model.model_dump(mode="json", by_alias=True)
         for name, model in (
@@ -146,6 +189,9 @@ def wire_samples() -> dict[str, Any]:
             ("captureDocument", document),
             ("runtimeRequirements", requirements),
             ("runtimeInstallation", installation),
+            ("documentCaptureOperation", document_operation),
+            ("audioCaptureOperation", audio_operation),
+            ("documentCaptureEvent", page_event),
         )
     }
 

@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { decodeJson, type RuntimeResponseModel } from './codec';
 import type {
   CaptureDocument,
+  CaptureOperation,
   RawCapture,
   RuntimeInstallation,
   RuntimeRequirements,
@@ -132,5 +133,26 @@ describe('what the runtime sends for speakers', () => {
     expect([installation.downloadedBytes, installation.downloadBytes]).toEqual([
       2_950_000_000, 10_480_000_000,
     ]);
+  });
+
+  it('decodes page progress for a document and covered time for a recording', async () => {
+    const document = await decode<CaptureOperation>(
+      'documentCaptureOperation',
+      'CaptureOperation',
+    );
+    expect([document.pagesDone, document.pagesTotal]).toEqual([9, 12]);
+    expect(document.durationMs).toBeNull();
+
+    const recording = await decode<CaptureOperation>(
+      'audioCaptureOperation',
+      'CaptureOperation',
+    );
+    expect([recording.coveredUntilMs, recording.durationMs]).toEqual([
+      724_000, 2_490_000,
+    ]);
+    expect(recording.pagesTotal).toBeNull();
+
+    const event = samples['documentCaptureEvent'] as Record<string, unknown>;
+    expect([event['pagesDone'], event['pagesTotal']]).toEqual([9, 12]);
   });
 });

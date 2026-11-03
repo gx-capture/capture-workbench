@@ -1005,6 +1005,32 @@ class ReportStructuringFailureV2(StrictModel):
     message: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
 
 
+_DOCUMENT_KINDS = frozenset({CaptureSourceKind.PDF, CaptureSourceKind.IMAGE})
+
+
+def _validate_capture_progress(
+    kind: CaptureSourceKind,
+    *,
+    pages_done: int | None,
+    pages_total: int | None,
+    duration_ms: int | None,
+    covered_until_ms: int | None,
+) -> None:
+    """Page counts belong to documents and come as a pair; media times to audio."""
+
+    if (pages_done is None) != (pages_total is None):
+        raise ValueError("pagesDone and pagesTotal are set together")
+    if pages_total is not None:
+        if kind not in _DOCUMENT_KINDS:
+            raise ValueError("pagesDone and pagesTotal are only for document captures")
+        if pages_done is not None and pages_done > pages_total:
+            raise ValueError("pagesDone cannot exceed pagesTotal")
+    if (duration_ms is not None or covered_until_ms is not None) and (
+        kind is not CaptureSourceKind.AUDIO
+    ):
+        raise ValueError("durationMs and coveredUntilMs are only for audio captures")
+
+
 class CaptureOperationV2(StrictModel):
     protocol_version: Literal["2"] = "2"
     capture_id: NonEmptyString
@@ -1019,6 +1045,14 @@ class CaptureOperationV2(StrictModel):
     created_at: datetime
     updated_at: datetime
     completed_at: datetime | None = None
+    # Document captures: pages done out of the pages to process (the selected
+    # PDF pages, 1 for an image), set together once that count is known.
+    pages_total: int | None = Field(default=None, ge=1)
+    pages_done: int | None = Field(default=None, ge=0)
+    # Audio captures: the media length once probed, and how far transcription
+    # has got (the coveredUntilMs the partial and events carry).
+    duration_ms: int | None = Field(default=None, ge=0)
+    covered_until_ms: int | None = Field(default=None, ge=0)
 
     _aware_times = field_validator("created_at", "updated_at", "completed_at")(
         lambda value: None if value is None else _require_aware(value)
@@ -1033,6 +1067,13 @@ class CaptureOperationV2(StrictModel):
         }
         if (self.status in terminal) != (self.completed_at is not None):
             raise ValueError("terminal streaming captures must have completedAt")
+        _validate_capture_progress(
+            self.kind,
+            pages_done=self.pages_done,
+            pages_total=self.pages_total,
+            duration_ms=self.duration_ms,
+            covered_until_ms=self.covered_until_ms,
+        )
         return self
 
 
@@ -1087,6 +1128,10 @@ class CaptureEventV2(StrictModel):
     segments: list[RawCaptureSegment] = Field(default_factory=list, max_length=1_000)
     error: CaptureFailureV2 | None = None
     created_at: datetime
+    # The operation's page and media progress, on the events that change it.
+    pages_done: int | None = Field(default=None, ge=0)
+    pages_total: int | None = Field(default=None, ge=1)
+    duration_ms: int | None = Field(default=None, ge=0)
 
     _aware_created_at = field_validator("created_at")(_require_aware)
 
@@ -1098,6 +1143,15 @@ class CaptureEventV2(StrictModel):
             raise ValueError("failed events must contain an error")
         if self.event_type is not StreamingEventType.FAILED and self.error is not None:
             raise ValueError("only failed events may contain an error")
+        _validate_capture_progress(
+            self.kind,
+            pages_done=self.pages_done,
+            pages_total=self.pages_total,
+            duration_ms=self.duration_ms,
+            # Events carried coveredUntilMs before kinds were checked, so
+            # only the fields added with the kind rule follow it.
+            covered_until_ms=None,
+        )
         return self
 
 

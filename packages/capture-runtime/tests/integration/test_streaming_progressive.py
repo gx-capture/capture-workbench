@@ -828,3 +828,117 @@ def test_a_capture_started_while_an_engine_is_uninstalled_waits_for_it(tmp_path:
         await service.shutdown()
 
     asyncio.run(scenario())
+
+
+class _ScriptedSessionWorker:
+    """A session worker that covers one second of the recording per window."""
+
+    alive = True
+
+    def __init__(self, engine: CaptureEngine) -> None:
+        self.engine = engine
+        self.covered = 0
+
+    async def begin(self, *, capture_id, source, spoken_language=None) -> None:
+        return None
+
+    async def input(self, window, cancellation, on_event):
+        self.covered = window.end_ms
+        segment = RawCaptureSegment(
+            segment_id=f"segment-{window.end_ms}",
+            order=0,
+            locator=TimeLocator(start_ms=window.start_ms, end_ms=window.end_ms),
+            text=f"words until {window.end_ms}",
+        )
+        event = ProgressiveSessionEvent(
+            StreamingEventType.SEGMENT,
+            "extracting",
+            partial_revision=window.end_ms // 1_000,
+            covered_until_ms=window.end_ms,
+            segments=(segment,),
+            extraction_engine=self.engine,
+        )
+        await on_event(event)
+        return [event]
+
+    async def finish(self, cancellation, on_event):
+        events = [ProgressiveSessionEvent(StreamingEventType.COMPLETED, "completed")]
+        await on_event(events[0])
+        return events
+
+    async def close(self) -> None:
+        self.alive = False
+
+
+class _ThreeWindowDecoder:
+    def __init__(self, *_args, **_kwargs) -> None:
+        self.windows = [
+            DecodedAudioWindow(start, start + 1_000, b"pcm") for start in (0, 1_000, 2_000)
+        ]
+
+    def push(self, _chunk: bytes) -> list[DecodedAudioWindow]:
+        windows, self.windows = self.windows, []
+        return windows
+
+    def finish(self) -> list[DecodedAudioWindow]:
+        return []
+
+
+def test_an_audio_capture_reports_its_duration_and_covered_time(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Hosts show 12:04 / 41:30: covered time grows against the probed length."""
+
+    async def scenario() -> None:
+        clock = FixedClock()
+        processor, _spawned = _warm_processor(tmp_path, monkeypatch, idle=0)
+        engine_identity = FakeProgressiveProcessor(clock).engine
+
+        async def start(*, engine, config):
+            return _ScriptedSessionWorker(engine_identity)
+
+        async def resolve(_requirement_id):
+            return _engine(tmp_path)
+
+        monkeypatch.setattr(_SessionWorker, "start", start)
+        monkeypatch.setattr(processor, "_resolve_engine", lambda: resolve("speech-recognition"))
+        monkeypatch.setattr(
+            "capture_runtime.progressive_capture.PyAVIncrementalDecoder", _ThreeWindowDecoder
+        )
+        # The container probe says the recording is 4 s; transcription covers 3 s.
+        monkeypatch.setattr(
+            "capture_runtime.progressive_capture._source_duration_ms", lambda _path: 4_000
+        )
+        repository = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+        repository.initialize()
+        ingestion_id, _ = _open(repository)
+        service = StreamingCaptureService(repository, clock=clock, processor=processor)
+        operation = service.start_capture(
+            StartCaptureV2(
+                client_request_id="duration-capture",
+                ingestion_id=ingestion_id,
+                structuring_mode=StructuringMode.HOST,
+            )
+        )
+        for _ in range(200):
+            if service.get_capture(operation.capture_id).status.value == "awaiting_structuring":
+                break
+            await asyncio.sleep(0.01)
+        current = service.get_capture(operation.capture_id)
+        assert current.status.value == "awaiting_structuring"
+        assert (current.duration_ms, current.covered_until_ms) == (4_000, 3_000)
+        assert (current.pages_done, current.pages_total) == (None, None)
+        timed = [
+            (event.covered_until_ms, event.duration_ms)
+            for event in repository.read_events(operation.capture_id, after_sequence=-1)
+            if event.covered_until_ms is not None
+        ]
+        assert timed == [(1_000, 4_000), (2_000, 4_000), (3_000, 4_000)]
+        await service.shutdown()
+
+        reloaded = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+        reloaded.initialize()
+        again = reloaded.get_capture(operation.capture_id)
+        assert (again.duration_ms, again.covered_until_ms) == (4_000, 3_000)
+
+    asyncio.run(scenario())

@@ -46,7 +46,8 @@
     "netstat",
     "taskkill.exe",
     "tasklist.exe",
-    "uv"
+    "uv",
+    "uvx"
   ],
   "ignoreUnresolved": [
     "^\\*$"

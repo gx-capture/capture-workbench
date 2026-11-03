@@ -151,6 +151,37 @@ class VerifiedDownloadCache:
             destination.unlink(missing_ok=True)
             return False
 
+    def publish(
+        self,
+        source: Path,
+        destination: Path,
+        *,
+        cancel_event: asyncio.Event,
+    ) -> None:
+        """Link or copy a finished cache entry into the install path."""
+
+        if source == destination:
+            return
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if cancel_event.is_set():
+            raise asyncio.CancelledError
+        if _link(source, destination):
+            return
+        created = False
+        try:
+            with source.open("rb") as reader, destination.open("xb") as writer:
+                created = True
+                while chunk := reader.read(_CHUNK_BYTES):
+                    if cancel_event.is_set():
+                        raise asyncio.CancelledError
+                    writer.write(chunk)
+                writer.flush()
+                os.fsync(writer.fileno())
+        except BaseException:
+            if created:
+                destination.unlink(missing_ok=True)
+            raise
+
     def store(self, sha256: str, source: Path) -> None:
         """Keep already verified bytes, linked where possible. Failures never fail an install."""
 
@@ -220,14 +251,32 @@ class CachingDownloader[Descriptor: _VerifiedDescriptor]:
             progress=progress,
         ):
             return
-        # The inner downloader verifies byte count and SHA-256 before returning.
+        entry = self._cache._entry(descriptor.sha256)
+        if entry is None:
+            await self._inner.download(
+                descriptor,
+                destination,
+                cancel_event=cancel_event,
+                progress=progress,
+            )
+            await asyncio.to_thread(self._cache.store, descriptor.sha256, destination)
+            return
+        # The install destination lives in a staging directory that is removed
+        # on cancel. Downloading into the cache entry keeps the partial file.
+        await asyncio.to_thread(entry.parent.mkdir, parents=True, exist_ok=True)
         await self._inner.download(
             descriptor,
-            destination,
+            entry,
             cancel_event=cancel_event,
             progress=progress,
         )
-        await asyncio.to_thread(self._cache.store, descriptor.sha256, destination)
+        await asyncio.to_thread(
+            self._cache.publish,
+            entry,
+            destination,
+            cancel_event=cancel_event,
+        )
+        await asyncio.to_thread(self._cache.store, descriptor.sha256, entry)
 
 
 def with_shared_cache[Descriptor: _VerifiedDescriptor](

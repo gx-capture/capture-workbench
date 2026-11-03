@@ -39,6 +39,23 @@ class CountingDownloader:
         progress(len(self.payload))
 
 
+class PartialDownloader:
+    """The second call finishes the partial the first call left beside the destination."""
+
+    def __init__(self) -> None:
+        self.destinations: list[Path] = []
+
+    async def download(self, descriptor, destination, *, cancel_event, progress) -> None:
+        self.destinations.append(destination)
+        partial = destination.with_name(destination.name + ".part")
+        if partial.is_file():
+            destination.write_bytes(PAYLOAD)
+            progress(len(PAYLOAD))
+            return
+        partial.write_bytes(PAYLOAD[:10])
+        raise RuntimeError("interrupted")
+
+
 def descriptor(payload: bytes = PAYLOAD) -> Descriptor:
     return Descriptor(sha256=hashlib.sha256(payload).hexdigest(), bytes=len(payload))
 
@@ -171,3 +188,20 @@ def test_cache_root_honors_the_override_and_can_be_disabled(tmp_path: Path) -> N
     )
     inner = CountingDownloader()
     assert with_shared_cache(inner, {"CAPTURE_ENGINE_CACHE_DIR": "off"}) is inner
+
+
+def test_an_interrupted_download_resumes_inside_the_cache(tmp_path: Path) -> None:
+    inner = PartialDownloader()
+    cache_root = tmp_path / "cache"
+    downloader = CachingDownloader(inner, VerifiedDownloadCache(cache_root))
+
+    with pytest.raises(RuntimeError, match="interrupted"):
+        fetch(downloader, tmp_path / "first.zip")
+
+    assert not (tmp_path / "first.zip").exists()
+    fetch(downloader, tmp_path / "second.zip")
+
+    assert inner.destinations[0] == inner.destinations[1]
+    assert cache_root in inner.destinations[0].parents
+    assert (tmp_path / "second.zip").read_bytes() == PAYLOAD
+    assert not (tmp_path / "first.zip").exists()

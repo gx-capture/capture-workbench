@@ -4,6 +4,17 @@
 
 - Clarification (2026-11-01): the 0.4.2 launcher durability and verified staging release apply to explicit live R3 use; restart reconciliation is not wired, and desktop, cert-prep and LAW still use legacy launch paths with native Windows Job containment (`KILL_ON_JOB_CLOSE`).
 
+### Interrupted engine downloads resume
+
+An engine download that is cancelled, loses its connection or stops with the
+runtime keeps its partial file (`<file>.part`) and a record of the bytes it
+holds (`<file>.part.json`). The next install continues each unfinished byte
+range from its first missing byte, and skips published parts already verified,
+instead of starting over; this matters for the ~3 GB speech worker. A server
+that ignores the resume request makes that region restart cleanly. A checksum
+or byte-count failure deletes the partial. Direct model files resume the same
+way, with every redirect still checked. No contract change.
+
 ### Release resolver action for consumer bump workflows
 
 The composite action `.github/actions/resolve-capture-release` finds the
@@ -57,6 +68,27 @@ unit says what it does, which languages it suits (Taiwan Mandarin, including mix
 Mandarin–English), the hardware it uses, its download size and its license. The Web Component
 shows the same guide when its host asks for a speech unit. The runtime now reports
 `speech-recognition` as `optional`.
+
+### Page and recording progress (contract change)
+
+Hosts can show "page 9 of 12" for a document and "12:04 of 41:30" for a
+recording without guessing from `progress`.
+
+- `CaptureOperationV2.pagesTotal` and `pagesDone` (pdf and image captures):
+  the pages to process (the selected PDF pages, 1 for an image) and the pages
+  done, set together once the count is known, before the first page finishes.
+  `pagesDone` never exceeds `pagesTotal` and equals it once extraction ends.
+- `CaptureOperationV2.durationMs` and `coveredUntilMs` (audio captures): the
+  recording's length from its container, and how far transcription has got
+  (the value the partial and events already carry). A container that does not
+  state its length leaves `durationMs` absent; a capture that identifies
+  speakers transcribes in one pass and reports neither.
+- `CaptureEventV2` gains `pagesDone`, `pagesTotal` and `durationMs`, set on the
+  events that change them, so SSE consumers see them without polling.
+- The values are stored with the operation and survive a runtime restart.
+- The contract set hash changes. The TypeScript client accepts and checks the
+  new fields on operations and events; clients older than this release reject
+  them on operations, so LAW and Cert move to it together with the runtime.
 
 ### Uninstall an engine (contract change)
 

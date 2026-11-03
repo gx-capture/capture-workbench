@@ -12,6 +12,7 @@ import {
   CaptureTransportError,
 } from '../errors.js';
 import {
+  assertCaptureProgress,
   bodyBytes,
   decodeSse,
   parseJsonFrame,
@@ -207,6 +208,10 @@ export async function* captureEvents(
           throw new CaptureRuntimeProtocolError(
             'Capture Runtime returned an invalid event identity or sequence.',
           );
+        assertCaptureProgress(
+          event as unknown as Record<string, unknown>,
+          'CaptureEvent',
+        );
         previous = event.sequence;
         yield event;
         if (['completed', 'failed', 'cancelled'].includes(event.eventType))
