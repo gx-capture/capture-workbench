@@ -11,7 +11,7 @@ import {
   type CaptureOperation,
   type RuntimeInstallation,
 } from './contracts';
-import { decodeJson } from './codec';
+import { decodeJson, type RuntimeResponseModel } from './codec';
 import {
   CaptureAuthenticationError,
   CaptureRuntimeCompatibilityError,
@@ -1712,4 +1712,55 @@ data: ${JSON.stringify(event)}
       CaptureRuntimeProtocolError,
     );
   });
+});
+
+describe('response field lists follow the contract set', () => {
+  // The codec rejects unknown top-level fields, so a field the runtime adds to
+  // a response model must reach the codec's list in the same change.
+  const schemas = new Map(
+    (
+      JSON.parse(new TextDecoder().decode(canonicalBundleBytes)) as {
+        schemas: { name: string; schema: { properties: Record<string, unknown> } }[];
+      }
+    ).schemas.map((entry) => [entry.name, entry.schema]),
+  );
+  const contractNames: Record<RuntimeResponseModel, string> = {
+    RuntimeReady: 'RuntimeReady',
+    RuntimeStreamingCapabilities: 'RuntimeStreamingCapabilitiesV2',
+    RuntimeRequirement: 'RuntimeRequirementV2',
+    RuntimeRequirements: 'RuntimeRequirementsV2',
+    RuntimeInstallation: 'RuntimeInstallationV2',
+    RuntimeInstallations: 'RuntimeInstallationsV2',
+    RuntimeModelInstallation: 'RuntimeModelInstallationV2',
+    RuntimeModelOptions: 'RuntimeModelOptionsV2',
+    RawCapture: 'RawCapture',
+    CaptureOcrProjection: 'CaptureOcrProjectionV3',
+    CaptureDocument: 'CaptureDocument',
+    CaptureOperation: 'CaptureOperationV2',
+    Ingestion: 'IngestionV2',
+    PartialCapture: 'PartialCaptureV2',
+    StreamingResult: 'CaptureStreamingResult',
+    StructuringSession: 'StructuringSessionV2',
+    StructuringBatch: 'StructuringBatchV2',
+  };
+
+  it.each(Object.entries(contractNames) as [RuntimeResponseModel, string][])(
+    'accepts every field of %s and requires none outside it',
+    async (model, contractName) => {
+      const schema = schemas.get(contractName);
+      expect(schema, contractName).toBeDefined();
+      const fields = Object.keys(schema!.properties);
+      // Every field is present, so only value checks may still reject it.
+      const body = Object.fromEntries(fields.map((field) => [field, null]));
+      const failure = await decodeJson(Response.json(body), undefined, model).then(
+        () => undefined,
+        (error: unknown) => error as Error,
+      );
+      expect(failure?.message ?? '').not.toMatch(/unknown \w+ field|without required field/u);
+
+      await expect(
+        decodeJson(Response.json({ ...body, notInContract: null }), undefined, model),
+      ).rejects.toThrow(`unknown ${model} field: notInContract`);
+    },
+  );
 });

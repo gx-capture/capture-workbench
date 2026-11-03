@@ -4,6 +4,19 @@
 
 - Clarification (2026-11-01): the 0.4.2 launcher durability and verified staging release apply to explicit live R3 use; restart reconciliation is not wired, and desktop, cert-prep and LAW still use legacy launch paths with native Windows Job containment (`KILL_ON_JOB_CLOSE`).
 
+### TypeScript client reads raw captures again
+
+The TypeScript runtime client (`@gx-capture/capture-runtime-client`) rejected
+fields the runtime sends in every raw capture: `diarizationEngine`, `speakers`,
+`suggestedUnits` and `ocrPageScope` (null or empty when unused). `getRaw()`
+failed with `unknown RawCapture field`, so the Web Component, Cert Prep and
+LAW's TypeScript paths could not read a raw capture, with or without speaker
+identification. The client now accepts them, and also `diarizationEngine`,
+`speakers` and `suggestedUnits` in a capture document. A unit test now checks
+that every response model the client decodes accepts all of its contract-set
+fields, and the client's test target runs all its spec files (the
+speaker wire-sample tests were never run). No contract change.
+
 ### Interrupted engine downloads resume
 
 An engine download that is cancelled, loses its connection or stops with the

@@ -40,7 +40,7 @@
     "test": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "pnpm exec vitest run --config packages/capture-runtime-client/vitest.config.ts packages/capture-runtime-client/src/client.spec.ts"
+        "command": "pnpm exec vitest run --config packages/capture-runtime-client/vitest.config.ts"
       }
     },
     "lint": {
