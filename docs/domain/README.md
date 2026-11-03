@@ -20,16 +20,16 @@ flowchart LR
   CON["執行環境合約"] -. SDK .-> HOST["工作台主機、Cert Prep、LAW"]
 ```
 
-| 上下文       | 說明文件   | 程式（重構後）                                      | 狀態   |
-| ------------ | ---------- | --------------------------------------------------- | ------ |
-| 擷取         | 待補（W5） | `capture_runtime/capture`                           | 規劃中 |
-| 文件 OCR     | 待補（W2） | `capture_runtime/ocr`                               | 規劃中 |
-| 語音轉寫     | 待補（W2） | `capture_runtime/speech`                            | 規劃中 |
-| 說話者分離   | 待補（W5） | `capture_runtime/diarization`                       | 規劃中 |
-| 結構化       | 待補（W5） | `capture_runtime/structuring`                       | 規劃中 |
-| 引擎供應     | 待補（W5） | `capture_runtime/provisioning`                      | 規劃中 |
-| 執行環境合約 | 待補（W1） | `capture_runtime/contracts`、三種 SDK               | 原地   |
-| 工作台主機   | 待補（W7） | `packages/capture-workbench-ui`、`apps/*`、launcher | 規劃中 |
+| 上下文       | 說明文件   | 程式（重構後）                                              | 狀態   |
+| ------------ | ---------- | ----------------------------------------------------------- | ------ |
+| 擷取         | 待補（W5） | `capture_runtime/capture`                                   | 規劃中 |
+| 文件 OCR     | 待補（W2） | `capture_runtime/ocr`                                       | 規劃中 |
+| 語音轉寫     | 待補（W2） | `capture_runtime/speech`                                    | 規劃中 |
+| 說話者分離   | 待補（W5） | `capture_runtime/diarization`                               | 規劃中 |
+| 結構化       | 待補（W5） | `capture_runtime/structuring`                               | 規劃中 |
+| 引擎供應     | 待補（W5） | `capture_runtime/provisioning`                              | 規劃中 |
+| 執行環境合約 | 待補（W1） | `capture_runtime/contracts`、兩種 SDK（TypeScript、Python） | 原地   |
+| 工作台主機   | 待補（W7） | `packages/capture-workbench-ui`、`apps/*`、launcher         | 規劃中 |
 
 實線箭頭表示資料由上游流向下游：下游讀取上游公開的資料，上游不知道下游。
 
