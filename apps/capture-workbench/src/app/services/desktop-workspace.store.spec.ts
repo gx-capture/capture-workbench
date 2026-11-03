@@ -8,6 +8,10 @@ import type { DesktopLibraryDetail, DesktopLibrarySummary } from '../contracts';
 import { DesktopLibraryService } from './desktop-library.service';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
 import { DesktopWorkspaceStore } from './desktop-workspace.store';
+import {
+  FIRST_RUN_DISMISSED_STORAGE_KEY,
+  RecognitionFeaturesStore,
+} from './recognition-features.store';
 
 const summary: DesktopLibrarySummary = {
   documentId: 'a'.repeat(32),
@@ -98,14 +102,15 @@ describe('DesktopWorkspaceStore', () => {
       }),
     );
 
-    expect(store.state()).toBe('needs-setup');
-    expect(store.installableCoreRequirements()).toEqual([]);
-    store.installCoreRequirements();
+    expect(store.state()).toBe('ready');
+    expect(store.ocrReady()).toBe(false);
+    expect(store.installableRequestedRequirements()).toEqual([]);
+    store.installUnit('windowsml-ocr');
 
     expect(startInstallation).not.toHaveBeenCalled();
   });
 
-  it('allows core installation while worker-owned OCR preflight is pending', () => {
+  it('allows unit installation while worker-owned OCR preflight is pending', () => {
     const startInstallation = vi.fn((request: { requirementId: string }) =>
       of({
         installationId: `install-${request.requirementId}`,
@@ -120,7 +125,7 @@ describe('DesktopWorkspaceStore', () => {
     const store = initializeStore(
       libraryStub(),
       runtimeStub({
-        ready: signal(false),
+        ready: signal(true),
         started: signal(true),
         ocrCompute: signal(null),
         getRequirements: vi.fn(() => of([
@@ -137,8 +142,8 @@ describe('DesktopWorkspaceStore', () => {
       }),
     );
 
-    expect(store.state()).toBe('needs-setup');
-    store.installCoreRequirements();
+    expect(store.state()).toBe('ready');
+    store.installUnit('windowsml-ocr');
     TestBed.tick();
 
     expect(startInstallation).toHaveBeenCalledWith({
@@ -198,9 +203,7 @@ describe('DesktopWorkspaceStore', () => {
         startInstallation,
       }),
     );
-    store.requestedRequirements.set(new Set(['speech-recognition']));
-
-    store.installCoreRequirements();
+    store.installUnits(['speech-recognition', 'windowsml-ocr']);
     TestBed.tick();
 
     expect(startInstallation.mock.calls.map(([request]) => request.requirementId)).toEqual([
@@ -298,7 +301,7 @@ describe('DesktopWorkspaceStore', () => {
 
     vi.useFakeTimers();
     try {
-      store.installCoreRequirements();
+      store.installUnit('windowsml-ocr');
       expect(observedStatuses).toEqual(['queued']);
 
       vi.advanceTimersByTime(1_500);
@@ -313,7 +316,7 @@ describe('DesktopWorkspaceStore', () => {
     }
   });
 
-  it('does not require Ollama for OCR setup', () => {
+  it('does not require Ollama for OCR readiness', () => {
     const library = libraryStub();
     const client = runtimeStub({
       getRequirements: vi.fn(() => of([
@@ -338,8 +341,8 @@ describe('DesktopWorkspaceStore', () => {
 
     const store = initializeStore(library, client);
 
-    expect(store.state()).toBe('needs-setup');
-    expect(store.coreMissing().map((item) => item.requirementId)).toEqual([
+    expect(store.state()).toBe('ready');
+    expect(store.features.missingFor('ocr').map((item) => item.requirementId)).toEqual([
       'windowsml-ocr',
     ]);
   });
@@ -385,7 +388,8 @@ describe('DesktopWorkspaceStore', () => {
     );
 
     expect(store.state()).toBe('ready');
-    expect(store.coreMissing()).toEqual([]);
+    expect(store.ocrReady()).toBe(true);
+    expect(store.requestedMissing()).toEqual([]);
 
     store.addSourcePaths([String.raw`C:\private\scan.pdf`]);
     TestBed.tick();
@@ -474,12 +478,319 @@ describe('DesktopWorkspaceStore', () => {
     store.addSourcePaths([String.raw`C:\private\voice.wav`]);
     TestBed.tick();
 
-    expect(store.state()).toBe('needs-setup');
-    expect(store.coreMissing().map((item) => item.requirementId)).toEqual([
+    expect(store.state()).toBe('ready');
+    expect(store.requestedMissing().map((item) => item.requirementId)).toEqual([
       'speech-recognition',
     ]);
-    expect(store.message()).toBe('處理文件前，需要先下載必要元件。');
+    expect(store.message()).toBe('處理錄音需要先下載台灣語音轉文字（TEA-ASR 1.1）。');
     expect(library.createSource).toHaveBeenCalledOnce();
+  });
+
+  it('never asks an ASR-only user for OCR and transcribes recordings when OCR is not installed', () => {
+    const audioDoc: DesktopLibrarySummary = {
+      ...summary,
+      fileName: 'interview.wav',
+      mediaType: 'audio/wav',
+    };
+    const startStreamingCapture = vi.fn(() => of(completedJob));
+    const getStreamingResult = vi.fn(() =>
+      of({ operation: completedJob, raw, result }),
+    );
+    const deleteStreamingCapture = vi.fn(() => of(undefined));
+    const startInstallation = vi.fn();
+    const library = libraryStub({
+      createSource: vi.fn(() => of(audioDoc)),
+      list: vi.fn(() => of([audioDoc])),
+      get: vi.fn(() => of(audioDoc as DesktopLibraryDetail)),
+    });
+    const client = runtimeStub({
+      ocrCompute: signal(null),
+      getRequirements: vi.fn(() =>
+        of([
+          {
+            requirementId: 'windowsml-ocr',
+            displayName: 'WindowsML OCR',
+            status: 'installable',
+            kind: 'engine',
+            requiredFor: ['capture'],
+            installStrategy: 'runtime-catalog',
+            downloadBytes: 144_000_000,
+          },
+          {
+            requirementId: 'speech-recognition',
+            displayName: 'Speech recognition',
+            status: 'ready',
+            kind: 'engine',
+            requiredFor: ['audio'],
+            installStrategy: 'runtime-catalog',
+            downloadBytes: 2_800_000_000,
+          },
+        ]),
+      ),
+      startInstallation,
+      startStreamingCapture,
+      getStreamingResult,
+      deleteStreamingCapture,
+    });
+    const store = initializeStore(library, client);
+
+    expect(store.state()).toBe('ready');
+    expect(store.asrReady()).toBe(true);
+    expect(store.ocrReady()).toBe(false);
+
+    store.addSourcePaths([String.raw`C:\private\interview.wav`]);
+    TestBed.tick();
+
+    expect(startInstallation).not.toHaveBeenCalled();
+    expect(store.requestedRequirements().has('windowsml-ocr')).toBe(false);
+    expect(startStreamingCapture).toHaveBeenCalledOnce();
+  });
+
+  it('reports byte-based progress, cancels a running installation, and retries after cancellation or failure', () => {
+    let attempt = 0;
+    const startInstallation = vi.fn(() => {
+      attempt += 1;
+      return of({
+        installationId: `install-speech-${attempt}`,
+        requirementId: 'speech-recognition' as const,
+        status: attempt === 1 ? ('running' as const) : ('completed' as const),
+        progress: attempt === 1 ? 0.1 : 1,
+        downloadedBytes: attempt === 1 ? 1_400_000_000 : 2_800_000_000,
+        downloadBytes: 2_800_000_000,
+        createdAt: '2026-11-01T00:00:00Z',
+        updatedAt: '2026-11-01T00:00:00Z',
+        ...(attempt === 2 ? { completedAt: '2026-11-01T00:00:01Z' } : {}),
+      });
+    });
+    const cancelInstallation = vi.fn((installationId: string) =>
+      of({
+        installationId,
+        requirementId: 'speech-recognition' as const,
+        status: 'cancelled' as const,
+        progress: 0.5,
+        downloadedBytes: 1_400_000_000,
+        downloadBytes: 2_800_000_000,
+        createdAt: '2026-11-01T00:00:00Z',
+        updatedAt: '2026-11-01T00:00:01Z',
+      }),
+    );
+    const getInstallation = vi.fn();
+    const store = initializeStore(
+      libraryStub(),
+      runtimeStub({
+        getRequirements: vi.fn(() =>
+          of([
+            {
+              requirementId: 'speech-recognition',
+              displayName: 'Speech recognition',
+              status: 'installable',
+              kind: 'engine',
+              requiredFor: ['audio'],
+              installStrategy: 'runtime-catalog',
+              downloadBytes: 2_800_000_000,
+            },
+          ]),
+        ),
+        startInstallation,
+        cancelInstallation,
+        getInstallation,
+      }),
+    );
+
+    vi.useFakeTimers();
+    try {
+      store.installUnit('speech-recognition');
+      expect(store.installing()).toBe(true);
+      expect(store.installationPercent()).toBe(50);
+
+      store.cancelInstallation('install-speech-1');
+      TestBed.tick();
+
+      expect(cancelInstallation).toHaveBeenCalledWith('install-speech-1');
+      expect(store.installing()).toBe(false);
+      expect(store.installationFor('speech-recognition')?.status).toBe('cancelled');
+
+      vi.advanceTimersByTime(1_500);
+      expect(getInstallation).not.toHaveBeenCalled();
+
+      store.retryInstallation('speech-recognition');
+      TestBed.tick();
+
+      expect(startInstallation).toHaveBeenCalledTimes(2);
+      expect(store.installationFor('speech-recognition')?.status).toBe('completed');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops the rest of a multi-unit install when the user cancels', () => {
+    const startInstallation = vi.fn((request: { requirementId: string }) =>
+      of({
+        installationId: `install-${request.requirementId}`,
+        requirementId: request.requirementId,
+        status: 'running' as const,
+        progress: 0.1,
+        createdAt: '2026-11-01T00:00:00Z',
+        updatedAt: '2026-11-01T00:00:00Z',
+      }),
+    );
+    const cancelInstallation = vi.fn((installationId: string) =>
+      of({
+        installationId,
+        requirementId: 'windowsml-ocr' as const,
+        status: 'cancelled' as const,
+        progress: 0.1,
+        createdAt: '2026-11-01T00:00:00Z',
+        updatedAt: '2026-11-01T00:00:01Z',
+      }),
+    );
+    const getInstallation = vi.fn();
+    const store = initializeStore(
+      libraryStub(),
+      runtimeStub({
+        getRequirements: vi.fn(() => of([
+          {
+            requirementId: 'windowsml-ocr',
+            displayName: 'WindowsML OCR',
+            status: 'installable',
+            kind: 'engine',
+            requiredFor: ['capture'],
+            installStrategy: 'runtime-catalog',
+          },
+          {
+            requirementId: 'speech-recognition',
+            displayName: 'Speech recognition',
+            status: 'installable',
+            kind: 'engine',
+            requiredFor: ['audio'],
+            installStrategy: 'runtime-catalog',
+          },
+        ])),
+        startInstallation,
+        cancelInstallation,
+        getInstallation,
+      }),
+    );
+
+    vi.useFakeTimers();
+    try {
+      store.installUnits(['windowsml-ocr', 'speech-recognition']);
+      store.cancelInstallation('install-windowsml-ocr');
+      vi.advanceTimersByTime(3_000);
+      TestBed.tick();
+
+      expect(startInstallation.mock.calls.map(([request]) => request.requirementId)).toEqual([
+        'windowsml-ocr',
+      ]);
+      expect(getInstallation).not.toHaveBeenCalled();
+      expect(store.installing()).toBe(false);
+      expect(store.message()).not.toBe('安裝完成，正在重新檢查。');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('re-attaches to a running installation on startup and resumes polling until completed', () => {
+    const running = {
+      installationId: 'install-reattach-1',
+      requirementId: 'speech-recognition' as const,
+      status: 'running' as const,
+      progress: 0.25,
+      downloadedBytes: 700_000_000,
+      downloadBytes: 2_800_000_000,
+      createdAt: '2026-11-01T00:00:00Z',
+      updatedAt: '2026-11-01T00:00:00Z',
+    };
+    const completed = {
+      ...running,
+      status: 'completed' as const,
+      progress: 1,
+      downloadedBytes: 2_800_000_000,
+      completedAt: '2026-11-01T00:00:02Z',
+    };
+    const listInstallations = vi.fn(() => of([running]));
+    const getInstallation = vi.fn(() => of(completed));
+
+    vi.useFakeTimers();
+    try {
+      const store = initializeStore(
+        libraryStub(),
+        runtimeStub({
+          listInstallations,
+          getInstallation,
+        }),
+      );
+
+      expect(listInstallations).toHaveBeenCalledOnce();
+      expect(store.installing()).toBe(true);
+      expect(store.activeInstallation()?.installationId).toBe('install-reattach-1');
+      expect(store.installationPercent()).toBe(25);
+
+      vi.advanceTimersByTime(750);
+      TestBed.tick();
+
+      expect(getInstallation).toHaveBeenCalledWith('install-reattach-1');
+      expect(store.installing()).toBe(false);
+      expect(store.activeInstallation()?.status).toBe('completed');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('remembers the first-run dismissal choice in localStorage', () => {
+    localStorage.removeItem(FIRST_RUN_DISMISSED_STORAGE_KEY);
+    try {
+      initializeStore(
+        libraryStub(),
+        runtimeStub({
+          getRequirements: vi.fn(() =>
+            of([
+              {
+                requirementId: 'windowsml-ocr',
+                displayName: 'WindowsML OCR',
+                status: 'installable',
+                kind: 'engine',
+                requiredFor: ['capture'],
+                installStrategy: 'runtime-catalog',
+                downloadBytes: 144_000_000,
+              },
+            ]),
+          ),
+        }),
+      );
+      const features = TestBed.inject(RecognitionFeaturesStore);
+      expect(features.showFirstRunCard()).toBe(true);
+
+      features.dismissFirstRun();
+      expect(features.showFirstRunCard()).toBe(false);
+      expect(localStorage.getItem(FIRST_RUN_DISMISSED_STORAGE_KEY)).toBe('true');
+
+      TestBed.resetTestingModule();
+      const reloadedStore = initializeStore(
+        libraryStub(),
+        runtimeStub({
+          getRequirements: vi.fn(() =>
+            of([
+              {
+                requirementId: 'windowsml-ocr',
+                displayName: 'WindowsML OCR',
+                status: 'installable',
+                kind: 'engine',
+                requiredFor: ['capture'],
+                installStrategy: 'runtime-catalog',
+                downloadBytes: 144_000_000,
+              },
+            ]),
+          ),
+        }),
+      );
+      const reloadedFeatures = TestBed.inject(RecognitionFeaturesStore);
+      expect(reloadedFeatures.firstRunDismissed()).toBe(true);
+      expect(reloadedFeatures.showFirstRunCard()).toBe(false);
+      expect(reloadedStore.state()).toBe('ready');
+    } finally {
+      localStorage.removeItem(FIRST_RUN_DISMISSED_STORAGE_KEY);
+    }
   });
 
   it('persists the runtime ID before terminal data and clears it only after DELETE', async () => {
@@ -2020,8 +2331,10 @@ function runtimeStub(overrides: Record<string, unknown> = {}) {
     setPreferGpu: vi.fn(),
     getRequirements: vi.fn(() => of([])),
     getModelOptions: vi.fn(() => of([])),
+    listInstallations: vi.fn(() => of([])),
     startInstallation: vi.fn(),
     getInstallation: vi.fn(),
+    cancelInstallation: vi.fn(),
     startModelInstallation: vi.fn(),
     getModelInstallation: vi.fn(),
     createCapture: vi.fn(() => of(completedJob)),

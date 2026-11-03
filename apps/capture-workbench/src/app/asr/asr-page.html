@@ -1,0 +1,37 @@
+<section
+  class="mx-auto flex max-w-2xl flex-col gap-6 px-8 py-10"
+  data-testid="page-asr"
+>
+  <h1 class="text-2xl font-semibold">{{ m().nav.asr }}</h1>
+
+  @if (showInstallPanel()) {
+    <div class="flex flex-col gap-4" data-testid="asr-install-panel">
+      <p class="text-muted-foreground text-sm">{{ m().asrPanelHint }}</p>
+      @for (unit of features.speechPack(); track unit.requirementId) {
+        <app-engine-card
+          [requirement]="unit"
+          [optional]="unit.requirementId === 'speaker-diarization'"
+          [installation]="features.installationFor(unit.requirementId)"
+          [installing]="features.installing()"
+          (install)="features.installUnit($event)"
+          (cancelInstall)="features.cancelInstallation($event)"
+          (retry)="features.retryInstallation($event)"
+        />
+      }
+    </div>
+  } @else {
+    <app-placeholder-page page="asr" />
+
+    @if (optionalSpeakerUnit(); as speakerUnit) {
+      <app-engine-card
+        [requirement]="speakerUnit"
+        [optional]="true"
+        [installation]="features.installationFor(speakerUnit.requirementId)"
+        [installing]="features.installing()"
+        (install)="features.installUnit($event)"
+        (cancelInstall)="features.cancelInstallation($event)"
+        (retry)="features.retryInstallation($event)"
+      />
+    }
+  }
+</section>

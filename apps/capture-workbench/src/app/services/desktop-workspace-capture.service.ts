@@ -52,8 +52,10 @@ import {
   isActiveJob,
   isActiveStreaming,
   isAudioMediaType,
+  isFeatureReady,
   isOcrCheckpoint,
   isPdfMediaType,
+  selectFeatureMissing,
   terminalLibraryStatus,
   terminalStage,
 } from './desktop-workspace.selectors';
@@ -172,7 +174,7 @@ export class DesktopWorkspaceCaptureService {
         host.refreshDocuments();
       }),
       switchMap((document) => {
-        if (isAudioMediaType(document.mediaType) && !this.audioReady(host.requirements())) {
+        if (isAudioMediaType(document.mediaType) && !isFeatureReady(host.requirements(), 'asr')) {
           host.requestedRequirements.update(
             (current) => new Set([...current, 'speech-recognition']),
           );
@@ -182,12 +184,22 @@ export class DesktopWorkspaceCaptureService {
         if (
           isAudioMediaType(document.mediaType)
           && host.identifySpeakers()
-          && !this.speakersReady(host.requirements())
+          && !isFeatureReady(host.requirements(), 'asr.speakers')
         ) {
           host.requestedRequirements.update(
             (current) => new Set([...current, 'speaker-diarization']),
           );
           host.setMessage(desktopMessages().speakerUnitNeeded);
+          return EMPTY;
+        }
+        if (
+          !isAudioMediaType(document.mediaType)
+          && selectFeatureMissing(host.requirements(), 'ocr').length > 0
+        ) {
+          host.requestedRequirements.update(
+            (current) => new Set([...current, 'windowsml-ocr']),
+          );
+          host.setMessage(desktopMessages().needsSetup);
           return EMPTY;
         }
         return this.captureExisting$(document.documentId, host, document.mediaType);
@@ -274,7 +286,7 @@ export class DesktopWorkspaceCaptureService {
       clientRequestId: crypto.randomUUID(),
       structuringMode: 'runtime',
       identifySpeakers:
-        host.identifySpeakers() && this.speakersReady(host.requirements()),
+        host.identifySpeakers() && isFeatureReady(host.requirements(), 'asr.speakers'),
     }).pipe(
       switchMap((operation) => {
         active.captureId = operation.captureId;
@@ -888,19 +900,6 @@ export class DesktopWorkspaceCaptureService {
       errorCode: 'capture_failed',
       errorMessage: errorMessage(error),
     });
-  }
-
-  private speakersReady(requirements: readonly RuntimeRequirement[]): boolean {
-    return requirements.some(
-      (requirement) =>
-        requirement.requirementId === 'speaker-diarization' && requirement.status === 'ready',
-    );
-  }
-
-  private audioReady(requirements: readonly RuntimeRequirement[]): boolean {
-    return requirements.some(
-      (requirement) => requirement.requirementId === 'speech-recognition' && requirement.status === 'ready',
-    );
   }
 
   private markBusy(documentId: string, busy: boolean): void {

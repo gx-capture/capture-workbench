@@ -15,10 +15,24 @@ import { desktopMessages } from '../i18n/desktop-messages';
 
 /** Pure workspace selectors and terminal mappings shared by the facade services. */
 
-// OCR is the capture gate; Ollama and its model catalog are optional host structuring.
-export const CORE_REQUIREMENTS = new Set<CaptureRequirementId>([
+export type RecognitionFeature = 'ocr' | 'asr' | 'asr.speakers';
+
+/** Recognition features and the runtime requirement units each one needs. */
+export const FEATURE_REQUIREMENTS: Readonly<
+  Record<RecognitionFeature, readonly CaptureRequirementId[]>
+> = {
+  ocr: ['windowsml-ocr'],
+  asr: ['speech-recognition'],
+  'asr.speakers': ['speaker-diarization'],
+};
+
+/** User-facing recognition engine units shown in settings and cards. */
+export const RECOGNITION_ENGINE_UNITS: readonly CaptureRequirementId[] = [
   'windowsml-ocr',
-]);
+  'speech-recognition',
+  'speaker-diarization',
+  'vertical-japanese-reader',
+];
 
 export const INSTALLATION_ORDER = new Map<CaptureRequirementId, number>([
   ['windowsml-ocr', 0],
@@ -46,6 +60,34 @@ export function selectSpeechPack(
     requirements.filter((requirement) => requirement.requirementId === requirementId));
 }
 
+/** The recognition engine units this runtime reports, in display order. */
+export function selectRecognitionEngines(
+  requirements: readonly RuntimeRequirement[],
+): readonly RuntimeRequirement[] {
+  return RECOGNITION_ENGINE_UNITS.flatMap((requirementId) =>
+    requirements.filter((requirement) => requirement.requirementId === requirementId));
+}
+
+/** Formats a download byte count as a localized approximate size (`約 2.8 GB`, `約 144 MB`). */
+export function formatApproximateBytes(
+  bytes: number | null | undefined,
+): string | null {
+  if (typeof bytes !== 'number' || !Number.isFinite(bytes) || bytes <= 0) {
+    return null;
+  }
+  const m = desktopMessages();
+  if (bytes >= 1_000_000_000) {
+    const gb = (bytes / 1_000_000_000).toFixed(1).replace(/\.0$/u, '');
+    return m.approxSize(`${gb} GB`);
+  }
+  if (bytes >= 1_000_000) {
+    const mb = Math.round(bytes / 1_000_000);
+    return m.approxSize(`${mb} MB`);
+  }
+  const kb = Math.max(1, Math.round(bytes / 1_000));
+  return m.approxSize(`${kb} KB`);
+}
+
 /** Converts model installation progress to the percentage shown by the UI. */
 export function modelInstallationPercent(
   installation: RuntimeModelInstallation | null,
@@ -53,12 +95,22 @@ export function modelInstallationPercent(
   return installationPercent(installation);
 }
 
-/** An installation's progress as a whole percentage. */
+/** An installation's progress as a whole percentage, preferring byte counts when available. */
 export function installationPercent(
-  installation: { readonly progress: number } | null,
+  installation: {
+    readonly progress: number;
+    readonly downloadedBytes?: number | null;
+    readonly downloadBytes?: number | null;
+  } | null,
 ): number {
-  const progress = installation?.progress ?? 0;
-  return Math.round(Math.min(Math.max(progress, 0), 1) * 100);
+  if (!installation) return 0;
+  const ratio =
+    typeof installation.downloadBytes === 'number'
+    && installation.downloadBytes > 0
+    && typeof installation.downloadedBytes === 'number'
+      ? installation.downloadedBytes / installation.downloadBytes
+      : installation.progress;
+  return Math.round(Math.min(Math.max(ratio, 0), 1) * 100);
 }
 
 /** Maps a model installation state to its human-readable phase. */
@@ -76,26 +128,57 @@ export function modelInstallationPhase(
   return phase.configuring;
 }
 
-/** Selects requirements that block capture or were explicitly requested. */
-export function selectCoreMissing(
+/** Whether every requirement unit for a recognition feature is installed (`ready`). */
+export function isFeatureReady(
+  requirements: readonly RuntimeRequirement[],
+  feature: RecognitionFeature,
+): boolean {
+  const requiredIds = FEATURE_REQUIREMENTS[feature];
+  return requiredIds.every((id) =>
+    requirements.some(
+      (requirement) =>
+        requirement.requirementId === id && requirement.status === 'ready',
+    ),
+  );
+}
+
+/** Selects requirements for a recognition feature that are not yet `ready`. */
+export function selectFeatureMissing(
+  requirements: readonly RuntimeRequirement[],
+  feature: RecognitionFeature,
+): readonly RuntimeRequirement[] {
+  const requiredIds = new Set(FEATURE_REQUIREMENTS[feature]);
+  return requirements.filter(
+    (requirement) =>
+      requiredIds.has(requirement.requirementId)
+      && requirement.status !== 'ready',
+  );
+}
+
+/** Selects explicitly requested requirements that are not yet `ready`. */
+export function selectRequestedMissing(
   requirements: readonly RuntimeRequirement[],
   requestedRequirements: ReadonlySet<CaptureRequirementId>,
 ): readonly RuntimeRequirement[] {
   return requirements.filter(
     (requirement) =>
-      (CORE_REQUIREMENTS.has(requirement.requirementId)
-        || requestedRequirements.has(requirement.requirementId))
+      requestedRequirements.has(requirement.requirementId)
       && requirement.status !== 'ready',
   );
 }
 
-/** Selects and orders installable core requirements for one consent action. */
-export function selectInstallableCoreRequirements(
+/** Selects and orders installable requirements from the requested IDs. */
+export function selectInstallableRequirements(
   requirements: readonly RuntimeRequirement[],
-  requestedRequirements: ReadonlySet<CaptureRequirementId>,
+  requestedRequirements: Iterable<CaptureRequirementId>,
 ): readonly RuntimeRequirement[] {
-  return selectCoreMissing(requirements, requestedRequirements)
-    .filter((requirement) => requirement.status === 'installable')
+  const requested = new Set(requestedRequirements);
+  return requirements
+    .filter(
+      (requirement) =>
+        requested.has(requirement.requirementId)
+        && requirement.status === 'installable',
+    )
     .slice()
     .sort(
       (left, right) =>

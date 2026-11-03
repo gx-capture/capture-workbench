@@ -43,7 +43,7 @@
         aria-hidden="true"
         [class.bg-primary]="store.state() === 'ready'"
         [class.bg-destructive]="store.state() === 'error'"
-        [class.bg-muted-foreground]="store.state() === 'starting' || store.state() === 'needs-setup'"
+        [class.bg-muted-foreground]="store.state() === 'starting'"
       ></span>
       {{ store.state() === 'ready' ? m().ready : m().notReady }}
     </p>

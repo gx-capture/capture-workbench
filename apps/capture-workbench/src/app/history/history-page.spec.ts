@@ -100,7 +100,7 @@ describe('HistoryPage', () => {
 
   it('shows a component installation as a rounded progress bar', async () => {
     const store = workspaceStub();
-    store.state.set('needs-setup');
+    store.requestedMissing.set([speechUnit('speech-recognition', 'installable')]);
     store.activeInstallation.set({
       installationId: 'installation-1',
       requirementId: 'speech-recognition',
@@ -133,7 +133,6 @@ describe('HistoryPage', () => {
       createdAt: '2026-07-20T00:00:00Z',
       updatedAt: '2026-07-20T00:00:00Z',
     });
-    store.state.set('needs-setup');
     store.modelSelectionRequired.set(true);
     store.modelInstallationPhase.set('下載與驗證模型');
     store.modelInstallationPercent.set(42);
@@ -156,7 +155,6 @@ describe('HistoryPage', () => {
 
   it('starts the exact model selected through the setup UI', async () => {
     const store = workspaceStub();
-    store.state.set('needs-setup');
     store.modelSelectionRequired.set(true);
     store.modelOptions.set([{
       optionId: 'qwen3.5-0.8b-v1',
@@ -377,8 +375,9 @@ it('lists the speakers of a transcript, plays a sample and stores a name', async
 });
 
 function workspaceStub(selected: unknown = null, modelInstallation: RuntimeModelInstallation | null = null) {
+  const activeInstallation = signal<RuntimeInstallation | null>(null);
   return {
-    state: signal<'ready' | 'needs-setup' | 'error'>('ready'),
+    state: signal<'ready' | 'starting' | 'error'>('ready'),
     message: signal(''),
     requirements: signal([]),
     documents: signal([]),
@@ -387,8 +386,10 @@ function workspaceStub(selected: unknown = null, modelInstallation: RuntimeModel
     query: signal(''),
     statusFilter: signal(''),
     installing: signal(false),
-    activeInstallation: signal<RuntimeInstallation | null>(null),
+    activeInstallation,
     installationPercent: signal(0),
+    installationFor: (requirementId: string) =>
+      activeInstallation()?.requirementId === requirementId ? activeInstallation() : null,
     activeModelInstallation: signal<RuntimeModelInstallation | null>(modelInstallation),
     modelInstallationPhase: signal(''),
     modelInstallationPercent: signal(0),
@@ -404,6 +405,8 @@ function workspaceStub(selected: unknown = null, modelInstallation: RuntimeModel
     setPreferGpu: vi.fn(),
     speechPack: signal<readonly RuntimeRequirement[]>([]),
     installSpeechUnit: vi.fn(),
+    cancelInstallation: vi.fn(),
+    retryInstallation: vi.fn(),
     sampleSources: signal(new Map<string, string>()),
     loadSpeakerSamples: vi.fn(),
     isRecording: (mediaType: string) =>
@@ -422,10 +425,10 @@ function workspaceStub(selected: unknown = null, modelInstallation: RuntimeModel
     requestUnit: vi.fn(),
     resultText: (result: { targetText: string }) => result.targetText,
     canCapture: signal(true),
-    coreMissing: signal([]),
-    installableCoreRequirements: signal([]),
+    requestedMissing: signal<readonly RuntimeRequirement[]>([]),
+    installableRequestedRequirements: signal<readonly RuntimeRequirement[]>([]),
     initialize: vi.fn(),
-    installCoreRequirements: vi.fn(),
+    installRequestedRequirements: vi.fn(),
     selectModelOption: vi.fn(),
     installSelectedModel: vi.fn(),
     chooseSources: vi.fn(),
@@ -482,10 +485,11 @@ function speechUnit(
     requiredFor: ['audio'],
     installStrategy: 'runtime-catalog',
     optional: true,
+    downloadBytes: requirementId === 'speech-recognition' ? 2_800_000_000 : 300_000_000,
   };
 }
 
-it('describes each optional speech unit and downloads only the one the user picks', async () => {
+it('describes each optional speech unit with EngineCard and downloads only the one the user picks', async () => {
   const store = workspaceStub();
   store.speechPack.set([
     speechUnit('speech-recognition', 'installable'),
@@ -502,7 +506,7 @@ it('describes each optional speech unit and downloads only the one the user pick
   const pack = root.querySelector('[data-testid="speech-pack"]') as HTMLDetailsElement;
   expect(pack.open).toBe(true);
   expect(pack.textContent).toContain('台灣語音包（選用）');
-  const units = [...root.querySelectorAll<HTMLElement>('[data-testid="speech-pack-unit"]')];
+  const units = [...root.querySelectorAll<HTMLElement>('[data-testid="engine-card"]')];
   expect(units.map((unit) => unit.dataset['requirementId'])).toEqual([
     'speech-recognition',
     'speaker-diarization',
@@ -510,11 +514,12 @@ it('describes each optional speech unit and downloads only the one the user pick
   const speech = units[0].textContent ?? '';
   expect(speech).toContain('TEA-ASR 1.1');
   expect(speech).toContain('台灣華語');
-  expect(speech).toContain('10.5 GB');
+  expect(speech).toContain('安裝（約 2.8 GB）');
   expect(speech).toContain('MIT');
   expect(units[1].textContent).toContain('最多分出 8 位說話者');
+  expect(units[1].textContent).toContain('安裝（約 300 MB）');
 
-  (units[1].querySelector('[data-testid="speech-pack-install"]') as HTMLButtonElement).click();
+  (units[1].querySelector('[data-testid="engine-card-install"]') as HTMLButtonElement).click();
   expect(store.installSpeechUnit).toHaveBeenCalledExactlyOnceWith('speaker-diarization');
 });
 
@@ -533,17 +538,19 @@ it('folds the speech pack away once both units are installed', async () => {
   const root = fixture.nativeElement as HTMLElement;
 
   expect((root.querySelector('[data-testid="speech-pack"]') as HTMLDetailsElement).open).toBe(false);
-  expect(root.querySelector('[data-testid="speech-pack-install"]')).toBeNull();
+  expect(root.querySelector('[data-testid="engine-card-install"]')).toBeNull();
 });
 
-it('shows a speech unit download in the pack while documents stay usable', async () => {
+it('shows a speech unit download in the EngineCard while documents stay usable', async () => {
   const store = workspaceStub();
   store.speechPack.set([speechUnit('speech-recognition', 'installable')]);
   store.activeInstallation.set({
     installationId: 'installation-2',
     requirementId: 'speech-recognition',
     status: 'running',
-    progress: 0.5,
+    progress: 0.1,
+    downloadedBytes: 1_400_000_000,
+    downloadBytes: 2_800_000_000,
     createdAt: '2026-11-01T00:00:00Z',
     updatedAt: '2026-11-01T00:00:00Z',
   });
@@ -556,8 +563,8 @@ it('shows a speech unit download in the pack while documents stay usable', async
   fixture.detectChanges();
   const root = fixture.nativeElement as HTMLElement;
 
-  const progress = root.querySelector('[data-testid="speech-pack-progress"]') as HTMLElement;
-  expect(progress.textContent).toContain('50%');
+  const progress = root.querySelector('[data-testid="engine-card-progress"]') as HTMLElement;
+  expect(progress.textContent).toContain('正在下載 50%');
   expect(root.querySelector('[data-testid="runtime-setup"]')).toBeNull();
 });
 

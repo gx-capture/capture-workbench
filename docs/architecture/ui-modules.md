@@ -10,6 +10,7 @@ flowchart LR
   n_apps_capture_workbench_src_app_services["apps/capture-workbench/src/app/services<br/>shell:service"]
   n_apps_capture_workbench_src_app_ui_button_src["apps/capture-workbench/src/app/ui/button/src<br/>shell:ui"]
   n_apps_capture_workbench_src_app_ui_card_src["apps/capture-workbench/src/app/ui/card/src<br/>shell:ui"]
+  n_apps_capture_workbench_src_app_ui_table_src["apps/capture-workbench/src/app/ui/table/src<br/>shell:ui"]
   n_apps_capture_workbench_src_app_ui_utils_src["apps/capture-workbench/src/app/ui/utils/src<br/>shell:ui"]
   n_packages_capture_runtime_client_src["packages/capture-runtime-client/src<br/>sdk"]
   n_packages_capture_workbench_ui_src["packages/capture-workbench-ui/src<br/>ui:public-api"]
@@ -39,6 +40,7 @@ flowchart LR
   n_apps_capture_workbench_src_app_services --> n_packages_capture_workbench_ui_src
   n_apps_capture_workbench_src_app_ui_button_src --> n_apps_capture_workbench_src_app_ui_utils_src
   n_apps_capture_workbench_src_app_ui_card_src --> n_apps_capture_workbench_src_app_ui_utils_src
+  n_apps_capture_workbench_src_app_ui_table_src --> n_apps_capture_workbench_src_app_ui_utils_src
   n_packages_capture_workbench_ui_src --> n_packages_capture_workbench_ui_src_lib
   n_packages_capture_workbench_ui_src --> n_packages_capture_workbench_ui_src_lib_capture_angular_components_capture_angular
   n_packages_capture_workbench_ui_src --> n_packages_capture_workbench_ui_src_lib_capture_angular_components_capture_runtime_compute_status
@@ -99,6 +101,7 @@ flowchart LR
   n_root --> n_apps_capture_workbench_src_app_services
   n_root --> n_apps_capture_workbench_src_app_ui_button_src
   n_root --> n_apps_capture_workbench_src_app_ui_card_src
+  n_root --> n_apps_capture_workbench_src_app_ui_table_src
   n_root --> n_apps_capture_workbench_src_app_ui_utils_src
   n_root --> n_packages_capture_workbench_ui_src
 ```

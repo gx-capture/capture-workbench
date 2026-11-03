@@ -50,17 +50,17 @@
       <span class="model-chip"><span aria-hidden="true"></span>{{ store.activeModelOption()?.displayName ?? m().noModel }}</span>
     </header>
 
-    @if (store.state() === 'needs-setup') {
+    @if (store.requestedMissing().length > 0 || store.modelSelectionRequired()) {
       <mat-card class="setup-card" appearance="outlined" aria-labelledby="setup-title" data-testid="runtime-setup">
         <div>
           <h2 id="setup-title">{{ m().setupTitle }}</h2>
           <p class="setup-status" aria-live="polite">{{ store.message() }}</p>
           <ul>
-            @for (requirement of store.coreMissing(); track requirement.requirementId) {
+            @for (requirement of store.requestedMissing(); track requirement.requirementId) {
               <li data-testid="runtime-requirement" [attr.data-requirement-id]="requirement.requirementId" [attr.data-status]="requirement.status">
                 @if (guides()[requirement.requirementId]; as guide) {
                   <span>{{ guide.name }}</span>
-                  <small>{{ guide.summary }} {{ guide.download }}</small>
+                  <small>{{ guide.summary }} {{ approxSize(requirement.downloadBytes) }}</small>
                 } @else {
                   <span>{{ requirement.displayName }}</span>
                 }
@@ -69,8 +69,8 @@
             }
           </ul>
         </div>
-        @if (store.installableCoreRequirements().length > 0) {
-          <button mat-flat-button type="button" data-testid="runtime-install" [disabled]="store.installing()" (click)="store.installCoreRequirements()">
+        @if (store.installableRequestedRequirements().length > 0) {
+          <button mat-flat-button type="button" data-testid="runtime-install" [disabled]="store.installing()" (click)="store.installRequestedRequirements()">
             @if (store.installing()) { <mat-spinner diameter="18" /> }
             {{ store.installing() ? m().installing : m().agreeAndInstall }}
           </button>
@@ -179,7 +179,25 @@
     </mat-card>
 
     @if (store.speechPack().length > 0) {
-      <app-speech-pack />
+      <details class="mb-9 rounded-md border bg-card px-5 py-4" data-testid="speech-pack" [open]="speechPackOpen()">
+        <summary class="grid cursor-pointer gap-1">
+          <strong class="text-lg">{{ m().speechPackTitle }}</strong>
+          <span class="text-muted-foreground text-xs">{{ m().speechPackHint }}</span>
+        </summary>
+        <div class="flex flex-col gap-3 pt-3">
+          @for (unit of store.speechPack(); track unit.requirementId) {
+            <app-engine-card
+              [requirement]="unit"
+              [optional]="unit.requirementId === 'speaker-diarization'"
+              [installation]="store.installationFor(unit.requirementId)"
+              [installing]="store.installing()"
+              (install)="store.installSpeechUnit($event)"
+              (cancelInstall)="store.cancelInstallation($event)"
+              (retry)="store.retryInstallation($event)"
+            />
+          }
+        </div>
+      </details>
     }
 
     <section class="queue-section" aria-labelledby="queue-title">
@@ -187,7 +205,7 @@
         <div>
           <h2 id="queue-title">{{ m().myDocuments }}</h2>
         </div>
-        @if (store.state() !== 'needs-setup') {
+        @if (store.requestedMissing().length === 0 && !store.modelSelectionRequired()) {
           <p aria-live="polite">{{ store.message() }}</p>
         }
       </div>

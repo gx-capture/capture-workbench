@@ -8,13 +8,13 @@ import {
 } from '@angular/core';
 import { rxResource, takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { finalize } from 'rxjs';
-import {
-  type PartialCapture,
-  type CaptureRequirementId,
-  type RuntimeModelOption,
-  type RuntimeRequirement,
+import type {
+  CaptureDocument,
+  CaptureRequirementId,
+  PartialCapture,
+  RawCapture,
+  RuntimeInstallation,
 } from '@gx-capture/capture-workbench-ui';
-import type { CaptureDocument, RawCapture } from '@gx-capture/capture-workbench-ui';
 import type {
   DesktopComputeStatus,
   DesktopLibraryDetail,
@@ -23,27 +23,22 @@ import type {
 import { DesktopLibraryService } from './desktop-library.service';
 import { DesktopWorkspaceFormattingService } from './desktop-workspace-formatting.service';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
-import { DesktopWorkspaceCaptureService, type DesktopWorkspaceCaptureHost } from './desktop-workspace-capture.service';
-import { DesktopWorkspaceInstallationService } from './desktop-workspace-installation.service';
 import {
-  activeModelOption as selectActiveModelOption,
-  errorMessage,
-  installationPercent,
-  isAudioMediaType,
-  modelInstallationPercent,
-  modelInstallationPhase,
-  modelSelectionRequired as selectModelSelectionRequired,
-  selectCoreMissing,
-  selectInstallableCoreRequirements,
-  selectSpeechPack,
+  DesktopWorkspaceCaptureService,
+  type DesktopWorkspaceCaptureHost,
+} from './desktop-workspace-capture.service';
+import { RecognitionFeaturesStore } from './recognition-features.store';
+import {
   captureResultText,
+  errorMessage,
+  isAudioMediaType,
   stageLabel as selectStageLabel,
   statusLabel as selectStatusLabel,
   transcriptLines,
 } from './desktop-workspace.selectors';
 import { desktopMessages } from '../i18n/desktop-messages';
 
-type WorkspaceState = 'starting' | 'needs-setup' | 'ready' | 'error';
+type WorkspaceState = 'starting' | 'ready' | 'error';
 
 @Injectable({ providedIn: 'root' })
 /** Public Angular facade for workspace state, commands, and capture actions. */
@@ -51,28 +46,25 @@ export class DesktopWorkspaceStore {
   private readonly runtime = inject(DesktopRuntimeClientService);
   private readonly library = inject(DesktopLibraryService);
   private readonly formatting = inject(DesktopWorkspaceFormattingService);
-  private readonly installation = inject(DesktopWorkspaceInstallationService);
   private readonly captureLifecycle = inject(DesktopWorkspaceCaptureService);
   private readonly destroyRef = inject(DestroyRef);
+  readonly features = inject(RecognitionFeaturesStore);
 
   readonly message = signal(desktopMessages().starting);
   readonly selectedId = signal<string | null>(null);
   readonly query = signal('');
   readonly statusFilter = signal('');
-  readonly installing = this.installation.installing;
-  readonly activeInstallation = this.installation.activeInstallation;
-  readonly activeModelInstallation = this.installation.activeModelInstallation;
-  readonly installationPercent = computed(() =>
-    installationPercent(this.activeInstallation()));
-  readonly modelInstallationPercent = computed(() =>
-    modelInstallationPercent(this.activeModelInstallation()));
-  readonly modelInstallationPhase = computed(() =>
-    modelInstallationPhase(this.activeModelInstallation()));
-  readonly selectedModelOptionId = this.installation.selectedModelOptionId;
+  readonly installing = this.features.installing;
+  readonly activeInstallation = this.features.activeInstallation;
+  readonly activeModelInstallation = this.features.activeModelInstallation;
+  readonly installationPercent = this.features.installationPercent;
+  readonly modelInstallationPercent = this.features.modelInstallationPercent;
+  readonly modelInstallationPhase = this.features.modelInstallationPhase;
+  readonly selectedModelOptionId = this.features.selectedModelOptionId;
   readonly busyIds = this.captureLifecycle.busyIds;
   readonly ocrCompute = this.runtime.ocrCompute;
   readonly runtimeStarted = this.runtime.started;
-  readonly requestedRequirements = signal<ReadonlySet<CaptureRequirementId>>(new Set());
+  readonly requestedRequirements = this.features.requestedRequirements;
   /** Tell speakers apart in audio added from now on. */
   readonly identifySpeakers = signal(false);
   /** Addresses of source files loaded for playing speaker samples, by document. */
@@ -85,7 +77,7 @@ export class DesktopWorkspaceStore {
   }
 
   get requirements() {
-    return this.requirementsResource.value;
+    return this.features.requirements;
   }
 
   get documents() {
@@ -98,81 +90,69 @@ export class DesktopWorkspaceStore {
 
   readonly state = computed<WorkspaceState>(() => {
     if (
-      this.runtime.error()
-      || this.requirementsResource.error()
-      || this.documentsResource.error()
+      this.runtime.error() ||
+      this.features.requirementsResource.error() ||
+      this.documentsResource.error()
     ) {
       return 'error';
     }
     if (!this.runtimeStarted()) return 'starting';
-    const requirementsStatus = this.requirementsResource.status();
-    // Model discovery is optional: OCR remains usable when Ollama/Qwen is absent.
+    const requirementsStatus = this.features.requirementsResource.status();
     if (
-      requirementsStatus === 'idle' || requirementsStatus === 'loading' || requirementsStatus === 'reloading'
+      requirementsStatus === 'idle' ||
+      requirementsStatus === 'loading' ||
+      requirementsStatus === 'reloading'
     ) {
       return 'starting';
     }
-    return this.runtime.ready() && this.coreMissing().length === 0
-      ? 'ready'
-      : 'needs-setup';
+    return 'ready';
   });
 
-  readonly canCapture = computed(() => this.state() === 'ready' && !this.installing());
+  /** Installing one feature does not block capturing with another (plan §2, ASR journey). */
+  readonly canCapture = computed(() => this.state() === 'ready');
   /** The GPU setting for speech recognition, offered only when a CUDA driver is present. */
   readonly speechGpu = computed<DesktopComputeStatus | null>(() => {
-    const status = this.computeResource.hasValue() ? this.computeResource.value() : undefined;
+    const status = this.computeResource.hasValue()
+      ? this.computeResource.value()
+      : undefined;
     return status?.cudaAvailable ? status : null;
   });
   readonly savingCompute = signal(false);
   /** Changing it relaunches the runtime, which would stop a capture or installation. */
   readonly canChangeCompute = computed(
-    () => !this.savingCompute() && !this.installing() && this.busyIds().size === 0,
+    () =>
+      !this.savingCompute() && !this.installing() && this.busyIds().size === 0,
   );
-  readonly coreMissing = computed(() =>
-    selectCoreMissing(this.requirements(), this.requestedRequirements()));
-  readonly installableCoreRequirements = computed(() =>
-    selectInstallableCoreRequirements(this.requirements(), this.requestedRequirements()));
-  readonly speechPack = computed(() => selectSpeechPack(this.requirements()));
-  readonly modelSelectionRequired = computed(
-    () => selectModelSelectionRequired(this.modelOptions()),
-  );
-  readonly activeModelOption = computed(
-    () => selectActiveModelOption(this.modelOptions()),
-  );
+  readonly ocrReady = this.features.ocrReady;
+  readonly asrReady = this.features.asrReady;
+  readonly speakersReady = this.features.speakersReady;
+  readonly engines = this.features.engines;
+  readonly speechPack = this.features.speechPack;
+  readonly requestedMissing = this.features.requestedMissing;
+  readonly installableRequestedRequirements =
+    this.features.installableRequestedRequirements;
+  readonly modelSelectionRequired = this.features.modelSelectionRequired;
+  readonly activeModelOption = this.features.activeModelOption;
 
   private dropListenerStarted = false;
 
-  private readonly computeResource = rxResource<DesktopComputeStatus, undefined>({
-    stream: ({ abortSignal }) => this.runtime.getComputeStatus(abortSignal),
-  });
-
-  private readonly requirementsResource = rxResource<
-    readonly RuntimeRequirement[],
-    { readonly ready: true } | undefined
-  >({
-    defaultValue: [],
-    params: () => this.runtimeStarted() ? { ready: true } : undefined,
-    stream: ({ abortSignal }) => this.runtime.getRequirements(abortSignal),
-  });
-
-  private readonly modelOptionsResource = rxResource<
-    readonly RuntimeModelOption[],
-    { readonly ready: true } | undefined
-  >({
-    defaultValue: [],
-    params: () => this.runtimeStarted() ? { ready: true } : undefined,
-    stream: ({ abortSignal }) => this.runtime.getModelOptions(abortSignal),
-  });
+  private readonly computeResource = rxResource<DesktopComputeStatus, undefined>(
+    {
+      stream: ({ abortSignal }) => this.runtime.getComputeStatus(abortSignal),
+    },
+  );
 
   private readonly documentsResource = rxResource<
     readonly DesktopLibrarySummary[],
     { readonly query: string; readonly status: string } | undefined
   >({
     defaultValue: [],
-    params: () => this.runtimeStarted()
-      ? { query: this.query(), status: this.statusFilter() }
-      : undefined,
-    stream: ({ params, abortSignal }) => this.library.list(params.query, params.status, abortSignal),
+    params: () =>
+      this.runtimeStarted()
+        ? { query: this.query(), status: this.statusFilter() }
+        : undefined,
+    stream: ({ params, abortSignal }) =>
+      this.library.list(params.query, params.status, abortSignal),
   });
 
   private readonly selectedResource = rxResource<
@@ -184,7 +164,8 @@ export class DesktopWorkspaceStore {
       const documentId = this.selectedId();
       return this.runtimeStarted() && documentId ? { documentId } : undefined;
     },
-    stream: ({ params, abortSignal }) => this.library.get(params.documentId, abortSignal),
+    stream: ({ params, abortSignal }) =>
+      this.library.get(params.documentId, abortSignal),
   });
 
   private readonly captureHost: DesktopWorkspaceCaptureHost = {
@@ -200,19 +181,25 @@ export class DesktopWorkspaceStore {
   };
 
   private readonly resourceErrorEffect = effect(() => {
-    const error = this.runtime.error()
-      ?? this.requirementsResource.error()
-      ?? this.documentsResource.error()
-      ?? this.selectedResource.error();
+    const error =
+      this.runtime.error() ??
+      this.features.requirementsResource.error() ??
+      this.documentsResource.error() ??
+      this.selectedResource.error();
     if (error) this.message.set(errorMessage(error));
   });
 
   private readonly stateMessageEffect = effect(() => {
     const state = this.state();
-    if (state === 'ready') {
+    if (state === 'ready' && this.message() === desktopMessages().starting) {
       this.message.set('');
-    } else if (state === 'needs-setup') {
-      this.message.set(desktopMessages().needsSetup);
+    }
+  });
+
+  private readonly featureMessageEffect = effect(() => {
+    const featureMsg = this.features.message();
+    if (featureMsg) {
+      this.message.set(featureMsg);
     }
   });
 
@@ -230,24 +217,26 @@ export class DesktopWorkspaceStore {
     }
     this.runtime.reload();
     this.computeResource.reload();
-    this.requirementsResource.reload();
-    this.modelOptionsResource.reload();
+    this.features.initialize();
     this.documentsResource.reload();
   }
 
   /** Lets speech recognition use the GPU or not, then waits for the relaunched runtime. */
   setPreferGpu(preferGpu: boolean): void {
-    if (!this.canChangeCompute() || this.speechGpu()?.preferGpu === preferGpu) return;
+    if (!this.canChangeCompute() || this.speechGpu()?.preferGpu === preferGpu) {
+      return;
+    }
     this.savingCompute.set(true);
-    this.runtime.setPreferGpu(preferGpu).pipe(
-      finalize(() => this.savingCompute.set(false)),
-    ).subscribe({
-      next: () => this.initialize(),
-      error: (error: unknown) => {
-        this.computeResource.reload();
-        this.message.set(errorMessage(error));
-      },
-    });
+    this.runtime
+      .setPreferGpu(preferGpu)
+      .pipe(finalize(() => this.savingCompute.set(false)))
+      .subscribe({
+        next: () => this.initialize(),
+        error: (error: unknown) => {
+          this.computeResource.reload();
+          this.message.set(errorMessage(error));
+        },
+      });
   }
 
   /** Reloads the document list without changing the current selection. */
@@ -271,57 +260,55 @@ export class DesktopWorkspaceStore {
     this.statusFilter.set(status);
   }
 
-  /** Installs all currently available core requirements in deterministic order. */
-  installCoreRequirements(): void {
-    this.installRequirements(this.installableCoreRequirements());
+  /** Latest installation record for a requirement unit, if any. */
+  installationFor(
+    requirementId: CaptureRequirementId,
+  ): RuntimeInstallation | null {
+    return this.features.installationFor(requirementId);
+  }
+
+  /** Installs all requested missing requirements in deterministic order. */
+  installRequestedRequirements(): void {
+    this.features.installRequestedRequirements();
+  }
+
+  /** Downloads one recognition unit the user chose. */
+  installUnit(requirementId: CaptureRequirementId): void {
+    this.features.installUnit(requirementId);
+  }
+
+  /** Downloads the selected recognition units in deterministic order. */
+  installUnits(requirementIds: readonly CaptureRequirementId[]): void {
+    this.features.installUnits(requirementIds);
   }
 
   /** Downloads one speech pack unit the user chose after reading its guide. */
   installSpeechUnit(requirementId: CaptureRequirementId): void {
-    this.installRequirements(
-      this.speechPack().filter(
-        (requirement) =>
-          requirement.requirementId === requirementId && requirement.status === 'installable',
-      ),
-    );
+    this.features.installUnit(requirementId);
   }
 
-  private installRequirements(installable: readonly RuntimeRequirement[]): void {
-    if (!this.runtimeStarted() || this.installing()) return;
-    if (installable.length === 0) return;
-    this.installation.installCoreRequirements$(installable).subscribe({
-      complete: () => {
-        this.runtime.reload();
-        this.requirementsResource.reload();
-        this.message.set(desktopMessages().recheck);
-      },
-      error: (error: unknown) => {
-        this.message.set(errorMessage(error));
-      },
-    });
+  /** Cancels a running installation. */
+  cancelInstallation(installationId?: string): void {
+    this.features.cancelInstallation(installationId);
+  }
+
+  /** Retries a failed or cancelled installation for a requirement unit. */
+  retryInstallation(requirementId: CaptureRequirementId): void {
+    this.features.retryInstallation(requirementId);
   }
 
   get modelOptions() {
-    return this.modelOptionsResource.value;
+    return this.features.modelOptions;
   }
 
   /** Selects the model option used by the next installation command. */
   selectModelOption(optionId: string): void {
-    this.installation.selectModelOption(optionId);
+    this.features.selectModelOption(optionId);
   }
 
   /** Starts the selected model installation and refreshes dependent resources. */
   installSelectedModel(): void {
-    const optionId = this.selectedModelOptionId();
-    if (!this.runtimeStarted() || this.installing() || !optionId) return;
-    this.installation.installSelectedModel$(optionId).pipe(
-      finalize(() => {
-        this.modelOptionsResource.reload();
-        this.requirementsResource.reload();
-      }),
-    ).subscribe({
-      error: (error: unknown) => this.message.set(errorMessage(error)),
-    });
+    this.features.installSelectedModel();
   }
 
   /** Opens the host source picker and enqueues the selected paths. */
@@ -356,13 +343,17 @@ export class DesktopWorkspaceStore {
 
   /** Deletes a non-active, non-recoverable library document after confirmation. */
   delete(documentId: string): void {
-    if (this.captureLifecycle.hasActiveCapture(documentId) || this.busyIds().has(documentId)) {
+    if (
+      this.captureLifecycle.hasActiveCapture(documentId) ||
+      this.busyIds().has(documentId)
+    ) {
       this.message.set(desktopMessages().cancelBeforeDelete);
       return;
     }
-    const document = this.documents().find(
-      (candidate) => candidate.documentId === documentId,
-    ) ??
+    const document =
+      this.documents().find(
+        (candidate) => candidate.documentId === documentId,
+      ) ??
       (this.selected()?.documentId === documentId
         ? this.selected()
         : undefined);
@@ -386,7 +377,7 @@ export class DesktopWorkspaceStore {
 
   /** Offer an optional unit that a finished capture said it missed. */
   requestUnit(requirementId: CaptureRequirementId): void {
-    this.requestedRequirements.update((current) => new Set([...current, requirementId]));
+    this.features.requestUnit(requirementId);
   }
 
   /** Units a result missed that are not installed yet. */
@@ -405,7 +396,9 @@ export class DesktopWorkspaceStore {
     this.library.sourceBytes(documentId).subscribe({
       next: (bytes) => {
         const url = URL.createObjectURL(new Blob([bytes], { type: mediaType }));
-        this.sampleSources.update((current) => new Map(current).set(documentId, url));
+        this.sampleSources.update((current) =>
+          new Map(current).set(documentId, url),
+        );
       },
       error: (error: unknown) => this.message.set(errorMessage(error)),
     });
@@ -422,8 +415,13 @@ export class DesktopWorkspaceStore {
   }
 
   /** A recording's transcript lines, with the names given to its speakers. */
-  transcriptLines(item: { readonly raw?: RawCapture; readonly result?: CaptureDocument }) {
-    return item.raw ? transcriptLines(item.raw, item.result?.speakers ?? []) : [];
+  transcriptLines(item: {
+    readonly raw?: RawCapture;
+    readonly result?: CaptureDocument;
+  }) {
+    return item.raw
+      ? transcriptLines(item.raw, item.result?.speakers ?? [])
+      : [];
   }
 
   /** Address that plays only one speaker's sample, once the source is loaded. */
@@ -440,23 +438,30 @@ export class DesktopWorkspaceStore {
   /** Stores the name the user gave a speaker; an empty name removes it. */
   nameSpeaker(documentId: string, speakerId: string, name: string): void {
     const detail = this.selected();
-    const result = detail?.documentId === documentId ? detail.result : undefined;
+    const result =
+      detail?.documentId === documentId ? detail.result : undefined;
     const speakers = result?.speakers ?? [];
-    if (!result || !speakers.some((speaker) => speaker.speakerId === speakerId)) return;
+    if (!result || !speakers.some((speaker) => speaker.speakerId === speakerId))
+      return;
     const displayName = name.trim().slice(0, 100) || null;
-    this.library.updateCapture({
-      documentId,
-      status: detail!.status,
-      stage: detail!.stage,
-      result: {
-        ...result,
-        speakers: speakers.map((speaker) =>
-          speaker.speakerId === speakerId ? { ...speaker, displayName } : speaker),
-      },
-    }).subscribe({
-      next: () => this.reloadDocumentState(documentId),
-      error: (error: unknown) => this.message.set(errorMessage(error)),
-    });
+    this.library
+      .updateCapture({
+        documentId,
+        status: detail!.status,
+        stage: detail!.stage,
+        result: {
+          ...result,
+          speakers: speakers.map((speaker) =>
+            speaker.speakerId === speakerId
+              ? { ...speaker, displayName }
+              : speaker,
+          ),
+        },
+      })
+      .subscribe({
+        next: () => this.reloadDocumentState(documentId),
+        error: (error: unknown) => this.message.set(errorMessage(error)),
+      });
   }
 
   /** Result text; a transcript with speakers reads "name: what they said". */
@@ -486,7 +491,9 @@ export class DesktopWorkspaceStore {
   export(documentId: string, format: 'json' | 'text'): void {
     this.library.export(documentId, format).subscribe({
       next: (exported) => {
-        const blob = new Blob([exported.content], { type: exported.mediaType });
+        const blob = new Blob([exported.content], {
+          type: exported.mediaType,
+        });
         const url = URL.createObjectURL(blob);
         const anchor = document.createElement('a');
         anchor.href = url;

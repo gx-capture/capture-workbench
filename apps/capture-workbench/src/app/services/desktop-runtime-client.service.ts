@@ -78,24 +78,21 @@ export class DesktopRuntimeClientService {
     const pageNumbers = status?.pdfPageNumbers;
     return isPdfPageNumbers(pageNumbers) ? [...pageNumbers] : undefined;
   });
-  /** True once the native sidecar is authenticated and setup APIs are usable.
-   *
-   * A clean app-data directory has no installed OCR worker yet, so the
-   * worker-owned compute preflight is intentionally unavailable during setup.
-   * Capture actions continue to require `ready`, which additionally requires
-   * the typed compute decision.
-   */
+  /** True once the native sidecar is authenticated and runtime APIs are usable. */
   readonly started = computed(
     () => this.resourceStatus() === 'resolved' && this.status().status === 'ready',
   );
-  readonly ready = computed(
-    () => this.started()
-      && this.ocrCompute() !== null,
-  );
+  readonly ready = computed(() => this.started());
 
   getRequirements(signal?: AbortSignal): Observable<readonly RuntimeRequirement[]> {
     return this.commands
       .invoke<{ readonly items: readonly RuntimeRequirement[] }>('runtime_requirements', {}, signal)
+      .pipe(map((response) => response.items));
+  }
+
+  listInstallations(signal?: AbortSignal): Observable<readonly RuntimeInstallation[]> {
+    return this.commands
+      .invoke<{ readonly items: readonly RuntimeInstallation[] }>('runtime_list_installations', {}, signal)
       .pipe(map((response) => response.items));
   }
 
@@ -111,6 +108,10 @@ export class DesktopRuntimeClientService {
 
   getInstallation(installationId: string, signal?: AbortSignal): Observable<RuntimeInstallation> {
     return this.commands.invoke('runtime_get_installation', { input: { id: installationId } }, signal);
+  }
+
+  cancelInstallation(installationId: string, signal?: AbortSignal): Observable<RuntimeInstallation> {
+    return this.commands.invoke('runtime_cancel_installation', { input: { id: installationId } }, signal);
   }
 
   getModelOptions(signal?: AbortSignal): Observable<readonly RuntimeModelOption[]> {
