@@ -5,10 +5,10 @@ from pathlib import Path
 
 import pytest
 
-from capture_runtime.engine_adapters import WhisperTextSegment, WhisperTranscriptionResult
 from capture_runtime.progressive_audio import DecodedAudioWindow, ProgressiveBackpressureError
 from capture_runtime.progressive_decoder import PyAVIncrementalDecoder
 from capture_runtime.progressive_whisper import SpeechRecognitionWindowTranscriber
+from capture_runtime.speech_transcript import WhisperTextSegment, WhisperTranscriptionResult
 
 
 def _wav(path: Path, *, seconds: int = 2) -> bytes:

@@ -117,7 +117,7 @@ def test_worker_module_import_does_not_bootstrap_http_application() -> None:
             "-c",
             (
                 "import sys; "
-                "import capture_runtime.engine_adapters; "
+                "import capture_runtime.ocr_windowsml_adapter; "
                 "assert 'capture_runtime.app' not in sys.modules"
             ),
         ],

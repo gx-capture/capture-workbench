@@ -16,7 +16,6 @@ from capture_runtime.app import create_app
 from capture_runtime.clock import SystemClock
 from capture_runtime.config import ExtractionRuntimeConfig, OllamaRuntimeConfig, RuntimeSettings
 from capture_runtime.contracts import RuntimeRequirementStatus
-from capture_runtime.engine_adapters import EngineProbe
 from capture_runtime.model_catalog import ActiveModelSelectionStore, model_option
 from capture_runtime.ollama import (
     CommandResult,
@@ -25,6 +24,7 @@ from capture_runtime.ollama import (
     OwnedProcess,
     SystemRuntimeInstaller,
 )
+from capture_runtime.worker_probe import EngineProbe
 from tests.conftest import TOKEN
 from tests.support.ollama_legacy import install_legacy_model
 

@@ -25,7 +25,7 @@ from capture_runtime.contracts import (
     StructuringSessionStatus,
     StructuringSessionV2,
 )
-from capture_runtime.storage.common import _atomic_json
+from capture_runtime.storage.common import atomic_json
 
 
 class StructuringSessionRecordNotFoundError(KeyError):
@@ -461,7 +461,7 @@ class StructuringSessionRepository:
             raise StructuringSessionRecordCorruptError(
                 "structuring session directory escaped repository root"
             )
-        _atomic_json(directory / "metadata.json", record.dump())
+        atomic_json(directory / "metadata.json", record.dump())
 
     def _load(self, directory: Path) -> StructuringSessionRecord:
         session_id = _uuid(directory.name)

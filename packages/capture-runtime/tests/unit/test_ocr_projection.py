@@ -22,8 +22,8 @@ from capture_runtime.contracts import (
     RawCapture,
     RawCaptureSegment,
 )
-from capture_runtime.engine_adapters import OcrRegion, OcrTextResult
 from capture_runtime.extractors import CaptureExtractionOutcome
+from capture_runtime.ocr_page_result import OcrRegion, OcrTextResult
 from capture_runtime.ocr_projection import (
     OcrEngineFailure,
     OcrEngineRequest,

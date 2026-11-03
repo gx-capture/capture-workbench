@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
+from capture_runtime.ocr_execution_evidence import OcrExecutionEvidence, OcrSessionDeviceProof
 from capture_runtime.ocr_preflight import (
     OcrExecutionPlan,
     OcrSelectedDeviceIdentityV1,
@@ -29,7 +30,6 @@ from capture_runtime.worker_process import WorkerFailureDiagnostics
 
 if TYPE_CHECKING:
     from capture_runtime.contracts import OcrProvenanceV3
-    from capture_runtime.engine_adapters import OcrExecutionEvidence
 
 
 SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
@@ -406,10 +406,6 @@ class OcrExecutionDeviceProofV1:
             raw_sessions = value["sessionDeviceProofs"]
             if not isinstance(raw_sessions, list):
                 raise ValueError("execution session evidence is invalid")
-            # Importing the adapter type here avoids the engine_adapters -> proof
-            # module cycle while keeping the wire parser strict and private.
-            from capture_runtime.engine_adapters import OcrSessionDeviceProof
-
             sessions = tuple(
                 OcrSessionDeviceProof(
                     session_index=cast(int, item["sessionIndex"]),

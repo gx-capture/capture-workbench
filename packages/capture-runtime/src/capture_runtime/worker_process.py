@@ -140,7 +140,7 @@ def _frame(request: WorkerRequest) -> bytes:
     return encoded
 
 
-def _subprocess_path(path: Path) -> str:
+def subprocess_path(path: Path) -> str:
     """Pass Win32 paths to native children, while keeping extended paths for checks."""
 
     value = os.fspath(path)
@@ -429,7 +429,7 @@ class WorkerProcess:
                 self._active.discard(process)
 
     async def _spawn(self, executable: Path) -> asyncio.subprocess.Process:
-        executable_path = _subprocess_path(executable)
+        executable_path = subprocess_path(executable)
         command = (
             [sys.executable, executable_path]
             if executable.suffix.casefold() in {".py", ".pyw"}
@@ -441,7 +441,7 @@ class WorkerProcess:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=dict(self._base_environment),
-            cwd=_subprocess_path(executable.parent),
+            cwd=subprocess_path(executable.parent),
             limit=MAX_WORKER_OUTPUT_BYTES + 2,
             creationflags=(subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0),
         )
@@ -888,4 +888,5 @@ __all__ = [
     "WorkerFailureDiagnostics",
     "WorkerTimeoutError",
     "WorkerProcess",
+    "subprocess_path",
 ]

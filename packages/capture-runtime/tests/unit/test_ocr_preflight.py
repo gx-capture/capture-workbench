@@ -15,11 +15,11 @@ from capture_runtime.contracts import (
 )
 from capture_runtime.ocr_preflight import (
     _DXGI_FACTORY1_VTABLE_IS_CURRENT,
+    NativeOcrAdapterMapLease,
     OcrComputePreflight,
     OcrGpuAdapter,
     OcrGpuCapabilitySnapshot,
     _classify_native_adapter,
-    _NativeOcrAdapterMapLease,
 )
 
 CONTRACT_SHA256 = "a" * 64
@@ -132,7 +132,7 @@ def test_native_map_lease_reads_dxgi_factory_is_current_vtable_method(native_val
     vtable[_DXGI_FACTORY1_VTABLE_IS_CURRENT] = ctypes.cast(is_current, ctypes.c_void_p)
     vtable_pointer = ctypes.cast(vtable, ctypes.POINTER(ctypes.c_void_p))
     factory = ctypes.cast(ctypes.pointer(vtable_pointer), ctypes.c_void_p)
-    lease = _NativeOcrAdapterMapLease.__new__(_NativeOcrAdapterMapLease)
+    lease = NativeOcrAdapterMapLease.__new__(NativeOcrAdapterMapLease)
     lease._factory = factory
     lease._factory6 = ctypes.c_void_p(1)
 

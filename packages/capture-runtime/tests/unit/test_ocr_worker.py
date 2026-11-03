@@ -19,7 +19,7 @@ from capture_runtime.contracts import (
     OcrComputePreflightV2,
     OcrProvenanceV3,
 )
-from capture_runtime.engine_adapters import OcrRegion, OcrTextResult, WindowsMLOcrAdapter
+from capture_runtime.ocr_page_result import OcrRegion, OcrTextResult
 from capture_runtime.ocr_preflight import (
     OcrComputePlan,
     OcrGpuAdapter,
@@ -28,6 +28,7 @@ from capture_runtime.ocr_preflight import (
 from capture_runtime.ocr_profile import CANONICAL_PROFILE_PATH, canonical_json_bytes
 from capture_runtime.ocr_projection import OcrEngineRequest, OcrPageInput, OcrPageManifest
 from capture_runtime.ocr_reading_order import plan_reading_order
+from capture_runtime.ocr_windowsml_adapter import WindowsMLOcrAdapter
 from capture_runtime.worker_client import (
     WorkerResultError,
     _assert_ocr_progress_matches_final,

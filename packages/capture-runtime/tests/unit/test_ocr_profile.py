@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pytest
 
-from capture_runtime.engine_adapters import EngineRuntimeUnavailableError
 from capture_runtime.ocr_profile import (
     CANONICAL_PROFILE_PATH,
     canonical_profile_bytes,
@@ -12,6 +11,7 @@ from capture_runtime.ocr_profile import (
     load_profile_spec,
     validate_model_artifacts,
 )
+from capture_runtime.worker_probe import EngineRuntimeUnavailableError
 
 
 def test_packaged_profile_identity_is_derived_from_canonical_bytes() -> None:

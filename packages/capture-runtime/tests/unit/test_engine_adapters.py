@@ -13,23 +13,14 @@ from types import ModuleType, SimpleNamespace
 import pytest
 from PIL import Image
 
-import capture_runtime.engine_adapters as engine_adapters
 import capture_runtime.extractors as extractor_module
+import capture_runtime.ocr_execution_evidence as execution_evidence
+import capture_runtime.ocr_paddle_normalization as paddle_normalization
+import capture_runtime.ocr_windowsml_adapter as windowsml_adapter
 from capture_runtime.clock import SystemClock
 from capture_runtime.config import ExtractionRuntimeConfig, OllamaRuntimeConfig, RuntimeSettings
 from capture_runtime.constants import RUNTIME_VERSION
 from capture_runtime.contracts import CaptureSource, OcrAdapterClass, OcrProvenanceV3
-from capture_runtime.engine_adapters import (
-    EngineProbe,
-    EngineRuntimeUnavailableError,
-    OcrExecutionEvidence,
-    OcrRegion,
-    OcrTextResult,
-    PaddleResultNormalizationError,
-    WhisperTextSegment,
-    WhisperTranscriptionResult,
-    WindowsMLOcrAdapter,
-)
 from capture_runtime.extractors import (
     ExtractionRuntimeUnavailableError,
     OcrExtractionFailure,
@@ -37,6 +28,10 @@ from capture_runtime.extractors import (
     PdfPageSelectionError,
     StandaloneRuntimeCaptureExtractor,
 )
+from capture_runtime.ocr_execution_evidence import OcrExecutionEvidence
+from capture_runtime.ocr_offline_stubs import install_offline_huggingface_stubs
+from capture_runtime.ocr_paddle_normalization import PaddleResultNormalizationError
+from capture_runtime.ocr_page_result import OcrRegion, OcrTextResult
 from capture_runtime.ocr_preflight import (
     OcrComputePlan,
     OcrExecutionPlan,
@@ -45,13 +40,17 @@ from capture_runtime.ocr_preflight import (
 )
 from capture_runtime.ocr_profile import (
     CANONICAL_PROFILE_PATH,
+    WINDOWSML_REQUIRED_MODEL_FILES,
     canonical_json_bytes,
     load_profile_spec,
 )
 from capture_runtime.ocr_projection import OcrBoxInput
+from capture_runtime.ocr_vertical_routing import VerticalLayoutError
+from capture_runtime.ocr_windowsml_adapter import WindowsMLOcrAdapter
 from capture_runtime.ollama import (
     IsolatedOllamaLifecycle,
 )
+from capture_runtime.speech_transcript import WhisperTextSegment, WhisperTranscriptionResult
 from capture_runtime.worker_client import (
     InstalledEngine,
     OcrWorkerFailure,
@@ -60,6 +59,7 @@ from capture_runtime.worker_client import (
     WorkerRunResult,
     WorkerSegment,
 )
+from capture_runtime.worker_probe import EngineProbe, EngineRuntimeUnavailableError
 
 
 def _write_windowsml_models(root: Path) -> None:
@@ -164,13 +164,13 @@ def test_offline_huggingface_stub_blocks_model_downloads() -> None:
         "huggingface_hub.logging",
         "huggingface_hub.utils",
     )
-    original = {name: engine_adapters.sys.modules.get(name) for name in module_names}
+    original = {name: windowsml_adapter.sys.modules.get(name) for name in module_names}
     try:
         for name in module_names:
-            engine_adapters.sys.modules.pop(name, None)
-        engine_adapters._install_offline_huggingface_stubs()
-        package = engine_adapters.sys.modules["huggingface_hub"]
-        utils = engine_adapters.sys.modules["huggingface_hub.utils"]
+            windowsml_adapter.sys.modules.pop(name, None)
+        install_offline_huggingface_stubs()
+        package = windowsml_adapter.sys.modules["huggingface_hub"]
+        utils = windowsml_adapter.sys.modules["huggingface_hub.utils"]
 
         package.logging.set_verbosity_error()
         with pytest.raises(
@@ -181,9 +181,9 @@ def test_offline_huggingface_stub_blocks_model_downloads() -> None:
         assert issubclass(utils.RepositoryNotFoundError, utils.HfHubHTTPError)
     finally:
         for name in module_names:
-            engine_adapters.sys.modules.pop(name, None)
+            windowsml_adapter.sys.modules.pop(name, None)
             if original[name] is not None:
-                engine_adapters.sys.modules[name] = original[name]
+                windowsml_adapter.sys.modules[name] = original[name]
 
 
 def _config(tmp_path: Path) -> ExtractionRuntimeConfig:
@@ -242,7 +242,7 @@ def test_windowsml_adapter_prefers_dml_with_cert_prep_adapter_zero_and_model_dig
     assert result.device == "windowsml-dml"
     assert result.digest.startswith("sha256:")
     expected_digest = hashlib.sha256()
-    for relative in engine_adapters.WINDOWSML_REQUIRED_MODEL_FILES:
+    for relative in WINDOWSML_REQUIRED_MODEL_FILES:
         expected_digest.update(relative.encode("utf-8"))
         expected_digest.update(b"\0")
         expected_digest.update((model_dir / relative).read_bytes())
@@ -533,7 +533,7 @@ def test_windowsml_adapter_horizontal_page_preserves_normalized_identity(tmp_pat
         pipeline_factory=lambda **_kwargs: Pipeline(),
         provider_resolver=lambda: ["CPUExecutionProvider"],
     ).extract_png(image.getvalue())
-    normalized = engine_adapters.normalize_paddle_results(
+    normalized = paddle_normalization.normalize_paddle_results(
         [{"res": payload}], raster_width=400, raster_height=200
     )
     assert result.text.encode("utf-8") == normalized.text.encode("utf-8")
@@ -698,11 +698,11 @@ def test_composite_matching_cannot_reuse_one_observation_for_duplicate_source_tu
     payload, observations = _composite_adapter_observations()
     for values in payload.values():
         values.append(values[0])
-    normalized = engine_adapters.normalize_paddle_results(
+    normalized = paddle_normalization.normalize_paddle_results(
         [{"res": payload}], raster_width=1000, raster_height=1000
     )
     with pytest.raises(RuntimeError, match="alignment"):
-        engine_adapters._compose_aligned_regions(normalized, observations, 1000, 1000)
+        paddle_normalization.compose_aligned_regions(normalized, observations, 1000, 1000)
 
 
 def test_composite_matching_ambiguous_equal_observations_preserves_whole_parents():
@@ -712,10 +712,10 @@ def test_composite_matching_ambiguous_equal_observations_preserves_whole_parents
     for values in payload.values():
         values.append(values[0])
     records = (*observations, replace(observations[0], record_id=99, detector_slot=7))
-    normalized = engine_adapters.normalize_paddle_results(
+    normalized = paddle_normalization.normalize_paddle_results(
         [{"res": payload}], raster_width=1000, raster_height=1000
     )
-    regions, sources, splits = engine_adapters._compose_aligned_regions(
+    regions, sources, splits = paddle_normalization.compose_aligned_regions(
         normalized, records, 1000, 1000
     )
     assert not splits
@@ -935,7 +935,7 @@ def test_vertical_reader_is_loaded_from_its_own_install_directory(tmp_path: Path
     empty = tmp_path / "reader-unit"
     empty.mkdir()
     present = adapter(empty)
-    with pytest.raises(engine_adapters.EngineRuntimeUnavailableError):
+    with pytest.raises(EngineRuntimeUnavailableError):
         present.extract_png(png)
     assert present.vertical_reader_wanted is False
 
@@ -966,7 +966,7 @@ def test_mixed_page_stays_with_the_regular_pipeline(tmp_path: Path) -> None:
             "reader_returned_far_less_text",
         ),
         ((), "reader_returned_no_text"),
-        (engine_adapters.VerticalLayoutError("no order"), "reader_layout_failed"),
+        (VerticalLayoutError("no order"), "reader_layout_failed"),
     ],
 )
 def test_first_pass_is_kept_when_the_vertical_reader_has_no_usable_result(
@@ -1102,7 +1102,7 @@ def test_windowsml_adapter_reading_order_failure_does_not_return_original_succes
     def broken_policy(_regions: object, **_kwargs: object) -> object:
         raise RuntimeError("reading-order invariant failed")
 
-    monkeypatch.setattr(engine_adapters, "plan_reading_order", broken_policy)
+    monkeypatch.setattr(windowsml_adapter, "plan_reading_order", broken_policy)
     adapter = WindowsMLOcrAdapter(
         model_dir,
         execution_plan=_cpu_plan(),
@@ -1110,9 +1110,9 @@ def test_windowsml_adapter_reading_order_failure_does_not_return_original_succes
         provider_resolver=lambda: ["CPUExecutionProvider"],
     )
     if cleanup_fails:
-        cleanup_error = engine_adapters.OcrExecutionEvidenceError([], cleanup_verified=False)
+        cleanup_error = execution_evidence.OcrExecutionEvidenceError([], cleanup_verified=False)
         monkeypatch.setattr(adapter, "_abort_provider_evidence", lambda _pipeline: cleanup_error)
-        with pytest.raises(engine_adapters.OcrInferenceCleanupError) as raised:
+        with pytest.raises(execution_evidence.OcrInferenceCleanupError) as raised:
             adapter.extract_png(b"fake-image-for-pipeline")
         assert raised.value.primary_code == "ocr_reading_order_failed"
         assert isinstance(raised.value.__cause__, RuntimeError)
@@ -1365,10 +1365,10 @@ def test_default_paddle_factory_does_not_patch_onnxruntime_globals(
 
     paddleocr_module = ModuleType("paddleocr")
     paddleocr_module.PaddleOCR = FakePaddleOCR  # type: ignore[attr-defined]
-    monkeypatch.setitem(engine_adapters.sys.modules, "onnxruntime", ort_module)
-    monkeypatch.setitem(engine_adapters.sys.modules, "paddleocr", paddleocr_module)
+    monkeypatch.setitem(windowsml_adapter.sys.modules, "onnxruntime", ort_module)
+    monkeypatch.setitem(windowsml_adapter.sys.modules, "paddleocr", paddleocr_module)
 
-    result = engine_adapters._default_paddle_pipeline(engine="onnxruntime")
+    result = windowsml_adapter._default_paddle_pipeline(engine="onnxruntime")
 
     assert isinstance(result, FakePaddleOCR)
     assert observed == [(InferenceSession, SessionOptions, {"engine": "onnxruntime"})]
@@ -1390,7 +1390,7 @@ def test_each_ocr_model_session_gets_its_own_profile_prefix() -> None:
         },
     }
 
-    config = engine_adapters._per_session_profile_config(
+    config = windowsml_adapter._per_session_profile_config(
         {"engine_config": _profiling_engine_config("C:/work/ocr-profile")},
         load_config=lambda name: pipeline_config,
     )
@@ -1432,7 +1432,7 @@ def test_ocr_models_share_the_pipeline_config_without_profiling(
     def load_config(name: str) -> dict[str, object]:
         raise AssertionError("the PaddleX config is only needed when profiling")
 
-    assert engine_adapters._per_session_profile_config(kwargs, load_config=load_config) is None
+    assert windowsml_adapter._per_session_profile_config(kwargs, load_config=load_config) is None
 
 
 def test_default_paddle_factory_passes_per_model_profile_prefixes(
@@ -1450,11 +1450,11 @@ def test_default_paddle_factory_passes_per_model_profile_prefixes(
     paddlex_inference.load_pipeline_config = lambda name: {  # type: ignore[attr-defined]
         "SubModules": {"TextDetection": {}, "TextRecognition": {}}
     }
-    monkeypatch.setitem(engine_adapters.sys.modules, "paddleocr", paddleocr_module)
-    monkeypatch.setitem(engine_adapters.sys.modules, "paddlex.inference", paddlex_inference)
+    monkeypatch.setitem(windowsml_adapter.sys.modules, "paddleocr", paddleocr_module)
+    monkeypatch.setitem(windowsml_adapter.sys.modules, "paddlex.inference", paddlex_inference)
     engine_config = _profiling_engine_config("C:/work/ocr-profile")
 
-    engine_adapters._default_paddle_pipeline(engine="onnxruntime", engine_config=engine_config)
+    windowsml_adapter._default_paddle_pipeline(engine="onnxruntime", engine_config=engine_config)
 
     assert len(observed) == 1
     assert observed[0]["engine_config"] == engine_config
@@ -1494,7 +1494,9 @@ def test_ort_session_identity_rejects_non_dml_first_session_before_inference(
             text_det_model=SimpleNamespace(runner=SimpleNamespace(session=session)),
         )
     )
-    evidence_adapter = engine_adapters._PaddleOcrExecutionEvidenceAdapter(tmp_path / "ocr-profile")
+    evidence_adapter = execution_evidence.PaddleOcrExecutionEvidenceAdapter(
+        tmp_path / "ocr-profile"
+    )
 
     with pytest.raises(EngineRuntimeUnavailableError, match="provider identity"):
         evidence_adapter.prepare(pipeline)
@@ -1721,8 +1723,8 @@ def test_windowsml_adapter_preserves_typed_profile_cleanup_failure(
             return None
 
         def finalize(self, _pipeline: object) -> OcrExecutionEvidence:
-            raise engine_adapters.OcrExecutionEvidenceError(
-                [engine_adapters.OcrExecutionEvidenceFailure("profile_residue")],
+            raise execution_evidence.OcrExecutionEvidenceError(
+                [execution_evidence.OcrExecutionEvidenceFailure("profile_residue")],
                 cleanup_verified=False,
             )
 
@@ -1734,7 +1736,7 @@ def test_windowsml_adapter_preserves_typed_profile_cleanup_failure(
         provider_evidence_adapter=EvidenceAdapter(),
     )
 
-    with pytest.raises(engine_adapters.OcrExecutionEvidenceError) as raised:
+    with pytest.raises(execution_evidence.OcrExecutionEvidenceError) as raised:
         adapter.extract_png(b"valid-png-bytes-for-fake-pipeline")
 
     assert raised.value.profile_paths_absent is False
@@ -1857,7 +1859,7 @@ def test_windowsml_prediction_failure_preserves_primary_kind_when_cleanup_fails(
 
     monkeypatch.setattr(Path, "unlink", unlink)
 
-    with pytest.raises(engine_adapters.OcrInferenceCleanupError) as raised:
+    with pytest.raises(execution_evidence.OcrInferenceCleanupError) as raised:
         adapter.extract_png(b"valid-png-bytes-for-fake-pipeline")
 
     assert raised.value.primary_code == "ocr_prediction_failed"
@@ -1901,10 +1903,10 @@ def test_ort_profile_abort_retries_cleanup_after_transient_delete_failure(
         original_unlink(path, *args, **kwargs)
 
     monkeypatch.setattr(Path, "unlink", unlink)
-    evidence_adapter = engine_adapters._PaddleOcrExecutionEvidenceAdapter(profile_prefix)
+    evidence_adapter = execution_evidence.PaddleOcrExecutionEvidenceAdapter(profile_prefix)
     evidence_adapter.prepare(pipeline)
 
-    with pytest.raises(engine_adapters.OcrExecutionEvidenceError) as raised:
+    with pytest.raises(execution_evidence.OcrExecutionEvidenceError) as raised:
         evidence_adapter.abort(pipeline)
     assert raised.value.cleanup_verified is False
     assert profile_path.exists()
@@ -1944,10 +1946,10 @@ def test_ort_profile_abort_fails_closed_when_absence_probe_is_unknown(
         return original_iterdir(path)
 
     monkeypatch.setattr(Path, "iterdir", iterdir)
-    evidence_adapter = engine_adapters._PaddleOcrExecutionEvidenceAdapter(profile_prefix)
+    evidence_adapter = execution_evidence.PaddleOcrExecutionEvidenceAdapter(profile_prefix)
     evidence_adapter.prepare(pipeline)
 
-    with pytest.raises(engine_adapters.OcrExecutionEvidenceError) as raised:
+    with pytest.raises(execution_evidence.OcrExecutionEvidenceError) as raised:
         evidence_adapter.abort(pipeline)
 
     assert raised.value.cleanup_verified is False
@@ -1989,7 +1991,9 @@ def test_ort_profile_evidence_counts_actual_assigned_nodes_and_disables_fallback
             text_rec_model=SimpleNamespace(runner=SimpleNamespace(session=session)),
         )
     )
-    evidence_adapter = engine_adapters._PaddleOcrExecutionEvidenceAdapter(tmp_path / "ocr-profile")
+    evidence_adapter = execution_evidence.PaddleOcrExecutionEvidenceAdapter(
+        tmp_path / "ocr-profile"
+    )
 
     evidence_adapter.prepare(pipeline)
     evidence = evidence_adapter.finalize(pipeline)
@@ -2023,7 +2027,9 @@ def test_ort_profile_evidence_does_not_delete_a_foreign_profile_path(
             text_det_model=SimpleNamespace(runner=SimpleNamespace(session=Session())),
         )
     )
-    evidence_adapter = engine_adapters._PaddleOcrExecutionEvidenceAdapter(tmp_path / "ocr-profile")
+    evidence_adapter = execution_evidence.PaddleOcrExecutionEvidenceAdapter(
+        tmp_path / "ocr-profile"
+    )
     evidence_adapter.prepare(pipeline)
 
     with pytest.raises(EngineRuntimeUnavailableError, match="does not belong"):
@@ -2056,7 +2062,9 @@ def test_ort_profile_finalize_is_not_trusted_when_missing_unreadable_or_zero(
             text_det_model=SimpleNamespace(runner=SimpleNamespace(session=Session())),
         )
     )
-    evidence_adapter = engine_adapters._PaddleOcrExecutionEvidenceAdapter(tmp_path / "ocr-profile")
+    evidence_adapter = execution_evidence.PaddleOcrExecutionEvidenceAdapter(
+        tmp_path / "ocr-profile"
+    )
     evidence_adapter.prepare(pipeline)
 
     if profile_payload == "[]":
@@ -2121,10 +2129,10 @@ def test_ort_profile_finalize_attempts_every_session_after_an_earlier_failure(
         original_unlink(path, *args, **kwargs)
 
     monkeypatch.setattr(Path, "unlink", unlink)
-    evidence_adapter = engine_adapters._PaddleOcrExecutionEvidenceAdapter(profile_prefix)
+    evidence_adapter = execution_evidence.PaddleOcrExecutionEvidenceAdapter(profile_prefix)
     evidence_adapter.prepare(pipeline)
 
-    with pytest.raises(engine_adapters.OcrExecutionEvidenceError) as raised:
+    with pytest.raises(execution_evidence.OcrExecutionEvidenceError) as raised:
         evidence_adapter.finalize(pipeline)
 
     assert end_calls == ["session-1", "session-2", "session-3"]
@@ -2188,7 +2196,9 @@ def test_ort_profile_finalize_aggregates_all_session_node_counts(
             ),
         )
     )
-    evidence_adapter = engine_adapters._PaddleOcrExecutionEvidenceAdapter(tmp_path / "ocr-profile")
+    evidence_adapter = execution_evidence.PaddleOcrExecutionEvidenceAdapter(
+        tmp_path / "ocr-profile"
+    )
 
     evidence_adapter.prepare(pipeline)
     evidence = evidence_adapter.finalize(pipeline)
@@ -2222,10 +2232,12 @@ def test_ort_profile_finalize_rejects_duplicate_profile_paths_but_cleans_once(
             text_rec_model=SimpleNamespace(runner=SimpleNamespace(session=Session())),
         )
     )
-    evidence_adapter = engine_adapters._PaddleOcrExecutionEvidenceAdapter(tmp_path / "ocr-profile")
+    evidence_adapter = execution_evidence.PaddleOcrExecutionEvidenceAdapter(
+        tmp_path / "ocr-profile"
+    )
     evidence_adapter.prepare(pipeline)
 
-    with pytest.raises(engine_adapters.OcrExecutionEvidenceError) as raised:
+    with pytest.raises(execution_evidence.OcrExecutionEvidenceError) as raised:
         evidence_adapter.finalize(pipeline)
 
     assert any(failure.code == "profile_path_duplicate" for failure in raised.value.failures)
@@ -2259,7 +2271,9 @@ def test_ort_profile_finalize_disambiguates_same_second_timestamp_profiles(
             text_rec_model=SimpleNamespace(runner=SimpleNamespace(session=Session())),
         )
     )
-    evidence_adapter = engine_adapters._PaddleOcrExecutionEvidenceAdapter(tmp_path / "ocr-profile")
+    evidence_adapter = execution_evidence.PaddleOcrExecutionEvidenceAdapter(
+        tmp_path / "ocr-profile"
+    )
     evidence_adapter.prepare(pipeline)
 
     evidence = evidence_adapter.finalize(pipeline)
@@ -2294,10 +2308,12 @@ def test_ort_profile_finalize_rejects_timestamp_duplicate_without_new_profile(
             text_rec_model=SimpleNamespace(runner=SimpleNamespace(session=Session())),
         )
     )
-    evidence_adapter = engine_adapters._PaddleOcrExecutionEvidenceAdapter(tmp_path / "ocr-profile")
+    evidence_adapter = execution_evidence.PaddleOcrExecutionEvidenceAdapter(
+        tmp_path / "ocr-profile"
+    )
     evidence_adapter.prepare(pipeline)
 
-    with pytest.raises(engine_adapters.OcrExecutionEvidenceError) as raised:
+    with pytest.raises(execution_evidence.OcrExecutionEvidenceError) as raised:
         evidence_adapter.finalize(pipeline)
 
     assert any(failure.code == "profile_path_duplicate" for failure in raised.value.failures)
@@ -2339,7 +2355,9 @@ def test_ort_profile_finalize_copies_locked_timestamp_profiles_and_cleans_aliase
             text_rec_model=SimpleNamespace(runner=SimpleNamespace(session=Session(1))),
         )
     )
-    evidence_adapter = engine_adapters._PaddleOcrExecutionEvidenceAdapter(tmp_path / "ocr-profile")
+    evidence_adapter = execution_evidence.PaddleOcrExecutionEvidenceAdapter(
+        tmp_path / "ocr-profile"
+    )
     evidence_adapter.prepare(pipeline)
 
     evidence = evidence_adapter.finalize(pipeline)
@@ -2368,10 +2386,12 @@ def test_ort_profile_finalize_missing_profile_is_failure_but_enoent_cleanup_is_p
             text_det_model=SimpleNamespace(runner=SimpleNamespace(session=Session())),
         )
     )
-    evidence_adapter = engine_adapters._PaddleOcrExecutionEvidenceAdapter(tmp_path / "ocr-profile")
+    evidence_adapter = execution_evidence.PaddleOcrExecutionEvidenceAdapter(
+        tmp_path / "ocr-profile"
+    )
     evidence_adapter.prepare(pipeline)
 
-    with pytest.raises(engine_adapters.OcrExecutionEvidenceError) as raised:
+    with pytest.raises(execution_evidence.OcrExecutionEvidenceError) as raised:
         evidence_adapter.finalize(pipeline)
 
     assert any(failure.code == "profile_missing" for failure in raised.value.failures)
@@ -2418,10 +2438,12 @@ def test_ort_profile_finalize_delete_failure_can_retry_idempotently(
             text_det_model=SimpleNamespace(runner=SimpleNamespace(session=Session())),
         )
     )
-    evidence_adapter = engine_adapters._PaddleOcrExecutionEvidenceAdapter(tmp_path / "ocr-profile")
+    evidence_adapter = execution_evidence.PaddleOcrExecutionEvidenceAdapter(
+        tmp_path / "ocr-profile"
+    )
     evidence_adapter.prepare(pipeline)
 
-    with pytest.raises(engine_adapters.OcrExecutionEvidenceError) as first:
+    with pytest.raises(execution_evidence.OcrExecutionEvidenceError) as first:
         evidence_adapter.finalize(pipeline)
     assert any(failure.code == "profile_delete_failed" for failure in first.value.failures)
     assert first.value.cleanup_verified is False
@@ -2469,7 +2491,9 @@ def test_ort_graph_assignment_evidence_counts_assigned_provider_nodes(
             text_det_model=SimpleNamespace(runner=SimpleNamespace(session=Session())),
         )
     )
-    evidence_adapter = engine_adapters._PaddleOcrExecutionEvidenceAdapter(tmp_path / "ocr-profile")
+    evidence_adapter = execution_evidence.PaddleOcrExecutionEvidenceAdapter(
+        tmp_path / "ocr-profile"
+    )
 
     evidence_adapter.prepare(pipeline)
     evidence = evidence_adapter.finalize(pipeline)
@@ -2508,7 +2532,9 @@ def test_ort_graph_assignment_empty_fails_for_retained_gpu_plan(
             text_det_model=SimpleNamespace(runner=SimpleNamespace(session=Session())),
         )
     )
-    evidence_adapter = engine_adapters._PaddleOcrExecutionEvidenceAdapter(tmp_path / "ocr-profile")
+    evidence_adapter = execution_evidence.PaddleOcrExecutionEvidenceAdapter(
+        tmp_path / "ocr-profile"
+    )
     evidence_adapter.prepare(pipeline, expected_device_id=plan.dml_device_id)
 
     with pytest.raises(EngineRuntimeUnavailableError, match="zero assigned DML nodes"):
@@ -2547,7 +2573,9 @@ def test_ort_graph_assignment_cpu_only_fails_for_retained_gpu_plan(
             text_det_model=SimpleNamespace(runner=SimpleNamespace(session=Session())),
         )
     )
-    evidence_adapter = engine_adapters._PaddleOcrExecutionEvidenceAdapter(tmp_path / "ocr-profile")
+    evidence_adapter = execution_evidence.PaddleOcrExecutionEvidenceAdapter(
+        tmp_path / "ocr-profile"
+    )
     evidence_adapter.prepare(pipeline, expected_device_id=plan.dml_device_id)
 
     with pytest.raises(EngineRuntimeUnavailableError, match="zero assigned DML nodes"):
@@ -2593,7 +2621,9 @@ def test_ort_graph_assignment_requires_dml_nodes_in_every_retained_gpu_session(
             text_rec_model=SimpleNamespace(runner=SimpleNamespace(session=sessions[1])),
         )
     )
-    evidence_adapter = engine_adapters._PaddleOcrExecutionEvidenceAdapter(tmp_path / "ocr-profile")
+    evidence_adapter = execution_evidence.PaddleOcrExecutionEvidenceAdapter(
+        tmp_path / "ocr-profile"
+    )
     evidence_adapter.prepare(pipeline, expected_device_id=plan.dml_device_id)
 
     with pytest.raises(EngineRuntimeUnavailableError, match="zero assigned DML nodes"):
@@ -2654,7 +2684,9 @@ def test_ort_profile_fallback_requires_dml_in_every_retained_gpu_session(
     if len(sessions) == 2:
         models["text_rec_model"] = SimpleNamespace(runner=SimpleNamespace(session=sessions[1]))
     pipeline = SimpleNamespace(paddlex_pipeline=SimpleNamespace(**models))
-    evidence_adapter = engine_adapters._PaddleOcrExecutionEvidenceAdapter(tmp_path / "ocr-profile")
+    evidence_adapter = execution_evidence.PaddleOcrExecutionEvidenceAdapter(
+        tmp_path / "ocr-profile"
+    )
     evidence_adapter.prepare(pipeline, expected_device_id=plan.dml_device_id)
 
     with pytest.raises(EngineRuntimeUnavailableError, match=message):
@@ -2705,10 +2737,12 @@ def test_ort_graph_assignment_rejects_unknown_provider_and_cleans_profiles(
             text_det_model=SimpleNamespace(runner=SimpleNamespace(session=Session())),
         )
     )
-    evidence_adapter = engine_adapters._PaddleOcrExecutionEvidenceAdapter(tmp_path / "ocr-profile")
+    evidence_adapter = execution_evidence.PaddleOcrExecutionEvidenceAdapter(
+        tmp_path / "ocr-profile"
+    )
 
     evidence_adapter.prepare(pipeline)
-    with pytest.raises(engine_adapters.OcrExecutionEvidenceError) as raised:
+    with pytest.raises(execution_evidence.OcrExecutionEvidenceError) as raised:
         evidence_adapter.finalize(pipeline)
 
     assert any(failure.code == "graph_unknown_provider" for failure in raised.value.failures)
@@ -2751,7 +2785,9 @@ def test_ort_profile_rejects_same_unknown_provider_policy(
             text_det_model=SimpleNamespace(runner=SimpleNamespace(session=Session())),
         )
     )
-    evidence_adapter = engine_adapters._PaddleOcrExecutionEvidenceAdapter(tmp_path / "ocr-profile")
+    evidence_adapter = execution_evidence.PaddleOcrExecutionEvidenceAdapter(
+        tmp_path / "ocr-profile"
+    )
 
     evidence_adapter.prepare(pipeline)
     with pytest.raises(EngineRuntimeUnavailableError, match="unknown_provider"):
@@ -2790,7 +2826,9 @@ def test_ort_graph_api_without_recording_config_uses_profile_evidence(
             text_det_model=SimpleNamespace(runner=SimpleNamespace(session=Session())),
         )
     )
-    evidence_adapter = engine_adapters._PaddleOcrExecutionEvidenceAdapter(tmp_path / "ocr-profile")
+    evidence_adapter = execution_evidence.PaddleOcrExecutionEvidenceAdapter(
+        tmp_path / "ocr-profile"
+    )
 
     evidence_adapter.prepare(pipeline)
     evidence = evidence_adapter.finalize(pipeline)

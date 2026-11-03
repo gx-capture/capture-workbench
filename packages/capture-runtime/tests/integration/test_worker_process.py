@@ -18,7 +18,7 @@ from capture_runtime.worker_process import (
     WorkerCancelledError,
     WorkerExecutionError,
     _stage_suffix,
-    _subprocess_path,
+    subprocess_path,
 )
 from tests.support.worker_process import WorkerProcess
 
@@ -583,10 +583,8 @@ def test_worker_subprocess_path_removes_windows_extended_prefix_on_windows(
 ) -> None:
     monkeypatch.setattr("capture_runtime.worker_process.os.name", "nt")
 
-    assert _subprocess_path(Path(r"\\?\C:\capture\worker.exe")) == r"C:\capture\worker.exe"
-    assert (
-        _subprocess_path(Path(r"\\?\UNC\server\share\worker.exe")) == r"\\server\share\worker.exe"
-    )
+    assert subprocess_path(Path(r"\\?\C:\capture\worker.exe")) == r"C:\capture\worker.exe"
+    assert subprocess_path(Path(r"\\?\UNC\server\share\worker.exe")) == r"\\server\share\worker.exe"
 
 
 def test_worker_process_delivers_validated_progress_frames_before_response() -> None:

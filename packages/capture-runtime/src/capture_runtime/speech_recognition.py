@@ -17,15 +17,17 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
 
-from capture_runtime.engine_adapters import (
-    EngineProbe,
-    EngineRuntimeUnavailableError,
+from capture_runtime.japanese_kanji import TABLE as JAPANESE_KANJI
+from capture_runtime.speech_transcript import (
     WhisperTextSegment,
     WhisperTranscriptionResult,
     WhisperWord,
-    _directory_digest,
 )
-from capture_runtime.japanese_kanji import TABLE as JAPANESE_KANJI
+from capture_runtime.worker_probe import (
+    EngineProbe,
+    EngineRuntimeUnavailableError,
+    directory_digest,
+)
 from capture_runtime.worker_stage_policy import (
     sanitize_worker_stage,
     speech_model_load_stage,
@@ -424,7 +426,7 @@ class TeaAsrAdapter:
             for path in (self.models_dir / folder).rglob("*")
             if path.is_file()
         )
-        return _directory_digest(self.models_dir, paths)
+        return directory_digest(self.models_dir, paths)
 
     def _report_stage(self, stage: str) -> None:
         safe = sanitize_worker_stage(stage)

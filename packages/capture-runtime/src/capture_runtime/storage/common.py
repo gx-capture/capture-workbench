@@ -21,7 +21,7 @@ class TransitionRejectedError(ValueError):
     """A durable state transition is not valid for the current record."""
 
 
-def _identifier(value: str) -> str:
+def record_identifier(value: str) -> str:
     try:
         parsed = UUID(value)
     except ValueError as error:
@@ -31,11 +31,11 @@ def _identifier(value: str) -> str:
     return str(parsed)
 
 
-def _dump_model(model: Any) -> Any:
+def dump_model(model: Any) -> Any:
     return model.model_dump(mode="json", by_alias=True)
 
 
-def _atomic_json(path: Path, payload: object) -> None:
+def atomic_json(path: Path, payload: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
     temporary.write_text(
@@ -49,7 +49,7 @@ __all__ = [
     "IdempotencyConflictError",
     "RecordNotFoundError",
     "TransitionRejectedError",
-    "_atomic_json",
-    "_dump_model",
-    "_identifier",
+    "atomic_json",
+    "dump_model",
+    "record_identifier",
 ]
