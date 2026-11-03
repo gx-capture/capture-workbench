@@ -25,5 +25,5 @@
   "rust|allow-dead-code|packages/capture-sidecar-launcher/src/journal.rs|allow(dead_code)",
   "rust|allow-dead-code|packages/capture-sidecar-launcher/src/journal_store.rs|allow(dead_code)",
   "rust|allow-dead-code|packages/capture-sidecar-launcher/src/reconcile.rs|allow(dead_code)",
-  "rust|allow-dead-code|packages/capture-sidecar-launcher/src/staging.rs|allow(dead_code)"
+  "rust|allow-dead-code|packages/capture-sidecar-launcher/src/staging/mod.rs|allow(dead_code)"
 ]
