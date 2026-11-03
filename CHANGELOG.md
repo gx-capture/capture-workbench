@@ -4,6 +4,17 @@
 
 - Clarification (2026-11-01): the 0.4.2 launcher durability and verified staging release apply to explicit live R3 use; restart reconciliation is not wired, and desktop, cert-prep and LAW still use legacy launch paths with native Windows Job containment (`KILL_ON_JOB_CLOSE`).
 
+### Interrupted engine downloads resume
+
+An engine download that is cancelled, loses its connection or stops with the
+runtime keeps its partial file (`<file>.part`) and a record of the bytes it
+holds (`<file>.part.json`). The next install continues each unfinished byte
+range from its first missing byte, and skips published parts already verified,
+instead of starting over; this matters for the ~3 GB speech worker. A server
+that ignores the resume request makes that region restart cleanly. A checksum
+or byte-count failure deletes the partial. Direct model files resume the same
+way, with every redirect still checked. No contract change.
+
 ### Release resolver action for consumer bump workflows
 
 The composite action `.github/actions/resolve-capture-release` finds the
