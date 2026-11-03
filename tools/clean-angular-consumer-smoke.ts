@@ -340,7 +340,7 @@ try {
           '@gx-capture/capture-runtime-client': runtimeClientArchiveSpec,
           '@gx-capture/capture-workbench-ui': archiveSpec,
           rxjs: '7.8.2',
-          tslib: '2.8.1',
+          tslib: '2.9.1',
         },
         devDependencies: {
           '@angular/build': '22.2.5',
@@ -356,7 +356,7 @@ try {
           'react-dom': '19.2.8',
           typescript: '6.0.3',
           vitest: '4.1.10',
-          vite: '7.3.6',
+          vite: '7.3.7',
           vue: '3.5.40',
         },
       },
