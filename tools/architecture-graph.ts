@@ -988,8 +988,22 @@ export function mermaidIds(nodes: string[]): Map<string, string> {
   return ids;
 }
 
-function mermaidLabel(text: string): string {
-  return text.replaceAll('"', '#quot;');
+/**
+ * Text that is safe inside a quoted Mermaid label (`id["..."]`): the
+ * characters Mermaid or its HTML labels would interpret become entity codes
+ * (`#` first, since every code starts with it), and line breaks and runs of
+ * whitespace become one space. tools/wiki-overview.ts uses it for issue titles.
+ */
+export function mermaidLabel(text: string): string {
+  return text
+    .replaceAll('#', '#35;')
+    .replaceAll('"', '#quot;')
+    .replaceAll('&', '#amp;')
+    .replaceAll('<', '#lt;')
+    .replaceAll('>', '#gt;')
+    .replaceAll('`', '#96;')
+    .replace(/\s+/gu, ' ')
+    .trim();
 }
 
 /**

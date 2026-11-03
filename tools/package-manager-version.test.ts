@@ -19,6 +19,7 @@ const bootstrapWorkflows = [
   '.github/workflows/package-candidate.yml',
   '.github/workflows/runtime-candidate.yml',
   '.github/workflows/release-candidate.yml',
+  '.github/workflows/wiki-overview.yml',
 ] as const;
 
 async function readRootFile(relativePath: string): Promise<string> {
