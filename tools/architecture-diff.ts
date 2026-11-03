@@ -374,9 +374,9 @@ export function spliceSection(body: string, section: string): string {
   }
   const eol = body.includes('\r\n') ? '\r\n' : '\n';
   const block = trimmed.replace(/\r?\n/gu, eol);
-  const start = body.indexOf(SECTION_START);
+  const start = markerLine(body, SECTION_START, 0);
   if (start >= 0) {
-    const end = body.indexOf(SECTION_END, start + SECTION_START.length);
+    const end = markerLine(body, SECTION_END, start + SECTION_START.length);
     if (end < 0) {
       throw new Error(
         `The description has ${SECTION_START} without ${SECTION_END} after it; fix the markers by hand.`,
@@ -386,6 +386,24 @@ export function spliceSection(body: string, section: string): string {
   }
   if (body === '') return block;
   return `${body}${body.endsWith('\n') ? eol : eol + eol}${block}`;
+}
+
+/**
+ * Index of `marker` where it fills a whole line, from `from`; -1 if none. An
+ * author who quotes the marker in prose (`<!-- architecture:start -->` in
+ * backticks) must not have that text replaced.
+ */
+function markerLine(body: string, marker: string, from: number): number {
+  for (
+    let index = body.indexOf(marker, from);
+    index >= 0;
+    index = body.indexOf(marker, index + marker.length)
+  ) {
+    const lineStart = index === 0 || body[index - 1] === '\n';
+    const after = body.slice(index + marker.length);
+    if (lineStart && /^(\r?\n|$)/u.test(after)) return index;
+  }
+  return -1;
 }
 
 // ---- CLI ------------------------------------------------------------------

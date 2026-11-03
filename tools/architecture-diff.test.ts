@@ -335,6 +335,15 @@ test('spliceSection replaces only the marked section and is idempotent', () => {
   assert.equal(spliceSection(spliced, SECTION), spliced);
 });
 
+test('spliceSection ignores markers quoted inside a line of prose', () => {
+  // PR #150's description quoted both markers in backticks; the first
+  // version replaced the prose between them.
+  const prose = `It writes between \`${SECTION_START}\` and \`${SECTION_END}\`.`;
+  assert.equal(spliceSection(prose, SECTION), `${prose}\n\n${SECTION}`);
+  const withSection = `${prose}\n\n${SECTION_START}\nold\n${SECTION_END}\n`;
+  assert.equal(spliceSection(withSection, SECTION), `${prose}\n\n${SECTION}\n`);
+});
+
 test('spliceSection appends after a blank line when the section is absent', () => {
   assert.equal(spliceSection('Summary', SECTION), `Summary\n\n${SECTION}`);
   assert.equal(spliceSection('Summary\n', SECTION), `Summary\n\n${SECTION}`);
