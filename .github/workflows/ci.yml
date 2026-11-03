@@ -157,6 +157,13 @@ jobs:
         shell: pwsh
         run: pnpm run architecture:check
 
+      # Known boundary exceptions (import-linter ignore_imports, ESLint
+      # disables and suppressions of Nx and Sheriff rules) may only shrink;
+      # --ci also fails on a stale baseline (architecture-exceptions:update).
+      - name: Architecture exceptions gate
+        shell: pwsh
+        run: node tools/architecture-exceptions-gate.ts --ci
+
   # Published packages: TypeScript and Python clients, the sidecar
   # launcher crate, and the Angular Web Component package.
   packages:

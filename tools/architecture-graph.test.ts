@@ -7,6 +7,7 @@ import {
   renderDocs,
   renderMermaid,
   runCli,
+  runHook,
   runtimeContextsLevel,
   uiModulesLevel,
 } from './architecture-graph.ts';
@@ -290,6 +291,89 @@ test('runCli prints the JSON graph by default and rejects bad usage', () => {
   assert.equal(runCli(['--nope'], bad.open), 2);
   assert.equal(runCli(['--root'], bad.open), 2);
   assert.match(bad.out.stderr, /Usage:/u);
+});
+
+function hookChecks(
+  results: { docs?: number; exceptions?: number; runtime?: number } = {},
+) {
+  const ran: string[] = [];
+  const check =
+    (name: string, result = 0) =>
+    () => {
+      ran.push(name);
+      return result;
+    };
+  return {
+    ran,
+    checks: {
+      checkDocs: check('docs', results.docs),
+      checkExceptions: check('exceptions', results.exceptions),
+      lintRuntime: check('runtime', results.runtime),
+    },
+  };
+}
+
+test('runHook skips everything when no architecture-relevant path changed', () => {
+  for (const changed of [
+    [],
+    ['docs/a.md', 'README.md'],
+    ['apps/web/a.component.html'],
+  ]) {
+    const { ran, checks } = hookChecks({ docs: 1 });
+    assert.equal(runHook(false, changed, checks), 0);
+    assert.deepEqual(ran, []);
+  }
+});
+
+test('runHook stops after one round of feedback', () => {
+  const { ran, checks } = hookChecks({ docs: 1 });
+  assert.equal(runHook(true, ['tools/a.ts'], checks), 0);
+  assert.deepEqual(ran, []);
+});
+
+test('runHook runs the docs check and exception gate for TypeScript and config changes', () => {
+  for (const changed of [
+    ['packages/ui/src/lib/a.ts'],
+    ['apps/capture-workbench/project.json'],
+    ['tsconfig.base.json'],
+    ['packages/ui/eslint-suppressions.json'],
+  ]) {
+    const { ran, checks } = hookChecks();
+    assert.equal(runHook(false, changed, checks), 0);
+    assert.deepEqual(ran, ['docs', 'exceptions']);
+  }
+});
+
+test('runHook adds the runtime contracts for runtime Python or importlinter.toml changes', () => {
+  for (const changed of [
+    ['packages/capture-runtime/src/capture_runtime/config.py'],
+    ['packages\\capture-runtime\\importlinter.toml'],
+    ['old.py -> packages/capture-runtime/src/capture_runtime/new.py'],
+  ]) {
+    const { ran, checks } = hookChecks();
+    assert.equal(runHook(false, changed, checks), 0);
+    assert.deepEqual(ran, ['docs', 'exceptions', 'runtime']);
+  }
+  const tests = hookChecks();
+  runHook(
+    false,
+    ['packages/capture-runtime/tests/unit/test_x.py'],
+    tests.checks,
+  );
+  assert.deepEqual(tests.ran, ['docs', 'exceptions']);
+});
+
+test('runHook reports every failing check with exit 2', () => {
+  const { ran, checks } = hookChecks({ exceptions: 1 });
+  assert.equal(
+    runHook(
+      false,
+      ['packages/capture-runtime/src/capture_runtime/a.py'],
+      checks,
+    ),
+    2,
+  );
+  assert.deepEqual(ran, ['docs', 'exceptions', 'runtime']);
 });
 
 test('--root opens the IO for that directory; without it the IO is for this checkout', () => {
