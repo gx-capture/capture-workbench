@@ -14,8 +14,8 @@
     "access": "public"
   },
   "dependencies": {
-    "@angular/compiler": "22.0.7",
-    "@angular/elements": "22.0.7",
+    "@angular/compiler": "^22.0.0",
+    "@angular/elements": "^22.0.0",
     "@gx-capture/capture-runtime-client": "workspace:*"
   },
   "peerDependencies": {
