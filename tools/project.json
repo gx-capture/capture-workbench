@@ -9,14 +9,14 @@
       "cache": true,
       "executor": "nx:run-commands",
       "options": {
-        "command": "pnpm exec eslint tools/capture-boundary-doctor.ts tools/capture-boundary-doctor.test.ts tools/three-project-acceptance.ts tools/three-project-acceptance.test.ts tools/three-project-cleanup-verifier.test.ts tools/windows-built-in-process-resolver.ts tools/windows-built-in-process-resolver.test.ts tools/package-manager.ts tools/package-manager-version.test.ts tools/cargo-test-retry-failed.ts tools/cargo-test-retry-failed.test.ts tools/resolve-capture-release.ts tools/resolve-capture-release.test.ts tools/architecture-graph.ts tools/architecture-graph.test.ts tools/architecture-diff.ts tools/architecture-diff.test.ts tools/architecture-exceptions-gate.ts tools/architecture-exceptions-gate.test.ts tools/dead-code-gate.ts tools/dead-code-gate.test.ts"
+        "command": "pnpm exec eslint tools/capture-boundary-doctor.ts tools/capture-boundary-doctor.test.ts tools/three-project-acceptance.ts tools/three-project-acceptance.test.ts tools/three-project-cleanup-verifier.test.ts tools/windows-built-in-process-resolver.ts tools/windows-built-in-process-resolver.test.ts tools/package-manager.ts tools/package-manager-version.test.ts tools/cargo-test-retry-failed.ts tools/cargo-test-retry-failed.test.ts tools/resolve-capture-release.ts tools/resolve-capture-release.test.ts tools/architecture-graph.ts tools/architecture-graph.test.ts tools/architecture-diff.ts tools/architecture-diff.test.ts tools/wiki-overview.ts tools/wiki-overview.test.ts tools/architecture-exceptions-gate.ts tools/architecture-exceptions-gate.test.ts tools/dead-code-gate.ts tools/dead-code-gate.test.ts"
       }
     },
     "test": {
       "cache": true,
       "executor": "nx:run-commands",
       "options": {
-        "command": "node --test tools/capture-boundary-doctor.test.ts tools/three-project-acceptance.test.ts tools/three-project-cleanup-verifier.test.ts tools/windows-built-in-process-resolver.test.ts tools/package-manager-version.test.ts tools/cargo-test-retry-failed.test.ts tools/dead-code-gate.test.ts tools/architecture-graph.test.ts tools/architecture-diff.test.ts tools/architecture-exceptions-gate.test.ts tools/resolve-capture-release.test.ts"
+        "command": "node --test tools/capture-boundary-doctor.test.ts tools/three-project-acceptance.test.ts tools/three-project-cleanup-verifier.test.ts tools/windows-built-in-process-resolver.test.ts tools/package-manager-version.test.ts tools/cargo-test-retry-failed.test.ts tools/dead-code-gate.test.ts tools/architecture-graph.test.ts tools/architecture-diff.test.ts tools/wiki-overview.test.ts tools/architecture-exceptions-gate.test.ts tools/resolve-capture-release.test.ts"
       }
     },
     "typecheck": {

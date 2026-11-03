@@ -1,0 +1,136 @@
+name: Wiki overview
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+# Regenerates the repository wiki's overview pages (tools/wiki-overview.ts):
+# Home, the work plan from the issues' sub-issue and "blocked by" relations,
+# and the architecture diagrams of tools/architecture-graph.ts. The pages say
+# they are generated; nobody edits them by hand. Sub-issue and dependency
+# changes fire no workflow event, so the daily run picks those up.
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+  issues:
+    types: [opened, closed, reopened, edited, labeled]
+  push:
+    branches: [main]
+    paths:
+      - 'apps/**'
+      - 'packages/**'
+      - 'tools/**'
+      - 'architecture-graph.config.json'
+      - '.github/workflows/wiki-overview.yml'
+      - 'nx.json'
+      - 'package.json'
+      - 'pnpm-workspace.yaml'
+      - 'tsconfig*.json'
+      - 'sheriff.config.ts'
+      - '!**/*.md'
+
+permissions:
+  contents: write
+  issues: read
+
+# Every run renders the whole current state, so only the newest one matters.
+concurrency:
+  group: wiki-overview
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install uv and Python 3.13
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          python-version: '3.13'
+          enable-cache: true
+
+      - name: Install workspace dependencies
+        shell: pwsh
+        run: pnpm install --frozen-lockfile
+
+      # bash keeps redirected output byte-exact (titles are zh-TW text);
+      # PowerShell re-encodes native output it redirects. The query is the
+      # one tools/wiki-overview.test.ts checks against the parser.
+      - name: Issues
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api graphql --paginate --slurp \
+            -f owner="${GITHUB_REPOSITORY%%/*}" -f name="${GITHUB_REPOSITORY#*/}" \
+            -f query="$(node tools/wiki-overview.ts --print-query)" \
+            > "$RUNNER_TEMP/issues.json"
+
+      - name: Architecture graph
+        shell: bash
+        run: node tools/architecture-graph.ts > "$RUNNER_TEMP/graph.json"
+
+      # The token travels only as an http.extraheader in this step's git
+      # config (masked, never echoed); the wiki repository exists only after
+      # its first page is created in the GitHub UI.
+      - name: Clone the wiki
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$auth"
+          wiki_url="https://github.com/$GITHUB_REPOSITORY.wiki.git"
+          if ! git -c http.extraheader="AUTHORIZATION: basic $auth" ls-remote "$wiki_url" > /dev/null 2>&1; then
+            echo "::error::The wiki repository $wiki_url does not exist (or is not reachable). Enable the wiki and create its first page in the GitHub UI (Wiki tab, 'Create the first page'); that is the only way to initialise it. Then re-run this workflow."
+            exit 1
+          fi
+          git -c http.extraheader="AUTHORIZATION: basic $auth" clone --depth 1 "$wiki_url" "$RUNNER_TEMP/wiki"
+
+      - name: Render pages
+        shell: bash
+        run: >-
+          node tools/wiki-overview.ts
+          --issues "$RUNNER_TEMP/issues.json"
+          --graph "$RUNNER_TEMP/graph.json"
+          --out "$RUNNER_TEMP/wiki"
+          --commit "$GITHUB_SHA"
+
+      # The tool leaves the pages untouched when only the generated time
+      # would change, so an empty status means nothing to publish. The push
+      # goes to whatever branch the wiki checks out (`master` today).
+      - name: Commit and push
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        working-directory: ${{ runner.temp }}/wiki
+        run: |
+          set -euo pipefail
+          git config core.quotePath false
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "The wiki pages are up to date."
+            exit 0
+          fi
+          git add -A
+          git -c user.name='github-actions[bot]' \
+            -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit --quiet -m "Regenerate overview from $GITHUB_REPOSITORY@${GITHUB_SHA:0:7}"
+          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$auth"
+          git -c http.extraheader="AUTHORIZATION: basic $auth" push origin HEAD
