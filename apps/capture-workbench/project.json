@@ -9,6 +9,7 @@
     "build": {
       "executor": "@angular/build:application",
       "outputs": ["{options.outputPath}"],
+      "defaultConfiguration": "production",
       "options": {
         "outputPath": "dist/apps/capture-workbench",
         "browser": "apps/capture-workbench/src/main.ts",
@@ -45,17 +46,20 @@
           ],
           "outputHashing": "all"
         },
-    "development": {
-      "optimization": false,
-      "extractLicenses": false,
-      "sourceMap": true
-    }
-      },
-      "defaultConfiguration": "production"
+        "development": {
+          "optimization": false,
+          "extractLicenses": false,
+          "sourceMap": true
+        }
+      }
     },
     "serve": {
       "continuous": true,
       "executor": "@angular/build:dev-server",
+      "defaultConfiguration": "development",
+      "readyWhen": {
+        "signal": true
+      },
       "configurations": {
         "production": {
           "buildTarget": "capture-workbench:build:production"
@@ -63,11 +67,20 @@
         "development": {
           "buildTarget": "capture-workbench:build:development"
         }
-      },
-      "defaultConfiguration": "development"
+      }
     },
     "lint": {
-      "executor": "@nx/eslint:lint"
+      "inputs": [
+        "default",
+        "^default",
+        "{workspaceRoot}/.eslintrc.json",
+        "{workspaceRoot}/.eslintignore",
+        "{workspaceRoot}/eslint.config.mjs",
+        "{workspaceRoot}/tools/eslint-rules/**/*",
+        {
+          "externalDependencies": ["eslint"]
+        }
+      ]
     },
     "test": {
       "executor": "@nx/angular:unit-test",
@@ -96,7 +109,11 @@
         "port": 4200,
         "staticFilePath": "dist/apps/capture-workbench/browser",
         "spa": true
-      }
+      },
+      "readyWhen": {
+        "signal": true
+      },
+      "dependsOn": ["build"]
     }
   }
 }

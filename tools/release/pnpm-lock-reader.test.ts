@@ -12,8 +12,8 @@ importers:
   .:
     devDependencies:
       nx:
-        specifier: 23.1.2
-        version: 23.1.2
+        specifier: 24.0.3
+        version: 24.0.3
   'packages/empty': {}
   "packages/example":
     dependencies:
@@ -22,12 +22,12 @@ importers:
         version: '1.2.3(peer@4.5.6)'
 
 packages:
-  nx@23.1.2: {}
+  nx@24.0.3: {}
   '@scope/pkg@1.2.3': {}
   "peer@4.5.6": {}
 
 snapshots:
-  nx@23.1.2: {}
+  nx@24.0.3: {}
   '@scope/pkg@1.2.3(peer@4.5.6)':
     dependencies:
       "peer": '4.5.6'

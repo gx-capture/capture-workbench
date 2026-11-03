@@ -112,11 +112,11 @@ export function verifyPackedPackage(): void {
     'The packed package must peer-depend on @angular/forms.',
   );
   assert(
-    manifest.dependencies?.['@angular/elements'] === '22.0.7',
+    manifest.dependencies?.['@angular/elements'] === '22.2.4',
     'The packed package must own @angular/elements.',
   );
   assert(
-    manifest.dependencies?.['@angular/compiler'] === '22.0.7',
+    manifest.dependencies?.['@angular/compiler'] === '22.2.4',
     'The packed package must own its non-Angular-host compiler fallback.',
   );
   assert(

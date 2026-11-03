@@ -110,6 +110,24 @@ async function withFixture<T>(
   }
 }
 
+// The first snapshot dependency reference of the requested shape, read from
+// the lockfile so dependency updates do not break the stale-reference tests.
+function snapshotDependencyReference(
+  lock: string,
+  peerSuffixed: boolean,
+): string {
+  const snapshots = lock.slice(lock.indexOf('\nsnapshots:\n'));
+  const pattern = peerSuffixed
+    ? /^ {6}([a-z][\w.-]*: \d+\.\d+\.\d+)\(/mu
+    : /^ {6}([a-z][\w.-]*: \d+\.\d+\.\d+)$/mu;
+  const match = pattern.exec(snapshots);
+  assert.ok(
+    match,
+    'expected a snapshot dependency reference in pnpm-lock.yaml',
+  );
+  return match[1];
+}
+
 function requiredEntry(
   inventory: ReturnType<typeof collectReleaseInventory>,
   id: string,
@@ -146,7 +164,7 @@ test('typed release inventory reports every D2.1 identity without mutation', () 
   const inventory = collectReleaseInventory(workspaceRoot);
   const ids = inventory.entries.map((entry) => entry.id);
   assert.equal(new Set(ids).size, ids.length);
-  requiredEntry(inventory, 'workspace.nx', '23.1.2');
+  requiredEntry(inventory, 'workspace.nx', '24.0.3');
   requiredEntry(inventory, 'release.version', RELEASE_VERSION);
   requiredEntry(inventory, 'runtime.api', '2.0');
   requiredEntry(inventory, 'document.schema', '2');
@@ -243,7 +261,7 @@ test('inventory rejects stale Nx identity before changing fixture bytes', async 
   await withFixture(async (root) => {
     const path = join(root, 'package.json');
     const before = await readFile(path, 'utf8');
-    const stale = before.replace('"nx": "23.1.2"', '"nx": "23.1.0"');
+    const stale = before.replace('"nx": "24.0.3"', '"nx": "24.0.2"');
     assert.notEqual(stale, before);
     await writeFile(path, stale, 'utf8');
     assert.throws(
@@ -602,24 +620,34 @@ test('inventory rejects a stale pnpm package and snapshot reference before mutat
   await withFixture(async (root) => {
     const path = join(root, 'pnpm-lock.yaml');
     const before = await readFile(path, 'utf8');
-    const stale = before.replace('axios: 1.18.1', 'axios: 9.99.99');
+    const reference = snapshotDependencyReference(before, true);
+    const name = reference.slice(0, reference.indexOf(':'));
+    const stale = before.replace(
+      `\n      ${reference}(`,
+      `\n      ${name}: 9.99.99(`,
+    );
     assert.notEqual(stale, before);
     await writeFile(path, stale, 'utf8');
     assert.throws(
       () => collectReleaseInventory(root),
-      /pnpm package\/snapshot|axios|graph/u,
+      /pnpm package\/snapshot|graph/u,
     );
     assert.equal(await readFile(path, 'utf8'), stale);
   });
   await withFixture(async (root) => {
     const path = join(root, 'pnpm-lock.yaml');
     const before = await readFile(path, 'utf8');
-    const stale = before.replace('open: 10.1.0', 'open: 99.99.99');
+    const reference = snapshotDependencyReference(before, false);
+    const name = reference.slice(0, reference.indexOf(':'));
+    const stale = before.replace(
+      `\n      ${reference}\n`,
+      `\n      ${name}: 99.99.99\n`,
+    );
     assert.notEqual(stale, before);
     await writeFile(path, stale, 'utf8');
     assert.throws(
       () => collectReleaseInventory(root),
-      /pnpm package\/snapshot|open|graph/u,
+      /pnpm package\/snapshot|graph/u,
     );
     assert.equal(await readFile(path, 'utf8'), stale);
   });

@@ -658,11 +658,11 @@ async function main(): Promise<void> {
           private: true,
           ...readPackageManagerPolicy(repoRoot),
           dependencies: {
-            '@angular/compiler': '22.0.7',
-            '@angular/core': '22.0.7',
-            '@angular/elements': '22.0.7',
-            '@angular/forms': '22.0.7',
-            '@angular/platform-browser': '22.0.7',
+            '@angular/compiler': '22.2.4',
+            '@angular/core': '22.2.4',
+            '@angular/elements': '22.2.4',
+            '@angular/forms': '22.2.4',
+            '@angular/platform-browser': '22.2.4',
             '@gx-capture/capture-runtime-client':
               fileSpec(runtimeClientArchive),
             '@gx-capture/capture-workbench-ui': fileSpec(packageArchive),
