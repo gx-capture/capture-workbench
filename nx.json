@@ -66,8 +66,5 @@
     "version": {
       "preVersionCommand": "corepack pnpm dlx nx run-many -t build"
     }
-  },
-  "affected": {
-    "legacy": true
   }
 }
