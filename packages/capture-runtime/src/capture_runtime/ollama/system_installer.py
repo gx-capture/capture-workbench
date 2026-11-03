@@ -68,6 +68,16 @@ def _artifact_descriptor(worker: EngineArtifactDescriptor) -> RuntimeArtifactDes
     )
 
 
+_ENGINE_UNIT_IDS = frozenset(
+    {
+        WINDOWSML_REQUIREMENT_ID,
+        SPEECH_RECOGNITION_REQUIREMENT_ID,
+        DIARIZATION_REQUIREMENT_ID,
+        VERTICAL_READER_REQUIREMENT_ID,
+    }
+)
+
+
 class SystemRuntimeInstaller:
     """Probe/install product requirements without dynamic package installation."""
 
@@ -256,12 +266,7 @@ class SystemRuntimeInstaller:
         report_progress: Callable[[float], None],
         report_download: DownloadProgress | None = None,
     ) -> None:
-        if requirement_id in {
-            WINDOWSML_REQUIREMENT_ID,
-            SPEECH_RECOGNITION_REQUIREMENT_ID,
-            DIARIZATION_REQUIREMENT_ID,
-            VERTICAL_READER_REQUIREMENT_ID,
-        }:
+        if requirement_id in _ENGINE_UNIT_IDS:
             if self._engine_manager is None:
                 raise RuntimeError("runtime-owned engine catalog is unavailable")
             await self._engine_manager.install(
@@ -279,6 +284,14 @@ class SystemRuntimeInstaller:
                 "Select a model option through the model-installation API."
             )
         raise ValueError(f"unknown requirementId: {requirement_id}")
+
+    def is_uninstallable(self, requirement_id: str) -> bool:
+        return self._engine_manager is not None and requirement_id in _ENGINE_UNIT_IDS
+
+    async def uninstall(self, requirement_id: str) -> None:
+        if self._engine_manager is None or requirement_id not in _ENGINE_UNIT_IDS:
+            raise ValueError(f"requirement is not an engine install unit: {requirement_id}")
+        await self._engine_manager.uninstall(requirement_id)
 
     async def install_model_option(
         self,

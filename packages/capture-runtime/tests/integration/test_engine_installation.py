@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 import capture_runtime.engine_installation as engine_installation_module
+from capture_runtime._engine_download_cache import CachingDownloader, VerifiedDownloadCache
 from capture_runtime.clock import SystemClock
 from capture_runtime.config import ExtractionRuntimeConfig
 from capture_runtime.constants import MAX_RUNTIME_ARTIFACT_BYTES, RUNTIME_VERSION
@@ -1669,3 +1670,155 @@ def test_a_models_only_unit_counts_its_model_bytes(tmp_path: Path) -> None:
 
     assert total == catalog.requirement("vertical-japanese-reader").model_delivery().extracted_bytes
     assert downloaded[-1] == DownloadedBytes(total, total)
+
+
+def _cached_manager(
+    tmp_path: Path, catalog: EngineCatalog, sources: dict[str, Path]
+) -> tuple[EngineInstallationManager, VerifiedDownloadCache, CopyDownloader]:
+    cache = VerifiedDownloadCache(tmp_path / "cache")
+    worker_downloader = CopyDownloader(sources)
+    manager = EngineInstallationManager(
+        tmp_path / "engines",
+        catalog,
+        worker_client=FakeWorkerClient(),  # type: ignore[arg-type]
+        downloader=CachingDownloader(worker_downloader, cache),
+        model_downloader=CachingDownloader(CopyModelDownloader(sources), cache),
+        download_cache=cache,
+    )
+    return manager, cache, worker_downloader
+
+
+def _cached(cache_root: Path, sha256: str) -> bool:
+    return (cache_root / sha256[:2] / sha256).is_file()
+
+
+def test_uninstall_removes_the_installed_engine_and_repeating_it_changes_nothing(
+    tmp_path: Path,
+) -> None:
+    catalog, sources = _catalog(tmp_path)
+    manager, _cache, _downloader = _cached_manager(tmp_path, catalog, sources)
+    installer = SystemRuntimeInstaller(
+        _Lifecycle(_LifecycleConfig(tmp_path / "app-data")),  # type: ignore[arg-type]
+        engine_manager=manager,
+        clock=SystemClock(),
+        enabled_requirement_ids={"windowsml-ocr"},
+    )
+    asyncio.run(
+        installer.install(
+            "windowsml-ocr", cancel_event=asyncio.Event(), report_progress=lambda _value: None
+        )
+    )
+    root = tmp_path / "engines" / "windowsml-ocr"
+    assert (root / "active.json").is_file()
+    assert installer.is_uninstallable("windowsml-ocr")
+
+    asyncio.run(installer.uninstall("windowsml-ocr"))
+
+    assert manager.active_engine("windowsml-ocr") is None
+    assert [item.name for item in root.iterdir()] == [".install.lock"]
+    assert manager.worker_client.shutdown_called  # type: ignore[attr-defined]
+    (requirement,) = installer.requirements()
+    assert requirement.status.value == "installable"
+
+    asyncio.run(installer.uninstall("windowsml-ocr"))
+    assert [item.name for item in root.iterdir()] == [".install.lock"]
+
+
+def test_uninstall_frees_only_the_cached_downloads_no_other_unit_references(
+    tmp_path: Path,
+) -> None:
+    worker_catalog, sources = _catalog(tmp_path)
+    worker_unit = worker_catalog.to_dict()["requirements"][0]
+    # The reader unit lists the same model files, so their cache entries are shared.
+    catalog = EngineCatalog.from_dict(
+        {
+            "catalogVersion": "2",
+            "runtimeVersion": RUNTIME_VERSION,
+            "requirements": [
+                worker_unit,
+                worker_unit | {"requirementId": "vertical-japanese-reader", "artifacts": []},
+            ],
+        }
+    )
+    manager, _cache, _downloader = _cached_manager(tmp_path, catalog, sources)
+    asyncio.run(
+        manager.install(
+            "windowsml-ocr", cancel_event=asyncio.Event(), report_progress=lambda _value: None
+        )
+    )
+    requirement = catalog.requirement("windowsml-ocr")
+    worker_sha256 = requirement.worker_artifact().sha256
+    model_sha256s = [item.sha256 for item in requirement.model_delivery().files]
+    cache_root = tmp_path / "cache"
+    assert _cached(cache_root, worker_sha256)
+    assert all(_cached(cache_root, sha256) for sha256 in model_sha256s)
+
+    asyncio.run(manager.uninstall("windowsml-ocr"))
+
+    assert not _cached(cache_root, worker_sha256)
+    assert all(_cached(cache_root, sha256) for sha256 in model_sha256s)
+
+
+def test_an_uninstalled_engine_installs_again(tmp_path: Path) -> None:
+    catalog, sources = _catalog(tmp_path)
+    manager, _cache, downloader = _cached_manager(tmp_path, catalog, sources)
+
+    def install() -> None:
+        asyncio.run(
+            manager.install(
+                "windowsml-ocr", cancel_event=asyncio.Event(), report_progress=lambda _value: None
+            )
+        )
+
+    install()
+    asyncio.run(manager.uninstall("windowsml-ocr"))
+    install()
+
+    engine = manager.active_engine("windowsml-ocr")
+    assert engine is not None
+    assert engine.executable.read_bytes() == b"worker-engine-1"
+    assert downloader.calls == 2
+
+
+def test_a_crash_after_the_marker_is_removed_leaves_the_engine_not_installed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    catalog, sources = _catalog(tmp_path)
+    manager, _cache, _downloader = _cached_manager(tmp_path, catalog, sources)
+    asyncio.run(
+        manager.install(
+            "windowsml-ocr", cancel_event=asyncio.Event(), report_progress=lambda _value: None
+        )
+    )
+
+    def crash(_root: Path) -> None:
+        raise EngineInstallationError("stale engine install residue could not be removed")
+
+    monkeypatch.setattr(engine_installation_module, "remove_unit_files", crash)
+    with pytest.raises(EngineInstallationError):
+        asyncio.run(manager.uninstall("windowsml-ocr"))
+    assert manager.active_engine("windowsml-ocr") is None
+    assert (tmp_path / "engines" / "windowsml-ocr" / "versions").is_dir()
+
+    monkeypatch.undo()
+    asyncio.run(manager.uninstall("windowsml-ocr"))
+    assert not (tmp_path / "engines" / "windowsml-ocr" / "versions").exists()
+
+
+def test_uninstall_removes_a_models_only_unit(tmp_path: Path) -> None:
+    _catalog_value, sources = _model_unit_catalog(tmp_path)
+    manager = _model_unit_manager(tmp_path, CopyModelDownloader(sources))
+    asyncio.run(
+        manager.install(
+            "vertical-japanese-reader",
+            cancel_event=asyncio.Event(),
+            report_progress=lambda _value: None,
+        )
+    )
+    assert manager.is_installed("vertical-japanese-reader")
+
+    asyncio.run(manager.uninstall("vertical-japanese-reader"))
+
+    assert manager.is_installed("vertical-japanese-reader") is False
+    root = tmp_path / "engines" / "vertical-japanese-reader"
+    assert [item.name for item in root.iterdir()] == [".install.lock"]

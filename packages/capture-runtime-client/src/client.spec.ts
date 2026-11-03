@@ -967,6 +967,60 @@ describe('CaptureRuntimeClient', () => {
     );
   });
 
+  it('uninstalls a requirement and checks the requirement it returns', async () => {
+    const requirement = {
+      requirementId: 'speech-recognition',
+      kind: 'transcription',
+      displayName: 'Speech recognition',
+      status: 'installable',
+      requiredFor: ['audio'],
+      installStrategy: 'runtime-artifact',
+      downloadBytes: 1024,
+    };
+    let body: Record<string, unknown> = requirement;
+    let status = 200;
+    const methods: string[] = [];
+    const transport = new InMemoryRuntimeTransport(
+      withDiscovery([
+        {
+          method: 'DELETE',
+          path: '/v2/runtime/requirements/speech-recognition/installation',
+          handle: (request) => {
+            methods.push(request.method ?? 'GET');
+            return Response.json(body, { status });
+          },
+        },
+      ]),
+    );
+    const client = new CaptureRuntimeClient({
+      baseUrl: 43123,
+      transport,
+      maxRetries: 0,
+    });
+
+    await expect(
+      client.uninstallRequirement('speech-recognition'),
+    ).resolves.toEqual(requirement);
+    expect(methods).toEqual(['DELETE']);
+
+    body = { ...requirement, installedAt: '2026-01-01T00:00:00Z' };
+    await expect(
+      client.uninstallRequirement('speech-recognition'),
+    ).rejects.toBeInstanceOf(CaptureRuntimeProtocolError);
+
+    body = {
+      error: {
+        code: 'requirement_in_use',
+        message: 'An installation or capture is active.',
+        details: { category: 'conflict', retryable: false },
+      },
+    };
+    status = 409;
+    await expect(
+      client.uninstallRequirement('speech-recognition'),
+    ).rejects.toMatchObject({ code: 'requirement_in_use', category: 'conflict' });
+  });
+
   it('keeps source page numbers of the shared page selection like Python', async () => {
     const fixture = sharedPageSelectionFixture();
     const decoded = (await decodeJson(

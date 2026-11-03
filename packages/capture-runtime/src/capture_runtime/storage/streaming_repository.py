@@ -239,6 +239,15 @@ class StreamingRepository:
         with self._lock:
             return self._get_capture(capture_id).request
 
+    def has_active_capture(self) -> bool:
+        """Whether any capture has not reached a terminal status."""
+
+        with self._lock:
+            return any(
+                record.operation.status not in _TERMINAL_CAPTURE_STATUSES
+                for record in self._captures.values()
+            )
+
     def capture_ids_for_ingestion(self, ingestion_id: str) -> list[str]:
         with self._lock:
             self._get_ingestion(ingestion_id)

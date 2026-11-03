@@ -17,14 +17,20 @@ from capture_runtime.contracts import (
     RuntimeModelOptionV2,
     RuntimeReady,
     RuntimeRequirementsV2,
+    RuntimeRequirementV2,
     StartRuntimeInstallationV2,
     StartRuntimeModelInstallationV2,
 )
 from capture_runtime.dependencies import RuntimeDependencies
+from capture_runtime.engine_installation import EngineInstallationError
 from capture_runtime.model_catalog import MODEL_OPTIONS, ActiveModelSelectionStore, catalog_sha256
 from capture_runtime.release import CAPTURE_DOCUMENT_SCHEMA_RELEASE_SHA256
 from capture_runtime.routes.common import ApiProblem, request_fingerprint
-from capture_runtime.services import IdempotencyConflictError, RecordNotFoundError
+from capture_runtime.services import (
+    IdempotencyConflictError,
+    RecordNotFoundError,
+    RequirementInUseError,
+)
 
 
 def register_runtime_routes(
@@ -149,6 +155,54 @@ def register_runtime_routes(
             raise ApiProblem(
                 404, "installation_not_found", "Installation job was not found."
             ) from error
+
+    @router.delete(
+        "/runtime/requirements/{requirement_id}/installation",
+        response_model=RuntimeRequirementV2,
+    )
+    async def uninstall_requirement(requirement_id: str) -> RuntimeRequirementV2:
+        if requirement_id in dependencies.disabled_requirement_ids:
+            raise ApiProblem(
+                422,
+                "requirement_disabled",
+                "This runtime process delegates structuring to its host provider.",
+            )
+        if await _requirement(requirement_id) is None:
+            raise ApiProblem(404, "requirement_not_found", "Runtime requirement was not found.")
+        if not dependencies.installer.is_uninstallable(requirement_id):
+            raise ApiProblem(
+                422,
+                "requirement_not_uninstallable",
+                "Only engines the runtime installs can be uninstalled.",
+            )
+        try:
+            await dependencies.installation_service.uninstall(
+                requirement_id, captures=dependencies.streaming_capture_service
+            )
+        except RequirementInUseError as error:
+            raise ApiProblem(
+                409,
+                "requirement_in_use",
+                "An installation or capture is active; try again when it has finished.",
+            ) from error
+        except EngineInstallationError as error:
+            # Another process installs the engine, or a file is still open. The
+            # unit is already reported as not installed; a retry removes the rest.
+            raise ApiProblem(
+                409,
+                "requirement_in_use",
+                "The engine files are in use; try again later.",
+            ) from error
+        requirement = await _requirement(requirement_id)
+        if requirement is None:
+            raise ApiProblem(404, "requirement_not_found", "Runtime requirement was not found.")
+        return requirement
+
+    async def _requirement(requirement_id: str) -> RuntimeRequirementV2 | None:
+        items = await asyncio.to_thread(
+            dependencies.installer.requirements, dependencies.enabled_requirement_ids
+        )
+        return next((item for item in items if item.requirement_id == requirement_id), None)
 
     @router.post(
         "/runtime/model-installations",

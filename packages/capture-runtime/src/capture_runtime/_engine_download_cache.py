@@ -15,6 +15,7 @@ possible, as across volumes, the bytes are copied as before.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import os
 import re
@@ -172,6 +173,15 @@ class VerifiedDownloadCache:
             pass
         finally:
             temporary.unlink(missing_ok=True)
+
+    def remove(self, sha256: str) -> None:
+        """Delete one entry, for bytes whose only user was an uninstalled unit."""
+
+        entry = self._entry(sha256)
+        if entry is None:
+            return
+        with contextlib.suppress(OSError):
+            entry.unlink(missing_ok=True)
 
     def _evict_idle(self, *, keep: Path) -> None:
         cutoff = time.time() - self._max_idle_seconds

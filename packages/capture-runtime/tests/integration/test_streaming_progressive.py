@@ -792,3 +792,39 @@ def test_session_start_names_the_spoken_language_only_when_given(language: str |
     start = json.loads(frame.payload)
     assert start.get("spokenLanguage") == language
     assert ("spokenLanguage" in start) is (language is not None)
+
+
+def test_a_capture_started_while_an_engine_is_uninstalled_waits_for_it(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        clock = FixedClock()
+        repository = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+        repository.initialize()
+        ingestion_id, _ = _open(repository)
+        service = StreamingCaptureService(
+            repository,
+            clock=clock,
+            processor=FakeProgressiveProcessor(clock),  # type: ignore[arg-type]
+            structurer=FakeCaptureStructuringProvider(clock),
+        )
+        assert service.hold_new_captures()
+        operation = service.start_capture(
+            StartCaptureV2(
+                client_request_id="capture-during-uninstall",
+                ingestion_id=ingestion_id,
+                structuring_mode=StructuringMode.RUNTIME,
+            )
+        )
+        await asyncio.sleep(0.05)
+        assert service.get_capture(operation.capture_id).status.value == "extracting"
+        # An active capture keeps the next uninstall from holding captures.
+        assert service.hold_new_captures() is False
+
+        service.resume_captures()
+        for _ in range(100):
+            if service.get_capture(operation.capture_id).status.value == "completed":
+                break
+            await asyncio.sleep(0.01)
+        assert service.get_capture(operation.capture_id).status.value == "completed"
+        await service.shutdown()
+
+    asyncio.run(scenario())

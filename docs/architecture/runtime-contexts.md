@@ -16,6 +16,7 @@ flowchart LR
   n_capture_runtime_engine_installation_lock["capture_runtime._engine_installation_lock"]
   n_capture_runtime_engine_installation_residue["capture_runtime._engine_installation_residue"]
   n_capture_runtime_engine_model_units["capture_runtime._engine_model_units"]
+  n_capture_runtime_engine_uninstall["capture_runtime._engine_uninstall"]
   n_capture_runtime_frozen_extraction_residue["capture_runtime._frozen_extraction_residue"]
   n_capture_runtime_generated_worker_stage_policy["capture_runtime._generated_worker_stage_policy"]
   n_capture_runtime_pdf_source["capture_runtime._pdf_source"]
@@ -91,6 +92,10 @@ flowchart LR
   n_capture_runtime_engine_model_units --> n_capture_runtime_engine_installation_errors
   n_capture_runtime_engine_model_units --> n_capture_runtime_engine_catalog
   n_capture_runtime_engine_model_units --> n_capture_runtime_install_progress
+  n_capture_runtime_engine_uninstall --> n_capture_runtime_engine_download_cache
+  n_capture_runtime_engine_uninstall --> n_capture_runtime_engine_installation_residue
+  n_capture_runtime_engine_uninstall --> n_capture_runtime_engine_model_units
+  n_capture_runtime_engine_uninstall --> n_capture_runtime_engine_catalog
   n_capture_runtime_frozen_extraction_residue --> n_capture_runtime_engine_installation_residue
   n_capture_runtime_pdf_source --> n_capture_runtime_ocr_projection
   n_capture_runtime_pdf_source --> n_capture_runtime_pdf_page_selection
@@ -158,6 +163,7 @@ flowchart LR
   n_capture_runtime_engine_installation --> n_capture_runtime_engine_installation_lock
   n_capture_runtime_engine_installation --> n_capture_runtime_engine_installation_residue
   n_capture_runtime_engine_installation --> n_capture_runtime_engine_model_units
+  n_capture_runtime_engine_installation --> n_capture_runtime_engine_uninstall
   n_capture_runtime_engine_installation --> n_capture_runtime_contracts
   n_capture_runtime_engine_installation --> n_capture_runtime_engine_catalog
   n_capture_runtime_engine_installation --> n_capture_runtime_install_progress
@@ -233,6 +239,7 @@ flowchart LR
   n_capture_runtime_routes --> n_capture_runtime_contract_set
   n_capture_runtime_routes --> n_capture_runtime_contracts
   n_capture_runtime_routes --> n_capture_runtime_dependencies
+  n_capture_runtime_routes --> n_capture_runtime_engine_installation
   n_capture_runtime_routes --> n_capture_runtime_model_catalog
   n_capture_runtime_routes --> n_capture_runtime_progressive_audio
   n_capture_runtime_routes --> n_capture_runtime_progressive_decoder
