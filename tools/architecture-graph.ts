@@ -14,6 +14,7 @@
  *   node tools/architecture-graph.ts            # print the JSON graph
  *   node tools/architecture-graph.ts --write    # regenerate docs/architecture/*.md
  *   node tools/architecture-graph.ts --check    # fail when those files are stale
+ *   node tools/architecture-graph.ts --root <dir>  # read another checkout (a PR's base)
  *
  * The graph-building functions are pure; everything that spawns a process or
  * touches the filesystem sits in the "process boundary" section at the end.
@@ -38,16 +39,16 @@ const ts = createRequire(import.meta.url)(
 ) as typeof import('typescript');
 type TsNode = import('typescript').Node;
 
-type Edge = [from: string, to: string];
+export type Edge = [from: string, to: string];
 
-interface GraphLevel {
+export interface GraphLevel {
   nodes: string[];
   edges: Edge[];
   /** Label shown under a node: its `type:*` tag (projects) or Sheriff tags (UI modules). */
   tags?: Record<string, string>;
 }
 
-interface ArchitectureGraph {
+export interface ArchitectureGraph {
   schemaVersion: 1;
   levels: {
     projects: GraphLevel;
@@ -403,8 +404,15 @@ function mermaidLabel(text: string): string {
   return text.replaceAll('"', '#quot;');
 }
 
-/** A `flowchart LR` diagram; `a --> b` means a depends on b. Output order follows the sorted level. */
-export function renderMermaid(level: GraphLevel): string {
+/**
+ * A `flowchart LR` diagram; `a --> b` means a depends on b. Output order
+ * follows the sorted level. `removed` edges (the PR diff comment) are drawn
+ * dashed and labelled after the level's own edges.
+ */
+export function renderMermaid(
+  level: GraphLevel,
+  removed: readonly Edge[] = [],
+): string {
   const ids = mermaidIds(level.nodes);
   const idOf = (node: string): string => {
     const id = ids.get(node);
@@ -422,6 +430,9 @@ export function renderMermaid(level: GraphLevel): string {
   }
   for (const [from, to] of level.edges) {
     lines.push(`  ${idOf(from)} --> ${idOf(to)}`);
+  }
+  for (const [from, to] of removed) {
+    lines.push(`  ${idOf(from)} -. removed .-> ${idOf(to)}`);
   }
   return lines.join('\n');
 }
@@ -509,17 +520,36 @@ interface CliIo {
 }
 
 const USAGE =
-  'Usage: node tools/architecture-graph.ts [--write | --check]\n' +
-  '  (no flag)  print the architecture graph as JSON\n' +
-  '  --write    regenerate docs/architecture/*.md\n' +
-  '  --check    exit 1 when docs/architecture/*.md are stale\n';
+  'Usage: node tools/architecture-graph.ts [--write | --check] [--root <dir>]\n' +
+  '  (no flag)     print the architecture graph as JSON\n' +
+  '  --write       regenerate docs/architecture/*.md\n' +
+  '  --check       exit 1 when docs/architecture/*.md are stale\n' +
+  '  --root <dir>  read the workspace at <dir> instead of this checkout\n' +
+  '                (it needs its own node_modules for nx)\n';
 
-/** Returns the process exit code: 0 ok, 1 stale docs, 2 bad usage. */
-export function runCli(argv: string[], io: CliIo): number {
-  const write = argv.includes('--write');
-  const check = argv.includes('--check');
-  const unknown = argv.filter((arg) => arg !== '--write' && arg !== '--check');
-  if (unknown.length > 0 || (write && check)) {
+/**
+ * Returns the process exit code: 0 ok, 1 stale docs, 2 bad usage. `openIo`
+ * receives the `--root` value, or undefined for this checkout.
+ */
+export function runCli(
+  argv: string[],
+  openIo: (root: string | undefined) => CliIo,
+): number {
+  let write = false;
+  let check = false;
+  let root: string | undefined;
+  let usageError = false;
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (arg === '--write') write = true;
+    else if (arg === '--check') check = true;
+    else if (arg === '--root' && root === undefined && argv[index + 1]) {
+      index += 1;
+      root = argv[index];
+    } else usageError = true;
+  }
+  const io = openIo(root);
+  if (usageError || (write && check)) {
     io.stderr(USAGE);
     return 2;
   }
@@ -545,7 +575,13 @@ export function runCli(argv: string[], io: CliIo): number {
 
 // ---- Process boundary: spawning tools and touching the filesystem ----------
 
+/** This checkout: its tools/ run against `--root`, which may be an older tree without them. */
 const workspaceRoot = resolve(import.meta.dirname, '..');
+const RUNTIME_GRAPH_SCRIPT = join(
+  workspaceRoot,
+  'tools',
+  'architecture_graph_runtime.py',
+);
 
 /** Sources scanned for UI module edges; the SDK is a Sheriff module the UI imports. */
 const UI_SOURCE_ROOTS = [
@@ -602,6 +638,12 @@ function collectProjects(root: string): GraphLevel {
       [nxBin, 'graph', `--file=${file}`],
       {
         cwd: root,
+        // A daemon started for a throwaway tree (a PR's base worktree) would
+        // outlive the run and keep that directory locked.
+        env:
+          root === workspaceRoot
+            ? process.env
+            : { ...process.env, NX_DAEMON: 'false' },
       },
     );
     return projectsLevel(JSON.parse(readFileSync(file, 'utf8')));
@@ -619,7 +661,7 @@ function collectRuntimeContexts(root: string): GraphLevel {
   const output = runChecked(
     'grimp runtime graph',
     'uvx',
-    ['--from', IMPORT_LINTER, 'python', 'tools/architecture_graph_runtime.py'],
+    ['--from', IMPORT_LINTER, 'python', RUNTIME_GRAPH_SCRIPT],
     {
       cwd: root,
       env: {
@@ -710,7 +752,9 @@ if (
   resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 ) {
   try {
-    process.exitCode = runCli(process.argv.slice(2), processIo(workspaceRoot));
+    process.exitCode = runCli(process.argv.slice(2), (root) =>
+      processIo(root === undefined ? workspaceRoot : resolve(root)),
+    );
   } catch (error) {
     process.stderr.write(`architecture-graph: ${(error as Error).message}\n`);
     process.exitCode = 1;

@@ -173,6 +173,24 @@ test('renderMermaid is stable and keeps ids unique', () => {
   assert.equal(renderMermaid(level), expected);
 });
 
+test('renderMermaid draws removed edges dashed and labelled after the level edges', () => {
+  const level = {
+    nodes: ['app', 'lib', 'old'],
+    edges: [['app', 'lib']] as [string, string][],
+  };
+  assert.equal(
+    renderMermaid(level, [['app', 'old']]),
+    [
+      'flowchart LR',
+      '  n_app["app"]',
+      '  n_lib["lib"]',
+      '  n_old["old"]',
+      '  n_app --> n_lib',
+      '  n_app -. removed .-> n_old',
+    ].join('\n'),
+  );
+});
+
 const graph = {
   schemaVersion: 1 as const,
   levels: {
@@ -226,14 +244,19 @@ function fakeIo(files: Map<string, string>) {
     stdout: (text: string) => void (out.stdout += text),
     stderr: (text: string) => void (out.stderr += text),
   };
-  return { io, out };
+  const roots: (string | undefined)[] = [];
+  const open = (root: string | undefined) => {
+    roots.push(root);
+    return io;
+  };
+  return { open, out, roots };
 }
 
 test('--check passes after --write and tolerates CRLF checkouts', () => {
   const files = new Map<string, string>();
-  assert.equal(runCli(['--write'], fakeIo(files).io), 0);
+  assert.equal(runCli(['--write'], fakeIo(files).open), 0);
   assert.equal(files.size, 3);
-  const { io, out } = fakeIo(
+  const { open, out } = fakeIo(
     new Map(
       [...files].map(([path, content]) => [
         path,
@@ -241,17 +264,17 @@ test('--check passes after --write and tolerates CRLF checkouts', () => {
       ]),
     ),
   );
-  assert.equal(runCli(['--check'], io), 0);
+  assert.equal(runCli(['--check'], open), 0);
   assert.equal(out.stderr, '');
 });
 
 test('--check reports a stale and a missing file with the fix command', () => {
   const files = new Map<string, string>();
-  runCli(['--write'], fakeIo(files).io);
+  runCli(['--write'], fakeIo(files).open);
   files.set('docs/architecture/projects.md', 'edited by hand\n');
   files.delete('docs/architecture/ui-modules.md');
-  const { io, out } = fakeIo(files);
-  assert.equal(runCli(['--check'], io), 1);
+  const { open, out } = fakeIo(files);
+  assert.equal(runCli(['--check'], open), 1);
   assert.match(out.stderr, /docs\/architecture\/projects\.md/u);
   assert.match(out.stderr, /docs\/architecture\/ui-modules\.md/u);
   assert.doesNotMatch(out.stderr, /runtime-contexts/u);
@@ -259,11 +282,20 @@ test('--check reports a stale and a missing file with the fix command', () => {
 });
 
 test('runCli prints the JSON graph by default and rejects bad usage', () => {
-  const { io, out } = fakeIo(new Map());
-  assert.equal(runCli([], io), 0);
+  const { open, out } = fakeIo(new Map());
+  assert.equal(runCli([], open), 0);
   assert.deepEqual(JSON.parse(out.stdout), graph);
   const bad = fakeIo(new Map());
-  assert.equal(runCli(['--write', '--check'], bad.io), 2);
-  assert.equal(runCli(['--nope'], bad.io), 2);
+  assert.equal(runCli(['--write', '--check'], bad.open), 2);
+  assert.equal(runCli(['--nope'], bad.open), 2);
+  assert.equal(runCli(['--root'], bad.open), 2);
   assert.match(bad.out.stderr, /Usage:/u);
+});
+
+test('--root opens the IO for that directory; without it the IO is for this checkout', () => {
+  const fake = fakeIo(new Map());
+  assert.equal(runCli(['--root', '../base'], fake.open), 0);
+  assert.equal(runCli([], fake.open), 0);
+  assert.deepEqual(fake.roots, ['../base', undefined]);
+  assert.equal(runCli(['--root', 'a', '--root', 'b'], fake.open), 2);
 });
