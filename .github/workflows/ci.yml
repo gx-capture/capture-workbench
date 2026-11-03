@@ -151,6 +151,12 @@ jobs:
         shell: pwsh
         run: node tools/dead-code-gate.ts --ci
 
+      # docs/architecture/*.md are generated from the Nx graph, the grimp
+      # import graph, and the Sheriff modules; fix with architecture:update.
+      - name: Architecture diagrams
+        shell: pwsh
+        run: pnpm run architecture:check
+
   # Published packages: TypeScript and Python clients, the sidecar
   # launcher crate, and the Angular Web Component package.
   packages:
