@@ -96,7 +96,7 @@
       "pdf": "pdfium"
     }
   },
-  "releaseVersion": "0.8.0",
+  "releaseVersion": "0.9.0",
   "schemaVersion": "3",
   "verticalReader": {
     "artifacts": [
