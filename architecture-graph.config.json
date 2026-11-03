@@ -1,0 +1,41 @@
+{
+  "levels": [
+    {
+      "id": "projects",
+      "kind": "nx",
+      "title": "Nx projects",
+      "label": "Nx 專案",
+      "output": "projects.md",
+      "intro": "Each node is an Nx project, labelled with its `type:*` tag. An arrow `a --> b` means project `a` depends on project `b` (from `nx graph`)."
+    },
+    {
+      "id": "runtimeContexts",
+      "kind": "python",
+      "title": "Capture Runtime contexts",
+      "label": "Capture Runtime 上下文",
+      "output": "runtime-contexts.md",
+      "intro": "Each node is a top-level group of the `capture_runtime` Python package. An arrow `a --> b` means a module in `a` imports a module in `b` (from grimp); imports inside one group are not drawn.",
+      "package": "capture_runtime",
+      "sourceDir": "packages/capture-runtime/src",
+      "projectDir": "packages/capture-runtime",
+      "collapseDepth": 1,
+      "importLinterConfig": "packages/capture-runtime/importlinter.toml"
+    },
+    {
+      "id": "uiModules",
+      "kind": "typescript",
+      "title": "UI modules",
+      "label": "UI 模組",
+      "output": "ui-modules.md",
+      "intro": "Each node is a Sheriff module of the Angular UI package, the shell app, or the runtime client SDK, labelled with its Sheriff tags; `root` holds files outside every module. An arrow `a --> b` means a TypeScript file in `a` imports a file in `b`.",
+      "sheriffConfig": "sheriff.config.ts",
+      "tsconfig": "tsconfig.base.json",
+      "sourceRoots": [
+        "packages/capture-workbench-ui/src",
+        "apps/capture-workbench/src",
+        "packages/capture-runtime-client/src"
+      ],
+      "exclude": ["node_modules", "dist", "testing"]
+    }
+  ]
+}
