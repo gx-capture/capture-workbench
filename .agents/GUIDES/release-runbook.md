@@ -14,8 +14,8 @@ source of truth for inputs.
   speech recognition and diarization engines, catalog). 0.7.x also went
   through Route A only; the last full route (desktop installer, stable
   pointer, consumer gates) was 0.6.3.
-- **0.9.0** is prepared (issue #181, approved by the owner on 2026-11-03) and
-  goes through Route A only; see below.
+- **0.9.0** is the latest published release, through Route A only (2026-11-03):
+  npm (GitHub Packages), PyPI, crates.io and GitHub release `v0.9.0`.
 - Releases after 0.8.0 publish no Java SDK. Maven publication was removed on
   2026-10-31 (no consumer used it); versions through 0.8.0 stay on GitHub
   Packages.
@@ -32,12 +32,13 @@ source of truth for inputs.
   structure of dense vertical periodical scans and pages that mix directions;
   about a fifth of furigana on textbook pages is not set aside.
 
-## Prepared: 0.9.0 (minor)
+## Published through Route A: 0.9.0 (minor)
 
-- Prepared on 2026-11-03 for Route A only (issue #181). Runs: package candidate
-  `<run>`, runtime candidate `<run>` (`model-enabled`), package promote
-  `<run>`, runtime promote `<run>` (`registries`). Source commit `<sha>` (merge
-  of the release PR).
+- Published on 2026-11-03 through Route A only (issue #181). Runs: package
+  candidate 41603006054 (candidate `dbf64d07…`, manifest `5160231a…`), runtime
+  candidate 41603269848 (`model-enabled`; candidate `c064d8d4…`, manifest
+  `2e924341…`), package promote 41605327337, runtime promote 41605563992
+  (`registries`). Source commit `c030eb4` (merge of PR #231).
 - Contents: download size and downloaded bytes (PR #141), resumable engine
   downloads (PR #151), uninstalling an engine (PR #145), page and recording
   progress (PR #148), the TypeScript client reading raw captures again
