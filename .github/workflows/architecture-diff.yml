@@ -1,0 +1,120 @@
+name: Architecture diff
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+# One sticky comment per pull request listing the dependency edges it adds
+# and removes (tools/architecture-diff.ts) at the three levels of
+# tools/architecture-graph.ts. Only paths that feed those graphs trigger it;
+# a pull request that never touches them cannot change a dependency.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'apps/**'
+      - 'packages/**'
+      - 'tools/architecture*'
+      - '.github/workflows/architecture-diff.yml'
+      - 'nx.json'
+      - 'package.json'
+      - 'pnpm-workspace.yaml'
+      - 'tsconfig*.json'
+      - 'sheriff.config.ts'
+      - '!**/*.md'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+# A newer push to a pull request replaces its older run; only the latest
+# head's comment matters.
+concurrency:
+  group: architecture-diff-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  comment:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    # Informational only: a failure here (a base tree that no longer installs,
+    # a fork's read-only token) must never block a merge. The blocking rules
+    # (Nx tags, import-linter, Sheriff, architecture:check) live in the
+    # `checks` job of ci.yml.
+    continue-on-error: true
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install uv and Python 3.13
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          python-version: '3.13'
+          enable-cache: true
+
+      - name: Install workspace dependencies
+        shell: pwsh
+        run: pnpm install --frozen-lockfile
+
+      # bash keeps redirected output byte-exact (the comment body is zh-TW
+      # text); PowerShell re-encodes native output it redirects.
+      - name: Head graph
+        shell: bash
+        run: node tools/architecture-graph.ts > "$RUNNER_TEMP/head.json"
+
+      # The head's copy of the tool reads the base tree through --root, so a
+      # base without tools/architecture-graph.ts still works. `nx graph` needs
+      # the workspace's own node_modules (the nx bin refuses a workspace
+      # without a local install and resolves nx.json plugins from it), so the
+      # base worktree gets its own install. The pnpm store is already warm
+      # from the head install, and lifecycle scripts are not needed to read
+      # the project graph.
+      - name: Base graph
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          git worktree add --detach "$RUNNER_TEMP/base" "$BASE_SHA"
+          pnpm --dir "$RUNNER_TEMP/base" install --frozen-lockfile --prefer-offline --ignore-scripts
+          node tools/architecture-graph.ts --root "$RUNNER_TEMP/base" > "$RUNNER_TEMP/base.json"
+
+      - name: Render comment
+        shell: bash
+        run: >-
+          node tools/architecture-diff.ts
+          --base "$RUNNER_TEMP/base.json"
+          --head "$RUNNER_TEMP/head.json"
+          > "$RUNNER_TEMP/architecture-diff.md"
+
+      # Update the comment that starts with the marker, else add one.
+      - name: Create or update the comment
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          # Collect every id first: piping into `head` could kill gh with
+          # SIGPIPE, which pipefail turns into a failed step.
+          ids="$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
+            --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | startswith("<!-- architecture-diff -->"))) | .id')"
+          comment_id="${ids%%$'\n'*}"
+          if [ -n "$comment_id" ]; then
+            gh api --method PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$comment_id" \
+              -F body=@"$RUNNER_TEMP/architecture-diff.md" > /dev/null
+          else
+            gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
+              -F body=@"$RUNNER_TEMP/architecture-diff.md" > /dev/null
+          fi

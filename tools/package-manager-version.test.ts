@@ -14,6 +14,7 @@ const expectedPolicy = readPackageManagerPolicy(root);
 const expectedVersion = expectedPolicy.engines.pnpm;
 const expectedPackageManager = expectedPolicy.packageManager;
 const bootstrapWorkflows = [
+  '.github/workflows/architecture-diff.yml',
   '.github/workflows/ci.yml',
   '.github/workflows/package-candidate.yml',
   '.github/workflows/runtime-candidate.yml',
