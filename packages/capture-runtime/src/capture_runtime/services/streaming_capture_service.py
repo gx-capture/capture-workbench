@@ -658,8 +658,8 @@ class StreamingCaptureService:
                 retryable=False,
             )
 
-        def report_ocr_progress(
-            completed_pages: int, total_pages: int, stage: str = "extracting"
+        def report_progress(
+            done: int, total: int, stage: str, pages: tuple[int, int] | None = None
         ) -> None:
             if cancellation.is_set() or self._shutting_down:
                 return
@@ -668,15 +668,21 @@ class StreamingCaptureService:
                 return
             # Reserve the existing final 10% for structuring. A page checkpoint
             # says nothing about the validity of the eventual terminal envelope.
-            progress = 0.9 * completed_pages / total_pages
-            if progress <= (operation.progress or 0):
+            progress = 0.9 * done / total
+            moved = progress > (operation.progress or 0)
+            pages_moved = pages is not None and pages != (
+                operation.pages_done,
+                operation.pages_total,
+            )
+            if not moved and not pages_moved:
                 return
             try:
                 self.repository.append_event(
                     capture_id,
                     event_type=StreamingEventType.CHECKPOINT,
                     stage=stage,
-                    progress=progress,
+                    progress=progress if moved else None,
+                    pages=pages,
                 )
             except OSError:
                 # Page progress is an observability signal. A failed checkpoint
@@ -684,13 +690,21 @@ class StreamingCaptureService:
                 # still records state, and OCR itself must not fail with it.
                 return
 
+        def report_ocr_progress(completed_pages: int, total_pages: int) -> None:
+            report_progress(
+                completed_pages,
+                total_pages,
+                "extracting",
+                (completed_pages, total_pages),
+            )
+
         if request.identify_speakers:
             extraction = await extractor.extract(
                 content,
                 source,
                 cancellation,
                 identify_speakers=True,
-                speaker_progress=lambda stage, permille: report_ocr_progress(permille, 1000, stage),
+                speaker_progress=lambda stage, permille: report_progress(permille, 1000, stage),
                 **_spoken_language(request),
             )
         elif request.pdf_page_numbers is None:
@@ -727,6 +741,13 @@ class StreamingCaptureService:
             updated_at=raw.created_at,
         )
         self.repository.write_partial(partial)
+        pages_total = self._processed_page_count(capture_id, declared_kind, extraction)
+        # Every processed page is done now; say so unless the last page
+        # checkpoint already did.
+        current = self.repository.get_capture(capture_id)
+        final_pages = None if pages_total is None else (pages_total, pages_total)
+        if final_pages == (current.pages_done, current.pages_total):
+            final_pages = None
         # One event holds at most 1,000 segments; a long transcript split by
         # speaker has more.
         segments = list(raw.segments)
@@ -737,8 +758,31 @@ class StreamingCaptureService:
                 stage="extracting",
                 partial_revision=partial.revision,
                 segments=segments[start : start + MAX_EVENT_SEGMENTS],
+                pages=final_pages if start == 0 else None,
             )
         return extraction
+
+    def _processed_page_count(
+        self,
+        capture_id: str,
+        kind: CaptureSourceKind,
+        extraction: CaptureExtractionOutcome,
+    ) -> int | None:
+        """How many pages a finished document extraction processed, when known.
+
+        The OCR projection holds one page per processed page; an extractor
+        without one still reports its page selection, and an image is one page.
+        """
+        if kind is CaptureSourceKind.AUDIO:
+            return None
+        if extraction.ocr_projection is not None and extraction.ocr_projection.page_count:
+            return extraction.ocr_projection.page_count
+        scope = extraction.raw.ocr_page_scope
+        if scope is not None:
+            return len(scope.requested_page_numbers)
+        if kind is CaptureSourceKind.IMAGE:
+            return 1
+        return self.repository.get_capture(capture_id).pages_total
 
     def _publish_execution_proof(
         self,
@@ -802,6 +846,7 @@ class StreamingCaptureService:
                 segments=list(event.segments),
                 error=event.error,
                 progress=event.progress,
+                duration_ms=event.duration_ms,
             )
 
     def _fail(

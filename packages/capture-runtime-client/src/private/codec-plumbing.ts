@@ -2,6 +2,7 @@ import { decodeJson, type RuntimeResponseModel } from '../codec.js';
 import type { RuntimeTransport } from '../contracts.js';
 
 export {
+  assertCaptureProgress,
   assertStructuringBatchSubmission,
   decodeError,
   decodeSse,

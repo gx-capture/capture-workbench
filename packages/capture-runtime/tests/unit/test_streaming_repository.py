@@ -5,6 +5,8 @@ import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
+
 from capture_runtime.clock import Clock
 from capture_runtime.contracts import (
     CaptureSourceKind,
@@ -287,3 +289,81 @@ def test_streaming_repository_returns_resync_when_replay_is_too_large(tmp_path: 
     assert len(events) == 1
     assert events[0].event_type is StreamingEventType.RESYNC_REQUIRED
     assert events[0].sequence == repository.get_capture(capture.capture_id).last_event_sequence
+
+
+def _ready_pdf_capture(repository: StreamingRepository) -> str:
+    source = b"%PDF-1.7 three pages"
+    digest = hashlib.sha256(source).hexdigest()
+    ingestion = repository.create_ingestion(
+        OpenIngestionV2(
+            client_request_id="repository-pdf-open",
+            kind=CaptureSourceKind.PDF,
+            file_name="sample.pdf",
+            media_type="application/pdf",
+            total_bytes=len(source),
+            source_sha256=digest,
+        )
+    )
+    repository.append_chunk(
+        ingestion.ingestion_id,
+        chunk_index=0,
+        byte_offset=0,
+        data=source,
+        sha256=digest,
+        max_chunk_bytes=4 * 1024 * 1024,
+        declared_total_bytes=len(source),
+    )
+    repository.finalize_ingestion(ingestion.ingestion_id, total_bytes=len(source), sha256=digest)
+    return repository.create_capture(
+        StartCaptureV2(
+            client_request_id="repository-pdf-capture",
+            ingestion_id=ingestion.ingestion_id,
+            structuring_mode=StructuringMode.HOST,
+        )
+    ).capture_id
+
+
+def test_page_progress_survives_reading_the_operation_back(tmp_path: Path) -> None:
+    clock = MutableClock()
+    repository = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+    repository.initialize()
+    capture_id = _ready_pdf_capture(repository)
+
+    for done in (0, 2, 1):
+        repository.append_event(
+            capture_id,
+            event_type=StreamingEventType.CHECKPOINT,
+            stage="extracting",
+            pages=(done, 3),
+        )
+
+    # A late checkpoint never moves the count back.
+    latest = repository.get_capture(capture_id)
+    assert (latest.pages_done, latest.pages_total) == (2, 3)
+    restarted = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+    restarted.initialize()
+    recovered = restarted.get_capture(capture_id)
+    assert (recovered.pages_done, recovered.pages_total) == (2, 3)
+    assert [
+        (event.pages_done, event.pages_total)
+        for event in restarted.read_events(capture_id, after_sequence=1)
+    ] == [(0, 3), (2, 3), (1, 3)]
+
+
+def test_progress_that_does_not_fit_the_capture_kind_is_never_written(tmp_path: Path) -> None:
+    clock = MutableClock()
+    repository = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+    repository.initialize()
+    capture_id = _ready_pdf_capture(repository)
+    before = repository.get_capture(capture_id)
+
+    with pytest.raises(ValueError, match="audio captures"):
+        repository.append_event(
+            capture_id,
+            event_type=StreamingEventType.CHECKPOINT,
+            stage="extracting",
+            duration_ms=60_000,
+        )
+
+    assert repository.get_capture(capture_id) == before
+    assert len(repository.read_events(capture_id, after_sequence=-1)) == 1

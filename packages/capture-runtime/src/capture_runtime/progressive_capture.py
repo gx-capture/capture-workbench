@@ -184,12 +184,16 @@ def _source_duration_ms(path: Path) -> int | None:
 def _with_progress(
     event: ProgressiveSessionEvent, duration_ms: int | None
 ) -> ProgressiveSessionEvent:
-    """Progress from covered time: 5-90%, the last 10% left for structuring as for OCR."""
+    """Progress from covered time: 5-90%, the last 10% left for structuring as for OCR.
+
+    The event also carries the recording's length, so a host can show covered
+    time against it.
+    """
 
     if duration_ms is None or event.covered_until_ms is None:
         return event
     covered = min(1.0, event.covered_until_ms / duration_ms)
-    return replace(event, progress=round(0.05 + 0.85 * covered, 4))
+    return replace(event, progress=round(0.05 + 0.85 * covered, 4), duration_ms=duration_ms)
 
 
 def _worker_key(engine: InstalledEngine, config: ExtractionRuntimeConfig) -> tuple[str, ...]:

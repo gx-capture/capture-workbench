@@ -499,6 +499,22 @@ def _invariants() -> list[dict[str, str]]:
                 "and downloadedBytes never exceeds downloadBytes."
             ),
         },
+        {
+            "id": "capture-pages-paired-for-documents",
+            "models": "CaptureOperationV2, CaptureEventV2",
+            "description": (
+                "pagesDone and pagesTotal are both present or both absent, only for pdf "
+                "and image captures, and pagesDone never exceeds pagesTotal."
+            ),
+        },
+        {
+            "id": "capture-media-time-for-audio",
+            "models": "CaptureOperationV2, CaptureEventV2",
+            "description": (
+                "durationMs, and coveredUntilMs on a capture operation, are only for "
+                "audio captures."
+            ),
+        },
     ]
 
 

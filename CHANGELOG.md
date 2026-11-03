@@ -58,6 +58,27 @@ Mandarin–English), the hardware it uses, its download size and its license. Th
 shows the same guide when its host asks for a speech unit. The runtime now reports
 `speech-recognition` as `optional`.
 
+### Page and recording progress (contract change)
+
+Hosts can show "page 9 of 12" for a document and "12:04 of 41:30" for a
+recording without guessing from `progress`.
+
+- `CaptureOperationV2.pagesTotal` and `pagesDone` (pdf and image captures):
+  the pages to process (the selected PDF pages, 1 for an image) and the pages
+  done, set together once the count is known, before the first page finishes.
+  `pagesDone` never exceeds `pagesTotal` and equals it once extraction ends.
+- `CaptureOperationV2.durationMs` and `coveredUntilMs` (audio captures): the
+  recording's length from its container, and how far transcription has got
+  (the value the partial and events already carry). A container that does not
+  state its length leaves `durationMs` absent; a capture that identifies
+  speakers transcribes in one pass and reports neither.
+- `CaptureEventV2` gains `pagesDone`, `pagesTotal` and `durationMs`, set on the
+  events that change them, so SSE consumers see them without polling.
+- The values are stored with the operation and survive a runtime restart.
+- The contract set hash changes. The TypeScript client accepts and checks the
+  new fields on operations and events; clients older than this release reject
+  them on operations, so LAW and Cert move to it together with the runtime.
+
 ### Uninstall an engine (contract change)
 
 Hosts can remove an installed engine to free disk space.
