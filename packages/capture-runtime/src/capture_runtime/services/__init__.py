@@ -1,4 +1,4 @@
-"""Public service facade for capture and runtime-installation jobs."""
+"""Public service facade for capture, model installation, and structuring."""
 
 from capture_runtime.services.model_installation_service import ModelInstallationService
 from capture_runtime.services.streaming_capture_service import StreamingCaptureService
