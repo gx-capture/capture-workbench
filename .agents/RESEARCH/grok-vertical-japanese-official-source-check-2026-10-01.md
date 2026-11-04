@@ -75,7 +75,7 @@ Root本輪重算：p14 A/B欄距中位數44 px；31與30相差45 px，30「い�
 
 **範圍有實益；自動解法尚未成立，當前不得宣稱可發布。** 最小有用範圍是 runtime 內的文章分組、區塊間與欄內／欄間讀序、正文與註音角色判定，再由一致的結果產生消費端可用表示。候選須處理多篇直排文章、橫排題幹／選項、署名、短正文欄／真正同欄碎框與註音的相互關係，不能以頁碼、檔名或人工指定欄位索引決定結果。
 
-實際使用路徑支持此收益：[頁面 raw segment](../../packages/capture-runtime/src/capture_runtime/extractors.py) 直接採用 `page.text`；[Workbench 預覽](../../packages/capture-workbench-ui/src/lib/capture-angular/components/capture-task-item/capture-task-item.component.ts) 顯示 segment 文字；[Cert Prep mapping](../../../cert-prep/apps/cert-prep-backend/src/cert_prep_backend/domains/capture_workbench/mapping.py) 保留 block 次序，以 projection.page.text 保存 raw_text；分類與 line metadata 則使用 document blocks 的 reviewed／target text 組成 source_text，排序可經 raw segments／structuring 間接影響分類；[LAW receipt payload](../../../gx.law-prep/apps/law-prep-ai-service/src/app/ocr/receipt_payload.py) 保留頁面文字、boxes 次序、原位置及來源身分。因此收益必須在顯示與保存後讀回的結果成立，不能只存在於研究摘要。
+實際使用路徑支持此收益：[頁面 raw segment](../../packages/capture-runtime/src/capture_runtime/capture_extraction.py) 直接採用 `page.text`；[Workbench 預覽](../../packages/capture-workbench-ui/src/lib/capture-angular/components/capture-task-item/capture-task-item.component.ts) 顯示 segment 文字；[Cert Prep mapping](../../../cert-prep/apps/cert-prep-backend/src/cert_prep_backend/domains/capture_workbench/mapping.py) 保留 block 次序，以 projection.page.text 保存 raw_text；分類與 line metadata 則使用 document blocks 的 reviewed／target text 組成 source_text，排序可經 raw segments／structuring 間接影響分類；[LAW receipt payload](../../../gx.law-prep/apps/law-prep-ai-service/src/app/ocr/receipt_payload.py) 保留頁面文字、boxes 次序、原位置及來源身分。因此收益必須在顯示與保存後讀回的結果成立，不能只存在於研究摘要。
 
 | 面向 | 範圍與必要條件 |
 | --- | --- |

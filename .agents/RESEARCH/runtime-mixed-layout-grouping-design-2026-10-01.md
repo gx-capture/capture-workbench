@@ -206,7 +206,7 @@ Cert分別驗raw_text保存、document blocks／reviewed text、line metadata、
 - [L12：worker封閉欄位與分數配對](../../packages/capture-runtime/src/capture_runtime/worker_client.py)
 - [L13：Cert raw_text／source_text mapping](../../../cert-prep/apps/cert-prep-backend/src/cert_prep_backend/domains/capture_workbench/mapping.py)
 - [L14：LAW receipt](../../../gx.law-prep/apps/law-prep-ai-service/src/app/ocr/receipt_payload.py)
-- [L15：runtime page segment](../../packages/capture-runtime/src/capture_runtime/extractors.py)
+- [L15：runtime page segment](../../packages/capture-runtime/src/capture_runtime/capture_extraction.py)
 - [L16：Cert文字清理與題組分類](../../../cert-prep/apps/cert-prep-backend/src/cert_prep_backend/domains/exam_content.py)
 - [L17：本機word-box來源](../../packages/capture-runtime/.venv/Lib/site-packages/paddlex/inference/pipelines/components/common/cal_ocr_word_box.py)
 - [L18：Grok四份N1版面記錄，非本輪驗收](../../reports/直排日文%20PaddleOCR%20研究.md)；[本輪看p2](../../tmp/research-vertical-japanese/v3-validation/images/original-p2.png)；[p16](../../tmp/research-vertical-japanese/v3-validation/images/original-p16.png)
