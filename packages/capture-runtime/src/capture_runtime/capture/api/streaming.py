@@ -12,6 +12,12 @@ from typing import Annotated
 from fastapi import APIRouter, Header, Path, Request, Response, status
 from fastapi.responses import StreamingResponse
 
+from capture_runtime.capture.infrastructure.streaming_repository import (
+    StreamingIdempotencyConflictError,
+    StreamingPartialNotFoundError,
+    StreamingRecordNotFoundError,
+    StreamingTransitionError,
+)
 from capture_runtime.contracts import (
     CaptureDocument,
     CaptureOcrProjectionV3,
@@ -35,10 +41,6 @@ from capture_runtime.routes.common import ApiProblem
 from capture_runtime.speech.infrastructure.progressive_audio import DEFAULT_CHECKPOINT_MS
 from capture_runtime.speech.infrastructure.progressive_decoder import progressive_decoder_ready
 from capture_runtime.storage import (
-    StreamingIdempotencyConflictError,
-    StreamingPartialNotFoundError,
-    StreamingRecordNotFoundError,
-    StreamingTransitionError,
     StructuringSessionDigestConflictError,
     StructuringSessionIdempotencyConflictError,
     StructuringSessionRecordCorruptError,

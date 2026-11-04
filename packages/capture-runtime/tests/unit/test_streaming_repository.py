@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from capture_runtime.capture.infrastructure.streaming_repository import StreamingRepository
 from capture_runtime.clock import Clock
 from capture_runtime.contracts import (
     CaptureSourceKind,
@@ -17,7 +18,6 @@ from capture_runtime.contracts import (
     StreamingIngestionStatus,
     StructuringMode,
 )
-from capture_runtime.storage import StreamingRepository
 
 
 class MutableClock(Clock):

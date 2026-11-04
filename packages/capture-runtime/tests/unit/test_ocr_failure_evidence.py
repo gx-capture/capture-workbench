@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from capture_runtime.capture_worker_client import WorkerClient
+from capture_runtime.capture.infrastructure.capture_worker_client import WorkerClient
 from capture_runtime.contracts import OcrProvenanceV3
 from capture_runtime.ocr.infrastructure.ocr_execution_proof import (
     AcceptanceOcrExecutionEvidenceSink,

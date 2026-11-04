@@ -16,6 +16,11 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
+from capture_runtime.capture.infrastructure.pdf_page_selection import (
+    MAX_PDF_PAGE_SELECTION,
+    is_ascending_page_numbers,
+    is_pdf_page_selection,
+)
 from capture_runtime.constants import RUNTIME_VERSION
 from capture_runtime.contracts import (
     CaptureOcrProjectionV3,
@@ -26,11 +31,6 @@ from capture_runtime.contracts import (
     StructuringMode,
 )
 from capture_runtime.ocr.infrastructure.ocr_projection import OcrBoxInput, OcrPageInput, OcrPipeline
-from capture_runtime.pdf_page_selection import (
-    MAX_PDF_PAGE_SELECTION,
-    is_ascending_page_numbers,
-    is_pdf_page_selection,
-)
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "ocr-page-selection-v3.json"
 CONTRACT_SHA256 = "d" * 64

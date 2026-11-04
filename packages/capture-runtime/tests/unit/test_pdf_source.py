@@ -7,7 +7,7 @@ from pathlib import Path
 import pypdfium2 as pdfium  # type: ignore[import-untyped]
 import pytest
 
-from capture_runtime.capture_extraction import (
+from capture_runtime.capture.infrastructure.capture_extraction import (
     OcrSourcePreflightError,
     PdfPageSelectionError,
     StandaloneRuntimeCaptureExtractor,

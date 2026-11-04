@@ -14,6 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal, Protocol, cast, overload
 
+from capture_runtime.capture.infrastructure.pdf_page_selection import is_ascending_page_numbers
 from capture_runtime.constants import API_VERSION, RUNTIME_VERSION
 from capture_runtime.contracts import (
     CaptureEngine,
@@ -29,8 +30,8 @@ from capture_runtime.contracts import (
     OcrProvenanceV3,
     OcrRasterV3,
 )
+from capture_runtime.capture.infrastructure.pdf_page_selection import is_ascending_page_numbers
 from capture_runtime.ocr.infrastructure.ocr_profile import load_profile_spec
-from capture_runtime.pdf_page_selection import is_ascending_page_numbers
 
 
 def _default_profile_identity() -> tuple[str, str]:

@@ -11,7 +11,7 @@ import pytest
 
 import capture_runtime.ocr.infrastructure.ocr_execution_proof as ocr_execution_proof
 import capture_runtime.workers.ocr_main as ocr_main
-from capture_runtime.capture_worker_client import WorkerClient
+from capture_runtime.capture.infrastructure.capture_worker_client import WorkerClient
 from capture_runtime.config import sanitized_child_environment
 from capture_runtime.constants import RUNTIME_VERSION
 from capture_runtime.contracts import OcrProvenanceV3

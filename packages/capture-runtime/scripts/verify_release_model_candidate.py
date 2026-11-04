@@ -15,7 +15,7 @@ from model_source_lock import (
     source_lock_sha256,
 )
 
-from capture_runtime.capture_worker_client import WorkerClient
+from capture_runtime.capture.infrastructure.capture_worker_client import WorkerClient
 from capture_runtime.contract_set import load_contract_set
 from capture_runtime.provisioning.infrastructure.engine_catalog import (
     EngineArtifactDescriptor,

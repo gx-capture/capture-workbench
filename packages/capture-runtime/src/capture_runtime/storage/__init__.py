@@ -1,16 +1,9 @@
-"""Public repository facade for capture and installation persistence."""
+"""Public repository facade for model installation and structuring persistence."""
 
 from capture_runtime.storage.common import (
     IdempotencyConflictError,
     RecordNotFoundError,
     TransitionRejectedError,
-)
-from capture_runtime.storage.streaming_repository import (
-    StreamingIdempotencyConflictError,
-    StreamingPartialNotFoundError,
-    StreamingRecordNotFoundError,
-    StreamingRepository,
-    StreamingTransitionError,
 )
 from capture_runtime.structuring.infrastructure.model_installation_repository import (
     ModelInstallationRecord,
@@ -30,11 +23,6 @@ __all__ = [
     "ModelInstallationRecord",
     "ModelInstallationRepository",
     "RecordNotFoundError",
-    "StreamingIdempotencyConflictError",
-    "StreamingPartialNotFoundError",
-    "StreamingRecordNotFoundError",
-    "StreamingRepository",
-    "StreamingTransitionError",
     "StructuringSessionDigestConflictError",
     "StructuringSessionIdempotencyConflictError",
     "StructuringSessionRecordCorruptError",

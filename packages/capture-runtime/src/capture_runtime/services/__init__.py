@@ -1,6 +1,5 @@
-"""Public service facade for capture, model installation, and structuring."""
+"""Public service facade for model installation and structuring."""
 
-from capture_runtime.services.streaming_capture_service import StreamingCaptureService
 from capture_runtime.storage.common import IdempotencyConflictError, RecordNotFoundError
 from capture_runtime.structuring.application.model_installation_service import (
     ModelInstallationService,
@@ -14,7 +13,6 @@ __all__ = [
     "IdempotencyConflictError",
     "ModelInstallationService",
     "RecordNotFoundError",
-    "StreamingCaptureService",
     "StructuringSessionService",
     "StructuringValidationError",
 ]

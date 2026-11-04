@@ -5,11 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from capture_runtime.capture_extraction import (
+from capture_runtime.capture.application.streaming_capture_service import StreamingCaptureService
+from capture_runtime.capture.infrastructure.capture_extraction import (
     CaptureExtractor,
     StandaloneRuntimeCaptureExtractor,
 )
-from capture_runtime.capture_worker_client import WorkerClient
+from capture_runtime.capture.infrastructure.capture_worker_client import WorkerClient
+from capture_runtime.capture.infrastructure.streaming_repository import StreamingRepository
 from capture_runtime.clock import Clock, SystemClock
 from capture_runtime.config import RuntimeSettings
 from capture_runtime.constants import (
@@ -31,15 +33,15 @@ from capture_runtime.provisioning.infrastructure.engine_installation import (
 from capture_runtime.provisioning.infrastructure.installation_repository import (
     InstallationRepository,
 )
+from capture_runtime.capture.application.streaming_capture_service import StreamingCaptureService
+from capture_runtime.capture.infrastructure.streaming_repository import StreamingRepository
 from capture_runtime.services import (
     ModelInstallationService,
-    StreamingCaptureService,
     StructuringSessionService,
 )
 from capture_runtime.speech.infrastructure.progressive_capture import ProgressiveCaptureProcessor
 from capture_runtime.storage import (
     ModelInstallationRepository,
-    StreamingRepository,
     StructuringSessionRepository,
 )
 from capture_runtime.structuring.infrastructure.coordinator import StructuringCoordinator

@@ -13,11 +13,11 @@ from uuid import uuid4
 
 from pydantic import ValidationError
 
-from capture_runtime.contracts import CaptureEventV2
-from capture_runtime.storage._streaming_records import (
+from capture_runtime.capture.infrastructure._streaming_records import (
     _CaptureRecord,
     _IngestionRecord,
 )
+from capture_runtime.contracts import CaptureEventV2
 
 
 def _atomic_json(path: Path, payload: object) -> None:

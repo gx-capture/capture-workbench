@@ -10,6 +10,8 @@ from pathlib import Path
 
 import pytest
 
+from capture_runtime.capture.application.streaming_capture_service import StreamingCaptureService
+from capture_runtime.capture.infrastructure.streaming_repository import StreamingRepository
 from capture_runtime.clock import Clock
 from capture_runtime.config import ExtractionRuntimeConfig
 from capture_runtime.contracts import (
@@ -43,7 +45,6 @@ from capture_runtime.speech.infrastructure.whisper_session import (
     SessionFrameDecoder,
     SessionFrameType,
 )
-from capture_runtime.storage import StreamingRepository
 from capture_runtime.structuring.infrastructure.contracts import StructuringValidationError
 from capture_runtime.structuring.infrastructure.structuring_provider import (
     FakeCaptureStructuringProvider,

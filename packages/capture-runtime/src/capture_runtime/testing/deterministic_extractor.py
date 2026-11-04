@@ -7,7 +7,9 @@ import hashlib
 from collections.abc import Callable
 
 from capture_runtime._pdf_source import PdfPageSelectionError
-from capture_runtime.capture_extraction import CaptureExtractionOutcome
+from capture_runtime.capture.infrastructure.capture_extraction import CaptureExtractionOutcome
+from capture_runtime.capture.infrastructure.pdf_page_selection import is_pdf_page_selection
+from capture_runtime.capture.infrastructure.source_sniffing import SniffedSource, sniff_source
 from capture_runtime.clock import Clock
 from capture_runtime.contracts import (
     CaptureEngine,
@@ -20,8 +22,6 @@ from capture_runtime.contracts import (
     TimeLocator,
     project_source_text,
 )
-from capture_runtime.pdf_page_selection import is_pdf_page_selection
-from capture_runtime.source_sniffing import SniffedSource, sniff_source
 
 
 def _engine_digest(engine: str, model: str) -> str:

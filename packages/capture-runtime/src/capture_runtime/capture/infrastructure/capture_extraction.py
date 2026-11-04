@@ -25,7 +25,9 @@ from capture_runtime._pdf_source import (
     selected_pdf_pages,
 )
 from capture_runtime._worker_payloads import WorkerRunResult
-from capture_runtime.audio_run_timeout import audio_run_timeout_seconds
+from capture_runtime.capture.infrastructure.audio_run_timeout import audio_run_timeout_seconds
+from capture_runtime.capture.infrastructure.pdf_page_selection import is_ascending_page_numbers
+from capture_runtime.capture.infrastructure.source_sniffing import SniffedSource, sniff_source
 from capture_runtime.clock import Clock
 from capture_runtime.config import ExtractionRuntimeConfig
 from capture_runtime.constants import (
@@ -87,13 +89,12 @@ from capture_runtime.ocr.infrastructure.ocr_worker_result import (
     OcrWorkerRunResult,
     WorkerOcrProgress,
 )
-from capture_runtime.pdf_page_selection import is_ascending_page_numbers
 from capture_runtime.provisioning.infrastructure.engine_catalog import EngineCatalogError
 from capture_runtime.provisioning.infrastructure.engine_installation import (
     EngineInstallationManager,
     ExtractionRuntimeUnavailableError,
 )
-from capture_runtime.source_sniffing import SniffedSource, sniff_source
+
 from capture_runtime.worker_client import InstalledEngine
 from capture_runtime.worker_probe import EngineRuntimeUnavailableError
 from capture_runtime.worker_process import DEFAULT_RUN_TIMEOUT_SECONDS, WorkerCancelledError

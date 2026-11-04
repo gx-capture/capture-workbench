@@ -14,8 +14,8 @@ import re
 from dataclasses import dataclass
 from typing import Final, Literal, NoReturn, cast
 
+from capture_runtime.capture.infrastructure.pdf_page_selection import is_ascending_page_numbers
 from capture_runtime.contracts import CaptureSourceKind, StructuringMode
-from capture_runtime.pdf_page_selection import is_ascending_page_numbers
 
 MAX_METADATA_BYTES: Final = 64 * 1024
 MAX_FILE_NAME_LENGTH: Final = 255

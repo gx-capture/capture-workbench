@@ -6,6 +6,11 @@ import hashlib
 import json
 from collections.abc import Callable
 
+from capture_runtime.capture.infrastructure.streaming_repository import (
+    StreamingRecordNotFoundError,
+    StreamingRepository,
+    StreamingTransitionError,
+)
 from capture_runtime.clock import Clock
 from capture_runtime.contract_set import SCHEMA_DIALECT, canonical_json_bytes
 from capture_runtime.contracts import (
@@ -18,9 +23,6 @@ from capture_runtime.contracts import (
     SubmitStructuringBatchV2,
 )
 from capture_runtime.storage import (
-    StreamingRecordNotFoundError,
-    StreamingRepository,
-    StreamingTransitionError,
     StructuringSessionDigestConflictError,
     StructuringSessionRepository,
 )
