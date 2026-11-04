@@ -5,7 +5,8 @@
 The product is Taiwan-first; more selectable models may follow. Speech recognition runs
 `JacobLinCool/TEA-ASR-1.1` (Qwen3-ASR-1.7B fine-tune, Traditional Chinese with Taiwan
 vocabulary) on CUDA and `JacobLinCool/TEA-ASR-1.1-mini` (Qwen3-ASR-0.6B based) on CPU, keeping
-the former GPU-primary / CPU-fallback-model rule. Word times come from
+the former GPU-primary / CPU-fallback-model rule by default; a host can choose one model for
+both devices (see "Choosing the model"). Word times come from
 `Qwen/Qwen3-ForcedAligner-0.6B-hf`. faster-whisper and CTranslate2 are removed.
 
 The public requirement id `whisper-primary` is renamed to `speech-recognition` (breaking under
@@ -79,3 +80,26 @@ languages it suits, the hardware it runs on, the download size and the license),
 `capture-workbench-ui` as `CAPTURE_UNIT_GUIDES` and shown by both the desktop app and the Web
 Component setup list. The guide's facts come from the pinned model cards and the published
 worker archives; change them together with the model-source lock.
+
+## Choosing the model (2026-11-04)
+
+The runtime setting `CAPTURE_SPEECH_RECOGNITION_MODEL` picks the recognizer:
+
+- `auto` (the default) keeps the device rule: `tea-asr-1.1` on CUDA, `tea-asr-1.1-mini` on CPU,
+  and the CPU retry after a classified CUDA failure runs mini.
+- `tea-asr-1.1-mini` or `tea-asr-1.1` runs that model on either device. A CPU retry keeps the
+  chosen model, so `tea-asr-1.1` on CPU is slow but stays the model the host asked for.
+- When the GPU is tried and when it falls back are unchanged. Provenance reports the model and
+  device that produced the result.
+
+Why: E2E and real-input checks run mini (the user's choice on 2026-11-04, for speed), and mini
+could only run on the CPU. It is a runtime setting, not a capture option, so the contract set is
+unchanged. The runtime sends the choice to the worker only when it is not `auto`: run option
+`model` for one-shot captures, `CAPTURE_SESSION_SPEECH_MODEL` for a streaming session worker,
+whose warm-worker key includes it. It replaces `CAPTURE_WHISPER_PRIMARY_MODEL` and
+`CAPTURE_WHISPER_FALLBACK_MODEL`, which were validated but never reached the worker.
+
+The installed unit still holds both models. Installing only mini, and a worker without the CUDA
+libraries, is evaluated in issue #274. The desktop app does not expose the setting yet: it
+launches the runtime with a fixed environment, so the setting would need a field in
+`compute-settings.json` and a line in `launch_policy.rs`.

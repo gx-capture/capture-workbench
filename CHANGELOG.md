@@ -21,6 +21,21 @@ Capture Workbench follows an explicit 0.x compatibility policy:
 The consumer consistency check is a permanent CI gate for the declared
 runtime, package lock, Python host, desktop host, and browser host versions.
 
+### Speech recognition model is chosen apart from the device
+
+Speech recognition always ran TEA-ASR-1.1 on the GPU and TEA-ASR-1.1-mini on the
+CPU, so mini could not use the GPU (issue #273).
+
+- The runtime setting `CAPTURE_SPEECH_RECOGNITION_MODEL` is `auto` (the
+  default, unchanged behavior), `tea-asr-1.1` or `tea-asr-1.1-mini`. A chosen
+  model runs on either device, also on the CPU retry after a CUDA failure.
+- When CUDA is tried and when it falls back to the CPU are unchanged.
+  Provenance reports the model and device that produced the result.
+- `CAPTURE_WHISPER_PRIMARY_MODEL` and `CAPTURE_WHISPER_FALLBACK_MODEL` are
+  removed: they were validated but never reached the worker.
+- A runtime setting, not a capture option: the contract set is unchanged. The
+  desktop app does not expose it yet.
+
 ## 0.9.0
 
 A minor release that is breaking for clients. Hosts can show how big an engine

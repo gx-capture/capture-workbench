@@ -18,6 +18,7 @@ def _request(
     *,
     prefer_gpu: bool,
     allow_cpu_fallback: bool | None = None,
+    model: object = None,
 ) -> WorkerRequest:
     options: dict[str, object] = {
         "maxDurationMs": 60_000,
@@ -25,6 +26,8 @@ def _request(
     }
     if allow_cpu_fallback is not None:
         options["allowCpuFallback"] = allow_cpu_fallback
+    if model is not None:
+        options["model"] = model
     return WorkerRequest(
         request_id="speech-recognition-worker-test",
         operation="run",
@@ -158,6 +161,65 @@ def test_worker_reports_actual_cpu_model_name_after_gpu_fallback(
     assert result["provenance"]["model"] == "tea-asr-1.1-mini"
     assert result["provenance"]["device"] == "cpu"
     assert result["warnings"] == ["Speech recognition GPU fallback: RuntimeError"]
+
+
+@pytest.mark.parametrize("fail_cuda", [False, True])
+def test_worker_runs_the_chosen_model_on_the_gpu_and_after_a_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fail_cuda: bool
+) -> None:
+    model_root = tmp_path / "models"
+    model_tree(model_root)
+    source = tmp_path / "fixture.wav"
+    source.write_bytes(b"RIFF" + b"\x00" * 8 + b"WAVE")
+
+    result, calls, constructors = _run_with_factory(
+        monkeypatch,
+        _request(model_root, source, prefer_gpu=True, model="tea-asr-1.1-mini"),
+        fail_cuda=fail_cuda,
+    )
+
+    assert constructors[0]["model"] == "tea-asr-1.1-mini"
+    assert [folder for folder, _ in calls] == ["fallback"] * (2 if fail_cuda else 1)
+    assert result["provenance"]["model"] == "tea-asr-1.1-mini"
+    assert result["provenance"]["device"] == ("cpu" if fail_cuda else "cuda")
+
+
+@pytest.mark.parametrize("model", ["primary", "auto", 1, ["tea-asr-1.1"]])
+def test_worker_rejects_an_unknown_model(tmp_path: Path, model: object) -> None:
+    model_root = tmp_path / "models"
+    model_tree(model_root)
+    source = tmp_path / "fixture.wav"
+    source.write_bytes(b"RIFF" + b"\x00" * 8 + b"WAVE")
+
+    with pytest.raises(ValueError, match="run options are invalid"):
+        whisper_main._run(_request(model_root, source, prefer_gpu=True, model=model), Event())
+
+
+@pytest.mark.parametrize("chosen", [None, "tea-asr-1.1-mini"])
+def test_session_worker_runs_the_model_the_runtime_chose(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, chosen: str | None
+) -> None:
+    constructors: list[dict[str, object]] = []
+
+    class RecordingAdapter:
+        def __init__(self, _model_path: Path, **kwargs: object) -> None:
+            constructors.append(kwargs)
+
+    monkeypatch.setattr(whisper_main, "TeaAsrAdapter", RecordingAdapter)
+    monkeypatch.setattr(whisper_main, "_import_speech_runtime", lambda: None)
+    monkeypatch.setattr(
+        "capture_runtime.workers.session_server.serve_session", lambda *_a, **_k: None
+    )
+    monkeypatch.setenv("CAPTURE_SESSION_MODEL_PATH", str(tmp_path))
+    monkeypatch.setenv("CAPTURE_SESSION_TEMP_DIR", str(tmp_path))
+    if chosen is None:
+        monkeypatch.delenv("CAPTURE_SESSION_SPEECH_MODEL", raising=False)
+    else:
+        monkeypatch.setenv("CAPTURE_SESSION_SPEECH_MODEL", chosen)
+
+    whisper_main._session()
+
+    assert constructors[0]["model"] == chosen
 
 
 def test_worker_strict_cuda_failure_does_not_run_cpu_fallback(

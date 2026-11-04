@@ -137,8 +137,6 @@ def _warm_processor(
         max_image_pixels=100_000,
         ocr_render_scale=2,
         max_audio_duration_ms=60_000,
-        whisper_primary_model="tea-asr-1.1",
-        whisper_fallback_model="tea-asr-1.1-mini",
         whisper_prefer_gpu=True,
         speech_worker_idle_seconds=idle,
     )
@@ -180,6 +178,57 @@ def test_a_completed_capture_leaves_its_worker_warm_for_the_next(
         await processor.shutdown()
 
     asyncio.run(scenario())
+
+
+def test_a_warm_worker_is_not_reused_for_another_speech_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def scenario() -> None:
+        processor, spawned = _warm_processor(tmp_path, monkeypatch, idle=60)
+        engine = _engine(tmp_path)
+        first = await processor._acquire(engine)
+        await processor._park(_worker_key(engine, processor.config), first)  # type: ignore[arg-type]
+
+        processor.config = replace(processor.config, speech_recognition_model="tea-asr-1.1-mini")
+        assert await processor._acquire(engine) is spawned[1]
+        assert first.closed  # type: ignore[union-attr]
+        await processor.shutdown()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("model", "sent"), [("auto", None), ("tea-asr-1.1-mini", "tea-asr-1.1-mini")]
+)
+def test_a_session_worker_is_told_the_chosen_speech_model(
+    tmp_path: Path, model: str, sent: str | None
+) -> None:
+    script = tmp_path / "session_worker.py"
+    script.write_text(
+        "import json, os, sys\n"
+        "sys.stdout.write(json.dumps(os.environ.get('CAPTURE_SESSION_SPEECH_MODEL')))\n",
+        encoding="utf-8",
+    )
+    engine = replace(_engine(tmp_path), executable=script, model_dir=tmp_path)
+    config = ExtractionRuntimeConfig(
+        windowsml_model_dir=tmp_path / "windowsml",
+        whisper_models_dir=tmp_path / "whisper",
+        temp_dir=tmp_path / "temp",
+        max_pdf_pages=10,
+        max_image_pixels=100_000,
+        ocr_render_scale=2,
+        max_audio_duration_ms=60_000,
+        whisper_prefer_gpu=True,
+        speech_recognition_model=model,
+    )
+
+    async def scenario() -> object:
+        worker = await _SessionWorker.start(engine=engine, config=config)
+        output = await worker.stdout.read()
+        await worker.process.wait()
+        return json.loads(output)
+
+    assert asyncio.run(scenario()) == sent
 
 
 def test_a_warm_worker_closes_when_idle_released_or_disabled(

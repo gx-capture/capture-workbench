@@ -195,8 +195,6 @@ def _config(tmp_path: Path) -> ExtractionRuntimeConfig:
         max_image_pixels=100_000,
         ocr_render_scale=2,
         max_audio_duration_ms=60_000,
-        whisper_primary_model="tea-asr-1.1",
-        whisper_fallback_model="tea-asr-1.1-mini",
         whisper_prefer_gpu=True,
     )
 
@@ -2964,6 +2962,24 @@ def test_runtime_settings_defaults_to_nvidia_whisper_gpu_preference() -> None:
 
     assert settings.extraction.whisper_prefer_gpu is True
     assert settings.extraction.whisper_allow_cpu_fallback is True
+    assert settings.extraction.speech_recognition_model == "auto"
+
+
+@pytest.mark.parametrize("model", ["auto", "tea-asr-1.1", "tea-asr-1.1-mini"])
+def test_runtime_settings_choose_a_speech_recognition_model(model: str) -> None:
+    settings = RuntimeSettings.from_env(
+        {"CAPTURE_API_TOKEN": "a" * 32, "CAPTURE_SPEECH_RECOGNITION_MODEL": model}
+    )
+
+    assert settings.extraction.speech_recognition_model == model
+
+
+@pytest.mark.parametrize("model", ["", "mini", "TEA-ASR-1.1-MINI", "primary"])
+def test_runtime_settings_reject_an_unknown_speech_recognition_model(model: str) -> None:
+    with pytest.raises(ValueError, match="CAPTURE_SPEECH_RECOGNITION_MODEL must be"):
+        RuntimeSettings.from_env(
+            {"CAPTURE_API_TOKEN": "a" * 32, "CAPTURE_SPEECH_RECOGNITION_MODEL": model}
+        )
 
 
 def test_runtime_settings_rejects_retired_windowsml_device_override() -> None:

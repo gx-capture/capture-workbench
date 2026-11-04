@@ -147,6 +147,54 @@ def test_cuda_failure_discards_partial_results_and_uses_mini_once(tmp_path, monk
 
 
 @pytest.mark.parametrize(
+    ("model", "prefer_gpu", "folder", "device", "reported"),
+    [
+        (None, True, "primary", "cuda", "tea-asr-1.1"),
+        (None, False, "fallback", "cpu", "tea-asr-1.1-mini"),
+        ("tea-asr-1.1-mini", True, "fallback", "cuda", "tea-asr-1.1-mini"),
+        ("tea-asr-1.1-mini", False, "fallback", "cpu", "tea-asr-1.1-mini"),
+        ("tea-asr-1.1", True, "primary", "cuda", "tea-asr-1.1"),
+        ("tea-asr-1.1", False, "primary", "cpu", "tea-asr-1.1"),
+    ],
+)
+def test_a_chosen_model_runs_on_either_device(
+    tmp_path, monkeypatch, model, prefer_gpu, folder, device, reported
+):
+    fake = FakeModels(monkeypatch)
+    result = adapter(tmp_path, fake, model=model, prefer_gpu=prefer_gpu).transcribe(
+        tmp_path / "source.wav", should_cancel=lambda: False
+    )
+    assert [Path(e[2]).name for e in fake.loads("asr")] == [folder]
+    assert fake.devices("asr") == [device]
+    assert (result.model, result.device) == (reported, device)
+    by_device = adapter(
+        tmp_path / "by-device", FakeModels(monkeypatch), prefer_gpu=folder == "primary"
+    )
+    expected = by_device.transcribe(tmp_path / "source.wav", should_cancel=lambda: False)
+    assert result.digest == expected.digest
+
+
+@pytest.mark.parametrize(
+    ("model", "folder"), [("tea-asr-1.1-mini", "fallback"), ("tea-asr-1.1", "primary")]
+)
+def test_a_cuda_failure_retries_the_chosen_model_on_the_cpu(tmp_path, monkeypatch, model, folder):
+    fake = FakeModels(monkeypatch)
+    fake.failures[("asr", "inference")] = RuntimeError("CUDA out of memory")
+    result = adapter(tmp_path, fake, model=model).transcribe(
+        tmp_path / "source.wav", should_cancel=lambda: False
+    )
+    assert [Path(e[2]).name for e in fake.loads("asr")] == [folder, folder]
+    assert fake.devices("asr") == ["cuda", "cpu"]
+    assert (result.model, result.device) == (model, "cpu")
+    assert result.warning == "Speech recognition GPU fallback: RuntimeError"
+
+
+def test_an_unknown_model_is_rejected(tmp_path, monkeypatch):
+    with pytest.raises(ValueError, match="model is invalid"):
+        adapter(tmp_path, FakeModels(monkeypatch), model="primary")
+
+
+@pytest.mark.parametrize(
     "error",
     [ValueError("invalid input"), RuntimeError("broken checkpoint"), InterruptedError("cancelled")],
 )

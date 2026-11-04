@@ -63,12 +63,20 @@ CPU, and Qwen3 forced alignment after releasing the recognizer. Models and
 processors load only from digest-verified local directories. Recognition uses
 30-second quiet-point chunks and bounded retries for generation loops; results
 warn when a chunk still reaches its token limit. One classified CUDA failure can
-retry the mini model on CPU. The `speech-recognition` extra uses Transformers
+retry on CPU. The `speech-recognition` extra uses Transformers
 5.20.2 and the Windows cu128 build of PyTorch 2.11.0; speaker diarization uses CPU PyTorch.
 A worker archive above 1.9 GB is published as ordered parts (`<archive>.001`, ...), each
 under GitHub's 2 GB asset limit, and the installer joins and verifies them. See the
 [decision record](../../.agents/DECISIONS/speech-recognition-tea-asr.md) for required
 re-approval, private-output remeasurement and package-size checks.
+
+`CAPTURE_SPEECH_RECOGNITION_MODEL` chooses the recognizer. `auto`, the default,
+runs TEA-ASR-1.1 on CUDA and TEA-ASR-1.1-mini on CPU, including the CPU retry.
+`tea-asr-1.1-mini` or `tea-asr-1.1` runs that model on either device, also on the
+CPU retry. `CAPTURE_WHISPER_PREFER_GPU` (default `true`) still decides whether
+CUDA is tried, and `CAPTURE_WHISPER_ALLOW_CPU_FALLBACK=false` turns the retry off.
+For example, `CAPTURE_SPEECH_RECOGNITION_MODEL=tea-asr-1.1-mini` runs mini on the
+GPU. Provenance names the model and device that produced the result.
 
 Speech recognition and speaker diarization engine provenance records the result device, total processing time in `elapsedMs` (including any failed CUDA attempt and CPU retry), and the successful attempt's stage times in `stageMs`.
 
