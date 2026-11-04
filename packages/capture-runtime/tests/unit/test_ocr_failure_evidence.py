@@ -9,12 +9,12 @@ import pytest
 
 from capture_runtime.capture_worker_client import WorkerClient
 from capture_runtime.contracts import OcrProvenanceV3
-from capture_runtime.ocr_execution_proof import (
+from capture_runtime.ocr.infrastructure.ocr_execution_proof import (
     AcceptanceOcrExecutionEvidenceSink,
     NoopOcrExecutionEvidenceSink,
     acceptance_ocr_execution_evidence_sink_from_environment,
 )
-from capture_runtime.ocr_worker_result import OcrWorkerFailure
+from capture_runtime.ocr.infrastructure.ocr_worker_result import OcrWorkerFailure
 from capture_runtime.worker_client import InstalledEngine
 from capture_runtime.worker_process import (
     MAX_WORKER_DIAGNOSTIC_STAGES,
@@ -356,7 +356,7 @@ def test_failure_artifact_write_failure_cleans_temporary_file(
         raise OSError("synthetic link failure")
 
     monkeypatch.setattr(
-        "capture_runtime.ocr_execution_proof.os.link",
+        "capture_runtime.ocr.infrastructure.ocr_execution_proof.os.link",
         fail_link,
     )
 

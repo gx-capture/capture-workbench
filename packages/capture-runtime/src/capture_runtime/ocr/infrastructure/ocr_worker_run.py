@@ -34,9 +34,9 @@ from capture_runtime._worker_payloads import (
     parse_words as _parse_words,
 )
 from capture_runtime.contracts import OcrComputePreflightV2
-from capture_runtime.ocr_execution_proof import OcrExecutionDeviceProofV1
-from capture_runtime.ocr_preflight import OcrComputeSelection, OcrExecutionPlan
-from capture_runtime.ocr_worker_result import (
+from capture_runtime.ocr.infrastructure.ocr_execution_proof import OcrExecutionDeviceProofV1
+from capture_runtime.ocr.infrastructure.ocr_preflight import OcrComputeSelection, OcrExecutionPlan
+from capture_runtime.ocr.infrastructure.ocr_worker_result import (
     OcrWorkerFailure,
     OcrWorkerRunResult,
     _assert_ocr_progress_matches_final,

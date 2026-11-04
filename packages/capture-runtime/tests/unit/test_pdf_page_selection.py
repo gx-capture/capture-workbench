@@ -25,7 +25,7 @@ from capture_runtime.contracts import (
     StartCaptureV2,
     StructuringMode,
 )
-from capture_runtime.ocr_projection import OcrBoxInput, OcrPageInput, OcrPipeline
+from capture_runtime.ocr.infrastructure.ocr_projection import OcrBoxInput, OcrPageInput, OcrPipeline
 from capture_runtime.pdf_page_selection import (
     MAX_PDF_PAGE_SELECTION,
     is_ascending_page_numbers,

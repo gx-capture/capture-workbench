@@ -27,7 +27,7 @@ def source_digest(regions: list[dict[str, Any]]) -> str:
 def normalize_observation(
     raw: list[dict[str, Any]], observation_id: str, *, width: int, height: int
 ) -> dict[str, Any]:
-    from capture_runtime.ocr_paddle_normalization import normalize_paddle_results
+    from capture_runtime.ocr.infrastructure.ocr_paddle_normalization import normalize_paddle_results
 
     normalized = normalize_paddle_results(
         [{"res": payload} for payload in raw], raster_width=width, raster_height=height
@@ -316,7 +316,7 @@ def _validate_gold(source: list[dict[str, Any]], gold: dict[str, Any]) -> None:
 
 
 def _validate_regions(regions: list[dict[str, Any]]) -> None:
-    from capture_runtime.ocr_paddle_normalization import normalize_paddle_results
+    from capture_runtime.ocr.infrastructure.ocr_paddle_normalization import normalize_paddle_results
 
     if not isinstance(regions, list) or any(
         not isinstance(region, dict)

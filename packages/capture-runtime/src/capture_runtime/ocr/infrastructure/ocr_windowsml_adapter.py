@@ -20,12 +20,12 @@ from typing import Any
 from uuid import uuid4
 
 from capture_runtime.contracts import OcrProvenanceV3
-from capture_runtime.ocr_alignment import (
+from capture_runtime.ocr.infrastructure.ocr_alignment import (
     AlignmentCollector,
     AlignmentContractError,
     AlignmentRecord,
 )
-from capture_runtime.ocr_execution_evidence import (
+from capture_runtime.ocr.infrastructure.ocr_execution_evidence import (
     OcrExecutionEvidence,
     OcrExecutionEvidenceAdapter,
     OcrExecutionEvidenceError,
@@ -33,41 +33,41 @@ from capture_runtime.ocr_execution_evidence import (
     OcrInferenceCleanupError,
     PaddleOcrExecutionEvidenceAdapter,
 )
-from capture_runtime.ocr_execution_proof import (
+from capture_runtime.ocr.infrastructure.ocr_execution_proof import (
     OcrExecutionDeviceProofV1,
     OcrExecutionProofContextV1,
     OcrPipelineConstructionProofV1,
 )
-from capture_runtime.ocr_offline_stubs import (
+from capture_runtime.ocr.infrastructure.ocr_offline_stubs import (
     install_offline_aistudio_stubs,
     install_offline_huggingface_stubs,
 )
-from capture_runtime.ocr_paddle_normalization import (
+from capture_runtime.ocr.infrastructure.ocr_paddle_normalization import (
     PaddleResultNormalizationError,
     compose_aligned_regions,
     normalize_paddle_results,
     paddle_results_sequence,
 )
-from capture_runtime.ocr_page_result import (
+from capture_runtime.ocr.infrastructure.ocr_page_result import (
     OcrLayoutEvidence,
     OcrRegion,
     OcrTextResult,
     VerticalReader,
 )
-from capture_runtime.ocr_preflight import (
+from capture_runtime.ocr.infrastructure.ocr_preflight import (
     NativeOcrAdapterMapLease,
     OcrExecutionPlan,
     OcrSelectionDeviceProofV1,
 )
-from capture_runtime.ocr_profile import (
+from capture_runtime.ocr.infrastructure.ocr_profile import (
     WINDOWSML_REQUIRED_MODEL_FILES,
     OcrProfileSpec,
     load_profile_spec,
     validate_model_artifacts,
 )
-from capture_runtime.ocr_reading_order import ReadingPlan, plan_reading_order
-from capture_runtime.ocr_region_lineage import validate_region_sources
-from capture_runtime.ocr_vertical_routing import (
+from capture_runtime.ocr.infrastructure.ocr_reading_order import ReadingPlan, plan_reading_order
+from capture_runtime.ocr.infrastructure.ocr_region_lineage import validate_region_sources
+from capture_runtime.ocr.infrastructure.ocr_vertical_routing import (
     PageRoute,
     VerticalLayoutError,
     VerticalReaderAssetError,
@@ -789,7 +789,7 @@ class WindowsMLOcrAdapter:
         directory = self._reader_directory()
         if directory is None:
             raise EngineRuntimeUnavailableError("The vertical reader is not installed.")
-        from capture_runtime.ocr_vertical_reader import (
+        from capture_runtime.ocr.infrastructure.ocr_vertical_reader import (
             VerticalPageReader,
             VerticalReaderDeviceError,
         )

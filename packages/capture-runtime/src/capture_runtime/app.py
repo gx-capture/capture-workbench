@@ -27,7 +27,7 @@ from capture_runtime.contract_set import (
     validate_route_inventory,
 )
 from capture_runtime.dependencies import RuntimeDependencies, build_runtime_dependencies
-from capture_runtime.ocr_preflight import OcrComputePreflight
+from capture_runtime.ocr.infrastructure.ocr_preflight import OcrComputePreflight
 from capture_runtime.ollama import ProcessController, RuntimeInstaller
 from capture_runtime.provisioning.api.runtime import register_runtime_routes
 from capture_runtime.provisioning.infrastructure.installation_repository import (

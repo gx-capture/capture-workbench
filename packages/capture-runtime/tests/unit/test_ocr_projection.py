@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-import capture_runtime.ocr_projection as ocr_projection_module
+import capture_runtime.ocr.infrastructure.ocr_projection as ocr_projection_module
 from capture_runtime.capture_extraction import CaptureExtractionOutcome
 from capture_runtime.constants import RUNTIME_VERSION
 from capture_runtime.contracts import (
@@ -23,8 +23,8 @@ from capture_runtime.contracts import (
     RawCapture,
     RawCaptureSegment,
 )
-from capture_runtime.ocr_page_result import OcrRegion, OcrTextResult
-from capture_runtime.ocr_projection import (
+from capture_runtime.ocr.infrastructure.ocr_page_result import OcrRegion, OcrTextResult
+from capture_runtime.ocr.infrastructure.ocr_projection import (
     OcrEngineFailure,
     OcrEngineRequest,
     OcrEngineRun,

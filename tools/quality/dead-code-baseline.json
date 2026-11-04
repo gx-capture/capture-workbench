@@ -16,7 +16,7 @@
   "python|class|packages/capture-runtime/src/capture_runtime/contracts/__init__.py|RuntimeModelInstallationsV2",
   "python|function|packages/capture-runtime/src/capture_runtime/__init__.py|__getattr__",
   "python|function|packages/capture-runtime/src/capture_runtime/artifact_parts.py|split_archive",
-  "python|function|packages/capture-runtime/src/capture_runtime/ocr_vertical_routing.py|verify_vertical_reader_files",
+  "python|function|packages/capture-runtime/src/capture_runtime/ocr/infrastructure/ocr_vertical_routing.py|verify_vertical_reader_files",
   "python|function|packages/capture-runtime/src/capture_runtime/release.py|build_release_artifacts",
   "python|function|packages/capture-runtime/src/capture_runtime/release.py|write_capture_document_schema",
   "python|method|packages/capture-runtime/src/capture_runtime/artifact_parts.py|readable",

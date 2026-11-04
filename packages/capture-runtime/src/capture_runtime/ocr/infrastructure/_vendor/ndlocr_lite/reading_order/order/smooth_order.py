@@ -5,7 +5,7 @@
 
 
 import numpy as np
-from capture_runtime._vendor.ndlocr_lite import _digraph as nx
+from capture_runtime.ocr.infrastructure._vendor.ndlocr_lite import _digraph as nx
 
 
 def find_minimum_hamiltonian_path(graph):

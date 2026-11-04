@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from capture_runtime.ocr_profile import (
+from capture_runtime.ocr.infrastructure.ocr_profile import (
     CANONICAL_PROFILE_PATH,
     canonical_profile_bytes,
     derive_profile_id,

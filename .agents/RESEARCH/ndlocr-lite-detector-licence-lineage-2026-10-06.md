@@ -20,7 +20,7 @@ the OCR engine). Neither Cert Prep nor LAW installs the unit by default:
 | `ndl.yaml`, `NDLmoji.yaml` | class names and character set |
 
 The repository also vendors upstream's layout and reading-order source
-(`packages/capture-runtime/src/capture_runtime/_vendor/ndlocr_lite/`), which is
+(`packages/capture-runtime/src/capture_runtime/ocr/infrastructure/_vendor/ndlocr_lite/`), which is
 not affected by this question.
 
 ## What is known

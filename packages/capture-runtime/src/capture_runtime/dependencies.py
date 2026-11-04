@@ -22,7 +22,7 @@ from capture_runtime.constants import (
 )
 from capture_runtime.contract_set import ContractSet, load_contract_set
 from capture_runtime.contracts import StructuringMode
-from capture_runtime.ocr_preflight import OcrComputePreflight
+from capture_runtime.ocr.infrastructure.ocr_preflight import OcrComputePreflight
 from capture_runtime.ollama import (
     ExternalOllamaCaptureStructuringProvider,
     IsolatedOllamaLifecycle,

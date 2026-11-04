@@ -2,7 +2,7 @@ from dataclasses import dataclass, replace
 
 import pytest
 
-from capture_runtime.ocr_region_lineage import (
+from capture_runtime.ocr.infrastructure.ocr_region_lineage import (
     RegionLineageError,
     RegionSource,
     validate_region_sources,

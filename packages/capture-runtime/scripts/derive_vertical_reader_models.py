@@ -15,8 +15,8 @@ from pathlib import Path
 
 import onnxruntime
 
-from capture_runtime.ocr_vertical_reader import derive_recognizer
-from capture_runtime.ocr_vertical_routing import (
+from capture_runtime.ocr.infrastructure.ocr_vertical_reader import derive_recognizer
+from capture_runtime.ocr.infrastructure.ocr_vertical_routing import (
     DERIVATION_ONNXRUNTIME,
     DERIVED_RECOGNIZER_FILES,
     read_reader_file,

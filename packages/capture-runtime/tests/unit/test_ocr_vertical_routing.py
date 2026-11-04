@@ -9,8 +9,8 @@ from pathlib import Path
 
 import pytest
 
-from capture_runtime._vendor.ndlocr_lite import _digraph
-from capture_runtime.ocr_vertical_routing import (
+from capture_runtime.ocr.infrastructure._vendor.ndlocr_lite import _digraph
+from capture_runtime.ocr.infrastructure.ocr_vertical_routing import (
     reader_result_reason,
     route_reason,
     vertical_reader_directory,
@@ -97,7 +97,7 @@ def test_a_confidently_read_page_without_kana_is_not_routed(
 
 
 def test_kana_share_ignores_whitespace_and_counts_both_syllabaries() -> None:
-    from capture_runtime.ocr_vertical_routing import kana_share
+    from capture_runtime.ocr.infrastructure.ocr_vertical_routing import kana_share
 
     assert kana_share(["あ ア\n", "漢 字"]) == pytest.approx(0.5)
     assert kana_share(["", "  "]) == 0.0
@@ -183,7 +183,7 @@ LAYOUT = json.loads(FIXTURE.read_text(encoding="utf-8"))
 @pytest.mark.parametrize("case", LAYOUT["cases"], ids=[case["id"] for case in LAYOUT["cases"]])
 def test_line_order_equals_upstream_for_recorded_detections(case: dict) -> None:
     np = pytest.importorskip("numpy", reason="The vertical reader requires the WindowsML extras.")
-    from capture_runtime.ocr_vertical_reader import _ordered_layout
+    from capture_runtime.ocr.infrastructure.ocr_vertical_reader import _ordered_layout
 
     detections = [
         {
@@ -205,7 +205,7 @@ def test_line_order_equals_upstream_for_recorded_detections(case: dict) -> None:
 def test_reader_files_are_accepted_only_with_their_pinned_bytes(tmp_path: Path) -> None:
     import hashlib
 
-    from capture_runtime.ocr_vertical_routing import (
+    from capture_runtime.ocr.infrastructure.ocr_vertical_routing import (
         VerticalReaderAssetError,
         read_reader_file,
         verify_vertical_reader_files,
@@ -231,7 +231,7 @@ def _identity(data: bytes) -> tuple[int, str]:
 
 
 def test_recognizer_is_derived_once_and_then_served_from_the_cache(tmp_path: Path) -> None:
-    from capture_runtime.ocr_vertical_routing import cached_recognizer
+    from capture_runtime.ocr.infrastructure.ocr_vertical_routing import cached_recognizer
 
     identity = _identity(b"derived")
     calls: list[bytes] = []
@@ -254,7 +254,7 @@ def test_recognizer_is_derived_once_and_then_served_from_the_cache(tmp_path: Pat
 def test_machine_that_derives_other_bytes_does_not_derive_again(
     tmp_path: Path, written: bytes
 ) -> None:
-    from capture_runtime.ocr_vertical_routing import cached_recognizer
+    from capture_runtime.ocr.infrastructure.ocr_vertical_routing import cached_recognizer
 
     identity = _identity(b"derived")
     calls: list[int] = []
@@ -272,7 +272,7 @@ def test_machine_that_derives_other_bytes_does_not_derive_again(
 
 
 def test_failed_derivation_is_tried_again_and_leaves_nothing(tmp_path: Path) -> None:
-    from capture_runtime.ocr_vertical_routing import cached_recognizer
+    from capture_runtime.ocr.infrastructure.ocr_vertical_routing import cached_recognizer
 
     identity = _identity(b"derived")
     calls: list[int] = []
@@ -293,7 +293,7 @@ def test_failed_derivation_is_tried_again_and_leaves_nothing(tmp_path: Path) -> 
 def test_nothing_is_derived_with_another_onnxruntime_release_or_without_a_cache(
     tmp_path: Path,
 ) -> None:
-    from capture_runtime.ocr_vertical_routing import cached_recognizer
+    from capture_runtime.ocr.infrastructure.ocr_vertical_routing import cached_recognizer
 
     def derive(_source: bytes, _target: Path) -> None:
         raise AssertionError("must not derive")
@@ -309,7 +309,7 @@ def test_nothing_is_derived_with_another_onnxruntime_release_or_without_a_cache(
 
 
 def test_altered_cache_entry_is_replaced_and_its_bytes_are_never_returned(tmp_path: Path) -> None:
-    from capture_runtime.ocr_vertical_routing import cached_recognizer
+    from capture_runtime.ocr.infrastructure.ocr_vertical_routing import cached_recognizer
 
     identity = _identity(b"derived")
     entry = tmp_path / "cache" / identity[1][:2] / identity[1]
@@ -327,7 +327,10 @@ def test_stale_temporary_files_of_a_killed_worker_are_removed(tmp_path: Path) ->
     import os
     import time
 
-    from capture_runtime.ocr_vertical_routing import STALE_TEMPORARY_SECONDS, cached_recognizer
+    from capture_runtime.ocr.infrastructure.ocr_vertical_routing import (
+        STALE_TEMPORARY_SECONDS,
+        cached_recognizer,
+    )
 
     identity = _identity(b"derived")
     shard = tmp_path / identity[1][:2]
@@ -372,8 +375,8 @@ class _Recognizer:
 
 
 def test_cascade_sends_overflowing_lines_to_the_next_longer_recognizer() -> None:
-    pytest.importorskip("capture_runtime.ocr_vertical_reader")
-    from capture_runtime.ocr_vertical_reader import _Crop, _read_cascade
+    pytest.importorskip("capture_runtime.ocr.infrastructure.ocr_vertical_reader")
+    from capture_runtime.ocr.infrastructure.ocr_vertical_reader import _Crop, _read_cascade
 
     short = _Recognizer("short", {"a": ("あ" * 24, 0.9), "b": ("い" * 25, 0.9)})
     middle = _Recognizer("middle", {"b": ("い" * 44, 0.8), "c": ("う" * 45, 0.8)})
@@ -398,8 +401,8 @@ def test_cascade_sends_overflowing_lines_to_the_next_longer_recognizer() -> None
 
 
 def test_cascade_reads_a_very_long_horizontal_line_in_two_halves() -> None:
-    pytest.importorskip("capture_runtime.ocr_vertical_reader")
-    from capture_runtime.ocr_vertical_reader import _Crop, _read_cascade
+    pytest.importorskip("capture_runtime.ocr.infrastructure.ocr_vertical_reader")
+    from capture_runtime.ocr.infrastructure.ocr_vertical_reader import _Crop, _read_cascade
 
     long = _Recognizer(
         "long",
@@ -432,7 +435,7 @@ class _StubDetector:
 
 
 def _reader_with(detections: list[dict[str, object]], recognizer: object) -> object:
-    from capture_runtime.ocr_vertical_reader import VerticalPageReader
+    from capture_runtime.ocr.infrastructure.ocr_vertical_reader import VerticalPageReader
 
     reader = object.__new__(VerticalPageReader)
     reader._detector = _StubDetector(detections)
@@ -447,7 +450,7 @@ def test_reader_returns_ordered_lines_clipped_to_the_raster(
     np = pytest.importorskip("numpy", reason="The vertical reader requires the WindowsML extras.")
     import xml.etree.ElementTree as ET
 
-    import capture_runtime.ocr_vertical_reader as module
+    import capture_runtime.ocr.infrastructure.ocr_vertical_reader as module
 
     def layout(width: int, height: int, _classes: object, detections: object) -> ET.Element:
         assert (width, height, len(detections)) == (100, 200, 1)  # type: ignore[arg-type]
@@ -489,8 +492,8 @@ def test_reader_returns_ordered_lines_clipped_to_the_raster(
 
 def test_reader_reports_a_layout_failure_as_such(monkeypatch: pytest.MonkeyPatch) -> None:
     np = pytest.importorskip("numpy", reason="The vertical reader requires the WindowsML extras.")
-    import capture_runtime.ocr_vertical_reader as module
-    from capture_runtime.ocr_vertical_routing import VerticalLayoutError
+    import capture_runtime.ocr.infrastructure.ocr_vertical_reader as module
+    from capture_runtime.ocr.infrastructure.ocr_vertical_routing import VerticalLayoutError
 
     def broken(*_arguments: object) -> object:
         raise ZeroDivisionError("float division by zero")
@@ -504,7 +507,7 @@ def test_reader_reports_a_layout_failure_as_such(monkeypatch: pytest.MonkeyPatch
 
 def test_lines_are_built_from_detections_when_the_layout_groups_none() -> None:
     np = pytest.importorskip("numpy", reason="The vertical reader requires the WindowsML extras.")
-    from capture_runtime.ocr_vertical_reader import _ordered_layout
+    from capture_runtime.ocr.infrastructure.ocr_vertical_reader import _ordered_layout
 
     # One box of a class the layout does not turn into a line, and one empty box.
     detections = [
@@ -559,7 +562,7 @@ def test_engine_cache_location_reaches_child_processes() -> None:
 def test_profile_whose_vertical_reader_differs_from_the_runtime_is_refused(
     tmp_path: Path, change: str
 ) -> None:
-    from capture_runtime.ocr_profile import (
+    from capture_runtime.ocr.infrastructure.ocr_profile import (
         CANONICAL_PROFILE_PATH,
         EngineRuntimeUnavailableError,
         canonical_json_bytes,

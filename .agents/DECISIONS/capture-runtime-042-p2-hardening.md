@@ -37,7 +37,7 @@ launch via the legacy path with native Windows Job containment
    - O3 is a pure projection reducer whose callers own OCR collection.
 
    Choose O1. The repository already has
-   packages/capture-runtime/src/capture_runtime/ocr_projection.py::OcrPipeline,
+   packages/capture-runtime/src/capture_runtime/ocr/infrastructure/ocr_projection.py::OcrPipeline,
    an OcrEnginePort, producer worker/extractor adapters, and several callers.
    One terminal operation hides page order, rasterization, normalization,
    provenance, cancellation, and typed failure. Current
@@ -240,7 +240,7 @@ rejected.
    capture-runtime:version-check is discovery-and-stop, not a new target.
 
    The compute real-proof owner is
-   `packages/capture-runtime/src/capture_runtime/ocr_preflight.py:OcrComputePlan.select`
+   `packages/capture-runtime/src/capture_runtime/ocr/infrastructure/ocr_preflight.py:OcrComputePlan.select`
    with `OcrGpuCapabilitySnapshot`. Its focused regression is
    `packages/capture-runtime/tests/unit/test_ocr_compute_plan.py:test_positive_unavailable_dgpu_selects_usable_igpu`:
    a positively unavailable dGPU plus a usable mapped iGPU selects the iGPU

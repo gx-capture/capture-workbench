@@ -9,7 +9,7 @@ import pytest
 
 from capture_runtime._worker_payloads import WorkerResultError
 from capture_runtime.contracts import OcrProvenanceV3
-from capture_runtime.ocr_worker_result import (
+from capture_runtime.ocr.infrastructure.ocr_worker_result import (
     OcrWorkerRunResult,
     WorkerOcrPage,
     _assert_ocr_progress_matches_final,

@@ -24,9 +24,11 @@ from capture_runtime.contracts import (
     StreamingCaptureStatus,
     StructuringMode,
 )
-from capture_runtime.ocr_execution_proof import AcceptanceOcrExecutionEvidenceSink
-from capture_runtime.ocr_projection import OcrPipeline
-from capture_runtime.ocr_worker_result import OcrWorkerFailure
+from capture_runtime.ocr.infrastructure.ocr_execution_proof import (
+    AcceptanceOcrExecutionEvidenceSink,
+)
+from capture_runtime.ocr.infrastructure.ocr_projection import OcrPipeline
+from capture_runtime.ocr.infrastructure.ocr_worker_result import OcrWorkerFailure
 from capture_runtime.services import StreamingCaptureService
 from capture_runtime.source_sniffing import SniffedSource
 from capture_runtime.storage import StreamingRepository

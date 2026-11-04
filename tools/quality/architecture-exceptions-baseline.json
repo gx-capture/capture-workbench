@@ -60,13 +60,13 @@
   "import-linter|Capture does not depend on its downstream contexts|packages/capture-runtime/importlinter.toml|capture_runtime.services.streaming_capture_service -> capture_runtime.structuring",
   "import-linter|Capture does not depend on its downstream contexts|packages/capture-runtime/importlinter.toml|capture_runtime.services.streaming_capture_service -> capture_runtime.structuring_provider",
   "import-linter|Contracts does not depend on its downstream contexts|packages/capture-runtime/importlinter.toml|capture_runtime.release -> capture_runtime.provisioning.infrastructure.engine_catalog",
-  "import-linter|Document OCR does not depend on its downstream contexts|packages/capture-runtime/importlinter.toml|capture_runtime.ocr_execution_proof -> capture_runtime.pdf_page_selection",
-  "import-linter|Document OCR does not depend on its downstream contexts|packages/capture-runtime/importlinter.toml|capture_runtime.ocr_projection -> capture_runtime.pdf_page_selection",
-  "import-linter|Heavy engine libraries stay in the engine contexts|packages/capture-runtime/importlinter.toml|capture_runtime.capture_extraction -> capture_runtime.ocr_execution_proof",
-  "import-linter|Heavy engine libraries stay in the engine contexts|packages/capture-runtime/importlinter.toml|capture_runtime.provisioning.infrastructure.engine_installation -> capture_runtime.ocr_preflight",
-  "import-linter|Heavy engine libraries stay in the engine contexts|packages/capture-runtime/importlinter.toml|capture_runtime.services.streaming_capture_service -> capture_runtime.ocr_execution_proof",
-  "import-linter|Provisioning does not depend on its downstream contexts|packages/capture-runtime/importlinter.toml|capture_runtime.provisioning.infrastructure.engine_installation -> capture_runtime.ocr_preflight",
+  "import-linter|Document OCR does not depend on its downstream contexts|packages/capture-runtime/importlinter.toml|capture_runtime.ocr.infrastructure.ocr_execution_proof -> capture_runtime.pdf_page_selection",
+  "import-linter|Document OCR does not depend on its downstream contexts|packages/capture-runtime/importlinter.toml|capture_runtime.ocr.infrastructure.ocr_projection -> capture_runtime.pdf_page_selection",
+  "import-linter|Heavy engine libraries stay in the engine contexts|packages/capture-runtime/importlinter.toml|capture_runtime.capture_extraction -> capture_runtime.ocr.infrastructure.ocr_execution_proof",
+  "import-linter|Heavy engine libraries stay in the engine contexts|packages/capture-runtime/importlinter.toml|capture_runtime.provisioning.infrastructure.engine_installation -> capture_runtime.ocr.infrastructure.ocr_preflight",
+  "import-linter|Heavy engine libraries stay in the engine contexts|packages/capture-runtime/importlinter.toml|capture_runtime.services.streaming_capture_service -> capture_runtime.ocr.infrastructure.ocr_execution_proof",
+  "import-linter|Provisioning does not depend on its downstream contexts|packages/capture-runtime/importlinter.toml|capture_runtime.provisioning.infrastructure.engine_installation -> capture_runtime.ocr.infrastructure.ocr_preflight",
   "import-linter|Provisioning does not depend on its downstream contexts|packages/capture-runtime/importlinter.toml|capture_runtime.provisioning.application.installation_service -> capture_runtime.ollama",
   "import-linter|Provisioning does not depend on its downstream contexts|packages/capture-runtime/importlinter.toml|capture_runtime.provisioning.infrastructure.installation_repository -> capture_runtime.storage.common",
-  "import-linter|Speech transcription does not depend on its downstream contexts|packages/capture-runtime/importlinter.toml|capture_runtime.provisioning.infrastructure.engine_installation -> capture_runtime.ocr_preflight"
+  "import-linter|Speech transcription does not depend on its downstream contexts|packages/capture-runtime/importlinter.toml|capture_runtime.provisioning.infrastructure.engine_installation -> capture_runtime.ocr.infrastructure.ocr_preflight"
 ]

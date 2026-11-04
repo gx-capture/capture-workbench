@@ -4,7 +4,11 @@ from dataclasses import dataclass
 
 import pytest
 
-from capture_runtime.ocr_reading_order import MAX_REGIONS, estimate_page_skew, plan_reading_order
+from capture_runtime.ocr.infrastructure.ocr_reading_order import (
+    MAX_REGIONS,
+    estimate_page_skew,
+    plan_reading_order,
+)
 
 
 @dataclass(frozen=True)

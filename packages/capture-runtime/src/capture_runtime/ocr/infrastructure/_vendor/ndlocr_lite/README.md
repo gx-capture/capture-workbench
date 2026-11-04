@@ -4,7 +4,7 @@ Part of [NDLOCR-Lite](https://github.com/ndl-lab/ndlocr-lite) by the National Di
 Library, Japan, copied from commit `636d1cfeb1331f89f4048f416e49e23a09a714b5`
 (version 1.3.0) and licensed under CC BY 4.0; see `LICENCE`.
 
-The runtime's vertical page reader (`capture_runtime/ocr_vertical_reader.py`) uses
+The runtime's vertical page reader (`capture_runtime/ocr/infrastructure/ocr_vertical_reader.py`) uses
 `ndl_parser.convert_to_xml_string3` to group detected lines into text blocks and
 `reading_order.xy_cut.eval.eval_xml` to order them.
 
@@ -16,7 +16,7 @@ and holds the digest of every source file. It makes these changes and no others:
 - `ndl_parser.py`: the top-level imports of `lxml` and `tqdm` are removed. The
   functions the runtime calls do not use them; neither is a runtime dependency.
 - `reading_order/**`: `from reading_order.` becomes
-  `from capture_runtime._vendor.ndlocr_lite.reading_order.`.
+  `from capture_runtime.ocr.infrastructure._vendor.ndlocr_lite.reading_order.`.
 - `reading_order/order/smooth_order.py`: `import networkx as nx` becomes an import
   of `_digraph.py`.
 

@@ -16,10 +16,10 @@ from pathlib import Path
 from typing import Any, cast
 
 from capture_runtime.constants import RUNTIME_VERSION
-from capture_runtime.ocr_vertical_routing import vertical_reader_declaration
+from capture_runtime.ocr.infrastructure.ocr_vertical_routing import vertical_reader_declaration
 from capture_runtime.worker_probe import EngineRuntimeUnavailableError
 
-CANONICAL_PROFILE_PATH = Path(__file__).resolve().parent / "assets" / "ocr-profile.json"
+CANONICAL_PROFILE_PATH = Path(__file__).resolve().parents[2] / "assets" / "ocr-profile.json"
 PROFILE_ALGORITHM = "capture-workbench-ocr-profile-v3"
 PROFILE_ID_PREFIX = "capture-workbench-ocr"
 MODEL_ARTIFACT_PATHS = (

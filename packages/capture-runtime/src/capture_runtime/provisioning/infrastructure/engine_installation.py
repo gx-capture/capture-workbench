@@ -14,7 +14,7 @@ from uuid import uuid4
 from capture_runtime._worker_payloads import WorkerProbeResult
 from capture_runtime.contracts import OcrComputePreflightV2
 from capture_runtime.install_progress import DownloadedBytes, DownloadProgress
-from capture_runtime.ocr_preflight import OcrComputeSelection
+from capture_runtime.ocr.infrastructure.ocr_preflight import OcrComputeSelection
 from capture_runtime.provisioning.infrastructure.engine_catalog import (
     ActivatedArtifact,
     ActiveEngineState,

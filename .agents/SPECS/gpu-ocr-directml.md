@@ -21,7 +21,7 @@ this policy.
 
 ## Adapter selection
 
-The producer owns adapter selection. `capture_runtime/ocr_preflight.py:OcrComputePlan.select`
+The producer owns adapter selection. `capture_runtime/ocr/infrastructure/ocr_preflight.py:OcrComputePlan.select`
 prefers a usable discrete GPU, then a usable integrated GPU, each with an exact LUID/ORT mapping,
 as defined by the compute truth table in the
 [Phase 2 SPEC](capture-runtime-042-p2-hardening.md#canonical-compute-decision-truth-table). An

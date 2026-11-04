@@ -7,7 +7,7 @@ from capture_runtime.constants import RUNTIME_VERSION
 from capture_runtime.contract_set import load_contract_set
 from capture_runtime.contracts import OcrAdapterClass, OcrComputeMode, OcrComputePreflightV2
 from capture_runtime.dependencies import build_runtime_dependencies
-from capture_runtime.ocr_preflight import (
+from capture_runtime.ocr.infrastructure.ocr_preflight import (
     OcrComputePreflight,
     OcrGpuAdapter,
     OcrGpuCapabilitySnapshot,

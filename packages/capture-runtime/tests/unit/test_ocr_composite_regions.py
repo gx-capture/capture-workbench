@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from capture_runtime.ocr_composite_regions import plan_composite_splits
+from capture_runtime.ocr.infrastructure.ocr_composite_regions import plan_composite_splits
 
 
 @dataclass(frozen=True)

@@ -10,7 +10,6 @@ flowchart LR
   n_capture_runtime_frozen_extraction_residue["capture_runtime._frozen_extraction_residue"]
   n_capture_runtime_generated_worker_stage_policy["capture_runtime._generated_worker_stage_policy"]
   n_capture_runtime_pdf_source["capture_runtime._pdf_source"]
-  n_capture_runtime_vendor["capture_runtime._vendor"]
   n_capture_runtime_windows_job["capture_runtime._windows_job"]
   n_capture_runtime_worker_payloads["capture_runtime._worker_payloads"]
   n_capture_runtime_app["capture_runtime.app"]
@@ -25,27 +24,10 @@ flowchart LR
   n_capture_runtime_contracts["capture_runtime.contracts"]
   n_capture_runtime_dependencies["capture_runtime.dependencies"]
   n_capture_runtime_diarization["capture_runtime.diarization"]
-  n_capture_runtime_image_normalization["capture_runtime.image_normalization"]
   n_capture_runtime_install_progress["capture_runtime.install_progress"]
   n_capture_runtime_japanese_kanji["capture_runtime.japanese_kanji"]
   n_capture_runtime_model_catalog["capture_runtime.model_catalog"]
-  n_capture_runtime_ocr_alignment["capture_runtime.ocr_alignment"]
-  n_capture_runtime_ocr_composite_regions["capture_runtime.ocr_composite_regions"]
-  n_capture_runtime_ocr_execution_evidence["capture_runtime.ocr_execution_evidence"]
-  n_capture_runtime_ocr_execution_proof["capture_runtime.ocr_execution_proof"]
-  n_capture_runtime_ocr_offline_stubs["capture_runtime.ocr_offline_stubs"]
-  n_capture_runtime_ocr_paddle_normalization["capture_runtime.ocr_paddle_normalization"]
-  n_capture_runtime_ocr_page_result["capture_runtime.ocr_page_result"]
-  n_capture_runtime_ocr_preflight["capture_runtime.ocr_preflight"]
-  n_capture_runtime_ocr_profile["capture_runtime.ocr_profile"]
-  n_capture_runtime_ocr_projection["capture_runtime.ocr_projection"]
-  n_capture_runtime_ocr_reading_order["capture_runtime.ocr_reading_order"]
-  n_capture_runtime_ocr_region_lineage["capture_runtime.ocr_region_lineage"]
-  n_capture_runtime_ocr_vertical_reader["capture_runtime.ocr_vertical_reader"]
-  n_capture_runtime_ocr_vertical_routing["capture_runtime.ocr_vertical_routing"]
-  n_capture_runtime_ocr_windowsml_adapter["capture_runtime.ocr_windowsml_adapter"]
-  n_capture_runtime_ocr_worker_result["capture_runtime.ocr_worker_result"]
-  n_capture_runtime_ocr_worker_run["capture_runtime.ocr_worker_run"]
+  n_capture_runtime_ocr["capture_runtime.ocr"]
   n_capture_runtime_ollama["capture_runtime.ollama"]
   n_capture_runtime_pdf_page_selection["capture_runtime.pdf_page_selection"]
   n_capture_runtime_problem_registry["capture_runtime.problem_registry"]
@@ -71,7 +53,7 @@ flowchart LR
   n_capture_runtime_main_ --> n_capture_runtime_app
   n_capture_runtime_main_ --> n_capture_runtime_config
   n_capture_runtime_frozen_extraction_residue --> n_capture_runtime_provisioning
-  n_capture_runtime_pdf_source --> n_capture_runtime_ocr_projection
+  n_capture_runtime_pdf_source --> n_capture_runtime_ocr
   n_capture_runtime_pdf_source --> n_capture_runtime_pdf_page_selection
   n_capture_runtime_worker_payloads --> n_capture_runtime_constants
   n_capture_runtime_worker_payloads --> n_capture_runtime_contracts
@@ -81,7 +63,7 @@ flowchart LR
   n_capture_runtime_app --> n_capture_runtime_constants
   n_capture_runtime_app --> n_capture_runtime_contract_set
   n_capture_runtime_app --> n_capture_runtime_dependencies
-  n_capture_runtime_app --> n_capture_runtime_ocr_preflight
+  n_capture_runtime_app --> n_capture_runtime_ocr
   n_capture_runtime_app --> n_capture_runtime_ollama
   n_capture_runtime_app --> n_capture_runtime_provisioning
   n_capture_runtime_app --> n_capture_runtime_routes
@@ -96,13 +78,7 @@ flowchart LR
   n_capture_runtime_capture_extraction --> n_capture_runtime_constants
   n_capture_runtime_capture_extraction --> n_capture_runtime_contracts
   n_capture_runtime_capture_extraction --> n_capture_runtime_diarization
-  n_capture_runtime_capture_extraction --> n_capture_runtime_image_normalization
-  n_capture_runtime_capture_extraction --> n_capture_runtime_ocr_execution_proof
-  n_capture_runtime_capture_extraction --> n_capture_runtime_ocr_paddle_normalization
-  n_capture_runtime_capture_extraction --> n_capture_runtime_ocr_page_result
-  n_capture_runtime_capture_extraction --> n_capture_runtime_ocr_projection
-  n_capture_runtime_capture_extraction --> n_capture_runtime_ocr_vertical_routing
-  n_capture_runtime_capture_extraction --> n_capture_runtime_ocr_worker_result
+  n_capture_runtime_capture_extraction --> n_capture_runtime_ocr
   n_capture_runtime_capture_extraction --> n_capture_runtime_pdf_page_selection
   n_capture_runtime_capture_extraction --> n_capture_runtime_provisioning
   n_capture_runtime_capture_extraction --> n_capture_runtime_source_sniffing
@@ -112,7 +88,7 @@ flowchart LR
   n_capture_runtime_capture_extraction --> n_capture_runtime_worker_process
   n_capture_runtime_capture_worker_client --> n_capture_runtime_worker_payloads
   n_capture_runtime_capture_worker_client --> n_capture_runtime_diarization
-  n_capture_runtime_capture_worker_client --> n_capture_runtime_ocr_worker_run
+  n_capture_runtime_capture_worker_client --> n_capture_runtime_ocr
   n_capture_runtime_capture_worker_client --> n_capture_runtime_speech
   n_capture_runtime_capture_worker_client --> n_capture_runtime_worker_client
   n_capture_runtime_capture_worker_client --> n_capture_runtime_worker_process
@@ -130,7 +106,7 @@ flowchart LR
   n_capture_runtime_dependencies --> n_capture_runtime_constants
   n_capture_runtime_dependencies --> n_capture_runtime_contract_set
   n_capture_runtime_dependencies --> n_capture_runtime_contracts
-  n_capture_runtime_dependencies --> n_capture_runtime_ocr_preflight
+  n_capture_runtime_dependencies --> n_capture_runtime_ocr
   n_capture_runtime_dependencies --> n_capture_runtime_ollama
   n_capture_runtime_dependencies --> n_capture_runtime_provisioning
   n_capture_runtime_dependencies --> n_capture_runtime_services
@@ -146,62 +122,16 @@ flowchart LR
   n_capture_runtime_diarization --> n_capture_runtime_worker_probe
   n_capture_runtime_diarization --> n_capture_runtime_worker_process
   n_capture_runtime_diarization --> n_capture_runtime_worker_stage_policy
-  n_capture_runtime_ocr_execution_evidence --> n_capture_runtime_worker_probe
-  n_capture_runtime_ocr_execution_proof --> n_capture_runtime_contracts
-  n_capture_runtime_ocr_execution_proof --> n_capture_runtime_ocr_execution_evidence
-  n_capture_runtime_ocr_execution_proof --> n_capture_runtime_ocr_preflight
-  n_capture_runtime_ocr_execution_proof --> n_capture_runtime_pdf_page_selection
-  n_capture_runtime_ocr_execution_proof --> n_capture_runtime_worker_process
-  n_capture_runtime_ocr_offline_stubs --> n_capture_runtime_worker_probe
-  n_capture_runtime_ocr_paddle_normalization --> n_capture_runtime_ocr_alignment
-  n_capture_runtime_ocr_paddle_normalization --> n_capture_runtime_ocr_composite_regions
-  n_capture_runtime_ocr_paddle_normalization --> n_capture_runtime_ocr_page_result
-  n_capture_runtime_ocr_paddle_normalization --> n_capture_runtime_ocr_region_lineage
-  n_capture_runtime_ocr_paddle_normalization --> n_capture_runtime_worker_probe
-  n_capture_runtime_ocr_page_result --> n_capture_runtime_contracts
-  n_capture_runtime_ocr_page_result --> n_capture_runtime_ocr_composite_regions
-  n_capture_runtime_ocr_page_result --> n_capture_runtime_ocr_reading_order
-  n_capture_runtime_ocr_page_result --> n_capture_runtime_ocr_region_lineage
-  n_capture_runtime_ocr_page_result --> n_capture_runtime_ocr_vertical_routing
-  n_capture_runtime_ocr_page_result --> n_capture_runtime_worker_probe
-  n_capture_runtime_ocr_preflight --> n_capture_runtime_contracts
-  n_capture_runtime_ocr_profile --> n_capture_runtime_constants
-  n_capture_runtime_ocr_profile --> n_capture_runtime_ocr_vertical_routing
-  n_capture_runtime_ocr_profile --> n_capture_runtime_worker_probe
-  n_capture_runtime_ocr_projection --> n_capture_runtime_constants
-  n_capture_runtime_ocr_projection --> n_capture_runtime_contracts
-  n_capture_runtime_ocr_projection --> n_capture_runtime_ocr_profile
-  n_capture_runtime_ocr_projection --> n_capture_runtime_pdf_page_selection
-  n_capture_runtime_ocr_vertical_reader --> n_capture_runtime_vendor
-  n_capture_runtime_ocr_vertical_reader --> n_capture_runtime_ocr_vertical_routing
-  n_capture_runtime_ocr_windowsml_adapter --> n_capture_runtime_contracts
-  n_capture_runtime_ocr_windowsml_adapter --> n_capture_runtime_ocr_alignment
-  n_capture_runtime_ocr_windowsml_adapter --> n_capture_runtime_ocr_execution_evidence
-  n_capture_runtime_ocr_windowsml_adapter --> n_capture_runtime_ocr_execution_proof
-  n_capture_runtime_ocr_windowsml_adapter --> n_capture_runtime_ocr_offline_stubs
-  n_capture_runtime_ocr_windowsml_adapter --> n_capture_runtime_ocr_paddle_normalization
-  n_capture_runtime_ocr_windowsml_adapter --> n_capture_runtime_ocr_page_result
-  n_capture_runtime_ocr_windowsml_adapter --> n_capture_runtime_ocr_preflight
-  n_capture_runtime_ocr_windowsml_adapter --> n_capture_runtime_ocr_profile
-  n_capture_runtime_ocr_windowsml_adapter --> n_capture_runtime_ocr_reading_order
-  n_capture_runtime_ocr_windowsml_adapter --> n_capture_runtime_ocr_region_lineage
-  n_capture_runtime_ocr_windowsml_adapter --> n_capture_runtime_ocr_vertical_reader
-  n_capture_runtime_ocr_windowsml_adapter --> n_capture_runtime_ocr_vertical_routing
-  n_capture_runtime_ocr_windowsml_adapter --> n_capture_runtime_provisioning
-  n_capture_runtime_ocr_windowsml_adapter --> n_capture_runtime_worker_probe
-  n_capture_runtime_ocr_windowsml_adapter --> n_capture_runtime_worker_stage_policy
-  n_capture_runtime_ocr_worker_result --> n_capture_runtime_worker_payloads
-  n_capture_runtime_ocr_worker_result --> n_capture_runtime_contracts
-  n_capture_runtime_ocr_worker_result --> n_capture_runtime_ocr_projection
-  n_capture_runtime_ocr_worker_result --> n_capture_runtime_worker_process
-  n_capture_runtime_ocr_worker_run --> n_capture_runtime_worker_payloads
-  n_capture_runtime_ocr_worker_run --> n_capture_runtime_contracts
-  n_capture_runtime_ocr_worker_run --> n_capture_runtime_ocr_execution_proof
-  n_capture_runtime_ocr_worker_run --> n_capture_runtime_ocr_preflight
-  n_capture_runtime_ocr_worker_run --> n_capture_runtime_ocr_worker_result
-  n_capture_runtime_ocr_worker_run --> n_capture_runtime_worker_client
-  n_capture_runtime_ocr_worker_run --> n_capture_runtime_worker_contracts
-  n_capture_runtime_ocr_worker_run --> n_capture_runtime_worker_process
+  n_capture_runtime_ocr --> n_capture_runtime_worker_payloads
+  n_capture_runtime_ocr --> n_capture_runtime_constants
+  n_capture_runtime_ocr --> n_capture_runtime_contracts
+  n_capture_runtime_ocr --> n_capture_runtime_pdf_page_selection
+  n_capture_runtime_ocr --> n_capture_runtime_provisioning
+  n_capture_runtime_ocr --> n_capture_runtime_worker_client
+  n_capture_runtime_ocr --> n_capture_runtime_worker_contracts
+  n_capture_runtime_ocr --> n_capture_runtime_worker_probe
+  n_capture_runtime_ocr --> n_capture_runtime_worker_process
+  n_capture_runtime_ocr --> n_capture_runtime_worker_stage_policy
   n_capture_runtime_ollama --> n_capture_runtime_windows_job
   n_capture_runtime_ollama --> n_capture_runtime_clock
   n_capture_runtime_ollama --> n_capture_runtime_config
@@ -209,7 +139,7 @@ flowchart LR
   n_capture_runtime_ollama --> n_capture_runtime_contracts
   n_capture_runtime_ollama --> n_capture_runtime_install_progress
   n_capture_runtime_ollama --> n_capture_runtime_model_catalog
-  n_capture_runtime_ollama --> n_capture_runtime_ocr_profile
+  n_capture_runtime_ollama --> n_capture_runtime_ocr
   n_capture_runtime_ollama --> n_capture_runtime_provisioning
   n_capture_runtime_ollama --> n_capture_runtime_structuring
   n_capture_runtime_provisioning --> n_capture_runtime_worker_payloads
@@ -219,7 +149,7 @@ flowchart LR
   n_capture_runtime_provisioning --> n_capture_runtime_dependencies
   n_capture_runtime_provisioning --> n_capture_runtime_install_progress
   n_capture_runtime_provisioning --> n_capture_runtime_model_catalog
-  n_capture_runtime_provisioning --> n_capture_runtime_ocr_preflight
+  n_capture_runtime_provisioning --> n_capture_runtime_ocr
   n_capture_runtime_provisioning --> n_capture_runtime_ollama
   n_capture_runtime_provisioning --> n_capture_runtime_release
   n_capture_runtime_provisioning --> n_capture_runtime_routes
@@ -243,9 +173,7 @@ flowchart LR
   n_capture_runtime_services --> n_capture_runtime_clock
   n_capture_runtime_services --> n_capture_runtime_contract_set
   n_capture_runtime_services --> n_capture_runtime_contracts
-  n_capture_runtime_services --> n_capture_runtime_ocr_execution_proof
-  n_capture_runtime_services --> n_capture_runtime_ocr_projection
-  n_capture_runtime_services --> n_capture_runtime_ocr_worker_result
+  n_capture_runtime_services --> n_capture_runtime_ocr
   n_capture_runtime_services --> n_capture_runtime_ollama
   n_capture_runtime_services --> n_capture_runtime_provisioning
   n_capture_runtime_services --> n_capture_runtime_source_sniffing
@@ -292,11 +220,7 @@ flowchart LR
   n_capture_runtime_workers --> n_capture_runtime_constants
   n_capture_runtime_workers --> n_capture_runtime_contracts
   n_capture_runtime_workers --> n_capture_runtime_diarization
-  n_capture_runtime_workers --> n_capture_runtime_image_normalization
-  n_capture_runtime_workers --> n_capture_runtime_ocr_offline_stubs
-  n_capture_runtime_workers --> n_capture_runtime_ocr_preflight
-  n_capture_runtime_workers --> n_capture_runtime_ocr_projection
-  n_capture_runtime_workers --> n_capture_runtime_ocr_windowsml_adapter
+  n_capture_runtime_workers --> n_capture_runtime_ocr
   n_capture_runtime_workers --> n_capture_runtime_pdf_page_selection
   n_capture_runtime_workers --> n_capture_runtime_speech
   n_capture_runtime_workers --> n_capture_runtime_worker_contracts

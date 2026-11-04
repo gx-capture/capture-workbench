@@ -19,8 +19,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
-from capture_runtime.ocr_execution_evidence import OcrExecutionEvidence, OcrSessionDeviceProof
-from capture_runtime.ocr_preflight import (
+from capture_runtime.ocr.infrastructure.ocr_execution_evidence import (
+    OcrExecutionEvidence,
+    OcrSessionDeviceProof,
+)
+from capture_runtime.ocr.infrastructure.ocr_preflight import (
     OcrExecutionPlan,
     OcrSelectedDeviceIdentityV1,
     OcrSelectionDeviceProofV1,

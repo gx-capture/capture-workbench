@@ -13,9 +13,9 @@ from types import ModuleType, SimpleNamespace
 import pytest
 from PIL import Image
 
-import capture_runtime.ocr_execution_evidence as execution_evidence
-import capture_runtime.ocr_paddle_normalization as paddle_normalization
-import capture_runtime.ocr_windowsml_adapter as windowsml_adapter
+import capture_runtime.ocr.infrastructure.ocr_execution_evidence as execution_evidence
+import capture_runtime.ocr.infrastructure.ocr_paddle_normalization as paddle_normalization
+import capture_runtime.ocr.infrastructure.ocr_windowsml_adapter as windowsml_adapter
 from capture_runtime._worker_payloads import WorkerRunResult, WorkerSegment
 from capture_runtime.capture_extraction import (
     OcrExtractionFailure,
@@ -27,27 +27,29 @@ from capture_runtime.clock import SystemClock
 from capture_runtime.config import ExtractionRuntimeConfig, OllamaRuntimeConfig, RuntimeSettings
 from capture_runtime.constants import RUNTIME_VERSION
 from capture_runtime.contracts import CaptureSource, OcrAdapterClass, OcrProvenanceV3
-from capture_runtime.image_normalization import normalize_image_png
-from capture_runtime.ocr_execution_evidence import OcrExecutionEvidence
-from capture_runtime.ocr_offline_stubs import install_offline_huggingface_stubs
-from capture_runtime.ocr_paddle_normalization import PaddleResultNormalizationError
-from capture_runtime.ocr_page_result import OcrRegion, OcrTextResult
-from capture_runtime.ocr_preflight import (
+from capture_runtime.ocr.infrastructure.image_normalization import normalize_image_png
+from capture_runtime.ocr.infrastructure.ocr_execution_evidence import OcrExecutionEvidence
+from capture_runtime.ocr.infrastructure.ocr_offline_stubs import install_offline_huggingface_stubs
+from capture_runtime.ocr.infrastructure.ocr_paddle_normalization import (
+    PaddleResultNormalizationError,
+)
+from capture_runtime.ocr.infrastructure.ocr_page_result import OcrRegion, OcrTextResult
+from capture_runtime.ocr.infrastructure.ocr_preflight import (
     OcrComputePlan,
     OcrExecutionPlan,
     OcrGpuAdapter,
     OcrGpuCapabilitySnapshot,
 )
-from capture_runtime.ocr_profile import (
+from capture_runtime.ocr.infrastructure.ocr_profile import (
     CANONICAL_PROFILE_PATH,
     WINDOWSML_REQUIRED_MODEL_FILES,
     canonical_json_bytes,
     load_profile_spec,
 )
-from capture_runtime.ocr_projection import OcrBoxInput
-from capture_runtime.ocr_vertical_routing import VerticalLayoutError
-from capture_runtime.ocr_windowsml_adapter import WindowsMLOcrAdapter
-from capture_runtime.ocr_worker_result import (
+from capture_runtime.ocr.infrastructure.ocr_projection import OcrBoxInput
+from capture_runtime.ocr.infrastructure.ocr_vertical_routing import VerticalLayoutError
+from capture_runtime.ocr.infrastructure.ocr_windowsml_adapter import WindowsMLOcrAdapter
+from capture_runtime.ocr.infrastructure.ocr_worker_result import (
     OcrWorkerFailure,
     OcrWorkerRunResult,
     WorkerOcrPage,
@@ -545,7 +547,7 @@ def test_windowsml_adapter_horizontal_page_preserves_normalized_identity(tmp_pat
 
 
 def _composite_adapter_observations():
-    from capture_runtime.ocr_alignment import AlignmentRecord, CtcRun
+    from capture_runtime.ocr.infrastructure.ocr_alignment import AlignmentRecord, CtcRun
 
     rectangles = [(100, 50, 20, 400)] + [
         (x, y, 20, 180) for y in (50, 270) for x in (140, 180, 220)
@@ -1008,7 +1010,7 @@ def test_vertical_reader_recognizers_follow_the_regular_pipeline_device(
     expected: int | None,
 ) -> None:
     reader_module = pytest.importorskip(
-        "capture_runtime.ocr_vertical_reader",
+        "capture_runtime.ocr.infrastructure.ocr_vertical_reader",
         reason="The vertical reader requires the WindowsML extras.",
     )
     adapter, _png, _texts, _created = _vertical_page_adapter(tmp_path, None)
@@ -1038,7 +1040,7 @@ def test_recognizer_refused_by_directml_fails_the_page(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     reader_module = pytest.importorskip(
-        "capture_runtime.ocr_vertical_reader",
+        "capture_runtime.ocr.infrastructure.ocr_vertical_reader",
         reason="The vertical reader requires the WindowsML extras.",
     )
     adapter, png, _texts, _created = _vertical_page_adapter(tmp_path, None)
@@ -1057,7 +1059,7 @@ def test_vertical_reader_that_cannot_be_loaded_fails_the_page_with_a_runtime_err
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     reader_module = pytest.importorskip(
-        "capture_runtime.ocr_vertical_reader",
+        "capture_runtime.ocr.infrastructure.ocr_vertical_reader",
         reason="The vertical reader requires the WindowsML extras.",
     )
     adapter, png, _texts, _created = _vertical_page_adapter(tmp_path, None)
@@ -4113,7 +4115,10 @@ def test_manifest_build_failure_is_typed_before_page_count_is_known(
 
 
 def test_ocr_enlarges_only_an_image_whose_enlarged_long_side_fits_the_cap() -> None:
-    from capture_runtime.image_normalization import OCR_MAX_ENLARGED_LONG_SIDE, ocr_image_scale
+    from capture_runtime.ocr.infrastructure.image_normalization import (
+        OCR_MAX_ENLARGED_LONG_SIDE,
+        ocr_image_scale,
+    )
 
     assert ocr_image_scale(800, 600, 2) == 2
     assert ocr_image_scale(OCR_MAX_ENLARGED_LONG_SIDE // 2, 10, 2) == 2

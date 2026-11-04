@@ -716,7 +716,7 @@ and returns one immutable selection. The readiness result and engine session
 use that same selection; hosts never select or persist an ordinal.
 
 The exact implementation owner is
-`packages/capture-runtime/src/capture_runtime/ocr_preflight.py:OcrComputePlan.select`
+`packages/capture-runtime/src/capture_runtime/ocr/infrastructure/ocr_preflight.py:OcrComputePlan.select`
 with `OcrGpuCapabilitySnapshot`; its tests are in
 `packages/capture-runtime/tests/unit/test_ocr_compute_plan.py`. A focused
 regression for a positively unavailable dGPU beside a usable iGPU is still

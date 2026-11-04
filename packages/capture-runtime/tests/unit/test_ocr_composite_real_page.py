@@ -17,8 +17,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from capture_runtime.ocr_composite_regions import plan_composite_splits
-from capture_runtime.ocr_reading_order import plan_reading_order
+from capture_runtime.ocr.infrastructure.ocr_composite_regions import plan_composite_splits
+from capture_runtime.ocr.infrastructure.ocr_reading_order import plan_reading_order
 
 FIXTURE = Path(__file__).parents[1] / "fixtures/vertical-ocr/reading-order-bunka-composite.json"
 DOCUMENT = json.loads(FIXTURE.read_text(encoding="utf-8"))
