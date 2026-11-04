@@ -70,7 +70,7 @@ The device is still CUDA when a GPU is present. Provenance must name the mini
 model, or a later reader will treat the run as the flagship.
 
 ```python
-from capture_runtime.speech_recognition import TeaAsrAdapter
+from capture_runtime.speech.infrastructure.speech_recognition import TeaAsrAdapter
 
 adapter = TeaAsrAdapter(
     models_dir,  # installed model directory containing both checkpoints and the aligner
@@ -105,7 +105,7 @@ loader, dtype, chunking, and aligner are the same code.
 
 ## Sources
 
-- `packages/capture-runtime/src/capture_runtime/speech_recognition.py` — `_load_asr`, `_asr_dtype`, `TeaAsrAdapter._attempt`
+- `packages/capture-runtime/src/capture_runtime/speech/infrastructure/speech_recognition.py` — `_load_asr`, `_asr_dtype`, `TeaAsrAdapter._attempt`
 - `packages/capture-runtime/src/capture_runtime/workers/speech_recognition_main.py` — selected model in run and session workers
 - `packages/capture-runtime/src/capture_runtime/config.py` — `CAPTURE_SPEECH_RECOGNITION_MODEL` validation
 - `packages/capture-runtime/model-sources/release-model-source-lock.json` — revisions and safetensors sizes

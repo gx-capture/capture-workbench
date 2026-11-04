@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from capture_runtime.contracts import StreamingEventType
-from capture_runtime.progressive_audio import (
+from capture_runtime.speech.infrastructure.progressive_audio import (
     ProgressiveAudioSession,
     ProgressiveSessionEvent,
     _elapsed_ms,

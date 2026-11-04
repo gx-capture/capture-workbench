@@ -11,7 +11,7 @@ from enum import StrEnum
 from typing import Any, Protocol
 
 from capture_runtime.contracts import SPOKEN_LANGUAGES, StreamingEventType
-from capture_runtime.progressive_audio import (
+from capture_runtime.speech.infrastructure.progressive_audio import (
     DecodedAudioWindow,
     ProgressiveSessionEvent,
 )

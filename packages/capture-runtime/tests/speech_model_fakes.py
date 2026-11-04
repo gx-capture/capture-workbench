@@ -11,7 +11,7 @@ import weakref
 from pathlib import Path
 from types import SimpleNamespace
 
-from capture_runtime import speech_recognition as backends
+from capture_runtime.speech.infrastructure import speech_recognition as backends
 
 AUDIO = [0.0] * 16_000
 

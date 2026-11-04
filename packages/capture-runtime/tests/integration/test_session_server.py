@@ -4,8 +4,11 @@ import json
 import threading
 from typing import Any
 
-from capture_runtime.progressive_audio import DecodedAudioWindow, ProgressiveSessionEvent
-from capture_runtime.whisper_session import (
+from capture_runtime.speech.infrastructure.progressive_audio import (
+    DecodedAudioWindow,
+    ProgressiveSessionEvent,
+)
+from capture_runtime.speech.infrastructure.whisper_session import (
     SessionFrameDecoder,
     SessionFrameType,
     encode_audio_input,

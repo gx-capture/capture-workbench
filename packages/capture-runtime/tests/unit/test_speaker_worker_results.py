@@ -14,8 +14,8 @@ from capture_runtime.diarization.infrastructure.speaker_turns import SpeakerTurn
 from capture_runtime.diarization.infrastructure.speaker_worker_result import (
     parse_diarization_result,
 )
-from capture_runtime.speech_recognition import TeaAsrAdapter
-from capture_runtime.speech_worker_result import parse_run_result
+from capture_runtime.speech.infrastructure.speech_recognition import TeaAsrAdapter
+from capture_runtime.speech.infrastructure.speech_worker_result import parse_run_result
 from capture_runtime.worker_contracts import WorkerRequest
 from tests.speech_model_fakes import FakeModels, model_tree
 
@@ -107,7 +107,10 @@ def test_speech_recognition_worker_omits_words_by_default(
 
 def test_speech_worker_emits_processing_times(tmp_path, monkeypatch):
     clock = iter(range(0, 1000, 5))
-    monkeypatch.setattr("capture_runtime.speech_recognition.time.perf_counter", lambda: next(clock))
+    monkeypatch.setattr(
+        "capture_runtime.speech.infrastructure.speech_recognition.time.perf_counter",
+        lambda: next(clock),
+    )
     result, _ = _whisper_run(tmp_path, monkeypatch, {}, None)
     assert result["provenance"]["elapsedMs"] == 45000
     assert result["provenance"]["stageMs"] == {

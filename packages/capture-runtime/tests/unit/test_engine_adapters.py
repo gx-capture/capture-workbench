@@ -59,7 +59,10 @@ from capture_runtime.ollama import (
 from capture_runtime.provisioning.infrastructure.engine_installation import (
     ExtractionRuntimeUnavailableError,
 )
-from capture_runtime.speech_transcript import WhisperTextSegment, WhisperTranscriptionResult
+from capture_runtime.speech.infrastructure.speech_transcript import (
+    WhisperTextSegment,
+    WhisperTranscriptionResult,
+)
 from capture_runtime.worker_client import InstalledEngine
 from capture_runtime.worker_probe import EngineProbe, EngineRuntimeUnavailableError
 

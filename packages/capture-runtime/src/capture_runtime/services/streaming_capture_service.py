@@ -47,16 +47,19 @@ from capture_runtime.ocr_execution_proof import (
 from capture_runtime.ocr_projection import OcrPipeline
 from capture_runtime.ocr_worker_result import OcrWorkerFailure
 from capture_runtime.ollama.lifecycle_impl import RuntimeUnavailableError
-from capture_runtime.progressive_audio import ProgressiveAudioError, ProgressiveSessionEvent
-from capture_runtime.progressive_capture import (
-    ProgressiveCaptureError,
-    ProgressiveCaptureProcessor,
-)
-from capture_runtime.progressive_decoder import ProgressiveDecoderError
 from capture_runtime.provisioning.infrastructure.engine_installation import (
     ExtractionRuntimeUnavailableError,
 )
 from capture_runtime.source_sniffing import SNIFF_BYTES, UnsupportedMediaError
+from capture_runtime.speech.infrastructure.progressive_audio import (
+    ProgressiveAudioError,
+    ProgressiveSessionEvent,
+)
+from capture_runtime.speech.infrastructure.progressive_capture import (
+    ProgressiveCaptureError,
+    ProgressiveCaptureProcessor,
+)
+from capture_runtime.speech.infrastructure.progressive_decoder import ProgressiveDecoderError
 from capture_runtime.storage import (
     StreamingPartialNotFoundError,
     StreamingRecordNotFoundError,

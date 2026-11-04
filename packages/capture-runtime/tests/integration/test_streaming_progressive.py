@@ -25,8 +25,12 @@ from capture_runtime.contracts import (
     StructuringMode,
     TimeLocator,
 )
-from capture_runtime.progressive_audio import DecodedAudioWindow, ProgressiveSessionEvent
-from capture_runtime.progressive_capture import (
+from capture_runtime.services import StreamingCaptureService
+from capture_runtime.speech.infrastructure.progressive_audio import (
+    DecodedAudioWindow,
+    ProgressiveSessionEvent,
+)
+from capture_runtime.speech.infrastructure.progressive_capture import (
     ProgressiveCaptureProcessor,
     _ProgressiveState,
     _session_worker_launch,
@@ -34,13 +38,15 @@ from capture_runtime.progressive_capture import (
     _with_progress,
     _worker_key,
 )
-from capture_runtime.progressive_decoder import ProgressiveDecoderError
-from capture_runtime.services import StreamingCaptureService
+from capture_runtime.speech.infrastructure.progressive_decoder import ProgressiveDecoderError
+from capture_runtime.speech.infrastructure.whisper_session import (
+    SessionFrameDecoder,
+    SessionFrameType,
+)
 from capture_runtime.storage import StreamingRepository
 from capture_runtime.structuring import StructuringValidationError
 from capture_runtime.structuring_provider import FakeCaptureStructuringProvider
 from capture_runtime.testing.deterministic_extractor import DeterministicCaptureExtractor
-from capture_runtime.whisper_session import SessionFrameDecoder, SessionFrameType
 from capture_runtime.worker_client import InstalledEngine
 
 
@@ -952,11 +958,13 @@ def test_an_audio_capture_reports_its_duration_and_covered_time(
         monkeypatch.setattr(_SessionWorker, "start", start)
         monkeypatch.setattr(processor, "_resolve_engine", lambda: resolve("speech-recognition"))
         monkeypatch.setattr(
-            "capture_runtime.progressive_capture.PyAVIncrementalDecoder", _ThreeWindowDecoder
+            "capture_runtime.speech.infrastructure.progressive_capture.PyAVIncrementalDecoder",
+            _ThreeWindowDecoder,
         )
         # The container probe says the recording is 4 s; transcription covers 3 s.
         monkeypatch.setattr(
-            "capture_runtime.progressive_capture._source_duration_ms", lambda _path: 4_000
+            "capture_runtime.speech.infrastructure.progressive_capture._source_duration_ms",
+            lambda _path: 4_000,
         )
         repository = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
         repository.initialize()

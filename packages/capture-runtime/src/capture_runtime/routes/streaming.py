@@ -31,9 +31,9 @@ from capture_runtime.contracts import (
     SubmitStructuringBatchV2,
 )
 from capture_runtime.dependencies import RuntimeDependencies
-from capture_runtime.progressive_audio import DEFAULT_CHECKPOINT_MS
-from capture_runtime.progressive_decoder import progressive_decoder_ready
 from capture_runtime.routes.common import ApiProblem
+from capture_runtime.speech.infrastructure.progressive_audio import DEFAULT_CHECKPOINT_MS
+from capture_runtime.speech.infrastructure.progressive_decoder import progressive_decoder_ready
 from capture_runtime.storage import (
     StreamingIdempotencyConflictError,
     StreamingPartialNotFoundError,

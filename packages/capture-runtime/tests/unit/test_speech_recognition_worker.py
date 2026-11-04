@@ -7,7 +7,7 @@ import pytest
 
 import capture_runtime.workers.speech_recognition_main as whisper_main
 from capture_runtime.constants import RUNTIME_VERSION
-from capture_runtime.speech_recognition import TeaAsrAdapter
+from capture_runtime.speech.infrastructure.speech_recognition import TeaAsrAdapter
 from capture_runtime.worker_contracts import WorkerRequest
 from tests.speech_model_fakes import FakeModels, model_tree
 
@@ -111,7 +111,10 @@ def test_worker_reports_actual_gpu_model_name_for_primary_directory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     clock = iter(range(0, 1000, 5))
-    monkeypatch.setattr("capture_runtime.speech_recognition.time.perf_counter", lambda: next(clock))
+    monkeypatch.setattr(
+        "capture_runtime.speech.infrastructure.speech_recognition.time.perf_counter",
+        lambda: next(clock),
+    )
     model_root = tmp_path / "models"
     model_tree(model_root)
     source = tmp_path / "fixture.wav"

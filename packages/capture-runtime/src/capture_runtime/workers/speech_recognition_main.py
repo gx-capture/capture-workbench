@@ -61,7 +61,7 @@ _report_stage("worker-entry-start")
 def _import_capture_runtime() -> tuple[Any, Any, Any, Any]:
     _report_stage("python-import-engine-adapters-start")
     try:
-        from capture_runtime.speech_recognition import TeaAsrAdapter
+        from capture_runtime.speech.infrastructure.speech_recognition import TeaAsrAdapter
     except ModuleNotFoundError:
         _report_stage("python-import-engine-adapters-module-missing")
         raise
@@ -319,8 +319,8 @@ def prepare(request: WorkerRequestModel) -> None:
 def _session() -> None:
     from capture_runtime.clock import SystemClock
     from capture_runtime.contracts import CaptureSource
-    from capture_runtime.progressive_audio import ProgressiveAudioSession
-    from capture_runtime.progressive_whisper import (
+    from capture_runtime.speech.infrastructure.progressive_audio import ProgressiveAudioSession
+    from capture_runtime.speech.infrastructure.progressive_whisper import (
         DirectWindowDecoder,
         SpeechRecognitionWindowTranscriber,
         ProgressiveWhisperWorkerBackend,

@@ -31,7 +31,6 @@ from capture_runtime.ollama import (
     RuntimeInstaller,
     SystemRuntimeInstaller,
 )
-from capture_runtime.progressive_capture import ProgressiveCaptureProcessor
 from capture_runtime.provisioning.application.installation_service import InstallationService
 from capture_runtime.provisioning.infrastructure.engine_catalog import load_engine_catalog
 from capture_runtime.provisioning.infrastructure.engine_installation import (
@@ -45,6 +44,7 @@ from capture_runtime.services import (
     StreamingCaptureService,
     StructuringSessionService,
 )
+from capture_runtime.speech.infrastructure.progressive_capture import ProgressiveCaptureProcessor
 from capture_runtime.storage import (
     ModelInstallationRepository,
     StreamingRepository,

@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from capture_runtime.progressive_audio import (
+from capture_runtime.speech.infrastructure.progressive_audio import (
     MAX_PROGRESSIVE_WINDOW_BYTES,
     DecodedAudioWindow,
     ProgressiveBackpressureError,

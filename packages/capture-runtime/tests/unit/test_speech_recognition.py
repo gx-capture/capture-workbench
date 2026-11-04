@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from capture_runtime import speech_recognition as speech
+from capture_runtime.speech.infrastructure import speech_recognition as speech
 from tests.speech_model_fakes import FakeModels, OutOfMemoryError, _Ids, adapter
 
 

@@ -5,7 +5,7 @@ import asyncio
 from pathlib import Path
 from unittest.mock import MagicMock, PropertyMock
 
-from capture_runtime.progressive_capture import _drain_stderr
+from capture_runtime.speech.infrastructure.progressive_capture import _drain_stderr
 from capture_runtime.worker_process import _diagnostic_stage_sequence
 from capture_runtime.worker_stage_policy import (
     MAX_WORKER_DIAGNOSTIC_STAGES,
