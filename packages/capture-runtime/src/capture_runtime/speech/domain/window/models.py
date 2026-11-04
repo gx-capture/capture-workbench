@@ -60,4 +60,3 @@ class WindowSlicingPolicy:
                 break
             start += step
         return tuple(windows)
-
