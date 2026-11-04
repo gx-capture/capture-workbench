@@ -2,8 +2,8 @@
 
 ## Status
 
-Accepted for implementation from HEAD
-`351a53bbab6b1de2622d00f01d607206c9a9c6ea`.
+Accepted on 2026-08-17 and closed on 2026-09-28. Decision 3 was replaced by
+the DDD refactor plan on 2026-10-26.
 
 ## Decisions
 
@@ -12,31 +12,25 @@ Accepted for implementation from HEAD
    outputs, binaries, caches, and third-party files are excluded.
 2. Preserve all public import paths, package exports, DI tokens, Tauri commands,
    runtime wire/schema/digest, persistence formats, and SDK APIs.
-3. Keep existing repository conventions. Do not impose a workspace-wide
-   `core/features/modules` or four-layer DDD layout.
-   **Superseded on 2026-10-26** by the DDD refactor plan
-   (`.agents/PLANS/ddd-refactor/`, decision P1): code moves into bounded
-   contexts with domain/application/infrastructure/api layers, built only
-   where they hold code. The rejection of thin wrapper layers below stands.
+3. Code moves into bounded contexts with domain/application/infrastructure/api
+   layers, built only where they hold code, as the DDD refactor plan
+   (`.agents/PLANS/ddd-refactor/`, decision P1 of 2026-10-26) sets out. Thin
+   wrapper layers are still rejected (see below).
 4. Use injectable Angular collaborators, signals/`rxResource` for view state,
    and RxJS for asynchronous workflow/event pipelines. Do not add product-code
    async-boundary exceptions.
 5. Keep `capture_runtime.contracts` and generated contract outputs in place.
    Keep `capture_runtime.contract_set`, SDK client modules, and Rust public
    modules as compatibility facades when private implementations move.
-6. Freeze Java public DTO namespace and generated Java codecs; document public
-   APIs without restructuring their compatibility surface.
-7. Add public-seam tests before extracting untested workflow behavior. Tests
+6. Add public-seam tests before extracting untested workflow behavior. Tests
    must not depend on private helpers or filenames.
-8. Run implementation lanes in parallel only when their write sets are
+7. Run implementation lanes in parallel only when their write sets are
    disjoint. Luna workers do not own `.agents`, `project.json`, generated
    assets, public entrypoints, or final integration.
-   The concrete write sets are recorded in the spec's
-   `Implementation lane ownership` table and are checked before staging.
-9. Process smoke harness scripts after production refactors, while preserving
+8. Process smoke harness scripts after production refactors, while preserving
    their CLI paths, evidence schema, async-boundary rules, and release meaning.
-10. Documentation coverage is advisory for this refactor; it is not an
-    immediate CI-blocking gate.
+9. Documentation coverage is advisory for this refactor; it is not an
+   immediate CI-blocking gate.
 
 ## Rejected alternatives
 
@@ -54,5 +48,6 @@ Accepted for implementation from HEAD
   Revisit only when a change in one of them becomes hard to review.
 - Not refactoring the desktop smoke and evidence harnesses: their source-marker
   tests pin the current structure, and no defect needs the change.
-- Public API documentation is prioritised by consumers: the three published
-  client SDKs are documented; launcher rustdoc remains a TODO.
+- Public API documentation is prioritised by consumers: the published
+  TypeScript and Python client SDKs are documented; launcher rustdoc remains a
+  TODO.

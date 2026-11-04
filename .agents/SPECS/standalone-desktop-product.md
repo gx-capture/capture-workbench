@@ -37,11 +37,8 @@ descriptor. This lets the real product development lane build from a clean
 environment while retaining an explicit manual-repair state if the download or
 post-install probe fails.
 
-The current `v0.3.0` public release is missing its referenced OCR asset. This
-does not block the Capture Workbench desktop artifact: the archive is neither
-bundled nor required to start the app. The runtime must nevertheless retain its
-consented `windowsml-ocr` installer and checksum verification. If a user asks
-to install that missing asset, the setup flow must report an actionable
+The OCR engine is neither bundled nor required to start the app. If its
+download or post-install probe fails, the setup flow reports an actionable
 installation error rather than fake readiness or deterministic OCR.
 
 ## Acceptance criteria

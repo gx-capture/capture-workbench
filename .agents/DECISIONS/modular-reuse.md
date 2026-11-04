@@ -7,16 +7,13 @@
   `capture_runtime.structuring` as the current runtime-local parity owner for
   batching, prompt/schema adaptation, minimal semantic validation, and
   provenance reconstruction.
-- The Python, TypeScript, and Java runtime-client SDKs expose typed public
+- The Python and TypeScript runtime-client SDKs expose typed public
   interfaces generated from that asset. Consumer applications do not copy
   wire DTOs or schemas.
 - The standalone `capture-structuring` TypeScript and Python packages were
   deleted in the 0.4.1 migration after all named consumers moved to the
   runtime-owned pull-session interface. No structuring-client packages are
   published.
-- The Python, TypeScript, and Java `capture-runtime-client` packages remain the
-  client SDKs. No structuring-client packages are created during this
-  migration.
 - The sidecar launcher crate owns process/health/launch-policy mechanics.
   Installers, persistence, and Tauri UI remain owned by each host.
 - Host LLM output is untrusted semantic input. Provenance is reconstructed from
@@ -44,8 +41,8 @@ cutover work:
 - Generated SDK codecs remain private implementation details; public DTOs and
   client methods are deliberate stable interfaces.
 - Registry publication uses the package's configured trusted publisher and
-  records immutable artifact digests in a release ledger. A clean install/import
-  probe is required before consumer source or lockfile cutover.
+  records immutable artifact digests in a release ledger. Consumers move their
+  source or lockfile only to published bytes that passed the consumer gates.
 - The Rust launcher publication is independently retriable, but its manifest,
   version, and digest must match the same candidate before promotion.
 

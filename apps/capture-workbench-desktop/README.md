@@ -53,7 +53,7 @@ The ordinary `build` target compiles the Tauri app with `--no-bundle` so workspa
 
 ## Opt-in real Ollama smoke
 
-After the first-run wizard has prepared an isolated app-data directory, a user may prove a
+After the desktop app has prepared an isolated app-data directory, a user may prove a
 staged release runtime against one real PDF. This target is excluded from normal CI and never
 downloads a model itself:
 
@@ -84,9 +84,8 @@ corepack pnpm nx run capture-workbench-desktop:smoke-real-media
 The diagnostic strips ambient provider/model overrides, verifies DirectML OCR
 and lock-selected TEA-ASR provenance, proves UUID-scoped capture deletion, and
 checks its owned runtime process is gone. Its report always records
-`releaseGateSatisfied=false` and `consumerE2e=false`: it is not the pending
-Tauri/WebView scanned-PDF/image/audio acceptance harness and is not candidate
-release evidence input.
+`releaseGateSatisfied=false` and `consumerE2e=false`: it is not the
+Tauri/WebView preflight below and is not candidate release evidence input.
 
 ## Opt-in real model-enabled Tauri/WebView preflight
 
@@ -114,8 +113,8 @@ The cert-prep PDF and audio are copied only into the owned temporary run and
 must not be committed or uploaded. The image remains a lock-pinned project
 fixture. Only the packaged executable can be overridden for local runs with
 `CAPTURE_REAL_MEDIA_MODEL_EXECUTABLE`. The preflight fails closed unless the staged
-generated catalog and source lock are the approved 0.5.0 model-enabled
-contract.
+generated catalog and source lock are the approved model-enabled contract of
+the release version in `release/version.json`.
 
 To also check progressive audio, first record a reference with
 `node apps/capture-workbench-desktop/scripts/progressive-audio-oracle.ts`
@@ -161,4 +160,4 @@ The isolated Ollama port can still be claimed by another process after runtime
 readiness but before Ollama is started later. Fully eliminating that late-bind
 race requires a future runtime contract that accepts an inherited socket (or
 performs its own bind-and-launch recovery); the desktop host never resolves it by
-killing an unrelated process.
+killing an unrelated process ([#255](https://github.com/gx-capture/capture-workbench/issues/255)).

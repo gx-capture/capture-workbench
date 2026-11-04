@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Capture Runtime and its Python, TypeScript, and Java clients share one immutable,
+Capture Runtime and its Python and TypeScript clients share one immutable,
 deterministic contract set. The runtime is the canonical model and policy source;
 client SDKs expose deliberate typed interfaces generated from the checked-in
 bundle. A release is promoted only when the runtime, SDKs, and named consumers
@@ -32,7 +32,6 @@ agree on the same contract-set digest.
 
 - Python package: `capture-runtime-client`.
 - npm package: `@gx-capture/capture-runtime-client`.
-- Maven package: `com.gx.capture:capture-runtime-client`.
 - Each SDK exposes typed discovery, capture and streaming operations, runtime
   setup, authentication, SSE resume, idempotency/retry, negotiation, and typed
   errors through a shared `RuntimeTransport` port.
@@ -41,22 +40,15 @@ agree on the same contract-set digest.
 - `capture_runtime.structuring` is the current runtime-local parity owner for
   provider-neutral batching, prompt/schema adaptation, minimal semantic
   validation, and provenance reconstruction.
-- The standalone `@gx-capture/capture-structuring` TypeScript package and
-  `capture-structuring` Python package were deleted in 0.4.1 after consumer
-  cutover and same-digest gates passed. The runtime-owned pull-session module
-  is now the sole structuring implementation and no structuring-client package
-  is published.
-- The Python, TypeScript, and Java `capture-runtime-client` packages remain the
-  client SDK surfaces. No `capture-structuring-client` or other structuring
-  client packages are created.
+- The runtime-owned pull-session module is the sole structuring
+  implementation. No structuring-client package is published.
 
 ## Structuring migration and pull-session freeze
 
 The legacy v2 full-document host commit route remains active and
 behavior-compatible until the explicit v3 retirement gate. The additive
-pull-session contract is implemented by the runtime and typed Python,
-TypeScript, and Java client SDKs; these semantics remain frozen for subsequent
-review-overlay and consumer cutover work:
+pull-session contract is implemented by the runtime and the typed Python and
+TypeScript client SDKs, with these frozen semantics:
 
 - provider capabilities advertise the provider capability and schema dialect;
 - provider responses contain minimal semantic batches only;
@@ -85,12 +77,12 @@ review-overlay and consumer cutover work:
 
 - The runtime embeds exactly one byte-stable, secret-free contract bundle and
   adjacent SHA-256 asset in every executable and wheel.
-- Python, TypeScript, and Java SDK artifacts are generated from that bundle and
+- Python and TypeScript SDK artifacts are generated from that bundle and
   publish with the same digest allowlist.
 - Consumer integrations validate discovery, strict decoding, unknown errors,
   SSE resume, retry/idempotency, and in-memory transports with shared fixtures.
 - Release assembly verifies route/manifest parity, generated-artifact drift,
-  packaging inclusion, clean consumer installation, and the final digest before
+  packaging inclusion, consumer gates, and the final digest before
   publication.
 - A failed registry, consumer, or integrity check blocks promotion; artifacts
   are rolled back as one release train.
@@ -103,9 +95,7 @@ review-overlay and consumer cutover work:
   exact digest behavior, and wrong-digest rejection.
 - The bundle is deterministic, secret-free, complete, and has one entry per
   canonical model, operation, route, transport, and problem.
-- All three SDKs pass typed v2 negotiation, transport, error, SSE, retry, and
+- Both SDKs pass typed v2 negotiation, transport, error, SSE, retry, and
   shared-fixture tests.
 - Active producers, SDKs, consumers, release tools, and current documentation
   use the runtime-owned v2 contract source and its single digest.
-- The standalone structuring packages are absent from current producer source,
-  candidate manifests, registry publication workflows, and consumer locks.

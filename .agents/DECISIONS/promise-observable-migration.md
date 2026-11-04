@@ -2,9 +2,10 @@
 
 ## Accepted breaking contract
 
-The current request explicitly authorizes replacing the published
-`@gx-capture/capture-workbench-ui` Promise contracts. No Promise compatibility adapter or
-dual overload is retained. The package version moves from `0.1.0` to `0.2.0`.
+The published `@gx-capture/capture-workbench-ui` contracts are Observable-based
+(replaced in 0.2.0, 2026-07-23). No Promise compatibility adapter or dual
+overload is retained. `tools/check-async-boundary.ts` enforces the boundaries
+below.
 
 ## Resource selection
 

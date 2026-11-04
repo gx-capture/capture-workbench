@@ -4,11 +4,11 @@
 module among several, behind an abstraction, so that LAW could use another model
 for vertical Chinese. This note records what is already separable, what was
 corrected at once, and what has to be measured and decided before an interface
-is fixed. Nothing here is implemented except the correction in the next section;
-the decisions taken on 2026-10-07 are listed below.
+is fixed. The decisions taken on 2026-10-07 are listed below; 0.6.0 delivered
+them.
 Evidence is under `tmp/vertical-japanese-ocr-phase0/direction-study/` (ignored).
 
-## Corrected now: the Japanese reader only reads Japanese pages (0.5.1)
+## The Japanese reader only reads Japanese pages (since 0.5.1)
 
 In 0.5.0 the routing rule looked only at layout, so a page of vertical Chinese
 was sent to the NDLOCR-Lite reader, which is a Japanese model. Two synthetic pages
@@ -53,36 +53,19 @@ two thresholds were set on the pages listed here.
   ruby-sized box and do nothing on Chinese text. Vertical Chinese already goes
   through it: the synthetic pages were ordered correctly by the regular pipeline.
 
-## What is fixed in place
+## Delivered in 0.6.0
 
-- The OCR profile declares exactly one reader and must equal constants in code.
-- The model source lock and engine catalog deliver that reader inside the OCR
-  engine: every install downloads about 157 MB, whatever the host reads.
-- One routing rule with one destination.
-
-## Proposed shape
-
-1. **The module boundary is the install unit the system already has.** The engine
-   catalog installs requirements separately (OCR, Whisper). A reader becomes its
-   own requirement that a host chooses to install. This also contains the
-   detector licence question to hosts that install the Japanese reader.
-2. **Pages choose the reader, hosts choose what is installed.** The profile
-   module states that hosts do not choose an OCR language. Keep that: each reader
-   declares which pages it accepts (direction, script, confidence of the first
-   pass), and the runtime routes a page to the first installed reader that accepts
-   it. A document with pages in several languages then needs no host parameter.
-3. **Abstract the reader only**: `accepts(first pass) -> reason or None` and
-   `read(png) -> lines`, with the profile holding a list of reader declarations.
-   The reading-order policy is not abstracted until a second language needs
-   different ordering.
-
-## Why the interface stays inside the runtime
-
-- There is one implementation. A Chinese vertical model may not be a whole-page
-  reader at all: the regular pipeline already reads clean vertical Chinese well,
-  so the useful module could be a recognizer swap, a detector, or nothing.
-- The cost of a wrong interface is another incompatible release: profile format,
-  catalog and install API change, and both consumers migrate again.
+- NDLOCR-Lite is the optional install unit `vertical-japanese-reader` (about
+  157 MB of models, no worker of its own). A host chooses to install it; this
+  also limits the detector licence question to hosts that do.
+- A page the reader would take while the unit is missing keeps the first-pass
+  result, and the result names the unit in `suggestedUnits`
+  (`RuntimeRequirementV2.optional` marks such units).
+- The OCR profile id does not depend on whether the unit is installed.
+- There is one reader, and its interface stays inside the runtime: a page is
+  chosen by its own evidence (the kana rule above), never by a language the host
+  names. A vertical Chinese model may not be a whole-page reader at all, so no
+  general reader interface is fixed until a second reader exists.
 
 ## Measurement of 2026-10-07: vertical Chinese on the regular pipeline
 
@@ -122,17 +105,10 @@ into a page to exercise detection and column order. Character error rate:
 - The strategy is selected by page evidence, not by a language the host names,
   and its interface stays inside the runtime.
 
-## Open questions, in order
+## Open
 
-1. **Contract shape of the install unit.** Requirement ids are a closed list in
-   the contract, the three client SDKs and the UI. Adding the reader is an
-   incompatible minor release; making the id extensible in the same release
-   keeps later readers from being another one.
-2. **Profile identity.** The profile id must not depend on which optional
-   readers a machine has, because hosts store it with their OCR results; the
-   reader that read a page belongs in that page's provenance.
-3. **Page structure of real vertical Chinese scans** (older judgments, gazettes)
-   is still unmeasured; no such document is available.
+- Page structure of real vertical Chinese scans (older judgments, gazettes) is
+  still unmeasured; no such document is available ([#248](https://github.com/gx-capture/capture-workbench/issues/248)).
 
 ## Not affected
 

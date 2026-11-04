@@ -9,8 +9,7 @@
 - New owner: a Tauri private library with opaque document IDs, because runtime
   jobs are intentionally ephemeral and host data must survive restart.
 - The library uses versioned JSON plus atomic file replacement rather than a
-  new database dependency. This keeps the existing dirty `Cargo.toml` outside
-  the slice.
+  new database dependency.
 - Bearer tokens remain exclusively in the native host. The renderer invokes a
   constrained native runtime proxy and receives only redacted runtime values;
   tokens are absent from IPC contracts, library files, and diagnostics.
@@ -21,10 +20,10 @@
   Capture Workbench desktop release gate. The app does not bundle or launch the
   archive, while runtime requirement discovery and the consented installation
   path remain intact for OCR-capable installations.
-- Superseded 2026-11-02: the desktop renderer no longer standardises on
-  Angular Material. New UI uses Tailwind tokens and Spartan helm components
-  (`tailwind-spartan-ui.md`). Material stays only in the document workspace on
-  `/history` until phase 7 of `.agents/PLANS/workbench-ocr-asr-ux.md` deletes
+- The desktop renderer uses Tailwind tokens and Spartan helm components
+  (`tailwind-spartan-ui.md`). Angular Material remains only in the document
+  workspace on `/history` until UI phase 7
+  ([#161](https://github.com/gx-capture/capture-workbench/issues/161)) deletes
   it.
 
 ## Sidecar launch

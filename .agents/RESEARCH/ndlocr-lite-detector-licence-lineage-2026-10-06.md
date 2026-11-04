@@ -1,15 +1,17 @@
 # NDLOCR-Lite line detector — licence lineage (open question)
 
-Recorded 2026-10-06 for the user to follow up. Capture 0.5.0 is published with
-this question open, by the user's decision of that date
+Recorded 2026-10-06 for the user to follow up (tracked in [#248](https://github.com/gx-capture/capture-workbench/issues/248)). Capture is published with
+this question open since 0.5.0, by the user's decision of 2026-10-06
 ([decisions](../DECISIONS/vertical-japanese-ocr.md)). Nothing here is legal
 advice; it lists what is known, what is not, and what could be done.
 
 ## What is delivered
 
-The OCR engine of 0.5.0 installs six files from
-`ndl-lab/ndlocr-lite` at commit `636d1cfeb1331f89f4048f416e49e23a09a714b5`,
-unchanged, with upstream's `LICENCE`, `README.md` and `LICENCE_DEPENDENCEIES`:
+Since 0.6.0 the optional install unit `vertical-japanese-reader` installs six
+files from `ndl-lab/ndlocr-lite` at commit
+`636d1cfeb1331f89f4048f416e49e23a09a714b5`, unchanged, with upstream's
+`LICENCE`, `README.md` and `LICENCE_DEPENDENCEIES` (0.5.x delivered them inside
+the OCR engine). Neither Cert Prep nor LAW installs the unit by default:
 
 | File | Role |
 | --- | --- |
@@ -67,17 +69,18 @@ repository. The three recognizers are not in question.
    written answer would settle the lock's licence record.
 2. Read the DINOv3 `LICENSE.md` and the DEIMv2 statement on its distilled
    backbones with someone qualified to judge "derivative work".
-3. If the answer is unfavourable: release an engine without the vertical reader
-   (the reading-order and furigana work does not depend on it), or replace the
-   detector with one of clear lineage and re-verify. The routing code tolerates
-   an engine without the reader directory; the profile and lock would need the
-   reader removed.
+3. If the answer is unfavourable: stop offering the `vertical-japanese-reader`
+   unit (the reading-order and furigana work does not depend on it), or replace
+   the detector with one of clear lineage and re-verify. Without the unit every
+   page is read by the regular pipeline; the lock and catalog would need the
+   unit removed.
 4. If the answer is favourable: add the answer to the lock's notice and close
    this note.
 
 ## Where it is recorded in the release
 
 - Lock: `packages/capture-runtime/model-sources/release-model-source-lock.json`
-  (`model/vertical/deim-s-1024x1024.onnx`, SPDX `CC-BY-4.0` as upstream states).
+  (`model/vertical/deim-s-1024x1024.onnx` in the `vertical-japanese-reader`
+  unit, SPDX `CC-BY-4.0` as upstream states).
 - Decision: `.agents/DECISIONS/vertical-japanese-ocr.md`, entries of 2026-10-06.
-- Open item: `.agents/TODOS/vertical-japanese-ocr.md`.
+- Release runbook: listed as open under "Current state".

@@ -1,23 +1,20 @@
 # Capture Workbench 領域驅動重構計畫（DDD）
 
-狀態：**已核可**（2026-10-26）：產品負責人核可方向與產品決策，見 [decisions.md](decisions.md)；實作安排見第 10 節。結構比照 LAW 已定案的 DDD 重構計畫（`gx.law-prep/.agents/PLANS/ddd-refactor/`，決策 A30、A31）。待定的決策見 [decisions.md](decisions.md)，術語見 [glossary.md](glossary.md)，每個上下文的說明見 [docs/domain/](../../../docs/domain/README.md)。
+狀態：**已核可**（2026-10-26）：產品負責人核可方向與產品決策，見 [decisions.md](decisions.md)；實作安排見第 10 節，進度見第 6 節與 [epic #169](https://github.com/gx-capture/capture-workbench/issues/169)。結構比照 LAW 已定案的 DDD 重構計畫（`gx.law-prep/.agents/PLANS/ddd-refactor/`，決策 A30、A31）。決策見 [decisions.md](decisions.md)，術語見 [glossary.md](glossary.md)，每個上下文的說明見 [docs/domain/](../../../docs/domain/README.md)。
 
-這份文件給產品負責人和之後加入的人讀。程式名稱用英文，說明用繁體中文。數字取自 2026-11-03 對 main（0.9.0）的唯讀盤點。
+這份文件給產品負責人和之後加入的人讀。程式名稱用英文，說明用繁體中文。數字取自 2026-11-04 對 main（0.9.0，W2–W4 合併後）的唯讀盤點。
 
 **這份計畫要取代一項既有決策的一部分**：[capture-large-file-refactor.md](../../DECISIONS/capture-large-file-refactor.md) 第 3 條「不採用四層 DDD 結構」。同一份決策拒絕「只為了 DDD 資料夾名稱加薄包裝層」，這一點保留：這裡只建有內容的層，不加轉手的空殼（[decisions.md](decisions.md) P1）。
 
 ## 1. 為什麼要重構
 
-Capture Runtime（`packages/capture-runtime/src/capture_runtime`）有 107 個 Python 檔（不含 `_vendor`）、約 37,000 行，大多平放在同一層，靠檔名前綴（`ocr_*`、`_engine_*`、`progressive_*`）分辨用途。沒有模組層級的循環，FastAPI 也只出現在 `app` 與 `routes`。但：
+Capture Runtime（`packages/capture-runtime/src/capture_runtime`）有 122 個 Python 檔（不含 `_vendor`）、約 37,700 行，大多平放在同一層，靠檔名前綴（`ocr_*`、`speech_*`、`speaker_*`、`_engine_*`、`progressive_*`）分辨用途。沒有模組層級的循環，FastAPI 也只出現在 `app` 與 `routes`。W2–W4 已把 `engine_adapters`、`extractors` 與 `worker_client` 的結果解析拆到各上下文的檔案，跨上下文的底線私有名稱 import 也已清零。但：
 
-| 現況                                                                                                                                                                     | 影響                                                                  |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------- |
-| `engine_adapters.py` 2,625 行同時放 OCR 型別、Paddle 結果正規化、DirectML 執行證據、WindowsML adapter、語音辨識的 `Whisper*` 型別、通用 `EngineProbe` 與離線 import stub | 改 OCR 要讀過語音的型別；語音與說話者分離都依賴 OCR 的檔案            |
-| `extractors.py` 1,650 行：媒體分派、worker 執行、PDF 點陣化、影像正規化、音訊解碼與逾時、併入說話者、OCR 出處，另有一個測試用的確定性 extractor                          | 一個類別 30 個方法，橫跨所有引擎                                      |
-| 11 個職責群組之間有 9 對互相依賴，例如 OCR ↔ worker、引擎安裝 ↔ OCR、引擎安裝 ↔ 結構化（經 `services/__init__`、`storage/__init__` 兩個門面）                            | 分不出上游、下游，改一個群組常要跟著改另一個                          |
-| 43 處 import 別的模組的底線私有名稱，其中 10 處跨上下文，例如語音與說話者分離 import `engine_adapters._directory_digest`                                                 | 私有實作被當成公開介面                                                |
-| `worker_client.py` 449 行與 `_worker_payloads.py` 898 行放 OCR、語音、說話者分離三種結果的解析                                                                           | 三個引擎的協定細節集中在一處                                          |
-| import-linter、Sheriff 與 Nx 標籤規則已在 W1 上線，但現有違規都列為已知例外（`tools/quality/architecture-exceptions-baseline.json`：import-linter 46 條、ESLint 56 條）  | 新增的違規會被擋下，但已知例外裡的跨群組依賴仍在，要靠 W2–W7 逐步刪除 |
+| 現況                                                                                                                                                                                        | 影響                                                       |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| 各上下文的檔案仍平放在頂層，`services/__init__`、`storage/__init__` 兩個門面把擷取、結構化與引擎供應綁在一起                                                                                | 分不出上游、下游，改一個群組常要跟著改另一個（W5）         |
+| `services/streaming_capture_service.py` 960 行：串流擷取的任務、取消與結果都在同一個類別；`capture_extraction.py` 1,447 行                                                                 | 狀態機與用例沒有以業務動作分開（W6）                       |
+| import-linter、Sheriff 與 Nx 標籤規則已在 W1 上線，現有違規列為已知例外（`tools/quality/architecture-exceptions-baseline.json`：import-linter 15 條、ESLint 56 條）                          | 新增的違規會被擋下，但已知例外裡的跨群組依賴仍在（W5–W7） |
 
 前端（`capture-workbench-ui`、桌面殼層）與 Rust（launcher、`src-tauri`）已有清楚的分工，問題較小，排在後面。
 
@@ -69,15 +66,15 @@ flowchart LR
 
 | 上下文       | 套件（重構後）                             | 負責                                                                 | 現在的程式                                                                                                                                                               |
 | ------------ | ------------------------------------------ | -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 擷取         | `capture`                                  | 匯入（分塊上傳）、擷取作業的狀態機、事件、取消、取回結果；依媒體分派 | `services.streaming_capture_service`、`storage.streaming_repository`、`storage._streaming_*`、`streaming`、`extractors` 的分派、`pdf_page_selection`、`routes.streaming` |
-| 文件 OCR     | `ocr`                                      | 運算計畫、DirectML 執行證據、閱讀順序、直書閱讀器、OCR 投影與出處    | `ocr_*`、`engine_adapters` 的 OCR 部分、`image_normalization`、`workers.ocr_main`、`_vendor`                                                                             |
-| 語音轉寫     | `speech`                                   | TEA-ASR 與對齊、分窗串流、迴圈停止、暖 worker                        | `speech_recognition`、`progressive_*`、`whisper_session`、`workers.speech_recognition_main`、`workers.session_server`                                                    |
-| 說話者分離   | `diarization`                              | Nemotron 說話者片段、對齊到逐字稿                                    | `speaker_diarization`、`speaker_turns`、`speaker_alignment`、`workers.diarization_main`                                                                                  |
+| 擷取         | `capture`                                  | 匯入（分塊上傳）、擷取作業的狀態機、事件、取消、取回結果；依媒體分派 | `services.streaming_capture_service`、`storage.streaming_repository`、`storage._streaming_*`、`streaming`、`capture_extraction`（依媒體分派）、`source_sniffing`、`audio_run_timeout`、`capture_worker_client`、`pdf_page_selection`、`routes.streaming` |
+| 文件 OCR     | `ocr`                                      | 運算計畫、DirectML 執行證據、閱讀順序、直書閱讀器、OCR 投影與出處    | `ocr_*`（含 `ocr_worker_result`、`ocr_worker_run`）、`image_normalization`、`workers.ocr_main`、`_vendor`                                                                           |
+| 語音轉寫     | `speech`                                   | TEA-ASR 與對齊、分窗串流、迴圈停止、暖 worker                        | `speech_recognition`、`speech_transcript`、`speech_worker_result`、`progressive_*`、`whisper_session`、`workers.speech_recognition_main`、`workers.session_server`                                                 |
+| 說話者分離   | `diarization`                              | Nemotron 說話者片段、對齊到逐字稿                                    | `speaker_diarization`、`speaker_turns`、`speaker_alignment`、`speaker_worker_result`、`workers.diarization_main`                                                                         |
 | 結構化       | `structuring`                              | 結構化工作階段、Ollama 供應者與生命週期、模型清單                    | `structuring/*`、`ollama/*`、`structuring_provider`、`model_catalog`、結構化與模型安裝的 service／repository                                                             |
 | 引擎供應     | `provisioning`                             | 引擎目錄、安裝、下載與快取、模型來源鎖                               | `engine_catalog`、`engine_installation`、`_engine_*`、`installation_service` 與 repository、`routes.runtime`                                                             |
 | 執行環境合約 | `contracts`（不動）                        | 公開的型別、操作、問題代碼、版本與 contract set                      | `contracts`、`contract_set`、`_contract_set_bundle`、`problem_registry`、`release`；兩種 SDK（TypeScript、Python）                                                       |
 | 工作台主機   | `capture-workbench-ui`、`apps/*`、launcher | 桌面殼層、Web Component、Tauri、sidecar launcher、主機自有的文件庫   | `packages/capture-workbench-ui`、`apps/capture-workbench`、`apps/capture-workbench-desktop`、`packages/capture-sidecar-launcher`                                         |
-| worker 核心  | `worker_kernel`                            | worker 行程、JSON-lines 協定、階段政策、暖 worker（不是上下文）      | `worker_contracts`、`worker_process`、`worker_stage_policy`、`workers.server`、`worker_client` 的共用部分                                                                |
+| worker 核心  | `worker_kernel`                            | worker 行程、JSON-lines 協定、階段政策、暖 worker（不是上下文）      | `worker_contracts`、`worker_process`、`worker_probe`、`worker_stage_policy`、`workers.server`、`worker_client`、`_worker_payloads`                                                         |
 | 平台         | `platform`                                 | 設定、時鐘、常數（不是上下文）                                       | `config`、`clock`、`constants`                                                                                                                                           |
 
 ## 4. 程式結構
@@ -143,7 +140,7 @@ flowchart TB
 | UI 與殼層 | Sheriff（`@softarc/eslint-plugin-sheriff`，跑在既有 ESLint）                                                                                  | `capture-workbench-ui` 與 `apps/capture-workbench` 依功能分資料夾（擷取流程、引擎安裝、文件庫），元件 → service → contracts，只經 `index.ts`                                                                                                                                                                                                                                                         |
 | Nx 專案   | 既有 `@nx/enforce-module-boundaries`                                                                                                          | 把 `* → *` 換成實際規則：`type:sdk` 不依賴 UI 或 app，`type:ui` 只依賴 `type:sdk`，任何套件不依賴 `type:tool`                                                                                                                                                                                                                                                                                        |
 | 打包      | 既有 `verify_boundaries.py`、worker probe、大小預算                                                                                           | 不變；重構後仍是 core exe 不含 torch 等重量級函式庫的最後防線                                                                                                                                                                                                                                                                                                                                        |
-| Rust      | 模組可見性（`pub(crate)`）                                                                                                                    | launcher 的 `process.rs`（14,340 行）、`launcher.rs`（7,786 行）、`staging.rs`（4,610 行，皆含測試）拆分時加上；排在最後                                                                                                                                                                                                                                                                             |
+| Rust      | 模組可見性（`pub(crate)`）                                                                                                                    | launcher 拆分時加上：`staging.rs`、`launcher.rs` 已拆成模組（W8），`process.rs`（14,340 行，含測試）待拆                                                                                                                                                                                                                                                                             |
 | 已知例外  | import-linter `ignore_imports`、ESLint bulk suppressions                                                                                      | 規則上線時把現有違規逐條列入，每個 PR 只能減少                                                                                                                                                                                                                                                                                                                                                       |
 | 用語      | 測試（`tests/unit/test_ubiquitous_language.py`）                                                                                              | `domain` 的公開類別與列舉名稱都在 glossary 的程式名稱欄；合約的每個列舉值都對應到概念集裡的一個概念                                                                                                                                                                                                                                                                                                  |
 | 用例      | 測試（`tests/unit/test_use_cases.py`）                                                                                                        | `docs/domain/<上下文>.md` 的用例表與 `application` 公開的用例一一對應                                                                                                                                                                                                                                                                                                                                |
@@ -153,18 +150,15 @@ flowchart TB
 
 每一步都是可以單獨合併、跑完全部檢查的 PR。凡是動到 worker 會打包的程式，另外要通過第 7 節的打包版檢查。
 
+進度：W0（PR #112）、W1（PR #113）、W2（PR #239）、W3（PR #244）、W4（PR #245）已合併；W8 的 `staging.rs`（PR #238）與 `launcher.rs`（PR #242）已拆。其餘步驟各有 issue：[W5 #173](https://github.com/gx-capture/capture-workbench/issues/173)、[W6 #174](https://github.com/gx-capture/capture-workbench/issues/174)、[W7 #175](https://github.com/gx-capture/capture-workbench/issues/175)、[W8 `process.rs` #176](https://github.com/gx-capture/capture-workbench/issues/176)、[W9 #177](https://github.com/gx-capture/capture-workbench/issues/177)；W2–W4 之後第 7 節的真實輸入比對是 [#240](https://github.com/gx-capture/capture-workbench/issues/240)。
+
 | 步驟 | 內容                                                                                                                                                                                                                | 驗證                                                                                        |
 | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| W0   | 本文件、[decisions.md](decisions.md)、[glossary.md](glossary.md)、`docs/domain/` 骨架；`capture-large-file-refactor.md` 第 3 條標為被取代                                                                           | 產品負責人核可                                                                              |
-| W1   | import-linter、Sheriff 與 Nx 標籤規則上線，規則依現有模組寫，現有違規列為已知例外                                                                                                                                   | 故意加一個違規時 CI 失敗；既有測試全過                                                      |
-| W2   | 拆 `engine_adapters`：OCR 型別與 adapter 歸 OCR，`Whisper*` 型別歸語音，`EngineProbe` 與目錄雜湊歸 worker 核心，離線 stub 歸 OCR worker；它們涉及的私有名稱 import 與跨上下文的私有名稱 import 改成公開介面         | contract set 雜湊不變；第 7 節打包版檢查                                                    |
-| W3   | 拆 `extractors`：分派歸擷取的 `application`，PDF、影像、音訊的準備歸各引擎的 `infrastructure`；確定性 extractor 與其他測試替身移到 `capture_runtime.testing`                                                        | 確定性模式（桌面 e2e 用）行為不變；第 7 節                                                  |
-| W4   | `worker_client` 的三種結果解析移到各引擎上下文，`worker_kernel` 只留行程、協定與暖 worker                                                                                                                           | 協定測試不變；第 7 節                                                                       |
 | W5   | 依上下文機械式搬移，每個上下文一個 PR：引擎供應 → 說話者分離 → 語音轉寫 → 文件 OCR → 結構化 → 擷取；移除 `services/__init__`、`storage/__init__` 門面；測試、scripts、tools、spec 的路徑同一個 PR 更新              | 逐檔比對只差 import；contract set 雜湊不變；第 7 節                                         |
 | W6   | 語意模型（每個上下文一個 PR，順序同 W5）：`domain` 依聚合分子套件，狀態機與政策移進聚合與值物件，`application` 改成以業務動作命名的用例（拆 961 行的 `StreamingCaptureService` 就在這一步）；概念集與用語、用例檢查 | 每條不變條件與用例的單元測試；第 5 節的用語、用例、領域物件檢查；串流 API 行為不變；第 7 節 |
 | W7   | UI 套件與桌面殼層依功能分資料夾，名稱用 glossary 的詞，Sheriff 規則全面生效；不等 UI 重設計 Phase 7，DDD 先於畫面開發（[decisions.md](decisions.md) P6）                                                            | 單元測試、Playwright e2e、`production-bundle-check`                                         |
-| W8   | Rust launcher 拆 `process.rs`、`launcher.rs`、`staging.rs`，模組改 `pub(crate)`（[decisions.md](decisions.md) P5）                                                                                                  | cargo test、`cargo-package-dry-run`；桌面打包版啟動                                         |
-| W9   | 每個上下文的 `docs/domain/<上下文>.md` 補齊（隨 W2–W7 同一個 PR 更新）                                                                                                                                              | 文件審閱                                                                                    |
+| W8   | Rust launcher 拆 `process.rs`，模組改 `pub(crate)`（`staging.rs`、`launcher.rs` 已拆；[decisions.md](decisions.md) P5）                                                                                                  | cargo test、`cargo-package-dry-run`；桌面打包版啟動                                         |
+| W9   | 每個上下文的 `docs/domain/<上下文>.md` 補齊（隨 W5–W7 同一個 PR 更新）                                                                                                                                              | 文件審閱                                                                                    |
 
 ## 7. 每個 PR 的驗證
 
@@ -178,14 +172,11 @@ flowchart TB
 
 | 步驟  | 估計（含驗證）  | 主要風險                                                                                                                                                                                         |
 | ----- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| W1    | 1 天            | 已知例外很多（9 對互相依賴的群組）：依上下文分組列出，W2–W5 逐步刪除                                                                                                                             |
-| W2–W4 | 4–5 天          | 把頂層 import 搬錯位置會讓 core exe 帶進重量級函式庫：`verify-core-boundary` 與大小預算把關                                                                                                      |
 | W5    | 5–7 天，6 個 PR | 86 個測試檔與 15 個 script 直接 import runtime 模組；約 15 處以字串 monkeypatch；`tools/release/version-sources.ts`、`project.json` 的 21 處路徑、`pyproject.toml` 的 force-include 都以路徑引用 |
 | W6    | 6–8 天，6 個 PR | 串流擷取的任務與取消狀態在同一個類別裡，拆成用例時要保持鎖與排程順序；聚合與合約型別互轉不能改變對外的 JSON                                                                                      |
 | W7    | 3 天            | Angular 套件是公開的 npm 套件：`index.ts` 的匯出不能變                                                                                                                                           |
-| W8    | 3–5 天          | 三個檔合計約 26,700 行；行程與 Job object 的清理不能退步；launcher 是公開的 crate                                                                                                                |
+| W8    | 2–3 天          | `process.rs` 約 14,300 行；行程與 Job object 的清理不能退步；launcher 是公開的 crate                                                                                                            |
 
-合計約 5–6 週、25–30 個 PR。W2 起的搬移等 Cert Prep 與 LAW 換到 0.7.2 以上才開始，以免重構與版本遷移混在一起（[decisions.md](decisions.md) P4）；兩者都已在 0.8.0 以上，條件已成立。
 
 ## 9. 給人讀的文件
 
@@ -195,13 +186,11 @@ flowchart TB
 
 產品負責人於 2026-10-26 核可：規則先在兩個 repo 並行上線，搬移先做 Cert Prep；Capture 的搬移等 Cert Prep 與 LAW 換到 0.7.2 以上才開始（兩者已在 0.8.0 以上）；機械式搬移派給其他 worker，由 Claude 驗證。DDD 除了依賴方向的限制，也要語意分層（第 4.1 節）。
 
-| 順序 | Cert Prep                                                     | Capture Workbench                  | 誰做                                 |
-| ---- | ------------------------------------------------------------- | ---------------------------------- | ------------------------------------ |
-| 1    | C1 規則與已知例外                                             | W1 規則與已知例外                  | Claude                               |
-| 2    | C2 平台（錯誤型別、資料庫）                                   | —                                  | Claude                               |
-| 3    | C3 依上下文搬移（7 個 PR）                                    | —                                  | worker 搬移，Claude 審查、驗證、合併 |
-| 4    | C4 語意模型（7 個 PR）、C5 資料表歸屬、C6 擷取規則移出 router | W2–W4 拆大檔（engine_adapters 等） | Claude                               |
-| 5    | C7 前端依上下文分資料夾                                       | W5 依上下文搬移（6 個 PR）         | worker 搬移，Claude 審查、驗證、合併 |
-| 6    | C8 Rust                                                       | W6 語意模型、W7–W9                 | Claude；W8、W9 的搬移部分可派工      |
+已完成：Cert Prep 的 C1–C4、C6、C8 與 C5 第一部分；Capture 的 W1–W4 與 W8 的 `staging.rs`、`launcher.rs`（PR 見第 6 節）。剩下的順序：
+
+| 順序 | Cert Prep                                                                                     | Capture Workbench                                                                                                                                                                      | 誰做                                                         |
+| ---- | --------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| 1    | C5 資料表歸屬的其餘部分（[#200](https://github.com/gx-capture/capture-workbench/issues/200)） | W5 依上下文搬移（6 個 PR，[#173](https://github.com/gx-capture/capture-workbench/issues/173)）                                                                                         | C5：Claude；W5：worker 搬移，Claude 審查、驗證、合併         |
+| 2    | C7 前端依上下文分資料夾（[#201](https://github.com/gx-capture/capture-workbench/issues/201)） | W6 語意模型（[#174](https://github.com/gx-capture/capture-workbench/issues/174)）、W7–W9（[#175](https://github.com/gx-capture/capture-workbench/issues/175)–[#177](https://github.com/gx-capture/capture-workbench/issues/177)） | C7：worker 搬移，Claude 審查；W6：Claude；W8、W9 的搬移部分可派工 |
 
 派工的規則：每個 worker 在自己的 git worktree 工作、不自動核准任何指令、不 commit 也不 push；同時最多兩個；建置、測試與安裝都由 Claude 執行，並檢查 worktree 以外沒有任何變動。worker 交回的是搬移與 import 的修改，第 7 節的驗證全部由 Claude 跑過才開 PR。語意模型（C4、W6）由 Claude 做，因為它要判斷業務意義，不是機械式的修改。

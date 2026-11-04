@@ -1,50 +1,27 @@
 # Capture Workbench：以 OCR 與 ASR 為核心的 UI/UX 重新設計提案
 
-Status: approved 2026-11-02; all §6 recommendations accepted. Based on a read-only study of `capture-workbench@cdbee11` (main, after 0.8.0). Product decision: Workbench is a product with two primary features, **文件轉文字 (OCR)** and **錄音轉逐字稿 (ASR)**.
+Status: approved 2026-11-02; all §6 recommendations accepted. Product decision: Workbench is a product with two primary features, **文件轉文字 (OCR)** and **錄音轉逐字稿 (ASR)**. Phases 1 (PR #139) and 2 (PR #149) are merged; the remaining phases are issues (§5), under [epic #152](https://github.com/gx-capture/capture-workbench/issues/152).
 
 ## 1. Current state
 
-**One screen, three panes** (`apps/capture-workbench/src/app/app.html`, 359 lines; `app.ts`):
+Phases 1 and 2 are in `apps/capture-workbench/src/app`:
 
-| Area | What it does today | Problem for a product |
-| --- | --- | --- |
-| Left rail | 「處理佇列」 count, a dead 「歷史資料庫」 label, search, an 8-value status select, runtime dot, language | Nothing navigates; statuses such as `persisting` are pipeline internals. |
-| Setup card (`runtime-setup`) | Blocks the app until `windowsml-ocr` is installed; also holds the Ollama model picker (`modelReference`) | A user who only wants transcripts must install OCR first. The model and 「結構化」 are developer concepts. |
-| Intake card | One 「選擇檔案」 for every type, plus the 辨識說話者 and 語音使用 GPU checkboxes | OCR and ASR options are mixed together. |
-| `SpeechPack` (`speech-pack/`) | 「台灣語音包（選用）」: 同意並下載 per unit, with the `CAPTURE_UNIT_GUIDES` facts | A good base, but it is not offered at the moment a recording needs it. Its sizes are hard-coded strings (~10.5 GB / ~0.7 GB on main, against ~2.8 GB / ~300 MB in 0.8.0), and `RuntimeRequirementV2` has no size field. |
-| Document list | Cards showing a 「PDF/FILE」 mark, the stage and the size | Not a table. Cannot sort or filter by type. |
-| Detail pane | Transcript and player, raw text and segments, live partial, structured result, provenance, speaker naming, retry/cancel, Export Text/JSON, delete | Mixes reading with diagnostics. Text cannot be edited, and the source is never shown. |
+- A shell with a left nav and the routes `/ocr` (home), `/asr`, `/history` and `/settings/engines` (`app.routes.ts`), built with Tailwind tokens and Spartan helm components in `src/app/ui` (`button`, `card`, `table`).
+- Each feature has its own gate; there is no global setup state. `/settings/engines` installs, cancels and retries each unit through the `EngineCard` (`engine-card/`), with sizes from the runtime's `downloadBytes`. A first-run card on `/ocr` offers the units, and a reload re-attaches to running installs (`runtime_list_installations`).
+- `/ocr` shows the first-run card and `/asr` the install panel for the speech units; their capture flows are placeholders for phases 3 and 4. `/history` is still the old single-screen workspace, with Angular Material, the Ollama picker, provenance, the structured JSON and JSON export; phase 7 moves the diagnostics out and deletes it.
 
-**Harness-only, to hide or move to 診斷:**
+**Harness-only, to move to 診斷 (phase 7):** provenance digests; the raw-segment and block data attributes; the structured JSON and JSON export; `ocrEvidence` (`contracts/ocr-evidence.ts`); the acceptance `pdfPageNumbers`; the `desktop_acceptance_*`, `desktop_runtime_process_probe` and `model_smoke_import_fixture` commands (`src-tauri/src/commands.rs`); the Ollama picker.
 
-- provenance digests;
-- the raw-segment and block data attributes;
-- the structured JSON and JSON export;
-- `ocrEvidence` (`contracts/ocr-evidence.ts`);
-- the acceptance `pdfPageNumbers`;
-- the `desktop_acceptance_*`, `desktop_runtime_process_probe` and `model_smoke_import_fixture` commands (`src-tauri/src/commands.rs`);
-- the Ollama picker.
+**Code facts that shape the design:**
 
-The `Cargo.toml` description "Tauri verification harness" and `apps/capture-workbench-desktop/.agents/DECISIONS/tauri-reference-harness.md` are already superseded by `.agents/SPECS/standalone-desktop-product.md`; replace them.
-
-**Code facts that shape the design** (checked against main; §2 says where each one matters):
-
-- OCR gates even ASR, through `CORE_REQUIREMENTS` and through `DesktopRuntimeClientService.ready ⇐ ocrCompute`.
 - Without Ollama, OCR stops at 「等待確認」 with no `result`, so Export is disabled.
-- Import starts the capture at once and is refused during setup.
-- Missing today:
-  - `spokenLanguage` is not sent.
-  - Page ranges other than a `1..K` prefix.
-  - Page counts and recording length in the progress data.
-  - Byte counts during installs.
-  - Listing installations from Tauri, and uninstalling an engine.
-  - Page images.
+- Import starts the capture at once.
+- The desktop app does not send `spokenLanguage` yet (phase 4).
+- PDF page ranges other than a `1..K` prefix are refused, and the runtime returns no page images.
 - A full restart loses runtime jobs.
-- Verified downloads are cached by SHA-256 (`_engine_download_cache.py`).
+- Verified downloads are cached by SHA-256 (`_engine_download_cache.py`), and an interrupted download resumes.
 
-**E2E today:** `apps/capture-workbench-e2e/src/reference-flow.spec.ts` (4 browser tests with a fake Tauri bridge) and `apps/capture-workbench-desktop/scripts/real-desktop-ocr-acceptance.spec.ts` (manual real OCR). Both, along with `real-desktop-ocr-smoke.ts`, select today's DOM (`workbench-root`, `.document-card`, `.detail-pane`, `.mat-mdc-form-field`), and `tools/verify-capture-workbench-production-bundle.ts` requires the OCR compute strings. There is no ASR journey test.
-
-**Styling:** Angular Material 22, chosen in `.agents/DECISIONS/standalone-desktop-product.md`. `app.css` is already 10.4 kB of source against the 10 kB `anyComponentStyle` error budget.
+**E2E today:** `apps/capture-workbench-e2e/src/reference-flow.spec.ts` (browser tests with a fake Tauri bridge) and `apps/capture-workbench-desktop/scripts/real-desktop-ocr-acceptance.spec.ts` (manual real OCR). There is no ASR journey test.
 
 ## 2. Target information architecture
 
@@ -92,8 +69,8 @@ The `Cargo.toml` description "Tauri verification harness" and `apps/capture-work
 - **Before the download:** free disk space is checked first, using LAW's `diskShort` text (needs a Tauri command).
 - **While it runs:** a percentage and 取消.
 - **After a failure:** 再試一次, which reuses the files already verified.
-- **Resume:** after a window reload the app re-attaches to the running install (`runtime_list_installations`). Picking up a partly downloaded file is Q4.
-- **No 移除** until the runtime can uninstall an engine.
+- **Resume:** after a window reload the app re-attaches to the running install (`runtime_list_installations`). The runtime resumes a partly downloaded file (Q4).
+- **移除:** the runtime can uninstall an engine (PR #145); the UI does not offer it yet ([#254](https://github.com/gx-capture/capture-workbench/issues/254)).
 
 ## 3. Wireframes
 
@@ -159,15 +136,15 @@ The `Cargo.toml` description "Tauri verification harness" and `apps/capture-work
 
 | Item | Decision |
 | --- | --- |
-| `DesktopWorkspaceStore` (525 lines) | **Split** into `RecognitionFeaturesStore` (requirements, installs, per-feature readiness, which replaces `coreMissing`/`state`), `CaptureQueueStore` (import, cancel, retry, partials) and `LibraryStore` (list, detail, delete, export, edits). Keep the facade services (`desktop-workspace-capture`, `-installation`, `desktop-library`, `desktop-runtime-client`). |
-| `desktop-workspace.selectors.ts` | **Keep**. Replace `CORE_REQUIREMENTS` with a feature→requirement map: `ocr: [windowsml-ocr]`, `asr: [speech-recognition]`, `asr.speakers: [speaker-diarization]`. |
-| `SpeechPack` | **Generalise** into an `EngineCard` (one unit: guide, size, action, progress), used by the ASR panel, the first-run card and the settings table. |
-| `CAPTURE_UNIT_GUIDES` (`capture-workbench-ui`) | **Keep** as the source of the descriptive text. Move sizes out of the strings into numbers from the runtime (Q3/phase 2). |
+| `DesktopWorkspaceStore` | **Split**: `RecognitionFeaturesStore` (requirements, installs, per-feature readiness) is split out (phase 2); `CaptureQueueStore` (import, cancel, retry, partials) and `LibraryStore` (list, detail, delete, export, edits). Keep the facade services (`desktop-workspace-capture`, `-installation`, `desktop-library`, `desktop-runtime-client`). |
+| `desktop-workspace.selectors.ts` | **Keep**. Feature gates use a feature→requirement map: `ocr: [windowsml-ocr]`, `asr: [speech-recognition]`, `asr.speakers: [speaker-diarization]` (phase 2). |
+| `EngineCard` (`engine-card/`) | One unit: guide, size, action, progress; used by the ASR panel and the settings table (phase 2, replacing `SpeechPack`). |
+| `CAPTURE_UNIT_GUIDES` (`capture-workbench-ui`) | **Keep** as the source of the descriptive text. The desktop app takes sizes from the runtime (phase 2); the Web Component still uses the strings ([#162](https://github.com/gx-capture/capture-workbench/issues/162)). |
 | `CaptureRuntimeComputeStatusComponent` | **Keep**, moved to 設定 › 運算裝置. |
 | `capture-reconciliation`, `capture-runtime-installation` (in `capture-workbench-ui`, not used by the desktop app) | **Leave** to the Web Component. The desktop app keeps its own `desktop-workspace-installation` and `-capture` services, extended with re-attach and the waiting queue. |
-| `app.html` / `app.css` | **Delete** after migration, replaced by routed pages. |
+| `history/history-page.*` (the old workspace, with its stylesheet) | **Delete** after migration, replaced by routed pages. |
 | `ocr-evidence.ts`, provenance markup, JSON export, acceptance commands | **Move** to the 診斷 page or behind an acceptance build flag. Do not delete them, because acceptance still uses them. |
-| Angular Material | **Replace** with Tailwind tokens and Spartan helm components (button, card, table, tabs, dialog, progress, badge), generated by the Spartan CLI into `apps/capture-workbench/src/app/ui` and matching LAW `libs/ui`. This supersedes the Material line in `standalone-desktop-product.md`. |
+| Angular Material | **Replace** with Tailwind tokens and Spartan helm components (button, card, table, tabs, dialog, progress, badge), generated by the Spartan CLI into `apps/capture-workbench/src/app/ui` and matching LAW `libs/ui`. Recorded in `.agents/DECISIONS/tailwind-spartan-ui.md` and `.agents/DECISIONS/standalone-desktop-product.md`. |
 
 ## 5. Phased delivery
 
@@ -175,35 +152,23 @@ Each phase is one PR, shippable on its own. Before merging, every UI PR runs `pn
 
 | # | PR | E2E added |
 | --- | --- | --- |
-| 1 | **Foundation:** Tailwind and Spartan set up, shell with left nav and routes. The current workspace moves unchanged to `/history`. Material is removed from the shell. Updates the `Cargo.toml` description and the harness decision. | Nav and routes render in zh-TW. `reference-flow.spec.ts` (its `.mat-mdc-*` checks), the desktop smoke/acceptance selectors and the bundle verifier strings are updated in the same PR. |
-| 2 | **Recognition features:** split out `RecognitionFeaturesStore`, per-feature gates (removing `ready ⇐ ocrCompute`), the `EngineCard`, 設定 › 辨識功能 with cancel (new Tauri `runtime_cancel_installation`, since the client already has `cancelInstallation`), the first-run card, and re-attaching after a reload (new `runtime_list_installations`). | ASR-only user: never asked for OCR. Install shows its size → progress → cancel → retry. A reload re-attaches. |
-| 3 | **OCR page:** drop zone, queue table, files kept while waiting (import decoupled from capture), the inline per-file install prompt, auto-start after install, and OCR text exportable without Ollama (raw-based .txt). | Drop a PDF without OCR → prompt → install → processing → done. |
-| 4 | **ASR page:** install panel, language (wire `spokenLanguage` through Tauri) and speaker options, progress with the live partial transcript, cancel. | Drop audio → install speech → partial transcript → done. Speakers off by default. |
-| 5 | **Result review:** `/history/:id` sub-nav, OCR page image beside editable text, transcript table with player, speaker naming. Edits stored as a separate `edits.json` layer (new host command). | Edit a line, then restore it. Click a time and the player seeks. Name a speaker once and every line shows the name. |
-| 6 | **History and export:** history table with filters; export .txt/.md (OCR) and .txt/.srt/.vtt/.md (ASR), rendered in the host from raw + edits; relaxed PDF page ranges. | Each format downloads with the expected content (fixture). |
-| 7 | **Diagnostics and cleanup:** the 診斷 page, provenance, JSON and the Ollama picker moved there; `app.html`, `app.css` and Material deleted. | Diagnostics is reachable from the status dot; the main views carry no provenance. |
+| 1 (PR #139) | **Foundation:** Tailwind and Spartan set up, shell with left nav and routes. The current workspace moves unchanged to `/history`. Material is removed from the shell. Updates the `Cargo.toml` description and the harness decision. | Nav and routes render in zh-TW. `reference-flow.spec.ts` (its `.mat-mdc-*` checks), the desktop smoke/acceptance selectors and the bundle verifier strings are updated in the same PR. |
+| 2 (PR #149) | **Recognition features:** split out `RecognitionFeaturesStore`, per-feature gates (removing `ready ⇐ ocrCompute`), the `EngineCard`, 設定 › 辨識功能 with cancel (new Tauri `runtime_cancel_installation`, since the client already has `cancelInstallation`), the first-run card, and re-attaching after a reload (new `runtime_list_installations`). | ASR-only user: never asked for OCR. Install shows its size → progress → cancel → retry. A reload re-attaches. |
+| 3 ([#157](https://github.com/gx-capture/capture-workbench/issues/157)) | **OCR page:** drop zone, queue table, files kept while waiting (import decoupled from capture), the inline per-file install prompt, auto-start after install, and OCR text exportable without Ollama (raw-based .txt). | Drop a PDF without OCR → prompt → install → processing → done. |
+| 4 ([#158](https://github.com/gx-capture/capture-workbench/issues/158)) | **ASR page:** install panel, language (wire `spokenLanguage` through Tauri) and speaker options, progress with the live partial transcript, cancel. | Drop audio → install speech → partial transcript → done. Speakers off by default. |
+| 5 ([#159](https://github.com/gx-capture/capture-workbench/issues/159)) | **Result review:** `/history/:id` sub-nav, OCR page image beside editable text, transcript table with player, speaker naming. Edits stored as a separate `edits.json` layer (new host command). | Edit a line, then restore it. Click a time and the player seeks. Name a speaker once and every line shows the name. |
+| 6 ([#160](https://github.com/gx-capture/capture-workbench/issues/160)) | **History and export:** history table with filters; export .txt/.md (OCR) and .txt/.srt/.vtt/.md (ASR), rendered in the host from raw + edits; relaxed PDF page ranges. | Each format downloads with the expected content (fixture). |
+| 7 ([#161](https://github.com/gx-capture/capture-workbench/issues/161)) | **Diagnostics and cleanup:** the 診斷 page, provenance, JSON and the Ollama picker moved there; the old workspace (`history/history-page.*`) and Material deleted. | Diagnostics is reachable from the status dot; the main views carry no provenance. |
 
-Upstream runtime items, shipped separately in capture-workbench as the runtime owner: `downloadBytes` in `RuntimeRequirementV2` and byte counts in installation progress (a contract change: regenerate the contracts and bump `CAPTURE_CONTRACT_SET_SHA256` before phase 2 reads them; until then the sizes come from `CAPTURE_UNIT_GUIDES`), resumable `.part` downloads (Q4), page and duration progress fields, an uninstall endpoint, and the larger source limit (Q6). Each Tauri command added must have a caller in the same PR, or the dead-code gate fails. Desktop CDP e2e for a real OCR and ASR journey stays local and manual, per AGENTS.md.
+Upstream runtime items, shipped separately in capture-workbench as the runtime owner: `downloadBytes` and installation byte counts (PR #141), resumable downloads (PR #151), page and duration progress (PR #148) and the uninstall endpoint (PR #145) are merged. Open: the speech split into a CUDA unit and a CPU-only mini unit (Q3, [#154](https://github.com/gx-capture/capture-workbench/issues/154)) and native-path import of recordings over 50 MiB (Q6, [#155](https://github.com/gx-capture/capture-workbench/issues/155)). Each Tauri command added must have a caller in the same PR, or the dead-code gate fails.
 
-## 6. Open questions (recommended answer in bold)
+Also open: the Web Component's unit guides still carry sizes in strings ([#162](https://github.com/gx-capture/capture-workbench/issues/162)), and the packaged acceptance must re-approve the new navigation's pixel baselines and run real OCR and ASR ([#163](https://github.com/gx-capture/capture-workbench/issues/163)). Desktop CDP e2e for a real OCR and ASR journey stays local and manual, per AGENTS.md.
+
+## 6. Decisions (approved 2026-11-02; the answer is in bold)
 
 1. **Material → Tailwind + Spartan?** This supersedes a recorded decision. **Yes, migrate shell-first (phase 1), with the helm components copied by the CLI, not shared across repositories.**
 2. **What happens to Ollama structuring (「結構化結果」)?** Without it, OCR ends at 「等待確認」 with no exportable result. **Hide it from the product views in v1, finish OCR as 完成 on the raw text, and build export from raw + edits. Keep the picker in 診斷 until a user-facing use exists.**
 3. **Split speech into a GPU model and a CPU-only mini unit?** **Yes, upstream. Choose by `cudaAvailable` and offer the smaller mini download on CPU machines, with the size taken from the runtime contract.**
-4. **Downloads that resume after the app closes?** Today a failure discards the partial download. Verified files are already cached by SHA-256, so only the file being downloaded is lost. **For v1, re-attach plus 再試一次. Add `.part` files with HTTP `Range` resume to `HttpArtifactDownloader` before ASR leaves its preview stage (the CUDA worker archive alone is about 2.95 GB).**
+4. **Downloads that resume after the app closes?** **Re-attach plus 再試一次, and `.part` files with HTTP `Range` resume in the runtime (done, PR #151).**
 5. **How should PDF pages be shown in review?** The runtime returns boxes but no page images. **Render pages in the renderer with pdf.js from the saved source, which needs no runtime change. Until that lands, show text only for PDFs and the image for image sources.**
-6. **Recordings over 50 MiB** (an hour of audio, most video; `.agents/TODOS/recording-transcription.md`)? **Must be fixed before ASR is a primary feature. Import by native path, so the renderer still never sees the path, and stream to the runtime.**
-
-## Second opinion (agy, Gemini 4 Argon high, plan mode)
-
-Adopted after checking the code:
-
-- the gaps listed under "Code facts" (all except the download cache came from this review);
-- the e2e, smoke-selector and bundle-verifier updates in phase 1;
-- the contract-hash bump.
-
-Rejected:
-
-- its `app.css` size (the file is 10,433 bytes, not 4.8 kB);
-- a `speech_pack_install` command (it does not exist);
-- retiring `SpeechPack` (`EngineCard` keeps the per-unit consent of the 2026-11-01 speech-pack decision).
+6. **Recordings over 50 MiB** (an hour of audio, most video; [#155](https://github.com/gx-capture/capture-workbench/issues/155))? **Must be fixed before ASR is a primary feature. Import by native path, so the renderer still never sees the path, and stream to the runtime.**

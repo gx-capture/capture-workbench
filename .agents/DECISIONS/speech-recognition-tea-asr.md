@@ -23,9 +23,10 @@ the reference clip):
 - TEA loops on long input (stable at 60 s, loops at 90 s): audio is cut into ~30 s chunks at
   the quietest 100 ms, and a chunk that reaches the generation limit is retried as halves while
   they last at least 5 s. Pieces that still loop are reported in the result warning.
-- Chinese is always forced (`language="zh"`), as the model card recommends for Taiwan speech;
-  it also keeps dense Chinese-English code-switching from being translated. Recordings in other
-  languages need another model.
+- Chinese (`language="zh"`) is the default, as the model card recommends for Taiwan speech;
+  it also keeps dense Chinese-English code-switching from being translated. A host may name
+  the spoken language of a recording (`spokenLanguage`, 0.8.0); Japanese transcripts are then
+  written in Japanese kanji forms (`capture_runtime/japanese_kanji`).
 
 Only speech recognition uses CUDA PyTorch (the CUDA 12.8 index on Windows); it is about 12.5x
 faster than CPU for transcription. Diarization uses CPU PyTorch: about a minute per 40-minute
@@ -52,9 +53,9 @@ boundary and preflight flags `--speech-recognition-*`; stages `speech-*`. Intern
 
 ## Consequences
 
-- The release model-source lock pins 34 files (about 7.5 GB) and needs the user's
-  re-approval before release. Install-time bounds were raised to admit it (4 GiB per file,
-  8 GiB per unit, 10 GiB across the lock).
+- The release model-source lock pins the TEA-ASR and aligner files (about 7.5 GB).
+  Install-time bounds were raised to admit them (4 GiB per file, 8 GiB per unit, 10 GiB
+  across the lock).
 - The `whisper-private-reference` fixture is the owner's 40-minute Taiwanese Mandarin interview
   (M4A, 39,199,307 bytes), which replaced the earlier MP3 when that file could not be found. Two
   identical runs of the published 0.7.1 worker on CUDA froze its expected normalized output

@@ -26,12 +26,13 @@ with paths in the same order.
 
 Upstream files not copied: the command-line program, the detector and recognizer
 wrappers (rewritten in `ocr_vertical_reader.py`), the PDF and GUI code, and the
-models. The engine delivers upstream's model and configuration files unchanged. On
+models. The optional install unit `vertical-japanese-reader` delivers upstream's
+model and configuration files unchanged. On
 each machine the runtime derives an ONNX Runtime-optimized copy of the three
 recognizers into its own cache; those copies are not distributed.
 
 Upstream lists the licences of the libraries and models it builds on in
-`LICENCE_DEPENDENCEIES`; the engine installs that file with the models.
+`LICENCE_DEPENDENCEIES`; the unit installs that file with the models.
 
 The copied files are excluded from linting and type checking so that they stay as
 upstream wrote them.

@@ -2,8 +2,9 @@
 
 ## Scope
 
-PDF and image OCR in `capture-runtime` use ONNX Runtime DirectML first on Windows. Audio
-Whisper, Ollama, `CaptureEngine`, `/v2`, and the Angular package contract are unchanged.
+PDF and image OCR in `capture-runtime` use ONNX Runtime DirectML first on Windows. Speech
+recognition, Ollama, `CaptureEngine`, `/v2`, and the Angular package contract are not part of
+this policy.
 
 ## Provider policy
 
@@ -47,24 +48,5 @@ requires DirectML to be the only ORT distribution and namespace owner, with both
 prepare/verify dependency and also uses `--no-sync`, so it cannot race an ordinary environment
 sync against production packaging.
 
-## Verification evidence
-
-The provider and production-environment rules were verified on 2026-07-29 on a Windows x64 host with `AMD Radeon(TM) 880M Graphics` and an NVIDIA
-discrete adapter:
-
-- The production environment gate reported `onnxruntime-directml` `1.24.4` as the sole
-  `onnxruntime` distribution and import owner, with `DmlExecutionProvider` and
-  `CPUExecutionProvider` registered.
-- The adapter policy tests passed for DML-first selection, CPU-only mode when DML is absent,
-  no separate CPU-only retry after a DML-session failure, and missing providers; the full runtime
-  suite passed 74 tests.
-- `capture-runtime:build-production-executable` passed after the environment gate.
-- `capture-workbench-desktop:smoke-real-desktop-ocr-directml --skip-nx-cache` passed against an
-  image-only one-page PDF. This DirectML-specific target always
-  requires `windowsml-dml`; CPU provenance fails the gate. The packaged Tauri UI displayed
-  non-empty raw OCR and structured output, and the isolated Ollama profile digest was preserved.
-- The smoke deleted its library document, left the main library at its original seven entries,
-  and left no desktop or runtime process.
-
-Current PDF behavior always renders every page and reports `windowsml-ocr`.
-The smoke therefore rejects embedded-text and composite extraction provenance.
+The local smoke `capture-workbench-desktop:smoke-real-desktop-ocr-directml` requires
+`windowsml-dml` provenance; CPU provenance fails it.

@@ -1,33 +1,11 @@
 # Vertical Japanese OCR decisions
 
-2026-10-02 — user approved the staged implementation plan.
-
-- Phase progression is automatic only after independent verification/review PASS;
-  formal publication remains separate. A later phase cannot compensate for a failed gate.
-- Keep Claude's three-phase architecture and geometric XY-cut starting point; retain
-  Astra's domain/band/article ownership checks and per-article ruby output contract.
-- Research scores are not full-product acceptance. The original cloud artifacts are
-  unavailable; new local measurements have their own provenance and are not relabeled
-  as reproductions of the missing cloud run.
-- Phase 1 originally required an exact tuple permutation; the user-approved, separately
-  gated composite exception below supersedes that universal restriction. Phase 2/3 change observations and are
-  compared against image truth, not by requiring unchanged cross-inference source IDs.
-- User selected per-page body/ruby CER non-regression with protected critical content
-  and omissions; ordinary character error locations may change.
-- User selected +150 MiB model storage, +512 MiB peak OCR RAM and <=2.5x warm triggered-
-  page p95 relative to Phase 1, with no timeout relaxation.
-- Change mode: mixed. Existing owner: capture-runtime. New owner needed: no. Add only
-  focused benchmark/policy modules; replace misleading metric comparisons rather than
-  adding another product pipeline. Verification floor: each phase's frozen gate.
-- Approved test seams are in the spec; no new approval is required to implement them.
-
 2026-10-02 — user approved adding Cert parser compatibility fixes to Phase 1 while
 keeping strict gold and runtime tuple preservation. The frozen p2/p16 CPU and DML
 probe returned zero questions on baseline and full-source oracle; image transcription
 produced six/one questions but their last choice absorbed page number 2/16. These
 failures cannot be fixed by horizontal identity or faithful tuple permutation alone.
-The former scope conflict is resolved; consumer implementation and verification remain
-open. The later explicit Phase 1 start below supersedes waiting for the Phase 0 gate.
+The former scope conflict is resolved; the parser fixes belong to Cert Prep.
 
 2026-10-02 — user approved keeping Bunka p2 mandatory and adding limited cross-band
 composite research/validation to Phase 1. CPU and DML source slot 21 combines upper
@@ -40,20 +18,6 @@ starting Phase 2, general box slicing, rerecognition or changing the public box 
 Ordinary boxes retain exact tuples. Split parent text must be conserved exactly once;
 score aggregation and consumer behavior need explicit evidence. Research feasibility
 and policy freeze remain open.
-
-2026-10-02 — user explicitly directed: "請進入 phase1 實作並開始驗證。不要紙上談兵。"
-Start Phase 1 product changes and tests now; do not wait for incomplete Phase 0
-annotations or benchmark expansion. Phase 0 remains incomplete, not waived or passed.
-Existing quality/contract requirements remain acceptance criteria, and later phases
-still require their preceding acceptance/review. Preserve the current P0 annotation
-work at resumable checkpoints and prioritize actual adapter integration, observable
-reading-order improvement, horizontal identity and failure-path verification.
-
-2026-10-02 — independent review identified holdout exposure after Root assigned the
-former private image custodian as the product-policy author. Preserve those files,
-but do not call them unseen for that author/policy. New unseen acceptance requires
-fresh complete documents and a custodian who does not implement the policy. This
-is an acceptance gap, not permission to stop the user-directed Phase 1 coding.
 
 2026-10-02 — Astra independently reproduced the limited same-inference composite
 research and permitted a bounded candidate implementation (review SHA256
@@ -172,9 +136,6 @@ the repository and not redistributed), and the release is 0.5.0. Decisions taken
   still describe the regular pipeline. No public contract field is added.
 - Model-source snapshot for 0.5.0 is commit `8f37898ac6b3b51c0d4e1e44aa7ea53e693f6815`
   (tag `capture-runtime-model-sources-v0.5.0`).
-- Publication (merge to `main`, candidate and promotion workflows, consumer
-  migration of Cert Prep and LAW, consumer gates) follows the release runbook and
-  is not started by this work.
 
 2026-10-06 — independent review before publication (user: review and acceptance
 first). Open for the user, blocking publication: the NDLOCR-Lite line detector was
@@ -196,7 +157,19 @@ abstraction, for example another model for vertical Chinese in LAW, and agreed t
 the proposed order: correct the routing now, measure before fixing an interface.
 Decided: the Japanese reader is used only for pages with kana (first pass, or the
 reader's own text when the first pass is unsure); this changes the profile's
-routing declaration and is prepared as 0.5.1. Not decided: readers as separately
-installed requirements chosen by page content. No vertical Chinese document is
-available to the user; that measurement is open. See
+routing declaration and shipped in 0.5.1. Readers as separately installed
+requirements were decided on 2026-10-07 (below), after vertical Traditional
+Chinese was measured on the regular pipeline. See
 `.agents/RESEARCH/ocr-reader-modules-design-2026-10-06.md`.
+
+2026-10-07 - user decisions for the next incompatible release (recorded in
+`.agents/RESEARCH/ocr-reader-modules-design-2026-10-06.md`): NDLOCR-Lite becomes
+the optional install unit `vertical-japanese-reader`, installed by neither Cert
+Prep nor LAW by default; a page the reader would accept while it is not
+installed keeps the first pass and reports the unit to offer; no reader for
+vertical Chinese is planned and the runtime does not normalize characters; the
+strategy is chosen by page evidence, not by a language the host names.
+
+2026-10-14 - delivered in 0.6.0 (PRs #85, #86). The user dropped the per-page
+record of which reader read a page. The end user decides whether to add the
+reader; otherwise only the default OCR runs.

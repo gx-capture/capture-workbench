@@ -1,10 +1,9 @@
-# Capture Runtime 0.4.2 Phase 2 hardening decisions
+# Capture Runtime Phase 2 hardening decisions
 
-Status: canonical rationale record for the documentation checkpoint dated
-2026-09-10. The [Phase 2 SPEC](../SPECS/capture-runtime-042-p2-hardening.md)
-owns policy, actual owner paths, interface alternatives, journal schema,
-compute truth, acceptance, identity, and D0-D8 gates. The
-[TODO](../TODOS/capture-runtime-042-p2-hardening.md) owns executable work; the
+Status: accepted 2026-09-10; first shipped in 0.4.2. The
+[Phase 2 SPEC](../SPECS/capture-runtime-042-p2-hardening.md) owns policy,
+owner paths, journal schema, compute truth, acceptance and identity. The
+open work is [#246](https://github.com/gx-capture/capture-workbench/issues/246) and [#247](https://github.com/gx-capture/capture-workbench/issues/247); the
 [release runbook](../GUIDES/release-runbook.md) owns the release procedure.
 
 ## Implementation status (2026-11-01)
@@ -15,46 +14,7 @@ within 60 s, third-failure manual review, authorized recovery, and proof-backed
 stale-record terminalization or staging release) is specified but not wired
 into production. No host uses the R3 lifecycle yet: desktop, cert-prep and LAW
 launch via the legacy path with native Windows Job containment
-(`KILL_ON_JOB_CLOSE`). See [TODO: Option W](../TODOS/capture-runtime-042-p2-hardening.md#option-w).
-
-## Checkpoint and authority
-
-This closure starts from expected HEAD
-f4ab9518d3d23c280791b90b8590fd0f1262500e; stop if `HEAD` drifts. The four canonical docs and the two
-active READMEs are the modified scope. Untracked
-.github/copilot-instructions.md and .github/instructions/ are preserved and are
-not staged. The exact resulting SHA is not embedded in this
-record; the D0 handoff reports git rev-parse HEAD externally.
-
-PR #39 remains an engineering checkpoint at
-c6d2140e233de70734005713427f77f92414f415; its deterministic CI is green but
-the PR is unmerged. Phase 1 is complete only at the local-probe tier: the
-three-project Capture -> Cert -> LAW sequence passed with local package bytes.
-That is not candidate, published, or release evidence. No current-HEAD Phase 2
-real JPEG/PDF, GPU, cleanup, candidate, download-back, or publication result is
-claimed. Source version 0.4.2 is not proof of a published package.
-
-CI repair is paused and has no authority in this checkpoint. The future D5-D8
-implementation slice explicitly owns publication-workflow contract edits; this
-documentation task makes no workflow changes, reruns no CI, and treats no CI
-result as model, GPU, cleanup, installation, publication, or stable-pointer
-evidence.
-
-## Change-mode checkpoint
-
-~~~text
-Change mode: mixed, edit-first
-Existing owners: Phase 2 SPEC/DECISION/TODO/GUIDE and two active READMEs
-Delete/supersede: old policy only after replacement tests and an additive commit
-New coordinator: prohibited; converge existing OcrPipeline and OwnedRuntimeSession
-Feature/code authority: none in this documentation checkpoint; future D5-D8
-workflow-contract edits are explicitly reserved for their named owner slice
-Verification floor: read-only owner/target/link/fence/diff checks
-~~~
-
-The old GPU/P1 documents already have visible historical banners. Their bodies
-remain evidence and are not rewritten in this slice. A later implementation
-worker may delete superseded policy only after residual scans and deletion tests.
+(`KILL_ON_JOB_CLOSE`). See [#246](https://github.com/gx-capture/capture-workbench/issues/246).
 
 ## Decisions
 
@@ -159,7 +119,7 @@ rejected.
 
 5. **Existing native exports and callers are the migration boundary.**
    src/lib.rs exports OwnedRuntimeSession and its current error/proof types;
-   src/launcher.rs owns SidecarLaunchSpec, LaunchOptions, LaunchedSidecar,
+   src/launcher/ owns SidecarLaunchSpec, LaunchOptions, LaunchedSidecar,
    launch_sidecar, and launch_sidecar_with_observer; desktop Tauri
    src/state.rs, src/launcher.rs, and src/commands.rs are callers. The
    implementation uses those paths and the existing launcher/desktop Cargo
@@ -259,11 +219,10 @@ rejected.
    actual root plan rather than an invented allowlist here.
 
 8. **Contract identity remains fixed.** API 2.0, raw/structured schema 2,
-   CaptureOcrProjectionV3 schema 3, and runtime contract-set hash
-   d293a3de26114f1b4fd65ea6d6d3f157fa2f93109b31e1e30d5d15ef0dfdeb40 remain
-   the floor. The acceptance contract has a separate generated package/hash:
+   and CaptureOcrProjectionV3 schema 3 remain the floor; the runtime contract-set hash is `contractSetSha256` in `packages/capture-runtime-client/package.json` (it changes only with a contract release). The acceptance contract has a separate generated package/hash:
    `@capture-runtime/acceptance-contract` under the proposed
-   `packages/capture-acceptance-contract/` owner. Its concrete owners are
+   `packages/capture-acceptance-contract/` owner (only the schemas and
+   `src/codecs.ts` exist; finish or remove: [#257](https://github.com/gx-capture/capture-workbench/issues/257)). Its concrete owners are
    `schemas/*.schema.json`, `src/codecs.ts`, `src/export.ts`/`src/index.ts`,
    `src/canonical-json.ts`, `src/manifest.ts`, `src/hash.ts`,
    `tools/generate.ts`, `tools/create-bundle.ts`, `package.json`, and
@@ -380,130 +339,7 @@ rejected.
     LAW's capability/fixture owners are
     `${GX_LAW_PREP_CHECKOUT}/apps/law-prep-web-e2e/src/e2e/support/evidence-workbench.scenario-types.ts:createDefaultFixtureBundle`,
     `${GX_LAW_PREP_CHECKOUT}/apps/law-prep-web-e2e/src/e2e/local-package/evidence-workbench.real.acceptance.spec.ts`,
-    `${GX_LAW_PREP_CHECKOUT}/apps/law-prep-engine/src/main/java/com/gx/lawprep/engine/capture/FoundryCaptureStructuringProvider.java:StructuringProviderCapability`,
     and `${GX_LAW_PREP_CHECKOUT}/apps/law-prep-ai-service/src/app/ocr/service.py:OcrExtractionService.extract`.
-
-    The Python LAW adapter migration is anchored at
-    `${GX_LAW_PREP_CHECKOUT}/apps/law-prep-ai-service/src/app/ocr/service.py:OcrExtractionService.extract`
-    and its `CaptureRuntimeClient` seam. The producer defines `RequestRefV1`
-    as `rr1_` plus 64 lowercase hex characters; Python generates it with
-    CSPRNG `secrets.token_bytes(32)`, never from request data. Python persists
-    `reserved` with ref/digest/complete metadata/contract identity before
-    idempotent `start_or_get(request_ref, request_digest, canonical metadata,
-    source bytes)`. Closed metadata is canonical compact UTF-8 JSON with
-    `protocolVersion: "2"`, `sourceKind`, `fileName`, `mediaType`, `totalBytes`,
-    expected `sourceSha256`, ordered `pdfPageNumbers` (`null` for non-PDF or
-    duplicate-free `[1, ..., N]` for PDF), `structuringMode`, nullable
-    `targetLanguage`, and `startPolicy: "eager"`. The producer recomputes the
-    canonical request digest and source byte count/digest. Legacy
-    `StartCaptureV2.clientRequestId` is represented by the opaque `requestRef`,
-    not duplicated; `ingestionId` is producer-created/private and first known
-    at `ingestion_bound`, so no start field is silently dropped and no native
-    identity crosses the seam. Durable
-    progression is `reserved -> source_verified -> ingestion_bound -> started
-    -> terminal -> cleanup -> deleted`. Same ref plus same metadata and bytes
-    creates/discovers without duplication; changed metadata, ordered page list,
-    length, or source bytes conflicts without mutation; only a producer
-    ACK/discovery receipt permits `started`. A client timeout or dropped
-    response leaves the last durable stage unchanged, does not imply that the
-    producer did not start, and retries the same tuple; it does not mark
-    terminal or delete.
-    `RequestRefV1` is exactly `rr1_` plus 64 lowercase hex characters from 32
-    CSPRNG bytes. Lookup/cancel/delete use the same ref.
-    The producer journals before capture side effect, retains sanitized cleanup
-    state for a bounded period, and uses the same v2 operation/lifecycle. Route
-    ownership remains
-    `packages/capture-runtime/src/capture_runtime/routes/streaming.py:register_streaming_routes`
-    with a same-route `start_capture_by_request_ref` adapter; service ownership
-    is
-    `packages/capture-runtime/src/capture_runtime/services/streaming_capture_service.py:StreamingCaptureService.start_or_get`;
-    storage ownership is
-    `packages/capture-runtime/src/capture_runtime/storage/streaming_repository.py:StreamingRepository.start_or_get_by_request_ref`
-    plus a durable ref index; Python SDK ownership is
-    `packages/capture-runtime-client-python/src/capture_runtime_client/client.py:CaptureRuntimeClient.start_or_get`;
-    and TypeScript SDK ownership is the private/public
-    `packages/capture-runtime-client/src/private/streaming.ts:startCaptureByRequestRef`
-    and `packages/capture-runtime-client/src/client.ts:CaptureRuntimeClient.startCaptureByRequestRef`
-    adapters. Tokens, paths, and native ids never cross the seam; API `2.0` and
-    `CaptureOcrProjectionV3` schema `3` remain unchanged.
-
-10. **D2.5 cross-repository handoff is root/HEAD/path bound.** The only sibling
-    inputs are `${CERT_PREP_CHECKOUT}` and `${GX_LAW_PREP_CHECKOUT}` (PowerShell
-    `${env:CERT_PREP_CHECKOUT}` and `${env:GX_LAW_PREP_CHECKOUT}`). D2 records the
-    resolved Git root, authorized branch, authorized `HEAD`, and exact path set
-    for each. Before edits, a worker runs `git -C <resolved-root>
-    rev-parse --show-toplevel`, `rev-parse --abbrev-ref HEAD`, `rev-parse HEAD`,
-    `ls-files --error-unmatch -- <exact-path>`, and a path-scoped
-    `status --short --untracked-files=all -- <exact-path>`. Root mismatch,
-    branch/`HEAD` drift, missing/extra path, missing variable, or unresolved
-    owner is discovery-and-stop. Consumer docs/adapters import/reference only
-    the exact generated `@capture-runtime/acceptance-contract` package bytes,
-    version `"1"`, and literal D3/D6 `contractSha256`; they do not fork
-    schemas, names, fields, codecs, or validators. `tools/acceptance-contract.ts`
-    remains a consumer adapter and is not contract authority.
-    Capture, Cert, and LAW each commit only inside their own resolved root and
-    report separate SHAs/checks; no one Capture commit stages sibling files.
-
-11. **Release gates do not collapse.** D0 DocsCommitted is the current docs
-    commit and has no self-hash. D1 is pending exact-head review. D2 is
-    authorization plus schemas/codecs and synthetic RED/GREEN contract cases
-    only; it does not generate an acceptance archive, hash delivery, launch a
-    child, use real media, or consume D3. D2/D2.5 do not require an installed
-    candidate. D3 is the first gate that runs the package generator, creates
-    the immutable acceptance package/bundle and semantic manifest, computes
-    `contractSha256` over that manifest, records a separate external archive
-    SHA, and writes one immutable byte ledger. D4 accepts only externally supplied D3 root/id/digests through the future
-    `capture-workbench-desktop:acceptance-d3-candidate` target owned by
-    `apps/capture-workbench-desktop/scripts/acceptance-d3-candidate.ts:runD3CandidateAcceptance`;
-    that target never stages/builds, imports source, or follows a mutable URL.
-    D4 consumes real fixtures through only those immutable D3 bytes; it never
-    builds, stages, or hashes a source tree. The current
-    `capture-workbench-desktop:acceptance-real` remains non-D4. D5
-    publishes every D3 byte after D4 and removes the current direct stable
-    pointer edge from `.github/workflows/release-promote.yml`. D6 fresh-downloads
-    those public bytes. D7 accepts only D6 and runs the same serial journey.
-    D8 is a separate protected dispatch consuming the D7 digest chain and a
-    current-pointer CAS guard, then invokes the producer
-    `.github/workflows/_publish-stable-pointer.yml` adapter and
-    `tools/update-release-index.ts`. A worker, host, Tauri, or local script has
-    no pointer authority.
-
-## Future D5-D8 workflow slice
-
-The workflow files are existing producer owners, not untouchable CI files. A
-future D2-authorized slice owns the contract correction across
-`.github/workflows/release-promote.yml`,
-`.github/workflows/_publish-stable-pointer.yml`,
-`.github/workflows/_publish-promotion-ledger.yml`,
-`.github/workflows/_publish-github-release.yml`, and
-`.github/workflows/_verify-registries.yml`,
-`.github/workflows/_publish-runtime-github-release.yml` for the existing
-runtime-release lane where applicable,
-`tools/create-promotion-ledger.ts`, `tools/update-release-index.ts`,
-`tools/three-project-acceptance.ts`, the proposed
-`packages/capture-acceptance-contract/` package/bundle, and
-`tools/acceptance-contract.ts` as its consumer adapter. The existing symbols
-are `parseArguments`/`main`, `updateReleaseIndex`/`main`,
-`runAcceptanceSequence`/`runCaptureWorkbenchAcceptance` and the three
-manifest validators, plus `writeAcceptanceManifest`/
-`readAcceptanceManifestTolerant`; the adapter may consume the canonical package
-but is not schema/codec/generator/manifest/hash authority. D5 must consume D4, publish every exact D3
-artifact through the registry and GitHub Release jobs, write its publication
-ledger, and remove the direct stable-pointer call/edge; no D5 path may invoke it
-transitively. A single-lane retry cannot terminalize D5 or dispatch D6 until all
-required lanes pass. D6 must be a fresh public
-download-back dispatch. D7 must be a separate
-downloaded-byte acceptance dispatch that runs the existing serial Capture ->
-Cert -> LAW owner. D8 must be a separate protected dispatch that consumes the
-D7 chain and expected pointer generation / digest, checks CAS, and only then
-invokes the stable-pointer adapter.
-
-No D6/D7 workflow-contract target or separate D8 dispatch exists in the current
-checkout. Their target/file creation is a discovery task in D2: inspect the
-resolved `capture-tools` project, create or assign the owner, then add focused
-contract tests before marking the slice GREEN. Existing publication, manifest,
-registry, and release-index tests are supporting checks, not proof that the
-future dispatch contracts already exist.
 
 ## Rejected framings
 
@@ -521,32 +357,8 @@ future dispatch contracts already exist.
   ownership proof.
 - Naming a Job for restart takeover, adopting a Job after restart, or weakening
   `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` to make recovery easier.
-- Treating D2/D2.5 as an installed-candidate gate, or letting D4 call
-  `stage-product-runtime`, a build/source path, or a mutable URL. The future
-  D4 target must accept externally supplied D3 root/id/digests; the existing
-  `acceptance-real` target is non-D4.
 - A second producer runner beside
   `tools/three-project-acceptance.ts:runAcceptanceSequence`.
-- Rebuilding or republishing between D3/D4/D5, accepting a local candidate in
-  D7, or moving the stable pointer before D7.
-
-## Review and rollback
-
-Standards review checks repository conventions, exact current-code paths,
-target validity, links/anchors/fences, privacy, active README portability,
-generated-file discipline, and staged scope. Specification review checks
-interface depth, OCR-only behavior, compute truth, journal/reconciler
-semantics, identity tiers, acceptance thresholds/order, release channels,
-publication byte equality, and rollback. Neither report is a gate until it
-names the exact post-D0 HEAD and external check/PR metadata.
-
-A failed gate stops later work and preserves sanitized evidence, journals,
-ledgers, and rollback references. Before publication, retain the failed
-candidate and stop. After publication, rollback is producer supersession only:
-publish a corrected successor through the immutable candidate/D5-D8 chain and
-mark the defective release superseded through the protected producer index
-operation. Never overwrite published `0.4.2` bytes or directly revert the
-stable pointer; never reset, rebase, amend, or broad-delete. Any later content
-commit invalidates D1 and requires a fresh exact-head review. This record claims
-no feature code, model run, candidate, publication, download-back, published
-acceptance, or stable-pointer mutation.
+- Rebuilding or republishing between candidate acceptance and publication,
+  accepting a local candidate as published acceptance, or moving the stable
+  pointer before published acceptance.

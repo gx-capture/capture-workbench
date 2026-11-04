@@ -1,10 +1,12 @@
 # Capture Workbench
 
-Capture Workbench is a local-first capture platform for turning PDFs, images,
-and audio into validated, structured documents. The repository contains the
-user interface, the local Capture Runtime that performs extraction and
-structuring, the typed client SDKs, and the Windows desktop host that ties
-them together.
+Capture Workbench is a local-first capture platform with two features:
+document text recognition (OCR) for PDFs and images, and speech transcription
+(ASR) for recordings, optionally with speaker identification. Everything runs
+on the user's machine. The repository contains the user interface, the local
+Capture Runtime that performs extraction and structuring, the typed client
+SDKs, and the Windows desktop host that ties them together. The current
+release is 0.9.0.
 
 The same runtime contract is used by the desktop application and by trusted
 backend integrations. A host owns durable source and domain data; runtime jobs
@@ -15,7 +17,7 @@ are ephemeral and are deleted after the host has copied the data it needs.
 | Area | Location | Responsibility |
 | --- | --- | --- |
 | Desktop product | `apps/capture-workbench-desktop` | Tauri 2 Windows 11 x64 host, local library/history, native process lifecycle, and runtime integration |
-| UI application | `apps/capture-workbench` | Angular renderer used by the desktop product |
+| UI application | `apps/capture-workbench` | Angular renderer used by the desktop product: pages for OCR, ASR, history and settings, built with Tailwind and Spartan components |
 | Embeddable UI | `packages/capture-workbench-ui` | Angular component and framework-neutral `capture-workbench` custom element |
 | Capture Runtime | `packages/capture-runtime` | Authenticated loopback service for ingestion, extraction, OCR, transcription, streaming, setup, and structuring |
 | TypeScript SDK | `packages/capture-runtime-client` | Framework-neutral runtime client with discovery, authentication, v2 operations, SSE, retries, and typed errors |
@@ -33,10 +35,19 @@ are ephemeral and are deleted after the host has copied the data it needs.
 3. The host opens an ingestion and capture operation for a PDF, image, or
    audio file. The v2 API provides snapshots and authenticated SSE progress,
    with cancellation, retry, and reconciliation support.
-4. Capture Runtime extracts raw text or time-based audio segments. PDF and
-   image extraction can use the runtime-managed OCR engine; audio extraction
-   uses the runtime-managed TEA-ASR engine. Optional requirements are installed
-   through an explicit, checksum-verified setup flow.
+4. Capture Runtime extracts raw text or time-based audio segments. Each
+   engine is an install unit that the host installs on request through a
+   checksum-verified, resumable setup flow:
+
+   | Unit | What it does |
+   | --- | --- |
+   | `windowsml-ocr` | OCR for PDFs and images (PP-OCRv6 models on DirectML or the CPU) |
+   | `speech-recognition` | ASR with TEA-ASR 1.1 (CUDA) or TEA-ASR 1.1 mini (CPU) |
+   | `speaker-diarization` (optional) | Who spoke when, with NVIDIA Nemotron-3-Diarization on the CPU |
+   | `vertical-japanese-reader` (optional) | NDLOCR-Lite models for vertical Japanese pages; without it the regular OCR reads every page |
+
+   A result can name an optional unit that would have helped
+   (`suggestedUnits`), so the host can offer it.
 5. Structuring can be owned by the runtime's isolated Ollama process or by the
    host's provider. The runtime validates the resulting `CaptureDocument`,
    including schema, ordering, and raw provenance, before reporting completion.
@@ -54,13 +65,14 @@ page.
 
 After launching the application:
 
-1. Complete the runtime setup shown by the application.
-2. Approve optional OCR, TEA-ASR, or model requirements when a workflow needs
-   them. Downloads are verified before activation, and a failed replacement
-   does not discard the last working installation.
-3. Import a PDF, image, or audio file.
-4. Review progress and provenance, inspect the resulting document, and use the
-   local library to reopen, retry, export, or delete captures.
+1. Choose the features to install: 文件轉文字 (OCR) and 錄音轉逐字稿 (ASR,
+   with optional speaker identification) are installed separately, each with
+   its download size shown first. 設定 › 辨識功能 installs, cancels and retries
+   them later. Downloads are verified before activation, and a failed
+   replacement does not discard the last working installation.
+2. Import a PDF, image, or audio file.
+3. Review progress, inspect the result, and use 紀錄 (history) to reopen,
+   retry, export, or delete captures.
 
 The desktop host keeps the source and result library in its application data
 directory. Runtime credentials and local source paths stay in native code; they
@@ -179,7 +191,7 @@ host adapter, not runtime credentials.
 
 ## Develop from source
 
-The workspace uses Nx and requires Node.js 24 and pnpm 12.0.0 via Corepack,
+The workspace uses Nx and requires Node.js 24 and pnpm 12.8.2 via Corepack,
 Python 3.13 with `uv` for the runtime, and Rust for Tauri/native targets.
 
 ```powershell
