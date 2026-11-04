@@ -6,6 +6,10 @@ from datetime import UTC, datetime
 
 import pytest
 
+from capture_runtime.capture.infrastructure.streaming import (
+    InMemoryStreamingIngestionAdapter,
+    StreamingIngestionError,
+)
 from capture_runtime.contracts import (
     CaptureEngine,
     CaptureEventV2,
@@ -21,10 +25,6 @@ from capture_runtime.contracts import (
     StreamingCaptureStatus,
     StreamingEventType,
     StructuringMode,
-)
-from capture_runtime.streaming import (
-    InMemoryStreamingIngestionAdapter,
-    StreamingIngestionError,
 )
 
 SOURCE = CaptureSource(

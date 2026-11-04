@@ -6,7 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 import capture_runtime.ocr.infrastructure.ocr_projection as ocr_projection_module
-from capture_runtime.capture_extraction import CaptureExtractionOutcome
+from capture_runtime.capture.infrastructure.capture_extraction import CaptureExtractionOutcome
 from capture_runtime.constants import RUNTIME_VERSION
 from capture_runtime.contracts import (
     CaptureEngine,
@@ -855,7 +855,7 @@ def test_public_pipeline_boundary_retired_helpers_are_absent() -> None:
 def test_public_adapters_do_not_call_private_pipeline_execution() -> None:
     runtime_root = Path(__file__).resolve().parents[2]
     for relative_path in (
-        Path("src/capture_runtime/capture_extraction.py"),
+        Path("src/capture_runtime/capture/infrastructure/capture_extraction.py"),
         Path("src/capture_runtime/workers/ocr_main.py"),
     ):
         source = (runtime_root / relative_path).read_text(encoding="utf-8")

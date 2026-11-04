@@ -6,8 +6,8 @@ import asyncio
 import math
 from io import BytesIO
 
+from capture_runtime.capture.infrastructure.pdf_page_selection import is_pdf_page_selection
 from capture_runtime.ocr.infrastructure.ocr_projection import OcrPageManifest
-from capture_runtime.pdf_page_selection import is_pdf_page_selection
 
 
 class PdfPageSelectionError(ValueError):

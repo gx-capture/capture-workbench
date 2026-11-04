@@ -15,12 +15,13 @@ import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
-from capture_runtime.capture_extraction import (
+from capture_runtime.capture.infrastructure.capture_extraction import (
     CaptureExtractionOutcome,
     OcrExtractionFailure,
     StandaloneRuntimeCaptureExtractor,
 )
-from capture_runtime.capture_worker_client import WorkerClient
+from capture_runtime.capture.infrastructure.capture_worker_client import WorkerClient
+from capture_runtime.capture.infrastructure.source_sniffing import SniffedSource
 from capture_runtime.clock import SystemClock
 from capture_runtime.contract_set import SCHEMA_DIALECT
 from capture_runtime.contracts import (
@@ -46,7 +47,6 @@ from capture_runtime.ocr.infrastructure.ocr_execution_proof import (
     InMemoryOcrExecutionEvidenceSink,
 )
 from capture_runtime.ocr.infrastructure.ocr_projection import OcrPageInput, OcrPipeline
-from capture_runtime.source_sniffing import SniffedSource
 from capture_runtime.worker_client import InstalledEngine
 from capture_runtime.worker_contracts import WorkerResponse
 from tests.conftest import TOKEN
@@ -518,7 +518,9 @@ def test_streaming_capability_is_strictly_advertised(client: TestClient) -> None
 def test_streaming_capability_keeps_ocr_available_without_progressive_decoder(
     client: TestClient, monkeypatch
 ) -> None:
-    monkeypatch.setattr("capture_runtime.routes.streaming.progressive_decoder_ready", lambda: False)
+    monkeypatch.setattr(
+        "capture_runtime.capture.api.streaming.progressive_decoder_ready", lambda: False
+    )
 
     response = client.get("/v2/streaming/health/ready")
 

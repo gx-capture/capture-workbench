@@ -11,12 +11,23 @@ from typing import TypedDict
 
 from pydantic import ValidationError
 
-from capture_runtime.capture_extraction import (
+from capture_runtime.capture.infrastructure.capture_extraction import (
     CaptureExtractionOutcome,
     CaptureExtractor,
     OcrExtractionFailure,
     OcrSourcePreflightError,
     PdfPageSelectionError,
+)
+from capture_runtime.capture.infrastructure.source_sniffing import (
+    SNIFF_BYTES,
+    UnsupportedMediaError,
+)
+from capture_runtime.capture.infrastructure.streaming import MAX_STREAM_CHUNK_BYTES
+from capture_runtime.capture.infrastructure.streaming_repository import (
+    StreamingPartialNotFoundError,
+    StreamingRecordNotFoundError,
+    StreamingRepository,
+    StreamingTransitionError,
 )
 from capture_runtime.clock import Clock
 from capture_runtime.contracts import (
@@ -49,7 +60,6 @@ from capture_runtime.ocr.infrastructure.ocr_worker_result import OcrWorkerFailur
 from capture_runtime.provisioning.infrastructure.engine_installation import (
     ExtractionRuntimeUnavailableError,
 )
-from capture_runtime.source_sniffing import SNIFF_BYTES, UnsupportedMediaError
 from capture_runtime.speech.infrastructure.progressive_audio import (
     ProgressiveAudioError,
     ProgressiveSessionEvent,
@@ -59,13 +69,6 @@ from capture_runtime.speech.infrastructure.progressive_capture import (
     ProgressiveCaptureProcessor,
 )
 from capture_runtime.speech.infrastructure.progressive_decoder import ProgressiveDecoderError
-from capture_runtime.storage import (
-    StreamingPartialNotFoundError,
-    StreamingRecordNotFoundError,
-    StreamingRepository,
-    StreamingTransitionError,
-)
-from capture_runtime.streaming import MAX_STREAM_CHUNK_BYTES
 from capture_runtime.structuring.infrastructure.ollama.lifecycle_impl import RuntimeUnavailableError
 from capture_runtime.structuring.infrastructure.structuring import (
     StructuringValidationError,

@@ -3,7 +3,7 @@ from __future__ import annotations
 import io
 import wave
 
-from capture_runtime.audio_run_timeout import audio_run_timeout_seconds
+from capture_runtime.capture.infrastructure.audio_run_timeout import audio_run_timeout_seconds
 from capture_runtime.worker_process import DEFAULT_RUN_TIMEOUT_SECONDS
 
 

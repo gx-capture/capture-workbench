@@ -17,7 +17,7 @@ import capture_runtime.ocr.infrastructure.ocr_execution_evidence as execution_ev
 import capture_runtime.ocr.infrastructure.ocr_paddle_normalization as paddle_normalization
 import capture_runtime.ocr.infrastructure.ocr_windowsml_adapter as windowsml_adapter
 from capture_runtime._worker_payloads import WorkerRunResult, WorkerSegment
-from capture_runtime.capture_extraction import (
+from capture_runtime.capture.infrastructure.capture_extraction import (
     OcrExtractionFailure,
     OcrSourcePreflightError,
     PdfPageSelectionError,

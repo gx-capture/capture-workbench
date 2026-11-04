@@ -8,7 +8,9 @@ from typing import Any
 import pytest
 
 from capture_runtime._worker_payloads import WorkerRunResult, WorkerSegment, WorkerWord
-from capture_runtime.capture_extraction import StandaloneRuntimeCaptureExtractor
+from capture_runtime.capture.infrastructure.capture_extraction import (
+    StandaloneRuntimeCaptureExtractor,
+)
 from capture_runtime.clock import SystemClock
 from capture_runtime.config import ExtractionRuntimeConfig
 from capture_runtime.constants import RUNTIME_VERSION

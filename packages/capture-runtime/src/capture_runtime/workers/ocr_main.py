@@ -73,7 +73,7 @@ from capture_runtime.ocr.infrastructure.ocr_projection import (
     OcrRequest,
     OcrTerminalOutcome,
 )
-from capture_runtime.pdf_page_selection import is_pdf_page_selection
+from capture_runtime.capture.infrastructure.pdf_page_selection import is_pdf_page_selection
 from capture_runtime.worker_contracts import WorkerRequest
 from capture_runtime.workers.server import serve
 

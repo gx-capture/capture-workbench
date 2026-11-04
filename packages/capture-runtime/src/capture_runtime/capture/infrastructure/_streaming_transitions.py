@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from capture_runtime.capture.infrastructure._streaming_records import _IngestionRecord
 from capture_runtime.contracts import (
     CaptureFailureV2,
     CaptureOperationV2,
@@ -11,7 +12,6 @@ from capture_runtime.contracts import (
     StartCaptureV2,
     StreamingCaptureStatus,
 )
-from capture_runtime.storage._streaming_records import _IngestionRecord
 
 _TERMINAL_CAPTURE_STATUSES = frozenset(
     {
