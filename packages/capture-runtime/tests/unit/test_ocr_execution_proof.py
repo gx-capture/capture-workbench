@@ -9,18 +9,18 @@ from types import SimpleNamespace
 
 import pytest
 
-import capture_runtime.ocr_execution_proof as ocr_execution_proof
+import capture_runtime.ocr.infrastructure.ocr_execution_proof as ocr_execution_proof
 import capture_runtime.workers.ocr_main as ocr_main
 from capture_runtime.capture_worker_client import WorkerClient
 from capture_runtime.config import sanitized_child_environment
 from capture_runtime.constants import RUNTIME_VERSION
 from capture_runtime.contracts import OcrProvenanceV3
-from capture_runtime.ocr_execution_evidence import (
+from capture_runtime.ocr.infrastructure.ocr_execution_evidence import (
     OcrExecutionEvidence,
     OcrSessionDeviceProof,
     PaddleOcrExecutionEvidenceAdapter,
 )
-from capture_runtime.ocr_execution_proof import (
+from capture_runtime.ocr.infrastructure.ocr_execution_proof import (
     AcceptanceOcrExecutionEvidenceSink,
     InMemoryOcrExecutionEvidenceSink,
     NoopOcrExecutionEvidenceSink,
@@ -30,14 +30,14 @@ from capture_runtime.ocr_execution_proof import (
     acceptance_ocr_execution_evidence_sink_from_environment,
     acceptance_ocr_execution_runtime_sha256_from_environment,
 )
-from capture_runtime.ocr_page_result import OcrTextResult
-from capture_runtime.ocr_preflight import (
+from capture_runtime.ocr.infrastructure.ocr_page_result import OcrTextResult
+from capture_runtime.ocr.infrastructure.ocr_preflight import (
     OcrAdapterClass,
     OcrComputePlan,
     OcrGpuAdapter,
     OcrGpuCapabilitySnapshot,
 )
-from capture_runtime.ocr_worker_result import OcrWorkerFailure
+from capture_runtime.ocr.infrastructure.ocr_worker_result import OcrWorkerFailure
 from capture_runtime.worker_client import InstalledEngine
 from capture_runtime.worker_contracts import WorkerRequest, WorkerResponse
 

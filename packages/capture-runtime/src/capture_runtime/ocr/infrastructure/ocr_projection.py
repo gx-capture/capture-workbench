@@ -29,7 +29,7 @@ from capture_runtime.contracts import (
     OcrProvenanceV3,
     OcrRasterV3,
 )
-from capture_runtime.ocr_profile import load_profile_spec
+from capture_runtime.ocr.infrastructure.ocr_profile import load_profile_spec
 from capture_runtime.pdf_page_selection import is_ascending_page_numbers
 
 
@@ -899,7 +899,7 @@ class _OcrProjectionBuilder:
     def _packaged_contract_sha256() -> str:
         try:
             value = (
-                (Path(__file__).resolve().parent / "assets" / "contract-set.sha256")
+                (Path(__file__).resolve().parents[2] / "assets" / "contract-set.sha256")
                 .read_text(encoding="ascii")
                 .strip()
             )

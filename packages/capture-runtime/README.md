@@ -17,7 +17,7 @@ and boxed vertical passages.
 
 The optional unit `vertical-japanese-reader` delivers the NDLOCR-Lite models
 (no worker of its own; vendored layout code in
-`src/capture_runtime/_vendor/ndlocr_lite/`). A vertical page whose text has
+`src/capture_runtime/ocr/infrastructure/_vendor/ndlocr_lite/`). A vertical page whose text has
 kana is read by it (`ocr_vertical_routing.py`, `ocr_vertical_reader.py`);
 without the unit the page keeps the regular result and the capture names the
 unit in `suggestedUnits`. See the

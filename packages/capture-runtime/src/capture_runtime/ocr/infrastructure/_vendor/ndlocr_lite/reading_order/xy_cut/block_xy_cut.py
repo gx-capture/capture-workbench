@@ -342,7 +342,7 @@ def solve(bboxes, grid=None, plot_path=None, logger=None, scale=1.0):
     if grid is None:
         grid = get_optimal_grid(bboxes)
     if logger is None:
-        from capture_runtime._vendor.ndlocr_lite.reading_order.utils.logger import get_logger
+        from capture_runtime.ocr.infrastructure._vendor.ndlocr_lite.reading_order.utils.logger import get_logger
         logger = get_logger(__name__)
 
     bboxes = normalize_bboxes(bboxes, grid, scale)

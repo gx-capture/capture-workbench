@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from capture_runtime.ocr_alignment import (
+from capture_runtime.ocr.infrastructure.ocr_alignment import (
     AlignmentCollector,
     AlignmentContractError,
     UnsupportedAlignmentPipeline,

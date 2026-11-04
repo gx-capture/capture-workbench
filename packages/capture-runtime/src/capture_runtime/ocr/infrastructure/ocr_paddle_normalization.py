@@ -12,10 +12,16 @@ from dataclasses import dataclass
 from numbers import Real
 from typing import Any, NoReturn
 
-from capture_runtime.ocr_alignment import AlignmentContractError, AlignmentRecord
-from capture_runtime.ocr_composite_regions import CompositeSplit, plan_composite_splits
-from capture_runtime.ocr_page_result import OcrRegion
-from capture_runtime.ocr_region_lineage import RegionSource, validate_region_sources
+from capture_runtime.ocr.infrastructure.ocr_alignment import AlignmentContractError, AlignmentRecord
+from capture_runtime.ocr.infrastructure.ocr_composite_regions import (
+    CompositeSplit,
+    plan_composite_splits,
+)
+from capture_runtime.ocr.infrastructure.ocr_page_result import OcrRegion
+from capture_runtime.ocr.infrastructure.ocr_region_lineage import (
+    RegionSource,
+    validate_region_sources,
+)
 from capture_runtime.worker_probe import EngineRuntimeUnavailableError
 
 

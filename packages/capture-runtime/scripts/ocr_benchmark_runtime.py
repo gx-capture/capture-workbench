@@ -202,13 +202,18 @@ def run_baseline(
 ) -> None:
     import onnxruntime as ort
 
-    from capture_runtime.ocr_execution_evidence import PaddleOcrExecutionEvidenceAdapter
-    from capture_runtime.ocr_paddle_normalization import (
+    from capture_runtime.ocr.infrastructure.ocr_execution_evidence import (
+        PaddleOcrExecutionEvidenceAdapter,
+    )
+    from capture_runtime.ocr.infrastructure.ocr_paddle_normalization import (
         _paddle_payload,
         paddle_results_sequence,
     )
-    from capture_runtime.ocr_profile import load_profile_spec, validate_model_artifacts
-    from capture_runtime.ocr_windowsml_adapter import (
+    from capture_runtime.ocr.infrastructure.ocr_profile import (
+        load_profile_spec,
+        validate_model_artifacts,
+    )
+    from capture_runtime.ocr.infrastructure.ocr_windowsml_adapter import (
         WindowsMLOcrAdapter,
         _default_paddle_pipeline,
     )

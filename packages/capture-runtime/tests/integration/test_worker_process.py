@@ -12,7 +12,7 @@ import pytest
 
 from capture_runtime.capture_worker_client import WorkerClient
 from capture_runtime.contracts import OcrAdapterClass, OcrComputeMode
-from capture_runtime.ocr_worker_result import OcrWorkerFailure
+from capture_runtime.ocr.infrastructure.ocr_worker_result import OcrWorkerFailure
 from capture_runtime.worker_client import InstalledEngine
 from capture_runtime.worker_contracts import WorkerProtocolError, WorkerResponse
 from capture_runtime.worker_process import (

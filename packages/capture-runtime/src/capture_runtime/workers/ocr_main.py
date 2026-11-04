@@ -48,20 +48,23 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 _report_stage("python-import-pillow-complete")
 
 _report_stage("python-import-capture-runtime-start")
-from capture_runtime.ocr_offline_stubs import (
+from capture_runtime.ocr.infrastructure.ocr_offline_stubs import (
     install_offline_aistudio_stubs,
     install_offline_huggingface_stubs,
 )
-from capture_runtime.ocr_windowsml_adapter import ReusableOcrSession, WindowsMLOcrAdapter
+from capture_runtime.ocr.infrastructure.ocr_windowsml_adapter import (
+    ReusableOcrSession,
+    WindowsMLOcrAdapter,
+)
 from capture_runtime.constants import VERTICAL_READER_REQUIREMENT_ID
 from capture_runtime.contracts import CaptureSource
-from capture_runtime.image_normalization import bounded_scaled_dimensions
-from capture_runtime.ocr_preflight import (
+from capture_runtime.ocr.infrastructure.image_normalization import bounded_scaled_dimensions
+from capture_runtime.ocr.infrastructure.ocr_preflight import (
     NativeOcrGpuCapabilityProbe,
     OcrComputePlan,
     OcrExecutionPlan,
 )
-from capture_runtime.ocr_projection import (
+from capture_runtime.ocr.infrastructure.ocr_projection import (
     OcrEngineRun,
     OcrEngineRequest,
     OcrPageInput,

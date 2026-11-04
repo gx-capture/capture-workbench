@@ -39,13 +39,13 @@ from capture_runtime.contracts import (
     StreamingEventType,
     StructuringMode,
 )
-from capture_runtime.ocr_execution_proof import (
+from capture_runtime.ocr.infrastructure.ocr_execution_proof import (
     OcrExecutionDeviceProofV1,
     OcrExecutionEvidenceSink,
     acceptance_ocr_execution_evidence_sink_from_environment,
 )
-from capture_runtime.ocr_projection import OcrPipeline
-from capture_runtime.ocr_worker_result import OcrWorkerFailure
+from capture_runtime.ocr.infrastructure.ocr_projection import OcrPipeline
+from capture_runtime.ocr.infrastructure.ocr_worker_result import OcrWorkerFailure
 from capture_runtime.ollama.lifecycle_impl import RuntimeUnavailableError
 from capture_runtime.provisioning.infrastructure.engine_installation import (
     ExtractionRuntimeUnavailableError,

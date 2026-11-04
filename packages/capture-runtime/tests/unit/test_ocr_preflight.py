@@ -13,7 +13,7 @@ from capture_runtime.contracts import (
     OcrComputePreflightV2,
     OcrComputeReasonCode,
 )
-from capture_runtime.ocr_preflight import (
+from capture_runtime.ocr.infrastructure.ocr_preflight import (
     _DXGI_FACTORY1_VTABLE_IS_CURRENT,
     NativeOcrAdapterMapLease,
     OcrComputePreflight,

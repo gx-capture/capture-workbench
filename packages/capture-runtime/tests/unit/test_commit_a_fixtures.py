@@ -104,7 +104,7 @@ def test_commit_a_provenance_binds_bytes_and_fixed_revisions() -> None:
 
 
 def test_generator_declares_the_vertical_reader_as_the_runtime_does() -> None:
-    from capture_runtime.ocr_vertical_routing import vertical_reader_declaration
+    from capture_runtime.ocr.infrastructure.ocr_vertical_routing import vertical_reader_declaration
 
     pipeline = json.loads((FIXTURE_ROOT / "model/pipeline.json").read_text("utf-8"))
     assert generator.VERTICAL_READER == vertical_reader_declaration()

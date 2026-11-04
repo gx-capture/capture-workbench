@@ -20,21 +20,31 @@ from capture_runtime.contracts import (
     OcrComputePreflightV2,
     OcrProvenanceV3,
 )
-from capture_runtime.ocr_page_result import OcrRegion, OcrTextResult
-from capture_runtime.ocr_preflight import (
+from capture_runtime.ocr.infrastructure.ocr_page_result import OcrRegion, OcrTextResult
+from capture_runtime.ocr.infrastructure.ocr_preflight import (
     OcrComputePlan,
     OcrGpuAdapter,
     OcrGpuCapabilitySnapshot,
 )
-from capture_runtime.ocr_profile import CANONICAL_PROFILE_PATH, canonical_json_bytes
-from capture_runtime.ocr_projection import OcrEngineRequest, OcrPageInput, OcrPageManifest
-from capture_runtime.ocr_reading_order import plan_reading_order
-from capture_runtime.ocr_windowsml_adapter import WindowsMLOcrAdapter
-from capture_runtime.ocr_worker_result import (
+from capture_runtime.ocr.infrastructure.ocr_profile import (
+    CANONICAL_PROFILE_PATH,
+    canonical_json_bytes,
+)
+from capture_runtime.ocr.infrastructure.ocr_projection import (
+    OcrEngineRequest,
+    OcrPageInput,
+    OcrPageManifest,
+)
+from capture_runtime.ocr.infrastructure.ocr_reading_order import plan_reading_order
+from capture_runtime.ocr.infrastructure.ocr_windowsml_adapter import WindowsMLOcrAdapter
+from capture_runtime.ocr.infrastructure.ocr_worker_result import (
     _assert_ocr_progress_matches_final,
     parse_ocr_progress,
 )
-from capture_runtime.ocr_worker_run import parse_ocr_compute_preflight, parse_run_result
+from capture_runtime.ocr.infrastructure.ocr_worker_run import (
+    parse_ocr_compute_preflight,
+    parse_run_result,
+)
 from capture_runtime.worker_contracts import WorkerRequest
 
 

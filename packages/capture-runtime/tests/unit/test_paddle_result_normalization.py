@@ -9,14 +9,20 @@ from types import SimpleNamespace
 import pytest
 from PIL import Image
 
-import capture_runtime.ocr_windowsml_adapter as windowsml_adapter
-from capture_runtime.ocr_paddle_normalization import (
+import capture_runtime.ocr.infrastructure.ocr_windowsml_adapter as windowsml_adapter
+from capture_runtime.ocr.infrastructure.ocr_paddle_normalization import (
     PaddleResultNormalizationError,
     normalize_paddle_results,
 )
-from capture_runtime.ocr_preflight import OcrComputePlan, OcrGpuCapabilitySnapshot
-from capture_runtime.ocr_profile import CANONICAL_PROFILE_PATH, canonical_json_bytes
-from capture_runtime.ocr_windowsml_adapter import WindowsMLOcrAdapter
+from capture_runtime.ocr.infrastructure.ocr_preflight import (
+    OcrComputePlan,
+    OcrGpuCapabilitySnapshot,
+)
+from capture_runtime.ocr.infrastructure.ocr_profile import (
+    CANONICAL_PROFILE_PATH,
+    canonical_json_bytes,
+)
+from capture_runtime.ocr.infrastructure.ocr_windowsml_adapter import WindowsMLOcrAdapter
 from capture_runtime.worker_probe import EngineRuntimeUnavailableError
 
 

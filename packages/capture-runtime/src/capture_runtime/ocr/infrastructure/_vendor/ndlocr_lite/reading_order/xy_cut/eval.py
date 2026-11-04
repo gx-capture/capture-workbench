@@ -9,10 +9,10 @@ import re
 import xml.etree.ElementTree as ET
 
 
-from capture_runtime._vendor.ndlocr_lite.reading_order.order.reorder import sort_lines
-from capture_runtime._vendor.ndlocr_lite.reading_order.utils.logger import get_logger
-from capture_runtime._vendor.ndlocr_lite.reading_order.utils.time import TimeKeeper
-from capture_runtime._vendor.ndlocr_lite.reading_order.xy_cut.block_xy_cut import solve
+from capture_runtime.ocr.infrastructure._vendor.ndlocr_lite.reading_order.order.reorder import sort_lines
+from capture_runtime.ocr.infrastructure._vendor.ndlocr_lite.reading_order.utils.logger import get_logger
+from capture_runtime.ocr.infrastructure._vendor.ndlocr_lite.reading_order.utils.time import TimeKeeper
+from capture_runtime.ocr.infrastructure._vendor.ndlocr_lite.reading_order.xy_cut.block_xy_cut import solve
 
 
 def eval_xml(root, time_keeper=None, logger=None, plot_path=None, line_width_scale=1.0, smoothing=True, **_):

@@ -12,10 +12,10 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from capture_runtime.contracts import OcrProvenanceV3
-from capture_runtime.ocr_composite_regions import CompositeSplit
-from capture_runtime.ocr_reading_order import ReadingPlan
-from capture_runtime.ocr_region_lineage import RegionSource
-from capture_runtime.ocr_vertical_routing import PageRoute
+from capture_runtime.ocr.infrastructure.ocr_composite_regions import CompositeSplit
+from capture_runtime.ocr.infrastructure.ocr_reading_order import ReadingPlan
+from capture_runtime.ocr.infrastructure.ocr_region_lineage import RegionSource
+from capture_runtime.ocr.infrastructure.ocr_vertical_routing import PageRoute
 from capture_runtime.worker_probe import EngineProbe
 
 

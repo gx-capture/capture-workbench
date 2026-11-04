@@ -14,8 +14,16 @@ from pathlib import Path
 
 UPSTREAM_REPOSITORY = "https://github.com/ndl-lab/ndlocr-lite"
 UPSTREAM_COMMIT = "636d1cfeb1331f89f4048f416e49e23a09a714b5"
-PACKAGE = "capture_runtime._vendor.ndlocr_lite"
-TARGET = Path(__file__).resolve().parents[1] / "src" / "capture_runtime" / "_vendor" / "ndlocr_lite"
+PACKAGE = "capture_runtime.ocr.infrastructure._vendor.ndlocr_lite"
+TARGET = (
+    Path(__file__).resolve().parents[1]
+    / "src"
+    / "capture_runtime"
+    / "ocr"
+    / "infrastructure"
+    / "_vendor"
+    / "ndlocr_lite"
+)
 EMPTY = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 SOURCES = {
     "LICENCE": "12538e73c4a1e05fc0c0b75d9d4de657f139d94ebc5f44b03a84cc1f793358f0",

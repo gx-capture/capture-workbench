@@ -25,7 +25,8 @@ WHISPER_PRIMARY_REVISION: Final = "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf"
 WHISPER_FALLBACK_REVISION: Final = "536b0662742c02347bc0e980a01041f333bce120"
 NDLOCR_LITE_REPOSITORY: Final = "ndl-lab/ndlocr-lite"
 NDLOCR_LITE_REVISION: Final = "636d1cfeb1331f89f4048f416e49e23a09a714b5"
-# Kept equal to capture_runtime.ocr_vertical_routing.vertical_reader_declaration();
+# Kept equal to
+# capture_runtime.ocr.infrastructure.ocr_vertical_routing.vertical_reader_declaration();
 # this script runs without the runtime package, and a unit test compares the two.
 VERTICAL_READER: Final[dict[str, object]] = {
     "artifacts": [

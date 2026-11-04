@@ -6,11 +6,11 @@ from types import SimpleNamespace
 import pytest
 
 from capture_runtime.contracts import OcrAdapterClass, OcrComputeMode
-from capture_runtime.ocr_execution_evidence import (
+from capture_runtime.ocr.infrastructure.ocr_execution_evidence import (
     OcrSessionDeviceProof,
     PaddleOcrExecutionEvidenceAdapter,
 )
-from capture_runtime.ocr_preflight import (
+from capture_runtime.ocr.infrastructure.ocr_preflight import (
     OcrComputePlan,
     OcrExecutionPlan,
     OcrGpuAdapter,

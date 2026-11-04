@@ -55,18 +55,20 @@ from capture_runtime.diarization.infrastructure.speaker_alignment import (
     speaker_segments,
 )
 from capture_runtime.diarization.infrastructure.speaker_worker_result import WorkerDiarizationResult
-from capture_runtime.image_normalization import (
+from capture_runtime.ocr.infrastructure.image_normalization import (
     image_ocr_scale,
     normalize_image_content,
     oriented_image_dimensions,
     png_raster_dimensions,
 )
-from capture_runtime.ocr_execution_proof import (
+from capture_runtime.ocr.infrastructure.ocr_execution_proof import (
     OcrExecutionDeviceProofV1,
     acceptance_ocr_execution_runtime_sha256_from_environment,
 )
-from capture_runtime.ocr_paddle_normalization import PaddleResultNormalizationError
-from capture_runtime.ocr_projection import (
+from capture_runtime.ocr.infrastructure.ocr_paddle_normalization import (
+    PaddleResultNormalizationError,
+)
+from capture_runtime.ocr.infrastructure.ocr_projection import (
     OcrEngineFailure,
     OcrEngineRequest,
     OcrEngineRun,
@@ -77,10 +79,10 @@ from capture_runtime.ocr_projection import (
     OcrRequest,
     OcrTerminalOutcome,
 )
-from capture_runtime.ocr_vertical_routing import (
+from capture_runtime.ocr.infrastructure.ocr_vertical_routing import (
     MODEL_SUBDIRECTORY as VERTICAL_READER_SUBDIRECTORY,
 )
-from capture_runtime.ocr_worker_result import (
+from capture_runtime.ocr.infrastructure.ocr_worker_result import (
     OcrWorkerFailure,
     OcrWorkerRunResult,
     WorkerOcrProgress,
@@ -97,7 +99,7 @@ from capture_runtime.worker_probe import EngineRuntimeUnavailableError
 from capture_runtime.worker_process import DEFAULT_RUN_TIMEOUT_SECONDS, WorkerCancelledError
 
 if TYPE_CHECKING:
-    from capture_runtime.ocr_page_result import OcrAdapter
+    from capture_runtime.ocr.infrastructure.ocr_page_result import OcrAdapter
     from capture_runtime.speech.infrastructure.speech_transcript import WhisperAdapter
 
 

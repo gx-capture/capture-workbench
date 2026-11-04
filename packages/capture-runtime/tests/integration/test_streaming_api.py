@@ -41,11 +41,11 @@ from capture_runtime.contracts import (
     StructuringMode,
     TimeLocator,
 )
-from capture_runtime.ocr_execution_proof import (
+from capture_runtime.ocr.infrastructure.ocr_execution_proof import (
     AcceptanceOcrExecutionEvidenceSink,
     InMemoryOcrExecutionEvidenceSink,
 )
-from capture_runtime.ocr_projection import OcrPageInput, OcrPipeline
+from capture_runtime.ocr.infrastructure.ocr_projection import OcrPageInput, OcrPipeline
 from capture_runtime.source_sniffing import SniffedSource
 from capture_runtime.worker_client import InstalledEngine
 from capture_runtime.worker_contracts import WorkerResponse

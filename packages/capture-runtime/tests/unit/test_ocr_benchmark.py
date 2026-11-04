@@ -9,7 +9,9 @@ from pathlib import Path
 
 import pytest
 
-from capture_runtime.ocr_paddle_normalization import PaddleResultNormalizationError
+from capture_runtime.ocr.infrastructure.ocr_paddle_normalization import (
+    PaddleResultNormalizationError,
+)
 
 MODULE_PATH = Path(__file__).resolve().parents[2] / "scripts" / "ocr_benchmark.py"
 spec = importlib.util.spec_from_file_location("ocr_benchmark", MODULE_PATH)

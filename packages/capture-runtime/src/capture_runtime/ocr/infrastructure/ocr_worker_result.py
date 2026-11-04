@@ -13,7 +13,7 @@ from typing import Literal, cast
 
 from capture_runtime._worker_payloads import SHA256_PROVENANCE, WorkerResultError, WorkerRunResult
 from capture_runtime.contracts import CaptureFailureV2, OcrProvenanceV3
-from capture_runtime.ocr_projection import OcrBoxInput
+from capture_runtime.ocr.infrastructure.ocr_projection import OcrBoxInput
 from capture_runtime.worker_process import WorkerExecutionError, WorkerFailureDiagnostics
 
 

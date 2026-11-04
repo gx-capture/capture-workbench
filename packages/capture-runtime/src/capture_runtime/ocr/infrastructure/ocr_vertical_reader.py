@@ -33,7 +33,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from capture_runtime.ocr_vertical_routing import (
+from capture_runtime.ocr.infrastructure.ocr_vertical_routing import (
     CHARSET,
     CLASSES,
     DERIVATION_ONNXRUNTIME,
@@ -402,8 +402,12 @@ def _ordered_layout(
 ) -> ET.Element:
     """Upstream ``_run_ocr_on_image_array`` up to the ordered line elements."""
 
-    from capture_runtime._vendor.ndlocr_lite.ndl_parser import convert_to_xml_string3
-    from capture_runtime._vendor.ndlocr_lite.reading_order.xy_cut.eval import eval_xml
+    from capture_runtime.ocr.infrastructure._vendor.ndlocr_lite.ndl_parser import (
+        convert_to_xml_string3,
+    )
+    from capture_runtime.ocr.infrastructure._vendor.ndlocr_lite.reading_order.xy_cut.eval import (
+        eval_xml,
+    )
 
     blocks: list[list[Any]] = []
     by_class: dict[int, list[list[Any]]] = {index: [] for index in range(17)}
