@@ -13,7 +13,7 @@ import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol, cast
 
 from capture_runtime._pdf_source import (
     PdfPageSelectionError,
@@ -24,6 +24,7 @@ from capture_runtime._pdf_source import (
     render_pdf_page,
     selected_pdf_pages,
 )
+from capture_runtime._worker_payloads import WorkerRunResult
 from capture_runtime.audio_run_timeout import audio_run_timeout_seconds
 from capture_runtime.clock import Clock
 from capture_runtime.config import ExtractionRuntimeConfig
@@ -78,21 +79,73 @@ from capture_runtime.ocr_projection import (
 from capture_runtime.ocr_vertical_routing import (
     MODEL_SUBDIRECTORY as VERTICAL_READER_SUBDIRECTORY,
 )
+from capture_runtime.ocr_worker_result import (
+    OcrWorkerFailure,
+    OcrWorkerRunResult,
+    WorkerOcrProgress,
+)
 from capture_runtime.pdf_page_selection import is_ascending_page_numbers
 from capture_runtime.source_sniffing import SniffedSource, sniff_source
 from capture_runtime.speaker_alignment import TimedWord, speaker_samples, speaker_segments
-from capture_runtime.worker_client import (
-    OcrWorkerFailure,
-    WorkerDiarizationResult,
-    WorkerOcrProgress,
-    WorkerRunResult,
-)
+from capture_runtime.speaker_worker_result import WorkerDiarizationResult
+from capture_runtime.worker_client import InstalledEngine
 from capture_runtime.worker_probe import EngineRuntimeUnavailableError
 from capture_runtime.worker_process import DEFAULT_RUN_TIMEOUT_SECONDS, WorkerCancelledError
 
 if TYPE_CHECKING:
     from capture_runtime.ocr_page_result import OcrAdapter
     from capture_runtime.speech_transcript import WhisperAdapter
+
+
+_OcrRunResult = OcrWorkerRunResult[OcrExecutionDeviceProofV1]
+
+
+class _EngineWorkerClient(Protocol):
+    """The capture aggregate's run and diarize, seen through the kernel client.
+
+    EngineInstallationManager types the shared client as the kernel, which
+    declares probe and shutdown. Production injects the aggregate.
+    """
+
+    async def run(
+        self,
+        engine: InstalledEngine,
+        *,
+        source_path: Path,
+        media_type: str,
+        options: dict[str, object],
+        cancel_event: asyncio.Event,
+        timeout_seconds: float = ...,
+        ocr_progress: Callable[[int, int], None] | None = ...,
+        on_permille: Callable[[int], None] | None = ...,
+        vertical_reader_dir: Path | None = ...,
+    ) -> WorkerRunResult: ...
+
+    async def run_ocr(
+        self,
+        engine: InstalledEngine,
+        *,
+        source_path: Path,
+        media_type: str,
+        options: dict[str, object],
+        cancel_event: asyncio.Event,
+        timeout_seconds: float = ...,
+        ocr_progress: Callable[[int, int], None] | None = ...,
+        on_permille: Callable[[int], None] | None = ...,
+        vertical_reader_dir: Path | None = ...,
+    ) -> _OcrRunResult: ...
+
+    async def diarize(
+        self,
+        engine: InstalledEngine,
+        *,
+        source_path: Path,
+        media_type: str,
+        options: dict[str, object],
+        cancel_event: asyncio.Event,
+        timeout_seconds: float = ...,
+        on_permille: Callable[[int], None] | None = ...,
+    ) -> WorkerDiarizationResult: ...
 
 
 class OcrSourcePreflightError(RuntimeError):
@@ -214,7 +267,7 @@ class _WorkerOcrEngineAdapter:
 
     def __init__(
         self,
-        result: WorkerRunResult,
+        result: _OcrRunResult,
         engine: OcrProvenanceV3,
     ) -> None:
         self._result = result
@@ -487,8 +540,7 @@ class StandaloneRuntimeCaptureExtractor:
                 expected_ocr_pages = self._preflight_image_manifest(content, cancel_event)
                 _report_pages_known(ocr_progress, expected_ocr_pages)
                 try:
-                    result = await self._run_worker(
-                        WINDOWSML_REQUIREMENT_ID,
+                    result = await self._run_ocr_worker(
                         content,
                         sniffed.media_type,
                         {
@@ -532,7 +584,7 @@ class StandaloneRuntimeCaptureExtractor:
             else:
                 if pdf_page_numbers is not None:
                     raise ValueError("PDF page selection is only valid for PDF sources.")
-                result = await self._run_worker(
+                speech_result = await self._run_worker(
                     SPEECH_RECOGNITION_REQUIREMENT_ID,
                     content,
                     sniffed.media_type,
@@ -549,8 +601,8 @@ class StandaloneRuntimeCaptureExtractor:
                         content, self.config.max_audio_duration_ms
                     ),
                 )
-                engine = self._capture_engine(result, expected_engine="speech-recognition")
-                warnings = list(result.warnings)
+                engine = self._capture_engine(speech_result, expected_engine="speech-recognition")
+                warnings = list(speech_result.warnings)
                 if identify_speakers:
                     diarization = await self._run_diarization(
                         content,
@@ -561,7 +613,7 @@ class StandaloneRuntimeCaptureExtractor:
                             content, self.config.max_audio_duration_ms
                         ),
                     )
-                    segments, speakers = _speaker_capture_segments(result, diarization)
+                    segments, speakers = _speaker_capture_segments(speech_result, diarization)
                     diarization_engine = CaptureEngine(
                         engine=diarization.engine,
                         model=diarization.model,
@@ -572,7 +624,7 @@ class StandaloneRuntimeCaptureExtractor:
                     )
                     warnings.extend(diarization.warnings)
                 else:
-                    segments = self._time_segments(result)
+                    segments = self._time_segments(speech_result)
         except WorkerCancelledError as error:
             raise asyncio.CancelledError from error
         except OcrWorkerFailure as error:
@@ -613,15 +665,14 @@ class StandaloneRuntimeCaptureExtractor:
         page_manifest: tuple[OcrPageManifest, ...],
         page_numbers: tuple[int, ...] | None = None,
         ocr_progress: Callable[[int, int], None] | None = None,
-    ) -> WorkerRunResult:
+    ) -> _OcrRunResult:
         options: dict[str, object] = {
             "maxPages": self.config.max_pdf_pages,
             "renderScale": self.config.ocr_render_scale,
         }
         if page_numbers is not None:
             options["pageNumbers"] = list(page_numbers)
-        return await self._run_worker(
-            WINDOWSML_REQUIREMENT_ID,
+        return await self._run_ocr_worker(
             content,
             "application/pdf",
             options,
@@ -633,7 +684,7 @@ class StandaloneRuntimeCaptureExtractor:
     def _worker_projection(
         self,
         source: CaptureSource,
-        result: WorkerRunResult,
+        result: _OcrRunResult,
         engine: OcrProvenanceV3,
         *,
         cancel_event: asyncio.Event,
@@ -656,19 +707,15 @@ class StandaloneRuntimeCaptureExtractor:
             raise OcrExtractionFailure(failure=outcome.failure, projection=outcome.projection)
         return outcome
 
-    async def _run_worker(
+    async def _prepare_worker_run(
         self,
         requirement_id: str,
         content: bytes,
         media_type: str,
         options: dict[str, object],
-        cancel_event: asyncio.Event,
-        *,
-        page_manifest: tuple[OcrPageManifest, ...] | None = None,
-        ocr_progress: Callable[[int, int], None] | None = None,
-        progress: Callable[[int], None] | None = None,
-        timeout_seconds: float = DEFAULT_RUN_TIMEOUT_SECONDS,
-    ) -> WorkerRunResult:
+    ) -> tuple[InstalledEngine, Path, dict[str, object], Path | None]:
+        """Resolve the engine and write the source file. The caller deletes that file."""
+
         assert self.engine_manager is not None
         worker_options = dict(options)
         try:
@@ -720,14 +767,81 @@ class StandaloneRuntimeCaptureExtractor:
         vertical_reader_dir = None
         if requirement_id == WINDOWSML_REQUIREMENT_ID:
             vertical_reader_dir = await self._vertical_reader_dir()
-        path = self._worker_source(content, media_type)
+        return (
+            engine,
+            self._worker_source(content, media_type),
+            worker_options,
+            vertical_reader_dir,
+        )
+
+    async def _run_ocr_worker(
+        self,
+        content: bytes,
+        media_type: str,
+        options: dict[str, object],
+        cancel_event: asyncio.Event,
+        *,
+        page_manifest: tuple[OcrPageManifest, ...] | None = None,
+        ocr_progress: Callable[[int, int], None] | None = None,
+        progress: Callable[[int], None] | None = None,
+        timeout_seconds: float = DEFAULT_RUN_TIMEOUT_SECONDS,
+    ) -> _OcrRunResult:
+        engine, path, worker_options, vertical_reader_dir = await self._prepare_worker_run(
+            WINDOWSML_REQUIREMENT_ID,
+            content,
+            media_type,
+            options,
+        )
         try:
             if page_manifest is not None:
                 worker_options = {
                     **worker_options,
                     "pageManifest": self.ocr_pipeline.serialize_manifest(page_manifest),
                 }
-            return await self.engine_manager.worker_client.run(
+            assert self.engine_manager is not None
+            worker_client = cast(_EngineWorkerClient, self.engine_manager.worker_client)
+            return await worker_client.run_ocr(
+                engine,
+                source_path=path,
+                media_type=media_type,
+                options=worker_options,
+                cancel_event=cancel_event,
+                timeout_seconds=timeout_seconds,
+                ocr_progress=ocr_progress,
+                on_permille=progress,
+                vertical_reader_dir=vertical_reader_dir,
+            )
+        finally:
+            path.unlink(missing_ok=True)
+
+    async def _run_worker(
+        self,
+        requirement_id: str,
+        content: bytes,
+        media_type: str,
+        options: dict[str, object],
+        cancel_event: asyncio.Event,
+        *,
+        page_manifest: tuple[OcrPageManifest, ...] | None = None,
+        ocr_progress: Callable[[int, int], None] | None = None,
+        progress: Callable[[int], None] | None = None,
+        timeout_seconds: float = DEFAULT_RUN_TIMEOUT_SECONDS,
+    ) -> WorkerRunResult:
+        engine, path, worker_options, vertical_reader_dir = await self._prepare_worker_run(
+            requirement_id,
+            content,
+            media_type,
+            options,
+        )
+        try:
+            if page_manifest is not None:
+                worker_options = {
+                    **worker_options,
+                    "pageManifest": self.ocr_pipeline.serialize_manifest(page_manifest),
+                }
+            assert self.engine_manager is not None
+            worker_client = cast(_EngineWorkerClient, self.engine_manager.worker_client)
+            return await worker_client.run(
                 engine,
                 source_path=path,
                 media_type=media_type,
@@ -788,7 +902,8 @@ class StandaloneRuntimeCaptureExtractor:
             )
         path = self._worker_source(content, media_type)
         try:
-            return await self.engine_manager.worker_client.diarize(
+            worker_client = cast(_EngineWorkerClient, self.engine_manager.worker_client)
+            return await worker_client.diarize(
                 engine,
                 source_path=path,
                 media_type=media_type,
@@ -1001,7 +1116,7 @@ class StandaloneRuntimeCaptureExtractor:
 
     @staticmethod
     def _validate_worker_segments_against_projection(
-        result: WorkerRunResult,
+        result: _OcrRunResult,
         projection: CaptureOcrProjectionV3,
     ) -> None:
         """Reject a legacy segment envelope that diverges from OCR pages.

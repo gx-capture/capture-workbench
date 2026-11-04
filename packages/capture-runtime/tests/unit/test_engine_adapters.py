@@ -16,6 +16,7 @@ from PIL import Image
 import capture_runtime.ocr_execution_evidence as execution_evidence
 import capture_runtime.ocr_paddle_normalization as paddle_normalization
 import capture_runtime.ocr_windowsml_adapter as windowsml_adapter
+from capture_runtime._worker_payloads import WorkerRunResult, WorkerSegment
 from capture_runtime.capture_extraction import (
     OcrExtractionFailure,
     OcrSourcePreflightError,
@@ -47,18 +48,17 @@ from capture_runtime.ocr_profile import (
 from capture_runtime.ocr_projection import OcrBoxInput
 from capture_runtime.ocr_vertical_routing import VerticalLayoutError
 from capture_runtime.ocr_windowsml_adapter import WindowsMLOcrAdapter
+from capture_runtime.ocr_worker_result import (
+    OcrWorkerFailure,
+    OcrWorkerRunResult,
+    WorkerOcrPage,
+    WorkerOcrProgress,
+)
 from capture_runtime.ollama import (
     IsolatedOllamaLifecycle,
 )
 from capture_runtime.speech_transcript import WhisperTextSegment, WhisperTranscriptionResult
-from capture_runtime.worker_client import (
-    InstalledEngine,
-    OcrWorkerFailure,
-    WorkerOcrPage,
-    WorkerOcrProgress,
-    WorkerRunResult,
-    WorkerSegment,
-)
+from capture_runtime.worker_client import InstalledEngine
 from capture_runtime.worker_probe import EngineProbe, EngineRuntimeUnavailableError
 
 
@@ -4118,7 +4118,7 @@ def test_worker_backed_image_is_enlarged_as_its_manifest_says(
         def __init__(self) -> None:
             self.options: dict[str, object] | None = None
 
-        async def run(self, _engine: InstalledEngine, **kwargs: object) -> WorkerRunResult:
+        async def run_ocr(self, _engine: InstalledEngine, **kwargs: object) -> OcrWorkerRunResult:
             self.options = kwargs["options"]  # type: ignore[assignment]
             raise Recorded
 
@@ -4164,9 +4164,9 @@ def test_worker_backed_pdf_dispatches_every_page_to_ocr(tmp_path: Path) -> None:
         def __init__(self) -> None:
             self.options: dict[str, object] | None = None
 
-        async def run(self, _engine: InstalledEngine, **kwargs: object) -> WorkerRunResult:
+        async def run_ocr(self, _engine: InstalledEngine, **kwargs: object) -> OcrWorkerRunResult:
             self.options = kwargs["options"]  # type: ignore[assignment]
-            return WorkerRunResult(
+            return OcrWorkerRunResult(
                 segments=(WorkerSegment(0, "Rendered page one", page=1),),
                 engine="windowsml-ocr",
                 model="pp-ocrv6-medium-windowsml",
@@ -4281,9 +4281,9 @@ def test_worker_backed_pdf_page_scope_dispatches_only_page_one_and_records_scope
         def __init__(self) -> None:
             self.options: dict[str, object] | None = None
 
-        async def run(self, _engine: InstalledEngine, **kwargs: object) -> WorkerRunResult:
+        async def run_ocr(self, _engine: InstalledEngine, **kwargs: object) -> OcrWorkerRunResult:
             self.options = kwargs["options"]  # type: ignore[assignment]
-            return WorkerRunResult(
+            return OcrWorkerRunResult(
                 segments=(WorkerSegment(0, "Rendered page one", page=1),),
                 engine="windowsml-ocr",
                 model="pp-ocrv6-medium-windowsml",
@@ -4390,8 +4390,8 @@ def test_worker_ocr_segments_must_match_canonical_projection(
     canonical_second_page_text: str,
 ) -> None:
     class DivergingWorkerClient:
-        async def run(self, _engine: InstalledEngine, **_kwargs: object) -> WorkerRunResult:
-            return WorkerRunResult(
+        async def run_ocr(self, _engine: InstalledEngine, **_kwargs: object) -> OcrWorkerRunResult:
+            return OcrWorkerRunResult(
                 segments=segments,
                 engine="windowsml-ocr",
                 model="pp-ocrv6-medium-windowsml",
@@ -4474,8 +4474,8 @@ def test_worker_ocr_projection_drives_raw_segments_for_perspective_boxes(
     )
 
     class PerspectiveWorkerClient:
-        async def run(self, _engine: InstalledEngine, **_kwargs: object) -> WorkerRunResult:
-            return WorkerRunResult(
+        async def run_ocr(self, _engine: InstalledEngine, **_kwargs: object) -> OcrWorkerRunResult:
+            return OcrWorkerRunResult(
                 segments=(WorkerSegment(0, "Perspective page one", page=1),),
                 engine="windowsml-ocr",
                 model="pp-ocrv6-medium-windowsml",
@@ -4614,8 +4614,8 @@ def test_worker_terminal_cardinality_is_rejected_before_raw_segments(
         segments = (WorkerSegment(0, "Page 1", page=1),)
 
     class MalformedWorkerClient:
-        async def run(self, _engine: InstalledEngine, **_kwargs: object) -> WorkerRunResult:
-            return WorkerRunResult(
+        async def run_ocr(self, _engine: InstalledEngine, **_kwargs: object) -> OcrWorkerRunResult:
+            return OcrWorkerRunResult(
                 segments=segments,
                 engine="windowsml-ocr",
                 model="pp-ocrv6-medium-windowsml",
@@ -4687,8 +4687,8 @@ def test_worker_projection_cancellation_does_not_become_success_or_protocol(
             return self.checks >= cancel_check
 
     class ValidWorkerClient:
-        async def run(self, _engine: InstalledEngine, **_kwargs: object) -> WorkerRunResult:
-            return WorkerRunResult(
+        async def run_ocr(self, _engine: InstalledEngine, **_kwargs: object) -> OcrWorkerRunResult:
+            return OcrWorkerRunResult(
                 segments=(WorkerSegment(0, "Rendered page one", page=1),),
                 engine="windowsml-ocr",
                 model="pp-ocrv6-medium-windowsml",
@@ -4753,8 +4753,8 @@ def test_worker_all_empty_terminal_is_failed_with_readable_no_text_projection(
     tmp_path: Path,
 ) -> None:
     class EmptyWorkerClient:
-        async def run(self, _engine: InstalledEngine, **_kwargs: object) -> WorkerRunResult:
-            return WorkerRunResult(
+        async def run_ocr(self, _engine: InstalledEngine, **_kwargs: object) -> OcrWorkerRunResult:
+            return OcrWorkerRunResult(
                 segments=(),
                 engine="windowsml-ocr",
                 model="pp-ocrv6-medium-windowsml",
@@ -4841,8 +4841,8 @@ def test_worker_provenance_mismatch_discards_untrusted_progress_prefix(
     )
 
     class MismatchedWorkerClient:
-        async def run(self, _engine: InstalledEngine, **_kwargs: object) -> WorkerRunResult:
-            return WorkerRunResult(
+        async def run_ocr(self, _engine: InstalledEngine, **_kwargs: object) -> OcrWorkerRunResult:
+            return OcrWorkerRunResult(
                 segments=(WorkerSegment(0, "valid prefix", page=1),),
                 engine="wrong-ocr-engine",
                 model="wrong-model",
@@ -4960,7 +4960,7 @@ def test_worker_failure_projection_is_page_complete_and_sanitized(
         )
 
     class FailingWorkerClient:
-        async def run(self, _engine: InstalledEngine, **_kwargs: object) -> WorkerRunResult:
+        async def run_ocr(self, _engine: InstalledEngine, **_kwargs: object) -> OcrWorkerRunResult:
             raise OcrWorkerFailure(
                 kind=kind,  # type: ignore[arg-type]
                 progress=page_manifest(empty=empty_progress) if with_progress else None,
@@ -5020,7 +5020,7 @@ def test_worker_failure_preserves_cancellation_priority(tmp_path: Path) -> None:
     cancellation = asyncio.Event()
 
     class FailingWorkerClient:
-        async def run(self, _engine: InstalledEngine, **_kwargs: object) -> WorkerRunResult:
+        async def run_ocr(self, _engine: InstalledEngine, **_kwargs: object) -> OcrWorkerRunResult:
             cancellation.set()
             raise OcrWorkerFailure(kind="worker", progress=None)
 
@@ -5168,8 +5168,8 @@ def test_worker_ocr_manifest_dimensions_remain_strict(
     dimensions = {"width": 121, "height": 81}
 
     class MismatchedWorkerClient:
-        async def run(self, _engine: InstalledEngine, **_kwargs: object) -> WorkerRunResult:
-            return WorkerRunResult(
+        async def run_ocr(self, _engine: InstalledEngine, **_kwargs: object) -> OcrWorkerRunResult:
+            return OcrWorkerRunResult(
                 segments=(WorkerSegment(0, "Rendered page one", page=1),),
                 engine="windowsml-ocr",
                 model="pp-ocrv6-medium-windowsml",
@@ -5289,9 +5289,9 @@ def test_worker_backed_ocr_uses_the_reader_unit_and_reports_when_it_is_missed(
     (unit_dir / "vertical").mkdir(parents=True)
 
     class RecordingWorkerClient:
-        async def run(self, _engine: InstalledEngine, **kwargs: object) -> WorkerRunResult:
+        async def run_ocr(self, _engine: InstalledEngine, **kwargs: object) -> OcrWorkerRunResult:
             received.append(kwargs.get("vertical_reader_dir"))
-            return WorkerRunResult(
+            return OcrWorkerRunResult(
                 segments=(WorkerSegment(0, "Rendered page one", page=1),),
                 engine="windowsml-ocr",
                 model="pp-ocrv6-medium-windowsml",

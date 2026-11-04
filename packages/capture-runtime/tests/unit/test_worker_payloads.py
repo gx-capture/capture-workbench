@@ -7,11 +7,11 @@ from typing import Any
 
 import pytest
 
+from capture_runtime._worker_payloads import WorkerResultError
 from capture_runtime.contracts import OcrProvenanceV3
-from capture_runtime.worker_client import (
+from capture_runtime.ocr_worker_result import (
+    OcrWorkerRunResult,
     WorkerOcrPage,
-    WorkerResultError,
-    WorkerRunResult,
     _assert_ocr_progress_matches_final,
     _consecutive_progress_prefix,
     _OcrProgressConsistencyError,
@@ -60,8 +60,8 @@ def _frame(page: int, text: str = "hello") -> dict[str, Any]:
     return {"type": "ocr-page", "page": _page(page, text)}
 
 
-def _final(pages: tuple[WorkerOcrPage, ...], **changes: Any) -> WorkerRunResult:
-    result = WorkerRunResult(
+def _final(pages: tuple[WorkerOcrPage, ...], **changes: Any) -> OcrWorkerRunResult:
+    result = OcrWorkerRunResult(
         segments=(),
         engine="windowsml-ocr",
         model="test-model",
@@ -142,7 +142,7 @@ def test_matching_final_is_accepted() -> None:
     _assert_ocr_progress_matches_final(progress, _final(progress.pages))
 
 
-def _assert_rejected(progress, final: WorkerRunResult, message: str, trusted: int) -> None:  # noqa: ANN001
+def _assert_rejected(progress, final: OcrWorkerRunResult, message: str, trusted: int) -> None:  # noqa: ANN001
     with pytest.raises(_OcrProgressConsistencyError) as error:
         _assert_ocr_progress_matches_final(progress, final)
     assert isinstance(error.value, WorkerResultError)

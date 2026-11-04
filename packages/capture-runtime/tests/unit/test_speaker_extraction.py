@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from capture_runtime._worker_payloads import WorkerRunResult, WorkerSegment, WorkerWord
 from capture_runtime.capture_extraction import StandaloneRuntimeCaptureExtractor
 from capture_runtime.clock import SystemClock
 from capture_runtime.config import ExtractionRuntimeConfig
@@ -21,14 +22,9 @@ from capture_runtime.contracts import (
 from capture_runtime.engine_catalog import EngineCatalogError
 from capture_runtime.engine_installation import ExtractionRuntimeUnavailableError
 from capture_runtime.speaker_turns import SpeakerTurn
+from capture_runtime.speaker_worker_result import WorkerDiarizationResult
 from capture_runtime.structuring_provider import FakeCaptureStructuringProvider
-from capture_runtime.worker_client import (
-    InstalledEngine,
-    WorkerDiarizationResult,
-    WorkerRunResult,
-    WorkerSegment,
-    WorkerWord,
-)
+from capture_runtime.worker_client import InstalledEngine
 
 AUDIO = b"RIFF\x00\x00\x00\x00WAVEpayload"
 

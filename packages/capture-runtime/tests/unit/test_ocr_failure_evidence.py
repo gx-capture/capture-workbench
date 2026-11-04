@@ -7,13 +7,15 @@ from pathlib import Path
 
 import pytest
 
+from capture_runtime.capture_worker_client import WorkerClient
 from capture_runtime.contracts import OcrProvenanceV3
 from capture_runtime.ocr_execution_proof import (
     AcceptanceOcrExecutionEvidenceSink,
     NoopOcrExecutionEvidenceSink,
     acceptance_ocr_execution_evidence_sink_from_environment,
 )
-from capture_runtime.worker_client import InstalledEngine, OcrWorkerFailure, WorkerClient
+from capture_runtime.ocr_worker_result import OcrWorkerFailure
+from capture_runtime.worker_client import InstalledEngine
 from capture_runtime.worker_process import (
     MAX_WORKER_DIAGNOSTIC_STAGES,
     WorkerExecutionError,

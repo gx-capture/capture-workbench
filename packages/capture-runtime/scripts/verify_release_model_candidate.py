@@ -15,6 +15,7 @@ from model_source_lock import (
     source_lock_sha256,
 )
 
+from capture_runtime.capture_worker_client import WorkerClient
 from capture_runtime.contract_set import load_contract_set
 from capture_runtime.engine_catalog import (
     EngineArtifactDescriptor,
@@ -27,7 +28,6 @@ from capture_runtime.engine_installation import (
     EngineInstallationError,
     EngineInstallationManager,
 )
-from capture_runtime.worker_client import WorkerClient
 
 WHISPER_CANDIDATE_MAX_DURATION_MS = 60 * 60 * 1000
 WHISPER_CANDIDATE_TIMEOUT_SECONDS = 60 * 60

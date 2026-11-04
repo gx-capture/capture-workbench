@@ -20,6 +20,7 @@ from capture_runtime.capture_extraction import (
     OcrExtractionFailure,
     StandaloneRuntimeCaptureExtractor,
 )
+from capture_runtime.capture_worker_client import WorkerClient
 from capture_runtime.clock import SystemClock
 from capture_runtime.contract_set import SCHEMA_DIALECT
 from capture_runtime.contracts import (
@@ -46,7 +47,7 @@ from capture_runtime.ocr_execution_proof import (
 )
 from capture_runtime.ocr_projection import OcrPageInput, OcrPipeline
 from capture_runtime.source_sniffing import SniffedSource
-from capture_runtime.worker_client import InstalledEngine, WorkerClient
+from capture_runtime.worker_client import InstalledEngine
 from capture_runtime.worker_contracts import WorkerResponse
 from tests.conftest import TOKEN
 

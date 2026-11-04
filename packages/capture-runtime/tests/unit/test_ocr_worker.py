@@ -12,6 +12,7 @@ import pytest
 from PIL import Image
 
 import capture_runtime.workers.ocr_main as ocr_main
+from capture_runtime._worker_payloads import WorkerResultError
 from capture_runtime.constants import RUNTIME_VERSION
 from capture_runtime.contracts import (
     OcrAdapterClass,
@@ -29,13 +30,11 @@ from capture_runtime.ocr_profile import CANONICAL_PROFILE_PATH, canonical_json_b
 from capture_runtime.ocr_projection import OcrEngineRequest, OcrPageInput, OcrPageManifest
 from capture_runtime.ocr_reading_order import plan_reading_order
 from capture_runtime.ocr_windowsml_adapter import WindowsMLOcrAdapter
-from capture_runtime.worker_client import (
-    WorkerResultError,
+from capture_runtime.ocr_worker_result import (
     _assert_ocr_progress_matches_final,
-    parse_ocr_compute_preflight,
     parse_ocr_progress,
-    parse_run_result,
 )
+from capture_runtime.ocr_worker_run import parse_ocr_compute_preflight, parse_run_result
 from capture_runtime.worker_contracts import WorkerRequest
 
 
