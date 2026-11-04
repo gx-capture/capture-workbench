@@ -9,14 +9,14 @@ from pathlib import Path
 from typing import Any
 
 from capture_runtime.contracts import CaptureEngine
-from capture_runtime.progressive_audio import (
+from capture_runtime.speech.infrastructure.progressive_audio import (
     DecodedAudioWindow,
     ProgressiveAudioSession,
     ProgressiveSessionEvent,
     WhisperWindowResult,
     WhisperWindowSegment,
 )
-from capture_runtime.speech_transcript import WhisperAdapter
+from capture_runtime.speech.infrastructure.speech_transcript import WhisperAdapter
 
 
 class SpeechRecognitionWindowTranscriber:

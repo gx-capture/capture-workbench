@@ -98,7 +98,7 @@ from capture_runtime.worker_process import DEFAULT_RUN_TIMEOUT_SECONDS, WorkerCa
 
 if TYPE_CHECKING:
     from capture_runtime.ocr_page_result import OcrAdapter
-    from capture_runtime.speech_transcript import WhisperAdapter
+    from capture_runtime.speech.infrastructure.speech_transcript import WhisperAdapter
 
 
 _OcrRunResult = OcrWorkerRunResult[OcrExecutionDeviceProofV1]

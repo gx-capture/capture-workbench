@@ -10,7 +10,7 @@ from capture_runtime.contracts import (
     CaptureSource,
     StreamingEventType,
 )
-from capture_runtime.progressive_audio import (
+from capture_runtime.speech.infrastructure.progressive_audio import (
     DecodedAudioWindow,
     ProgressiveAudioSession,
     ProgressiveBackpressureError,

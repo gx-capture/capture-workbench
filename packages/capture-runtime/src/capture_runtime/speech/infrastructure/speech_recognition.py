@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from capture_runtime.japanese_kanji import TABLE as JAPANESE_KANJI
-from capture_runtime.speech_transcript import (
+from capture_runtime.speech.infrastructure.speech_transcript import (
     WhisperTextSegment,
     WhisperTranscriptionResult,
     WhisperWord,

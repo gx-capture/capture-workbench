@@ -7,8 +7,11 @@ from typing import Any
 import pytest
 
 from capture_runtime.contracts import StreamingEventType
-from capture_runtime.progressive_audio import DecodedAudioWindow, ProgressiveSessionEvent
-from capture_runtime.whisper_session import (
+from capture_runtime.speech.infrastructure.progressive_audio import (
+    DecodedAudioWindow,
+    ProgressiveSessionEvent,
+)
+from capture_runtime.speech.infrastructure.whisper_session import (
     MAX_SESSION_FRAME_PAYLOAD,
     SessionFrameDecoder,
     SessionFrameType,

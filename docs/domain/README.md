@@ -24,7 +24,7 @@ flowchart LR
 | ------------ | ----------------------- | ----------------------------------------------------------- | ---------------- |
 | 擷取         | 待補                    | `capture_runtime/capture`                                   | 規劃中           |
 | 文件 OCR     | 待補                    | `capture_runtime/ocr`                                       | 規劃中           |
-| 語音轉寫     | 待補                    | `capture_runtime/speech`                                    | 規劃中           |
+| 語音轉寫     | [說明](speech.md)       | `capture_runtime/speech`                                    | W5 搬移；W6 待辦 |
 | 說話者分離   | [說明](diarization.md)  | `capture_runtime/diarization`                               | W5 搬移；W6 待辦 |
 | 結構化       | 待補                    | `capture_runtime/structuring`                               | 規劃中           |
 | 引擎供應     | [說明](provisioning.md) | `capture_runtime/provisioning`                              | W5 搬移；W6 待辦 |

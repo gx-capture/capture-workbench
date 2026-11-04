@@ -8,7 +8,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from typing import BinaryIO, cast
 
-from capture_runtime.whisper_session import (
+from capture_runtime.speech.infrastructure.whisper_session import (
     SessionFrame,
     SessionFrameDecoder,
     WhisperSessionBackend,
