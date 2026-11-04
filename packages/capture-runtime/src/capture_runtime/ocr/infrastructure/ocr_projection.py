@@ -30,7 +30,6 @@ from capture_runtime.contracts import (
     OcrProvenanceV3,
     OcrRasterV3,
 )
-from capture_runtime.capture.infrastructure.pdf_page_selection import is_ascending_page_numbers
 from capture_runtime.ocr.infrastructure.ocr_profile import load_profile_spec
 
 

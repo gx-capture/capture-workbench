@@ -647,7 +647,6 @@ ignore_imports = [
   "capture_runtime.capture.application.streaming_capture_service -> capture_runtime.structuring.infrastructure.ollama.lifecycle_impl",
   "capture_runtime.capture.application.streaming_capture_service -> capture_runtime.structuring.infrastructure.structuring",
   "capture_runtime.capture.application.streaming_capture_service -> capture_runtime.structuring.infrastructure.structuring_provider",
-  "capture_runtime.capture.application.streaming_capture_service -> capture_runtime.structuring",
 ]
 
 [[tool.importlinter.contracts]]

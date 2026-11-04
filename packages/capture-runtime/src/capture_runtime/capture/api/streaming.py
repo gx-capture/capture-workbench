@@ -40,14 +40,14 @@ from capture_runtime.dependencies import RuntimeDependencies
 from capture_runtime.routes.common import ApiProblem
 from capture_runtime.speech.infrastructure.progressive_audio import DEFAULT_CHECKPOINT_MS
 from capture_runtime.speech.infrastructure.progressive_decoder import progressive_decoder_ready
-from capture_runtime.storage import (
+from capture_runtime.structuring.infrastructure.contracts import StructuringValidationError
+from capture_runtime.structuring.infrastructure.structuring_session_repository import (
     StructuringSessionDigestConflictError,
     StructuringSessionIdempotencyConflictError,
     StructuringSessionRecordCorruptError,
     StructuringSessionRecordNotFoundError,
     StructuringSessionTransitionError,
 )
-from capture_runtime.structuring.infrastructure.contracts import StructuringValidationError
 
 _CONTENT_RANGE = re.compile(r"^bytes ([0-9]+)-([0-9]+)/([0-9]+)$")
 _DIGEST = re.compile(r"^sha-256=([0-9a-f]{64})$")

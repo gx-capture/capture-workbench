@@ -60,14 +60,6 @@ from capture_runtime.ocr.infrastructure.ocr_worker_result import OcrWorkerFailur
 from capture_runtime.provisioning.infrastructure.engine_installation import (
     ExtractionRuntimeUnavailableError,
 )
-from capture_runtime.capture.infrastructure.source_sniffing import SNIFF_BYTES, UnsupportedMediaError
-from capture_runtime.capture.infrastructure.streaming import MAX_STREAM_CHUNK_BYTES
-from capture_runtime.capture.infrastructure.streaming_repository import (
-    StreamingPartialNotFoundError,
-    StreamingRecordNotFoundError,
-    StreamingRepository,
-    StreamingTransitionError,
-)
 from capture_runtime.speech.infrastructure.progressive_audio import (
     ProgressiveAudioError,
     ProgressiveSessionEvent,

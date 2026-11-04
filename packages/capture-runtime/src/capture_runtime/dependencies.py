@@ -33,18 +33,17 @@ from capture_runtime.provisioning.infrastructure.engine_installation import (
 from capture_runtime.provisioning.infrastructure.installation_repository import (
     InstallationRepository,
 )
-from capture_runtime.capture.application.streaming_capture_service import StreamingCaptureService
-from capture_runtime.capture.infrastructure.streaming_repository import StreamingRepository
-from capture_runtime.services import (
+from capture_runtime.speech.infrastructure.progressive_capture import ProgressiveCaptureProcessor
+from capture_runtime.structuring.application.model_installation_service import (
     ModelInstallationService,
+)
+from capture_runtime.structuring.application.structuring_session_service import (
     StructuringSessionService,
 )
-from capture_runtime.speech.infrastructure.progressive_capture import ProgressiveCaptureProcessor
-from capture_runtime.storage import (
-    ModelInstallationRepository,
-    StructuringSessionRepository,
-)
 from capture_runtime.structuring.infrastructure.coordinator import StructuringCoordinator
+from capture_runtime.structuring.infrastructure.model_installation_repository import (
+    ModelInstallationRepository,
+)
 from capture_runtime.structuring.infrastructure.ollama import (
     ExternalOllamaCaptureStructuringProvider,
     IsolatedOllamaLifecycle,
@@ -57,6 +56,9 @@ from capture_runtime.structuring.infrastructure.structuring_provider import (
     CaptureStructuringProvider,
     FakeCaptureStructuringProvider,
     HostOnlyCaptureStructuringProvider,
+)
+from capture_runtime.structuring.infrastructure.structuring_session_repository import (
+    StructuringSessionRepository,
 )
 from capture_runtime.testing.deterministic_extractor import DeterministicCaptureExtractor
 from capture_runtime.worker_process import WorkerProcess

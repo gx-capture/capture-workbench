@@ -35,7 +35,9 @@ from capture_runtime.provisioning.infrastructure.installation_repository import 
 )
 from capture_runtime.routes.common import ApiProblem, error_response
 from capture_runtime.routes.meta import register_contract_routes
-from capture_runtime.storage import ModelInstallationRepository
+from capture_runtime.structuring.infrastructure.model_installation_repository import (
+    ModelInstallationRepository,
+)
 from capture_runtime.structuring.infrastructure.ollama import ProcessController, RuntimeInstaller
 from capture_runtime.structuring.infrastructure.structuring_provider import (
     CaptureStructuringProvider,

@@ -22,15 +22,15 @@ from capture_runtime.contracts import (
     StructuringSessionV2,
     SubmitStructuringBatchV2,
 )
-from capture_runtime.storage import (
-    StructuringSessionDigestConflictError,
-    StructuringSessionRepository,
-)
 from capture_runtime.structuring.infrastructure.contracts import StructuringValidationError
 from capture_runtime.structuring.infrastructure.coordinator import StructuringCoordinator
 from capture_runtime.structuring.infrastructure.structuring import (
     assemble_structuring_document,
     validate_structuring_batch,
+)
+from capture_runtime.structuring.infrastructure.structuring_session_repository import (
+    StructuringSessionDigestConflictError,
+    StructuringSessionRepository,
 )
 
 

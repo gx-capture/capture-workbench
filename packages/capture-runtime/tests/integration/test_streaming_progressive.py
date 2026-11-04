@@ -27,7 +27,6 @@ from capture_runtime.contracts import (
     StructuringMode,
     TimeLocator,
 )
-from capture_runtime.services import StreamingCaptureService
 from capture_runtime.speech.infrastructure.progressive_audio import (
     DecodedAudioWindow,
     ProgressiveSessionEvent,

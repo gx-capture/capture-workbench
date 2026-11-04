@@ -58,7 +58,6 @@ flowchart LR
   n_capture_runtime_app --> n_capture_runtime_ocr
   n_capture_runtime_app --> n_capture_runtime_provisioning
   n_capture_runtime_app --> n_capture_runtime_routes
-  n_capture_runtime_app --> n_capture_runtime_storage
   n_capture_runtime_app --> n_capture_runtime_structuring
   n_capture_runtime_capture --> n_capture_runtime_pdf_source
   n_capture_runtime_capture --> n_capture_runtime_worker_payloads
@@ -72,7 +71,6 @@ flowchart LR
   n_capture_runtime_capture --> n_capture_runtime_provisioning
   n_capture_runtime_capture --> n_capture_runtime_routes
   n_capture_runtime_capture --> n_capture_runtime_speech
-  n_capture_runtime_capture --> n_capture_runtime_storage
   n_capture_runtime_capture --> n_capture_runtime_structuring
   n_capture_runtime_capture --> n_capture_runtime_worker_client
   n_capture_runtime_capture --> n_capture_runtime_worker_probe
@@ -92,9 +90,7 @@ flowchart LR
   n_capture_runtime_dependencies --> n_capture_runtime_contracts
   n_capture_runtime_dependencies --> n_capture_runtime_ocr
   n_capture_runtime_dependencies --> n_capture_runtime_provisioning
-  n_capture_runtime_dependencies --> n_capture_runtime_services
   n_capture_runtime_dependencies --> n_capture_runtime_speech
-  n_capture_runtime_dependencies --> n_capture_runtime_storage
   n_capture_runtime_dependencies --> n_capture_runtime_structuring
   n_capture_runtime_dependencies --> n_capture_runtime_testing
   n_capture_runtime_dependencies --> n_capture_runtime_worker_process
@@ -136,8 +132,6 @@ flowchart LR
   n_capture_runtime_request_ref_codec --> n_capture_runtime_contracts
   n_capture_runtime_routes --> n_capture_runtime_contract_set
   n_capture_runtime_routes --> n_capture_runtime_contracts
-  n_capture_runtime_services --> n_capture_runtime_storage
-  n_capture_runtime_services --> n_capture_runtime_structuring
   n_capture_runtime_speech --> n_capture_runtime_worker_payloads
   n_capture_runtime_speech --> n_capture_runtime_clock
   n_capture_runtime_speech --> n_capture_runtime_config
@@ -149,7 +143,6 @@ flowchart LR
   n_capture_runtime_speech --> n_capture_runtime_worker_probe
   n_capture_runtime_speech --> n_capture_runtime_worker_process
   n_capture_runtime_speech --> n_capture_runtime_worker_stage_policy
-  n_capture_runtime_storage --> n_capture_runtime_structuring
   n_capture_runtime_structuring --> n_capture_runtime_windows_job
   n_capture_runtime_structuring --> n_capture_runtime_capture
   n_capture_runtime_structuring --> n_capture_runtime_clock

@@ -23,7 +23,7 @@ from capture_runtime.contracts import (
     StructuringProviderCapabilityV2,
     TimeLocator,
 )
-from capture_runtime.storage import (
+from capture_runtime.structuring.infrastructure.structuring_session_repository import (
     StructuringSessionRecordCorruptError,
     StructuringSessionRepository,
 )
