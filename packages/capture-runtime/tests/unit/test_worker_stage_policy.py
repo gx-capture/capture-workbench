@@ -30,7 +30,7 @@ PRODUCER_FILES = (
     RUNTIME_ROOT / "src/capture_runtime/ocr_windowsml_adapter.py",
     RUNTIME_ROOT / "src/capture_runtime/ocr_execution_evidence.py",
     RUNTIME_ROOT / "src/capture_runtime/workers/diarization_main.py",
-    RUNTIME_ROOT / "src/capture_runtime/speaker_diarization.py",
+    RUNTIME_ROOT / "src/capture_runtime/diarization/infrastructure/speaker_diarization.py",
 )
 _IMPORT_DETAIL = "secret-token C:\\private\\source"
 

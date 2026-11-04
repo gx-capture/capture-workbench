@@ -9,15 +9,15 @@ from typing import Any
 
 import pytest
 
-from capture_runtime import speaker_diarization as diarization
-from capture_runtime.speaker_diarization import (
+from capture_runtime.diarization.infrastructure import speaker_diarization as diarization
+from capture_runtime.diarization.infrastructure.speaker_diarization import (
     DIARIZATION_REQUIRED_FILES,
     NemotronDiarizationAdapter,
     _speaker_turns,
     cuda_failure_reason,
     decode_mono_16k,
 )
-from capture_runtime.speaker_turns import SpeakerTurn
+from capture_runtime.diarization.infrastructure.speaker_turns import SpeakerTurn
 from capture_runtime.worker_probe import EngineRuntimeUnavailableError
 
 
@@ -402,7 +402,7 @@ def test_probe_requires_each_runtime_dependency(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, missing: str
 ) -> None:
     monkeypatch.setattr(
-        "capture_runtime.speaker_diarization.importlib.util.find_spec",
+        "capture_runtime.diarization.infrastructure.speaker_diarization.importlib.util.find_spec",
         lambda name: None if name == missing else object(),
     )
     adapter = NemotronDiarizationAdapter(

@@ -19,12 +19,14 @@ from capture_runtime.contracts import (
     RawCapture,
     TimeLocator,
 )
+from capture_runtime.diarization.infrastructure.speaker_turns import SpeakerTurn
+from capture_runtime.diarization.infrastructure.speaker_worker_result import (
+    WorkerDiarizationResult,
+)
 from capture_runtime.provisioning.infrastructure.engine_catalog import EngineCatalogError
 from capture_runtime.provisioning.infrastructure.engine_installation import (
     ExtractionRuntimeUnavailableError,
 )
-from capture_runtime.speaker_turns import SpeakerTurn
-from capture_runtime.speaker_worker_result import WorkerDiarizationResult
 from capture_runtime.structuring_provider import FakeCaptureStructuringProvider
 from capture_runtime.worker_client import InstalledEngine
 

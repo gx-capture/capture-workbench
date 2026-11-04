@@ -139,7 +139,7 @@ labels when a capture requests speaker identification.
   milliseconds; speakers are anonymous labels such as `SPEAKER_00`.
 - Options: `maxDurationMs`, `preferGpu`, `allowCpuFallback`.
   A recognized CUDA failure retries the same model once on CPU.
-- `capture_runtime.speaker_alignment.assign_speakers` gives timed transcript
+- `capture_runtime.diarization.infrastructure.speaker_alignment.assign_speakers` gives timed transcript
   spans a speaker from those turns; a tie or an uncovered span stays unassigned.
 
 ```powershell

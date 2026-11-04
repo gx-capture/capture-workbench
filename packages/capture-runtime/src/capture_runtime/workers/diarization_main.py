@@ -34,7 +34,7 @@ def _report_stage(stage: str) -> None:
 _report_stage("worker-entry-start")
 _report_stage("python-import-capture-runtime-start")
 try:
-    from capture_runtime.speaker_diarization import (
+    from capture_runtime.diarization.infrastructure.speaker_diarization import (
         DIARIZATION_REQUIREMENT_ID,
         NemotronDiarizationAdapter,
     )

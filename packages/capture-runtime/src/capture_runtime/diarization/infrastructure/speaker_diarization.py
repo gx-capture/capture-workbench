@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from capture_runtime.constants import DIARIZATION_REQUIREMENT_ID
-from capture_runtime.speaker_turns import SPEAKER_LABEL, SpeakerTurn
+from capture_runtime.diarization.infrastructure.speaker_turns import SPEAKER_LABEL, SpeakerTurn
 from capture_runtime.worker_probe import (
     EngineProbe,
     EngineRuntimeUnavailableError,

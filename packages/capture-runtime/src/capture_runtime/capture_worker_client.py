@@ -7,8 +7,10 @@ from collections.abc import Callable
 from pathlib import Path
 
 from capture_runtime._worker_payloads import WorkerRunResult
+from capture_runtime.diarization.infrastructure.speaker_worker_result import (
+    SpeakerWorkerMethods,
+)
 from capture_runtime.ocr_worker_run import OcrWorkerMethods
-from capture_runtime.speaker_worker_result import SpeakerWorkerMethods
 from capture_runtime.speech_worker_result import SpeechWorkerMethods
 from capture_runtime.worker_client import InstalledEngine
 from capture_runtime.worker_client import WorkerClient as KernelWorkerClient

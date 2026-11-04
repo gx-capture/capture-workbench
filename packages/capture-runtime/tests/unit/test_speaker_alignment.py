@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from capture_runtime.speaker_alignment import (
+from capture_runtime.diarization.infrastructure.speaker_alignment import (
     SpeakerSample,
     SpeakerSegment,
     TimedWord,
@@ -10,7 +10,7 @@ from capture_runtime.speaker_alignment import (
     speaker_samples,
     speaker_segments,
 )
-from capture_runtime.speaker_turns import SpeakerTurn
+from capture_runtime.diarization.infrastructure.speaker_turns import SpeakerTurn
 
 
 def test_span_takes_the_speaker_who_talks_longest_in_it() -> None:

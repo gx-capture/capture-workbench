@@ -49,6 +49,12 @@ from capture_runtime.contracts import (
     TimeLocator,
     project_source_text,
 )
+from capture_runtime.diarization.infrastructure.speaker_alignment import (
+    TimedWord,
+    speaker_samples,
+    speaker_segments,
+)
+from capture_runtime.diarization.infrastructure.speaker_worker_result import WorkerDiarizationResult
 from capture_runtime.image_normalization import (
     image_ocr_scale,
     normalize_image_content,
@@ -86,8 +92,6 @@ from capture_runtime.provisioning.infrastructure.engine_installation import (
     ExtractionRuntimeUnavailableError,
 )
 from capture_runtime.source_sniffing import SniffedSource, sniff_source
-from capture_runtime.speaker_alignment import TimedWord, speaker_samples, speaker_segments
-from capture_runtime.speaker_worker_result import WorkerDiarizationResult
 from capture_runtime.worker_client import InstalledEngine
 from capture_runtime.worker_probe import EngineRuntimeUnavailableError
 from capture_runtime.worker_process import DEFAULT_RUN_TIMEOUT_SECONDS, WorkerCancelledError
