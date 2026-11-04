@@ -81,6 +81,13 @@ def test_every_api_enum_value_of_a_modelled_context_maps_to_one_concept() -> Non
             contracts.StructuringSessionStatus,
             contracts.StructuringBatchStatus,
         ],
+        "capture": [
+            contracts.CaptureSourceKind,
+            contracts.StreamingIngestionMode,
+            contracts.StreamingIngestionStatus,
+            contracts.StreamingCaptureStatus,
+            contracts.StreamingEventType,
+        ],
     }
     mapped = {
         (concept["enum"]["enumId"], concept["enum"]["value"])

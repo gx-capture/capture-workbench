@@ -7,8 +7,8 @@
 | 中文     | 程式名稱                          | 意思                                                       |
 | -------- | --------------------------------- | ---------------------------------------------------------- |
 | 來源     | `CaptureSource`                   | 送進 runtime 的一份 PDF、圖片或錄音，以 SHA-256 識別       |
-| 匯入     | `IngestionV2`                     | 分塊上傳來源的過程，完成後才能開始擷取                     |
-| 擷取作業 | `CaptureOperationV2`              | 對一份來源的一次擷取；狀態依 `StreamingCaptureStatus` 前進 |
+| 匯入     | `Ingestion`、`IngestionChunk`、`IngestionV2`                     | 分塊上傳來源的過程，完成後才能開始擷取                     |
+| 擷取作業 | `CaptureOperation`、`CaptureCompleted`、`PageLocator`、`TimeRange`、`CaptureOperationV2` | 對一份來源的一次擷取；狀態依 `StreamingCaptureStatus` 前進 |
 | 擷取事件 | `CaptureEventV2`                  | 擷取作業的進度、片段、結束等事件，經 SSE 送給主機          |
 | 原始擷取 | `RawCapture`                      | 引擎讀出的片段與出處，尚未結構化                           |
 | 片段     | `RawCaptureSegment`               | 一段文字，帶頁碼或時間位置，語音的片段可帶說話者           |

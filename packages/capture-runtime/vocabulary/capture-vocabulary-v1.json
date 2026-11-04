@@ -274,6 +274,195 @@
       "codeName": "StructuringBatchStatus.FAILED",
       "enum": { "enumId": "StructuringBatchStatus", "value": "failed" },
       "retired": false
+    },
+    {
+      "id": "capture.source-kind.pdf",
+      "label": "PDF 文件",
+      "codeName": "CaptureSourceKind.PDF",
+      "enum": { "enumId": "CaptureSourceKind", "value": "pdf" },
+      "retired": false
+    },
+    {
+      "id": "capture.source-kind.image",
+      "label": "影像",
+      "codeName": "CaptureSourceKind.IMAGE",
+      "enum": { "enumId": "CaptureSourceKind", "value": "image" },
+      "retired": false
+    },
+    {
+      "id": "capture.source-kind.audio",
+      "label": "音訊",
+      "codeName": "CaptureSourceKind.AUDIO",
+      "enum": { "enumId": "CaptureSourceKind", "value": "audio" },
+      "retired": false
+    },
+    {
+      "id": "capture.ingestion-mode.file",
+      "label": "檔案匯入",
+      "codeName": "StreamingIngestionMode.FILE",
+      "enum": { "enumId": "StreamingIngestionMode", "value": "file" },
+      "retired": false
+    },
+    {
+      "id": "capture.ingestion-status.open",
+      "label": "匯入進行中",
+      "codeName": "StreamingIngestionStatus.OPEN",
+      "enum": { "enumId": "StreamingIngestionStatus", "value": "open" },
+      "retired": false
+    },
+    {
+      "id": "capture.ingestion-status.finalizing",
+      "label": "匯入校驗中",
+      "codeName": "StreamingIngestionStatus.FINALIZING",
+      "enum": { "enumId": "StreamingIngestionStatus", "value": "finalizing" },
+      "retired": false
+    },
+    {
+      "id": "capture.ingestion-status.ready",
+      "label": "匯入就緒",
+      "codeName": "StreamingIngestionStatus.READY",
+      "enum": { "enumId": "StreamingIngestionStatus", "value": "ready" },
+      "retired": false
+    },
+    {
+      "id": "capture.ingestion-status.cancelled",
+      "label": "匯入已取消",
+      "codeName": "StreamingIngestionStatus.CANCELLED",
+      "enum": { "enumId": "StreamingIngestionStatus", "value": "cancelled" },
+      "retired": false
+    },
+    {
+      "id": "capture.ingestion-status.failed",
+      "label": "匯入失敗",
+      "codeName": "StreamingIngestionStatus.FAILED",
+      "enum": { "enumId": "StreamingIngestionStatus", "value": "failed" },
+      "retired": false
+    },
+    {
+      "id": "capture.ingestion-status.expired",
+      "label": "匯入已過期",
+      "codeName": "StreamingIngestionStatus.EXPIRED",
+      "enum": { "enumId": "StreamingIngestionStatus", "value": "expired" },
+      "retired": false
+    },
+    {
+      "id": "capture.status.created",
+      "label": "擷取已建立",
+      "codeName": "StreamingCaptureStatus.CREATED",
+      "enum": { "enumId": "StreamingCaptureStatus", "value": "created" },
+      "retired": false
+    },
+    {
+      "id": "capture.status.waiting-input",
+      "label": "等待輸入完成",
+      "codeName": "StreamingCaptureStatus.WAITING_INPUT",
+      "enum": { "enumId": "StreamingCaptureStatus", "value": "waiting_input" },
+      "retired": false
+    },
+    {
+      "id": "capture.status.extracting",
+      "label": "媒體特徵擷取中",
+      "codeName": "StreamingCaptureStatus.EXTRACTING",
+      "enum": { "enumId": "StreamingCaptureStatus", "value": "extracting" },
+      "retired": false
+    },
+    {
+      "id": "capture.status.awaiting-structuring",
+      "label": "等待結構化",
+      "codeName": "StreamingCaptureStatus.AWAITING_STRUCTURING",
+      "enum": { "enumId": "StreamingCaptureStatus", "value": "awaiting_structuring" },
+      "retired": false
+    },
+    {
+      "id": "capture.status.structuring",
+      "label": "結構化中",
+      "codeName": "StreamingCaptureStatus.STRUCTURING",
+      "enum": { "enumId": "StreamingCaptureStatus", "value": "structuring" },
+      "retired": false
+    },
+    {
+      "id": "capture.status.completed",
+      "label": "擷取完成",
+      "codeName": "StreamingCaptureStatus.COMPLETED",
+      "enum": { "enumId": "StreamingCaptureStatus", "value": "completed" },
+      "retired": false
+    },
+    {
+      "id": "capture.status.failed",
+      "label": "擷取失敗",
+      "codeName": "StreamingCaptureStatus.FAILED",
+      "enum": { "enumId": "StreamingCaptureStatus", "value": "failed" },
+      "retired": false
+    },
+    {
+      "id": "capture.status.cancelled",
+      "label": "擷取已取消",
+      "codeName": "StreamingCaptureStatus.CANCELLED",
+      "enum": { "enumId": "StreamingCaptureStatus", "value": "cancelled" },
+      "retired": false
+    },
+    {
+      "id": "capture.event-type.accepted",
+      "label": "請求已接受",
+      "codeName": "StreamingEventType.ACCEPTED",
+      "enum": { "enumId": "StreamingEventType", "value": "accepted" },
+      "retired": false
+    },
+    {
+      "id": "capture.event-type.input-checkpoint",
+      "label": "輸入檢查點",
+      "codeName": "StreamingEventType.INPUT_CHECKPOINT",
+      "enum": { "enumId": "StreamingEventType", "value": "input_checkpoint" },
+      "retired": false
+    },
+    {
+      "id": "capture.event-type.heartbeat",
+      "label": "心跳保活",
+      "codeName": "StreamingEventType.HEARTBEAT",
+      "enum": { "enumId": "StreamingEventType", "value": "heartbeat" },
+      "retired": false
+    },
+    {
+      "id": "capture.event-type.segment",
+      "label": "擷取片段",
+      "codeName": "StreamingEventType.SEGMENT",
+      "enum": { "enumId": "StreamingEventType", "value": "segment" },
+      "retired": false
+    },
+    {
+      "id": "capture.event-type.checkpoint",
+      "label": "進度檢查點",
+      "codeName": "StreamingEventType.CHECKPOINT",
+      "enum": { "enumId": "StreamingEventType", "value": "checkpoint" },
+      "retired": false
+    },
+    {
+      "id": "capture.event-type.resync-required",
+      "label": "需重新同步",
+      "codeName": "StreamingEventType.RESYNC_REQUIRED",
+      "enum": { "enumId": "StreamingEventType", "value": "resync_required" },
+      "retired": false
+    },
+    {
+      "id": "capture.event-type.completed",
+      "label": "作業完成",
+      "codeName": "StreamingEventType.COMPLETED",
+      "enum": { "enumId": "StreamingEventType", "value": "completed" },
+      "retired": false
+    },
+    {
+      "id": "capture.event-type.failed",
+      "label": "作業失敗",
+      "codeName": "StreamingEventType.FAILED",
+      "enum": { "enumId": "StreamingEventType", "value": "failed" },
+      "retired": false
+    },
+    {
+      "id": "capture.event-type.cancelled",
+      "label": "作業取消",
+      "codeName": "StreamingEventType.CANCELLED",
+      "enum": { "enumId": "StreamingEventType", "value": "cancelled" },
+      "retired": false
     }
   ]
 }
