@@ -7,13 +7,13 @@ from pathlib import Path
 import pypdfium2 as pdfium  # type: ignore[import-untyped]
 import pytest
 
-from capture_runtime.clock import SystemClock
-from capture_runtime.config import ExtractionRuntimeConfig
-from capture_runtime.extractors import (
+from capture_runtime.capture_extraction import (
     OcrSourcePreflightError,
     PdfPageSelectionError,
     StandaloneRuntimeCaptureExtractor,
 )
+from capture_runtime.clock import SystemClock
+from capture_runtime.config import ExtractionRuntimeConfig
 
 _UNSORTED = "PDF page selection must list source pages in ascending order without duplicates."
 

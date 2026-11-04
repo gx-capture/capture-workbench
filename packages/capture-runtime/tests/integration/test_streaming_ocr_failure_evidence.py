@@ -8,6 +8,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
+from capture_runtime.capture_extraction import (
+    CaptureExtractionOutcome,
+    OcrExtractionFailure,
+    StandaloneRuntimeCaptureExtractor,
+)
 from capture_runtime.clock import Clock
 from capture_runtime.config import ExtractionRuntimeConfig
 from capture_runtime.contracts import (
@@ -18,15 +23,10 @@ from capture_runtime.contracts import (
     StreamingCaptureStatus,
     StructuringMode,
 )
-from capture_runtime.extractors import (
-    CaptureExtractionOutcome,
-    OcrExtractionFailure,
-    SniffedSource,
-    StandaloneRuntimeCaptureExtractor,
-)
 from capture_runtime.ocr_execution_proof import AcceptanceOcrExecutionEvidenceSink
 from capture_runtime.ocr_projection import OcrPipeline
 from capture_runtime.services import StreamingCaptureService
+from capture_runtime.source_sniffing import SniffedSource
 from capture_runtime.storage import StreamingRepository
 from capture_runtime.worker_client import InstalledEngine, OcrWorkerFailure, WorkerClient
 from capture_runtime.worker_process import WorkerFailureDiagnostics, WorkerProcess

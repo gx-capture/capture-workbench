@@ -5,6 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from capture_runtime.capture_extraction import (
+    CaptureExtractor,
+    StandaloneRuntimeCaptureExtractor,
+)
 from capture_runtime.clock import Clock, SystemClock
 from capture_runtime.config import RuntimeSettings
 from capture_runtime.constants import (
@@ -19,11 +23,6 @@ from capture_runtime.contract_set import ContractSet, load_contract_set
 from capture_runtime.contracts import StructuringMode
 from capture_runtime.engine_catalog import load_engine_catalog
 from capture_runtime.engine_installation import EngineInstallationManager
-from capture_runtime.extractors import (
-    CaptureExtractor,
-    DeterministicCaptureExtractor,
-    StandaloneRuntimeCaptureExtractor,
-)
 from capture_runtime.ocr_preflight import OcrComputePreflight
 from capture_runtime.ollama import (
     ExternalOllamaCaptureStructuringProvider,
@@ -52,6 +51,7 @@ from capture_runtime.structuring_provider import (
     FakeCaptureStructuringProvider,
     HostOnlyCaptureStructuringProvider,
 )
+from capture_runtime.testing.deterministic_extractor import DeterministicCaptureExtractor
 from capture_runtime.worker_client import WorkerClient
 from capture_runtime.worker_process import WorkerProcess
 

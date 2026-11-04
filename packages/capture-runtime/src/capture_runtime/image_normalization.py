@@ -1,8 +1,13 @@
-"""Shared image sizing rules for standalone and worker-backed OCR."""
+"""Shared image sizing rules and image preparation for standalone and worker-backed OCR."""
 
 from __future__ import annotations
 
 import math
+from io import BytesIO
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from PIL import Image
 
 # OCR enlarges an image only while its enlarged long side stays within this. Enlarging helps
 # a small image; a larger one it only slows. On an RTX 4060 laptop a 1654 x 2339 page took
@@ -47,4 +52,105 @@ def bounded_scaled_dimensions(
         effective_scale = math.nextafter(effective_scale, 0)
 
 
-__all__ = ["bounded_scaled_dimensions"]
+def normalize_image_png(
+    image: Image.Image,
+    *,
+    scale: float = 1,
+    max_pixels: int | None = None,
+) -> bytes:
+    from PIL import Image, ImageOps
+
+    oriented = ImageOps.exif_transpose(image)
+    if "A" in oriented.getbands() or "transparency" in oriented.info:
+        rgba = oriented.convert("RGBA")
+        normalized = Image.new("RGB", rgba.size, "white")
+        normalized.paste(rgba, mask=rgba.getchannel("A"))
+    else:
+        normalized = oriented.convert("RGB")
+    if scale != 1:
+        width, height = normalized.size
+        dimensions = (
+            bounded_scaled_dimensions(width, height, scale, max_pixels)
+            if max_pixels is not None
+            else (round(width * scale), round(height * scale))
+        )
+        normalized = normalized.resize(dimensions, Image.Resampling.LANCZOS)
+    output = BytesIO()
+    normalized.save(output, format="PNG")
+    return output.getvalue()
+
+
+def normalize_image_content(content: bytes, *, scale: float, max_pixels: int) -> bytes:
+    import warnings as image_warnings
+
+    from PIL import Image, UnidentifiedImageError
+
+    try:
+        with image_warnings.catch_warnings():
+            image_warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(BytesIO(content)) as image:
+                if (image.format or "").upper() not in {"PNG", "JPEG", "WEBP"}:
+                    raise ValueError("Only PNG, JPEG, and WebP images are supported.")
+                width, height = image.size
+                if width <= 0 or height <= 0:
+                    raise ValueError("Image dimensions must be positive.")
+                if width * height > max_pixels:
+                    raise ValueError("Image exceeds the configured pixel limit.")
+                if getattr(image, "n_frames", 1) != 1 or bool(getattr(image, "is_animated", False)):
+                    raise ValueError("Animated or multi-frame images are unsupported.")
+                image.seek(0)
+                image.load()
+                return normalize_image_png(
+                    image, scale=ocr_image_scale(width, height, scale), max_pixels=max_pixels
+                )
+    except (
+        OSError,
+        UnidentifiedImageError,
+        Image.DecompressionBombError,
+        Image.DecompressionBombWarning,
+    ) as error:
+        raise ValueError("Uploaded image is not readable.") from error
+
+
+def png_raster_dimensions(image_png: bytes) -> tuple[int | None, int | None]:
+    try:
+        from PIL import Image
+
+        with Image.open(BytesIO(image_png)) as image:
+            width, height = image.size
+            return (width, height) if width > 0 and height > 0 else (None, None)
+    except Exception:
+        return None, None
+
+
+def image_ocr_scale(content: bytes, scale: float) -> float:
+    """The enlargement of an already validated image, as normalize_image_content applies it."""
+
+    from PIL import Image
+
+    with Image.open(BytesIO(content)) as image:
+        width, height = image.size
+    return ocr_image_scale(width, height, scale)
+
+
+def oriented_image_dimensions(content: bytes) -> tuple[int, int]:
+    from PIL import Image, ImageOps
+
+    with Image.open(BytesIO(content)) as image:
+        oriented = ImageOps.exif_transpose(image)
+        width, height = oriented.size
+    if width <= 0 or height <= 0:
+        raise ValueError("Image dimensions must be positive.")
+    return width, height
+
+
+__all__ = [
+    "OCR_MAX_ENLARGED_LONG_SIDE",
+    "bounded_scaled_dimensions",
+    "image_ocr_scale",
+    "normalize_image_content",
+    "normalize_image_png",
+    "ocr_image_scale",
+    "oriented_image_dimensions",
+    "png_raster_dimensions",
+]

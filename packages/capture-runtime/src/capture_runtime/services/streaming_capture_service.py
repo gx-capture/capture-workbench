@@ -11,6 +11,13 @@ from typing import TypedDict
 
 from pydantic import ValidationError
 
+from capture_runtime.capture_extraction import (
+    CaptureExtractionOutcome,
+    CaptureExtractor,
+    OcrExtractionFailure,
+    OcrSourcePreflightError,
+    PdfPageSelectionError,
+)
 from capture_runtime.clock import Clock
 from capture_runtime.contracts import (
     CaptureDocument,
@@ -32,16 +39,7 @@ from capture_runtime.contracts import (
     StreamingEventType,
     StructuringMode,
 )
-from capture_runtime.extractors import (
-    SNIFF_BYTES,
-    CaptureExtractionOutcome,
-    CaptureExtractor,
-    ExtractionRuntimeUnavailableError,
-    OcrExtractionFailure,
-    OcrSourcePreflightError,
-    PdfPageSelectionError,
-    UnsupportedMediaError,
-)
+from capture_runtime.engine_installation import ExtractionRuntimeUnavailableError
 from capture_runtime.ocr_execution_proof import (
     OcrExecutionDeviceProofV1,
     OcrExecutionEvidenceSink,
@@ -55,6 +53,7 @@ from capture_runtime.progressive_capture import (
     ProgressiveCaptureProcessor,
 )
 from capture_runtime.progressive_decoder import ProgressiveDecoderError
+from capture_runtime.source_sniffing import SNIFF_BYTES, UnsupportedMediaError
 from capture_runtime.storage import (
     StreamingPartialNotFoundError,
     StreamingRecordNotFoundError,

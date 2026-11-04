@@ -1,13 +1,17 @@
-"""Source sniffing and deterministic extraction seams."""
+"""Choosing and driving the engines that read one capture source.
+
+The extractor sniffs the source, prepares it for the engine that reads
+that media (PDF and image pages for OCR, a recording for speech recognition
+and speaker diarization), runs the installed worker or the in-process
+adapters, and assembles the raw capture with its OCR projection.
+"""
 
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
-from io import BytesIO
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Protocol
 
@@ -20,6 +24,7 @@ from capture_runtime._pdf_source import (
     render_pdf_page,
     selected_pdf_pages,
 )
+from capture_runtime.audio_run_timeout import audio_run_timeout_seconds
 from capture_runtime.clock import Clock
 from capture_runtime.config import ExtractionRuntimeConfig
 from capture_runtime.constants import (
@@ -44,8 +49,16 @@ from capture_runtime.contracts import (
     project_source_text,
 )
 from capture_runtime.engine_catalog import EngineCatalogError
-from capture_runtime.engine_installation import EngineInstallationManager
-from capture_runtime.image_normalization import bounded_scaled_dimensions, ocr_image_scale
+from capture_runtime.engine_installation import (
+    EngineInstallationManager,
+    ExtractionRuntimeUnavailableError,
+)
+from capture_runtime.image_normalization import (
+    image_ocr_scale,
+    normalize_image_content,
+    oriented_image_dimensions,
+    png_raster_dimensions,
+)
 from capture_runtime.ocr_execution_proof import (
     OcrExecutionDeviceProofV1,
     acceptance_ocr_execution_runtime_sha256_from_environment,
@@ -65,7 +78,8 @@ from capture_runtime.ocr_projection import (
 from capture_runtime.ocr_vertical_routing import (
     MODEL_SUBDIRECTORY as VERTICAL_READER_SUBDIRECTORY,
 )
-from capture_runtime.pdf_page_selection import is_ascending_page_numbers, is_pdf_page_selection
+from capture_runtime.pdf_page_selection import is_ascending_page_numbers
+from capture_runtime.source_sniffing import SniffedSource, sniff_source
 from capture_runtime.speaker_alignment import TimedWord, speaker_samples, speaker_segments
 from capture_runtime.worker_client import (
     OcrWorkerFailure,
@@ -77,18 +91,8 @@ from capture_runtime.worker_probe import EngineRuntimeUnavailableError
 from capture_runtime.worker_process import DEFAULT_RUN_TIMEOUT_SECONDS, WorkerCancelledError
 
 if TYPE_CHECKING:
-    from PIL import Image
-
     from capture_runtime.ocr_page_result import OcrAdapter
     from capture_runtime.speech_transcript import WhisperAdapter
-
-
-class UnsupportedMediaError(ValueError):
-    pass
-
-
-class ExtractionRuntimeUnavailableError(RuntimeError):
-    pass
 
 
 class OcrSourcePreflightError(RuntimeError):
@@ -96,12 +100,6 @@ class OcrSourcePreflightError(RuntimeError):
 
     def __init__(self) -> None:
         super().__init__("OCR source preflight failed.")
-
-
-@dataclass(frozen=True, slots=True)
-class SniffedSource:
-    kind: CaptureSourceKind
-    media_type: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,7 +160,7 @@ class _SyncOcrEngineAdapter:
                 elif self._source_kind is CaptureSourceKind.PDF:
                     image_png = self._extractor._render_pdf_page(self._content, expected.page - 1)
                 else:
-                    image_png = _normalize_image_content(
+                    image_png = normalize_image_content(
                         self._content,
                         scale=self._extractor.config.ocr_render_scale,
                         max_pixels=self._extractor.config.max_image_pixels,
@@ -313,11 +311,6 @@ class _OcrWorkerFailureEngineAdapter:
         )
 
 
-SNIFF_BYTES = 200
-"""How much of a source's start `sniff_source` needs (MPEG-TS repeats its sync byte at 188)."""
-
-_MP4_BOX_TYPES = frozenset({b"ftyp", b"moov", b"mdat", b"wide", b"free", b"skip", b"pnot"})
-
 # The suffix a worker's copy of a source gets; decoders sniff the content, so
 # the suffix only has to be plausible.
 _SOURCE_SUFFIXES = {
@@ -342,65 +335,6 @@ _SOURCE_SUFFIXES = {
     "video/mpeg": ".mpg",
     "video/mp2t": ".ts",
 }
-
-
-def sniff_source(content: bytes) -> SniffedSource:
-    """The kind of a source and its media type, from the signature of its first bytes.
-
-    Audio is whatever FFmpeg decodes: recordings arrive as phone memos (M4A,
-    3GP, AMR), dictaphone files (WMA, MP3), and meetings or hearings recorded
-    as video (MP4, MOV, MKV, WebM, AVI, MPEG-TS), whose audio track is
-    transcribed.
-    """
-    if content.startswith(b"%PDF-"):
-        return SniffedSource(CaptureSourceKind.PDF, "application/pdf")
-    if content.startswith(b"\x89PNG\r\n\x1a\n"):
-        return SniffedSource(CaptureSourceKind.IMAGE, "image/png")
-    if content.startswith(b"\xff\xd8\xff"):
-        return SniffedSource(CaptureSourceKind.IMAGE, "image/jpeg")
-    if len(content) >= 12 and content[:4] == b"RIFF" and content[8:12] == b"WEBP":
-        return SniffedSource(CaptureSourceKind.IMAGE, "image/webp")
-    media_type = _audio_media_type(content)
-    if media_type is not None:
-        return SniffedSource(CaptureSourceKind.AUDIO, media_type)
-    raise UnsupportedMediaError(
-        "Only PDF, PNG, JPEG, WebP, and audio or video recordings are supported"
-    )
-
-
-def _audio_media_type(content: bytes) -> str | None:
-    if len(content) >= 12 and content[:4] == b"RIFF":
-        return {b"WAVE": "audio/wav", b"AVI ": "video/x-msvideo"}.get(content[8:12])
-    if content.startswith(b"ID3"):
-        return "audio/mpeg"
-    if len(content) >= 2 and content[0] == 0xFF and content[1] & 0xE0 == 0xE0:
-        # Both open with an 11-bit sync word; ADTS marks its layer bits zero.
-        return "audio/aac" if content[1] & 0x06 == 0 else "audio/mpeg"
-    if content.startswith(b"fLaC"):
-        return "audio/flac"
-    if content.startswith(b"OggS"):
-        return "audio/ogg"
-    if len(content) >= 12 and content[4:8] == b"ftyp":
-        return "audio/mp4"
-    if len(content) >= 8 and content[4:8] in _MP4_BOX_TYPES:
-        return "video/quicktime"
-    if content.startswith(b"\x1a\x45\xdf\xa3"):
-        return "video/x-matroska"
-    if content.startswith(b"\x30\x26\xb2\x75\x8e\x66\xcf\x11"):
-        return "video/x-ms-asf"
-    if content.startswith(b"#!AMR"):
-        return "audio/amr"
-    if len(content) >= 12 and content[:4] == b"FORM" and content[8:12] in {b"AIFF", b"AIFC"}:
-        return "audio/aiff"
-    if content.startswith(b"caff"):
-        return "audio/x-caf"
-    if content.startswith(b"FLV"):
-        return "video/x-flv"
-    if content.startswith(b"\x00\x00\x01\xba"):
-        return "video/mpeg"
-    if len(content) > 188 and content[0] == 0x47 and content[188] == 0x47:
-        return "video/mp2t"
-    return None
 
 
 class StandaloneRuntimeCaptureExtractor:
@@ -559,7 +493,7 @@ class StandaloneRuntimeCaptureExtractor:
                         sniffed.media_type,
                         {
                             "maxImagePixels": self.config.max_image_pixels,
-                            "renderScale": _image_ocr_scale(content, self.config.ocr_render_scale),
+                            "renderScale": image_ocr_scale(content, self.config.ocr_render_scale),
                         },
                         cancel_event,
                         page_manifest=expected_ocr_pages,
@@ -611,7 +545,7 @@ class StandaloneRuntimeCaptureExtractor:
                     },
                     cancel_event,
                     progress=_stage_progress(speaker_progress, "transcribing", 0, 450),
-                    timeout_seconds=_audio_run_timeout_seconds(
+                    timeout_seconds=audio_run_timeout_seconds(
                         content, self.config.max_audio_duration_ms
                     ),
                 )
@@ -623,7 +557,7 @@ class StandaloneRuntimeCaptureExtractor:
                         sniffed.media_type,
                         cancel_event,
                         _stage_progress(speaker_progress, "identifying-speakers", 450, 1000),
-                        timeout_seconds=_audio_run_timeout_seconds(
+                        timeout_seconds=audio_run_timeout_seconds(
                             content, self.config.max_audio_duration_ms
                         ),
                     )
@@ -931,7 +865,7 @@ class StandaloneRuntimeCaptureExtractor:
         *,
         raster_cache: list[bytes] | None = None,
     ) -> tuple[OcrPageManifest, ...]:
-        normalized = _normalize_image_content(
+        normalized = normalize_image_content(
             content,
             scale=self.config.ocr_render_scale,
             max_pixels=self.config.max_image_pixels,
@@ -939,10 +873,10 @@ class StandaloneRuntimeCaptureExtractor:
         if raster_cache is not None:
             raster_cache.append(normalized)
         self._checkpoint(cancel_event)
-        raster_width, raster_height = _raster_dimensions(normalized)
+        raster_width, raster_height = png_raster_dimensions(normalized)
         if raster_width is None or raster_height is None:
             raise ValueError("OCR raster metadata is unavailable for image input.")
-        source_width, source_height = _oriented_image_dimensions(content)
+        source_width, source_height = oriented_image_dimensions(content)
         raster_scale = min(raster_width / source_width, raster_height / source_height)
         return (
             OcrPageManifest(
@@ -1301,124 +1235,6 @@ class StandaloneRuntimeCaptureExtractor:
         checkpoint(cancel_event)
 
 
-def _normalize_image_png(
-    image: Image.Image,
-    *,
-    scale: float = 1,
-    max_pixels: int | None = None,
-) -> bytes:
-    from PIL import Image, ImageOps
-
-    oriented = ImageOps.exif_transpose(image)
-    if "A" in oriented.getbands() or "transparency" in oriented.info:
-        rgba = oriented.convert("RGBA")
-        normalized = Image.new("RGB", rgba.size, "white")
-        normalized.paste(rgba, mask=rgba.getchannel("A"))
-    else:
-        normalized = oriented.convert("RGB")
-    if scale != 1:
-        width, height = normalized.size
-        dimensions = (
-            bounded_scaled_dimensions(width, height, scale, max_pixels)
-            if max_pixels is not None
-            else (round(width * scale), round(height * scale))
-        )
-        normalized = normalized.resize(dimensions, Image.Resampling.LANCZOS)
-    output = BytesIO()
-    normalized.save(output, format="PNG")
-    return output.getvalue()
-
-
-def _normalize_image_content(content: bytes, *, scale: float, max_pixels: int) -> bytes:
-    import warnings as image_warnings
-
-    from PIL import Image, UnidentifiedImageError
-
-    try:
-        with image_warnings.catch_warnings():
-            image_warnings.simplefilter("error", Image.DecompressionBombWarning)
-            with Image.open(BytesIO(content)) as image:
-                if (image.format or "").upper() not in {"PNG", "JPEG", "WEBP"}:
-                    raise ValueError("Only PNG, JPEG, and WebP images are supported.")
-                width, height = image.size
-                if width <= 0 or height <= 0:
-                    raise ValueError("Image dimensions must be positive.")
-                if width * height > max_pixels:
-                    raise ValueError("Image exceeds the configured pixel limit.")
-                if getattr(image, "n_frames", 1) != 1 or bool(getattr(image, "is_animated", False)):
-                    raise ValueError("Animated or multi-frame images are unsupported.")
-                image.seek(0)
-                image.load()
-                return _normalize_image_png(
-                    image, scale=ocr_image_scale(width, height, scale), max_pixels=max_pixels
-                )
-    except (
-        OSError,
-        UnidentifiedImageError,
-        Image.DecompressionBombError,
-        Image.DecompressionBombWarning,
-    ) as error:
-        raise ValueError("Uploaded image is not readable.") from error
-
-
-def _raster_dimensions(image_png: bytes) -> tuple[int | None, int | None]:
-    try:
-        from PIL import Image
-
-        with Image.open(BytesIO(image_png)) as image:
-            width, height = image.size
-            return (width, height) if width > 0 and height > 0 else (None, None)
-    except Exception:
-        return None, None
-
-
-def _image_ocr_scale(content: bytes, scale: float) -> float:
-    """The enlargement of an already validated image, as _normalize_image_content applies it."""
-
-    from PIL import Image
-
-    with Image.open(BytesIO(content)) as image:
-        width, height = image.size
-    return ocr_image_scale(width, height, scale)
-
-
-def _oriented_image_dimensions(content: bytes) -> tuple[int, int]:
-    from PIL import Image, ImageOps
-
-    with Image.open(BytesIO(content)) as image:
-        oriented = ImageOps.exif_transpose(image)
-        width, height = oriented.size
-    if width <= 0 or height <= 0:
-        raise ValueError("Image dimensions must be positive.")
-    return width, height
-
-
-def _audio_run_timeout_seconds(content: bytes, max_duration_ms: int) -> float:
-    """How long one Whisper or speaker-diarization run on this audio may take.
-
-    Both take time in proportion to the recording, and diarization runs on the
-    CPU at about a third of real time: with the standard limit alone a
-    40-minute interview failed. The limit grows by the recording's own length,
-    or by the longest allowed when the container does not say.
-    """
-    duration_seconds = _audio_duration_seconds(content)
-    if duration_seconds is None:
-        duration_seconds = max_duration_ms / 1000
-    return DEFAULT_RUN_TIMEOUT_SECONDS + duration_seconds
-
-
-def _audio_duration_seconds(content: bytes) -> float | None:
-    try:
-        import av
-
-        with av.open(BytesIO(content), mode="r") as container:
-            if container.duration is None:
-                return None
-            return container.duration / 1_000_000
-    except Exception:
-        return None
-
-
 def _report_pages_known(
     ocr_progress: Callable[[int, int], None] | None,
     page_manifest: tuple[OcrPageManifest, ...],
@@ -1506,146 +1322,11 @@ def _projection_segments(projection: CaptureOcrProjectionV3) -> list[RawCaptureS
     ]
 
 
-def _engine_digest(engine: str, model: str) -> str:
-    value = hashlib.sha256(f"{engine}:{model}".encode()).hexdigest()
-    return f"sha256:{value}"
-
-
-class DeterministicCaptureExtractor:
-    """Content-sniffed fake for CI and the independently testable harness."""
-
-    def __init__(self, clock: Clock, *, delay_seconds: float = 0) -> None:
-        self._clock = clock
-        self._delay_seconds = delay_seconds
-
-    def sniff(self, content: bytes) -> SniffedSource:
-        return sniff_source(content)
-
-    async def extract(
-        self,
-        content: bytes,
-        source: CaptureSource,
-        cancel_event: asyncio.Event,
-        *,
-        pdf_page_numbers: tuple[int, ...] | None = None,
-        ocr_progress: Callable[[int, int], None] | None = None,
-        identify_speakers: bool = False,
-        speaker_progress: Callable[[str, int], None] | None = None,
-        spoken_language: str | None = None,
-    ) -> CaptureExtractionOutcome:
-        sniffed = self.sniff(content)
-        if self._delay_seconds:
-            try:
-                await asyncio.wait_for(cancel_event.wait(), timeout=self._delay_seconds)
-            except TimeoutError:
-                pass
-        if cancel_event.is_set():
-            raise asyncio.CancelledError
-
-        text = self._fixture_text(content, sniffed.kind, source.sha256)
-        scope: OcrPageScopeV2 | None = None
-        if sniffed.kind is CaptureSourceKind.AUDIO:
-            parts = [part.strip() for part in text.split("|") if part.strip()]
-            segments = [
-                RawCaptureSegment(
-                    segment_id=f"segment-{index + 1}",
-                    order=index,
-                    locator=TimeLocator(
-                        start_ms=index * 1000,
-                        end_ms=(index + 1) * 1000,
-                    ),
-                    text=part,
-                )
-                for index, part in enumerate(parts)
-            ]
-            engine = CaptureEngine(
-                engine="speech-recognition",
-                model="deterministic-whisper-v1",
-                digest=_engine_digest("speech-recognition", "deterministic-whisper-v1"),
-                device="fake",
-            )
-        else:
-            source_pages = [part.strip() for part in text.split("\f")]
-            page_numbers = tuple(range(1, len(source_pages) + 1))
-            if pdf_page_numbers is not None:
-                if not is_pdf_page_selection(pdf_page_numbers):
-                    raise PdfPageSelectionError(
-                        "PDF page selection must list source pages in ascending order "
-                        "without duplicates."
-                    )
-                if pdf_page_numbers[-1] > len(source_pages):
-                    raise PdfPageSelectionError(
-                        f"PDF page selection includes page {pdf_page_numbers[-1]}, "
-                        f"but the PDF has {len(source_pages)} pages."
-                    )
-                page_numbers = tuple(pdf_page_numbers)
-            # Each page keeps its source page number, selected or not.
-            page_texts = [
-                (page_number, source_pages[page_number - 1])
-                for page_number in page_numbers
-                if source_pages[page_number - 1]
-            ]
-            segments = [
-                RawCaptureSegment(
-                    segment_id=f"segment-{index + 1}",
-                    order=index,
-                    locator=PageLocator(page=page_number),
-                    text=part,
-                )
-                for index, (page_number, part) in enumerate(page_texts)
-            ]
-            engine = CaptureEngine(
-                engine="windowsml-ocr",
-                model="deterministic-windowsml-v1",
-                digest=_engine_digest("windowsml-ocr", "deterministic-windowsml-v1"),
-                device="fake",
-            )
-            scope = (
-                OcrPageScopeV2(
-                    source_page_count=len(text.split("\f")),
-                    requested_page_numbers=list(pdf_page_numbers),
-                    processed_page_numbers=list(pdf_page_numbers),
-                )
-                if sniffed.kind is CaptureSourceKind.PDF and pdf_page_numbers is not None
-                else None
-            )
-        if not segments:
-            raise ValueError("extraction produced no non-empty content")
-        return CaptureExtractionOutcome(
-            raw=RawCapture(
-                source=source,
-                segments=segments,
-                source_text=project_source_text(segments),
-                extraction_engine=engine,
-                warnings=[],
-                ocr_page_scope=scope,
-                created_at=self._clock.now(),
-            )
-        )
-
-    @staticmethod
-    def _fixture_text(content: bytes, kind: CaptureSourceKind, sha256: str) -> str:
-        marker = b"CAPTURE_TEXT:"
-        marker_index = content.find(marker)
-        if marker_index >= 0:
-            candidate = content[marker_index + len(marker) :].decode("utf-8", errors="ignore")
-            candidate = candidate.strip("\x00\r\n ")
-            if candidate:
-                return candidate
-        return f"Deterministic {kind.value} capture {sha256[:12]}"
-
-
 __all__ = [
     "CaptureExtractor",
     "CaptureExtractionOutcome",
-    "DeterministicCaptureExtractor",
-    "ExtractionRuntimeUnavailableError",
     "OcrExtractionFailure",
     "OcrSourcePreflightError",
     "PdfPageSelectionError",
-    "SniffedSource",
     "StandaloneRuntimeCaptureExtractor",
-    "UnsupportedMediaError",
-    "SNIFF_BYTES",
-    "sniff_source",
 ]

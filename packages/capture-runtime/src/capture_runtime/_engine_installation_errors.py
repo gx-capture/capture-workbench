@@ -15,15 +15,21 @@ class EngineResolutionTimeoutError(TimeoutError):
     """Raised when active-engine verification does not finish within its deadline."""
 
 
+class ExtractionRuntimeUnavailableError(RuntimeError):
+    """Raised when the runtime requirement an extraction needs is not installed and ready."""
+
+
 # Preserve the established public module path for tracebacks, reprs, and
 # consumers that inspect these exception types.
 EngineInstallationError.__module__ = "capture_runtime.engine_installation"
 EngineInstallBusyError.__module__ = "capture_runtime.engine_installation"
 EngineResolutionTimeoutError.__module__ = "capture_runtime.engine_installation"
+ExtractionRuntimeUnavailableError.__module__ = "capture_runtime.engine_installation"
 
 
 __all__ = [
     "EngineInstallBusyError",
     "EngineInstallationError",
     "EngineResolutionTimeoutError",
+    "ExtractionRuntimeUnavailableError",
 ]

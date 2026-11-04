@@ -16,6 +16,7 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import Response as StarletteResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from capture_runtime.capture_extraction import CaptureExtractor
 from capture_runtime.clock import Clock
 from capture_runtime.config import RuntimeSettings
 from capture_runtime.constants import RUNTIME_VERSION
@@ -26,7 +27,6 @@ from capture_runtime.contract_set import (
     validate_route_inventory,
 )
 from capture_runtime.dependencies import RuntimeDependencies, build_runtime_dependencies
-from capture_runtime.extractors import CaptureExtractor
 from capture_runtime.ocr_preflight import OcrComputePreflight
 from capture_runtime.ollama import ProcessController, RuntimeInstaller
 from capture_runtime.routes.common import ApiProblem, error_response
