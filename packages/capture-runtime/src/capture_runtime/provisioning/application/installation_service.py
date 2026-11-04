@@ -13,6 +13,10 @@ from capture_runtime.contracts import (
     RuntimeInstallationV2,
 )
 from capture_runtime.install_progress import DownloadedBytes
+from capture_runtime.provisioning.domain.installation import (
+    InstallationJob,
+    InstallationStatus,
+)
 from capture_runtime.provisioning.infrastructure.engine_installation import EngineInstallationError
 from capture_runtime.provisioning.infrastructure.installation_repository import (
     InstallationRepository,
@@ -58,6 +62,46 @@ def installation_failure_code(error: BaseException) -> str:
     if "probe" in message and "failed" in message:
         return "engine_probe_failed"
     return "installation_failed"
+
+
+def _to_domain(job: RuntimeInstallationV2) -> InstallationJob:
+    return InstallationJob(
+        installation_id=job.installation_id,
+        requirement_id=job.requirement_id,
+        status=InstallationStatus(job.status.value),
+        progress=job.progress,
+        download_bytes=job.download_bytes,
+        downloaded_bytes=job.downloaded_bytes,
+        failure_code=job.error.code if job.error else None,
+        failure_message=job.error.message if job.error else None,
+        retryable=job.error.retryable if job.error else False,
+        created_at=job.created_at,
+        updated_at=job.updated_at,
+        completed_at=job.completed_at,
+    )
+
+
+def _to_contract(job: InstallationJob) -> RuntimeInstallationV2:
+    error = None
+    if job.failure_code and job.failure_message:
+        error = CaptureFailureV2(
+            code=job.failure_code,
+            message=job.failure_message,
+            stage="runtime",
+            retryable=job.retryable,
+        )
+    return RuntimeInstallationV2(
+        installation_id=job.installation_id,
+        requirement_id=job.requirement_id,
+        status=RuntimeInstallationStatus(job.status.value),
+        progress=job.progress,
+        download_bytes=job.download_bytes,
+        downloaded_bytes=job.downloaded_bytes,
+        error=error,
+        created_at=job.created_at,
+        updated_at=job.updated_at,
+        completed_at=job.completed_at,
+    )
 
 
 class RequirementInUseError(RuntimeError):
@@ -184,62 +228,34 @@ class InstallationService:
 
     async def _process(self, installation_id: str, cancellation: asyncio.Event) -> None:
         try:
-            current = self.get(installation_id)
-            current = current.model_copy(
-                update={
-                    "status": RuntimeInstallationStatus.RUNNING,
-                    "progress": 0.05,
-                    "updated_at": self._clock.now(),
-                }
-            )
-            self.repository.update_job(installation_id, current)
+            domain_job = _to_domain(self.get(installation_id))
+            domain_job.mark_running(self._clock.now())
+            self.repository.update_job(installation_id, _to_contract(domain_job))
 
             def progress(value: float) -> None:
-                job = self.get(installation_id)
-                if job.status in TERMINAL_INSTALLATION_STATUSES:
+                job = _to_domain(self.get(installation_id))
+                if job.is_terminal:
                     return
-                self.repository.update_job(
-                    installation_id,
-                    job.model_copy(
-                        update={
-                            "progress": max(0.0, min(1.0, value)),
-                            "updated_at": self._clock.now(),
-                        }
-                    ),
-                )
+                job.update_progress(value, self._clock.now())
+                self.repository.update_job(installation_id, _to_contract(job))
 
             def downloaded(value: DownloadedBytes) -> None:
-                job = self.get(installation_id)
-                if job.status in TERMINAL_INSTALLATION_STATUSES:
+                job = _to_domain(self.get(installation_id))
+                if job.is_terminal:
                     return
-                self.repository.update_job(
-                    installation_id,
-                    job.model_copy(
-                        update={
-                            "download_bytes": value.total,
-                            "downloaded_bytes": max(0, min(value.done, value.total)),
-                            "updated_at": self._clock.now(),
-                        }
-                    ),
-                )
+                job.update_download(downloaded=value.done, total=value.total, now=self._clock.now())
+                self.repository.update_job(installation_id, _to_contract(job))
 
             async with self._install_lock:
                 await self.installer.install(
-                    current.requirement_id,
+                    domain_job.requirement_id,
                     cancel_event=cancellation,
                     report_progress=progress,
                     report_download=downloaded,
                 )
-            now = self._clock.now()
-            completed = self.get(installation_id).model_copy(
-                update={
-                    "status": RuntimeInstallationStatus.COMPLETED,
-                    "progress": 1.0,
-                    "updated_at": now,
-                    "completed_at": now,
-                }
-            )
-            self.repository.update_job(installation_id, completed)
+            completed_job = _to_domain(self.get(installation_id))
+            completed_job.mark_completed(self._clock.now())
+            self.repository.update_job(installation_id, _to_contract(completed_job))
         except asyncio.CancelledError:
             if cancellation.is_set():
                 current = self.get(installation_id)
@@ -298,37 +314,20 @@ class InstallationService:
         message: str,
         retryable: bool,
     ) -> None:
-        now = self._clock.now()
-        job = self.get(installation_id).model_copy(
-            update={
-                "status": status,
-                "error": CaptureFailureV2(
-                    code=code,
-                    message=message,
-                    stage="runtime",
-                    retryable=retryable,
-                ),
-                "updated_at": now,
-                "completed_at": now,
-            }
+        domain_job = _to_domain(self.get(installation_id))
+        domain_job.mark_failed(
+            code,
+            message,
+            retryable=retryable,
+            now=self._clock.now(),
+            manual_action=(status == RuntimeInstallationStatus.MANUAL_ACTION_REQUIRED),
         )
-        self.repository.update_job(installation_id, job)
+        self.repository.update_job(installation_id, _to_contract(domain_job))
 
     def _cancelled_job(self, job: RuntimeInstallationV2) -> RuntimeInstallationV2:
-        now = self._clock.now()
-        return job.model_copy(
-            update={
-                "status": RuntimeInstallationStatus.CANCELLED,
-                "error": CaptureFailureV2(
-                    code="installation_cancelled",
-                    message="Runtime installation was cancelled.",
-                    stage="runtime",
-                    retryable=True,
-                ),
-                "updated_at": now,
-                "completed_at": now,
-            }
-        )
+        domain_job = _to_domain(job)
+        domain_job.mark_cancelled(self._clock.now())
+        return _to_contract(domain_job)
 
 
 __all__ = ["CaptureGate", "InstallationService", "RequirementInUseError"]

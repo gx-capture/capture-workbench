@@ -27,7 +27,7 @@ flowchart LR
 | 語音轉寫     | [說明](speech.md)       | `capture_runtime/speech`                                    | W5 搬移；W6 待辦 |
 | 說話者分離   | [說明](diarization.md)  | `capture_runtime/diarization`                               | W5 搬移；W6 待辦 |
 | 結構化       | [說明](structuring.md)  | `capture_runtime/structuring`                               | W5 搬移；W6 待辦 |
-| 引擎供應     | [說明](provisioning.md) | `capture_runtime/provisioning`                              | W5 搬移；W6 待辦 |
+| 引擎供應     | [說明](provisioning.md) | `capture_runtime/provisioning`                              | W6 定案          |
 | 執行環境合約 | 待補                    | `capture_runtime/contracts`、兩種 SDK（TypeScript、Python） | 原地             |
 | 工作台主機   | 待補                    | `packages/capture-workbench-ui`、`apps/*`、launcher         | 規劃中           |
 

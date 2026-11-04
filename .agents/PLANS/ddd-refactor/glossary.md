@@ -45,14 +45,14 @@
 
 ## 引擎供應
 
-| 中文       | 程式名稱                | 意思                                                               |
-| ---------- | ----------------------- | ------------------------------------------------------------------ |
-| 需求       | `RuntimeRequirementV2`  | runtime 需要的一個元件，例如 `windowsml-ocr`、`speech-recognition` |
-| 安裝       | `RuntimeInstallationV2` | 下載、驗證、啟用一個需求的過程                                     |
-| 引擎       | engine、worker          | 另外打包、以 JSON-lines 協定與 runtime 溝通的程式                  |
-| 引擎目錄   | engine catalog          | 每個需求的 worker、模型檔、版本與雜湊                              |
-| 模型來源鎖 | model source lock       | 發布時核可的模型來源、版本與雜湊                                   |
-| 下載快取   | engine cache            | 本機共用、以 SHA-256 為鍵的下載內容                                |
+| 中文       | 程式名稱                                                      | 意思                                                               |
+| ---------- | ------------------------------------------------------------- | ------------------------------------------------------------------ |
+| 需求       | `RuntimeRequirement`、`RuntimeRequirementV2`                  | runtime 需要的一個元件，例如 `windowsml-ocr`、`speech-recognition` |
+| 安裝       | `InstallationJob`、`RuntimeInstallationV2`、`InstallationStatus` | 下載、驗證、啟用一個需求的過程與作業狀態機                         |
+| 引擎       | engine、worker                                                | 另外打包、以 JSON-lines 協定與 runtime 溝通的程式                  |
+| 引擎目錄   | `EngineCatalog`、`EngineRequirementDescriptor`                | 每個需求的 worker、模型檔、版本與雜湊                              |
+| 模型來源鎖 | model source lock                                             | 發布時核可的模型來源、版本與雜湊                                   |
+| 下載快取   | engine cache                                                  | 本機共用、以 SHA-256 為鍵的下載內容                                |
 
 ## 執行環境合約
 

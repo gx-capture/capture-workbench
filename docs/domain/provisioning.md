@@ -10,13 +10,44 @@
 
 ## 聚合與不變條件
 
-W5 只搬移現有模組，保留原有行為；聚合、值物件與狀態機的語意整理留待 W6。現有 `EngineCatalog` 描述引擎需求與其檔案，`InstallationRepository` 保存安裝作業紀錄，`EngineInstallationManager` 解析並安裝需求。下載完整性驗證、安裝互斥與啟用順序沿用既有實作。
+引擎供應上下文依聚合分子套件（W6 定案）：
+1. **安裝作業 (`installation`)**：`InstallationJob` 聚合根守住安裝狀態機（`InstallationStatus`）與不變條件。只有非終態能推進，終態不可再變更進度或下載位元組；進度介於 0.0 與 1.0；已下載位元組不大於總位元組。
+2. **需求 (`requirement`)**：`RuntimeRequirement` 實體描述需求識別碼、顯示名稱與就緒狀態。
+3. **引擎目錄 (`catalog`)**：`EngineCatalog` 與 `EngineRequirementDescriptor` 描述需求的檔案規格與校驗雜湊。
 
 ```mermaid
 classDiagram
+  class InstallationJob {
+    +str installation_id
+    +str requirement_id
+    +InstallationStatus status
+    +float progress
+    +int download_bytes
+    +int downloaded_bytes
+    +bool is_terminal
+    +mark_running(now)
+    +update_progress(value, now)
+    +update_download(downloaded, total, now)
+    +mark_completed(now)
+    +mark_failed(code, message, retryable, now)
+    +mark_cancelled(now)
+  }
+  class RuntimeRequirement {
+    +str requirement_id
+    +str display_name
+    +str status
+    +str error
+  }
+  class EngineCatalog {
+    +get(requirement_id)
+  }
+  class EngineRequirementDescriptor {
+    +str requirement_id
+    +str display_name
+    +tuple artifacts
+    +tuple model_files
+  }
   EngineCatalog --> EngineRequirementDescriptor : describes
-  InstallationService --> InstallationRepository : records jobs
-  EngineInstallationManager --> EngineCatalog : resolves requirements
 ```
 
 ## 主要流程
@@ -25,22 +56,33 @@ classDiagram
 sequenceDiagram
   participant Host as 主機
   participant API as Runtime API
+  participant UseCase as InstallRequirement / CancelInstallation
   participant Service as InstallationService
-  participant Installer as 安裝程式
   participant Repo as InstallationRepository
   Host->>API: 提交安裝需求
-  API->>Service: create
-  Service->>Repo: 建立或取回安裝作業
-  Service->>Installer: 執行安裝
-  Service->>Repo: 更新進度與結果
+  API->>UseCase: execute
+  UseCase->>Service: create / cancel
+  Service->>Repo: 建立或更新 InstallationJob
   Host->>API: 查詢安裝狀態
-  API->>Service: get / list
+  API->>UseCase: GetInstallation / ListInstallations
+  UseCase->>Repo: 讀取 InstallationJob
 ```
+
+## 用例
+
+| 中文 | 用例（程式名稱） | 說明 |
+| :--- | :--- | :--- |
+| 安裝需求 | `InstallRequirement` | 建立或取回安裝作業，並非同步執行下載、驗證與啟用 |
+| 取消安裝 | `CancelInstallation` | 取消進行中或等待中的安裝作業 |
+| 取得安裝作業 | `GetInstallation` | 依識別碼查詢單一安裝作業狀態 |
+| 列出安裝作業 | `ListInstallations` | 列出目前所有已記錄的安裝作業 |
+| 卸載需求 | `UninstallRequirement` | 在無進行中擷取與安裝時，釋放暖 worker 並移除安裝之引擎 |
+| 查詢需求清單 | `ListRequirements` | 查詢可用的執行環境需求與當前安裝狀態 |
 
 ## 與其他上下文的關係
 
-文件 OCR、語音轉寫與說話者分離使用本上下文供應的引擎與模型；結構化使用供應的 Ollama runtime。worker 的推論與結果解析由各引擎上下文負責。W5 保留既有跨模組依賴，不表示已完成 W6 的領域模型與分層整理。
+文件 OCR、語音轉寫與說話者分離使用本上下文供應的引擎與模型；結構化使用供應的 Ollama runtime。worker 的推論與結果解析由各引擎上下文負責。
 
 ## 規則與資料來源
 
-目錄載入、檔案下載、快取與安裝儲存庫位於 `capture_runtime.provisioning.infrastructure`。現有 `application.installation_service.InstallationService` 以 `create`、`get`、`list` 提供安裝作業的建立與查詢，HTTP 路由位於 `provisioning.api.runtime`。公開型別仍由 `capture_runtime.contracts` 定義。引擎目錄與模型來源鎖提供版本、檔案及完整性資訊；遷移邊界與後續步驟見 [DDD 重構計畫](../../.agents/PLANS/ddd-refactor/README.md)。
+領域模型位於 `capture_runtime.provisioning.domain`。用例位於 `capture_runtime.provisioning.application.use_cases`。目錄載入、檔案下載、快取與安裝儲存庫位於 `capture_runtime.provisioning.infrastructure`。HTTP 路由位於 `capture_runtime.provisioning.api.runtime`。公開型別由 `capture_runtime.contracts` 定義，在 API 與 application 邊界與領域物件互轉。
