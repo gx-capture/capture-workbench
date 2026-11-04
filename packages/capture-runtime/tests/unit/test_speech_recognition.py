@@ -35,7 +35,9 @@ def test_cpu_fallback_time_includes_the_failed_gpu_attempt(tmp_path, monkeypatch
     fake.failures[(engine, "inference")] = RuntimeError("CUDA out of memory")
     clock = iter(range(0, 1000, 5))
     monkeypatch.setattr(speech.time, "perf_counter", lambda: next(clock))
-    result = adapter(tmp_path, fake).transcribe(tmp_path / "source.wav", should_cancel=lambda: False)
+    result = adapter(tmp_path, fake).transcribe(
+        tmp_path / "source.wav", should_cancel=lambda: False
+    )
     assert result.device == "cpu"
     assert result.stage_ms == {
         "modelLoad": 5000,
@@ -218,7 +220,9 @@ def test_explicit_cpu_does_not_probe_cuda_and_strict_cuda_never_falls_back(tmp_p
 
 def test_no_cuda_uses_the_primary_checkpoint_without_a_gpu_attempt(tmp_path, monkeypatch):
     fake = FakeModels(monkeypatch, cuda=False)
-    result = adapter(tmp_path, fake).transcribe(tmp_path / "source.wav", should_cancel=lambda: False)
+    result = adapter(tmp_path, fake).transcribe(
+        tmp_path / "source.wav", should_cancel=lambda: False
+    )
     assert [Path(event[2]).name for event in fake.loads("asr")] == ["primary"]
     assert fake.devices("asr") == ["cpu"]
     assert (result.model, result.device) == ("tea-asr-1.1", "cpu")
