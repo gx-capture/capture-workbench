@@ -10,8 +10,10 @@ import pytest
 import capture_runtime.workers.speech_recognition_main as whisper_main
 from capture_runtime._worker_payloads import WorkerResultError, WorkerWord
 from capture_runtime.constants import RUNTIME_VERSION
-from capture_runtime.speaker_turns import SpeakerTurn
-from capture_runtime.speaker_worker_result import parse_diarization_result
+from capture_runtime.diarization.infrastructure.speaker_turns import SpeakerTurn
+from capture_runtime.diarization.infrastructure.speaker_worker_result import (
+    parse_diarization_result,
+)
 from capture_runtime.speech_recognition import TeaAsrAdapter
 from capture_runtime.speech_worker_result import parse_run_result
 from capture_runtime.worker_contracts import WorkerRequest

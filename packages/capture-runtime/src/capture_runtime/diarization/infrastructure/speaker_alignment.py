@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 
-from capture_runtime.speaker_turns import SpeakerTurn
+from capture_runtime.diarization.infrastructure.speaker_turns import SpeakerTurn
 
 
 @dataclass(frozen=True, slots=True)

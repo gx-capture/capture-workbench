@@ -13,11 +13,11 @@ import pytest
 
 import capture_runtime.workers.diarization_main as diarization_main
 from capture_runtime.constants import RUNTIME_VERSION
-from capture_runtime.speaker_diarization import (
+from capture_runtime.diarization.infrastructure.speaker_diarization import (
     DIARIZATION_REQUIRED_FILES,
     SpeakerDiarizationResult,
 )
-from capture_runtime.speaker_turns import SpeakerTurn
+from capture_runtime.diarization.infrastructure.speaker_turns import SpeakerTurn
 from capture_runtime.worker_contracts import WorkerRequest, WorkerResponse
 from capture_runtime.worker_stage_policy import WORKER_STAGE_PATTERN, sanitize_worker_stage
 
@@ -135,7 +135,8 @@ def test_probe_reports_model_readiness_and_the_device_it_would_use(
         diarization_main.NemotronDiarizationAdapter, "cuda_available", lambda self: True
     )
     monkeypatch.setattr(
-        "capture_runtime.speaker_diarization.importlib.util.find_spec", lambda _name: object()
+        "capture_runtime.diarization.infrastructure.speaker_diarization.importlib.util.find_spec",
+        lambda _name: object(),
     )
     request = _request(tmp_path, "probe", options={"preferGpu": True})
 

@@ -50,7 +50,9 @@ def test_approved_production_lock_is_canonical_model_enabled() -> None:
 
 
 def test_production_lock_pins_every_file_the_speaker_worker_needs() -> None:
-    from capture_runtime.speaker_diarization import DIARIZATION_REQUIRED_FILES
+    from capture_runtime.diarization.infrastructure.speaker_diarization import (
+        DIARIZATION_REQUIRED_FILES,
+    )
 
     source = (
         Path(__file__).resolve().parents[2] / "model-sources" / "release-model-source-lock.json"

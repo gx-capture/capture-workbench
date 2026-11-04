@@ -28,7 +28,7 @@ from capture_runtime._worker_payloads import (
 from capture_runtime._worker_payloads import (
     permille_handler as _permille_handler,
 )
-from capture_runtime.speaker_turns import SPEAKER_LABEL, SpeakerTurn
+from capture_runtime.diarization.infrastructure.speaker_turns import SPEAKER_LABEL, SpeakerTurn
 from capture_runtime.worker_client import InstalledEngine
 from capture_runtime.worker_process import DEFAULT_RUN_TIMEOUT_SECONDS, WorkerProcess
 
