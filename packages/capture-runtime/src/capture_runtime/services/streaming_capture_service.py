@@ -46,6 +46,7 @@ from capture_runtime.ocr_execution_proof import (
     acceptance_ocr_execution_evidence_sink_from_environment,
 )
 from capture_runtime.ocr_projection import OcrPipeline
+from capture_runtime.ocr_worker_result import OcrWorkerFailure
 from capture_runtime.ollama.lifecycle_impl import RuntimeUnavailableError
 from capture_runtime.progressive_audio import ProgressiveAudioError, ProgressiveSessionEvent
 from capture_runtime.progressive_capture import (
@@ -63,7 +64,6 @@ from capture_runtime.storage import (
 from capture_runtime.streaming import MAX_STREAM_CHUNK_BYTES
 from capture_runtime.structuring import StructuringValidationError, validate_structuring_candidate
 from capture_runtime.structuring_provider import CaptureStructuringProvider
-from capture_runtime.worker_client import OcrWorkerFailure
 
 MAX_EVENT_SEGMENTS = 1_000
 # A speech session's end is not the capture's: the capture publishes its next

@@ -5,7 +5,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from capture_runtime.worker_client import InstalledEngine, WorkerClient
+from capture_runtime.capture_worker_client import WorkerClient
+from capture_runtime.worker_client import InstalledEngine
 from capture_runtime.worker_contracts import WorkerResponse
 from capture_runtime.workers.server import permille_reporter
 from tests.speech_model_fakes import FakeModels, adapter

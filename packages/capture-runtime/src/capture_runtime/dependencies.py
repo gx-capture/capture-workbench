@@ -9,6 +9,7 @@ from capture_runtime.capture_extraction import (
     CaptureExtractor,
     StandaloneRuntimeCaptureExtractor,
 )
+from capture_runtime.capture_worker_client import WorkerClient
 from capture_runtime.clock import Clock, SystemClock
 from capture_runtime.config import RuntimeSettings
 from capture_runtime.constants import (
@@ -52,7 +53,6 @@ from capture_runtime.structuring_provider import (
     HostOnlyCaptureStructuringProvider,
 )
 from capture_runtime.testing.deterministic_extractor import DeterministicCaptureExtractor
-from capture_runtime.worker_client import WorkerClient
 from capture_runtime.worker_process import WorkerProcess
 
 
