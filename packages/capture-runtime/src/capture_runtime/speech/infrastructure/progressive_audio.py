@@ -18,10 +18,13 @@ from capture_runtime.contracts import (
     TimeLocator,
     project_source_text,
 )
+from capture_runtime.speech.domain import (
+    DEFAULT_OVERLAP_MS,
+    DEFAULT_WINDOW_MS,
+    MAX_PROGRESSIVE_WINDOW_BYTES,
+    AudioWindow,
+)
 
-MAX_PROGRESSIVE_WINDOW_BYTES = 4 * 1024 * 1024
-DEFAULT_WINDOW_MS = 120_000
-DEFAULT_OVERLAP_MS = 30_000
 DEFAULT_CHECKPOINT_MS = 300_000
 DEFAULT_HEARTBEAT_MS = 5_000
 DEFAULT_STALL_TIMEOUT_MS = 90_000
@@ -39,19 +42,8 @@ class ProgressiveSessionClosedError(ProgressiveAudioError):
     pass
 
 
-@dataclass(frozen=True, slots=True)
-class DecodedAudioWindow:
-    start_ms: int
-    end_ms: int
-    payload: bytes
-
-    def __post_init__(self) -> None:
-        if self.start_ms < 0 or self.end_ms <= self.start_ms:
-            raise ValueError("audio window interval is invalid")
-        if not self.payload:
-            raise ValueError("audio window payload must not be empty")
-        if len(self.payload) > MAX_PROGRESSIVE_WINDOW_BYTES:
-            raise ValueError("audio window exceeds the bounded payload limit")
+# Backwards compatibility alias for domain AudioWindow
+DecodedAudioWindow = AudioWindow
 
 
 @dataclass(frozen=True, slots=True)

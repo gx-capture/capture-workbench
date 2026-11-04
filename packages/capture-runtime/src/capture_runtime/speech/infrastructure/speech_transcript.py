@@ -11,24 +11,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+from capture_runtime.speech.domain import (
+    SpeechTranscriptSegment,
+    SpeechWord,
+)
 from capture_runtime.worker_probe import EngineProbe
 
-
-@dataclass(frozen=True, slots=True)
-class WhisperWord:
-    start_ms: int
-    end_ms: int
-    # Raw model token text; a leading space marks a word boundary.
-    text: str
-
-
-@dataclass(frozen=True, slots=True)
-class WhisperTextSegment:
-    start_ms: int
-    end_ms: int
-    text: str
-    # Filled only when the adapter was asked for word timestamps.
-    words: tuple[WhisperWord, ...] = ()
+# Backwards compatibility aliases for domain models
+WhisperWord = SpeechWord
+WhisperTextSegment = SpeechTranscriptSegment
 
 
 @dataclass(frozen=True, slots=True)
