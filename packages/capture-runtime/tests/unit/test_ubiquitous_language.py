@@ -76,6 +76,11 @@ def test_every_api_enum_value_of_a_modelled_context_maps_to_one_concept() -> Non
             contracts.OcrProvenanceStatus,
             contracts.OcrProvenanceUnavailableReason,
         ],
+        "structuring": [
+            contracts.StructuringMode,
+            contracts.StructuringSessionStatus,
+            contracts.StructuringBatchStatus,
+        ],
     }
     mapped = {
         (concept["enum"]["enumId"], concept["enum"]["value"])

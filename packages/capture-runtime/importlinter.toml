@@ -675,6 +675,10 @@ name = "Structuring does not depend on its downstream contexts"
 type = "forbidden"
 source_modules = [
   "capture_runtime.structuring",
+  "capture_runtime.structuring.domain",
+  "capture_runtime.structuring.domain.session",
+  "capture_runtime.structuring.application",
+  "capture_runtime.structuring.application.use_cases",
   "capture_runtime.structuring.infrastructure.ollama",
   "capture_runtime.structuring.infrastructure.structuring_provider",
   "capture_runtime.structuring.infrastructure.model_catalog",
