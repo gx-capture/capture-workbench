@@ -391,6 +391,15 @@ ignore_imports = [
 name = "Document OCR does not depend on its downstream contexts"
 type = "forbidden"
 source_modules = [
+  "capture_runtime.ocr.domain.compute_plan.models",
+  "capture_runtime.ocr.domain.compute_plan",
+  "capture_runtime.ocr.domain.page.models",
+  "capture_runtime.ocr.domain.page",
+  "capture_runtime.ocr.domain.evidence.models",
+  "capture_runtime.ocr.domain.evidence",
+  "capture_runtime.ocr.domain",
+  "capture_runtime.ocr.application.use_cases",
+  "capture_runtime.ocr.application",
   "capture_runtime.ocr.infrastructure.ocr_page_result",
   "capture_runtime.ocr.infrastructure.ocr_paddle_normalization",
   "capture_runtime.ocr.infrastructure.ocr_execution_evidence",
