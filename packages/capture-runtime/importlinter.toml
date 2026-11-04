@@ -631,6 +631,10 @@ ignore_imports = [
 name = "Capture does not depend on its downstream contexts"
 type = "forbidden"
 source_modules = [
+  "capture_runtime.capture.domain",
+  "capture_runtime.capture.domain.ingestion",
+  "capture_runtime.capture.domain.operation",
+  "capture_runtime.capture.application.use_cases",
   "capture_runtime.capture.application.streaming_capture_service",
   "capture_runtime.capture.infrastructure.streaming_repository",
   "capture_runtime.capture.infrastructure._streaming_persistence",

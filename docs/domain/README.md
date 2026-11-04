@@ -22,7 +22,7 @@ flowchart LR
 
 | 上下文       | 說明文件                | 程式（重構後）                                              | 狀態             |
 | ------------ | ----------------------- | ----------------------------------------------------------- | ---------------- |
-| 擷取         | [說明](capture.md)      | `capture_runtime/capture`                                   | W5 搬移；W6 待辦 |
+| 擷取         | [說明](capture.md)      | `capture_runtime/capture`                                   | W6 定案          |
 | 文件 OCR     | [說明](ocr.md)          | `capture_runtime/ocr`                                       | W6 定案          |
 | 語音轉寫     | [說明](speech.md)       | `capture_runtime/speech`                                    | W6 定案          |
 | 說話者分離   | [說明](diarization.md)  | `capture_runtime/diarization`                               | W6 定案          |
