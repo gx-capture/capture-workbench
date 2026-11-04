@@ -12,7 +12,7 @@ from typing import Any
 import pytest
 
 from capture_runtime.constants import RUNTIME_VERSION
-from capture_runtime.engine_catalog import (
+from capture_runtime.provisioning.infrastructure.engine_catalog import (
     EngineCatalog,
     EngineCatalogError,
     canonical_json_bytes,

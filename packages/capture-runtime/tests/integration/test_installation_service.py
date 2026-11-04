@@ -7,15 +7,17 @@ from pathlib import Path
 import pytest
 
 from capture_runtime.clock import SystemClock
-from capture_runtime.engine_installation import EngineInstallationError
 from capture_runtime.install_progress import DownloadedBytes, DownloadProgress
-from capture_runtime.services.installation_service import (
+from capture_runtime.provisioning.application.installation_service import (
     TERMINAL_INSTALLATION_STATUSES,
     InstallationService,
     RequirementInUseError,
     installation_failure_code,
 )
-from capture_runtime.storage import InstallationRepository
+from capture_runtime.provisioning.infrastructure.engine_installation import EngineInstallationError
+from capture_runtime.provisioning.infrastructure.installation_repository import (
+    InstallationRepository,
+)
 from capture_runtime.worker_process import WorkerExecutionError
 
 

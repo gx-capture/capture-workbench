@@ -1,6 +1,6 @@
 // The TypeScript reading of a worker artifact's source in the release engine
 // catalog. It mirrors `EngineArtifactDescriptor`/`EngineArtifactPart` in
-// packages/capture-runtime/src/capture_runtime/engine_catalog.py: a worker
+// packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/engine_catalog.py: a worker
 // archive above one GitHub release asset (2 GB) is published as ordered parts
 // `<fileName>.001`, `.002`, ... instead of one `url`, and the catalog keeps the
 // whole archive's `bytes` and `sha256` alongside each part's own.

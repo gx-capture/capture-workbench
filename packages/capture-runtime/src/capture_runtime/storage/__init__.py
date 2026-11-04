@@ -5,10 +5,6 @@ from capture_runtime.storage.common import (
     RecordNotFoundError,
     TransitionRejectedError,
 )
-from capture_runtime.storage.installation_repository import (
-    InstallationRecord,
-    InstallationRepository,
-)
 from capture_runtime.storage.model_installation_repository import (
     ModelInstallationRecord,
     ModelInstallationRepository,
@@ -31,8 +27,6 @@ from capture_runtime.storage.structuring_session_repository import (
 
 __all__ = [
     "IdempotencyConflictError",
-    "InstallationRecord",
-    "InstallationRepository",
     "ModelInstallationRecord",
     "ModelInstallationRepository",
     "RecordNotFoundError",

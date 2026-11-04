@@ -8,7 +8,10 @@ import tempfile
 from collections.abc import Callable
 from pathlib import Path
 
-from capture_runtime.engine_catalog import ActiveEngineState, canonical_json_bytes
+from capture_runtime.provisioning.infrastructure.engine_catalog import (
+    ActiveEngineState,
+    canonical_json_bytes,
+)
 
 type InstalledFileSnapshot = tuple[tuple[str, int, int, int], ...]
 

@@ -17,7 +17,10 @@ from model_source_lock import (
 
 from capture_runtime.artifact_parts import JoinedParts, archive_parts
 from capture_runtime.constants import RUNTIME_VERSION
-from capture_runtime.engine_catalog import EngineCatalog, canonical_json_bytes
+from capture_runtime.provisioning.infrastructure.engine_catalog import (
+    EngineCatalog,
+    canonical_json_bytes,
+)
 from capture_runtime.worker_contracts import WORKER_PROTOCOL_VERSION
 
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from pathlib import Path
 
-from capture_runtime.engine_catalog import EngineRequirementDescriptor
+from capture_runtime.provisioning.infrastructure.engine_catalog import EngineRequirementDescriptor
 
 from ._engine_download_cache import VerifiedDownloadCache
 from ._engine_installation_residue import remove_residue_path

@@ -17,12 +17,12 @@ from model_source_lock import (
 
 from capture_runtime.capture_worker_client import WorkerClient
 from capture_runtime.contract_set import load_contract_set
-from capture_runtime.engine_catalog import (
+from capture_runtime.provisioning.infrastructure.engine_catalog import (
     EngineArtifactDescriptor,
     canonical_json_bytes,
     load_engine_catalog,
 )
-from capture_runtime.engine_installation import (
+from capture_runtime.provisioning.infrastructure.engine_installation import (
     DOWNLOAD_CHUNK_BYTES,
     ArtifactDownloader,
     EngineInstallationError,

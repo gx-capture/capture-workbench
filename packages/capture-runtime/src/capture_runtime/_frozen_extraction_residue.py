@@ -17,7 +17,9 @@ import threading
 import time
 from pathlib import Path
 
-from ._engine_installation_residue import is_reparse_point
+from capture_runtime.provisioning.infrastructure._engine_installation_residue import (
+    is_reparse_point,
+)
 
 _LOGGER = logging.getLogger(__name__)
 

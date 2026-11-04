@@ -6,7 +6,10 @@ import zipfile
 from pathlib import Path
 
 from capture_runtime.artifact_parts import split_archive
-from capture_runtime.engine_installation import MAX_ARCHIVE_FILES, MAX_FILES_MANIFEST_BYTES
+from capture_runtime.provisioning.infrastructure.engine_installation import (
+    MAX_ARCHIVE_FILES,
+    MAX_FILES_MANIFEST_BYTES,
+)
 
 ZIP_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
 

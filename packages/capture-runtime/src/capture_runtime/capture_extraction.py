@@ -49,11 +49,6 @@ from capture_runtime.contracts import (
     TimeLocator,
     project_source_text,
 )
-from capture_runtime.engine_catalog import EngineCatalogError
-from capture_runtime.engine_installation import (
-    EngineInstallationManager,
-    ExtractionRuntimeUnavailableError,
-)
 from capture_runtime.image_normalization import (
     image_ocr_scale,
     normalize_image_content,
@@ -85,6 +80,11 @@ from capture_runtime.ocr_worker_result import (
     WorkerOcrProgress,
 )
 from capture_runtime.pdf_page_selection import is_ascending_page_numbers
+from capture_runtime.provisioning.infrastructure.engine_catalog import EngineCatalogError
+from capture_runtime.provisioning.infrastructure.engine_installation import (
+    EngineInstallationManager,
+    ExtractionRuntimeUnavailableError,
+)
 from capture_runtime.source_sniffing import SniffedSource, sniff_source
 from capture_runtime.speaker_alignment import TimedWord, speaker_samples, speaker_segments
 from capture_runtime.speaker_worker_result import WorkerDiarizationResult

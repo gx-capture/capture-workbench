@@ -7,7 +7,10 @@ from pathlib import Path
 import pytest
 
 from capture_runtime.contracts import RuntimeArtifactDescriptorV2
-from capture_runtime.engine_catalog import EngineCatalog, canonical_json_bytes
+from capture_runtime.provisioning.infrastructure.engine_catalog import (
+    EngineCatalog,
+    canonical_json_bytes,
+)
 from capture_runtime.release import (
     CAPTURE_DOCUMENT_SCHEMA_ID,
     CAPTURE_DOCUMENT_SCHEMA_RELEASE_SHA256,

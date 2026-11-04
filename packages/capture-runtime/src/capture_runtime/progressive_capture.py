@@ -29,10 +29,6 @@ from capture_runtime.contracts import (
     TimeLocator,
     project_source_text,
 )
-from capture_runtime.engine_installation import (
-    EngineInstallationManager,
-    ExtractionRuntimeUnavailableError,
-)
 from capture_runtime.progressive_audio import (
     DEFAULT_HEARTBEAT_MS,
     DEFAULT_OVERLAP_MS,
@@ -42,6 +38,10 @@ from capture_runtime.progressive_audio import (
     ProgressiveSessionEvent,
 )
 from capture_runtime.progressive_decoder import ProgressiveDecoderError, PyAVIncrementalDecoder
+from capture_runtime.provisioning.infrastructure.engine_installation import (
+    EngineInstallationManager,
+    ExtractionRuntimeUnavailableError,
+)
 from capture_runtime.whisper_session import (
     SESSION_PROTOCOL_VERSION,
     SessionFrameType,

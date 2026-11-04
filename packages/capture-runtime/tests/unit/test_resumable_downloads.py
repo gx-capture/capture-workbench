@@ -10,10 +10,15 @@ from pathlib import Path
 import httpx
 import pytest
 
-from capture_runtime import _engine_installation_download as download_module
 from capture_runtime.constants import RUNTIME_VERSION
-from capture_runtime.engine_catalog import EngineArtifactDescriptor, EngineModelFileDescriptor
-from capture_runtime.engine_installation import (
+from capture_runtime.provisioning.infrastructure import (
+    _engine_installation_download as download_module,
+)
+from capture_runtime.provisioning.infrastructure.engine_catalog import (
+    EngineArtifactDescriptor,
+    EngineModelFileDescriptor,
+)
+from capture_runtime.provisioning.infrastructure.engine_installation import (
     EngineInstallationError,
     HttpArtifactDownloader,
     HttpModelFileDownloader,

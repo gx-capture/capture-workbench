@@ -18,8 +18,14 @@ from capture_runtime.artifact_parts import (
     split_archive,
 )
 from capture_runtime.constants import RUNTIME_VERSION
-from capture_runtime.engine_catalog import EngineArtifactDescriptor, EngineCatalogError
-from capture_runtime.engine_installation import EngineInstallationError, HttpArtifactDownloader
+from capture_runtime.provisioning.infrastructure.engine_catalog import (
+    EngineArtifactDescriptor,
+    EngineCatalogError,
+)
+from capture_runtime.provisioning.infrastructure.engine_installation import (
+    EngineInstallationError,
+    HttpArtifactDownloader,
+)
 from capture_runtime.worker_contracts import WORKER_PROTOCOL_VERSION
 
 NAME = f"capture-engine-speech-recognition-{RUNTIME_VERSION}-windows-x64.zip"

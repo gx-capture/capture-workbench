@@ -19,7 +19,6 @@ from threading import Lock
 from typing import Any
 from uuid import uuid4
 
-from capture_runtime._engine_download_cache import default_cache_root
 from capture_runtime.contracts import OcrProvenanceV3
 from capture_runtime.ocr_alignment import (
     AlignmentCollector,
@@ -78,6 +77,7 @@ from capture_runtime.ocr_vertical_routing import (
     vertical_reader_directory,
     vertical_share,
 )
+from capture_runtime.provisioning.infrastructure._engine_download_cache import default_cache_root
 from capture_runtime.worker_probe import (
     EngineProbe,
     EngineRuntimeUnavailableError,
