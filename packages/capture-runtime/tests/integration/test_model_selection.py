@@ -7,8 +7,12 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from capture_runtime.app import create_app
-from capture_runtime.model_catalog import MODEL_OPTIONS, ActiveModelSelectionStore, catalog_sha256
-from capture_runtime.ollama import FakeRuntimeInstaller
+from capture_runtime.structuring.infrastructure.model_catalog import (
+    MODEL_OPTIONS,
+    ActiveModelSelectionStore,
+    catalog_sha256,
+)
+from capture_runtime.structuring.infrastructure.ollama import FakeRuntimeInstaller
 from tests.conftest import TOKEN, idempotency_headers
 
 

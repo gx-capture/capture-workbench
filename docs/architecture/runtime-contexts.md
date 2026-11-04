@@ -26,9 +26,7 @@ flowchart LR
   n_capture_runtime_diarization["capture_runtime.diarization"]
   n_capture_runtime_install_progress["capture_runtime.install_progress"]
   n_capture_runtime_japanese_kanji["capture_runtime.japanese_kanji"]
-  n_capture_runtime_model_catalog["capture_runtime.model_catalog"]
   n_capture_runtime_ocr["capture_runtime.ocr"]
-  n_capture_runtime_ollama["capture_runtime.ollama"]
   n_capture_runtime_pdf_page_selection["capture_runtime.pdf_page_selection"]
   n_capture_runtime_problem_registry["capture_runtime.problem_registry"]
   n_capture_runtime_provisioning["capture_runtime.provisioning"]
@@ -41,7 +39,6 @@ flowchart LR
   n_capture_runtime_storage["capture_runtime.storage"]
   n_capture_runtime_streaming["capture_runtime.streaming"]
   n_capture_runtime_structuring["capture_runtime.structuring"]
-  n_capture_runtime_structuring_provider["capture_runtime.structuring_provider"]
   n_capture_runtime_testing["capture_runtime.testing"]
   n_capture_runtime_worker_client["capture_runtime.worker_client"]
   n_capture_runtime_worker_contracts["capture_runtime.worker_contracts"]
@@ -64,11 +61,10 @@ flowchart LR
   n_capture_runtime_app --> n_capture_runtime_contract_set
   n_capture_runtime_app --> n_capture_runtime_dependencies
   n_capture_runtime_app --> n_capture_runtime_ocr
-  n_capture_runtime_app --> n_capture_runtime_ollama
   n_capture_runtime_app --> n_capture_runtime_provisioning
   n_capture_runtime_app --> n_capture_runtime_routes
   n_capture_runtime_app --> n_capture_runtime_storage
-  n_capture_runtime_app --> n_capture_runtime_structuring_provider
+  n_capture_runtime_app --> n_capture_runtime_structuring
   n_capture_runtime_audio_run_timeout --> n_capture_runtime_worker_process
   n_capture_runtime_capture_extraction --> n_capture_runtime_pdf_source
   n_capture_runtime_capture_extraction --> n_capture_runtime_worker_payloads
@@ -107,13 +103,11 @@ flowchart LR
   n_capture_runtime_dependencies --> n_capture_runtime_contract_set
   n_capture_runtime_dependencies --> n_capture_runtime_contracts
   n_capture_runtime_dependencies --> n_capture_runtime_ocr
-  n_capture_runtime_dependencies --> n_capture_runtime_ollama
   n_capture_runtime_dependencies --> n_capture_runtime_provisioning
   n_capture_runtime_dependencies --> n_capture_runtime_services
   n_capture_runtime_dependencies --> n_capture_runtime_speech
   n_capture_runtime_dependencies --> n_capture_runtime_storage
   n_capture_runtime_dependencies --> n_capture_runtime_structuring
-  n_capture_runtime_dependencies --> n_capture_runtime_structuring_provider
   n_capture_runtime_dependencies --> n_capture_runtime_testing
   n_capture_runtime_dependencies --> n_capture_runtime_worker_process
   n_capture_runtime_diarization --> n_capture_runtime_worker_payloads
@@ -132,28 +126,17 @@ flowchart LR
   n_capture_runtime_ocr --> n_capture_runtime_worker_probe
   n_capture_runtime_ocr --> n_capture_runtime_worker_process
   n_capture_runtime_ocr --> n_capture_runtime_worker_stage_policy
-  n_capture_runtime_ollama --> n_capture_runtime_windows_job
-  n_capture_runtime_ollama --> n_capture_runtime_clock
-  n_capture_runtime_ollama --> n_capture_runtime_config
-  n_capture_runtime_ollama --> n_capture_runtime_constants
-  n_capture_runtime_ollama --> n_capture_runtime_contracts
-  n_capture_runtime_ollama --> n_capture_runtime_install_progress
-  n_capture_runtime_ollama --> n_capture_runtime_model_catalog
-  n_capture_runtime_ollama --> n_capture_runtime_ocr
-  n_capture_runtime_ollama --> n_capture_runtime_provisioning
-  n_capture_runtime_ollama --> n_capture_runtime_structuring
   n_capture_runtime_provisioning --> n_capture_runtime_worker_payloads
   n_capture_runtime_provisioning --> n_capture_runtime_clock
   n_capture_runtime_provisioning --> n_capture_runtime_constants
   n_capture_runtime_provisioning --> n_capture_runtime_contracts
   n_capture_runtime_provisioning --> n_capture_runtime_dependencies
   n_capture_runtime_provisioning --> n_capture_runtime_install_progress
-  n_capture_runtime_provisioning --> n_capture_runtime_model_catalog
   n_capture_runtime_provisioning --> n_capture_runtime_ocr
-  n_capture_runtime_provisioning --> n_capture_runtime_ollama
   n_capture_runtime_provisioning --> n_capture_runtime_release
   n_capture_runtime_provisioning --> n_capture_runtime_routes
   n_capture_runtime_provisioning --> n_capture_runtime_storage
+  n_capture_runtime_provisioning --> n_capture_runtime_structuring
   n_capture_runtime_provisioning --> n_capture_runtime_worker_client
   n_capture_runtime_provisioning --> n_capture_runtime_worker_contracts
   n_capture_runtime_provisioning --> n_capture_runtime_worker_process
@@ -171,17 +154,14 @@ flowchart LR
   n_capture_runtime_routes --> n_capture_runtime_structuring
   n_capture_runtime_services --> n_capture_runtime_capture_extraction
   n_capture_runtime_services --> n_capture_runtime_clock
-  n_capture_runtime_services --> n_capture_runtime_contract_set
   n_capture_runtime_services --> n_capture_runtime_contracts
   n_capture_runtime_services --> n_capture_runtime_ocr
-  n_capture_runtime_services --> n_capture_runtime_ollama
   n_capture_runtime_services --> n_capture_runtime_provisioning
   n_capture_runtime_services --> n_capture_runtime_source_sniffing
   n_capture_runtime_services --> n_capture_runtime_speech
   n_capture_runtime_services --> n_capture_runtime_storage
   n_capture_runtime_services --> n_capture_runtime_streaming
   n_capture_runtime_services --> n_capture_runtime_structuring
-  n_capture_runtime_services --> n_capture_runtime_structuring_provider
   n_capture_runtime_source_sniffing --> n_capture_runtime_contracts
   n_capture_runtime_speech --> n_capture_runtime_worker_payloads
   n_capture_runtime_speech --> n_capture_runtime_clock
@@ -195,14 +175,19 @@ flowchart LR
   n_capture_runtime_speech --> n_capture_runtime_worker_process
   n_capture_runtime_speech --> n_capture_runtime_worker_stage_policy
   n_capture_runtime_storage --> n_capture_runtime_clock
-  n_capture_runtime_storage --> n_capture_runtime_contract_set
   n_capture_runtime_storage --> n_capture_runtime_contracts
+  n_capture_runtime_storage --> n_capture_runtime_structuring
   n_capture_runtime_streaming --> n_capture_runtime_contracts
+  n_capture_runtime_structuring --> n_capture_runtime_windows_job
+  n_capture_runtime_structuring --> n_capture_runtime_clock
+  n_capture_runtime_structuring --> n_capture_runtime_config
+  n_capture_runtime_structuring --> n_capture_runtime_constants
   n_capture_runtime_structuring --> n_capture_runtime_contract_set
   n_capture_runtime_structuring --> n_capture_runtime_contracts
-  n_capture_runtime_structuring_provider --> n_capture_runtime_clock
-  n_capture_runtime_structuring_provider --> n_capture_runtime_contracts
-  n_capture_runtime_structuring_provider --> n_capture_runtime_structuring
+  n_capture_runtime_structuring --> n_capture_runtime_install_progress
+  n_capture_runtime_structuring --> n_capture_runtime_ocr
+  n_capture_runtime_structuring --> n_capture_runtime_provisioning
+  n_capture_runtime_structuring --> n_capture_runtime_storage
   n_capture_runtime_testing --> n_capture_runtime_pdf_source
   n_capture_runtime_testing --> n_capture_runtime_capture_extraction
   n_capture_runtime_testing --> n_capture_runtime_clock

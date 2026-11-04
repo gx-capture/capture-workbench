@@ -33,20 +33,6 @@ from capture_runtime.contracts import (
     RuntimeRequirementV2,
 )
 from capture_runtime.install_progress import DownloadProgress
-from capture_runtime.model_catalog import (
-    ActiveModelSelectionStore,
-    RuntimeModelOption,
-    model_option,
-)
-from capture_runtime.ollama.installer_runtime import (
-    AsyncSubprocessCommandRunner,
-    CommandRunner,
-    _atomic_json,
-)
-from capture_runtime.ollama.lifecycle_impl import (
-    IsolatedOllamaLifecycle,
-    ManualActionRequiredError,
-)
 from capture_runtime.provisioning.infrastructure.engine_catalog import (
     EngineArtifactDescriptor,
     EngineCatalogError,
@@ -54,6 +40,20 @@ from capture_runtime.provisioning.infrastructure.engine_catalog import (
 from capture_runtime.provisioning.infrastructure.engine_installation import (
     EngineInstallationManager,
     sha256_file,
+)
+from capture_runtime.structuring.infrastructure.model_catalog import (
+    ActiveModelSelectionStore,
+    RuntimeModelOption,
+    model_option,
+)
+from capture_runtime.structuring.infrastructure.ollama.installer_runtime import (
+    AsyncSubprocessCommandRunner,
+    CommandRunner,
+    _atomic_json,
+)
+from capture_runtime.structuring.infrastructure.ollama.lifecycle_impl import (
+    IsolatedOllamaLifecycle,
+    ManualActionRequiredError,
 )
 
 

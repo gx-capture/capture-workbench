@@ -11,13 +11,15 @@ import httpx
 from capture_runtime.clock import Clock
 from capture_runtime.config import ExternalOllamaConfig
 from capture_runtime.contracts import CaptureEngine, RawCapture
-from capture_runtime.ollama.lifecycle_impl import RuntimeUnavailableError
-from capture_runtime.structuring import (
+from capture_runtime.structuring.infrastructure.constants import (
     DEFAULT_STRUCTURING_NUM_CTX,
     DEFAULT_STRUCTURING_NUM_PREDICT,
+)
+from capture_runtime.structuring.infrastructure.coordinator import (
     StructuringCoordinator,
     StructuringGenerationRequest,
 )
+from capture_runtime.structuring.infrastructure.ollama.lifecycle_impl import RuntimeUnavailableError
 
 
 class ExternalOllamaCaptureStructuringProvider:

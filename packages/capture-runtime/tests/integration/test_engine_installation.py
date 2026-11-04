@@ -25,7 +25,6 @@ from capture_runtime.contracts import (
     RuntimeRequirementsV2,
 )
 from capture_runtime.install_progress import DownloadedBytes
-from capture_runtime.ollama import SystemRuntimeInstaller
 from capture_runtime.provisioning.infrastructure._engine_download_cache import (
     CachingDownloader,
     VerifiedDownloadCache,
@@ -41,6 +40,7 @@ from capture_runtime.provisioning.infrastructure.engine_installation import (
     EngineInstallBusyError,
     ModelFileDownloader,
 )
+from capture_runtime.structuring.infrastructure.ollama import SystemRuntimeInstaller
 from capture_runtime.worker_client import InstalledEngine, WorkerProbeResult
 from capture_runtime.worker_process import WorkerExecutionError, WorkerTimeoutError
 

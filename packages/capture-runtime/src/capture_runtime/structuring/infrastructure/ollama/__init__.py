@@ -2,14 +2,14 @@
 
 import shutil as _shutil
 
-from capture_runtime.ollama.installer import (
+from capture_runtime.structuring.infrastructure.ollama.installer import (
     CommandResult,
     FakeRuntimeInstaller,
     RuntimeInstaller,
     SystemRuntimeInstaller,
 )
-from capture_runtime.ollama.installer_impl import _extract_safe_zip
-from capture_runtime.ollama.lifecycle import (
+from capture_runtime.structuring.infrastructure.ollama.installer_impl import _extract_safe_zip
+from capture_runtime.structuring.infrastructure.ollama.lifecycle import (
     IsolatedOllamaLifecycle,
     ManualActionRequiredError,
     OllamaOwnershipError,
@@ -18,7 +18,7 @@ from capture_runtime.ollama.lifecycle import (
     RuntimeUnavailableError,
     SubprocessController,
 )
-from capture_runtime.ollama.provider import (
+from capture_runtime.structuring.infrastructure.ollama.provider import (
     ExternalOllamaCaptureStructuringProvider,
     OllamaCaptureStructuringProvider,
 )

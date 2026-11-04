@@ -16,8 +16,11 @@ from capture_runtime.app import create_app
 from capture_runtime.clock import SystemClock
 from capture_runtime.config import ExtractionRuntimeConfig, OllamaRuntimeConfig, RuntimeSettings
 from capture_runtime.contracts import RuntimeRequirementStatus
-from capture_runtime.model_catalog import ActiveModelSelectionStore, model_option
-from capture_runtime.ollama import (
+from capture_runtime.structuring.infrastructure.model_catalog import (
+    ActiveModelSelectionStore,
+    model_option,
+)
+from capture_runtime.structuring.infrastructure.ollama import (
     CommandResult,
     FakeRuntimeInstaller,
     IsolatedOllamaLifecycle,
@@ -409,7 +412,7 @@ def test_requirements_api_recovers_installed_profile_after_process_restart(
     )
     _record_installed_profile(settings.ollama)
     monkeypatch.setattr(
-        "capture_runtime.ollama.shutil.which",
+        "capture_runtime.structuring.infrastructure.ollama.shutil.which",
         lambda executable: "C:/Program Files/Ollama/ollama.exe" if executable == "ollama" else None,
     )
 

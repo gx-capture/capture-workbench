@@ -11,19 +11,19 @@ import pytest
 from capture_runtime.clock import Clock
 from capture_runtime.config import OllamaRuntimeConfig
 from capture_runtime.contracts import CaptureDocument, RawCapture
-from capture_runtime.ollama import (
-    OllamaCaptureStructuringProvider,
-    RuntimeUnavailableError,
-)
-from capture_runtime.structuring import (
+from capture_runtime.structuring.infrastructure.constants import (
     CAPTURE_BLOCK_BATCH_SCHEMA,
     CAPTURE_IDENTITY_BLOCK_BATCH_SCHEMA,
     OLLAMA_CAPTURE_BLOCK_BATCH_SCHEMA,
     OLLAMA_IDENTITY_BLOCK_BATCH_SCHEMA,
-    StructuringValidationError,
     ollama_structuring_batch_schema,
-    validate_structuring_candidate,
 )
+from capture_runtime.structuring.infrastructure.contracts import StructuringValidationError
+from capture_runtime.structuring.infrastructure.ollama import (
+    OllamaCaptureStructuringProvider,
+    RuntimeUnavailableError,
+)
+from capture_runtime.structuring.infrastructure.structuring import validate_structuring_candidate
 
 NOW = datetime(2026, 7, 20, 8, 0, tzinfo=UTC)
 COMPLETED_AT = datetime(2026, 7, 20, 8, 5, tzinfo=UTC)

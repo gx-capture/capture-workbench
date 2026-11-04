@@ -10,13 +10,18 @@ import httpx
 
 from capture_runtime.clock import Clock
 from capture_runtime.contracts import CaptureEngine, RawCapture
-from capture_runtime.model_catalog import model_option
-from capture_runtime.ollama.lifecycle_impl import IsolatedOllamaLifecycle, RuntimeUnavailableError
-from capture_runtime.structuring import (
+from capture_runtime.structuring.infrastructure.constants import (
     DEFAULT_STRUCTURING_NUM_CTX,
     DEFAULT_STRUCTURING_NUM_PREDICT,
+)
+from capture_runtime.structuring.infrastructure.coordinator import (
     StructuringCoordinator,
     StructuringGenerationRequest,
+)
+from capture_runtime.structuring.infrastructure.model_catalog import model_option
+from capture_runtime.structuring.infrastructure.ollama.lifecycle_impl import (
+    IsolatedOllamaLifecycle,
+    RuntimeUnavailableError,
 )
 
 _QWEN_0_8B_PROFILE_ID = model_option("qwen3.5-0.8b-v1").profile_id

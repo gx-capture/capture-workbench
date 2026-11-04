@@ -13,8 +13,12 @@ from capture_runtime.contracts import (
     RuntimeInstallationStatus,
     RuntimeModelInstallationV2,
 )
-from capture_runtime.ollama.lifecycle_impl import ManualActionRequiredError
-from capture_runtime.storage.model_installation_repository import ModelInstallationRepository
+from capture_runtime.structuring.infrastructure.model_installation_repository import (
+    ModelInstallationRepository,
+)
+from capture_runtime.structuring.infrastructure.ollama.lifecycle_impl import (
+    ManualActionRequiredError,
+)
 
 
 class ModelOptionInstaller(Protocol):

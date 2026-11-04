@@ -23,14 +23,6 @@ from capture_runtime.constants import (
 from capture_runtime.contract_set import ContractSet, load_contract_set
 from capture_runtime.contracts import StructuringMode
 from capture_runtime.ocr.infrastructure.ocr_preflight import OcrComputePreflight
-from capture_runtime.ollama import (
-    ExternalOllamaCaptureStructuringProvider,
-    IsolatedOllamaLifecycle,
-    OllamaCaptureStructuringProvider,
-    ProcessController,
-    RuntimeInstaller,
-    SystemRuntimeInstaller,
-)
 from capture_runtime.provisioning.application.installation_service import InstallationService
 from capture_runtime.provisioning.infrastructure.engine_catalog import load_engine_catalog
 from capture_runtime.provisioning.infrastructure.engine_installation import (
@@ -50,8 +42,16 @@ from capture_runtime.storage import (
     StreamingRepository,
     StructuringSessionRepository,
 )
-from capture_runtime.structuring import StructuringCoordinator
-from capture_runtime.structuring_provider import (
+from capture_runtime.structuring.infrastructure.coordinator import StructuringCoordinator
+from capture_runtime.structuring.infrastructure.ollama import (
+    ExternalOllamaCaptureStructuringProvider,
+    IsolatedOllamaLifecycle,
+    OllamaCaptureStructuringProvider,
+    ProcessController,
+    RuntimeInstaller,
+    SystemRuntimeInstaller,
+)
+from capture_runtime.structuring.infrastructure.structuring_provider import (
     CaptureStructuringProvider,
     FakeCaptureStructuringProvider,
     HostOnlyCaptureStructuringProvider,

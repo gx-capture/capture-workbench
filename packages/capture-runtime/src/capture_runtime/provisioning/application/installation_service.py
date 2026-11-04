@@ -13,10 +13,13 @@ from capture_runtime.contracts import (
     RuntimeInstallationV2,
 )
 from capture_runtime.install_progress import DownloadedBytes
-from capture_runtime.ollama import ManualActionRequiredError, RuntimeInstaller
 from capture_runtime.provisioning.infrastructure.engine_installation import EngineInstallationError
 from capture_runtime.provisioning.infrastructure.installation_repository import (
     InstallationRepository,
+)
+from capture_runtime.structuring.infrastructure.ollama import (
+    ManualActionRequiredError,
+    RuntimeInstaller,
 )
 from capture_runtime.worker_process import WorkerExecutionError
 

@@ -12,7 +12,7 @@ from typing import Any
 import pytest
 
 from capture_runtime import worker_process
-from capture_runtime.ollama import lifecycle_impl
+from capture_runtime.structuring.infrastructure.ollama import lifecycle_impl
 
 JOB = 4242
 PROCESS_HANDLE = 777

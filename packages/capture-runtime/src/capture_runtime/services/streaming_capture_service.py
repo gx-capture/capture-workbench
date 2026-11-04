@@ -46,7 +46,6 @@ from capture_runtime.ocr.infrastructure.ocr_execution_proof import (
 )
 from capture_runtime.ocr.infrastructure.ocr_projection import OcrPipeline
 from capture_runtime.ocr.infrastructure.ocr_worker_result import OcrWorkerFailure
-from capture_runtime.ollama.lifecycle_impl import RuntimeUnavailableError
 from capture_runtime.provisioning.infrastructure.engine_installation import (
     ExtractionRuntimeUnavailableError,
 )
@@ -67,8 +66,14 @@ from capture_runtime.storage import (
     StreamingTransitionError,
 )
 from capture_runtime.streaming import MAX_STREAM_CHUNK_BYTES
-from capture_runtime.structuring import StructuringValidationError, validate_structuring_candidate
-from capture_runtime.structuring_provider import CaptureStructuringProvider
+from capture_runtime.structuring.infrastructure.ollama.lifecycle_impl import RuntimeUnavailableError
+from capture_runtime.structuring.infrastructure.structuring import (
+    StructuringValidationError,
+    validate_structuring_candidate,
+)
+from capture_runtime.structuring.infrastructure.structuring_provider import (
+    CaptureStructuringProvider,
+)
 
 MAX_EVENT_SEGMENTS = 1_000
 # A speech session's end is not the capture's: the capture publishes its next

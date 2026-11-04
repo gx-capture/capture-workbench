@@ -1,6 +1,6 @@
 """Process ownership and isolated Ollama lifecycle seam."""
 
-from capture_runtime.ollama.lifecycle_impl import (
+from capture_runtime.structuring.infrastructure.ollama.lifecycle_impl import (
     IsolatedOllamaLifecycle,
     ManualActionRequiredError,
     OllamaOwnershipError,

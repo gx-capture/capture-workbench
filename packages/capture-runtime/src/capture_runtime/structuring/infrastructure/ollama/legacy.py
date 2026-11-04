@@ -1,8 +1,8 @@
-"""Compatibility facade for the pre-package ``capture_runtime.ollama`` module."""
+"""Compatibility facade for this Ollama package."""
 
 import shutil as _shutil
 
-from capture_runtime.ollama.installer_impl import (
+from capture_runtime.structuring.infrastructure.ollama.installer_impl import (
     CommandResult,
     CommandRunner,
     FakeRuntimeInstaller,
@@ -10,7 +10,7 @@ from capture_runtime.ollama.installer_impl import (
     SystemRuntimeInstaller,
     _extract_safe_zip,
 )
-from capture_runtime.ollama.lifecycle_impl import (
+from capture_runtime.structuring.infrastructure.ollama.lifecycle_impl import (
     IsolatedOllamaLifecycle,
     ManualActionRequiredError,
     OllamaOwnershipError,
@@ -19,7 +19,9 @@ from capture_runtime.ollama.lifecycle_impl import (
     RuntimeUnavailableError,
     SubprocessController,
 )
-from capture_runtime.ollama.provider_impl import OllamaCaptureStructuringProvider
+from capture_runtime.structuring.infrastructure.ollama.provider_impl import (
+    OllamaCaptureStructuringProvider,
+)
 
 shutil = _shutil
 

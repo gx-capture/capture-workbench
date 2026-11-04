@@ -1,7 +1,7 @@
 """Compatibility exports for the split runtime installer modules."""
 
-from capture_runtime.ollama.fake_installer import FakeRuntimeInstaller
-from capture_runtime.ollama.installer_runtime import (
+from capture_runtime.structuring.infrastructure.ollama.fake_installer import FakeRuntimeInstaller
+from capture_runtime.structuring.infrastructure.ollama.installer_runtime import (
     AsyncSubprocessCommandRunner,
     CommandResult,
     CommandRunner,
@@ -10,7 +10,9 @@ from capture_runtime.ollama.installer_runtime import (
     _extract_safe_zip,
     _sha256_file,
 )
-from capture_runtime.ollama.system_installer import SystemRuntimeInstaller
+from capture_runtime.structuring.infrastructure.ollama.system_installer import (
+    SystemRuntimeInstaller,
+)
 
 __all__ = [
     "AsyncSubprocessCommandRunner",
