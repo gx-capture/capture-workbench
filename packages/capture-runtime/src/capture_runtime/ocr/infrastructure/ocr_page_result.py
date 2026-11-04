@@ -7,11 +7,11 @@ records that no public contract projects.
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
 from typing import Protocol
 
 from capture_runtime.contracts import OcrProvenanceV3
+from capture_runtime.ocr.domain import PageRegion
 from capture_runtime.ocr.infrastructure.ocr_composite_regions import CompositeSplit
 from capture_runtime.ocr.infrastructure.ocr_reading_order import ReadingPlan
 from capture_runtime.ocr.infrastructure.ocr_region_lineage import RegionSource
@@ -40,23 +40,8 @@ class OcrTextResult:
     page_route: PageRoute | None = None
 
 
-@dataclass(frozen=True, slots=True)
-class OcrRegion:
-    text: str
-    confidence: float | None = None
-    polygon: tuple[tuple[float, float], ...] = ()
-
-    @property
-    def box(self) -> tuple[int, int, int, int] | None:
-        """Return a compatibility bounding rectangle without replacing polygon."""
-
-        if not self.polygon:
-            return None
-        left = math.floor(min(point[0] for point in self.polygon))
-        top = math.floor(min(point[1] for point in self.polygon))
-        right = math.ceil(max(point[0] for point in self.polygon))
-        bottom = math.ceil(max(point[1] for point in self.polygon))
-        return left, top, max(1, right - left), max(1, bottom - top)
+# Backwards compatibility alias for domain PageRegion
+OcrRegion = PageRegion
 
 
 @dataclass(frozen=True, slots=True)

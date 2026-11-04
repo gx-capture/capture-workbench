@@ -42,7 +42,12 @@ def modules_of(package_name: str) -> list[ModuleType]:
     modules = [package]
     if hasattr(package, "__path__"):
         for info in pkgutil.walk_packages(package.__path__, prefix=f"{package_name}."):
-            modules.append(importlib.import_module(info.name))
+            if "._vendor" in info.name:
+                continue
+            try:
+                modules.append(importlib.import_module(info.name))
+            except ModuleNotFoundError:
+                continue
     return modules
 
 

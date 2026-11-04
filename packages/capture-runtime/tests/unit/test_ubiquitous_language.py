@@ -66,6 +66,16 @@ def test_every_api_enum_value_of_a_modelled_context_maps_to_one_concept() -> Non
         ],
         "diarization": [],
         "speech": [],
+        "ocr": [
+            contracts.OcrComputeMode,
+            contracts.OcrAdapterClass,
+            contracts.OcrComputeReasonCode,
+            contracts.OcrComputeNoticeCode,
+            contracts.OcrProjectionStatus,
+            contracts.OcrPageStatus,
+            contracts.OcrProvenanceStatus,
+            contracts.OcrProvenanceUnavailableReason,
+        ],
     }
     mapped = {
         (concept["enum"]["enumId"], concept["enum"]["value"])

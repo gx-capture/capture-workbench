@@ -78,6 +78,139 @@
       "codeName": "RuntimeRequirementStatus.UNAVAILABLE",
       "enum": { "enumId": "RuntimeRequirementStatus", "value": "unavailable" },
       "retired": false
+    },
+    {
+      "id": "ocr.compute-mode.gpu-dml",
+      "label": "DirectML GPU 模式",
+      "codeName": "OcrComputeMode.GPU_DML",
+      "enum": { "enumId": "OcrComputeMode", "value": "gpu-dml" },
+      "retired": false
+    },
+    {
+      "id": "ocr.compute-mode.cpu-fallback",
+      "label": "CPU 回退模式",
+      "codeName": "OcrComputeMode.CPU_FALLBACK",
+      "enum": { "enumId": "OcrComputeMode", "value": "cpu-fallback" },
+      "retired": false
+    },
+    {
+      "id": "ocr.adapter-class.dedicated",
+      "label": "獨立顯卡",
+      "codeName": "OcrAdapterClass.DEDICATED",
+      "enum": { "enumId": "OcrAdapterClass", "value": "dedicated" },
+      "retired": false
+    },
+    {
+      "id": "ocr.adapter-class.integrated",
+      "label": "整合顯卡",
+      "codeName": "OcrAdapterClass.INTEGRATED",
+      "enum": { "enumId": "OcrAdapterClass", "value": "integrated" },
+      "retired": false
+    },
+    {
+      "id": "ocr.adapter-class.unknown",
+      "label": "未知顯卡類別",
+      "codeName": "OcrAdapterClass.UNKNOWN",
+      "enum": { "enumId": "OcrAdapterClass", "value": "unknown" },
+      "retired": false
+    },
+    {
+      "id": "ocr.compute-reason.no-compatible-gpu",
+      "label": "無相容 GPU",
+      "codeName": "OcrComputeReasonCode.NO_COMPATIBLE_GPU",
+      "enum": { "enumId": "OcrComputeReasonCode", "value": "no_compatible_gpu" },
+      "retired": false
+    },
+    {
+      "id": "ocr.compute-reason.dml-provider-unavailable",
+      "label": "DirectML 提供者無法使用",
+      "codeName": "OcrComputeReasonCode.DML_PROVIDER_UNAVAILABLE",
+      "enum": { "enumId": "OcrComputeReasonCode", "value": "dml_provider_unavailable" },
+      "retired": false
+    },
+    {
+      "id": "ocr.compute-notice.cpu-fallback",
+      "label": "OCR CPU 回退通知",
+      "codeName": "OcrComputeNoticeCode.CPU_FALLBACK",
+      "enum": { "enumId": "OcrComputeNoticeCode", "value": "ocr_cpu_fallback" },
+      "retired": false
+    },
+    {
+      "id": "ocr.projection-status.completed",
+      "label": "OCR 投影完成",
+      "codeName": "OcrProjectionStatus.COMPLETED",
+      "enum": { "enumId": "OcrProjectionStatus", "value": "completed" },
+      "retired": false
+    },
+    {
+      "id": "ocr.projection-status.failed",
+      "label": "OCR 投影失敗",
+      "codeName": "OcrProjectionStatus.FAILED",
+      "enum": { "enumId": "OcrProjectionStatus", "value": "failed" },
+      "retired": false
+    },
+    {
+      "id": "ocr.page-status.recognized",
+      "label": "已辨識頁面",
+      "codeName": "OcrPageStatus.RECOGNIZED",
+      "enum": { "enumId": "OcrPageStatus", "value": "recognized" },
+      "retired": false
+    },
+    {
+      "id": "ocr.page-status.empty",
+      "label": "空白頁面",
+      "codeName": "OcrPageStatus.EMPTY",
+      "enum": { "enumId": "OcrPageStatus", "value": "empty" },
+      "retired": false
+    },
+    {
+      "id": "ocr.page-status.failed",
+      "label": "頁面辨識失敗",
+      "codeName": "OcrPageStatus.FAILED",
+      "enum": { "enumId": "OcrPageStatus", "value": "failed" },
+      "retired": false
+    },
+    {
+      "id": "ocr.provenance-status.resolved",
+      "label": "出處已解析",
+      "codeName": "OcrProvenanceStatus.RESOLVED",
+      "enum": { "enumId": "OcrProvenanceStatus", "value": "resolved" },
+      "retired": false
+    },
+    {
+      "id": "ocr.provenance-status.unavailable",
+      "label": "出處無法取得",
+      "codeName": "OcrProvenanceStatus.UNAVAILABLE",
+      "enum": { "enumId": "OcrProvenanceStatus", "value": "unavailable" },
+      "retired": false
+    },
+    {
+      "id": "ocr.provenance-unavailable-reason.model-unavailable",
+      "label": "模型無法取得",
+      "codeName": "OcrProvenanceUnavailableReason.MODEL_UNAVAILABLE",
+      "enum": { "enumId": "OcrProvenanceUnavailableReason", "value": "model_unavailable" },
+      "retired": false
+    },
+    {
+      "id": "ocr.provenance-unavailable-reason.worker-crashed",
+      "label": "Worker 異常終止",
+      "codeName": "OcrProvenanceUnavailableReason.WORKER_CRASHED",
+      "enum": { "enumId": "OcrProvenanceUnavailableReason", "value": "worker_crashed" },
+      "retired": false
+    },
+    {
+      "id": "ocr.provenance-unavailable-reason.worker-timeout",
+      "label": "Worker 逾時",
+      "codeName": "OcrProvenanceUnavailableReason.WORKER_TIMEOUT",
+      "enum": { "enumId": "OcrProvenanceUnavailableReason", "value": "worker_timeout" },
+      "retired": false
+    },
+    {
+      "id": "ocr.provenance-unavailable-reason.protocol-failure",
+      "label": "通訊協定錯誤",
+      "codeName": "OcrProvenanceUnavailableReason.PROTOCOL_FAILURE",
+      "enum": { "enumId": "OcrProvenanceUnavailableReason", "value": "protocol_failure" },
+      "retired": false
     }
   ]
 }

@@ -18,11 +18,11 @@
 
 | 中文       | 程式名稱                 | 意思                                                             |
 | ---------- | ------------------------ | ---------------------------------------------------------------- |
-| 運算計畫   | compute plan             | 預檢後選定的 GPU（DirectML）或 CPU 執行方式                      |
-| 執行證據   | execution evidence       | DirectML 實際執行了模型節點的證據；不在合約裡                    |
+| 運算計畫   | `compute plan`、`ComputePlanSelection`、`ComputePlanPolicy`      | 預檢後選定的 GPU（DirectML）或 CPU 執行方式                      |
+| 執行證據   | `execution evidence`、`DirectMlExecutionEvidence`、`SessionDeviceProof` | DirectML 實際執行了模型節點的證據；不在合約裡                    |
 | OCR 設定檔 | OCR profile              | 模型、字典、前處理與版本的組合，id 由 `pipeline.json` 的雜湊產生 |
 | OCR 投影   | `CaptureOcrProjectionV3` | 每頁的文字、區塊、信心值與出處                                   |
-| 閱讀順序   | reading order            | 依版面決定區塊的先後，含直書與多欄                               |
+| 閱讀順序   | `reading order`、`PageReadingOrder`、`PageRegion`、`BoundingBox`、`OcrPage` | 依版面決定區塊的先後，含直書與多欄                               |
 | 直書閱讀器 | vertical reader          | 讀直書日文頁面的選用元件（NDLOCR-Lite）                          |
 
 ## 語音轉寫與說話者分離
