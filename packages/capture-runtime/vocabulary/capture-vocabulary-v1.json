@@ -1,0 +1,83 @@
+{
+  "version": 1,
+  "description": "Capture Workbench concept set (DDD plan decision D12). Each contract enum value of a modelled context maps to exactly one concept. A concept is never deleted and its id never changes; retire it instead.",
+  "concepts": [
+    {
+      "id": "provisioning.installation-status.queued",
+      "label": "排隊中",
+      "codeName": "RuntimeInstallationStatus.QUEUED",
+      "enum": { "enumId": "RuntimeInstallationStatus", "value": "queued" },
+      "retired": false
+    },
+    {
+      "id": "provisioning.installation-status.running",
+      "label": "進行中",
+      "codeName": "RuntimeInstallationStatus.RUNNING",
+      "enum": { "enumId": "RuntimeInstallationStatus", "value": "running" },
+      "retired": false
+    },
+    {
+      "id": "provisioning.installation-status.completed",
+      "label": "已完成",
+      "codeName": "RuntimeInstallationStatus.COMPLETED",
+      "enum": { "enumId": "RuntimeInstallationStatus", "value": "completed" },
+      "retired": false
+    },
+    {
+      "id": "provisioning.installation-status.failed",
+      "label": "失敗",
+      "codeName": "RuntimeInstallationStatus.FAILED",
+      "enum": { "enumId": "RuntimeInstallationStatus", "value": "failed" },
+      "retired": false
+    },
+    {
+      "id": "provisioning.installation-status.cancelled",
+      "label": "已取消",
+      "codeName": "RuntimeInstallationStatus.CANCELLED",
+      "enum": { "enumId": "RuntimeInstallationStatus", "value": "cancelled" },
+      "retired": false
+    },
+    {
+      "id": "provisioning.installation-status.manual-action-required",
+      "label": "需手動操作",
+      "codeName": "RuntimeInstallationStatus.MANUAL_ACTION_REQUIRED",
+      "enum": { "enumId": "RuntimeInstallationStatus", "value": "manual_action_required" },
+      "retired": false
+    },
+    {
+      "id": "provisioning.requirement-status.ready",
+      "label": "可用",
+      "codeName": "RuntimeRequirementStatus.READY",
+      "enum": { "enumId": "RuntimeRequirementStatus", "value": "ready" },
+      "retired": false
+    },
+    {
+      "id": "provisioning.requirement-status.missing",
+      "label": "缺失",
+      "codeName": "RuntimeRequirementStatus.MISSING",
+      "enum": { "enumId": "RuntimeRequirementStatus", "value": "missing" },
+      "retired": false
+    },
+    {
+      "id": "provisioning.requirement-status.installable",
+      "label": "可安裝",
+      "codeName": "RuntimeRequirementStatus.INSTALLABLE",
+      "enum": { "enumId": "RuntimeRequirementStatus", "value": "installable" },
+      "retired": false
+    },
+    {
+      "id": "provisioning.requirement-status.manual-action-required",
+      "label": "需手動操作",
+      "codeName": "RuntimeRequirementStatus.MANUAL_ACTION_REQUIRED",
+      "enum": { "enumId": "RuntimeRequirementStatus", "value": "manual_action_required" },
+      "retired": false
+    },
+    {
+      "id": "provisioning.requirement-status.unavailable",
+      "label": "無法使用",
+      "codeName": "RuntimeRequirementStatus.UNAVAILABLE",
+      "enum": { "enumId": "RuntimeRequirementStatus", "value": "unavailable" },
+      "retired": false
+    }
+  ]
+}

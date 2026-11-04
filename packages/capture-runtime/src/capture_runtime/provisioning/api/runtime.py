@@ -23,6 +23,14 @@ from capture_runtime.contracts import (
 )
 from capture_runtime.dependencies import RuntimeDependencies
 from capture_runtime.provisioning.application.installation_service import RequirementInUseError
+from capture_runtime.provisioning.application.use_cases import (
+    CancelInstallation,
+    GetInstallation,
+    InstallRequirement,
+    ListInstallations,
+    ListRequirements,
+    UninstallRequirement,
+)
 from capture_runtime.provisioning.infrastructure.engine_installation import EngineInstallationError
 from capture_runtime.release import CAPTURE_DOCUMENT_SCHEMA_RELEASE_SHA256
 from capture_runtime.routes.common import ApiProblem, request_fingerprint
@@ -39,6 +47,13 @@ def register_runtime_routes(
     dependencies: RuntimeDependencies,
 ) -> None:
     """Register readiness, requirement and installation endpoints."""
+
+    install_requirement = InstallRequirement(dependencies.installation_service)
+    cancel_installation_uc = CancelInstallation(dependencies.installation_service)
+    get_installation_uc = GetInstallation(dependencies.installation_service)
+    list_installations_uc = ListInstallations(dependencies.installation_service)
+    uninstall_requirement_uc = UninstallRequirement(dependencies.installation_service)
+    list_requirements = ListRequirements(dependencies.installer)
 
     @router.get("/health/ready", response_model=RuntimeReady)
     async def ready() -> RuntimeReady:
@@ -61,16 +76,11 @@ def register_runtime_routes(
     @router.get("/runtime/requirements", response_model=RuntimeRequirementsV2)
     async def requirements() -> RuntimeRequirementsV2:
         items = await asyncio.to_thread(
-            dependencies.installer.requirements,
-            dependencies.enabled_requirement_ids,
+            list_requirements.execute,
+            enabled_requirement_ids=dependencies.enabled_requirement_ids,
+            disabled_requirement_ids=dependencies.disabled_requirement_ids,
         )
-        return RuntimeRequirementsV2(
-            items=[
-                item
-                for item in items
-                if item.requirement_id not in dependencies.disabled_requirement_ids
-            ]
-        )
+        return RuntimeRequirementsV2(items=items)
 
     @router.get("/runtime/model-options", response_model=RuntimeModelOptionsV2)
     async def model_options() -> RuntimeModelOptionsV2:
@@ -120,7 +130,7 @@ def register_runtime_routes(
             )
         fingerprint = request_fingerprint(payload.model_dump(mode="json", by_alias=True))
         try:
-            return dependencies.installation_service.create(
+            return install_requirement.execute(
                 idempotency_key=str(idempotency_key),
                 request_fingerprint=fingerprint,
                 requirement_id=payload.requirement_id,
@@ -134,12 +144,12 @@ def register_runtime_routes(
 
     @router.get("/runtime/installations", response_model=RuntimeInstallationsV2)
     async def list_installations() -> RuntimeInstallationsV2:
-        return RuntimeInstallationsV2(items=dependencies.installation_service.list())
+        return RuntimeInstallationsV2(items=list_installations_uc.execute())
 
     @router.get("/runtime/installations/{installation_id}", response_model=RuntimeInstallationV2)
     async def get_installation(installation_id: str) -> RuntimeInstallationV2:
         try:
-            return dependencies.installation_service.get(installation_id)
+            return get_installation_uc.execute(installation_id)
         except RecordNotFoundError as error:
             raise ApiProblem(
                 404, "installation_not_found", "Installation job was not found."
@@ -151,7 +161,7 @@ def register_runtime_routes(
     )
     async def cancel_installation(installation_id: str) -> RuntimeInstallationV2:
         try:
-            return await dependencies.installation_service.cancel(installation_id)
+            return await cancel_installation_uc.execute(installation_id)
         except RecordNotFoundError as error:
             raise ApiProblem(
                 404, "installation_not_found", "Installation job was not found."
@@ -177,7 +187,7 @@ def register_runtime_routes(
                 "Only engines the runtime installs can be uninstalled.",
             )
         try:
-            await dependencies.installation_service.uninstall(
+            await uninstall_requirement_uc.execute(
                 requirement_id, captures=dependencies.streaming_capture_service
             )
         except RequirementInUseError as error:
