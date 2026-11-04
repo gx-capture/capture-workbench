@@ -64,6 +64,7 @@ def test_every_api_enum_value_of_a_modelled_context_maps_to_one_concept() -> Non
             contracts.RuntimeInstallationStatus,
             contracts.RuntimeRequirementStatus,
         ],
+        "diarization": [],
     }
     mapped = {
         (concept["enum"]["enumId"], concept["enum"]["value"])

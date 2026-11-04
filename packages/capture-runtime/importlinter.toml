@@ -538,6 +538,11 @@ ignore_imports = [
 name = "Speaker diarization does not depend on its downstream contexts"
 type = "forbidden"
 source_modules = [
+  "capture_runtime.diarization.domain.turn.models",
+  "capture_runtime.diarization.domain.turn",
+  "capture_runtime.diarization.domain",
+  "capture_runtime.diarization.application.use_cases",
+  "capture_runtime.diarization.application",
   "capture_runtime.diarization.infrastructure.speaker_diarization",
   "capture_runtime.diarization.infrastructure.speaker_worker_result",
   "capture_runtime.diarization.infrastructure.speaker_alignment",
