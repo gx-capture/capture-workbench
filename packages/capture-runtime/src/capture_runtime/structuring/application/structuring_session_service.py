@@ -22,6 +22,7 @@ from capture_runtime.contracts import (
     StructuringSessionV2,
     SubmitStructuringBatchV2,
 )
+from capture_runtime.structuring.domain.session import StructuringSemanticBlock
 from capture_runtime.structuring.infrastructure.contracts import StructuringValidationError
 from capture_runtime.structuring.infrastructure.coordinator import StructuringCoordinator
 from capture_runtime.structuring.infrastructure.structuring import (
@@ -153,10 +154,15 @@ class StructuringSessionService:
                     "persisted structuring batch references an unknown raw segment"
                 )
             segments.append(segment)
-        semantic_blocks = [
-            block.model_dump(mode="json", by_alias=True, exclude_none=True)
+        domain_blocks = [
+            StructuringSemanticBlock(
+                source_segment_id=block.source_segment_id,
+                type=block.type,
+                target_text=block.target_text,
+            )
             for block in payload.blocks
         ]
+        semantic_blocks = [block.dump() for block in domain_blocks]
         accepted_before = self.repository.accepted_blocks(session_id)
         candidate = json.dumps(
             {"blocks": semantic_blocks}, ensure_ascii=False, separators=(",", ":")
@@ -172,7 +178,7 @@ class StructuringSessionService:
             completed_document = self._assemble_final_document(
                 session,
                 raw,
-                current_blocks=semantic_blocks,
+                current_blocks=domain_blocks,
             )
         updated_session, _ = self.repository.submit(
             session_id,
@@ -180,7 +186,7 @@ class StructuringSessionService:
             batch_digest=payload.batch_digest,
             idempotency_key=idempotency_key,
             submission_fingerprint=submission_fingerprint,
-            blocks=semantic_blocks,
+            blocks=domain_blocks,
             completed_document=completed_document,
         )
         if completed_document is not None:
@@ -251,9 +257,12 @@ class StructuringSessionService:
         session: StructuringSessionV2,
         raw: RawCapture,
         *,
-        current_blocks: list[dict[str, object]],
+        current_blocks: list[StructuringSemanticBlock],
     ) -> CaptureDocument:
-        all_semantics = [*self.repository.accepted_blocks(session.session_id), *current_blocks]
+        all_semantics = [
+            b.dump()
+            for b in [*self.repository.accepted_blocks(session.session_id), *current_blocks]
+        ]
         segments_by_id = {segment.segment_id: segment for segment in raw.segments}
         blocks: list[dict[str, object]] = []
         cursor = 0

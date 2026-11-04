@@ -26,6 +26,7 @@ from capture_runtime.contracts import (
     StructuringSessionV2,
 )
 from capture_runtime.storage.common import atomic_json
+from capture_runtime.structuring.domain.session import StructuringSemanticBlock
 
 
 class StructuringSessionRecordNotFoundError(KeyError):
@@ -106,7 +107,7 @@ def _uuid(value: str) -> str:
 @dataclass(slots=True)
 class StructuringBatchRecord:
     batch: StructuringBatchV2
-    accepted_blocks: list[dict[str, object]] | None = None
+    accepted_blocks: list[StructuringSemanticBlock] | None = None
     idempotency_key: str | None = None
     submission_fingerprint: str | None = None
     response: StructuringSessionV2 | None = None
@@ -114,7 +115,11 @@ class StructuringBatchRecord:
     def dump(self) -> dict[str, object]:
         return {
             "batch": self.batch.model_dump(mode="json", by_alias=True),
-            "acceptedBlocks": self.accepted_blocks,
+            "acceptedBlocks": (
+                [b.dump() for b in self.accepted_blocks]
+                if self.accepted_blocks is not None
+                else None
+            ),
             "idempotencyKey": self.idempotency_key,
             "submissionFingerprint": self.submission_fingerprint,
             "response": (
@@ -302,10 +307,10 @@ class StructuringSessionRepository:
                 raise StructuringSessionRecordNotFoundError(str(batch_index))
             return record.batches[batch_index].batch
 
-    def accepted_blocks(self, session_id: str) -> list[dict[str, object]]:
+    def accepted_blocks(self, session_id: str) -> list[StructuringSemanticBlock]:
         with self._lock:
             record = self._record(session_id)
-            accepted: list[dict[str, object]] = []
+            accepted: list[StructuringSemanticBlock] = []
             for batch in record.batches:
                 if batch.accepted_blocks is None:
                     break
@@ -352,7 +357,7 @@ class StructuringSessionRepository:
         batch_digest: str,
         idempotency_key: str,
         submission_fingerprint: str,
-        blocks: list[dict[str, object]],
+        blocks: list[StructuringSemanticBlock],
         completed_document: CaptureDocument | None = None,
     ) -> tuple[StructuringSessionV2, bool]:
         with self._lock:
@@ -499,10 +504,13 @@ class StructuringSessionRepository:
                 if not isinstance(accepted, list):
                     raise StructuringSessionRecordCorruptError(directory.name)
                 accepted_blocks = [
-                    StructuringSemanticBlockV2.model_validate(item).model_dump(
-                        mode="json", by_alias=True, exclude_none=True
+                    StructuringSemanticBlock(
+                        source_segment_id=block_model.source_segment_id,
+                        type=block_model.type,
+                        target_text=block_model.target_text,
                     )
                     for item in accepted
+                    for block_model in [StructuringSemanticBlockV2.model_validate(item)]
                 ]
             response_payload = entry.get("response")
             response = (

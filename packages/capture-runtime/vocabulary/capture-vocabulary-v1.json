@@ -211,6 +211,69 @@
       "codeName": "OcrProvenanceUnavailableReason.PROTOCOL_FAILURE",
       "enum": { "enumId": "OcrProvenanceUnavailableReason", "value": "protocol_failure" },
       "retired": false
+    },
+    {
+      "id": "structuring.mode.runtime",
+      "label": "Runtime 結構化",
+      "codeName": "StructuringMode.RUNTIME",
+      "enum": { "enumId": "StructuringMode", "value": "runtime" },
+      "retired": false
+    },
+    {
+      "id": "structuring.mode.host",
+      "label": "主機結構化",
+      "codeName": "StructuringMode.HOST",
+      "enum": { "enumId": "StructuringMode", "value": "host" },
+      "retired": false
+    },
+    {
+      "id": "structuring.session-status.open",
+      "label": "工作階段進行中",
+      "codeName": "StructuringSessionStatus.OPEN",
+      "enum": { "enumId": "StructuringSessionStatus", "value": "open" },
+      "retired": false
+    },
+    {
+      "id": "structuring.session-status.completed",
+      "label": "工作階段已完成",
+      "codeName": "StructuringSessionStatus.COMPLETED",
+      "enum": { "enumId": "StructuringSessionStatus", "value": "completed" },
+      "retired": false
+    },
+    {
+      "id": "structuring.session-status.failed",
+      "label": "工作階段失敗",
+      "codeName": "StructuringSessionStatus.FAILED",
+      "enum": { "enumId": "StructuringSessionStatus", "value": "failed" },
+      "retired": false
+    },
+    {
+      "id": "structuring.session-status.cancelled",
+      "label": "工作階段已取消",
+      "codeName": "StructuringSessionStatus.CANCELLED",
+      "enum": { "enumId": "StructuringSessionStatus", "value": "cancelled" },
+      "retired": false
+    },
+    {
+      "id": "structuring.batch-status.ready",
+      "label": "批次準備就緒",
+      "codeName": "StructuringBatchStatus.READY",
+      "enum": { "enumId": "StructuringBatchStatus", "value": "ready" },
+      "retired": false
+    },
+    {
+      "id": "structuring.batch-status.accepted",
+      "label": "批次已接受",
+      "codeName": "StructuringBatchStatus.ACCEPTED",
+      "enum": { "enumId": "StructuringBatchStatus", "value": "accepted" },
+      "retired": false
+    },
+    {
+      "id": "structuring.batch-status.failed",
+      "label": "批次失敗",
+      "codeName": "StructuringBatchStatus.FAILED",
+      "enum": { "enumId": "StructuringBatchStatus", "value": "failed" },
+      "retired": false
     }
   ]
 }
