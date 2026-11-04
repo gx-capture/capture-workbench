@@ -25,7 +25,7 @@ const ZH_TW: Readonly<Record<string, CaptureUnitGuide>> = {
     languages:
       '適用：台灣華語，以及華語夾雜英語的日常對話、會議與課堂錄音。日語、英語等其他語言需由主程式指定語言，但模型未針對它們調校；台語、客語不在訓練範圍內。',
     hardware:
-      '有 NVIDIA GPU 時使用 TEA-ASR 1.1（約 20 億參數，準確度最佳）；沒有 GPU 時改用 TEA-ASR 1.1-mini（約 7.8 億參數），速度明顯較慢，中英夾雜較多時準確度略低。',
+      '有 NVIDIA GPU 時在 GPU 上執行 TEA-ASR 1.1（約 20 億參數）；沒有 GPU 時在 CPU 上執行同一個模型，速度明顯較慢。',
     download: '下載約 10.5 GB（兩種大小的辨識模型、對齊時間點的 Qwen3 模型與 GPU 執行環境）。',
     license:
       'TEA-ASR 採 MIT 授權，基礎模型 Qwen3-ASR 採 Apache-2.0。全程在這台電腦上執行，錄音不會上傳。',
@@ -50,7 +50,7 @@ const EN: Readonly<Record<string, CaptureUnitGuide>> = {
     languages:
       'Suited to Taiwan Mandarin, including everyday conversation, meetings and lectures that mix in English. Other languages such as Japanese or English can be requested by the host app, but the model is not tuned for them; Taiwanese Hokkien and Hakka are outside its training.',
     hardware:
-      'With an NVIDIA GPU it uses TEA-ASR 1.1 (about 2 billion parameters, best accuracy); without one it uses TEA-ASR 1.1-mini (about 780 million parameters), which is much slower and slightly less accurate on heavy Mandarin–English mixing.',
+      'With an NVIDIA GPU it runs TEA-ASR 1.1 (about 2 billion parameters) on the GPU; without one it runs the same model on the CPU, which is much slower.',
     download:
       'About 10.5 GB (recognition models in two sizes, a Qwen3 model that aligns the times, and the GPU runtime).',
     license:

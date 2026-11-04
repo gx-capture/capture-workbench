@@ -353,9 +353,10 @@ def decode_audio(source: Path, *, max_duration_ms: int, should_cancel: Callable[
 
 
 class TeaAsrAdapter:
-    """Primary on the GPU, fallback (mini) on the CPU, or one chosen model on either.
+    """One checkpoint on CUDA when a GPU is available, otherwise on CPU.
 
-    Classified CUDA errors are retried once on the CPU.
+    A classified CUDA failure retries that same checkpoint once on CPU.
+    The default is TEA-ASR 1.1; an explicit model choice is independent of device.
     """
 
     def __init__(
@@ -382,7 +383,7 @@ class TeaAsrAdapter:
         self.primary_provenance_model = primary_provenance_model
         self.fallback_provenance_model = fallback_provenance_model
         # A model chosen by its provenance name runs on either device, also after a
-        # GPU fallback; None picks the model by device.
+        # GPU fallback; None keeps the primary checkpoint on both devices.
         if model not in {None, primary_provenance_model, fallback_provenance_model}:
             raise ValueError("Speech recognition model is invalid")
         self.chosen_model = model
@@ -428,12 +429,10 @@ class TeaAsrAdapter:
         self._models[role] = (key, processor, model)
         return processor, model
 
-    def _selection(self, device: str) -> tuple[str, str]:
-        """The model folder and provenance name that run on ``device``."""
+    def _selection(self) -> tuple[str, str]:
+        """The chosen model folder and provenance name, independent of device."""
 
-        identity = self.chosen_model or (
-            self.primary_provenance_model if device == "cuda" else self.fallback_provenance_model
-        )
+        identity = self.chosen_model or self.primary_provenance_model
         if identity == self.primary_provenance_model:
             return self.primary_model, identity
         return self.fallback_model, identity
@@ -634,7 +633,7 @@ class TeaAsrAdapter:
 
         with _cleanup_on_exit(cleanup):
             stage_ms: dict[str, int] = {}
-            selected, identity = self._selection(device)
+            selected, identity = self._selection()
             dtype = getattr(torch, _asr_dtype("auto", device, torch))
             duration_ms = round(len(audio) / SAMPLE_RATE * 1000)
             check_cancel()
