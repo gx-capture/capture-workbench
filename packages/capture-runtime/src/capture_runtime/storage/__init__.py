@@ -5,10 +5,6 @@ from capture_runtime.storage.common import (
     RecordNotFoundError,
     TransitionRejectedError,
 )
-from capture_runtime.storage.model_installation_repository import (
-    ModelInstallationRecord,
-    ModelInstallationRepository,
-)
 from capture_runtime.storage.streaming_repository import (
     StreamingIdempotencyConflictError,
     StreamingPartialNotFoundError,
@@ -16,7 +12,11 @@ from capture_runtime.storage.streaming_repository import (
     StreamingRepository,
     StreamingTransitionError,
 )
-from capture_runtime.storage.structuring_session_repository import (
+from capture_runtime.structuring.infrastructure.model_installation_repository import (
+    ModelInstallationRecord,
+    ModelInstallationRepository,
+)
+from capture_runtime.structuring.infrastructure.structuring_session_repository import (
     StructuringSessionDigestConflictError,
     StructuringSessionIdempotencyConflictError,
     StructuringSessionRecordCorruptError,

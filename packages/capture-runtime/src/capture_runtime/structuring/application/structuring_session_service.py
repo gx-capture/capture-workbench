@@ -24,9 +24,9 @@ from capture_runtime.storage import (
     StructuringSessionDigestConflictError,
     StructuringSessionRepository,
 )
-from capture_runtime.structuring import (
-    StructuringCoordinator,
-    StructuringValidationError,
+from capture_runtime.structuring.infrastructure.contracts import StructuringValidationError
+from capture_runtime.structuring.infrastructure.coordinator import StructuringCoordinator
+from capture_runtime.structuring.infrastructure.structuring import (
     assemble_structuring_document,
     validate_structuring_batch,
 )

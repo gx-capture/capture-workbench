@@ -8,7 +8,9 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from capture_runtime.app import create_app
     from capture_runtime.contracts import CaptureDocument, RawCapture
-    from capture_runtime.structuring_provider import CaptureStructuringProvider
+    from capture_runtime.structuring.infrastructure.structuring_provider import (
+        CaptureStructuringProvider,
+    )
 
 __all__ = [
     "CaptureDocument",
@@ -21,7 +23,9 @@ __all__ = [
 def __getattr__(name: str) -> object:
     module_name = {
         "CaptureDocument": "capture_runtime.contracts",
-        "CaptureStructuringProvider": "capture_runtime.structuring_provider",
+        "CaptureStructuringProvider": (
+            "capture_runtime.structuring.infrastructure.structuring_provider"
+        ),
         "RawCapture": "capture_runtime.contracts",
         "create_app": "capture_runtime.app",
     }.get(name)

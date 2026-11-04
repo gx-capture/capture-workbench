@@ -28,7 +28,6 @@ from capture_runtime.contract_set import (
 )
 from capture_runtime.dependencies import RuntimeDependencies, build_runtime_dependencies
 from capture_runtime.ocr.infrastructure.ocr_preflight import OcrComputePreflight
-from capture_runtime.ollama import ProcessController, RuntimeInstaller
 from capture_runtime.provisioning.api.runtime import register_runtime_routes
 from capture_runtime.provisioning.infrastructure.installation_repository import (
     InstallationRepository,
@@ -37,7 +36,10 @@ from capture_runtime.routes.common import ApiProblem, error_response
 from capture_runtime.routes.meta import register_contract_routes
 from capture_runtime.routes.streaming import register_streaming_routes
 from capture_runtime.storage import ModelInstallationRepository
-from capture_runtime.structuring_provider import CaptureStructuringProvider
+from capture_runtime.structuring.infrastructure.ollama import ProcessController, RuntimeInstaller
+from capture_runtime.structuring.infrastructure.structuring_provider import (
+    CaptureStructuringProvider,
+)
 
 
 class CandidateBodyLimitMiddleware:

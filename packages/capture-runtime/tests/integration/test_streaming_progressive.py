@@ -44,8 +44,10 @@ from capture_runtime.speech.infrastructure.whisper_session import (
     SessionFrameType,
 )
 from capture_runtime.storage import StreamingRepository
-from capture_runtime.structuring import StructuringValidationError
-from capture_runtime.structuring_provider import FakeCaptureStructuringProvider
+from capture_runtime.structuring.infrastructure.contracts import StructuringValidationError
+from capture_runtime.structuring.infrastructure.structuring_provider import (
+    FakeCaptureStructuringProvider,
+)
 from capture_runtime.testing.deterministic_extractor import DeterministicCaptureExtractor
 from capture_runtime.worker_client import InstalledEngine
 

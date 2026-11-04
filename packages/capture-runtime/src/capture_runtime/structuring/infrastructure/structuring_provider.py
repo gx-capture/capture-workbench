@@ -18,7 +18,7 @@ from capture_runtime.contracts import (
     CaptureEngine,
     RawCapture,
 )
-from capture_runtime.structuring import StructuringValidationError
+from capture_runtime.structuring.infrastructure.contracts import StructuringValidationError
 
 
 class CaptureStructuringProvider(Protocol):

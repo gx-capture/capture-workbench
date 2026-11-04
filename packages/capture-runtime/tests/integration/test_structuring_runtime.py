@@ -7,9 +7,9 @@ from datetime import UTC, datetime
 
 import pytest
 
-from capture_runtime.structuring import (
-    CAPTURE_BLOCK_BATCH_SCHEMA,
-    StructuringValidationError,
+from capture_runtime.structuring.infrastructure.constants import CAPTURE_BLOCK_BATCH_SCHEMA
+from capture_runtime.structuring.infrastructure.contracts import StructuringValidationError
+from capture_runtime.structuring.infrastructure.structuring import (
     plan_structuring_batches,
     structure_capture,
     validate_structuring_batch,

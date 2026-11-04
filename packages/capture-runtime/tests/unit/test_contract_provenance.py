@@ -8,7 +8,8 @@ import pytest
 from pydantic import ValidationError
 
 from capture_runtime.contracts import CaptureDocument, RawCapture
-from capture_runtime.structuring import StructuringValidationError, validate_structuring_candidate
+from capture_runtime.structuring.infrastructure.contracts import StructuringValidationError
+from capture_runtime.structuring.infrastructure.structuring import validate_structuring_candidate
 
 
 def _engine(name: str) -> dict[str, str]:

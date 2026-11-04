@@ -23,16 +23,16 @@ from capture_runtime.config import (
     sanitized_child_environment,
 )
 from capture_runtime.contracts import CaptureDocument
-from capture_runtime.ollama import (
+from capture_runtime.release import (
+    build_release_artifacts,
+    write_capture_document_schema,
+)
+from capture_runtime.structuring.infrastructure.ollama import (
     FakeRuntimeInstaller,
     IsolatedOllamaLifecycle,
     OllamaOwnershipError,
     OwnedProcess,
     SubprocessController,
-)
-from capture_runtime.release import (
-    build_release_artifacts,
-    write_capture_document_schema,
 )
 from tests.conftest import TOKEN, idempotency_headers, poll_installation
 

@@ -45,7 +45,7 @@ from capture_runtime.storage import (
     StructuringSessionRecordNotFoundError,
     StructuringSessionTransitionError,
 )
-from capture_runtime.structuring import StructuringValidationError
+from capture_runtime.structuring.infrastructure.contracts import StructuringValidationError
 
 _CONTENT_RANGE = re.compile(r"^bytes ([0-9]+)-([0-9]+)/([0-9]+)$")
 _DIGEST = re.compile(r"^sha-256=([0-9a-f]{64})$")

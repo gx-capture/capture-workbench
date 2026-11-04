@@ -10,7 +10,7 @@ import pytest
 from capture_runtime.clock import Clock
 from capture_runtime.config import ExternalOllamaConfig
 from capture_runtime.contracts import CaptureDocument, RawCapture
-from capture_runtime.ollama import (
+from capture_runtime.structuring.infrastructure.ollama import (
     ExternalOllamaCaptureStructuringProvider,
     RuntimeUnavailableError,
 )

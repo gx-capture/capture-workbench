@@ -1,6 +1,6 @@
 """Runtime requirement installer seam."""
 
-from capture_runtime.ollama.installer_impl import (
+from capture_runtime.structuring.infrastructure.ollama.installer_impl import (
     CommandResult,
     FakeRuntimeInstaller,
     RuntimeInstaller,

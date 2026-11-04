@@ -15,7 +15,7 @@ from typing import BinaryIO, Protocol
 from capture_runtime._windows_job import create_kill_on_close_job, terminate_and_close_job
 from capture_runtime.clock import Clock
 from capture_runtime.config import OllamaRuntimeConfig
-from capture_runtime.model_catalog import ActiveModelSelectionStore
+from capture_runtime.structuring.infrastructure.model_catalog import ActiveModelSelectionStore
 
 
 class OllamaOwnershipError(RuntimeError):

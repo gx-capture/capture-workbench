@@ -22,12 +22,16 @@ from capture_runtime.contracts import (
     StartRuntimeModelInstallationV2,
 )
 from capture_runtime.dependencies import RuntimeDependencies
-from capture_runtime.model_catalog import MODEL_OPTIONS, ActiveModelSelectionStore, catalog_sha256
 from capture_runtime.provisioning.application.installation_service import RequirementInUseError
 from capture_runtime.provisioning.infrastructure.engine_installation import EngineInstallationError
 from capture_runtime.release import CAPTURE_DOCUMENT_SCHEMA_RELEASE_SHA256
 from capture_runtime.routes.common import ApiProblem, request_fingerprint
 from capture_runtime.storage.common import IdempotencyConflictError, RecordNotFoundError
+from capture_runtime.structuring.infrastructure.model_catalog import (
+    MODEL_OPTIONS,
+    ActiveModelSelectionStore,
+    catalog_sha256,
+)
 
 
 def register_runtime_routes(

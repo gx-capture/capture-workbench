@@ -27,7 +27,9 @@ from capture_runtime.provisioning.infrastructure.engine_catalog import EngineCat
 from capture_runtime.provisioning.infrastructure.engine_installation import (
     ExtractionRuntimeUnavailableError,
 )
-from capture_runtime.structuring_provider import FakeCaptureStructuringProvider
+from capture_runtime.structuring.infrastructure.structuring_provider import (
+    FakeCaptureStructuringProvider,
+)
 from capture_runtime.worker_client import InstalledEngine
 
 AUDIO = b"RIFF\x00\x00\x00\x00WAVEpayload"

@@ -12,7 +12,7 @@ from capture_runtime.ocr.infrastructure.ocr_preflight import (
     OcrGpuAdapter,
     OcrGpuCapabilitySnapshot,
 )
-from capture_runtime.ollama import FakeRuntimeInstaller
+from capture_runtime.structuring.infrastructure.ollama import FakeRuntimeInstaller
 from tests.conftest import TOKEN, idempotency_headers
 
 

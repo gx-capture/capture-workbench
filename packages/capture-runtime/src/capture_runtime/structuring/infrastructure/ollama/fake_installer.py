@@ -13,7 +13,9 @@ from capture_runtime.constants import (
 )
 from capture_runtime.contracts import RuntimeRequirementStatus, RuntimeRequirementV2
 from capture_runtime.install_progress import DownloadProgress
-from capture_runtime.ollama.lifecycle_impl import ManualActionRequiredError
+from capture_runtime.structuring.infrastructure.ollama.lifecycle_impl import (
+    ManualActionRequiredError,
+)
 
 
 class FakeRuntimeInstaller:
