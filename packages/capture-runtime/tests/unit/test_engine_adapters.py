@@ -13,21 +13,21 @@ from types import ModuleType, SimpleNamespace
 import pytest
 from PIL import Image
 
-import capture_runtime.extractors as extractor_module
 import capture_runtime.ocr_execution_evidence as execution_evidence
 import capture_runtime.ocr_paddle_normalization as paddle_normalization
 import capture_runtime.ocr_windowsml_adapter as windowsml_adapter
-from capture_runtime.clock import SystemClock
-from capture_runtime.config import ExtractionRuntimeConfig, OllamaRuntimeConfig, RuntimeSettings
-from capture_runtime.constants import RUNTIME_VERSION
-from capture_runtime.contracts import CaptureSource, OcrAdapterClass, OcrProvenanceV3
-from capture_runtime.extractors import (
-    ExtractionRuntimeUnavailableError,
+from capture_runtime.capture_extraction import (
     OcrExtractionFailure,
     OcrSourcePreflightError,
     PdfPageSelectionError,
     StandaloneRuntimeCaptureExtractor,
 )
+from capture_runtime.clock import SystemClock
+from capture_runtime.config import ExtractionRuntimeConfig, OllamaRuntimeConfig, RuntimeSettings
+from capture_runtime.constants import RUNTIME_VERSION
+from capture_runtime.contracts import CaptureSource, OcrAdapterClass, OcrProvenanceV3
+from capture_runtime.engine_installation import ExtractionRuntimeUnavailableError
+from capture_runtime.image_normalization import normalize_image_png
 from capture_runtime.ocr_execution_evidence import OcrExecutionEvidence
 from capture_runtime.ocr_offline_stubs import install_offline_huggingface_stubs
 from capture_runtime.ocr_paddle_normalization import PaddleResultNormalizationError
@@ -3728,7 +3728,7 @@ def test_sync_ocr_all_empty_is_failed_with_readable_no_text_projection(
 def test_standalone_image_scale_adapts_to_the_pixel_limit() -> None:
     image = Image.new("RGB", (5_000, 3_000), "white")
 
-    normalized_png = extractor_module._normalize_image_png(
+    normalized_png = normalize_image_png(
         image,
         scale=2,
         max_pixels=50_000_000,

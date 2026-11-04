@@ -25,6 +25,8 @@ flowchart LR
   n_capture_runtime_worker_payloads["capture_runtime._worker_payloads"]
   n_capture_runtime_app["capture_runtime.app"]
   n_capture_runtime_artifact_parts["capture_runtime.artifact_parts"]
+  n_capture_runtime_audio_run_timeout["capture_runtime.audio_run_timeout"]
+  n_capture_runtime_capture_extraction["capture_runtime.capture_extraction"]
   n_capture_runtime_clock["capture_runtime.clock"]
   n_capture_runtime_config["capture_runtime.config"]
   n_capture_runtime_constants["capture_runtime.constants"]
@@ -33,7 +35,6 @@ flowchart LR
   n_capture_runtime_dependencies["capture_runtime.dependencies"]
   n_capture_runtime_engine_catalog["capture_runtime.engine_catalog"]
   n_capture_runtime_engine_installation["capture_runtime.engine_installation"]
-  n_capture_runtime_extractors["capture_runtime.extractors"]
   n_capture_runtime_image_normalization["capture_runtime.image_normalization"]
   n_capture_runtime_install_progress["capture_runtime.install_progress"]
   n_capture_runtime_japanese_kanji["capture_runtime.japanese_kanji"]
@@ -64,6 +65,7 @@ flowchart LR
   n_capture_runtime_request_ref_codec["capture_runtime.request_ref_codec"]
   n_capture_runtime_routes["capture_runtime.routes"]
   n_capture_runtime_services["capture_runtime.services"]
+  n_capture_runtime_source_sniffing["capture_runtime.source_sniffing"]
   n_capture_runtime_speaker_alignment["capture_runtime.speaker_alignment"]
   n_capture_runtime_speaker_diarization["capture_runtime.speaker_diarization"]
   n_capture_runtime_speaker_turns["capture_runtime.speaker_turns"]
@@ -73,6 +75,7 @@ flowchart LR
   n_capture_runtime_streaming["capture_runtime.streaming"]
   n_capture_runtime_structuring["capture_runtime.structuring"]
   n_capture_runtime_structuring_provider["capture_runtime.structuring_provider"]
+  n_capture_runtime_testing["capture_runtime.testing"]
   n_capture_runtime_whisper_session["capture_runtime.whisper_session"]
   n_capture_runtime_worker_client["capture_runtime.worker_client"]
   n_capture_runtime_worker_contracts["capture_runtime.worker_contracts"]
@@ -111,17 +114,39 @@ flowchart LR
   n_capture_runtime_worker_payloads --> n_capture_runtime_ocr_preflight
   n_capture_runtime_worker_payloads --> n_capture_runtime_ocr_projection
   n_capture_runtime_worker_payloads --> n_capture_runtime_speaker_turns
+  n_capture_runtime_app --> n_capture_runtime_capture_extraction
   n_capture_runtime_app --> n_capture_runtime_clock
   n_capture_runtime_app --> n_capture_runtime_config
   n_capture_runtime_app --> n_capture_runtime_constants
   n_capture_runtime_app --> n_capture_runtime_contract_set
   n_capture_runtime_app --> n_capture_runtime_dependencies
-  n_capture_runtime_app --> n_capture_runtime_extractors
   n_capture_runtime_app --> n_capture_runtime_ocr_preflight
   n_capture_runtime_app --> n_capture_runtime_ollama
   n_capture_runtime_app --> n_capture_runtime_routes
   n_capture_runtime_app --> n_capture_runtime_storage
   n_capture_runtime_app --> n_capture_runtime_structuring_provider
+  n_capture_runtime_audio_run_timeout --> n_capture_runtime_worker_process
+  n_capture_runtime_capture_extraction --> n_capture_runtime_pdf_source
+  n_capture_runtime_capture_extraction --> n_capture_runtime_audio_run_timeout
+  n_capture_runtime_capture_extraction --> n_capture_runtime_clock
+  n_capture_runtime_capture_extraction --> n_capture_runtime_config
+  n_capture_runtime_capture_extraction --> n_capture_runtime_constants
+  n_capture_runtime_capture_extraction --> n_capture_runtime_contracts
+  n_capture_runtime_capture_extraction --> n_capture_runtime_engine_catalog
+  n_capture_runtime_capture_extraction --> n_capture_runtime_engine_installation
+  n_capture_runtime_capture_extraction --> n_capture_runtime_image_normalization
+  n_capture_runtime_capture_extraction --> n_capture_runtime_ocr_execution_proof
+  n_capture_runtime_capture_extraction --> n_capture_runtime_ocr_paddle_normalization
+  n_capture_runtime_capture_extraction --> n_capture_runtime_ocr_page_result
+  n_capture_runtime_capture_extraction --> n_capture_runtime_ocr_projection
+  n_capture_runtime_capture_extraction --> n_capture_runtime_ocr_vertical_routing
+  n_capture_runtime_capture_extraction --> n_capture_runtime_pdf_page_selection
+  n_capture_runtime_capture_extraction --> n_capture_runtime_source_sniffing
+  n_capture_runtime_capture_extraction --> n_capture_runtime_speaker_alignment
+  n_capture_runtime_capture_extraction --> n_capture_runtime_speech_transcript
+  n_capture_runtime_capture_extraction --> n_capture_runtime_worker_client
+  n_capture_runtime_capture_extraction --> n_capture_runtime_worker_probe
+  n_capture_runtime_capture_extraction --> n_capture_runtime_worker_process
   n_capture_runtime_config --> n_capture_runtime_constants
   n_capture_runtime_contract_set --> n_capture_runtime_contract_set_bundle
   n_capture_runtime_contract_set --> n_capture_runtime_constants
@@ -129,6 +154,7 @@ flowchart LR
   n_capture_runtime_contract_set --> n_capture_runtime_problem_registry
   n_capture_runtime_contract_set --> n_capture_runtime_release
   n_capture_runtime_contracts --> n_capture_runtime_constants
+  n_capture_runtime_dependencies --> n_capture_runtime_capture_extraction
   n_capture_runtime_dependencies --> n_capture_runtime_clock
   n_capture_runtime_dependencies --> n_capture_runtime_config
   n_capture_runtime_dependencies --> n_capture_runtime_constants
@@ -136,7 +162,6 @@ flowchart LR
   n_capture_runtime_dependencies --> n_capture_runtime_contracts
   n_capture_runtime_dependencies --> n_capture_runtime_engine_catalog
   n_capture_runtime_dependencies --> n_capture_runtime_engine_installation
-  n_capture_runtime_dependencies --> n_capture_runtime_extractors
   n_capture_runtime_dependencies --> n_capture_runtime_ocr_preflight
   n_capture_runtime_dependencies --> n_capture_runtime_ollama
   n_capture_runtime_dependencies --> n_capture_runtime_progressive_capture
@@ -144,6 +169,7 @@ flowchart LR
   n_capture_runtime_dependencies --> n_capture_runtime_storage
   n_capture_runtime_dependencies --> n_capture_runtime_structuring
   n_capture_runtime_dependencies --> n_capture_runtime_structuring_provider
+  n_capture_runtime_dependencies --> n_capture_runtime_testing
   n_capture_runtime_dependencies --> n_capture_runtime_worker_client
   n_capture_runtime_dependencies --> n_capture_runtime_worker_process
   n_capture_runtime_engine_catalog --> n_capture_runtime_constants
@@ -164,25 +190,6 @@ flowchart LR
   n_capture_runtime_engine_installation --> n_capture_runtime_ocr_preflight
   n_capture_runtime_engine_installation --> n_capture_runtime_worker_client
   n_capture_runtime_engine_installation --> n_capture_runtime_worker_process
-  n_capture_runtime_extractors --> n_capture_runtime_pdf_source
-  n_capture_runtime_extractors --> n_capture_runtime_clock
-  n_capture_runtime_extractors --> n_capture_runtime_config
-  n_capture_runtime_extractors --> n_capture_runtime_constants
-  n_capture_runtime_extractors --> n_capture_runtime_contracts
-  n_capture_runtime_extractors --> n_capture_runtime_engine_catalog
-  n_capture_runtime_extractors --> n_capture_runtime_engine_installation
-  n_capture_runtime_extractors --> n_capture_runtime_image_normalization
-  n_capture_runtime_extractors --> n_capture_runtime_ocr_execution_proof
-  n_capture_runtime_extractors --> n_capture_runtime_ocr_paddle_normalization
-  n_capture_runtime_extractors --> n_capture_runtime_ocr_page_result
-  n_capture_runtime_extractors --> n_capture_runtime_ocr_projection
-  n_capture_runtime_extractors --> n_capture_runtime_ocr_vertical_routing
-  n_capture_runtime_extractors --> n_capture_runtime_pdf_page_selection
-  n_capture_runtime_extractors --> n_capture_runtime_speaker_alignment
-  n_capture_runtime_extractors --> n_capture_runtime_speech_transcript
-  n_capture_runtime_extractors --> n_capture_runtime_worker_client
-  n_capture_runtime_extractors --> n_capture_runtime_worker_probe
-  n_capture_runtime_extractors --> n_capture_runtime_worker_process
   n_capture_runtime_ocr_execution_evidence --> n_capture_runtime_worker_probe
   n_capture_runtime_ocr_execution_proof --> n_capture_runtime_contracts
   n_capture_runtime_ocr_execution_proof --> n_capture_runtime_ocr_execution_evidence
@@ -245,7 +252,6 @@ flowchart LR
   n_capture_runtime_progressive_capture --> n_capture_runtime_constants
   n_capture_runtime_progressive_capture --> n_capture_runtime_contracts
   n_capture_runtime_progressive_capture --> n_capture_runtime_engine_installation
-  n_capture_runtime_progressive_capture --> n_capture_runtime_extractors
   n_capture_runtime_progressive_capture --> n_capture_runtime_progressive_audio
   n_capture_runtime_progressive_capture --> n_capture_runtime_progressive_decoder
   n_capture_runtime_progressive_capture --> n_capture_runtime_whisper_session
@@ -273,11 +279,11 @@ flowchart LR
   n_capture_runtime_routes --> n_capture_runtime_services
   n_capture_runtime_routes --> n_capture_runtime_storage
   n_capture_runtime_routes --> n_capture_runtime_structuring
+  n_capture_runtime_services --> n_capture_runtime_capture_extraction
   n_capture_runtime_services --> n_capture_runtime_clock
   n_capture_runtime_services --> n_capture_runtime_contract_set
   n_capture_runtime_services --> n_capture_runtime_contracts
   n_capture_runtime_services --> n_capture_runtime_engine_installation
-  n_capture_runtime_services --> n_capture_runtime_extractors
   n_capture_runtime_services --> n_capture_runtime_install_progress
   n_capture_runtime_services --> n_capture_runtime_ocr_execution_proof
   n_capture_runtime_services --> n_capture_runtime_ocr_projection
@@ -285,12 +291,14 @@ flowchart LR
   n_capture_runtime_services --> n_capture_runtime_progressive_audio
   n_capture_runtime_services --> n_capture_runtime_progressive_capture
   n_capture_runtime_services --> n_capture_runtime_progressive_decoder
+  n_capture_runtime_services --> n_capture_runtime_source_sniffing
   n_capture_runtime_services --> n_capture_runtime_storage
   n_capture_runtime_services --> n_capture_runtime_streaming
   n_capture_runtime_services --> n_capture_runtime_structuring
   n_capture_runtime_services --> n_capture_runtime_structuring_provider
   n_capture_runtime_services --> n_capture_runtime_worker_client
   n_capture_runtime_services --> n_capture_runtime_worker_process
+  n_capture_runtime_source_sniffing --> n_capture_runtime_contracts
   n_capture_runtime_speaker_alignment --> n_capture_runtime_speaker_turns
   n_capture_runtime_speaker_diarization --> n_capture_runtime_constants
   n_capture_runtime_speaker_diarization --> n_capture_runtime_speaker_turns
@@ -310,6 +318,12 @@ flowchart LR
   n_capture_runtime_structuring_provider --> n_capture_runtime_clock
   n_capture_runtime_structuring_provider --> n_capture_runtime_contracts
   n_capture_runtime_structuring_provider --> n_capture_runtime_structuring
+  n_capture_runtime_testing --> n_capture_runtime_pdf_source
+  n_capture_runtime_testing --> n_capture_runtime_capture_extraction
+  n_capture_runtime_testing --> n_capture_runtime_clock
+  n_capture_runtime_testing --> n_capture_runtime_contracts
+  n_capture_runtime_testing --> n_capture_runtime_pdf_page_selection
+  n_capture_runtime_testing --> n_capture_runtime_source_sniffing
   n_capture_runtime_whisper_session --> n_capture_runtime_contracts
   n_capture_runtime_whisper_session --> n_capture_runtime_progressive_audio
   n_capture_runtime_worker_client --> n_capture_runtime_worker_payloads

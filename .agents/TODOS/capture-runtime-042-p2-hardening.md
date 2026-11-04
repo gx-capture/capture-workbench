@@ -95,7 +95,7 @@ diagnostic and is not D4.
   `packages/capture-runtime/src/capture_runtime/ocr_projection.py:OcrPipeline`,
   `extract`, `normalize_observation`, `serialize_page`, `serialize_manifest`,
   `failed_page`, and `failure`; callers
-  `packages/capture-runtime/src/capture_runtime/extractors.py:StandaloneRuntimeCaptureExtractor,_WorkerOcrEngineAdapter`,
+  `packages/capture-runtime/src/capture_runtime/capture_extraction.py:StandaloneRuntimeCaptureExtractor,_WorkerOcrEngineAdapter`,
   `packages/capture-runtime/src/capture_runtime/services/streaming_capture_service.py`,
   and `packages/capture-runtime/src/capture_runtime/workers/ocr_main.py`; tests
   `packages/capture-runtime/tests/unit/test_ocr_projection.py`,

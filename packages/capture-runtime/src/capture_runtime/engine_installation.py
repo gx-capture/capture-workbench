@@ -78,6 +78,7 @@ from ._engine_installation_errors import (
     EngineInstallationError,
     EngineInstallBusyError,
     EngineResolutionTimeoutError,
+    ExtractionRuntimeUnavailableError,
 )
 from ._engine_installation_lock import ExclusiveInstallFile
 from ._engine_installation_residue import (
@@ -886,6 +887,7 @@ __all__ = [
     "EngineInstallationError",
     "EngineInstallationManager",
     "EngineResolutionTimeoutError",
+    "ExtractionRuntimeUnavailableError",
     "HttpArtifactDownloader",
     "LocalModelFileDownloader",
     "safe_extract_artifact",

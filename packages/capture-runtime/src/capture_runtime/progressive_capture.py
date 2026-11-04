@@ -29,8 +29,10 @@ from capture_runtime.contracts import (
     TimeLocator,
     project_source_text,
 )
-from capture_runtime.engine_installation import EngineInstallationManager
-from capture_runtime.extractors import ExtractionRuntimeUnavailableError
+from capture_runtime.engine_installation import (
+    EngineInstallationManager,
+    ExtractionRuntimeUnavailableError,
+)
 from capture_runtime.progressive_audio import (
     DEFAULT_HEARTBEAT_MS,
     DEFAULT_OVERLAP_MS,

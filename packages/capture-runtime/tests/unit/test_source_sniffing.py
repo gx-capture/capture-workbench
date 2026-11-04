@@ -6,7 +6,7 @@ import av
 import pytest
 
 from capture_runtime.contracts import CaptureSourceKind
-from capture_runtime.extractors import SNIFF_BYTES, UnsupportedMediaError, sniff_source
+from capture_runtime.source_sniffing import SNIFF_BYTES, UnsupportedMediaError, sniff_source
 
 
 def _record(path: Path, container_format: str, codec: str, *, rate: int = 16_000) -> bytes:

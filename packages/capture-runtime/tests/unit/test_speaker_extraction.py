@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from capture_runtime.capture_extraction import StandaloneRuntimeCaptureExtractor
 from capture_runtime.clock import SystemClock
 from capture_runtime.config import ExtractionRuntimeConfig
 from capture_runtime.constants import RUNTIME_VERSION
@@ -18,10 +19,7 @@ from capture_runtime.contracts import (
     TimeLocator,
 )
 from capture_runtime.engine_catalog import EngineCatalogError
-from capture_runtime.extractors import (
-    ExtractionRuntimeUnavailableError,
-    StandaloneRuntimeCaptureExtractor,
-)
+from capture_runtime.engine_installation import ExtractionRuntimeUnavailableError
 from capture_runtime.speaker_turns import SpeakerTurn
 from capture_runtime.structuring_provider import FakeCaptureStructuringProvider
 from capture_runtime.worker_client import (
