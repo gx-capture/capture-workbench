@@ -29,8 +29,6 @@ def _extractor(tmp_path: Path, *, max_pdf_pages: int = 3) -> StandaloneRuntimeCa
             max_image_pixels=100_000,
             ocr_render_scale=2,
             max_audio_duration_ms=60_000,
-            whisper_primary_model="tea-asr-1.1",
-            whisper_fallback_model="tea-asr-1.1-mini",
             whisper_prefer_gpu=True,
         ),
     )

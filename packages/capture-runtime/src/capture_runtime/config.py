@@ -136,10 +136,11 @@ class ExtractionRuntimeConfig:
     max_image_pixels: int
     ocr_render_scale: float
     max_audio_duration_ms: int
-    whisper_primary_model: str
-    whisper_fallback_model: str
     whisper_prefer_gpu: bool
     whisper_allow_cpu_fallback: bool = True
+    # "auto" runs tea-asr-1.1 on the GPU and tea-asr-1.1-mini on the CPU; a named
+    # model runs on either device, also after a GPU fallback.
+    speech_recognition_model: str = "auto"
     engine_resolution_timeout_seconds: float = 60.0
     # An idle speech recognition worker keeps its models loaded this long for
     # the next capture; 0 closes it after each capture.
@@ -298,24 +299,19 @@ class RuntimeSettings:
             max_image_pixels=max_image_pixels,
             ocr_render_scale=ocr_render_scale,
             max_audio_duration_ms=max_audio_duration_ms,
-            whisper_primary_model=env.get("CAPTURE_WHISPER_PRIMARY_MODEL", "tea-asr-1.1"),
-            whisper_fallback_model=env.get("CAPTURE_WHISPER_FALLBACK_MODEL", "tea-asr-1.1-mini"),
             # Prefer Nvidia CUDA when the bundled PyTorch runtime can
             # initialize it. Diagnostics retain the bounded CPU fallback;
             # source-lock production verification can explicitly fail closed.
             whisper_prefer_gpu=_bool(env.get("CAPTURE_WHISPER_PREFER_GPU"), True),
             whisper_allow_cpu_fallback=_bool(env.get("CAPTURE_WHISPER_ALLOW_CPU_FALLBACK"), True),
+            speech_recognition_model=env.get("CAPTURE_SPEECH_RECOGNITION_MODEL", "auto"),
             engine_resolution_timeout_seconds=engine_resolution_timeout_seconds,
             speech_worker_idle_seconds=speech_worker_idle_seconds,
             ocr_worker_idle_seconds=ocr_worker_idle_seconds,
         )
-        supported_whisper_models = {"tea-asr-1.1", "tea-asr-1.1-mini"}
-        if {
-            extraction.whisper_primary_model,
-            extraction.whisper_fallback_model,
-        } - supported_whisper_models:
+        if extraction.speech_recognition_model not in {"auto", "tea-asr-1.1", "tea-asr-1.1-mini"}:
             raise ValueError(
-                "Capture speech models must be tea-asr-1.1 or tea-asr-1.1-mini in runtime v2"
+                "CAPTURE_SPEECH_RECOGNITION_MODEL must be auto, tea-asr-1.1 or tea-asr-1.1-mini"
             )
 
         external_ollama = None

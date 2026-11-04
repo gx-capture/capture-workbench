@@ -205,6 +205,7 @@ def _worker_key(engine: InstalledEngine, config: ExtractionRuntimeConfig) -> tup
         str(engine.worker_sha256),
         str(config.whisper_prefer_gpu),
         str(config.whisper_allow_cpu_fallback),
+        config.speech_recognition_model,
     )
 
 
@@ -497,6 +498,11 @@ class _SessionWorker:
                 "CAPTURE_SESSION_PREFER_GPU": "1" if config.whisper_prefer_gpu else "0",
                 "CAPTURE_SESSION_ALLOW_CPU_FALLBACK": (
                     "1" if config.whisper_allow_cpu_fallback else "0"
+                ),
+                **(
+                    {"CAPTURE_SESSION_SPEECH_MODEL": config.speech_recognition_model}
+                    if config.speech_recognition_model != "auto"
+                    else {}
                 ),
             }
         )

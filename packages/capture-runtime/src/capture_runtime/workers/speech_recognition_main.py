@@ -225,14 +225,19 @@ def _run(request: WorkerRequestModel, cancellation: Event, progress: Any = None)
     allow_cpu_fallback = options.get("allowCpuFallback", True)
     word_timestamps = options.get("wordTimestamps", False)
     language = options.get("language")
+    # Without "model" the device picks it: TEA-ASR-1.1 on the GPU, mini on the CPU.
+    model = options.get("model")
     from capture_runtime.contracts import SPOKEN_LANGUAGES
 
     language_valid = "language" not in options or (
         isinstance(language, str) and language in SPOKEN_LANGUAGES
     )
+    model_valid = "model" not in options or (
+        isinstance(model, str) and model in ("tea-asr-1.1", "tea-asr-1.1-mini")
+    )
     if (
         set(options)
-        - {"maxDurationMs", "preferGpu", "allowCpuFallback", "wordTimestamps", "language"}
+        - {"maxDurationMs", "preferGpu", "allowCpuFallback", "wordTimestamps", "language", "model"}
         or not isinstance(max_duration_ms, int)
         or isinstance(max_duration_ms, bool)
         or max_duration_ms <= 0
@@ -240,6 +245,7 @@ def _run(request: WorkerRequestModel, cancellation: Event, progress: Any = None)
         or not isinstance(allow_cpu_fallback, bool)
         or not isinstance(word_timestamps, bool)
         or not language_valid
+        or not model_valid
     ):
         raise ValueError("Speech recognition run options are invalid")
     adapter = TeaAsrAdapter(
@@ -248,6 +254,7 @@ def _run(request: WorkerRequestModel, cancellation: Event, progress: Any = None)
         fallback_model="fallback",
         primary_provenance_model="tea-asr-1.1",
         fallback_provenance_model="tea-asr-1.1-mini",
+        model=model,
         prefer_gpu=prefer_gpu,
         max_duration_ms=max_duration_ms,
         allow_cpu_fallback=allow_cpu_fallback,
@@ -332,6 +339,7 @@ def _session() -> None:
         fallback_model="fallback",
         primary_provenance_model="tea-asr-1.1",
         fallback_provenance_model="tea-asr-1.1-mini",
+        model=os.environ.get("CAPTURE_SESSION_SPEECH_MODEL") or None,
         prefer_gpu=os.environ.get("CAPTURE_SESSION_PREFER_GPU", "1") == "1",
         allow_cpu_fallback=os.environ.get("CAPTURE_SESSION_ALLOW_CPU_FALLBACK", "1") == "1",
         max_duration_ms=8 * 60 * 60 * 1000,

@@ -96,6 +96,7 @@ def _extract(
     identify_speakers: bool,
     in_catalog: bool = True,
     speaker_progress: Any = None,
+    speech_recognition_model: str = "auto",
 ) -> tuple[RawCapture, _WorkerClient]:
     worker_client = _WorkerClient()
 
@@ -124,9 +125,8 @@ def _extract(
             max_image_pixels=100_000,
             ocr_render_scale=2,
             max_audio_duration_ms=60_000,
-            whisper_primary_model="tea-asr-1.1",
-            whisper_fallback_model="tea-asr-1.1-mini",
             whisper_prefer_gpu=True,
+            speech_recognition_model=speech_recognition_model,
         ),
         engine_manager=manager,  # type: ignore[arg-type]
     )
@@ -217,6 +217,27 @@ def test_without_the_request_the_transcript_has_no_speakers(tmp_path: Path) -> N
         (
             "speech-recognition",
             {"maxDurationMs": 60_000, "preferGpu": True, "allowCpuFallback": True},
+        )
+    ]
+
+
+def test_a_chosen_speech_model_is_sent_to_the_worker(tmp_path: Path) -> None:
+    _raw, worker_client = _extract(
+        tmp_path,
+        installed={"speech-recognition"},
+        identify_speakers=False,
+        speech_recognition_model="tea-asr-1.1-mini",
+    )
+
+    assert worker_client.calls == [
+        (
+            "speech-recognition",
+            {
+                "maxDurationMs": 60_000,
+                "preferGpu": True,
+                "allowCpuFallback": True,
+                "model": "tea-asr-1.1-mini",
+            },
         )
     ]
 

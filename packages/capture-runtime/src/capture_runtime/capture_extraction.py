@@ -594,6 +594,11 @@ class StandaloneRuntimeCaptureExtractor:
                         "allowCpuFallback": self.config.whisper_allow_cpu_fallback,
                         **({"wordTimestamps": True} if identify_speakers else {}),
                         **({"language": spoken_language} if spoken_language else {}),
+                        **(
+                            {"model": self.config.speech_recognition_model}
+                            if self.config.speech_recognition_model != "auto"
+                            else {}
+                        ),
                     },
                     cancel_event,
                     progress=_stage_progress(speaker_progress, "transcribing", 0, 450),

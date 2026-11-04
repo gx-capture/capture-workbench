@@ -353,7 +353,10 @@ def decode_audio(source: Path, *, max_duration_ms: int, should_cancel: Callable[
 
 
 class TeaAsrAdapter:
-    """GPU primary / mini CPU fallback, with one retry for classified CUDA errors."""
+    """Primary on the GPU, fallback (mini) on the CPU, or one chosen model on either.
+
+    Classified CUDA errors are retried once on the CPU.
+    """
 
     def __init__(
         self,
@@ -363,6 +366,7 @@ class TeaAsrAdapter:
         fallback_model: str = "fallback",
         primary_provenance_model: str = "tea-asr-1.1",
         fallback_provenance_model: str = "tea-asr-1.1-mini",
+        model: str | None = None,
         prefer_gpu: bool,
         max_duration_ms: int,
         allow_cpu_fallback: bool = True,
@@ -377,6 +381,11 @@ class TeaAsrAdapter:
         self.primary_model, self.fallback_model = primary_model, fallback_model
         self.primary_provenance_model = primary_provenance_model
         self.fallback_provenance_model = fallback_provenance_model
+        # A model chosen by its provenance name runs on either device, also after a
+        # GPU fallback; None picks the model by device.
+        if model not in {None, primary_provenance_model, fallback_provenance_model}:
+            raise ValueError("Speech recognition model is invalid")
+        self.chosen_model = model
         self.prefer_gpu, self.allow_cpu_fallback = prefer_gpu, allow_cpu_fallback
         self.max_duration_ms, self.word_timestamps = max_duration_ms, word_timestamps
         # The default spoken language. TEA-ASR is a Taiwan Mandarin model; its card recommends
@@ -418,6 +427,16 @@ class TeaAsrAdapter:
             processor, model = load()
         self._models[role] = (key, processor, model)
         return processor, model
+
+    def _selection(self, device: str) -> tuple[str, str]:
+        """The model folder and provenance name that run on ``device``."""
+
+        identity = self.chosen_model or (
+            self.primary_provenance_model if device == "cuda" else self.fallback_provenance_model
+        )
+        if identity == self.primary_provenance_model:
+            return self.primary_model, identity
+        return self.fallback_model, identity
 
     def _model_digest(self, selected: str) -> str:
         paths = sorted(
@@ -615,12 +634,7 @@ class TeaAsrAdapter:
 
         with _cleanup_on_exit(cleanup):
             stage_ms: dict[str, int] = {}
-            selected = self.primary_model if device == "cuda" else self.fallback_model
-            identity = (
-                self.primary_provenance_model
-                if device == "cuda"
-                else self.fallback_provenance_model
-            )
+            selected, identity = self._selection(device)
             dtype = getattr(torch, _asr_dtype("auto", device, torch))
             duration_ms = round(len(audio) / SAMPLE_RATE * 1000)
             check_cancel()

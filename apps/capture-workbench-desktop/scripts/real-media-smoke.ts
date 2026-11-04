@@ -691,8 +691,6 @@ export function runtimeEnvironment(
     CAPTURE_EXTRACTION_PROVIDER: 'runtime',
     CAPTURE_RETENTION_HOURS: '24',
     CAPTURE_MAX_UPLOAD_BYTES: String(50 * 1024 * 1024),
-    CAPTURE_WHISPER_PRIMARY_MODEL: 'tea-asr-1.1',
-    CAPTURE_WHISPER_FALLBACK_MODEL: 'tea-asr-1.1-mini',
     CAPTURE_WHISPER_PREFER_GPU: String(expectedProvenance.whisperPreferGpu),
   };
 }
