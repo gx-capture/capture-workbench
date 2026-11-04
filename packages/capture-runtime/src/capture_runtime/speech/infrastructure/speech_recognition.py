@@ -18,6 +18,11 @@ from pathlib import Path
 from typing import Any, cast
 
 from capture_runtime.japanese_kanji import TABLE as JAPANESE_KANJI
+from capture_runtime.speech.domain import (
+    LOOP_MAX_PERIOD,
+    LOOP_REPEATS,
+    RepetitionLoopPolicy,
+)
 from capture_runtime.speech.infrastructure.speech_transcript import (
     WhisperTextSegment,
     WhisperTranscriptionResult,
@@ -44,8 +49,8 @@ RETRY_MIN_SECONDS = 5
 # a 25 s chunk before halving it. The parsed transcript already collapses a character
 # repeated over 20 times, or a pattern repeated 20 times, to one, so stopping later than
 # that changes when the chunk is halved, not what it reads.
-LOOP_REPEATS = 32
-LOOP_MAX_PERIOD = 16
+LOOP_REPEATS = LOOP_REPEATS
+LOOP_MAX_PERIOD = LOOP_MAX_PERIOD
 SENTENCE_ENDINGS = ("。", "！", "？", "!", "?", "；", ";", "…", ".")
 ASR_KEY_MAPPING = {
     r"^thinker\.audio_tower\.proj1\.": "model.multi_modal_projector.linear_1.",
@@ -174,23 +179,16 @@ def _out_of_memory(error: BaseException, torch: Any) -> bool:
 class _LoopStop:
     """Stopping criterion for one generation: true once its tail repeats one pattern."""
 
-    def __init__(self) -> None:
+    def __init__(self, policy: RepetitionLoopPolicy | None = None) -> None:
         self.tokens: list[int] = []
         self.stopped = False
+        self._policy = policy or RepetitionLoopPolicy()
 
     def __call__(self, input_ids: Any, *_args: Any, **_kwargs: Any) -> bool:
-        tokens = self.tokens
-        tokens.append(int(input_ids[0, -1]))
-        for period in range(1, LOOP_MAX_PERIOD + 1):
-            span = period * LOOP_REPEATS
-            if len(tokens) < span:
-                break
-            if (
-                tokens[-1] == tokens[-1 - period]
-                and tokens[-span:] == tokens[-period:] * LOOP_REPEATS
-            ):
-                self.stopped = True
-                return True
+        self.tokens.append(int(input_ids[0, -1]))
+        if self._policy.is_repeating_sequence(self.tokens):
+            self.stopped = True
+            return True
         return False
 
 

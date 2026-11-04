@@ -465,6 +465,13 @@ ignore_imports = [
 name = "Speech transcription does not depend on its downstream contexts"
 type = "forbidden"
 source_modules = [
+  "capture_runtime.speech.domain.transcript.models",
+  "capture_runtime.speech.domain.transcript",
+  "capture_runtime.speech.domain.window.models",
+  "capture_runtime.speech.domain.window",
+  "capture_runtime.speech.domain",
+  "capture_runtime.speech.application.use_cases",
+  "capture_runtime.speech.application",
   "capture_runtime.speech.infrastructure.speech_recognition",
   "capture_runtime.speech.infrastructure.speech_worker_result",
   "capture_runtime.speech.infrastructure.speech_transcript",
