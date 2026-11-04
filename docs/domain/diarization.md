@@ -10,15 +10,50 @@
 
 ## 聚合與不變條件
 
-W5 只搬移現有模組，保留原有行為；W6 才會加入 turn 聚合。現有 `SpeakerTurn` 表示一位說話者連續發言的時間範圍。`NemotronDiarizationAdapter` 由本機模型目錄產生可重疊的 `turns` 與互不重疊的 `exclusive_turns`。對齊只依互斥片段決定一位說話者；平手或沒有覆蓋的時間範圍維持未指定，不猜測。
+說話者分離上下文依聚合分子套件（W6 定案）：
+1. **片段時間軸 (`turn`)**：
+   - `TurnTimeline` 為聚合根，守住不變條件：互斥片段（`exclusive_turns`）按時間遞增且**絕不可互相重疊**；所有片段的時間範圍必須合法（`0 <= start_ms < end_ms <= duration_ms`）。
+   - 值物件 `SpeakerTurn` 代表單一說話者的時間範圍，說話者標籤必須符合標籤規範（`SPEAKER_LABEL`）。
+   - 對齊結果 `SpeakerAssignment`、對齊後的詞彙段落 `SpeakerSegment` 與試聽樣本 `SpeakerSample` 均為純領域值物件。
+   - 對齊政策：對齊只依互斥片段決定一位說話者；平手或沒有覆蓋的時間範圍維持未指定，不猜測。試聽樣本只取單獨發言且在長度上限（10 秒）內的段落。
 
 ```mermaid
 classDiagram
-  NemotronDiarizationAdapter --> SpeakerDiarizationResult : produces
-  SpeakerDiarizationResult --> SpeakerTurn : lists
-  SpeakerWorkerMethods --> WorkerDiarizationResult : returns
-  WorkerDiarizationResult --> SpeakerTurn : checks
-  SpeakerSegment --> SpeakerTurn : aligned by
+  class TurnTimeline {
+    +tuple turns
+    +tuple exclusive_turns
+    +int duration_ms
+    +assign_speakers(spans)
+    +align_words(words)
+    +extract_samples(segments)
+  }
+  class SpeakerTurn {
+    +int start_ms
+    +int end_ms
+    +str speaker
+  }
+  class SpeakerAssignment {
+    +str speaker
+    +tuple candidates
+    +bool overlap
+  }
+  class SpeakerSegment {
+    +int start_ms
+    +int end_ms
+    +str text
+    +str speaker
+    +bool overlap
+  }
+  class SpeakerSample {
+    +str speaker
+    +int start_ms
+    +int end_ms
+    +str text
+  }
+  TurnTimeline --> SpeakerTurn : contains
+  TurnTimeline --> SpeakerAssignment : produces
+  TurnTimeline --> SpeakerSegment : produces
+  TurnTimeline --> SpeakerSample : produces
 ```
 
 ## 主要流程
@@ -26,24 +61,37 @@ classDiagram
 ```mermaid
 sequenceDiagram
   participant Capture as 擷取
-  participant Methods as SpeakerWorkerMethods
+  participant DiarizeUC as DiarizeAudio
+  participant AlignUC as AlignSpeakerTurns
+  participant SampleUC as ExtractSpeakerSamples
+  participant Timeline as TurnTimeline
   participant Worker as 分離 worker
-  participant Adapter as NemotronDiarizationAdapter
-  participant Align as 對齊
-  Capture->>Methods: diarize
-  Methods->>Worker: run
-  Worker->>Adapter: diarize
-  Adapter-->>Worker: turns 與 exclusive turns
-  Worker-->>Methods: 結果
-  Methods-->>Capture: WorkerDiarizationResult
-  Capture->>Align: speaker_segments 與 speaker_samples
-  Align-->>Capture: 帶說話者的片段與試聽樣本
+  Capture->>DiarizeUC: execute(engine, audio_path)
+  DiarizeUC->>Worker: diarize
+  Worker-->>DiarizeUC: WorkerDiarizationResult
+  DiarizeUC-->>Capture: turns 與 exclusive turns
+  Capture->>AlignUC: execute(words, exclusive_turns, turns)
+  AlignUC->>Timeline: align_words
+  Timeline-->>AlignUC: SpeakerSegment 清單
+  AlignUC-->>Capture: 帶說話者的片段
+  Capture->>SampleUC: execute(segments)
+  SampleUC->>Timeline: extract_samples
+  Timeline-->>SampleUC: SpeakerSample 清單
+  SampleUC-->>Capture: 試聽樣本
 ```
+
+## 用例
+
+| 中文 | 用例（程式名稱） | 說明 |
+| :--- | :--- | :--- |
+| 對齊說話者片段 | `AlignSpeakerTurns` | 將語音轉寫的詞彙依分離時間對齊至說話者與重疊狀態 |
+| 擷取試聽樣本 | `ExtractSpeakerSamples` | 挑選每位說話者單獨發言且長度適中的試聽樣本片段 |
+| 執行說話者分離 | `DiarizeAudio` | 呼叫分離 worker 辨識音訊並產生互斥與可重疊說話者片段 |
 
 ## 與其他上下文的關係
 
-語音轉寫提供帶時間的逐字稿；本上下文只負責說話者片段與對齊，兩邊的 worker 互不依賴。引擎供應提供 `speaker-diarization` 的 worker 與模型目錄。擷取讀取對齊後的片段與試聽樣本，寫入原始擷取。本上下文不讀取文件 OCR、結構化或擷取儲存。W5 保留既有跨模組依賴，不表示已完成 W6 的領域模型與分層整理。
+語音轉寫提供帶時間的逐字稿；本上下文只負責說話者片段與對齊，兩邊的 worker 互不依賴。引擎供應提供 `speaker-diarization` 的 worker 與模型目錄。擷取讀取對齊後的片段與試聽樣本，寫入原始擷取。本上下文不讀取文件 OCR、結構化或擷取儲存。
 
 ## 規則與資料來源
 
-已搬入 `capture_runtime.diarization.infrastructure` 的模組是 `speaker_diarization`（本機 Nemotron 轉接；辨識到 CUDA 失敗時以同一模型在 CPU 重試一次）、`speaker_turns`（`SpeakerTurn` 與說話者標籤）、`speaker_alignment`（`assign_speakers`、`speaker_segments`、`speaker_samples`）與 `speaker_worker_result`（結果檢查與 `SpeakerWorkerMethods`）。`workers/diarization_main.py` 仍是 PyInstaller 的 worker 進入點，只更新 import。公開型別仍由 `capture_runtime.contracts` 定義。W6 將加入 turn 聚合。遷移邊界與後續步驟見 [DDD 重構計畫](../../.agents/PLANS/ddd-refactor/README.md)。
+領域模型位於 `capture_runtime.diarization.domain.turn`。用例位於 `capture_runtime.diarization.application.use_cases`。基礎設施位於 `capture_runtime.diarization.infrastructure`：`speaker_diarization`（Nemotron 本機轉接與 CPU 重試政策）、`speaker_worker_result`（worker 結果解析與協定）及 `speaker_alignment`、`speaker_turns` 相容匯出。`workers/diarization_main.py` 是 PyInstaller worker 進入點。
