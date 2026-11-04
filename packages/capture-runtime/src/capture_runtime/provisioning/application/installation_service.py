@@ -12,10 +12,12 @@ from capture_runtime.contracts import (
     RuntimeInstallationStatus,
     RuntimeInstallationV2,
 )
-from capture_runtime.engine_installation import EngineInstallationError
 from capture_runtime.install_progress import DownloadedBytes
 from capture_runtime.ollama import ManualActionRequiredError, RuntimeInstaller
-from capture_runtime.storage import InstallationRepository
+from capture_runtime.provisioning.infrastructure.engine_installation import EngineInstallationError
+from capture_runtime.provisioning.infrastructure.installation_repository import (
+    InstallationRepository,
+)
 from capture_runtime.worker_process import WorkerExecutionError
 
 TERMINAL_INSTALLATION_STATUSES = {

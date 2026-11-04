@@ -778,7 +778,7 @@ def default_catalog_path() -> Path:
         generated = Path(frozen_root) / "capture-engine-catalog.json"
         if generated.is_file():
             return generated
-    return Path(__file__).resolve().parent / "assets" / "engine-catalog.json"
+    return Path(__file__).resolve().parents[2] / "assets" / "engine-catalog.json"
 
 
 def load_engine_catalog(path: Path | None = None) -> EngineCatalog:

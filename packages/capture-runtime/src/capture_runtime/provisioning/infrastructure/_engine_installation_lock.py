@@ -42,7 +42,7 @@ class _ExclusiveInstallFile:
 
 
 ExclusiveInstallFile = _ExclusiveInstallFile
-_ExclusiveInstallFile.__module__ = "capture_runtime.engine_installation"
+_ExclusiveInstallFile.__module__ = "capture_runtime.provisioning.infrastructure.engine_installation"
 
 
 __all__ = ["ExclusiveInstallFile"]

@@ -15,7 +15,8 @@ from collections.abc import Callable
 from pathlib import Path
 from uuid import uuid4
 
-from capture_runtime.engine_catalog import (
+from capture_runtime.install_progress import DownloadedBytes, DownloadProgress
+from capture_runtime.provisioning.infrastructure.engine_catalog import (
     EngineCatalogError,
     EngineModelDeliveryDescriptor,
     EngineRequirementDescriptor,
@@ -24,7 +25,6 @@ from capture_runtime.engine_catalog import (
 from ._engine_installation_artifacts import verify_direct_model_files
 from ._engine_installation_download import ModelFileDownloader
 from ._engine_installation_errors import EngineInstallationError
-from .install_progress import DownloadedBytes, DownloadProgress
 
 STATE_FILE_NAME = "active-model.json"
 STATE_VERSION = "1"

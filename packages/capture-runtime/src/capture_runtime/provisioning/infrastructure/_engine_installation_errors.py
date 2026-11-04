@@ -21,10 +21,18 @@ class ExtractionRuntimeUnavailableError(RuntimeError):
 
 # Preserve the established public module path for tracebacks, reprs, and
 # consumers that inspect these exception types.
-EngineInstallationError.__module__ = "capture_runtime.engine_installation"
-EngineInstallBusyError.__module__ = "capture_runtime.engine_installation"
-EngineResolutionTimeoutError.__module__ = "capture_runtime.engine_installation"
-ExtractionRuntimeUnavailableError.__module__ = "capture_runtime.engine_installation"
+EngineInstallationError.__module__ = (
+    "capture_runtime.provisioning.infrastructure.engine_installation"
+)
+EngineInstallBusyError.__module__ = (
+    "capture_runtime.provisioning.infrastructure.engine_installation"
+)
+EngineResolutionTimeoutError.__module__ = (
+    "capture_runtime.provisioning.infrastructure.engine_installation"
+)
+ExtractionRuntimeUnavailableError.__module__ = (
+    "capture_runtime.provisioning.infrastructure.engine_installation"
+)
 
 
 __all__ = [

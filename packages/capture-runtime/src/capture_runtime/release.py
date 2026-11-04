@@ -38,7 +38,10 @@ def _validated_engine_release_files(
     engine_dir: Path,
     engine_catalog: Path,
 ) -> tuple[Path, ...]:
-    from capture_runtime.engine_catalog import EngineCatalog, canonical_json_bytes
+    from capture_runtime.provisioning.infrastructure.engine_catalog import (
+        EngineCatalog,
+        canonical_json_bytes,
+    )
 
     if not engine_dir.is_dir():
         raise FileNotFoundError(engine_dir)

@@ -39,7 +39,6 @@ from capture_runtime.contracts import (
     StreamingEventType,
     StructuringMode,
 )
-from capture_runtime.engine_installation import ExtractionRuntimeUnavailableError
 from capture_runtime.ocr_execution_proof import (
     OcrExecutionDeviceProofV1,
     OcrExecutionEvidenceSink,
@@ -54,6 +53,9 @@ from capture_runtime.progressive_capture import (
     ProgressiveCaptureProcessor,
 )
 from capture_runtime.progressive_decoder import ProgressiveDecoderError
+from capture_runtime.provisioning.infrastructure.engine_installation import (
+    ExtractionRuntimeUnavailableError,
+)
 from capture_runtime.source_sniffing import SNIFF_BYTES, UnsupportedMediaError
 from capture_runtime.storage import (
     StreamingPartialNotFoundError,

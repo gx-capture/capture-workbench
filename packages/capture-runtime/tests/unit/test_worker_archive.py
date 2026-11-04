@@ -12,8 +12,8 @@ from types import ModuleType
 import pytest
 
 from capture_runtime.constants import RUNTIME_VERSION
-from capture_runtime.engine_catalog import EngineArtifactDescriptor
-from capture_runtime.engine_installation import safe_extract_artifact
+from capture_runtime.provisioning.infrastructure.engine_catalog import EngineArtifactDescriptor
+from capture_runtime.provisioning.infrastructure.engine_installation import safe_extract_artifact
 
 SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "worker_archive.py"
 

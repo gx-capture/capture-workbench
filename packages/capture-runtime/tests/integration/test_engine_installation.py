@@ -14,8 +14,7 @@ from pathlib import Path
 
 import pytest
 
-import capture_runtime.engine_installation as engine_installation_module
-from capture_runtime._engine_download_cache import CachingDownloader, VerifiedDownloadCache
+import capture_runtime.provisioning.infrastructure.engine_installation as engine_installation_module
 from capture_runtime.clock import SystemClock
 from capture_runtime.config import ExtractionRuntimeConfig
 from capture_runtime.constants import MAX_RUNTIME_ARTIFACT_BYTES, RUNTIME_VERSION
@@ -25,16 +24,23 @@ from capture_runtime.contracts import (
     OcrComputePreflightV2,
     RuntimeRequirementsV2,
 )
-from capture_runtime.engine_catalog import EngineCatalog, EngineCatalogError
-from capture_runtime.engine_installation import (
+from capture_runtime.install_progress import DownloadedBytes
+from capture_runtime.ollama import SystemRuntimeInstaller
+from capture_runtime.provisioning.infrastructure._engine_download_cache import (
+    CachingDownloader,
+    VerifiedDownloadCache,
+)
+from capture_runtime.provisioning.infrastructure.engine_catalog import (
+    EngineCatalog,
+    EngineCatalogError,
+)
+from capture_runtime.provisioning.infrastructure.engine_installation import (
     ArtifactDownloader,
     EngineInstallationError,
     EngineInstallationManager,
     EngineInstallBusyError,
     ModelFileDownloader,
 )
-from capture_runtime.install_progress import DownloadedBytes
-from capture_runtime.ollama import SystemRuntimeInstaller
 from capture_runtime.worker_client import InstalledEngine, WorkerProbeResult
 from capture_runtime.worker_process import WorkerExecutionError, WorkerTimeoutError
 
@@ -1053,7 +1059,8 @@ def test_separate_process_install_lock_blocks_then_releases(tmp_path: Path) -> N
     script = (
         "import sys\n"
         "from pathlib import Path\n"
-        "from capture_runtime.engine_installation import _ExclusiveInstallFile\n"
+        "from capture_runtime.provisioning.infrastructure.engine_installation "
+        "import _ExclusiveInstallFile\n"
         "with _ExclusiveInstallFile(Path(sys.argv[1])):\n"
         "    print('locked', flush=True)\n"
         "    sys.stdin.read(1)\n"

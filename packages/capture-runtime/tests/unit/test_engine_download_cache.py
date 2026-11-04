@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from capture_runtime._engine_download_cache import (
+from capture_runtime.provisioning.infrastructure._engine_download_cache import (
     CachingDownloader,
     VerifiedDownloadCache,
     default_cache_root,

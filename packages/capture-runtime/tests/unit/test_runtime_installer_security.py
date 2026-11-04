@@ -11,15 +11,15 @@ from pathlib import Path
 import httpx
 import pytest
 
-import capture_runtime.engine_installation as engine_installation
+import capture_runtime.provisioning.infrastructure.engine_installation as engine_installation
 from capture_runtime.constants import RUNTIME_VERSION
-from capture_runtime.engine_catalog import (
+from capture_runtime.provisioning.infrastructure.engine_catalog import (
     EngineArtifactDescriptor,
     EngineCatalogError,
     EngineModelDeliveryDescriptor,
     EngineModelFileDescriptor,
 )
-from capture_runtime.engine_installation import (
+from capture_runtime.provisioning.infrastructure.engine_installation import (
     MAX_FILES_MANIFEST_BYTES,
     EngineInstallationError,
     HttpArtifactDownloader,

@@ -16,7 +16,7 @@ from uuid import uuid4
 
 import httpx
 
-from capture_runtime.engine_catalog import (
+from capture_runtime.provisioning.infrastructure.engine_catalog import (
     EngineArtifactDescriptor,
     EngineArtifactPart,
     EngineModelFileDescriptor,
@@ -1354,7 +1354,11 @@ __all__ = [
     "smoke_worker_mirror_url",
 ]
 
-ArtifactDownloader.__module__ = "capture_runtime.engine_installation"
-ModelFileDownloader.__module__ = "capture_runtime.engine_installation"
-HttpArtifactDownloader.__module__ = "capture_runtime.engine_installation"
-HttpModelFileDownloader.__module__ = "capture_runtime.engine_installation"
+ArtifactDownloader.__module__ = "capture_runtime.provisioning.infrastructure.engine_installation"
+ModelFileDownloader.__module__ = "capture_runtime.provisioning.infrastructure.engine_installation"
+HttpArtifactDownloader.__module__ = (
+    "capture_runtime.provisioning.infrastructure.engine_installation"
+)
+HttpModelFileDownloader.__module__ = (
+    "capture_runtime.provisioning.infrastructure.engine_installation"
+)

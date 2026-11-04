@@ -27,7 +27,6 @@ from capture_runtime.clock import SystemClock
 from capture_runtime.config import ExtractionRuntimeConfig, OllamaRuntimeConfig, RuntimeSettings
 from capture_runtime.constants import RUNTIME_VERSION
 from capture_runtime.contracts import CaptureSource, OcrAdapterClass, OcrProvenanceV3
-from capture_runtime.engine_installation import ExtractionRuntimeUnavailableError
 from capture_runtime.image_normalization import normalize_image_png
 from capture_runtime.ocr_execution_evidence import OcrExecutionEvidence
 from capture_runtime.ocr_offline_stubs import install_offline_huggingface_stubs
@@ -56,6 +55,9 @@ from capture_runtime.ocr_worker_result import (
 )
 from capture_runtime.ollama import (
     IsolatedOllamaLifecycle,
+)
+from capture_runtime.provisioning.infrastructure.engine_installation import (
+    ExtractionRuntimeUnavailableError,
 )
 from capture_runtime.speech_transcript import WhisperTextSegment, WhisperTranscriptionResult
 from capture_runtime.worker_client import InstalledEngine

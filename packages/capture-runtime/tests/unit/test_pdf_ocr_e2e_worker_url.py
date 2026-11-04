@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import pytest
 
-from capture_runtime._engine_installation_download import pdf_ocr_e2e_local_worker_url
-from capture_runtime.engine_installation import EngineInstallationError
+from capture_runtime.provisioning.infrastructure._engine_installation_download import (
+    pdf_ocr_e2e_local_worker_url,
+)
+from capture_runtime.provisioning.infrastructure.engine_installation import EngineInstallationError
 
 
 def test_pdf_ocr_e2e_local_worker_url_requires_explicit_opt_in() -> None:
