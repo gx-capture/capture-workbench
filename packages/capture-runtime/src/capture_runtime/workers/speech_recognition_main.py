@@ -225,7 +225,7 @@ def _run(request: WorkerRequestModel, cancellation: Event, progress: Any = None)
     allow_cpu_fallback = options.get("allowCpuFallback", True)
     word_timestamps = options.get("wordTimestamps", False)
     language = options.get("language")
-    # Without "model" the device picks it: TEA-ASR-1.1 on the GPU, mini on the CPU.
+    # Without "model" TEA-ASR-1.1 runs on either device.
     model = options.get("model")
     from capture_runtime.contracts import SPOKEN_LANGUAGES
 

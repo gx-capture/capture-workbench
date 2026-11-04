@@ -157,8 +157,8 @@ def test_worker_reports_actual_cpu_model_name_after_gpu_fallback(
         fail_cuda=True,
     )
 
-    assert calls == [("primary", "cuda"), ("fallback", "cpu")]
-    assert result["provenance"]["model"] == "tea-asr-1.1-mini"
+    assert calls == [("primary", "cuda"), ("primary", "cpu")]
+    assert result["provenance"]["model"] == "tea-asr-1.1"
     assert result["provenance"]["device"] == "cpu"
     assert result["warnings"] == ["Speech recognition GPU fallback: RuntimeError"]
 

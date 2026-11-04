@@ -490,7 +490,10 @@ def _validate_private_whisper_fixture(value: object, *, require_approved: bool) 
         if expected_model is not None or expected_device is not None:
             raise ModelSourceLockError("private Whisper model/device pair must be frozen together")
     elif (expected_model, expected_device) not in {
+        # Shipping runs tea-asr-1.1 on CUDA when a GPU is present, and the same
+        # checkpoint on CPU when it is not (2026-11-04).
         ("tea-asr-1.1", "cuda"),
+        ("tea-asr-1.1", "cpu"),
         ("tea-asr-1.1-mini", "cpu"),
     }:
         raise ModelSourceLockError("private Whisper model/device pair is unsupported")

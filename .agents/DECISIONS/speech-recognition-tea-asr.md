@@ -4,9 +4,10 @@
 
 The product is Taiwan-first; more selectable models may follow. Speech recognition runs
 `JacobLinCool/TEA-ASR-1.1` (Qwen3-ASR-1.7B fine-tune, Traditional Chinese with Taiwan
-vocabulary) on CUDA and `JacobLinCool/TEA-ASR-1.1-mini` (Qwen3-ASR-0.6B based) on CPU, keeping
-the former GPU-primary / CPU-fallback-model rule by default; a host can choose one model for
-both devices (see "Choosing the model"). Word times come from
+vocabulary). By default that checkpoint runs on CUDA when a GPU is present, and on CPU
+when it is not. A classified CUDA failure retries the same checkpoint once on CPU.
+`JacobLinCool/TEA-ASR-1.1-mini` stays installed for explicit selection and development
+tests; it is not the automatic CPU substitute. Word times come from
 `Qwen/Qwen3-ForcedAligner-0.6B-hf`. faster-whisper and CTranslate2 are removed.
 
 The public requirement id `whisper-primary` is renamed to `speech-recognition` (breaking under
@@ -85,16 +86,16 @@ worker archives; change them together with the model-source lock.
 
 The runtime setting `CAPTURE_SPEECH_RECOGNITION_MODEL` picks the recognizer:
 
-- `auto` (the default) keeps the device rule: `tea-asr-1.1` on CUDA, `tea-asr-1.1-mini` on CPU,
-  and the CPU retry after a classified CUDA failure runs mini.
+- `auto` (the default) runs `tea-asr-1.1` on CUDA or CPU, and the CPU retry after a
+  classified CUDA failure keeps that same checkpoint.
 - `tea-asr-1.1-mini` or `tea-asr-1.1` runs that model on either device. A CPU retry keeps the
   chosen model, so `tea-asr-1.1` on CPU is slow but stays the model the host asked for.
 - When the GPU is tried and when it falls back are unchanged. Provenance reports the model and
   device that produced the result.
 
-Why: E2E and real-input checks run mini (the user's choice on 2026-11-04, for speed), and mini
-could only run on the CPU. It is a runtime setting, not a capture option, so the contract set is
-unchanged. The runtime sends the choice to the worker only when it is not `auto`: run option
+Why: development transcriptions run mini on CUDA (the user's choice on 2026-11-04,
+for speed), while release smokes and the private fixture stay on TEA-ASR 1.1 / CUDA.
+It is a runtime setting, not a capture option, so the contract set is unchanged. The runtime sends the choice to the worker only when it is not `auto`: run option
 `model` for one-shot captures, `CAPTURE_SESSION_SPEECH_MODEL` for a streaming session worker,
 whose warm-worker key includes it. It replaces `CAPTURE_WHISPER_PRIMARY_MODEL` and
 `CAPTURE_WHISPER_FALLBACK_MODEL`, which were validated but never reached the worker.
@@ -103,3 +104,21 @@ The installed unit still holds both models. Installing only mini, and a worker w
 libraries, is evaluated in issue #274. The desktop app does not expose the setting yet: it
 launches the runtime with a fixed environment, so the setting would need a field in
 `compute-settings.json` and a line in `launch_policy.rs`.
+
+## Device follows the machine (2026-11-04)
+
+If a GPU is present and the model supports it, the shipping runtime uses the GPU.
+If no GPU is present, it uses the CPU. The default checkpoint is TEA-ASR 1.1 on
+both devices. An explicit model choice also stays the same across a CPU retry.
+The earlier automatic pairing (TEA-ASR 1.1 on CUDA, mini on CPU) is retired.
+
+OCR already selects DirectML when a GPU is usable and the CPU otherwise.
+Diarization's adapter uses CUDA when that process can see one. Its shipped worker
+is CPU PyTorch, so that process has no GPU and stays on CPU.
+
+A development test that transcribes real audio sets
+`CAPTURE_SPEECH_RECOGNITION_MODEL=tea-asr-1.1-mini` and
+`CAPTURE_WHISPER_ALLOW_CPU_FALLBACK=false`, then checks provenance
+`tea-asr-1.1-mini` with device `cuda`, as
+[the research note](../RESEARCH/tea-asr-1.1-mini-gpu-2026-11-04.md) specifies.
+Release smokes and `whisper-private-reference` stay on `tea-asr-1.1` / `cuda`.

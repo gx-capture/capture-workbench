@@ -16,6 +16,20 @@
 - When a design or release channel is replaced, delete the old path, its config, CI and release steps, and its docs in the same change. Do not keep it "for compatibility" unless a named consumer still needs it. When a tool cannot see a real use (a CLI entry, a framework callback), add a `knip.json` entry or a vulture decorator ignore in `tools/dead-code-gate.ts`; never add new dead code to the baseline.
 - `.claude/settings.json` runs the check as a Claude Code Stop hook before a turn that changed code ends.
 
+# Speech development tests
+
+The shipping runtime uses the GPU when one is present and the model supports it,
+and the CPU when no GPU is present. By default, speech recognition runs TEA-ASR 1.1
+on CUDA or, with no GPU, that same checkpoint on CPU. An explicitly chosen model
+also stays the same across devices and CPU retries.
+
+A development test that transcribes real audio uses TEA-ASR 1.1 mini on CUDA
+and checks provenance `tea-asr-1.1-mini` with device `cuda`. Set
+`CAPTURE_SPEECH_RECOGNITION_MODEL=tea-asr-1.1-mini` and
+`CAPTURE_WHISPER_ALLOW_CPU_FALLBACK=false`. Follow
+`.agents/RESEARCH/tea-asr-1.1-mini-gpu-2026-11-04.md`. Release smokes and the
+private speech fixture stay on `tea-asr-1.1` / `cuda`.
+
 # Architecture
 
 - `docs/architecture/` holds generated diagrams of today's dependencies (Nx projects, runtime contexts, UI modules). Never edit them by hand: run `pnpm run architecture:update` after changing dependencies; CI's `checks` job fails when they are stale (`architecture:check`).

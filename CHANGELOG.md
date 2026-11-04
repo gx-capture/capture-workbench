@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Speech device
+
+- TEA-ASR 1.1 runs on CUDA when a GPU is present and on CPU when it is not. A
+  failed GPU attempt retries that same checkpoint on CPU. The runtime no longer
+  switches to TEA-ASR 1.1 mini because the device is CPU.
+
 ### Compatibility policy
 
 Capture Workbench follows an explicit 0.x compatibility policy:
@@ -27,7 +33,7 @@ Speech recognition always ran TEA-ASR-1.1 on the GPU and TEA-ASR-1.1-mini on the
 CPU, so mini could not use the GPU (issue #273).
 
 - The runtime setting `CAPTURE_SPEECH_RECOGNITION_MODEL` is `auto` (the
-  default, unchanged behavior), `tea-asr-1.1` or `tea-asr-1.1-mini`. A chosen
+  default, TEA-ASR-1.1 on either device), `tea-asr-1.1` or `tea-asr-1.1-mini`. A chosen
   model runs on either device, also on the CPU retry after a CUDA failure.
 - When CUDA is tried and when it falls back to the CPU are unchanged.
   Provenance reports the model and device that produced the result.

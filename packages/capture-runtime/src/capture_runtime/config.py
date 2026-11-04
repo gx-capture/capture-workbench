@@ -138,8 +138,8 @@ class ExtractionRuntimeConfig:
     max_audio_duration_ms: int
     whisper_prefer_gpu: bool
     whisper_allow_cpu_fallback: bool = True
-    # "auto" runs tea-asr-1.1 on the GPU and tea-asr-1.1-mini on the CPU; a named
-    # model runs on either device, also after a GPU fallback.
+    # "auto" runs tea-asr-1.1 on either device; an explicit choice also keeps its
+    # checkpoint after a GPU fallback.
     speech_recognition_model: str = "auto"
     engine_resolution_timeout_seconds: float = 60.0
     # An idle speech recognition worker keeps its models loaded this long for

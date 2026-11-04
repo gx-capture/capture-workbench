@@ -131,15 +131,16 @@ def test_the_recognizer_makes_room_when_the_aligner_does_not_fit_beside_it(tmp_p
 
 
 @pytest.mark.parametrize("engine", ["asr", "aligner"])
-def test_cuda_failure_discards_partial_results_and_uses_mini_once(tmp_path, monkeypatch, engine):
+def test_cuda_failure_retries_the_same_checkpoint_on_cpu(tmp_path, monkeypatch, engine):
+    # 2026-11-04: a GPU failure uses CPU. The checkpoint stays TEA-ASR 1.1.
     fake = FakeModels(monkeypatch)
     fake.failures[(engine, "inference")] = RuntimeError("CUDA out of memory private/path")
     recognizer = adapter(tmp_path, fake)
     result = recognizer.transcribe(tmp_path / "source.wav", should_cancel=lambda: False)
-    assert [Path(e[2]).name for e in fake.loads("asr")] == ["primary", "fallback"]
+    assert [Path(e[2]).name for e in fake.loads("asr")] == ["primary", "primary"]
     assert fake.devices("asr") == ["cuda", "cpu"]
     assert fake.loads("asr")[-1][3]["dtype"] == "float32"
-    assert (result.model, result.device) == ("tea-asr-1.1-mini", "cpu")
+    assert (result.model, result.device) == ("tea-asr-1.1", "cpu")
     assert len(result.segments) == 1
     assert result.warning == "Speech recognition GPU fallback: RuntimeError"
     gc.collect()
@@ -150,7 +151,7 @@ def test_cuda_failure_discards_partial_results_and_uses_mini_once(tmp_path, monk
     ("model", "prefer_gpu", "folder", "device", "reported"),
     [
         (None, True, "primary", "cuda", "tea-asr-1.1"),
-        (None, False, "fallback", "cpu", "tea-asr-1.1-mini"),
+        (None, False, "primary", "cpu", "tea-asr-1.1"),
         ("tea-asr-1.1-mini", True, "fallback", "cuda", "tea-asr-1.1-mini"),
         ("tea-asr-1.1-mini", False, "fallback", "cpu", "tea-asr-1.1-mini"),
         ("tea-asr-1.1", True, "primary", "cuda", "tea-asr-1.1"),
@@ -167,10 +168,8 @@ def test_a_chosen_model_runs_on_either_device(
     assert [Path(e[2]).name for e in fake.loads("asr")] == [folder]
     assert fake.devices("asr") == [device]
     assert (result.model, result.device) == (reported, device)
-    by_device = adapter(
-        tmp_path / "by-device", FakeModels(monkeypatch), prefer_gpu=folder == "primary"
-    )
-    expected = by_device.transcribe(tmp_path / "source.wav", should_cancel=lambda: False)
+    on_cpu = adapter(tmp_path / "on-cpu", FakeModels(monkeypatch), model=reported, prefer_gpu=False)
+    expected = on_cpu.transcribe(tmp_path / "source.wav", should_cancel=lambda: False)
     assert result.digest == expected.digest
 
 
@@ -212,11 +211,22 @@ def test_explicit_cpu_does_not_probe_cuda_and_strict_cuda_never_falls_back(tmp_p
         tmp_path / "source.wav", should_cancel=lambda: False
     )
     assert ("probe",) not in fake.events
-    assert result.model == "tea-asr-1.1-mini"
+    assert (result.model, result.device) == ("tea-asr-1.1", "cpu")
     with pytest.raises(speech.EngineRuntimeUnavailableError, match="CUDA"):
         adapter(tmp_path, fake, allow_cpu_fallback=False).transcribe(
             tmp_path / "source.wav", should_cancel=lambda: False
         )
+
+
+def test_no_cuda_uses_the_primary_checkpoint_without_a_gpu_attempt(tmp_path, monkeypatch):
+    fake = FakeModels(monkeypatch, cuda=False)
+    result = adapter(tmp_path, fake).transcribe(
+        tmp_path / "source.wav", should_cancel=lambda: False
+    )
+    assert [Path(event[2]).name for event in fake.loads("asr")] == ["primary"]
+    assert fake.devices("asr") == ["cpu"]
+    assert (result.model, result.device) == ("tea-asr-1.1", "cpu")
+    assert result.warning is None
 
 
 def test_cpu_failure_is_not_retried(tmp_path, monkeypatch):

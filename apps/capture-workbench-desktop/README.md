@@ -109,6 +109,13 @@ corepack pnpm nx run capture-workbench-desktop:smoke-real-media-model
 Replace `<cert-prep-root>` with the local cert-prep checkout; the example is
 intentionally portable and contains no repository-specific absolute path.
 
+Both real-media smokes check the lock-selected product pair, TEA-ASR 1.1 on CUDA. A
+development transcription outside them uses TEA-ASR 1.1 mini on CUDA, as
+`.agents/RESEARCH/tea-asr-1.1-mini-gpu-2026-11-04.md` describes, by setting
+`CAPTURE_SPEECH_RECOGNITION_MODEL=tea-asr-1.1-mini` on the runtime. The desktop
+GPU switch only selects the device; its fixed launch environment does not yet
+expose the model setting.
+
 The cert-prep PDF and audio are copied only into the owned temporary run and
 must not be committed or uploaded. The image remains a lock-pinned project
 fixture. Only the packaged executable can be overridden for local runs with
