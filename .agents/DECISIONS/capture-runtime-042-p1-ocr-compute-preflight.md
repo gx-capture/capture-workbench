@@ -58,8 +58,3 @@ complete.
 - Model OCR as preflight: expensive, unnecessary, and unsafe for readiness.
 - A second preflight route: the authenticated readiness contract already
   exists and is negotiated by clients.
-
-## Rollback
-
-Revert this focused slice to `888d0627bc23a3449e5e2173e351532b05e058e9`; leave
-the known line-ending-only desktop schema status untouched.

@@ -1,7 +1,7 @@
 # Standalone Desktop Merge Hardening Decisions
 
 - Change mode: correctness repair with private desktop-contract additions.
-- Public `/v2`, `CaptureDocument`, `@gx/capture-workbench-ui`, and the native-only
+- Public `/v2`, `CaptureDocument`, `@gx-capture/capture-workbench-ui`, and the native-only
   bearer-token boundary remain unchanged.
 - Tauri commands that perform filesystem or runtime HTTP work are async
   wrappers. Existing synchronous library and runtime-client code runs through
@@ -28,7 +28,7 @@
   DELETE; only the runtime's defined no-raw response is treated as empty.
 - `LibraryCaptureUpdate.clearCaptureId` is the only operation that clears a
   stored runtime ID. Omitting both capture-ID fields preserves the current ID.
-- Renderer file validation is fail-fast and exactly matches the native six-MIME
-  allowlist. The Rust 50 MiB validation remains the final authority.
+- Renderer file validation is fail-fast and matches the native allowlist. The
+  Rust validation (type signature and 50 MiB) remains the final authority.
 - Native file pickers, binary/streaming IPC, store/component decomposition,
   shared smoke helpers, and typed runtime response DTOs are deferred.

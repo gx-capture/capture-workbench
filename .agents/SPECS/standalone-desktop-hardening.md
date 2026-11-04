@@ -26,8 +26,11 @@ and durable before it replaces PR #4.
 - `retry(documentId)` always reuses a retained runtime job. Nonterminal
   documents query that job; documents with committed terminal data retry only
   cleanup. A new job is created only when no runtime ID is retained.
-- Renderer source inputs accept only PDF, PNG, JPEG, WAV, MP3, and MP4 MIME
-  values, with byte length `1..=50 MiB`.
+- Source inputs accept PDF, PNG, JPEG and the recordings listed in
+  `RECORDING_EXTENSIONS`/`RECORDING_MEDIA_TYPES` of
+  `apps/capture-workbench-desktop/src-tauri/src/library/validation.rs`, with
+  byte length `1..=50 MiB`. Larger recordings are
+  [#155](https://github.com/gx-capture/capture-workbench/issues/155).
 
 ## Capture lifecycle
 
@@ -88,7 +91,6 @@ Commands that call `LibraryStore` or `runtime_client` clone managed state into a
 - Recovery uses the original capture ID and never creates a replacement job.
 - Invalid/oversized files allocate no source buffer and invoke no native command.
 - Ready UI messaging and Playwright reference flow are green.
-- Duplicate `build-nsis-release` is removed and no tracked caller remains.
 
 ## Test plan
 
@@ -96,46 +98,7 @@ Commands that call `LibraryStore` or `runtime_client` clone managed state into a
   terminal races, immediate-completion linkage, persistence failures, same-ID
   restart recovery, canceled raw durability, cleanup 404, and cleanup failure
   with preserved terminal evidence, including double local-write failures.
-- Renderer source tests cover six allowed MIME values, empty, exact 50 MiB,
-  oversized, WebP, and OGG inputs, including no `arrayBuffer`/invoke assertions.
+- Renderer source tests cover allowed types, empty, exact 50 MiB, oversized
+  and unsupported inputs, including no `arrayBuffer`/invoke assertions.
 - Rust library/runtime tests cover clear-ID semantics, status validation, source
   limits, MIME allowlist, and DELETE 404 mapping.
-- Run focused and full Nx targets, deterministic smoke, Playwright E2E, and the
-  tracked real-PDF standalone OCR smoke from standard host AppData.
-
-## Verification evidence (2026-07-29)
-
-- `capture-workbench:test`: 4 files, 41 tests passed.
-- `capture-angular:test`: 8 files, 55 tests passed.
-- Native desktop tests: 27 passed; package QA tests: 34 passed.
-- Capture Runtime: Ruff, mypy, build, and 70 tests passed.
-- Deterministic desktop smoke and Playwright reference flow (3 tests) passed.
-- `capture-workbench-desktop:smoke-real-desktop-ocr` passed from a fresh
-  production sidecar/Tauri build, using the tracked real PDF and the standard
-  Tauri host AppData. Its redacted report records real engines, visible OCR,
-  isolated Ollama provenance, and post-verification document deletion.
-
-## Replacement PR closeout (2026-07-29)
-
-- [PR #5](https://github.com/WodenWang820118/capture-workbench/pull/5)
-  contains the standalone desktop hardening slice at reviewed HEAD
-  `90c87c15228122aed48ffb1cc454f489ceaee76a`. GitGuardian and
-  [`verify-windows-x64`](https://github.com/WodenWang820118/capture-workbench/actions/runs/30417868697)
-  succeeded at that HEAD.
-- [PR #6](https://github.com/WodenWang820118/capture-workbench/pull/6) is the
-  stacked DirectML slice. At implementation HEAD
-  `5f50120a6d6a65c02d047fb3b410c145f27766cd`, GitGuardian and
-  [`verify-windows-x64`](https://github.com/WodenWang820118/capture-workbench/actions/runs/30421151824)
-  succeeded, including the desktop product and Playwright reference-flow
-  steps.
-- The repo-owned
-  `capture-workbench-desktop:smoke-real-desktop-ocr-directml` gate passed with
-  an image-only scanned PDF. Its redacted report records
-  `releaseGateSatisfied=true`, `realEnginesExercised=true`,
-  `rawOcrVisible=true`, `ocrDevice=windowsml-dml`, isolated Ollama model
-  provenance, successful document deletion, and no owned desktop/runtime
-  process residue.
-- The broad [PR #4](https://github.com/WodenWang820118/capture-workbench/pull/4)
-  was linked to both green replacements and
-  [closed as superseded](https://github.com/WodenWang820118/capture-workbench/pull/4#issuecomment-5112913276)
-  at `2026-07-29T04:13:09Z`.

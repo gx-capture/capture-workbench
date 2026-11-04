@@ -38,7 +38,8 @@ PaddleOCR 3.7 WindowsML worker. Embedded PDF text is never read or returned.
   field and `checkpoint` events while capture remains `extracting`. Progress
   is `0.9 * completed / requested`, including successfully processed empty
   pages; the final 10% remains reserved for structuring. These events contain
-  counts expressed as a fraction, not OCR text or a success receipt. Raw text
+  counts expressed as a fraction, not OCR text or a success receipt. The
+  capture also reports `pagesDone`/`pagesTotal` (both or neither). Raw text
   and terminal success still require complete result/provenance validation.
 
 ## Key decisions

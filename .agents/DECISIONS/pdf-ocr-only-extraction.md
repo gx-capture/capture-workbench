@@ -31,17 +31,3 @@ can prove that later pages never entered OCR.
   text layer on others.
 - Compare multiple text extractors: agreement between two consumers of the same
   invalid mapping does not establish visual correctness.
-
-## Change checkpoint
-
-- Change mode: mixed.
-- Existing owners: Capture Runtime extractor/OCR worker and Cert Prep capture
-  admission policy.
-- Delete candidates: embedded PDF extraction branches, digest helpers,
-  production `pypdf`, and embedded-only acceptance assertions.
-- New owner needed: yes, only these durable cross-repository decision/spec/TODO
-  artifacts.
-- Token posture: compact quality.
-- Verification floor: focused Nx tests, runtime lint/typecheck, local release
-  consumer checks, separately collected unit/integration tests, and distinct
-  local-package plus online-package real-fixture semantic OCR proof.

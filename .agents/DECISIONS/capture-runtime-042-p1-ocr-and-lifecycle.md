@@ -26,7 +26,8 @@
    they do not share or duplicate native Job handles. Runtime-root exit is
    observed and invokes the same terminate-and-prove path. OS crash/power-loss
    reconciliation is a next-start concern, not an app callback guarantee.
-   Forward note (2026-11-01): next-start reconciliation is still unimplemented; see the [P2 status banner](capture-runtime-042-p2-hardening.md#implementation-status-2026-11-01).
+   Next-start reconciliation is not wired yet; see the
+   [P2 implementation status](capture-runtime-042-p2-hardening.md#implementation-status-2026-11-01).
 7. **Sequential acceptance evidence.** The three-project runner uses
    acceptance-manifest schema 2. Each child must prove all seven cleanup
    booleans (`app`, `sidecar`, `cdpPort`, `temporaryAppData`, `ownedPids`,

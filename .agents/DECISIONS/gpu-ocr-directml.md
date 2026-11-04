@@ -1,13 +1,9 @@
 # Decision: DirectML-first OCR
 
-The faster-whisper exclusion below is obsolete since speech recognition moved to
-TEA-ASR (`speech-recognition-tea-asr.md`); the DirectML OCR decision stands.
-
 ## Decision
 
-Use `onnxruntime-directml==1.24.4` for Windows OCR and Whisper's Windows extra. Remove the
-generic `onnxruntime` dependency pulled by `faster-whisper==1.2.1` with a scoped uv dependency
-exclusion so two distributions cannot overwrite the `onnxruntime` Python namespace.
+Use `onnxruntime-directml==1.24.4` for Windows OCR, and no other ONNX Runtime distribution,
+so two distributions cannot overwrite the `onnxruntime` Python namespace.
 
 The producer selects the OCR adapter through `OcrComputePlan.select`: a usable discrete GPU, then
 a usable integrated GPU, each with an exact LUID/ORT mapping (see the

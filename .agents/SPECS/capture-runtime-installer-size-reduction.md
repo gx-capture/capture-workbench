@@ -2,10 +2,11 @@
 
 ## Purpose
 
-Reduce the Windows 11 x64 Capture Workbench NSIS installer to the desktop host
-plus a lightweight `capture-runtime-core`. WindowsML OCR and Whisper executable
-workers, their models, and the app-managed Ollama runtime/model are installed
-only after explicit requirement installation.
+The Windows 11 x64 Capture Workbench NSIS installer holds the desktop host plus
+a lightweight `capture-runtime-core`. The OCR, speech recognition and speaker
+diarization workers, their models, the vertical Japanese reader's models, and
+the app-managed Ollama runtime/model are installed only after explicit
+requirement installation.
 
 The existing authenticated loopback `/v2` API, `CaptureClient`,
 `CaptureDocument`, requirement IDs, local desktop library/history, isolated
@@ -23,9 +24,8 @@ isolation, and DirectML-first fail-closed OCR policy are unchanged.
 - It replaces the old meaning of an OCR `bundled` install strategy. The
   checksum-pinned descriptor remains runtime-owned, but code and model bytes
   are optional release artifacts and are not NSIS resources.
-- It extends `release-model-artifact-provisioning.md` only for the governed artifact set and
-  draft verification. It does not restore the retired separate clean-install
-  evidence workflow or protected release environment.
+- Model files are delivered as described in `release-model-artifact-provisioning.md`
+  (direct checksum-pinned downloads, never in a release asset).
 - Deterministic development/smoke remains a QA lane. Product staging uses the
   core release runtime and real optional-engine installation path.
 
@@ -37,19 +37,11 @@ isolation, and DirectML-first fail-closed OCR policy are unchanged.
   bearer token, or worker command.
 - No runtime `pip install`, `uv sync`, unpinned code execution, or dynamic
   Python-package installation.
-- No OCR/Whisper worker or model in the initial NSIS installer.
+- No engine worker or model in the initial NSIS installer.
 - No automatic Ollama inclusion in the initial installer.
 - No platform other than Windows 11 x64.
 
-## Delivery Slices and Ownership
-
-1. Establish a reproducible pre-change size/startup report.
-2. Replace dynamic PyInstaller collection with reviewed fixed specs/hooks.
-3. Add catalog, worker protocol/process/client, and safe installation seams.
-4. Package Whisper independently and route audio extraction through it.
-5. Package OCR independently and route image/scanned-PDF extraction through it.
-6. Build a core-only runtime, release asset set, and NSIS stage.
-7. Enforce boundary, consistency, and measured size budgets in Nx/CI.
+## Ownership
 
 Pure functions and frozen dataclasses own descriptor parsing, hashes, archive
 validation, protocol validation, and activation-state transitions. Stateful
@@ -65,55 +57,36 @@ orchestration, and installation logic.
 The core must not contain/import at runtime:
 
 - PaddleOCR, PaddleX, OpenCV, ONNX Runtime, `pypdfium2`, or Pillow;
-- PyTorch, Transformers, PyAV, or Hugging Face Hub (faster-whisper and CTranslate2 until
-  the TEA-ASR change);
+- PyTorch, Transformers, PyAV, or Hugging Face Hub;
 - worker/model archives;
 - binaries for non-Windows or non-x64 platforms.
 
 Every PDF is sent to the OCR worker, which owns PDFium rendering and PaddleOCR
-for every page. Embedded PDF text is never read. Images are sent to OCR; audio
-is sent to Whisper.
+for every page. Embedded PDF text is never read. Images are sent to OCR;
+recordings are sent to the speech recognition worker (and the speaker
+diarization worker when speakers are requested).
 
 ## Catalog and Artifact Formats
 
-The embedded UTF-8 JSON catalog is canonical JSON with sorted keys and a final
-LF:
+The embedded engine catalog (`assets/engine-catalog.json`, parsed by
+`engine_catalog.py`) is canonical UTF-8 JSON with sorted keys and a final LF.
+Its root has exactly `catalogVersion` (`"2"`), `runtimeVersion` (must equal the
+core's version) and `requirements`. Each requirement has `requirementId`,
+`artifacts`, `modelFiles` and `unavailableReason`; a source build without an
+injected release catalog lists every requirement as unavailable with a reason.
 
-```json
-{
-  "catalogVersion": "1",
-  "runtimeVersion": "0.3.8",
-  "requirements": [
-    {
-      "requirementId": "windowsml-ocr",
-      "artifacts": [
-        {
-          "role": "worker",
-          "requirementId": "windowsml-ocr",
-          "artifactVersion": "0.3.8",
-          "workerProtocolVersion": "1",
-          "platform": "windows",
-          "arch": "x86_64",
-          "fileName": "capture-engine-ocr-0.3.8-windows-x64.zip",
-          "bytes": 1,
-          "sha256": "<64 lowercase hex>",
-          "extractedBytes": 1,
-          "entryPoint": "capture-engine-ocr.exe",
-          "filesManifestSha256": "<64 lowercase hex>",
-          "url": "https://github.com/gx-capture/capture-workbench/releases/download/v0.3.8/..."
-        }
-      ]
-    }
-  ]
-}
-```
+`artifacts` holds worker archives only (`role: "worker"`). Each has
+`requirementId`, `artifactVersion`, `workerProtocolVersion`, `platform`
+(`windows`), `arch` (`x86_64`), `fileName`, `bytes`, `sha256`,
+`extractedBytes`, `entryPoint`, `filesManifestSha256`, and either `url` or
+ordered `parts` (each `fileName`, `bytes`, `sha256`, `url`). `bytes` and
+`sha256` always describe the whole archive; an archive above 1.9 GB is
+published in parts because GitHub release assets must stay under 2 GB. A URL is
+absolute HTTPS with no credentials, query, or fragment and is owned only by the
+catalog. A models-only unit (`vertical-japanese-reader`) has no worker archive.
 
-Each requirement has exactly a `worker` artifact and one or more pinned
-`model` artifacts. `requirementId`, `artifactVersion`,
-`workerProtocolVersion`, `platform`, `arch`, `fileName`, `bytes`, `sha256`,
-`extractedBytes`, `entryPoint`, and `filesManifestSha256` are mandatory.
-`role` is `worker` or `model`; `url` is absolute HTTPS with no credentials,
-query, or fragment and is owned only by the embedded catalog.
+`modelFiles` is the direct model delivery generated from the model source lock
+(see `release-model-artifact-provisioning.md`).
 
 Every ZIP contains `files-manifest.json`. Its canonical JSON shape is:
 
@@ -141,21 +114,9 @@ Each requirement is owned below:
 └── .staging/<unique-install-id>/
 ```
 
-`active.json` is canonical JSON:
-
-```json
-{
-  "stateVersion": "1",
-  "requirementId": "windowsml-ocr",
-  "artifactVersion": "0.3.8",
-  "workerProtocolVersion": "1",
-  "entryPoint": "versions/0.3.8/worker/capture-engine-ocr.exe",
-  "activatedArtifacts": [
-    {"role": "worker", "sha256": "<hex>"},
-    {"role": "model", "sha256": "<hex>"}
-  ]
-}
-```
+`active.json` is canonical JSON with exactly `stateVersion`,
+`requirementId`, `artifactVersion`, `workerProtocolVersion`, `entryPoint` and
+`activatedArtifacts` (each `{role, sha256}`).
 
 Activation uses same-volume temporary write, flush, and atomic replace.
 Versions install side-by-side. The old `active.json` is retained until all new
@@ -175,7 +136,7 @@ and may not contain secrets. Each request/result is one JSON object with:
 
 - `protocolVersion: "1"`;
 - caller-generated `requestId` (1-64 ASCII alphanumeric/`._-`);
-- `operation: "probe" | "run" | "cancel"`;
+- `operation: "probe" | "preflight" | "run" | "cancel"`;
 - operation-specific `payload`.
 
 `probe` validates worker code and optional model directory. `run` accepts a
@@ -186,9 +147,11 @@ model directory. `cancel` names the running request ID. Responses contain
 Input framing is capped at 64 KiB. Output framing is capped at 8 MiB. More than
 one line, invalid UTF-8/JSON, an unknown field/operation, wrong request ID,
 protocol mismatch, oversized output, invalid provenance, or a nonzero exit is
-fail-closed. One worker process serves one run plus its cancel message and then
-exits. Core never sends its API bearer token in worker argv, environment,
-stdin, source file, or model path.
+fail-closed. A worker process serves one run plus its cancel message
+(`workers/server.py`); progressive speech recognition uses a binary-framed
+session for one recording (`workers/session_server.py`). Core never sends its
+API bearer token in worker argv, environment, stdin, source file, or model
+path.
 
 Default probe timeout is 30 seconds and run timeout is 15 minutes. On user
 cancellation core writes a cancel frame, waits up to two seconds, then
@@ -200,7 +163,10 @@ name-wide process termination is permitted.
 
 Downloads stream to a unique `.staging` file with a byte ceiling. HTTP status,
 `Content-Length` when present, exact descriptor bytes, and SHA-256 must match
-before extraction.
+before extraction. Large artifacts download as parallel byte ranges, an
+interrupted download resumes, and verified downloads are shared between hosts
+through the machine-wide engine cache (`CAPTURE_ENGINE_CACHE_DIR`, `off`
+disables it). The limits are in `_engine_installation_limits.py`.
 
 ZIP validation precedes extraction and rejects:
 
@@ -209,9 +175,10 @@ ZIP validation precedes extraction and rejects:
 - symlink, reparse-point, junction, device, FIFO, or other non-regular entries;
 - duplicate normalized paths and case-insensitive collisions;
 - encrypted entries;
-- more than 4,096 entries;
-- any single file over 512 MiB;
-- aggregate bytes above the descriptor `extractedBytes` or 2 GiB;
+- more than 8,192 entries;
+- any single file over 2 GiB;
+- aggregate bytes above the descriptor `extractedBytes` or 8 GiB;
+- an installed file path of 260 characters or more (Windows `MAX_PATH`);
 - compression ratio above 200:1 for non-empty files;
 - missing, malformed, mismatched, or duplicate inner manifest entries;
 - files absent from the inner manifest or manifest byte/hash mismatch.
@@ -230,9 +197,11 @@ never follows an existing path.
 4. Probe worker + model + providers.
 5. Atomically activate.
 
-`speech-recognition` (formerly `whisper-primary`) follows the same sequence with a
-separately packaged Transformers speech worker and fixed-revision model artifact. No Hugging Face API is
-called by runtime. The installed model is entirely described by the catalog.
+`speech-recognition` and `speaker-diarization` follow the same sequence with
+their own Transformers workers and direct model files. No Hugging Face API is
+called by the runtime; the installed model is entirely described by the
+catalog. `vertical-japanese-reader` installs model files only. An installed
+unit can be removed again (`DELETE /v2/runtime/requirements/{id}/installation`).
 
 Ollama stays app-managed/on-demand with its existing isolated profile and
 runtime-owned lifecycle. It is not added to core/NSIS and its bearer/token
@@ -245,15 +214,15 @@ engine catalog, core executable, schema/runtime manifest, core-only NSIS, then
 size report. Release assets include:
 
 - core runtime executable, checksum, runtime manifest, and schema;
-- OCR ZIP and files manifest;
-- Whisper ZIP and files manifest;
+- OCR, speech recognition and speaker diarization worker ZIPs (or their parts)
+  and files manifests;
 - engine catalog;
 - NSIS installer;
 - runtime size report plus PyInstaller inventory/xref/warnings.
 
 The NSIS resource allowlist is exactly core executable, runtime manifest, and
 schema. A scan fails if engine workers, model assets, Paddle/ONNX/PDFium/Pillow,
-Whisper/CTranslate2/PyAV/Hugging Face, or Ollama payloads are present.
+PyTorch/Transformers/PyAV/Hugging Face, or Ollama payloads are present.
 
 Publication keeps the candidate draft-only, uploads the exact GitHub Release
 assets, downloads every Release asset and re-verifies byte
@@ -266,7 +235,7 @@ closed. No external release is created by local implementation or verification.
 
 `scripts/report_bundle_size.py` emits canonical JSON containing tool/runtime
 versions, exact executable and installer file names/bytes/SHA-256, installed
-bytes, top PyInstaller files, and categorized core/PDF/OCR/Whisper bytes.
+bytes, top PyInstaller files, and categorized core/PDF/OCR/speech bytes.
 Installed bytes come only from exact silent install plus positive byte
 measurement and native-uninstall proof. Product-registry and run-directory
 cleanup after that proof is best-effort diagnostic hygiene. Unknown
@@ -300,21 +269,24 @@ Required Nx and release targets:
 
 - `build-core-executable`
 - `build-ocr-worker`
-- `build-whisper-worker`
+- `build-speech-recognition-worker`
+- `build-diarization-worker`
 - `generate-engine-catalog`
 - `verify-core-boundary`
 - `verify-worker-boundaries`
 - `bundle-size-report`
 - `size-regression-check`
 
-Ordinary pull-request and `main` CI run the non-mutating boundary, package,
-desktop-product, and reference-flow gates. CI uploads inventory, xref, and
+Push CI on `main` runs the non-mutating boundary, package, desktop-product,
+and reference-flow gates (pull requests run only the quick `checks` job). CI uploads inventory, xref, and
 warnings with always/warn semantics, but it does not install or uninstall the
 NSIS candidate, emit canonical installed-size evidence, or run the strict size
 budget.
 
-Release `build-candidate` is the sole owner of exact installed-size and strict
-budget proof. After rebuilding and staging the production runtime and building
+The `build-candidate` job of `release-candidate.yml` is the sole owner of exact
+installed-size and strict budget proof (`size-regression-check`, or
+`size-regression-check-model-enabled` against
+`size-budgets/windows-x64-model-enabled.json` for a model-enabled release). After rebuilding and staging the production runtime and building
 the NSIS installer, it performs the size-only install/native-uninstall proof,
 runs `size-regression-check`, copies the canonical report and SHA-256 into the
 release directory, and only then assembles and uploads the candidate for
@@ -332,13 +304,6 @@ The raw `dist/executable/capture-runtime.exe` PyInstaller intermediate is not a
 release-report identity. Report v2 schema and publisher comparisons remain
 strict.
 
-Exact-main push run `30561666148` at
-`cb83f713ad03100e050870132364e8dc1e585649` is immutable failure evidence for
-the retired shared ownership: product/reference gates passed, then the
-installed-size step rejected a `deterministic` staged runtime where `release`
-was required. No installation, installed-size value, canonical report, tag, or
-release was produced.
-
 ## Test Plan
 
 Unit tests cover descriptor/catalog/state validation, checksums, traversal,
@@ -355,22 +320,16 @@ catalog/release consistency, core-only staging, and size-report/budget logic.
 Existing runtime API/schema/provenance, Tauri Rust, package QA, deterministic
 desktop smoke, and full workspace gates remain the behavior-preservation floor.
 
-Real OCR, Whisper, and Ollama smokes are mandatory for Definition of Done when
-their local fixtures and prepared assets exist. Otherwise the TODO remains open
-with the exact command and blocker; deterministic evidence is not described as
-real-engine proof.
+Real OCR, speech and Ollama journeys are local and manual; deterministic
+evidence is not described as real-engine proof.
 
-The current repository intentionally contains an incomplete development
-catalog because the exact OCR/Whisper source, license, NOTICE, derived-pipeline,
-and real-fixture records are not yet approved. Publication catalog generation
-requires the canonical checked-in direct-model source lock to pass and fails
-closed while that lock is blocked. Model ZIP inputs and
+The checked-in development catalog lists every requirement as unavailable;
+release catalog generation requires the approved model source lock and fails
+closed otherwise. Model ZIP inputs and
 `CAPTURE_*_MODEL_ARCHIVE`/`CAPTURE_*_MODEL_MANIFEST` environment variables are
-retired. This does not weaken deterministic/unit verification and leaves the
-real-engine and publication acceptance items open until both the lock and an
-authorized self-hosted Windows x64 DirectML runner are available.
+retired.
 
-## Hardening Follow-up
+## Install lock and archive paths
 
 - The per-requirement `.install.lock` is a persistent inert file guarded by a
   non-blocking OS-owned exclusive lock. Process exit releases ownership; the
@@ -380,17 +339,14 @@ authorized self-hosted Windows x64 DirectML runner are available.
   trailing dots/spaces, and case-insensitive reserved device basenames,
   including names with extensions. `files-manifest.json` is capped at 4 MiB
   from its `ZipInfo.file_size` before it can be read.
-- OCR install probes use the configured WindowsML DirectML device ID, defaulting
-  to zero. Whisper probe payload and the public `/v2` API/schema are unchanged.
 
 ## Acceptance Criteria
 
 - Initial NSIS contains only core runtime metadata/schema bytes and no optional
   engine/model/Ollama payload.
-- Core has no OCR/Whisper heavy dependency and still extracts embedded PDF
-  text and owns job lifecycle.
-- OCR/Whisper install from runtime-owned pinned/checksummed catalog artifacts,
-  activate atomically, rollback, and run offline after installation.
+- Core has no engine dependency and owns the job lifecycle.
+- Engines install from runtime-owned pinned/checksummed catalog artifacts,
+  activate atomically, roll back, and run offline after installation.
 - API, schemas, `CaptureClient`, `CaptureDocument`, requirement IDs,
   cancellation, renderer token isolation, local history, and structuring modes
   remain compatible.
@@ -399,6 +355,5 @@ authorized self-hosted Windows x64 DirectML runner are available.
   held by a separate process rejects concurrent installation.
 - Windows-unsafe archive paths and an oversized inner files manifest are
   rejected before extraction or manifest allocation.
-- A nonzero configured WindowsML device ID reaches the OCR model probe.
 - Catalog/manifests/assets agree exactly and size/boundary gates pass.
 - `corepack pnpm verify` passes.

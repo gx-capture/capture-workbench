@@ -1,39 +1,50 @@
 # Open work
 
-Ordered by priority. Each line links to the TODO that holds the detail and
-evidence rules. Release state and procedure: [release-runbook.md](../GUIDES/release-runbook.md).
+Work is tracked in GitHub issues of `gx-capture/capture-workbench`
+(Cert Prep and LAW items carry the `cross-repo` label). Release state
+and procedure: [release-runbook.md](../GUIDES/release-runbook.md).
 
-## Runtime and OCR
+## Tracked in issues
 
-- Usable iGPU selection when the dGPU is positively unavailable, plus the
-  `acceptance-real-ocr-gpu-selection` target — [capture-runtime-042-p2-hardening.md](capture-runtime-042-p2-hardening.md)
-- PDF page-1 leg in Capture Workbench and with the original private PDF —
-  [capture-runtime-042-p1-ocr-and-lifecycle.md](capture-runtime-042-p1-ocr-and-lifecycle.md)
-- Real Whisper and isolated Ollama proofs — [capture-runtime-installer-size-reduction.md](capture-runtime-installer-size-reduction.md)
-- Model selection proofs: no model pull before selection; 0.8B OCR and audio
-  E2E — [runtime-model-selection-download.md](runtime-model-selection-download.md)
-- Handwriting OCR quality (disclosed 0.4.2 limitation) needs a separate
-  recognizer evaluation.
-- Vertical Japanese text: recognized in the wrong column order with more
-  errors (N1 PDF page 16). Evaluate `useTextlineOrientation` or a
-  vertical-aware recognizer; either changes the OCR profile identity, so it
-  ships as a release decision — [pdf-ocr-only-extraction.md](pdf-ocr-only-extraction.md)
+- Workbench UI redesign around OCR and ASR, epic
+  [#152](https://github.com/gx-capture/capture-workbench/issues/152): phases
+  [#157](https://github.com/gx-capture/capture-workbench/issues/157) (OCR page),
+  [#158](https://github.com/gx-capture/capture-workbench/issues/158) (ASR page),
+  [#159](https://github.com/gx-capture/capture-workbench/issues/159) (result view and editing),
+  [#160](https://github.com/gx-capture/capture-workbench/issues/160) (history table and export),
+  [#161](https://github.com/gx-capture/capture-workbench/issues/161) (diagnostics; remove Angular Material),
+  [#162](https://github.com/gx-capture/capture-workbench/issues/162) (Web Component sizes from the runtime),
+  [#163](https://github.com/gx-capture/capture-workbench/issues/163) (packaged real OCR/ASR run, pixel baselines).
+- Runtime items: speech recognition as a CUDA unit and a CPU-only mini unit
+  [#154](https://github.com/gx-capture/capture-workbench/issues/154);
+  recordings over 50 MiB by native path
+  [#155](https://github.com/gx-capture/capture-workbench/issues/155);
+  cross-process lock for the shared download cache
+  [#185](https://github.com/gx-capture/capture-workbench/issues/185).
+- DDD refactor, epic [#169](https://github.com/gx-capture/capture-workbench/issues/169):
+  W5–W9 [#173](https://github.com/gx-capture/capture-workbench/issues/173)–[#177](https://github.com/gx-capture/capture-workbench/issues/177);
+  real-input comparison after W2–W4
+  [#240](https://github.com/gx-capture/capture-workbench/issues/240).
+- TypeScript client spec files are not type-checked
+  [#230](https://github.com/gx-capture/capture-workbench/issues/230).
 
-## Recording transcription
+- Runtime and OCR:
+  restart reconciliation and host migration to the R3 lifecycle ("Option W",
+  a decision for the user) [#246](https://github.com/gx-capture/capture-workbench/issues/246);
+  iGPU selection test and installed proof [#247](https://github.com/gx-capture/capture-workbench/issues/247);
+  vertical Japanese reader follow-ups (detector licence, DirectML evidence,
+  furigana review) [#248](https://github.com/gx-capture/capture-workbench/issues/248);
+  handwriting OCR quality [#250](https://github.com/gx-capture/capture-workbench/issues/250);
+  model selection and isolated Ollama proofs [#251](https://github.com/gx-capture/capture-workbench/issues/251);
+  late-bind race on the isolated Ollama port [#255](https://github.com/gx-capture/capture-workbench/issues/255);
+  delete the unused `request_ref_codec.py` [#256](https://github.com/gx-capture/capture-workbench/issues/256);
+  finish or remove the producer acceptance contract
+  (`ConsumerSemanticResultV1`) [#257](https://github.com/gx-capture/capture-workbench/issues/257).
+- Workbench UI: playback of formats WebView2 cannot play [#249](https://github.com/gx-capture/capture-workbench/issues/249);
+  engine uninstall in settings [#254](https://github.com/gx-capture/capture-workbench/issues/254).
+- Maintenance: rustdoc for the public `capture-sidecar-launcher` functions
+  [#252](https://github.com/gx-capture/capture-workbench/issues/252); release version literals in tests (Capture, LAW, Cert Prep)
+  [#253](https://github.com/gx-capture/capture-workbench/issues/253).
 
-- Release the progressive audio fixes with a rebuilt Whisper engine, then a
-  real Workbench journey with a recording; large recordings and playback of
-  WMA/AMR — [recording-transcription.md](recording-transcription.md)
-
-## Maintenance
-
-- Release version literals: a version bump touches about 136 files, most of
-  them tests and scripts that hard-code the version. Read it from the
-  existing per-language source instead (`RUNTIME_VERSION` in Python and the
-  TypeScript client, `CARGO_PKG_VERSION` in Rust, `release/version.json` in
-  tools), keep assertions that compare against `release/version.json`, then
-  apply the same to Cert Prep and LAW. Target: only manifests, locks and
-  generated artifacts change per release.
-
-- Rustdoc for the remaining public `capture-sidecar-launcher` functions —
-  [capture-large-file-refactor.md](capture-large-file-refactor.md)
+[recording-transcription.md](recording-transcription.md) keeps the pointers
+that issue #155 links to.

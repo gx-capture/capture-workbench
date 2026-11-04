@@ -7,8 +7,8 @@
 - The standalone `capture-structuring` TypeScript and Python packages were
   retired in 0.4.1 after consumer cutover and same-digest gates passed. The
   runtime-owned pull-session implementation is the sole structuring seam.
-- The Python, TypeScript, and Java `capture-runtime-client` packages remain the
-  client SDKs. No structuring-client packages are created.
+- The Python and TypeScript `capture-runtime-client` packages are the client
+  SDKs. No structuring-client packages are created.
 - A host may supply `CaptureStructuringProvider`; the host mode pauses at `awaiting_structuring`, then commits a candidate document for runtime validation.
 - The standalone Workbench uses a runtime-owned isolated Ollama provider.
 - `cert-prep` and `law-prep` reuse their existing AI providers and must not launch a second semantic provider for capture.

@@ -237,13 +237,11 @@ later registration attempt may retry after the underlying error is corrected.
 
 The framework-neutral fixture is
 [`fixtures/web-component/index.html`](./fixtures/web-component/index.html).
-For D7 published acceptance, install the exact immutable package version and
-runtime bytes identified by the D6 download-back ledger; this exact install is
-required before D8 and must not resolve through `stable`, `latest`, or another
-mutable pointer. After D8 stable-pointer promotion, ordinary consumers may
-follow the stable channel and install from the configured NPM-compatible
-registry. The package does not publish a standalone browser
-bundle or CDN entry.
+Release acceptance installs the exact package version and runtime bytes of the
+release under test, never through `stable`, `latest`, or another mutable
+pointer. Ordinary consumers install from the configured NPM-compatible
+registry. The package does not publish a standalone browser bundle or CDN
+entry.
 
 React and Vue consumers can assign the object properties through a DOM ref and
 listen with `addEventListener`:
@@ -260,7 +258,7 @@ the host backend. A sidecar bearer token must never enter the Web Component,
 Angular state, DOM, URL, storage, log, or error/report payload.
 
 For a direct loopback runtime client, keep the same strict CSP used by the
-Tauri reference host: permit only `http://127.0.0.1:*` in `connect-src`, and
+Capture Workbench desktop host: permit only `http://127.0.0.1:*` in `connect-src`, and
 do not grant arbitrary HTTPS, `unsafe-eval`, or wildcard origins. The element
 uses the existing CSS variables `--capture-accent`, `--capture-background`,
 `--capture-foreground`, `--capture-muted`, `--capture-border`, and

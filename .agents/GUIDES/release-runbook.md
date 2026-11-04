@@ -6,22 +6,16 @@ source of truth for inputs.
 
 ## Current state
 
-- **0.8.0** is the latest published release, through Route A only (2026-10-31):
-  npm (`@gx-capture/capture-workbench-ui`, `@gx-capture/capture-runtime-client`
-  on GitHub Packages), Maven (`com.gx.capture:capture-runtime-client`, GitHub
-  Packages), PyPI (`capture-runtime-client`), crates.io
-  (`capture-sidecar-launcher`), and GitHub release `v0.8.0` (runtime exe, OCR,
-  speech recognition and diarization engines, catalog). 0.7.x also went
-  through Route A first; 0.8.0 then completed the full route (release
-  candidate 41185624191, release promotion 41411635581 on 2026-11-02 at
-  `cdbee11`), which publishes `capture-release-manifest-v1.json`, the desktop
-  installer and the stable pointer. Consumers' release workflows that attest
-  the release manifest need that full route.
 - **0.9.0** is the latest published release (2026-11-03): Route A first, then
   the full route (release candidate 41649253900, consumer gates 41659676388,
   release promotion 41666190542), so `v0.9.0` carries
   `capture-release-manifest-v1.json` and the desktop installer, and the stable
-  pointer names it.
+  pointer names it. Route A publishes npm (`@gx-capture/capture-workbench-ui`,
+  `@gx-capture/capture-runtime-client` on GitHub Packages), PyPI
+  (`capture-runtime-client`), crates.io (`capture-sidecar-launcher`), and the
+  GitHub release (runtime exe, OCR, speech recognition and diarization
+  engines, catalog). Consumers' release workflows that attest the release
+  manifest need the full route.
 - Releases after 0.8.0 publish no Java SDK. Maven publication was removed on
   2026-10-31 (no consumer used it); versions through 0.8.0 stay on GitHub
   Packages.
@@ -31,8 +25,9 @@ source of truth for inputs.
   job type-checks every TypeScript project.
 - The contract set no longer carries the release version: a patch release keeps
   its hash, and only a contract change moves it.
-- **Open**: the licence lineage of the NDLOCR-Lite line detector's weights; see
-  `.agents/RESEARCH/ndlocr-lite-detector-licence-lineage-2026-10-06.md`.
+- **Open**: the licence lineage of the NDLOCR-Lite line detector's weights,
+  delivered only in the optional `vertical-japanese-reader` unit; see
+  `.agents/RESEARCH/ndlocr-lite-detector-licence-lineage-2026-10-06.md` ([#248](https://github.com/gx-capture/capture-workbench/issues/248)).
 - Known limitations: handwriting OCR quality (printed text is the floor); page
   structure of dense vertical periodical scans and pages that mix directions;
   about a fifth of furigana on textbook pages is not set aside.
@@ -68,12 +63,14 @@ source of truth for inputs.
 - Consumers: Cert Prep first, then LAW; both bump every Capture pin, the
   contract-set hash and tests that quote runtime minor 8 (see the changelog).
 
-## Published through Route A: 0.8.0 (minor)
+## Published: 0.8.0 (minor)
 
-- Published on 2026-10-31 through Route A only. Runs: package candidate
+- Published on 2026-10-31 through Route A. Runs: package candidate
   41181447228, runtime candidate 41181635905 (`model-enabled`), package promote
   41183372874, runtime promote 41183508942 (`registries`). Source commit
-  `97bb151` (merge of PR #116).
+  `97bb151` (merge of PR #116). The full route followed on 2026-11-02 at
+  `cdbee11`: release candidate 41185624191, release promotion 41411635581.
+  0.8.0 is the last release with a Java SDK on Maven.
 - A host can name the language spoken in an audio capture
   (`StartCaptureV2.spokenLanguage`, PR #115), and deleting a capture deletes its
   uploaded source (PR #114). The owner approved the release on 2026-10-31.
@@ -155,8 +152,8 @@ source of truth for inputs.
   worker's longest DLL path is 78 characters below its install folder.
 - The `whisper-private-reference` expected output hash was still Whisper's in
   0.7.1. After the release it was frozen on the owner's 40-minute M4A interview,
-  which replaced the missing MP3 (see the speech recognition decision); the
-  change ships with the next release.
+  which replaced the missing MP3 (see the speech recognition decision); that
+  change shipped in 0.7.2 (PR #108).
 
 ## Published through Route A: 0.7.0 (minor, breaking)
 
@@ -183,17 +180,12 @@ source of truth for inputs.
   `capture-runtime-model-sources-v0.7.0`). The lock (34 files, about 7.5 GB)
   was approved by the owner on 2026-10-25. OCR profile
   `capture-workbench-ocr-7680a930bb89b381`.
-- **Open**: the `whisper-private-reference` fixture's expected normalized
-  output hash still records the Whisper measurement. Replace it with two
-  identical production TEA-ASR runs of the private recording
-  (`CAPTURE_PRIVATE_WHISPER_FIXTURE`) before the model candidate is verified.
 
 ## Published: 0.6.3 (patch, Route A then full route)
 
-- Published on 2026-10-16 through Route A only, like 0.6.2: npm, Maven,
-  PyPI, crates.io and GitHub release `v0.6.3` (runtime exe `3b96746c…`, OCR,
-  rebuilt Whisper and diarization engine zips). `release-index/stable.json`
-  still points at `v0.5.1`, and no desktop installer is published for 0.6.x.
+- Published on 2026-10-16 through Route A first: npm, Maven, PyPI, crates.io
+  and GitHub release `v0.6.3` (runtime exe `3b96746c…`, OCR, rebuilt Whisper
+  and diarization engine zips). The full publish below followed the same day.
 - Fixes the two transcription defects the 0.6.2 consumer checks found
   (PR #96): Whisper's voice activity filter kept a click as speech, so a
   silent window yielded "You" and, with speakers, a word was timed at 0:00.
@@ -276,10 +268,8 @@ source of truth for inputs.
     the interview 3 times (82 lines, 115 to 124 seconds) and once with
     speakers (996 seconds; on 0.6.0 the whole interview with speakers failed
     at the 15-minute limit).
-- Still open from those checks:
-  - A silent opening yields a hallucinated "You" at 0:00.
-  - With speakers, one word comes back at 0:00 without a speaker, though it
-    was spoken near 4:43.
+- Those checks found two transcription defects (a hallucinated "You" after a
+  silent opening, a word with speakers timed at 0:00); 0.6.3 fixed both.
 
 ## Published through Route A: 0.6.1 (patch)
 
@@ -308,8 +298,7 @@ source of truth for inputs.
 - Why the full route stopped: a release candidate's contract impact is
   measured against the stable pointer (0.5.1), so 0.6.x is `breaking` and the
   LAW gate is required. The gate runs on LAW `main`, which still pins 0.5.1;
-  LAW's 0.6.x adoption lives on `feat/legal-ontology-hybrid`. Move the stable
-  pointer once LAW `main` carries 0.6.x.
+  LAW's 0.6.x adoption lived on `feat/legal-ontology-hybrid` until 0.6.3.
 - Observed: an audio capture's event stream reports `completed` about half a
   second before `GET /v2/captures/{id}` does, and `get_raw` answers
   `raw_unavailable` in between. Poll the operation before reading results.
@@ -330,10 +319,6 @@ source of truth for inputs.
   `speaker-diarization` (worker archive about 272 MB, models from
   `gx-capture/capture-model-sources`) and `vertical-japanese-reader` (models
   only, no worker archive).
-- Checked locally: the release engine catalog generates from the real worker
-  archives. Not yet exercised anywhere: the candidate and promote workflows with
-  four units, installing the optional units from a published release, and the
-  consumer gates. Cert Prep and LAW still pin 0.5.1.
 
 ## Workflow map
 
@@ -352,6 +337,17 @@ desktop installer and the stable pointer. Every publish step is idempotent:
 npm and crates.io compare remote bytes, PyPI uses `skip-existing`, and
 `tools/create-github-release.ts` keeps runtime seed assets and uploads only
 missing ones.
+
+- Contract impact: the release candidate classifies its contracts against the
+  stable release (`tools/contract-impact.ts`): `no-impact`, `additive`,
+  `breaking` or `manual-review`, the last for any change it cannot place.
+  `.github/consumer-gates.json` lists the gates: Cert Prep is required always,
+  LAW whenever the classification is not `no-impact`.
+- `release.yml` audits every pushed `v*` tag against its candidate, release and
+  registries. `release-supersede.yml` marks a defective tag superseded in
+  `release-index/releases.json` and moves the stable pointer to a known-good
+  replacement; its assets stay, and the defective release's notes get a
+  warning footer.
 
 ## Procedure
 
@@ -375,7 +371,7 @@ missing ones.
    first, then LAW).
 5. Dispatch `release-candidate.yml` with the Route A inputs and the
    `release_mode` recorded in the runtime candidate manifest
-   (`model-enabled` for 0.5.0). Record the run ID, `candidateId`, and the
+   (`model-enabled` for every release since 0.5.0). Record the run ID, `candidateId`, and the
    `candidate-manifest.json` hash from artifact
    `capture-candidate-<version>-<run>`.
 6. Pre-run both consumer gates locally against the downloaded release

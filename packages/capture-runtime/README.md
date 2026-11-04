@@ -1,6 +1,61 @@
 # Capture Runtime v2
 
-Speech recognition and speaker diarization engine provenance records the result device, total processing time in `elapsedMs` (including any failed CUDA attempt and CPU retry), and the successful attempt's stage times in `stageMs`.
+Capture Runtime is the authenticated, local Windows runtime for Capture
+Workbench. It exposes only the v2 protocol; no compatibility routes or legacy
+wire models are shipped. The host installs each engine as a requirement
+(install unit) through `/v2/runtime/*`; OCR, speech recognition and speaker
+diarization run as separately packaged worker processes.
+
+## OCR
+
+The `capture-engine-ocr` worker serves requirement `windowsml-ocr`: PP-OCRv6
+medium detection and recognition (Traditional Chinese multilingual dictionary)
+on DirectML, or on the CPU when the compute plan selects it
+(`src/capture_runtime/assets/ocr-profile.json`). The runtime orders the regions
+of each page (`ocr_reading_order.py`), including furigana on horizontal pages
+and boxed vertical passages.
+
+The optional unit `vertical-japanese-reader` delivers the NDLOCR-Lite models
+(no worker of its own; vendored layout code in
+`src/capture_runtime/_vendor/ndlocr_lite/`). A vertical page whose text has
+kana is read by it (`ocr_vertical_routing.py`, `ocr_vertical_reader.py`);
+without the unit the page keeps the regular result and the capture names the
+unit in `suggestedUnits`. See the
+[decision record](../../.agents/DECISIONS/vertical-japanese-ocr.md).
+
+Routing (`ocr_vertical_routing.py`): every page gets the regular first pass. A
+page goes to the reader when the reading-order policy treats it as vertical, at
+least three boxes are tall (height at least twice the width), at least 80% of
+the recognized characters lie in tall boxes, and the page is Japanese (at least
+5% kana; a first pass without kana and a character-weighted mean score of at
+least 0.85 settles that it is not). A routed page takes the reader's lines,
+order and scores as whole regions. Reader files that are altered, or a reader
+that fails in inference, fail the page; a reader result with no text or under
+half the first pass's characters keeps the first pass. Provenance (`model`,
+`modelDigest`, `device`) still names the regular pipeline.
+
+Known limits of the reading order and the reader:
+
+- Pages that mix directions (vertical share under 80%) stay with the regular
+  pipeline; no reader handles them well.
+- Page structure of dense vertical periodical scans is not reliable: facing
+  pages with a narrow gutter, page-tall rules, bands interrupted by a title or
+  picture, detector boxes that span two bands, titles, authors and page numbers.
+- About a fifth of furigana on textbook pages is not set aside; a reading over a
+  line without ideographs stays in place, and furigana on the horizontal
+  questions of a mixed page stays interleaved.
+- Ruby on a routed page is whatever the reader returns, and its scores are not
+  calibrated against the regular pipeline's.
+
+`scripts/ocr_benchmark.py` (opt-in, uncached Nx `capture-runtime:ocr-benchmark`;
+its tests are `capture-runtime:test-ocr-benchmark`) scores page layouts against
+private local material; it is a research tool, not a release gate.
+
+```powershell
+pnpm nx run capture-runtime:build-ocr-worker
+```
+
+## Speech recognition
 
 Speech recognition uses the separate `capture-engine-speech-recognition` worker
 under requirement `speech-recognition`: TEA-ASR-1.1 on CUDA, TEA-ASR-1.1-mini on
@@ -15,9 +70,7 @@ under GitHub's 2 GB asset limit, and the installer joins and verifies them. See 
 [decision record](../../.agents/DECISIONS/speech-recognition-tea-asr.md) for required
 re-approval, private-output remeasurement and package-size checks.
 
-Capture Runtime is the authenticated, local Windows runtime for Capture
-Workbench. The hard-cut release exposes only the v2 protocol; no compatibility
-routes or legacy wire models are shipped.
+Speech recognition and speaker diarization engine provenance records the result device, total processing time in `elapsedMs` (including any failed CUDA attempt and CPU retry), and the successful attempt's stage times in `stageMs`.
 
 ## Public endpoints
 

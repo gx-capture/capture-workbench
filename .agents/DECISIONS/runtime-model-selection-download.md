@@ -1,7 +1,6 @@
 # Decision: allowlisted runtime model selection
 
-Status: accepted for the v2 runtime release; promotion remains blocked until
-the candidate gates pass.
+Status: accepted and released.
 
 The standalone Workbench bridge uses the v2 model endpoints. The
 runtime maps stable option IDs to exact model references and profile settings.

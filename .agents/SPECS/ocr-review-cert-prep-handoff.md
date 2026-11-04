@@ -14,12 +14,14 @@ correct page/segment text before Cert Prep structures and persists the result.
 
 ## Interfaces
 
-- Capture Workbench adds an opt-in review gate and `CaptureReview` edits.
-- Host clients may implement `confirmCapture(captureId, request)`; the request
-  contains only a review version and segment text overrides.
+- `CaptureWorkbenchConfig.reviewBeforeCommit` turns the review gate on;
+  `reviewEditable` allows editing. Edits are `CaptureReview`/`CaptureReviewEdit`
+  values (`packages/capture-workbench-ui/src/lib/contracts`).
+- The component emits `capture-review-required` when it pauses; the
+  `capture-completed` event carries the canonical CaptureDocument plus the
+  review edits.
 - Cert Prep exposes capture-review upload, status, raw, confirm, cancel, and
   result routes under `/projects/{projectId}/capture-workbench/captures`.
-- A completion event carries the canonical CaptureDocument plus review edits.
 
 ## Key decisions
 

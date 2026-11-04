@@ -1,4 +1,4 @@
-# Capture Runtime 0.4.2 P1 OCR projection and ownership spec
+# OCR projection and runtime ownership spec
 
 ## Purpose
 
@@ -10,10 +10,9 @@ projection is exposed through an authenticated
 remain `2.0`; only this response has `schemaVersion: "3"`.  Existing raw and
 structured document schema 2 contracts remain compatible.
 
-Phase 1 real-app acceptance intentionally requests one JPEG and PDF page 1 per
-app. The runtime contract still supports an explicit page scope and its
-all-pages default; full-document OCR is only a targeted later check when page
-accumulation, ordering, or memory is the risk under test.
+Real-app acceptance requests one JPEG and PDF page 1 per app. Full-document
+OCR is a targeted check when page accumulation, ordering, or memory is the
+risk under test.
 
 ## Non-goals
 
@@ -58,7 +57,8 @@ PP-OCRv6 detector/recognizer names and model revisions, the final
 Traditional-Chinese/multilingual dictionary path/revision/SHA, the three
 PaddleX orientation switches, DirectML provider policy, and preprocessing
 ownership (PDFium/Pillow RGB normalization, bounded Lanczos resize, no
-deskew/contrast pass).  The worker verifies every listed model/dictionary file
+deskew/contrast pass).  Profile v3 also declares the vertical Japanese reader
+([vertical-japanese-ocr.md](vertical-japanese-ocr.md)).  The worker verifies every listed model/dictionary file
 byte hash before constructing PaddleOCR; the resolved model digest is then
 computed from the bytes actually loaded, not copied from the manifest.
 
@@ -204,8 +204,8 @@ structuring success.
 
 - Requested PDF pages (all pages when no page scope is supplied) and images are
   rasterized and sent to the canonical PaddleOCR adapter; no production
-  embedded-text path exists. Phase 1 real acceptance uses a real private JPEG
-  and PDF page 1, and does not require the PDF to lack an embedded text layer.
+  embedded-text path exists. Real acceptance does not require the PDF to lack
+  an embedded text layer.
 - Projection pages are complete, ordered by source page, and retain empty pages.
 - OCR polygon points and raster metadata are bounds-checked; recognized Paddle
   regions carry bounded numeric scores, while empty/failed page confidence is
@@ -226,12 +226,6 @@ structuring success.
   no-breakaway, root-exit monitoring, and terminate-and-prove behavior.
 - Human truth acceptance separately proves scanned-PDF CER <=1%, photo CER
   <=3%, and zero missing critical anchors per document.
-
-## Verification
-
-Focused P1 gates are the runtime unit/integration/contract targets and the
-sidecar Rust format/check/test targets, all with `--skip-nx-cache`.  Real
-package/model E2E and release publication remain later gates.
 
 ## Cross-project real-OCR execution
 

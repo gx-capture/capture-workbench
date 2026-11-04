@@ -1,4 +1,4 @@
-# Capture Runtime 0.4.2 P1 OCR compute preflight specification
+# OCR compute preflight specification
 
 ## Outcome
 
@@ -10,7 +10,7 @@ the OCR compute mode.
 ## Contract
 
 `RuntimeReady.ocrCompute` is an additive `OcrComputePreflightV2` value with
-`apiVersion: "2.0"`, `schemaVersion: "1"`, `runtimeVersion: "0.4.2"`,
+`apiVersion: "2.0"`, `schemaVersion: "1"`, the runtime's `runtimeVersion`,
 `contractSetVersion: "2"`, and the exact authenticated contract-set digest.
 Its stable decision fields are:
 
@@ -77,8 +77,4 @@ provider absence, inventory/provider indeterminate and structurally-invalid
 snapshots, contract identity, and auth. Existing WindowsML tests continue to
 prove DML session initialization or inference failure has no retry. A
 read-only machine probe reports the current mode without loading PaddleOCR or
-model assets. This slice does not update hand-written SDK clients, UI policy,
-installed-package acceptance, real OCR, or release pointers; generated
-contract artifacts are the only consumer impact handed to later workers.
-
-Rollback is the parent checkpoint `888d0627bc23a3449e5e2173e351532b05e058e9`.
+model assets. Hosts never probe, rank or select a GPU themselves.

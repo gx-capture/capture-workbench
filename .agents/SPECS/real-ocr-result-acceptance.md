@@ -10,7 +10,9 @@ residue.
 
 ## Interfaces
 
-- Input: `CAPTURE_REAL_DESKTOP_OCR_INPUT` or the legacy PDF variable.
+- Input: `CAPTURE_REAL_DESKTOP_OCR_INPUT` (image) or `CAPTURE_REAL_DESKTOP_OCR_PDF`.
+- Target: `capture-workbench-desktop:acceptance-real`; the steps are in the
+  header of `apps/capture-workbench-desktop/scripts/real-desktop-ocr-smoke.ts`.
 - Oracle: `CAPTURE_REAL_DESKTOP_OCR_EXPECTATIONS`, or
   `<input-path>.expected.json`.
 - Oracle schema: `{ schemaVersion: 1, sourceFileName?: string,
@@ -52,7 +54,8 @@ residue.
 - Unit tests cover valid parsing, missing anchors, malformed JSON, and broken
   raw/structured projections.
 - The real Playwright journey observes executable readiness, drives the native
-  picker, reattaches CDP after native/runtime transitions, and reads both
-  visible result panels after the actual OCR and AI structuring stages.
+  picker, reattaches CDP after native/runtime transitions, and checks the OCR
+  result. With `E2E_ACCEPTANCE_RUN_ID` set it stops at the durable OCR
+  checkpoint; diagnostic runs also structure the result and read both panels.
 - The completion wrapper fails closed unless Playwright succeeds, the manifest
   is `completed`, and every cleanup field is true.
