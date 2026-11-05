@@ -2,7 +2,7 @@
 import '../../../tools/test-temp-root.ts';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
@@ -17,6 +17,9 @@ import {
   assertTaskkillResult,
   acquireExclusiveSmokeLock,
   buildInstalledAppEnvironment,
+  buildInstalledSmokeFailureReport,
+  writeSmokeFailureReport,
+  installedAppExerciseError,
   installedSmokeDiagnosticMessageLimit,
   installedSmokeDiagnosticRedactionMarker,
   installedSmokeExecutableTimeoutMs,
@@ -32,6 +35,8 @@ import {
   installedWebViewCdpReadyTimeoutMs,
   parseInstalledWebViewCdpPort,
 } from './installed-browser.ts';
+import { trackSmokeStep } from './smoke-diagnostics.ts';
+import type { SmokeStepEvent } from './smoke-diagnostics.ts';
 import { appRoot } from './stage-runtime.ts';
 
 function observe(observable) {
@@ -51,6 +56,10 @@ test('installed measurement derives the exact installer name from release metada
   assert.equal(
     expectedInstallerName('0.3.8'),
     'Capture Workbench_0.3.8_x64-setup.exe',
+  );
+  assert.equal(
+    expectedInstallerName('0.3.8', 'Capture Workbench QA Fake Data'),
+    'Capture Workbench QA Fake Data_0.3.8_x64-setup.exe',
   );
   assert.throws(() => expectedInstallerName('0.3.8-beta'), /semantic x\.y\.z/u);
 });
@@ -126,6 +135,8 @@ test('installed app environment is process-scoped, isolated, and drops ambient s
       GITHUB_TOKEN: 'must-not-propagate',
       CAPTURE_API_TOKEN: 'must-not-propagate',
       CAPTURE_EXTRACTION_PROVIDER: 'must-not-propagate',
+      CAPTURE_ACCEPTANCE_APP_DATA_ROOT: 'must-not-propagate',
+      E2E_ARTIFACT_ROOT: 'must-not-propagate',
       WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: '--persisted-unsafe-value',
     },
     {
@@ -138,6 +149,8 @@ test('installed app environment is process-scoped, isolated, and drops ambient s
     43_219,
   );
 
+  assert.equal(environment.CAPTURE_ACCEPTANCE_APP_DATA_ROOT, join(root, 'artifacts', 'appdata'));
+  assert.equal(environment.E2E_ARTIFACT_ROOT, join(root, 'artifacts'));
   assert.equal(environment.PATH, 'safe-path');
   assert.equal(environment.SYSTEMROOT, 'C:\\Windows');
   assert.equal(environment.CUDA_PATH, 'cuda-toolkit-root');
@@ -261,6 +274,20 @@ test('uninstall and recursive cleanup fail closed until owned processes are prov
     () => assertInstallationCleanupAllowed(undefined),
     /without proving all owned processes stopped/u,
   );
+});
+
+test('installed exercise diagnostics retain a later capture failure without labeling it a startup failure', () => {
+  const captureError = new Error('Installed pdf capture did not complete.');
+  const diagnostics = formatInstalledWebViewStartupDiagnostics({ appRunning: true });
+  const failure = installedAppExerciseError(captureError, diagnostics);
+  assert.ok(failure instanceof AggregateError);
+  assert.deepEqual(failure.errors[0], captureError);
+  assert.deepEqual(nestedErrorMessages(failure), [
+    'Installed app exercise failed.',
+    captureError.message,
+    diagnostics,
+  ]);
+  assert.equal(installedAppExerciseError(captureError), captureError);
 });
 
 test('installed smoke diagnostics recursively expose the nested cleanup cause', () => {
@@ -621,3 +648,96 @@ function captureDocument(fixture) {
     completedAt: '2026-07-22T00:00:01Z',
   };
 }
+
+
+test('failure report includes timeline, causes, WebView diagnostics, cards and safe request lines', () => {
+  const timestamp = '2026-11-05T01:02:03.000Z';
+  const report = buildInstalledSmokeFailureReport({
+    timestamp,
+    error: new AggregateError([
+      new Error('Capture failed.', { cause: new Error('Runtime refused chunk.') }),
+      new Error('Bearer private-credential'),
+    ], 'Installed smoke failed.'),
+    timeline: [{ step: 'completion wait', timestamp, outcome: 'failed' }],
+    webViewDiagnostics: 'appRunning=true; userData=C:\\private-user\\webview',
+    cardDiagnostics: [{ fileName: 'fixture.pdf', status: 'failed', detailErrors: ['chunk_conflict', 'token=private-credential'] }],
+    requestLogLines: [JSON.stringify({
+      timestamp: 123, method: 'POST', route: '/v2/ingestions/{ingestionId}/finalize',
+      status: 409, errorCode: 'ingestion_finalize_rejected',
+      headers: { authorization: 'Bearer private-credential' }, body: 'private-body',
+    }), JSON.stringify({ method: 'GET', route: 'C:\\private-user\\log', status: 500 }), 'malformed private-credential'],
+  });
+  assert.deepEqual(report.errors.slice(0, 3), ['Installed smoke failed.', 'Capture failed.', 'Runtime refused chunk.']);
+  assert.equal(report.timeline.find((event) => event.step === 'completion wait').outcome, 'failed');
+  assert.equal(report.timeline.find((event) => event.step === 'source picker').outcome, 'skipped');
+  assert.equal(report.timeline.length, 7);
+  assert.equal(report.cardDiagnostics[0].status, 'failed');
+  assert.equal(report.cardDiagnostics[0].detailErrors[0], 'chunk_conflict');
+  const line = JSON.parse(report.requestLogLines[0]);
+  assert.equal(line.route, '/v2/ingestions/{ingestionId}/finalize');
+  assert.equal(line.errorCode, 'ingestion_finalize_rejected');
+  assert.equal(line.headers, undefined);
+  assert.match(report.webViewDiagnostics, /appRunning=true/u);
+  const serialized = JSON.stringify(report);
+  for (const value of ['private-credential', 'private-user', 'private-body', 'authorization']) {
+    assert.equal(serialized.includes(value), false, value);
+  }
+});
+
+test('step timeline records synchronous failure and successful completion', async () => {
+  const timeline: SmokeStepEvent[] = [];
+  await observe(trackSmokeStep(timeline, 'install', () => of(undefined)));
+  await assert.rejects(observe(trackSmokeStep(timeline, 'launch', () => { throw new Error('launch failed'); })), /launch failed/u);
+  assert.deepEqual(timeline.map(({ step, outcome }) => [step, outcome]), [
+    ['install', 'started'], ['install', 'passed'], ['launch', 'started'], ['launch', 'failed'],
+  ]);
+  for (const event of timeline) assert.ok(Number.isFinite(Date.parse(event.timestamp)));
+});
+
+test('failure report retention keeps three newest reports and preserves unrelated evidence', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'capture-installed-failure-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writeFile(join(root, 'installed-smoke.json'), 'success evidence');
+  await writeFile(join(root, 'installed-smoke-failure-not-a-timestamp.json'), 'unrelated');
+  const directoryName = 'installed-smoke-failure-2020-01-01T00-00-00-000Z.json';
+  await mkdir(join(root, directoryName));
+  const report = buildInstalledSmokeFailureReport({ error: new Error('Failed safely.') });
+  const paths: string[] = [];
+  // Write out of time order so retention must use timestamp, not directory order.
+  for (const day of [5, 1, 4, 2, 3]) {
+    paths.push(await writeSmokeFailureReport(root, report, 'installed-smoke-failure', new Date(`2026-11-0${day}T00:00:00.000Z`)));
+  }
+  const names = await readdir(root);
+  for (const day of [3, 4, 5]) assert.ok(names.includes(`installed-smoke-failure-2026-11-0${day}T00-00-00-000Z.json`));
+  for (const day of [1, 2]) assert.equal(names.includes(`installed-smoke-failure-2026-11-0${day}T00-00-00-000Z.json`), false);
+  assert.equal(await readFile(join(root, 'installed-smoke.json'), 'utf8'), 'success evidence');
+  assert.ok(names.includes('installed-smoke-failure-not-a-timestamp.json'));
+  assert.ok(names.includes(directoryName));
+  assert.deepEqual(JSON.parse(await readFile(paths[0], 'utf8')), report);
+});
+
+test('request-log environment accepts an explicit isolated TEMP destination only', () => {
+  const root = resolve(appRoot, '..', '..', 'tmp', 'installed-log-environment-test');
+  const directories = {
+    root, appData: join(root, 'appdata'), localAppData: join(root, 'localappdata'),
+    temporary: join(root, 'temp'), webViewData: join(root, 'webview2'),
+  };
+  const requestLog = join(directories.temporary, 'requests.jsonl');
+  const source = { CAPTURE_DETERMINISTIC_REQUEST_LOG: 'ambient-log-must-not-propagate' };
+  assert.equal(buildInstalledAppEnvironment(source, directories, 0).CAPTURE_DETERMINISTIC_REQUEST_LOG, undefined);
+  assert.equal(buildInstalledAppEnvironment(source, { ...directories, requestLog }, 0).CAPTURE_DETERMINISTIC_REQUEST_LOG, requestLog);
+  assert.throws(() => buildInstalledAppEnvironment(source, { ...directories, requestLog: join(root, 'outside-temp.jsonl') }, 0), /strict descendant/u);
+});
+
+
+test('isolation failure reports include only real app-data metadata and the failed comparison', () => {
+  const before = { directoryExists: true, libraryExists: true, index: { mtimeNs: '100', bytes: '20' } };
+  const after = { ...before, index: { mtimeNs: '101', bytes: '20' } };
+  const report = buildInstalledSmokeFailureReport({
+    error: new Error('Real product app-data changed during the installed smoke. Isolation failed.'),
+    realAppDataGuard: { status: 'failed', before, after },
+  });
+  assert.deepEqual(report.realAppDataGuard, { status: 'failed', before, after });
+  assert.ok(report.errors.some((message) => message.includes('Real product app-data changed')));
+  assert.doesNotMatch(JSON.stringify(report), /[A-Za-z]:[\\/]/u);
+});

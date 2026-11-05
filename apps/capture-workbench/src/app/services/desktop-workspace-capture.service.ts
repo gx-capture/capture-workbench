@@ -142,7 +142,10 @@ export class DesktopWorkspaceCaptureService {
   private isAudioDocument(
     documentId: string,
     host: DesktopWorkspaceCaptureHost,
+    mediaType?: string,
   ): boolean {
+    // A new import is not in the library list yet, so the caller's media type wins.
+    if (mediaType !== undefined) return isAudioMediaType(mediaType);
     const document = host.documents().find((item) => item.documentId === documentId)
       ?? (host.selected()?.documentId === documentId ? host.selected() : undefined);
     return isAudioMediaType(document?.mediaType ?? '');
@@ -219,7 +222,7 @@ export class DesktopWorkspaceCaptureService {
     return defer(() => {
       if (!this.runtime.ready() || this.activeCaptures.has(documentId)) return EMPTY;
       const active: ActiveCapture = {
-        streaming: this.isAudioDocument(documentId, host),
+        streaming: this.isAudioDocument(documentId, host, mediaType),
         lastEventSequence: 0,
         rawPersisted: false,
         cancelRequested: false,

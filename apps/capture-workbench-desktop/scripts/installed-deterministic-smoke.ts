@@ -11,7 +11,7 @@ import {
   stat,
   writeFile,
 } from 'node:fs/promises';
-import { join, resolve, win32 } from 'node:path';
+import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import {
@@ -31,6 +31,9 @@ import {
   toArray,
 } from 'rxjs';
 
+import { deterministicQaNsis, deterministicQaProductName } from './deterministic-qa.ts';
+import { assertRealAppDataUnchanged, realProductAppDataDirectory, snapshotRealAppData } from './installed-app-data-guard.ts';
+import type { AppDataSnapshot } from './installed-app-data-guard.ts';
 import { assertStagedRuntime } from './assert-staged-runtime.ts';
 import {
   CHILD_ENVIRONMENT_ALLOWLIST,
@@ -80,6 +83,22 @@ export {
 
 export { assertCaptureDocumentForFixture };
 
+import {
+  buildInstalledSmokeFailureReport,
+  readSmokeRequestLog,
+  trackSmokeStep,
+  writeSmokeFailureReport,
+  nestedErrorMessages,
+} from './smoke-diagnostics.ts';
+import type { SmokeStepEvent, SmokeCardDiagnostic } from './smoke-diagnostics.ts';
+export {
+  buildInstalledSmokeFailureReport,
+  writeSmokeFailureReport,
+  installedSmokeDiagnosticMessageLimit,
+  installedSmokeDiagnosticRedactionMarker,
+  nestedErrorMessages,
+} from './smoke-diagnostics.ts';
+
 const workspaceRoot = resolve(appRoot, '..', '..');
 const smokeRoot = join(
   workspaceRoot,
@@ -93,6 +112,7 @@ const webViewDataDirectory = join(runRoot, 'webview2');
 const appDataDirectory = join(runRoot, 'appdata');
 const localAppDataDirectory = join(runRoot, 'localappdata');
 const temporaryDirectory = join(runRoot, 'temp');
+const requestLogPath = join(temporaryDirectory, 'deterministic-requests.jsonl');
 const evidencePath = join(smokeRoot, 'installed-smoke.json');
 const installedSizeEvidencePath = join(smokeRoot, 'installed-size.json');
 const smokeLockPath = join(smokeRoot, 'installed-smoke.lock');
@@ -505,6 +525,10 @@ export function runInstalledDeterministicSmoke(
     return runSizeMeasurement();
   }
 
+  const qa = expectedSource === 'deterministic';
+  const smokeProductName = qa ? deterministicQaProductName : 'Capture Workbench';
+  const smokeProductRegistryKey = qa ? productRegistryKey.replace('Capture Workbench', smokeProductName) : productRegistryKey;
+  const smokeUninstallRegistryKey = qa ? uninstallRegistryKey.replace('Capture Workbench', smokeProductName) : uninstallRegistryKey;
   const processCleanup = createProcessCleanup({
     smokeRoot,
     workspaceRoot,
@@ -514,8 +538,8 @@ export function runInstalledDeterministicSmoke(
         smokeRoot,
         workspaceRoot,
         registryViews,
-        productRegistryKey,
-        uninstallRegistryKey,
+        productRegistryKey: smokeProductRegistryKey,
+        uninstallRegistryKey: smokeUninstallRegistryKey,
         baseChildEnvironment,
         pathExists,
       });
@@ -526,8 +550,8 @@ export function runInstalledDeterministicSmoke(
     smokeRoot,
     workspaceRoot,
     registryViews,
-    productRegistryKey,
-    uninstallRegistryKey,
+    productRegistryKey: smokeProductRegistryKey,
+    uninstallRegistryKey: smokeUninstallRegistryKey,
     baseChildEnvironment,
     pathExists,
   });
@@ -535,7 +559,8 @@ export function runInstalledDeterministicSmoke(
     workspaceRoot,
     smokeRoot,
     runRoot,
-    nsisDirectory,
+    nsisDirectory: qa ? deterministicQaNsis : nsisDirectory,
+    productName: smokeProductName,
     childEnvironmentAllowlist,
     terminateTrackedProcessTree: processCleanup.terminateTrackedProcessTree,
   });
@@ -557,7 +582,24 @@ export function runInstalledDeterministicSmoke(
         map((smokeLock) => ({ runtimeVersion, smokeLock })),
       ),
     ),
+    catchError((error) => {
+      // Preflight/lock errors have no owned run data to inspect. Validate the
+      // output root before persisting their skipped-step report.
+      return lifecycle.prepareSmokeDirectories().pipe(
+        concatMap(() => defer(() => from(writeSmokeFailureReport(
+          smokeRoot, buildInstalledSmokeFailureReport({ error }),
+        )))),
+        catchError((reportError) => throwError(() => new AggregateError(
+          [error, reportError], 'Installed smoke preflight failed and its failure report could not be written.',
+        ))),
+        concatMap(() => throwError(() => error)),
+      );
+    }),
     switchMap(({ runtimeVersion, smokeLock }) => {
+      let realAppDataDirectory: string | undefined;
+      let realAppDataBefore: AppDataSnapshot | undefined;
+      let realAppDataAfter: AppDataSnapshot | undefined;
+      let realAppDataGuard: 'not-started' | 'recorded' | 'passed' | 'failed' = 'not-started';
       const state = {
         appProcess: undefined,
         browser: undefined,
@@ -568,6 +610,12 @@ export function runInstalledDeterministicSmoke(
         exerciseResult: undefined,
         exerciseError: undefined,
         cleanupErrors: [],
+        timeline: [] as SmokeStepEvent[],
+        cards: [] as SmokeCardDiagnostic[],
+        webViewDiagnostics: '',
+        requestLogLines: [] as string[],
+        failureReportPath: undefined as string | undefined,
+        failureReportTimestamp: undefined as string | undefined,
         cleanup: {
           ownedProcessCount: 0,
           ownedProcessesStopped: false,
@@ -590,6 +638,22 @@ export function runInstalledDeterministicSmoke(
           }),
         );
 
+      const persistFailure = (error) => defer(async () => {
+        state.failureReportTimestamp ??= new Date().toISOString();
+        const report = buildInstalledSmokeFailureReport({
+          error, timeline: state.timeline, cardDiagnostics: state.cards,
+          realAppDataGuard: { status: realAppDataGuard, before: realAppDataBefore, after: realAppDataAfter },
+          webViewDiagnostics: state.webViewDiagnostics,
+          requestLogLines: state.requestLogLines, timestamp: state.failureReportTimestamp,
+        });
+        if (state.failureReportPath) {
+          // Add any later cleanup errors to this run's existing report.
+          await writeFile(state.failureReportPath, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
+        } else {
+          state.failureReportPath = await writeSmokeFailureReport(smokeRoot, report);
+        }
+      });
+
       const installAndExercise = defer(() =>
         from(rm(evidencePath, { force: true })),
       ).pipe(
@@ -610,6 +674,7 @@ export function runInstalledDeterministicSmoke(
             appDataDirectory,
             localAppDataDirectory,
             temporaryDirectory,
+            join(runRoot, 'artifacts', 'appdata'),
           ]).pipe(
             concatMap((path) =>
               defer(() => from(mkdir(path, { recursive: true }))),
@@ -624,15 +689,21 @@ export function runInstalledDeterministicSmoke(
           ]);
           state.privateProcessRootsRegistered = true;
         }),
+        concatMap(() => defer(async () => {
+          realAppDataGuard = 'failed';
+          realAppDataDirectory = realProductAppDataDirectory();
+          realAppDataBefore = await snapshotRealAppData(realAppDataDirectory);
+          realAppDataGuard = 'recorded';
+        })),
         tap(() => (state.installationAttempted = true)),
         concatMap(() =>
-          lifecycle.runCheckedExecutable(
+          trackSmokeStep(state.timeline, 'install', () => lifecycle.runCheckedExecutable(
             state.installer.path,
             installerArguments(smokeRoot, installDirectory),
             'Deterministic NSIS installer',
             baseChildEnvironment(process.env, temporaryDirectory),
             installedSmokeExecutableTimeoutMs,
-          ),
+          )),
         ),
         concatMap(() =>
           lifecycle.assertOwnedRegularFile(
@@ -657,58 +728,70 @@ export function runInstalledDeterministicSmoke(
                   localAppData: localAppDataDirectory,
                   temporary: temporaryDirectory,
                   webViewData: webViewDataDirectory,
+                  ...(expectedSource === 'deterministic' ? { requestLog: requestLogPath } : {}),
                 },
                 cdpPort,
               );
-              state.appProcess = spawn(
-                join(installDirectory, installedExecutableName),
-                [],
-                {
-                  cwd: installDirectory,
-                  env: appEnvironment,
-                  stdio: 'ignore',
-                  windowsHide: true,
-                },
-              );
-              state.appProcess.on('error', () => undefined);
-              return connectToInstalledWebView(
-                cdpPort,
-                state.appProcess,
-                webViewDataDirectory,
-              ).pipe(
-                tap(({ browser, port }) => {
-                  state.browser = browser;
-                  state.cdpPort = port;
-                }),
-                concatMap(() => installedPage(state.browser, state.appProcess)),
-                concatMap((page) =>
-                  expectedSource === 'release'
-                    ? of({
-                        productTitle: 'Capture Workbench',
-                        model: 'setup-pending',
-                        captures: [],
-                      })
-                    : exerciseInstalledUi(
-                        page,
-                        state.appProcess.pid,
-                        temporaryDirectory,
-                      ),
-                ),
-                tap(
-                  (exerciseResult) => (state.exerciseResult = exerciseResult),
-                ),
-                concatMap(() =>
-                  processCleanup.processesRunningUnder(installDirectory),
-                ),
-                tap((processes) => {
-                  state.cleanup.ownedProcessCount = processes.length;
-                  if (state.cleanup.ownedProcessCount < 2) {
-                    throw new Error(
-                      'Installed smoke did not observe both the owned Tauri app and runtime process.',
-                    );
-                  }
-                }),
-              );
+              return (expectedSource === 'deterministic'
+                ? defer(() => from(writeFile(
+                    join(temporaryDirectory, 'capture-deterministic-request-log.json'),
+                    JSON.stringify({ CAPTURE_DETERMINISTIC_REQUEST_LOG: appEnvironment.CAPTURE_DETERMINISTIC_REQUEST_LOG }),
+                    { encoding: 'utf8', flag: 'wx' },
+                  )))
+                : of(undefined)).pipe(concatMap(() => {
+                state.timeline.push({ step: 'launch', timestamp: new Date().toISOString(), outcome: 'started' });
+                state.appProcess = spawn(
+                  join(installDirectory, installedExecutableName),
+                  [],
+                  {
+                    cwd: installDirectory,
+                    env: appEnvironment,
+                    stdio: 'ignore',
+                    windowsHide: true,
+                  },
+                );
+                state.appProcess.once('spawn', () => state.timeline.push({ step: 'launch', timestamp: new Date().toISOString(), outcome: 'passed' }));
+                state.appProcess.on('error', () => state.timeline.push({ step: 'launch', timestamp: new Date().toISOString(), outcome: 'failed' }));
+                return trackSmokeStep(state.timeline, 'WebView2 connect', () => connectToInstalledWebView(
+                  cdpPort,
+                  state.appProcess,
+                  webViewDataDirectory,
+                )).pipe(
+                  tap(({ browser, port }) => {
+                    state.browser = browser;
+                    state.cdpPort = port;
+                  }),
+                  concatMap(() => trackSmokeStep(state.timeline, 'page found', () => installedPage(state.browser, state.appProcess))),
+                  concatMap((page) =>
+                    expectedSource === 'release'
+                      ? of({
+                          productTitle: 'Capture Workbench',
+                          model: 'setup-pending',
+                          captures: [],
+                        })
+                      : exerciseInstalledUi(
+                          page,
+                          state.appProcess.pid,
+                          temporaryDirectory,
+                          { timeline: state.timeline, cards: state.cards },
+                        ),
+                  ),
+                  tap(
+                    (exerciseResult) => (state.exerciseResult = exerciseResult),
+                  ),
+                  concatMap(() =>
+                    processCleanup.processesRunningUnder(installDirectory),
+                  ),
+                  tap((processes) => {
+                    state.cleanup.ownedProcessCount = processes.length;
+                    if (state.cleanup.ownedProcessCount < 2) {
+                      throw new Error(
+                        'Installed smoke did not observe both the owned Tauri app and runtime process.',
+                      );
+                    }
+                  }),
+                );
+              }));
             }),
           ),
         ),
@@ -721,12 +804,8 @@ export function runInstalledDeterministicSmoke(
                 state.cdpPort ?? dynamicWebViewCdpPort,
               )
             : undefined;
-          state.exerciseError = diagnostics
-            ? new AggregateError(
-                [error, new Error(diagnostics)],
-                'Installed WebView2 startup failed.',
-              )
-            : error;
+          state.webViewDiagnostics = diagnostics ?? '';
+          state.exerciseError = installedAppExerciseError(error, diagnostics);
           return of(undefined);
         }),
       );
@@ -892,8 +971,26 @@ export function runInstalledDeterministicSmoke(
             ),
           );
         }),
+        concatMap(() => attempt(defer(async () => {
+          if (!realAppDataBefore || !realAppDataDirectory) return;
+          realAppDataGuard = 'failed';
+          realAppDataAfter = await snapshotRealAppData(realAppDataDirectory);
+          assertRealAppDataUnchanged(realAppDataBefore, realAppDataAfter);
+          realAppDataGuard = 'passed';
+        }))),
+        // Snapshot after stopping the fake, before deleting its isolated TEMP.
+        concatMap(() => defer(async () => {
+          state.requestLogLines = await readSmokeRequestLog(requestLogPath);
+        })),
+        concatMap(() => state.exerciseError || state.cleanupErrors.length > 0
+          ? attempt(persistFailure(new AggregateError(
+              [state.exerciseError, ...state.cleanupErrors].filter(Boolean),
+              'Installed deterministic Tauri smoke failed or could not clean up safely.',
+            )))
+          : of(undefined)),
         concatMap(() =>
-          state.cleanup.ownedProcessesStopped
+          state.cleanup.ownedProcessesStopped &&
+          (!(state.exerciseError || state.cleanupErrors.length > 0) || state.failureReportPath)
             ? attempt(
                 lifecycle.safeRemoveTree(smokeRoot, runRoot).pipe(
                   concatMap(() => pathExists(runRoot)),
@@ -934,6 +1031,7 @@ export function runInstalledDeterministicSmoke(
             },
             captures: state.exerciseResult.captures,
             cleanup: state.cleanup,
+            realAppDataGuard: { status: realAppDataGuard, before: realAppDataBefore, after: realAppDataAfter },
             disclaimer:
               'Deterministic packaged verification only; it does not certify real WindowsML, Whisper, Ollama, or licensed-fixture behavior.',
           };
@@ -946,9 +1044,16 @@ export function runInstalledDeterministicSmoke(
 
       return cleanupRun.pipe(
         catchError((error) =>
-          releaseLock(smokeLock).pipe(concatMap(() => throwError(() => error))),
+          persistFailure(error).pipe(
+            catchError((reportError) => throwError(() => new AggregateError([error, reportError], 'Installed smoke failed and its failure report could not be written.'))),
+            concatMap(() => throwError(() => error)),
+            catchError((failure) => releaseLock(smokeLock).pipe(concatMap(() => throwError(() => failure)))),
+          ),
         ),
-        concatMap((result) => releaseLock(smokeLock).pipe(map(() => result))),
+        concatMap((result) => releaseLock(smokeLock).pipe(
+          catchError((error) => persistFailure(error).pipe(concatMap(() => throwError(() => error)))),
+          map(() => result),
+        )),
       );
     }),
   );
@@ -962,92 +1067,15 @@ export function releaseExclusiveSmokeLock(lock) {
   return releaseLock(lock);
 }
 
-function errorMessage(error) {
-  return error instanceof Error ? error.message : String(error);
+export function installedAppExerciseError(error, diagnostics?: string) {
+  return diagnostics
+    ? new AggregateError(
+        [error, new Error(diagnostics)],
+        'Installed app exercise failed.',
+      )
+    : error;
 }
 
-export const installedSmokeDiagnosticRedactionMarker =
-  '[redacted unsafe diagnostic]';
-export const installedSmokeDiagnosticMessageLimit = 512;
-const installedSmokeDiagnosticCountLimit = 32;
-const sensitiveDiagnosticFragments = [
-  'authorization',
-  'bearer',
-  'secret',
-  'token',
-];
-
-function containsSensitiveDiagnosticLabel(value) {
-  const compactOriginal = value.toLowerCase().replace(/[^a-z\d]+/gu, '');
-  return sensitiveDiagnosticFragments.some((fragment) =>
-    compactOriginal.includes(fragment),
-  );
-}
-
-function containsAbsoluteWindowsPath(value) {
-  const substringCandidates = [
-    ...value.matchAll(/[A-Za-z]:[\\/]/gu),
-    ...value.matchAll(/[\\/]{2}[^\\/\s]+[\\/][^\\/\s]+/gu),
-    ...value.matchAll(
-      /(?:^|[\s"'`()[\]{}<>,;=:])(?<rooted>[\\/](?![\\/])[^\\/\s]+)/gu,
-    ),
-  ];
-  return substringCandidates.some((match) =>
-    win32.isAbsolute(match.groups?.['rooted'] ?? value.slice(match.index)),
-  );
-}
-
-function redactAbsolutePathFragments(value) {
-  return value
-    .replace(
-      /[A-Za-z]:[\\/][^\s"'`<>|]+/gu,
-      installedSmokeDiagnosticRedactionMarker,
-    )
-    .replace(
-      /\\\\[^\\/\s]+[\\/][^\s"'`<>|]+/gu,
-      installedSmokeDiagnosticRedactionMarker,
-    )
-    .replace(
-      /(?:^|[\s"'`()[\]{}<>,;=:])[\\/](?![\\/])[^\s"'`<>|]+/gu,
-      (match) =>
-        match.slice(0, match.length - match.trimStart().length) +
-        installedSmokeDiagnosticRedactionMarker,
-    );
-}
-
-function sanitizedDiagnosticMessage(error) {
-  const raw = errorMessage(error);
-  if (containsSensitiveDiagnosticLabel(raw)) {
-    return installedSmokeDiagnosticRedactionMarker;
-  }
-  const normalized = raw.replace(/\s+/gu, ' ').trim();
-  const redacted = containsAbsoluteWindowsPath(normalized)
-    ? redactAbsolutePathFragments(normalized)
-    : normalized;
-  if (redacted.length <= installedSmokeDiagnosticMessageLimit) return redacted;
-  return `${redacted.slice(0, installedSmokeDiagnosticMessageLimit - 3)}...`;
-}
-
-export function nestedErrorMessages(error) {
-  const messages = [];
-  const visited = new Set();
-  const visit = (candidate) => {
-    if (messages.length >= installedSmokeDiagnosticCountLimit) return;
-    if (visited.has(candidate)) return;
-    if (
-      (typeof candidate === 'object' && candidate !== null) ||
-      typeof candidate === 'function'
-    ) {
-      visited.add(candidate);
-    }
-    messages.push(sanitizedDiagnosticMessage(candidate));
-    if (candidate instanceof AggregateError) {
-      for (const cause of candidate.errors) visit(cause);
-    }
-  };
-  visit(error);
-  return messages;
-}
 
 if (
   process.argv[1] &&

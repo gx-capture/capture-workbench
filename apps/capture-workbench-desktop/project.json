@@ -22,10 +22,10 @@
       "executor": "nx:run-commands",
       "dependsOn": ["stage-deterministic-runtime"],
       "metadata": {
-        "description": "Fresh-checkout development host with deterministic staged runtime assets."
+        "description": "QA development host with fake runtime/data and required acceptance app-data isolation."
       },
       "options": {
-        "command": "corepack pnpm exec tauri dev --target x86_64-pc-windows-msvc --config apps/capture-workbench-desktop/src-tauri/tauri.conf.json"
+        "command": "node apps/capture-workbench-desktop/scripts/build-deterministic-qa.ts --dev"
       }
     },
     "build": {
@@ -61,15 +61,12 @@
       "cache": false,
       "executor": "nx:run-commands",
       "dependsOn": ["stage-deterministic-runtime"],
-      "outputs": [
-        "{projectRoot}/src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis"
-      ],
+      "outputs": ["{projectRoot}/src-tauri/target/deterministic-qa/x86_64-pc-windows-msvc/release/bundle/nsis"],
       "options": {
-        "commands": [
-          "node apps/capture-workbench-desktop/scripts/assert-staged-runtime.ts --deterministic",
-          "corepack pnpm exec tauri build --target x86_64-pc-windows-msvc --bundles nsis --ci --config apps/capture-workbench-desktop/src-tauri/tauri.conf.json"
-        ],
-        "parallel": false
+        "command": "node apps/capture-workbench-desktop/scripts/build-deterministic-qa.ts"
+      },
+      "metadata": {
+        "description": "QA ONLY: separately named installer with fake runtime/data, acceptance-app-data, isolated resources and Cargo output."
       }
     },
     "cargo-fmt": {
@@ -113,13 +110,24 @@
         "command": "node tools/check-desktop-contract-consistency.ts"
       }
     },
+    "fake-runtime-routes": {
+      "cache": true,
+      "executor": "nx:run-commands",
+      "inputs": [
+        "default",
+        "{workspaceRoot}/tools/check-fake-runtime-routes*.ts"
+      ],
+      "options": {
+        "command": "node tools/check-fake-runtime-routes.ts"
+      }
+    },
     "stage-deterministic-runtime": {
       "cache": false,
       "executor": "nx:run-commands",
       "outputs": [
-        "{projectRoot}/src-tauri/binaries/capture-runtime-x86_64-pc-windows-msvc.exe",
-        "{projectRoot}/src-tauri/resources/capture-runtime-manifest.json",
-        "{projectRoot}/src-tauri/resources/capture-document-v2.schema.json"
+        "{projectRoot}/src-tauri/target/deterministic-qa/staged/binaries/capture-runtime-x86_64-pc-windows-msvc.exe",
+        "{projectRoot}/src-tauri/target/deterministic-qa/staged/resources/capture-runtime-manifest.json",
+        "{projectRoot}/src-tauri/target/deterministic-qa/staged/resources/capture-document-v2.schema.json"
       ],
       "options": {
         "command": "node apps/capture-workbench-desktop/scripts/stage-deterministic-runtime.ts"
@@ -196,7 +204,7 @@
       "cache": true,
       "executor": "nx:run-commands",
       "options": {
-        "command": "node --test apps/capture-workbench-desktop/scripts/*.test.ts tools/acceptance-contract.test.ts tools/worker-stage-policy.test.ts tools/three-project-acceptance.test.ts tools/three-project-cleanup-verifier.test.ts tools/check-async-boundary.test.ts tools/finalize-packed-package.test.ts tools/local-release-consumer-smoke.test.ts tools/node24-corepack.test.ts tools/record-candidate-verification.test.ts tools/acceptance-checkpoint-journal.test.ts"
+        "command": "node --test apps/capture-workbench-desktop/scripts/*.test.ts tools/acceptance-contract.test.ts tools/worker-stage-policy.test.ts tools/three-project-acceptance.test.ts tools/three-project-cleanup-verifier.test.ts tools/check-async-boundary.test.ts tools/finalize-packed-package.test.ts tools/local-release-consumer-smoke.test.ts tools/node24-corepack.test.ts tools/record-candidate-verification.test.ts tools/acceptance-checkpoint-journal.test.ts tools/check-fake-runtime-routes.test.ts"
       }
     },
     "package-qa": {

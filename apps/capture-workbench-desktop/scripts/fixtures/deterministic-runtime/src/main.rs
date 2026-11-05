@@ -1,5 +1,6 @@
 mod contract;
 mod http;
+mod request_log;
 
 use std::{
     env,
@@ -11,6 +12,7 @@ use std::{
 
 use contract::{FixtureSettings, FixtureState};
 use http::{read_request, write_response, AuthorizationDecision, LocalRequestPolicy};
+use request_log::RequestLog;
 
 fn main() {
     let (host, port) = parse_args().unwrap_or_else(|error| exit_with_error(&error));
@@ -23,6 +25,10 @@ fn main() {
             .unwrap_or_else(|error| exit_with_error(&error)),
     );
     let state = Arc::new(FixtureState::new(settings));
+    let request_log = Arc::new(
+        RequestLog::from_env()
+            .unwrap_or_else(|_| exit_with_error("Deterministic request log could not be opened.")),
+    );
     let listener = TcpListener::bind((host.as_str(), port))
         .unwrap_or_else(|_| exit_with_error("Deterministic runtime could not bind."));
 
@@ -32,27 +38,44 @@ fn main() {
         };
         let policy = Arc::clone(&policy);
         let state = Arc::clone(&state);
-        thread::spawn(move || handle_connection(stream, &policy, &state));
+        let request_log = Arc::clone(&request_log);
+        thread::spawn(move || handle_connection(stream, &policy, &state, &request_log));
     }
 }
 
-fn handle_connection(mut stream: TcpStream, policy: &LocalRequestPolicy, state: &FixtureState) {
+fn handle_connection(
+    mut stream: TcpStream,
+    policy: &LocalRequestPolicy,
+    state: &FixtureState,
+    request_log: &RequestLog,
+) {
     let request = match read_request(&mut stream) {
         Ok(request) => request,
         Err(response) => {
+            record_request(request_log, "OTHER", "unmatched", &response);
             write_response(&mut stream, response);
             return;
         }
     };
     let origin = request.headers.get("origin").cloned();
+    let method = request.method.clone();
+    let path = request.path.clone();
     let response = match policy.authorize(&request) {
         AuthorizationDecision::Authorized => state.route(request),
         AuthorizationDecision::Respond(response) => response,
     };
+    record_request(request_log, &method, &path, &response);
     write_response(
         &mut stream,
         response.with_cors(policy.permitted_origin(origin.as_deref())),
     );
+}
+
+fn record_request(log: &RequestLog, method: &str, path: &str, response: &http::Response) {
+    if log.record(method, path, response).is_err() {
+        // Never print OS errors, which may contain the configured private path.
+        exit_with_error("Deterministic request log could not be written.");
+    }
 }
 
 fn parse_args() -> Result<(String, u16), String> {

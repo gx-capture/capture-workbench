@@ -1,0 +1,26 @@
+{
+  "$schema": "../../../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "Capture Workbench QA Fake Data",
+  "identifier": "io.github.gx-capture.capture-workbench.deterministic-qa",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "create": false,
+        "title": "Capture Workbench QA - Fake Runtime / Fake Data",
+        "width": 1280,
+        "height": 860,
+        "minWidth": 600,
+        "minHeight": 520,
+        "resizable": true
+      }
+    ]
+  },
+  "bundle": {
+    "resources": {
+      "target/deterministic-qa/staged/binaries/capture-runtime-x86_64-pc-windows-msvc.exe": "binaries/capture-runtime-x86_64-pc-windows-msvc.exe",
+      "target/deterministic-qa/staged/resources/capture-runtime-manifest.json": "resources/capture-runtime-manifest.json",
+      "target/deterministic-qa/staged/resources/capture-document-v2.schema.json": "resources/capture-document-v2.schema.json"
+    }
+  }
+}

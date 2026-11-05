@@ -627,29 +627,6 @@ test('real Ollama smoke uses the capture contract and validates profile provenan
   assert.doesNotMatch(source, /CAPTURE_WINDOWSML_BUNDLE/u);
 });
 
-test('deterministic runtime checks exact Host authority and canonical v2 names', async () => {
-  const fixtureRoot = join(
-    appRoot,
-    'scripts',
-    'fixtures',
-    'deterministic-runtime',
-    'src',
-  );
-  const [httpSource, contractSource, deterministicSource] = await Promise.all([
-    readFile(join(fixtureRoot, 'http.rs'), 'utf8'),
-    readFile(join(fixtureRoot, 'contract.rs'), 'utf8'),
-    readFile(join(appRoot, 'scripts', 'deterministic-http.ts'), 'utf8'),
-  ]);
-  assert.match(httpSource, /rsplit_once\(':'\)/u);
-  assert.doesNotMatch(httpSource, /fn normalized_host/u);
-  assert.match(contractSource, /"captureId"/u);
-  assert.match(contractSource, /const API_VERSION: &str = "2\.0"/u);
-  assert.match(contractSource, /const SCHEMA_VERSION: &str = "2"/u);
-  assert.match(deterministicSource, /multipart\/form-data; boundary=/u);
-  assert.match(deterministicSource, /'structuringMode'/u);
-  assert.match(deterministicSource, /wrongAuthorityPortRejected/u);
-});
-
 test('release candidate workflow is dispatch-only, exact-commit, and immutable', async () => {
   const workspaceRoot = join(appRoot, '..', '..');
   const workflow = await readFile(

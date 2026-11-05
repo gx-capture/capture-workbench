@@ -10,6 +10,7 @@
     "packages/capture-runtime/tests/unit/*.test.ts",
     "tools/verify-main-ci.ts",
     "tools/clean-angular-consumer-smoke.ts",
+    "tools/check-fake-runtime-routes.ts",
     "**/*.test.ts",
     "sheriff.config.ts"
   ],

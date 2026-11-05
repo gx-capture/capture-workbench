@@ -8,6 +8,9 @@ import {
   catchError,
   concatMap,
   defaultIfEmpty,
+  defer,
+  finalize,
+  tap,
   fromEvent,
   map,
   of,
@@ -20,7 +23,9 @@ import {
 } from 'rxjs';
 
 import { DETERMINISTIC_MAX_UPLOAD_BYTES } from './constants/deterministic.ts';
-import { appRoot, stagedExecutable } from './stage-runtime.ts';
+import { appRoot } from './stage-runtime.ts';
+import { deterministicQaPaths } from './deterministic-qa.ts';
+const { stagedExecutable } = deterministicQaPaths;
 import { waitForReady } from './deterministic-http.ts';
 
 const workspaceRoot = resolve(appRoot, '..', '..');
@@ -33,11 +38,11 @@ const runtimeData = join(
 );
 const maxUploadBytes = DETERMINISTIC_MAX_UPLOAD_BYTES;
 
-export function launchReadyRuntime() {
+export function launchReadyRuntime(requestLogPath?: string) {
   const failures: string[] = [];
   return range(1, 3).pipe(
     concatMap((attempt) =>
-      launchAttempt().pipe(
+      launchAttempt(requestLogPath).pipe(
         catchError((error: unknown) => {
           failures.push(
             `attempt ${attempt}: ${error instanceof Error ? error.message : String(error)}`,
@@ -61,7 +66,7 @@ export function launchReadyRuntime() {
   );
 }
 
-function launchAttempt() {
+function launchAttempt(requestLogPath?: string) {
   return reservePort().pipe(
     concatMap((runtimePort) =>
       reservePort(runtimePort).pipe(
@@ -81,6 +86,7 @@ function launchAttempt() {
           windowsHide: true,
           env: {
             ...process.env,
+            ...(requestLogPath ? { CAPTURE_DETERMINISTIC_REQUEST_LOG: requestLogPath } : {}),
             CAPTURE_HOST: '127.0.0.1',
             CAPTURE_PORT: String(runtimePort),
             CAPTURE_API_TOKEN: token,
@@ -99,6 +105,8 @@ function launchAttempt() {
           },
         },
       );
+      let spawnError: Error | undefined;
+      child.on('error', (error) => { spawnError = error; });
       const output = captureChildOutput(child);
       return waitForReady({ runtimePort, host, origin, token, child }).pipe(
         map((ready) => ({ child, ready, runtimePort, ollamaPort, token, host, origin })),
@@ -108,7 +116,7 @@ function launchAttempt() {
               throwError(
                 () =>
                   new Error(
-                    `${error instanceof Error ? error.message : String(error)}${
+                    `${spawnError ? 'Deterministic runtime could not start.' : error instanceof Error ? error.message : String(error)}${
                       redactChildOutput(output.text(), token)
                         ? `; child output: ${redactChildOutput(output.text(), token)}`
                         : ''
@@ -170,15 +178,34 @@ function reservePort(excluded?: number): Observable<number> {
 }
 
 export function terminateOwnedTree(child: ReturnType<typeof spawn>): Observable<void> {
-  if (!child.pid || child.exitCode !== null) return of(undefined);
-  if (process.platform === 'win32') {
-    spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], {
-      stdio: 'ignore',
-      windowsHide: true,
-    });
-  } else {
-    child.kill('SIGTERM');
-  }
-  const exited = fromEvent(child, 'exit').pipe(take(1), map(() => undefined));
-  return race(exited, timer(2_000).pipe(map(() => undefined))).pipe(take(1));
+  const running = () => child.exitCode === null && child.signalCode === null;
+  const waitForExit = () => running() ? race(
+    fromEvent(child, 'exit').pipe(take(1), map(() => undefined)),
+    timer(2_000).pipe(map(() => undefined)),
+  ) : of(undefined);
+  return defer(() => {
+    if (!child.pid || !running()) return of(undefined);
+    if (process.platform === 'win32') {
+      const result = spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], {
+        stdio: 'ignore', windowsHide: true, timeout: 5_000,
+      });
+      if (result.error || result.status !== 0) child.kill('SIGKILL');
+    } else {
+      child.kill('SIGTERM');
+    }
+    return waitForExit().pipe(
+      concatMap(() => {
+        if (!running()) return of(undefined);
+        child.kill('SIGKILL');
+        return waitForExit();
+      }),
+      tap(() => {
+        if (running()) throw new Error('Deterministic runtime did not stop after forced termination.');
+      }),
+    );
+  }).pipe(finalize(() => {
+    child.stdout?.destroy();
+    child.stderr?.destroy();
+    child.unref();
+  }));
 }

@@ -14,6 +14,7 @@ import {
 } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { deterministicQaPaths } from './deterministic-qa.ts';
 import { MAX_RUNTIME_ARTIFACT_BYTES } from './constants/runtime.ts';
 import {
   Observable,
@@ -49,6 +50,11 @@ export const stageProvenance = join(
   'resources',
   '.runtime-stage.json',
 );
+
+const productExecutable = stagedExecutable;
+const productManifest = stagedManifest;
+const productSchema = stagedSchema;
+const productProvenance = stageProvenance;
 
 const expected = Object.freeze({
   manifestVersion: '1',
@@ -194,6 +200,9 @@ export function stageRuntime({
   if (!['release', 'deterministic'].includes(source)) {
     throw new Error('Runtime stage source must be release or deterministic.');
   }
+  const { stagedExecutable, stagedManifest, stagedSchema, stageProvenance } =
+    source === 'deterministic' ? deterministicQaPaths
+      : { stagedExecutable: productExecutable, stagedManifest: productManifest, stagedSchema: productSchema, stageProvenance: productProvenance };
   const resolvedArtifact = resolveInput(artifactPath);
   const resolvedManifest = resolveInput(manifestPath);
   const resolvedSchema = resolveInput(schemaPath);

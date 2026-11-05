@@ -1,13 +1,13 @@
 // eslint-disable-next-line @nx/enforce-module-boundaries -- repository tooling reads shared release intent.
 import { RELEASE_VERSION } from '../../../tools/release/release-intent.ts';
 import { randomBytes } from 'node:crypto';
-import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { concatMap, defer, from, map, Observable, finalize } from 'rxjs';
+import { catchError, concatMap, defer, from, map, throwError } from 'rxjs';
 
+import { deterministicQaTarget } from './deterministic-qa.ts';
 import { sha256File, stageRuntime } from './stage-runtime.ts';
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
@@ -15,7 +15,7 @@ const fixtureRoot = join(scriptDirectory, 'fixtures', 'deterministic-runtime');
 const fixtureManifest = join(fixtureRoot, 'Cargo.toml');
 const target = 'x86_64-pc-windows-msvc';
 
-export function stageDeterministicRuntime(): Observable<unknown> {
+export function stageDeterministicRuntime() {
   const build = spawnSync(
     'cargo',
     [
@@ -41,9 +41,10 @@ export function stageDeterministicRuntime(): Observable<unknown> {
     'release',
     'capture-runtime.exe',
   );
-  return defer(() => from(stat(executable))).pipe(
+  return defer(() => from(mkdir(deterministicQaTarget, { recursive: true }))).pipe(
+    concatMap(() => defer(() => from(stat(executable)))),
     concatMap((metadata) =>
-      defer(() => from(mkdtemp(join(tmpdir(), 'capture-workbench-runtime-')))).pipe(
+      defer(() => from(mkdtemp(join(deterministicQaTarget, 'fixture-')))).pipe(
         concatMap((temporary) => {
           const manifestPath = join(
             temporary,
@@ -92,9 +93,12 @@ export function stageDeterministicRuntime(): Observable<unknown> {
                 ),
               );
             }),
-            finalize(() => {
-              from(rm(temporary, { recursive: true, force: true })).subscribe();
-            }),
+            concatMap((result) => defer(() => from(rm(temporary, { recursive: true, force: true }))).pipe(
+              map(() => result),
+            )),
+            catchError((error) => defer(() => from(rm(temporary, { recursive: true, force: true }))).pipe(
+              concatMap(() => throwError(() => error)),
+            )),
           );
         }),
       ),
@@ -105,7 +109,7 @@ export function stageDeterministicRuntime(): Observable<unknown> {
 stageDeterministicRuntime().subscribe({
   next: ({ manifest }) => {
     process.stdout.write(
-      `Staged deterministic runtime ${manifest.runtimeVersion} for QA only.\n`,
+      `Staged QA ONLY fake runtime ${manifest.runtimeVersion} and fake data schema under target/deterministic-qa/staged.\n`,
     );
   },
   error: (error: unknown) => {

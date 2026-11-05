@@ -22,17 +22,18 @@ import {
 import { sha256File } from './stage-runtime.ts';
 import { assertStrictDescendant } from './contracts/installed.ts';
 
-export function expectedInstallerName(version) {
+export function expectedInstallerName(version, productName = 'Capture Workbench') {
   if (!/^\d+\.\d+\.\d+$/u.test(version)) {
     throw new Error('Expected installer version must be semantic x.y.z.');
   }
-  return `Capture Workbench_${version}_x64-setup.exe`;
+  return `${productName}_${version}_x64-setup.exe`;
 }
 
 export function createInstalledSmokeLifecycle({
   workspaceRoot,
   smokeRoot,
   nsisDirectory,
+  productName = 'Capture Workbench',
   terminateTrackedProcessTree,
 }) {
   function prepareSmokeDirectories() {
@@ -90,7 +91,7 @@ export function createInstalledSmokeLifecycle({
 
   function findDeterministicInstaller(expectedVersion) {
     const expectedName = expectedVersion
-      ? expectedInstallerName(expectedVersion)
+      ? expectedInstallerName(expectedVersion, productName)
       : undefined;
     return forkJoin({
       workspaceRealPath: defer(() => from(realpath(workspaceRoot))),
