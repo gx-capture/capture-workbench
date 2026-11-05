@@ -2,10 +2,10 @@ import { SheriffConfig } from '@softarc/sheriff-core';
 
 /**
  * Architecture rules for the Angular package and the desktop shell (DDD refactor
- * step W1, .agents/PLANS/ddd-refactor/). They describe today's technical folders
- * so that no new import points back up the chain
- * component → service → client → contract. Step W7 replaces them with one
- * module per bounded context.
+ * step W7, .agents/PLANS/ddd-refactor/). They organize the UI package and the
+ * desktop shell into feature modules aligned with ubiquitous language and
+ * enforce unidirectional dependencies:
+ * element → capture → installation → client / i18n → contracts / constants.
  */
 export const config: SheriffConfig = {
   enableBarrelLess: true,
@@ -16,13 +16,18 @@ export const config: SheriffConfig = {
   modules: {
     'packages/capture-workbench-ui/src': ['ui:public-api'],
     'packages/capture-workbench-ui/src/lib': ['ui:client'],
-    'packages/capture-workbench-ui/src/lib/capture-angular/components/<component>':
-      ['ui:component'],
-    'packages/capture-workbench-ui/src/lib/capture-angular/services/<service>':
-      ['ui:service'],
-    'packages/capture-workbench-ui/src/lib/capture-angular/i18n': ['ui:i18n'],
+    'packages/capture-workbench-ui/src/lib/element': ['ui:element'],
+    'packages/capture-workbench-ui/src/lib/capture-workflow': ['ui:capture'],
+    'packages/capture-workbench-ui/src/lib/installation': ['ui:installation'],
+    'packages/capture-workbench-ui/src/lib/i18n': ['ui:i18n'],
     'packages/capture-workbench-ui/src/lib/contracts': ['ui:contract'],
     'packages/capture-workbench-ui/src/lib/constants': ['ui:constant'],
+    'apps/capture-workbench/src/app/asr': ['shell:feature'],
+    'apps/capture-workbench/src/app/ocr': ['shell:feature'],
+    'apps/capture-workbench/src/app/history': ['shell:feature'],
+    'apps/capture-workbench/src/app/settings': ['shell:feature'],
+    'apps/capture-workbench/src/app/engine-card': ['shell:feature'],
+    'apps/capture-workbench/src/app/placeholder': ['shell:feature'],
     'apps/capture-workbench/src/app/services': ['shell:service'],
     'apps/capture-workbench/src/app/contracts': ['shell:contract'],
     'apps/capture-workbench/src/app/i18n': ['shell:i18n'],
@@ -32,18 +37,28 @@ export const config: SheriffConfig = {
   depRules: {
     root: ['shell:*', 'ui:public-api', 'sdk', 'root'],
     'ui:public-api': ['ui:*', 'sdk'],
-    'ui:component': [
-      'ui:component',
-      'ui:service',
+    'ui:element': [
+      'ui:element',
+      'ui:capture',
+      'ui:installation',
+      'ui:client',
+      'ui:contract',
+      'ui:constant',
+      'sdk',
+    ],
+    'ui:capture': [
+      'ui:capture',
+      'ui:installation',
       'ui:client',
       'ui:i18n',
       'ui:contract',
       'ui:constant',
       'sdk',
     ],
-    'ui:service': [
-      'ui:service',
+    'ui:installation': [
+      'ui:installation',
       'ui:client',
+      'ui:i18n',
       'ui:contract',
       'ui:constant',
       'sdk',
@@ -52,6 +67,15 @@ export const config: SheriffConfig = {
     'ui:i18n': ['ui:i18n', 'ui:contract', 'ui:constant'],
     'ui:contract': ['ui:contract', 'sdk'],
     'ui:constant': ['ui:constant', 'ui:contract', 'sdk'],
+    'shell:feature': [
+      'shell:feature',
+      'shell:service',
+      'shell:contract',
+      'shell:i18n',
+      'shell:ui',
+      'ui:public-api',
+      'sdk',
+    ],
     'shell:service': [
       'shell:service',
       'shell:contract',

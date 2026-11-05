@@ -1,0 +1,253 @@
+import { DestroyRef, Injectable, inject, signal } from '@angular/core';
+import {
+  EMPTY,
+  Observable,
+  Subscription,
+  catchError,
+  concatMap,
+  defer,
+  expand,
+  finalize,
+  of,
+  takeWhile,
+  tap,
+  throwError,
+} from 'rxjs';
+import {
+  type CaptureClient,
+  type RuntimeInstallation,
+  type RuntimeRequirement,
+} from '../contracts';
+import { MAX_INSTALLATIONS_PER_USER_ACTION } from '../constants';
+import {
+  errorMessage,
+  isAbortError,
+  redactFailure,
+  retryUncertainResponse,
+  throwIfAborted,
+} from '../capture-client-errors';
+
+const INSTALLATION_ORDER = new Map([
+  ['windowsml-ocr', 0],
+  ['speech-recognition', 1],
+  ['speaker-diarization', 2],
+  ['vertical-japanese-reader', 3],
+  ['ollama-runtime', 4],
+  ['capture-ollama-model', 5],
+]);
+
+@Injectable()
+export class CaptureRuntimeInstallationService {
+  private readonly destroyRef = inject(DestroyRef);
+  readonly installation = signal<RuntimeInstallation | null>(null);
+  readonly error = signal<string | undefined>(undefined);
+  private controller?: AbortController;
+  private installSubscription?: Subscription;
+
+  constructor() {
+    this.destroyRef.onDestroy(() => {
+      this.controller?.abort();
+      this.installSubscription?.unsubscribe();
+    });
+  }
+
+  clearError(): void {
+    this.error.set(undefined);
+  }
+
+  install(options: {
+    readonly client: CaptureClient | null;
+    readonly requirements: () => readonly RuntimeRequirement[];
+    readonly pollIntervalMs: () => number;
+    readonly reload: () => Observable<void>;
+  }): void {
+    const { client } = options;
+    if (!client || this.installation()) return;
+    const installable = () =>
+      options
+        .requirements()
+        .filter((requirement) => requirement.status === 'installable')
+        .slice()
+        .sort(
+          (left, right) =>
+            (INSTALLATION_ORDER.get(left.requirementId) ??
+              Number.MAX_SAFE_INTEGER) -
+            (INSTALLATION_ORDER.get(right.requirementId) ??
+              Number.MAX_SAFE_INTEGER),
+        );
+    if (installable().length === 0) return;
+
+    this.installSubscription?.unsubscribe();
+    this.controller = new AbortController();
+    const signal = this.controller.signal;
+    const completedRequirementIds = new Set<string>();
+    const requestIds = new Map<string, string>();
+    let installationsStarted = 0;
+
+    const installNext = (): Observable<void> =>
+      defer(() => {
+        throwIfAborted(signal);
+        const requirement = installable().find(
+          (candidate) => !completedRequirementIds.has(candidate.requirementId),
+        );
+        if (!requirement) {
+          if (
+            installationsStarted === MAX_INSTALLATIONS_PER_USER_ACTION &&
+            installable().some(
+              (candidate) =>
+                !completedRequirementIds.has(candidate.requirementId),
+            )
+          ) {
+            return throwError(
+              () =>
+                new Error(
+                  'Runtime installation stopped after reaching the safety limit.',
+                ),
+            );
+          }
+          return of(undefined);
+        }
+        if (installationsStarted >= MAX_INSTALLATIONS_PER_USER_ACTION) {
+          return throwError(
+            () =>
+              new Error(
+                'Runtime installation stopped after reaching the safety limit.',
+              ),
+          );
+        }
+
+        const request = {
+          clientRequestId:
+            requestIds.get(requirement.requirementId) ?? crypto.randomUUID(),
+          requirementId: requirement.requirementId,
+          consent: true,
+        } as const;
+        requestIds.set(requirement.requirementId, request.clientRequestId);
+        installationsStarted += 1;
+
+        return retryUncertainResponse(
+          () => client.startInstallation(request, signal),
+          signal,
+        ).pipe(
+          tap((installation) =>
+            this.installation.set(this.sanitizeInstallation(installation)),
+          ),
+          concatMap((installation) =>
+            pollInstallation(
+              client,
+              installation,
+              options.pollIntervalMs,
+              signal,
+              (current) =>
+                this.installation.set(this.sanitizeInstallation(current)),
+            ),
+          ),
+          concatMap((installation) => {
+            if (installation.status !== 'completed') return EMPTY;
+            completedRequirementIds.add(requirement.requirementId);
+            this.installation.set(null);
+            return options.reload();
+          }),
+          concatMap(() => installNext()),
+        );
+      });
+
+    this.installSubscription = installNext()
+      .pipe(
+        catchError((error: unknown) => {
+          if (!isAbortError(error)) {
+            this.error.set(errorMessage(error, 'Runtime installation failed.'));
+          }
+          return of(undefined);
+        }),
+        finalize(() => {
+          this.controller = undefined;
+          if (this.installation()?.status === 'completed')
+            this.installation.set(null);
+        }),
+      )
+      .subscribe();
+  }
+
+  cancel(client: CaptureClient | null): void {
+    const installation = this.installation();
+    if (!installation || !client) return;
+    this.controller?.abort();
+    client.cancelInstallation(installation.installationId).subscribe({
+      next: (canceled) =>
+        this.installation.set(this.sanitizeInstallation(canceled)),
+      error: (error: unknown) =>
+        this.error.set(
+          errorMessage(error, 'Unable to cancel runtime installation.'),
+        ),
+    });
+  }
+
+  private sanitizeInstallation(
+    installation: RuntimeInstallation,
+  ): RuntimeInstallation {
+    return installation.error
+      ? { ...installation, error: redactFailure(installation.error) }
+      : installation;
+  }
+}
+
+function pollInstallation(
+  client: CaptureClient,
+  initial: RuntimeInstallation,
+  pollIntervalMs: () => number,
+  signal: AbortSignal,
+  onInstallation: (installation: RuntimeInstallation) => void,
+): Observable<RuntimeInstallation> {
+  const read = (installationId: string): Observable<RuntimeInstallation> =>
+    abortableDelay(pollIntervalMs(), signal).pipe(
+      concatMap(() => client.getInstallation(installationId, signal)),
+    );
+
+  return of(initial).pipe(
+    tap(onInstallation),
+    expand((installation) =>
+      installation.status === 'queued' || installation.status === 'running'
+        ? read(installation.installationId)
+        : EMPTY,
+    ),
+    takeWhile(
+      (installation) =>
+        installation.status === 'queued' || installation.status === 'running',
+      true,
+    ),
+    tap(onInstallation),
+  );
+}
+
+function abortableDelay(
+  milliseconds: number,
+  signal: AbortSignal,
+): Observable<void> {
+  return new Observable<void>((subscriber) => {
+    if (signal.aborted) {
+      subscriber.error(createAbortError());
+      return;
+    }
+    const timeout = setTimeout(
+      () => {
+        subscriber.next();
+        subscriber.complete();
+      },
+      Math.max(0, milliseconds),
+    );
+    const abort = (): void => {
+      clearTimeout(timeout);
+      subscriber.error(createAbortError());
+    };
+    signal.addEventListener('abort', abort, { once: true });
+    return () => {
+      clearTimeout(timeout);
+      signal.removeEventListener('abort', abort);
+    };
+  });
+}
+
+function createAbortError(): DOMException {
+  return new DOMException('The operation was aborted.', 'AbortError');
+}
