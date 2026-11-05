@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -28,6 +27,7 @@ from capture_runtime._worker_payloads import (
 from capture_runtime._worker_payloads import (
     permille_handler as _permille_handler,
 )
+from capture_runtime.diarization.domain.turn.models import DiarizationResult
 from capture_runtime.diarization.infrastructure.speaker_turns import SPEAKER_LABEL, SpeakerTurn
 from capture_runtime.worker_client import InstalledEngine
 from capture_runtime.worker_process import DEFAULT_RUN_TIMEOUT_SECONDS, WorkerProcess
@@ -37,18 +37,7 @@ class _ProcessClient(Protocol):
     process: WorkerProcess
 
 
-@dataclass(frozen=True, slots=True)
-class WorkerDiarizationResult:
-    turns: tuple[SpeakerTurn, ...]
-    exclusive_turns: tuple[SpeakerTurn, ...]
-    duration_ms: int
-    engine: str
-    model: str
-    digest: str
-    device: str
-    warnings: tuple[str, ...]
-    elapsed_ms: int | None = None
-    stage_ms: dict[str, int] | None = None
+WorkerDiarizationResult = DiarizationResult
 
 
 def _parse_turns(value: object, duration_ms: int) -> tuple[SpeakerTurn, ...]:

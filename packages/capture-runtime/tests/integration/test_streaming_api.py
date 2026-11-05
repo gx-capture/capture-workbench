@@ -185,7 +185,7 @@ def test_pdf_page_progress_reaches_http_before_worker_terminal(
         assert client.get(f"/v2/captures/{capture_id}/raw").status_code == 409
         checkpoints = [
             event
-            for event in service.events(capture_id, after_sequence=0)
+            for event in service.events_use_case.execute(capture_id, after_sequence=0)
             if event.event_type.value == "checkpoint"
         ]
         # The page count arrives before the first page, then each page moves it.
@@ -223,7 +223,7 @@ def test_pdf_page_progress_reaches_http_before_worker_terminal(
             assert (final["pagesDone"], final["pagesTotal"]) == (2, 2)
             pages = [
                 (event.pages_done, event.pages_total)
-                for event in service.events(capture_id, after_sequence=0)
+                for event in service.events_use_case.execute(capture_id, after_sequence=0)
                 if event.pages_total is not None
             ]
             assert pages == [(0, 2), (1, 2), (2, 2)]
@@ -843,7 +843,7 @@ def test_non_contiguous_pdf_page_selection_keeps_source_page_numbers_end_to_end(
     assert [page["text"] for page in ocr.json()["pages"]] == [
         f"text of source page {page}" for page in selection
     ]
-    events = service.events(capture_id, after_sequence=0)
+    events = service.events_use_case.execute(capture_id, after_sequence=0)
     checkpoints = [event for event in events if event.event_type.value == "checkpoint"]
     # Progress counts the selected pages: 1 of 4 is a quarter of extraction,
     # after a first checkpoint that only says how many pages there are.
@@ -1563,7 +1563,9 @@ def test_host_proof_commit_persistence_failure_preserves_checkpoint_artifact(
 
     monkeypatch.setattr(service.repository, "commit_host_result", fail_commit)
     with pytest.raises(RuntimeError, match="persistence failure"):
-        service.commit_host_result(capture_id, candidate, idempotency_key="host-commit-failure")
+        service.commit_host_result_use_case.execute(
+            capture_id, candidate, idempotency_key="host-commit-failure"
+        )
 
     assert capture_id not in service._pending_execution_proofs
     _wait_for_proof_artifact(root)

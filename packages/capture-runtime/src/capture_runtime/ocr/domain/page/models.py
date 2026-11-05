@@ -3,7 +3,14 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
+
+from capture_runtime.ocr.domain.page.reading_order import (
+    ReadingPlan,
+    RegionLike,
+    plan_reading_order,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,32 +65,13 @@ class PageRegion:
 class PageReadingOrder:
     """Policy for ordering page text regions by reading direction."""
 
-    def order_regions(
+    def plan(
         self,
-        regions: tuple[PageRegion, ...],
+        regions: Sequence[RegionLike],
         *,
-        vertical: bool = False,
-    ) -> tuple[PageRegion, ...]:
-        if len(regions) <= 1:
-            return regions
-        if vertical:
-            # Vertical Japanese reading: columns right-to-left, lines top-to-bottom
-            def v_key(r: PageRegion) -> tuple[float, float]:
-                b = r.box
-                if not b:
-                    return (0.0, 0.0)
-                return (-(b[0] + b[2]), float(b[1]))
-
-            return tuple(sorted(regions, key=v_key))
-
-        # Horizontal: top-to-bottom, left-to-right
-        def h_key(r: PageRegion) -> tuple[float, float]:
-            b = r.box
-            if not b:
-                return (0.0, 0.0)
-            return (float(b[1]), float(b[0]))
-
-        return tuple(sorted(regions, key=h_key))
+        raw_source_slots: Sequence[tuple[int, int]] | None = None,
+    ) -> ReadingPlan:
+        return plan_reading_order(regions, raw_source_slots=raw_source_slots)
 
 
 @dataclass(frozen=True, slots=True)

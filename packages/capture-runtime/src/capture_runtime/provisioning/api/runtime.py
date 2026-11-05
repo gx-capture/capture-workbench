@@ -48,6 +48,9 @@ def register_runtime_routes(
 ) -> None:
     """Register readiness, requirement and installation endpoints."""
 
+    install_model = dependencies.model_installation_service.install_use_case
+    get_model_job = dependencies.model_installation_service.get_use_case
+    cancel_model_job = dependencies.model_installation_service.cancel_use_case
     install_requirement = InstallRequirement(dependencies.installation_service)
     cancel_installation_uc = CancelInstallation(dependencies.installation_service)
     get_installation_uc = GetInstallation(dependencies.installation_service)
@@ -234,7 +237,7 @@ def register_runtime_routes(
             raise ApiProblem(422, "model_option_unknown", "The model option is not allowlisted.")
         fingerprint = request_fingerprint(payload.model_dump(mode="json", by_alias=True))
         try:
-            return dependencies.model_installation_service.create(
+            return install_model.execute(
                 idempotency_key=str(idempotency_key),
                 request_fingerprint=fingerprint,
                 option_id=payload.option_id,
@@ -252,7 +255,7 @@ def register_runtime_routes(
     )
     async def get_model_installation(installation_id: str) -> RuntimeModelInstallationV2:
         try:
-            return dependencies.model_installation_service.get(installation_id)
+            return get_model_job.execute(installation_id)
         except RecordNotFoundError as error:
             raise ApiProblem(
                 404, "installation_not_found", "Model installation job was not found."
@@ -264,7 +267,7 @@ def register_runtime_routes(
     )
     async def cancel_model_installation(installation_id: str) -> RuntimeModelInstallationV2:
         try:
-            return await dependencies.model_installation_service.cancel(installation_id)
+            return await cancel_model_job.execute(installation_id)
         except RecordNotFoundError as error:
             raise ApiProblem(
                 404, "installation_not_found", "Model installation job was not found."

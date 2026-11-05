@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from capture_runtime.contracts import CaptureEngine
+
 MAX_PROGRESSIVE_WINDOW_BYTES = 4 * 1024 * 1024
 DEFAULT_WINDOW_MS = 120_000
 DEFAULT_OVERLAP_MS = 30_000
@@ -47,16 +49,33 @@ class WindowSlicingPolicy:
     def step_ms(self) -> int:
         return self.window_ms - self.overlap_ms
 
-    def compute_windows(self, total_duration_ms: int) -> tuple[tuple[int, int], ...]:
+    def compute_windows(
+        self, total_duration_ms: int, *, start_ms: int = 0, include_partial: bool = True
+    ) -> tuple[tuple[int, int], ...]:
         if total_duration_ms <= 0:
             return ()
         windows: list[tuple[int, int]] = []
-        start = 0
+        start = start_ms
         step = self.step_ms
         while start < total_duration_ms:
             end = min(start + self.window_ms, total_duration_ms)
-            windows.append((start, end))
+            if include_partial or end - start == self.window_ms:
+                windows.append((start, end))
             if end == total_duration_ms:
                 break
             start += step
         return tuple(windows)
+
+
+@dataclass(frozen=True, slots=True)
+class WindowTranscriptSegment:
+    start_ms: int
+    end_ms: int
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
+class WindowTranscript:
+    segments: tuple[WindowTranscriptSegment, ...]
+    extraction_engine: CaptureEngine
+    warnings: tuple[str, ...] = ()

@@ -22,6 +22,7 @@ from capture_runtime.ocr.domain import (
     PageRegion,
     SessionDeviceProof,
 )
+from capture_runtime.ocr.domain.compute_plan import ComputeCandidate
 from capture_runtime.ocr.infrastructure.ocr_page_result import (
     OcrRegion,
     OcrTextResult,
@@ -59,22 +60,23 @@ def test_compute_plan_invariants_and_policy() -> None:
         )
 
     policy = ComputePlanPolicy()
-    gpu_plan = policy.evaluate(
-        has_compatible_gpu=True,
-        dml_available=True,
-        device_name="RTX",
-        device_id=0,
-    )
+    gpu = ComputeCandidate(0, "dedicated", "positive-usable", True)
+    gpu_plan = policy.evaluate((gpu,), dml_available=True, require_identity=True)
     assert gpu_plan.compute_mode == "gpu-dml"
-    assert gpu_plan.device_name == "RTX"
-
-    no_gpu_plan = policy.evaluate(has_compatible_gpu=False, dml_available=False)
-    assert no_gpu_plan.compute_mode == "cpu-fallback"
-    assert no_gpu_plan.reason == "no_compatible_gpu"
-
-    no_dml_plan = policy.evaluate(has_compatible_gpu=True, dml_available=False)
-    assert no_dml_plan.compute_mode == "cpu-fallback"
-    assert no_dml_plan.reason == "dml_provider_unavailable"
+    assert gpu_plan.device_id == 0
+    assert policy.evaluate((), dml_available=False).reason == "no_compatible_gpu"
+    unavailable = ComputeCandidate(0, "dedicated", "positive-unavailable", True)
+    assert policy.evaluate((unavailable,), dml_available=False).reason == "dml_provider_unavailable"
+    unknown = ComputeCandidate(1, "unknown", "indeterminate", False)
+    assert policy.evaluate((unknown, gpu), dml_available=True) is None
+    assert (
+        policy.evaluate(
+            (ComputeCandidate(0, "dedicated", "positive-usable", False),),
+            dml_available=True,
+            require_identity=True,
+        )
+        is None
+    )
 
 
 def test_bounding_box_invariants() -> None:
@@ -115,23 +117,17 @@ def test_page_region_invariants_and_box() -> None:
 
 
 def test_page_reading_order() -> None:
-    order = PageReadingOrder()
-    r1 = PageRegion(text="1", polygon=((10.0, 10.0), (20.0, 10.0), (20.0, 20.0), (10.0, 20.0)))
-    r2 = PageRegion(text="2", polygon=((30.0, 10.0), (40.0, 10.0), (40.0, 20.0), (30.0, 20.0)))
-    r3 = PageRegion(text="3", polygon=((10.0, 30.0), (20.0, 30.0), (20.0, 40.0), (10.0, 40.0)))
-
-    # Empty / single
-    assert order.order_regions(()) == ()
-    assert order.order_regions((r1,)) == (r1,)
-
-    # Horizontal: r1 (10, 10), r2 (30, 10), r3 (10, 30)
-    ordered_h = order.order_regions((r3, r2, r1), vertical=False)
-    assert [r.text for r in ordered_h] == ["1", "2", "3"]
-
-    # Vertical Japanese (right to left, top to bottom)
-    ordered_v = order.order_regions((r1, r2, r3), vertical=True)
-    # r2 has larger right x (40) -> comes first
-    assert [r.text for r in ordered_v] == ["2", "1", "3"]
+    left = PageRegion(
+        text="\u5de6", polygon=((10.0, 0.0), (20.0, 0.0), (20.0, 150.0), (10.0, 150.0))
+    )
+    right = PageRegion(
+        text="\u53f3", polygon=((50.0, 0.0), (60.0, 0.0), (60.0, 150.0), (50.0, 150.0))
+    )
+    plan = PageReadingOrder().plan((left, right))
+    assert plan.order == (1, 0)
+    assert plan.applied
+    assert OrderPageRegions().execute((left, right)) == plan
+    assert PageReadingOrder().plan(()).order == ()
 
 
 def test_ocr_page_invariants() -> None:
@@ -185,7 +181,7 @@ def test_execution_evidence_invariants() -> None:
         source="ort-profile",
         session_device_proofs=(proof0, proof1),
     )
-    assert evidence.is_pure_dml
+    assert VerifyExecutionEvidence().execute(evidence)
 
     with pytest.raises(ValueError, match="session index must be a non-negative integer"):
         SessionDeviceProof(session_index=-1, dml_node_count=5)
@@ -199,7 +195,7 @@ def test_execution_evidence_invariants() -> None:
     with pytest.raises(ValueError, match="session fallback must be disabled"):
         SessionDeviceProof(session_index=0, dml_node_count=1, fallback_disabled=False)
 
-    with pytest.raises(ValueError, match="node counts must be non-negative"):
+    with pytest.raises(ValueError, match="must be a non-negative integer"):
         DirectMlExecutionEvidence(dml_node_count=-1)
 
     with pytest.raises(ValueError, match="execution evidence source must be non-empty"):
@@ -221,7 +217,9 @@ def test_execution_evidence_invariants() -> None:
 def test_use_cases() -> None:
     # 1. SelectComputePlan
     uc_plan = SelectComputePlan()
-    plan = uc_plan.execute(has_compatible_gpu=True, dml_available=True, device_name="GPU")
+    plan = uc_plan.execute(
+        (ComputeCandidate(0, "dedicated", "positive-usable", True),), dml_available=True
+    )
     assert plan.compute_mode == "gpu-dml"
 
     # 2. ExtractPageText
@@ -243,20 +241,21 @@ def test_use_cases() -> None:
         raster_scale=1.0,
     )
     uc_extract = ExtractPageText(mock_adapter)
-    page = uc_extract.execute(b"fake_png", page_number=2)
+    extracted = uc_extract.execute(b"fake_png", page_number=2)
+    page = extracted.domain_page
+    assert extracted.result is mock_adapter.extract_png.return_value
     assert page.page_number == 2
     assert page.text == "Extracted text"
     assert len(page.regions) == 1
-
-    # 3. OrderPageRegions
-    uc_order = OrderPageRegions()
-    r1 = PageRegion(text="A", polygon=((10.0, 10.0), (20.0, 10.0)))
-    r2 = PageRegion(text="B", polygon=((0.0, 10.0), (5.0, 10.0)))
-    ordered = uc_order.execute((r1, r2))
-    assert [r.text for r in ordered] == ["B", "A"]
 
     # 4. VerifyExecutionEvidence
     uc_evidence = VerifyExecutionEvidence()
     proof = SessionDeviceProof(session_index=0, dml_node_count=8)
     ev = DirectMlExecutionEvidence(dml_node_count=8, session_device_proofs=(proof,))
     assert uc_evidence.execute(ev) is True
+
+
+def test_execution_evidence_retains_cpu_bookkeeping_but_requires_real_dml_work() -> None:
+    verify = VerifyExecutionEvidence()
+    assert verify.execute(DirectMlExecutionEvidence(dml_node_count=4, cpu_node_count=2))
+    assert not verify.execute(DirectMlExecutionEvidence(dml_node_count=0, cpu_node_count=8))

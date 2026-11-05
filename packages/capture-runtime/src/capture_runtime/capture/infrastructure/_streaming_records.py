@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+from capture_runtime.capture.domain.ingestion.models import Ingestion
 from capture_runtime.contracts import (
     CaptureOperationV2,
     CaptureSourceKind,
@@ -27,6 +28,19 @@ class _IngestionRecord:
     next_offset: int = 0
     accepted_chunks: dict[int, tuple[int, int, str]] = field(default_factory=dict)
     finalized_sha256: str | None = None
+
+    def domain(self) -> Ingestion:
+        return Ingestion(
+            ingestion_id=self.ingestion_id,
+            kind=self.request.kind,
+            mode=self.request.mode,
+            status=self.status,
+            received_bytes=self.next_offset,
+            expected_total_bytes=self.request.total_bytes,
+            expected_sha256=self.request.source_sha256,
+            next_chunk_index=self.next_chunk_index,
+            finalized_sha256=self.finalized_sha256,
+        )
 
     def snapshot(self) -> IngestionV2:
         return IngestionV2(

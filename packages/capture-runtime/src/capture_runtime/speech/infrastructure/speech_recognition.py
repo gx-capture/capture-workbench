@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from capture_runtime.japanese_kanji import TABLE as JAPANESE_KANJI
+from capture_runtime.speech.application.use_cases import DetectRepetitionLoop
 from capture_runtime.speech.domain import (
     LOOP_MAX_PERIOD,
     LOOP_REPEATS,
@@ -182,11 +183,11 @@ class _LoopStop:
     def __init__(self, policy: RepetitionLoopPolicy | None = None) -> None:
         self.tokens: list[int] = []
         self.stopped = False
-        self._policy = policy or RepetitionLoopPolicy()
+        self._detector = DetectRepetitionLoop(policy)
 
     def __call__(self, input_ids: Any, *_args: Any, **_kwargs: Any) -> bool:
         self.tokens.append(int(input_ids[0, -1]))
-        if self._policy.is_repeating_sequence(self.tokens):
+        if self._detector.execute(self.tokens):
             self.stopped = True
             return True
         return False

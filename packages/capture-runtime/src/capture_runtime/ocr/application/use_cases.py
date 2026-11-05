@@ -2,27 +2,72 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol
+from collections.abc import Sequence
+from dataclasses import dataclass
+from typing import Protocol
 
 from capture_runtime.ocr.domain.compute_plan import (
+    ComputeCandidate,
     ComputePlanPolicy,
     ComputePlanSelection,
 )
 from capture_runtime.ocr.domain.evidence import DirectMlExecutionEvidence
+from capture_runtime.ocr.domain.evidence.models import has_dml_execution
 from capture_runtime.ocr.domain.page import (
     OcrPage,
     PageReadingOrder,
     PageRegion,
 )
-
-if TYPE_CHECKING:
-    from capture_runtime.ocr.infrastructure.ocr_page_result import OcrTextResult
+from capture_runtime.ocr.domain.page.reading_order import ReadingPlan, RegionLike
 
 
-class PageOcrAdapter(Protocol):
-    """Protocol for reading a page raster with an OCR model."""
+class PageTextResult(Protocol):
+    @property
+    def text(self) -> str: ...
+    @property
+    def regions(self) -> tuple[PageRegion, ...]: ...
+    @property
+    def raster_width(self) -> int | None: ...
+    @property
+    def raster_height(self) -> int | None: ...
+    @property
+    def raster_scale(self) -> float: ...
 
-    def extract_png(self, image_png: bytes) -> OcrTextResult: ...
+
+class PageOcrAdapter[Result: PageTextResult](Protocol):
+    """An OCR port expressed in domain values, independent of adapter implementation."""
+
+    def extract_png(self, image_png: bytes) -> Result: ...
+
+
+@dataclass(frozen=True, slots=True)
+class ExtractedPage[Result: PageTextResult]:
+    domain_page: OcrPage
+    result: Result
+
+    @property
+    def text(self) -> str:
+        return self.domain_page.text
+
+    @property
+    def regions(self) -> tuple[PageRegion, ...]:
+        return self.domain_page.regions
+
+    @property
+    def raster_width(self) -> int | None:
+        return self.domain_page.raster_width
+
+    @property
+    def raster_height(self) -> int | None:
+        return self.domain_page.raster_height
+
+    @property
+    def raster_scale(self) -> float:
+        return self.domain_page.raster_scale
+
+    def __getattr__(self, name: str) -> object:
+        # Adapter-only audit metadata remains opaque to the application.
+        return getattr(self.result, name)
 
 
 class SelectComputePlan:
@@ -33,28 +78,23 @@ class SelectComputePlan:
 
     def execute(
         self,
-        has_compatible_gpu: bool,
+        candidates: tuple[ComputeCandidate, ...],
+        *,
         dml_available: bool,
-        adapter_class: str = "dedicated",
-        device_name: str | None = None,
-        device_id: int | None = None,
-    ) -> ComputePlanSelection:
+        require_identity: bool = False,
+    ) -> ComputePlanSelection | None:
         return self._policy.evaluate(
-            has_compatible_gpu,
-            dml_available,
-            adapter_class=adapter_class,
-            device_name=device_name,
-            device_id=device_id,
+            candidates, dml_available=dml_available, require_identity=require_identity
         )
 
 
-class ExtractPageText:
+class ExtractPageText[Result: PageTextResult]:
     """Read a document page image through OCR adapter and return an OcrPage aggregate."""
 
-    def __init__(self, adapter: PageOcrAdapter) -> None:
+    def __init__(self, adapter: PageOcrAdapter[Result]) -> None:
         self._adapter = adapter
 
-    def execute(self, image_png: bytes, page_number: int = 1) -> OcrPage:
+    def execute(self, image_png: bytes, page_number: int = 1) -> ExtractedPage[Result]:
         result = self._adapter.extract_png(image_png)
         regions = tuple(
             PageRegion(text=r.text, confidence=r.confidence, polygon=r.polygon)
@@ -62,7 +102,7 @@ class ExtractPageText:
         )
         for r in regions:
             _ = r.box
-        return OcrPage(
+        page = OcrPage(
             page_number=page_number,
             regions=regions,
             text=result.text,
@@ -70,6 +110,7 @@ class ExtractPageText:
             raster_height=result.raster_height,
             raster_scale=result.raster_scale,
         )
+        return ExtractedPage(domain_page=page, result=result)
 
 
 class OrderPageRegions:
@@ -80,11 +121,11 @@ class OrderPageRegions:
 
     def execute(
         self,
-        regions: tuple[PageRegion, ...],
+        regions: Sequence[RegionLike],
         *,
-        vertical: bool = False,
-    ) -> tuple[PageRegion, ...]:
-        return self._reading_order.order_regions(regions, vertical=vertical)
+        raw_source_slots: Sequence[tuple[int, int]] | None = None,
+    ) -> ReadingPlan:
+        return self._reading_order.plan(regions, raw_source_slots=raw_source_slots)
 
 
 class VerifyExecutionEvidence:
@@ -94,7 +135,7 @@ class VerifyExecutionEvidence:
         self,
         evidence: DirectMlExecutionEvidence,
     ) -> bool:
-        return evidence.is_pure_dml
+        return has_dml_execution(evidence)
 
 
 __all__ = [

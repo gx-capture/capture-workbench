@@ -71,3 +71,32 @@ def documented_use_cases(context: str) -> set[str]:
         if line.lstrip().startswith("|") and len(cells) >= 2:
             names.update(_CODE_NAME.findall(cells[1]))
     return names
+
+
+def contract_concept_values() -> dict[str, set[str]]:
+    """Read finite contract values from code and the canonical worker policy."""
+    import inspect
+    import json
+    from enum import Enum
+    from typing import get_args
+
+    from capture_runtime import contracts
+    from capture_runtime.problem_registry import DEFAULT_PROBLEM_REGISTRY
+
+    expected = {
+        name: {str(member.value) for member in value}
+        for name, value in vars(contracts).items()
+        if inspect.isclass(value)
+        and issubclass(value, Enum)
+        and value.__module__ == contracts.__name__
+    }
+    expected["CaptureRequirementId"] = set(get_args(contracts.CaptureRequirementId))
+    for model in (contracts.CaptureBlock, contracts.StructuringSemanticBlockV2):
+        expected[f"{model.__name__}.type"] = set(get_args(model.model_fields["type"].annotation))
+    policy = json.loads(
+        (SOURCE_ROOT / "assets" / "worker-stage-policy.json").read_text(encoding="utf-8")
+    )
+    expected["WorkerStage"] = set(policy["exactStages"])
+    expected["WorkerStageFamily"] = set(policy["familyPatterns"])
+    expected["ProblemCode"] = set(DEFAULT_PROBLEM_REGISTRY.definitions)
+    return expected

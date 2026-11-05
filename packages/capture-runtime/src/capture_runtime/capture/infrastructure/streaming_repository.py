@@ -6,13 +6,15 @@ import hashlib
 import json
 import re
 import threading
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
 from pydantic import ValidationError
 
+from capture_runtime.capture.domain.ingestion.models import IngestionChunk, IngestionTransitionError
+from capture_runtime.capture.domain.operation.models import CaptureTransitionError
 from capture_runtime.capture.infrastructure._streaming_persistence import (
     _atomic_json,
     _file_sha256,
@@ -32,6 +34,7 @@ from capture_runtime.capture.infrastructure._streaming_transitions import (
     _mark_awaiting_structuring,
     _mark_ingestion_ready,
     _mark_structuring,
+    operation_domain,
 )
 from capture_runtime.clock import Clock
 from capture_runtime.contracts import (
@@ -50,7 +53,6 @@ from capture_runtime.contracts import (
     StreamingCaptureStatus,
     StreamingEventType,
     StreamingIngestionStatus,
-    StructuringMode,
 )
 
 
@@ -62,8 +64,7 @@ class StreamingIdempotencyConflictError(ValueError):
     pass
 
 
-class StreamingTransitionError(ValueError):
-    pass
+StreamingTransitionError = CaptureTransitionError
 
 
 class StreamingPartialNotFoundError(StreamingRecordNotFoundError):
@@ -168,32 +169,27 @@ class StreamingRepository:
     ) -> IngestionV2:
         with self._lock:
             record = self._get_ingestion(ingestion_id)
-            if record.status is not StreamingIngestionStatus.OPEN:
-                raise StreamingTransitionError("ingestion is not open")
-            if chunk_index < 0 or byte_offset < 0 or not data:
-                raise StreamingTransitionError("chunk metadata is invalid")
-            if len(data) > max_chunk_bytes:
-                raise StreamingTransitionError("chunk exceeds the configured limit")
-            if declared_total_bytes != record.request.total_bytes:
-                raise StreamingTransitionError("chunk total bytes conflict with ingestion")
-            actual_sha256 = hashlib.sha256(data).hexdigest()
-            if sha256 != actual_sha256:
-                raise StreamingTransitionError("chunk checksum does not match bytes")
-            if chunk_index < record.next_chunk_index:
+            try:
+                chunk = IngestionChunk(chunk_index, byte_offset, len(data), sha256)
+                current = record.domain()
                 accepted = record.accepted_chunks.get(chunk_index)
-                if accepted == (byte_offset, len(data), sha256):
-                    return self._ingestion_snapshot(record)
-                raise StreamingTransitionError("chunk conflicts with an accepted chunk")
-            if chunk_index != record.next_chunk_index or byte_offset != record.next_offset:
-                raise StreamingTransitionError("chunks must be contiguous and ordered")
-            if record.next_offset + len(data) > record.request.total_bytes:
-                raise StreamingTransitionError("chunks exceed declared source size")
+                updated = current.append(
+                    chunk,
+                    actual_sha256=hashlib.sha256(data).hexdigest(),
+                    declared_total_bytes=declared_total_bytes,
+                    max_chunk_bytes=max_chunk_bytes,
+                    accepted_chunk=IngestionChunk(chunk_index, *accepted) if accepted else None,
+                )
+            except ValueError as error:
+                raise StreamingTransitionError(str(error)) from error
+            if updated is current:
+                return self._ingestion_snapshot(record)
             self._persistence.append_source(
                 self._ingestion_directory(ingestion_id) / "source.bin", data
             )
             record.accepted_chunks[chunk_index] = (byte_offset, len(data), sha256)
-            record.next_chunk_index += 1
-            record.next_offset += len(data)
+            record.next_chunk_index = updated.next_chunk_index
+            record.next_offset = updated.received_bytes
             self._persist_ingestion(record)
             return self._ingestion_snapshot(record)
 
@@ -206,21 +202,23 @@ class StreamingRepository:
     ) -> IngestionV2:
         with self._lock:
             record = self._get_ingestion(ingestion_id)
-            if record.status is StreamingIngestionStatus.READY:
-                if record.finalized_sha256 == sha256 and total_bytes == record.next_offset:
-                    return self._ingestion_snapshot(record)
-                raise StreamingTransitionError("finalize conflicts with existing source")
-            if record.status is not StreamingIngestionStatus.OPEN:
-                raise StreamingTransitionError("ingestion is not open")
-            if total_bytes != record.request.total_bytes or total_bytes != record.next_offset:
-                raise StreamingTransitionError("final byte count does not match upload")
-            actual_sha256 = _file_sha256(self._ingestion_directory(ingestion_id) / "source.bin")
-            if sha256 != actual_sha256 or (
-                record.request.source_sha256 is not None and record.request.source_sha256 != sha256
-            ):
-                raise StreamingTransitionError("final source checksum does not match upload")
-            record.status = StreamingIngestionStatus.READY
-            record.finalized_sha256 = sha256
+            current = record.domain()
+            # Replay is a metadata decision; do not reread a previously finalized source.
+            actual_sha256 = (
+                record.finalized_sha256
+                if record.status is StreamingIngestionStatus.READY
+                else _file_sha256(self._ingestion_directory(ingestion_id) / "source.bin")
+            )
+            try:
+                updated = current.finalize(
+                    total_bytes=total_bytes, sha256=sha256, actual_sha256=actual_sha256 or ""
+                )
+            except IngestionTransitionError as error:
+                raise StreamingTransitionError(str(error)) from error
+            if updated is current:
+                return self._ingestion_snapshot(record)
+            record.status = updated.status
+            record.finalized_sha256 = updated.finalized_sha256
             self._persist_ingestion(record)
             return self._ingestion_snapshot(record)
 
@@ -319,6 +317,8 @@ class StreamingRepository:
         progress: float | None = None,
         pages: tuple[int, int] | None = None,
         duration_ms: int | None = None,
+        _terminal_transition: bool = False,
+        _created_at: datetime | None = None,
     ) -> CaptureEventV2:
         """Append an event and fold its progress into the operation.
 
@@ -328,7 +328,13 @@ class StreamingRepository:
         """
         with self._lock:
             record = self._get_capture(capture_id)
-            sequence = record.operation.last_event_sequence + 1
+            domain = operation_domain(record.operation).record_event(
+                event_type,
+                progress=progress,
+                partial_revision=partial_revision,
+                terminal_transition=_terminal_transition,
+            )
+            sequence = domain.last_event_sequence
             event = CaptureEventV2(
                 event_id=f"{capture_id}/{sequence}",
                 sequence=sequence,
@@ -341,7 +347,7 @@ class StreamingRepository:
                 covered_until_ms=covered_until_ms,
                 segments=segments or [],
                 error=error,
-                created_at=self._clock.now(),
+                created_at=_created_at or self._clock.now(),
                 pages_done=None if pages is None else pages[0],
                 pages_total=None if pages is None else pages[1],
                 duration_ms=duration_ms,
@@ -353,12 +359,8 @@ class StreamingRepository:
                 {
                     **operation.model_dump(),
                     "last_event_sequence": sequence,
-                    "partial_revision": max(operation.partial_revision, partial_revision or 0),
-                    "progress": (
-                        operation.progress
-                        if progress is None
-                        else max(operation.progress or 0, progress)
-                    ),
+                    "partial_revision": domain.partial_revision,
+                    "progress": domain.progress,
                     **_progress_update(operation, event),
                     "updated_at": self._clock.now(),
                 }
@@ -488,26 +490,16 @@ class StreamingRepository:
                 ):
                     return record.operation
                 raise StreamingIdempotencyConflictError(idempotency_key)
-            if (
-                record.request.structuring_mode is not StructuringMode.HOST
-                or record.operation.status is not StreamingCaptureStatus.AWAITING_STRUCTURING
-            ):
-                raise StreamingTransitionError("capture is no longer awaiting host structuring")
+            operation_domain(record.operation).require_host_structuring(
+                record.request.structuring_mode
+            )
             _atomic_json(
                 self._capture_directory(capture_id) / "result.json",
                 result.model_dump(mode="json", by_alias=True),
             )
             record.commit_idempotency_key = idempotency_key
             record.commit_fingerprint = fingerprint
-            now = result.completed_at
-            record.operation = _complete_capture(record.operation, now=now)
-            self._persist_capture(record)
-            self.append_event(
-                capture_id,
-                event_type=StreamingEventType.COMPLETED,
-                stage="completed",
-            )
-            return record.operation
+            return self._complete_capture_locked(record, now=result.completed_at)
 
     def read_result(self, capture_id: str) -> CaptureDocument:
         with self._lock:
@@ -540,10 +532,9 @@ class StreamingRepository:
     def mark_structuring(self, capture_id: str) -> CaptureOperationV2:
         with self._lock:
             record = self._get_capture(capture_id)
-            if record.operation.status is StreamingCaptureStatus.STRUCTURING:
+            domain = operation_domain(record.operation).begin_structuring()
+            if domain.status is record.operation.status:
                 return record.operation
-            if record.operation.status is not StreamingCaptureStatus.AWAITING_STRUCTURING:
-                raise StreamingTransitionError("capture is not awaiting structuring")
             now = self._clock.now()
             record.operation = _mark_structuring(record.operation, now=now)
             self._persist_capture(record)
@@ -566,11 +557,9 @@ class StreamingRepository:
                 ):
                     return record.operation
                 raise StreamingIdempotencyConflictError(idempotency_key)
-            if (
-                record.request.structuring_mode is not StructuringMode.HOST
-                or record.operation.status is not StreamingCaptureStatus.AWAITING_STRUCTURING
-            ):
-                raise StreamingTransitionError("capture is no longer awaiting host structuring")
+            operation_domain(record.operation).require_host_structuring(
+                record.request.structuring_mode
+            )
             record.failure_idempotency_key = idempotency_key
             record.failure_fingerprint = fingerprint
             return self._fail_capture_locked(record, failure)
@@ -578,19 +567,24 @@ class StreamingRepository:
     def complete_capture(self, capture_id: str) -> CaptureOperationV2:
         with self._lock:
             record = self._get_capture(capture_id)
-            if record.operation.status is StreamingCaptureStatus.COMPLETED:
+            if record.operation.status in _TERMINAL_CAPTURE_STATUSES:
                 return record.operation
-            if record.operation.status is StreamingCaptureStatus.CANCELLED:
-                return record.operation
-            now = self._clock.now()
-            record.operation = _complete_capture(record.operation, now=now)
-            self._persist_capture(record)
-            self.append_event(
-                capture_id,
-                event_type=StreamingEventType.COMPLETED,
-                stage="completed",
-            )
-            return record.operation
+            return self._complete_capture_locked(record, now=self._clock.now())
+
+    def _complete_capture_locked(
+        self, record: _CaptureRecord, *, now: datetime
+    ) -> CaptureOperationV2:
+        record.operation = _complete_capture(record.operation, now=now)
+        self._persist_capture(record)
+        event = operation_domain(record.operation).completed_event(now)
+        self.append_event(
+            event.capture_id,
+            event_type=StreamingEventType.COMPLETED,
+            _terminal_transition=True,
+            _created_at=event.completed_at,
+            stage="completed",
+        )
+        return record.operation
 
     def fail_capture(self, capture_id: str, failure: CaptureFailureV2) -> CaptureOperationV2:
         with self._lock:
@@ -607,6 +601,7 @@ class StreamingRepository:
         self.append_event(
             record.operation.capture_id,
             event_type=StreamingEventType.FAILED,
+            _terminal_transition=True,
             stage=failure.stage or "failed",
             error=failure,
         )
@@ -635,6 +630,7 @@ class StreamingRepository:
             self.append_event(
                 capture_id,
                 event_type=StreamingEventType.CANCELLED,
+                _terminal_transition=True,
                 stage="cancelled",
             )
             return record.operation

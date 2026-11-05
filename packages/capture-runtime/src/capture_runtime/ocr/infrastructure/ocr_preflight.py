@@ -25,6 +25,8 @@ from capture_runtime.contracts import (
     OcrComputePreflightV2,
     OcrComputeReasonCode,
 )
+from capture_runtime.ocr.application.use_cases import SelectComputePlan
+from capture_runtime.ocr.domain.compute_plan.models import ComputeCandidate
 
 _DXGI_ADAPTER_FLAG_SOFTWARE = 0x2
 _DXGI_ERROR_NOT_FOUND = 0x887A0002
@@ -620,36 +622,40 @@ class OcrComputePlan:
             )
         except (TypeError, ValueError):
             return None
-        # A candidate is eligible only after all potentially higher-priority
-        # candidates are positively unavailable.  Indeterminate evidence can
-        # never be accumulated into CPU fallback.
         ordered = sorted(hardware, key=_adapter_sort_key)
-        for candidate in ordered:
-            assessment = self._assessment(candidate, snapshot)
-            if assessment == "indeterminate":
-                return None
-            if assessment == "positive-usable":
-                if structured and candidate.luid is None:
-                    return None
-                try:
-                    return self._selection(
-                        candidate,
-                        snapshot,
-                        selection_source="automatic",
-                        adapter_map_sha256=map_digest,
-                        structured=structured,
-                    )
-                except (TypeError, ValueError):
-                    return None
-        if any(self._assessment(item, snapshot) == "indeterminate" for item in hardware):
-            return None
-        reason = (
-            OcrComputeReasonCode.DML_PROVIDER_UNAVAILABLE
-            if hardware and not snapshot.dml_provider_available
-            else OcrComputeReasonCode.NO_COMPATIBLE_GPU
+        decision = SelectComputePlan().execute(
+            tuple(
+                ComputeCandidate(
+                    item.index,
+                    item.adapter_class.value,
+                    self._assessment(item, snapshot),
+                    item.luid is not None,
+                )
+                for item in ordered
+            ),
+            dml_available=snapshot.dml_provider_available,
+            require_identity=structured,
         )
-        cpu_class = hardware[0].adapter_class if len(hardware) == 1 else OcrAdapterClass.UNKNOWN
-        return self._cpu_selection(snapshot, reason, map_digest, adapter_class=cpu_class)
+        if decision is None:
+            return None
+        if decision.compute_mode == "gpu-dml":
+            candidate = next(item for item in hardware if item.index == decision.device_id)
+            try:
+                return self._selection(
+                    candidate,
+                    snapshot,
+                    selection_source="automatic",
+                    adapter_map_sha256=map_digest,
+                    structured=structured,
+                )
+            except (TypeError, ValueError):
+                return None
+        return self._cpu_selection(
+            snapshot,
+            OcrComputeReasonCode(decision.reason or "no_compatible_gpu"),
+            map_digest,
+            adapter_class=OcrAdapterClass(decision.adapter_class),
+        )
 
     def _assessment(
         self,

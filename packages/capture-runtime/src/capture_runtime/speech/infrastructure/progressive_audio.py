@@ -18,12 +18,14 @@ from capture_runtime.contracts import (
     TimeLocator,
     project_source_text,
 )
+from capture_runtime.speech.application.use_cases import TranscribeAudioWindow
 from capture_runtime.speech.domain import (
     DEFAULT_OVERLAP_MS,
     DEFAULT_WINDOW_MS,
     MAX_PROGRESSIVE_WINDOW_BYTES,
     AudioWindow,
 )
+from capture_runtime.speech.domain.window.models import WindowTranscript, WindowTranscriptSegment
 
 DEFAULT_CHECKPOINT_MS = 300_000
 DEFAULT_HEARTBEAT_MS = 5_000
@@ -46,18 +48,10 @@ class ProgressiveSessionClosedError(ProgressiveAudioError):
 DecodedAudioWindow = AudioWindow
 
 
-@dataclass(frozen=True, slots=True)
-class WhisperWindowSegment:
-    start_ms: int
-    end_ms: int
-    text: str
+WhisperWindowSegment = WindowTranscriptSegment
 
 
-@dataclass(frozen=True, slots=True)
-class WhisperWindowResult:
-    segments: tuple[WhisperWindowSegment, ...]
-    extraction_engine: CaptureEngine
-    warnings: tuple[str, ...] = ()
+WhisperWindowResult = WindowTranscript
 
 
 class IncrementalAudioDecoder(Protocol):
@@ -113,6 +107,7 @@ class ProgressiveAudioSession:
         self.capture_id = capture_id
         self.decoder = decoder
         self.transcriber = transcriber
+        self._transcribe_window = TranscribeAudioWindow(transcriber)
         self.clock = clock
         self.window_ms = window_ms
         self.overlap_ms = overlap_ms
@@ -186,7 +181,7 @@ class ProgressiveAudioSession:
         """Consume an already decoded bounded window from the worker seam."""
 
         self._ensure_open()
-        result = self.transcriber.transcribe(window)
+        result = self._transcribe_window.execute(window)
         self.consume_window_result(window, result)
         return self.drain_events()
 
@@ -244,7 +239,7 @@ class ProgressiveAudioSession:
             return
         if window.start_ms > self._covered_until_ms + self.overlap_ms:
             raise ProgressiveAudioError("decoded audio windows have a gap")
-        result = self.transcriber.transcribe(window)
+        result = self._transcribe_window.execute(window)
         self._consume_result(window, result)
 
     def _consume_result(self, window: DecodedAudioWindow, result: WhisperWindowResult) -> None:

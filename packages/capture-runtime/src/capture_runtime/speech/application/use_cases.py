@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
+from typing import Protocol
 
 from capture_runtime.speech.domain.transcript import (
     RepetitionLoopPolicy,
@@ -12,16 +12,12 @@ from capture_runtime.speech.domain.transcript import (
     SpeechTranscriptSegment,
     SpeechWord,
 )
+from capture_runtime.speech.domain.transcript.models import SpeechRecognitionResult
 from capture_runtime.speech.domain.window import (
     AudioWindow,
     WindowSlicingPolicy,
 )
-
-if TYPE_CHECKING:
-    from capture_runtime.speech.infrastructure.progressive_audio import WhisperWindowResult
-    from capture_runtime.speech.infrastructure.speech_transcript import (
-        WhisperTranscriptionResult,
-    )
+from capture_runtime.speech.domain.window.models import WindowTranscript
 
 
 class AudioTranscriber(Protocol):
@@ -34,13 +30,13 @@ class AudioTranscriber(Protocol):
         should_cancel: Callable[[], bool],
         allow_empty_output: bool = False,
         language: str | None = None,
-    ) -> WhisperTranscriptionResult: ...
+    ) -> SpeechRecognitionResult: ...
 
 
 class WindowTranscriberPort(Protocol):
     """Protocol for transcribing individual audio windows."""
 
-    def transcribe(self, window: AudioWindow) -> WhisperWindowResult: ...
+    def transcribe(self, window: AudioWindow) -> WindowTranscript: ...
 
 
 class TranscribeAudio:
@@ -82,6 +78,8 @@ class TranscribeAudio:
             device=result.device,
             digest=result.digest,
             warning=result.warning,
+            elapsed_ms=result.elapsed_ms,
+            stage_ms=result.stage_ms,
         )
         _ = transcript.text
         return transcript
@@ -93,7 +91,7 @@ class TranscribeAudioWindow:
     def __init__(self, transcriber: WindowTranscriberPort) -> None:
         self._transcriber = transcriber
 
-    def execute(self, window: AudioWindow) -> WhisperWindowResult:
+    def execute(self, window: AudioWindow) -> WindowTranscript:
         return self._transcriber.transcribe(window)
 
 
@@ -103,8 +101,12 @@ class SliceAudioStream:
     def __init__(self, policy: WindowSlicingPolicy | None = None) -> None:
         self._policy = policy or WindowSlicingPolicy()
 
-    def execute(self, total_duration_ms: int) -> tuple[tuple[int, int], ...]:
-        return self._policy.compute_windows(total_duration_ms)
+    def execute(
+        self, total_duration_ms: int, *, start_ms: int = 0, include_partial: bool = True
+    ) -> tuple[tuple[int, int], ...]:
+        return self._policy.compute_windows(
+            total_duration_ms, start_ms=start_ms, include_partial=include_partial
+        )
 
 
 class DetectRepetitionLoop:

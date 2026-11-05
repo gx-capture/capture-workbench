@@ -51,12 +51,16 @@ from capture_runtime.contracts import (
     TimeLocator,
     project_source_text,
 )
+from capture_runtime.diarization.application.use_cases import (
+    AlignSpeakerTurns,
+    DiarizeAudio,
+    ExtractSpeakerSamples,
+)
 from capture_runtime.diarization.infrastructure.speaker_alignment import (
     TimedWord,
-    speaker_samples,
-    speaker_segments,
 )
 from capture_runtime.diarization.infrastructure.speaker_worker_result import WorkerDiarizationResult
+from capture_runtime.ocr.application.use_cases import ExtractPageText
 from capture_runtime.ocr.infrastructure.image_normalization import (
     image_ocr_scale,
     normalize_image_content,
@@ -94,6 +98,7 @@ from capture_runtime.provisioning.infrastructure.engine_installation import (
     EngineInstallationManager,
     ExtractionRuntimeUnavailableError,
 )
+from capture_runtime.speech.application.use_cases import TranscribeAudio
 from capture_runtime.worker_client import InstalledEngine
 from capture_runtime.worker_probe import EngineRuntimeUnavailableError
 from capture_runtime.worker_process import DEFAULT_RUN_TIMEOUT_SECONDS, WorkerCancelledError
@@ -207,6 +212,7 @@ class _SyncOcrEngineAdapter:
         adapter = self._extractor.ocr_adapter
         if adapter is None:
             raise OcrEngineFailure(kind="unavailable", completed_pages=())
+        extract_page = ExtractPageText(adapter)
         pages: list[OcrPageInput] = []
         warnings: list[str] = []
         provenance: OcrProvenanceV3 | None = None
@@ -226,7 +232,8 @@ class _SyncOcrEngineAdapter:
                     )
                 self._check_cancelled(request)
                 try:
-                    result = adapter.extract_png(image_png)
+                    extracted = extract_page.execute(image_png, expected.page)
+                    result = extracted.result
                 except PaddleResultNormalizationError:
                     if request.is_cancelled():
                         raise InterruptedError("Capture extraction was cancelled.") from None
@@ -241,7 +248,7 @@ class _SyncOcrEngineAdapter:
                     ) from error
                 self._check_cancelled(request)
                 current = result.provenance or self._provenance(result)
-                pages.append(request.observe(expected, result, current))
+                pages.append(request.observe(expected, extracted, current))
                 if result.warning:
                     warnings.append(result.warning)
                 if provenance is None:
@@ -914,7 +921,7 @@ class StandaloneRuntimeCaptureExtractor:
         path = self._worker_source(content, media_type)
         try:
             worker_client = cast(_EngineWorkerClient, self.engine_manager.worker_client)
-            return await worker_client.diarize(
+            return await DiarizeAudio(worker_client).execute(
                 engine,
                 source_path=path,
                 media_type=media_type,
@@ -1328,7 +1335,7 @@ class StandaloneRuntimeCaptureExtractor:
         try:
             if self.whisper_adapter is None:
                 raise ExtractionRuntimeUnavailableError("Whisper worker is not configured.")
-            result = self.whisper_adapter.transcribe(
+            result = TranscribeAudio(self.whisper_adapter).execute(
                 path, should_cancel=cancel_event.is_set, language=spoken_language
             )
         finally:
@@ -1396,7 +1403,9 @@ def _speaker_capture_segments(
     )
     spoken = [
         item
-        for item in speaker_segments(words, diarization.exclusive_turns, diarization.turns)
+        for item in AlignSpeakerTurns().execute(
+            words, diarization.exclusive_turns, diarization.turns
+        )
         if item.text
     ]
     segments = [
@@ -1410,7 +1419,7 @@ def _speaker_capture_segments(
         )
         for index, item in enumerate(spoken)
     ]
-    samples = {sample.speaker: sample for sample in speaker_samples(spoken)}
+    samples = {sample.speaker: sample for sample in ExtractSpeakerSamples().execute(spoken)}
     speaker_ids = sorted(
         {turn.speaker for turn in diarization.turns}
         | {item.speaker for item in spoken if item.speaker is not None}

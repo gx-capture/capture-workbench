@@ -198,3 +198,17 @@ __all__ = [
     "speaker_samples",
     "speaker_segments",
 ]
+
+
+@dataclass(frozen=True, slots=True)
+class DiarizationResult:
+    turns: tuple[SpeakerTurn, ...]
+    exclusive_turns: tuple[SpeakerTurn, ...]
+    duration_ms: int
+    engine: str
+    model: str
+    digest: str
+    device: str
+    warnings: tuple[str, ...]
+    elapsed_ms: int | None = None
+    stage_ms: dict[str, int] | None = None

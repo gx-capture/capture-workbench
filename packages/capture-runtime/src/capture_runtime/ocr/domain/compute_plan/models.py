@@ -28,30 +28,42 @@ class ComputePlanSelection:
 
 
 @dataclass(frozen=True, slots=True)
+class ComputeCandidate:
+    """One already-ranked hardware candidate with an observed assessment."""
+
+    device_id: int
+    adapter_class: str
+    assessment: str
+    has_identity: bool
+
+
+@dataclass(frozen=True, slots=True)
 class ComputePlanPolicy:
-    """Policy for evaluating hardware capability and choosing execution plan."""
+    """Choose only after every higher-ranked candidate is positively assessed."""
 
     def evaluate(
         self,
-        has_compatible_gpu: bool,
+        candidates: tuple[ComputeCandidate, ...],
+        *,
         dml_available: bool,
-        adapter_class: str = "dedicated",
-        device_name: str | None = None,
-        device_id: int | None = None,
-    ) -> ComputePlanSelection:
-        if has_compatible_gpu and dml_available:
-            return ComputePlanSelection(
-                compute_mode="gpu-dml",
-                adapter_class=adapter_class,
-                device_name=device_name,
-                device_id=device_id,
-            )
-        reason = "no_compatible_gpu" if not has_compatible_gpu else "dml_provider_unavailable"
+        require_identity: bool = False,
+    ) -> ComputePlanSelection | None:
+        for candidate in candidates:
+            if candidate.assessment == "indeterminate":
+                return None
+            if candidate.assessment == "positive-usable":
+                if require_identity and not candidate.has_identity:
+                    return None
+                return ComputePlanSelection(
+                    compute_mode="gpu-dml",
+                    adapter_class=candidate.adapter_class,
+                    device_id=candidate.device_id,
+                )
         return ComputePlanSelection(
             compute_mode="cpu-fallback",
-            adapter_class=adapter_class if has_compatible_gpu else "unknown",
-            device_name=device_name if has_compatible_gpu else None,
-            device_id=device_id if has_compatible_gpu else None,
-            reason=reason,
+            adapter_class=candidates[0].adapter_class if len(candidates) == 1 else "unknown",
+            reason="dml_provider_unavailable"
+            if candidates and not dml_available
+            else "no_compatible_gpu",
             notices=("ocr_cpu_fallback",),
         )

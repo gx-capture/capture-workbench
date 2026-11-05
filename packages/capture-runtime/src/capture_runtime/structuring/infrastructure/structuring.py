@@ -20,6 +20,7 @@ from jsonschema import Draft202012Validator, FormatChecker
 from pydantic import ValidationError
 
 from capture_runtime.contract_set import default_contract_bundle
+from capture_runtime.structuring.domain.session import BatchPlanningPolicy
 
 from .constants import (
     CAPTURE_BLOCK_BATCH_SCHEMA,
@@ -180,12 +181,10 @@ def plan_structuring_batches(
 ) -> list[StructuringBatchPlan]:
     """Plan conservative UTF-8-token-bounded batches preserving source order."""
 
-    if num_predict <= OUTPUT_RESERVE_TOKENS:
-        raise ValueError("Capture structuring output budget is too small")
-    if num_ctx <= num_predict + CONTEXT_RESERVE_TOKENS:
-        raise ValueError("Capture structuring context budget is too small")
-    input_limit = num_ctx - num_predict - CONTEXT_RESERVE_TOKENS
-    output_limit = num_predict - OUTPUT_RESERVE_TOKENS
+    policy = BatchPlanningPolicy(num_ctx, target_language)
+    input_limit, output_limit = limits = policy.limits(
+        num_predict, context_reserve=CONTEXT_RESERVE_TOKENS, output_reserve=OUTPUT_RESERVE_TOKENS
+    )
     empty_prompt = build_structuring_batch_prompt((), target_language=target_language)
     batch_schema = (
         schema if schema is not None else structuring_batch_schema(target_language=target_language)
@@ -208,14 +207,14 @@ def plan_structuring_batches(
         segment_output = _estimated_block_output_tokens(segment, target_language=target_language)
         next_input = current_input + segment_input
         next_output = current_output + segment_output
-        if current and (next_input > input_limit or next_output > output_limit):
+        if current and not policy.fits(next_input, next_output, limits):
             plans.append(StructuringBatchPlan(tuple(current), current_input, current_output))
             current = []
             current_input = fixed_input
             current_output = fixed_output
             next_input = current_input + segment_input
             next_output = current_output + segment_output
-        if next_input > input_limit or next_output > output_limit:
+        if not policy.fits(next_input, next_output, limits):
             segment_wire = _segment_wire(segment)
             raise StructuringValidationError(
                 f"Raw segment {segment_wire.get('segmentId')!r} exceeds the provider token budget.",

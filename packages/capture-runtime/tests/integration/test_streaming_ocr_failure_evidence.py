@@ -138,7 +138,7 @@ def test_streaming_ocr_failure_records_private_artifact_before_public_projection
                 runtime_sha256="c" * 64,
             ),
         )
-        operation = service.start_capture(
+        operation = service.start_capture_use_case.execute(
             StartCaptureV2(
                 client_request_id="failure-evidence-capture",
                 ingestion_id=ingestion.ingestion_id,
@@ -273,7 +273,7 @@ os._exit(7)
                 runtime_sha256=_loaded_runtime_sha256(),
             ),
         )
-        operation = service.start_capture(
+        operation = service.start_capture_use_case.execute(
             StartCaptureV2(
                 client_request_id="real-worker-failure-capture",
                 ingestion_id=ingestion.ingestion_id,

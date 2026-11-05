@@ -55,6 +55,8 @@ class SpeechTranscript:
     device: str
     digest: str
     warning: str | None = None
+    elapsed_ms: int | None = None
+    stage_ms: dict[str, int] | None = None
 
     def __post_init__(self) -> None:
         if self.duration_ms < 0:
@@ -96,3 +98,15 @@ class RepetitionLoopPolicy:
             ):
                 return True
         return False
+
+
+@dataclass(frozen=True, slots=True)
+class SpeechRecognitionResult:
+    segments: tuple[SpeechTranscriptSegment, ...]
+    duration_ms: int
+    device: str
+    model: str
+    digest: str
+    warning: str | None = None
+    elapsed_ms: int | None = None
+    stage_ms: dict[str, int] | None = None

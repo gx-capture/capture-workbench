@@ -6,10 +6,8 @@ from __future__ import annotations
 import inspect
 import json
 from collections import Counter
-from enum import Enum
 from typing import Any
 
-from capture_runtime import contracts
 from tests.semantic_layers import (
     VOCABULARY,
     documented_contexts,
@@ -54,54 +52,26 @@ def test_concepts_have_unique_ids_and_mappings() -> None:
 
     assert [concept_id for concept_id, count in ids.items() if count > 1] == []
     assert [mapping for mapping, count in mappings.items() if count > 1] == []
-    assert all(concept["label"] and concept["codeName"] for concept in concepts)
+    assert all(concept["codeName"] for concept in concepts)
+    for concept in concepts:
+        label = concept["label"]
+        assert "?" not in label and "\ufffd" not in label, concept["id"]
+        assert any("\u4e00" <= char <= "\u9fff" for char in label), concept["id"]
 
 
 def test_every_api_enum_value_of_a_modelled_context_maps_to_one_concept() -> None:
-    # Context-to-enums mapping for modelled contexts
-    context_enums: dict[str, list[type[Enum]]] = {
-        "provisioning": [
-            contracts.RuntimeInstallationStatus,
-            contracts.RuntimeRequirementStatus,
-        ],
-        "diarization": [],
-        "speech": [],
-        "ocr": [
-            contracts.OcrComputeMode,
-            contracts.OcrAdapterClass,
-            contracts.OcrComputeReasonCode,
-            contracts.OcrComputeNoticeCode,
-            contracts.OcrProjectionStatus,
-            contracts.OcrPageStatus,
-            contracts.OcrProvenanceStatus,
-            contracts.OcrProvenanceUnavailableReason,
-        ],
-        "structuring": [
-            contracts.StructuringMode,
-            contracts.StructuringSessionStatus,
-            contracts.StructuringBatchStatus,
-        ],
-        "capture": [
-            contracts.CaptureSourceKind,
-            contracts.StreamingIngestionMode,
-            contracts.StreamingIngestionStatus,
-            contracts.StreamingCaptureStatus,
-            contracts.StreamingEventType,
-        ],
-    }
-    mapped = {
-        (concept["enum"]["enumId"], concept["enum"]["value"])
-        for concept in _concepts()
-        if "enum" in concept and not concept.get("retired")
-    }
+    from tests.semantic_layers import contract_concept_values
 
-    for context in documented_contexts():
-        if context not in context_enums:
-            continue
-        for enum_cls in context_enums[context]:
-            enum_id = enum_cls.__name__
-            for member in enum_cls:
-                mapping = (enum_id, str(member.value))
-                assert mapping in mapped, (
-                    f"Missing concept mapping for {enum_id}.{member.name} ({member.value})"
-                )
+    mapped: dict[str, set[str]] = {}
+    for concept in _concepts():
+        if "enum" in concept and not concept.get("retired"):
+            mapped.setdefault(concept["enum"]["enumId"], set()).add(concept["enum"]["value"])
+    expected = contract_concept_values()
+    assert mapped == expected, {
+        name: {
+            "missing": sorted(values - mapped.get(name, set())),
+            "stale": sorted(mapped.get(name, set()) - values),
+        }
+        for name, values in expected.items()
+        if mapped.get(name) != values
+    }
