@@ -1,3 +1,4 @@
+import { newDocumentId } from './installed-document-selection.ts';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
@@ -20,6 +21,7 @@ import {
   race,
   switchMap,
   take,
+  tap,
   throwError,
   timer,
   toArray,
@@ -39,6 +41,9 @@ export {
   nativeClickWebViewElement,
   nativeOpenDialogUiAutomation,
 } from './real-media-model-smoke.ts';
+
+import { trackSmokeStep } from './smoke-diagnostics.ts';
+import type { SmokeStepEvent, SmokeCardDiagnostic } from './smoke-diagnostics.ts';
 
 const fixtures = INSTALLED_FIXTURES;
 export const installedWebViewCdpReadyTimeoutMs = 180_000;
@@ -326,12 +331,19 @@ function connectAttempt(endpoint, appProcess, deadline, lastError) {
   );
 }
 
-function captureFixture(page, fixture, appPid, fixtureDirectory) {
+function captureFixture(page, fixture, appPid, fixtureDirectory, diagnostics) {
   const filePath = join(fixtureDirectory, fixture.fileName);
   const importButton = page.getByTestId('source-import');
+  let diagnosticCard = page.locator('.document-card[data-document-id=""]');
+  let beforeIds: string[] = [];
+  const documentIds = (cards) => cards.evaluateAll((elements) =>
+    elements.map((element) => element.getAttribute('data-document-id')).filter(Boolean));
   return defer(() => from(writeFile(filePath, fixture.buffer))).pipe(
+    concatMap(() => defer(() => from(documentIds(page.locator('.document-card')))).pipe(
+      tap((ids: string[]) => { beforeIds = ids; }),
+    )),
     concatMap(() =>
-      defer(() =>
+      trackSmokeStep(diagnostics.timeline, 'source picker', () => defer(() =>
         from(
           nativeOpenDialogUiAutomation(filePath, appPid, () =>
             nativeClickWebViewElement(importButton, appPid),
@@ -347,32 +359,40 @@ function captureFixture(page, fixture, appPid, fixtureDirectory) {
             diagnostics
               ? new Error(
                   `Native source picker automation failed: ${diagnostics}.`,
+                  { cause: error },
                 )
               : error,
           );
         }),
-      ),
+      )),
     ),
-    map(() =>
-      page
-        .locator('.document-card')
-        .filter({ hasText: fixture.fileName })
-        .last(),
+    concatMap(() =>
+      trackSmokeStep(diagnostics.timeline, 'card visible', () => waitUntil(
+        () => defer(() => from(documentIds(
+          page.locator('.document-card').filter({ hasText: fixture.fileName }),
+        ))).pipe(switchMap((ids: string[]) => {
+          const id = newDocumentId(beforeIds, ids);
+          if (!id) return of(false);
+          if (!/^[a-zA-Z0-9_-]+$/u.test(id)) throw new Error('Invalid document card identifier.');
+          diagnosticCard = page.locator(`.document-card[data-document-id="${id}"]`);
+          return defer(() => from(diagnosticCard.isVisible()));
+        })),
+        15_000,
+        `Installed ${fixture.sourceKind} import did not create a new document card.`,
+      )).pipe(map(() => diagnosticCard)),
     ),
     concatMap((card) =>
-      defer(() =>
-        from(card.waitFor({ state: 'visible', timeout: 15_000 })),
-      ).pipe(map(() => card)),
-    ),
-    concatMap((card) =>
-      waitUntil(
+      trackSmokeStep(diagnostics.timeline, 'completion wait', () => waitUntil(
         () =>
-          defer(() => from(card.locator('.status').textContent())).pipe(
+          defer(() => from(card.locator('.status').textContent({ timeout: 1_000 }))).pipe(
             map((status) => status === '已完成'),
           ),
         45_000,
         `Installed ${fixture.sourceKind} capture did not complete.`,
-      ).pipe(map(() => card)),
+      )).pipe(
+        catchError((error) => incompleteCaptureError(page, card, error, fixture, diagnostics)),
+        map(() => card),
+      ),
     ),
     concatMap((card) => defer(() => from((card as Locator).click())).pipe(map(() => card))),
     concatMap(() => {
@@ -391,10 +411,15 @@ function captureFixture(page, fixture, appPid, fixtureDirectory) {
         }),
       );
     }),
+    catchError((error) => diagnostics.cards.some((card) => card.fileName === fixture.fileName)
+      ? throwError(() => error)
+      : incompleteCaptureError(page, diagnosticCard, error, fixture, diagnostics)),
   );
 }
 
-export function exerciseInstalledUi(page, appPid, fixtureDirectory) {
+export function exerciseInstalledUi(page, appPid, fixtureDirectory, diagnostics = {
+  timeline: [] as SmokeStepEvent[], cards: [] as SmokeCardDiagnostic[],
+}) {
   return defer(() =>
     from(
       page
@@ -426,7 +451,7 @@ export function exerciseInstalledUi(page, appPid, fixtureDirectory) {
     concatMap((model) =>
       from(fixtures).pipe(
         concatMap((fixture) =>
-          captureFixture(page, fixture, appPid, fixtureDirectory),
+          captureFixture(page, fixture, appPid, fixtureDirectory, diagnostics),
         ),
         toArray(),
         map((captures) => ({
@@ -463,6 +488,25 @@ function prepareFirstRun(page) {
           ),
         ),
       );
+    }),
+  );
+}
+
+// A stuck capture is only diagnosable from what the card and the detail pane
+// show (status and the runtime error code), so the failure carries both.
+function incompleteCaptureError(page, card, error, fixture, diagnostics) {
+  return defer(() => from(card.click({ timeout: 1_000 }).catch(() => undefined))).pipe(
+    concatMap(() => forkJoin({
+      status: defer(() => from(card.locator('.status').textContent({ timeout: 1_000 }).catch(() => null))),
+      detailErrors: defer(() => from(page.locator('.detail-error').allTextContents().catch(() => []))),
+    })),
+    concatMap(({ status, detailErrors }: { status: string | null; detailErrors: string[] }) => {
+      diagnostics.cards.push({ fileName: fixture.fileName, status, detailErrors });
+      return throwError(() => new Error(
+        `${errorMessage(error)} Last status: ${status ?? 'unavailable'}; detail errors: ${
+          detailErrors.length > 0 ? detailErrors.join(' | ') : 'none'
+        }.`, { cause: error },
+      ));
     }),
   );
 }

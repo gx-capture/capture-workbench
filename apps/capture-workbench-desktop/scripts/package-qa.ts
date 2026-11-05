@@ -3,19 +3,12 @@ import { join, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { Observable, concatMap, defer, from, map, mergeMap, toArray } from 'rxjs';
 
+import { deterministicQaNsis } from './deterministic-qa.ts';
 import { assertStagedRuntime } from './assert-staged-runtime.ts';
 import { appRoot, sha256File } from './stage-runtime.ts';
 
 const workspaceRoot = resolve(appRoot, '..', '..');
-const nsisDirectory = join(
-  appRoot,
-  'src-tauri',
-  'target',
-  'x86_64-pc-windows-msvc',
-  'release',
-  'bundle',
-  'nsis',
-);
+const nsisDirectory = deterministicQaNsis;
 const reportDirectory = join(
   workspaceRoot,
   'tmp',

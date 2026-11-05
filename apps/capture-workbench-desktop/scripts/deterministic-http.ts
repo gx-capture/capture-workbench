@@ -3,10 +3,13 @@ import { createHash, randomUUID } from 'node:crypto';
 import http from 'node:http';
 import {
   Observable,
+  from,
+  toArray,
   catchError,
   concatMap,
   defaultIfEmpty,
   filter,
+  exhaustMap,
   map,
   of,
   take,
@@ -17,14 +20,12 @@ import {
 } from 'rxjs';
 
 import {
-  DETERMINISTIC_FIXTURES,
   DETERMINISTIC_MAX_UPLOAD_BYTES,
   DETERMINISTIC_SCHEMA_VERSION,
 } from './constants/deterministic.ts';
 
 const maxUploadBytes = DETERMINISTIC_MAX_UPLOAD_BYTES;
 const schemaVersion = DETERMINISTIC_SCHEMA_VERSION;
-const fixtures = DETERMINISTIC_FIXTURES;
 
 export function verifyRequestPolicy(context) {
   return requestJson({ ...context, token: undefined }).pipe(
@@ -125,67 +126,109 @@ export function verifyRequirements(context) {
   );
 }
 
-export function verifyRuntimeCapture(context, fixture) {
-  const idempotencyKey = randomUUID();
-  const request = captureRequest(fixture, 'runtime', 'zh-TW');
+// Follow the desktop bridge: metadata, ordered chunks, finalize, JSON capture start.
+export function createIngestion(context, fixture) {
+  const clientRequestId = randomUUID();
+  const kind = fixtureKind(fixture);
+  const metadata = {
+    protocolVersion: '2', clientRequestId, kind, mode: 'file',
+    fileName: fixture.fileName, mediaType: fixture.mediaType,
+    totalBytes: fixture.content.length,
+  };
   return requestJson({
-    ...context,
-    method: 'POST',
-    path: '/v2/captures',
-    headers: {
-      'content-type': request.contentType,
-      'x-idempotency-key': idempotencyKey,
-    },
-    body: request.body,
+    ...context, method: 'POST', path: '/v2/ingestions',
+    headers: { 'content-type': 'application/json', 'x-idempotency-key': clientRequestId },
+    body: JSON.stringify(metadata),
   }).pipe(
-    concatMap((created) => {
-      validateJob(created, 202, { status: 'completed', stage: 'completed', mode: 'runtime' });
-      const captureId = created.body.captureId;
-      return requestJson({
-        ...context,
-        method: 'POST',
-        path: '/v2/captures',
-        headers: { 'content-type': request.contentType, 'x-idempotency-key': idempotencyKey },
-        body: request.body,
-      }).pipe(
-        tap((repeated) => {
-          assert.equal(repeated.status, 202);
-          assert.equal(repeated.body.captureId, captureId);
-        }),
-        concatMap(() => {
-          const changed = captureRequest(
-            { ...fixture, content: Buffer.concat([fixture.content, Buffer.from('changed')]) },
-            'runtime',
-            'zh-TW',
-          );
+    concatMap((opened) => {
+      assert.equal(opened.status, 201);
+      assert.equal(opened.body.protocolVersion, '2');
+      assert.equal(opened.body.status, 'open');
+      assert.equal(opened.body.kind, kind);
+      assert.equal(typeof opened.body.ingestionId, 'string');
+      const ingestionId = opened.body.ingestionId;
+      const chunks = Array.from({ length: Math.ceil(fixture.content.length / 1_048_576) }, (_, index) => index);
+      return from(chunks).pipe(
+        concatMap((index) => {
+          const offset = index * 1_048_576;
+          const body = fixture.content.subarray(offset, offset + 1_048_576);
           return requestJson({
-            ...context,
-            method: 'POST',
-            path: '/v2/captures',
-            headers: { 'content-type': changed.contentType, 'x-idempotency-key': idempotencyKey },
-            body: changed.body,
-          }).pipe(
+            ...context, method: 'PUT', path: `/v2/ingestions/${ingestionId}/chunks/${index}`,
+            headers: {
+              'content-type': 'application/octet-stream',
+              'x-idempotency-key': `${clientRequestId}-chunk-${index}`,
+              'content-range': `bytes ${offset}-${offset + body.length - 1}/${fixture.content.length}`,
+              digest: `sha-256=${sha256(body)}`,
+            }, body,
+          }).pipe(tap((chunk) => {
+            assert.equal(chunk.status, 200);
+            assert.equal(chunk.body.ingestionId, ingestionId);
+            assert.equal(chunk.body.nextOffset, offset + body.length);
+            assert.equal(chunk.body.nextChunkIndex, index + 1);
+          }));
+        }),
+        toArray(),
+        concatMap(() => requestJson({
+          ...context, method: 'POST', path: `/v2/ingestions/${ingestionId}/finalize`,
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ protocolVersion: '2', totalBytes: fixture.content.length, sha256: sha256(fixture.content) }),
+        })),
+        map((finalized) => {
+          assert.equal(finalized.status, 200);
+          assert.equal(finalized.body.ingestionId, ingestionId);
+          assert.equal(finalized.body.status, 'ready');
+          assert.equal(finalized.body.finalizedSha256, sha256(fixture.content));
+          return ingestionId;
+        }),
+      );
+    }),
+  );
+}
+
+export function verifyRuntimeCapture(context, fixture, structuringMode = 'runtime') {
+  return createIngestion(context, fixture).pipe(
+    concatMap((ingestionId) => {
+      const clientRequestId = randomUUID();
+      const payload = {
+        protocolVersion: '2', clientRequestId, ingestionId,
+        structuringMode, startPolicy: 'eager', targetLanguage: 'zh-TW',
+      };
+      const start = (body = payload) => requestJson({
+        ...context, method: 'POST', path: '/v2/captures',
+        headers: { 'content-type': 'application/json', 'x-idempotency-key': clientRequestId },
+        body: JSON.stringify(body),
+      });
+      return start().pipe(
+        concatMap((created) => {
+          validateJob(created, 202, ingestionId, fixtureKind(fixture));
+          const captureId = created.body.captureId;
+          return start().pipe(
+            tap((repeated) => {
+              validateJob(repeated, 202, ingestionId, fixtureKind(fixture));
+              assert.equal(repeated.body.captureId, captureId);
+            }),
+            concatMap(() => start({ ...payload, targetLanguage: 'en' })),
             tap((conflict) => assertApiError(conflict, 409, 'idempotency_conflict')),
             concatMap(() => requestJson({ ...context, path: `/v2/captures/${captureId}` })),
-            tap((status) => validateJob(status, 200, { status: 'completed', stage: 'completed', mode: 'runtime' })),
-            concatMap(() => requestJson({ ...context, path: `/v2/captures/${captureId}/raw` })),
-            tap((raw) => validateRaw(fixture, raw)),
-            concatMap((raw) =>
-              requestJson({ ...context, path: `/v2/captures/${captureId}/result` }).pipe(
-                map((result) => {
-                  validateResult(fixture, raw.body, result, 'zh-TW');
-                  return {
-                    fileName: fixture.fileName,
-                    captureId,
-                    locatorKind: result.body.blocks[0].locator.kind,
-                    segments: result.body.rawSegments.length,
-                    jsonReparsed: JSON.parse(JSON.stringify(result.body)).schemaVersion === '2',
-                    textProjection: result.body.targetText === result.body.blocks.map((block) => block.targetText).join('\n'),
-                    idempotency: true,
-                  };
-                }),
-              ),
-            ),
+            tap((status) => validateJob(status, 200, ingestionId, fixtureKind(fixture))),
+            concatMap(() => requestJson({ ...context, path: `/v2/captures/${captureId}/result` })),
+            map((response) => {
+              assert.equal(response.status, 200);
+              assert.deepEqual(Object.keys(response.body).sort(), ['operation', 'raw', 'result']);
+              validateJob({ ...response, body: response.body.operation }, 200, ingestionId, fixtureKind(fixture));
+              assert.equal(response.body.operation.captureId, captureId);
+              validateRaw(fixture, { ...response, body: response.body.raw });
+              const result = response.body.result;
+              validateResult(fixture, response.body.raw, { ...response, body: result }, 'zh-TW');
+              return {
+                fileName: fixture.fileName, captureId, structuringMode,
+                locatorKind: result.blocks[0].locator.kind,
+                segments: result.rawSegments.length,
+                jsonReparsed: JSON.parse(JSON.stringify(result)).schemaVersion === '2',
+                textProjection: result.targetText === result.blocks.map((block) => block.targetText).join('\n'),
+                idempotency: true,
+              };
+            }),
           );
         }),
       );
@@ -194,89 +237,13 @@ export function verifyRuntimeCapture(context, fixture) {
 }
 
 export function verifyHostStructuring(context, fixture) {
-  return createHostCapture(context, fixture).pipe(
-    concatMap((awaiting) => {
-      const captureId = awaiting.body.captureId;
-      return requestJson({ ...context, path: `/v2/captures/${captureId}/result` }).pipe(
-        tap((unavailable) => assertApiError(unavailable, 409, 'result_unavailable')),
-        concatMap(() => requestJson({ ...context, path: `/v2/captures/${captureId}/raw` })),
-        tap((raw) => validateRaw(fixture, raw)),
-        concatMap((raw) => {
-          const candidate = hostCandidate(raw.body);
-          return requestJson({
-            ...context,
-            method: 'POST',
-            path: `/v2/captures/${captureId}/structure`,
-            headers: { 'content-type': 'application/json', 'x-idempotency-key': randomUUID() },
-            body: JSON.stringify(candidate),
-          }).pipe(
-            tap((structured) => validateJob(structured, 200, { status: 'completed', stage: 'completed', mode: 'host' })),
-            concatMap(() => requestJson({ ...context, path: `/v2/captures/${captureId}/result` })),
-            tap((result) => {
-              assert.equal(result.status, 200);
-              assert.deepEqual(result.body, candidate);
-            }),
-            concatMap(() => createHostCapture(context, fixtures[0])),
-            concatMap((failedCapture) => {
-              const failedId = failedCapture.body.captureId;
-              return requestJson({
-                ...context,
-                method: 'POST',
-                path: `/v2/captures/${failedId}/structuring-failure`,
-                headers: { 'content-type': 'application/json' },
-                body: JSON.stringify({ code: 'invalid_provider_json', message: 'Provider returned invalid JSON.' }),
-              }).pipe(
-                tap((failed) => {
-                  validateJob(failed, 200, { status: 'failed', stage: 'failed', mode: 'host' });
-                  assert.deepEqual(failed.body.error, {
-                    code: 'invalid_provider_json',
-                    message: 'Provider returned invalid JSON.',
-                    stage: 'structuring',
-                    retryable: false,
-                  });
-                }),
-                concatMap(() => requestJson({ ...context, path: `/v2/captures/${failedId}/result` })),
-                tap((failedResult) => assertApiError(failedResult, 409, 'result_unavailable')),
-                concatMap(() => requestJson({ ...context, path: `/v2/captures/${failedId}/raw` })),
-                map((diagnostic) => {
-                  assert.equal(diagnostic.status, 200);
-                  assert.equal(diagnostic.body.diagnosticOnly, true);
-                  return {
-                    completedCaptureId: captureId,
-                    failedCaptureId: failedId,
-                    unavailableResultEnvelope: true,
-                    diagnosticRawAfterFailure: true,
-                  };
-                }),
-              );
-            }),
-          );
-        }),
-      );
-    }),
-  );
+  // The installed fake completes host-mode requests immediately, like its UI flow.
+  return verifyRuntimeCapture(context, fixture, 'host');
 }
 
-function createHostCapture(context, fixture) {
-  const request = captureRequest(fixture, 'host');
-  return requestJson({
-    ...context,
-    method: 'POST',
-    path: '/v2/captures',
-    headers: {
-      'content-type': request.contentType,
-      'x-idempotency-key': randomUUID(),
-    },
-    body: request.body,
-  }).pipe(
-    tap((response) =>
-      validateJob(response, 202, {
-        status: 'running',
-        stage: 'awaiting_structuring',
-        mode: 'host',
-      }),
-    ),
-  );
+function fixtureKind(fixture) {
+  return fixture.mediaType === 'application/pdf' ? 'pdf'
+    : fixture.mediaType.startsWith('audio/') ? 'audio' : 'image';
 }
 
 export function validateReady(response) {
@@ -285,7 +252,9 @@ export function validateReady(response) {
     'apiVersion',
     'capabilities',
     'captureDocumentSchemaVersion',
+    'contractSetVersion',
     'message',
+    'ocrCompute',
     'ready',
     'runtimeVersion',
     'service',
@@ -293,28 +262,51 @@ export function validateReady(response) {
   assert.equal(response.body.service, 'capture-runtime');
   assert.equal(response.body.apiVersion, '2.0');
   assert.equal(response.body.captureDocumentSchemaVersion, schemaVersion);
-  assert.equal(response.body.capabilities.maxUploadBytes, maxUploadBytes);
+  assert.equal(response.body.ready, true);
+  assert.equal(response.body.message, null);
+  assert.equal(typeof response.body.runtimeVersion, 'string');
+  assert.equal(response.body.contractSetVersion, '2');
+  assert.deepEqual(response.body.capabilities, {
+    captureKinds: ['pdf', 'image', 'audio'],
+    structuringModes: ['runtime', 'host'],
+    supportsCancellation: true, supportsRawDiagnostics: true, maxUploadBytes,
+  });
+  const compute = response.body.ocrCompute;
+  assert.deepEqual(Object.keys(compute).sort(), [
+    'adapterClass', 'apiVersion', 'contractSetVersion', 'contractSha256', 'mode',
+    'noticeCode', 'reasonCode', 'runtimeVersion', 'schemaVersion', 'service',
+    'userNoticeRequired', 'workerSha256',
+  ]);
+  assert.equal(compute.apiVersion, '2.0');
+  assert.equal(compute.schemaVersion, '1');
+  assert.equal(compute.service, 'capture-runtime');
+  assert.equal(compute.runtimeVersion, response.body.runtimeVersion);
+  assert.equal(compute.contractSetVersion, '2');
+  assert.match(compute.contractSha256, /^[0-9a-f]{64}$/u);
+  assert.match(compute.workerSha256, /^[0-9a-f]{64}$/u);
+  assert.equal(compute.mode, 'cpu-fallback');
+  assert.equal(compute.adapterClass, 'unknown');
+  assert.equal(compute.reasonCode, 'no_compatible_gpu');
+  assert.equal(compute.userNoticeRequired, true);
+  assert.equal(compute.noticeCode, 'ocr_cpu_fallback');
 }
 
-function validateJob(response, expectedStatus, expected) {
+function validateJob(response, expectedStatus, ingestionId, kind) {
   assert.equal(response.status, expectedStatus);
   assert.deepEqual(Object.keys(response.body).sort(), [
-    'captureId',
-    'completedAt',
-    'createdAt',
-    'error',
-    'progress',
-    'source',
-    'stage',
-    'status',
-    'structuringMode',
-    'updatedAt',
+    'captureId', 'completedAt', 'createdAt', 'error', 'ingestionId', 'kind',
+    'lastEventSequence', 'partialRevision', 'progress', 'protocolVersion',
+    'source', 'status', 'updatedAt',
   ]);
   assert.equal(typeof response.body.captureId, 'string');
-  assert.equal(response.body.status, expected.status);
-  assert.equal(response.body.stage, expected.stage);
-  assert.equal(response.body.structuringMode, expected.mode);
-  assert.equal(typeof response.body.progress, 'number');
+  assert.equal(response.body.protocolVersion, '2');
+  assert.equal(response.body.ingestionId, ingestionId);
+  assert.equal(response.body.kind, kind);
+  assert.equal(response.body.status, 'completed');
+  assert.equal(response.body.progress, 1);
+  assert.equal(response.body.partialRevision, 0);
+  assert.equal(response.body.lastEventSequence, 1);
+  assert.equal(response.body.error, null);
   assertJobTimestamps(response.body);
 }
 
@@ -394,63 +386,6 @@ function validateResult(fixture, raw, response, targetLanguage) {
   assert.match(response.body.structuringEngine.digest, /^sha256:[0-9a-f]{64}$/u);
 }
 
-function hostCandidate(raw) {
-  const blocks = raw.segments.map((segment, index) => ({
-    blockId: `host-block-${index + 1}`,
-    order: index,
-    type: segment.locator.kind === 'time' ? 'transcript' : 'paragraph',
-    sourceSegmentId: segment.segmentId,
-    locator: segment.locator,
-    sourceText: segment.text,
-    targetText: `[host] ${segment.text}`,
-  }));
-  return {
-    schemaVersion,
-    source: raw.source,
-    rawSegments: raw.segments,
-    blocks,
-    sourceText: raw.sourceText,
-    targetText: blocks.map((block) => block.targetText).join('\n'),
-    extractionEngine: raw.extractionEngine,
-    structuringEngine: {
-      engine: 'host-fixture',
-      model: 'host-fixture-v1',
-      digest: `sha256:${sha256(Buffer.from('host-fixture:host-fixture-v1'))}`,
-      device: 'fake',
-    },
-    warnings: raw.warnings,
-    createdAt: raw.createdAt,
-    completedAt: '2000-01-01T00:00:01Z',
-  };
-}
-
-function captureRequest(fixture, structuringMode, targetLanguage) {
-  const boundary = `capture-workbench-${randomUUID()}`;
-  const chunks = [
-    field(boundary, 'file', fixture.content, fixture.fileName),
-    field(boundary, 'structuringMode', Buffer.from(structuringMode)),
-  ];
-  if (targetLanguage) {
-    chunks.push(field(boundary, 'targetLanguage', Buffer.from(targetLanguage)));
-  }
-  chunks.push(Buffer.from(`--${boundary}--\r\n`, 'utf8'));
-  return {
-    contentType: `multipart/form-data; boundary=${boundary}`,
-    body: Buffer.concat(chunks),
-  };
-}
-
-function field(boundary, name, value, fileName) {
-  const disposition = fileName
-    ? `Content-Disposition: form-data; name="${name}"; filename="${fileName}"\r\nContent-Type: application/octet-stream`
-    : `Content-Disposition: form-data; name="${name}"`;
-  return Buffer.concat([
-    Buffer.from(`--${boundary}\r\n${disposition}\r\n\r\n`, 'utf8'),
-    value,
-    Buffer.from('\r\n', 'utf8'),
-  ]);
-}
-
 function assertApiError(response, status, code) {
   assert.equal(response.status, status);
   assert.deepEqual(Object.keys(response.body), ['error']);
@@ -470,8 +405,8 @@ export function waitForReady(context) {
   const deadline = Date.now() + 10_000;
   return timer(0, 50).pipe(
     takeWhile(() => Date.now() < deadline),
-    concatMap(() => {
-      if (context.child.exitCode !== null) {
+    exhaustMap(() => {
+      if (context.child.exitCode !== null || context.child.signalCode != null) {
         return throwError(() => new Error('Deterministic runtime exited before readiness.'));
       }
       return requestJson(context).pipe(catchError(() => of(undefined)));
@@ -516,6 +451,8 @@ function requestJson({
         },
       },
       (response) => {
+        response.on('aborted', () => subscriber.error(new Error('Deterministic HTTP response was aborted.')));
+        response.on('error', (error) => subscriber.error(error));
         const chunks = [];
         response.on('data', (chunk) => chunks.push(chunk));
         response.on('end', () => {
@@ -533,6 +470,7 @@ function requestJson({
         });
       },
     );
+    request.setTimeout(5_000, () => request.destroy(new Error('Deterministic HTTP request timed out.')));
     request.on('error', (error) => subscriber.error(error));
     request.end(payload);
     return () => request.destroy();

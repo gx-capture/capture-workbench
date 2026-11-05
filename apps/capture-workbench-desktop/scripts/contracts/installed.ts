@@ -1,4 +1,4 @@
-import { isAbsolute, relative, resolve } from 'node:path';
+import { isAbsolute, join, relative, resolve } from 'node:path';
 
 import {
   CHILD_ENVIRONMENT_ALLOWLIST,
@@ -115,8 +115,12 @@ export function buildInstalledAppEnvironment(source, directories, cdpPort): Reco
     directories.webViewData,
     'WebView2 user-data directory',
   );
+  const requestLog = directories.requestLog === undefined ? undefined
+    : assertStrictDescendant(temporary, directories.requestLog, 'Deterministic request log');
   return {
     ...environment,
+    CAPTURE_ACCEPTANCE_APP_DATA_ROOT: join(isolatedRoot, 'artifacts', 'appdata'),
+    E2E_ARTIFACT_ROOT: join(isolatedRoot, 'artifacts'),
     APPDATA: appData,
     LOCALAPPDATA: localAppData,
     TEMP: temporary,
@@ -126,6 +130,7 @@ export function buildInstalledAppEnvironment(source, directories, cdpPort): Reco
     // cause hosted WebView2 instances to ignore the whole environment value.
     WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${cdpPort}`,
     WEBVIEW2_USER_DATA_FOLDER: webViewData,
+    ...(requestLog ? { CAPTURE_DETERMINISTIC_REQUEST_LOG: requestLog } : {}),
   };
 }
 

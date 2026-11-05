@@ -49,7 +49,27 @@ node apps/capture-workbench-desktop/scripts/stage-runtime.ts `
 corepack pnpm nx run capture-workbench-desktop:build-nsis
 ```
 
-The ordinary `build` target compiles the Tauri app with `--no-bundle` so workspace-wide verification does not silently package a fake runtime. `stage-deterministic-runtime` and `build-nsis-deterministic` are test-only and are not publication artifacts.
+The ordinary `build` target compiles the Tauri app with `--no-bundle`.
+`build-nsis` packages the staged release runtime using `tauri.conf.json`.
+
+`build-nsis-deterministic` builds **Capture Workbench QA Fake Data** using
+`tauri.deterministic-qa.conf.json` and the `acceptance-app-data` Cargo feature.
+Its identifier is `io.github.gx-capture.capture-workbench.deterministic-qa`.
+The fake executable, manifest, schema and provenance are staged only under
+`src-tauri/target/deterministic-qa/staged`; product resources are untouched.
+Its separate Cargo output is `src-tauri/target/deterministic-qa`, with installers
+in `x86_64-pc-windows-msvc/release/bundle/nsis` below that directory.
+`package-qa` and the installed deterministic smoke consume this QA installer.
+The installer name, window title and build output label its fake runtime and fake data.
+These artifacts must never be published as product releases.
+
+The QA executable requires existing `E2E_ARTIFACT_ROOT` and
+`CAPTURE_ACCEPTANCE_APP_DATA_ROOT` directories, with app data strictly below
+the artifact root. The installed smoke creates them for each run;
+`dev:deterministic` creates them under `src-tauri/target/deterministic-qa/dev`.
+`capture-workbench-desktop:contract-consistency` checks that the fake's route
+table covers the native host's method/path calls, including parameterized
+routes. The pull-request `checks` job runs this gate.
 
 ## Opt-in real Ollama smoke
 
@@ -137,12 +157,22 @@ silent, current-user NSIS install and uninstall:
 corepack pnpm nx run capture-workbench-desktop:smoke-installed-deterministic --skip-nx-cache
 ```
 
-It refuses to run over an existing Capture Workbench install,
-uses only an owned directory below `tmp/capture-workbench-desktop`, launches
+It refuses to run over an existing QA install,
+uses an owned run directory below `tmp/capture-workbench-desktop/installed-smoke`, launches
 WebView2 debugging with process-scoped environment variables, and uploads one
 deterministic PDF, image, and audio fixture through the installed UI. Cleanup
 must prove that owned processes, the CDP port, install directory, registry
 entries, and isolated data are gone before the target succeeds.
+
+The native library uses `run/artifacts/appdata` via
+`CAPTURE_ACCEPTANCE_APP_DATA_ROOT`; `E2E_ARTIFACT_ROOT` is `run/artifacts`.
+The smoke selects each imported card by its newly appearing `data-document-id`.
+Before installation it resolves real Roaming AppData through the Windows known
+folder and records only product-directory/library existence and library-index
+mtime/size. After process shutdown and uninstall it compares that metadata.
+Any change fails isolation and appears in the failure report; no real library
+contents are read, copied or logged. Failures are saved as timestamped
+`installed-smoke-failure-*.json` files alongside the smoke evidence.
 
 The resulting `tmp/capture-workbench-desktop/installed-smoke/installed-smoke.json`
 is explicitly marked deterministic and diagnostic only. It does not certify

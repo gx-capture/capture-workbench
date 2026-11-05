@@ -8,8 +8,9 @@ use std::{
 use serde_json::{json, Value};
 
 const MAX_REQUEST_BYTES: usize = 51 * 1024 * 1024;
-const CORS_METHODS: &str = "GET, POST, DELETE, OPTIONS";
-const CORS_HEADERS: &str = "Accept, Authorization, Content-Type, X-Idempotency-Key";
+const CORS_METHODS: &str = "GET, POST, PUT, DELETE, OPTIONS";
+const CORS_HEADERS: &str =
+    "Accept, Authorization, Content-Type, X-Idempotency-Key, Content-Range, Digest, Last-Event-ID";
 
 pub struct Request {
     pub method: String,
@@ -19,16 +20,23 @@ pub struct Request {
 }
 
 pub struct Response {
-    status: u16,
-    body: Option<Value>,
+    pub(crate) status: u16,
+    pub(crate) body: Option<Value>,
+    event_stream: Option<String>,
     headers: Vec<(String, String)>,
 }
 
 impl Response {
+    #[cfg(test)]
+    pub fn into_parts(self) -> (u16, Value) {
+        (self.status, self.body.unwrap_or(Value::Null))
+    }
+
     pub fn json(status: u16, body: Value) -> Self {
         Self {
             status,
             body: Some(body),
+            event_stream: None,
             headers: Vec::new(),
         }
     }
@@ -37,6 +45,7 @@ impl Response {
         Self {
             status,
             body: None,
+            event_stream: None,
             headers: Vec::new(),
         }
     }
@@ -44,6 +53,12 @@ impl Response {
     pub fn header(mut self, name: &str, value: &str) -> Self {
         self.headers.push((name.into(), value.into()));
         self
+    }
+
+    pub fn event_stream(body: String) -> Self {
+        let mut response = Self::empty(200);
+        response.event_stream = Some(body);
+        response
     }
 
     pub fn with_cors(mut self, origin: Option<&str>) -> Self {
@@ -214,6 +229,7 @@ pub fn read_request(stream: &mut TcpStream) -> Result<Request, Response> {
 pub fn write_response(stream: &mut TcpStream, response: Response) {
     let reason = match response.status {
         200 => "OK",
+        201 => "Created",
         202 => "Accepted",
         204 => "No Content",
         400 => "Bad Request",
@@ -226,10 +242,16 @@ pub fn write_response(stream: &mut TcpStream, response: Response) {
         422 => "Unprocessable Content",
         _ => "Error",
     };
+    let is_event_stream = response.event_stream.is_some();
     let body = response
-        .body
-        .map(|body| serde_json::to_vec(&body).unwrap_or_else(|_| b"{}".to_vec()))
-        .unwrap_or_default();
+        .event_stream
+        .map(String::into_bytes)
+        .unwrap_or_else(|| {
+            response
+                .body
+                .map(|body| serde_json::to_vec(&body).unwrap_or_else(|_| b"{}".to_vec()))
+                .unwrap_or_default()
+        });
     let _ = write!(
         stream,
         "HTTP/1.1 {} {}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\n",
@@ -237,7 +259,9 @@ pub fn write_response(stream: &mut TcpStream, response: Response) {
         reason,
         body.len()
     );
-    if !body.is_empty() {
+    if is_event_stream {
+        let _ = write!(stream, "Content-Type: text/event-stream\r\n");
+    } else if !body.is_empty() {
         let _ = write!(stream, "Content-Type: application/json\r\n");
     }
     for (name, value) in response.headers {

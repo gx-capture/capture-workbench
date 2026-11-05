@@ -1,3 +1,4 @@
+import { deterministicQaPaths } from './deterministic-qa.ts';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -17,7 +18,9 @@ export function assertStagedRuntime(expectedSource) {
       throw new Error('Expected stage source must be release or deterministic.');
     });
   }
-  return defer(() => from(readFile(stageProvenance, 'utf8'))).pipe(
+  const paths = expectedSource === 'deterministic' ? deterministicQaPaths
+    : { stageProvenance, stagedManifest, stagedExecutable, stagedSchema };
+  return defer(() => from(readFile(paths.stageProvenance, 'utf8'))).pipe(
     map((contents) => JSON.parse(contents)),
     switchMap((provenance) => {
       if (provenance.source !== expectedSource) {
@@ -25,7 +28,7 @@ export function assertStagedRuntime(expectedSource) {
           `Refusing to build: staged runtime source is ${String(provenance.source)}, expected ${expectedSource}.`,
         );
       }
-      return validateRuntime(stagedManifest, stagedExecutable, stagedSchema).pipe(
+      return validateRuntime(paths.stagedManifest, paths.stagedExecutable, paths.stagedSchema).pipe(
         map((verified) => {
           if (verified.manifest.runtimeVersion !== provenance.runtimeVersion) {
             throw new Error(
