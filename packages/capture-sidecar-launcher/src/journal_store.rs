@@ -1813,7 +1813,6 @@ impl ClosingCleanupAdmission {
     }
 }
 
-#[cfg(windows)]
 fn cancellation_requested(cancellation: &AtomicBool) -> bool {
     cancellation.load(Ordering::Acquire)
 }
