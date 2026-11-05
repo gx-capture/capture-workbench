@@ -546,6 +546,47 @@ describe('DesktopWorkspaceStore', () => {
     expect(startStreamingCapture).toHaveBeenCalledOnce();
   });
 
+  it('streams a newly imported recording before the library list includes it', () => {
+    const audioDoc: DesktopLibrarySummary = {
+      ...summary,
+      fileName: 'interview.wav',
+      mediaType: 'audio/wav',
+    };
+    const startStreamingCapture = vi.fn(() => of(completedJob));
+    const createCapture = vi.fn(() => of(completedJob));
+    const library = libraryStub({
+      createSource: vi.fn(() => of(audioDoc)),
+      list: vi.fn(() => of([])),
+      get: vi.fn(() => of(audioDoc as DesktopLibraryDetail)),
+    });
+    const client = runtimeStub({
+      getRequirements: vi.fn(() =>
+        of([
+          {
+            requirementId: 'speech-recognition',
+            displayName: 'Speech recognition',
+            status: 'ready',
+            kind: 'engine',
+            requiredFor: ['audio'],
+            installStrategy: 'runtime-catalog',
+            downloadBytes: 2_800_000_000,
+          },
+        ]),
+      ),
+      startStreamingCapture,
+      createCapture,
+      getStreamingResult: vi.fn(() => of({ operation: completedJob, raw, result })),
+      deleteStreamingCapture: vi.fn(() => of(undefined)),
+    });
+    const store = initializeStore(library, client);
+
+    store.addSourcePaths([String.raw`C:\private\interview.wav`]);
+    TestBed.tick();
+
+    expect(startStreamingCapture).toHaveBeenCalledOnce();
+    expect(createCapture).not.toHaveBeenCalled();
+  });
+
   it('reports byte-based progress, cancels a running installation, and retries after cancellation or failure', () => {
     let attempt = 0;
     const startInstallation = vi.fn(() => {
