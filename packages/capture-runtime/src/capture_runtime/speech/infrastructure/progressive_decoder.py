@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from capture_runtime.speech.application.use_cases import SliceAudioStream
+from capture_runtime.speech.domain.window import WindowSlicingPolicy
 from capture_runtime.speech.infrastructure.progressive_audio import (
     MAX_PROGRESSIVE_WINDOW_BYTES,
     DecodedAudioWindow,
@@ -48,6 +50,7 @@ class PyAVIncrementalDecoder:
             raise ValueError("decoder byte limits must be positive")
         self.spool_path = spool_path
         self.sample_rate = sample_rate
+        self._slicer = SliceAudioStream(WindowSlicingPolicy(window_ms, overlap_ms))
         self.window_ms = window_ms
         self.overlap_ms = overlap_ms
         self.max_spool_bytes = max_spool_bytes
@@ -111,8 +114,12 @@ class PyAVIncrementalDecoder:
                     # samples (Opus, MP3 and AAC frames); only the samples are audio.
                     self._pcm.extend(bytes(decoded.planes[0])[: sample_count * 2])
                     self._decoded_until_ms = frame_end_ms
-                    while self._decoded_until_ms - self._window_start_ms >= self.window_ms:
-                        windows.append(self._take_window(self._window_start_ms + self.window_ms))
+                    for _, end_ms in self._slicer.execute(
+                        self._decoded_until_ms,
+                        start_ms=self._window_start_ms,
+                        include_partial=False,
+                    ):
+                        windows.append(self._take_window(end_ms))
             return windows
         except ProgressiveDecoderError:
             raise

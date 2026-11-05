@@ -367,3 +367,39 @@ def test_progress_that_does_not_fit_the_capture_kind_is_never_written(tmp_path: 
 
     assert repository.get_capture(capture_id) == before
     assert len(repository.read_events(capture_id, after_sequence=-1)) == 1
+
+
+def test_completion_event_retains_exact_domain_time_and_replays_once(tmp_path: Path) -> None:
+    from capture_runtime.capture.infrastructure.streaming_repository import StreamingTransitionError
+
+    clock = MutableClock()
+    clock.current = clock.current.replace(microsecond=123456)
+    repository = StreamingRepository(tmp_path, clock=clock, retention_hours=4)
+    repository.initialize()
+    source = b"source"
+    ingestion_id, digest = _open(repository, source)
+    repository.append_chunk(
+        ingestion_id,
+        chunk_index=0,
+        byte_offset=0,
+        data=source,
+        sha256=digest,
+        max_chunk_bytes=1024,
+        declared_total_bytes=len(source),
+    )
+    repository.finalize_ingestion(ingestion_id, total_bytes=len(source), sha256=digest)
+    operation = repository.create_capture(
+        StartCaptureV2(
+            ingestion_id=ingestion_id,
+            client_request_id="complete-once",
+            structuring_mode=StructuringMode.HOST,
+        )
+    )
+    completed = repository.complete_capture(operation.capture_id)
+    events = repository.read_events(operation.capture_id, after_sequence=0)
+    assert events[-1].event_type is StreamingEventType.COMPLETED
+    assert events[-1].created_at == completed.completed_at == clock.current
+    assert repository.complete_capture(operation.capture_id) == completed
+    assert repository.read_events(operation.capture_id, after_sequence=0) == events
+    with pytest.raises(StreamingTransitionError):
+        repository.mark_structuring(operation.capture_id)

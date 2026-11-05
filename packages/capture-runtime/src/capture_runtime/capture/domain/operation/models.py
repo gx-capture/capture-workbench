@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from datetime import datetime
 
 from capture_runtime.contracts import (
     CaptureSourceKind,
     StreamingCaptureStatus,
     StreamingEventType,
+    StructuringMode,
 )
 
 TERMINAL_CAPTURE_STATUSES = frozenset(
@@ -54,13 +56,13 @@ class CaptureCompleted:
     """Domain event emitted when a capture operation finishes successfully."""
 
     capture_id: str
-    completed_at_ms: int
+    completed_at: datetime
 
     def __post_init__(self) -> None:
         if not self.capture_id:
             raise ValueError("capture_id cannot be empty")
-        if self.completed_at_ms < 0:
-            raise ValueError(f"completed_at_ms must be non-negative, got {self.completed_at_ms}")
+        if self.completed_at.timestamp() < 0:
+            raise ValueError("completed_at must not precede the Unix epoch")
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,15 +81,31 @@ class CaptureOperation:
     def is_terminal(self) -> bool:
         return self.status in TERMINAL_CAPTURE_STATUSES
 
-    def completed_event(self, completed_at_ms: int) -> CaptureCompleted:
+    def completed_event(self, completed_at: datetime) -> CaptureCompleted:
         if self.status is not StreamingCaptureStatus.COMPLETED:
             raise CaptureTransitionError("capture has not completed")
-        return CaptureCompleted(self.capture_id, completed_at_ms)
+        return CaptureCompleted(self.capture_id, completed_at)
+
+    def require_host_structuring(self, mode: StructuringMode) -> None:
+        if (
+            mode is not StructuringMode.HOST
+            or self.status is not StreamingCaptureStatus.AWAITING_STRUCTURING
+        ):
+            raise CaptureTransitionError("capture is not awaiting host structuring")
+
+    def begin_structuring(self) -> CaptureOperation:
+        if self.status is StreamingCaptureStatus.STRUCTURING:
+            return self
+        if self.status is not StreamingCaptureStatus.AWAITING_STRUCTURING:
+            raise CaptureTransitionError("capture is not awaiting structuring")
+        return self.transition(StreamingCaptureStatus.STRUCTURING)
 
     def transition(self, status: StreamingCaptureStatus) -> CaptureOperation:
         """Advance the existing lifecycle; a terminal state never changes."""
-        if self.is_terminal:
+        if status is self.status:
             return self
+        if self.is_terminal:
+            raise CaptureTransitionError(f"cannot move capture from {self.status} to {status}")
         allowed = {
             StreamingCaptureStatus.CREATED: {
                 StreamingCaptureStatus.WAITING_INPUT,

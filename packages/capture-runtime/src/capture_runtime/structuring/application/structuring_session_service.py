@@ -56,8 +56,6 @@ class StructuringSessionService:
         host_result_committer: Callable[..., CaptureOperationV2] | None = None,
         host_result_discarder: Callable[[str], None] | None = None,
     ) -> None:
-        self.validate_batch = validate_structuring_batch
-        self.assemble_document = assemble_structuring_document
         self.repository = repository
         self.streaming_repository = streaming_repository
         self._coordinator = coordinator
@@ -66,9 +64,23 @@ class StructuringSessionService:
         self._host_result_committer = host_result_committer
         self._host_result_discarder = host_result_discarder
 
-        self.open_use_case = OpenStructuringSession(self)
-        self.submit_use_case = SubmitStructuringBatch(self)
-        self.get_use_case = GetStructuringSession(self)
+        self.open_use_case = OpenStructuringSession(
+            repository,
+            streaming_repository,
+            plan_batches=self._planned_batches,
+            contract_set_sha256=contract_set_sha256,
+        )
+        self.submit_use_case = SubmitStructuringBatch(
+            repository,
+            streaming_repository,
+            clock=clock,
+            validate_batch=validate_structuring_batch,
+            assemble_document=assemble_structuring_document,
+            discard_result=self._discard_host_result,
+            recover=self._recover_completed_sessions,
+            commit_result=self._commit_completed_capture,
+        )
+        self.get_use_case = GetStructuringSession(repository)
 
     def initialize(self) -> None:
         self.repository.initialize()

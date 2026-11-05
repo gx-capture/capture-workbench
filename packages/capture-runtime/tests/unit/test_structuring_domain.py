@@ -2,19 +2,11 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, Mock
-
 import pytest
 
 from capture_runtime.contracts import (
-    RuntimeModelInstallationV2,
     StructuringBatchStatus,
     StructuringSessionStatus,
-)
-from capture_runtime.structuring.application.use_cases import (
-    CancelModelInstallation,
-    GetModelInstallation,
-    InstallModelOption,
 )
 from capture_runtime.structuring.domain.session import (
     BatchPlanningPolicy,
@@ -167,32 +159,56 @@ def test_batch_planning_policy() -> None:
 
 
 @pytest.mark.anyio
-async def test_model_installation_use_cases() -> None:
-    mock_installation_service = Mock()
+async def test_model_installation_use_cases(tmp_path) -> None:
+    import asyncio
 
-    # 4. InstallModelOption
-    mock_job = Mock(spec=RuntimeModelInstallationV2)
-    mock_installation_service.create.return_value = mock_job
-    install_uc = InstallModelOption(mock_installation_service)
+    from capture_runtime.clock import SystemClock
+    from capture_runtime.contracts import RuntimeInstallationStatus
+    from capture_runtime.structuring.application.model_installation_service import (
+        ModelInstallationService,
+    )
+    from capture_runtime.structuring.infrastructure.model_installation_repository import (
+        ModelInstallationRepository,
+    )
+
+    started = asyncio.Event()
+
+    class Installer:
+        async def install_model_option(self, option_id, *, cancel_event, report_progress):
+            report_progress(0.5)
+            if option_id == "slow":
+                started.set()
+                await asyncio.Event().wait()
+
+    clock = SystemClock()
+    repository = ModelInstallationRepository(tmp_path, clock=clock, retention_hours=4)
+    repository.initialize()
+    service = ModelInstallationService(repository, installer=Installer(), clock=clock)
+    first = service.install_use_case.execute(
+        idempotency_key="first", request_fingerprint="first", option_id="ready"
+    )
     assert (
-        install_uc.execute(idempotency_key="k", request_fingerprint="fp", option_id="opt")
-        is mock_job
+        service.install_use_case.execute(
+            idempotency_key="first", request_fingerprint="first", option_id="ready"
+        )
+        == first
     )
-    mock_installation_service.create.assert_called_once_with(
-        idempotency_key="k", request_fingerprint="fp", option_id="opt"
+    await service._tasks[first.installation_id]
+    assert (
+        service.get_use_case.execute(first.installation_id).status
+        is RuntimeInstallationStatus.COMPLETED
     )
-
-    # 5. CancelModelInstallation
-    mock_installation_service.cancel = AsyncMock(return_value=mock_job)
-    cancel_uc = CancelModelInstallation(mock_installation_service)
-    assert await cancel_uc.execute("job-1") is mock_job
-    mock_installation_service.cancel.assert_awaited_once_with("job-1")
-
-    # 6. GetModelInstallation
-    mock_installation_service.get.return_value = mock_job
-    get_job_uc = GetModelInstallation(mock_installation_service)
-    assert get_job_uc.execute("job-1") is mock_job
-    mock_installation_service.get.assert_called_once_with("job-1")
+    slow = service.install_use_case.execute(
+        idempotency_key="slow", request_fingerprint="slow", option_id="slow"
+    )
+    await started.wait()
+    cancelled = await service.cancel_use_case.execute(slow.installation_id)
+    assert cancelled.status is RuntimeInstallationStatus.CANCELLED
+    assert await service.cancel_use_case.execute(slow.installation_id) == cancelled
+    restarted = ModelInstallationRepository(tmp_path, clock=clock, retention_hours=4)
+    restarted.initialize()
+    assert restarted.get(slow.installation_id).job == cancelled
+    await service.shutdown()
 
 
 def test_session_aggregate_accepts_batches_only_in_order_and_stops_at_completion() -> None:

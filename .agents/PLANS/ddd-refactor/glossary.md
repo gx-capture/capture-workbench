@@ -69,3 +69,20 @@
 | 分窗逐字稿 | `WindowTranscript` | 單一音訊窗的辨識片段、引擎與警告。 |
 | 分窗逐字稿片段 | `WindowTranscriptSegment` | 音訊窗內的文字與時間範圍。 |
 | 說話者分離結果 | `DiarizationResult` | Worker 解碼後的說話者片段、裝置、模型與耗時。 |
+
+## 領域錯誤與正式政策
+
+| 中文 | 程式名稱 | 意義 |
+| --- | --- | --- |
+| 匯入轉換錯誤 | `IngestionTransitionError` | 分塊或來源狀態不允許所要求的操作。 |
+| 擷取轉換錯誤 | `CaptureTransitionError` | 擷取狀態不允許所要求的操作。 |
+| 工作階段轉換錯誤 | `SessionTransitionError` | 批次順序或工作階段狀態不允許提交。 |
+| 結構化驗證錯誤 | `StructuringValidationError` | 語意輸出無法安全投影。 |
+| 批次摘要衝突 | `StructuringSessionDigestConflictError` | 提交與已規劃的批次摘要不同。 |
+| 運算候選 | `ComputeCandidate` | 已排名且帶有證據 assessment 的裝置候選。 |
+| 區域介面 | `RegionLike` | 閱讀計畫所需的文字與幾何欄位。 |
+| 頁面偏斜估計 | `SkewEstimate` | 閱讀順序分析的角度及一致性。 |
+| 文章計畫 | `ArticlePlan` | 多欄文章的來源區域與角色。 |
+| 前置署名計畫 | `FrontMatterSignaturePlan` | 頁面前置署名的來源關係。 |
+| 閱讀計畫 | `ReadingPlan` | 順序、振假名、來源位置與版面診斷。 |
+| 模型安裝 | `ModelInstallation` | 結構化模型安裝作業的狀態聚合。 |

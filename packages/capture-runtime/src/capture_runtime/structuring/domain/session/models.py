@@ -128,6 +128,19 @@ class BatchPlanningPolicy:
     max_context_tokens: int = 4096
     target_language: str | None = None
 
+    def limits(
+        self, max_predict: int, *, context_reserve: int, output_reserve: int
+    ) -> tuple[int, int]:
+        if max_predict <= output_reserve:
+            raise ValueError("Capture structuring output budget is too small")
+        if self.max_context_tokens <= max_predict + context_reserve:
+            raise ValueError("Capture structuring context budget is too small")
+        return self.max_context_tokens - max_predict - context_reserve, max_predict - output_reserve
+
+    @staticmethod
+    def fits(input_tokens: int, output_tokens: int, limits: tuple[int, int]) -> bool:
+        return input_tokens <= limits[0] and output_tokens <= limits[1]
+
     def __post_init__(self) -> None:
         if self.max_context_tokens < 1:
             raise ValueError("max_context_tokens must be >= 1")

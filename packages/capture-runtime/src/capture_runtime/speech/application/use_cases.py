@@ -54,19 +54,12 @@ class TranscribeAudio:
         language: str | None = None,
     ) -> SpeechTranscript:
         cancel_cb = should_cancel or (lambda: False)
-        if allow_empty_output:
-            result = self._transcriber.transcribe(
-                source_path,
-                should_cancel=cancel_cb,
-                allow_empty_output=True,
-                language=language,
-            )
-        else:
-            result = self._transcriber.transcribe(
-                source_path,
-                should_cancel=cancel_cb,
-                language=language,
-            )
+        result = self._transcriber.transcribe(
+            source_path,
+            should_cancel=cancel_cb,
+            allow_empty_output=allow_empty_output,
+            language=language,
+        )
         segments = tuple(
             SpeechTranscriptSegment(
                 start_ms=s.start_ms,
@@ -108,8 +101,12 @@ class SliceAudioStream:
     def __init__(self, policy: WindowSlicingPolicy | None = None) -> None:
         self._policy = policy or WindowSlicingPolicy()
 
-    def execute(self, total_duration_ms: int) -> tuple[tuple[int, int], ...]:
-        return self._policy.compute_windows(total_duration_ms)
+    def execute(
+        self, total_duration_ms: int, *, start_ms: int = 0, include_partial: bool = True
+    ) -> tuple[tuple[int, int], ...]:
+        return self._policy.compute_windows(
+            total_duration_ms, start_ms=start_ms, include_partial=include_partial
+        )
 
 
 class DetectRepetitionLoop:

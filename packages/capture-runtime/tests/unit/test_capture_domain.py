@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
 
 from capture_runtime.capture.application.use_cases import (
-    AppendChunk,
-    CancelCapture,
     FinalizeIngestion,
-    OpenIngestion,
-    PollCaptureEvents,
     StartCapture,
 )
 from capture_runtime.capture.domain.ingestion import Ingestion, IngestionChunk
@@ -145,15 +143,15 @@ def test_page_locator_and_time_range_invariants() -> None:
 
 
 def test_capture_completed_event_invariants() -> None:
-    event = CaptureCompleted(capture_id="cap-1", completed_at_ms=1000)
+    event = CaptureCompleted(capture_id="cap-1", completed_at=datetime.fromtimestamp(1, UTC))
     assert event.capture_id == "cap-1"
-    assert event.completed_at_ms == 1000
+    assert event.completed_at == datetime.fromtimestamp(1, UTC)
 
     with pytest.raises(ValueError, match="capture_id cannot be empty"):
-        CaptureCompleted(capture_id="", completed_at_ms=100)
+        CaptureCompleted(capture_id="", completed_at=datetime.fromtimestamp(0.1, UTC))
 
-    with pytest.raises(ValueError, match="completed_at_ms must be non-negative"):
-        CaptureCompleted(capture_id="c", completed_at_ms=-1)
+    with pytest.raises(ValueError, match="completed_at must not precede"):
+        CaptureCompleted(capture_id="c", completed_at=datetime.fromtimestamp(-1, UTC))
 
 
 def test_capture_use_cases_run_upload_schedule_replay_and_cancel(tmp_path, monkeypatch) -> None:
@@ -174,10 +172,11 @@ def test_capture_use_cases_run_upload_schedule_replay_and_cancel(tmp_path, monke
     repository.initialize()
     service = StreamingCaptureService(repository, clock=clock)
     scheduled = []
-    monkeypatch.setattr(service, "_schedule", scheduled.append)
+    service.start_capture_use_case = StartCapture(repository, schedule=scheduled.append)
+    service.finalize_ingestion_use_case = FinalizeIngestion(repository, schedule=scheduled.append)
     content = b"abcdef"
     digest = hashlib.sha256(content).hexdigest()
-    ingestion = OpenIngestion(service).execute(
+    ingestion = service.open_ingestion_use_case.execute(
         OpenIngestionV2(
             client_request_id="upload",
             file_name="test.wav",
@@ -186,7 +185,7 @@ def test_capture_use_cases_run_upload_schedule_replay_and_cancel(tmp_path, monke
             source_sha256=digest,
         )
     )
-    operation = StartCapture(service).execute(
+    operation = service.start_capture_use_case.execute(
         StartCaptureV2(
             ingestion_id=ingestion.ingestion_id,
             client_request_id="capture",
@@ -197,26 +196,26 @@ def test_capture_use_cases_run_upload_schedule_replay_and_cancel(tmp_path, monke
     arguments = dict(
         chunk_index=0, byte_offset=0, data=content, sha256=digest, declared_total_bytes=len(content)
     )
-    uploaded = AppendChunk(service).execute(ingestion.ingestion_id, **arguments)
+    uploaded = service.append_chunk_use_case.execute(ingestion.ingestion_id, **arguments)
     events = service.events_use_case.execute(operation.capture_id, after_sequence=0)
-    assert AppendChunk(service).execute(ingestion.ingestion_id, **arguments) == uploaded
+    assert service.append_chunk_use_case.execute(ingestion.ingestion_id, **arguments) == uploaded
     assert service.events_use_case.execute(operation.capture_id, after_sequence=0) == events
-    finalized = FinalizeIngestion(service).execute(
+    finalized = service.finalize_ingestion_use_case.execute(
         ingestion.ingestion_id, FinalizeIngestionV2(total_bytes=len(content), sha256=digest)
     )
     assert (
-        FinalizeIngestion(service).execute(
+        service.finalize_ingestion_use_case.execute(
             ingestion.ingestion_id, FinalizeIngestionV2(total_bytes=len(content), sha256=digest)
         )
         == finalized
     )
     assert scheduled == [operation.capture_id]
-    cancelled = CancelCapture(service).execute(operation.capture_id)
+    cancelled = service.cancel_capture_use_case.execute(operation.capture_id)
     assert service._cancellations[operation.capture_id].is_set()
     assert cancelled.status is StreamingCaptureStatus.CANCELLED
-    assert CancelCapture(service).execute(operation.capture_id) == cancelled
+    assert service.cancel_capture_use_case.execute(operation.capture_id) == cancelled
     assert (
-        PollCaptureEvents(service).execute(operation.capture_id)[-1].event_type
+        service.events_use_case.execute(operation.capture_id)[-1].event_type
         is StreamingEventType.CANCELLED
     )
     with pytest.raises(StreamingTransitionError, match="no longer accepts events"):
@@ -255,6 +254,10 @@ def test_capture_aggregate_rejects_skipped_states_and_keeps_terminal_state() -> 
     completed = progressed.transition(StreamingCaptureStatus.AWAITING_STRUCTURING).transition(
         StreamingCaptureStatus.COMPLETED
     )
-    assert completed.transition(StreamingCaptureStatus.FAILED) is completed
+    assert completed.transition(StreamingCaptureStatus.COMPLETED) is completed
+    with pytest.raises(CaptureTransitionError):
+        completed.transition(StreamingCaptureStatus.FAILED)
+    with pytest.raises(CaptureTransitionError):
+        completed.transition(StreamingCaptureStatus.STRUCTURING)
     with pytest.raises(CaptureTransitionError):
         completed.record_event(StreamingEventType.CHECKPOINT)

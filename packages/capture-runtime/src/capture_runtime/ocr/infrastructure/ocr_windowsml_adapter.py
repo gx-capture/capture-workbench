@@ -20,6 +20,8 @@ from typing import Any
 from uuid import uuid4
 
 from capture_runtime.contracts import OcrProvenanceV3
+from capture_runtime.ocr.application.use_cases import OrderPageRegions, VerifyExecutionEvidence
+from capture_runtime.ocr.domain.page.reading_order import ReadingPlan
 from capture_runtime.ocr.infrastructure.ocr_alignment import (
     AlignmentCollector,
     AlignmentContractError,
@@ -65,7 +67,6 @@ from capture_runtime.ocr.infrastructure.ocr_profile import (
     load_profile_spec,
     validate_model_artifacts,
 )
-from capture_runtime.ocr.infrastructure.ocr_reading_order import ReadingPlan, plan_reading_order
 from capture_runtime.ocr.infrastructure.ocr_region_lineage import validate_region_sources
 from capture_runtime.ocr.infrastructure.ocr_vertical_routing import (
     PageRoute,
@@ -251,6 +252,8 @@ class WindowsMLOcrAdapter:
         # Where the optional vertical reader unit is installed; without it the
         # reader is looked for inside the OCR model directory, as before it
         # became optional.
+        self._order_regions = OrderPageRegions()
+        self._verify_evidence = VerifyExecutionEvidence()
         self._vertical_reader_dir = vertical_reader_dir
         # A page would have gone to the vertical reader, but it is not installed.
         self.vertical_reader_wanted = False
@@ -589,7 +592,7 @@ class WindowsMLOcrAdapter:
                         "DML execution evidence finalization is unavailable."
                     )
                 evidence = finalize(pipeline)
-                if evidence.dml_node_count < 1:
+                if not self._verify_evidence.execute(evidence):
                     raise EngineRuntimeUnavailableError(
                         "DML execution evidence contained zero assigned DML nodes."
                     )
@@ -652,7 +655,7 @@ class WindowsMLOcrAdapter:
                 normalized, alignment_records, raster_width, raster_height
             )
             result_failure_code = "ocr_reading_order_failed"
-            reading_plan = plan_reading_order(
+            reading_plan = self._order_regions.execute(
                 layout_regions, raw_source_slots=normalized.source_slots if not splits else None
             )
             regions = tuple(layout_regions[index] for index in reading_plan.order)

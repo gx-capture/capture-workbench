@@ -13,6 +13,7 @@ from types import ModuleType, SimpleNamespace
 import pytest
 from PIL import Image
 
+import capture_runtime.ocr.domain.page.models as page_models
 import capture_runtime.ocr.infrastructure.ocr_execution_evidence as execution_evidence
 import capture_runtime.ocr.infrastructure.ocr_paddle_normalization as paddle_normalization
 import capture_runtime.ocr.infrastructure.ocr_windowsml_adapter as windowsml_adapter
@@ -1105,7 +1106,7 @@ def test_windowsml_adapter_reading_order_failure_does_not_return_original_succes
     def broken_policy(_regions: object, **_kwargs: object) -> object:
         raise RuntimeError("reading-order invariant failed")
 
-    monkeypatch.setattr(windowsml_adapter, "plan_reading_order", broken_policy)
+    monkeypatch.setattr(page_models, "plan_reading_order", broken_policy)
     adapter = WindowsMLOcrAdapter(
         model_dir,
         execution_plan=_cpu_plan(),
@@ -3043,7 +3044,9 @@ class FakeWhisperAdapter:
     def probe(self) -> EngineProbe:
         return EngineProbe(True, True, True, "ready")
 
-    def transcribe(self, source_path: Path, *, should_cancel, language=None):
+    def transcribe(
+        self, source_path: Path, *, should_cancel, allow_empty_output=False, language=None
+    ):
         assert not should_cancel()
         assert source_path.is_file()
         self.paths.append(source_path)

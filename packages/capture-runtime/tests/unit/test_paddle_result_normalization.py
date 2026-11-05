@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import pytest
 from PIL import Image
 
-import capture_runtime.ocr.infrastructure.ocr_windowsml_adapter as windowsml_adapter
+import capture_runtime.ocr.domain.page.models as page_models
 from capture_runtime.ocr.infrastructure.ocr_paddle_normalization import (
     PaddleResultNormalizationError,
     normalize_paddle_results,
@@ -131,13 +131,13 @@ def test_adapter_passes_original_slots_to_reading_plan(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     observed = []
-    original = windowsml_adapter.plan_reading_order
+    original = page_models.plan_reading_order
 
     def observe(regions, **kwargs):
         observed.append(kwargs.get("raw_source_slots"))
         return original(regions, **kwargs)
 
-    monkeypatch.setattr(windowsml_adapter, "plan_reading_order", observe)
+    monkeypatch.setattr(page_models, "plan_reading_order", observe)
     result = _extract(
         tmp_path,
         {

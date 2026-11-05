@@ -107,6 +107,7 @@ class ProgressiveAudioSession:
         self.capture_id = capture_id
         self.decoder = decoder
         self.transcriber = transcriber
+        self._transcribe_window = TranscribeAudioWindow(transcriber)
         self.clock = clock
         self.window_ms = window_ms
         self.overlap_ms = overlap_ms
@@ -180,7 +181,7 @@ class ProgressiveAudioSession:
         """Consume an already decoded bounded window from the worker seam."""
 
         self._ensure_open()
-        result = TranscribeAudioWindow(self.transcriber).execute(window)
+        result = self._transcribe_window.execute(window)
         self.consume_window_result(window, result)
         return self.drain_events()
 
@@ -238,7 +239,7 @@ class ProgressiveAudioSession:
             return
         if window.start_ms > self._covered_until_ms + self.overlap_ms:
             raise ProgressiveAudioError("decoded audio windows have a gap")
-        result = TranscribeAudioWindow(self.transcriber).execute(window)
+        result = self._transcribe_window.execute(window)
         self._consume_result(window, result)
 
     def _consume_result(self, window: DecodedAudioWindow, result: WhisperWindowResult) -> None:

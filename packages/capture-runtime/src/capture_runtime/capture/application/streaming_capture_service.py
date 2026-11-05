@@ -106,7 +106,6 @@ class StreamingCaptureService:
         execution_evidence_sink: OcrExecutionEvidenceSink | None = None,
         max_chunk_bytes: int = MAX_STREAM_CHUNK_BYTES,
     ) -> None:
-        self._validate_document = _validate_runtime_document
         self.repository = repository
         self._clock = clock
         self.max_chunk_bytes = max_chunk_bytes
@@ -131,13 +130,22 @@ class StreamingCaptureService:
         self._engines_available = asyncio.Event()
         self._engines_available.set()
 
-        self.open_ingestion_use_case = OpenIngestion(self)
-        self.append_chunk_use_case = AppendChunk(self)
-        self.finalize_ingestion_use_case = FinalizeIngestion(self)
-        self.start_capture_use_case = StartCapture(self)
-        self.cancel_capture_use_case = CancelCapture(self)
-        self.events_use_case = PollCaptureEvents(self)
-        self.commit_host_result_use_case = CommitHostStructuring(self)
+        self.open_ingestion_use_case = OpenIngestion(repository)
+        self.append_chunk_use_case = AppendChunk(repository, max_chunk_bytes=max_chunk_bytes)
+        self.finalize_ingestion_use_case = FinalizeIngestion(repository, schedule=self._schedule)
+        self.start_capture_use_case = StartCapture(repository, schedule=self._schedule)
+        self.cancel_capture_use_case = CancelCapture(repository, request_cancel=self.request_cancel)
+        self.events_use_case = PollCaptureEvents(repository)
+        self.commit_host_result_use_case = CommitHostStructuring(
+            repository,
+            clock=clock,
+            validate_document=_validate_runtime_document,
+            discard_result=self._clear_pending_execution_proof,
+        )
+
+    def request_cancel(self, capture_id: str) -> None:
+        self._clear_pending_execution_proof(capture_id)
+        self._cancellations.setdefault(capture_id, asyncio.Event()).set()
 
     def get_ingestion(self, ingestion_id: str) -> IngestionV2:
         return self.repository.get_ingestion(ingestion_id)
@@ -801,12 +809,6 @@ class StreamingCaptureService:
                     projection = projection.model_copy(update={"capture_id": capture_id})
                 self.repository.write_ocr_projection(capture_id, projection)
             self.repository.fail_capture(capture_id, failure)
-
-    def _captures_for(self, ingestion_id: str) -> list[CaptureOperationV2]:
-        return [
-            self.repository.get_capture(capture_id)
-            for capture_id in self.repository.capture_ids_for_ingestion(ingestion_id)
-        ]
 
 
 class _SpokenLanguageArgument(TypedDict, total=False):

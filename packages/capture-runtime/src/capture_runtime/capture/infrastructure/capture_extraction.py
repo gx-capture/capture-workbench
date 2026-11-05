@@ -212,6 +212,7 @@ class _SyncOcrEngineAdapter:
         adapter = self._extractor.ocr_adapter
         if adapter is None:
             raise OcrEngineFailure(kind="unavailable", completed_pages=())
+        extract_page = ExtractPageText(adapter)
         pages: list[OcrPageInput] = []
         warnings: list[str] = []
         provenance: OcrProvenanceV3 | None = None
@@ -231,7 +232,8 @@ class _SyncOcrEngineAdapter:
                     )
                 self._check_cancelled(request)
                 try:
-                    result = ExtractPageText(adapter).execute(image_png, expected.page).result
+                    extracted = extract_page.execute(image_png, expected.page)
+                    result = extracted.result
                 except PaddleResultNormalizationError:
                     if request.is_cancelled():
                         raise InterruptedError("Capture extraction was cancelled.") from None
@@ -246,7 +248,7 @@ class _SyncOcrEngineAdapter:
                     ) from error
                 self._check_cancelled(request)
                 current = result.provenance or self._provenance(result)
-                pages.append(request.observe(expected, result, current))
+                pages.append(request.observe(expected, extracted, current))
                 if result.warning:
                     warnings.append(result.warning)
                 if provenance is None:

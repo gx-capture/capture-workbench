@@ -6,7 +6,7 @@ import hashlib
 import json
 import re
 import threading
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
@@ -53,7 +53,6 @@ from capture_runtime.contracts import (
     StreamingCaptureStatus,
     StreamingEventType,
     StreamingIngestionStatus,
-    StructuringMode,
 )
 
 
@@ -319,6 +318,7 @@ class StreamingRepository:
         pages: tuple[int, int] | None = None,
         duration_ms: int | None = None,
         _terminal_transition: bool = False,
+        _created_at: datetime | None = None,
     ) -> CaptureEventV2:
         """Append an event and fold its progress into the operation.
 
@@ -347,7 +347,7 @@ class StreamingRepository:
                 covered_until_ms=covered_until_ms,
                 segments=segments or [],
                 error=error,
-                created_at=self._clock.now(),
+                created_at=_created_at or self._clock.now(),
                 pages_done=None if pages is None else pages[0],
                 pages_total=None if pages is None else pages[1],
                 duration_ms=duration_ms,
@@ -490,30 +490,16 @@ class StreamingRepository:
                 ):
                     return record.operation
                 raise StreamingIdempotencyConflictError(idempotency_key)
-            if (
-                record.request.structuring_mode is not StructuringMode.HOST
-                or record.operation.status is not StreamingCaptureStatus.AWAITING_STRUCTURING
-            ):
-                raise StreamingTransitionError("capture is no longer awaiting host structuring")
+            operation_domain(record.operation).require_host_structuring(
+                record.request.structuring_mode
+            )
             _atomic_json(
                 self._capture_directory(capture_id) / "result.json",
                 result.model_dump(mode="json", by_alias=True),
             )
             record.commit_idempotency_key = idempotency_key
             record.commit_fingerprint = fingerprint
-            now = result.completed_at
-            record.operation = _complete_capture(record.operation, now=now)
-            self._persist_capture(record)
-            event = operation_domain(record.operation).completed_event(
-                round(now.timestamp() * 1000)
-            )
-            self.append_event(
-                event.capture_id,
-                event_type=StreamingEventType.COMPLETED,
-                _terminal_transition=True,
-                stage="completed",
-            )
-            return record.operation
+            return self._complete_capture_locked(record, now=result.completed_at)
 
     def read_result(self, capture_id: str) -> CaptureDocument:
         with self._lock:
@@ -546,10 +532,9 @@ class StreamingRepository:
     def mark_structuring(self, capture_id: str) -> CaptureOperationV2:
         with self._lock:
             record = self._get_capture(capture_id)
-            if record.operation.status is StreamingCaptureStatus.STRUCTURING:
+            domain = operation_domain(record.operation).begin_structuring()
+            if domain.status is record.operation.status:
                 return record.operation
-            if record.operation.status is not StreamingCaptureStatus.AWAITING_STRUCTURING:
-                raise StreamingTransitionError("capture is not awaiting structuring")
             now = self._clock.now()
             record.operation = _mark_structuring(record.operation, now=now)
             self._persist_capture(record)
@@ -572,11 +557,9 @@ class StreamingRepository:
                 ):
                     return record.operation
                 raise StreamingIdempotencyConflictError(idempotency_key)
-            if (
-                record.request.structuring_mode is not StructuringMode.HOST
-                or record.operation.status is not StreamingCaptureStatus.AWAITING_STRUCTURING
-            ):
-                raise StreamingTransitionError("capture is no longer awaiting host structuring")
+            operation_domain(record.operation).require_host_structuring(
+                record.request.structuring_mode
+            )
             record.failure_idempotency_key = idempotency_key
             record.failure_fingerprint = fingerprint
             return self._fail_capture_locked(record, failure)
@@ -586,19 +569,22 @@ class StreamingRepository:
             record = self._get_capture(capture_id)
             if record.operation.status in _TERMINAL_CAPTURE_STATUSES:
                 return record.operation
-            now = self._clock.now()
-            record.operation = _complete_capture(record.operation, now=now)
-            self._persist_capture(record)
-            event = operation_domain(record.operation).completed_event(
-                round(now.timestamp() * 1000)
-            )
-            self.append_event(
-                event.capture_id,
-                event_type=StreamingEventType.COMPLETED,
-                _terminal_transition=True,
-                stage="completed",
-            )
-            return record.operation
+            return self._complete_capture_locked(record, now=self._clock.now())
+
+    def _complete_capture_locked(
+        self, record: _CaptureRecord, *, now: datetime
+    ) -> CaptureOperationV2:
+        record.operation = _complete_capture(record.operation, now=now)
+        self._persist_capture(record)
+        event = operation_domain(record.operation).completed_event(now)
+        self.append_event(
+            event.capture_id,
+            event_type=StreamingEventType.COMPLETED,
+            _terminal_transition=True,
+            _created_at=event.completed_at,
+            stage="completed",
+        )
+        return record.operation
 
     def fail_capture(self, capture_id: str, failure: CaptureFailureV2) -> CaptureOperationV2:
         with self._lock:

@@ -2,19 +2,23 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
 from capture_runtime.ocr.domain.compute_plan import (
+    ComputeCandidate,
     ComputePlanPolicy,
     ComputePlanSelection,
 )
 from capture_runtime.ocr.domain.evidence import DirectMlExecutionEvidence
+from capture_runtime.ocr.domain.evidence.models import has_dml_execution
 from capture_runtime.ocr.domain.page import (
     OcrPage,
     PageReadingOrder,
     PageRegion,
 )
+from capture_runtime.ocr.domain.page.reading_order import ReadingPlan, RegionLike
 
 
 class PageTextResult(Protocol):
@@ -38,8 +42,32 @@ class PageOcrAdapter[Result: PageTextResult](Protocol):
 
 @dataclass(frozen=True, slots=True)
 class ExtractedPage[Result: PageTextResult]:
-    page: OcrPage
+    domain_page: OcrPage
     result: Result
+
+    @property
+    def text(self) -> str:
+        return self.domain_page.text
+
+    @property
+    def regions(self) -> tuple[PageRegion, ...]:
+        return self.domain_page.regions
+
+    @property
+    def raster_width(self) -> int | None:
+        return self.domain_page.raster_width
+
+    @property
+    def raster_height(self) -> int | None:
+        return self.domain_page.raster_height
+
+    @property
+    def raster_scale(self) -> float:
+        return self.domain_page.raster_scale
+
+    def __getattr__(self, name: str) -> object:
+        # Adapter-only audit metadata remains opaque to the application.
+        return getattr(self.result, name)
 
 
 class SelectComputePlan:
@@ -50,18 +78,13 @@ class SelectComputePlan:
 
     def execute(
         self,
-        has_compatible_gpu: bool,
+        candidates: tuple[ComputeCandidate, ...],
+        *,
         dml_available: bool,
-        adapter_class: str = "dedicated",
-        device_name: str | None = None,
-        device_id: int | None = None,
-    ) -> ComputePlanSelection:
+        require_identity: bool = False,
+    ) -> ComputePlanSelection | None:
         return self._policy.evaluate(
-            has_compatible_gpu,
-            dml_available,
-            adapter_class=adapter_class,
-            device_name=device_name,
-            device_id=device_id,
+            candidates, dml_available=dml_available, require_identity=require_identity
         )
 
 
@@ -87,7 +110,7 @@ class ExtractPageText[Result: PageTextResult]:
             raster_height=result.raster_height,
             raster_scale=result.raster_scale,
         )
-        return ExtractedPage(page=page, result=result)
+        return ExtractedPage(domain_page=page, result=result)
 
 
 class OrderPageRegions:
@@ -98,11 +121,11 @@ class OrderPageRegions:
 
     def execute(
         self,
-        regions: tuple[PageRegion, ...],
+        regions: Sequence[RegionLike],
         *,
-        vertical: bool = False,
-    ) -> tuple[PageRegion, ...]:
-        return self._reading_order.order_regions(regions, vertical=vertical)
+        raw_source_slots: Sequence[tuple[int, int]] | None = None,
+    ) -> ReadingPlan:
+        return self._reading_order.plan(regions, raw_source_slots=raw_source_slots)
 
 
 class VerifyExecutionEvidence:
@@ -112,7 +135,7 @@ class VerifyExecutionEvidence:
         self,
         evidence: DirectMlExecutionEvidence,
     ) -> bool:
-        return evidence.is_pure_dml
+        return has_dml_execution(evidence)
 
 
 __all__ = [
