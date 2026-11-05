@@ -21,15 +21,7 @@ _TERMINAL_CAPTURE_STATUSES = TERMINAL_CAPTURE_STATUSES
 
 
 def operation_domain(operation: CaptureOperationV2) -> CaptureOperation:
-    return CaptureOperation(
-        capture_id=operation.capture_id,
-        ingestion_id=operation.ingestion_id,
-        kind=operation.kind,
-        status=operation.status,
-        progress=operation.progress or 0,
-        partial_revision=operation.partial_revision,
-        last_event_sequence=operation.last_event_sequence,
-    )
+    return CaptureOperation.from_contract(operation)
 
 
 def transition_operation(

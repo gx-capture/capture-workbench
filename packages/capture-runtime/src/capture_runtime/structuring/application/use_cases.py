@@ -7,6 +7,10 @@ import json
 from collections.abc import Awaitable, Callable
 
 from capture_runtime.capture.application.ports import CaptureRepository
+from capture_runtime.capture.domain.operation import (
+    CaptureOperation,
+    CaptureTransitionError,
+)
 from capture_runtime.clock import Clock
 from capture_runtime.contract_set import SCHEMA_DIALECT, canonical_json_bytes
 from capture_runtime.contracts import (
@@ -53,10 +57,12 @@ class OpenStructuringSession:
             return existing
         operation = self._captures.get_capture(request.capture_id)
         capture_request = self._captures.capture_request(request.capture_id)
-        if capture_request.structuring_mode.value != "host":
-            raise SessionTransitionError("pull structuring requires host capture mode")
-        if operation.status.value not in {"awaiting_structuring", "structuring"}:
-            raise SessionTransitionError("capture is not awaiting pull structuring")
+        try:
+            CaptureOperation.from_contract(operation).require_pull_structuring(
+                capture_request.structuring_mode
+            )
+        except CaptureTransitionError as error:
+            raise SessionTransitionError(str(error)) from error
         raw = self._captures.read_raw(request.capture_id)
         planned = self._plan_batches(raw, request)
         return self._repository.create_or_get(

@@ -233,3 +233,89 @@ def test_session_aggregate_accepts_batches_only_in_order_and_stops_at_completion
     assert completed.status is StructuringSessionStatus.COMPLETED
     with pytest.raises(SessionTransitionError, match="not open"):
         completed.accept_batch(2)
+
+
+def test_open_structuring_session_rejection_policies() -> None:
+    from datetime import UTC, datetime
+    from unittest.mock import MagicMock
+
+    from capture_runtime.contract_set import SCHEMA_DIALECT
+    from capture_runtime.contracts import (
+        CaptureEngine,
+        CaptureOperationV2,
+        CaptureSourceKind,
+        OpenStructuringSessionV2,
+        StartCaptureV2,
+        StreamingCaptureStatus,
+        StructuringMode,
+        StructuringProviderCapabilityV2,
+    )
+    from capture_runtime.structuring.application.use_cases import OpenStructuringSession
+    from capture_runtime.structuring.domain.session.models import SessionTransitionError
+
+    capability = StructuringProviderCapabilityV2(
+        provider=CaptureEngine(
+            engine="ollama",
+            model="test-model",
+            digest=f"sha256:{'a' * 64}",
+        ),
+        capability="capture-structuring",
+        schema_dialect=SCHEMA_DIALECT,
+    )
+    request = OpenStructuringSessionV2(
+        capture_id="cap-1",
+        target_language="en",
+        provider_capability=capability,
+        schema_dialect=SCHEMA_DIALECT,
+        client_request_id="req-1",
+    )
+
+    mock_repo = MagicMock()
+    mock_repo.get_by_client_request.return_value = None
+    mock_captures = MagicMock()
+
+    use_case = OpenStructuringSession(
+        repository=mock_repo,
+        captures=mock_captures,
+        plan_batches=MagicMock(),
+        contract_set_sha256="test-sha",
+    )
+
+    now = datetime.now(UTC)
+    # Test rejection when structuring_mode is not HOST
+    mock_captures.get_capture.return_value = CaptureOperationV2(
+        capture_id="cap-1",
+        ingestion_id="ing-1",
+        kind=CaptureSourceKind.IMAGE,
+        status=StreamingCaptureStatus.AWAITING_STRUCTURING,
+        partial_revision=0,
+        last_event_sequence=0,
+        created_at=now,
+        updated_at=now,
+    )
+    mock_captures.capture_request.return_value = StartCaptureV2(
+        client_request_id="start-1",
+        ingestion_id="ing-1",
+        structuring_mode=StructuringMode.RUNTIME,
+    )
+    with pytest.raises(SessionTransitionError, match="pull structuring requires host capture mode"):
+        use_case.execute(request)
+
+    # Test rejection when operation status is not awaiting/active structuring
+    mock_captures.get_capture.return_value = CaptureOperationV2(
+        capture_id="cap-1",
+        ingestion_id="ing-1",
+        kind=CaptureSourceKind.IMAGE,
+        status=StreamingCaptureStatus.EXTRACTING,
+        partial_revision=0,
+        last_event_sequence=0,
+        created_at=now,
+        updated_at=now,
+    )
+    mock_captures.capture_request.return_value = StartCaptureV2(
+        client_request_id="start-1",
+        ingestion_id="ing-1",
+        structuring_mode=StructuringMode.HOST,
+    )
+    with pytest.raises(SessionTransitionError, match="capture is not awaiting pull structuring"):
+        use_case.execute(request)

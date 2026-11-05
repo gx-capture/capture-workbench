@@ -22,7 +22,7 @@
 
 ## 聚合與不變條件
 
-`Ingestion` 以 `append` 與 `finalize` 守住分塊順序、重送一致性、大小與摘要。`CaptureOperation` 管理合法轉換、主機提交前置條件及終態事件。相同狀態可冪等重入，終態不可轉回活動狀態；非同步完成與取消的重播由 repository 在鎖內處理。`CaptureCompleted` 保留完整完成時間，作為終止事件的時間來源。
+`Ingestion` 以 `append` 與 `finalize` 守住分塊順序、重送一致性、大小與摘要。`CaptureOperation` 管理合法轉換、主機提交與拉取結構化前置條件及終態事件。相同狀態可冪等重入，終態不可轉回活動狀態；非同步完成與取消的重播由 repository 在鎖內處理。`CaptureCompleted` 保留完整完成時間，作為終止事件的時間來源。
 
 ```mermaid
 classDiagram
@@ -30,6 +30,7 @@ classDiagram
   Ingestion : finalize(source)
   CaptureOperation : transition(status)
   CaptureOperation : require_host_structuring(mode)
+  CaptureOperation : require_pull_structuring(mode)
   CaptureOperation --> CaptureCompleted : completed_event
 ```
 

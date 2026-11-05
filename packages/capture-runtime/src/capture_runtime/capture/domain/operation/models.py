@@ -6,6 +6,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 
 from capture_runtime.contracts import (
+    CaptureOperationV2,
     CaptureSourceKind,
     StreamingCaptureStatus,
     StreamingEventType,
@@ -86,12 +87,33 @@ class CaptureOperation:
             raise CaptureTransitionError("capture has not completed")
         return CaptureCompleted(self.capture_id, completed_at)
 
+    @classmethod
+    def from_contract(cls, operation: CaptureOperationV2) -> CaptureOperation:
+        return cls(
+            capture_id=operation.capture_id,
+            ingestion_id=operation.ingestion_id,
+            kind=operation.kind,
+            status=operation.status,
+            progress=operation.progress or 0.0,
+            partial_revision=operation.partial_revision,
+            last_event_sequence=operation.last_event_sequence,
+        )
+
     def require_host_structuring(self, mode: StructuringMode) -> None:
         if (
             mode is not StructuringMode.HOST
             or self.status is not StreamingCaptureStatus.AWAITING_STRUCTURING
         ):
             raise CaptureTransitionError("capture is not awaiting host structuring")
+
+    def require_pull_structuring(self, mode: StructuringMode) -> None:
+        if mode is not StructuringMode.HOST:
+            raise CaptureTransitionError("pull structuring requires host capture mode")
+        if self.status not in {
+            StreamingCaptureStatus.AWAITING_STRUCTURING,
+            StreamingCaptureStatus.STRUCTURING,
+        }:
+            raise CaptureTransitionError("capture is not awaiting pull structuring")
 
     def begin_structuring(self) -> CaptureOperation:
         if self.status is StreamingCaptureStatus.STRUCTURING:

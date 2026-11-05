@@ -5,6 +5,7 @@ from __future__ import annotations
 from capture_runtime.capture.domain.operation.models import (
     CaptureCompleted,
     CaptureOperation,
+    CaptureTransitionError,
     PageLocator,
     TimeRange,
 )
@@ -12,6 +13,7 @@ from capture_runtime.capture.domain.operation.models import (
 __all__ = [
     "CaptureCompleted",
     "CaptureOperation",
+    "CaptureTransitionError",
     "PageLocator",
     "TimeRange",
 ]

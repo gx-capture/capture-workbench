@@ -261,3 +261,48 @@ def test_capture_aggregate_rejects_skipped_states_and_keeps_terminal_state() -> 
         completed.transition(StreamingCaptureStatus.STRUCTURING)
     with pytest.raises(CaptureTransitionError):
         completed.record_event(StreamingEventType.CHECKPOINT)
+
+
+def test_capture_operation_from_contract_and_require_pull_structuring() -> None:
+    from capture_runtime.capture.domain.operation.models import CaptureTransitionError
+    from capture_runtime.contracts import CaptureOperationV2
+
+    now = datetime.now(UTC)
+    contract_op = CaptureOperationV2(
+        capture_id="cap-1",
+        ingestion_id="ing-1",
+        kind=CaptureSourceKind.IMAGE,
+        status=StreamingCaptureStatus.AWAITING_STRUCTURING,
+        progress=0.75,
+        partial_revision=1,
+        last_event_sequence=3,
+        created_at=now,
+        updated_at=now,
+    )
+    domain_op = CaptureOperation.from_contract(contract_op)
+    assert domain_op.capture_id == "cap-1"
+    assert domain_op.ingestion_id == "ing-1"
+    assert domain_op.status is StreamingCaptureStatus.AWAITING_STRUCTURING
+    assert domain_op.progress == 0.75
+    assert domain_op.partial_revision == 1
+    assert domain_op.last_event_sequence == 3
+
+    # require_pull_structuring succeeds for AWAITING_STRUCTURING and STRUCTURING with HOST mode
+    domain_op.require_pull_structuring(StructuringMode.HOST)
+
+    structuring_op = domain_op.transition(StreamingCaptureStatus.STRUCTURING)
+    structuring_op.require_pull_structuring(StructuringMode.HOST)
+
+    # Rejects non-HOST mode
+    with pytest.raises(CaptureTransitionError, match="pull structuring requires host capture mode"):
+        domain_op.require_pull_structuring(StructuringMode.RUNTIME)
+
+    # Rejects invalid status (e.g. EXTRACTING)
+    extracting_op = CaptureOperation(
+        capture_id="cap-2",
+        ingestion_id="ing-2",
+        kind=CaptureSourceKind.IMAGE,
+        status=StreamingCaptureStatus.EXTRACTING,
+    )
+    with pytest.raises(CaptureTransitionError, match="capture is not awaiting pull structuring"):
+        extracting_op.require_pull_structuring(StructuringMode.HOST)
