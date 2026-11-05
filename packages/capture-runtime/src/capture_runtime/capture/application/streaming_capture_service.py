@@ -11,6 +11,15 @@ from typing import TypedDict
 
 from pydantic import ValidationError
 
+from capture_runtime.capture.application.use_cases import (
+    AppendChunk,
+    CancelCapture,
+    CommitHostStructuring,
+    FinalizeIngestion,
+    OpenIngestion,
+    PollCaptureEvents,
+    StartCapture,
+)
 from capture_runtime.capture.infrastructure.capture_extraction import (
     CaptureExtractionOutcome,
     CaptureExtractor,
@@ -32,17 +41,14 @@ from capture_runtime.capture.infrastructure.streaming_repository import (
 from capture_runtime.clock import Clock
 from capture_runtime.contracts import (
     CaptureDocument,
-    CaptureEventV2,
     CaptureFailureV2,
     CaptureOcrProjectionV3,
     CaptureOperationV2,
     CaptureSource,
     CaptureSourceKind,
     CaptureStreamingResult,
-    FinalizeIngestionV2,
     IngestionV2,
     OcrProjectionStatus,
-    OpenIngestionV2,
     PartialCaptureV2,
     RawCapture,
     StartCaptureV2,
@@ -100,6 +106,7 @@ class StreamingCaptureService:
         execution_evidence_sink: OcrExecutionEvidenceSink | None = None,
         max_chunk_bytes: int = MAX_STREAM_CHUNK_BYTES,
     ) -> None:
+        self._validate_document = _validate_runtime_document
         self.repository = repository
         self._clock = clock
         self.max_chunk_bytes = max_chunk_bytes
@@ -124,8 +131,13 @@ class StreamingCaptureService:
         self._engines_available = asyncio.Event()
         self._engines_available.set()
 
-    def open_ingestion(self, request: OpenIngestionV2) -> IngestionV2:
-        return self.repository.create_ingestion(request)
+        self.open_ingestion_use_case = OpenIngestion(self)
+        self.append_chunk_use_case = AppendChunk(self)
+        self.finalize_ingestion_use_case = FinalizeIngestion(self)
+        self.start_capture_use_case = StartCapture(self)
+        self.cancel_capture_use_case = CancelCapture(self)
+        self.events_use_case = PollCaptureEvents(self)
+        self.commit_host_result_use_case = CommitHostStructuring(self)
 
     def get_ingestion(self, ingestion_id: str) -> IngestionV2:
         return self.repository.get_ingestion(ingestion_id)
@@ -133,65 +145,8 @@ class StreamingCaptureService:
     def delete_ingestion(self, ingestion_id: str) -> None:
         self.repository.delete_ingestion(ingestion_id)
 
-    def append_chunk(
-        self,
-        ingestion_id: str,
-        *,
-        chunk_index: int,
-        byte_offset: int,
-        data: bytes,
-        sha256: str,
-        declared_total_bytes: int,
-    ) -> IngestionV2:
-        before = self.repository.get_ingestion(ingestion_id)
-        snapshot = self.repository.append_chunk(
-            ingestion_id,
-            chunk_index=chunk_index,
-            byte_offset=byte_offset,
-            data=data,
-            sha256=sha256,
-            max_chunk_bytes=self.max_chunk_bytes,
-            declared_total_bytes=declared_total_bytes,
-        )
-        if snapshot.next_chunk_index > before.next_chunk_index:
-            for operation in self._captures_for(ingestion_id):
-                if operation.status in {
-                    StreamingCaptureStatus.WAITING_INPUT,
-                    StreamingCaptureStatus.EXTRACTING,
-                }:
-                    self.repository.append_event(
-                        operation.capture_id,
-                        event_type=StreamingEventType.INPUT_CHECKPOINT,
-                        stage="extracting",
-                    )
-        return snapshot
-
-    def finalize_ingestion(
-        self,
-        ingestion_id: str,
-        request: FinalizeIngestionV2,
-    ) -> IngestionV2:
-        snapshot = self.repository.finalize_ingestion(
-            ingestion_id,
-            total_bytes=request.total_bytes,
-            sha256=request.sha256,
-        )
-        changed = self.repository.mark_ingestion_ready(ingestion_id)
-        for operation in changed:
-            self._schedule(operation.capture_id)
-        return snapshot
-
-    def start_capture(self, request: StartCaptureV2) -> CaptureOperationV2:
-        operation = self.repository.create_capture(request)
-        if operation.status is StreamingCaptureStatus.EXTRACTING:
-            self._schedule(operation.capture_id)
-        return operation
-
     def get_capture(self, capture_id: str) -> CaptureOperationV2:
         return self.repository.get_capture(capture_id)
-
-    def events(self, capture_id: str, *, after_sequence: int) -> list[CaptureEventV2]:
-        return self.repository.read_events(capture_id, after_sequence=after_sequence)
 
     def event_stream_should_close(self, capture_id: str) -> bool:
         operation = self.repository.get_capture(capture_id)
@@ -270,49 +225,6 @@ class StreamingCaptureService:
         self.repository.complete_capture(capture_id)
         return completed
 
-    def commit_host_result(
-        self,
-        capture_id: str,
-        candidate: CaptureDocument,
-        *,
-        idempotency_key: str,
-    ) -> CaptureOperationV2:
-        try:
-            operation = self.repository.get_capture(capture_id)
-            fingerprint = _candidate_fingerprint(candidate)
-            if operation.status is StreamingCaptureStatus.COMPLETED:
-                committed = self.repository.commit_host_result(
-                    capture_id,
-                    idempotency_key=idempotency_key,
-                    fingerprint=fingerprint,
-                    result=candidate,
-                )
-            else:
-                request = self.repository.capture_request(capture_id)
-                if (
-                    request.structuring_mode is not StructuringMode.HOST
-                    or operation.status is not StreamingCaptureStatus.AWAITING_STRUCTURING
-                ):
-                    raise StreamingTransitionError("capture is not awaiting host structuring")
-                raw = self.repository.read_raw(capture_id)
-                validated = _validate_runtime_document(candidate, raw)
-                completed = CaptureDocument.model_validate(
-                    {
-                        **validated.model_dump(mode="json", by_alias=True),
-                        "completedAt": self._clock.now().isoformat(),
-                    }
-                )
-                committed = self.repository.commit_host_result(
-                    capture_id,
-                    idempotency_key=idempotency_key,
-                    fingerprint=fingerprint,
-                    result=completed,
-                )
-            return committed
-        except Exception:
-            self._clear_pending_execution_proof(capture_id)
-            raise
-
     def report_host_failure(
         self,
         capture_id: str,
@@ -352,12 +264,6 @@ class StreamingCaptureService:
             message="Host structuring output failed strict schema or provenance validation.",
             idempotency_key=idempotency_key,
         )
-
-    def cancel_capture(self, capture_id: str) -> CaptureOperationV2:
-        self._clear_pending_execution_proof(capture_id)
-        cancellation = self._cancellations.setdefault(capture_id, asyncio.Event())
-        cancellation.set()
-        return self.repository.cancel_capture(capture_id)
 
     def delete_capture(self, capture_id: str) -> None:
         self._clear_pending_execution_proof(capture_id)
@@ -914,23 +820,6 @@ def _spoken_language(request: StartCaptureV2) -> _SpokenLanguageArgument:
     return {"spoken_language": request.spoken_language}
 
 
-def _validate_runtime_document(candidate: object, raw: RawCapture) -> CaptureDocument:
-    try:
-        return CaptureDocument.model_validate(validate_structuring_candidate(candidate, raw))
-    except ValidationError as error:
-        raise StructuringValidationError(
-            "structuring output does not satisfy CaptureDocument",
-            issues=[
-                {
-                    "location": [str(part) for part in issue["loc"]],
-                    "message": issue["msg"],
-                    "type": issue["type"],
-                }
-                for issue in error.errors()
-            ],
-        ) from error
-
-
 def _find_ocr_worker_failure(error: BaseException) -> OcrWorkerFailure | None:
     current: BaseException | None = error
     visited: set[int] = set()
@@ -950,16 +839,6 @@ def _safe_failure_message(error: BaseException) -> str:
     return "Progressive audio processing failed at a bounded runtime boundary."
 
 
-def _candidate_fingerprint(candidate: CaptureDocument) -> str:
-    canonical = json.dumps(
-        candidate.model_dump(mode="json", by_alias=True),
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    return hashlib.sha256(canonical.encode()).hexdigest()
-
-
 def _failure_fingerprint(code: str, message: str) -> str:
     canonical = json.dumps(
         {"code": code, "message": message},
@@ -971,3 +850,20 @@ def _failure_fingerprint(code: str, message: str) -> str:
 
 
 __all__ = ["StreamingCaptureService", "StreamingTransitionError"]
+
+
+def _validate_runtime_document(candidate: object, raw: RawCapture) -> CaptureDocument:
+    try:
+        return CaptureDocument.model_validate(validate_structuring_candidate(candidate, raw))
+    except ValidationError as error:
+        raise StructuringValidationError(
+            "structuring output does not satisfy CaptureDocument",
+            issues=[
+                {
+                    "location": [str(part) for part in issue["loc"]],
+                    "message": issue["msg"],
+                    "type": issue["type"],
+                }
+                for issue in error.errors()
+            ],
+        ) from error

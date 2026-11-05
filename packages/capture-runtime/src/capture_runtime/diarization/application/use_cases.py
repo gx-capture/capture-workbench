@@ -15,12 +15,10 @@ from capture_runtime.diarization.domain.turn import (
     TurnTimeline,
     speaker_samples,
 )
+from capture_runtime.diarization.domain.turn.models import DiarizationResult
 from capture_runtime.worker_process import DEFAULT_RUN_TIMEOUT_SECONDS
 
 if TYPE_CHECKING:
-    from capture_runtime.diarization.infrastructure.speaker_worker_result import (
-        WorkerDiarizationResult,
-    )
     from capture_runtime.worker_client import InstalledEngine
 
 
@@ -37,7 +35,7 @@ class DiarizationClient(Protocol):
         cancel_event: asyncio.Event,
         timeout_seconds: float = DEFAULT_RUN_TIMEOUT_SECONDS,
         on_permille: Callable[[int], None] | None = None,
-    ) -> WorkerDiarizationResult: ...
+    ) -> DiarizationResult: ...
 
 
 class AlignSpeakerTurns:
@@ -81,7 +79,7 @@ class DiarizeAudio:
         cancel_event: asyncio.Event,
         timeout_seconds: float = DEFAULT_RUN_TIMEOUT_SECONDS,
         on_permille: Callable[[int], None] | None = None,
-    ) -> WorkerDiarizationResult:
+    ) -> DiarizationResult:
         return await self._client.diarize(
             engine,
             source_path=source_path,

@@ -7,7 +7,6 @@ speech context moves into its own package (DDD plan, decision D9).
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
@@ -15,6 +14,7 @@ from capture_runtime.speech.domain import (
     SpeechTranscriptSegment,
     SpeechWord,
 )
+from capture_runtime.speech.domain.transcript.models import SpeechRecognitionResult
 from capture_runtime.worker_probe import EngineProbe
 
 # Backwards compatibility aliases for domain models
@@ -22,16 +22,7 @@ WhisperWord = SpeechWord
 WhisperTextSegment = SpeechTranscriptSegment
 
 
-@dataclass(frozen=True, slots=True)
-class WhisperTranscriptionResult:
-    segments: tuple[WhisperTextSegment, ...]
-    duration_ms: int
-    device: str
-    model: str
-    digest: str
-    warning: str | None = None
-    elapsed_ms: int | None = None
-    stage_ms: dict[str, int] | None = None
+WhisperTranscriptionResult = SpeechRecognitionResult
 
 
 class WhisperAdapter(Protocol):

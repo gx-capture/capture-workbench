@@ -27,6 +27,12 @@ from capture_runtime.contracts import (
 )
 from capture_runtime.storage.common import atomic_json
 from capture_runtime.structuring.domain.session import StructuringSemanticBlock
+from capture_runtime.structuring.domain.session.models import (
+    SessionTransitionError,
+    StructuringBatch,
+    StructuringSession,
+    StructuringSessionDigestConflictError,
+)
 
 
 class StructuringSessionRecordNotFoundError(KeyError):
@@ -37,12 +43,7 @@ class StructuringSessionIdempotencyConflictError(ValueError):
     """A pull-session idempotency key was reused with different input."""
 
 
-class StructuringSessionDigestConflictError(ValueError):
-    """A submission did not match the advertised provider batch digest."""
-
-
-class StructuringSessionTransitionError(ValueError):
-    """A pull-session transition is not valid for its durable state."""
+StructuringSessionTransitionError = SessionTransitionError
 
 
 class StructuringSessionRecordCorruptError(RuntimeError):
@@ -376,29 +377,42 @@ class StructuringSessionRepository:
                         "accepted structuring batch is missing its replay response"
                     )
                 return batch.response, False
-            if batch.batch.batch_digest != batch_digest:
-                raise StructuringSessionDigestConflictError(batch_digest)
-            if record.session.status is not StructuringSessionStatus.OPEN:
-                raise StructuringSessionTransitionError("structuring session is not open")
-            if batch_index != record.session.next_batch_index:
-                raise StructuringSessionTransitionError(
-                    "structuring batches must be submitted in order"
-                )
-
+            value = batch.batch
+            domain_batch = StructuringBatch(
+                session_id=value.session_id,
+                capture_id=value.capture_id,
+                batch_index=value.batch_index,
+                batch_count=value.batch_count,
+                source_segment_ids=tuple(value.source_segment_ids),
+                provider_prompt=value.provider_prompt,
+                provider_schema=value.provider_schema,
+                num_ctx=value.num_ctx,
+                num_predict=value.num_predict,
+                batch_digest=value.batch_digest,
+                status=value.status,
+            )
+            domain_batch.verify_digest(batch_digest)
+            current = record.session
+            domain = StructuringSession(
+                session_id=current.session_id,
+                capture_id=current.capture_id,
+                raw_source_sha256=current.raw_source_sha256,
+                contract_set_sha256=current.contract_set_sha256,
+                schema_dialect=current.schema_dialect,
+                batch_count=current.batch_count,
+                next_batch_index=current.next_batch_index,
+                status=current.status,
+            ).accept_batch(batch_index)
             now = self._clock.now()
-            is_final = batch_index + 1 == record.session.batch_count
+            is_final = domain.status is StructuringSessionStatus.COMPLETED
             updated_batch = batch.batch.model_copy(
-                update={"status": StructuringBatchStatus.ACCEPTED},
+                update={"status": domain_batch.accept().status},
             )
             updated_session = record.session.model_copy(
                 update={
-                    "next_batch_index": batch_index + 1,
+                    "next_batch_index": domain.next_batch_index,
                     "updated_at": now,
-                    "status": (
-                        StructuringSessionStatus.COMPLETED
-                        if is_final
-                        else StructuringSessionStatus.OPEN
-                    ),
+                    "status": domain.status,
                     "completed_at": now if is_final else None,
                 }
             )

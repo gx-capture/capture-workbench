@@ -155,14 +155,15 @@ def test_pull_session_plans_tiny_profile_batches_and_reconstructs_result(
         hashlib.sha256(canonical_json_bytes(digest_input)).hexdigest() == first_batch["batchDigest"]
     )
 
-    assert (
-        client.put(
-            f"/v2/captures/{capture_id}/structure/session/batches/1",
-            json=_submit_payload(first_batch, "wrong-order"),
-            headers={"X-Idempotency-Key": "session-batch-wrong-order"},
-        ).status_code
-        == 409
+    second_batch = client.get(f"/v2/captures/{capture_id}/structure/session/batches/1").json()
+    out_of_order = client.put(
+        f"/v2/captures/{capture_id}/structure/session/batches/1",
+        json=_submit_payload(second_batch, "wrong-order"),
+        headers={"X-Idempotency-Key": "session-batch-wrong-order"},
     )
+    assert out_of_order.status_code == 409
+    assert out_of_order.json()["error"]["code"] == "invalid_capture_state"
+    assert client.get(f"/v2/captures/{capture_id}/structure/session").json()["nextBatchIndex"] == 0
     first_submit = client.put(
         f"/v2/captures/{capture_id}/structure/session/batches/0",
         json=_submit_payload(first_batch, "zero"),

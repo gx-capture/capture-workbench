@@ -95,3 +95,7 @@ sequenceDiagram
 ## 規則與資料來源
 
 領域模型位於 `capture_runtime.diarization.domain.turn`。用例位於 `capture_runtime.diarization.application.use_cases`。基礎設施位於 `capture_runtime.diarization.infrastructure`：`speaker_diarization`（Nemotron 本機轉接與 CPU 重試政策）、`speaker_worker_result`（worker 結果解析與協定）及 `speaker_alignment`、`speaker_turns` 相容匯出。`workers/diarization_main.py` 是 PyInstaller worker 進入點。
+
+## W6 ??????
+
+Worker ????? domain ? `DiarizationResult`??????? `DiarizeAudio`?`AlignSpeakerTurns` ? `ExtractSpeakerSamples` ???????????????? port ??? infrastructure ?????? worker frame ??????????

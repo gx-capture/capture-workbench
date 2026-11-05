@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 from pydantic.alias_generators import to_camel
 
 from capture_runtime.contracts import CaptureText
+from capture_runtime.structuring.domain.session.models import StructuringValidationError
 
 NonEmptyString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 """String value that must contain at least one non-whitespace character."""
@@ -31,14 +32,6 @@ type LlmGenerate = Callable[
     StructuringCandidate | Awaitable[StructuringCandidate],
 ]
 """Provider callback that turns one prompt/schema pair into JSON output."""
-
-
-class StructuringValidationError(ValueError):
-    """Raised when structuring output cannot be safely projected."""
-
-    def __init__(self, message: str, *, issues: list[dict[str, object]] | None = None) -> None:
-        super().__init__(message)
-        self.issues = issues or []
 
 
 class _SemanticModel(BaseModel):

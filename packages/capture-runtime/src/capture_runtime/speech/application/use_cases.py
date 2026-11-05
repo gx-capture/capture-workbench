@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
+from typing import Protocol
 
 from capture_runtime.speech.domain.transcript import (
     RepetitionLoopPolicy,
@@ -12,16 +12,12 @@ from capture_runtime.speech.domain.transcript import (
     SpeechTranscriptSegment,
     SpeechWord,
 )
+from capture_runtime.speech.domain.transcript.models import SpeechRecognitionResult
 from capture_runtime.speech.domain.window import (
     AudioWindow,
     WindowSlicingPolicy,
 )
-
-if TYPE_CHECKING:
-    from capture_runtime.speech.infrastructure.progressive_audio import WhisperWindowResult
-    from capture_runtime.speech.infrastructure.speech_transcript import (
-        WhisperTranscriptionResult,
-    )
+from capture_runtime.speech.domain.window.models import WindowTranscript
 
 
 class AudioTranscriber(Protocol):
@@ -34,13 +30,13 @@ class AudioTranscriber(Protocol):
         should_cancel: Callable[[], bool],
         allow_empty_output: bool = False,
         language: str | None = None,
-    ) -> WhisperTranscriptionResult: ...
+    ) -> SpeechRecognitionResult: ...
 
 
 class WindowTranscriberPort(Protocol):
     """Protocol for transcribing individual audio windows."""
 
-    def transcribe(self, window: AudioWindow) -> WhisperWindowResult: ...
+    def transcribe(self, window: AudioWindow) -> WindowTranscript: ...
 
 
 class TranscribeAudio:
@@ -58,12 +54,19 @@ class TranscribeAudio:
         language: str | None = None,
     ) -> SpeechTranscript:
         cancel_cb = should_cancel or (lambda: False)
-        result = self._transcriber.transcribe(
-            source_path,
-            should_cancel=cancel_cb,
-            allow_empty_output=allow_empty_output,
-            language=language,
-        )
+        if allow_empty_output:
+            result = self._transcriber.transcribe(
+                source_path,
+                should_cancel=cancel_cb,
+                allow_empty_output=True,
+                language=language,
+            )
+        else:
+            result = self._transcriber.transcribe(
+                source_path,
+                should_cancel=cancel_cb,
+                language=language,
+            )
         segments = tuple(
             SpeechTranscriptSegment(
                 start_ms=s.start_ms,
@@ -82,6 +85,8 @@ class TranscribeAudio:
             device=result.device,
             digest=result.digest,
             warning=result.warning,
+            elapsed_ms=result.elapsed_ms,
+            stage_ms=result.stage_ms,
         )
         _ = transcript.text
         return transcript
@@ -93,7 +98,7 @@ class TranscribeAudioWindow:
     def __init__(self, transcriber: WindowTranscriberPort) -> None:
         self._transcriber = transcriber
 
-    def execute(self, window: AudioWindow) -> WhisperWindowResult:
+    def execute(self, window: AudioWindow) -> WindowTranscript:
         return self._transcriber.transcribe(window)
 
 

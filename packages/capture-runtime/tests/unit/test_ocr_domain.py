@@ -243,7 +243,9 @@ def test_use_cases() -> None:
         raster_scale=1.0,
     )
     uc_extract = ExtractPageText(mock_adapter)
-    page = uc_extract.execute(b"fake_png", page_number=2)
+    extracted = uc_extract.execute(b"fake_png", page_number=2)
+    page = extracted.page
+    assert extracted.result is mock_adapter.extract_png.return_value
     assert page.page_number == 2
     assert page.text == "Extracted text"
     assert len(page.regions) == 1

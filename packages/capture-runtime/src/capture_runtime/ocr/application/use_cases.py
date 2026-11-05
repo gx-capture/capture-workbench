@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol
+from dataclasses import dataclass
+from typing import Protocol
 
 from capture_runtime.ocr.domain.compute_plan import (
     ComputePlanPolicy,
@@ -15,14 +16,30 @@ from capture_runtime.ocr.domain.page import (
     PageRegion,
 )
 
-if TYPE_CHECKING:
-    from capture_runtime.ocr.infrastructure.ocr_page_result import OcrTextResult
+
+class PageTextResult(Protocol):
+    @property
+    def text(self) -> str: ...
+    @property
+    def regions(self) -> tuple[PageRegion, ...]: ...
+    @property
+    def raster_width(self) -> int | None: ...
+    @property
+    def raster_height(self) -> int | None: ...
+    @property
+    def raster_scale(self) -> float: ...
 
 
-class PageOcrAdapter(Protocol):
-    """Protocol for reading a page raster with an OCR model."""
+class PageOcrAdapter[Result: PageTextResult](Protocol):
+    """An OCR port expressed in domain values, independent of adapter implementation."""
 
-    def extract_png(self, image_png: bytes) -> OcrTextResult: ...
+    def extract_png(self, image_png: bytes) -> Result: ...
+
+
+@dataclass(frozen=True, slots=True)
+class ExtractedPage[Result: PageTextResult]:
+    page: OcrPage
+    result: Result
 
 
 class SelectComputePlan:
@@ -48,13 +65,13 @@ class SelectComputePlan:
         )
 
 
-class ExtractPageText:
+class ExtractPageText[Result: PageTextResult]:
     """Read a document page image through OCR adapter and return an OcrPage aggregate."""
 
-    def __init__(self, adapter: PageOcrAdapter) -> None:
+    def __init__(self, adapter: PageOcrAdapter[Result]) -> None:
         self._adapter = adapter
 
-    def execute(self, image_png: bytes, page_number: int = 1) -> OcrPage:
+    def execute(self, image_png: bytes, page_number: int = 1) -> ExtractedPage[Result]:
         result = self._adapter.extract_png(image_png)
         regions = tuple(
             PageRegion(text=r.text, confidence=r.confidence, polygon=r.polygon)
@@ -62,7 +79,7 @@ class ExtractPageText:
         )
         for r in regions:
             _ = r.box
-        return OcrPage(
+        page = OcrPage(
             page_number=page_number,
             regions=regions,
             text=result.text,
@@ -70,6 +87,7 @@ class ExtractPageText:
             raster_height=result.raster_height,
             raster_scale=result.raster_scale,
         )
+        return ExtractedPage(page=page, result=result)
 
 
 class OrderPageRegions:

@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-from unittest.mock import Mock
-
 import pytest
 
 from capture_runtime.capture.application.use_cases import (
     AppendChunk,
     CancelCapture,
-    CommitHostStructuring,
     FinalizeIngestion,
     OpenIngestion,
     PollCaptureEvents,
@@ -23,12 +20,8 @@ from capture_runtime.capture.domain.operation import (
     TimeRange,
 )
 from capture_runtime.contracts import (
-    CaptureDocument,
-    CaptureEventV2,
-    CaptureOperationV2,
     CaptureSourceKind,
     FinalizeIngestionV2,
-    IngestionV2,
     OpenIngestionV2,
     StartCaptureV2,
     StreamingCaptureStatus,
@@ -163,83 +156,105 @@ def test_capture_completed_event_invariants() -> None:
         CaptureCompleted(capture_id="c", completed_at_ms=-1)
 
 
-def test_capture_use_cases() -> None:
-    mock_service = Mock()
+def test_capture_use_cases_run_upload_schedule_replay_and_cancel(tmp_path, monkeypatch) -> None:
+    import hashlib
 
-    # 1. OpenIngestion
-    open_req = OpenIngestionV2(
-        client_request_id="req-1",
-        file_name="doc.pdf",
-        media_type="application/pdf",
-        total_bytes=1000,
-        kind=CaptureSourceKind.PDF,
+    from capture_runtime.capture.application.streaming_capture_service import (
+        StreamingCaptureService,
     )
-    mock_ingestion = Mock(spec=IngestionV2)
-    mock_service.open_ingestion.return_value = mock_ingestion
-    open_uc = OpenIngestion(mock_service)
-    assert open_uc.execute(open_req) is mock_ingestion
-    mock_service.open_ingestion.assert_called_once_with(open_req)
+    from capture_runtime.capture.infrastructure.streaming_repository import (
+        StreamingRepository,
+        StreamingTransitionError,
+    )
+    from capture_runtime.clock import SystemClock
+    from capture_runtime.contracts import StreamingEventType
 
-    # 2. AppendChunk
-    mock_service.append_chunk.return_value = mock_ingestion
-    append_uc = AppendChunk(mock_service)
-    assert (
-        append_uc.execute(
-            "ing-1",
-            chunk_index=0,
-            byte_offset=0,
-            data=b"bytes",
-            sha256="s",
-            declared_total_bytes=5,
+    clock = SystemClock()
+    repository = StreamingRepository(tmp_path, clock=clock, retention_hours=4)
+    repository.initialize()
+    service = StreamingCaptureService(repository, clock=clock)
+    scheduled = []
+    monkeypatch.setattr(service, "_schedule", scheduled.append)
+    content = b"abcdef"
+    digest = hashlib.sha256(content).hexdigest()
+    ingestion = OpenIngestion(service).execute(
+        OpenIngestionV2(
+            client_request_id="upload",
+            file_name="test.wav",
+            media_type="audio/wav",
+            total_bytes=len(content),
+            source_sha256=digest,
         )
-        is mock_ingestion
     )
-    mock_service.append_chunk.assert_called_once_with(
-        "ing-1",
-        chunk_index=0,
-        byte_offset=0,
-        data=b"bytes",
-        sha256="s",
-        declared_total_bytes=5,
+    operation = StartCapture(service).execute(
+        StartCaptureV2(
+            ingestion_id=ingestion.ingestion_id,
+            client_request_id="capture",
+            structuring_mode=StructuringMode.HOST,
+        )
     )
-
-    # 3. FinalizeIngestion
-    finalize_req = FinalizeIngestionV2(total_bytes=5, sha256="0" * 64)
-    mock_service.finalize_ingestion.return_value = mock_ingestion
-    finalize_uc = FinalizeIngestion(mock_service)
-    assert finalize_uc.execute("ing-1", finalize_req) is mock_ingestion
-    mock_service.finalize_ingestion.assert_called_once_with("ing-1", finalize_req)
-
-    # 4. StartCapture
-    start_req = StartCaptureV2(
-        ingestion_id="ing-1",
-        client_request_id="req-2",
-        structuring_mode=StructuringMode.HOST,
+    assert scheduled == []
+    arguments = dict(
+        chunk_index=0, byte_offset=0, data=content, sha256=digest, declared_total_bytes=len(content)
     )
-    mock_op = Mock(spec=CaptureOperationV2)
-    mock_service.start_capture.return_value = mock_op
-    start_uc = StartCapture(mock_service)
-    assert start_uc.execute(start_req) is mock_op
-    mock_service.start_capture.assert_called_once_with(start_req)
-
-    # 5. CancelCapture
-    mock_service.cancel_capture.return_value = mock_op
-    cancel_uc = CancelCapture(mock_service)
-    assert cancel_uc.execute("cap-1") is mock_op
-    mock_service.cancel_capture.assert_called_once_with("cap-1")
-
-    # 6. PollCaptureEvents
-    mock_event = Mock(spec=CaptureEventV2)
-    mock_service.events.return_value = [mock_event]
-    poll_uc = PollCaptureEvents(mock_service)
-    assert poll_uc.execute("cap-1", after_sequence=0) == [mock_event]
-    mock_service.events.assert_called_once_with("cap-1", after_sequence=0)
-
-    # 7. CommitHostStructuring
-    mock_doc = Mock(spec=CaptureDocument)
-    mock_service.commit_host_result.return_value = mock_op
-    commit_uc = CommitHostStructuring(mock_service)
-    assert commit_uc.execute("cap-1", mock_doc, idempotency_key="idemp-1") is mock_op
-    mock_service.commit_host_result.assert_called_once_with(
-        "cap-1", mock_doc, idempotency_key="idemp-1"
+    uploaded = AppendChunk(service).execute(ingestion.ingestion_id, **arguments)
+    events = service.events_use_case.execute(operation.capture_id, after_sequence=0)
+    assert AppendChunk(service).execute(ingestion.ingestion_id, **arguments) == uploaded
+    assert service.events_use_case.execute(operation.capture_id, after_sequence=0) == events
+    finalized = FinalizeIngestion(service).execute(
+        ingestion.ingestion_id, FinalizeIngestionV2(total_bytes=len(content), sha256=digest)
     )
+    assert (
+        FinalizeIngestion(service).execute(
+            ingestion.ingestion_id, FinalizeIngestionV2(total_bytes=len(content), sha256=digest)
+        )
+        == finalized
+    )
+    assert scheduled == [operation.capture_id]
+    cancelled = CancelCapture(service).execute(operation.capture_id)
+    assert service._cancellations[operation.capture_id].is_set()
+    assert cancelled.status is StreamingCaptureStatus.CANCELLED
+    assert CancelCapture(service).execute(operation.capture_id) == cancelled
+    assert (
+        PollCaptureEvents(service).execute(operation.capture_id)[-1].event_type
+        is StreamingEventType.CANCELLED
+    )
+    with pytest.raises(StreamingTransitionError, match="no longer accepts events"):
+        repository.append_event(
+            operation.capture_id, event_type=StreamingEventType.HEARTBEAT, stage="late"
+        )
+    restarted = StreamingRepository(tmp_path, clock=clock, retention_hours=4)
+    restarted.initialize()
+    assert restarted.get_capture(operation.capture_id) == cancelled
+    with pytest.raises(StreamingTransitionError):
+        restarted.append_event(
+            operation.capture_id, event_type=StreamingEventType.SEGMENT, stage="late"
+        )
+    assert restarted.read_events(
+        operation.capture_id, after_sequence=0
+    ) == service.events_use_case.execute(operation.capture_id, after_sequence=0)
+
+
+def test_capture_aggregate_rejects_skipped_states_and_keeps_terminal_state() -> None:
+    from capture_runtime.capture.domain.operation.models import CaptureTransitionError
+    from capture_runtime.contracts import StreamingEventType
+
+    operation = CaptureOperation(capture_id="c", ingestion_id="i", kind=CaptureSourceKind.AUDIO)
+    with pytest.raises(CaptureTransitionError):
+        operation.transition(StreamingCaptureStatus.STRUCTURING)
+    extracting = operation.transition(StreamingCaptureStatus.EXTRACTING)
+    progressed = extracting.record_event(
+        StreamingEventType.CHECKPOINT, progress=0.5, partial_revision=2
+    )
+    assert (
+        progressed.record_event(
+            StreamingEventType.HEARTBEAT, progress=0.2, partial_revision=1
+        ).progress
+        == 0.5
+    )
+    completed = progressed.transition(StreamingCaptureStatus.AWAITING_STRUCTURING).transition(
+        StreamingCaptureStatus.COMPLETED
+    )
+    assert completed.transition(StreamingCaptureStatus.FAILED) is completed
+    with pytest.raises(CaptureTransitionError):
+        completed.record_event(StreamingEventType.CHECKPOINT)

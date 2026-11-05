@@ -447,7 +447,7 @@ def test_progressive_runtime_materializes_partial_raw_result_and_terminal_events
             processor=FakeProgressiveProcessor(clock),  # type: ignore[arg-type]
             structurer=FakeCaptureStructuringProvider(clock),
         )
-        operation = service.start_capture(
+        operation = service.start_capture_use_case.execute(
             StartCaptureV2(
                 client_request_id="progressive-capture",
                 ingestion_id=ingestion_id,
@@ -494,7 +494,7 @@ def test_an_audio_capture_first_releases_a_warm_ocr_worker(tmp_path: Path) -> No
             extractor=Extractor(),  # type: ignore[arg-type]
             structurer=FakeCaptureStructuringProvider(clock),
         )
-        operation = service.start_capture(
+        operation = service.start_capture_use_case.execute(
             StartCaptureV2(
                 client_request_id="audio-after-ocr",
                 ingestion_id=ingestion_id,
@@ -528,7 +528,7 @@ def test_progressive_runtime_does_not_publish_the_session_end_as_the_capture_end
             processor=SessionEndingProcessor(clock),  # type: ignore[arg-type]
             structurer=FakeCaptureStructuringProvider(clock),
         )
-        operation = service.start_capture(
+        operation = service.start_capture_use_case.execute(
             StartCaptureV2(
                 client_request_id="progressive-host-capture",
                 ingestion_id=ingestion_id,
@@ -565,7 +565,7 @@ def test_progressive_runtime_preserves_structuring_phase_failure_after_raw_mater
             processor=FakeProgressiveProcessor(clock),  # type: ignore[arg-type]
             structurer=FailingStructurer(),  # type: ignore[arg-type]
         )
-        operation = service.start_capture(
+        operation = service.start_capture_use_case.execute(
             StartCaptureV2(
                 client_request_id="progressive-structuring-failure",
                 ingestion_id=ingestion_id,
@@ -601,7 +601,7 @@ def test_progressive_runtime_exposes_bounded_decoder_failure(
             processor=FailingDecoderProcessor(),  # type: ignore[arg-type]
             structurer=FakeCaptureStructuringProvider(clock),
         )
-        operation = service.start_capture(
+        operation = service.start_capture_use_case.execute(
             StartCaptureV2(
                 client_request_id="progressive-decoder-failure",
                 ingestion_id=ingestion_id,
@@ -637,7 +637,7 @@ def test_streaming_runtime_fails_when_audio_processor_is_unavailable(
             extractor=DeterministicCaptureExtractor(clock),
             structurer=FakeCaptureStructuringProvider(clock),
         )
-        operation = service.start_capture(
+        operation = service.start_capture_use_case.execute(
             StartCaptureV2(
                 client_request_id="missing-audio-processor",
                 ingestion_id=ingestion_id,
@@ -693,7 +693,7 @@ def test_an_audio_capture_hands_its_spoken_language_to_recognition(
             processor=processor,  # type: ignore[arg-type]
             structurer=FakeCaptureStructuringProvider(clock),
         )
-        operation = service.start_capture(
+        operation = service.start_capture_use_case.execute(
             StartCaptureV2(
                 client_request_id="spoken-language",
                 ingestion_id=ingestion_id,
@@ -721,7 +721,7 @@ def test_a_spoken_language_on_a_non_audio_capture_fails_it(tmp_path: Path) -> No
             extractor=DeterministicCaptureExtractor(clock),
             structurer=FakeCaptureStructuringProvider(clock),
         )
-        operation = service.start_capture(
+        operation = service.start_capture_use_case.execute(
             StartCaptureV2(
                 client_request_id="spoken-language-image",
                 ingestion_id=ingestion_id,
@@ -864,7 +864,7 @@ def test_a_capture_started_while_an_engine_is_uninstalled_waits_for_it(tmp_path:
             structurer=FakeCaptureStructuringProvider(clock),
         )
         assert service.hold_new_captures()
-        operation = service.start_capture(
+        operation = service.start_capture_use_case.execute(
             StartCaptureV2(
                 client_request_id="capture-during-uninstall",
                 ingestion_id=ingestion_id,
@@ -972,7 +972,7 @@ def test_an_audio_capture_reports_its_duration_and_covered_time(
         repository.initialize()
         ingestion_id, _ = _open(repository)
         service = StreamingCaptureService(repository, clock=clock, processor=processor)
-        operation = service.start_capture(
+        operation = service.start_capture_use_case.execute(
             StartCaptureV2(
                 client_request_id="duration-capture",
                 ingestion_id=ingestion_id,

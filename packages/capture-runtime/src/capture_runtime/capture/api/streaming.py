@@ -80,7 +80,7 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
     ) -> IngestionV2:
         _require_matching_idempotency_key(idempotency_key, request.client_request_id)
         try:
-            return service.open_ingestion(request)
+            return service.open_ingestion_use_case.execute(request)
         except StreamingIdempotencyConflictError as error:
             raise ApiProblem(
                 409,
@@ -138,7 +138,7 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
                 "Chunk length does not match Content-Range.",
             )
         try:
-            return service.append_chunk(
+            return service.append_chunk_use_case.execute(
                 ingestion_id,
                 chunk_index=chunk_index,
                 byte_offset=byte_offset,
@@ -161,7 +161,7 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
         request: FinalizeIngestionV2,
     ) -> IngestionV2:
         try:
-            return service.finalize_ingestion(ingestion_id, request)
+            return service.finalize_ingestion_use_case.execute(ingestion_id, request)
         except StreamingRecordNotFoundError as error:
             raise ApiProblem(404, "ingestion_not_found", "Ingestion was not found.") from error
         except StreamingTransitionError as error:
@@ -194,7 +194,7 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
     ) -> CaptureOperationV2:
         _require_matching_idempotency_key(idempotency_key, request.client_request_id)
         try:
-            return service.start_capture(request)
+            return service.start_capture_use_case.execute(request)
         except StreamingRecordNotFoundError as error:
             raise ApiProblem(404, "ingestion_not_found", "Ingestion was not found.") from error
         except StreamingIdempotencyConflictError as error:
@@ -220,7 +220,7 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
     ) -> StreamingResponse:
         after_sequence = _event_cursor(last_event_id)
         try:
-            events = service.events(capture_id, after_sequence=after_sequence)
+            events = service.events_use_case.execute(capture_id, after_sequence=after_sequence)
         except StreamingRecordNotFoundError as error:
             raise ApiProblem(
                 404, "capture_not_found", "Streaming capture was not found."
@@ -232,7 +232,9 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
             heartbeat_deadline = time.monotonic() + 5
             while True:
                 current_events = (
-                    events if initial_replay else service.events(capture_id, after_sequence=cursor)
+                    events
+                    if initial_replay
+                    else service.events_use_case.execute(capture_id, after_sequence=cursor)
                 )
                 initial_replay = False
                 for event in current_events:
@@ -253,7 +255,7 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
                     # immediately before appending its terminal event. Flush
                     # the durable tail before closing so a fast consumer never
                     # observes an EOF after only the initial replay.
-                    for event in service.events(capture_id, after_sequence=cursor):
+                    for event in service.events_use_case.execute(capture_id, after_sequence=cursor):
                         payload = json.dumps(
                             event.model_dump(mode="json", by_alias=True),
                             ensure_ascii=False,
@@ -324,7 +326,7 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
     @router.post("/captures/{capture_id}/cancel", response_model=CaptureOperationV2)
     async def cancel_capture(capture_id: str) -> CaptureOperationV2:
         try:
-            return service.cancel_capture(capture_id)
+            return service.cancel_capture_use_case.execute(capture_id)
         except StreamingRecordNotFoundError as error:
             raise ApiProblem(
                 404, "capture_not_found", "Streaming capture was not found."
@@ -361,7 +363,7 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
             raise ApiProblem(422, "validation_error", "captureId must match the route capture.")
         _require_matching_idempotency_key(idempotency_key, request.client_request_id)
         try:
-            return structuring_session_service.open(request)
+            return structuring_session_service.open_use_case.execute(request)
         except StructuringSessionIdempotencyConflictError as error:
             raise ApiProblem(
                 409,
@@ -385,7 +387,7 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
     )
     async def get_structuring_session(capture_id: str) -> StructuringSessionV2:
         try:
-            session = structuring_session_service.get_for_capture(capture_id)
+            session = structuring_session_service.get_use_case.execute(capture_id)
             return session
         except StructuringSessionRecordNotFoundError as error:
             raise ApiProblem(
@@ -401,7 +403,7 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
         batch_index: Annotated[int, Path(ge=0)],
     ) -> StructuringBatchV2:
         try:
-            session = structuring_session_service.get_for_capture(capture_id)
+            session = structuring_session_service.get_use_case.execute(capture_id)
         except StructuringSessionRecordNotFoundError as error:
             raise ApiProblem(
                 404, "structuring_session_not_found", "Structuring session was not found."
@@ -426,13 +428,13 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
         ],
     ) -> StructuringSessionV2:
         try:
-            session = structuring_session_service.get_for_capture(capture_id)
+            session = structuring_session_service.get_use_case.execute(capture_id)
         except StructuringSessionRecordNotFoundError as error:
             raise ApiProblem(
                 404, "structuring_session_not_found", "Structuring session was not found."
             ) from error
         try:
-            return structuring_session_service.submit(
+            return structuring_session_service.submit_use_case.execute(
                 session.session_id,
                 batch_index,
                 payload,
@@ -485,7 +487,7 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
         ],
     ) -> CaptureOperationV2:
         try:
-            return service.commit_host_result(
+            return service.commit_host_result_use_case.execute(
                 capture_id, candidate, idempotency_key=idempotency_key
             )
         except StructuringValidationError as error:

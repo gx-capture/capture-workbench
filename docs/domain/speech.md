@@ -98,3 +98,7 @@ sequenceDiagram
 ## 規則與資料來源
 
 領域模型位於 `capture_runtime.speech.domain`（`window` 與 `transcript` 聚合），應用用例位於 `capture_runtime.speech.application`。技術實作與適配器位於 `capture_runtime.speech.infrastructure`：`speech_recognition`（`TeaAsrAdapter`）、`speech_transcript`（`WhisperAdapter`）、`speech_worker_result`（`SpeechWorkerMethods`）、`progressive_audio`（`ProgressiveAudioSession`）、`progressive_capture`（`ProgressiveCaptureProcessor`）、`progressive_decoder`（`PyAVIncrementalDecoder`）、`progressive_whisper`（窗轉寫）與 `whisper_session`（暖 worker 訊框）。公開型別仍由 `capture_runtime.contracts` 定義。
+
+## W6 ??????
+
+??????????? domain?`SpeechRecognitionResult`?`WindowTranscript`?`WindowTranscriptSegment`????????? `TranscribeAudio`?????????? `TranscribeAudioWindow`????????? `DetectRepetitionLoop`?????????????`elapsed_ms` ? `stage_ms` ????

@@ -7,23 +7,14 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from capture_runtime.contracts import (
-    CaptureEngine,
-    OpenStructuringSessionV2,
     RuntimeModelInstallationV2,
     StructuringBatchStatus,
-    StructuringProviderCapabilityV2,
-    StructuringSemanticBlockV2,
     StructuringSessionStatus,
-    StructuringSessionV2,
-    SubmitStructuringBatchV2,
 )
 from capture_runtime.structuring.application.use_cases import (
     CancelModelInstallation,
     GetModelInstallation,
-    GetStructuringSession,
     InstallModelOption,
-    OpenStructuringSession,
-    SubmitStructuringBatch,
 )
 from capture_runtime.structuring.domain.session import (
     BatchPlanningPolicy,
@@ -176,48 +167,8 @@ def test_batch_planning_policy() -> None:
 
 
 @pytest.mark.anyio
-async def test_structuring_use_cases() -> None:
-    mock_session_service = Mock()
+async def test_model_installation_use_cases() -> None:
     mock_installation_service = Mock()
-
-    # 1. OpenStructuringSession
-    open_req = OpenStructuringSessionV2(
-        capture_id="cap-1",
-        target_language="en",
-        provider_capability=StructuringProviderCapabilityV2(
-            provider=CaptureEngine(
-                engine="ollama", model="llama3", digest="sha256:" + "0" * 64, device="cpu"
-            ),
-            capability="structuring",
-            schema_dialect="v2",
-        ),
-        schema_dialect="v2",
-        client_request_id="req-1",
-    )
-    mock_session = Mock(spec=StructuringSessionV2)
-    mock_session_service.open.return_value = mock_session
-
-    open_uc = OpenStructuringSession(mock_session_service)
-    assert open_uc.execute(open_req) is mock_session
-    mock_session_service.open.assert_called_once_with(open_req)
-
-    # 2. SubmitStructuringBatch
-    submit_payload = SubmitStructuringBatchV2(
-        batch_digest="0" * 64,
-        blocks=[StructuringSemanticBlockV2(source_segment_id="seg-1", type="paragraph")],
-    )
-    mock_session_service.submit.return_value = mock_session
-    submit_uc = SubmitStructuringBatch(mock_session_service)
-    assert submit_uc.execute("sess-1", 0, submit_payload, idempotency_key="idemp-1") is mock_session
-    mock_session_service.submit.assert_called_once_with(
-        "sess-1", 0, submit_payload, idempotency_key="idemp-1"
-    )
-
-    # 3. GetStructuringSession
-    mock_session_service.get.return_value = mock_session
-    get_session_uc = GetStructuringSession(mock_session_service)
-    assert get_session_uc.execute("sess-1") is mock_session
-    mock_session_service.get.assert_called_once_with("sess-1")
 
     # 4. InstallModelOption
     mock_job = Mock(spec=RuntimeModelInstallationV2)
@@ -242,3 +193,27 @@ async def test_structuring_use_cases() -> None:
     get_job_uc = GetModelInstallation(mock_installation_service)
     assert get_job_uc.execute("job-1") is mock_job
     mock_installation_service.get.assert_called_once_with("job-1")
+
+
+def test_session_aggregate_accepts_batches_only_in_order_and_stops_at_completion() -> None:
+    from capture_runtime.structuring.domain.session.models import SessionTransitionError
+
+    session = StructuringSession(
+        session_id="s",
+        capture_id="c",
+        raw_source_sha256="a" * 64,
+        contract_set_sha256="b" * 64,
+        schema_dialect="v2",
+        batch_count=2,
+    )
+    with pytest.raises(SessionTransitionError, match="in order"):
+        session.accept_batch(1)
+    accepted = session.accept_batch(0)
+    assert accepted.next_batch_index == 1
+    assert session.next_batch_index == 0
+    with pytest.raises(SessionTransitionError, match="in order"):
+        accepted.accept_batch(0)
+    completed = accepted.accept_batch(1)
+    assert completed.status is StructuringSessionStatus.COMPLETED
+    with pytest.raises(SessionTransitionError, match="not open"):
+        completed.accept_batch(2)

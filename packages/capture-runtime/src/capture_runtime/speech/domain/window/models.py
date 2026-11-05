@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from capture_runtime.contracts import CaptureEngine
+
 MAX_PROGRESSIVE_WINDOW_BYTES = 4 * 1024 * 1024
 DEFAULT_WINDOW_MS = 120_000
 DEFAULT_OVERLAP_MS = 30_000
@@ -60,3 +62,17 @@ class WindowSlicingPolicy:
                 break
             start += step
         return tuple(windows)
+
+
+@dataclass(frozen=True, slots=True)
+class WindowTranscriptSegment:
+    start_ms: int
+    end_ms: int
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
+class WindowTranscript:
+    segments: tuple[WindowTranscriptSegment, ...]
+    extraction_engine: CaptureEngine
+    warnings: tuple[str, ...] = ()

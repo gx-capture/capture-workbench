@@ -235,7 +235,7 @@ def build_runtime_dependencies(
         coordinator=StructuringCoordinator(),
         clock=runtime_clock,
         contract_set_sha256=runtime_contract_set.sha256,
-        host_result_committer=streaming_capture_service.commit_host_result,
+        host_result_committer=streaming_capture_service.commit_host_result_use_case.execute,
         host_result_discarder=streaming_capture_service._clear_pending_execution_proof,
     )
     installation_service = InstallationService(

@@ -463,6 +463,1434 @@
       "codeName": "StreamingEventType.CANCELLED",
       "enum": { "enumId": "StreamingEventType", "value": "cancelled" },
       "retired": false
+    },
+    {
+      "id": "CaptureBlock.type.heading",
+      "label": "?????heading",
+      "codeName": "CaptureBlock.type.heading",
+      "enum": { "enumId": "CaptureBlock.type", "value": "heading" },
+      "retired": false
+    },
+    {
+      "id": "CaptureBlock.type.list-item",
+      "label": "?????list-item",
+      "codeName": "CaptureBlock.type.list-item",
+      "enum": { "enumId": "CaptureBlock.type", "value": "list-item" },
+      "retired": false
+    },
+    {
+      "id": "CaptureBlock.type.paragraph",
+      "label": "?????paragraph",
+      "codeName": "CaptureBlock.type.paragraph",
+      "enum": { "enumId": "CaptureBlock.type", "value": "paragraph" },
+      "retired": false
+    },
+    {
+      "id": "CaptureBlock.type.quote",
+      "label": "?????quote",
+      "codeName": "CaptureBlock.type.quote",
+      "enum": { "enumId": "CaptureBlock.type", "value": "quote" },
+      "retired": false
+    },
+    {
+      "id": "CaptureBlock.type.table",
+      "label": "?????table",
+      "codeName": "CaptureBlock.type.table",
+      "enum": { "enumId": "CaptureBlock.type", "value": "table" },
+      "retired": false
+    },
+    {
+      "id": "CaptureBlock.type.transcript",
+      "label": "?????transcript",
+      "codeName": "CaptureBlock.type.transcript",
+      "enum": { "enumId": "CaptureBlock.type", "value": "transcript" },
+      "retired": false
+    },
+    {
+      "id": "CaptureRequirementId.capture-ollama-model",
+      "label": "?????capture-ollama-model",
+      "codeName": "CaptureRequirementId.capture-ollama-model",
+      "enum": { "enumId": "CaptureRequirementId", "value": "capture-ollama-model" },
+      "retired": false
+    },
+    {
+      "id": "CaptureRequirementId.ollama-runtime",
+      "label": "?????ollama-runtime",
+      "codeName": "CaptureRequirementId.ollama-runtime",
+      "enum": { "enumId": "CaptureRequirementId", "value": "ollama-runtime" },
+      "retired": false
+    },
+    {
+      "id": "CaptureRequirementId.speaker-diarization",
+      "label": "?????speaker-diarization",
+      "codeName": "CaptureRequirementId.speaker-diarization",
+      "enum": { "enumId": "CaptureRequirementId", "value": "speaker-diarization" },
+      "retired": false
+    },
+    {
+      "id": "CaptureRequirementId.speech-recognition",
+      "label": "?????speech-recognition",
+      "codeName": "CaptureRequirementId.speech-recognition",
+      "enum": { "enumId": "CaptureRequirementId", "value": "speech-recognition" },
+      "retired": false
+    },
+    {
+      "id": "CaptureRequirementId.vertical-japanese-reader",
+      "label": "?????vertical-japanese-reader",
+      "codeName": "CaptureRequirementId.vertical-japanese-reader",
+      "enum": { "enumId": "CaptureRequirementId", "value": "vertical-japanese-reader" },
+      "retired": false
+    },
+    {
+      "id": "CaptureRequirementId.windowsml-ocr",
+      "label": "?????windowsml-ocr",
+      "codeName": "CaptureRequirementId.windowsml-ocr",
+      "enum": { "enumId": "CaptureRequirementId", "value": "windowsml-ocr" },
+      "retired": false
+    },
+    {
+      "id": "ProblemCode.candidate_too_large",
+      "label": "?????candidate_too_large",
+      "codeName": "ProblemCode.candidate_too_large",
+      "enum": { "enumId": "ProblemCode", "value": "candidate_too_large" },
+      "retired": false
+    },
+    {
+      "id": "ProblemCode.capture_not_found",
+      "label": "?????capture_not_found",
+      "codeName": "ProblemCode.capture_not_found",
+      "enum": { "enumId": "ProblemCode", "value": "capture_not_found" },
+      "retired": false
+    },
+    {
+      "id": "ProblemCode.chunk_checksum_mismatch",
+      "label": "?????chunk_checksum_mismatch",
+      "codeName": "ProblemCode.chunk_checksum_mismatch",
+      "enum": { "enumId": "ProblemCode", "value": "chunk_checksum_mismatch" },
+      "retired": false
+    },
+    {
+      "id": "ProblemCode.chunk_conflict",
+      "label": "?????chunk_conflict",
+      "codeName": "ProblemCode.chunk_conflict",
+      "enum": { "enumId": "ProblemCode", "value": "chunk_conflict" },
+      "retired": false
+    },
+    {
+      "id": "ProblemCode.chunk_length_mismatch",
+      "label": "?????chunk_length_mismatch",
+      "codeName": "ProblemCode.chunk_length_mismatch",
+      "enum": { "enumId": "ProblemCode", "value": "chunk_length_mismatch" },
+      "retired": false
+    },
+    {
+      "id": "ProblemCode.chunk_out_of_order",
+      "label": "?????chunk_out_of_order",
+      "codeName": "ProblemCode.chunk_out_of_order",
+      "enum": { "enumId": "ProblemCode", "value": "chunk_out_of_order" },
+      "retired": false
+    },
+    {
+      "id": "ProblemCode.chunk_rejected",
+      "label": "?????chunk_rejected",
+      "codeName": "ProblemCode.chunk_rejected",
+      "enum": { "enumId": "ProblemCode", "value": "chunk_rejected" },
+      "retired": false
+    },
+    {
+      "id": "ProblemCode.chunk_too_large",
+      "label": "?????chunk_too_large",
+      "codeName": "ProblemCode.chunk_too_large",
+      "enum": { "enumId": "ProblemCode", "value": "chunk_too_large" },
+      "retired": false
+    },
+    {
+      "id": "ProblemCode.chunk_total_conflict",
+      "label": "?????chunk_total_conflict",
+      "codeName": "ProblemCode.chunk_total_conflict",
+      "enum": { "enumId": "ProblemCode", "value": "chunk_total_conflict" },
+      "retired": false
+    },
+    {
+      "id": "ProblemCode.contract_bundle_integrity",
+      "label": "?????contract_bundle_integrity",
+      "codeName": "ProblemCode.contract_bundle_integrity",
+      "enum": { "enumId": "ProblemCode", "value": "contract_bundle_integrity" },
+      "retired": false
+    },
+    {
+      "id": "ProblemCode.contract_bundle_not_found",
+      "label": "?????contract_bundle_not_found",
+      "codeName": "ProblemCode.contract_bundle_not_found",
+      "enum": { "enumId": "ProblemCode", "value": "contract_bundle_not_found" },
+      "retired": false
+    },
+    {
+      "id": "ProblemCode.direct_model_checksum",
+      "label": "?????direct_model_checksum",
+      "codeName": "ProblemCode.direct_model_checksum",
+      "enum": { "enumId": "ProblemCode", "value": "direct_model_checksum" },
+      "retired": false
+    },
+    {
+      "id": "ProblemCode.direct_model_retries_exhausted",
+      "label": "?????direct_model_retries_exhausted",
+      "codeName": "ProblemCode.direct_model_retries_exhausted",
+      "enum": { "enumId": "ProblemCode", "value": "direct_model_retries_exhausted" },
+      "retired": false
+    },
+    {
+      "id": "ProblemCode.engine_probe_failed",
+      "label": "?????engine_probe_failed",
+      "codeName": "ProblemCode.engine_probe_failed",
+      "enum": { "enumId": "ProblemCode", "value": "engine_probe_failed" },
+      "retired": false
+    },
+    {
+      "id": "ProblemCode.extraction_runtime_unavailable",
+      "label": "?????extraction_runtime_unavailable",
+      "codeName": "ProblemCode.extraction_runtime_unavailable",
+      "enum": { "enumId": "ProblemCode", "value": "extraction_runtime_unavailable" },
+      "retired": false
+    },
+    {
+      "id": "ProblemCode.http_400",
+      "label": "?????http_400",
+      "codeName": "ProblemCode.http_400",
+      "enum": { "enumId": "ProblemCode", "value": "http_400" },
+      "retired": false
+    },
+    {
+      "id": "ProblemCode.http_404",
+      "label": "?????http_404",
+      "codeName": "ProblemCode.http_404",
+      "enum": { "enumId": "ProblemCode", "value": "http_404" },
+      "retired": false
+    },
+    {
+      "id": "ProblemCode.http_409",
+      "label": "?????http_409",
+      "codeName": "ProblemCode.http_409",
+      "enum": { "enumId": "ProblemCode", "value": "http_409" },
+      "retired": false
+    },
+    {
+      "id": "ProblemCode.http_415",
+      "label": "?????http_415",
+      "codeName": "ProblemCode.http_415",
+      "enum": { "enumId": "ProblemCode", "value": "http_415" },
+      "retired": false
+    },
+    {
+      "id": "ProblemCode.http_422",
+      "label": "?????http_422",
+      "codeName": "ProblemCode.http_422",
+      "enum": { "enumId": "ProblemCode", "value": "http_422" },
+      "retired": false
+    },
+    {
+      "id": "ProblemCode.idempotency_conflict",
+      "label": "?????idempotency_conflict",
+      "codeName": "ProblemCode.idempotency_conflict",
+      "enum": { "enumId": "ProblemCode", "value": "idempotency_conflict" },
+      "retired": false
+    },
+    {
+      "id": "ProblemCode.ingestion_delete_rejected",
+      "label": "?????ingestion_delete_rejected",
+      "codeName": "ProblemCode.ingestion_delete_rejected",
+      "enum": { "enumId": "ProblemCode", "value": "ingestion_delete_rejected" },
+      "retired": false
+    },
+    {
+      "id": "ProblemCode.ingestion_finalize_rejected",
+      "label": "?????ingestion_finalize_rejected",
+      "codeName": "ProblemCode.ingestion_finalize_rejected",
+      "enum": { "enumId": "ProblemCode", "value": "ingestion_finalize_rejected" },
+      "retired": false
+    },
+    {
+      "id": "ProblemCode.ingestion_not_found",
+      "label": "?????ingestion_not_found",
+      "codeName": "ProblemCode.ingestion_not_found",
+      "enum": { "enumId": "ProblemCode", "value": "ingestion_not_found" },
+      "retired": false
+    },
+    {
+      "id": "ProblemCode.installation_cancelled",
+      "label": "?????installation_cancelled",
+      "codeName": "ProblemCode.installation_cancelled",
+      "enum": { "enumId": "ProblemCode", "value": "installation_cancelled" },
+      "retired": false
+    },
+    {
+      "id": "ProblemCode.installation_filesystem",
+      "label": "?????installation_filesystem",
+      "codeName": "ProblemCode.installation_filesystem",
+      "enum": { "enumId": "ProblemCode", "value": "installation_filesystem" },
+      "retired": false
+    },
+    {
+      "id": "ProblemCode.installation_not_found",
+      "label": "?????installation_not_found",
+      "codeName": "ProblemCode.installation_not_found",
+      "enum": { "enumId": "ProblemCode", "value": "installation_not_found" },
+      "retired": false
+    },
+    {
+      "id": "ProblemCode.installation_unexpected",
+      "label": "?????installation_unexpected",
+      "codeName": "ProblemCode.installation_unexpected",
+      "enum": { "enumId": "ProblemCode", "value": "installation_unexpected" },
+      "retired": false
+    },
+    {
+      "id": "ProblemCode.invalid_capture_state",
+      "label": "?????invalid_capture_state",
+      "codeName": "ProblemCode.invalid_capture_state",
+      "enum": { "enumId": "ProblemCode", "value": "invalid_capture_state" },
+      "retired": false
+    },
+    {
+      "id": "ProblemCode.invalid_chunk_headers",
+      "label": "?????invalid_chunk_headers",
+      "codeName": "ProblemCode.invalid_chunk_headers",
+      "enum": { "enumId": "ProblemCode", "value": "invalid_chunk_headers" },
+      "retired": false
+    },
+    {
+      "id": "ProblemCode.invalid_content_length",
+      "label": "?????invalid_content_length",
+      "codeName": "ProblemCode.invalid_content_length",
+      "enum": { "enumId": "ProblemCode", "value": "invalid_content_length" },
+      "retired": false
+    },
+    {
+      "id": "ProblemCode.invalid_event_cursor",
+      "label": "?????invalid_event_cursor",
+      "codeName": "ProblemCode.invalid_event_cursor",
+      "enum": { "enumId": "ProblemCode", "value": "invalid_event_cursor" },
+      "retired": false
+    },
+    {
+      "id": "ProblemCode.invalid_host",
+      "label": "?????invalid_host",
+      "codeName": "ProblemCode.invalid_host",
+      "enum": { "enumId": "ProblemCode", "value": "invalid_host" },
+      "retired": false
+    },
+    {
+      "id": "ProblemCode.invalid_structure",
+      "label": "?????invalid_structure",
+      "codeName": "ProblemCode.invalid_structure",
+      "enum": { "enumId": "ProblemCode", "value": "invalid_structure" },
+      "retired": false
+    },
+    {
+      "id": "ProblemCode.manual_action_required",
+      "label": "?????manual_action_required",
+      "codeName": "ProblemCode.manual_action_required",
+      "enum": { "enumId": "ProblemCode", "value": "manual_action_required" },
+      "retired": false
+    },
+    {
+      "id": "ProblemCode.model_option_unknown",
+      "label": "?????model_option_unknown",
+      "codeName": "ProblemCode.model_option_unknown",
+      "enum": { "enumId": "ProblemCode", "value": "model_option_unknown" },
+      "retired": false
+    },
+    {
+      "id": "ProblemCode.not_found",
+      "label": "?????not_found",
+      "codeName": "ProblemCode.not_found",
+      "enum": { "enumId": "ProblemCode", "value": "not_found" },
+      "retired": false
+    },
+    {
+      "id": "ProblemCode.ocr_unavailable",
+      "label": "?????ocr_unavailable",
+      "codeName": "ProblemCode.ocr_unavailable",
+      "enum": { "enumId": "ProblemCode", "value": "ocr_unavailable" },
+      "retired": false
+    },
+    {
+      "id": "ProblemCode.origin_not_allowed",
+      "label": "?????origin_not_allowed",
+      "codeName": "ProblemCode.origin_not_allowed",
+      "enum": { "enumId": "ProblemCode", "value": "origin_not_allowed" },
+      "retired": false
+    },
+    {
+      "id": "ProblemCode.partial_unavailable",
+      "label": "?????partial_unavailable",
+      "codeName": "ProblemCode.partial_unavailable",
+      "enum": { "enumId": "ProblemCode", "value": "partial_unavailable" },
+      "retired": false
+    },
+    {
+      "id": "ProblemCode.progressive_no_text_at_sample",
+      "label": "?????progressive_no_text_at_sample",
+      "codeName": "ProblemCode.progressive_no_text_at_sample",
+      "enum": { "enumId": "ProblemCode", "value": "progressive_no_text_at_sample" },
+      "retired": false
+    },
+    {
+      "id": "ProblemCode.raw_unavailable",
+      "label": "?????raw_unavailable",
+      "codeName": "ProblemCode.raw_unavailable",
+      "enum": { "enumId": "ProblemCode", "value": "raw_unavailable" },
+      "retired": false
+    },
+    {
+      "id": "ProblemCode.requirement_disabled",
+      "label": "?????requirement_disabled",
+      "codeName": "ProblemCode.requirement_disabled",
+      "enum": { "enumId": "ProblemCode", "value": "requirement_disabled" },
+      "retired": false
+    },
+    {
+      "id": "ProblemCode.requirement_in_use",
+      "label": "?????requirement_in_use",
+      "codeName": "ProblemCode.requirement_in_use",
+      "enum": { "enumId": "ProblemCode", "value": "requirement_in_use" },
+      "retired": false
+    },
+    {
+      "id": "ProblemCode.requirement_not_found",
+      "label": "?????requirement_not_found",
+      "codeName": "ProblemCode.requirement_not_found",
+      "enum": { "enumId": "ProblemCode", "value": "requirement_not_found" },
+      "retired": false
+    },
+    {
+      "id": "ProblemCode.requirement_not_uninstallable",
+      "label": "?????requirement_not_uninstallable",
+      "codeName": "ProblemCode.requirement_not_uninstallable",
+      "enum": { "enumId": "ProblemCode", "value": "requirement_not_uninstallable" },
+      "retired": false
+    },
+    {
+      "id": "ProblemCode.requirement_unavailable",
+      "label": "?????requirement_unavailable",
+      "codeName": "ProblemCode.requirement_unavailable",
+      "enum": { "enumId": "ProblemCode", "value": "requirement_unavailable" },
+      "retired": false
+    },
+    {
+      "id": "ProblemCode.result_unavailable",
+      "label": "?????result_unavailable",
+      "codeName": "ProblemCode.result_unavailable",
+      "enum": { "enumId": "ProblemCode", "value": "result_unavailable" },
+      "retired": false
+    },
+    {
+      "id": "ProblemCode.runtime_restarted",
+      "label": "?????runtime_restarted",
+      "codeName": "ProblemCode.runtime_restarted",
+      "enum": { "enumId": "ProblemCode", "value": "runtime_restarted" },
+      "retired": false
+    },
+    {
+      "id": "ProblemCode.source_kind_mismatch",
+      "label": "?????source_kind_mismatch",
+      "codeName": "ProblemCode.source_kind_mismatch",
+      "enum": { "enumId": "ProblemCode", "value": "source_kind_mismatch" },
+      "retired": false
+    },
+    {
+      "id": "ProblemCode.streaming_source_unavailable",
+      "label": "?????streaming_source_unavailable",
+      "codeName": "ProblemCode.streaming_source_unavailable",
+      "enum": { "enumId": "ProblemCode", "value": "streaming_source_unavailable" },
+      "retired": false
+    },
+    {
+      "id": "ProblemCode.structuring_batch_digest_conflict",
+      "label": "?????structuring_batch_digest_conflict",
+      "codeName": "ProblemCode.structuring_batch_digest_conflict",
+      "enum": { "enumId": "ProblemCode", "value": "structuring_batch_digest_conflict" },
+      "retired": false
+    },
+    {
+      "id": "ProblemCode.structuring_batch_not_found",
+      "label": "?????structuring_batch_not_found",
+      "codeName": "ProblemCode.structuring_batch_not_found",
+      "enum": { "enumId": "ProblemCode", "value": "structuring_batch_not_found" },
+      "retired": false
+    },
+    {
+      "id": "ProblemCode.structuring_invalid_output",
+      "label": "?????structuring_invalid_output",
+      "codeName": "ProblemCode.structuring_invalid_output",
+      "enum": { "enumId": "ProblemCode", "value": "structuring_invalid_output" },
+      "retired": false
+    },
+    {
+      "id": "ProblemCode.structuring_session_corrupt",
+      "label": "?????structuring_session_corrupt",
+      "codeName": "ProblemCode.structuring_session_corrupt",
+      "enum": { "enumId": "ProblemCode", "value": "structuring_session_corrupt" },
+      "retired": false
+    },
+    {
+      "id": "ProblemCode.structuring_session_not_found",
+      "label": "?????structuring_session_not_found",
+      "codeName": "ProblemCode.structuring_session_not_found",
+      "enum": { "enumId": "ProblemCode", "value": "structuring_session_not_found" },
+      "retired": false
+    },
+    {
+      "id": "ProblemCode.unauthorized",
+      "label": "?????unauthorized",
+      "codeName": "ProblemCode.unauthorized",
+      "enum": { "enumId": "ProblemCode", "value": "unauthorized" },
+      "retired": false
+    },
+    {
+      "id": "ProblemCode.unsupported_media_type",
+      "label": "?????unsupported_media_type",
+      "codeName": "ProblemCode.unsupported_media_type",
+      "enum": { "enumId": "ProblemCode", "value": "unsupported_media_type" },
+      "retired": false
+    },
+    {
+      "id": "ProblemCode.validation_error",
+      "label": "?????validation_error",
+      "codeName": "ProblemCode.validation_error",
+      "enum": { "enumId": "ProblemCode", "value": "validation_error" },
+      "retired": false
+    },
+    {
+      "id": "RuntimeModelOptionStatus.active",
+      "label": "?????active",
+      "codeName": "RuntimeModelOptionStatus.active",
+      "enum": { "enumId": "RuntimeModelOptionStatus", "value": "active" },
+      "retired": false
+    },
+    {
+      "id": "RuntimeModelOptionStatus.installed",
+      "label": "?????installed",
+      "codeName": "RuntimeModelOptionStatus.installed",
+      "enum": { "enumId": "RuntimeModelOptionStatus", "value": "installed" },
+      "retired": false
+    },
+    {
+      "id": "RuntimeModelOptionStatus.not-installed",
+      "label": "?????not-installed",
+      "codeName": "RuntimeModelOptionStatus.not-installed",
+      "enum": { "enumId": "RuntimeModelOptionStatus", "value": "not-installed" },
+      "retired": false
+    },
+    {
+      "id": "StructuringSemanticBlockV2.type.heading",
+      "label": "?????heading",
+      "codeName": "StructuringSemanticBlockV2.type.heading",
+      "enum": { "enumId": "StructuringSemanticBlockV2.type", "value": "heading" },
+      "retired": false
+    },
+    {
+      "id": "StructuringSemanticBlockV2.type.list-item",
+      "label": "?????list-item",
+      "codeName": "StructuringSemanticBlockV2.type.list-item",
+      "enum": { "enumId": "StructuringSemanticBlockV2.type", "value": "list-item" },
+      "retired": false
+    },
+    {
+      "id": "StructuringSemanticBlockV2.type.paragraph",
+      "label": "?????paragraph",
+      "codeName": "StructuringSemanticBlockV2.type.paragraph",
+      "enum": { "enumId": "StructuringSemanticBlockV2.type", "value": "paragraph" },
+      "retired": false
+    },
+    {
+      "id": "StructuringSemanticBlockV2.type.quote",
+      "label": "?????quote",
+      "codeName": "StructuringSemanticBlockV2.type.quote",
+      "enum": { "enumId": "StructuringSemanticBlockV2.type", "value": "quote" },
+      "retired": false
+    },
+    {
+      "id": "StructuringSemanticBlockV2.type.table",
+      "label": "?????table",
+      "codeName": "StructuringSemanticBlockV2.type.table",
+      "enum": { "enumId": "StructuringSemanticBlockV2.type", "value": "table" },
+      "retired": false
+    },
+    {
+      "id": "StructuringSemanticBlockV2.type.transcript",
+      "label": "?????transcript",
+      "codeName": "StructuringSemanticBlockV2.type.transcript",
+      "enum": { "enumId": "StructuringSemanticBlockV2.type", "value": "transcript" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.diarization-assets-probe-complete",
+      "label": "?????diarization-assets-probe-complete",
+      "codeName": "WorkerStage.diarization-assets-probe-complete",
+      "enum": { "enumId": "WorkerStage", "value": "diarization-assets-probe-complete" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.diarization-assets-probe-start",
+      "label": "?????diarization-assets-probe-start",
+      "codeName": "WorkerStage.diarization-assets-probe-start",
+      "enum": { "enumId": "WorkerStage", "value": "diarization-assets-probe-start" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.diarization-audio-decode-complete",
+      "label": "?????diarization-audio-decode-complete",
+      "codeName": "WorkerStage.diarization-audio-decode-complete",
+      "enum": { "enumId": "WorkerStage", "value": "diarization-audio-decode-complete" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.diarization-audio-decode-start",
+      "label": "?????diarization-audio-decode-start",
+      "codeName": "WorkerStage.diarization-audio-decode-start",
+      "enum": { "enumId": "WorkerStage", "value": "diarization-audio-decode-start" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.diarization-device-cpu",
+      "label": "?????diarization-device-cpu",
+      "codeName": "WorkerStage.diarization-device-cpu",
+      "enum": { "enumId": "WorkerStage", "value": "diarization-device-cpu" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.diarization-device-cuda",
+      "label": "?????diarization-device-cuda",
+      "codeName": "WorkerStage.diarization-device-cuda",
+      "enum": { "enumId": "WorkerStage", "value": "diarization-device-cuda" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.diarization-gpu-fallback",
+      "label": "?????diarization-gpu-fallback",
+      "codeName": "WorkerStage.diarization-gpu-fallback",
+      "enum": { "enumId": "WorkerStage", "value": "diarization-gpu-fallback" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.diarization-inference-complete",
+      "label": "?????diarization-inference-complete",
+      "codeName": "WorkerStage.diarization-inference-complete",
+      "enum": { "enumId": "WorkerStage", "value": "diarization-inference-complete" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.diarization-inference-start",
+      "label": "?????diarization-inference-start",
+      "codeName": "WorkerStage.diarization-inference-start",
+      "enum": { "enumId": "WorkerStage", "value": "diarization-inference-start" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.diarization-model-load-complete",
+      "label": "?????diarization-model-load-complete",
+      "codeName": "WorkerStage.diarization-model-load-complete",
+      "enum": { "enumId": "WorkerStage", "value": "diarization-model-load-complete" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.diarization-model-load-start",
+      "label": "?????diarization-model-load-start",
+      "codeName": "WorkerStage.diarization-model-load-start",
+      "enum": { "enumId": "WorkerStage", "value": "diarization-model-load-start" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.diarization-output-empty",
+      "label": "?????diarization-output-empty",
+      "codeName": "WorkerStage.diarization-output-empty",
+      "enum": { "enumId": "WorkerStage", "value": "diarization-output-empty" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.ocr-dml-device-id-mismatch",
+      "label": "?????ocr-dml-device-id-mismatch",
+      "codeName": "WorkerStage.ocr-dml-device-id-mismatch",
+      "enum": { "enumId": "WorkerStage", "value": "ocr-dml-device-id-mismatch" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.ocr-dml-device-id-unobservable",
+      "label": "?????ocr-dml-device-id-unobservable",
+      "codeName": "WorkerStage.ocr-dml-device-id-unobservable",
+      "enum": { "enumId": "WorkerStage", "value": "ocr-dml-device-id-unobservable" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.ocr-execution-evidence-prepare",
+      "label": "?????ocr-execution-evidence-prepare",
+      "codeName": "WorkerStage.ocr-execution-evidence-prepare",
+      "enum": { "enumId": "WorkerStage", "value": "ocr-execution-evidence-prepare" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.ocr-native-map-after",
+      "label": "?????ocr-native-map-after",
+      "codeName": "WorkerStage.ocr-native-map-after",
+      "enum": { "enumId": "WorkerStage", "value": "ocr-native-map-after" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.ocr-native-map-before",
+      "label": "?????ocr-native-map-before",
+      "codeName": "WorkerStage.ocr-native-map-before",
+      "enum": { "enumId": "WorkerStage", "value": "ocr-native-map-before" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.ocr-normalize-failed-unknown",
+      "label": "?????ocr-normalize-failed-unknown",
+      "codeName": "WorkerStage.ocr-normalize-failed-unknown",
+      "enum": { "enumId": "WorkerStage", "value": "ocr-normalize-failed-unknown" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.ocr-output-empty",
+      "label": "?????ocr-output-empty",
+      "codeName": "WorkerStage.ocr-output-empty",
+      "enum": { "enumId": "WorkerStage", "value": "ocr-output-empty" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.ocr-paddle-factory",
+      "label": "?????ocr-paddle-factory",
+      "codeName": "WorkerStage.ocr-paddle-factory",
+      "enum": { "enumId": "WorkerStage", "value": "ocr-paddle-factory" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.ocr-pdf-render-complete",
+      "label": "?????ocr-pdf-render-complete",
+      "codeName": "WorkerStage.ocr-pdf-render-complete",
+      "enum": { "enumId": "WorkerStage", "value": "ocr-pdf-render-complete" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.ocr-pdf-render-start",
+      "label": "?????ocr-pdf-render-start",
+      "codeName": "WorkerStage.ocr-pdf-render-start",
+      "enum": { "enumId": "WorkerStage", "value": "ocr-pdf-render-start" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.ocr-pipeline-create-complete",
+      "label": "?????ocr-pipeline-create-complete",
+      "codeName": "WorkerStage.ocr-pipeline-create-complete",
+      "enum": { "enumId": "WorkerStage", "value": "ocr-pipeline-create-complete" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.ocr-pipeline-create-failed-unknown",
+      "label": "?????ocr-pipeline-create-failed-unknown",
+      "codeName": "WorkerStage.ocr-pipeline-create-failed-unknown",
+      "enum": { "enumId": "WorkerStage", "value": "ocr-pipeline-create-failed-unknown" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.ocr-pipeline-create-start",
+      "label": "?????ocr-pipeline-create-start",
+      "codeName": "WorkerStage.ocr-pipeline-create-start",
+      "enum": { "enumId": "WorkerStage", "value": "ocr-pipeline-create-start" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.ocr-predict-complete",
+      "label": "?????ocr-predict-complete",
+      "codeName": "WorkerStage.ocr-predict-complete",
+      "enum": { "enumId": "WorkerStage", "value": "ocr-predict-complete" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.ocr-predict-failed-unknown",
+      "label": "?????ocr-predict-failed-unknown",
+      "codeName": "WorkerStage.ocr-predict-failed-unknown",
+      "enum": { "enumId": "WorkerStage", "value": "ocr-predict-failed-unknown" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.ocr-predict-start",
+      "label": "?????ocr-predict-start",
+      "codeName": "WorkerStage.ocr-predict-start",
+      "enum": { "enumId": "WorkerStage", "value": "ocr-predict-start" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.ocr-probe-assets-missing-unknown",
+      "label": "?????ocr-probe-assets-missing-unknown",
+      "codeName": "WorkerStage.ocr-probe-assets-missing-unknown",
+      "enum": { "enumId": "WorkerStage", "value": "ocr-probe-assets-missing-unknown" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.ocr-probe-assets-ready",
+      "label": "?????ocr-probe-assets-ready",
+      "codeName": "WorkerStage.ocr-probe-assets-ready",
+      "enum": { "enumId": "WorkerStage", "value": "ocr-probe-assets-ready" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.ocr-probe-complete",
+      "label": "?????ocr-probe-complete",
+      "codeName": "WorkerStage.ocr-probe-complete",
+      "enum": { "enumId": "WorkerStage", "value": "ocr-probe-complete" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.ocr-probe-modules-missing-unknown",
+      "label": "?????ocr-probe-modules-missing-unknown",
+      "codeName": "WorkerStage.ocr-probe-modules-missing-unknown",
+      "enum": { "enumId": "WorkerStage", "value": "ocr-probe-modules-missing-unknown" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.ocr-probe-modules-ready",
+      "label": "?????ocr-probe-modules-ready",
+      "codeName": "WorkerStage.ocr-probe-modules-ready",
+      "enum": { "enumId": "WorkerStage", "value": "ocr-probe-modules-ready" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.ocr-probe-modules-start",
+      "label": "?????ocr-probe-modules-start",
+      "codeName": "WorkerStage.ocr-probe-modules-start",
+      "enum": { "enumId": "WorkerStage", "value": "ocr-probe-modules-start" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.ocr-probe-providers-error",
+      "label": "?????ocr-probe-providers-error",
+      "codeName": "WorkerStage.ocr-probe-providers-error",
+      "enum": { "enumId": "WorkerStage", "value": "ocr-probe-providers-error" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.ocr-probe-providers-unknown",
+      "label": "?????ocr-probe-providers-unknown",
+      "codeName": "WorkerStage.ocr-probe-providers-unknown",
+      "enum": { "enumId": "WorkerStage", "value": "ocr-probe-providers-unknown" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.ocr-probe-start",
+      "label": "?????ocr-probe-start",
+      "codeName": "WorkerStage.ocr-probe-start",
+      "enum": { "enumId": "WorkerStage", "value": "ocr-probe-start" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.ocr-provider-evidence-failed-unknown",
+      "label": "?????ocr-provider-evidence-failed-unknown",
+      "codeName": "WorkerStage.ocr-provider-evidence-failed-unknown",
+      "enum": { "enumId": "WorkerStage", "value": "ocr-provider-evidence-failed-unknown" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.ocr-provider-evidence-start",
+      "label": "?????ocr-provider-evidence-start",
+      "codeName": "WorkerStage.ocr-provider-evidence-start",
+      "enum": { "enumId": "WorkerStage", "value": "ocr-provider-evidence-start" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.ocr-provider-evidence-unknown",
+      "label": "?????ocr-provider-evidence-unknown",
+      "codeName": "WorkerStage.ocr-provider-evidence-unknown",
+      "enum": { "enumId": "WorkerStage", "value": "ocr-provider-evidence-unknown" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.python-import-av-complete",
+      "label": "?????python-import-av-complete",
+      "codeName": "WorkerStage.python-import-av-complete",
+      "enum": { "enumId": "WorkerStage", "value": "python-import-av-complete" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.python-import-av-start",
+      "label": "?????python-import-av-start",
+      "codeName": "WorkerStage.python-import-av-start",
+      "enum": { "enumId": "WorkerStage", "value": "python-import-av-start" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.python-import-capture-runtime-complete",
+      "label": "?????python-import-capture-runtime-complete",
+      "codeName": "WorkerStage.python-import-capture-runtime-complete",
+      "enum": { "enumId": "WorkerStage", "value": "python-import-capture-runtime-complete" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.python-import-capture-runtime-failed",
+      "label": "?????python-import-capture-runtime-failed",
+      "codeName": "WorkerStage.python-import-capture-runtime-failed",
+      "enum": { "enumId": "WorkerStage", "value": "python-import-capture-runtime-failed" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.python-import-capture-runtime-start",
+      "label": "?????python-import-capture-runtime-start",
+      "codeName": "WorkerStage.python-import-capture-runtime-start",
+      "enum": { "enumId": "WorkerStage", "value": "python-import-capture-runtime-start" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.python-import-engine-adapters-complete",
+      "label": "?????python-import-engine-adapters-complete",
+      "codeName": "WorkerStage.python-import-engine-adapters-complete",
+      "enum": { "enumId": "WorkerStage", "value": "python-import-engine-adapters-complete" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.python-import-engine-adapters-dependency-failed",
+      "label": "?????python-import-engine-adapters-dependency-failed",
+      "codeName": "WorkerStage.python-import-engine-adapters-dependency-failed",
+      "enum": { "enumId": "WorkerStage", "value": "python-import-engine-adapters-dependency-failed" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.python-import-engine-adapters-failed",
+      "label": "?????python-import-engine-adapters-failed",
+      "codeName": "WorkerStage.python-import-engine-adapters-failed",
+      "enum": { "enumId": "WorkerStage", "value": "python-import-engine-adapters-failed" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.python-import-engine-adapters-module-missing",
+      "label": "?????python-import-engine-adapters-module-missing",
+      "codeName": "WorkerStage.python-import-engine-adapters-module-missing",
+      "enum": { "enumId": "WorkerStage", "value": "python-import-engine-adapters-module-missing" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.python-import-engine-adapters-os-failed",
+      "label": "?????python-import-engine-adapters-os-failed",
+      "codeName": "WorkerStage.python-import-engine-adapters-os-failed",
+      "enum": { "enumId": "WorkerStage", "value": "python-import-engine-adapters-os-failed" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.python-import-engine-adapters-os-failed-winerror-unknown",
+      "label": "?????python-import-engine-adapters-os-failed-winerror-unknown",
+      "codeName": "WorkerStage.python-import-engine-adapters-os-failed-winerror-unknown",
+      "enum": { "enumId": "WorkerStage", "value": "python-import-engine-adapters-os-failed-winerror-unknown" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.python-import-engine-adapters-start",
+      "label": "?????python-import-engine-adapters-start",
+      "codeName": "WorkerStage.python-import-engine-adapters-start",
+      "enum": { "enumId": "WorkerStage", "value": "python-import-engine-adapters-start" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.python-import-librosa-complete",
+      "label": "?????python-import-librosa-complete",
+      "codeName": "WorkerStage.python-import-librosa-complete",
+      "enum": { "enumId": "WorkerStage", "value": "python-import-librosa-complete" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.python-import-librosa-start",
+      "label": "?????python-import-librosa-start",
+      "codeName": "WorkerStage.python-import-librosa-start",
+      "enum": { "enumId": "WorkerStage", "value": "python-import-librosa-start" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.python-import-numpy-complete",
+      "label": "?????python-import-numpy-complete",
+      "codeName": "WorkerStage.python-import-numpy-complete",
+      "enum": { "enumId": "WorkerStage", "value": "python-import-numpy-complete" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.python-import-numpy-start",
+      "label": "?????python-import-numpy-start",
+      "codeName": "WorkerStage.python-import-numpy-start",
+      "enum": { "enumId": "WorkerStage", "value": "python-import-numpy-start" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.python-import-onnxruntime-complete",
+      "label": "?????python-import-onnxruntime-complete",
+      "codeName": "WorkerStage.python-import-onnxruntime-complete",
+      "enum": { "enumId": "WorkerStage", "value": "python-import-onnxruntime-complete" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.python-import-onnxruntime-failed-unknown",
+      "label": "?????python-import-onnxruntime-failed-unknown",
+      "codeName": "WorkerStage.python-import-onnxruntime-failed-unknown",
+      "enum": { "enumId": "WorkerStage", "value": "python-import-onnxruntime-failed-unknown" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.python-import-onnxruntime-start",
+      "label": "?????python-import-onnxruntime-start",
+      "codeName": "WorkerStage.python-import-onnxruntime-start",
+      "enum": { "enumId": "WorkerStage", "value": "python-import-onnxruntime-start" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.python-import-paddleocr-complete",
+      "label": "?????python-import-paddleocr-complete",
+      "codeName": "WorkerStage.python-import-paddleocr-complete",
+      "enum": { "enumId": "WorkerStage", "value": "python-import-paddleocr-complete" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.python-import-paddleocr-failed-unknown",
+      "label": "?????python-import-paddleocr-failed-unknown",
+      "codeName": "WorkerStage.python-import-paddleocr-failed-unknown",
+      "enum": { "enumId": "WorkerStage", "value": "python-import-paddleocr-failed-unknown" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.python-import-paddleocr-start",
+      "label": "?????python-import-paddleocr-start",
+      "codeName": "WorkerStage.python-import-paddleocr-start",
+      "enum": { "enumId": "WorkerStage", "value": "python-import-paddleocr-start" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.python-import-pdfium-complete",
+      "label": "?????python-import-pdfium-complete",
+      "codeName": "WorkerStage.python-import-pdfium-complete",
+      "enum": { "enumId": "WorkerStage", "value": "python-import-pdfium-complete" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.python-import-pdfium-start",
+      "label": "?????python-import-pdfium-start",
+      "codeName": "WorkerStage.python-import-pdfium-start",
+      "enum": { "enumId": "WorkerStage", "value": "python-import-pdfium-start" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.python-import-pillow-complete",
+      "label": "?????python-import-pillow-complete",
+      "codeName": "WorkerStage.python-import-pillow-complete",
+      "enum": { "enumId": "WorkerStage", "value": "python-import-pillow-complete" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.python-import-pillow-start",
+      "label": "?????python-import-pillow-start",
+      "codeName": "WorkerStage.python-import-pillow-start",
+      "enum": { "enumId": "WorkerStage", "value": "python-import-pillow-start" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.python-import-torch-complete",
+      "label": "?????python-import-torch-complete",
+      "codeName": "WorkerStage.python-import-torch-complete",
+      "enum": { "enumId": "WorkerStage", "value": "python-import-torch-complete" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.python-import-torch-start",
+      "label": "?????python-import-torch-start",
+      "codeName": "WorkerStage.python-import-torch-start",
+      "enum": { "enumId": "WorkerStage", "value": "python-import-torch-start" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.python-import-transformers-complete",
+      "label": "?????python-import-transformers-complete",
+      "codeName": "WorkerStage.python-import-transformers-complete",
+      "enum": { "enumId": "WorkerStage", "value": "python-import-transformers-complete" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.python-import-transformers-start",
+      "label": "?????python-import-transformers-start",
+      "codeName": "WorkerStage.python-import-transformers-start",
+      "enum": { "enumId": "WorkerStage", "value": "python-import-transformers-start" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.python-import-worker-contracts-complete",
+      "label": "?????python-import-worker-contracts-complete",
+      "codeName": "WorkerStage.python-import-worker-contracts-complete",
+      "enum": { "enumId": "WorkerStage", "value": "python-import-worker-contracts-complete" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.python-import-worker-contracts-dependency-failed",
+      "label": "?????python-import-worker-contracts-dependency-failed",
+      "codeName": "WorkerStage.python-import-worker-contracts-dependency-failed",
+      "enum": { "enumId": "WorkerStage", "value": "python-import-worker-contracts-dependency-failed" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.python-import-worker-contracts-failed",
+      "label": "?????python-import-worker-contracts-failed",
+      "codeName": "WorkerStage.python-import-worker-contracts-failed",
+      "enum": { "enumId": "WorkerStage", "value": "python-import-worker-contracts-failed" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.python-import-worker-contracts-module-missing",
+      "label": "?????python-import-worker-contracts-module-missing",
+      "codeName": "WorkerStage.python-import-worker-contracts-module-missing",
+      "enum": { "enumId": "WorkerStage", "value": "python-import-worker-contracts-module-missing" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.python-import-worker-contracts-os-failed",
+      "label": "?????python-import-worker-contracts-os-failed",
+      "codeName": "WorkerStage.python-import-worker-contracts-os-failed",
+      "enum": { "enumId": "WorkerStage", "value": "python-import-worker-contracts-os-failed" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.python-import-worker-contracts-os-failed-winerror-unknown",
+      "label": "?????python-import-worker-contracts-os-failed-winerror-unknown",
+      "codeName": "WorkerStage.python-import-worker-contracts-os-failed-winerror-unknown",
+      "enum": { "enumId": "WorkerStage", "value": "python-import-worker-contracts-os-failed-winerror-unknown" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.python-import-worker-contracts-start",
+      "label": "?????python-import-worker-contracts-start",
+      "codeName": "WorkerStage.python-import-worker-contracts-start",
+      "enum": { "enumId": "WorkerStage", "value": "python-import-worker-contracts-start" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.python-import-worker-server-complete",
+      "label": "?????python-import-worker-server-complete",
+      "codeName": "WorkerStage.python-import-worker-server-complete",
+      "enum": { "enumId": "WorkerStage", "value": "python-import-worker-server-complete" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.python-import-worker-server-dependency-failed",
+      "label": "?????python-import-worker-server-dependency-failed",
+      "codeName": "WorkerStage.python-import-worker-server-dependency-failed",
+      "enum": { "enumId": "WorkerStage", "value": "python-import-worker-server-dependency-failed" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.python-import-worker-server-failed",
+      "label": "?????python-import-worker-server-failed",
+      "codeName": "WorkerStage.python-import-worker-server-failed",
+      "enum": { "enumId": "WorkerStage", "value": "python-import-worker-server-failed" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.python-import-worker-server-module-missing",
+      "label": "?????python-import-worker-server-module-missing",
+      "codeName": "WorkerStage.python-import-worker-server-module-missing",
+      "enum": { "enumId": "WorkerStage", "value": "python-import-worker-server-module-missing" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.python-import-worker-server-os-failed",
+      "label": "?????python-import-worker-server-os-failed",
+      "codeName": "WorkerStage.python-import-worker-server-os-failed",
+      "enum": { "enumId": "WorkerStage", "value": "python-import-worker-server-os-failed" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.python-import-worker-server-os-failed-winerror-unknown",
+      "label": "?????python-import-worker-server-os-failed-winerror-unknown",
+      "codeName": "WorkerStage.python-import-worker-server-os-failed-winerror-unknown",
+      "enum": { "enumId": "WorkerStage", "value": "python-import-worker-server-os-failed-winerror-unknown" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.python-import-worker-server-start",
+      "label": "?????python-import-worker-server-start",
+      "codeName": "WorkerStage.python-import-worker-server-start",
+      "enum": { "enumId": "WorkerStage", "value": "python-import-worker-server-start" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.speech-assets-probe-complete",
+      "label": "?????speech-assets-probe-complete",
+      "codeName": "WorkerStage.speech-assets-probe-complete",
+      "enum": { "enumId": "WorkerStage", "value": "speech-assets-probe-complete" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.speech-assets-probe-start",
+      "label": "?????speech-assets-probe-start",
+      "codeName": "WorkerStage.speech-assets-probe-start",
+      "enum": { "enumId": "WorkerStage", "value": "speech-assets-probe-start" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.speech-device-probe-complete",
+      "label": "?????speech-device-probe-complete",
+      "codeName": "WorkerStage.speech-device-probe-complete",
+      "enum": { "enumId": "WorkerStage", "value": "speech-device-probe-complete" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.speech-device-probe-start",
+      "label": "?????speech-device-probe-start",
+      "codeName": "WorkerStage.speech-device-probe-start",
+      "enum": { "enumId": "WorkerStage", "value": "speech-device-probe-start" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.speech-gpu-fallback",
+      "label": "?????speech-gpu-fallback",
+      "codeName": "WorkerStage.speech-gpu-fallback",
+      "enum": { "enumId": "WorkerStage", "value": "speech-gpu-fallback" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.speech-model-load-cpu-complete",
+      "label": "?????speech-model-load-cpu-complete",
+      "codeName": "WorkerStage.speech-model-load-cpu-complete",
+      "enum": { "enumId": "WorkerStage", "value": "speech-model-load-cpu-complete" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.speech-model-load-cpu-failed-unknown",
+      "label": "?????speech-model-load-cpu-failed-unknown",
+      "codeName": "WorkerStage.speech-model-load-cpu-failed-unknown",
+      "enum": { "enumId": "WorkerStage", "value": "speech-model-load-cpu-failed-unknown" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.speech-model-load-cpu-fallback-float32",
+      "label": "?????speech-model-load-cpu-fallback-float32",
+      "codeName": "WorkerStage.speech-model-load-cpu-fallback-float32",
+      "enum": { "enumId": "WorkerStage", "value": "speech-model-load-cpu-fallback-float32" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.speech-model-load-cpu-reused",
+      "label": "?????speech-model-load-cpu-reused",
+      "codeName": "WorkerStage.speech-model-load-cpu-reused",
+      "enum": { "enumId": "WorkerStage", "value": "speech-model-load-cpu-reused" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.speech-model-load-cpu-start",
+      "label": "?????speech-model-load-cpu-start",
+      "codeName": "WorkerStage.speech-model-load-cpu-start",
+      "enum": { "enumId": "WorkerStage", "value": "speech-model-load-cpu-start" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.speech-model-load-cuda-complete",
+      "label": "?????speech-model-load-cuda-complete",
+      "codeName": "WorkerStage.speech-model-load-cuda-complete",
+      "enum": { "enumId": "WorkerStage", "value": "speech-model-load-cuda-complete" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.speech-model-load-cuda-failed-unknown",
+      "label": "?????speech-model-load-cuda-failed-unknown",
+      "codeName": "WorkerStage.speech-model-load-cuda-failed-unknown",
+      "enum": { "enumId": "WorkerStage", "value": "speech-model-load-cuda-failed-unknown" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.speech-model-load-cuda-reused",
+      "label": "?????speech-model-load-cuda-reused",
+      "codeName": "WorkerStage.speech-model-load-cuda-reused",
+      "enum": { "enumId": "WorkerStage", "value": "speech-model-load-cuda-reused" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.speech-model-load-cuda-start",
+      "label": "?????speech-model-load-cuda-start",
+      "codeName": "WorkerStage.speech-model-load-cuda-start",
+      "enum": { "enumId": "WorkerStage", "value": "speech-model-load-cuda-start" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.speech-output-empty",
+      "label": "?????speech-output-empty",
+      "codeName": "WorkerStage.speech-output-empty",
+      "enum": { "enumId": "WorkerStage", "value": "speech-output-empty" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.speech-output-empty-window",
+      "label": "?????speech-output-empty-window",
+      "codeName": "WorkerStage.speech-output-empty-window",
+      "enum": { "enumId": "WorkerStage", "value": "speech-output-empty-window" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.speech-transcription-call-complete",
+      "label": "?????speech-transcription-call-complete",
+      "codeName": "WorkerStage.speech-transcription-call-complete",
+      "enum": { "enumId": "WorkerStage", "value": "speech-transcription-call-complete" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.speech-transcription-call-start",
+      "label": "?????speech-transcription-call-start",
+      "codeName": "WorkerStage.speech-transcription-call-start",
+      "enum": { "enumId": "WorkerStage", "value": "speech-transcription-call-start" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.speech-transcription-complete",
+      "label": "?????speech-transcription-complete",
+      "codeName": "WorkerStage.speech-transcription-complete",
+      "enum": { "enumId": "WorkerStage", "value": "speech-transcription-complete" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.speech-transcription-iteration-start",
+      "label": "?????speech-transcription-iteration-start",
+      "codeName": "WorkerStage.speech-transcription-iteration-start",
+      "enum": { "enumId": "WorkerStage", "value": "speech-transcription-iteration-start" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.worker-entry-start",
+      "label": "?????worker-entry-start",
+      "codeName": "WorkerStage.worker-entry-start",
+      "enum": { "enumId": "WorkerStage", "value": "worker-entry-start" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.worker-process-entry-missing",
+      "label": "?????worker-process-entry-missing",
+      "codeName": "WorkerStage.worker-process-entry-missing",
+      "enum": { "enumId": "WorkerStage", "value": "worker-process-entry-missing" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.worker-process-exit-before-response",
+      "label": "?????worker-process-exit-before-response",
+      "codeName": "WorkerStage.worker-process-exit-before-response",
+      "enum": { "enumId": "WorkerStage", "value": "worker-process-exit-before-response" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.worker-process-exit-nonzero",
+      "label": "?????worker-process-exit-nonzero",
+      "codeName": "WorkerStage.worker-process-exit-nonzero",
+      "enum": { "enumId": "WorkerStage", "value": "worker-process-exit-nonzero" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.worker-process-no-response",
+      "label": "?????worker-process-no-response",
+      "codeName": "WorkerStage.worker-process-no-response",
+      "enum": { "enumId": "WorkerStage", "value": "worker-process-no-response" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.worker-process-response-error",
+      "label": "?????worker-process-response-error",
+      "codeName": "WorkerStage.worker-process-response-error",
+      "enum": { "enumId": "WorkerStage", "value": "worker-process-response-error" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.worker-process-termination",
+      "label": "?????worker-process-termination",
+      "codeName": "WorkerStage.worker-process-termination",
+      "enum": { "enumId": "WorkerStage", "value": "worker-process-termination" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.worker-process-timeout",
+      "label": "?????worker-process-timeout",
+      "codeName": "WorkerStage.worker-process-timeout",
+      "enum": { "enumId": "WorkerStage", "value": "worker-process-timeout" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStage.worker-stage-sequence-truncated",
+      "label": "?????worker-stage-sequence-truncated",
+      "codeName": "WorkerStage.worker-stage-sequence-truncated",
+      "enum": { "enumId": "WorkerStage", "value": "worker-stage-sequence-truncated" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStageFamily.668cbbda38fd0712",
+      "label": "???????ocr-(?:pipeline-create|predict|normalize|provider-evidence)-failed-(?:arithmeticerror|assertionerror|attributeerror|connectionerror|engineruntimeunavailableerror|eoferror|filenotfounderror|importerror|indexerror|keyerror|memoryerror|modulenotfounderror|nameerror|notexisterror|notimplementederror|ocrexecutionevidenceerror|ocrinferencecleanuperror|oserror|overflowerror|paddleresultnormalizationerror|permissionerror|runtimeerror|timeouterror|typeerror|unknown|unknownexecutionprovidererror|valueerror|zerodivisionerror)",
+      "codeName": "WorkerStageFamily.ocr-(?:pipeline-create|predict|normalize|provider-evidence)-failed-(?:arithmeticerror|assertionerror|attributeerror|connectionerror|engineruntimeunavailableerror|eoferror|filenotfounderror|importerror|indexerror|keyerror|memoryerror|modulenotfounderror|nameerror|notexisterror|notimplementederror|ocrexecutionevidenceerror|ocrinferencecleanuperror|oserror|overflowerror|paddleresultnormalizationerror|permissionerror|runtimeerror|timeouterror|typeerror|unknown|unknownexecutionprovidererror|valueerror|zerodivisionerror)",
+      "enum": { "enumId": "WorkerStageFamily", "value": "ocr-(?:pipeline-create|predict|normalize|provider-evidence)-failed-(?:arithmeticerror|assertionerror|attributeerror|connectionerror|engineruntimeunavailableerror|eoferror|filenotfounderror|importerror|indexerror|keyerror|memoryerror|modulenotfounderror|nameerror|notexisterror|notimplementederror|ocrexecutionevidenceerror|ocrinferencecleanuperror|oserror|overflowerror|paddleresultnormalizationerror|permissionerror|runtimeerror|timeouterror|typeerror|unknown|unknownexecutionprovidererror|valueerror|zerodivisionerror)" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStageFamily.9496819438add299",
+      "label": "???????ocr-probe-assets-missing-[0-9]{1,4}",
+      "codeName": "WorkerStageFamily.ocr-probe-assets-missing-[0-9]{1,4}",
+      "enum": { "enumId": "WorkerStageFamily", "value": "ocr-probe-assets-missing-[0-9]{1,4}" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStageFamily.56c95521cee83097",
+      "label": "???????ocr-probe-modules-missing-[0-9]{1,3}",
+      "codeName": "WorkerStageFamily.ocr-probe-modules-missing-[0-9]{1,3}",
+      "enum": { "enumId": "WorkerStageFamily", "value": "ocr-probe-modules-missing-[0-9]{1,3}" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStageFamily.f4930c35efdc372b",
+      "label": "???????ocr-probe-providers-[0-9]{1,6}-cpu-(?:yes|no)-dml-(?:yes|no)",
+      "codeName": "WorkerStageFamily.ocr-probe-providers-[0-9]{1,6}-cpu-(?:yes|no)-dml-(?:yes|no)",
+      "enum": { "enumId": "WorkerStageFamily", "value": "ocr-probe-providers-[0-9]{1,6}-cpu-(?:yes|no)-dml-(?:yes|no)" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStageFamily.14fcdf413d39b775",
+      "label": "???????ocr-provider-evidence-dml-[0-9]{1,6}-cpu-[0-9]{1,6}",
+      "codeName": "WorkerStageFamily.ocr-provider-evidence-dml-[0-9]{1,6}-cpu-[0-9]{1,6}",
+      "enum": { "enumId": "WorkerStageFamily", "value": "ocr-provider-evidence-dml-[0-9]{1,6}-cpu-[0-9]{1,6}" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStageFamily.021445215740dcc6",
+      "label": "???????python-import-(?:engine-adapters|worker-contracts|worker-server)-os-failed-winerror-[0-9]{1,5}",
+      "codeName": "WorkerStageFamily.python-import-(?:engine-adapters|worker-contracts|worker-server)-os-failed-winerror-[0-9]{1,5}",
+      "enum": { "enumId": "WorkerStageFamily", "value": "python-import-(?:engine-adapters|worker-contracts|worker-server)-os-failed-winerror-[0-9]{1,5}" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStageFamily.d164496ac60be065",
+      "label": "???????python-import-(?:onnxruntime|paddleocr)-failed-(?:arithmeticerror|assertionerror|attributeerror|connectionerror|engineruntimeunavailableerror|eoferror|filenotfounderror|importerror|indexerror|keyerror|memoryerror|modulenotfounderror|nameerror|notexisterror|notimplementederror|ocrexecutionevidenceerror|ocrinferencecleanuperror|oserror|overflowerror|paddleresultnormalizationerror|permissionerror|runtimeerror|timeouterror|typeerror|unknown|unknownexecutionprovidererror|valueerror|zerodivisionerror)",
+      "codeName": "WorkerStageFamily.python-import-(?:onnxruntime|paddleocr)-failed-(?:arithmeticerror|assertionerror|attributeerror|connectionerror|engineruntimeunavailableerror|eoferror|filenotfounderror|importerror|indexerror|keyerror|memoryerror|modulenotfounderror|nameerror|notexisterror|notimplementederror|ocrexecutionevidenceerror|ocrinferencecleanuperror|oserror|overflowerror|paddleresultnormalizationerror|permissionerror|runtimeerror|timeouterror|typeerror|unknown|unknownexecutionprovidererror|valueerror|zerodivisionerror)",
+      "enum": { "enumId": "WorkerStageFamily", "value": "python-import-(?:onnxruntime|paddleocr)-failed-(?:arithmeticerror|assertionerror|attributeerror|connectionerror|engineruntimeunavailableerror|eoferror|filenotfounderror|importerror|indexerror|keyerror|memoryerror|modulenotfounderror|nameerror|notexisterror|notimplementederror|ocrexecutionevidenceerror|ocrinferencecleanuperror|oserror|overflowerror|paddleresultnormalizationerror|permissionerror|runtimeerror|timeouterror|typeerror|unknown|unknownexecutionprovidererror|valueerror|zerodivisionerror)" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStageFamily.93abf6d140dc479e",
+      "label": "???????python-import-(?:onnxruntime|paddleocr)-failed-(?:arithmeticerror|assertionerror|attributeerror|connectionerror|engineruntimeunavailableerror|eoferror|filenotfounderror|importerror|indexerror|keyerror|memoryerror|modulenotfounderror|nameerror|notexisterror|notimplementederror|ocrexecutionevidenceerror|ocrinferencecleanuperror|oserror|overflowerror|paddleresultnormalizationerror|permissionerror|runtimeerror|timeouterror|typeerror|unknown|unknownexecutionprovidererror|valueerror|zerodivisionerror)-(?:missing-module|native-load|cannot-import-symbol|partial-init|other)-(?:onnxruntime|paddleocr|paddlex|unknown)",
+      "codeName": "WorkerStageFamily.python-import-(?:onnxruntime|paddleocr)-failed-(?:arithmeticerror|assertionerror|attributeerror|connectionerror|engineruntimeunavailableerror|eoferror|filenotfounderror|importerror|indexerror|keyerror|memoryerror|modulenotfounderror|nameerror|notexisterror|notimplementederror|ocrexecutionevidenceerror|ocrinferencecleanuperror|oserror|overflowerror|paddleresultnormalizationerror|permissionerror|runtimeerror|timeouterror|typeerror|unknown|unknownexecutionprovidererror|valueerror|zerodivisionerror)-(?:missing-module|native-load|cannot-import-symbol|partial-init|other)-(?:onnxruntime|paddleocr|paddlex|unknown)",
+      "enum": { "enumId": "WorkerStageFamily", "value": "python-import-(?:onnxruntime|paddleocr)-failed-(?:arithmeticerror|assertionerror|attributeerror|connectionerror|engineruntimeunavailableerror|eoferror|filenotfounderror|importerror|indexerror|keyerror|memoryerror|modulenotfounderror|nameerror|notexisterror|notimplementederror|ocrexecutionevidenceerror|ocrinferencecleanuperror|oserror|overflowerror|paddleresultnormalizationerror|permissionerror|runtimeerror|timeouterror|typeerror|unknown|unknownexecutionprovidererror|valueerror|zerodivisionerror)-(?:missing-module|native-load|cannot-import-symbol|partial-init|other)-(?:onnxruntime|paddleocr|paddlex|unknown)" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStageFamily.9fe4797fb116bcd5",
+      "label": "???????python-import-(?:onnxruntime|paddleocr)-failed-(?:arithmeticerror|assertionerror|attributeerror|connectionerror|engineruntimeunavailableerror|eoferror|filenotfounderror|importerror|indexerror|keyerror|memoryerror|modulenotfounderror|nameerror|notexisterror|notimplementederror|ocrexecutionevidenceerror|ocrinferencecleanuperror|oserror|overflowerror|paddleresultnormalizationerror|permissionerror|runtimeerror|timeouterror|typeerror|unknown|unknownexecutionprovidererror|valueerror|zerodivisionerror)-native-load-(?:onnxruntime|paddleocr|paddlex|unknown)-(?:dependency-missing|symbol-missing|bad-image|initialization-failed|resource-exhausted|blocked|side-by-side|unknown)-(?:onnxruntime|directml|opencv|numpy|pandas|shapely|pyclipper|pillow|pydantic-core|rpds|tokenizers|chardet|charset-normalizer|aiohttp|multidict|yarl|frozenlist|propcache|vc-runtime|python-runtime|paddlex|paddleocr|unknown)",
+      "codeName": "WorkerStageFamily.python-import-(?:onnxruntime|paddleocr)-failed-(?:arithmeticerror|assertionerror|attributeerror|connectionerror|engineruntimeunavailableerror|eoferror|filenotfounderror|importerror|indexerror|keyerror|memoryerror|modulenotfounderror|nameerror|notexisterror|notimplementederror|ocrexecutionevidenceerror|ocrinferencecleanuperror|oserror|overflowerror|paddleresultnormalizationerror|permissionerror|runtimeerror|timeouterror|typeerror|unknown|unknownexecutionprovidererror|valueerror|zerodivisionerror)-native-load-(?:onnxruntime|paddleocr|paddlex|unknown)-(?:dependency-missing|symbol-missing|bad-image|initialization-failed|resource-exhausted|blocked|side-by-side|unknown)-(?:onnxruntime|directml|opencv|numpy|pandas|shapely|pyclipper|pillow|pydantic-core|rpds|tokenizers|chardet|charset-normalizer|aiohttp|multidict|yarl|frozenlist|propcache|vc-runtime|python-runtime|paddlex|paddleocr|unknown)",
+      "enum": { "enumId": "WorkerStageFamily", "value": "python-import-(?:onnxruntime|paddleocr)-failed-(?:arithmeticerror|assertionerror|attributeerror|connectionerror|engineruntimeunavailableerror|eoferror|filenotfounderror|importerror|indexerror|keyerror|memoryerror|modulenotfounderror|nameerror|notexisterror|notimplementederror|ocrexecutionevidenceerror|ocrinferencecleanuperror|oserror|overflowerror|paddleresultnormalizationerror|permissionerror|runtimeerror|timeouterror|typeerror|unknown|unknownexecutionprovidererror|valueerror|zerodivisionerror)-native-load-(?:onnxruntime|paddleocr|paddlex|unknown)-(?:dependency-missing|symbol-missing|bad-image|initialization-failed|resource-exhausted|blocked|side-by-side|unknown)-(?:onnxruntime|directml|opencv|numpy|pandas|shapely|pyclipper|pillow|pydantic-core|rpds|tokenizers|chardet|charset-normalizer|aiohttp|multidict|yarl|frozenlist|propcache|vc-runtime|python-runtime|paddlex|paddleocr|unknown)" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStageFamily.732f8dcbfae59133",
+      "label": "???????speech-model-load-(?:cpu|cuda)-failed-(?:arithmeticerror|assertionerror|attributeerror|connectionerror|engineruntimeunavailableerror|eoferror|filenotfounderror|importerror|indexerror|keyerror|memoryerror|modulenotfounderror|nameerror|notexisterror|notimplementederror|ocrexecutionevidenceerror|ocrinferencecleanuperror|oserror|overflowerror|permissionerror|runtimeerror|timeouterror|typeerror|unknown|unknownexecutionprovidererror|valueerror|zerodivisionerror)",
+      "codeName": "WorkerStageFamily.speech-model-load-(?:cpu|cuda)-failed-(?:arithmeticerror|assertionerror|attributeerror|connectionerror|engineruntimeunavailableerror|eoferror|filenotfounderror|importerror|indexerror|keyerror|memoryerror|modulenotfounderror|nameerror|notexisterror|notimplementederror|ocrexecutionevidenceerror|ocrinferencecleanuperror|oserror|overflowerror|permissionerror|runtimeerror|timeouterror|typeerror|unknown|unknownexecutionprovidererror|valueerror|zerodivisionerror)",
+      "enum": { "enumId": "WorkerStageFamily", "value": "speech-model-load-(?:cpu|cuda)-failed-(?:arithmeticerror|assertionerror|attributeerror|connectionerror|engineruntimeunavailableerror|eoferror|filenotfounderror|importerror|indexerror|keyerror|memoryerror|modulenotfounderror|nameerror|notexisterror|notimplementederror|ocrexecutionevidenceerror|ocrinferencecleanuperror|oserror|overflowerror|permissionerror|runtimeerror|timeouterror|typeerror|unknown|unknownexecutionprovidererror|valueerror|zerodivisionerror)" },
+      "retired": false
+    },
+    {
+      "id": "WorkerStageFamily.98ceccbb832694a9",
+      "label": "???????worker-process-(?:timeout|exit-before-response|no-response|response-error|exit-nonzero)-bootloader",
+      "codeName": "WorkerStageFamily.worker-process-(?:timeout|exit-before-response|no-response|response-error|exit-nonzero)-bootloader",
+      "enum": { "enumId": "WorkerStageFamily", "value": "worker-process-(?:timeout|exit-before-response|no-response|response-error|exit-nonzero)-bootloader" },
+      "retired": false
     }
   ]
 }
