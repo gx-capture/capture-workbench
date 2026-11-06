@@ -28,10 +28,10 @@ flowchart LR
 | 說話者分離   | [說明](diarization.md)  | `capture_runtime/diarization`                               | W6 定案          |
 | 結構化       | [說明](structuring.md)  | `capture_runtime/structuring`                               | W6 定案          |
 | 引擎供應     | [說明](provisioning.md) | `capture_runtime/provisioning`                              | W6 定案          |
-| 執行環境合約 | 待補                    | `capture_runtime/contracts`、兩種 SDK（TypeScript、Python） | 原地             |
-| 工作台主機   | 待補                    | `packages/capture-workbench-ui`、`apps/*`、launcher         | 規劃中           |
+| 執行環境合約 | [說明](contracts.md)    | `capture_runtime/contracts`、兩種 SDK（TypeScript、Python） | 原地             |
+| 工作台主機   | [說明](host.md)         | `packages/capture-workbench-ui`、`apps/*`、launcher         | W7、W8 定案      |
 
-實線箭頭表示資料由上游流向下游：下游讀取上游公開的資料，上游不知道下游。各上下文的說明文件由 [W9（#177）](https://github.com/gx-capture/capture-workbench/issues/177) 補齊；程式在 [W5（#173）](https://github.com/gx-capture/capture-workbench/issues/173) 搬進上表的套件。
+實線箭頭表示資料由上游流向下游：下游讀取上游公開的資料，上游不知道下游。
 
 ## 每份說明的固定段落
 
