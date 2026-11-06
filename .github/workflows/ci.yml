@@ -424,14 +424,14 @@ jobs:
           pnpm nx run capture-tools:release-index-test
 
       # The Tauri build embeds the reference app built above and the staged
-      # runtime resources; the deterministic fixture runtime stages them
-      # without building the production runtime.
+      # runtime resources; cargo-check, cargo-test and smoke-deterministic
+      # depend on stage-deterministic-runtime, which stages the fixture runtime
+      # under target/deterministic-qa without building the production runtime.
       - name: Verify Capture Workbench desktop product
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
-          pnpm nx run capture-workbench-desktop:stage-deterministic-runtime
           pnpm nx run capture-workbench-desktop:cargo-fmt-check
           pnpm nx run capture-workbench-desktop:cargo-check
           pnpm nx run capture-workbench-desktop:cargo-test
