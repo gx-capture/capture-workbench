@@ -36,6 +36,10 @@ corepack pnpm nx run capture-workbench-desktop:cargo-test
 corepack pnpm nx run capture-workbench-desktop:package-qa-test
 ```
 
+`cargo-check` and `cargo-test` first run `stage-deterministic-runtime` and point
+the bundle resources at `src-tauri/target/deterministic-qa/staged`, so they work
+on a fresh checkout without a staged product runtime in `src-tauri/binaries`.
+
 ## Runtime staging
 
 Release automation must stage a Windows x64 runtime and its release manifest before the NSIS product build:

@@ -86,15 +86,17 @@
     "cargo-check": {
       "cache": true,
       "executor": "nx:run-commands",
+      "dependsOn": ["stage-deterministic-runtime"],
       "options": {
-        "command": "cargo check --manifest-path apps/capture-workbench-desktop/src-tauri/Cargo.toml"
+        "command": "node apps/capture-workbench-desktop/scripts/cargo-deterministic-qa.ts check"
       }
     },
     "cargo-test": {
       "cache": true,
       "executor": "nx:run-commands",
+      "dependsOn": ["stage-deterministic-runtime"],
       "options": {
-        "command": "cargo test --manifest-path apps/capture-workbench-desktop/src-tauri/Cargo.toml"
+        "command": "node apps/capture-workbench-desktop/scripts/cargo-deterministic-qa.ts test"
       }
     },
     "contract-consistency": {
