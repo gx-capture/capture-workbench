@@ -61,6 +61,14 @@
 | 合約集   | contract set | 所有公開型別、操作與問題代碼；雜湊相同的 runtime 與 SDK 相容 |
 | 問題代碼 | problem      | 對外回報的錯誤種類（`problem_registry`）                     |
 
+## 工作台主機
+
+| 中文             | 程式名稱                                         | 意思                                                       |
+| ---------------- | ------------------------------------------------ | ---------------------------------------------------------- |
+| 文件庫           | `LibraryStore`、`LibraryIndex`、`StoredDocument` | 主機保存的來源檔與擷取結果；耐久資料由主機持有             |
+| sidecar          | `SidecarConnection`                              | launcher 啟動的 runtime 行程，以及連它所需的端點與 token   |
+| runtime manifest | `capture-runtime-manifest.json`                  | 隨產品發布的 runtime 版本與執行檔雜湊，啟動前先驗證        |
+
 ## W6 補正的引擎結果物件
 
 | 中文 | 程式名稱 | 意義 |
