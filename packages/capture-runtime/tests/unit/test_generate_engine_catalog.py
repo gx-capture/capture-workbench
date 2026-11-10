@@ -7,6 +7,7 @@ import subprocess
 import sys
 import zipfile
 from pathlib import Path
+from typing import Any
 
 from capture_runtime.artifact_parts import split_archive
 from capture_runtime.constants import RUNTIME_VERSION
@@ -393,3 +394,262 @@ def test_split_worker_archive_is_catalogued_as_parts_and_released(tmp_path: Path
         engine_catalog=catalog_path,
     )
     assert all((tmp_path / "release" / part.name).is_file() for part in parts)
+
+
+_CPU_MODEL_ROOTS = ("model/aligner", "model/fallback", "model/fallback-architecture")
+_PRIMARY_MODEL_ROOTS = ("model/primary", "model/primary-architecture")
+
+
+def _under(path: str, root: str) -> bool:
+    return path == root or path.startswith(f"{root}/")
+
+
+def _cpu_speech_files(files: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The CPU subset: three model directories plus the license and notice they name."""
+
+    model_paths = {
+        item["path"]
+        for item in files
+        if any(_under(item["path"], root) for root in _CPU_MODEL_ROOTS)
+    }
+    referenced: set[str] = set()
+    for item in files:
+        if item["path"] not in model_paths:
+            continue
+        for key in ("licensePath", "noticePath"):
+            referenced_path = item[key]
+            if isinstance(referenced_path, str):
+                referenced.add(referenced_path)
+    chosen = model_paths | referenced
+    return [item for item in files if item["path"] in chosen]
+
+
+def _prepare_speech_engines(engine_dir: Path) -> dict[str, Path]:
+    engine_dir.mkdir()
+    ocr_archive, ocr_manifest = archive_pair(
+        engine_dir,
+        f"capture-engine-ocr-{RUNTIME_VERSION}-windows-x64.zip",
+        "capture-engine-ocr.exe",
+    )
+    speech_archive, speech_manifest = archive_pair(
+        engine_dir,
+        f"capture-engine-speech-recognition-{RUNTIME_VERSION}-windows-x64.zip",
+        "capture-engine-speech-recognition.exe",
+    )
+    cpu_archive, cpu_manifest = archive_pair(
+        engine_dir,
+        f"capture-engine-speech-recognition-cpu-{RUNTIME_VERSION}-windows-x64.zip",
+        "capture-engine-speech-recognition-cpu.exe",
+    )
+    return {
+        "ocr_archive": ocr_archive,
+        "ocr_manifest": ocr_manifest,
+        "speech_archive": speech_archive,
+        "speech_manifest": speech_manifest,
+        "cpu_archive": cpu_archive,
+        "cpu_manifest": cpu_manifest,
+    }
+
+
+def _run_catalog(
+    engines: dict[str, Path],
+    source_lock_path: Path,
+    catalog_path: Path,
+    *,
+    include_cpu: bool,
+) -> subprocess.CompletedProcess[str]:
+    command = [
+        sys.executable,
+        str(SCRIPT_PATH),
+        "--model-source-lock",
+        str(source_lock_path),
+        "--output",
+        str(catalog_path),
+        "--ocr-worker-archive",
+        str(engines["ocr_archive"]),
+        "--ocr-worker-manifest",
+        str(engines["ocr_manifest"]),
+        "--speech-recognition-worker-archive",
+        str(engines["speech_archive"]),
+        "--speech-recognition-worker-manifest",
+        str(engines["speech_manifest"]),
+    ]
+    if include_cpu:
+        command.extend(
+            [
+                "--speech-recognition-cpu-worker-archive",
+                str(engines["cpu_archive"]),
+                "--speech-recognition-cpu-worker-manifest",
+                str(engines["cpu_manifest"]),
+            ]
+        )
+    return subprocess.run(
+        command,
+        env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[2] / "src")},
+        stdin=subprocess.DEVNULL,
+        shell=False,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _speech_requirement(source_lock: dict[str, Any]) -> dict[str, Any]:
+    return next(
+        item
+        for item in source_lock["requirements"]
+        if item["requirementId"] == "speech-recognition"
+    )
+
+
+def test_omitting_the_cpu_archive_keeps_the_single_speech_delivery(tmp_path: Path) -> None:
+    engine_dir = tmp_path / "engines"
+    engines = _prepare_speech_engines(engine_dir)
+    source_lock, _content = approved_source_lock()
+    source_lock_path = tmp_path / "model-source-lock.json"
+    source_lock_path.write_bytes(canonical_json_bytes(source_lock))
+    catalog_path = tmp_path / "catalog" / "capture-engine-catalog.json"
+    # The CPU zip is in the engine directory. Only the arguments select it.
+    result = _run_catalog(engines, source_lock_path, catalog_path, include_cpu=False)
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(catalog_path.read_text(encoding="utf-8"))
+    catalog = EngineCatalog.from_dict(payload)
+    assert {
+        requirement.requirement_id: [artifact.role for artifact in requirement.artifacts]
+        for requirement in catalog.requirements
+    } == {
+        "windowsml-ocr": ["worker"],
+        "speech-recognition": ["worker"],
+        "vertical-japanese-reader": [],
+    }
+    speech = next(
+        item for item in payload["requirements"] if item["requirementId"] == "speech-recognition"
+    )
+    assert set(speech) == {"requirementId", "artifacts", "modelFiles", "unavailableReason"}
+    assert speech["unavailableReason"] is None
+    assert [item["entryPoint"] for item in speech["artifacts"]] == [
+        "capture-engine-speech-recognition.exe"
+    ]
+    locked_files = _speech_requirement(source_lock)["files"]
+    assert speech["modelFiles"]["files"] == locked_files
+    assert any(item["path"] == "model/primary/model.safetensors" for item in locked_files)
+
+
+def test_cpu_archive_emits_cuda_and_cpu_speech_contents(tmp_path: Path) -> None:
+    engine_dir = tmp_path / "engines"
+    engines = _prepare_speech_engines(engine_dir)
+    source_lock, _content = approved_source_lock()
+    source_lock_path = tmp_path / "model-source-lock.json"
+    source_lock_path.write_bytes(canonical_json_bytes(source_lock))
+    legacy_path = tmp_path / "legacy" / "capture-engine-catalog.json"
+    catalog_path = tmp_path / "catalog" / "capture-engine-catalog.json"
+    legacy = _run_catalog(engines, source_lock_path, legacy_path, include_cpu=False)
+    generated = _run_catalog(engines, source_lock_path, catalog_path, include_cpu=True)
+
+    assert legacy.returncode == 0, legacy.stderr
+    assert generated.returncode == 0, generated.stderr
+    legacy_payload = json.loads(legacy_path.read_text(encoding="utf-8"))
+    payload = json.loads(catalog_path.read_text(encoding="utf-8"))
+    assert [
+        item for item in payload["requirements"] if item["requirementId"] != "speech-recognition"
+    ] == [
+        item
+        for item in legacy_payload["requirements"]
+        if item["requirementId"] != "speech-recognition"
+    ]
+    legacy_speech = next(
+        item
+        for item in legacy_payload["requirements"]
+        if item["requirementId"] == "speech-recognition"
+    )
+    speech = next(
+        item for item in payload["requirements"] if item["requirementId"] == "speech-recognition"
+    )
+    assert set(speech) == {"requirementId", "contents"}
+    assert [item["id"] for item in speech["contents"]] == ["cuda", "cpu"]
+    cuda, cpu = speech["contents"]
+    assert cuda["artifacts"] == legacy_speech["artifacts"]
+    assert cuda["modelFiles"] == legacy_speech["modelFiles"]
+    assert cuda["unavailableReason"] is None
+    assert cpu["unavailableReason"] is None
+    assert [item["entryPoint"] for item in cpu["artifacts"]] == [
+        "capture-engine-speech-recognition-cpu.exe"
+    ]
+    assert [item["fileName"] for item in cpu["artifacts"]] == [engines["cpu_archive"].name]
+    assert [item["artifactVersion"] for item in cuda["artifacts"]] == [RUNTIME_VERSION]
+    assert [item["artifactVersion"] for item in cpu["artifacts"]] == [RUNTIME_VERSION]
+    assert cuda["modelFiles"]["artifactVersion"] == RUNTIME_VERSION
+    assert cpu["modelFiles"]["artifactVersion"] == RUNTIME_VERSION
+    expected = _cpu_speech_files(_speech_requirement(source_lock)["files"])
+    assert cpu["modelFiles"]["files"] == expected
+    published = {item["path"] for item in cpu["modelFiles"]["files"]}
+    assert not any(_under(path, root) for path in published for root in _PRIMARY_MODEL_ROOTS)
+    assert "licenses/NOTICE-primary.md" not in published
+    assert "licenses/NOTICE-primary-architecture.md" not in published
+    assert "licenses/LICENSE-Qwen3-ASR.txt" in published
+    assert "licenses/NOTICE-fallback.md" in published
+    assert "licenses/NOTICE-fallback-architecture.md" in published
+    assert "licenses/NOTICE-aligner.md" in published
+    parsed = EngineCatalog.from_dict(payload)
+    cpu_content = parsed.requirement("speech-recognition").find_content("cpu")
+    assert cpu_content is not None
+    assert cpu_content.model_delivery().artifact_version == RUNTIME_VERSION
+    assert cpu_content.worker_artifact().artifact_version == RUNTIME_VERSION
+
+
+def test_cpu_catalog_fails_when_an_expected_speech_path_is_missing(tmp_path: Path) -> None:
+    engine_dir = tmp_path / "engines"
+    engines = _prepare_speech_engines(engine_dir)
+    source_lock, _content = approved_source_lock()
+    speech = _speech_requirement(source_lock)
+    speech["files"] = [
+        item for item in speech["files"] if item["path"] != "model/fallback/model.safetensors"
+    ]
+    source_lock_path = tmp_path / "model-source-lock.json"
+    source_lock_path.write_bytes(canonical_json_bytes(source_lock))
+    catalog_path = tmp_path / "catalog" / "capture-engine-catalog.json"
+
+    result = _run_catalog(engines, source_lock_path, catalog_path, include_cpu=True)
+
+    assert result.returncode != 0
+    assert "model/fallback/model.safetensors" in result.stderr
+    assert not catalog_path.exists()
+
+
+def test_cpu_catalog_fails_when_a_primary_path_would_be_included(tmp_path: Path) -> None:
+    engine_dir = tmp_path / "engines"
+    engines = _prepare_speech_engines(engine_dir)
+    source_lock, _content = approved_source_lock()
+    speech = _speech_requirement(source_lock)
+    revision = "a" * 40
+    speech["files"].append(
+        {
+            "bytes": 10,
+            "derivation": None,
+            "kind": "license",
+            "licensePath": None,
+            "noticePath": None,
+            "owner": "example",
+            "path": "model/primary/LICENSE.txt",
+            "redirectHosts": [],
+            "revision": revision,
+            "sha256": "b" * 64,
+            "spdx": "Apache-2.0",
+            "url": f"https://example.test/license/{revision}",
+        }
+    )
+    speech["files"].sort(key=lambda item: item["path"])
+    fallback = next(
+        item for item in speech["files"] if item["path"] == "model/fallback/model.safetensors"
+    )
+    fallback["licensePath"] = "model/primary/LICENSE.txt"
+    source_lock_path = tmp_path / "model-source-lock.json"
+    source_lock_path.write_bytes(canonical_json_bytes(source_lock))
+    catalog_path = tmp_path / "catalog" / "capture-engine-catalog.json"
+
+    result = _run_catalog(engines, source_lock_path, catalog_path, include_cpu=True)
+
+    assert result.returncode != 0
+    assert "model/primary/LICENSE.txt" in result.stderr
+    assert not catalog_path.exists()
