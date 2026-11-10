@@ -114,6 +114,17 @@ export class DesktopRuntimeClientService {
     return this.commands.invoke('runtime_cancel_installation', { input: { id: installationId } }, signal);
   }
 
+  uninstallRequirement(
+    requirementId: CaptureRequirementId,
+    signal?: AbortSignal,
+  ): Observable<RuntimeRequirement> {
+    return this.commands.invoke(
+      'runtime_uninstall_requirement',
+      { input: { requirementId } },
+      signal,
+    );
+  }
+
   getModelOptions(signal?: AbortSignal): Observable<readonly RuntimeModelOption[]> {
     return this.commands
       .invoke<{ readonly items: readonly RuntimeModelOption[] }>('runtime_model_options', {}, signal)

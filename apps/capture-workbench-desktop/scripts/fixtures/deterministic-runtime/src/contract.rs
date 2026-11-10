@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     env,
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -139,6 +139,8 @@ pub struct FixtureState {
     ingestion_idempotency: Mutex<HashMap<String, IdempotencyRecord>>,
     installations: Mutex<HashMap<String, InstallationRecord>>,
     installation_idempotency: Mutex<HashMap<String, IdempotencyRecord>>,
+    // Catalog ids whose installation has been removed. The catalog starts installed.
+    uninstalled: Mutex<HashSet<String>>,
     model_installations: Mutex<HashMap<String, ModelInstallationRecord>>,
     model_installation_idempotency: Mutex<HashMap<String, IdempotencyRecord>>,
 }
@@ -157,6 +159,7 @@ impl FixtureState {
             ingestion_idempotency: Mutex::new(HashMap::new()),
             installations: Mutex::new(HashMap::new()),
             installation_idempotency: Mutex::new(HashMap::new()),
+            uninstalled: Mutex::new(HashSet::new()),
             model_installations: Mutex::new(HashMap::new()),
             model_installation_idempotency: Mutex::new(HashMap::new()),
         }
@@ -178,6 +181,9 @@ impl FixtureState {
             }
             _ if request.path.starts_with("/v2/runtime/model-installations/") => {
                 self.route_model_installation(&request)
+            }
+            _ if request.path.starts_with("/v2/runtime/requirements/") => {
+                self.route_requirement(&request)
             }
             _ if request.path.starts_with("/v2/captures/") => self.route_capture(&request),
             _ => api_error(404, "not_found", "Resource was not found."),
@@ -221,22 +227,57 @@ impl FixtureState {
     }
 
     fn requirements(&self) -> Response {
-        Response::json(
-            200,
-            json!({
-                "items": [
-                    requirement("windowsml-ocr", "ocr", "WindowsML OCR", &["pdf", "image"]),
-                    requirement("speech-recognition", "stt", "Speech recognition", &["audio"]),
-                    requirement("ollama-runtime", "llm-runtime", "Ollama", &["structuring"]),
-                    requirement(
-                        "capture-ollama-model",
-                        "llm-model",
-                        "Capture structuring model",
-                        &["structuring"],
-                    ),
-                ]
-            }),
-        )
+        let uninstalled = self.uninstalled.lock().ok();
+        let items = [
+            "windowsml-ocr",
+            "speech-recognition",
+            "ollama-runtime",
+            "capture-ollama-model",
+        ]
+        .into_iter()
+        .filter_map(|requirement_id| {
+            let status = if uninstalled
+                .as_ref()
+                .is_some_and(|ids| ids.contains(requirement_id))
+            {
+                "installable"
+            } else {
+                "ready"
+            };
+            known_requirement(requirement_id, status)
+        })
+        .collect::<Vec<_>>();
+        Response::json(200, json!({ "items": items }))
+    }
+
+    fn route_requirement(&self, request: &Request) -> Response {
+        let relative = request.path.trim_start_matches("/v2/runtime/requirements/");
+        if let Some(requirement_id) = relative.strip_suffix("/installation") {
+            return if request.method == "DELETE" {
+                self.uninstall_requirement(requirement_id)
+            } else {
+                api_error(404, "not_found", "Resource was not found.")
+            };
+        }
+        api_error(404, "not_found", "Resource was not found.")
+    }
+
+    fn uninstall_requirement(&self, requirement_id: &str) -> Response {
+        // The real route returns the requirement with status installable, including
+        // a repeat after it is already not installed. This fixture has no disabled
+        // set, no non-terminal installation or capture, and no separate
+        // "not an engine" flag, so it does not answer 409 or 422.
+        let Some(body) = known_requirement(requirement_id, "installable") else {
+            return api_error(
+                404,
+                "requirement_not_found",
+                "Runtime requirement was not found.",
+            );
+        };
+        if let Ok(mut uninstalled) = self.uninstalled.lock() {
+            uninstalled.insert(requirement_id.to_owned());
+        }
+        Response::json(200, body)
     }
 
     fn model_options(&self) -> Response {
@@ -843,10 +884,41 @@ fn required_idempotency_key(request: &Request) -> Result<String, Response> {
 }
 
 fn valid_requirement_id(value: &str) -> bool {
-    matches!(
-        value,
-        "windowsml-ocr" | "speech-recognition" | "ollama-runtime" | "capture-ollama-model"
-    )
+    known_requirement(value, "ready").is_some()
+}
+
+fn known_requirement(requirement_id: &str, status: &str) -> Option<Value> {
+    Some(match requirement_id {
+        "windowsml-ocr" => requirement(
+            "windowsml-ocr",
+            "ocr",
+            "WindowsML OCR",
+            &["pdf", "image"],
+            status,
+        ),
+        "speech-recognition" => requirement(
+            "speech-recognition",
+            "stt",
+            "Speech recognition",
+            &["audio"],
+            status,
+        ),
+        "ollama-runtime" => requirement(
+            "ollama-runtime",
+            "llm-runtime",
+            "Ollama",
+            &["structuring"],
+            status,
+        ),
+        "capture-ollama-model" => requirement(
+            "capture-ollama-model",
+            "llm-model",
+            "Capture structuring model",
+            &["structuring"],
+            status,
+        ),
+        _ => return None,
+    })
 }
 
 fn valid_model_option_id(value: &str) -> bool {
@@ -871,12 +943,13 @@ fn requirement(
     kind: &str,
     display_name: &str,
     required_for: &[&str],
+    status: &str,
 ) -> Value {
     json!({
         "requirementId": requirement_id,
         "kind": kind,
         "displayName": display_name,
-        "status": "ready",
+        "status": status,
         "requiredFor": required_for,
         "installStrategy": "deterministic-fixture",
         "detail": "Available in deterministic verification mode.",

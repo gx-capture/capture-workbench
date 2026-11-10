@@ -185,7 +185,12 @@ describe('App shell and recognition pages', () => {
     ) as HTMLElement;
     expect(page.querySelector('h1')?.textContent).toContain('設定');
     expect(page.querySelector('h2')?.textContent).toContain('辨識功能');
-    expect(page.textContent).not.toContain('移除');
+    const ocrRow = page.querySelector(
+      '[data-testid="engine-row"][data-requirement-id="windowsml-ocr"]',
+    ) as HTMLElement;
+    expect(
+      ocrRow.querySelector('[data-testid="engine-row-remove"]')?.textContent?.trim(),
+    ).toBe('移除');
 
     const headers = [
       ...page.querySelectorAll('[data-testid="engines-table"] thead th'),
@@ -196,6 +201,7 @@ describe('App shell and recognition pages', () => {
       page.querySelector(
         '[data-testid="engine-row"][data-requirement-id="speech-recognition"]',
       ) as HTMLElement;
+    expect(speechRow().querySelector('[data-testid="engine-row-remove"]')).toBeNull();
     expect(
       speechRow()
         .querySelector('[data-testid="engine-row-install"]')
@@ -358,6 +364,9 @@ async function renderShell(
     installUnit: vi.fn(),
     installUnits: vi.fn(),
     installFirstRunSelection: vi.fn(),
+    isRemoving: () => false,
+    removalError: () => null,
+    removeUnit: vi.fn(),
     cancelInstallation: vi.fn(),
     retryInstallation: vi.fn(),
     dismissFirstRun: vi.fn(() => {

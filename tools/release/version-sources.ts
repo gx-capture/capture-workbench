@@ -652,7 +652,7 @@ function addReleaseSourceEntries(
     'apps/capture-workbench-desktop/src-tauri/src/runtime_client.rs',
     /api_version:\s*"([^"]+)"/gu,
     EXPECTED_RUNTIME_API_VERSION,
-    6,
+    7,
   );
   addExpectedOccurrences(
     entries,
@@ -662,7 +662,7 @@ function addReleaseSourceEntries(
     'apps/capture-workbench-desktop/src-tauri/src/runtime_client.rs',
     /capture_document_schema_version:\s*"([^"]+)"/gu,
     EXPECTED_DOCUMENT_SCHEMA_VERSION,
-    6,
+    7,
   );
 
   const sourceLockPath =

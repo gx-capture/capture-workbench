@@ -458,3 +458,73 @@ fn desktop_pdf_ingestion_opens_with_the_host_request() {
     assert_eq!(body["status"], "open");
     assert_eq!(body["receivedBytes"], 0);
 }
+
+#[test]
+fn uninstall_requirement_returns_installable_and_rejects_an_unknown_id() {
+    let state = fixture();
+    let before = get(&state, "/v2/runtime/requirements", 200);
+    let installed = before["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["requirementId"] == "windowsml-ocr")
+        .unwrap()
+        .clone();
+    assert_eq!(installed["status"], "ready");
+
+    let remove = json_request(
+        "DELETE",
+        "/v2/runtime/requirements/windowsml-ocr/installation",
+        None,
+        Value::Null,
+    );
+    let removed = exchange(&state, remove, 200);
+    let mut expected = installed;
+    expected["status"] = json!("installable");
+    assert_eq!(removed, expected);
+
+    let repeated = exchange(
+        &state,
+        json_request(
+            "DELETE",
+            "/v2/runtime/requirements/windowsml-ocr/installation",
+            None,
+            Value::Null,
+        ),
+        200,
+    );
+    assert_eq!(repeated, removed);
+
+    let after = get(&state, "/v2/runtime/requirements", 200);
+    let items = after["items"].as_array().unwrap();
+    assert_eq!(
+        items
+            .iter()
+            .find(|item| item["requirementId"] == "windowsml-ocr")
+            .unwrap()["status"],
+        "installable"
+    );
+    assert_eq!(
+        items
+            .iter()
+            .find(|item| item["requirementId"] == "speech-recognition")
+            .unwrap()["status"],
+        "ready"
+    );
+
+    let unknown = exchange(
+        &state,
+        json_request(
+            "DELETE",
+            "/v2/runtime/requirements/no-such-engine/installation",
+            None,
+            Value::Null,
+        ),
+        404,
+    );
+    assert_eq!(unknown["error"]["code"], "requirement_not_found");
+    assert_eq!(
+        unknown["error"]["message"],
+        "Runtime requirement was not found."
+    );
+}

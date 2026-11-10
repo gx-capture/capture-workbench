@@ -12,7 +12,7 @@ use crate::{
         LibraryCaptureUpdate, LibraryDocumentDetail, LibraryDocumentRequest,
         LibraryDocumentSummary, LibraryExportPayload, LibraryExportRequest,
         LibraryImportSourceRequest, LibraryListRequest, RuntimeCreateCaptureInput, RuntimeIdInput,
-        RuntimeInstallationStartInput, RuntimeModelInstallationStartInput,
+        RuntimeInstallationStartInput, RuntimeModelInstallationStartInput, RuntimeRequirementInput,
         RuntimeStreamingCaptureInput, RuntimeStreamingEventsInput,
     },
     library::LibraryStore,
@@ -257,6 +257,15 @@ pub(crate) async fn runtime_cancel_installation(
 ) -> Result<serde_json::Value, String> {
     let state = state.inner().clone();
     run_blocking(move || runtime_client::cancel_installation(&state, input)).await
+}
+
+#[tauri::command]
+pub(crate) async fn runtime_uninstall_requirement(
+    state: tauri::State<'_, DesktopState>,
+    input: RuntimeRequirementInput,
+) -> Result<serde_json::Value, String> {
+    let state = state.inner().clone();
+    run_blocking(move || runtime_client::uninstall_requirement(&state, input)).await
 }
 
 #[tauri::command]

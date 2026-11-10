@@ -126,6 +126,17 @@ export interface DesktopMessages {
   readonly downloadingProgress: (percent: number) => string;
   readonly cancelInstall: string;
   readonly retryInstall: string;
+  readonly removeEngine: string;
+  readonly removeEngineNamed: (name: string) => string;
+  readonly removeEngineTitle: (name: string) => string;
+  readonly removeEngineBody: (name: string, size: string | null) => string;
+  readonly removeEngineCancel: string;
+  readonly removingEngine: string;
+  readonly removeBlockedInstalling: string;
+  readonly removeBlockedCapture: string;
+  readonly removeEngineInUse: string;
+  readonly removeEngineNotUninstallable: string;
+  readonly removeEngineNotFound: string;
   readonly later: string;
   readonly optionalSuffix: string;
   readonly firstRunTitle: string;
@@ -309,6 +320,20 @@ const ZH_TW: DesktopMessages = {
   downloadingProgress: (percent) => `正在下載 ${percent}%`,
   cancelInstall: '取消',
   retryInstall: '再試一次',
+  removeEngine: '移除',
+  removeEngineNamed: (name) => `移除${name}`,
+  removeEngineTitle: (name) => `移除${name}？`,
+  removeEngineBody: (name, size) =>
+    size
+      ? `這會刪除${name}（${size}）。已經做好的文件和逐字稿會留在這台電腦，之後可以再安裝。`
+      : `這會刪除${name}。已經做好的文件和逐字稿會留在這台電腦，之後可以再安裝。`,
+  removeEngineCancel: '取消',
+  removingEngine: '正在移除',
+  removeBlockedInstalling: '這項功能正在安裝',
+  removeBlockedCapture: '有辨識正在使用它',
+  removeEngineInUse: '安裝或辨識還在進行，請稍後再移除',
+  removeEngineNotUninstallable: '這項功能無法從這裡移除',
+  removeEngineNotFound: '找不到這項功能',
   later: '稍後再說',
   optionalSuffix: '（選用）',
   firstRunTitle: '需要時再安裝辨識功能',
@@ -513,6 +538,21 @@ const EN: DesktopMessages = {
   downloadingProgress: (percent) => `Downloading ${percent}%`,
   cancelInstall: 'Cancel',
   retryInstall: 'Try again',
+  removeEngine: 'Remove',
+  removeEngineNamed: (name) => `Remove ${name}`,
+  removeEngineTitle: (name) => `Remove ${name}?`,
+  removeEngineBody: (name, size) =>
+    size
+      ? `This deletes ${name} (${size}). Documents and transcripts already saved stay on this computer, and you can install it again later.`
+      : `This deletes ${name}. Documents and transcripts already saved stay on this computer, and you can install it again later.`,
+  removeEngineCancel: 'Cancel',
+  removingEngine: 'Removing',
+  removeBlockedInstalling: 'This feature is installing',
+  removeBlockedCapture: 'A recognition is using it',
+  removeEngineInUse:
+    'An installation or recognition is still running. Try again when it finishes.',
+  removeEngineNotUninstallable: 'This feature cannot be removed from here.',
+  removeEngineNotFound: 'This feature was not found.',
   later: 'Maybe later',
   optionalSuffix: ' (optional)',
   firstRunTitle: 'Install recognition features when you need them',

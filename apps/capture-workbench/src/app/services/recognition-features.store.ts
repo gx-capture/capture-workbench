@@ -1,11 +1,12 @@
 import {
   computed,
+  DestroyRef,
   effect,
   Injectable,
   inject,
   signal,
 } from '@angular/core';
-import { rxResource } from '@angular/core/rxjs-interop';
+import { rxResource, takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { finalize } from 'rxjs';
 import type {
   CaptureRequirementId,
@@ -19,6 +20,7 @@ import {
   activeModelOption as selectActiveModelOption,
   errorMessage,
   installationPercent,
+  uninstallFailureMessage,
   isFeatureReady,
   modelInstallationPercent,
   modelInstallationPhase,
@@ -60,6 +62,7 @@ function readFirstRunDismissed(): boolean {
 export class RecognitionFeaturesStore {
   private readonly runtime = inject(DesktopRuntimeClientService);
   private readonly installation = inject(DesktopWorkspaceInstallationService);
+  private readonly destroyRef = inject(DestroyRef);
 
   readonly runtimeStarted = this.runtime.started;
   readonly installing = this.installation.installing;
@@ -81,6 +84,19 @@ export class RecognitionFeaturesStore {
   );
   readonly message = signal('');
   readonly firstRunDismissed = signal<boolean>(readFirstRunDismissed());
+  private readonly removingIds = signal<ReadonlySet<CaptureRequirementId>>(
+    new Set(),
+  );
+  private readonly removalErrors = signal<
+    ReadonlyMap<CaptureRequirementId, string>
+  >(new Map());
+  /**
+   * Requirement returned by uninstall. It covers the runtime list until that
+   * list leaves `ready`, so readiness updates before the reload lands.
+   */
+  private readonly uninstalled = signal<
+    ReadonlyMap<CaptureRequirementId, RuntimeRequirement>
+  >(new Map());
 
   private reattachedForStart = false;
 
@@ -102,9 +118,16 @@ export class RecognitionFeaturesStore {
     stream: ({ abortSignal }) => this.runtime.getModelOptions(abortSignal),
   });
 
-  get requirements() {
-    return this.requirementsResource.value;
-  }
+  readonly requirements = computed(() => {
+    const listed = this.requirementsResource.value();
+    const removed = this.uninstalled();
+    if (removed.size === 0) return listed;
+    return listed.map((item) => {
+      const override = removed.get(item.requirementId);
+      if (!override || item.status !== 'ready') return item;
+      return override;
+    });
+  });
 
   get modelOptions() {
     return this.modelOptionsResource.value;
@@ -144,6 +167,26 @@ export class RecognitionFeaturesStore {
       !this.firstRunDismissed() &&
       (this.firstRunInstallableUnits().length > 0 || this.installing()),
   );
+
+  /**
+   * Drops an uninstall overlay once the runtime list no longer says ready.
+   * A finished reinstall drops it in installRequirements, so the next ready
+   * state is not stuck on not-installed.
+   */
+  private readonly releaseUninstalledOverlay = effect(() => {
+    const removed = this.uninstalled();
+    if (removed.size === 0) return;
+    const listed = this.requirementsResource.value();
+    if (listed.length === 0) return;
+    const stale = [...removed.keys()].filter((requirementId) => {
+      const listedUnit = listed.find(
+        (item) => item.requirementId === requirementId,
+      );
+      return !listedUnit || listedUnit.status !== 'ready';
+    });
+    if (stale.length === 0) return;
+    this.forgetUninstalled(stale);
+  });
 
   private readonly reattachEffect = effect(() => {
     const started = this.runtimeStarted();
@@ -209,6 +252,70 @@ export class RecognitionFeaturesStore {
    */
   retryInstallation(requirementId: CaptureRequirementId): void {
     this.installUnits([requirementId]);
+  }
+
+  /** True while this unit's uninstall request is in flight. */
+  isRemoving(requirementId: CaptureRequirementId): boolean {
+    return this.removingIds().has(requirementId);
+  }
+
+  /** The last uninstall error for this unit, if the runtime still reports it. */
+  removalError(requirementId: CaptureRequirementId): string | null {
+    return this.removalErrors().get(requirementId) ?? null;
+  }
+
+  /**
+   * Removes an installed engine after the user confirms.
+   * Refuses while that unit is installing; a capture in progress is refused
+   * by the runtime and shown on the row.
+   */
+  removeUnit(requirementId: CaptureRequirementId): void {
+    if (this.removingIds().has(requirementId)) return;
+    const installation = this.installation.installationFor(requirementId);
+    if (
+      installation?.status === 'queued' ||
+      installation?.status === 'running'
+    ) {
+      return;
+    }
+    if (!this.runtimeStarted()) return;
+    const unit = this.requirements().find(
+      (item) => item.requirementId === requirementId,
+    );
+    if (!unit || unit.status !== 'ready') return;
+    this.removingIds.update(
+      (current) => new Set([...current, requirementId]),
+    );
+    this.clearRemovalError(requirementId);
+    this.runtime
+      .uninstallRequirement(requirementId)
+      .pipe(
+        finalize(() => {
+          this.removingIds.update((current) => {
+            if (!current.has(requirementId)) return current;
+            const next = new Set(current);
+            next.delete(requirementId);
+            return next;
+          });
+        }),
+        takeUntilDestroyed(this.destroyRef),
+      )
+      .subscribe({
+        next: (requirement) => {
+          this.clearRemovalError(requirementId);
+          this.rememberUninstalled(requirementId, requirement);
+          this.requirementsResource.reload();
+          this.runtime.reload();
+        },
+        error: (error: unknown) => {
+          this.removalErrors.update((current) => {
+            const next = new Map(current);
+            next.set(requirementId, uninstallFailureMessage(error));
+            return next;
+          });
+          this.requirementsResource.reload();
+        },
+      });
   }
 
   /** Cancels a running installation and stops the rest of its install queue. */
@@ -297,7 +404,11 @@ export class RecognitionFeaturesStore {
   ): void {
     if (!this.runtimeStarted() || this.installing()) return;
     if (installable.length === 0) return;
+    const ids = installable.map((item) => item.requirementId);
     this.installation.installRequirements$(installable).subscribe({
+      next: (installation) => {
+        this.forgetUninstalled([installation.requirementId]);
+      },
       complete: () => {
         this.runtime.reload();
         this.requirementsResource.reload();
@@ -306,9 +417,40 @@ export class RecognitionFeaturesStore {
         }
       },
       error: (error: unknown) => {
+        this.forgetUninstalled(ids);
         this.requirementsResource.reload();
         this.message.set(errorMessage(error));
       },
+    });
+  }
+
+  private rememberUninstalled(
+    requirementId: CaptureRequirementId,
+    requirement: RuntimeRequirement,
+  ): void {
+    this.uninstalled.update((current) => {
+      const next = new Map(current);
+      next.set(requirementId, requirement);
+      return next;
+    });
+  }
+
+  private forgetUninstalled(ids: readonly CaptureRequirementId[]): void {
+    if (ids.length === 0) return;
+    this.uninstalled.update((current) => {
+      if (!ids.some((id) => current.has(id))) return current;
+      const next = new Map(current);
+      for (const id of ids) next.delete(id);
+      return next;
+    });
+  }
+
+  private clearRemovalError(requirementId: CaptureRequirementId): void {
+    this.removalErrors.update((current) => {
+      if (!current.has(requirementId)) return current;
+      const next = new Map(current);
+      next.delete(requirementId);
+      return next;
     });
   }
 }

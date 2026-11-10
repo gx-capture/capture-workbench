@@ -1,6 +1,8 @@
 import type { RuntimeRequirement } from '@gx-capture/capture-workbench-ui';
+import type { DesktopLibrarySummary } from '../contracts';
 import { setDesktopLocale } from '../i18n/desktop-messages';
 import {
+  captureNeedsRequirement,
   captureResultText,
   FEATURE_REQUIREMENTS,
   formatApproximateBytes,
@@ -11,6 +13,7 @@ import {
   selectRecognitionEngines,
   selectRequestedMissing,
   selectSpeechPack,
+  uninstallFailureMessage,
 } from './desktop-workspace.selectors';
 
 function requirement(
@@ -96,6 +99,59 @@ describe('feature requirements and speech pack', () => {
         'speech-recognition',
       ]).map((item) => item.requirementId),
     ).toEqual(['speech-recognition', 'speaker-diarization']);
+  });
+});
+
+describe('captureNeedsRequirement', () => {
+  const document = (
+    status: DesktopLibrarySummary['status'],
+    mediaType: string,
+  ): DesktopLibrarySummary => ({
+    documentId: 'b'.repeat(32),
+    fileName: 'source',
+    mediaType,
+    byteLength: 8,
+    createdAtMs: 1,
+    updatedAtMs: 1,
+    status,
+  });
+
+  it('blocks the engines that kind of active capture needs', () => {
+    const pdf = document('processing', 'application/pdf');
+    const image = document('persisting', 'image/png');
+    const audio = document('processing', 'audio/mpeg');
+    const video = document('persisting', 'video/mp4');
+    expect(captureNeedsRequirement('windowsml-ocr', [pdf])).toBe(true);
+    expect(captureNeedsRequirement('vertical-japanese-reader', [image])).toBe(true);
+    expect(captureNeedsRequirement('speech-recognition', [pdf])).toBe(false);
+    expect(captureNeedsRequirement('speech-recognition', [audio])).toBe(true);
+    expect(captureNeedsRequirement('speaker-diarization', [video])).toBe(true);
+    expect(captureNeedsRequirement('windowsml-ocr', [audio])).toBe(false);
+    expect(captureNeedsRequirement('ollama-runtime', [pdf])).toBe(true);
+    expect(captureNeedsRequirement('windowsml-ocr', [])).toBe(false);
+    expect(
+      captureNeedsRequirement('windowsml-ocr', [
+        document('queued', 'application/pdf'),
+        document('awaiting_confirmation', 'application/pdf'),
+      ]),
+    ).toBe(false);
+  });
+});
+
+describe('uninstallFailureMessage', () => {
+  beforeEach(() => setDesktopLocale('zh-TW'));
+
+  it('maps the desktop bridge HTTP status and redacts anything else', () => {
+    const rejected = (status: number) =>
+      new Error(`Capture Runtime request was rejected with HTTP ${status}.`);
+    expect(uninstallFailureMessage(rejected(409))).toBe(
+      '安裝或辨識還在進行，請稍後再移除',
+    );
+    expect(uninstallFailureMessage(rejected(422))).toBe('這項功能無法從這裡移除');
+    expect(uninstallFailureMessage(rejected(404))).toBe('找不到這項功能');
+    expect(uninstallFailureMessage(new Error('Bearer secret-token failed'))).toBe(
+      'Bearer [redacted] failed',
+    );
   });
 });
 

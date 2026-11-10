@@ -11,26 +11,41 @@ import {
   type RuntimeInstallation,
   type RuntimeRequirement,
 } from '@gx-capture/capture-workbench-ui';
+import { BrnAlertDialogImports } from '@spartan-ng/brain/alert-dialog';
+import { BrnDialogClose } from '@spartan-ng/brain/dialog';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
 import { HlmCardImports } from '@spartan-ng/helm/card';
 import { HlmTableImports } from '@spartan-ng/helm/table';
 import { desktopLocale, desktopMessages } from '../i18n/desktop-messages';
 import {
+  captureNeedsRequirement,
   formatApproximateBytes,
   installationPercent,
 } from '../services/desktop-workspace.selectors';
+import { DesktopWorkspaceStore } from '../services/desktop-workspace.store';
 import { RecognitionFeaturesStore } from '../services/recognition-features.store';
 
 @Component({
   selector: 'app-engines-page',
   templateUrl: './engines-page.html',
-  imports: [HlmButtonImports, HlmCardImports, HlmTableImports],
+  imports: [
+    HlmButtonImports,
+    HlmCardImports,
+    HlmTableImports,
+    BrnAlertDialogImports,
+    BrnDialogClose,
+  ],
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class EnginesPage {
   protected readonly features = inject(RecognitionFeaturesStore);
+  private readonly workspace = inject(DesktopWorkspaceStore);
   protected readonly m = desktopMessages;
   private readonly locale = desktopLocale;
+  protected readonly removeTarget = signal<RuntimeRequirement | null>(null);
+  protected readonly removeDialogState = computed(() =>
+    this.removeTarget() === null ? 'closed' : 'open',
+  );
 
   protected readonly expandedIds = signal<ReadonlySet<CaptureRequirementId>>(
     new Set(),
@@ -104,5 +119,57 @@ export class EnginesPage {
 
   protected percentFor(unit: RuntimeRequirement): number {
     return installationPercent(this.installationFor(unit));
+  }
+
+  protected engineName(unit: RuntimeRequirement): string {
+    return this.m().engineName[unit.requirementId] ?? unit.displayName;
+  }
+
+  protected removing(unit: RuntimeRequirement): boolean {
+    return this.features.isRemoving(unit.requirementId);
+  }
+
+  protected removalFailure(unit: RuntimeRequirement): string | null {
+    return this.features.removalError(unit.requirementId);
+  }
+
+  protected removalBlock(
+    unit: RuntimeRequirement,
+  ): 'installing' | 'capture' | null {
+    if (this.isRunning(unit)) return 'installing';
+    if (
+      captureNeedsRequirement(
+        unit.requirementId,
+        this.workspace.allDocuments(),
+      )
+    ) {
+      return 'capture';
+    }
+    return null;
+  }
+
+  protected askRemove(unit: RuntimeRequirement): void {
+    if (this.removing(unit)) return;
+    if (this.removalBlock(unit) !== null) return;
+    this.removeTarget.set(unit);
+  }
+
+  protected confirmRemove(): void {
+    const target = this.removeTarget();
+    if (!target) return;
+    this.features.removeUnit(target.requirementId);
+    this.removeTarget.set(null);
+  }
+
+  protected onRemoveDialogState(state: 'open' | 'closed'): void {
+    if (state === 'closed') this.removeTarget.set(null);
+  }
+
+  protected removeTitle(unit: RuntimeRequirement): string {
+    return this.m().removeEngineTitle(this.engineName(unit));
+  }
+
+  protected removeBody(unit: RuntimeRequirement): string {
+    return this.m().removeEngineBody(this.engineName(unit), this.sizeLabel(unit));
   }
 }

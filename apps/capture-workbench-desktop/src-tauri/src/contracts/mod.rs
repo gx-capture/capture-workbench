@@ -11,5 +11,6 @@ pub(crate) use library::{
 };
 pub(crate) use runtime::{
     RuntimeCreateCaptureInput, RuntimeIdInput, RuntimeInstallationStartInput,
-    RuntimeModelInstallationStartInput, RuntimeStreamingCaptureInput, RuntimeStreamingEventsInput,
+    RuntimeModelInstallationStartInput, RuntimeRequirementInput, RuntimeStreamingCaptureInput,
+    RuntimeStreamingEventsInput,
 };

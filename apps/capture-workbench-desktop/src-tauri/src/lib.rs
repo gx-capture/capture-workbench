@@ -41,6 +41,7 @@ macro_rules! desktop_invoke_handler {
             commands::runtime_list_installations,
             commands::runtime_get_installation,
             commands::runtime_cancel_installation,
+            commands::runtime_uninstall_requirement,
             commands::runtime_model_options,
             commands::runtime_start_model_installation,
             commands::runtime_get_model_installation,

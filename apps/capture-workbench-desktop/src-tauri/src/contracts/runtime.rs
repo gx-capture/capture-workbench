@@ -46,3 +46,9 @@ pub(crate) struct RuntimeStreamingEventsInput {
 pub(crate) struct RuntimeIdInput {
     pub id: String,
 }
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RuntimeRequirementInput {
+    pub requirement_id: String,
+}

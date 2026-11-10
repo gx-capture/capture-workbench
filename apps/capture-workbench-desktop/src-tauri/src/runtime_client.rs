@@ -7,7 +7,7 @@ use crate::{
     config::BackendConfig,
     contracts::{
         RuntimeCreateCaptureInput, RuntimeIdInput, RuntimeInstallationStartInput,
-        RuntimeModelInstallationStartInput, RuntimeStreamingCaptureInput,
+        RuntimeModelInstallationStartInput, RuntimeRequirementInput, RuntimeStreamingCaptureInput,
         RuntimeStreamingEventsInput,
     },
     library::{LibraryStore, RuntimeSourceFile, RECORDING_MEDIA_TYPES},
@@ -81,6 +81,23 @@ pub(crate) fn cancel_installation(
         state,
         "POST",
         &format!("/v2/runtime/installations/{}/cancel", input.id),
+        None,
+        None,
+    )
+}
+
+pub(crate) fn uninstall_requirement(
+    state: &DesktopState,
+    input: RuntimeRequirementInput,
+) -> Result<Value, String> {
+    validate_requirement_id(&input.requirement_id)?;
+    request_json(
+        state,
+        "DELETE",
+        &format!(
+            "/v2/runtime/requirements/{}/installation",
+            input.requirement_id
+        ),
         None,
         None,
     )
@@ -934,6 +951,80 @@ mod tests {
             },
         )
         .is_err());
+
+        server.join().expect("server");
+    }
+
+    #[test]
+    fn uninstall_requirement_proxies_delete_and_reports_http_conflict() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("listener");
+        let port = listener.local_addr().expect("address").port();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept uninstall");
+            let mut request = [0_u8; 4096];
+            let count = stream.read(&mut request).expect("request uninstall");
+            let request = String::from_utf8_lossy(&request[..count]);
+            assert!(request.starts_with(
+                "DELETE /v2/runtime/requirements/windowsml-ocr/installation HTTP/1.1"
+            ));
+            assert!(request.contains("Authorization: Bearer secret-token"));
+            let body = r#"{"requirementId":"windowsml-ocr","kind":"runtime","displayName":"WindowsML OCR","status":"installable","requiredFor":["capture"],"installStrategy":"automatic","downloadBytes":144000000}"#;
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .expect("response uninstall");
+            drop(stream);
+
+            let (mut stream, _) = listener.accept().expect("accept conflict");
+            let mut request = [0_u8; 4096];
+            let count = stream.read(&mut request).expect("request conflict");
+            let request = String::from_utf8_lossy(&request[..count]);
+            assert!(request.starts_with(
+                "DELETE /v2/runtime/requirements/speech-recognition/installation HTTP/1.1"
+            ));
+            write!(
+                stream,
+                "HTTP/1.1 409 Conflict\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            )
+            .expect("response conflict");
+        });
+
+        let state = DesktopState::with_backend_config_for_test(BackendConfig {
+            base_url: format!("http://127.0.0.1:{port}"),
+            token: "secret-token".into(),
+            runtime_version: env!("CARGO_PKG_VERSION").into(),
+            api_version: "2.0".into(),
+            capture_document_schema_version: "2".into(),
+        });
+
+        assert!(uninstall_requirement(
+            &state,
+            RuntimeRequirementInput {
+                requirement_id: "../windowsml-ocr".into(),
+            },
+        )
+        .is_err());
+
+        let removed = uninstall_requirement(
+            &state,
+            RuntimeRequirementInput {
+                requirement_id: "windowsml-ocr".into(),
+            },
+        )
+        .expect("uninstall");
+        assert_eq!(removed["requirementId"], "windowsml-ocr");
+        assert_eq!(removed["status"], "installable");
+
+        let conflict = uninstall_requirement(
+            &state,
+            RuntimeRequirementInput {
+                requirement_id: "speech-recognition".into(),
+            },
+        );
+        assert!(conflict.expect_err("conflict").contains("HTTP 409"));
 
         server.join().expect("server");
     }
