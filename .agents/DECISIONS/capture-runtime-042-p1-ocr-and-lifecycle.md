@@ -24,10 +24,11 @@
 6. **Ownership.** Windows Job Object ownership is implemented in one Rust
    `OwnedRuntimeSession` per launch attempt. Host adapters own graceful intent;
    they do not share or duplicate native Job handles. Runtime-root exit is
-   observed and invokes the same terminate-and-prove path. OS crash/power-loss
-   reconciliation is a next-start concern, not an app callback guarantee.
-   Next-start reconciliation is not wired yet; see the
-   [P2 implementation status](capture-runtime-042-p2-hardening.md#implementation-status-2026-11-01).
+   observed and invokes the same terminate-and-prove path. After a host crash
+   the system closes the Job and stops the runtime tree; after an OS crash or
+   power loss the next start uses a fresh port and token and the runtime's
+   startup sweeps remove the leftovers. See the
+   [P2 runtime process lifecycle](../SPECS/capture-runtime-042-p2-hardening.md#runtime-process-lifecycle).
 7. **Sequential acceptance evidence.** The three-project runner uses
    acceptance-manifest schema 2. Each child must prove all seven cleanup
    booleans (`app`, `sidecar`, `cdpPort`, `temporaryAppData`, `ownedPids`,

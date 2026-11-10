@@ -13,10 +13,6 @@ export const NATIVE_RELEASE_LOCKS = [
     ['capture-sidecar-launcher'],
   ],
   [
-    'packages/capture-sidecar-launcher/tests/fixtures/activation-probe/Cargo.lock',
-    ['capture-activation-probe'],
-  ],
-  [
     'apps/capture-workbench-desktop/scripts/fixtures/deterministic-runtime/Cargo.lock',
     ['capture-runtime-deterministic-fixture'],
   ],

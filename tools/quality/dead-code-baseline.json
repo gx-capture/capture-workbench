@@ -21,9 +21,5 @@
   "python|function|packages/capture-runtime/src/capture_runtime/release.py|write_capture_document_schema",
   "python|method|packages/capture-runtime/src/capture_runtime/artifact_parts.py|readable",
   "python|method|packages/capture-runtime/src/capture_runtime/artifact_parts.py|seekable",
-  "python|method|packages/capture-runtime/src/capture_runtime/artifact_parts.py|tell",
-  "rust|allow-dead-code|packages/capture-sidecar-launcher/src/journal.rs|allow(dead_code)",
-  "rust|allow-dead-code|packages/capture-sidecar-launcher/src/journal_store.rs|allow(dead_code)",
-  "rust|allow-dead-code|packages/capture-sidecar-launcher/src/reconcile.rs|allow(dead_code)",
-  "rust|allow-dead-code|packages/capture-sidecar-launcher/src/staging/mod.rs|allow(dead_code)"
+  "python|method|packages/capture-runtime/src/capture_runtime/artifact_parts.py|tell"
 ]

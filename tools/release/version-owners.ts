@@ -27,7 +27,6 @@ export const RELEASE_VERSION_OWNERS: readonly VersionOwner[] = [
     'packages/capture-runtime/pyproject.toml',
     'packages/capture-runtime-client-python/pyproject.toml',
     'packages/capture-sidecar-launcher/Cargo.toml',
-    'packages/capture-sidecar-launcher/tests/fixtures/activation-probe/Cargo.toml',
     'apps/capture-workbench-desktop/scripts/fixtures/deterministic-runtime/Cargo.toml',
     'apps/capture-workbench-desktop/src-tauri/Cargo.toml',
   ].map((path) => ({

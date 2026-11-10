@@ -123,10 +123,7 @@ pub fn launch_sidecar_with_observer(
         completed_attempts = attempt_number;
         let spec = spec_factory(attempt_number, remaining)?;
         let mut command = spec.command();
-        let mut process = match OwnedRuntimeSession::spawn(&mut command) {
-            Ok(process) => process,
-            Err(error) => return Err(error),
-        };
+        let mut process = OwnedRuntimeSession::spawn(&mut command)?;
         if let Err(error) = observe_spawn(process.clone()) {
             let cleanup = process.terminate().err();
             return Err(match cleanup {

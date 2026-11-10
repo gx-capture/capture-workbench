@@ -584,42 +584,6 @@ function addReleaseSourceEntries(
     /^const SCHEMA_VERSION:\s*&str\s*=\s*"([^"]+)"/mu,
     EXPECTED_DOCUMENT_SCHEMA_VERSION,
   );
-  addExpectedMatch(
-    entries,
-    'runtime.api.sidecar-health',
-    'api',
-    root,
-    'packages/capture-sidecar-launcher/src/health.rs',
-    /^[ \t]*const R3_API_VERSION:\s*&str\s*=\s*"([^"]+)";/mu,
-    EXPECTED_RUNTIME_API_VERSION,
-  );
-  addExpectedMatch(
-    entries,
-    'document.schema.sidecar-health',
-    'document-schema',
-    root,
-    'packages/capture-sidecar-launcher/src/health.rs',
-    /^[ \t]*const R3_DOCUMENT_SCHEMA_VERSION:\s*&str\s*=\s*"([^"]+)";/mu,
-    EXPECTED_DOCUMENT_SCHEMA_VERSION,
-  );
-  addExpectedMatch(
-    entries,
-    'contract-set.version.sidecar-health',
-    'tooling',
-    root,
-    'packages/capture-sidecar-launcher/src/health.rs',
-    /^[ \t]*const R3_CONTRACT_SET_VERSION:\s*&str\s*=\s*"([^"]+)";/mu,
-    EXPECTED_CONTRACT_SET_VERSION,
-  );
-  addExpectedMatch(
-    entries,
-    'runtime.service.sidecar-health',
-    'tooling',
-    root,
-    'packages/capture-sidecar-launcher/src/health.rs',
-    /^[ \t]*const R3_SERVICE:\s*&str\s*=\s*"([^"]+)";/mu,
-    'capture-runtime',
-  );
   addExpectedOccurrences(
     entries,
     'runtime.api.sidecar-manifest',

@@ -36,7 +36,6 @@ const INVENTORY_FILES = [
   'packages/capture-runtime-client-python/pyproject.toml',
   'packages/capture-runtime/pyproject.toml',
   'packages/capture-sidecar-launcher/Cargo.toml',
-  'packages/capture-sidecar-launcher/tests/fixtures/activation-probe/Cargo.toml',
   'apps/capture-workbench-desktop/scripts/fixtures/deterministic-runtime/Cargo.toml',
   'apps/capture-workbench-desktop/src-tauri/Cargo.toml',
   'apps/capture-workbench-desktop/src-tauri/tauri.conf.json',
@@ -53,7 +52,6 @@ const INVENTORY_FILES = [
   'apps/capture-workbench-desktop/scripts/stage-runtime.ts',
   'apps/capture-workbench-desktop/scripts/real-media-model-smoke.ts',
   'packages/capture-runtime/src/capture_runtime/contracts/__init__.py',
-  'packages/capture-sidecar-launcher/src/health.rs',
   'packages/capture-sidecar-launcher/src/manifest.rs',
   'packages/capture-sidecar-launcher/src/lib.rs',
   'apps/capture-workbench-desktop/scripts/fixtures/deterministic-runtime/src/contract.rs',
@@ -194,68 +192,6 @@ test('typed release inventory reports every D2.1 identity without mutation', () 
   }
   assert.equal(inventory.channelOwners.length, 8);
 });
-
-const R3_HEALTH_PATH = 'packages/capture-sidecar-launcher/src/health.rs';
-const R3_IDENTITIES = [
-  [
-    'R3_SERVICE',
-    'runtime.service.sidecar-health',
-    'capture-runtime',
-    'other-runtime',
-  ],
-  ['R3_API_VERSION', 'runtime.api.sidecar-health', '2.0', '2.1'],
-  ['R3_DOCUMENT_SCHEMA_VERSION', 'document.schema.sidecar-health', '2', '3'],
-  ['R3_CONTRACT_SET_VERSION', 'contract-set.version.sidecar-health', '2', '3'],
-] as const;
-
-test('R3 inventory uses production identities and preserves negative test fixtures', async () => {
-  await withFixture(async (root) => {
-    const path = join(root, R3_HEALTH_PATH);
-    const before = await readFile(path, 'utf8');
-    assert.match(before, /foreign_manifest\.runtime_version = "99\.0\.0"/u);
-    assert.match(
-      before,
-      /\("runtimeVersion", serde_json::json!\("0\.4\.1"\)\)/u,
-    );
-    const inventory = collectReleaseInventory(root);
-    for (const [, id, value] of R3_IDENTITIES)
-      requiredEntry(inventory, id, value);
-    const versions = collectReleaseVersionEntries(root);
-    assert.ok(versions.every((entry) => entry.value === RELEASE_VERSION));
-    assert.equal(verifyGeneratedVersions(root).releaseVersion, RELEASE_VERSION);
-    assert.equal(await readFile(path, 'utf8'), before);
-  });
-});
-
-for (const [name, id, value, wrong] of R3_IDENTITIES) {
-  for (const mutation of ['drift', 'missing', 'duplicate'] as const) {
-    test(`R3 inventory rejects ${mutation} of production ${name}`, async () => {
-      await withFixture(async (root) => {
-        const path = join(root, R3_HEALTH_PATH);
-        const before = await readFile(path, 'utf8');
-        const declaration = `const ${name}: &str = "${value}";`;
-        const replacement =
-          mutation === 'drift'
-            ? `const ${name}: &str = "${wrong}";`
-            : mutation === 'missing'
-              ? ''
-              : `${declaration}\n  ${declaration}`;
-        const changed = before.replace(declaration, replacement);
-        assert.notEqual(changed, before);
-        await writeFile(path, changed, 'utf8');
-        assert.throws(
-          () => collectReleaseInventory(root),
-          (error: unknown) => {
-            assert.ok(error instanceof Error);
-            assert.ok(error.message.includes(id), error.message);
-            return true;
-          },
-        );
-        assert.equal(await readFile(path, 'utf8'), changed);
-      });
-    });
-  }
-}
 
 test('inventory rejects stale Nx identity before changing fixture bytes', async () => {
   await withFixture(async (root) => {

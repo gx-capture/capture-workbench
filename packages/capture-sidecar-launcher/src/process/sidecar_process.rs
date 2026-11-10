@@ -1,5 +1,4 @@
 use std::{
-    ffi::c_void,
     io,
     process::{Child, Command, ExitStatus},
 };
@@ -42,8 +41,8 @@ impl OwnedSidecarProcess {
     ///
     /// On Windows the child is created suspended and without a window. It is
     /// resumed only after the job assignment has been checked. If assignment
-    /// or resume fails, this stops that child before returning. No journal is
-    /// written and readiness is not probed.
+    /// or resume fails, this stops that child before returning. Nothing is
+    /// written to disk and readiness is not probed.
     ///
     /// # Errors
     ///
@@ -150,7 +149,7 @@ impl OwnedSidecarProcess {
         let root_pid = self.id();
         #[cfg(windows)]
         {
-            let root_handle = self.child.as_raw_handle() as *mut c_void;
+            let root_handle = self.child.as_raw_handle();
             let root_identity = process_identity_from_handle(root_handle, root_pid).map_err(|error| {
                 RuntimeCleanupError::new(
                     root_pid,
@@ -237,11 +236,11 @@ impl OwnedSidecarProcess {
             let descendants_terminated = self.job.active_processes().map_err(|error| {
                 RuntimeCleanupError::new(root_pid, RuntimeCleanupErrorKind::Descendants, error)
             })? == 0;
-            return Ok(RuntimeTerminationProof {
+            Ok(RuntimeTerminationProof {
                 root_pid,
                 root_reaped: true,
                 descendants_terminated,
-            });
+            })
         }
         #[cfg(not(windows))]
         {
