@@ -21,8 +21,9 @@ source of truth for inputs.
   Packages.
 - Consumers on their `main` branches pin 0.9.0: Cert Prep
   (`WodenWang820118/cert-prep#116`) and LAW (`WodenWang820118/gx.law-prep#336`).
-- The workspace runs Nx 24 with task-based affected; the pull request `checks`
-  job type-checks every TypeScript project.
+- The workspace runs Nx 24 with task-based affected. The pull request `checks`
+  job and `pnpm run verify:affected` lint, type-check, and unit-test only the
+  projects a change affects. Push CI on `main` still verifies every project.
 - The contract set no longer carries the release version: a patch release keeps
   its hash, and only a contract change moves it.
 - **Open**: the licence lineage of the NDLOCR-Lite line detector's weights,

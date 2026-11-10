@@ -11,10 +11,26 @@
     ],
     "sharedGlobals": [
       "{workspaceRoot}/package.json",
+      "{workspaceRoot}/pnpm-lock.yaml",
+      "{workspaceRoot}/pnpm-workspace.yaml",
+      "{workspaceRoot}/nx.json",
+      "{workspaceRoot}/tsconfig.base.json",
+      "{workspaceRoot}/eslint.config.mjs",
+      "{workspaceRoot}/.nvmrc",
+      "{workspaceRoot}/.npmrc.example",
+      "{workspaceRoot}/.github/workflows/ci.yml",
+      "{workspaceRoot}/**/uv.lock",
+      "{workspaceRoot}/**/Cargo.lock",
       "{workspaceRoot}/tools/package-manager.ts",
       "{workspaceRoot}/release/version.json",
       "{workspaceRoot}/tools/release/release-intent.ts",
       "{workspaceRoot}/tools/release/run-with-release-version.ts"
+    ],
+    "toolingCorpus": [
+      "{workspaceRoot}/.github/**/*",
+      "{workspaceRoot}/release/**/*",
+      "{workspaceRoot}/release-index/**/*",
+      "{workspaceRoot}/test-fixtures/**/*"
     ]
   },
   "targetDefaults": {

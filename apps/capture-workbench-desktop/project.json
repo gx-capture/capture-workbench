@@ -79,6 +79,7 @@
     "cargo-fmt-check": {
       "cache": true,
       "executor": "nx:run-commands",
+      "inputs": ["default"],
       "options": {
         "command": "cargo fmt --manifest-path apps/capture-workbench-desktop/src-tauri/Cargo.toml -- --check"
       }
@@ -95,6 +96,10 @@
       "cache": true,
       "executor": "nx:run-commands",
       "dependsOn": ["stage-deterministic-runtime"],
+      "inputs": [
+        "default",
+        "{workspaceRoot}/test-fixtures/ocr-evidence-v1-golden.json"
+      ],
       "options": {
         "command": "node apps/capture-workbench-desktop/scripts/cargo-deterministic-qa.ts test"
       }
@@ -205,6 +210,13 @@
     "package-qa-test": {
       "cache": true,
       "executor": "nx:run-commands",
+      "inputs": [
+        "default",
+        "^default",
+        "toolingCorpus",
+        "{workspaceRoot}/packages/capture-runtime/src/capture_runtime/assets/worker-stage-policy-corpus.json",
+        "{workspaceRoot}/packages/capture-acceptance-contract/**/*"
+      ],
       "options": {
         "command": "node --test apps/capture-workbench-desktop/scripts/*.test.ts tools/acceptance-contract.test.ts tools/worker-stage-policy.test.ts tools/three-project-acceptance.test.ts tools/three-project-cleanup-verifier.test.ts tools/check-async-boundary.test.ts tools/finalize-packed-package.test.ts tools/local-release-consumer-smoke.test.ts tools/node24-corepack.test.ts tools/record-candidate-verification.test.ts tools/acceptance-checkpoint-journal.test.ts tools/check-fake-runtime-routes.test.ts"
       }
@@ -233,8 +245,11 @@
       "executor": "nx:run-commands",
       "inputs": [
         "default",
+        "^default",
         "{projectRoot}/tsconfig.json",
-        "{projectRoot}/scripts/tsconfig.json"
+        "{projectRoot}/scripts/tsconfig.json",
+        "{workspaceRoot}/tools/**/*.ts",
+        "{workspaceRoot}/packages/capture-acceptance-contract/**/*.ts"
       ],
       "options": {
         "command": "corepack pnpm exec tsc -p apps/capture-workbench-desktop/tsconfig.json --noEmit"

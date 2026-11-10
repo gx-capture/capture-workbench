@@ -8,6 +8,7 @@
     "cargo-fmt-check": {
       "cache": true,
       "executor": "nx:run-commands",
+      "inputs": ["default"],
       "options": {
         "command": "cargo fmt --manifest-path packages/capture-sidecar-launcher/Cargo.toml -- --check"
       }
@@ -23,6 +24,22 @@
       "cache": true,
       "executor": "nx:run-commands",
       "dependsOn": ["cargo-fixture-build"],
+      "inputs": [
+        "default",
+        "{workspaceRoot}/tools/cargo-test-retry-failed.ts",
+        "{workspaceRoot}/packages/capture-runtime-client-python/src/capture_runtime_client/private/schemas/capture-document.schema.json",
+        "{workspaceRoot}/packages/capture-runtime/src/capture_runtime/contracts/**/*",
+        "{workspaceRoot}/packages/capture-runtime/src/capture_runtime/contract_set.py",
+        "{workspaceRoot}/packages/capture-runtime/src/capture_runtime/_contract_set_bundle.py",
+        "{workspaceRoot}/packages/capture-runtime/src/capture_runtime/constants/**/*",
+        "{workspaceRoot}/packages/capture-runtime/src/capture_runtime/release.py",
+        "{workspaceRoot}/packages/capture-runtime/src/capture_runtime/assets/contract-set.json",
+        "{workspaceRoot}/packages/capture-runtime/src/capture_runtime/assets/contract-set.sha256",
+        "{workspaceRoot}/packages/capture-runtime/tests/fixtures/speaker-wire-samples.json",
+        "{workspaceRoot}/packages/capture-runtime/tests/fixtures/ocr-projection-v3-perspective.json",
+        "{workspaceRoot}/packages/capture-runtime/tests/fixtures/ocr-page-selection-v3.json",
+        "{workspaceRoot}/packages/capture-runtime/tests/fixtures/ocr-projection-v3-referenced-invalid-corpus.json"
+      ],
       "options": {
         "command": "node tools/cargo-test-retry-failed.ts --manifest-path packages/capture-sidecar-launcher/Cargo.toml",
         "env": { "RUST_TEST_THREADS": "4" }

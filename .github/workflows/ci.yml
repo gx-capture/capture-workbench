@@ -60,9 +60,11 @@ concurrency:
 # dispatch candidates at the latest commit that changed code. Pull requests
 # run only `checks`.
 jobs:
-  # Pull requests: lint, type checks, and unit tests of every project, without
-  # builds, packaging, engine workers, the installer, the desktop product, or
-  # the reference flow. A failure only those catch shows on main's push run.
+  # Pull requests: lint, type checks, and unit tests of the projects a change
+  # affects, without builds, packaging, engine workers, the installer, the
+  # desktop product, or the reference flow. Contract, architecture, and
+  # dead-code gates still cover the whole workspace. A failure only the push
+  # jobs catch shows on main's push run.
   checks:
     if: github.event_name == 'pull_request'
     runs-on: windows-latest
@@ -97,60 +99,21 @@ jobs:
         shell: pwsh
         run: pnpm install --frozen-lockfile
 
-      - name: Check packages
+      - name: Check contracts
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
-          pnpm nx run capture-runtime:classify-release-model-mode
           pnpm nx run capture-runtime:check-contracts
-          pnpm nx run capture-runtime-client:lint
-          pnpm nx run capture-runtime-client:typecheck
-          pnpm nx run capture-runtime-client:test
-          pnpm nx run capture-runtime-client-python:lint
-          pnpm nx run capture-runtime-client-python:typecheck
-          pnpm nx run capture-runtime-client-python:test
-          pnpm nx run capture-sidecar-launcher:cargo-fmt-check
-          pnpm nx run capture-sidecar-launcher:cargo-test
-          pnpm nx run capture-angular:lint
-          pnpm nx run capture-angular:typecheck
-          pnpm nx run capture-angular:test
 
-      - name: Check capture runtime
+      - name: Check affected projects
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
-          pnpm nx run capture-runtime:python-version-check
-          pnpm nx run capture-runtime:lint
-          pnpm nx run capture-runtime:typecheck
-          pnpm nx run capture-runtime:test
-
-      - name: Check reference app, desktop scripts, and release tooling
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $PSNativeCommandUseErrorActionPreference = $true
-          pnpm nx run capture-workbench:lint
-          pnpm nx run capture-workbench:typecheck
-          pnpm nx run capture-workbench:test
-          pnpm nx run capture-workbench-desktop:cargo-fmt-check
-          pnpm nx run capture-workbench-desktop:typecheck-scripts
-          pnpm nx run capture-workbench-desktop:package-qa-test
-          pnpm nx run capture-workbench-desktop:fake-runtime-routes
-          pnpm nx run capture-tools:typecheck
-          pnpm nx run capture-tools:release-version-typecheck
-          pnpm nx run capture-tools:python-candidate-index-typecheck
-          pnpm nx run capture-tools:test
-          pnpm nx run capture-tools:release-version-test
-          pnpm nx run capture-tools:release-candidate-test
-          pnpm nx run capture-tools:contract-impact-test
-          pnpm nx run capture-tools:release-contract-test
-          pnpm nx run capture-tools:consumer-gate-test
-          pnpm nx run capture-tools:promotion-evidence-test
-          pnpm nx run capture-tools:promotion-registry-test
-          pnpm nx run capture-tools:release-manifest-test
-          pnpm nx run capture-tools:release-index-test
+          pnpm nx affected -t "classify-release-model-mode,python-version-check,typecheck,test,cargo-fmt-check,typecheck-scripts,package-qa-test,fake-runtime-routes,release-version-typecheck,python-candidate-index-typecheck,release-version-test,release-candidate-test,contract-impact-test,release-contract-test,consumer-gate-test,promotion-evidence-test,promotion-registry-test,release-manifest-test,release-index-test" --base=origin/main --head=HEAD --parallel=1
+          pnpm nx affected -t lint -p "capture-runtime,capture-runtime-client,capture-runtime-client-python,capture-angular,capture-workbench" --base=origin/main --head=HEAD --parallel=1
+          pnpm nx affected -t cargo-test -p capture-sidecar-launcher --base=origin/main --head=HEAD --parallel=1
 
       # knip (TypeScript) and vulture (Python) dead-code ratchet. --ci also
       # fails when a baseline entry is gone, so the baseline only shrinks.

@@ -83,7 +83,13 @@
       ]
     },
     "test": {
+      "cache": true,
       "executor": "@nx/angular:unit-test",
+      "inputs": [
+        "default",
+        "^production",
+        "{workspaceRoot}/test-fixtures/ocr-evidence-v1-golden.json"
+      ],
       "options": {
         "watch": false
       }

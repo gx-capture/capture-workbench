@@ -61,7 +61,13 @@
       }
     },
     "test": {
+      "cache": true,
       "executor": "@nx/angular:unit-test",
+      "inputs": [
+        "default",
+        "^production",
+        "{workspaceRoot}/packages/capture-runtime/src/capture_runtime/assets/contract-set.json"
+      ],
       "options": {
         "watch": false
       }
