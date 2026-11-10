@@ -47,6 +47,10 @@ class OwnedProcess:
 class ProcessController(Protocol):
     def is_pid_running(self, pid: int) -> bool: ...
 
+    def process_creation_time(self, pid: int) -> int | None:
+        """Raw OS creation-time integer, or None when it cannot be read."""
+        ...
+
     def spawn(
         self,
         executable: str,
@@ -71,6 +75,13 @@ class SubprocessController:
         except OSError:
             return False
         return True
+
+    def process_creation_time(self, pid: int) -> int | None:
+        if pid <= 0:
+            return None
+        if os.name == "nt":
+            return _windows_process_creation_time(pid)
+        return _posix_process_creation_time(pid)
 
     def spawn(
         self,
@@ -174,6 +185,90 @@ def _windows_pid_is_running(pid: int) -> bool:
         kernel32.CloseHandle(handle)
 
 
+def _raw_creation_time(value: object) -> int | None:
+    # JSON booleans are ints in Python. Only a real integer is a creation time.
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value
+
+
+def _recorded_process_creation_time(payload: object) -> int | None:
+    if not isinstance(payload, dict):
+        return None
+    return _raw_creation_time(payload.get("processCreationTime"))
+
+
+def _windows_process_creation_time(pid: int) -> int | None:
+    """Raw FILETIME from GetProcessTimes, or None when the process cannot be queried."""
+
+    import ctypes
+
+    class Filetime(ctypes.Structure):
+        _fields_ = [("dwLowDateTime", ctypes.c_uint32), ("dwHighDateTime", ctypes.c_uint32)]
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.argtypes = [ctypes.c_ulong, ctypes.c_int, ctypes.c_ulong]
+    kernel32.OpenProcess.restype = ctypes.c_void_p
+    kernel32.GetProcessTimes.argtypes = [
+        ctypes.c_void_p,
+        ctypes.POINTER(Filetime),
+        ctypes.POINTER(Filetime),
+        ctypes.POINTER(Filetime),
+        ctypes.POINTER(Filetime),
+    ]
+    kernel32.GetProcessTimes.restype = ctypes.c_int
+    kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+    kernel32.CloseHandle.restype = ctypes.c_int
+    # PROCESS_QUERY_LIMITED_INFORMATION. FILETIME is a 64-bit count of
+    # 100-nanosecond intervals; keep that integer so comparison stays exact.
+    process_query_limited_information = 0x1000
+    handle = kernel32.OpenProcess(process_query_limited_information, False, pid)
+    if not handle:
+        return None
+    try:
+        created = Filetime()
+        exited = Filetime()
+        kernel = Filetime()
+        user = Filetime()
+        if not kernel32.GetProcessTimes(
+            handle,
+            ctypes.byref(created),
+            ctypes.byref(exited),
+            ctypes.byref(kernel),
+            ctypes.byref(user),
+        ):
+            return None
+        return (int(created.dwHighDateTime) << 32) | int(created.dwLowDateTime)
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def _posix_process_creation_time(pid: int) -> int | None:
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_bytes()
+    except OSError:
+        return None
+    return _parse_proc_stat_start_time(stat)
+
+
+def _parse_proc_stat_start_time(stat: bytes) -> int | None:
+    # Field 22 is starttime. The comm field is wrapped in parentheses and may
+    # itself contain spaces and parentheses, so count tokens after the last one.
+    end = stat.rfind(b")")
+    if end < 0:
+        return None
+    fields = stat[end + 1 :].split()
+    if len(fields) < 20:
+        return None
+    try:
+        value = int(fields[19])
+    except ValueError:
+        return None
+    if value < 0:
+        return None
+    return value
+
+
 def _create_windows_kill_on_close_job(process: subprocess.Popen[bytes]) -> int:
     return create_kill_on_close_job(int(process._handle))  # type: ignore[attr-defined]
 
@@ -239,14 +334,15 @@ class IsolatedOllamaLifecycle:
                 output_path=self.config.app_data_dir / "ollama.log",
             )
             self._owned = owned
-            _atomic_json(
-                self.config.pid_file,
-                {
-                    "pid": owned.pid,
-                    "profileId": self.config.profile_id,
-                    "startedAt": self._clock.now().isoformat(),
-                },
-            )
+            payload: dict[str, object] = {
+                "pid": owned.pid,
+                "profileId": self.config.profile_id,
+                "startedAt": self._clock.now().isoformat(),
+            }
+            creation_time = _raw_creation_time(self._controller.process_creation_time(owned.pid))
+            if creation_time is not None:
+                payload["processCreationTime"] = creation_time
+            _atomic_json(self.config.pid_file, payload)
             return owned.pid
 
     def stop(self) -> None:
@@ -267,7 +363,18 @@ class IsolatedOllamaLifecycle:
         except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
             self.config.pid_file.unlink(missing_ok=True)
             return
-        if self._controller.is_pid_running(pid):
+        if not self._controller.is_pid_running(pid):
+            self.config.pid_file.unlink(missing_ok=True)
+            return
+        # Refuse unless both creation times are raw integers and they differ.
+        # A missing or unreadable time keeps today's refusal of a live PID.
+        recorded = _recorded_process_creation_time(payload)
+        live = (
+            _raw_creation_time(self._controller.process_creation_time(pid))
+            if recorded is not None
+            else None
+        )
+        if recorded is None or live is None or live == recorded:
             raise OllamaOwnershipError(
                 "Capture Ollama PID file points to a live process not owned by this runtime"
             )

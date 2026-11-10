@@ -56,6 +56,10 @@ class FakeProcessController:
     def is_pid_running(self, pid: int) -> bool:
         return pid in self.live_pids
 
+    def process_creation_time(self, pid: int) -> int | None:
+        del pid
+        return None
+
     def spawn(
         self,
         executable: str,

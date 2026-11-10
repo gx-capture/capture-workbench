@@ -191,7 +191,8 @@ one 60-second budget; every attempt uses previously unused runtime/Ollama ports
 and a new bearer token. A failed attempt is stopped through its own Windows job
 object before another attempt begins. The desktop host never deletes the shared
 Ollama PID record; the runtime lifecycle reconciles it only after proving the
-recorded PID is no longer alive. Shutdown cancellation prevents further attempts.
+recorded PID is no longer alive, or that the PID now belongs to another process
+(its creation time differs from the recorded one). Shutdown cancellation prevents further attempts.
 On Windows the runtime root is created suspended, assigned to that attempt's
 job object, and only then resumed, so a one-file bootloader child cannot escape
 the ownership boundary before assignment.

@@ -186,10 +186,12 @@ Limits that follow from this design:
 - The launcher keeps no record of what it started, so after a power loss or
   an operating-system kill it relies on every process being gone. The startup
   sweeps above remove what such a stop leaves on disk.
-- Ollama's `ollama.pid` survives a power loss. If Windows reuses that PID for
-  an unrelated process, the runtime refuses to adopt it and structuring stays
-  unavailable until that process exits. This fail-closed behavior is
-  deliberate.
+- Ollama's `ollama.pid` survives a power loss. The file records the PID and
+  the process creation time. A live PID with the same creation time is the
+  same process, and the runtime refuses to start a second one. A live PID
+  with a different creation time has been reused: the runtime removes the
+  stale file and continues. A file without a creation time, or a creation
+  time that cannot be read, keeps the conservative refusal.
 ## Canonical compute decision truth table
 
 `OcrComputePlan.select(input)` consumes one immutable producer hardware snapshot
