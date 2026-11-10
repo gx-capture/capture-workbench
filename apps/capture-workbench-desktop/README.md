@@ -18,10 +18,10 @@ The desktop host starts one verified `capture-runtime` sidecar on a random loopb
 - `capture-workbench-desktop:acceptance-three-projects` runs Capture
   Workbench, Cert Prep, and LAW in order with cleanup proven between them.
 
-Acceptance records use the producer's `@capture-runtime/acceptance-contract`
-package (`packages/capture-acceptance-contract`). The desktop writes only its
-semantic result; raw paths, text, tokens, and PIDs never enter acceptance
-records. The release procedure is in `.agents/GUIDES/release-runbook.md`.
+Each consumer runs its own acceptance gate and writes its own manifest.
+Cert Prep's gate is `acceptance-real` and LAW's gate is
+`law-prep-web-e2e:acceptance-real`; a release is gated by those gates.
+The release procedure is in `.agents/GUIDES/release-runbook.md`.
 
 Run `corepack pnpm dev` for the product lane. It generates and stages release
 runtime assets before Tauri starts. `corepack pnpm dev:deterministic` remains a

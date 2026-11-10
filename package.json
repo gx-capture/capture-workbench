@@ -80,7 +80,6 @@
     "@tauri-apps/cli": "2.12.4",
     "@types/node": "^24.19.2",
     "@typescript-eslint/utils": "^8.72.1",
-    "ajv": "8.20.0",
     "angular-eslint": "22.6.0",
     "eslint": "^9.39.5",
     "eslint-config-prettier": "^10.1.8",
