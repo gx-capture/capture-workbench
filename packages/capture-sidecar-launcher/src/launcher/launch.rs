@@ -16,14 +16,23 @@ use crate::{
     SidecarConnection,
 };
 
-/// Bounded launch timing and retry policy.
+/// Bounds for one [`launch_sidecar`] call.
+///
+/// The `Default` implementation allows 3 attempts, waits up to 45 seconds for
+/// each attempt to become ready, and stops the whole call after 60 seconds.
 #[derive(Debug, Clone, Copy)]
 pub struct LaunchOptions {
+    /// How long one attempt waits for `/v2/health/ready`.
     pub ready_timeout: Duration,
+    /// Pause between readiness probes while the process is still alive.
     pub ready_poll_interval: Duration,
+    /// Maximum number of isolated processes. Zero rejects the call.
     pub max_attempts: usize,
+    /// Budget for every attempt and the delays between them. Zero rejects the call.
     pub total_timeout: Duration,
+    /// Pause after a failed attempt before the next spawn.
     pub retry_delay: Duration,
+    /// How often that pause checks the stopping flag.
     pub retry_poll_interval: Duration,
 }
 
@@ -40,13 +49,22 @@ impl Default for LaunchOptions {
     }
 }
 
-/// A ready sidecar and its exact process-ownership handle.
+/// A ready sidecar and the ownership token for that process.
 pub struct LaunchedSidecar {
+    /// Ownership of the ready attempt. The last clone drops by stopping it.
     pub process: OwnedRuntimeSession,
+    /// Loopback URL, bearer token, and versions from the ready handshake.
     pub connection: SidecarConnection,
 }
 
-/// Verifies, launches, probes, and retries one authenticated sidecar.
+/// Launches one verified sidecar and retries until it is ready or the policy ends.
+///
+/// Same process and cleanup behavior as [`launch_sidecar_with_observer`]. The
+/// observer used here accepts every spawn.
+///
+/// # Errors
+///
+/// Returns `Err(String)` in the same cases as [`launch_sidecar_with_observer`].
 pub fn launch_sidecar(
     verified: &VerifiedSidecar,
     stopping: &AtomicBool,
@@ -56,10 +74,29 @@ pub fn launch_sidecar(
     launch_sidecar_with_observer(verified, stopping, options, spec_factory, |_| Ok(()))
 }
 
-/// Launches a sidecar while handing every spawned attempt to the host before
-/// readiness is probed. The observer normally stores a clone in the host's
-/// authoritative ownership state; the launcher still uses its own token for
-/// probing and retry cleanup.
+/// Launches a sidecar and hands each spawned attempt to the host before probing.
+///
+/// `spec_factory` receives the attempt number, starting at 1, and the time
+/// left in `options.total_timeout`. Each attempt spawns that command. On
+/// Windows the child is created suspended, assigned to a kill-on-close job,
+/// and resumed only after the assignment is checked. `observe_spawn` then
+/// receives a clone of the ownership token. The launcher keeps its own clone,
+/// probes readiness with the spec's bearer token, and does not log that token.
+///
+/// A failed probe or an early process exit stops that attempt before the next
+/// one. `stopping` is checked before each attempt, during the ready wait, and
+/// during the retry pause. An attempt that already returned ready is not
+/// stopped because the flag later becomes true.
+///
+/// # Errors
+///
+/// Returns `Err(String)` when `max_attempts` or `total_timeout` is zero, when
+/// `stopping` is set before a ready result, when `spec_factory` or spawn
+/// fails, or when `observe_spawn` fails. An observer failure also stops that
+/// attempt; if that cleanup fails, both messages are returned. When every
+/// allowed attempt fails, the error includes the number of attempts and the
+/// last probe or exit failure. Cleanup failure while retiring a not-ready
+/// attempt is returned instead of the readiness failure.
 pub fn launch_sidecar_with_observer(
     verified: &VerifiedSidecar,
     stopping: &AtomicBool,

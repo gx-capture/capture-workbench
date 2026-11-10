@@ -10,6 +10,7 @@ import {
   type CaptureEvent,
   type CaptureOperation,
   type RuntimeInstallation,
+  type SubmitStructuringBatch,
 } from './contracts';
 import { decodeJson, type RuntimeResponseModel } from './codec';
 import {
@@ -213,7 +214,7 @@ function applyReferencedInvalidMutation(
     }
     parent = value as Record<string, unknown>;
   }
-  const field = invalid.path.at(-1);
+  const field = invalid.path[invalid.path.length - 1];
   if (!field) throw new Error(`Invalid corpus path is empty: ${invalid.name}`);
   if (invalid.operation === 'remove') delete parent[field];
   else parent[field] = invalid.value;
@@ -501,14 +502,19 @@ describe('CaptureRuntimeClient', () => {
 
     const completed = await client.getOcr('cap');
     expect(completed.pages).toHaveLength(1);
-    expect(completed.pages[0]?.provenance?.engine).toBe('windowsml-ocr');
+    const pageProvenance = completed.pages[0]?.provenance;
+    expect(
+      pageProvenance !== undefined && pageProvenance.status === 'resolved'
+        ? pageProvenance.engine
+        : undefined,
+    ).toBe('windowsml-ocr');
     expect(completed.pages[0]?.boxes?.[0]?.polygon).toEqual([
       { x: 10.5, y: 20.25 },
       { x: 310.75, y: 12.5 },
       { x: 320, y: 80.5 },
       { x: 5, y: 90 },
     ]);
-    expect(visited.at(-1)).toBe('/v2/captures/cap/ocr');
+    expect(visited[visited.length - 1]).toBe('/v2/captures/cap/ocr');
 
     const failedTransport = new InMemoryRuntimeTransport(
       withDiscovery([
@@ -1617,18 +1623,12 @@ data: ${JSON.stringify(event)}
     expect((await client.getStructuringSession('cap')).sessionId).toBe('session-1');
     expect((await client.getStructuringSession('cap')).providerCapability.provider).toEqual(session.providerCapability.provider);
     expect((await client.pullStructuringBatch('cap', 0)).batchDigest).toBe(batch.batchDigest);
-    await client.submitStructuringBatch(
-      'cap',
-      0,
-      { batchDigest: batch.batchDigest, blocks: [{ sourceSegmentId: 'segment-1', type: 'paragraph', targetText: 'translated' }] },
-      'batch-key',
-    );
-    await client.submitStructuringBatch(
-      'cap',
-      0,
-      { batchDigest: batch.batchDigest, blocks: [{ sourceSegmentId: 'segment-1', type: 'paragraph', targetText: 'translated' }] },
-      'batch-key',
-    );
+    const submission: SubmitStructuringBatch = {
+      batchDigest: batch.batchDigest,
+      blocks: [{ sourceSegmentId: 'segment-1', type: 'paragraph', targetText: 'translated' }],
+    };
+    await client.submitStructuringBatch('cap', 0, submission, 'batch-key');
+    await client.submitStructuringBatch('cap', 0, submission, 'batch-key');
     expect(submitHeaders?.get('X-Idempotency-Key')).toBe('batch-key');
     expect(() => client.openStructuringSession('other', request)).toThrow(
       CaptureRuntimeProtocolError,

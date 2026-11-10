@@ -1,4 +1,5 @@
 import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
+import { formatApproximateBytes } from '../i18n/format-approximate-bytes';
 import { CaptureWorkbenchStore } from './capture-workbench-store';
 import { CaptureRuntimeComputeStatusComponent } from '../installation/capture-runtime-compute-status.component';
 
@@ -55,6 +56,9 @@ import { CaptureRuntimeComputeStatusComponent } from '../installation/capture-ru
                 } @else {
                   <strong>{{ requirement.displayName }}</strong>
                 }
+                @if (formatApproximateBytes(requirement.downloadBytes, store.config().locale); as size) {
+                  <span data-testid="capture-download-size">{{ size }}</span>
+                }
                 @if (requirement.detail) {
                   <span>{{ requirement.detail }}</span>
                 }
@@ -108,6 +112,7 @@ import { CaptureRuntimeComputeStatusComponent } from '../installation/capture-ru
 export class CaptureRuntimeSetupComponent {
   protected readonly store = inject(CaptureWorkbenchStore);
   protected readonly m = this.store.messages;
+  protected readonly formatApproximateBytes = formatApproximateBytes;
 
   protected requirementName(requirementId: string): string {
     return (

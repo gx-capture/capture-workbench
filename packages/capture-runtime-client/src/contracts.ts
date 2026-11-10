@@ -52,7 +52,15 @@ export interface StructuringSession extends Generated.StructuringSessionV2 {}
 export interface StructuringBatch extends Generated.StructuringBatchV2 {}
 export interface StructuringSemanticBlock
   extends Generated.StructuringSemanticBlockV2 {}
-export interface SubmitStructuringBatch extends Generated.SubmitStructuringBatchV2 {}
+/**
+ * A host may leave `protocolVersion` out: the schema lists it as optional and
+ * the client writes it on the wire. The generated type marks it required only
+ * because the generator treats `const` fields as always present.
+ */
+export interface SubmitStructuringBatch
+  extends Omit<Generated.SubmitStructuringBatchV2, 'protocolVersion'> {
+  readonly protocolVersion?: '2';
+}
 export interface RuntimeReady {
   readonly ready: boolean;
   readonly service: string;

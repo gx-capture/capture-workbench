@@ -8,7 +8,11 @@
     "typecheck": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "pnpm exec tsc --noEmit -p packages/capture-runtime-client/tsconfig.json"
+        "commands": [
+          "pnpm exec tsc --noEmit -p packages/capture-runtime-client/tsconfig.json",
+          "pnpm exec tsc --noEmit -p packages/capture-runtime-client/tsconfig.spec.json"
+        ],
+        "parallel": false
       }
     },
     "build": {
@@ -38,7 +42,17 @@
       }
     },
     "test": {
+      "cache": true,
       "executor": "nx:run-commands",
+      "inputs": [
+        "default",
+        "{workspaceRoot}/packages/capture-runtime/src/capture_runtime/assets/contract-set.json",
+        "{workspaceRoot}/packages/capture-runtime/src/capture_runtime/assets/contract-set.sha256",
+        "{workspaceRoot}/packages/capture-runtime/tests/fixtures/ocr-projection-v3-perspective.json",
+        "{workspaceRoot}/packages/capture-runtime/tests/fixtures/ocr-page-selection-v3.json",
+        "{workspaceRoot}/packages/capture-runtime/tests/fixtures/ocr-projection-v3-referenced-invalid-corpus.json",
+        "{workspaceRoot}/packages/capture-runtime/tests/fixtures/speaker-wire-samples.json"
+      ],
       "options": {
         "command": "pnpm exec vitest run --config packages/capture-runtime-client/vitest.config.ts"
       }

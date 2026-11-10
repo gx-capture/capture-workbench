@@ -24,12 +24,12 @@ use crate::{
     },
 };
 
-/// The producer-owned inputs for one ordered root in an immutable group plan.
+/// Inputs for one ordered root in an immutable group plan.
 ///
-/// This value is consumed by [`build_immutable_group_plan`]. It deliberately
-/// has no public accessors: executable, manifest, environment, and bearer
-/// token inputs are frozen into the opaque plan and never returned as a public
-/// lifecycle receipt.
+/// Consumed by [`build_immutable_group_plan`]. There are no public accessors.
+/// The executable, manifest path, environment, and bearer token are frozen
+/// into the plan and are not returned on a lifecycle receipt. Constructing
+/// this value does not read those paths.
 pub struct GroupRootPlanInput {
     role: String,
     root_generation: u64,
@@ -38,8 +38,11 @@ pub struct GroupRootPlanInput {
 }
 
 impl GroupRootPlanInput {
-    /// Creates one producer input. Vector order supplied to
-    /// [`build_immutable_group_plan`] is the canonical root order.
+    /// Stores one root's role, generation, launch spec, and manifest path.
+    ///
+    /// The position of this value in the vector passed to
+    /// [`build_immutable_group_plan`] is the root's ordinal. This function
+    /// does not check the role, generation, port, token, or files.
     pub fn new(
         role: String,
         root_generation: u64,
@@ -55,15 +58,32 @@ impl GroupRootPlanInput {
     }
 }
 
-/// Builds a real producer-owned immutable plan for the canonical prepare
-/// seam. Every root's manifest, executable bytes, and readiness schema are
-/// verified from the supplied paths before private nonces, references, and
-/// plan identities are finalized.
+/// Verifies each root and builds an in-memory plan for [`crate::OwnedRuntimeSession::prepare_group`].
 ///
-/// The function performs preflight reads and creates no staging directory,
-/// listener, process, or model resource. Those resources remain forbidden
-/// until [`OwnedRuntimeSession::prepare_group`](crate::OwnedRuntimeSession::prepare_group)
-/// has completed the external sink binding transaction.
+/// `roots` must be non-empty and `group_generation` must be non-zero. Vector
+/// order is the root order. For every root this reads the manifest, checks
+/// the executable's length and SHA-256, and checks the readiness schema file
+/// beside the manifest against the manifest digest and the canonical schema
+/// digest. Ports must be distinct and non-zero. The bearer token is kept in
+/// the plan's private launch command. It is not placed in the returned plan's
+/// public values, and this function does not write it.
+///
+/// `producer_root` must be an existing absolute directory and must not be a
+/// reparse point. The call reads files and generates identifiers. It does not
+/// create a staging directory, listener, process, journal file, or model
+/// resource.
+///
+/// # Errors
+///
+/// Returns [`PrepareError::InvalidPlan`](crate::PrepareError::InvalidPlan)
+/// when the generation, roots, manifest, executable digest, schema, ports, or
+/// producer directory fail the checks above.
+/// Returns [`PrepareError::ReferenceGeneration`](crate::PrepareError::ReferenceGeneration)
+/// when the operating-system generator cannot supply a session or address
+/// identifier.
+/// Returns [`PrepareError::JournalUnavailable`](crate::PrepareError::JournalUnavailable)
+/// when the journal store cannot be constructed, including on targets other
+/// than Windows.
 pub fn build_immutable_group_plan(
     producer_root: PathBuf,
     group_generation: u64,

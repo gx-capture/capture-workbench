@@ -9,12 +9,23 @@
     "e2e": {
       "executor": "nx:run-commands",
       "parallelism": true,
+      "inputs": [
+        "default",
+        "^default",
+        "{workspaceRoot}/tools/release/release-intent.ts",
+        "{workspaceRoot}/release/version.json"
+      ],
       "options": {
         "command": "corepack pnpm exec playwright test --config apps/capture-workbench-e2e/playwright.config.ts"
       }
     },
     "runtime-web-component-e2e": {
       "executor": "nx:run-commands",
+      "inputs": [
+        "default",
+        "^default",
+        "{workspaceRoot}/tools/runtime-web-component-e2e.ts"
+      ],
       "dependsOn": [
         {
           "target": "pack",

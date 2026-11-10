@@ -77,10 +77,11 @@ choice; documents never wait for them. The runtime reports `speech-recognition` 
 unit when a recording arrives without it.
 
 Before downloading, the user sees what each model is: a guide per unit (what it does, which
-languages it suits, the hardware it runs on, the download size and the license), kept in
+languages it suits, the hardware it runs on, what the download contains and the license), kept in
 `capture-workbench-ui` as `CAPTURE_UNIT_GUIDES` and shown by both the desktop app and the Web
 Component setup list. The guide's facts come from the pinned model cards and the published
-worker archives; change them together with the model-source lock.
+worker archives; change them together with the model-source lock. Download size is not one of
+those facts: both hosts format the runtime requirement's `downloadBytes`.
 
 ## Choosing the model (2026-11-04)
 

@@ -5,18 +5,32 @@ use std::{
 
 use crate::constants::LOOPBACK_HOST;
 
-/// Host-owned launch inputs. The launcher owns command isolation and process lifecycle;
-/// the host supplies only its product-specific environment values.
+/// Host-owned inputs for one sidecar process.
+///
+/// The launch command clears the child environment, then copies parent
+/// variables whose names match `inherited_environment_allowlist` without
+/// regard to case, then applies `environment`. It runs `serve --host
+/// 127.0.0.1 --port <port>` with the executable's parent as the working
+/// directory and with stdin, stdout, and stderr set to null. `token` is used
+/// for the readiness probe and the returned connection. It is not copied into
+/// the child environment unless the host also puts it in `environment`.
 pub struct SidecarLaunchSpec {
+    /// Sidecar executable to spawn.
     pub executable_path: PathBuf,
+    /// Loopback port passed to `serve --port`.
     pub port: u16,
+    /// Bearer token for the readiness probe. Not logged by this crate.
     pub token: String,
+    /// Environment entries set after the allowlisted parent variables.
     pub environment: Vec<(String, String)>,
+    /// Parent environment names the child may inherit.
     pub inherited_environment_allowlist: Vec<String>,
 }
 
 impl SidecarLaunchSpec {
-    /// Creates a launch specification for the runtime's standard `serve` entrypoint.
+    /// Stores one `serve` launch specification.
+    ///
+    /// Does not open the executable, bind `port`, or spawn a process.
     pub fn new(
         executable_path: PathBuf,
         port: u16,

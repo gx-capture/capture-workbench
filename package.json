@@ -22,6 +22,7 @@
     "lint": "corepack pnpm nx run-many -t lint",
     "verify": "corepack pnpm run verify:workspace && corepack pnpm run verify:package && corepack pnpm run verify:smoke",
     "verify:workspace": "corepack pnpm nx run-many -t lint,typecheck,test,build,production-bundle-check,cargo-fmt-check,cargo-check,cargo-test,package-qa-test --parallel=false",
+    "verify:affected": "corepack pnpm nx run capture-runtime:check-contracts && corepack pnpm nx affected -t classify-release-model-mode,python-version-check,typecheck,test,cargo-fmt-check,typecheck-scripts,package-qa-test,fake-runtime-routes,release-version-typecheck,python-candidate-index-typecheck,release-version-test,release-candidate-test,contract-impact-test,release-contract-test,consumer-gate-test,promotion-evidence-test,promotion-registry-test,release-manifest-test,release-index-test --base=origin/main && corepack pnpm nx affected -t lint --exclude=capture-tools,capture-workbench-desktop,capture-workbench-e2e --base=origin/main && corepack pnpm nx affected -t cargo-test --exclude=capture-workbench-desktop --base=origin/main",
     "verify:package": "corepack pnpm nx run capture-angular:clean-consumer-smoke",
     "verify:smoke": "corepack pnpm nx run capture-workbench-desktop:smoke-deterministic && corepack pnpm nx run capture-workbench-e2e:e2e",
     "acceptance:three-projects": "node tools/three-project-acceptance.ts",

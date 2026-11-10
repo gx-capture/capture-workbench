@@ -6,12 +6,13 @@ import type {
   RawCapture,
   RuntimeRequirement,
 } from '@gx-capture/capture-workbench-ui';
+import { formatApproximateBytes as formatApproximateBytesIn } from '@gx-capture/capture-workbench-ui';
 import type {
   DesktopLibraryStatus,
   DesktopLibrarySummary,
 } from '../contracts';
 import type { DesktopCaptureOperation } from './desktop-runtime-client.service';
-import { desktopMessages } from '../i18n/desktop-messages';
+import { desktopLocale, desktopMessages } from '../i18n/desktop-messages';
 
 /** Pure workspace selectors and terminal mappings shared by the facade services. */
 
@@ -68,24 +69,11 @@ export function selectRecognitionEngines(
     requirements.filter((requirement) => requirement.requirementId === requirementId));
 }
 
-/** Formats a download byte count as a localized approximate size (`約 2.8 GB`, `約 144 MB`). */
+/** A download size in the app's current language (`約 2.8 GB`, `~2.8 GB`), or null when unknown. */
 export function formatApproximateBytes(
   bytes: number | null | undefined,
 ): string | null {
-  if (typeof bytes !== 'number' || !Number.isFinite(bytes) || bytes <= 0) {
-    return null;
-  }
-  const m = desktopMessages();
-  if (bytes >= 1_000_000_000) {
-    const gb = (bytes / 1_000_000_000).toFixed(1).replace(/\.0$/u, '');
-    return m.approxSize(`${gb} GB`);
-  }
-  if (bytes >= 1_000_000) {
-    const mb = Math.round(bytes / 1_000_000);
-    return m.approxSize(`${mb} MB`);
-  }
-  const kb = Math.max(1, Math.round(bytes / 1_000));
-  return m.approxSize(`${kb} KB`);
+  return formatApproximateBytesIn(bytes, desktopLocale());
 }
 
 /** Converts model installation progress to the percentage shown by the UI. */

@@ -9,14 +9,25 @@
       "cache": true,
       "executor": "nx:run-commands",
       "options": {
-        "command": "pnpm exec eslint tools/capture-boundary-doctor.ts tools/capture-boundary-doctor.test.ts tools/three-project-acceptance.ts tools/three-project-acceptance.test.ts tools/three-project-cleanup-verifier.test.ts tools/windows-built-in-process-resolver.ts tools/windows-built-in-process-resolver.test.ts tools/package-manager.ts tools/package-manager-version.test.ts tools/cargo-test-retry-failed.ts tools/cargo-test-retry-failed.test.ts tools/resolve-capture-release.ts tools/resolve-capture-release.test.ts tools/architecture-graph.ts tools/architecture-graph.test.ts tools/architecture-diff.ts tools/architecture-diff.test.ts tools/wiki-overview.ts tools/wiki-overview.test.ts tools/architecture-exceptions-gate.ts tools/architecture-exceptions-gate.test.ts tools/dead-code-gate.ts tools/dead-code-gate.test.ts"
+        "command": "pnpm exec eslint tools/capture-boundary-doctor.ts tools/capture-boundary-doctor.test.ts tools/three-project-acceptance.ts tools/three-project-acceptance.test.ts tools/three-project-cleanup-verifier.test.ts tools/windows-built-in-process-resolver.ts tools/windows-built-in-process-resolver.test.ts tools/package-manager.ts tools/package-manager-version.test.ts tools/cargo-test-retry-failed.ts tools/cargo-test-retry-failed.test.ts tools/resolve-capture-release.ts tools/resolve-capture-release.test.ts tools/architecture-graph.ts tools/architecture-graph.test.ts tools/architecture-diff.ts tools/architecture-diff.test.ts tools/wiki-overview.ts tools/wiki-overview.test.ts tools/architecture-exceptions-gate.ts tools/architecture-exceptions-gate.test.ts tools/dead-code-gate.ts tools/dead-code-gate.test.ts tools/affected-projects.test.ts"
       }
     },
     "test": {
       "cache": true,
       "executor": "nx:run-commands",
+      "inputs": [
+        "default",
+        "^default",
+        "{workspaceRoot}/.github/**/*",
+        "{workspaceRoot}/release/**/*",
+        "{workspaceRoot}/release-index/**/*",
+        "{workspaceRoot}/test-fixtures/**/*",
+        "{workspaceRoot}/architecture-graph.config.json",
+        "{workspaceRoot}/pnpm-workspace.yaml",
+        "{workspaceRoot}/packages/capture-acceptance-contract/**/*"
+      ],
       "options": {
-        "command": "node --test tools/capture-boundary-doctor.test.ts tools/three-project-acceptance.test.ts tools/three-project-cleanup-verifier.test.ts tools/windows-built-in-process-resolver.test.ts tools/package-manager-version.test.ts tools/cargo-test-retry-failed.test.ts tools/dead-code-gate.test.ts tools/architecture-graph.test.ts tools/architecture-diff.test.ts tools/wiki-overview.test.ts tools/architecture-exceptions-gate.test.ts tools/resolve-capture-release.test.ts"
+        "command": "node --test tools/capture-boundary-doctor.test.ts tools/three-project-acceptance.test.ts tools/three-project-cleanup-verifier.test.ts tools/windows-built-in-process-resolver.test.ts tools/package-manager-version.test.ts tools/cargo-test-retry-failed.test.ts tools/dead-code-gate.test.ts tools/architecture-graph.test.ts tools/architecture-diff.test.ts tools/wiki-overview.test.ts tools/architecture-exceptions-gate.test.ts tools/resolve-capture-release.test.ts tools/affected-projects.test.ts"
       }
     },
     "typecheck": {
@@ -84,12 +95,14 @@
         "{workspaceRoot}/pnpm-lock.yaml",
         "{workspaceRoot}/packages/**/Cargo.lock",
         "{workspaceRoot}/packages/**/uv.lock",
-        "{workspaceRoot}/apps/**/Cargo.lock"
+        "{workspaceRoot}/apps/**/Cargo.lock",
+        "toolingCorpus"
       ]
     },
     "release-candidate-test": {
       "cache": true,
       "executor": "nx:run-commands",
+      "inputs": ["default", "^default", "toolingCorpus"],
       "options": {
         "command": "node --test tools/verify-release-candidate.test.ts tools/assemble-release-candidate.test.ts"
       }
@@ -97,6 +110,7 @@
     "contract-impact-test": {
       "cache": true,
       "executor": "nx:run-commands",
+      "inputs": ["default", "^default", "toolingCorpus"],
       "options": {
         "command": "node --test tools/contract-impact.test.ts tools/create-contract-snapshot.test.ts"
       }
@@ -104,6 +118,7 @@
     "release-contract-test": {
       "cache": true,
       "executor": "nx:run-commands",
+      "inputs": ["default", "^default", "toolingCorpus"],
       "options": {
         "command": "node --test tools/classify-release-contract.test.ts"
       }
@@ -111,6 +126,7 @@
     "consumer-gate-test": {
       "cache": true,
       "executor": "nx:run-commands",
+      "inputs": ["default", "^default", "toolingCorpus"],
       "options": {
         "command": "node --test tools/consumer-gate.test.ts tools/release/evidence-values.test.ts"
       }
@@ -118,6 +134,7 @@
     "promotion-evidence-test": {
       "cache": true,
       "executor": "nx:run-commands",
+      "inputs": ["default", "^default", "toolingCorpus"],
       "options": {
         "command": "node --test tools/verify-promotion-evidence.test.ts"
       }
@@ -125,6 +142,7 @@
     "promotion-registry-test": {
       "cache": true,
       "executor": "nx:run-commands",
+      "inputs": ["default", "^default", "toolingCorpus"],
       "options": {
         "command": "node --test tools/package-candidate-workflow.test.ts tools/publish-npm-candidate.test.ts tools/publish-crate-candidate.test.ts tools/verify-package-candidate.test.ts tools/verify-runtime-candidate.test.ts tools/verify-runtime-candidate-binding.test.ts tools/verify-registry-ledgers.test.ts tools/record-pypi-candidate.test.ts tools/assemble-runtime-candidate.test.ts tools/release/github-release-support.test.ts"
       }
@@ -132,6 +150,7 @@
     "release-manifest-test": {
       "cache": true,
       "executor": "nx:run-commands",
+      "inputs": ["default", "^default", "toolingCorpus"],
       "options": {
         "command": "node --test tools/create-release-manifest.test.ts"
       }
@@ -191,6 +210,7 @@
     "release-index-test": {
       "cache": true,
       "executor": "nx:run-commands",
+      "inputs": ["default", "^default", "toolingCorpus"],
       "options": {
         "command": "node --test tools/update-release-index.test.ts"
       }
