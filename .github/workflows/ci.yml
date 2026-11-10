@@ -105,6 +105,9 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
           pnpm nx run capture-runtime:check-contracts
+          # Scans every TypeScript file under apps, packages and tools, so it
+          # runs on every pull request, not only when capture-angular is affected.
+          pnpm nx run capture-angular:async-boundary-check
 
       - name: Check affected projects
         shell: pwsh
