@@ -4,12 +4,14 @@ import argparse
 import hashlib
 import zipfile
 from pathlib import Path
+from typing import Any
 from urllib.parse import quote
 
 from model_source_lock import (
     CORE_ONLY_RELEASE_MODE,
     OPTIONAL_REQUIREMENT_IDS,
     PENDING_WHISPER_FREEZE_BLOCKER,
+    cpu_speech_model_delivery,
     load_source_lock,
     model_delivery,
     release_mode,
@@ -129,6 +131,66 @@ def requirement(
     }
 
 
+def _content(
+    *,
+    content_id: str,
+    archive: Path,
+    manifest: Path,
+    entry_point: str,
+    model_files: dict[str, Any],
+    release_base_url: str,
+) -> dict[str, object]:
+    return {
+        "id": content_id,
+        "artifacts": [
+            descriptor(
+                requirement_id="speech-recognition",
+                role="worker",
+                archive=archive,
+                manifest=manifest,
+                entry_point=entry_point,
+                release_base_url=release_base_url,
+            )
+        ],
+        "modelFiles": model_files,
+        "unavailableReason": None,
+    }
+
+
+def speech_contents(
+    *,
+    cuda_archive: Path,
+    cuda_manifest: Path,
+    cpu_archive: Path,
+    cpu_manifest: Path,
+    source_lock: dict[str, Any],
+    release_base_url: str,
+) -> dict[str, object]:
+    """Speech as ``cuda`` then ``cpu``. Both workers use the runtime version."""
+
+    return {
+        "requirementId": "speech-recognition",
+        "contents": [
+            _content(
+                content_id="cuda",
+                archive=cuda_archive,
+                manifest=cuda_manifest,
+                entry_point="capture-engine-speech-recognition.exe",
+                model_files=model_delivery(source_lock, "speech-recognition"),
+                release_base_url=release_base_url,
+            ),
+            _content(
+                content_id="cpu",
+                archive=cpu_archive,
+                manifest=cpu_manifest,
+                entry_point="capture-engine-speech-recognition-cpu.exe",
+                model_files=cpu_speech_model_delivery(source_lock),
+                release_base_url=release_base_url,
+            ),
+        ],
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, required=True)
@@ -142,6 +204,9 @@ def main() -> None:
     parser.add_argument("--ocr-worker-manifest", type=Path, required=True)
     parser.add_argument("--speech-recognition-worker-archive", type=Path, required=True)
     parser.add_argument("--speech-recognition-worker-manifest", type=Path, required=True)
+    # Optional. Without these, speech stays one delivery. Release targets omit them.
+    parser.add_argument("--speech-recognition-cpu-worker-archive", type=Path)
+    parser.add_argument("--speech-recognition-cpu-worker-manifest", type=Path)
     # Read only when the model source lock contains the speaker-diarization unit.
     parser.add_argument("--diarization-worker-archive", type=Path)
     parser.add_argument("--diarization-worker-manifest", type=Path)
@@ -189,9 +254,48 @@ def main() -> None:
         != arguments.ocr_worker_archive.parent.resolve()
     ):
         raise SystemExit("OCR and Whisper worker archives must share one engine directory")
-    requirements = (
+    cpu_archive = arguments.speech_recognition_cpu_worker_archive
+    cpu_manifest = arguments.speech_recognition_cpu_worker_manifest
+    if (cpu_archive is None) != (cpu_manifest is None):
+        raise SystemExit(
+            "The speech-recognition CPU worker archive and manifest must be passed together."
+        )
+    if cpu_archive is not None and (
+        source_lock is None or release_mode(source_lock) == CORE_ONLY_RELEASE_MODE
+    ):
+        raise SystemExit(
+            "The speech-recognition CPU worker archive requires the speech model source lock."
+        )
+    if (
+        cpu_archive is not None
+        and cpu_archive.parent.resolve() != arguments.ocr_worker_archive.parent.resolve()
+    ):
+        raise SystemExit("Worker archives must share one engine directory")
+    if source_lock is not None and release_mode(source_lock) == CORE_ONLY_RELEASE_MODE:
+        speech: dict[str, object] | None = None
+    elif cpu_archive is not None and cpu_manifest is not None and source_lock is not None:
+        speech = speech_contents(
+            cuda_archive=arguments.speech_recognition_worker_archive,
+            cuda_manifest=arguments.speech_recognition_worker_manifest,
+            cpu_archive=cpu_archive,
+            cpu_manifest=cpu_manifest,
+            source_lock=source_lock,
+            release_base_url=arguments.release_base_url,
+        )
+    else:
+        speech = requirement(
+            requirement_id="speech-recognition",
+            worker_archive=arguments.speech_recognition_worker_archive,
+            worker_manifest=arguments.speech_recognition_worker_manifest,
+            worker_entry_point="capture-engine-speech-recognition.exe",
+            direct_model_files=(
+                None if source_lock is None else model_delivery(source_lock, "speech-recognition")
+            ),
+            release_base_url=arguments.release_base_url,
+        )
+    requirements: list[dict[str, object]] = (
         []
-        if source_lock is not None and release_mode(source_lock) == CORE_ONLY_RELEASE_MODE
+        if speech is None
         else [
             requirement(
                 requirement_id="windowsml-ocr",
@@ -203,18 +307,7 @@ def main() -> None:
                 ),
                 release_base_url=arguments.release_base_url,
             ),
-            requirement(
-                requirement_id="speech-recognition",
-                worker_archive=arguments.speech_recognition_worker_archive,
-                worker_manifest=arguments.speech_recognition_worker_manifest,
-                worker_entry_point="capture-engine-speech-recognition.exe",
-                direct_model_files=(
-                    None
-                    if source_lock is None
-                    else model_delivery(source_lock, "speech-recognition")
-                ),
-                release_base_url=arguments.release_base_url,
-            ),
+            speech,
         ]
     )
     locked_ids = (

@@ -639,6 +639,112 @@ def model_delivery(lock: dict[str, Any], requirement_id: str) -> dict[str, Any]:
     }
 
 
+# CPU speech publishes the mini checkpoint, its architecture directory, and the
+# aligner. These names are the files that content cannot ship without. The
+# speech worker is not imported here: catalog generation must not load it.
+_CPU_SPEECH_MODEL_ROOTS = (
+    "model/aligner",
+    "model/fallback",
+    "model/fallback-architecture",
+)
+_CPU_SPEECH_FORBIDDEN_ROOTS = (
+    "model/primary",
+    "model/primary-architecture",
+)
+_CPU_SPEECH_EXPECTED_PATHS = frozenset(
+    {
+        "model/aligner/chat_template.jinja",
+        "model/aligner/config.json",
+        "model/aligner/model.safetensors",
+        "model/aligner/processor_config.json",
+        "model/aligner/tokenizer.json",
+        "model/aligner/tokenizer_config.json",
+        "model/fallback-architecture/chat_template.jinja",
+        "model/fallback-architecture/config.json",
+        "model/fallback-architecture/processor_config.json",
+        "model/fallback-architecture/tokenizer.json",
+        "model/fallback-architecture/tokenizer_config.json",
+        "model/fallback/added_tokens.json",
+        "model/fallback/generation_config.json",
+        "model/fallback/model.safetensors",
+        "model/fallback/special_tokens_map.json",
+        "model/fallback/tokenizer.json",
+        "model/fallback/tokenizer_config.json",
+    }
+)
+
+
+def _path_under(path: str, root: str) -> bool:
+    return path == root or path.startswith(f"{root}/")
+
+
+def cpu_speech_model_delivery(lock: dict[str, Any]) -> dict[str, Any]:
+    """Speech model files for the ``cpu`` content.
+
+    The list is the locked ``speech-recognition`` paths under
+    ``model/fallback``, ``model/fallback-architecture`` and ``model/aligner``,
+    plus the license and notice files those entries reference. Each file keeps
+    the lock entry's byte count and sha256. No new locked file is created.
+    """
+
+    try:
+        full = model_delivery(lock, "speech-recognition")
+    except StopIteration as error:
+        raise ModelSourceLockError(
+            "speech-recognition cpu model delivery requires the speech-recognition unit"
+        ) from error
+    files = full["files"]
+    by_path = {item["path"]: item for item in files}
+    selected_paths = {
+        item["path"]
+        for item in files
+        if any(_path_under(item["path"], root) for root in _CPU_SPEECH_MODEL_ROOTS)
+    }
+    for path in list(selected_paths):
+        item = by_path[path]
+        for field in ("licensePath", "noticePath"):
+            referenced = item[field]
+            if referenced is None:
+                continue
+            if not isinstance(referenced, str) or referenced not in by_path:
+                raise ModelSourceLockError(
+                    "speech-recognition cpu model delivery references a path that is "
+                    f"not locked: {referenced}"
+                )
+            selected_paths.add(referenced)
+    missing = sorted(_CPU_SPEECH_EXPECTED_PATHS - selected_paths)
+    if missing:
+        raise ModelSourceLockError(
+            "speech-recognition cpu model delivery is missing locked paths: " + ", ".join(missing)
+        )
+    forbidden = sorted(
+        path
+        for path in selected_paths
+        if any(_path_under(path, root) for root in _CPU_SPEECH_FORBIDDEN_ROOTS)
+    )
+    if forbidden:
+        raise ModelSourceLockError(
+            "speech-recognition cpu model delivery must not include primary paths: "
+            + ", ".join(forbidden)
+        )
+    selected = [item for item in files if item["path"] in selected_paths]
+    manifest = {
+        "artifactVersion": full["artifactVersion"],
+        "entryPoint": full["entryPoint"],
+        "files": selected,
+        "manifestVersion": "1",
+    }
+    return {
+        "artifactVersion": full["artifactVersion"],
+        "entryCount": len(selected),
+        "entryPoint": full["entryPoint"],
+        "extractedBytes": sum(item["bytes"] for item in selected),
+        "files": selected,
+        "manifestSha256": hashlib.sha256(canonical_json_bytes(manifest)).hexdigest(),
+        "sourceLockSha256": full["sourceLockSha256"],
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("operation", choices=("classify", "validate"))
