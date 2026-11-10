@@ -154,6 +154,7 @@ pub(crate) async fn model_smoke_import_fixture(
         let source = fixtures.resolve(&request.fixture_key)?;
         library.import_source(LibraryImportSourceRequest {
             source_path: source.to_string_lossy().into_owned(),
+            ..Default::default()
         })
     })
     .await

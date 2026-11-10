@@ -471,7 +471,7 @@ test('blocking native I/O is isolated behind async Tauri commands', async () => 
   assert.match(commands, /pub(?:\(crate\))? fn desktop_runtime_status/u);
 });
 
-test('native source import keeps renderer IPC path-only and responses path-free', async () => {
+test('native source import keeps path IPC in the library service', async () => {
   const workspaceRoot = join(appRoot, '..', '..');
   const [renderer, contracts, library, capability, desktopHost] =
     await Promise.all([

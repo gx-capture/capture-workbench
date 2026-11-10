@@ -5,8 +5,8 @@ use std::fs;
 
 #[cfg(test)]
 use crate::contracts::{
-    LibraryCaptureUpdate, LibraryDocumentRequest, LibraryImportSourceRequest, LibraryListRequest,
-    LibrarySourceInput, OcrEvidenceV1,
+    LibraryCaptureOptions, LibraryCaptureUpdate, LibraryDocumentRequest,
+    LibraryImportSourceRequest, LibraryListRequest, LibrarySourceInput, OcrEvidenceV1,
 };
 
 const INDEX_FILE_NAME: &str = "library-index-v1.json";
@@ -110,6 +110,7 @@ mod tests {
             recovery_code: None,
             recovery_message: None,
             ocr_evidence: None,
+            capture_options: None,
         }
     }
 
@@ -214,6 +215,7 @@ mod tests {
             recovery_code: None,
             recovery_message: None,
             ocr_evidence: evidence,
+            capture_options: None,
         }
     }
 
@@ -334,6 +336,7 @@ mod tests {
                 recovery_code: None,
                 recovery_message: None,
                 ocr_evidence: None,
+                capture_options: None,
             })
             .expect("update");
         let detail = library
@@ -947,6 +950,7 @@ mod tests {
                 recovery_code: None,
                 recovery_message: None,
                 ocr_evidence: None,
+                capture_options: None,
             })
             .expect("write backup");
         fs::write(
@@ -989,6 +993,7 @@ mod tests {
                 recovery_code: None,
                 recovery_message: None,
                 ocr_evidence: None,
+                capture_options: None,
             })
             .expect("link capture");
         assert_eq!(linked.capture_id.as_deref(), Some("capture-1"));
@@ -1007,6 +1012,7 @@ mod tests {
                 recovery_code: Some("runtime_cleanup_failed".into()),
                 recovery_message: Some("retry cleanup".into()),
                 ocr_evidence: None,
+                capture_options: None,
             })
             .expect("preserve capture");
         assert_eq!(preserved.capture_id.as_deref(), Some("capture-1"));
@@ -1033,6 +1039,7 @@ mod tests {
                 recovery_code: None,
                 recovery_message: None,
                 ocr_evidence: None,
+                capture_options: None,
             })
             .expect("clear capture");
         assert_eq!(cleared.capture_id, None);
@@ -1056,6 +1063,7 @@ mod tests {
                 recovery_code: None,
                 recovery_message: None,
                 ocr_evidence: None,
+                capture_options: None,
             })
             .is_err());
     }
@@ -1157,6 +1165,7 @@ mod tests {
         let imported = library
             .import_source(LibraryImportSourceRequest {
                 source_path: source.to_string_lossy().into_owned(),
+                ..Default::default()
             })
             .expect("native import");
         let serialized = serde_json::to_string(&imported).expect("summary");
@@ -1169,6 +1178,7 @@ mod tests {
         let error = library
             .import_source(LibraryImportSourceRequest {
                 source_path: mismatch.to_string_lossy().into_owned(),
+                ..Default::default()
             })
             .expect_err("signature mismatch");
         assert!(!error.contains(&mismatch.to_string_lossy().to_string()));
@@ -1195,6 +1205,7 @@ mod tests {
         let imported = library
             .import_source(LibraryImportSourceRequest {
                 source_path: exact.to_string_lossy().into_owned(),
+                ..Default::default()
             })
             .expect("exact limit");
         assert_eq!(imported.byte_length, MAX_SOURCE_BYTES as u64);
@@ -1214,6 +1225,7 @@ mod tests {
         let error = library
             .import_source(LibraryImportSourceRequest {
                 source_path: oversized.to_string_lossy().into_owned(),
+                ..Default::default()
             })
             .expect_err("oversized rejected");
         assert!(error.contains("limit"));
@@ -1237,6 +1249,7 @@ mod tests {
         assert!(library
             .import_source(LibraryImportSourceRequest {
                 source_path: directory.path().to_string_lossy().into_owned(),
+                ..Default::default()
             })
             .is_err());
 
@@ -1251,8 +1264,131 @@ mod tests {
             assert!(library
                 .import_source(LibraryImportSourceRequest {
                     source_path: link.to_string_lossy().into_owned(),
+                    ..Default::default()
                 })
                 .is_err());
         }
+    }
+
+    #[test]
+    fn path_import_keeps_a_file_queued_with_its_page_count() {
+        let directory = tempfile::tempdir().expect("temporary app data");
+        let source = directory.path().join("charge.pdf");
+        fs::write(&source, b"%PDF-1.7\ncharge").expect("source");
+        let library = LibraryStore::open(directory.path()).expect("library");
+        let imported = library
+            .import_source(LibraryImportSourceRequest {
+                source_path: source.to_string_lossy().into_owned(),
+                capture_options: Some(LibraryCaptureOptions {
+                    pdf_page_count: Some(3),
+                }),
+                ..Default::default()
+            })
+            .expect("path import");
+        assert_eq!(imported.status, "queued");
+        assert_eq!(imported.capture_id, None);
+        assert!(!imported.has_raw);
+        let options = imported.capture_options.expect("options");
+        assert_eq!(options.pdf_page_count, Some(3));
+
+        let preserved = library
+            .update_capture(LibraryCaptureUpdate {
+                document_id: imported.document_id.clone(),
+                capture_id: Some("capture-1".into()),
+                clear_capture_id: false,
+                status: "processing".into(),
+                stage: Some("extracting".into()),
+                raw: None,
+                result: None,
+                error_code: None,
+                error_message: None,
+                recovery_code: None,
+                recovery_message: None,
+                ocr_evidence: None,
+                capture_options: None,
+            })
+            .expect("update without options");
+        let preserved_options = preserved.capture_options.expect("options kept");
+        assert_eq!(preserved_options.pdf_page_count, Some(3));
+
+        let with_raw = library
+            .update_capture(LibraryCaptureUpdate {
+                document_id: imported.document_id,
+                capture_id: None,
+                clear_capture_id: true,
+                status: "awaiting_confirmation".into(),
+                stage: Some("completed".into()),
+                raw: Some(serde_json::json!({ "sourceText": "第一頁" })),
+                result: None,
+                error_code: None,
+                error_message: None,
+                recovery_code: None,
+                recovery_message: None,
+                ocr_evidence: None,
+                capture_options: None,
+            })
+            .expect("raw");
+        assert!(with_raw.has_raw);
+    }
+
+    #[test]
+    fn path_import_rejects_an_invalid_page_count() {
+        let directory = tempfile::tempdir().expect("temporary app data");
+        let library = LibraryStore::open(directory.path()).expect("library");
+        let pages = library
+            .import_source(LibraryImportSourceRequest {
+                source_path: directory
+                    .path()
+                    .join("charge.pdf")
+                    .to_string_lossy()
+                    .into_owned(),
+                capture_options: Some(LibraryCaptureOptions {
+                    pdf_page_count: Some(0),
+                }),
+                ..Default::default()
+            })
+            .expect_err("page count");
+        assert_eq!(pages, "Capture PDF page selection is invalid.");
+
+        let missing = library
+            .import_source(LibraryImportSourceRequest::default())
+            .expect_err("empty path");
+        assert_eq!(missing, "Selected source cannot be inspected.");
+    }
+
+    #[test]
+    fn old_index_without_capture_options_still_opens() {
+        let directory = tempfile::tempdir().expect("temporary app data");
+        let library_root = directory.path().join("library");
+        fs::create_dir_all(library_root.join("items")).expect("items");
+        let document_id = "ab".repeat(16);
+        fs::write(
+            library_root.join(INDEX_FILE_NAME),
+            format!(
+                r#"{{
+                    "version": 1,
+                    "documents": [{{
+                        "documentId": "{document_id}",
+                        "fileName": "old.pdf",
+                        "mediaType": "application/pdf",
+                        "byteLength": 1,
+                        "createdAtMs": 1,
+                        "updatedAtMs": 1,
+                        "status": "queued",
+                        "stage": "uploading",
+                        "captureId": null,
+                        "errorCode": null,
+                        "errorMessage": null
+                    }}]
+                }}"#
+            ),
+        )
+        .expect("old index");
+
+        let library = LibraryStore::open(directory.path()).expect("old index opens");
+        let listed = library.list(LibraryListRequest::default()).expect("list");
+        assert_eq!(listed.len(), 1);
+        assert!(listed[0].capture_options.is_none());
+        assert!(!listed[0].has_raw);
     }
 }

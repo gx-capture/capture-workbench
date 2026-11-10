@@ -1,0 +1,241 @@
+import { computed, DestroyRef, effect, Injectable, inject, signal } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { catchError, concatMap, EMPTY, finalize, from } from 'rxjs';
+import type { DesktopCaptureOptions, DesktopLibrarySummary } from '../contracts';
+import { desktopMessages } from '../i18n/desktop-messages';
+import { DesktopLibraryService } from './desktop-library.service';
+import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
+import { DesktopWorkspaceCaptureService, type DesktopWorkspaceCaptureHost } from './desktop-workspace-capture.service';
+import { DesktopWorkspaceFormattingService } from './desktop-workspace-formatting.service';
+import { DesktopWorkspaceStore } from './desktop-workspace.store';
+import {
+  errorMessage,
+  formatApproximateBytes,
+  installationPercent,
+} from './desktop-workspace.selectors';
+import { RecognitionFeaturesStore } from './recognition-features.store';
+import {
+  describeOcrDocument,
+  isOcrMediaType,
+  ocrFileExtension,
+  ocrFileName,
+  parsePdfPageCount,
+  refuseOcrFile,
+  renderRawOcrText,
+} from './ocr-queue';
+
+const OCR_PICKER_EXTENSIONS = ['pdf', 'png', 'jpg', 'jpeg'] as const;
+
+@Injectable({ providedIn: 'root' })
+/** Import, waiting queue, start, cancel, retry and progress for the OCR page. */
+export class CaptureQueueStore {
+  private readonly library = inject(DesktopLibraryService);
+  private readonly capture = inject(DesktopWorkspaceCaptureService);
+  private readonly runtime = inject(DesktopRuntimeClientService);
+  private readonly features = inject(RecognitionFeaturesStore);
+  private readonly workspace = inject(DesktopWorkspaceStore);
+  private readonly formatting = inject(DesktopWorkspaceFormattingService);
+  private readonly destroyRef = inject(DestroyRef);
+
+  private readonly attached = signal(false);
+  private readonly pendingStart = new Set<string>();
+  private readonly reattached = new Set<string>();
+
+  /** The page-count field. A drop and the file button both read it. */
+  readonly pageCountText = signal('');
+  readonly importError = signal('');
+
+  private readonly host: DesktopWorkspaceCaptureHost = {
+    selectedId: signal<string | null>(null),
+    requestedRequirements: this.features.requestedRequirements,
+    requirements: () => this.features.requirements(),
+    documents: () => this.sharedDocuments(),
+    selected: () => null,
+    refreshDocuments: () => this.refreshShared(),
+    reloadDocumentState: () => this.refreshShared(),
+    setMessage: (message) => this.importError.set(message),
+    identifySpeakers: () => false,
+  };
+
+  readonly rows = computed(() => this.sharedDocuments()
+    .filter((document) => isOcrMediaType(document.mediaType))
+    .map((document) => describeOcrDocument({
+      document,
+      job: this.capture.jobs().get(document.documentId),
+      busy: this.capture.busyIds().has(document.documentId),
+      ocrReady: this.features.isFeatureReady('ocr'),
+      installPercent: this.ocrInstallPercent(),
+    })));
+
+  readonly ocrSizeLabel = computed(() => {
+    const requirement = this.features.requirements()
+      .find((item) => item.requirementId === 'windowsml-ocr');
+    return formatApproximateBytes(requirement?.downloadBytes);
+  });
+
+  private readonly ocrInstallPercent = computed(() => {
+    const active = this.features.activeInstallation();
+    if (!active || active.requirementId !== 'windowsml-ocr') return null;
+    if (active.status !== 'queued' && active.status !== 'running') return null;
+    return installationPercent(active);
+  });
+
+  private readonly loadEffect = effect(() => {
+    if (!this.attached() || !this.runtime.started()) return;
+    this.refreshShared();
+  });
+
+  private readonly workEffect = effect(() => {
+    if (!this.attached() || !this.runtime.started()) return;
+    const documents = this.sharedDocuments();
+    if (this.features.isFeatureReady('ocr')) this.startWaiting(documents);
+    this.reattachRunning(documents);
+  });
+
+  /** Safe to call more than once. The document list itself lives on the workspace. */
+  attach(): void {
+    this.attached.set(true);
+  }
+
+  install(): void {
+    this.features.installUnit('windowsml-ocr');
+  }
+
+  cancel(documentId: string): void {
+    this.capture.cancel(documentId);
+  }
+
+  retry(documentId: string): void {
+    this.capture.retry$(documentId, this.host)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        error: (error: unknown) => this.importError.set(errorMessage(error)),
+      });
+  }
+
+  restart(documentId: string): void {
+    this.capture.restartLost$(documentId, this.host)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        error: (error: unknown) => this.importError.set(errorMessage(error)),
+      });
+  }
+
+  exportTxt(documentId: string): void {
+    const document = this.sharedDocuments().find((item) => item.documentId === documentId);
+    if (!document?.hasRaw) return;
+    this.library.get(documentId)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (detail) => {
+          const text = renderRawOcrText(detail.raw);
+          if (text === '') return;
+          const stem = document.fileName.replace(/\.[^.]+$/u, '');
+          this.formatting.downloadText(`${stem}.txt`, text, 'text/plain;charset=utf-8');
+        },
+        error: (error: unknown) => this.importError.set(errorMessage(error)),
+      });
+  }
+
+  /** Opens the existing picker, limited to PDF and image files, then queues the paths. */
+  chooseFiles(): void {
+    this.library.selectSources(OCR_PICKER_EXTENSIONS)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (paths) => {
+          void this.importPaths(paths);
+        },
+        error: (error: unknown) => this.importError.set(errorMessage(error)),
+      });
+  }
+
+  /**
+   * Saves each accepted path as a waiting document. Capture starts later, when OCR is ready.
+   * The host reads the file and checks its size.
+   */
+  importPaths(paths: readonly string[]): Promise<void> {
+    const pageCount = parsePdfPageCount(this.pageCountText());
+    const errors: string[] = [];
+    const accepted: { readonly path: string; readonly options?: DesktopCaptureOptions }[] = [];
+    for (const path of paths) {
+      const name = ocrFileName(path);
+      const refused = refuseOcrFile(name);
+      if (refused) {
+        errors.push(refused);
+        continue;
+      }
+      const pdf = ocrFileExtension(name) === 'pdf';
+      if (pdf && pageCount === 'invalid') {
+        errors.push(`${name}: ${desktopMessages().ocrPageCountInvalid}`);
+        continue;
+      }
+      accepted.push({
+        path,
+        ...(pdf && typeof pageCount === 'number' ? { options: { pdfPageCount: pageCount } } : {}),
+      });
+    }
+    this.importError.set(errors.join('\n'));
+    if (accepted.length === 0) return Promise.resolve();
+    return new Promise((resolve) => {
+      from(accepted).pipe(
+        concatMap((item) => {
+          const request = item.options
+            ? this.library.importSource(item.path, item.options)
+            : this.library.createSource(item.path);
+          return request.pipe(
+            catchError((error: unknown) => {
+              errors.push(`${ocrFileName(item.path)}: ${errorMessage(error)}`);
+              this.importError.set(errors.join('\n'));
+              return EMPTY;
+            }),
+          );
+        }),
+        finalize(() => {
+          this.importError.set(errors.join('\n'));
+          this.refreshShared();
+          resolve();
+        }),
+        takeUntilDestroyed(this.destroyRef),
+      ).subscribe();
+    });
+  }
+
+  private sharedDocuments(): readonly DesktopLibrarySummary[] {
+    return this.workspace.allDocuments();
+  }
+
+  private refreshShared(): void {
+    this.workspace.refreshDocuments();
+  }
+
+  private startWaiting(documents: readonly DesktopLibrarySummary[]): void {
+    for (const document of documents) {
+      if (!isOcrMediaType(document.mediaType)) continue;
+      if (document.status !== 'queued' || document.captureId) continue;
+      if (this.pendingStart.has(document.documentId)) continue;
+      if (this.capture.hasActiveCapture(document.documentId)) continue;
+      this.pendingStart.add(document.documentId);
+      this.capture.startDocument$(document.documentId, this.host)
+        .pipe(takeUntilDestroyed(this.destroyRef))
+        .subscribe({
+          error: () => this.pendingStart.delete(document.documentId),
+          complete: () => this.pendingStart.delete(document.documentId),
+        });
+    }
+  }
+
+  private reattachRunning(documents: readonly DesktopLibrarySummary[]): void {
+    for (const document of documents) {
+      if (!isOcrMediaType(document.mediaType) || !document.captureId) continue;
+      if (document.status !== 'processing' && document.status !== 'persisting') continue;
+      if (this.reattached.has(document.documentId)) continue;
+      if (this.capture.hasActiveCapture(document.documentId)) continue;
+      this.reattached.add(document.documentId);
+      this.capture.reattach$(document, this.host)
+        .pipe(takeUntilDestroyed(this.destroyRef))
+        .subscribe({
+          error: () => this.reattached.delete(document.documentId),
+        });
+    }
+  }
+}

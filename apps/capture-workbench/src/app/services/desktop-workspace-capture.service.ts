@@ -60,6 +60,7 @@ import {
   terminalStage,
 } from './desktop-workspace.selectors';
 import { desktopMessages } from '../i18n/desktop-messages';
+import { pdfPagePrefix } from './ocr-queue';
 
 interface ActiveCapture {
   captureId?: string;
@@ -98,6 +99,8 @@ export interface DesktopWorkspaceCaptureHost {
 export class DesktopWorkspaceCaptureService {
   readonly busyIds = signal<ReadonlySet<string>>(new Set());
   readonly streamingPartials = signal<ReadonlyMap<string, PartialCapture>>(new Map());
+  /** Live one-shot jobs, so a queue can show page progress that the library does not store. */
+  readonly jobs = signal<ReadonlyMap<string, DesktopCaptureOperation>>(new Map());
 
   private readonly runtime = inject(DesktopRuntimeClientService);
   private readonly library = inject(DesktopLibraryService);
@@ -115,6 +118,41 @@ export class DesktopWorkspaceCaptureService {
   ): Observable<void> {
     return from(paths).pipe(
       concatMap((sourcePath) => this.captureNewSource$(sourcePath, host)),
+    );
+  }
+
+  /** Starts a capture for a file that is already in the library. */
+  startDocument$(
+    documentId: string,
+    host: DesktopWorkspaceCaptureHost,
+  ): Observable<void> {
+    return this.captureExisting$(documentId, host);
+  }
+
+  /** Re-attaches to a runtime job the library still points at. */
+  reattach$(
+    document: DesktopLibrarySummary,
+    host: DesktopWorkspaceCaptureHost,
+  ): Observable<void> {
+    return document.captureId ? this.recoverCapture$(document, host) : EMPTY;
+  }
+
+  /**
+   * A restart lost the runtime job. Clear the stale id and start again.
+   * Unlike `retry$`, this does not try to recover that id.
+   */
+  restartLost$(
+    documentId: string,
+    host: DesktopWorkspaceCaptureHost,
+  ): Observable<void> {
+    return this.library.updateCapture({
+      documentId,
+      status: 'queued',
+      stage: 'uploading',
+      clearCaptureId: true,
+    }).pipe(
+      tap(() => host.reloadDocumentState(documentId)),
+      switchMap(() => this.captureExisting$(documentId, host)),
     );
   }
 
@@ -172,46 +210,50 @@ export class DesktopWorkspaceCaptureService {
     host: DesktopWorkspaceCaptureHost,
   ): Observable<void> {
     return this.library.createSource(sourcePath).pipe(
-      tap((document) => {
-        host.selectedId.set(document.documentId);
-        host.refreshDocuments();
-      }),
-      switchMap((document) => {
-        if (isAudioMediaType(document.mediaType) && !isFeatureReady(host.requirements(), 'asr')) {
-          host.requestedRequirements.update(
-            (current) => new Set([...current, 'speech-recognition']),
-          );
-          host.setMessage(desktopMessages().whisperNeeded);
-          return EMPTY;
-        }
-        if (
-          isAudioMediaType(document.mediaType)
-          && host.identifySpeakers()
-          && !isFeatureReady(host.requirements(), 'asr.speakers')
-        ) {
-          host.requestedRequirements.update(
-            (current) => new Set([...current, 'speaker-diarization']),
-          );
-          host.setMessage(desktopMessages().speakerUnitNeeded);
-          return EMPTY;
-        }
-        if (
-          !isAudioMediaType(document.mediaType)
-          && selectFeatureMissing(host.requirements(), 'ocr').length > 0
-        ) {
-          host.requestedRequirements.update(
-            (current) => new Set([...current, 'windowsml-ocr']),
-          );
-          host.setMessage(desktopMessages().needsSetup);
-          return EMPTY;
-        }
-        return this.captureExisting$(document.documentId, host, document.mediaType);
-      }),
+      switchMap((document) => this.continueImported$(document, host)),
       catchError((error) => {
         host.setMessage(errorMessage(error));
         return EMPTY;
       }),
     );
+  }
+
+  /** Selects the imported file and starts it, unless its recognition unit is missing. */
+  private continueImported$(
+    document: DesktopLibrarySummary,
+    host: DesktopWorkspaceCaptureHost,
+  ): Observable<void> {
+    host.selectedId.set(document.documentId);
+    host.refreshDocuments();
+    if (isAudioMediaType(document.mediaType) && !isFeatureReady(host.requirements(), 'asr')) {
+      host.requestedRequirements.update(
+        (current) => new Set([...current, 'speech-recognition']),
+      );
+      host.setMessage(desktopMessages().whisperNeeded);
+      return EMPTY;
+    }
+    if (
+      isAudioMediaType(document.mediaType)
+      && host.identifySpeakers()
+      && !isFeatureReady(host.requirements(), 'asr.speakers')
+    ) {
+      host.requestedRequirements.update(
+        (current) => new Set([...current, 'speaker-diarization']),
+      );
+      host.setMessage(desktopMessages().speakerUnitNeeded);
+      return EMPTY;
+    }
+    if (
+      !isAudioMediaType(document.mediaType)
+      && selectFeatureMissing(host.requirements(), 'ocr').length > 0
+    ) {
+      host.requestedRequirements.update(
+        (current) => new Set([...current, 'windowsml-ocr']),
+      );
+      host.setMessage(desktopMessages().needsSetup);
+      return EMPTY;
+    }
+    return this.captureExisting$(document.documentId, host, document.mediaType);
   }
 
   private captureExisting$(
@@ -232,9 +274,7 @@ export class DesktopWorkspaceCaptureService {
       };
       this.activeCaptures.set(documentId, active);
       this.markBusy(documentId, true);
-      const pdfPageNumbers = this.isPdfDocument(documentId, host, mediaType)
-        ? this.runtime.pdfPageNumbers()
-        : undefined;
+      const pdfPageNumbers = this.pdfPageNumbersFor(documentId, host, mediaType);
 
       const work$ = this.library.updateCapture({
         documentId,
@@ -262,6 +302,7 @@ export class DesktopWorkspaceCaptureService {
       switchMap((job) => {
         active.captureId = job.captureId;
         this.rememberSourceIdentity(active, job);
+        this.rememberJob(documentId, job);
         active.lastStage = captureJobStage(job);
         return this.library.updateCapture({
           documentId,
@@ -449,6 +490,7 @@ export class DesktopWorkspaceCaptureService {
           : this.runtime.getCapture(document.captureId).pipe(
             tap((job) => {
               this.rememberSourceIdentity(active, job);
+              this.rememberJob(document.documentId, job);
               active.lastStage = captureJobStage(job);
             }),
             switchMap((job) => this.waitForTerminal$(document.documentId, job, active, host)),
@@ -476,6 +518,7 @@ export class DesktopWorkspaceCaptureService {
       finalize(() => {
         active.cancelWake.complete();
         this.activeCaptures.delete(documentId);
+        this.forgetJob(documentId);
         this.markBusy(documentId, false);
       }),
       map(() => undefined),
@@ -527,7 +570,10 @@ export class DesktopWorkspaceCaptureService {
         );
       }),
       switchMap((next) => this.persistRawDuringExtraction$(documentId, next, active, host)),
-      tap((next) => active.lastStage = next.stage),
+      tap((next) => {
+        this.rememberJob(documentId, next);
+        active.lastStage = next.stage;
+      }),
     );
   }
 
@@ -902,6 +948,38 @@ export class DesktopWorkspaceCaptureService {
       clearCaptureId: true,
       errorCode: 'capture_failed',
       errorMessage: errorMessage(error),
+    });
+  }
+
+  private pdfPageNumbersFor(
+    documentId: string,
+    host: DesktopWorkspaceCaptureHost,
+    mediaType?: string,
+  ): readonly number[] | undefined {
+    if (!this.isPdfDocument(documentId, host, mediaType)) return undefined;
+    const document = host.documents().find((item) => item.documentId === documentId)
+      ?? (host.selected()?.documentId === documentId ? host.selected() : undefined);
+    const count = document?.captureOptions?.pdfPageCount;
+    if (typeof count === 'number' && Number.isInteger(count) && count >= 1 && count <= 500) {
+      return pdfPagePrefix(count);
+    }
+    return this.runtime.pdfPageNumbers();
+  }
+
+  private rememberJob(documentId: string, job: DesktopCaptureOperation): void {
+    this.jobs.update((current) => {
+      const next = new Map(current);
+      next.set(documentId, job);
+      return next;
+    });
+  }
+
+  private forgetJob(documentId: string): void {
+    this.jobs.update((current) => {
+      if (!current.has(documentId)) return current;
+      const next = new Map(current);
+      next.delete(documentId);
+      return next;
     });
   }
 

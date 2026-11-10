@@ -1,5 +1,5 @@
 <section
-  class="mx-auto flex max-w-2xl flex-col gap-6 px-8 py-10"
+  class="mx-auto flex max-w-4xl flex-col gap-6 px-8 py-10"
   data-testid="page-ocr"
 >
   <h1 class="text-2xl font-semibold">{{ m().nav.ocr }}</h1>
@@ -155,5 +155,163 @@
     </div>
   }
 
-  <app-placeholder-page page="ocr" />
+  <div
+    class="flex flex-col gap-4 rounded-xl border border-dashed p-6"
+    data-testid="ocr-dropzone"
+  >
+    <p class="text-sm">{{ m().ocrDropHint }}</p>
+    <div class="flex flex-wrap items-end gap-4">
+      <label class="flex items-center gap-2 text-sm">
+        {{ m().ocrFirstPages }}
+        <input
+          class="border-input bg-background w-20 rounded-md border px-2 py-1"
+          data-testid="ocr-page-count"
+          type="number"
+          min="1"
+          max="500"
+          inputmode="numeric"
+          [value]="queue.pageCountText()"
+          (input)="onPageCount($event)"
+        />
+        {{ m().ocrPagesUnit }}
+      </label>
+    </div>
+    <div>
+      <button
+        hlmBtn
+        type="button"
+        data-testid="ocr-choose-files"
+        (click)="chooseFiles()"
+      >
+        {{ m().chooseFiles }}
+      </button>
+    </div>
+    @if (queue.importError(); as importError) {
+      <p class="text-destructive text-sm whitespace-pre-line" data-testid="ocr-import-error" role="alert">
+        {{ importError }}
+      </p>
+    }
+  </div>
+
+  @if (queue.rows().length > 0) {
+    <div hlmTableContainer>
+      <table hlmTable data-testid="ocr-queue">
+        <thead hlmTHead>
+          <tr hlmTr>
+            <th hlmTh>{{ m().ocrColFile }}</th>
+            <th hlmTh>{{ m().ocrColPages }}</th>
+            <th hlmTh>{{ m().ocrColStatus }}</th>
+            <th hlmTh class="text-right">{{ m().ocrColAction }}</th>
+          </tr>
+        </thead>
+        <tbody hlmTBody>
+          @for (row of queue.rows(); track row.documentId) {
+            <tr
+              hlmTr
+              data-testid="ocr-queue-row"
+              [attr.data-document-id]="row.documentId"
+              [attr.data-user-status]="row.userStatus"
+            >
+              <td hlmTd class="font-medium">{{ row.fileName }}</td>
+              <td hlmTd data-testid="ocr-row-pages">{{ row.pageLabel }}</td>
+              <td hlmTd data-testid="ocr-row-status" aria-live="polite">
+                <div>{{ row.statusText }}</div>
+                @if (row.userStatus === 'processing' && row.progressText) {
+                  <div data-testid="ocr-row-progress">{{ row.progressText }}</div>
+                }
+                @if (row.interrupted) {
+                  <div>{{ m().ocrInterrupted }}</div>
+                }
+                @if (row.needsInstall && row.installPercent === null) {
+                  <div>{{ m().ocrNeedsEngine(queue.ocrSizeLabel()) }}</div>
+                }
+                @if (row.needsInstall && row.installPercent !== null) {
+                  <div data-testid="ocr-row-install-progress">{{ row.installPercent }}%</div>
+                }
+              </td>
+              <td hlmTd class="text-right">
+                <div class="flex flex-wrap justify-end gap-2">
+                  @if (row.needsInstall && row.installPercent === null) {
+                    <button
+                      hlmBtn
+                      size="sm"
+                      type="button"
+                      data-testid="ocr-row-install"
+                      [attr.aria-label]="m().ocrInstallNamed(row.fileName)"
+                      (click)="queue.install()"
+                    >
+                      {{ m().offerInstall }}
+                    </button>
+                  }
+                  @if (row.userStatus === 'processing') {
+                    <button
+                      hlmBtn
+                      variant="outline"
+                      size="sm"
+                      type="button"
+                      data-testid="ocr-row-cancel"
+                      [attr.aria-label]="m().ocrCancelNamed(row.fileName)"
+                      (click)="queue.cancel(row.documentId)"
+                    >
+                      {{ m().cancelInstall }}
+                    </button>
+                  }
+                  @if (row.userStatus === 'needs-attention' && row.interrupted) {
+                    <button
+                      hlmBtn
+                      variant="outline"
+                      size="sm"
+                      type="button"
+                      data-testid="ocr-row-restart"
+                      [attr.aria-label]="m().ocrRestartNamed(row.fileName)"
+                      (click)="queue.restart(row.documentId)"
+                    >
+                      {{ m().ocrRestart }}
+                    </button>
+                  }
+                  @if ((row.userStatus === 'needs-attention' && !row.interrupted) || row.userStatus === 'cancelled') {
+                    <button
+                      hlmBtn
+                      variant="outline"
+                      size="sm"
+                      type="button"
+                      data-testid="ocr-row-retry"
+                      [attr.aria-label]="m().ocrRetryNamed(row.fileName)"
+                      (click)="queue.retry(row.documentId)"
+                    >
+                      {{ m().ocrRetry }}
+                    </button>
+                  }
+                  @if (row.userStatus === 'done') {
+                    <a
+                      hlmBtn
+                      variant="outline"
+                      size="sm"
+                      routerLink="/history"
+                      data-testid="ocr-row-view"
+                      [attr.aria-label]="m().ocrViewNamed(row.fileName)"
+                    >
+                      {{ m().ocrView }}
+                    </a>
+                    <button
+                      hlmBtn
+                      variant="outline"
+                      size="sm"
+                      type="button"
+                      data-testid="ocr-row-export-txt"
+                      [disabled]="!row.canExport"
+                      [attr.aria-label]="m().ocrExportNamed(row.fileName)"
+                      (click)="queue.exportTxt(row.documentId)"
+                    >
+                      {{ m().ocrExportTxt }}
+                    </button>
+                  }
+                </div>
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  }
 </section>

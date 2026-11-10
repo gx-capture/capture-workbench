@@ -368,6 +368,8 @@ async function renderShell(
   const store = {
     state: signal<'starting' | 'ready' | 'error'>('starting'),
     initialize: vi.fn(),
+    allDocuments: signal([]),
+    refreshDocuments: () => undefined,
   };
 
   await TestBed.configureTestingModule({

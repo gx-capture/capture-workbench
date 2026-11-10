@@ -15,6 +15,12 @@ export type DesktopLibraryStatus =
   | 'failed'
   | 'canceled';
 
+/** Choices stored with a file before a capture starts. */
+export interface DesktopCaptureOptions {
+  /** Pages `1..=K`. Omitted means the whole document, apart from any harness scope. */
+  readonly pdfPageCount?: number | null;
+}
+
 export interface DesktopLibrarySummary {
   readonly documentId: string;
   readonly fileName: string;
@@ -29,6 +35,9 @@ export interface DesktopLibrarySummary {
   readonly errorMessage?: string;
   readonly recoveryCode?: string;
   readonly recoveryMessage?: string;
+  readonly captureOptions?: DesktopCaptureOptions | null;
+  /** True when the library has stored raw OCR or transcript text. */
+  readonly hasRaw?: boolean;
 }
 
 export interface DesktopLibraryDetail extends DesktopLibrarySummary {

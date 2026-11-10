@@ -9,10 +9,12 @@ import type {
   CaptureRequirementId,
   RuntimeRequirement,
 } from '@gx-capture/capture-workbench-ui';
+import { RouterLink } from '@angular/router';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
 import { HlmCardImports } from '@spartan-ng/helm/card';
+import { HlmTableImports } from '@spartan-ng/helm/table';
 import { desktopMessages } from '../i18n/desktop-messages';
-import { PlaceholderPage } from '../placeholder/placeholder-page';
+import { CaptureQueueStore } from '../services/capture-queue.store';
 import {
   formatApproximateBytes,
   installationPercent,
@@ -22,16 +24,21 @@ import { RecognitionFeaturesStore } from '../services/recognition-features.store
 @Component({
   selector: 'app-ocr-page',
   templateUrl: './ocr-page.html',
-  imports: [HlmButtonImports, HlmCardImports, PlaceholderPage],
+  imports: [HlmButtonImports, HlmCardImports, HlmTableImports, RouterLink],
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class OcrPage {
   protected readonly features = inject(RecognitionFeaturesStore);
+  protected readonly queue = inject(CaptureQueueStore);
   protected readonly m = desktopMessages;
 
   private readonly manualSelection = signal<ReadonlySet<CaptureRequirementId> | null>(
     null,
   );
+
+  constructor() {
+    this.queue.attach();
+  }
 
   protected readonly ocrUnit = computed(() =>
     this.findInstallable('windowsml-ocr'),
@@ -117,6 +124,15 @@ export class OcrPage {
 
   protected dismiss(): void {
     this.features.dismissFirstRun();
+  }
+
+  protected chooseFiles(): void {
+    this.queue.chooseFiles();
+  }
+
+  protected onPageCount(event: Event): void {
+    const input = event.target;
+    if (input instanceof HTMLInputElement) this.queue.pageCountText.set(input.value);
   }
 
   private findInstallable(

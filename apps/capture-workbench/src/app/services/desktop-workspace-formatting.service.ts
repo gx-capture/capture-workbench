@@ -18,6 +18,17 @@ export class DesktopWorkspaceFormattingService {
       : `${(bytes / 1_000_000).toFixed(1)} MB`;
   }
 
+  /** Downloads text the page already built, through the same browser save path as host export. */
+  downloadText(fileName: string, content: string, mediaType: string): void {
+    const blob = new Blob([content], { type: mediaType });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = fileName;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  }
+
   /** Formats persisted epoch timestamps for the workspace locale. */
   formatDate(milliseconds: number): string {
     return new Intl.DateTimeFormat(desktopLocale(), {

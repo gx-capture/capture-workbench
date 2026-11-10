@@ -7,6 +7,7 @@ import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { open } from '@tauri-apps/plugin-dialog';
 import { defer, from, map, Observable } from 'rxjs';
 import type {
+  DesktopCaptureOptions,
   DesktopLibraryDetail,
   DesktopLibraryExport,
   DesktopLibraryStatus,
@@ -29,7 +30,8 @@ export const RECORDING_EXTENSIONS: readonly string[] = [
 export class DesktopLibraryService {
   private readonly commands = inject(DesktopTauriCommandService);
 
-  selectSources(): Observable<readonly string[]> {
+  selectSources(extensions?: readonly string[]): Observable<readonly string[]> {
+    const accepted = extensions ?? ['pdf', 'png', 'jpg', 'jpeg', ...RECORDING_EXTENSIONS];
     return defer(() =>
       from(
         open({
@@ -38,7 +40,7 @@ export class DesktopLibraryService {
           filters: [
             {
               name: 'Capture sources',
-              extensions: ['pdf', 'png', 'jpg', 'jpeg', ...RECORDING_EXTENSIONS],
+              extensions: [...accepted],
             },
           ],
         }),
@@ -83,6 +85,16 @@ export class DesktopLibraryService {
         request: { sourcePath },
       },
     ).pipe(map(sanitizeSummary));
+  }
+
+  /** Path import that also stores the page-count option. The host still reads the file. */
+  importSource(
+    sourcePath: string,
+    captureOptions: DesktopCaptureOptions,
+  ): Observable<DesktopLibrarySummary> {
+    return this.commands.invoke<DesktopLibrarySummary>('library_import_source', {
+      request: { sourcePath, captureOptions },
+    }).pipe(map(sanitizeSummary));
   }
 
   list(query = '', status = '', signal?: AbortSignal): Observable<readonly DesktopLibrarySummary[]> {

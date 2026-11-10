@@ -11,9 +11,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::contracts::{
-    LibraryCaptureUpdate, LibraryDocumentDetail, LibraryDocumentRequest, LibraryDocumentSummary,
-    LibraryExportFormat, LibraryExportPayload, LibraryExportRequest, LibraryImportSourceRequest,
-    LibraryListRequest, LibrarySourceInput, LibrarySourcePayload,
+    LibraryCaptureOptions, LibraryCaptureUpdate, LibraryDocumentDetail, LibraryDocumentRequest,
+    LibraryDocumentSummary, LibraryExportFormat, LibraryExportPayload, LibraryExportRequest,
+    LibraryImportSourceRequest, LibraryListRequest, LibrarySourceInput, LibrarySourcePayload,
 };
 
 use super::transaction::{prepare_transaction_entry, LibraryTransaction, TransactionStage};
@@ -51,10 +51,13 @@ pub(crate) struct StoredDocument {
     pub(super) recovery_message: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) ocr_evidence: Option<crate::contracts::OcrEvidenceV1>,
+    /// Absent on indexes written before a file could wait with options.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) capture_options: Option<LibraryCaptureOptions>,
 }
 
 impl StoredDocument {
-    fn summary(&self) -> LibraryDocumentSummary {
+    fn summary(&self, has_raw: bool) -> LibraryDocumentSummary {
         LibraryDocumentSummary {
             document_id: self.document_id.clone(),
             file_name: self.file_name.clone(),
@@ -69,6 +72,8 @@ impl StoredDocument {
             error_message: self.error_message.clone(),
             recovery_code: self.recovery_code.clone(),
             recovery_message: self.recovery_message.clone(),
+            capture_options: self.capture_options.clone(),
+            has_raw,
         }
     }
 }
@@ -125,11 +130,23 @@ impl LibraryStore {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn create_source(
         &self,
         input: LibrarySourceInput,
     ) -> Result<LibraryDocumentSummary, String> {
+        self.create_source_with_options(input, None)
+    }
+
+    pub(crate) fn create_source_with_options(
+        &self,
+        input: LibrarySourceInput,
+        capture_options: Option<LibraryCaptureOptions>,
+    ) -> Result<LibraryDocumentSummary, String> {
         validate_source_input(&input)?;
+        if let Some(options) = &capture_options {
+            super::validation::validate_capture_options(options)?;
+        }
         let now = now_ms()?;
         let document_id = random_document_id()?;
         let document_directory = self.document_directory(&document_id)?;
@@ -152,8 +169,9 @@ impl LibraryStore {
             recovery_code: None,
             recovery_message: None,
             ocr_evidence: None,
+            capture_options,
         };
-        let summary = document.summary();
+        let summary = document.summary(false);
         let mut index = self.lock_index()?;
         index.documents.insert(0, document);
         if let Err(error) = self.save_index(&index) {
@@ -168,6 +186,12 @@ impl LibraryStore {
         &self,
         request: LibraryImportSourceRequest,
     ) -> Result<LibraryDocumentSummary, String> {
+        if let Some(options) = &request.capture_options {
+            super::validation::validate_capture_options(options)?;
+        }
+        if request.source_path.is_empty() {
+            return Err("Selected source cannot be inspected.".into());
+        }
         let source = PathBuf::from(request.source_path);
         let source_metadata = fs::symlink_metadata(&source)
             .map_err(|_| "Selected source cannot be inspected.".to_string())?;
@@ -203,11 +227,14 @@ impl LibraryStore {
             return Err("Selected source changed during import.".into());
         }
         let media_type = super::validation::verified_media_type(&file_name, &bytes)?;
-        self.create_source(LibrarySourceInput {
-            file_name,
-            media_type: media_type.into(),
-            bytes,
-        })
+        self.create_source_with_options(
+            LibrarySourceInput {
+                file_name,
+                media_type: media_type.into(),
+                bytes,
+            },
+            request.capture_options,
+        )
     }
 
     pub(crate) fn update_capture(
@@ -216,6 +243,9 @@ impl LibraryStore {
     ) -> Result<LibraryDocumentSummary, String> {
         validate_document_id(&update.document_id)?;
         validate_status(&update.status)?;
+        if let Some(options) = &update.capture_options {
+            super::validation::validate_capture_options(options)?;
+        }
         if update.clear_capture_id && update.capture_id.is_some() {
             return Err(
                 "Capture library update cannot set and clear a runtime identifier together.".into(),
@@ -256,8 +286,12 @@ impl LibraryStore {
         document.error_message = update.error_message;
         document.recovery_code = update.recovery_code;
         document.recovery_message = update.recovery_message;
+        if update.capture_options.is_some() {
+            document.capture_options = update.capture_options.clone();
+        }
         document.updated_at_ms = now_ms()?;
-        let summary = document.summary();
+        let has_raw = update.raw.is_some() || directory.join(RAW_FILE_NAME).is_file();
+        let summary = document.summary(has_raw);
 
         let transaction_id = random_document_id()?;
         let mut prepared = Vec::new();
@@ -315,16 +349,19 @@ impl LibraryStore {
     ) -> Result<Vec<LibraryDocumentSummary>, String> {
         let query = request.query.unwrap_or_default().trim().to_lowercase();
         let status = request.status.unwrap_or_default().trim().to_lowercase();
-        Ok(self
-            .lock_index()?
-            .documents
-            .iter()
-            .filter(|document| {
-                (query.is_empty() || document.file_name.to_lowercase().contains(&query))
-                    && (status.is_empty() || document.status == status)
-            })
-            .map(StoredDocument::summary)
-            .collect())
+        let documents = self.lock_index()?.documents.clone();
+        let mut summaries = Vec::new();
+        for document in documents.into_iter().filter(|document| {
+            (query.is_empty() || document.file_name.to_lowercase().contains(&query))
+                && (status.is_empty() || document.status == status)
+        }) {
+            let has_raw = self
+                .document_directory(&document.document_id)?
+                .join(RAW_FILE_NAME)
+                .is_file();
+            summaries.push(document.summary(has_raw));
+        }
+        Ok(summaries)
     }
 
     pub(crate) fn get(
@@ -333,9 +370,10 @@ impl LibraryStore {
     ) -> Result<LibraryDocumentDetail, String> {
         let document = self.find_document(&request.document_id)?;
         let directory = self.document_directory(&document.document_id)?;
+        let raw = read_json_optional(&directory.join(RAW_FILE_NAME))?;
         Ok(LibraryDocumentDetail {
-            summary: document.summary(),
-            raw: read_json_optional(&directory.join(RAW_FILE_NAME))?,
+            summary: document.summary(raw.is_some()),
+            raw,
             result: read_json_optional(&directory.join(RESULT_FILE_NAME))?,
             ocr_evidence: document.ocr_evidence,
         })
