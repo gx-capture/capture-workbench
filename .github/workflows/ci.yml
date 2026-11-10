@@ -112,8 +112,8 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
           pnpm nx affected -t "classify-release-model-mode,python-version-check,typecheck,test,cargo-fmt-check,typecheck-scripts,package-qa-test,fake-runtime-routes,release-version-typecheck,python-candidate-index-typecheck,release-version-test,release-candidate-test,contract-impact-test,release-contract-test,consumer-gate-test,promotion-evidence-test,promotion-registry-test,release-manifest-test,release-index-test" --base=origin/main --head=HEAD --parallel=1
-          pnpm nx affected -t lint -p "capture-runtime,capture-runtime-client,capture-runtime-client-python,capture-angular,capture-workbench" --base=origin/main --head=HEAD --parallel=1
-          pnpm nx affected -t cargo-test -p capture-sidecar-launcher --base=origin/main --head=HEAD --parallel=1
+          pnpm nx affected -t lint --exclude="capture-tools,capture-workbench-desktop,capture-workbench-e2e" --base=origin/main --head=HEAD --parallel=1
+          pnpm nx affected -t cargo-test --exclude=capture-workbench-desktop --base=origin/main --head=HEAD --parallel=1
 
       # knip (TypeScript) and vulture (Python) dead-code ratchet. --ci also
       # fails when a baseline entry is gone, so the baseline only shrinks.
