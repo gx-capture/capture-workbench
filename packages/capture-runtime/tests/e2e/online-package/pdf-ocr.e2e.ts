@@ -150,11 +150,7 @@ async function main(): Promise<void> {
         'Online runtime manifest does not match CAPTURE_PDF_OCR_E2E_ONLINE_RUNTIME_SHA256.',
       );
     }
-    for (const name of [
-      manifest.fileName,
-      `${manifest.fileName}.sha256`,
-      manifest.schemaFileName,
-    ]) {
+    for (const name of [manifest.fileName, manifest.schemaFileName]) {
       await downloadAsset(options.baseUrl, name, join(releaseRoot, name));
     }
     await runPdfOcrE2e({

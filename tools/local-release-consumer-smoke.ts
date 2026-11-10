@@ -33,21 +33,20 @@ const defaultReleaseRoot = join(
   'packages/capture-runtime/dist/release',
 );
 
+const RUNTIME_EXECUTABLE_ASSET =
+  'capture-runtime-x86_64-pc-windows-msvc.exe';
+const RUNTIME_MANIFEST_ASSET = 'capture-runtime-manifest.json';
+const RUNTIME_SCHEMA_ASSET = 'capture-document-v2.schema.json';
+
 export const CORE_RUNTIME_ASSET_NAMES = Object.freeze([
-  'capture-runtime-x86_64-pc-windows-msvc.exe',
-  'capture-runtime-x86_64-pc-windows-msvc.exe.sha256',
-  'capture-runtime-manifest.json',
-  'capture-document-v2.schema.json',
+  RUNTIME_EXECUTABLE_ASSET,
+  RUNTIME_MANIFEST_ASSET,
+  RUNTIME_SCHEMA_ASSET,
 ]);
 // Keep the historical export for callers that only need the core manifest names.
 export const RUNTIME_ASSET_NAMES = CORE_RUNTIME_ASSET_NAMES;
-export const RUNTIME_SIZE_REPORT_NAMES = Object.freeze([
-  'runtime-size-report.json',
-  'runtime-size-report.json.sha256',
-]);
 
 const ENGINE_CATALOG_NAME = 'capture-engine-catalog.json';
-const ENGINE_CATALOG_CHECKSUM_NAME = `${ENGINE_CATALOG_NAME}.sha256`;
 const WORKER_PROTOCOL_VERSION = '1';
 const MODEL_REQUIREMENT_IDS = ['windowsml-ocr', 'speech-recognition'] as const;
 // Units a release may or may not carry; when present they are checked like the others.
@@ -353,10 +352,10 @@ export function validateRuntimeManifest(
       'Runtime release manifest has an unsupported platform or contract version.',
     );
   }
-  if (manifest.fileName !== RUNTIME_ASSET_NAMES[0]) {
+  if (manifest.fileName !== RUNTIME_EXECUTABLE_ASSET) {
     throw new Error('Runtime release executable name is not canonical.');
   }
-  if (manifest.schemaFileName !== RUNTIME_ASSET_NAMES[3]) {
+  if (manifest.schemaFileName !== RUNTIME_SCHEMA_ASSET) {
     throw new Error('Runtime release schema name is not canonical.');
   }
   if (!Number.isSafeInteger(manifest.bytes) || manifest.bytes <= 0) {
@@ -397,23 +396,15 @@ async function sha256Files(paths: readonly string[]): Promise<string> {
   return hash.digest('hex');
 }
 
-async function verifyChecksum(
+async function verifyCatalogDigest(
   directory: string,
   name: string,
-  expectedDigest?: string,
-): Promise<string> {
+  expectedDigest: string,
+): Promise<void> {
   const digest = await sha256Files([join(directory, name)]);
-  if (expectedDigest !== undefined && digest !== expectedDigest) {
+  if (digest !== expectedDigest) {
     throw new Error(`Release asset digest does not match catalog: ${name}.`);
   }
-  const checksumName = `${name}.sha256`;
-  const checksum = (
-    await readFile(join(directory, checksumName), 'utf8')
-  ).trim();
-  if (checksum !== `${digest}  ${name}`) {
-    throw new Error(`Release checksum does not match ${name}.`);
-  }
-  return digest;
 }
 
 type RuntimeReleaseInspection = {
@@ -434,23 +425,7 @@ async function inspectRuntimeRelease(
   }
 
   const hasCatalog = names.includes(ENGINE_CATALOG_NAME);
-  const hasCatalogChecksum = names.includes(ENGINE_CATALOG_CHECKSUM_NAME);
-  if (hasCatalog !== hasCatalogChecksum) {
-    throw new Error(
-      'Runtime release catalog and checksum must be published together.',
-    );
-  }
-
-  const hasSizeReport = names.includes(RUNTIME_SIZE_REPORT_NAMES[0]);
-  const hasSizeReportChecksum = names.includes(RUNTIME_SIZE_REPORT_NAMES[1]);
-  if (hasSizeReport !== hasSizeReportChecksum) {
-    throw new Error(
-      'Runtime size report and checksum must be published together.',
-    );
-  }
-
   const assetNames: string[] = [...RUNTIME_ASSET_NAMES];
-  if (hasSizeReport) assetNames.push(...RUNTIME_SIZE_REPORT_NAMES);
   const workers: CatalogWorkerDescriptor[] = [];
   if (hasCatalog) {
     const catalogBytes = await readFile(join(directory, ENGINE_CATALOG_NAME));
@@ -461,21 +436,21 @@ async function inspectRuntimeRelease(
       throw new Error('Engine catalog JSON is invalid.');
     }
     workers.push(...catalogWorkers(rawCatalog, expectedVersion, catalogBytes));
-    assetNames.push(ENGINE_CATALOG_NAME, ENGINE_CATALOG_CHECKSUM_NAME);
+    assetNames.push(ENGINE_CATALOG_NAME);
     for (const worker of workers) {
       const filesManifestName = `${worker.fileName.slice(0, -'.zip'.length)}-files.json`;
       assertSafeAssetName(filesManifestName, 'Engine worker files manifest');
       for (const { fileName: file } of workerPublishedFiles(worker)) {
-        assetNames.push(file, `${file}.sha256`);
+        assetNames.push(file);
       }
-      assetNames.push(filesManifestName, `${filesManifestName}.sha256`);
+      assetNames.push(filesManifestName);
     }
   }
   assertExactAssetNames(names, assetNames);
 
   const manifest = validateRuntimeManifest(
     JSON.parse(
-      await readFile(join(directory, 'capture-runtime-manifest.json'), 'utf8'),
+      await readFile(join(directory, RUNTIME_MANIFEST_ASSET), 'utf8'),
     ),
     expectedVersion,
   );
@@ -494,28 +469,12 @@ async function inspectRuntimeRelease(
     throw new Error('Runtime schema digest does not match the manifest.');
   }
 
-  const runtimeChecksum = (
-    await readFile(
-      join(directory, 'capture-runtime-x86_64-pc-windows-msvc.exe.sha256'),
-      'utf8',
-    )
-  ).trim();
-  const checksumMatch = runtimeChecksum.match(/^([0-9a-f]{64})\s+(.+)$/u);
-  if (
-    !checksumMatch ||
-    checksumMatch[1] !== manifest.sha256 ||
-    checksumMatch[2] !== manifest.fileName
-  ) {
-    throw new Error('Runtime checksum file does not match the manifest.');
-  }
-
   if (hasCatalog) {
-    await verifyChecksum(directory, ENGINE_CATALOG_NAME);
     for (const worker of workers) {
       const filesManifestName = `${worker.fileName.slice(0, -'.zip'.length)}-files.json`;
       if (worker.parts.length) {
         for (const part of worker.parts) {
-          await verifyChecksum(directory, part.fileName, part.sha256);
+          await verifyCatalogDigest(directory, part.fileName, part.sha256);
         }
         const joined = await sha256Files(
           worker.parts.map((part) => join(directory, part.fileName)),
@@ -526,17 +485,14 @@ async function inspectRuntimeRelease(
           );
         }
       } else {
-        await verifyChecksum(directory, worker.fileName, worker.sha256);
+        await verifyCatalogDigest(directory, worker.fileName, worker.sha256);
       }
-      await verifyChecksum(
+      await verifyCatalogDigest(
         directory,
         filesManifestName,
         worker.filesManifestSha256,
       );
     }
-  }
-  if (hasSizeReport) {
-    await verifyChecksum(directory, RUNTIME_SIZE_REPORT_NAMES[0]);
   }
   return { manifest, assetNames: Object.freeze(assetNames) };
 }

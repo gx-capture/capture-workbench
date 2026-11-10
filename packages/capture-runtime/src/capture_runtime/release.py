@@ -101,7 +101,9 @@ def _validated_engine_release_files(
             manifest = matching_manifests[0]
             with JoinedParts(parts) as joined, zipfile.ZipFile(joined) as source:
                 if source.read("files-manifest.json") != manifest.read_bytes():
-                    raise ValueError(f"archive inner manifest differs from release sidecar: {name}")
+                    raise ValueError(
+                        f"archive inner manifest differs from the published files manifest: {name}"
+                    )
                 if sum(item.file_size for item in source.infolist()) != descriptor.extracted_bytes:
                     raise ValueError(f"catalog extracted byte count mismatch: {name}")
             selected.update((*parts, manifest))
@@ -204,22 +206,9 @@ def build_release_artifacts(
         json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
-    (output_dir / f"{released_executable.name}.sha256").write_text(
-        f"{manifest['sha256']}  {released_executable.name}\n",
-        encoding="utf-8",
-    )
     if engine_files:
         for item in engine_files:
             shutil.copy2(item, output_dir / item.name)
-            (output_dir / f"{item.name}.sha256").write_text(
-                f"{sha256_file(item)}  {item.name}\n",
-                encoding="utf-8",
-            )
     if engine_catalog is not None:
-        released_catalog = output_dir / "capture-engine-catalog.json"
-        shutil.copy2(engine_catalog, released_catalog)
-        (output_dir / f"{released_catalog.name}.sha256").write_text(
-            f"{sha256_file(released_catalog)}  {released_catalog.name}\n",
-            encoding="utf-8",
-        )
+        shutil.copy2(engine_catalog, output_dir / "capture-engine-catalog.json")
     return manifest

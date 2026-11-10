@@ -209,16 +209,23 @@ boundary is unchanged.
 
 ## Release and NSIS
 
-Release build order is worker executables, files manifests/ZIPs, checksums,
-engine catalog, core executable, schema/runtime manifest, core-only NSIS, then
-size report. Release assets include:
+Release build order is worker executables, files manifests/ZIPs, engine
+catalog, core executable, schema/runtime manifest, core-only NSIS, then the
+size report. A GitHub Release has 17 assets:
 
-- core runtime executable, checksum, runtime manifest, and schema;
-- OCR, speech recognition and speaker diarization worker ZIPs (or their parts)
-  and files manifests;
+- core runtime executable, runtime manifest, and schema;
+- OCR, speech recognition and speaker diarization worker archives (or their
+  parts) and files manifests;
 - engine catalog;
 - NSIS installer;
-- runtime size report plus PyInstaller inventory/xref/warnings.
+- `capture-release-manifest-v1.json` and its `.sha256`, plus the candidate
+  manifest, the runtime candidate manifest, and the contract snapshot.
+
+The size report, including the PyInstaller inventory, xref, and warnings, is
+the CI artifact `capture-size-report-<version>-<run>`. It is not one of the
+17 GitHub Release assets. Digests of the runtime and engine
+files are the runtime manifest, the engine catalog, and `runtimeAssets` in
+the release manifest.
 
 The NSIS resource allowlist is exactly core executable, runtime manifest, and
 schema. A scan fails if engine workers, model assets, Paddle/ONNX/PDFium/Pillow,

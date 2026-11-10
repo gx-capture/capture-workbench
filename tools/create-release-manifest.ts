@@ -4,6 +4,7 @@ import { basename, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { verifyContractImpact } from './classify-release-contract.ts';
+import { assertPublishableRuntimeReleaseFile } from './release/github-release-support.ts';
 
 type JsonRecord = Record<string, unknown>;
 
@@ -60,6 +61,7 @@ async function assetRecords(candidate: string): Promise<readonly JsonRecord[]> {
   for (const directory of ['runtime', 'desktop']) {
     const root = join(candidate, directory);
     for (const name of await readdir(root)) {
+      assertPublishableRuntimeReleaseFile(name);
       const path = join(root, name);
       if (!(await stat(path)).isFile())
         throw new Error(`Release asset is not a regular file: ${name}.`);

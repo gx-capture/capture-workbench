@@ -1,6 +1,6 @@
 # Capture Workbench release runbook
 
-Current as of 2026-11-03. This is the operational procedure for publishing a
+Current as of 2026-11-10. This is the operational procedure for publishing a
 Capture Workbench release and moving its consumers. Workflow files remain the
 source of truth for inputs.
 
@@ -332,9 +332,11 @@ source of truth for inputs.
 | Consumer gates    | `consumer-gates.yml`                              | dispatches Cert/LAW gates, gate ledger                              |
 | Full publish      | `release-promote.yml`                             | re-verified registries, tag, desktop assets, stable pointer, ledger |
 
-Route A alone publishes the libraries and runtime. The full route reuses the
-Route A candidate runs at the same source commit and is required for the
-desktop installer and the stable pointer. Every publish step is idempotent:
+Route A alone publishes the libraries and runtime. A runtime candidate built
+from a source commit before this change cannot be published with the current
+tooling; rebuild the runtime candidate. The full route reuses the Route A
+candidate runs at the same source commit and is required for the desktop
+installer and the stable pointer. Every publish step is idempotent:
 npm and crates.io compare remote bytes, PyPI uses `skip-existing`, and
 `tools/create-github-release.ts` keeps runtime seed assets and uploads only
 missing ones.
@@ -349,6 +351,28 @@ missing ones.
   `release-index/releases.json` and moves the stable pointer to a known-good
   replacement; its assets stay, and the defective release's notes get a
   warning footer.
+
+## GitHub Release assets
+
+From the next release, a full release publishes 17 assets:
+
+- Runtime: `capture-runtime-x86_64-pc-windows-msvc.exe`, `capture-runtime-manifest.json`, `capture-document-v2.schema.json`.
+- Engines: `capture-engine-catalog.json`; each worker archive (speech recognition is `capture-engine-speech-recognition-<version>-windows-x64.zip.001` and `.zip.002`); and the three `*-files.json` manifests (OCR, speech recognition, diarization).
+- Desktop: `Capture.Workbench_<version>_x64-setup.exe`.
+- Evidence: `candidate-manifest.json`, `capture-runtime-candidate-manifest.json` (the Route A seed), `capture-contract-snapshot.json`, `capture-release-manifest-v1.json`, and `capture-release-manifest-v1.json.sha256`.
+
+GitHub also attaches the source zip and tarball. A release keeps the assets it was published with. `tools/resolve-capture-release.ts` checks the release-manifest bytes against `release-index/stable.json` `manifestSha256` and the attestation. That check holds whether or not the release also carries per-asset `.sha256` files.
+
+Check a new release like this:
+
+- The executable and schema bytes match `capture-runtime-manifest.json` (`sha256`, `schemaSha256`).
+- Each engine archive, split part, and `*-files.json` matches `capture-engine-catalog.json` (`sha256`, `parts[].sha256`, `filesManifestSha256`).
+- Every runtime and desktop asset matches `runtimeAssets` in `capture-release-manifest-v1.json` (size and sha256).
+- That manifest's digest is `capture-release-manifest-v1.json.sha256` and `release-index/stable.json` `manifestSha256`.
+
+The packaging budget still fails the release candidate when a measured size exceeds its budget. The size report is the CI artifact `capture-size-report-<version>-<run>`. It is not one of the 17 release assets.
+
+Candidate checksums stay inside the candidate artifact and are not release assets: `checksums/*.sha256`, `candidate-manifest.json.sha256`, and the same files on the package and runtime candidates. They are the expected digests recorded before the release manifest exists.
 
 ## Procedure
 

@@ -35,10 +35,14 @@ canonical catalog it generates:
   requirements value is invalid. It is never reclassified as core-only.
 
 The core-only catalog has `requirements: []`. Its release directory contains
-the core runtime, schema/manifest/checksums, empty engine catalog, size
-evidence, NSIS installer, and package tarball handoff. Its GitHub Release
-contains only the canonical runtime assets and NSIS installer; the package
-tarball is GitHub Packages-only. Optional worker archives, model files/ZIPs,
+the core runtime, schema, runtime manifest, and empty engine catalog. The
+release candidate also carries the NSIS installer and the package tarball
+handoff. The size report is the CI artifact
+`capture-size-report-<version>-<run>`. Its GitHub Release contains the canonical
+runtime assets (executable, schema, runtime manifest, engine catalog) and the
+NSIS installer. A full release has 17 assets. Checksum sidecars and the size
+report are not among them. The package tarball is GitHub Packages-only. Optional
+worker archives, model files/ZIPs,
 and QA fixtures are absent. Runtime requirement reporting exposes every engine
 as unavailable with no downloadable artifact,
 and an installation attempt fails before any download begins.

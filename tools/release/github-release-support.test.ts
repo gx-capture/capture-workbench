@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
 import test, { after, before } from 'node:test';
 import {
+  isPublishedRuntimeReleaseFile,
   parseReleaseArguments,
   parseRemoteReleaseInventory,
   run,
@@ -156,6 +157,47 @@ for (const cli of CLIS) {
     assert.equal(result.stderr, 'Unable to inspect the GitHub Release.\n');
   });
 }
+
+test('both release CLIs reject a checksum sidecar and the size report before upload', async () => {
+  for (const cli of CLIS) {
+    for (const name of [
+      'capture-engine-catalog.json.sha256',
+      'runtime-size-report.json',
+    ]) {
+      const dir = await candidateDirectory(cli);
+      await writeFile(join(dir, 'runtime', name), 'not published');
+      const result = runCli(cli, releaseArguments(dir));
+      assert.equal(result.status, 1, `${cli} ${name}`);
+      assert.match(
+        result.stderr,
+        /not a GitHub Release asset/u,
+        `${cli} ${name}`,
+      );
+    }
+  }
+});
+
+test('published runtime names keep worker files and drop checksum sidecars', () => {
+  assert.equal(
+    isPublishedRuntimeReleaseFile(
+      'capture-engine-ocr-0.9.0-windows-x64-files.json',
+    ),
+    true,
+  );
+  assert.equal(
+    isPublishedRuntimeReleaseFile('capture-engine-ocr-0.9.0-windows-x64.zip'),
+    true,
+  );
+  assert.equal(
+    isPublishedRuntimeReleaseFile('capture-runtime-manifest.json'),
+    true,
+  );
+  assert.equal(isPublishedRuntimeReleaseFile('runtime-size-report.json'), false);
+  assert.equal(
+    isPublishedRuntimeReleaseFile('capture-engine-catalog.json.sha256'),
+    false,
+  );
+});
 
 test('the workbench CLI rejects remote assets outside the candidate', async () => {
   const args = releaseArguments(

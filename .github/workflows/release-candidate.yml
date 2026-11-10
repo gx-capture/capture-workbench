@@ -208,9 +208,14 @@ jobs:
           Copy-Item -Path "$env:RUNTIME_CANDIDATE_PATH/runtime/*" -Destination packages/capture-runtime/dist/release -Recurse -Force
           $sizeTarget = if ($env:RELEASE_MODE -eq 'model-enabled') { 'capture-runtime:size-regression-check-model-enabled' } else { 'capture-runtime:size-regression-check' }
           pnpm nx run $sizeTarget
-          Copy-Item packages/capture-runtime/dist/size/runtime-size-report.json packages/capture-runtime/dist/release/runtime-size-report.json
-          $digest = (Get-FileHash packages/capture-runtime/dist/release/runtime-size-report.json -Algorithm SHA256).Hash.ToLowerInvariant()
-          "$digest  runtime-size-report.json" | Set-Content packages/capture-runtime/dist/release/runtime-size-report.json.sha256 -Encoding utf8NoBOM
+
+      - name: Upload runtime size report
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: capture-size-report-${{ inputs.version }}-${{ github.run_id }}
+          path: packages/capture-runtime/dist/size/runtime-size-report.json
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Assemble and verify immutable candidate
         shell: pwsh

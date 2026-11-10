@@ -172,12 +172,14 @@ The release candidate workflow (`release-candidate.yml`) validates and
 classifies the lock, verifies exact-head main CI,
 rebuilds the lock-bound catalog/workers, and checks runtime/package/installer
 integrity. It does not resolve a candidate receipt or rerun model probes on a
-GitHub runner. The release candidate contains catalogued worker ZIPs/sidecars,
-but never model files, model ZIPs, or QA fixtures.
+GitHub runner. The release candidate contains catalogued worker archives and
+their files manifests, but never model files, model ZIPs, or QA fixtures.
 
 The core-only release candidate contains core runtime assets, an empty canonical
-catalog, core-only NSIS, size report, and the package tarball handoff. A
-model-enabled candidate additionally contains catalogued worker ZIPs/sidecars.
+catalog, core-only NSIS, and the package tarball handoff. The size report is
+the CI artifact `capture-size-report-<version>-<run>`. A model-enabled
+candidate additionally
+contains catalogued worker archives and their files manifests.
 Neither mode contains model files/ZIPs or QA fixtures.
 The package tarball is published through GitHub Packages and is never a GitHub
 Release asset. Upload uses compression level 0 and short retention for this
@@ -186,8 +188,11 @@ ordinary-sized handoff.
 ## Publisher
 
 The publisher derives the canonical expected release asset names from the
-complete catalog plus core runtime, worker, checksum, size-report, and installer
-assets. Model file/ZIP names are forbidden. Before package publication and on
+complete catalog plus core runtime, worker archives, files manifests, and the
+installer. A full release has 17 assets. Checksum sidecars and the size report
+are not among them. The size report is the CI artifact
+`capture-size-report-<version>-<run>`.
+Model file/ZIP names are forbidden. Before package publication and on
 all draft/public retries it lists remote asset names and requires:
 
 - no duplicate names;

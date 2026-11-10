@@ -9,7 +9,6 @@ import test from 'node:test';
 
 import {
   RUNTIME_ASSET_NAMES,
-  RUNTIME_SIZE_REPORT_NAMES,
   validateRuntimeManifest,
   verifyRuntimeRelease,
 } from './local-release-consumer-smoke.ts';
@@ -48,15 +47,11 @@ async function createFixture(): Promise<string> {
     fileName: RUNTIME_ASSET_NAMES[0],
     bytes: executable.byteLength,
     sha256: digest(executable),
-    schemaFileName: RUNTIME_ASSET_NAMES[3],
+    schemaFileName: RUNTIME_ASSET_NAMES[2],
     schemaSha256: digest(schema),
   };
   await writeFile(join(directory, manifest.fileName), executable);
   await writeFile(join(directory, manifest.schemaFileName), schema);
-  await writeFile(
-    join(directory, RUNTIME_ASSET_NAMES[1]),
-    `${manifest.sha256}  ${manifest.fileName}\n`,
-  );
   await writeFile(
     join(directory, 'capture-runtime-manifest.json'),
     `${JSON.stringify(manifest, null, 2)}\n`,
@@ -113,17 +108,8 @@ async function createModelFixture(
       : [[fileName, archive] as const];
     for (const [name, bytes] of files) {
       pendingWrites.push(writeFile(join(directory, name), bytes));
-      pendingWrites.push(
-        writeFile(join(directory, `${name}.sha256`), `${digest(bytes)}  ${name}\n`),
-      );
     }
     pendingWrites.push(writeFile(join(directory, filesManifestName), filesManifest));
-    pendingWrites.push(
-      writeFile(
-        join(directory, `${filesManifestName}.sha256`),
-        `${artifact.filesManifestSha256}  ${filesManifestName}\n`,
-      ),
-    );
     return {
       requirementId,
       artifacts: [artifact],
@@ -147,10 +133,6 @@ async function createModelFixture(
   };
   const catalogBytes = canonicalJson(catalog);
   await writeFile(join(directory, 'capture-engine-catalog.json'), catalogBytes);
-  await writeFile(
-    join(directory, 'capture-engine-catalog.json.sha256'),
-    `${digest(catalogBytes)}  capture-engine-catalog.json\n`,
-  );
   return directory;
 }
 
@@ -173,25 +155,22 @@ test('runtime release verifier accepts the canonical asset set', async () => {
   });
 });
 
-test('runtime release verifier accepts the immutable size report pair', async () => {
+test('runtime release verifier rejects a size report and a checksum sidecar', async () => {
   await withFixture(async (directory) => {
-    const report = JSON.stringify({ reportVersion: '2' }) + '\n';
-    await writeFile(join(directory, RUNTIME_SIZE_REPORT_NAMES[0]), report);
-    await writeFile(
-      join(directory, RUNTIME_SIZE_REPORT_NAMES[1]),
-      `${digest(Buffer.from(report))}  ${RUNTIME_SIZE_REPORT_NAMES[0]}\n`,
-    );
-    const manifest = await verifyRuntimeRelease(directory, version);
-    assert.equal(manifest.runtimeVersion, version);
-  });
-});
-
-test('runtime release verifier rejects an unpaired size report', async () => {
-  await withFixture(async (directory) => {
-    await writeFile(join(directory, RUNTIME_SIZE_REPORT_NAMES[0]), '{}\n');
+    await writeFile(join(directory, 'runtime-size-report.json'), '{}\n');
     await assert.rejects(
       verifyRuntimeRelease(directory, version),
-      /size report and checksum must be published together/u,
+      /outside the canonical asset set/u,
+    );
+  });
+  await withFixture(async (directory) => {
+    await writeFile(
+      join(directory, `${RUNTIME_ASSET_NAMES[0]}.sha256`),
+      `${'a'.repeat(64)}  ${RUNTIME_ASSET_NAMES[0]}\n`,
+    );
+    await assert.rejects(
+      verifyRuntimeRelease(directory, version),
+      /outside the canonical asset set/u,
     );
   });
 });
@@ -231,7 +210,6 @@ test('runtime release verifier accepts a models-only unit that has no worker arc
     });
     const bytes = canonicalJson(catalog);
     await writeFile(path, bytes);
-    await writeFile(`${path}.sha256`, `${digest(bytes)}  capture-engine-catalog.json\n`);
 
     const manifest = await verifyRuntimeRelease(directory, version);
     assert.equal(manifest.runtimeVersion, version);
@@ -239,7 +217,6 @@ test('runtime release verifier accepts a models-only unit that has no worker arc
     catalog.requirements[2].artifacts = catalog.requirements[0].artifacts;
     const invalid = canonicalJson(catalog);
     await writeFile(path, invalid);
-    await writeFile(`${path}.sha256`, `${digest(invalid)}  capture-engine-catalog.json\n`);
     await assert.rejects(
       verifyRuntimeRelease(directory, version),
       /Engine catalog requirement is invalid: vertical-japanese-reader/,
@@ -278,10 +255,22 @@ test('runtime release verifier rejects model archives or unknown model-enabled a
 
 test('runtime release verifier rejects executable tampering', async () => {
   await withFixture(async (directory) => {
-    await writeFile(join(directory, RUNTIME_ASSET_NAMES[0]), 'tampered');
+    const path = join(directory, RUNTIME_ASSET_NAMES[0]);
+    const tampered = Buffer.from(await readFile(path));
+    tampered[0] = tampered[0] === 0x74 ? 0x75 : 0x74;
+    await writeFile(path, tampered);
     await assert.rejects(
       verifyRuntimeRelease(directory, version),
-      /byte count|digest/u,
+      /digest does not match the manifest/u,
+    );
+  });
+  await withFixture(async (directory) => {
+    const path = join(directory, RUNTIME_ASSET_NAMES[0]);
+    const original = await readFile(path);
+    await writeFile(path, Buffer.concat([original, Buffer.from('x')]));
+    await assert.rejects(
+      verifyRuntimeRelease(directory, version),
+      /byte count does not match the manifest/u,
     );
   });
 });
@@ -323,7 +312,7 @@ test('runtime manifest validation rejects non-Windows releases', () => {
           fileName: RUNTIME_ASSET_NAMES[0],
           bytes: 1,
           sha256: '0'.repeat(64),
-          schemaFileName: RUNTIME_ASSET_NAMES[3],
+          schemaFileName: RUNTIME_ASSET_NAMES[2],
           schemaSha256: '0'.repeat(64),
         },
         version,
@@ -346,9 +335,7 @@ test('runtime release verifier rejects a corrupted worker archive part', async (
   const directory = await createModelFixture([], { splitSpeech: true });
   try {
     const name = `capture-engine-speech-recognition-${version}-windows-x64.zip.002`;
-    const corrupted = Buffer.from('corrupted part');
-    await writeFile(join(directory, name), corrupted);
-    await writeFile(join(directory, `${name}.sha256`), `${digest(corrupted)}  ${name}\n`);
+    await writeFile(join(directory, name), Buffer.from('corrupted part'));
     await assert.rejects(
       verifyRuntimeRelease(directory, version),
       /digest does not match catalog/u,
