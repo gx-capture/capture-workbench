@@ -10,6 +10,7 @@ import { basename, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import {
+  assertPublishableRuntimeReleaseFile,
   parseReleaseArguments,
   parseRemoteReleaseInventory,
   run,
@@ -19,9 +20,9 @@ import {
 async function assetPaths(candidate: string): Promise<string[]> {
   const runtime = join(candidate, 'runtime');
   const desktop = join(candidate, 'desktop');
-  const runtimeFiles = (await readdir(runtime)).map((name) =>
-    join(runtime, name),
-  );
+  const runtimeNames = await readdir(runtime);
+  for (const name of runtimeNames) assertPublishableRuntimeReleaseFile(name);
+  const runtimeFiles = runtimeNames.map((name) => join(runtime, name));
   const desktopFiles = (await readdir(desktop))
     .filter((name) => name.endsWith('.exe'))
     .map((name) => join(desktop, name));

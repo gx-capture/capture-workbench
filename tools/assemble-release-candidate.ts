@@ -11,6 +11,7 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { createContractSnapshot } from './create-contract-snapshot.ts';
+import { isPublishedRuntimeReleaseFile } from './release/github-release-support.ts';
 
 type ReleaseMode = 'core-only' | 'model-enabled';
 
@@ -67,6 +68,30 @@ async function sha256(path: string): Promise<string> {
     .digest('hex');
 }
 
+/** Copies a runtime directory. A checksum sidecar or the size report fails the candidate. */
+export async function stageRuntimeReleaseAssets(
+  sourceDirectory: string,
+  destinationDirectory: string,
+): Promise<readonly string[]> {
+  const staged: string[] = [];
+  for (const name of (await readdir(sourceDirectory)).sort()) {
+    const source = join(sourceDirectory, name);
+    if (!(await stat(source)).isFile()) {
+      throw new Error(`Runtime release asset is not a regular file: ${name}.`);
+    }
+    if (!isPublishedRuntimeReleaseFile(name)) {
+      throw new Error(
+        `Runtime release file is not a GitHub Release asset: ${name}. ` +
+          'A runtime candidate built from a source commit before this change ' +
+          'cannot be published with the current tooling; rebuild the runtime candidate.',
+      );
+    }
+    await cp(source, join(destinationDirectory, name));
+    staged.push(name);
+  }
+  return staged;
+}
+
 async function copyMatching(
   sourceDirectory: string,
   destinationDirectory: string,
@@ -84,6 +109,42 @@ async function copyMatching(
   for (const name of names)
     await cp(join(sourceDirectory, name), join(destinationDirectory, name));
   return names;
+}
+
+const CANDIDATE_ROOT_DIRECTORIES = [
+  'runtime',
+  'package',
+  'python',
+  'crate',
+  'contracts',
+  'checksums',
+  'desktop',
+] as const;
+
+/** Creates the release candidate's root directories and nothing else. */
+export async function createCandidateLayout(output: string): Promise<void> {
+  await mkdir(output, { recursive: false });
+  await Promise.all(
+    CANDIDATE_ROOT_DIRECTORIES.map((name) => mkdir(join(output, name))),
+  );
+}
+
+export async function requireInstalledSizeReport(
+  reportPath: string,
+  installer: { fileName: string; bytes: number; sha256: string },
+): Promise<void> {
+  const report = JSON.parse(await readFile(reportPath, 'utf8')) as {
+    nsisInstaller?: { fileName?: unknown; bytes?: unknown; sha256?: unknown };
+  };
+  if (
+    report.nsisInstaller?.fileName !== installer.fileName ||
+    report.nsisInstaller?.bytes !== installer.bytes ||
+    report.nsisInstaller?.sha256 !== installer.sha256
+  ) {
+    throw new Error(
+      'Installed-size report does not bind the Tauri-generated installer.',
+    );
+  }
 }
 
 export async function verifyPackageContractSet(
@@ -110,6 +171,7 @@ async function main(): Promise<void> {
   } =
     parseArguments(process.argv.slice(2));
   const root = resolve(import.meta.dirname, '..');
+  await createCandidateLayout(output);
   const runtime = join(output, 'runtime');
   const packages = join(output, 'package');
   const python = join(output, 'python');
@@ -117,28 +179,11 @@ async function main(): Promise<void> {
   const contracts = join(output, 'contracts');
   const checksums = join(output, 'checksums');
   const desktop = join(output, 'desktop');
-  await mkdir(output, { recursive: false });
-  await Promise.all(
-    [runtime, packages, python, crate, contracts, checksums, desktop].map(
-      (path) => mkdir(path),
-    ),
-  );
 
   const runtimeSource = runtimeCandidate
     ? join(resolve(runtimeCandidate), 'runtime')
     : resolve(root, 'packages/capture-runtime/dist/release');
-  await cp(runtimeSource, runtime, { recursive: true });
-  if (runtimeCandidate) {
-    const sizeReport = resolve(
-      root,
-      'packages/capture-runtime/dist/release/runtime-size-report.json',
-    );
-    await cp(sizeReport, join(runtime, 'runtime-size-report.json'));
-    await cp(
-      `${sizeReport}.sha256`,
-      join(runtime, 'runtime-size-report.json.sha256'),
-    );
-  }
+  await stageRuntimeReleaseAssets(runtimeSource, runtime);
   const packageNames = await copyMatching(
     packageCandidate
       ? join(resolve(packageCandidate), 'package')
@@ -197,31 +242,16 @@ async function main(): Promise<void> {
     );
   }
 
-  const reportPath = join(runtime, 'runtime-size-report.json');
-  const report = JSON.parse(await readFile(reportPath, 'utf8')) as Record<
-    string,
-    any
-  >;
-  if (
-    report.nsisInstaller?.fileName !== installers[0] ||
-    report.nsisInstaller?.bytes !== sourceMetadata.size ||
-    report.nsisInstaller?.sha256 !== sourceDigest
-  ) {
-    throw new Error(
-      'Installed-size report does not bind the Tauri-generated installer.',
-    );
-  }
-  report.nsisInstaller = {
-    path: `desktop/${candidateInstallerName}`,
-    fileName: candidateInstallerName,
-    bytes: stagedMetadata.size,
-    sha256: sourceDigest,
-  };
-  await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
-  await writeFile(
-    `${reportPath}.sha256`,
-    `${await sha256(reportPath)}  runtime-size-report.json\n`,
-    'utf8',
+  await requireInstalledSizeReport(
+    resolve(
+      root,
+      'packages/capture-runtime/dist/size/runtime-size-report.json',
+    ),
+    {
+      fileName: installers[0],
+      bytes: sourceMetadata.size,
+      sha256: sourceDigest,
+    },
   );
   await writeFile(
     join(contracts, 'contract-snapshot.json'),

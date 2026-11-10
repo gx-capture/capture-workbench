@@ -161,25 +161,24 @@ test('release manifest is immutable, candidate-bound, and records registry and g
       }),
     );
     const output = join(root, 'capture-release-manifest-v1.json');
-    const result = spawnSync(
-      process.execPath,
-      [
-        resolve(import.meta.dirname, 'create-release-manifest.ts'),
-        '--candidate',
-        candidate,
-        '--tag',
-        ("v" + RELEASE_VERSION),
-        '--promotion-evidence',
-        evidencePath,
-        '--consumer-gate-ledger',
-        gatePath,
-        '--registry-directory',
-        registries,
-        '--output',
-        output,
-      ],
-      { encoding: 'utf8' },
-    );
+    const manifestArguments = [
+      resolve(import.meta.dirname, 'create-release-manifest.ts'),
+      '--candidate',
+      candidate,
+      '--tag',
+      ("v" + RELEASE_VERSION),
+      '--promotion-evidence',
+      evidencePath,
+      '--consumer-gate-ledger',
+      gatePath,
+      '--registry-directory',
+      registries,
+      '--output',
+      output,
+    ];
+    const result = spawnSync(process.execPath, manifestArguments, {
+      encoding: 'utf8',
+    });
     assert.equal(result.status, 0, result.stderr);
     const manifest = JSON.parse(await readFile(output, 'utf8'));
     assert.equal(manifest.status, 'released');
@@ -197,6 +196,10 @@ test('release manifest is immutable, candidate-bound, and records registry and g
       ['crates.io', 'npm', 'pypi'],
     );
     assert.equal(manifest.consumerGates.gates[0].verdict, 'passed');
+    assert.deepEqual(
+      manifest.runtimeAssets.map((item: { path: string }) => item.path),
+      ['desktop/installer.exe', 'runtime/runtime.bin'],
+    );
     assert.match(
       await readFile(`${output}.sha256`, 'utf8'),
       /^[0-9a-f]{64} {2}capture-release-manifest-v1\.json\n$/u,
@@ -207,6 +210,16 @@ test('release manifest is immutable, candidate-bound, and records registry and g
       ),
       JSON.parse(candidateManifest.toString('utf8')),
     );
+    for (const name of ['runtime-size-report.json', 'runtime.bin.sha256']) {
+      const extra = join(runtime, name);
+      await writeFile(extra, '{}\n');
+      const rejected = spawnSync(process.execPath, manifestArguments, {
+        encoding: 'utf8',
+      });
+      assert.equal(rejected.status, 1, name);
+      assert.match(rejected.stderr, /not a GitHub Release asset/u, name);
+      await rm(extra);
+    }
   } finally {
     await rm(root, { recursive: true, force: true });
   }

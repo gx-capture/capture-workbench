@@ -170,8 +170,11 @@ def test_release_copies_only_catalogued_engine_assets_with_checksums(
 
     released = {item.name for item in (tmp_path / "release").iterdir()}
     assert "capture-engine-catalog.json" in released
-    assert "capture-engine-catalog.json.sha256" in released
-    assert all(f"{item.name}.sha256" in released for item in engine_dir.iterdir() if item.is_file())
+    assert "capture-runtime-manifest.json" in released
+    assert not any(
+        name.endswith(".sha256") or name == "runtime-size-report.json" for name in released
+    )
+    assert all(item.name in released for item in engine_dir.iterdir() if item.is_file())
 
 
 def test_release_rejects_catalog_archive_drift_before_copying(tmp_path: Path) -> None:
@@ -217,7 +220,9 @@ def test_release_publishes_a_split_worker_archive_as_its_checked_parts(tmp_path:
     released = {item.name for item in (tmp_path / "release").iterdir()}
     speech = "capture-engine-speech-recognition.zip"
     assert speech not in released
-    assert {f"{speech}.001", f"{speech}.001.sha256", f"{speech}.002"} <= released
+    assert {f"{speech}.001", f"{speech}.002"} <= released
+    assert f"{speech}.001.sha256" not in released
+    assert f"{speech}.002.sha256" not in released
 
 
 def test_release_rejects_a_drifted_archive_part(tmp_path: Path) -> None:

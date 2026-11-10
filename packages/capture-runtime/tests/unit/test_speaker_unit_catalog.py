@@ -203,7 +203,7 @@ def test_catalog_and_release_include_the_speaker_unit_when_the_lock_has_it(
     )
     archive = f"capture-engine-diarization-{RUNTIME_VERSION}-windows-x64.zip"
     assert (release / archive).is_file()
-    assert (release / f"{archive}.sha256").is_file()
+    assert not (release / f"{archive}.sha256").is_file()
 
 
 def test_catalog_generation_fails_when_the_locked_unit_has_no_worker_archive(
