@@ -5,7 +5,17 @@
   "tags": ["scope:capture", "type:sdk"],
   "targets": {
     "test": {
+      "cache": true,
       "executor": "nx:run-commands",
+      "inputs": [
+        "default",
+        "{workspaceRoot}/packages/capture-runtime/src/capture_runtime/assets/contract-set.json",
+        "{workspaceRoot}/packages/capture-runtime/src/capture_runtime/assets/contract-set.sha256",
+        "{workspaceRoot}/packages/capture-runtime/tests/fixtures/ocr-projection-v3-perspective.json",
+        "{workspaceRoot}/packages/capture-runtime/tests/fixtures/ocr-page-selection-v3.json",
+        "{workspaceRoot}/packages/capture-runtime/tests/fixtures/ocr-projection-v3-referenced-invalid-corpus.json",
+        "{workspaceRoot}/packages/capture-runtime/tests/fixtures/speaker-wire-samples.json"
+      ],
       "options": { "command": "uv run --project packages/capture-runtime-client-python pytest packages/capture-runtime-client-python/tests" }
     },
     "lint": {
