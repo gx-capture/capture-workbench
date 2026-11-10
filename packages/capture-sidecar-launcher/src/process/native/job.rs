@@ -1,5 +1,3 @@
-#[cfg(windows)]
-use std::collections::HashSet;
 use std::os::windows::io::AsRawHandle;
 use std::{collections::HashMap, ffi::c_void, io, mem::size_of, process::Child, ptr};
 
@@ -31,9 +29,6 @@ use super::handle::{
 };
 
 #[cfg(windows)]
-use super::tree::remaining_timeout_ms;
-
-#[cfg(windows)]
 use super::{same_process_identity, OwnedProcessIdentity};
 
 #[cfg(windows)]
@@ -53,28 +48,6 @@ pub(crate) struct WindowsJob {
     process_termination_attempts: usize,
     #[cfg(test)]
     stale_process_snapshot: Option<Vec<OwnedProcessIdentity>>,
-    #[cfg(test)]
-    pub(crate) assignment_failure_at: Option<usize>,
-    #[cfg(test)]
-    assignment_attempts: usize,
-    #[cfg(test)]
-    pub(crate) membership_failure_at: Option<usize>,
-    #[cfg(test)]
-    pub(crate) membership_attempts: usize,
-    #[cfg(test)]
-    pub(crate) resume_failure_at: Option<usize>,
-    #[cfg(test)]
-    pub(crate) identity_failure_at: Option<usize>,
-}
-
-#[cfg(all(test, windows))]
-#[derive(Default)]
-pub(crate) struct GroupTestFaults {
-    pub(crate) assignment_failure_at: Option<usize>,
-    pub(crate) membership_failure_at: Option<usize>,
-    pub(crate) resume_failure_at: Option<usize>,
-    pub(crate) identity_failure_at: Option<usize>,
-    pub(crate) nonce_generation_failure: bool,
 }
 
 #[cfg(windows)]
@@ -119,47 +92,12 @@ impl WindowsJob {
             process_termination_attempts: 0,
             #[cfg(test)]
             stale_process_snapshot: None,
-            #[cfg(test)]
-            assignment_failure_at: None,
-            #[cfg(test)]
-            assignment_attempts: 0,
-            #[cfg(test)]
-            membership_failure_at: None,
-            #[cfg(test)]
-            membership_attempts: 0,
-            #[cfg(test)]
-            resume_failure_at: None,
-            #[cfg(test)]
-            identity_failure_at: None,
         })
     }
 
-    #[cfg(test)]
-    pub(crate) fn new_with_faults(faults: GroupTestFaults) -> Result<Self, String> {
-        let mut job = Self::new()?;
-        job.assignment_failure_at = faults.assignment_failure_at;
-        job.membership_failure_at = faults.membership_failure_at;
-        job.resume_failure_at = faults.resume_failure_at;
-        job.identity_failure_at = faults.identity_failure_at;
-        Ok(job)
-    }
-
     pub(crate) fn assign(&mut self, child: &Child) -> Result<(), String> {
-        #[cfg(test)]
-        {
-            let attempt = self.assignment_attempts;
-            self.assignment_attempts += 1;
-            if self.assignment_failure_at == Some(attempt) {
-                self.assignment_failure_at = None;
-                return Err("Injected Job assignment failure.".into());
-            }
-        }
-        let assigned = unsafe {
-            AssignProcessToJobObject(
-                self.handle as *mut c_void,
-                child.as_raw_handle() as *mut c_void,
-            )
-        };
+        let assigned =
+            unsafe { AssignProcessToJobObject(self.handle as *mut c_void, child.as_raw_handle()) };
         if assigned == 0 {
             Err(format!(
                 "Capture runtime could not be attached to its owned process job: {}",
@@ -171,19 +109,10 @@ impl WindowsJob {
     }
 
     pub(crate) fn verify_assignment(&mut self, child: &Child) -> Result<(), String> {
-        #[cfg(test)]
-        {
-            let attempt = self.membership_attempts;
-            self.membership_attempts += 1;
-            if self.membership_failure_at == Some(attempt) {
-                self.membership_failure_at = None;
-                return Err("Injected Job membership verification failure.".into());
-            }
-        }
         let mut in_job = 0_i32;
         let verified = unsafe {
             IsProcessInJob(
-                child.as_raw_handle() as *mut c_void,
+                child.as_raw_handle(),
                 self.handle as *mut c_void,
                 &mut in_job,
             )
@@ -196,22 +125,6 @@ impl WindowsJob {
         }
         if in_job == 0 {
             return Err("Capture runtime root process was not assigned to its owned Job.".into());
-        }
-        Ok(())
-    }
-
-    pub(crate) fn verify_membership_set(
-        &mut self,
-        expected: &[OwnedProcessIdentity],
-    ) -> Result<(), String> {
-        let observed = self.owned_processes(None)?;
-        let expected_set: HashSet<_> = expected.iter().copied().collect();
-        let observed_set: HashSet<_> = observed.iter().copied().collect();
-        if expected.len() != expected_set.len()
-            || observed.len() != observed_set.len()
-            || expected_set != observed_set
-        {
-            return Err("The owned runtime Job membership did not match every group root.".into());
         }
         Ok(())
     }
@@ -365,38 +278,6 @@ impl WindowsJob {
         )
     }
 
-    pub(crate) fn terminate_remaining_owned_processes(
-        &mut self,
-        deadline: std::time::Instant,
-    ) -> Result<(), String> {
-        const MAX_PASSES: usize = 20;
-        for _ in 0..MAX_PASSES {
-            if remaining_timeout_ms(deadline) == 0 {
-                return Err("The owned runtime Job cleanup budget expired.".into());
-            }
-            let processes = self.owned_processes(None)?;
-            if processes.is_empty() {
-                return Ok(());
-            }
-            for process in processes {
-                self.terminate_owned_process_with_timeout(
-                    process,
-                    None,
-                    remaining_timeout_ms(deadline),
-                )?;
-            }
-            if self.owned_processes(None)?.is_empty() {
-                return Ok(());
-            }
-            let sleep_ms = remaining_timeout_ms(deadline).min(10);
-            if sleep_ms == 0 {
-                return Err("The owned runtime Job cleanup budget expired.".into());
-            }
-            std::thread::sleep(std::time::Duration::from_millis(u64::from(sleep_ms)));
-        }
-        Err("The owned runtime Job still reports active processes after group cleanup.".into())
-    }
-
     pub(crate) fn terminate_owned_process_with_timeout(
         &mut self,
         expected: OwnedProcessIdentity,
@@ -492,26 +373,6 @@ impl WindowsJob {
     #[cfg(test)]
     pub(crate) fn inject_stale_process_snapshot(&mut self, snapshot: Vec<OwnedProcessIdentity>) {
         self.stale_process_snapshot = Some(snapshot);
-    }
-
-    #[cfg(test)]
-    pub(crate) fn take_resume_failure(&mut self, ordinal: usize) -> bool {
-        if self.resume_failure_at == Some(ordinal) {
-            self.resume_failure_at = None;
-            true
-        } else {
-            false
-        }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn take_identity_failure(&mut self, ordinal: usize) -> bool {
-        if self.identity_failure_at == Some(ordinal) {
-            self.identity_failure_at = None;
-            true
-        } else {
-            false
-        }
     }
 
     #[cfg(all(test, windows))]

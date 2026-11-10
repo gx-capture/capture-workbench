@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+### Sidecar launcher keeps one launch path (breaking for the launcher crate)
+
+`capture-sidecar-launcher` drops its group lifecycle (R3), the launch journal,
+run staging and restart reconciliation. No host used them. Desktop, Cert Prep
+and LAW keep the launch path they use: a fresh loopback port and token per
+attempt, every root in a kill-on-close Job object, and the runtime's startup
+sweeps. The crate writes nothing to disk. This changes the crate's public API,
+so the next release bumps its minor version.
+
+- Removed functions and methods: `build_immutable_group_plan`,
+  `OwnedRuntimeSession::prepare_group`, `OwnedRuntimeSession::activate_group`,
+  `OwnedRuntimeSession::observe` and `OwnedRuntimeSession::close`.
+- Removed types: `ActivationCancelHandle`, `ActivationCleanupObservation`,
+  `BindingAttemptId`, `CleanupError`, `CleanupErrorKind`, `CleanupPhase`,
+  `CloseReason`, `CompleteGroupBinding`, `CompleteGroupBindingReceiptV1`,
+  `GroupLease`, `GroupLifecycleState`, `GroupObservation`, `GroupProof`,
+  `GroupRootPlanInput`, `ImmutableGroupPlan`, `LaunchError`,
+  `LaunchErrorKind`, `LaunchPhase`, `LifecycleError`, `LifecycleErrorKind`,
+  `LifecyclePhase`, `PersistError`, `PrepareError`, `PreparedGroup`,
+  `ReconcileRef`, `ReconcileRefSink`, `RootRefBinding`,
+  `SemanticActivationCleanupState` and `VerifiedGroupBinding`.
+- Unchanged: `launch_sidecar`, `launch_sidecar_with_observer`,
+  `LaunchOptions`, `LaunchedSidecar`, `SidecarLaunchSpec`,
+  `SidecarConnection`, `OwnedRuntimeSession` (`spawn`, `id`, `try_wait`,
+  `monitor_root_exit`, `terminate_and_prove`, `terminate`),
+  `OwnedSidecarProcess`, `RuntimeTerminationProof`, `RuntimeCleanupError`,
+  `RuntimeCleanupErrorKind`, the manifest functions and types,
+  `probe_ready_once`, `ProbeResult`, `ReadyHandshake`,
+  `generate_bearer_token`, `reserve_loopback_port` and
+  `reserve_distinct_loopback_port`.
+- The runtime no longer reads `CAPTURE_RUN_STAGING_DIR`; only the removed
+  group activation set it. Staging is always `app_data/jobs/staging`.
+
 ### Speech device
 
 - TEA-ASR 1.1 runs on CUDA when a GPU is present and on CPU when it is not. A

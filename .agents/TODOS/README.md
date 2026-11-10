@@ -29,8 +29,6 @@ and procedure: [release-runbook.md](../GUIDES/release-runbook.md).
   [#230](https://github.com/gx-capture/capture-workbench/issues/230).
 
 - Runtime and OCR:
-  restart reconciliation and host migration to the R3 lifecycle ("Option W",
-  a decision for the user) [#246](https://github.com/gx-capture/capture-workbench/issues/246);
   iGPU selection test and installed proof [#247](https://github.com/gx-capture/capture-workbench/issues/247);
   vertical Japanese reader follow-ups (detector licence, DirectML evidence,
   furigana review) [#248](https://github.com/gx-capture/capture-workbench/issues/248);

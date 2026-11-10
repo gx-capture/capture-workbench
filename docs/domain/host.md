@@ -86,6 +86,6 @@ PDF 可以帶 `captureOptions`，目前只有 `pdfPageCount`（前 K 頁，只�
 
 ## 規則與資料來源
 
-- launcher 的啟動日誌（journal）與重啟對帳（reconcile）目前只有驗證值與讀取觀察的基礎，尚未接上正式路徑；是否接上待產品負責人決定（[#246](https://github.com/gx-capture/capture-workbench/issues/246)）。
+- launcher 只有一條啟動路徑：每次啟動用新的 loopback port 與 token，runtime 放進 `KILL_ON_JOB_CLOSE` 的 Job；主機結束時系統關閉 Job 並停掉整棵程序樹。launcher 不寫磁碟、不記錄啟動過的程序；當機後殘留的檔案由 runtime 啟動時清掉（見 [Phase 2 SPEC 的 runtime process lifecycle](../../.agents/SPECS/capture-runtime-042-p2-hardening.md#runtime-process-lifecycle)）。
 - 測試用的假 runtime 只在 QA 安裝檔（Capture Workbench QA Fake Data）與 deterministic smoke 使用，資料寫在獨立目錄，不碰使用者真實的 App 資料（見 [desktop README](../../apps/capture-workbench-desktop/README.md)）。
 - 改 UI 模組或殼層資料夾時，同一個 PR 更新 `sheriff.config.ts` 並執行 `pnpm run architecture:update`。

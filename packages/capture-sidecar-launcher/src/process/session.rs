@@ -4,250 +4,10 @@ use std::io;
 #[cfg(all(test, windows))]
 use std::os::windows::io::AsRawHandle;
 use std::process::{Command, ExitStatus};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use crate::prepare::{ImmutableGroupPlan, PrepareError, PreparedGroup, ReconcileRefSink};
-
-#[cfg(windows)]
-use super::activation::{activate_prepared_group, close_running_owner, RunningActivationOwner};
-
-#[cfg(windows)]
-use super::error::{launch_error_from_private_failure, lifecycle_error};
-use super::error::{
-    CleanupError, CleanupErrorKind, CleanupPhase, CloseReason, GroupObservation, GroupProof,
-    LaunchError, LifecycleError, LifecycleErrorKind, LifecyclePhase, RuntimeCleanupError,
-    RuntimeCleanupErrorKind,
-};
-#[cfg(not(windows))]
-use super::error::{LaunchErrorKind, LaunchPhase};
+use super::error::{RuntimeCleanupError, RuntimeCleanupErrorKind};
 use super::sidecar_process::OwnedSidecarProcess;
-
-/// Move-only lease for one live runtime group.
-///
-/// [`crate::OwnedRuntimeSession::observe`] borrows it.
-/// [`crate::OwnedRuntimeSession::close`] consumes it. Drop invalidates the
-/// lease token and then drops the private owner, which can stop the owned
-/// job. Drop does not return a [`GroupProof`].
-pub struct GroupLease {
-    token: std::sync::atomic::AtomicBool,
-    #[cfg(windows)]
-    pub(crate) owner: Mutex<Option<RunningActivationOwner>>,
-}
-
-impl GroupLease {
-    #[cfg(windows)]
-    pub(crate) fn new(owner: RunningActivationOwner) -> Self {
-        Self {
-            token: std::sync::atomic::AtomicBool::new(true),
-            owner: Mutex::new(Some(owner)),
-        }
-    }
-
-    fn invalidate(&self) {
-        self.token
-            .store(false, std::sync::atomic::Ordering::Release);
-    }
-}
-
-impl Drop for GroupLease {
-    fn drop(&mut self) {
-        // This is intentionally the first operation. Dropping the owner below
-        // may invoke the native bounded fallback, but can never leave a valid
-        // in-memory lease token during that work.
-        self.invalidate();
-    }
-}
-
-/// A public whole-group lifecycle owner. Legacy one-process methods remain
-/// available on this type for migration; the R3 methods below are a separate
-/// opaque group seam.
-
-impl OwnedRuntimeSession {
-    /// Starts the roots in `prepared` and returns a live lease.
-    ///
-    /// On Windows this consumes the prepared group, creates its staging
-    /// scope, starts each root, and returns only after the running journal
-    /// record is written. The call uses one 60 second budget and the cancel
-    /// flag from [`PreparedGroup::cancel_handle`]. The bearer token is not
-    /// logged or written to the journal. On failure the returned
-    /// [`LaunchError`] keeps the cleanup owner; call
-    /// [`LaunchError::retry_cleanup`] instead of dropping it unnoticed.
-    ///
-    /// # Errors
-    ///
-    /// On Windows the error kind can be [`crate::LaunchErrorKind::Preparation`],
-    /// [`crate::LaunchErrorKind::Staging`], [`crate::LaunchErrorKind::Native`],
-    /// [`crate::LaunchErrorKind::Storage`], [`crate::LaunchErrorKind::Cancellation`],
-    /// [`crate::LaunchErrorKind::Deadline`], or [`crate::LaunchErrorKind::Reconcile`].
-    /// On any other target the kind is [`crate::LaunchErrorKind::Unsupported`] and
-    /// the phase is [`crate::LaunchPhase::Preparation`].
-    pub fn activate_group(prepared: PreparedGroup) -> Result<GroupLease, LaunchError> {
-        #[cfg(not(windows))]
-        {
-            let _ = prepared;
-            return Err(LaunchError {
-                kind: LaunchErrorKind::Unsupported,
-                phase: LaunchPhase::Preparation,
-                no_resources: false,
-            });
-        }
-        #[cfg(windows)]
-        {
-            match activate_prepared_group(prepared) {
-                Ok(owner) => Ok(GroupLease::new(owner)),
-                Err(failure) => Err(launch_error_from_private_failure(failure)),
-            }
-        }
-    }
-
-    /// Reads one running group's readiness without taking its close owner.
-    ///
-    /// On Windows this uses a 60 second budget, rechecks the journal, schema
-    /// digest, listeners, and strict readiness probe, and returns an
-    /// observation whose state is [`crate::GroupLifecycleState::Running`]. It does
-    /// not consult [`PreparedGroup::cancel_handle`]. A
-    /// [`LifecycleErrorKind::Listener`] result invalidates the lease token so
-    /// a later observe fails, and it still leaves close authority with the
-    /// caller. Other failures leave the token valid.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LifecycleError`]. On Windows the kind can be
-    /// [`LifecycleErrorKind::Busy`], [`LifecycleErrorKind::Cancellation`],
-    /// [`LifecycleErrorKind::Deadline`], [`LifecycleErrorKind::Conflict`],
-    /// [`LifecycleErrorKind::Storage`], [`LifecycleErrorKind::Native`],
-    /// [`LifecycleErrorKind::Listener`], [`LifecycleErrorKind::Validation`],
-    /// or [`LifecycleErrorKind::InvalidState`]. On any other target the kind
-    /// is [`LifecycleErrorKind::Unsupported`]. The phase is
-    /// [`LifecyclePhase::Observe`].
-    pub fn observe(lease: &GroupLease) -> Result<GroupObservation, LifecycleError> {
-        #[cfg(not(windows))]
-        {
-            let _ = lease;
-            return Err(LifecycleError {
-                kind: LifecycleErrorKind::Unsupported,
-                phase: LifecyclePhase::Observe,
-            });
-        }
-        #[cfg(windows)]
-        {
-            let cancellation = Arc::new(std::sync::atomic::AtomicBool::new(false));
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
-            observe_group_with_budget(lease, deadline, cancellation)
-        }
-    }
-
-    /// Stops a live group and returns its terminal proof.
-    ///
-    /// Consumes `lease` and invalidates its token before taking the owner, so
-    /// a new observation cannot start. On Windows this uses a 60 second
-    /// budget, stops the owned processes, releases listeners and staging, and
-    /// writes the terminal journal record. `reason` selects neither a
-    /// different transition nor a journal field; both
-    /// [`CloseReason`] variants follow the same close path and neither is
-    /// stored.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`CleanupError`]. On Windows the kind can be any
-    /// [`CleanupErrorKind`] other than [`CleanupErrorKind::Unsupported`].
-    /// [`CleanupErrorKind::InvalidState`] means the lease no longer held an
-    /// owner. On any other target the kind is
-    /// [`CleanupErrorKind::Unsupported`] and the phase is
-    /// [`CleanupPhase::Running`]. Call [`CleanupError::retry`] to resume a
-    /// Windows failure that still holds an owner.
-    pub fn close(lease: GroupLease, reason: CloseReason) -> Result<GroupProof, CleanupError> {
-        #[cfg(not(windows))]
-        {
-            let _ = (lease, reason);
-            return Err(CleanupError {
-                kind: CleanupErrorKind::Unsupported,
-                phase: CleanupPhase::Running,
-            });
-        }
-        #[cfg(windows)]
-        {
-            let mut lease = lease;
-            // Invalidate before extracting the owner so a concurrent observer
-            // cannot begin after close has acquired its one-use authority.
-            lease.invalidate();
-            let owner = match lease.owner.get_mut() {
-                Ok(slot) => slot.take(),
-                Err(poisoned) => poisoned.into_inner().take(),
-            };
-            let Some(owner) = owner else {
-                return Err(CleanupError {
-                    kind: CleanupErrorKind::InvalidState,
-                    phase: CleanupPhase::Running,
-                    owner: None,
-                });
-            };
-            let cancellation = Arc::new(std::sync::atomic::AtomicBool::new(false));
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
-            let _ = reason;
-            close_running_owner(owner, deadline, cancellation)
-        }
-    }
-}
-
-#[cfg(windows)]
-/// Observe through one caller-owned absolute budget.  Keeping the budget
-/// outside the mutex acquisition makes contention itself bounded and ensures
-/// a lock released before the deadline does not grant a fresh timeout after
-/// admission.
-
-pub(crate) fn observe_group_with_budget(
-    lease: &GroupLease,
-    deadline: std::time::Instant,
-    cancellation: Arc<AtomicBool>,
-) -> Result<GroupObservation, LifecycleError> {
-    if std::time::Instant::now() >= deadline {
-        return Err(lifecycle_error(LifecycleErrorKind::Deadline));
-    }
-    if !lease.token.load(std::sync::atomic::Ordering::Acquire) {
-        return Err(LifecycleError {
-            kind: LifecycleErrorKind::InvalidState,
-            phase: LifecyclePhase::Observe,
-        });
-    }
-    let mut owner = loop {
-        match lease.owner.try_lock() {
-            Ok(owner) => break owner,
-            Err(std::sync::TryLockError::Poisoned(_)) => {
-                // Poisoned admission retains the owner in the lease; fail
-                // closed without taking or dropping that owner.
-                return Err(lifecycle_error(LifecycleErrorKind::InvalidState));
-            }
-            Err(std::sync::TryLockError::WouldBlock) => {
-                let remaining = deadline.saturating_duration_since(std::time::Instant::now());
-                if remaining.is_zero() {
-                    return Err(lifecycle_error(LifecycleErrorKind::Busy));
-                }
-                std::thread::sleep(std::time::Duration::from_millis(10).min(remaining));
-            }
-        }
-    };
-    let owner = owner.as_mut().ok_or(LifecycleError {
-        kind: LifecycleErrorKind::InvalidState,
-        phase: LifecyclePhase::Observe,
-    })?;
-    // Recheck after admission: another observer may have invalidated authority.
-    if !lease.token.load(Ordering::Acquire) {
-        return Err(lifecycle_error(LifecycleErrorKind::InvalidState));
-    }
-    let result = owner.observe_public(deadline, cancellation);
-    if let Err(error) = &result {
-        // A failed readiness/listener check revokes observation authority.
-        // Budget, cancellation, lock, journal and staging observation errors
-        // alone do not establish failed readiness; they withhold this result
-        // but preserve retry and the exact close owner.
-        if error.kind == LifecycleErrorKind::Listener {
-            lease.invalidate();
-        }
-    }
-    result
-}
 
 /// Evidence from one completed single-process stop.
 ///
@@ -301,50 +61,19 @@ pub(crate) struct OwnedRuntimeSessionState {
 /// [`crate::launch_sidecar_with_observer`] keeps one clone and passes another
 /// to the host before readiness is probed. The process and its Windows job
 /// are released only after the last clone proves cleanup. Dropping that last
-/// clone stops the attempt and ignores a cleanup error. Group methods on
-/// this type are a separate lifecycle from [`Self::spawn`].
+/// clone stops the attempt and ignores a cleanup error.
 #[derive(Clone)]
 pub struct OwnedRuntimeSession {
     inner: Arc<Mutex<OwnedRuntimeSessionState>>,
 }
 
 impl OwnedRuntimeSession {
-    /// Writes the group journal and asks `sink` to store the binding.
-    ///
-    /// Takes the journal lock under `plan`'s producer root, creates the
-    /// journal file when it is absent, writes the address index, and calls
-    /// [`ReconcileRefSink::persist`], [`ReconcileRefSink::read_back`], and
-    /// [`ReconcileRefSink::verify`]. It then compare-and-swaps the journal to
-    /// the prepared-bound record. The bearer token is not written to the
-    /// journal, the index, or the sink record. No listener or root process is
-    /// started. A failure after the initial journal write leaves that file in
-    /// place.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`PrepareError::InvalidPlan`] when the plan or address index
-    /// is incomplete, [`PrepareError::InvalidTimestamp`] when a journal
-    /// timestamp is rejected, [`PrepareError::ReferenceGeneration`] when the
-    /// attempt id cannot be generated, and [`PrepareError::InvalidBinding`]
-    /// when the sink receipt does not match the binding.
-    /// [`PrepareError::Binding`] carries the sink's [`crate::PersistError`].
-    /// Journal failures are [`PrepareError::JournalAlreadyExists`],
-    /// [`PrepareError::JournalConflict`], [`PrepareError::JournalCorrupt`],
-    /// [`PrepareError::JournalTooLarge`], [`PrepareError::JournalAmbiguous`],
-    /// or [`PrepareError::JournalUnavailable`].
-    pub fn prepare_group(
-        plan: &ImmutableGroupPlan,
-        sink: &dyn ReconcileRefSink,
-    ) -> Result<PreparedGroup, PrepareError> {
-        crate::prepare::prepare_group(plan, sink)
-    }
-
     /// Spawns `command` and wraps it in an ownership token.
     ///
     /// On Windows the child is created suspended and without a window,
     /// assigned to a new kill-on-close job, and resumed only after that
     /// assignment is checked. A failed assignment stops the child before this
-    /// returns. This does not probe readiness and does not write a journal.
+    /// returns. This does not probe readiness and writes nothing to disk.
     ///
     /// # Errors
     ///

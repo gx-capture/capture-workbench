@@ -23,11 +23,9 @@
     "cargo-test": {
       "cache": true,
       "executor": "nx:run-commands",
-      "dependsOn": ["cargo-fixture-build"],
       "inputs": [
         "default",
         "{workspaceRoot}/tools/cargo-test-retry-failed.ts",
-        "{workspaceRoot}/packages/capture-runtime-client-python/src/capture_runtime_client/private/schemas/capture-document.schema.json",
         "{workspaceRoot}/packages/capture-runtime/src/capture_runtime/contracts/**/*",
         "{workspaceRoot}/packages/capture-runtime/src/capture_runtime/contract_set.py",
         "{workspaceRoot}/packages/capture-runtime/src/capture_runtime/_contract_set_bundle.py",
@@ -43,31 +41,6 @@
       "options": {
         "command": "node tools/cargo-test-retry-failed.ts --manifest-path packages/capture-sidecar-launcher/Cargo.toml",
         "env": { "RUST_TEST_THREADS": "4" }
-      }
-    },
-    "cargo-fixture-build": {
-      "cache": true,
-      "executor": "nx:run-commands",
-      "outputs": [
-        "{projectRoot}/tests/fixtures/activation-probe/target"
-      ],
-      "options": {
-        "command": "cargo build --locked --manifest-path packages/capture-sidecar-launcher/tests/fixtures/activation-probe/Cargo.toml"
-      }
-    },
-    "cargo-fixture-check": {
-      "cache": true,
-      "executor": "nx:run-commands",
-      "options": {
-        "command": "cargo check --locked --manifest-path packages/capture-sidecar-launcher/tests/fixtures/activation-probe/Cargo.toml"
-      }
-    },
-    "cargo-fixture-test": {
-      "cache": true,
-      "executor": "nx:run-commands",
-      "dependsOn": ["cargo-fixture-build"],
-      "options": {
-        "command": "cargo test --locked --manifest-path packages/capture-sidecar-launcher/tests/fixtures/activation-probe/Cargo.toml"
       }
     },
     "cargo-package-dry-run": {

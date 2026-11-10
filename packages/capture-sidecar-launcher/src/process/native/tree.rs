@@ -1,11 +1,9 @@
 #[cfg(windows)]
-use std::ffi::{c_void, OsString};
+use std::ffi::OsString;
 #[cfg(windows)]
 use std::io;
 #[cfg(windows)]
 use std::os::windows::ffi::OsStringExt;
-#[cfg(windows)]
-use std::os::windows::io::AsRawHandle;
 #[cfg(any(windows, test))]
 use std::process::{Child, Command, Stdio};
 
@@ -14,17 +12,14 @@ use std::path::PathBuf;
 
 #[cfg(windows)]
 use windows_sys::Win32::{
-    Foundation::{
-        GetLastError, ERROR_NO_MORE_FILES, INVALID_HANDLE_VALUE, WAIT_FAILED, WAIT_OBJECT_0,
-        WAIT_TIMEOUT,
-    },
+    Foundation::{GetLastError, ERROR_NO_MORE_FILES, INVALID_HANDLE_VALUE},
     System::Diagnostics::ToolHelp::{
         CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32,
     },
     System::SystemInformation::GetSystemDirectoryW,
     System::Threading::{
-        GetExitCodeProcess, GetProcessIdOfThread, OpenThread, ResumeThread, SuspendThread,
-        WaitForSingleObject, THREAD_QUERY_LIMITED_INFORMATION, THREAD_SUSPEND_RESUME,
+        GetProcessIdOfThread, OpenThread, ResumeThread, THREAD_QUERY_LIMITED_INFORMATION,
+        THREAD_SUSPEND_RESUME,
     },
 };
 
@@ -68,75 +63,6 @@ pub(crate) fn terminate_assigned_suspended_child(
         .wait()
         .map(|_| ())
         .map_err(|error| format!("Assigned suspended runtime root could not be reaped: {error}"))
-}
-
-#[cfg(windows)]
-pub(crate) fn remaining_timeout_ms(deadline: std::time::Instant) -> u32 {
-    let millis = deadline
-        .saturating_duration_since(std::time::Instant::now())
-        .as_millis();
-    u32::try_from(millis.min(u128::from(u32::MAX))).unwrap_or(u32::MAX)
-}
-
-#[cfg(windows)]
-pub(crate) fn reap_child_by_exact_handle(
-    child: &mut Child,
-    wait_timeout_ms: u32,
-) -> Result<(), String> {
-    let handle = child.as_raw_handle() as *mut c_void;
-    let wait_state = unsafe { WaitForSingleObject(handle, wait_timeout_ms) };
-    if wait_state != WAIT_OBJECT_0 {
-        return Err(match wait_state {
-            WAIT_TIMEOUT => "Runtime group root did not exit within the cleanup budget.",
-            WAIT_FAILED => "Runtime group root wait failed.",
-            _ => "Runtime group root returned an unknown wait state.",
-        }
-        .into());
-    }
-    let mut exit_code = 0_u32;
-    if unsafe { GetExitCodeProcess(handle, &mut exit_code) } == 0 {
-        return Err(format!(
-            "Runtime group root terminal exit code could not be queried: {}",
-            io::Error::last_os_error()
-        ));
-    }
-    if exit_code == 259 {
-        return Err("Runtime group root still reports an active exit code.".into());
-    }
-    match child.try_wait() {
-        Ok(Some(_)) => Ok(()),
-        Ok(None) => Err("Runtime group root was signaled but could not be reaped.".into()),
-        Err(error) => Err(format!("Runtime group root could not be reaped: {error}")),
-    }
-}
-
-#[cfg(windows)]
-pub(crate) fn terminate_child_by_exact_handle(
-    child: &mut Child,
-    wait_timeout_ms: u32,
-) -> Result<(), String> {
-    if child
-        .try_wait()
-        .map_err(|error| format!("Runtime group root liveness could not be proven: {error}"))?
-        .is_some()
-    {
-        return Ok(());
-    }
-    if let Err(error) = child.kill() {
-        if child
-            .try_wait()
-            .map_err(|wait_error| {
-                format!(
-                    "Runtime group root kill failed ({error}) and liveness could not be proven: {wait_error}"
-                )
-            })?
-            .is_some()
-        {
-            return Ok(());
-        }
-        return Err(format!("Runtime group root could not be stopped: {error}"));
-    }
-    reap_child_by_exact_handle(child, wait_timeout_ms)
 }
 
 #[cfg(windows)]
@@ -208,34 +134,6 @@ pub(crate) fn open_suspended_primary_thread(child: &Child) -> Result<ScopedWindo
         );
     }
     Ok(thread)
-}
-
-#[cfg(windows)]
-pub(crate) fn verify_suspended_primary_thread(child: &Child) -> Result<(), String> {
-    // CREATE_SUSPENDED provides the initial native suspension. Re-observe the
-    // exact primary thread and temporarily move its count 1 -> 2 -> 1 so the
-    // current count is proven rather than inferred from launch history.
-    let thread = open_suspended_primary_thread(child)?;
-    let previous_suspend_count = unsafe { SuspendThread(thread.raw()) };
-    if previous_suspend_count == u32::MAX {
-        return Err(format!(
-            "The owned runtime primary thread suspend count could not be observed: {}",
-            io::Error::last_os_error()
-        ));
-    }
-    let restored_previous_count = unsafe { ResumeThread(thread.raw()) };
-    if restored_previous_count == u32::MAX {
-        return Err(format!(
-            "The owned runtime primary thread suspend count could not be restored: {}",
-            io::Error::last_os_error()
-        ));
-    }
-    if previous_suspend_count != 1 || restored_previous_count != 2 {
-        return Err(format!(
-            "The owned runtime primary thread had an unexpected suspend transition {previous_suspend_count} -> {restored_previous_count}; expected 1 -> 2 -> 1."
-        ));
-    }
-    Ok(())
 }
 
 #[cfg(windows)]
