@@ -143,7 +143,7 @@ export class CaptureQueueStore {
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
         next: (paths) => {
-          void this.importPaths(paths);
+          this.importPaths(paths);
         },
         error: (error: unknown) => this.importError.set(errorMessage(error)),
       });
@@ -153,7 +153,7 @@ export class CaptureQueueStore {
    * Saves each accepted path as a waiting document. Capture starts later, when OCR is ready.
    * The host reads the file and checks its size.
    */
-  importPaths(paths: readonly string[]): Promise<void> {
+  importPaths(paths: readonly string[]): void {
     const pageCount = parsePdfPageCount(this.pageCountText());
     const errors: string[] = [];
     const accepted: { readonly path: string; readonly options?: DesktopCaptureOptions }[] = [];
@@ -175,9 +175,9 @@ export class CaptureQueueStore {
       });
     }
     this.importError.set(errors.join('\n'));
-    if (accepted.length === 0) return Promise.resolve();
-    return new Promise((resolve) => {
-      from(accepted).pipe(
+    if (accepted.length === 0) return;
+    from(accepted)
+      .pipe(
         concatMap((item) => {
           const request = item.options
             ? this.library.importSource(item.path, item.options)
@@ -193,11 +193,10 @@ export class CaptureQueueStore {
         finalize(() => {
           this.importError.set(errors.join('\n'));
           this.refreshShared();
-          resolve();
         }),
         takeUntilDestroyed(this.destroyRef),
-      ).subscribe();
-    });
+      )
+      .subscribe();
   }
 
   private sharedDocuments(): readonly DesktopLibrarySummary[] {

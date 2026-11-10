@@ -22,7 +22,7 @@ describe('CaptureQueueStore', () => {
     TestBed.tick();
 
     harness.store.pageCountText.set('3');
-    await harness.store.importPaths([String.raw`C:\fixtures\charge.pdf`]);
+    harness.store.importPaths([String.raw`C:\fixtures\charge.pdf`]);
     TestBed.tick();
 
     expect(harness.library.importSource).toHaveBeenCalledWith(
@@ -49,7 +49,7 @@ describe('CaptureQueueStore', () => {
     harness.store.attach();
     TestBed.tick();
 
-    await harness.store.importPaths([String.raw`C:\fixtures\charge.pdf`]);
+    harness.store.importPaths([String.raw`C:\fixtures\charge.pdf`]);
     TestBed.tick();
     await settle();
 
@@ -67,7 +67,7 @@ describe('CaptureQueueStore', () => {
     TestBed.tick();
 
     harness.store.pageCountText.set('0');
-    await harness.store.importPaths([
+    harness.store.importPaths([
       String.raw`C:\fixtures\notes.txt`,
       String.raw`C:\fixtures\range.pdf`,
       String.raw`C:\fixtures\scan.png`,
@@ -86,7 +86,7 @@ describe('CaptureQueueStore', () => {
     const harness = configure({ ocrReady: true });
     harness.store.attach();
     TestBed.tick();
-    await harness.store.importPaths([String.raw`C:\fixtures\charge.pdf`]);
+    harness.store.importPaths([String.raw`C:\fixtures\charge.pdf`]);
     TestBed.tick();
     await settle();
 
@@ -141,7 +141,7 @@ describe('CaptureQueueStore', () => {
     const harness = configure({ ocrReady: true, job: runningJob() });
     harness.store.attach();
     TestBed.tick();
-    await harness.store.importPaths([String.raw`C:\fixtures\charge.pdf`]);
+    harness.store.importPaths([String.raw`C:\fixtures\charge.pdf`]);
     TestBed.tick();
 
     expect(harness.rows()[0]?.userStatus).toBe('processing');
