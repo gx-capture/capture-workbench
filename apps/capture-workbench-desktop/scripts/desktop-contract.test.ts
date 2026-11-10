@@ -714,7 +714,7 @@ test('release candidate workflow is dispatch-only, exact-commit, and immutable',
         /actions\/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02/gu,
       ) ?? []
     ).length,
-    5,
+    6,
   );
   assert.match(workflow, /actions\/upload-artifact@[0-9a-f]{40}/u);
   assert.doesNotMatch(

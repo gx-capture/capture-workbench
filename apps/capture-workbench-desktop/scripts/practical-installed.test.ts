@@ -157,21 +157,28 @@ async function releaseFixture(mutate: (files: Map<string, Buffer>) => void = () 
     [`capture-engine-ocr-${RELEASE_VERSION}-windows-x64.zip`, worker],
     ...SPEECH_PARTS.map((part, index): [string, Buffer] => [`${SPEECH_ARCHIVE}.00${index + 1}`, part]),
   ]);
-  for (const name of [RUNTIME_EXECUTABLE_NAME, RUNTIME_CATALOG_NAME]) {
-    files.set(`${name}.sha256`, Buffer.from(`${sha256Hex(files.get(name) ?? Buffer.alloc(0))}  ${name}\n`));
-  }
   mutate(files);
   for (const [name, bytes] of files) await writeFile(join(directory, name), bytes);
   return { directory, runtimeSha256: sha256Hex(executable) };
 }
 
-test('runtime release directory is verified against an independent digest, sidecars, manifest and catalog', async (t) => {
+test('runtime release directory is verified against an independent digest, the manifest and the catalog', async (t) => {
   const good = await releaseFixture();
   t.after(() => rm(good.directory, { recursive: true, force: true }));
   const release = verifyRuntimeReleaseDirectory(good.directory, good.runtimeSha256, RELEASE_VERSION);
   assert.equal(release.workers[0].requirementId, 'windowsml-ocr');
+  assert.equal(release.executable.sha256, good.runtimeSha256);
   assert.throws(() => verifyRuntimeReleaseDirectory(good.directory, sha('other'), RELEASE_VERSION), /expected release digest/u);
   assert.throws(() => verifyRuntimeReleaseDirectory(good.directory, good.runtimeSha256, '99.0.0'), /manifest/u);
+
+  const withSidecars = await releaseFixture((files) => {
+    files.set(`${RUNTIME_EXECUTABLE_NAME}.sha256`, Buffer.from(`${sha('stale')}  ${RUNTIME_EXECUTABLE_NAME}\n`));
+    files.set(`${RUNTIME_CATALOG_NAME}.sha256`, Buffer.from(`${sha('x')}  other.json\n`));
+  });
+  t.after(() => rm(withSidecars.directory, { recursive: true, force: true }));
+  const ignoredSidecars = verifyRuntimeReleaseDirectory(withSidecars.directory, good.runtimeSha256, RELEASE_VERSION);
+  assert.equal(ignoredSidecars.executable.sha256, good.runtimeSha256);
+  assert.equal(ignoredSidecars.catalog.sha256, release.catalog.sha256);
 
   const cases: Array<[string, (files: Map<string, Buffer>) => void, RegExp]> = [
     [
@@ -182,8 +189,6 @@ test('runtime release directory is verified against an independent digest, sidec
       },
       /expected release digest/u,
     ],
-    ['stale sidecar', (files) => files.set(`${RUNTIME_CATALOG_NAME}.sha256`, Buffer.from(`${sha('x')}  ${RUNTIME_CATALOG_NAME}\n`)), /release checksum/u],
-    ['sidecar names another file', (files) => files.set(`${RUNTIME_CATALOG_NAME}.sha256`, Buffer.from(`${sha('x')}  other.json\n`)), /malformed/u],
     ['schema substitution', (files) => files.set(RUNTIME_SCHEMA_NAME, Buffer.from('{}')), /manifest/u],
   ];
   for (const [label, mutate, expected] of cases) {
@@ -196,18 +201,16 @@ test('runtime release directory is verified against an independent digest, sidec
     const catalog = JSON.parse(String(files.get(RUNTIME_CATALOG_NAME)));
     catalog.requirements[0].artifacts[0].url = 'https://example.invalid/worker.zip';
     files.set(RUNTIME_CATALOG_NAME, Buffer.from(JSON.stringify(catalog)));
-    files.set(`${RUNTIME_CATALOG_NAME}.sha256`, Buffer.from(`${sha256Hex(files.get(RUNTIME_CATALOG_NAME) ?? Buffer.alloc(0))}  ${RUNTIME_CATALOG_NAME}\n`));
   });
   t.after(() => rm(wrongUrl.directory, { recursive: true, force: true }));
   assert.throws(() => verifyRuntimeReleaseDirectory(wrongUrl.directory, good.runtimeSha256, RELEASE_VERSION), /worker artifact/u);
 });
 
-/** Edits the fixture catalog and re-signs its sidecar, as a release would. */
+/** Edits the fixture catalog. Its digest is the catalog bytes themselves. */
 function editCatalog(files: Map<string, Buffer>, edit: (speech: Record<string, unknown> & { parts: Array<Record<string, unknown>> }) => void) {
   const catalog = JSON.parse(String(files.get(RUNTIME_CATALOG_NAME)));
   edit(catalog.requirements[1].artifacts[0]);
   files.set(RUNTIME_CATALOG_NAME, Buffer.from(JSON.stringify(catalog)));
-  files.set(`${RUNTIME_CATALOG_NAME}.sha256`, Buffer.from(`${sha256Hex(files.get(RUNTIME_CATALOG_NAME) ?? Buffer.alloc(0))}  ${RUNTIME_CATALOG_NAME}\n`));
 }
 
 test('a worker published as parts is accepted and each part is verified like a single archive', async (t) => {

@@ -11,6 +11,7 @@ import { basename, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import {
+  assertPublishableRuntimeReleaseFile,
   parseReleaseArguments,
   parseRemoteReleaseInventory,
   run,
@@ -94,8 +95,10 @@ async function main(): Promise<void> {
   }
   const temporary = await mkdtemp(join(tmpdir(), 'capture-runtime-release-'));
   try {
-    const runtimeAssets = (await readdir(join(candidate, 'runtime'))).map(
-      (name) => join(candidate, 'runtime', name),
+    const runtimeNames = await readdir(join(candidate, 'runtime'));
+    for (const name of runtimeNames) assertPublishableRuntimeReleaseFile(name);
+    const runtimeAssets = runtimeNames.map((name) =>
+      join(candidate, 'runtime', name),
     );
     const runtimeManifest = join(
       temporary,

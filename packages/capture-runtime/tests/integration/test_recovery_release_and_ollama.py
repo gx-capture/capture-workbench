@@ -92,6 +92,7 @@ def test_schema_and_manifest_are_generated_from_pydantic(tmp_path: Path) -> None
     assert manifest["bytes"] == len(b"deterministic executable")
     assert manifest["sha256"] == hashlib.sha256(b"deterministic executable").hexdigest()
     assert "runtimeRequirements" not in manifest
+    assert not (tmp_path / "release" / f"{manifest['fileName']}.sha256").exists()
     assert (
         json.loads(
             (tmp_path / "release" / "capture-runtime-manifest.json").read_text(encoding="utf-8")

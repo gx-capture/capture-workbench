@@ -143,22 +143,9 @@ function regularFile(path: string, label: string): Buffer {
   return readFileSync(path);
 }
 
-function parseSidecar(text: string, fileName: string): string {
-  const match = /^([0-9a-f]{64}) [ *](.+?)\r?\n?$/u.exec(text);
-  if (!match || match[2] !== fileName) {
-    throw new Error(`Checksum sidecar for ${fileName} is malformed or names another file.`);
-  }
-  return match[1];
-}
-
-function verifiedWithSidecar(directory: string, fileName: string): VerifiedFile {
+function verifiedFile(directory: string, fileName: string): VerifiedFile {
   const bytes = regularFile(join(directory, fileName), fileName);
-  const sidecar = regularFile(join(directory, `${fileName}.sha256`), `${fileName}.sha256`);
-  const sha256 = sha256Hex(bytes);
-  if (parseSidecar(sidecar.toString('utf8'), fileName) !== sha256) {
-    throw new Error(`${fileName} differs from its release checksum.`);
-  }
-  return { fileName, bytes: bytes.length, sha256 };
+  return { fileName, bytes: bytes.length, sha256: sha256Hex(bytes) };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -182,11 +169,11 @@ export function verifyRuntimeReleaseDirectory(
   if (!lstatOrUndefined(root)?.isDirectory()) {
     throw new Error('Runtime release directory must be a regular directory.');
   }
-  const executable = verifiedWithSidecar(root, RUNTIME_EXECUTABLE_NAME);
+  const executable = verifiedFile(root, RUNTIME_EXECUTABLE_NAME);
   if (executable.sha256 !== expectedRuntimeSha256) {
     throw new Error('Runtime executable differs from the expected release digest.');
   }
-  const catalog = verifiedWithSidecar(root, RUNTIME_CATALOG_NAME);
+  const catalog = verifiedFile(root, RUNTIME_CATALOG_NAME);
   const manifestBytes = regularFile(join(root, RUNTIME_MANIFEST_NAME), RUNTIME_MANIFEST_NAME);
   const schemaBytes = regularFile(join(root, RUNTIME_SCHEMA_NAME), RUNTIME_SCHEMA_NAME);
   const manifest: unknown = JSON.parse(manifestBytes.toString('utf8'));

@@ -120,7 +120,7 @@ def test_direct_source_lock_generates_catalog_without_model_release_assets(
         speech_recognition_worker_manifest,
     ):
         assert (release / artifact.name).is_file()
-        assert (release / f"{artifact.name}.sha256").is_file()
+        assert not (release / f"{artifact.name}.sha256").exists()
     assert not list(release.glob("capture-model-*"))
 
 

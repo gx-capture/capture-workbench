@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Release assets
+
+- From the next release, the per-asset `.sha256` files of the runtime assets
+  and `runtime-size-report.json` are no longer release assets. Hosts verify
+  the executable against `capture-runtime-manifest.json` and the workers
+  against the engine catalog. `capture-release-manifest-v1.json.sha256` and
+  the three `*-files.json` assets stay. The size report is the CI artifact
+  `capture-size-report-<version>-<run>`.
+
 ### Speech device
 
 - TEA-ASR 1.1 runs on CUDA when a GPU is present and on CPU when it is not. A

@@ -77,10 +77,6 @@ export async function verifyRuntimeRelease(
   ) {
     throw new Error('Runtime executable does not match its release manifest.');
   }
-  const checksum = await readFile(`${executablePath}.sha256`, 'utf8');
-  if (checksum.trim() !== `${manifest.sha256}  ${manifest.fileName}`) {
-    throw new Error('Runtime executable checksum file is invalid.');
-  }
   const schema = await readFile(join(releaseRoot, manifest.schemaFileName));
   if (sha256(schema) !== manifest.schemaSha256) {
     throw new Error('Runtime schema does not match its release manifest.');

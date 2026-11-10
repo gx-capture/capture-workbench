@@ -25,6 +25,19 @@ export function sha256(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
+/** Checksum sidecars and the size report are not GitHub Release assets. */
+export function isPublishedRuntimeReleaseFile(name: string): boolean {
+  return name !== 'runtime-size-report.json' && !name.endsWith('.sha256');
+}
+
+export function assertPublishableRuntimeReleaseFile(name: string): void {
+  if (!isPublishedRuntimeReleaseFile(name)) {
+    throw new Error(
+      `Runtime release file is not a GitHub Release asset: ${name}.`,
+    );
+  }
+}
+
 export function parseReleaseArguments(
   args: readonly string[],
 ): Map<string, string> {
