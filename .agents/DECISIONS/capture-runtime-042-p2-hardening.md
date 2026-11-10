@@ -59,9 +59,9 @@ identity. The open work is [#247](https://github.com/gx-capture/capture-workbenc
 
    Consequences: the launcher writes nothing to disk and keeps no record of
    what it started. After a power loss it relies on every process being gone.
-   Ollama's `ollama.pid` can outlive a power loss; when Windows reuses that PID
-   the runtime refuses to adopt the process and structuring stays unavailable
-   until that process exits.
+   Ollama's `ollama.pid` can outlive a power loss. The file also records the
+   process creation time, so a PID that Windows has given to another process
+   is recognized: the runtime removes the stale file and starts Ollama.
 
 5. **Existing native exports and callers are the boundary.** src/lib.rs
    exports `OwnedRuntimeSession`, `OwnedSidecarProcess`,
