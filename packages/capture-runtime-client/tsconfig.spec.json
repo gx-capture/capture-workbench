@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "noEmit": true
+  },
+  "include": ["src/**/*.spec.ts"],
+  // Clears the parent exclude of src/**/*.spec.ts. Include does not do that.
+  "exclude": []
+}
+
