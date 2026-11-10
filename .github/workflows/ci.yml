@@ -204,7 +204,10 @@ jobs:
           pnpm nx run capture-angular:build
           pnpm nx run capture-angular:clean-consumer-smoke
 
-  # Capture Runtime (Python) and the optional OCR and speech recognition worker builds.
+  # Capture Runtime (Python) and the optional OCR, CUDA speech, diarization,
+  # and CPU speech worker builds. The CPU speech worker is one more
+  # PyInstaller pass on CPU PyTorch: a 302 MiB archive, about 4 minutes on a
+  # developer machine.
   runtime:
     if: github.event_name == 'push'
     runs-on: windows-latest
@@ -254,6 +257,14 @@ jobs:
         shell: pwsh
         run: pnpm nx run capture-runtime:verify-diarization-worker
 
+      - name: Build and verify the CPU speech recognition worker
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          pnpm nx run capture-runtime:verify-speech-recognition-cpu-worker
+          pnpm nx run capture-runtime:verify-speech-recognition-cpu-boundary
+
       - name: Upload workers packaging diagnostics
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -267,6 +278,9 @@ jobs:
             packages/capture-runtime/.build/pyinstaller/ocr-worker/capture-engine-ocr/warn-capture-engine-ocr.txt
             packages/capture-runtime/.build/pyinstaller/speech-recognition-worker/capture-engine-speech-recognition/xref-capture-engine-speech-recognition.html
             packages/capture-runtime/.build/pyinstaller/speech-recognition-worker/capture-engine-speech-recognition/warn-capture-engine-speech-recognition.txt
+            packages/capture-runtime/dist/speech-recognition-cpu-worker-inventory.txt
+            packages/capture-runtime/.build/pyinstaller/speech-recognition-cpu-worker/capture-engine-speech-recognition-cpu/xref-capture-engine-speech-recognition-cpu.html
+            packages/capture-runtime/.build/pyinstaller/speech-recognition-cpu-worker/capture-engine-speech-recognition-cpu/warn-capture-engine-speech-recognition-cpu.txt
           if-no-files-found: warn
           retention-days: 7
 

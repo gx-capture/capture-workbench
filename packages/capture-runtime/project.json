@@ -399,8 +399,8 @@
         "production"
       ],
       "outputs": [
-        "{projectRoot}/dist/engines/capture-engine-speech-recognition-*.zip",
-        "{projectRoot}/dist/engines/capture-engine-speech-recognition-*-files.json"
+        "{projectRoot}/dist/engines/capture-engine-speech-recognition-[0-9]*.zip",
+        "{projectRoot}/dist/engines/capture-engine-speech-recognition-[0-9]*-files.json"
       ],
       "options": {
         "cwd": "packages/capture-runtime",
@@ -449,6 +449,61 @@
       "options": {
         "cwd": "packages/capture-runtime",
         "command": "uv run --python 3.13 python scripts/probe_packaged_worker.py dist/workers/capture-engine-diarization/capture-engine-diarization.exe speaker-diarization"
+      }
+    },
+    "build-speech-recognition-cpu-worker": {
+      "cache": true,
+      "executor": "nx:run-commands",
+      "inputs": [
+        "production"
+      ],
+      "outputs": [
+        "{projectRoot}/dist/engines/capture-engine-speech-recognition-cpu-*.zip",
+        "{projectRoot}/dist/engines/capture-engine-speech-recognition-cpu-*-files.json"
+      ],
+      "metadata": {
+        "description": "Packages the speech recognition worker on CPU PyTorch in its own environment (.venv-speech-recognition-cpu). Releases do not ship this archive yet."
+      },
+      "options": {
+        "cwd": "packages/capture-runtime",
+        "env": {
+          "UV_PROJECT_ENVIRONMENT": ".venv-speech-recognition-cpu"
+        },
+        "command": "uv run --python 3.13 --extra speech-recognition-cpu --group dev python scripts/build_speech_recognition_cpu_worker.py"
+      }
+    },
+    "verify-speech-recognition-cpu-worker": {
+      "cache": true,
+      "executor": "nx:run-commands",
+      "dependsOn": [
+        "build-speech-recognition-cpu-worker"
+      ],
+      "inputs": [
+        "production"
+      ],
+      "metadata": {
+        "description": "Starts the packaged CPU speech recognition worker and checks that it answers the installer's code probe."
+      },
+      "options": {
+        "cwd": "packages/capture-runtime",
+        "command": "uv run --python 3.13 python scripts/probe_packaged_worker.py dist/workers/capture-engine-speech-recognition-cpu/capture-engine-speech-recognition-cpu.exe speech-recognition"
+      }
+    },
+    "verify-speech-recognition-cpu-boundary": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "dependsOn": [
+        "build-speech-recognition-cpu-worker"
+      ],
+      "outputs": [
+        "{projectRoot}/dist/speech-recognition-cpu-worker-inventory.txt"
+      ],
+      "metadata": {
+        "description": "Rejects a CPU speech worker archive that contains a CUDA runtime library or a module the speech workers already forbid. Not a release target."
+      },
+      "options": {
+        "cwd": "packages/capture-runtime",
+        "command": "node ../../tools/release/run-with-release-version.ts uv run --no-sync --python 3.13 python scripts/verify_boundaries.py --speech-recognition-cpu-worker dist/engines/capture-engine-speech-recognition-cpu-{releaseVersion}-windows-x64.zip --speech-recognition-cpu-inventory dist/speech-recognition-cpu-worker-inventory.txt"
       }
     },
     "validate-model-source-lock": {
