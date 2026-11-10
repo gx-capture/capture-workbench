@@ -351,6 +351,45 @@ describe('DesktopRuntimeClientService', () => {
     );
   });
 
+  it('uninstalls a requirement through the native Tauri command', () => {
+    const removed = {
+      requirementId: 'windowsml-ocr',
+      displayName: 'WindowsML OCR',
+      status: 'installable',
+      kind: 'runtime',
+      requiredFor: ['capture'],
+      installStrategy: 'automatic',
+      downloadBytes: 144_000_000,
+    };
+    const commands = {
+      invoke: vi.fn((command: string) => {
+        if (command === 'desktop_runtime_status') {
+          return of({ status: 'ready', detail: 'Runtime ready' });
+        }
+        if (command === 'runtime_ready') return of(readyPayload);
+        if (command === 'runtime_uninstall_requirement') return of(removed);
+        return of({ items: [] });
+      }),
+    };
+    TestBed.configureTestingModule({
+      providers: [
+        { provide: DesktopTauriCommandService, useValue: commands },
+        DesktopRuntimeClientService,
+      ],
+    });
+
+    const service = TestBed.inject(DesktopRuntimeClientService);
+    let requirement: unknown;
+    service.uninstallRequirement('windowsml-ocr').subscribe((value) => (requirement = value));
+
+    expect(requirement).toEqual(removed);
+    expect(commands.invoke).toHaveBeenCalledWith(
+      'runtime_uninstall_requirement',
+      { input: { requirementId: 'windowsml-ocr' } },
+      undefined,
+    );
+  });
+
   it('keeps the OCR compute accessor safe when readiness is errored', () => {
     const commands = {
       invoke: vi.fn((command: string) => command === 'desktop_runtime_status'

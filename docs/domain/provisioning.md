@@ -79,6 +79,8 @@ sequenceDiagram
 | 卸載需求 | `UninstallRequirement` | 在無進行中擷取與安裝時，釋放暖 worker 並移除安裝之引擎 |
 | 查詢需求清單 | `ListRequirements` | 查詢可用的執行環境需求與當前安裝狀態 |
 
+桌面應用的設定 › 辨識功能在使用者確認引擎名稱與大小之後，才透過 `runtime_uninstall_requirement` 呼叫卸載需求。已經做好的文件與逐字稿留在主機，不會跟著引擎刪除。
+
 ## 與其他上下文的關係
 
 文件 OCR、語音轉寫與說話者分離使用本上下文供應的引擎與模型；結構化使用供應的 Ollama runtime。worker 的推論與結果解析由各引擎上下文負責。

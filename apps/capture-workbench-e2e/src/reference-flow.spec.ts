@@ -2,7 +2,7 @@
 // Tauri bridge and scripted runtime responses. It checks the Traditional
 // Chinese shell navigation, first-run recognition card, the OCR queue
 // (drop, install, page progress, raw .txt, waiting file across reload),
-// ASR-only journey, install/cancel/retry lifecycle, reload re-attachment,
+// ASR-only journey, install/cancel/retry/remove lifecycle, reload re-attachment,
 // and the history queue.
 import { readFile } from 'node:fs/promises';
 import { expect, test, type Page } from '@playwright/test';
@@ -164,9 +164,11 @@ test('shows the size, then progress, cancel and retry on /settings/engines', asy
 
   const table = page.getByTestId('engines-table');
   await expect(table.locator('thead th')).toHaveText(['功能', '狀態', '大小', '用途', '動作']);
-  await expect(page.getByRole('button', { name: '移除' })).toHaveCount(0);
+  const ocrRow = table.locator('[data-testid="engine-row"][data-requirement-id="windowsml-ocr"]');
+  await expect(ocrRow.getByTestId('engine-row-remove')).toHaveText('移除');
 
   const speechRow = table.locator('[data-testid="engine-row"][data-requirement-id="speech-recognition"]');
+  await expect(speechRow.getByTestId('engine-row-remove')).toHaveCount(0);
   await speechRow.getByTestId('engine-row-toggle').click();
   await expect(
     table.locator('[data-testid="engine-row-details"][data-requirement-id="speech-recognition"]'),
@@ -192,6 +194,50 @@ test('shows the size, then progress, cancel and retry on /settings/engines', asy
   });
   expect(commands).toContain('runtime_list_installations');
   expect(commands).toContain('runtime_cancel_installation');
+});
+
+test('removes an installed engine after confirming its size and shows it on the OCR page', async ({ page }) => {
+  await openDesktop(
+    page,
+    [
+      requirement('windowsml-ocr', 'WindowsML OCR', 'ready', 144_000_000),
+      requirement('speech-recognition', '本機語音轉文字', 'installable', 2_800_000_000),
+    ],
+    '/settings/engines',
+  );
+
+  const ocrRow = page.locator('[data-testid="engine-row"][data-requirement-id="windowsml-ocr"]');
+  await expect(ocrRow).toHaveAttribute('data-status', 'ready');
+  await ocrRow.getByTestId('engine-row-remove').click();
+
+  const dialog = page.getByRole('alertdialog');
+  await expect(dialog).toContainText('約 144 MB');
+  await expect(dialog).toContainText('已經做好的文件和逐字稿會留在這台電腦');
+  await dialog.getByTestId('engine-remove-cancel').click();
+  await expect(dialog).toHaveCount(0);
+  await expect(ocrRow.getByTestId('engine-row-status')).toContainText('已安裝');
+
+  await ocrRow.getByTestId('engine-row-remove').click();
+  await dialog.getByTestId('engine-remove-confirm').click();
+  await expect(ocrRow.getByTestId('engine-row-removing')).toContainText('正在移除');
+  await expect(ocrRow).toHaveAttribute('data-status', 'installable');
+  await expect(ocrRow.getByTestId('engine-row-status')).toContainText('未安裝');
+  await expect(ocrRow.getByTestId('engine-row-install')).toBeVisible();
+
+  const commands = await page.evaluate(() => {
+    const target = globalThis as unknown as {
+      readonly __captureInvokedCommands: readonly string[];
+    };
+    return target.__captureInvokedCommands;
+  });
+  expect(commands.filter((command) => command === 'runtime_uninstall_requirement')).toEqual([
+    'runtime_uninstall_requirement',
+  ]);
+
+  await page.getByRole('navigation', { name: '主要功能' }).getByRole('link', { name: '文件轉文字' }).click();
+  await expect(
+    page.locator('[data-testid="first-run-option"][data-requirement-id="windowsml-ocr"]'),
+  ).toBeVisible();
 });
 
 test('re-attaches to an in-progress installation returned by runtime_list_installations on start', async ({ page }) => {
@@ -586,6 +632,34 @@ async function openDesktop(
           record['status'] = 'cancelled';
           installations.set(id, record);
           return Promise.resolve({ ...record });
+        }
+        if (command === 'runtime_uninstall_requirement') {
+          const requirementId = String(args.input?.requirementId ?? '');
+          const inUse = [...installations.values()].some((item) =>
+            item['requirementId'] === requirementId
+            && (item['status'] === 'queued' || item['status'] === 'running'));
+          if (inUse) {
+            return Promise.reject(
+              new Error('Capture Runtime request was rejected with HTTP 409.'),
+            );
+          }
+          return new Promise((resolve) => {
+            setTimeout(() => {
+              const req = mutableRequirements.find(
+                (item) => item['requirementId'] === requirementId,
+              );
+              if (req) req['status'] = 'installable';
+              resolve(req ? { ...req } : {
+                requirementId,
+                displayName: requirementId,
+                status: 'installable',
+                kind: 'runtime',
+                requiredFor: ['capture'],
+                installStrategy: 'automatic',
+                detail: null,
+              });
+            }, 1500);
+          });
         }
         if (command === 'runtime_model_options') {
           return Promise.resolve({

@@ -82,7 +82,7 @@ PDF 可以帶 `captureOptions`，目前只有 `pdfPageCount`（前 K 頁，只�
 
 ## 與其他上下文的關係
 
-主機只是合約的消費者，和 Cert Prep、LAW 地位相同；runtime 不知道主機。引擎安裝也經合約（`runtime_start_installation` 等指令）由 runtime 執行。
+主機只是合約的消費者，和 Cert Prep、LAW 地位相同；runtime 不知道主機。引擎安裝也經合約（`runtime_start_installation` 等指令）由 runtime 執行。設定 › 辨識功能在確認大小後以 `runtime_uninstall_requirement` 移除已安裝的引擎；文件庫裡的文件與逐字稿留在這台電腦。
 
 ## 規則與資料來源
 

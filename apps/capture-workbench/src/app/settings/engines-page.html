@@ -47,7 +47,11 @@
                   </button>
                 </td>
                 <td hlmTd data-testid="engine-row-status">
-                  @if (isRunning(unit)) {
+                  @if (removing(unit)) {
+                    <span data-testid="engine-row-removing" aria-live="polite">
+                      {{ m().removingEngine }}
+                    </span>
+                  } @else if (isRunning(unit)) {
                     <div
                       class="flex min-w-36 flex-col gap-1"
                       data-testid="engine-row-progress"
@@ -67,6 +71,15 @@
                   } @else {
                     <span>{{ statusLabel(unit) }}</span>
                   }
+                  @if (removalFailure(unit); as removeError) {
+                    <p
+                      class="text-destructive mt-1 text-xs whitespace-normal"
+                      role="alert"
+                      data-testid="engine-row-remove-error"
+                    >
+                      {{ removeError }}
+                    </p>
+                  }
                 </td>
                 <td hlmTd data-testid="engine-row-size">
                   {{ sizeLabel(unit) ?? '—' }}
@@ -75,42 +88,73 @@
                   {{ m().enginePurpose[unit.requirementId] ?? guides()[unit.requirementId]?.summary ?? '' }}
                 </td>
                 <td hlmTd class="text-right">
-                  @if (isRunning(unit)) {
-                    <button
-                      hlmBtn
-                      variant="outline"
-                      size="sm"
-                      type="button"
-                      data-testid="engine-row-cancel"
-                      (click)="features.cancelInstallation(installationFor(unit)!.installationId)"
-                    >
-                      {{ m().cancelInstall }}
-                    </button>
-                  } @else if (isFailed(unit)) {
-                    <button
-                      hlmBtn
-                      variant="default"
-                      size="sm"
-                      type="button"
-                      data-testid="engine-row-retry"
-                      [disabled]="features.installing()"
-                      (click)="features.retryInstallation(unit.requirementId)"
-                    >
-                      {{ m().retryInstall }}
-                    </button>
-                  } @else if (unit.status === 'installable') {
-                    <button
-                      hlmBtn
-                      variant="default"
-                      size="sm"
-                      type="button"
-                      data-testid="engine-row-install"
-                      [disabled]="features.installing()"
-                      (click)="features.installUnit(unit.requirementId)"
-                    >
-                      {{ installLabel(unit) }}
-                    </button>
-                  }
+                  <div class="flex flex-col items-end gap-1">
+                    @if (isRunning(unit)) {
+                      <button
+                        hlmBtn
+                        variant="outline"
+                        size="sm"
+                        type="button"
+                        data-testid="engine-row-cancel"
+                        (click)="features.cancelInstallation(installationFor(unit)!.installationId)"
+                      >
+                        {{ m().cancelInstall }}
+                      </button>
+                    }
+                    @if (!removing(unit) && unit.status === 'ready') {
+                      <button
+                        hlmBtn
+                        variant="outline"
+                        size="sm"
+                        type="button"
+                        data-testid="engine-row-remove"
+                        [attr.aria-label]="m().removeEngineNamed(engineName(unit))"
+                        [disabled]="removalBlock(unit) !== null"
+                        (click)="askRemove(unit)"
+                      >
+                        {{ m().removeEngine }}
+                      </button>
+                      @if (removalBlock(unit) === 'installing') {
+                        <p
+                          class="text-muted-foreground max-w-48 text-xs whitespace-normal"
+                          data-testid="engine-row-remove-reason"
+                        >
+                          {{ m().removeBlockedInstalling }}
+                        </p>
+                      } @else if (removalBlock(unit) === 'capture') {
+                        <p
+                          class="text-muted-foreground max-w-48 text-xs whitespace-normal"
+                          data-testid="engine-row-remove-reason"
+                        >
+                          {{ m().removeBlockedCapture }}
+                        </p>
+                      }
+                    } @else if (!isRunning(unit) && isFailed(unit)) {
+                      <button
+                        hlmBtn
+                        variant="default"
+                        size="sm"
+                        type="button"
+                        data-testid="engine-row-retry"
+                        [disabled]="features.installing()"
+                        (click)="features.retryInstallation(unit.requirementId)"
+                      >
+                        {{ m().retryInstall }}
+                      </button>
+                    } @else if (!isRunning(unit) && unit.status === 'installable') {
+                      <button
+                        hlmBtn
+                        variant="default"
+                        size="sm"
+                        type="button"
+                        data-testid="engine-row-install"
+                        [disabled]="features.installing()"
+                        (click)="features.installUnit(unit.requirementId)"
+                      >
+                        {{ installLabel(unit) }}
+                      </button>
+                    }
+                  </div>
                 </td>
               </tr>
 
@@ -153,4 +197,48 @@
       </div>
     </div>
   </div>
+
+  <brn-alert-dialog
+    [state]="removeDialogState()"
+    (stateChanged)="onRemoveDialogState($event)"
+  >
+    <brn-alert-dialog-overlay class="bg-foreground/40" />
+    <ng-template brnAlertDialogContent>
+      @if (removeTarget(); as target) {
+        <div
+          class="bg-popover text-popover-foreground w-[min(28rem,calc(100vw-2rem))] rounded-xl p-6 shadow-lg"
+          data-testid="engine-remove-dialog"
+        >
+          <h2 brnAlertDialogTitle class="text-lg font-semibold">
+            {{ removeTitle(target) }}
+          </h2>
+          <p brnAlertDialogDescription class="text-muted-foreground mt-2 text-sm">
+            {{ removeBody(target) }}
+          </p>
+          <div class="mt-6 flex justify-end gap-2">
+            <button
+              hlmBtn
+              type="button"
+              variant="outline"
+              size="sm"
+              brnDialogClose
+              data-testid="engine-remove-cancel"
+            >
+              {{ m().removeEngineCancel }}
+            </button>
+            <button
+              hlmBtn
+              type="button"
+              variant="destructive"
+              size="sm"
+              data-testid="engine-remove-confirm"
+              (click)="confirmRemove()"
+            >
+              {{ m().removeEngine }}
+            </button>
+          </div>
+        </div>
+      }
+    </ng-template>
+  </brn-alert-dialog>
 </section>

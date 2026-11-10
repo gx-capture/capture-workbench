@@ -32,7 +32,7 @@ Phases 1 and 2 are in `apps/capture-workbench/src/app`:
   紀錄            /history        表格，可篩選類型/狀態
     └ 單筆結果    /history/:id    子導覽：內容 · 說話者(ASR) · 匯出 · 詳細資訊
   設定            /settings
-    ├ 辨識功能    /settings/engines   安裝、大小、進度、取消
+    ├ 辨識功能    /settings/engines   安裝、大小、進度、取消、移除
     ├ 運算裝置    /settings/compute   文字辨識 DirectML、語音 CUDA（偵測，不詢問）
     ├ 一般        /settings/general   語言
     └ 診斷        /settings/diagnostics  runtime 版本、合約雜湊、出處、JSON、OCR evidence
@@ -70,7 +70,7 @@ Phases 1 and 2 are in `apps/capture-workbench/src/app`:
 - **While it runs:** a percentage and 取消.
 - **After a failure:** 再試一次, which reuses the files already verified.
 - **Resume:** after a window reload the app re-attaches to the running install (`runtime_list_installations`). The runtime resumes a partly downloaded file (Q4).
-- **移除:** the runtime can uninstall an engine (PR #145); the UI does not offer it yet ([#254](https://github.com/gx-capture/capture-workbench/issues/254)).
+- **移除:** Settings › 辨識功能 offers removal for an installed engine ([#254](https://github.com/gx-capture/capture-workbench/issues/254)). The dialog names the engine and its size; nothing is removed until the user confirms. Documents and transcripts already saved stay on this computer.
 
 ## 3. Wireframes
 

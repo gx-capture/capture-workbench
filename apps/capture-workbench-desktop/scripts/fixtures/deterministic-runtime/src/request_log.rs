@@ -111,6 +111,9 @@ fn route_template(path: &str) -> &'static str {
     match parts.as_slice() {
         ["", "v2", "health", "ready"] => "/v2/health/ready",
         ["", "v2", "runtime", "requirements"] => "/v2/runtime/requirements",
+        ["", "v2", "runtime", "requirements", _, "installation"] => {
+            "/v2/runtime/requirements/{requirementId}/installation"
+        }
         ["", "v2", "runtime", "model-options"] => "/v2/runtime/model-options",
         ["", "v2", "runtime", "installations"] => "/v2/runtime/installations",
         ["", "v2", "runtime", "installations", _] => "/v2/runtime/installations/{installationId}",

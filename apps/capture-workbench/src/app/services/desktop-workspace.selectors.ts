@@ -197,6 +197,38 @@ export function isAudioMediaType(mediaType: string): boolean {
   return mediaType.startsWith('audio/') || mediaType.startsWith('video/');
 }
 
+const SPEECH_CAPTURE_REQUIREMENTS = new Set<CaptureRequirementId>([
+  'speech-recognition',
+  'speaker-diarization',
+]);
+
+const OCR_CAPTURE_REQUIREMENTS = new Set<CaptureRequirementId>([
+  'windowsml-ocr',
+  'vertical-japanese-reader',
+]);
+
+/**
+ * Whether a capture that is still processing or saving needs this engine.
+ * The runtime does not record which engine a capture used, so a recording
+ * blocks both speech units and a document blocks both OCR units.
+ */
+export function captureNeedsRequirement(
+  requirementId: CaptureRequirementId,
+  documents: readonly DesktopLibrarySummary[],
+): boolean {
+  const active = documents.filter(
+    (document) => document.status === 'processing' || document.status === 'persisting',
+  );
+  if (active.length === 0) return false;
+  if (SPEECH_CAPTURE_REQUIREMENTS.has(requirementId)) {
+    return active.some((document) => isAudioMediaType(document.mediaType));
+  }
+  if (OCR_CAPTURE_REQUIREMENTS.has(requirementId)) {
+    return active.some((document) => !isAudioMediaType(document.mediaType));
+  }
+  return true;
+}
+
 /** One line of a recording's transcript, with when it was heard and who spoke it. */
 export interface TranscriptLine {
   readonly segmentId: string;
@@ -323,6 +355,19 @@ export function terminalStage(status?: DesktopLibraryStatus): string {
 export function errorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   return redactSensitiveMessage(message);
+}
+
+/**
+ * Maps an uninstall rejection to settings copy.
+ * The desktop bridge keeps only the HTTP status, so every 422 shares one message.
+ */
+export function uninstallFailureMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  const messages = desktopMessages();
+  if (message.includes('HTTP 409')) return messages.removeEngineInUse;
+  if (message.includes('HTTP 422')) return messages.removeEngineNotUninstallable;
+  if (message.includes('HTTP 404')) return messages.removeEngineNotFound;
+  return errorMessage(error);
 }
 
 /** Removes bearer and token-shaped values from user-visible diagnostics. */
