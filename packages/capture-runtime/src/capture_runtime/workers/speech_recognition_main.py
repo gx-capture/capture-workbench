@@ -116,6 +116,31 @@ TeaAsrAdapter, WorkerRequest, serve, permille_reporter = _import_capture_runtime
 _report_stage("python-import-capture-runtime-complete")
 
 MAX_SOURCE_BYTES = 50 * 1024 * 1024
+_SPEECH_CONTENTS = frozenset({"cuda", "cpu"})
+
+
+def _content_option(options: dict[str, Any]) -> str | None:
+    """The installed content, when the runtime sent one.
+
+    Omitting the key is a legacy single content and keeps today's CUDA rules.
+    An unknown id is not CUDA: a truncated install must not be reinterpreted.
+    """
+
+    if "content" not in options:
+        return None
+    content = options["content"]
+    if not isinstance(content, str) or content not in _SPEECH_CONTENTS:
+        raise ValueError("Speech recognition content is invalid")
+    return content
+
+
+def _session_content() -> str | None:
+    raw = os.environ.get("CAPTURE_SESSION_SPEECH_CONTENT")
+    if raw is None:
+        return None
+    if raw not in _SPEECH_CONTENTS:
+        raise ValueError("Speech recognition content is invalid")
+    return raw
 
 
 def _import_speech_runtime() -> None:
@@ -140,11 +165,12 @@ def _probe(request: WorkerRequestModel) -> dict[str, Any]:
     if payload["requirementId"] != "speech-recognition":
         raise ValueError("Speech recognition requirementId is invalid")
     options = payload.get("options", {})
-    if not isinstance(options, dict) or set(options) - {"preferGpu"}:
+    if not isinstance(options, dict) or set(options) - {"preferGpu", "content"}:
         raise ValueError("Speech recognition probe options are invalid")
     prefer_gpu = options.get("preferGpu", True)
     if not isinstance(prefer_gpu, bool):
         raise ValueError("Speech recognition probe preferGpu is invalid")
+    content = _content_option(options)
     model_value = payload["modelPath"]
     if model_value is None:
         import importlib.util
@@ -176,11 +202,15 @@ def _probe(request: WorkerRequestModel) -> dict[str, Any]:
         primary_provenance_model="tea-asr-1.1",
         fallback_provenance_model="tea-asr-1.1-mini",
         prefer_gpu=prefer_gpu,
+        content=content,
         max_duration_ms=8 * 60 * 60 * 1000,
         stage_reporter=_report_stage,
     )
     probe = adapter.probe()
-    device = "cuda" if prefer_gpu and adapter._cuda_devices() > 0 else "cpu"
+    if content == "cpu":
+        device = "cpu"
+    else:
+        device = "cuda" if prefer_gpu and adapter._cuda_devices() > 0 else "cpu"
     return {
         "ready": probe.ready,
         "codeReady": probe.code_ready,
@@ -225,8 +255,10 @@ def _run(request: WorkerRequestModel, cancellation: Event, progress: Any = None)
     allow_cpu_fallback = options.get("allowCpuFallback", True)
     word_timestamps = options.get("wordTimestamps", False)
     language = options.get("language")
-    # Without "model" TEA-ASR-1.1 runs on either device.
+    # Without "model" TEA-ASR-1.1 runs on either device. Without "content" the
+    # installed unit is the legacy pack, which follows the same rule.
     model = options.get("model")
+    content = _content_option(options)
     from capture_runtime.contracts import SPOKEN_LANGUAGES
 
     language_valid = "language" not in options or (
@@ -237,7 +269,15 @@ def _run(request: WorkerRequestModel, cancellation: Event, progress: Any = None)
     )
     if (
         set(options)
-        - {"maxDurationMs", "preferGpu", "allowCpuFallback", "wordTimestamps", "language", "model"}
+        - {
+            "maxDurationMs",
+            "preferGpu",
+            "allowCpuFallback",
+            "wordTimestamps",
+            "language",
+            "model",
+            "content",
+        }
         or not isinstance(max_duration_ms, int)
         or isinstance(max_duration_ms, bool)
         or max_duration_ms <= 0
@@ -255,6 +295,7 @@ def _run(request: WorkerRequestModel, cancellation: Event, progress: Any = None)
         primary_provenance_model="tea-asr-1.1",
         fallback_provenance_model="tea-asr-1.1-mini",
         model=model,
+        content=content,
         prefer_gpu=prefer_gpu,
         max_duration_ms=max_duration_ms,
         allow_cpu_fallback=allow_cpu_fallback,
@@ -340,6 +381,7 @@ def _session() -> None:
         primary_provenance_model="tea-asr-1.1",
         fallback_provenance_model="tea-asr-1.1-mini",
         model=os.environ.get("CAPTURE_SESSION_SPEECH_MODEL") or None,
+        content=_session_content(),
         prefer_gpu=os.environ.get("CAPTURE_SESSION_PREFER_GPU", "1") == "1",
         allow_cpu_fallback=os.environ.get("CAPTURE_SESSION_ALLOW_CPU_FALLBACK", "1") == "1",
         max_duration_ms=8 * 60 * 60 * 1000,

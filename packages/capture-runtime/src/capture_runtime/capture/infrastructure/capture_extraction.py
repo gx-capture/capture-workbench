@@ -851,6 +851,10 @@ class StandaloneRuntimeCaptureExtractor:
             media_type,
             options,
         )
+        # The id was stored when the install lock was taken. Do not detect a
+        # driver or infer a pack from which model folders are on disk.
+        if requirement_id == SPEECH_RECOGNITION_REQUIREMENT_ID and engine.content_id is not None:
+            worker_options["content"] = engine.content_id
         try:
             if page_manifest is not None:
                 worker_options = {

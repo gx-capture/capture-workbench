@@ -209,6 +209,7 @@ def _worker_key(engine: InstalledEngine, config: ExtractionRuntimeConfig) -> tup
         str(config.whisper_prefer_gpu),
         str(config.whisper_allow_cpu_fallback),
         config.speech_recognition_model,
+        engine.content_id or "",
     )
 
 
@@ -509,6 +510,11 @@ class _SessionWorker:
                 ),
             }
         )
+        # Sibling of the model setting. Only a state "2" engine has one,
+        # and it is the id recorded at install, not a fresh detection.
+        content_id = engine.content_id
+        if content_id is not None:
+            environment["CAPTURE_SESSION_SPEECH_CONTENT"] = content_id
         process = await asyncio.create_subprocess_exec(
             *command,
             stdin=asyncio.subprocess.PIPE,

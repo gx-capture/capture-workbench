@@ -7,8 +7,10 @@ import pytest
 
 import capture_runtime.workers.speech_recognition_main as whisper_main
 from capture_runtime.constants import RUNTIME_VERSION
+from capture_runtime.speech.infrastructure import speech_recognition as speech_backend
 from capture_runtime.speech.infrastructure.speech_recognition import TeaAsrAdapter
 from capture_runtime.worker_contracts import WorkerRequest
+from capture_runtime.worker_probe import EngineRuntimeUnavailableError
 from tests.speech_model_fakes import FakeModels, model_tree
 
 
@@ -19,6 +21,7 @@ def _request(
     prefer_gpu: bool,
     allow_cpu_fallback: bool | None = None,
     model: object = None,
+    content: object = None,
 ) -> WorkerRequest:
     options: dict[str, object] = {
         "maxDurationMs": 60_000,
@@ -28,6 +31,8 @@ def _request(
         options["allowCpuFallback"] = allow_cpu_fallback
     if model is not None:
         options["model"] = model
+    if content is not None:
+        options["content"] = content
     return WorkerRequest(
         request_id="speech-recognition-worker-test",
         operation="run",
@@ -42,14 +47,14 @@ def _request(
     )
 
 
-def _probe_request(*, options: object) -> WorkerRequest:
+def _probe_request(*, options: object, model_path: Path | None = None) -> WorkerRequest:
     return WorkerRequest(
         request_id="speech-recognition-worker-probe-test",
         operation="probe",
         payload={
             "requirementId": "speech-recognition",
             "artifactVersion": RUNTIME_VERSION,
-            "modelPath": None,
+            "modelPath": None if model_path is None else str(model_path),
             "options": options,
         },
     )
@@ -244,3 +249,153 @@ def test_worker_strict_cuda_failure_does_not_run_cpu_fallback(
             ),
             fail_cuda=True,
         )
+
+
+def test_worker_cpu_content_loads_mini_on_cpu_even_when_fallback_is_disallowed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    model_root = tmp_path / "models"
+    model_tree(model_root)
+    source = tmp_path / "fixture.wav"
+    source.write_bytes(b"RIFF" + b"\x00" * 8 + b"WAVE")
+
+    result, calls, constructors = _run_with_factory(
+        monkeypatch,
+        _request(
+            model_root,
+            source,
+            prefer_gpu=True,
+            allow_cpu_fallback=False,
+            content="cpu",
+        ),
+        fail_cuda=False,
+    )
+
+    assert constructors[0]["content"] == "cpu"
+    assert constructors[0]["allow_cpu_fallback"] is False
+    assert [folder for folder, _device in calls] == ["fallback"]
+    assert result["provenance"]["model"] == "tea-asr-1.1-mini"
+    assert result["provenance"]["device"] == "cpu"
+    assert result["warnings"] == []
+
+
+def test_worker_cpu_content_does_not_substitute_mini_for_the_primary_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    model_root = tmp_path / "models"
+    model_tree(model_root)
+    source = tmp_path / "fixture.wav"
+    source.write_bytes(b"RIFF" + b"\x00" * 8 + b"WAVE")
+
+    with pytest.raises(EngineRuntimeUnavailableError, match="^model not installed$"):
+        _run_with_factory(
+            monkeypatch,
+            _request(model_root, source, prefer_gpu=True, model="tea-asr-1.1", content="cpu"),
+            fail_cuda=False,
+        )
+
+
+@pytest.mark.parametrize("content", ["gpu", "primary", 1])
+def test_worker_rejects_an_unknown_content(tmp_path: Path, content: object) -> None:
+    model_root = tmp_path / "models"
+    model_tree(model_root)
+    source = tmp_path / "fixture.wav"
+    source.write_bytes(b"RIFF" + b"\x00" * 8 + b"WAVE")
+
+    with pytest.raises(ValueError, match="content is invalid"):
+        whisper_main._run(_request(model_root, source, prefer_gpu=True, content=content), Event())
+
+
+def _asset_probe(
+    monkeypatch: pytest.MonkeyPatch, model_root: Path, content: str
+) -> dict[str, object]:
+    monkeypatch.setattr(speech_backend.importlib.util, "find_spec", lambda _name: object())
+
+    def cuda_devices(self: object) -> int:
+        raise AssertionError("content probe must not be what decides CUDA")
+
+    if content == "cpu":
+        monkeypatch.setattr(whisper_main.TeaAsrAdapter, "_cuda_devices", cuda_devices)
+    else:
+        monkeypatch.setattr(whisper_main.TeaAsrAdapter, "_cuda_devices", lambda _self: 0)
+    return whisper_main._probe(
+        _probe_request(options={"preferGpu": True, "content": content}, model_path=model_root)
+    )
+
+
+def test_worker_probe_of_a_cpu_content_ignores_a_missing_primary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    model_root = tmp_path / "models"
+    model_tree(model_root)
+    for folder in ("primary", "primary-architecture"):
+        for item in (model_root / folder).iterdir():
+            item.unlink()
+
+    result = _asset_probe(monkeypatch, model_root, "cpu")
+
+    assert result["assetsReady"] is True
+    assert result["ready"] is True
+    assert result["device"] == "cpu"
+
+
+def test_worker_probe_of_a_cuda_content_fails_without_the_primary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    model_root = tmp_path / "models"
+    model_tree(model_root)
+    (model_root / "primary" / "model.safetensors").unlink()
+
+    result = _asset_probe(monkeypatch, model_root, "cuda")
+
+    assert result["assetsReady"] is False
+    assert result["ready"] is False
+    assert "primary/model.safetensors" in str(result["detail"])
+
+
+@pytest.mark.parametrize("raw", [None, "cpu", "cuda"])
+def test_session_worker_uses_the_installed_content(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, raw: str | None
+) -> None:
+    constructors: list[dict[str, object]] = []
+
+    class RecordingAdapter:
+        def __init__(self, _model_path: Path, **kwargs: object) -> None:
+            constructors.append(kwargs)
+
+    monkeypatch.setattr(whisper_main, "TeaAsrAdapter", RecordingAdapter)
+    monkeypatch.setattr(whisper_main, "_import_speech_runtime", lambda: None)
+    monkeypatch.setattr(
+        "capture_runtime.workers.session_server.serve_session", lambda *_a, **_k: None
+    )
+    monkeypatch.setenv("CAPTURE_SESSION_MODEL_PATH", str(tmp_path))
+    monkeypatch.setenv("CAPTURE_SESSION_TEMP_DIR", str(tmp_path))
+    monkeypatch.delenv("CAPTURE_SESSION_SPEECH_MODEL", raising=False)
+    if raw is None:
+        monkeypatch.delenv("CAPTURE_SESSION_SPEECH_CONTENT", raising=False)
+    else:
+        monkeypatch.setenv("CAPTURE_SESSION_SPEECH_CONTENT", raw)
+
+    whisper_main._session()
+
+    assert constructors[0]["content"] == raw
+
+
+def test_session_worker_rejects_an_unknown_content(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    constructors: list[dict[str, object]] = []
+
+    class RecordingAdapter:
+        def __init__(self, _model_path: Path, **kwargs: object) -> None:
+            constructors.append(kwargs)
+
+    monkeypatch.setattr(whisper_main, "TeaAsrAdapter", RecordingAdapter)
+    monkeypatch.setattr(whisper_main, "_import_speech_runtime", lambda: None)
+    monkeypatch.setenv("CAPTURE_SESSION_MODEL_PATH", str(tmp_path))
+    monkeypatch.setenv("CAPTURE_SESSION_TEMP_DIR", str(tmp_path))
+    monkeypatch.setenv("CAPTURE_SESSION_SPEECH_CONTENT", "mps")
+
+    with pytest.raises(ValueError, match="content is invalid"):
+        whisper_main._session()
+    assert constructors == []

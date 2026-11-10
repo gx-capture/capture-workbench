@@ -18,6 +18,9 @@ class InstalledEngine:
     # Populated by EngineInstallationManager from the verified catalog
     # descriptor. Test-only protocol callers may omit it.
     worker_sha256: str | None = None
+    # State "2" names the installed content. None is a legacy single content,
+    # and launch must not fill it in by detecting a driver or listing folders.
+    content_id: str | None = None
 
 
 class WorkerClient:

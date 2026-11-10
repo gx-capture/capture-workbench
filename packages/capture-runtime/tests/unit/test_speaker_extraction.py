@@ -105,6 +105,8 @@ def _extract(
     in_catalog: bool = True,
     speaker_progress: Any = None,
     speech_recognition_model: str = "auto",
+    content_id: str | None = None,
+    speech_recognition_variant: str = "auto",
 ) -> tuple[RawCapture, _WorkerClient]:
     worker_client = _WorkerClient()
 
@@ -119,7 +121,14 @@ def _extract(
                 artifact_version=RUNTIME_VERSION,
                 executable=tmp_path / f"{requirement_id}.exe",
                 model_dir=tmp_path / "models",
+                content_id=content_id if requirement_id == "speech-recognition" else None,
             )
+
+        def choose_content(self, *_args: object, **_kwargs: object) -> None:
+            raise AssertionError("speech launch must not detect a content")
+
+        def installed_content(self, *_args: object, **_kwargs: object) -> None:
+            raise AssertionError("speech launch must not re-read the catalog")
 
     manager = EngineManager()
     manager.worker_client = worker_client  # type: ignore[attr-defined]
@@ -135,6 +144,7 @@ def _extract(
             max_audio_duration_ms=60_000,
             whisper_prefer_gpu=True,
             speech_recognition_model=speech_recognition_model,
+            speech_recognition_variant=speech_recognition_variant,
         ),
         engine_manager=manager,  # type: ignore[arg-type]
     )
@@ -227,6 +237,29 @@ def test_without_the_request_the_transcript_has_no_speakers(tmp_path: Path) -> N
             {"maxDurationMs": 60_000, "preferGpu": True, "allowCpuFallback": True},
         )
     ]
+
+
+@pytest.mark.parametrize(
+    ("content_id", "variant", "sent"),
+    [("cpu", "cuda", "cpu"), ("cuda", "cpu", "cuda"), (None, "cuda", None)],
+)
+def test_one_shot_capture_sends_the_installed_content_and_not_the_variant(
+    tmp_path: Path, content_id: str | None, variant: str, sent: str | None
+) -> None:
+    _raw, worker_client = _extract(
+        tmp_path,
+        installed={"speech-recognition"},
+        identify_speakers=False,
+        content_id=content_id,
+        speech_recognition_variant=variant,
+    )
+
+    options = worker_client.calls[0][1]
+    if sent is None:
+        assert "content" not in options
+    else:
+        assert options["content"] == sent
+    assert "model" not in options
 
 
 def test_a_chosen_speech_model_is_sent_to_the_worker(tmp_path: Path) -> None:

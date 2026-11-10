@@ -265,6 +265,23 @@ def _cleanup_install_attempt(
     )
 
 
+def _probe_options_for_installed_content(
+    engine: InstalledEngine,
+    probe_options: dict[str, object] | None,
+) -> dict[str, object] | None:
+    """Name the recorded speech content on an asset probe.
+
+    A legacy engine has no content id, so its probe stays exactly today's request.
+    """
+
+    content_id = engine.content_id
+    if engine.requirement_id != "speech-recognition" or content_id is None:
+        return probe_options
+    options = dict(probe_options or {})
+    options["content"] = content_id
+    return options
+
+
 class EngineInstallationManager:
     def __init__(
         self,
@@ -485,6 +502,7 @@ class EngineInstallationManager:
             # worker-owned preflight binds to the executable that was
             # extracted and verified against that archive's inner manifest.
             worker_sha256=sha256_file(executable),
+            content_id=state.content_id,
         )
         with self._verified_active_engines_lock:
             self._verified_active_engines[requirement_id] = _VerifiedActiveEngine(
@@ -518,7 +536,7 @@ class EngineInstallationManager:
             return await self.worker_client.probe(
                 engine,
                 include_model=True,
-                options=probe_options,
+                options=_probe_options_for_installed_content(engine, probe_options),
             )
         except Exception:
             return None
@@ -774,6 +792,7 @@ class EngineInstallationManager:
                 executable=probe_executable,
                 model_dir=new_version / "model" / model_descriptor.entry_point,
                 worker_sha256=sha256_file(probe_executable),
+                content_id=content_id,
             )
             try:
                 code_probe = await self.worker_client.probe(
@@ -836,12 +855,13 @@ class EngineInstallationManager:
                 executable=engine_executable,
                 model_dir=self._resolved_child(model_root, model_descriptor.entry_point),
                 worker_sha256=sha256_file(engine_executable),
+                content_id=content_id,
             )
             try:
                 probe = await self.worker_client.probe(
                     engine,
                     include_model=True,
-                    options=probe_options,
+                    options=_probe_options_for_installed_content(engine, probe_options),
                 )
             except WorkerExecutionError as error:
                 raise EngineInstallationError(
@@ -903,6 +923,7 @@ class EngineInstallationManager:
                 executable=active_executable,
                 model_dir=self._resolved_child(version / "model", model_descriptor.entry_point),
                 worker_sha256=sha256_file(active_executable),
+                content_id=content_id,
             )
             installed_files = _installed_engine_snapshot(version / "worker", version / "model")
             if installed_files is not None:
