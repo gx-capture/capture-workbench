@@ -57,3 +57,13 @@ sequenceDiagram
 ## 規則與資料來源
 
 保留 TEA-ASR 的裝置、模型、摘要、警告、`elapsed_ms` 與 `stage_ms`。分窗從保留的重疊游標開始；沒有完整視窗時不提前提交，結束時才沖出剩餘部分。每個工作階段只組裝一次視窗轉寫用例。
+
+## 已安裝的內容
+
+發行目錄尚未提供 `cpu` 內容時，語音需求沒有 `contents`。那種安裝與 `cuda` 內容使用同一套模型與裝置規則。
+
+狀態 `"2"` 的安裝把 `contentId` 交給語音 worker：一次擷取的執行選項是 `content`，串流工作階段的環境變數是 `CAPTURE_SESSION_SPEECH_CONTENT`。沒有內容 id 的引擎不送這兩項，行為與今日相同。這個 id 是安裝當下記下的值，啟動時不重新偵測顯示卡，也不依磁碟上有哪些模型資料夾來猜測。未知的內容 id 直接失敗，不會當成 `cuda`。
+
+`cuda` 與舊安裝：`auto` 與 `tea-asr-1.1` 載入 `primary`，回報模型 `tea-asr-1.1`。偏好 GPU 且 CUDA 可用時使用 CUDA；被歸類的 CUDA 失敗以同一個檢查點在 CPU 重試。明確的 `tea-asr-1.1-mini` 維持 mini。`probe` 要求 primary、mini、兩邊的架構目錄與 aligner。
+
+`cpu` 內容沒有 GPU 路徑，一律在 CPU 上執行。`preferGpu` 與 `allowCpuFallback` 不改變裝置，也不會因為不允許 CPU 後援而回報 CUDA 裝置不存在。`auto` 載入 TEA-ASR-1.1-mini，回報模型 `tea-asr-1.1-mini`、裝置 `cpu`。明確的 `tea-asr-1.1-mini` 同樣載入 mini。明確的 `tea-asr-1.1` 在載入任何模型之前失敗，不會改載 mini；worker 內部的錯誤訊息是 `model not installed`，但 API 的呼叫端目前只會收到一般的 worker 失敗（`worker_failed`），看不到這句訊息，需求也仍顯示為就緒。`probe` 在 mini、它的架構目錄與 aligner 都存在時就緒，不要求 primary。

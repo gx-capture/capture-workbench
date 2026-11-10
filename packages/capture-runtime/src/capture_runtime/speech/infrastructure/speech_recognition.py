@@ -356,6 +356,9 @@ class TeaAsrAdapter:
 
     A classified CUDA failure retries that same checkpoint once on CPU.
     The default is TEA-ASR 1.1; an explicit model choice is independent of device.
+
+    A ``cpu`` content has no GPU build. It loads TEA-ASR-1.1-mini and reports
+    device ``cpu``. ``tea-asr-1.1`` is not in that content, so it fails before load.
     """
 
     def __init__(
@@ -367,6 +370,7 @@ class TeaAsrAdapter:
         primary_provenance_model: str = "tea-asr-1.1",
         fallback_provenance_model: str = "tea-asr-1.1-mini",
         model: str | None = None,
+        content: str | None = None,
         prefer_gpu: bool,
         max_duration_ms: int,
         allow_cpu_fallback: bool = True,
@@ -381,11 +385,18 @@ class TeaAsrAdapter:
         self.primary_model, self.fallback_model = primary_model, fallback_model
         self.primary_provenance_model = primary_provenance_model
         self.fallback_provenance_model = fallback_provenance_model
+        # None and "cuda" are today's pack. "cpu" is the CPU content. Anything
+        # else must fail closed: guessing from a missing primary/ would hide a
+        # truncated CUDA install.
+        if content not in {None, "cuda", "cpu"}:
+            raise ValueError("Speech recognition content is invalid")
+        self.content = content
         # A model chosen by its provenance name runs on either device, also after a
         # GPU fallback; None keeps the primary checkpoint on both devices.
         if model not in {None, primary_provenance_model, fallback_provenance_model}:
             raise ValueError("Speech recognition model is invalid")
         self.chosen_model = model
+        self._reject_uninstalled_model()
         self.prefer_gpu, self.allow_cpu_fallback = prefer_gpu, allow_cpu_fallback
         self.max_duration_ms, self.word_timestamps = max_duration_ms, word_timestamps
         # The default spoken language. TEA-ASR is a Taiwan Mandarin model; its card recommends
@@ -428,9 +439,17 @@ class TeaAsrAdapter:
         self._models[role] = (key, processor, model)
         return processor, model
 
+    def _reject_uninstalled_model(self) -> None:
+        """A cpu content has no TEA-ASR 1.1 checkpoint. Do not substitute mini."""
+
+        if self.content == "cpu" and self.chosen_model == self.primary_provenance_model:
+            raise EngineRuntimeUnavailableError("model not installed")
+
     def _selection(self) -> tuple[str, str]:
         """The chosen model folder and provenance name, independent of device."""
 
+        if self.content == "cpu":
+            return self.fallback_model, self.fallback_provenance_model
         identity = self.chosen_model or self.primary_provenance_model
         if identity == self.primary_provenance_model:
             return self.primary_model, identity
@@ -464,13 +483,20 @@ class TeaAsrAdapter:
             importlib.util.find_spec(name) is not None
             for name in ("torch", "transformers", "numpy", "librosa", "av")
         )
-        required = {
-            self.primary_model: CHECKPOINT_FILES,
-            self.fallback_model: CHECKPOINT_FILES,
-            f"{self.primary_model}-architecture": ARCHITECTURE_FILES,
-            f"{self.fallback_model}-architecture": ARCHITECTURE_FILES,
-            "aligner": ALIGNER_FILES,
-        }
+        if self.content == "cpu":
+            required = {
+                self.fallback_model: CHECKPOINT_FILES,
+                f"{self.fallback_model}-architecture": ARCHITECTURE_FILES,
+                "aligner": ALIGNER_FILES,
+            }
+        else:
+            required = {
+                self.primary_model: CHECKPOINT_FILES,
+                self.fallback_model: CHECKPOINT_FILES,
+                f"{self.primary_model}-architecture": ARCHITECTURE_FILES,
+                f"{self.fallback_model}-architecture": ARCHITECTURE_FILES,
+                "aligner": ALIGNER_FILES,
+            }
         missing = [
             f"{folder}/{name}"
             for folder, names in required.items()
@@ -541,6 +567,7 @@ class TeaAsrAdapter:
         allow_empty_output: bool,
         language: str,
     ) -> WhisperTranscriptionResult:
+        self._reject_uninstalled_model()
         self._report_stage(speech_stage("assets-probe-start"))
         probe = self.probe()
         if not probe.ready:
@@ -556,7 +583,9 @@ class TeaAsrAdapter:
             raise ValueError("Audio duration exceeds the configured limit.")
         self._report_stage(speech_stage("device-probe-start"))
         device, warning = "cpu", None
-        if self.prefer_gpu:
+        # A cpu content ships no CUDA runtime. prefer_gpu cannot select one,
+        # and disallowing CPU fallback must not report the device as missing.
+        if self.content != "cpu" and self.prefer_gpu:
             try:
                 available = bool(self._cuda_devices())
             except Exception as error:

@@ -157,13 +157,14 @@ def _warm_processor(
     return processor, spawned
 
 
-def _engine(tmp_path: Path, name: str = "speech") -> InstalledEngine:
+def _engine(tmp_path: Path, name: str = "speech", content_id: str | None = None) -> InstalledEngine:
     return InstalledEngine(
         requirement_id="speech-recognition",
         artifact_version="0.7.2",
         executable=tmp_path / name / "capture-engine-speech-recognition.exe",
         model_dir=tmp_path / name / "model",
         worker_sha256="b" * 64,
+        content_id=content_id,
     )
 
 
@@ -237,6 +238,64 @@ def test_a_session_worker_is_told_the_chosen_speech_model(
         return json.loads(output)
 
     assert asyncio.run(scenario()) == sent
+
+
+@pytest.mark.parametrize(
+    ("content_id", "variant", "sent"),
+    [("cpu", "cuda", "cpu"), ("cuda", "cpu", "cuda"), (None, "cpu", None)],
+)
+def test_a_session_worker_is_told_the_installed_content_and_not_the_variant(
+    tmp_path: Path, content_id: str | None, variant: str, sent: str | None
+) -> None:
+    script = tmp_path / "session_worker.py"
+    script.write_text(
+        "import json, os, sys\n"
+        "sys.stdout.write(json.dumps({\n"
+        "  'model': os.environ.get('CAPTURE_SESSION_SPEECH_MODEL'),\n"
+        "  'content': os.environ.get('CAPTURE_SESSION_SPEECH_CONTENT'),\n"
+        "}))\n",
+        encoding="utf-8",
+    )
+    engine = replace(
+        _engine(tmp_path, content_id=content_id), executable=script, model_dir=tmp_path
+    )
+    config = ExtractionRuntimeConfig(
+        windowsml_model_dir=tmp_path / "windowsml",
+        whisper_models_dir=tmp_path / "whisper",
+        temp_dir=tmp_path / "temp",
+        max_pdf_pages=10,
+        max_image_pixels=100_000,
+        ocr_render_scale=2,
+        max_audio_duration_ms=60_000,
+        whisper_prefer_gpu=True,
+        speech_recognition_model="auto",
+        speech_recognition_variant=variant,
+    )
+
+    async def scenario() -> object:
+        worker = await _SessionWorker.start(engine=engine, config=config)
+        output = await worker.stdout.read()
+        await worker.process.wait()
+        return json.loads(output)
+
+    assert asyncio.run(scenario()) == {"model": None, "content": sent}
+
+
+def test_a_warm_worker_is_not_reused_for_another_content(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def scenario() -> None:
+        processor, spawned = _warm_processor(tmp_path, monkeypatch, idle=60)
+        engine = _engine(tmp_path, content_id="cuda")
+        first = await processor._acquire(engine)
+        await processor._park(_worker_key(engine, processor.config), first)  # type: ignore[arg-type]
+
+        other = replace(engine, content_id="cpu")
+        assert await processor._acquire(other) is spawned[1]
+        assert first.closed  # type: ignore[union-attr]
+        await processor.shutdown()
+
+    asyncio.run(scenario())
 
 
 def test_a_warm_worker_closes_when_idle_released_or_disabled(

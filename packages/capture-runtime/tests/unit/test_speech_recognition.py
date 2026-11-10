@@ -482,3 +482,111 @@ def test_progress_failure_preserves_the_original_exception(tmp_path, monkeypatch
         )
     assert raised.value is failure
     assert fake.devices("asr") == ["cuda"]
+
+
+def test_cuda_content_keeps_the_primary_checkpoint_on_cpu_without_a_gpu(tmp_path, monkeypatch):
+    fake = FakeModels(monkeypatch, cuda=False)
+    result = adapter(tmp_path, fake, content="cuda").transcribe(
+        tmp_path / "source.wav", should_cancel=lambda: False
+    )
+    assert [Path(event[2]).name for event in fake.loads("asr")] == ["primary"]
+    assert fake.devices("asr") == ["cpu"]
+    assert (result.model, result.device) == ("tea-asr-1.1", "cpu")
+    assert result.warning is None
+
+
+def test_cuda_content_retries_the_same_checkpoint_after_a_classified_cuda_error(
+    tmp_path, monkeypatch
+):
+    fake = FakeModels(monkeypatch)
+    fake.failures[("asr", "inference")] = RuntimeError("CUDA out of memory")
+    result = adapter(tmp_path, fake, content="cuda").transcribe(
+        tmp_path / "source.wav", should_cancel=lambda: False
+    )
+    assert [Path(event[2]).name for event in fake.loads("asr")] == ["primary", "primary"]
+    assert fake.devices("asr") == ["cuda", "cpu"]
+    assert (result.model, result.device) == ("tea-asr-1.1", "cpu")
+    assert result.warning == "Speech recognition GPU fallback: RuntimeError"
+
+
+def test_cpu_content_auto_reports_mini_on_cpu(tmp_path, monkeypatch):
+    fake = FakeModels(monkeypatch)
+    result = adapter(tmp_path, fake, content="cpu").transcribe(
+        tmp_path / "source.wav", should_cancel=lambda: False
+    )
+    assert [Path(event[2]).name for event in fake.loads("asr")] == ["fallback"]
+    assert fake.devices("asr") == ["cpu"]
+    assert ("probe",) not in fake.events
+    assert (result.model, result.device) == ("tea-asr-1.1-mini", "cpu")
+    assert result.warning is None
+
+
+@pytest.mark.parametrize("cuda_present", [True, False])
+def test_cpu_content_stays_on_cpu_when_gpu_is_preferred_and_fallback_is_disallowed(
+    tmp_path, monkeypatch, cuda_present
+):
+    fake = FakeModels(monkeypatch, cuda=cuda_present)
+    result = adapter(
+        tmp_path,
+        fake,
+        content="cpu",
+        prefer_gpu=True,
+        allow_cpu_fallback=False,
+    ).transcribe(tmp_path / "source.wav", should_cancel=lambda: False)
+    assert ("probe",) not in fake.events
+    assert fake.devices("asr") == ["cpu"]
+    assert (result.model, result.device) == ("tea-asr-1.1-mini", "cpu")
+    assert result.warning is None
+
+
+def test_cpu_content_rejects_the_primary_model_before_any_load(tmp_path, monkeypatch):
+    fake = FakeModels(monkeypatch)
+    with pytest.raises(speech.EngineRuntimeUnavailableError, match="^model not installed$"):
+        adapter(tmp_path, fake, content="cpu", model="tea-asr-1.1")
+    assert not fake.loads("asr")
+    assert not fake.loads("aligner")
+
+
+def test_cpu_content_explicit_mini_loads_mini(tmp_path, monkeypatch):
+    fake = FakeModels(monkeypatch)
+    result = adapter(
+        tmp_path, fake, content="cpu", model="tea-asr-1.1-mini", prefer_gpu=True
+    ).transcribe(tmp_path / "source.wav", should_cancel=lambda: False)
+    assert [Path(event[2]).name for event in fake.loads("asr")] == ["fallback"]
+    assert fake.devices("asr") == ["cpu"]
+    assert (result.model, result.device) == ("tea-asr-1.1-mini", "cpu")
+
+
+def test_an_unknown_content_is_rejected(tmp_path, monkeypatch):
+    fake = FakeModels(monkeypatch)
+    with pytest.raises(ValueError, match="content is invalid"):
+        adapter(tmp_path, fake, content="gpu")
+    assert not fake.loads("asr")
+
+
+def test_cpu_content_probe_does_not_require_the_primary_checkpoint(tmp_path, monkeypatch):
+    recognizer = adapter(tmp_path, FakeModels(monkeypatch), content="cpu")
+    for folder in ("primary", "primary-architecture"):
+        for item in (tmp_path / folder).iterdir():
+            item.unlink()
+    probe = recognizer.probe()
+    assert probe.assets_ready is True
+    assert probe.ready is True
+    assert "primary" not in (probe.detail or "")
+
+    (tmp_path / "fallback" / "model.safetensors").unlink()
+    missing = recognizer.probe()
+    assert missing.assets_ready is False
+    assert "fallback/model.safetensors" in missing.detail
+
+
+@pytest.mark.parametrize("content", [None, "cuda"])
+def test_cuda_and_legacy_probes_fail_when_the_primary_checkpoint_is_absent(
+    tmp_path, monkeypatch, content
+):
+    recognizer = adapter(tmp_path, FakeModels(monkeypatch), content=content)
+    (tmp_path / "primary" / "model.safetensors").unlink()
+    probe = recognizer.probe()
+    assert probe.assets_ready is False
+    assert probe.ready is False
+    assert "primary/model.safetensors" in probe.detail

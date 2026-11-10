@@ -2077,6 +2077,11 @@ def test_a_requirement_without_contents_ignores_the_variant(tmp_path: Path) -> N
     )
     assert state["stateVersion"] == "1"
     assert "contentId" not in state
+    legacy = manager.active_engine("windowsml-ocr")
+    assert legacy is not None and legacy.content_id is None
+    legacy_client = manager.worker_client
+    assert isinstance(legacy_client, FakeWorkerClient)
+    assert [options for _engine, _include, options in legacy_client.probes] == [None, None]
     assert set(state) == {
         "activatedArtifacts",
         "artifactVersion",
@@ -2124,7 +2129,14 @@ def test_an_installed_content_stays_when_the_driver_or_override_changes(tmp_path
     assert worker_sha == cpu.worker_artifact().sha256
     engine = manager.active_engine("speech-recognition")
     assert engine is not None
+    assert engine.content_id == "cpu"
     assert engine.executable.read_bytes() == b"cpu-worker"
+    installed_client = manager.worker_client
+    assert isinstance(installed_client, FakeWorkerClient)
+    assert [(include, options) for _engine, include, options in installed_client.probes] == [
+        (False, None),
+        (True, {"content": "cpu"}),
+    ]
 
     driver.present = True
     calls = driver.calls
@@ -2152,6 +2164,7 @@ def test_an_installed_content_stays_when_the_driver_or_override_changes(tmp_path
     )
     fresh_engine = fresh.active_engine("speech-recognition")
     assert fresh_engine is not None
+    assert fresh_engine.content_id == "cpu"
     assert fresh_engine.executable.read_bytes() == b"cpu-worker"
     fresh_listed = _listed(
         _requirements_installer(tmp_path, fresh, "speech-recognition"), "speech-recognition"
@@ -2179,7 +2192,14 @@ def test_auto_with_a_driver_installs_the_cuda_content(tmp_path: Path) -> None:
     assert state["contentId"] == "cuda"
     engine = manager.active_engine("speech-recognition")
     assert engine is not None
+    assert engine.content_id == "cuda"
     assert engine.executable.read_bytes() == b"cuda-worker"
+    cuda_client = manager.worker_client
+    assert isinstance(cuda_client, FakeWorkerClient)
+    assert [(include, options) for _engine, include, options in cuda_client.probes] == [
+        (False, None),
+        (True, {"content": "cuda"}),
+    ]
     assert downloaded[-1].total == cuda.download_bytes
 
 
