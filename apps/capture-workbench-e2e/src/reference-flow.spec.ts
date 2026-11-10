@@ -1,7 +1,10 @@
 // Browser reference flow (CI): the reference app in a browser with a fake
 // Tauri bridge and scripted runtime responses. It checks the Traditional
-// Chinese shell navigation, first-run recognition card, ASR-only journey,
-// install/cancel/retry lifecycle, reload re-attachment, and the history queue.
+// Chinese shell navigation, first-run recognition card, the OCR queue
+// (drop, install, page progress, raw .txt, waiting file across reload),
+// ASR-only journey, install/cancel/retry lifecycle, reload re-attachment,
+// and the history queue.
+import { readFile } from 'node:fs/promises';
 import { expect, test, type Page } from '@playwright/test';
 // eslint-disable-next-line @nx/enforce-module-boundaries -- repository browser fixture shares release intent.
 import { RELEASE_VERSION } from '../../../tools/release/release-intent.ts';
@@ -28,9 +31,62 @@ test('navigates the Traditional Chinese shell to each page from the left navigat
     await expect(page.getByRole('heading', { level: 1, name: target.heading })).toBeVisible();
   }
 
-  await page.getByRole('link', { name: '前往紀錄加入文件' }).click();
+  await expect(page.getByTestId('ocr-dropzone')).toBeVisible();
+  await expect(page.getByRole('link', { name: '前往紀錄加入文件' })).toHaveCount(0);
+  await nav.getByRole('link', { name: '紀錄' }).click();
   await expect(page).toHaveURL(/\/history$/u);
   await expect(page.getByText('history.pdf')).toBeVisible();
+});
+
+test('drops a PDF without OCR, installs it, and exports the raw text', async ({ page }) => {
+  await openDesktop(
+    page,
+    [requirement('windowsml-ocr', 'WindowsML OCR', 'installable', 144_000_000)],
+    '/ocr',
+    { completeInstallOnPoll: 2, ocrJourney: true, runtimeVersion: '0.9.0' },
+  );
+
+  await page.getByTestId('first-run-dismiss').click();
+  await dropPdf(page, 'charge.pdf');
+
+  const row = page.locator('[data-testid="ocr-queue-row"]', { hasText: 'charge.pdf' });
+  await expect(row).toHaveAttribute('data-user-status', 'waiting');
+  await expect(row.getByTestId('ocr-row-status')).toContainText('需要文字辨識（約 144 MB）');
+  await row.getByTestId('ocr-row-install').click();
+
+  await expect(row.getByTestId('ocr-row-progress')).toContainText('第 9/12 頁', { timeout: 15_000 });
+  await expect(row).toHaveAttribute('data-user-status', 'done', { timeout: 15_000 });
+  await expect(row.getByTestId('ocr-row-status')).toContainText('完成');
+
+  const downloadPromise = page.waitForEvent('download');
+  await row.getByTestId('ocr-row-export-txt').click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toBe('charge.txt');
+  const saved = await download.path();
+  if (!saved) throw new Error('download path missing');
+  expect(await readFile(saved, 'utf8')).toBe('第一頁\n\n第二頁');
+});
+
+test('keeps a waiting OCR file after the window reloads', async ({ page }) => {
+  await openDesktop(
+    page,
+    [requirement('windowsml-ocr', 'WindowsML OCR', 'installable', 144_000_000)],
+    '/ocr',
+    { persistLibrary: true },
+  );
+
+  await page.getByTestId('first-run-dismiss').click();
+  await dropPdf(page, 'charge.pdf');
+
+  const row = page.locator('[data-testid="ocr-queue-row"]', { hasText: 'charge.pdf' });
+  await expect(row).toHaveAttribute('data-user-status', 'waiting');
+  await expect(row.getByTestId('ocr-row-status')).toContainText('等待中');
+
+  await page.reload();
+  await expect(page.getByRole('heading', { level: 1, name: '文件轉文字' })).toBeVisible();
+  const reloaded = page.locator('[data-testid="ocr-queue-row"]', { hasText: 'charge.pdf' });
+  await expect(reloaded).toHaveAttribute('data-user-status', 'waiting');
+  await expect(reloaded.getByTestId('ocr-row-install')).toBeVisible();
 });
 
 test('shows the first-run recognition card on /ocr and remembers dismissing it across reloads', async ({ page }) => {
@@ -176,7 +232,10 @@ test('renders the desktop queue and history filter through the authenticated run
   await expect(page.getByText('Ollama · qwen3.5:0.8b')).toBeVisible();
   await expect(page.getByRole('combobox', { name: '處理狀態' })).toBeVisible();
   await expect(page.getByRole('button', { name: '選擇檔案' })).toBeEnabled();
+  await page.getByLabel('搜尋文件').fill('not-a-file');
+  await expect(page.getByText('history.pdf')).toHaveCount(0);
   await page.getByLabel('搜尋文件').fill('history');
+  await expect(page.getByText('history.pdf')).toBeVisible();
 
   const commands = await page.evaluate(() => {
     const target = globalThis as unknown as {
@@ -188,7 +247,7 @@ test('renders the desktop queue and history filter through the authenticated run
   expect(commands).toContain('runtime_requirements');
   expect(commands).toContain('runtime_list_installations');
   expect(commands).not.toContain('backend_config');
-  expect(commands.filter((command) => command === 'library_list').length).toBeGreaterThan(1);
+  expect(commands).toContain('library_list');
 });
 
 test('does not run a deterministic provider in an unconfigured browser', async ({ page }) => {
@@ -203,6 +262,12 @@ interface OpenDesktopOptions {
   readonly completeInstallOnPoll?: number;
   readonly holdRunningUntilCancel?: boolean;
   readonly initialRunningInstallations?: readonly Record<string, unknown>[];
+  /** Script capture commands so one OCR file can reach raw text. */
+  readonly ocrJourney?: boolean;
+  /** Keep the fake library in sessionStorage so a reload still lists it. */
+  readonly persistLibrary?: boolean;
+  /** Overrides the runtime version the fake reports. The OCR journey uses 0.9.0. */
+  readonly runtimeVersion?: string;
 }
 
 async function openDesktop(
@@ -224,6 +289,8 @@ async function openDesktop(
         };
         transformCallback: (...args: unknown[]) => number;
       };
+      __captureEmitTauriEvent?: (event: string, payload: unknown) => void;
+      __captureTauriListenerCount?: (event: string) => number;
       __TAURI_EVENT_PLUGIN_INTERNALS__: {
         unregisterListener: (event: string, eventId: number) => void;
       };
@@ -232,10 +299,158 @@ async function openDesktop(
     let nextCallbackId = 1;
     let nextEventId = 1;
     let nextInstallSeq = 1;
+    const callbacks = new Map<number, (eventData: unknown) => void>();
+    const listeners = new Map<string, number[]>();
     const mutableRequirements = runtimeRequirements.map((item) => ({ ...item }));
     const installations = new Map<string, Record<string, unknown>>();
     const pollCounts = new Map<string, number>();
     let cancelledOnce = false;
+    const historyId = 'a'.repeat(32);
+    const libraryKey = 'capture-workbench.e2e-ocr-library';
+    interface StoredDoc {
+      documentId: string;
+      fileName: string;
+      mediaType: string;
+      byteLength: number;
+      createdAtMs: number;
+      updatedAtMs: number;
+      status: string;
+      stage?: string;
+      captureId?: string;
+      captureOptions?: Record<string, unknown>;
+      hasRaw?: boolean;
+    }
+    const historyDocument = (): StoredDoc => ({
+      documentId: historyId,
+      fileName: 'history.pdf',
+      mediaType: 'application/pdf',
+      byteLength: 2048,
+      createdAtMs: 1,
+      updatedAtMs: 1,
+      status: 'completed',
+      stage: 'completed',
+    });
+    let documents: StoredDoc[] = [historyDocument()];
+    const rawByDocument = new Map<string, unknown>();
+    const rememberLibrary = (): void => {
+      if (!installOptions.persistLibrary) return;
+      sessionStorage.setItem(libraryKey, JSON.stringify({
+        documents,
+        raw: [...rawByDocument.entries()],
+      }));
+    };
+    if (installOptions.persistLibrary) {
+      try {
+        const stored = sessionStorage.getItem(libraryKey);
+        if (stored) {
+          const parsed = JSON.parse(stored) as {
+            documents?: StoredDoc[];
+            raw?: readonly (readonly [string, unknown])[];
+          };
+          if (Array.isArray(parsed.documents) && parsed.documents.length > 0) {
+            documents = parsed.documents;
+          }
+          for (const entry of parsed.raw ?? []) {
+            if (Array.isArray(entry) && typeof entry[0] === 'string') {
+              rawByDocument.set(entry[0], entry[1]);
+            }
+          }
+        }
+      } catch {
+        documents = [historyDocument()];
+        rawByDocument.clear();
+      }
+      if (!documents.some((item) => item.documentId === historyId)) {
+        documents = [historyDocument(), ...documents];
+      }
+    }
+    const listedSummary = (document: StoredDoc): StoredDoc => {
+      const hasRaw = rawByDocument.has(document.documentId) || document.hasRaw === true;
+      return hasRaw ? { ...document, hasRaw: true } : { ...document };
+    };
+    let ocrPolls = 0;
+    const ocrCaptureId = 'capture-ocr-1';
+    const sourceSha = 'a'.repeat(64);
+    const ocrJob = (status: string, stage: string): Record<string, unknown> => ({
+      protocolVersion: '2',
+      ingestionId: 'ingestion-ocr-1',
+      captureId: ocrCaptureId,
+      partialRevision: 0,
+      lastEventSequence: 0,
+      createdAt: '2026-07-20T00:00:00Z',
+      status,
+      stage,
+      progress: status === 'running' ? 0.75 : 1,
+      pagesDone: 9,
+      pagesTotal: 12,
+      source: {
+        sha256: sourceSha,
+        fileName: 'charge.pdf',
+        mediaType: 'application/pdf',
+        bytes: 12,
+      },
+    });
+    const ocrProvenance = {
+      status: 'resolved',
+      engine: 'windowsml-ocr',
+      model: 'ppocrv6-traditional-multilingual',
+      modelDigest: `sha256:${'d'.repeat(64)}`,
+      device: 'RTX4060',
+      profileId: 'profile-1',
+      profileSpecSha256: 'e'.repeat(64),
+    };
+    const ocrProjection = (): Record<string, unknown> => ({
+      apiVersion: '2.0',
+      schemaVersion: '3',
+      captureId: ocrCaptureId,
+      status: 'completed',
+      source: {
+        sha256: sourceSha,
+        fileName: 'charge.pdf',
+        mediaType: 'application/pdf',
+        bytes: 12,
+      },
+      pages: [{
+        page: 1,
+        status: 'recognized',
+        raster: { width: 1200, height: 800, scale: 1, coordinateSystem: 'pixel' },
+        text: 'OCR text',
+        boxes: [{
+          polygon: [
+            { x: 100, y: 120 },
+            { x: 220, y: 120 },
+            { x: 220, y: 160 },
+            { x: 100, y: 160 },
+          ],
+          text: 'OCR text',
+          confidence: 0.875,
+        }],
+        confidence: 0.875,
+        provenance: ocrProvenance,
+      }],
+      pageCount: 1,
+      runtimeVersion,
+      contractSha256: 'a'.repeat(64),
+      provenance: ocrProvenance,
+      createdAt: '2026-07-20T00:00:00Z',
+    });
+    const ocrRaw = (): Record<string, unknown> => ({
+      schemaVersion: '2',
+      diagnosticOnly: true,
+      source: {
+        sha256: sourceSha,
+        fileName: 'charge.pdf',
+        mediaType: 'application/pdf',
+        bytes: 12,
+      },
+      segments: [
+        { segmentId: 'seg-1', order: 0, locator: { kind: 'page', page: 1 }, text: '第一頁' },
+        { segmentId: 'seg-2', order: 0, locator: { kind: 'page', page: 2 }, text: '第二頁' },
+      ],
+      sourceText: '第一頁\n第二頁',
+      extractionEngine: 'windowsml-ocr',
+      createdAt: '2026-07-20T00:00:00Z',
+    });
 
     for (const initial of installOptions.initialRunningInstallations ?? []) {
       const id = String(initial['installationId']);
@@ -246,12 +461,25 @@ async function openDesktop(
     target.isTauri = true;
     target.__captureInvokedCommands = [];
     target.__captureStartedRequirementIds = [];
+    target.__captureTauriListenerCount = (event: string) => (listeners.get(event) ?? []).length;
+    target.__captureEmitTauriEvent = (event: string, payload: unknown) => {
+      for (const handlerId of listeners.get(event) ?? []) {
+        callbacks.get(handlerId)?.({ event, id: handlerId, payload });
+      }
+    };
     target.__TAURI_INTERNALS__ = {
       metadata: {
         currentWindow: { label: 'main' },
         currentWebview: { label: 'main' },
       },
-      transformCallback: () => nextCallbackId++,
+      transformCallback: (...args: unknown[]) => {
+        const id = nextCallbackId++;
+        const callback = args[0];
+        if (typeof callback === 'function') {
+          callbacks.set(id, callback as (eventData: unknown) => void);
+        }
+        return id;
+      },
       invoke: (command: string, rawArgs?: unknown): Promise<unknown> => {
         target.__captureInvokedCommands.push(command);
         const args = (rawArgs ?? {}) as {
@@ -260,6 +488,10 @@ async function openDesktop(
             readonly installationId?: string;
             readonly requirementId?: string;
           };
+          readonly request?: Record<string, unknown>;
+          readonly update?: Record<string, unknown>;
+          readonly event?: string;
+          readonly handler?: number;
         };
         if (command === 'desktop_runtime_status') {
           return Promise.resolve({ status: 'ready', detail: 'Capture Runtime 已準備完成。' });
@@ -371,12 +603,90 @@ async function openDesktop(
           });
         }
         if (command === 'library_list') {
-          return Promise.resolve([{
-            documentId: 'a'.repeat(32), fileName: 'history.pdf', mediaType: 'application/pdf',
-            byteLength: 2048, createdAtMs: 1, updatedAtMs: 1, status: 'completed', stage: 'completed',
-          }]);
+          return Promise.resolve(documents.map((item) => listedSummary(item)));
+        }
+        if (command === 'library_import_source') {
+          const request = args.request ?? {};
+          const sourcePath = typeof request['sourcePath'] === 'string' ? request['sourcePath'] : '';
+          const fileName = sourcePath.split(/[/\\]/u).pop() || 'source.pdf';
+          const lower = fileName.toLowerCase();
+          const mediaType = lower.endsWith('.png')
+            ? 'image/png'
+            : lower.endsWith('.jpg') || lower.endsWith('.jpeg')
+              ? 'image/jpeg'
+              : 'application/pdf';
+          const options = request['captureOptions'];
+          const pdfPageCount = options !== null && typeof options === 'object'
+            ? (options as { readonly pdfPageCount?: unknown }).pdfPageCount
+            : undefined;
+          const document: StoredDoc = {
+            documentId: 'b'.repeat(32),
+            fileName,
+            mediaType,
+            byteLength: 12,
+            createdAtMs: Date.now(),
+            updatedAtMs: Date.now(),
+            status: 'queued',
+            stage: 'uploading',
+            ...(typeof pdfPageCount === 'number' ? { captureOptions: { pdfPageCount } } : {}),
+          };
+          documents = [
+            document,
+            ...documents.filter((item) => item.documentId !== document.documentId),
+          ];
+          rememberLibrary();
+          return Promise.resolve(listedSummary(document));
+        }
+        if (command === 'library_get') {
+          const documentId = String(args.request?.['documentId'] ?? '');
+          const current = documents.find((item) => item.documentId === documentId);
+          if (!current) return Promise.reject(new Error(`Unknown document: ${documentId}`));
+          return Promise.resolve({
+            ...listedSummary(current),
+            ...(rawByDocument.has(documentId) ? { raw: rawByDocument.get(documentId) } : {}),
+          });
+        }
+        if (command === 'library_update_capture') {
+          const update = args.update ?? {};
+          const documentId = String(update['documentId'] ?? '');
+          const current = documents.find((item) => item.documentId === documentId);
+          if (!current) return Promise.reject(new Error(`Unknown document: ${documentId}`));
+          if (update['raw'] !== undefined && update['raw'] !== null) {
+            rawByDocument.set(documentId, update['raw']);
+            current.hasRaw = true;
+          }
+          if (typeof update['status'] === 'string') current.status = update['status'];
+          if (typeof update['stage'] === 'string') current.stage = update['stage'];
+          if (typeof update['captureId'] === 'string') current.captureId = update['captureId'];
+          if (update['clearCaptureId'] === true) delete current.captureId;
+          current.updatedAtMs = Date.now();
+          rememberLibrary();
+          return Promise.resolve(listedSummary(current));
+        }
+        if (installOptions.ocrJourney && command === 'runtime_create_capture') {
+          ocrPolls = 0;
+          return Promise.resolve(ocrJob('running', 'extracting'));
+        }
+        if (installOptions.ocrJourney && command === 'runtime_get_capture') {
+          ocrPolls += 1;
+          if (ocrPolls <= 4) return Promise.resolve(ocrJob('running', 'extracting'));
+          return Promise.resolve(ocrJob('awaiting_structuring', 'awaiting_structuring'));
+        }
+        if (installOptions.ocrJourney && command === 'runtime_get_raw') {
+          return Promise.resolve(ocrRaw());
+        }
+        if (installOptions.ocrJourney && command === 'runtime_get_ocr') {
+          return Promise.resolve(ocrProjection());
+        }
+        if (installOptions.ocrJourney && command === 'runtime_delete_capture') {
+          return Promise.resolve(null);
         }
         if (command === 'plugin:event|listen') {
+          const eventName = typeof args.event === 'string' ? args.event : '';
+          const handlerId = typeof args.handler === 'number' ? args.handler : -1;
+          const bucket = listeners.get(eventName) ?? [];
+          bucket.push(handlerId);
+          listeners.set(eventName, bucket);
           return Promise.resolve(nextEventId++);
         }
         if (command === 'plugin:event|unlisten') {
@@ -388,8 +698,32 @@ async function openDesktop(
     target.__TAURI_EVENT_PLUGIN_INTERNALS__ = {
       unregisterListener: () => undefined,
     };
-  }, { runtimeRequirements: requirements, runtimeVersion: RELEASE_VERSION, installOptions: options });
+  }, {
+    runtimeRequirements: requirements,
+    runtimeVersion: options.runtimeVersion ?? RELEASE_VERSION,
+    installOptions: options,
+  });
   await page.goto(path);
+}
+
+/** Drops one PDF the way the desktop app receives it: a Tauri drag-drop path. */
+async function dropPdf(page: Page, fileName: string): Promise<void> {
+  const sourcePath = `C:\\fixtures\\${fileName}`;
+  await page.waitForFunction(() => {
+    const target = globalThis as {
+      __captureTauriListenerCount?: (event: string) => number;
+    };
+    return (target.__captureTauriListenerCount?.('tauri://drag-drop') ?? 0) > 0;
+  });
+  await page.evaluate((path) => {
+    const target = globalThis as {
+      __captureEmitTauriEvent?: (event: string, payload: unknown) => void;
+    };
+    target.__captureEmitTauriEvent?.('tauri://drag-drop', {
+      paths: [path],
+      position: { x: 0, y: 0 },
+    });
+  }, sourcePath);
 }
 
 function requirement(

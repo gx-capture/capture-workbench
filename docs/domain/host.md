@@ -44,12 +44,14 @@ flowchart LR
 ## 不變條件
 
 - bearer token 只存在記憶體，不寫進紀錄或檔案。
-- renderer 拿不到來源檔的路徑：匯入、讀取來源位元組、匯出都經 Tauri 指令。
+- 選擇檔案與拖放都把本機路徑交給畫面。`library_import_source` 收 `{ sourcePath }`，由主機自己讀檔；位元組不經過 IPC。匯出仍經 Tauri 指令。空檔與超過上限由主機拒絕。
 - 文件庫的寫入先記交易日誌再提交（`library/transaction.rs`），寫到一半中斷不會留下不一致的索引。
 - 擷取結束時，先把結果存進文件庫，再刪除 runtime 端的擷取。
 - 主機只啟動通過 manifest 與執行檔驗證的 runtime。
 
 ## 主要流程
+
+`/ocr` 把匯入和擷取分開。丟進來或選取的 PDF、圖片以本機路徑呼叫 `library_import_source`，文件庫立刻記成 `queued`、沒有 `captureId`，畫面顯示等待中。`windowsml-ocr` 還沒安裝也一樣。安裝完成後，等待中的文件自己開始擷取，不需要再按一次。整個視窗只有一個拖放訂閱：在 `/ocr` 路徑進入這個佇列，在其他頁面則照舊工作台立刻開始擷取。`/history` 的選擇檔案仍接受錄音。
 
 ```mermaid
 sequenceDiagram
@@ -60,16 +62,23 @@ sequenceDiagram
   participant RT as runtime sidecar
   Tauri->>L: 驗證 manifest 與執行檔，啟動 sidecar
   L-->>Tauri: 端點與 token（記憶體）
-  UI->>Tauri: library_import_source
-  Tauri->>Lib: 寫入來源檔
-  UI->>Tauri: runtime_start_streaming_capture
-  Tauri->>RT: /v2/ingestions 上傳，開始擷取
-  RT-->>Tauri: 事件、部分結果、結果
+  UI->>Tauri: library_import_source（sourcePath）
+  Tauri->>Lib: 寫入來源檔，狀態 queued
+  Note over UI,Lib: /ocr 停在這裡，直到文字辨識就緒
+  UI->>Tauri: runtime_create_capture 或 runtime_start_streaming_capture
+  Tauri->>RT: 上傳來源，開始擷取
+  RT-->>Tauri: 進度、原始文字、結果
   Tauri-->>UI: 進度與結果
   UI->>Tauri: library_update_capture
   Tauri->>Lib: 保存結果
   Tauri->>RT: 刪除 runtime 端的擷取
 ```
+
+等待中的文件留在文件庫。重新載入視窗後，佇列仍列出它們，並接回還在跑的擷取。整個程式重開後，runtime 作業已經消失的文件標成 `recovery_required`，`/ocr` 顯示已中斷，可以重新開始。
+
+PDF 可以帶 `captureOptions`，目前只有 `pdfPageCount`（前 K 頁，只接受 `1..=K`，最多 500）。舊索引沒有這個欄位也讀得回來。直書日文閱讀器沒有逐次開關：runtime 在 `vertical-japanese-reader` 已安裝時會自己把它交給辨識工作。
+
+`/ocr` 的 `.txt` 由畫面用文件庫裡的原始文字組成（頁面順序，頁與頁之間空一行），不新增匯出指令。沒有 Ollama 的結構化結果時，只要原始文字在，這一頁就算完成。列表上的 `hasRaw` 表示原始文字已經寫進文件庫。
 
 ## 與其他上下文的關係
 

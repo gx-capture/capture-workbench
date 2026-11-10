@@ -497,10 +497,26 @@ pub(crate) struct LibrarySourceInput {
     pub bytes: Vec<u8>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+/// Options stored with a file before a capture starts.
+///
+/// `pdf_page_count` is the only value this host sends: pages `1..=K`.
+/// Start-capture has no vertical-Japanese flag. The runtime passes that
+/// reader into the worker when the unit is installed.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LibraryCaptureOptions {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pdf_page_count: Option<u32>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LibraryImportSourceRequest {
+    /// Native path from the file dialog or a Tauri drag-drop event.
+    #[serde(default)]
     pub source_path: String,
+    #[serde(default)]
+    pub capture_options: Option<LibraryCaptureOptions>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -520,6 +536,9 @@ pub(crate) struct LibraryCaptureUpdate {
     pub recovery_message: Option<String>,
     #[serde(default)]
     pub ocr_evidence: Option<OcrEvidenceV1>,
+    /// Present only when the caller is replacing the options stored at import.
+    #[serde(default)]
+    pub capture_options: Option<LibraryCaptureOptions>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -565,6 +584,11 @@ pub(crate) struct LibraryDocumentSummary {
     pub error_message: Option<String>,
     pub recovery_code: Option<String>,
     pub recovery_message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capture_options: Option<LibraryCaptureOptions>,
+    /// True when the library has stored raw OCR or transcript text.
+    #[serde(default)]
+    pub has_raw: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]

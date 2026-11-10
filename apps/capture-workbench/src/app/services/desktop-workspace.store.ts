@@ -4,9 +4,11 @@ import {
   effect,
   Injectable,
   inject,
+  Injector,
   signal,
 } from '@angular/core';
 import { rxResource, takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { Router } from '@angular/router';
 import { finalize } from 'rxjs';
 import type {
   CaptureDocument,
@@ -20,6 +22,7 @@ import type {
   DesktopLibraryDetail,
   DesktopLibrarySummary,
 } from '../contracts';
+import { CaptureQueueStore } from './capture-queue.store';
 import { DesktopLibraryService } from './desktop-library.service';
 import { DesktopWorkspaceFormattingService } from './desktop-workspace-formatting.service';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
@@ -48,6 +51,8 @@ export class DesktopWorkspaceStore {
   private readonly formatting = inject(DesktopWorkspaceFormattingService);
   private readonly captureLifecycle = inject(DesktopWorkspaceCaptureService);
   private readonly destroyRef = inject(DestroyRef);
+  private readonly injector = inject(Injector);
+  private readonly router = inject(Router, { optional: true });
   readonly features = inject(RecognitionFeaturesStore);
 
   readonly message = signal(desktopMessages().starting);
@@ -80,7 +85,13 @@ export class DesktopWorkspaceStore {
     return this.features.requirements;
   }
 
+  /** History search result. The OCR queue reads {@link allDocuments} instead. */
   get documents() {
+    return this.visibleDocuments;
+  }
+
+  /** Every library document, including ones the history search hides. */
+  get allDocuments() {
     return this.documentsResource.value;
   }
 
@@ -144,16 +155,20 @@ export class DesktopWorkspaceStore {
 
   private readonly documentsResource = rxResource<
     readonly DesktopLibrarySummary[],
-    { readonly query: string; readonly status: string } | undefined
+    { readonly ready: true } | undefined
   >({
     defaultValue: [],
-    params: () =>
-      this.runtimeStarted()
-        ? { query: this.query(), status: this.statusFilter() }
-        : undefined,
-    stream: ({ params, abortSignal }) =>
-      this.library.list(params.query, params.status, abortSignal),
+    params: () => (this.runtimeStarted() ? { ready: true } : undefined),
+    stream: ({ abortSignal }) => this.library.list('', '', abortSignal),
   });
+
+  private readonly visibleDocuments = computed(() =>
+    filterLibraryDocuments(
+      this.documentsResource.value(),
+      this.query(),
+      this.statusFilter(),
+    ),
+  );
 
   private readonly selectedResource = rxResource<
     DesktopLibraryDetail | null,
@@ -211,7 +226,7 @@ export class DesktopWorkspaceStore {
         .droppedSources()
         .pipe(takeUntilDestroyed(this.destroyRef))
         .subscribe({
-          next: (paths) => this.addSourcePaths(paths),
+          next: (paths) => this.routeDroppedSources(paths),
           error: (error: unknown) => this.message.set(errorMessage(error)),
         });
     }
@@ -491,15 +506,11 @@ export class DesktopWorkspaceStore {
   export(documentId: string, format: 'json' | 'text'): void {
     this.library.export(documentId, format).subscribe({
       next: (exported) => {
-        const blob = new Blob([exported.content], {
-          type: exported.mediaType,
-        });
-        const url = URL.createObjectURL(blob);
-        const anchor = document.createElement('a');
-        anchor.href = url;
-        anchor.download = exported.fileName;
-        anchor.click();
-        URL.revokeObjectURL(url);
+        this.formatting.downloadText(
+          exported.fileName,
+          exported.content,
+          exported.mediaType,
+        );
       },
       error: (error: unknown) => this.message.set(errorMessage(error)),
     });
@@ -525,8 +536,39 @@ export class DesktopWorkspaceStore {
     return selectStatusLabel(status);
   }
 
+  /**
+   * The one drag-drop subscription. On `/ocr` the paths wait in the OCR queue.
+   * Anywhere else they start capture, as this workspace always did.
+   */
+  private routeDroppedSources(paths: readonly string[]): void {
+    if (this.onOcrPage()) {
+      this.injector.get(CaptureQueueStore).importPaths(paths);
+      return;
+    }
+    this.addSourcePaths(paths);
+  }
+
+  private onOcrPage(): boolean {
+    const path = (this.router?.url ?? '').split(/[?#]/u)[0] ?? '';
+    return path === '/ocr';
+  }
+
   private reloadDocumentState(documentId: string): void {
     this.documentsResource.reload();
     if (this.selectedId() === documentId) this.selectedResource.reload();
   }
+}
+
+/** Same rule as the host list: file name contains the query, status matches exactly. */
+function filterLibraryDocuments(
+  documents: readonly DesktopLibrarySummary[],
+  query: string,
+  status: string,
+): readonly DesktopLibrarySummary[] {
+  const needle = query.trim().toLowerCase();
+  const wanted = status.trim().toLowerCase();
+  return documents.filter((document) =>
+    (needle === '' || document.fileName.toLowerCase().includes(needle))
+    && (wanted === '' || document.status === wanted),
+  );
 }

@@ -1,6 +1,6 @@
 # Capture Workbench：以 OCR 與 ASR 為核心的 UI/UX 重新設計提案
 
-Status: approved 2026-11-02; all §6 recommendations accepted. Product decision: Workbench is a product with two primary features, **文件轉文字 (OCR)** and **錄音轉逐字稿 (ASR)**. Phases 1 (PR #139) and 2 (PR #149) are merged; the remaining phases are issues (§5), under [epic #152](https://github.com/gx-capture/capture-workbench/issues/152).
+Status: approved 2026-11-02; all §6 recommendations accepted. Product decision: Workbench is a product with two primary features, **文件轉文字 (OCR)** and **錄音轉逐字稿 (ASR)**. Phases 1 (PR #139) and 2 (PR #149) are merged. Phase 3 (PR #306) adds the `/ocr` queue. The remaining phases are issues (§5), under [epic #152](https://github.com/gx-capture/capture-workbench/issues/152).
 
 ## 1. Current state
 
@@ -8,20 +8,20 @@ Phases 1 and 2 are in `apps/capture-workbench/src/app`:
 
 - A shell with a left nav and the routes `/ocr` (home), `/asr`, `/history` and `/settings/engines` (`app.routes.ts`), built with Tailwind tokens and Spartan helm components in `src/app/ui` (`button`, `card`, `table`).
 - Each feature has its own gate; there is no global setup state. `/settings/engines` installs, cancels and retries each unit through the `EngineCard` (`engine-card/`), with sizes from the runtime's `downloadBytes`. A first-run card on `/ocr` offers the units, and a reload re-attaches to running installs (`runtime_list_installations`).
-- `/ocr` shows the first-run card and `/asr` the install panel for the speech units; their capture flows are placeholders for phases 3 and 4. `/history` is still the old single-screen workspace, with Angular Material, the Ollama picker, provenance, the structured JSON and JSON export; phase 7 moves the diagnostics out and deletes it.
+- `/ocr` keeps the first-run card and, under it, a drop zone and a queue (檔名 · 頁數 · 狀態 · 動作). A dropped or chosen PDF or image is a native path (`droppedSources` or the existing file dialog, limited here to PDF and images). The host reads the file. The library saves it at once as 等待中, with its page-count option, whether or not `windowsml-ocr` is installed. One drag-drop subscription routes the path: `/ocr` waits, every other page starts capture as before. A missing engine shows an install prompt whose size comes from `downloadBytes`; when that install finishes, every waiting file starts by itself. A running row shows the stage, the percentage and 「第 9/12 頁」 when the job carries page counts. A document whose raw OCR text exists is 完成 and exports a `.txt` built from that text (page order, a blank line between pages), without the Ollama picker. `/asr` still shows the speech install panel; its capture flow stays a placeholder for phase 4. `/history` is still the old single-screen workspace, with Angular Material, the Ollama picker, provenance, the structured JSON and JSON export; phase 7 moves the diagnostics out and deletes it.
 
 **Harness-only, to move to 診斷 (phase 7):** provenance digests; the raw-segment and block data attributes; the structured JSON and JSON export; `ocrEvidence` (`contracts/ocr-evidence.ts`); the acceptance `pdfPageNumbers`; the `desktop_acceptance_*`, `desktop_runtime_process_probe` and `model_smoke_import_fixture` commands (`src-tauri/src/commands.rs`); the Ollama picker.
 
 **Code facts that shape the design:**
 
-- Without Ollama, OCR stops at 「等待確認」 with no `result`, so Export is disabled.
-- Import starts the capture at once.
+- Without Ollama, the runtime still stops at `awaiting_structuring` with no `result`. `/ocr` shows 完成 once raw text is stored and exports that text. `/history` still shows 等待確認 and leaves Export disabled until a structured result exists.
+- On `/history`, a native-path import starts the capture at once. On `/ocr`, the same path import only saves the file; capture starts when `windowsml-ocr` is ready. The host checks size and emptiness.
 - The desktop app does not send `spokenLanguage` yet (phase 4).
 - PDF page ranges other than a `1..K` prefix are refused, and the runtime returns no page images.
 - A full restart loses runtime jobs.
 - Verified downloads are cached by SHA-256 (`_engine_download_cache.py`), and an interrupted download resumes.
 
-**E2E today:** `apps/capture-workbench-e2e/src/reference-flow.spec.ts` (browser tests with a fake Tauri bridge) and `apps/capture-workbench-desktop/scripts/real-desktop-ocr-acceptance.spec.ts` (manual real OCR). There is no ASR journey test.
+**E2E today:** `apps/capture-workbench-e2e/src/reference-flow.spec.ts` (browser tests with a fake Tauri bridge: shell, first-run card, ASR-only install, engines, and the OCR queue driven by a `tauri://drag-drop` path) and `apps/capture-workbench-desktop/scripts/real-desktop-ocr-acceptance.spec.ts` (manual real OCR). There is no ASR journey test.
 
 ## 2. Target information architecture
 
@@ -42,7 +42,7 @@ Phases 1 and 2 are in `apps/capture-workbench/src/app`:
 **Rules:**
 
 - **Each feature has its own gate.** `/ocr` needs only `windowsml-ocr`, and `/asr` needs only `speech-recognition`. The global `needs-setup` state and the `ready ⇐ ocrCompute` coupling both go away; the app is usable as soon as the runtime runs.
-- **Files are kept before an engine is ready.** A dropped file is saved to the library as 等待中 together with its options. When the install finishes, the queue starts the waiting files.
+- **Files are kept before an engine is ready.** A dropped path is saved to the library as 等待中 together with its page count. When the install finishes, the queue starts the waiting files.
 - **Ask each fact once.** The first-run choice is remembered. Spoken language is a per-file default that the user changes only when needed. Devices are detected and never asked.
 - **Statuses users see:** 等待中 · 處理中 · 完成 · 需要處理 · 已取消. The pipeline stage is shown only as the progress step.
 
@@ -50,7 +50,7 @@ Phases 1 and 2 are in `apps/capture-workbench/src/app`:
 
 1. **First-run card** on `/ocr` (the LAW `recognition-setup-card` pattern). It offers two choices, 文字辨識 (約 144 MB) and 錄音轉文字 (約 2.8 GB) + 說話者辨識 (約 0.3 GB), plus 稍後再說. Nothing downloads until the user clicks.
 2. **Drop or choose files.** If OCR is missing, the file still enters the queue and its row shows the LAW `recognition-feature-prompt`: 「需要文字辨識（約 144 MB）」[安裝]. The file starts by itself once the install finishes.
-3. **Options are part of the drop step, shown only for PDFs:** 頁數範圍 and 直書日文 (when the vertical reader is installed). Until the `1..K` validators are relaxed and the page count is probed, the range is 前 K 頁. A crop for images can come later (Cert Prep `source-image-crop-dialog`).
+3. **Options are part of the drop step, for PDFs:** 前 K 頁. Until the `1..K` validators are relaxed and the page count is probed, that is the only range. The vertical reader is not a per-file control; the runtime uses it when `vertical-japanese-reader` is installed. A crop for images can come later (Cert Prep `source-image-crop-dialog`).
 4. **Progress:** a row per file showing the stage, a percentage and a 取消 button, with 重試 after a failure. A count like 第 9/12 頁 comes from `pagesDone` and `pagesTotal` in `CaptureOperationV2` (also on SSE events). After a reload, the app re-attaches to running captures. After a full restart, unfinished files show 已中斷 with 重新開始.
 5. **Review:** source page on the left, editable text on the right, synced by page. Images are shown as they are; PDF pages need a rasteriser (Q5). Edits are a separate layer; the recognized text is kept, and 還原 restores it.
 6. **Export:** .txt and .md (with page headings), plus 複製全部. Both are built from the raw text plus the edits layer, so export works without Ollama. JSON moves to 診斷.
@@ -154,7 +154,7 @@ Each phase is one PR, shippable on its own. Before merging, every UI PR runs `pn
 | --- | --- | --- |
 | 1 (PR #139) | **Foundation:** Tailwind and Spartan set up, shell with left nav and routes. The current workspace moves unchanged to `/history`. Material is removed from the shell. Updates the `Cargo.toml` description and the harness decision. | Nav and routes render in zh-TW. `reference-flow.spec.ts` (its `.mat-mdc-*` checks), the desktop smoke/acceptance selectors and the bundle verifier strings are updated in the same PR. |
 | 2 (PR #149) | **Recognition features:** split out `RecognitionFeaturesStore`, per-feature gates (removing `ready ⇐ ocrCompute`), the `EngineCard`, 設定 › 辨識功能 with cancel (new Tauri `runtime_cancel_installation`, since the client already has `cancelInstallation`), the first-run card, and re-attaching after a reload (new `runtime_list_installations`). | ASR-only user: never asked for OCR. Install shows its size → progress → cancel → retry. A reload re-attaches. |
-| 3 ([#157](https://github.com/gx-capture/capture-workbench/issues/157)) | **OCR page:** drop zone, queue table, files kept while waiting (import decoupled from capture), the inline per-file install prompt, auto-start after install, and OCR text exportable without Ollama (raw-based .txt). | Drop a PDF without OCR → prompt → install → processing → done. |
+| 3 (PR #306, [#157](https://github.com/gx-capture/capture-workbench/issues/157)) | **OCR page:** native-path drop zone, queue table, files kept while waiting (import decoupled from capture), the inline per-file install prompt, auto-start after install, and OCR text exportable without Ollama (raw-based .txt). | Drop a PDF path without OCR → prompt with its size → install → the file starts → page progress → 完成 → export .txt. A waiting file survives a reload. |
 | 4 ([#158](https://github.com/gx-capture/capture-workbench/issues/158)) | **ASR page:** install panel, language (wire `spokenLanguage` through Tauri) and speaker options, progress with the live partial transcript, cancel. | Drop audio → install speech → partial transcript → done. Speakers off by default. |
 | 5 ([#159](https://github.com/gx-capture/capture-workbench/issues/159)) | **Result review:** `/history/:id` sub-nav, OCR page image beside editable text, transcript table with player, speaker naming. Edits stored as a separate `edits.json` layer (new host command). | Edit a line, then restore it. Click a time and the player seeks. Name a speaker once and every line shows the name. |
 | 6 ([#160](https://github.com/gx-capture/capture-workbench/issues/160)) | **History and export:** history table with filters; export .txt/.md (OCR) and .txt/.srt/.vtt/.md (ASR), rendered in the host from raw + edits; relaxed PDF page ranges. | Each format downloads with the expected content (fixture). |

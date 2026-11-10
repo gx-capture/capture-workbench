@@ -28,6 +28,20 @@ describe('DesktopLibraryService native source import', () => {
     expect(JSON.stringify(imported)).not.toContain(sourcePath);
   });
 
+  it('sends a native path together with the page-count option', async () => {
+    const { commands, service } = configure();
+    const sourcePath = String.raw`C:\private\charge.pdf`;
+
+    await firstValueFrom(service.importSource(sourcePath, { pdfPageCount: 3 }));
+
+    expect(commands.invoke).toHaveBeenCalledWith('library_import_source', {
+      request: {
+        sourcePath,
+        captureOptions: { pdfPageCount: 3 },
+      },
+    });
+  });
+
   it('keeps ordinary library responses path-free', async () => {
     const { service } = configure();
 

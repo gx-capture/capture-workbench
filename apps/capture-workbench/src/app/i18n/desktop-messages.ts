@@ -10,7 +10,7 @@ const DEFAULT_DESKTOP_LOCALE: DesktopLocale = 'zh-TW';
 /** Pages the shell's left navigation leads to. */
 export type ShellRoute = 'ocr' | 'asr' | 'history' | 'settings';
 /** Pages whose intake still links to the history workspace. */
-export type PlaceholderRoute = 'ocr' | 'asr';
+export type PlaceholderRoute = 'asr';
 
 /** Every piece of text the desktop app shows. */
 export interface DesktopMessages {
@@ -145,6 +145,33 @@ export interface DesktopMessages {
   readonly engineName: Readonly<Record<string, string | undefined>>;
   readonly enginePurpose: Readonly<Record<string, string | undefined>>;
   readonly engineStatus: Readonly<Record<string, string | undefined>>;
+  readonly ocrDropHint: string;
+  readonly ocrColFile: string;
+  readonly ocrColPages: string;
+  readonly ocrColStatus: string;
+  readonly ocrColAction: string;
+  readonly ocrStatusWaiting: string;
+  readonly ocrStatusProcessing: string;
+  readonly ocrStatusDone: string;
+  readonly ocrStatusNeedsAttention: string;
+  readonly ocrStatusCancelled: string;
+  readonly ocrNeedsEngine: (size: string | null) => string;
+  readonly ocrPageProgress: (done: number, total: number) => string;
+  readonly ocrFirstPages: string;
+  readonly ocrPagesUnit: string;
+  readonly ocrView: string;
+  readonly ocrExportTxt: string;
+  readonly ocrRestart: string;
+  readonly ocrInterrupted: string;
+  readonly ocrRetry: string;
+  readonly ocrUnsupportedFile: (name: string) => string;
+  readonly ocrPageCountInvalid: string;
+  readonly ocrInstallNamed: (name: string) => string;
+  readonly ocrCancelNamed: (name: string) => string;
+  readonly ocrRetryNamed: (name: string) => string;
+  readonly ocrRestartNamed: (name: string) => string;
+  readonly ocrViewNamed: (name: string) => string;
+  readonly ocrExportNamed: (name: string) => string;
 }
 
 const ZH_TW: DesktopMessages = {
@@ -165,7 +192,6 @@ const ZH_TW: DesktopMessages = {
   nav: { ocr: '文件轉文字', asr: '錄音轉逐字稿', history: '紀錄', settings: '設定' },
   comingSoon: '即將推出',
   placeholder: {
-    ocr: { summary: '讀出掃描檔、PDF 和照片裡的文字。', action: '前往紀錄加入文件' },
     asr: { summary: '把錄音轉成標有時間的逐字稿。', action: '前往紀錄加入錄音' },
   },
   noModel: '未選擇模型',
@@ -322,6 +348,33 @@ const ZH_TW: DesktopMessages = {
     manual_action_required: '需手動處理',
     unavailable: '無法安裝',
   },
+  ocrDropHint: '拖曳 PDF 或圖片到這裡',
+  ocrColFile: '檔名',
+  ocrColPages: '頁數',
+  ocrColStatus: '狀態',
+  ocrColAction: '動作',
+  ocrStatusWaiting: '等待中',
+  ocrStatusProcessing: '處理中',
+  ocrStatusDone: '完成',
+  ocrStatusNeedsAttention: '需要處理',
+  ocrStatusCancelled: '已取消',
+  ocrNeedsEngine: (size) => size ? `需要文字辨識（${size}）` : '需要文字辨識',
+  ocrPageProgress: (done, total) => `第 ${done}/${total} 頁`,
+  ocrFirstPages: '前',
+  ocrPagesUnit: '頁',
+  ocrView: '檢視',
+  ocrExportTxt: '匯出 .txt',
+  ocrRestart: '重新開始',
+  ocrInterrupted: '已中斷',
+  ocrRetry: '重試',
+  ocrUnsupportedFile: (name) => `${name} 不是 PDF 或圖片。`,
+  ocrPageCountInvalid: 'Capture PDF page selection is invalid.',
+  ocrInstallNamed: (name) => `安裝文字辨識以處理 ${name}`,
+  ocrCancelNamed: (name) => `取消 ${name}`,
+  ocrRetryNamed: (name) => `重試 ${name}`,
+  ocrRestartNamed: (name) => `重新開始 ${name}`,
+  ocrViewNamed: (name) => `檢視 ${name}`,
+  ocrExportNamed: (name) => `匯出 ${name} 的文字`,
 };
 
 const EN: DesktopMessages = {
@@ -342,7 +395,6 @@ const EN: DesktopMessages = {
   nav: { ocr: 'Document to text', asr: 'Recording to transcript', history: 'History', settings: 'Settings' },
   comingSoon: 'Coming soon',
   placeholder: {
-    ocr: { summary: 'Read the text in scans, PDFs and photos.', action: 'Add documents in History' },
     asr: { summary: 'Turn recordings into timed transcripts.', action: 'Add recordings in History' },
   },
   noModel: 'No model selected',
@@ -502,6 +554,33 @@ const EN: DesktopMessages = {
     manual_action_required: 'Manual step required',
     unavailable: 'Unavailable',
   },
+  ocrDropHint: 'Drop a PDF or images here',
+  ocrColFile: 'File',
+  ocrColPages: 'Pages',
+  ocrColStatus: 'Status',
+  ocrColAction: 'Action',
+  ocrStatusWaiting: 'Waiting',
+  ocrStatusProcessing: 'Processing',
+  ocrStatusDone: 'Done',
+  ocrStatusNeedsAttention: 'Needs attention',
+  ocrStatusCancelled: 'Canceled',
+  ocrNeedsEngine: (size) => size ? `Text recognition is required (${size})` : 'Text recognition is required',
+  ocrPageProgress: (done, total) => `Page ${done}/${total}`,
+  ocrFirstPages: 'First',
+  ocrPagesUnit: 'pages',
+  ocrView: 'View',
+  ocrExportTxt: 'Export .txt',
+  ocrRestart: 'Start again',
+  ocrInterrupted: 'Interrupted',
+  ocrRetry: 'Retry',
+  ocrUnsupportedFile: (name) => `${name} is not a PDF or an image.`,
+  ocrPageCountInvalid: 'Capture PDF page selection is invalid.',
+  ocrInstallNamed: (name) => `Install text recognition for ${name}`,
+  ocrCancelNamed: (name) => `Cancel ${name}`,
+  ocrRetryNamed: (name) => `Retry ${name}`,
+  ocrRestartNamed: (name) => `Start ${name} again`,
+  ocrViewNamed: (name) => `View ${name}`,
+  ocrExportNamed: (name) => `Export text for ${name}`,
 };
 
 export const DESKTOP_MESSAGES: Readonly<Record<DesktopLocale, DesktopMessages>> =

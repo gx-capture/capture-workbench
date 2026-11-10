@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::contracts::LibrarySourceInput;
+use crate::contracts::{LibraryCaptureOptions, LibrarySourceInput};
 
 use super::MAX_SOURCE_BYTES;
 
@@ -60,6 +60,16 @@ pub(crate) const RECORDING_MEDIA_TYPES: &[&str] = &[
     "video/mpeg",
     "video/mp2t",
 ];
+
+/// `pdf_page_count` is a `1..=K` prefix. The desktop host refuses any other range.
+pub(crate) fn validate_capture_options(options: &LibraryCaptureOptions) -> Result<(), String> {
+    if let Some(count) = options.pdf_page_count {
+        if count == 0 || count > 500 {
+            return Err("Capture PDF page selection is invalid.".into());
+        }
+    }
+    Ok(())
+}
 
 pub(crate) fn verified_media_type(file_name: &str, bytes: &[u8]) -> Result<&'static str, String> {
     let extension = Path::new(file_name)
