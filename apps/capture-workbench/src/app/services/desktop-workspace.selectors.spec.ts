@@ -99,17 +99,19 @@ describe('feature requirements and speech pack', () => {
   });
 });
 
-describe('formatApproximateBytes and installationPercent', () => {
-  beforeEach(() => setDesktopLocale('zh-TW'));
+describe('formatApproximateBytes', () => {
+  afterEach(() => setDesktopLocale('zh-TW'));
 
-  it('formats downloadBytes in human units and returns null when absent', () => {
+  it('follows the app language and returns null when the size is unknown', () => {
+    setDesktopLocale('zh-TW');
     expect(formatApproximateBytes(2_800_000_000)).toBe('約 2.8 GB');
-    expect(formatApproximateBytes(144_000_000)).toBe('約 144 MB');
+    setDesktopLocale('en');
+    expect(formatApproximateBytes(144_000_000)).toBe('~144 MB');
     expect(formatApproximateBytes(null)).toBeNull();
-    expect(formatApproximateBytes(undefined)).toBeNull();
-    expect(formatApproximateBytes(0)).toBeNull();
   });
+});
 
+describe('installationPercent', () => {
   it('computes percentage from downloadedBytes / downloadBytes and falls back to progress', () => {
     expect(
       installationPercent({

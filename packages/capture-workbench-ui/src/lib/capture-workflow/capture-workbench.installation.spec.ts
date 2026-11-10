@@ -184,8 +184,95 @@ describe('CaptureWorkbenchComponent', () => {
     const guide = row.querySelector('[data-testid="capture-unit-guide"]')
       ?.textContent;
     expect(guide).toContain('台灣華語');
-    expect(guide).toContain('10.5 GB');
+    expect(guide).toContain(
+      '兩種大小的辨識模型、對齊時間點的 Qwen3 模型與 GPU 執行環境',
+    );
+    expect(guide).not.toMatch(/\d+(?:\.\d+)?\s*(?:GB|MB)/);
     expect(guide).toContain('錄音不會上傳');
+    expect(row.querySelector('[data-testid="capture-download-size"]')).toBeNull();
+  });
+
+  it('shows each listed unit size from downloadBytes and none when it is missing or zero', async () => {
+    inputSource.config.set({ identifySpeakers: true });
+    inputSource.client.set(
+      fakeClient({
+        getReady: vi.fn(() => of({ ...READY, ready: false })),
+        getRequirements: vi.fn(() =>
+          of([
+            {
+              requirementId: 'speech-recognition',
+              kind: 'transcription',
+              displayName: 'Speech recognition',
+              status: 'installable',
+              requiredFor: ['audio'],
+              installStrategy: 'runtime-catalog',
+              optional: true,
+              downloadBytes: 2_800_000_000,
+            },
+            {
+              requirementId: 'speaker-diarization',
+              kind: 'speaker-identification',
+              displayName: 'Speakers',
+              status: 'installable',
+              requiredFor: ['audio'],
+              installStrategy: 'runtime-catalog',
+              optional: true,
+              downloadBytes: 0,
+            },
+            {
+              requirementId: 'windowsml-ocr',
+              kind: 'ocr',
+              displayName: 'WindowsML OCR',
+              status: 'installable',
+              requiredFor: ['pdf', 'image'],
+              installStrategy: 'runtime-catalog',
+              downloadBytes: 144_000_000,
+            },
+            {
+              requirementId: 'ollama-runtime',
+              kind: 'runtime',
+              displayName: 'Ollama',
+              status: 'installable',
+              requiredFor: ['runtime'],
+              installStrategy: 'winget',
+            },
+          ] satisfies RuntimeRequirement[]),
+        ),
+      }),
+    );
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const root = captureWorkbenchRoot(fixture);
+    const sizeOf = (requirementId: string) =>
+      root.querySelector(
+        `[data-requirement-id="${requirementId}"] [data-testid="capture-download-size"]`,
+      );
+    expect(sizeOf('speech-recognition')?.textContent).toBe('約 2.8 GB');
+    expect(sizeOf('windowsml-ocr')?.textContent).toBe('約 144 MB');
+    expect(
+      root.querySelector(
+        '[data-requirement-id="windowsml-ocr"] [data-testid="capture-unit-guide"]',
+      ),
+    ).toBeNull();
+    expect(sizeOf('speaker-diarization')).toBeNull();
+    expect(sizeOf('ollama-runtime')).toBeNull();
+    expect(
+      root.querySelector(
+        '[data-requirement-id="speaker-diarization"] [data-testid="capture-unit-guide"]',
+      )?.textContent,
+    ).toContain('說話者辨識模型與 CPU 執行環境');
+
+    inputSource.config.set({ identifySpeakers: true, locale: 'en' });
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    expect(sizeOf('speech-recognition')?.textContent).toBe('~2.8 GB');
+    expect(sizeOf('windowsml-ocr')?.textContent).toBe('~144 MB');
+    expect(sizeOf('speaker-diarization')).toBeNull();
+    expect(sizeOf('ollama-runtime')).toBeNull();
   });
 
   it('installs OCR before Whisper even when the runtime lists dependencies in reverse order', async () => {

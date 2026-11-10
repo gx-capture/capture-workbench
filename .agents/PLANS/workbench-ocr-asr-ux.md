@@ -139,7 +139,7 @@ Phases 1 and 2 are in `apps/capture-workbench/src/app`:
 | `DesktopWorkspaceStore` | **Split**: `RecognitionFeaturesStore` (requirements, installs, per-feature readiness) is split out (phase 2); `CaptureQueueStore` (import, cancel, retry, partials) and `LibraryStore` (list, detail, delete, export, edits). Keep the facade services (`desktop-workspace-capture`, `-installation`, `desktop-library`, `desktop-runtime-client`). |
 | `desktop-workspace.selectors.ts` | **Keep**. Feature gates use a feature→requirement map: `ocr: [windowsml-ocr]`, `asr: [speech-recognition]`, `asr.speakers: [speaker-diarization]` (phase 2). |
 | `EngineCard` (`engine-card/`) | One unit: guide, size, action, progress; used by the ASR panel and the settings table (phase 2, replacing `SpeechPack`). |
-| `CAPTURE_UNIT_GUIDES` (`capture-workbench-ui`) | **Keep** as the source of the descriptive text. The desktop app takes sizes from the runtime (phase 2); the Web Component still uses the strings ([#162](https://github.com/gx-capture/capture-workbench/issues/162)). |
+| `CAPTURE_UNIT_GUIDES` (`capture-workbench-ui`) | **Keep** as the source of the descriptive text. Download sizes come from the runtime's `downloadBytes`, in the desktop app and the Web Component. |
 | `CaptureRuntimeComputeStatusComponent` | **Keep**, moved to 設定 › 運算裝置. |
 | `capture-reconciliation`, `capture-runtime-installation` (in `capture-workbench-ui`, not used by the desktop app) | **Leave** to the Web Component. The desktop app keeps its own `desktop-workspace-installation` and `-capture` services, extended with re-attach and the waiting queue. |
 | `history/history-page.*` (the old workspace, with its stylesheet) | **Delete** after migration, replaced by routed pages. |
@@ -162,7 +162,7 @@ Each phase is one PR, shippable on its own. Before merging, every UI PR runs `pn
 
 Upstream runtime items, shipped separately in capture-workbench as the runtime owner: `downloadBytes` and installation byte counts (PR #141), resumable downloads (PR #151), page and duration progress (PR #148) and the uninstall endpoint (PR #145) are merged. Open: the speech split into a CUDA unit and a CPU-only mini unit (Q3, [#154](https://github.com/gx-capture/capture-workbench/issues/154)) and native-path import of recordings over 50 MiB (Q6, [#155](https://github.com/gx-capture/capture-workbench/issues/155)). Each Tauri command added must have a caller in the same PR, or the dead-code gate fails.
 
-Also open: the Web Component's unit guides still carry sizes in strings ([#162](https://github.com/gx-capture/capture-workbench/issues/162)), and the packaged acceptance must re-approve the new navigation's pixel baselines and run real OCR and ASR ([#163](https://github.com/gx-capture/capture-workbench/issues/163)). Desktop CDP e2e for a real OCR and ASR journey stays local and manual, per AGENTS.md.
+Also open: the packaged acceptance must re-approve the new navigation's pixel baselines and run real OCR and ASR ([#163](https://github.com/gx-capture/capture-workbench/issues/163)). Desktop CDP e2e for a real OCR and ASR journey stays local and manual, per AGENTS.md.
 
 ## 6. Decisions (approved 2026-11-02; the answer is in bold)
 

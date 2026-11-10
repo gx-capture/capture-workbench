@@ -121,7 +121,6 @@ export interface DesktopMessages {
   };
   readonly stage: Readonly<Record<string, string | undefined>>;
   readonly status: Readonly<Record<string, string | undefined>>;
-  readonly approxSize: (size: string) => string;
   readonly installWithSize: (size?: string | null) => string;
   readonly installSelectedWithSize: (size?: string | null) => string;
   readonly downloadingProgress: (percent: number) => string;
@@ -279,7 +278,6 @@ const ZH_TW: DesktopMessages = {
     failed: '處理失敗',
     canceled: '已取消',
   },
-  approxSize: (size) => `約 ${size}`,
   installWithSize: (size) => (size ? `安裝（${size}）` : '安裝'),
   installSelectedWithSize: (size) => (size ? `安裝所選（${size}）` : '安裝所選'),
   downloadingProgress: (percent) => `正在下載 ${percent}%`,
@@ -457,7 +455,6 @@ const EN: DesktopMessages = {
     failed: 'Failed',
     canceled: 'Canceled',
   },
-  approxSize: (size) => `~${size}`,
   installWithSize: (size) => (size ? `Install (${size})` : 'Install'),
   installSelectedWithSize: (size) =>
     size ? `Install selected (${size})` : 'Install selected',
