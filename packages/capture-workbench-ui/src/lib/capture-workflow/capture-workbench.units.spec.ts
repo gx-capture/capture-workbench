@@ -95,6 +95,41 @@ describe('CaptureWorkbenchComponent optional units', () => {
     );
   });
 
+  it('shows a runtime download size for a listed unit that has no guide', async () => {
+    inputSource.client.set(
+      fakeClient({
+        getRequirements: vi.fn(() =>
+          of([
+            { ...READER, optional: false, downloadBytes: 120_000_000 },
+            {
+              requirementId: 'windowsml-ocr',
+              kind: 'ocr',
+              displayName: 'WindowsML OCR',
+              status: 'installable',
+              requiredFor: ['pdf', 'image'],
+              installStrategy: 'runtime-catalog',
+              downloadBytes: 0,
+            },
+          ] satisfies RuntimeRequirement[]),
+        ),
+      }),
+    );
+    const root = await settle();
+
+    const reader = root.querySelector(
+      '[data-testid="capture-runtime-requirement"][data-requirement-id="vertical-japanese-reader"]',
+    );
+    expect(reader?.querySelector('[data-testid="capture-unit-guide"]')).toBeNull();
+    expect(
+      reader?.querySelector('[data-testid="capture-download-size"]')?.textContent,
+    ).toBe('約 120 MB');
+    expect(
+      root.querySelector(
+        '[data-requirement-id="windowsml-ocr"] [data-testid="capture-download-size"]',
+      ),
+    ).toBeNull();
+  });
+
   it('shows no offer when the result suggests nothing', async () => {
     inputSource.client.set(
       fakeClient({ getRequirements: vi.fn(() => of([READER])) }),
