@@ -16,14 +16,12 @@ the same `.npmrc.example`):
 //npm.pkg.github.com/:_authToken=${GITHUB_PACKAGES_TOKEN}
 ```
 
-## Acceptance boundary
+## Host boundary
 
-Acceptance runs use the producer's `@capture-runtime/acceptance-contract`
-package (`packages/capture-acceptance-contract`). When this package takes part
-as a consumer, it reads the producer's invocation read-only and writes only its
-`ConsumerSemanticResultV1`; the producer owns scope, cleanup proof, and the
-final acceptance record. This UI package exposes no activation permit, native
-process identity, or per-root activation API.
+This UI package exposes no activation permit, native process identity, or
+per-root activation API. Each consumer runs its own acceptance gate and writes
+its own manifest. Cert Prep's gate is `acceptance-real` and LAW's gate is
+`law-prep-web-e2e:acceptance-real`; a release is gated by those gates.
 
 ## Angular integration contract
 

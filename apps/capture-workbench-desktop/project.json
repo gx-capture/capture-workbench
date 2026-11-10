@@ -214,8 +214,7 @@
         "default",
         "^default",
         "toolingCorpus",
-        "{workspaceRoot}/packages/capture-runtime/src/capture_runtime/assets/worker-stage-policy-corpus.json",
-        "{workspaceRoot}/packages/capture-acceptance-contract/**/*"
+        "{workspaceRoot}/packages/capture-runtime/src/capture_runtime/assets/worker-stage-policy-corpus.json"
       ],
       "options": {
         "command": "node --test apps/capture-workbench-desktop/scripts/*.test.ts tools/acceptance-contract.test.ts tools/worker-stage-policy.test.ts tools/three-project-acceptance.test.ts tools/three-project-cleanup-verifier.test.ts tools/check-async-boundary.test.ts tools/finalize-packed-package.test.ts tools/local-release-consumer-smoke.test.ts tools/node24-corepack.test.ts tools/record-candidate-verification.test.ts tools/acceptance-checkpoint-journal.test.ts tools/check-fake-runtime-routes.test.ts"
@@ -248,8 +247,7 @@
         "^default",
         "{projectRoot}/tsconfig.json",
         "{projectRoot}/scripts/tsconfig.json",
-        "{workspaceRoot}/tools/**/*.ts",
-        "{workspaceRoot}/packages/capture-acceptance-contract/**/*.ts"
+        "{workspaceRoot}/tools/**/*.ts"
       ],
       "options": {
         "command": "corepack pnpm exec tsc -p apps/capture-workbench-desktop/tsconfig.json --noEmit"

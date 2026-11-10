@@ -50,7 +50,6 @@
   "eslint|@nx/enforce-module-boundaries|packages/capture-runtime/tests/unit/pdf-ocr-e2e-contract.test.ts|eslint-disable",
   "eslint|@nx/enforce-module-boundaries|packages/capture-runtime/tests/unit/runtime-identity.test.ts|eslint-disable",
   "eslint|@nx/enforce-module-boundaries|packages/capture-runtime/tests/unit/runtime-identity.test.ts|eslint-disable#2",
-  "eslint|@nx/enforce-module-boundaries|tools/three-project-acceptance.test.ts|eslint-disable",
   "import-linter|Capture does not depend on its downstream contexts|packages/capture-runtime/importlinter.toml|capture_runtime.capture.application.streaming_capture_service -> capture_runtime.structuring.infrastructure.ollama.lifecycle_impl",
   "import-linter|Capture does not depend on its downstream contexts|packages/capture-runtime/importlinter.toml|capture_runtime.capture.application.streaming_capture_service -> capture_runtime.structuring.infrastructure.structuring",
   "import-linter|Capture does not depend on its downstream contexts|packages/capture-runtime/importlinter.toml|capture_runtime.capture.application.streaming_capture_service -> capture_runtime.structuring.infrastructure.structuring_provider",

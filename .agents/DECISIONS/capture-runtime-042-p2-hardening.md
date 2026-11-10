@@ -19,10 +19,11 @@ launch via the legacy path with native Windows Job containment
 ## Decisions
 
 1. **One producer, no second coordinator.** The producer owns OCR, compute,
-   model provenance, process lifecycle, acceptance, version identity, and
-   release evidence. Cert Prep and GX Law Prep receive semantic adapters and
-   own durable domain data only. Runtime jobs, listeners, and run staging are
-   ephemeral; durable runtime/model caches are retained.
+   model provenance, process lifecycle, version identity, and release evidence.
+   Each consumer runs its own acceptance gate and writes its own manifest.
+   Cert Prep and GX Law Prep receive semantic adapters and own durable domain
+   data only. Runtime jobs, listeners, and run staging are ephemeral; durable
+   runtime/model caches are retained.
 
 2. **Deepening is convergence/replacement.** The implementation worker starts
    from current symbols, migrates callers through one external seam, hides
@@ -219,17 +220,7 @@ rejected.
    actual root plan rather than an invented allowlist here.
 
 8. **Contract identity remains fixed.** API 2.0, raw/structured schema 2,
-   and CaptureOcrProjectionV3 schema 3 remain the floor; the runtime contract-set hash is `contractSetSha256` in `packages/capture-runtime-client/package.json` (it changes only with a contract release). The acceptance contract has a separate generated package/hash:
-   `@capture-runtime/acceptance-contract` under the proposed
-   `packages/capture-acceptance-contract/` owner (only the schemas and
-   `src/codecs.ts` exist; finish or remove: [#257](https://github.com/gx-capture/capture-workbench/issues/257)). Its concrete owners are
-   `schemas/*.schema.json`, `src/codecs.ts`, `src/export.ts`/`src/index.ts`,
-   `src/canonical-json.ts`, `src/manifest.ts`, `src/hash.ts`,
-   `tools/generate.ts`, `tools/create-bundle.ts`, `package.json`, and
-   `project.json`; the semantic `contract-manifest.json` is generated only at
-   D3. Its package/bundle identity is distinct from the runtime contract-set
-   hash and is the only acceptance schema/codec authority; the existing
-   `tools/acceptance-contract.ts` is a consumer adapter only. The
+   and CaptureOcrProjectionV3 schema 3 remain the floor; the runtime contract-set hash is `contractSetSha256` in `packages/capture-runtime-client/package.json` (it changes only with a contract release). The
    first implementation slice upgrades Nx 23.1.0 to 23.1.2 in
    package.json and pnpm-lock.yaml and extends
    tools/release/version-sources.ts plus its existing
@@ -248,99 +239,6 @@ rejected.
    existing full verification is
    `corepack pnpm nx run capture-runtime:test-unit --skip-nx-cache`.
 
-9. **Acceptance is one producer contract, per fixture, and serial.** Every
-    real scanned PDF page 1 must have CER <= 1%; every real private JPEG must
-    have CER <= 3%; no critical-anchor omissions are allowed; CER is never
-    averaged. The producer owns one generated `ProducerAcceptanceContractV1`
-    from `@capture-runtime/acceptance-contract`, version `"1"`, with a
-    D3/D6-bound semantic-manifest `contractSha256` plus a separate external
-    `acceptanceContractArchiveSha256`. Its semantic manifest is the canonical
-    ordered `{path, byteLength, sha256}` entry set for schema/codec/export/
-    canonical-json bytes; it excludes itself, any hash file, generated archive,
-    and delivery metadata. Each entry hash covers exact file bytes, while
-    `contractSha256` hashes canonical compact UTF-8 manifest bytes, not the
-    archive and not an embedded self-hash. Cert and LAW consume
-    the exact package bytes/hash and may not copy schemas, redefine producer
-    record names or fields, or create local validators. The producer is the sole
-    writer of mutable `ProducerChildScopeV1` at
-    `CAPTURE_ACCEPTANCE_SCOPE_PATH`; it publishes a
-    frozen `ProducerChildInvocationV1` through the distinct
-    `CAPTURE_ACCEPTANCE_INVOCATION_PATH` (or read-only handle/pipe); the child
-    writes exactly one `ConsumerSemanticResultV1` at the separate
-    `CAPTURE_ACCEPTANCE_SEMANTIC_RESULT_PATH`; and only after validation and
-    cleanup does the producer emit immutable `AcceptanceChildWireV1` at
-    `CAPTURE_ACCEPTANCE_WIRE_PATH`. The child never receives scope or final
-    wire. Invocation bytes are canonicalized, atomically create-new published,
-    flushed, digest-bound, frozen, and ACL/read-only checked before launch.
-    Semantic output is canonicalized and atomically create-new written once;
-    any second create, overwrite, partial record, or digest mismatch fails
-    closed. `ConsumerSemanticResultV1` contains no cleanup fields; the producer
-    adds `producerCleanup` only to the final wire.
-
-    Scope is a state-discriminated union: `planned` contains only child/plan
-    identity and `unbound`; `prepared` adds the complete ordered `rootBindings`,
-    immutable group/root generations, binding-attempt id, and receipt; `ready`
-    adds only the invocation digest and output nonce. The ready scope is not
-    nested in the invocation. The producer
-    computes the self-excluded invocation digest before the final bytes exist,
-    writes canonical bytes to a secure same-directory temporary, flushes and
-    closes it, atomically creates the final file, reopens it read-only to verify
-    bytes/digest, and freezes/ACL-checks it before `activate_group`. No root is
-    resumed before that verification.
-
-    The wire carries parentGate/tier, D3 or D6 ledger binding, invocation
-    digest, ordered `fixtureAssignments[]`, equal-cardinality/order-bound
-    `fixtureResults[]` with per-fixture key/index/identity/media/oracle/artifact
-    digests, actual normalized-output digest/CER/anchor omissions/outcome/
-    projection digest, expected truth/anchor digests, child semantic-result
-    digest, detailed producer cleanup, privacy flags, and its self-excluded
-    canonical digest. Capture JPEG and Capture PDF page-1 children each have
-    exactly one assignment with keys `capture-private-jpeg-1` and
-    `capture-scanned-pdf-page1-1`; Cert/LAW may have multiple assignments but
-    cannot add, remove, reorder, or substitute one. D4 consumes only D3
-    candidate bytes and runs four unique legs; D7 consumes only D6 downloads
-    and repeats that sequence. D4/D7 require full private normalized reference
-    text plus critical anchors. The formal Cert migration deletes the
-    `anchorOnly` field/flag and parser; a legacy field is rejected, never
-    ignored or accepted as anchor-only success. The standalone real-JPEG
-    coordinator is migrated/deleted in favor of the sole
-    `tools/three-project-acceptance.ts:runAcceptanceSequence` runner.
-
-    `fixtureAssignments[]` include opaque media and oracle capability handles
-    plus their handle digests, media digest, and oracle digest. The producer
-    defines the generic capability shape; Cert and LAW own private resolvers and
-    read-only stores that verify the handle and `mediaSha256`/`oracleSha256`
-    bindings. Raw paths, text, and store locations never enter the invocation,
-    wire, or host response; exact normalized CER executes against the resolved
-    real media/full truth.
-
-    Capability handles are producer-issued for exactly one child/leg, gate, and
-    invocation. Their audience is that named consumer child; they expire on
-    close and are atomically consumed on first successful resolver open. A
-    retry, copied handle, second open, or later gate requires a new binding.
-    The producer durably revokes handles on cancel, identity/freeze/activation
-    failure, cleanup failure, or expiry, and the resolver rejects revoked
-    handles. Raw handle values, media, truth, paths, tokens, PIDs, and native
-    diagnostics are never logged or persisted outside the private invocation/
-    resolver store; logs, errors, reports, and wires contain only handle
-    digests and sanitized reason codes.
-
-    The concrete cross-repository migration inventory is: Cert's actual
-    `${CERT_PREP_CHECKOUT}/apps/cert-prep-desktop/scripts/acceptance-artifacts.mts:writeAcceptanceManifest`,
-    `sanitizeAcceptanceFixtureMetadata`, `collectAcceptanceArtifactInputs`,
-    and `redact`, plus
-    `${CERT_PREP_CHECKOUT}/apps/cert-prep-desktop/scripts/acceptance-artifacts.test.mts`;
-    LAW's
-    `${GX_LAW_PREP_CHECKOUT}/apps/law-prep-web-e2e/src/e2e/support/acceptance-artifacts.ts:createAcceptanceRun`,
-    `writeAcceptanceManifest`, and `redact`, its focused
-    `${GX_LAW_PREP_CHECKOUT}/apps/law-prep-web-e2e/src/e2e/local-package/acceptance-artifacts.contract.mts`,
-    and its real runner
-    `${GX_LAW_PREP_CHECKOUT}/apps/law-prep-web-e2e/scripts/acceptance-real.mts`.
-    LAW's capability/fixture owners are
-    `${GX_LAW_PREP_CHECKOUT}/apps/law-prep-web-e2e/src/e2e/support/evidence-workbench.scenario-types.ts:createDefaultFixtureBundle`,
-    `${GX_LAW_PREP_CHECKOUT}/apps/law-prep-web-e2e/src/e2e/local-package/evidence-workbench.real.acceptance.spec.ts`,
-    and `${GX_LAW_PREP_CHECKOUT}/apps/law-prep-ai-service/src/app/ocr/service.py:OcrExtractionService.extract`.
-
 ## Rejected framings
 
 - Treating a green deterministic PR or completed local-probe Phase 1 as
@@ -357,8 +255,6 @@ rejected.
   ownership proof.
 - Naming a Job for restart takeover, adopting a Job after restart, or weakening
   `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` to make recovery easier.
-- A second producer runner beside
-  `tools/three-project-acceptance.ts:runAcceptanceSequence`.
 - Rebuilding or republishing between candidate acceptance and publication,
   accepting a local candidate as published acceptance, or moving the stable
   pointer before published acceptance.

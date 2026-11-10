@@ -23,8 +23,7 @@
         "{workspaceRoot}/release-index/**/*",
         "{workspaceRoot}/test-fixtures/**/*",
         "{workspaceRoot}/architecture-graph.config.json",
-        "{workspaceRoot}/pnpm-workspace.yaml",
-        "{workspaceRoot}/packages/capture-acceptance-contract/**/*"
+        "{workspaceRoot}/pnpm-workspace.yaml"
       ],
       "options": {
         "command": "node --test tools/capture-boundary-doctor.test.ts tools/three-project-acceptance.test.ts tools/three-project-cleanup-verifier.test.ts tools/windows-built-in-process-resolver.test.ts tools/package-manager-version.test.ts tools/cargo-test-retry-failed.test.ts tools/dead-code-gate.test.ts tools/architecture-graph.test.ts tools/architecture-diff.test.ts tools/wiki-overview.test.ts tools/architecture-exceptions-gate.test.ts tools/resolve-capture-release.test.ts tools/affected-projects.test.ts"
