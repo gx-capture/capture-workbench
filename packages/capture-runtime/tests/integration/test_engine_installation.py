@@ -9,6 +9,7 @@ import subprocess
 import sys
 import threading
 import zipfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -16,7 +17,7 @@ import pytest
 
 import capture_runtime.provisioning.infrastructure.engine_installation as engine_installation_module
 from capture_runtime.clock import SystemClock
-from capture_runtime.config import ExtractionRuntimeConfig
+from capture_runtime.config import ExtractionRuntimeConfig, RuntimeSettings
 from capture_runtime.constants import MAX_RUNTIME_ARTIFACT_BYTES, RUNTIME_VERSION
 from capture_runtime.contracts import (
     OcrAdapterClass,
@@ -24,14 +25,18 @@ from capture_runtime.contracts import (
     OcrComputePreflightV2,
     RuntimeRequirementsV2,
 )
+from capture_runtime.dependencies import build_runtime_dependencies
 from capture_runtime.install_progress import DownloadedBytes
 from capture_runtime.provisioning.infrastructure._engine_download_cache import (
     CachingDownloader,
     VerifiedDownloadCache,
 )
 from capture_runtime.provisioning.infrastructure.engine_catalog import (
+    ActivatedArtifact,
+    ActiveEngineState,
     EngineCatalog,
     EngineCatalogError,
+    canonical_json_bytes,
 )
 from capture_runtime.provisioning.infrastructure.engine_installation import (
     ArtifactDownloader,
@@ -1678,7 +1683,12 @@ def test_a_models_only_unit_counts_its_model_bytes(tmp_path: Path) -> None:
 
 
 def _cached_manager(
-    tmp_path: Path, catalog: EngineCatalog, sources: dict[str, Path]
+    tmp_path: Path,
+    catalog: EngineCatalog,
+    sources: dict[str, Path],
+    *,
+    speech_variant: str = "auto",
+    nvidia_driver_present: Callable[[], bool] | None = None,
 ) -> tuple[EngineInstallationManager, VerifiedDownloadCache, CopyDownloader]:
     cache = VerifiedDownloadCache(tmp_path / "cache")
     worker_downloader = CopyDownloader(sources)
@@ -1689,6 +1699,8 @@ def _cached_manager(
         downloader=CachingDownloader(worker_downloader, cache),
         model_downloader=CachingDownloader(CopyModelDownloader(sources), cache),
         download_cache=cache,
+        speech_variant=speech_variant,
+        nvidia_driver_present=nvidia_driver_present,
     )
     return manager, cache, worker_downloader
 
@@ -1827,3 +1839,786 @@ def test_uninstall_removes_a_models_only_unit(tmp_path: Path) -> None:
     assert manager.is_installed("vertical-japanese-reader") is False
     root = tmp_path / "engines" / "vertical-japanese-reader"
     assert [item.name for item in root.iterdir()] == [".install.lock"]
+
+
+def _reject_driver() -> bool:
+    raise AssertionError("driver detection ran")
+
+
+class _Driver:
+    def __init__(self, present: bool) -> None:
+        self.present = present
+        self.calls = 0
+
+    def __call__(self) -> bool:
+        self.calls += 1
+        return self.present
+
+
+def _requirements_installer(
+    tmp_path: Path, manager: EngineInstallationManager, *requirement_ids: str
+) -> SystemRuntimeInstaller:
+    return SystemRuntimeInstaller(
+        _Lifecycle(_LifecycleConfig(tmp_path / "app-data")),  # type: ignore[arg-type]
+        engine_manager=manager,
+        clock=SystemClock(),
+        enabled_requirement_ids=set(requirement_ids),
+    )
+
+
+def _listed(installer: SystemRuntimeInstaller, requirement_id: str):
+    return next(item for item in installer.requirements() if item.requirement_id == requirement_id)
+
+
+def _archive(
+    root: Path,
+    *,
+    requirement_id: str,
+    file_name: str,
+    entry_point: str,
+    payload: bytes,
+) -> dict[str, object]:
+    files = {entry_point: payload}
+    manifest = _manifest(files)
+    archive = root / file_name
+    with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_STORED) as destination:
+        for name, content in files.items():
+            destination.writestr(name, content)
+        destination.writestr("files-manifest.json", manifest)
+    with zipfile.ZipFile(archive) as source:
+        extracted_bytes = sum(item.file_size for item in source.infolist())
+    return {
+        "role": "worker",
+        "requirementId": requirement_id,
+        "artifactVersion": "engine-1",
+        "workerProtocolVersion": "1",
+        "platform": "windows",
+        "arch": "x86_64",
+        "fileName": archive.name,
+        "bytes": archive.stat().st_size,
+        "sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
+        "extractedBytes": extracted_bytes,
+        "entryPoint": entry_point,
+        "filesManifestSha256": hashlib.sha256(manifest).hexdigest(),
+        "url": f"https://downloads.example.test/{archive.name}",
+    }
+
+
+def _direct_delivery(
+    root: Path, sources: dict[str, Path], files: dict[str, bytes]
+) -> dict[str, object]:
+    revision = "a" * 40
+    described: list[dict[str, object]] = []
+    for path, content in sorted(files.items()):
+        if path.startswith("licenses/"):
+            kind = "license"
+        elif path.startswith("notices/"):
+            kind = "notice"
+        else:
+            kind = "source"
+        source = root / path.replace("/", "-")
+        source.write_bytes(content)
+        sources[path] = source
+        described.append(
+            {
+                "bytes": len(content),
+                "derivation": None,
+                "kind": kind,
+                "licensePath": None if kind in {"license", "notice"} else "licenses/LICENSE.txt",
+                "noticePath": None if kind in {"license", "notice"} else "notices/NOTICE.txt",
+                "owner": "test-owner",
+                "path": path,
+                "redirectHosts": [],
+                "revision": revision,
+                "sha256": hashlib.sha256(content).hexdigest(),
+                "spdx": "MIT",
+                "url": f"https://downloads.example.test/{revision}/{path}",
+            }
+        )
+    manifest = {
+        "artifactVersion": "engine-1",
+        "entryPoint": "model",
+        "files": described,
+        "manifestVersion": "1",
+    }
+    return {
+        "artifactVersion": "engine-1",
+        "entryCount": len(described),
+        "entryPoint": "model",
+        "extractedBytes": sum(len(content) for content in files.values()),
+        "files": described,
+        "manifestSha256": hashlib.sha256(canonical_json_bytes(manifest)).hexdigest(),
+        "sourceLockSha256": "b" * 64,
+    }
+
+
+def _speech_contents_catalog(
+    root: Path,
+    *,
+    include_cuda: bool = True,
+    include_cpu: bool = True,
+    include_speaker: bool = False,
+) -> tuple[EngineCatalog, dict[str, Path]]:
+    sources: dict[str, Path] = {}
+    shared = {"licenses/LICENSE.txt": b"license", "notices/NOTICE.txt": b"notice"}
+    contents: list[dict[str, object]] = []
+    if include_cuda:
+        cuda_name = "capture-engine-speech-recognition.zip"
+        cuda_worker = _archive(
+            root,
+            requirement_id="speech-recognition",
+            file_name=cuda_name,
+            entry_point="capture-engine-speech-recognition.exe",
+            payload=b"cuda-worker",
+        )
+        sources[cuda_name] = root / cuda_name
+        contents.append(
+            {
+                "id": "cuda",
+                "artifacts": [cuda_worker],
+                "modelFiles": _direct_delivery(
+                    root, sources, {**shared, "model/primary.bin": b"primary-weights"}
+                ),
+                "unavailableReason": None,
+            }
+        )
+    if include_cpu:
+        cpu_name = "capture-engine-speech-recognition-cpu.zip"
+        cpu_worker = _archive(
+            root,
+            requirement_id="speech-recognition",
+            file_name=cpu_name,
+            entry_point="capture-engine-speech-recognition-cpu.exe",
+            payload=b"cpu-worker",
+        )
+        sources[cpu_name] = root / cpu_name
+        contents.append(
+            {
+                "id": "cpu",
+                "artifacts": [cpu_worker],
+                "modelFiles": _direct_delivery(
+                    root, sources, {**shared, "model/fallback.bin": b"fallback-weights"}
+                ),
+                "unavailableReason": None,
+            }
+        )
+    requirements: list[dict[str, object]] = [
+        {"requirementId": "speech-recognition", "contents": contents}
+    ]
+    if include_speaker:
+        speaker_name = "capture-engine-speaker-diarization.zip"
+        speaker_worker = _archive(
+            root,
+            requirement_id="speaker-diarization",
+            file_name=speaker_name,
+            entry_point="capture-engine-speaker-diarization.exe",
+            payload=b"speaker-worker",
+        )
+        sources[speaker_name] = root / speaker_name
+        requirements.append(
+            {
+                "requirementId": "speaker-diarization",
+                "artifacts": [speaker_worker],
+                "modelFiles": _direct_delivery(root, sources, dict(shared)),
+                "unavailableReason": None,
+            }
+        )
+    return (
+        EngineCatalog.from_dict(
+            {
+                "catalogVersion": "2",
+                "runtimeVersion": RUNTIME_VERSION,
+                "requirements": requirements,
+            }
+        ),
+        sources,
+    )
+
+
+def _install(manager: EngineInstallationManager, requirement_id: str, downloaded=None) -> None:
+    asyncio.run(
+        manager.install(
+            requirement_id,
+            cancel_event=asyncio.Event(),
+            report_progress=lambda _value: None,
+            report_download=None if downloaded is None else downloaded.append,
+        )
+    )
+
+
+def _tree_bytes(root: Path) -> dict[str, bytes | None]:
+    recorded: dict[str, bytes | None] = {}
+    for item in root.rglob("*"):
+        relative = item.relative_to(root).as_posix()
+        recorded[relative] = None if item.is_dir() else item.read_bytes()
+    return recorded
+
+
+def test_a_requirement_without_contents_ignores_the_variant(tmp_path: Path) -> None:
+    catalog, sources = _catalog(tmp_path)
+    manager, _cache, downloader = _cached_manager(
+        tmp_path,
+        catalog,
+        sources,
+        speech_variant="cpu",
+        nvidia_driver_present=_reject_driver,
+    )
+    installer = _requirements_installer(tmp_path, manager, "windowsml-ocr")
+    expected = catalog.requirement("windowsml-ocr").download_bytes
+
+    listed = _listed(installer, "windowsml-ocr")
+    assert listed.status.value == "installable"
+    assert listed.download_bytes == expected
+
+    _install(manager, "windowsml-ocr")
+
+    state = json.loads(
+        (tmp_path / "engines" / "windowsml-ocr" / "active.json").read_text(encoding="utf-8")
+    )
+    assert state["stateVersion"] == "1"
+    assert "contentId" not in state
+    assert set(state) == {
+        "activatedArtifacts",
+        "artifactVersion",
+        "entryPoint",
+        "requirementId",
+        "stateVersion",
+        "workerProtocolVersion",
+    }
+    assert _listed(installer, "windowsml-ocr").download_bytes == expected
+    assert downloader.calls == 1
+
+
+def test_an_installed_content_stays_when_the_driver_or_override_changes(tmp_path: Path) -> None:
+    catalog, sources = _speech_contents_catalog(tmp_path)
+    speech = catalog.requirement("speech-recognition")
+    cpu = speech.find_content("cpu")
+    cuda = speech.find_content("cuda")
+    assert cpu is not None and cuda is not None
+    assert cpu.download_bytes != cuda.download_bytes
+    driver = _Driver(False)
+    manager, _cache, downloader = _cached_manager(
+        tmp_path, catalog, sources, nvidia_driver_present=driver
+    )
+    installer = _requirements_installer(tmp_path, manager, "speech-recognition")
+
+    listed = _listed(installer, "speech-recognition")
+    assert listed.status.value == "installable"
+    assert listed.artifact is None
+    assert listed.download_bytes == cpu.download_bytes
+    assert driver.calls == 1
+
+    downloaded: list[DownloadedBytes] = []
+    _install(manager, "speech-recognition", downloaded)
+    assert {item.total for item in downloaded} == {cpu.download_bytes}
+    assert downloaded[-1].done == cpu.download_bytes
+    assert driver.calls == 2
+    state = json.loads(
+        (tmp_path / "engines" / "speech-recognition" / "active.json").read_text(encoding="utf-8")
+    )
+    assert state["stateVersion"] == "2"
+    assert state["contentId"] == "cpu"
+    worker_sha = next(
+        item["sha256"] for item in state["activatedArtifacts"] if item["role"] == "worker"
+    )
+    assert worker_sha == cpu.worker_artifact().sha256
+    engine = manager.active_engine("speech-recognition")
+    assert engine is not None
+    assert engine.executable.read_bytes() == b"cpu-worker"
+
+    driver.present = True
+    calls = driver.calls
+    downloads = downloader.calls
+    downloader.fail = True
+    ready = _listed(installer, "speech-recognition")
+    assert ready.status.value == "ready"
+    assert ready.download_bytes == cpu.download_bytes
+    kept = manager.active_engine("speech-recognition")
+    assert kept is not None
+    assert kept.executable.read_bytes() == b"cpu-worker"
+    _install(manager, "speech-recognition")
+    assert driver.calls == calls
+    assert downloader.calls == downloads
+
+    fresh_downloader = CopyDownloader(sources, fail=True)
+    fresh = EngineInstallationManager(
+        tmp_path / "engines",
+        catalog,
+        worker_client=FakeWorkerClient(),  # type: ignore[arg-type]
+        downloader=fresh_downloader,
+        model_downloader=CopyModelDownloader(sources),
+        speech_variant="cuda",
+        nvidia_driver_present=_reject_driver,
+    )
+    fresh_engine = fresh.active_engine("speech-recognition")
+    assert fresh_engine is not None
+    assert fresh_engine.executable.read_bytes() == b"cpu-worker"
+    fresh_listed = _listed(
+        _requirements_installer(tmp_path, fresh, "speech-recognition"), "speech-recognition"
+    )
+    assert fresh_listed.status.value == "ready"
+    assert fresh_listed.download_bytes == cpu.download_bytes
+    _install(fresh, "speech-recognition")
+    assert fresh_downloader.calls == 0
+
+
+def test_auto_with_a_driver_installs_the_cuda_content(tmp_path: Path) -> None:
+    catalog, sources = _speech_contents_catalog(tmp_path)
+    cuda = catalog.requirement("speech-recognition").find_content("cuda")
+    assert cuda is not None
+    manager, _cache, _downloader = _cached_manager(
+        tmp_path, catalog, sources, nvidia_driver_present=_Driver(True)
+    )
+    downloaded: list[DownloadedBytes] = []
+
+    _install(manager, "speech-recognition", downloaded)
+
+    state = json.loads(
+        (tmp_path / "engines" / "speech-recognition" / "active.json").read_text(encoding="utf-8")
+    )
+    assert state["contentId"] == "cuda"
+    engine = manager.active_engine("speech-recognition")
+    assert engine is not None
+    assert engine.executable.read_bytes() == b"cuda-worker"
+    assert downloaded[-1].total == cuda.download_bytes
+
+
+def test_a_forced_cuda_variant_installs_cuda_without_a_driver(tmp_path: Path) -> None:
+    catalog, sources = _speech_contents_catalog(tmp_path)
+    cuda = catalog.requirement("speech-recognition").find_content("cuda")
+    assert cuda is not None
+    manager, _cache, _downloader = _cached_manager(
+        tmp_path,
+        catalog,
+        sources,
+        speech_variant="cuda",
+        nvidia_driver_present=_reject_driver,
+    )
+    installer = _requirements_installer(tmp_path, manager, "speech-recognition")
+
+    listed = _listed(installer, "speech-recognition")
+    assert listed.status.value == "installable"
+    assert listed.download_bytes == cuda.download_bytes
+    _install(manager, "speech-recognition")
+
+    state = json.loads(
+        (tmp_path / "engines" / "speech-recognition" / "active.json").read_text(encoding="utf-8")
+    )
+    assert state["contentId"] == "cuda"
+    engine = manager.active_engine("speech-recognition")
+    assert engine is not None
+    assert engine.executable.read_bytes() == b"cuda-worker"
+
+
+def test_a_forced_variant_whose_content_is_missing_is_unavailable(tmp_path: Path) -> None:
+    catalog, sources = _speech_contents_catalog(tmp_path, include_cpu=False)
+    manager, _cache, downloader = _cached_manager(
+        tmp_path,
+        catalog,
+        sources,
+        speech_variant="cpu",
+        nvidia_driver_present=_reject_driver,
+    )
+    listed = _listed(
+        _requirements_installer(tmp_path, manager, "speech-recognition"), "speech-recognition"
+    )
+
+    assert listed.status.value == "unavailable"
+    assert listed.download_bytes is None
+    assert listed.artifact is None
+    assert listed.detail == "No cpu content is published for this runtime release."
+    with pytest.raises(EngineInstallationError, match="No cpu content"):
+        _install(manager, "speech-recognition")
+    assert downloader.calls == 0
+    assert not (tmp_path / "engines" / "speech-recognition" / "active.json").exists()
+
+
+def test_an_incomplete_content_lists_its_reason_and_no_size(tmp_path: Path) -> None:
+    reason = "cpu pack is not in this release"
+    catalog = EngineCatalog.from_dict(
+        {
+            "catalogVersion": "2",
+            "runtimeVersion": RUNTIME_VERSION,
+            "requirements": [
+                {
+                    "requirementId": "speech-recognition",
+                    "contents": [
+                        {
+                            "id": "cpu",
+                            "artifacts": [],
+                            "modelFiles": None,
+                            "unavailableReason": reason,
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+    manager = EngineInstallationManager(
+        tmp_path / "engines",
+        catalog,
+        worker_client=FakeWorkerClient(),  # type: ignore[arg-type]
+        downloader=CopyDownloader({}, fail=True),
+        model_downloader=CopyModelDownloader({}),
+        speech_variant="cpu",
+        nvidia_driver_present=_reject_driver,
+    )
+    listed = _listed(
+        _requirements_installer(tmp_path, manager, "speech-recognition"), "speech-recognition"
+    )
+
+    assert listed.status.value == "unavailable"
+    assert listed.download_bytes is None
+    assert listed.artifact is None
+    assert listed.detail == reason
+
+
+def test_a_version_1_state_is_not_ready_on_a_requirement_with_contents(tmp_path: Path) -> None:
+    catalog, sources = _speech_contents_catalog(tmp_path)
+    manager, _cache, _downloader = _cached_manager(
+        tmp_path,
+        catalog,
+        sources,
+        speech_variant="cuda",
+        nvidia_driver_present=_reject_driver,
+    )
+    _install(manager, "speech-recognition")
+    cuda = catalog.requirement("speech-recognition").find_content("cuda")
+    assert cuda is not None
+    path = tmp_path / "engines" / "speech-recognition" / "active.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload["contentId"] == "cuda"
+    worker_sha = next(
+        item["sha256"] for item in payload["activatedArtifacts"] if item["role"] == "worker"
+    )
+    assert worker_sha == cuda.worker_artifact().sha256
+
+    del payload["contentId"]
+    payload["stateVersion"] = "1"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    parsed = ActiveEngineState.from_dict(json.loads(path.read_text(encoding="utf-8")))
+    assert parsed.content_id is None
+    assert manager.active_engine("speech-recognition") is None
+
+
+def test_uninstall_drops_every_content_cache_and_keeps_another_requirements(
+    tmp_path: Path,
+) -> None:
+    catalog, sources = _speech_contents_catalog(tmp_path, include_speaker=True)
+    manager, cache, _downloader = _cached_manager(
+        tmp_path,
+        catalog,
+        sources,
+        speech_variant="cuda",
+        nvidia_driver_present=_reject_driver,
+    )
+    _install(manager, "speech-recognition")
+    speech = catalog.requirement("speech-recognition")
+    cuda = speech.find_content("cuda")
+    cpu = speech.find_content("cpu")
+    assert cuda is not None and cpu is not None
+    speaker = catalog.requirement("speaker-diarization")
+    cuda_files = cuda.model_delivery().files
+    cpu_files = cpu.model_delivery().files
+    cuda_worker = cuda.worker_artifact().sha256
+    cpu_worker = cpu.worker_artifact().sha256
+    primary = next(item.sha256 for item in cuda_files if item.path == "model/primary.bin")
+    fallback = next(item.sha256 for item in cpu_files if item.path == "model/fallback.bin")
+    shared = next(item.sha256 for item in cuda_files if item.kind == "license")
+    speaker_worker = speaker.worker_artifact().sha256
+    cache_root = tmp_path / "cache"
+    assert _cached(cache_root, cuda_worker)
+    assert _cached(cache_root, primary)
+    assert _cached(cache_root, shared)
+    cache.store(cpu_worker, sources["capture-engine-speech-recognition-cpu.zip"])
+    cache.store(fallback, sources["model/fallback.bin"])
+    cache.store(speaker_worker, sources["capture-engine-speaker-diarization.zip"])
+
+    asyncio.run(manager.uninstall("speech-recognition"))
+
+    assert not _cached(cache_root, cuda_worker)
+    assert not _cached(cache_root, primary)
+    assert not _cached(cache_root, cpu_worker)
+    assert not _cached(cache_root, fallback)
+    assert _cached(cache_root, shared)
+    assert _cached(cache_root, speaker_worker)
+
+
+def test_auto_without_a_driver_installs_the_only_cuda_content(tmp_path: Path) -> None:
+    catalog, sources = _speech_contents_catalog(tmp_path, include_cpu=False)
+    cuda = catalog.requirement("speech-recognition").find_content("cuda")
+    assert cuda is not None
+    driver = _Driver(False)
+    manager, _cache, _downloader = _cached_manager(
+        tmp_path, catalog, sources, nvidia_driver_present=driver
+    )
+    installer = _requirements_installer(tmp_path, manager, "speech-recognition")
+
+    listed = _listed(installer, "speech-recognition")
+    assert listed.status.value == "installable"
+    assert listed.artifact is None
+    assert listed.download_bytes == cuda.download_bytes
+    assert driver.calls == 1
+
+    _install(manager, "speech-recognition")
+
+    state = json.loads(
+        (tmp_path / "engines" / "speech-recognition" / "active.json").read_text(encoding="utf-8")
+    )
+    assert state["stateVersion"] == "2"
+    assert state["contentId"] == "cuda"
+    engine = manager.active_engine("speech-recognition")
+    assert engine is not None
+    assert engine.executable.read_bytes() == b"cuda-worker"
+
+
+def test_auto_with_a_driver_installs_the_only_cpu_content(tmp_path: Path) -> None:
+    catalog, sources = _speech_contents_catalog(tmp_path, include_cuda=False)
+    cpu = catalog.requirement("speech-recognition").find_content("cpu")
+    assert cpu is not None
+    driver = _Driver(True)
+    manager, _cache, _downloader = _cached_manager(
+        tmp_path, catalog, sources, nvidia_driver_present=driver
+    )
+    installer = _requirements_installer(tmp_path, manager, "speech-recognition")
+
+    listed = _listed(installer, "speech-recognition")
+    assert listed.status.value == "installable"
+    assert listed.download_bytes == cpu.download_bytes
+    assert driver.calls == 1
+
+    _install(manager, "speech-recognition")
+
+    state = json.loads(
+        (tmp_path / "engines" / "speech-recognition" / "active.json").read_text(encoding="utf-8")
+    )
+    assert state["contentId"] == "cpu"
+    engine = manager.active_engine("speech-recognition")
+    assert engine is not None
+    assert engine.executable.read_bytes() == b"cpu-worker"
+
+
+def test_a_forced_cuda_variant_whose_content_is_missing_is_unavailable(tmp_path: Path) -> None:
+    catalog, sources = _speech_contents_catalog(tmp_path, include_cuda=False)
+    manager, _cache, downloader = _cached_manager(
+        tmp_path,
+        catalog,
+        sources,
+        speech_variant="cuda",
+        nvidia_driver_present=_reject_driver,
+    )
+    listed = _listed(
+        _requirements_installer(tmp_path, manager, "speech-recognition"), "speech-recognition"
+    )
+
+    assert listed.status.value == "unavailable"
+    assert listed.download_bytes is None
+    assert listed.artifact is None
+    assert listed.detail == "No cuda content is published for this runtime release."
+    with pytest.raises(EngineInstallationError, match="No cuda content"):
+        _install(manager, "speech-recognition")
+    assert downloader.calls == 0
+    assert not (tmp_path / "engines" / "speech-recognition" / "active.json").exists()
+
+
+def test_auto_with_a_driver_lists_the_cuda_size_before_install(tmp_path: Path) -> None:
+    catalog, sources = _speech_contents_catalog(tmp_path)
+    speech = catalog.requirement("speech-recognition")
+    cuda = speech.find_content("cuda")
+    cpu = speech.find_content("cpu")
+    assert cuda is not None and cpu is not None
+    assert cuda.download_bytes != cpu.download_bytes
+    driver = _Driver(True)
+    manager, _cache, _downloader = _cached_manager(
+        tmp_path, catalog, sources, nvidia_driver_present=driver
+    )
+
+    listed = _listed(
+        _requirements_installer(tmp_path, manager, "speech-recognition"), "speech-recognition"
+    )
+
+    assert listed.status.value == "installable"
+    assert listed.artifact is None
+    assert listed.download_bytes == cuda.download_bytes
+    assert driver.calls == 1
+    assert not (tmp_path / "engines" / "speech-recognition" / "active.json").exists()
+
+
+def test_a_version_2_state_on_a_requirement_without_contents_is_not_ready(tmp_path: Path) -> None:
+    catalog, sources = _catalog(tmp_path)
+    manager, _cache, _downloader = _cached_manager(
+        tmp_path,
+        catalog,
+        sources,
+        speech_variant="cpu",
+        nvidia_driver_present=_reject_driver,
+    )
+    _install(manager, "windowsml-ocr")
+    root = tmp_path / "engines" / "windowsml-ocr"
+    path = root / "active.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload["stateVersion"] == "1"
+    payload["stateVersion"] = "2"
+    payload["contentId"] = "cpu"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    parsed = ActiveEngineState.from_dict(json.loads(path.read_text(encoding="utf-8")))
+    assert parsed.content_id == "cpu"
+    before = _tree_bytes(root)
+
+    assert manager.active_engine("windowsml-ocr") is None
+    assert _tree_bytes(root) == before
+    listed = _listed(_requirements_installer(tmp_path, manager, "windowsml-ocr"), "windowsml-ocr")
+    assert listed.status.value == "installable"
+
+
+def test_a_recorded_content_the_catalog_dropped_is_replaced_on_install(tmp_path: Path) -> None:
+    catalog, sources = _speech_contents_catalog(tmp_path, include_cuda=False)
+    manager, _cache, _downloader = _cached_manager(
+        tmp_path, catalog, sources, nvidia_driver_present=_Driver(False)
+    )
+    root = tmp_path / "engines" / "speech-recognition"
+    root.mkdir(parents=True)
+    state = ActiveEngineState(
+        requirement_id="speech-recognition",
+        artifact_version="engine-1",
+        worker_protocol_version="1",
+        entry_point="versions/engine-1/worker/capture-engine-speech-recognition.exe",
+        activated_artifacts=(
+            ActivatedArtifact("worker", "a" * 64),
+            ActivatedArtifact("model", "b" * 64),
+        ),
+        state_version="2",
+        content_id="cuda",
+    )
+    path = root / "active.json"
+    path.write_bytes(canonical_json_bytes(state.to_dict()))
+    (root / "kept.txt").write_bytes(b"keep")
+    loaded = ActiveEngineState.from_dict(json.loads(path.read_text(encoding="utf-8")))
+    assert loaded.content_id == "cuda"
+    before = _tree_bytes(root)
+
+    assert manager.active_engine("speech-recognition") is None
+    assert _tree_bytes(root) == before
+
+    _install(manager, "speech-recognition")
+
+    updated = json.loads(path.read_text(encoding="utf-8"))
+    assert updated["stateVersion"] == "2"
+    assert updated["contentId"] == "cpu"
+    engine = manager.active_engine("speech-recognition")
+    assert engine is not None
+    assert engine.executable.read_bytes() == b"cpu-worker"
+
+
+def test_a_version_1_state_on_a_contents_requirement_installs_as_version_2(tmp_path: Path) -> None:
+    catalog, sources = _speech_contents_catalog(tmp_path)
+    manager, _cache, _downloader = _cached_manager(
+        tmp_path,
+        catalog,
+        sources,
+        speech_variant="cuda",
+        nvidia_driver_present=_reject_driver,
+    )
+    _install(manager, "speech-recognition")
+    path = tmp_path / "engines" / "speech-recognition" / "active.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload["contentId"] == "cuda"
+    del payload["contentId"]
+    payload["stateVersion"] = "1"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    recorded = ActiveEngineState.from_dict(json.loads(path.read_text(encoding="utf-8")))
+    assert recorded.content_id is None
+    assert manager.active_engine("speech-recognition") is None
+
+    _install(manager, "speech-recognition")
+
+    updated = json.loads(path.read_text(encoding="utf-8"))
+    assert updated["stateVersion"] == "2"
+    assert updated["contentId"] == "cuda"
+    engine = manager.active_engine("speech-recognition")
+    assert engine is not None
+    assert engine.executable.read_bytes() == b"cuda-worker"
+
+
+def test_uninstall_after_a_cpu_install_frees_both_contents_and_keeps_a_shared_digest(
+    tmp_path: Path,
+) -> None:
+    catalog, sources = _speech_contents_catalog(tmp_path, include_speaker=True)
+    manager, cache, _downloader = _cached_manager(
+        tmp_path,
+        catalog,
+        sources,
+        speech_variant="cpu",
+        nvidia_driver_present=_reject_driver,
+    )
+    _install(manager, "speech-recognition")
+    root = tmp_path / "engines" / "speech-recognition"
+    assert (root / "active.json").is_file()
+    speech = catalog.requirement("speech-recognition")
+    cuda = speech.find_content("cuda")
+    cpu = speech.find_content("cpu")
+    assert cuda is not None and cpu is not None
+    speaker = catalog.requirement("speaker-diarization")
+    cuda_files = cuda.model_delivery().files
+    cpu_files = cpu.model_delivery().files
+    cuda_worker = cuda.worker_artifact().sha256
+    cpu_worker = cpu.worker_artifact().sha256
+    primary = next(item.sha256 for item in cuda_files if item.path == "model/primary.bin")
+    fallback = next(item.sha256 for item in cpu_files if item.path == "model/fallback.bin")
+    shared = next(item.sha256 for item in cpu_files if item.kind == "license")
+    speaker_worker = speaker.worker_artifact().sha256
+    cache_root = tmp_path / "cache"
+    assert _cached(cache_root, cpu_worker)
+    assert _cached(cache_root, fallback)
+    assert _cached(cache_root, shared)
+    cache.store(cuda_worker, sources["capture-engine-speech-recognition.zip"])
+    cache.store(primary, sources["model/primary.bin"])
+    cache.store(speaker_worker, sources["capture-engine-speaker-diarization.zip"])
+
+    asyncio.run(manager.uninstall("speech-recognition"))
+
+    assert manager.active_engine("speech-recognition") is None
+    assert [item.name for item in root.iterdir()] == [".install.lock"]
+    assert not (root / "versions").exists()
+    assert not _cached(cache_root, cpu_worker)
+    assert not _cached(cache_root, fallback)
+    assert not _cached(cache_root, cuda_worker)
+    assert not _cached(cache_root, primary)
+    assert _cached(cache_root, shared)
+    assert _cached(cache_root, speaker_worker)
+
+
+def test_the_settings_variant_selects_the_listed_content(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(engine_installation_module, "detect_nvidia_driver", _reject_driver)
+    settings = RuntimeSettings.from_env(
+        {
+            "CAPTURE_API_TOKEN": "a" * 32,
+            "CAPTURE_APP_DATA_DIR": str(tmp_path / "app-data"),
+            "CAPTURE_EXTRACTION_PROVIDER": "fake",
+            "CAPTURE_STRUCTURING_PROVIDER": "fake",
+            "CAPTURE_SPEECH_RECOGNITION_VARIANT": "cpu",
+        }
+    )
+    dependencies = build_runtime_dependencies(settings)
+    catalog_root = tmp_path / "catalog"
+    catalog_root.mkdir()
+    catalog, _sources = _speech_contents_catalog(catalog_root)
+    speech = catalog.requirement("speech-recognition")
+    cpu = speech.find_content("cpu")
+    cuda = speech.find_content("cuda")
+    assert cpu is not None and cuda is not None
+    assert cpu.download_bytes != cuda.download_bytes
+    dependencies.engine_manager.catalog = catalog
+
+    listed = next(
+        item
+        for item in dependencies.installer.requirements(["speech-recognition"])
+        if item.requirement_id == "speech-recognition"
+    )
+
+    assert listed.status.value == "installable"
+    assert listed.artifact is None
+    assert listed.download_bytes == cpu.download_bytes

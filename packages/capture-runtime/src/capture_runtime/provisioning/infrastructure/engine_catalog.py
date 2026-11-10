@@ -17,6 +17,10 @@ from capture_runtime.worker_contracts import WORKER_PROTOCOL_VERSION
 
 CATALOG_VERSION = "2"
 ENGINE_STATE_VERSION = "1"
+# A requirement with contents records which content was installed. Version 1
+# stays the exact key set a requirement without contents still writes.
+ENGINE_CONTENT_STATE_VERSION = "2"
+ENGINE_CONTENT_IDS = frozenset({"cpu", "cuda"})
 SHA256_PATTERN = re.compile(r"^[a-f0-9]{64}$")
 IMMUTABLE_REVISION_PATTERN = re.compile(r"^[a-f0-9]{40,64}$")
 WINDOWS_FORBIDDEN_PATH_CHARACTERS = frozenset('<>:"|?*')
@@ -525,6 +529,117 @@ class EngineModelDeliveryDescriptor:
 # Units that are models only: they run inside another unit's worker, so the
 # catalog gives them direct model files and no worker archive.
 MODEL_ONLY_REQUIREMENT_IDS = frozenset({"vertical-japanese-reader"})
+_REQUIREMENT_KEYS = {"requirementId", "artifacts", "modelFiles", "unavailableReason"}
+_CONTENT_REQUIREMENT_KEYS = {"requirementId", "contents"}
+_CONTENT_KEYS = {"id", "artifacts", "modelFiles", "unavailableReason"}
+
+
+def _requirement_id(value: object) -> str:
+    if not isinstance(value, str) or not value:
+        raise EngineCatalogError("engine requirementId must be non-empty")
+    return value
+
+
+def _parse_delivery(
+    payload: dict[str, Any],
+    *,
+    requirement_id: str,
+    other_unit_paths: frozenset[str],
+    label: str,
+) -> tuple[tuple[EngineArtifactDescriptor, ...], EngineModelDeliveryDescriptor | None, str | None]:
+    """Validate one delivery. ``label`` keeps today's requirement error text."""
+
+    raw_artifacts = payload["artifacts"]
+    if not isinstance(raw_artifacts, list):
+        raise EngineCatalogError(f"{label} artifacts must be a list")
+    artifacts = tuple(EngineArtifactDescriptor.from_dict(item) for item in raw_artifacts)
+    if any(item.requirement_id != requirement_id for item in artifacts):
+        raise EngineCatalogError("artifact requirementId must match its requirement")
+    roles = [item.role for item in artifacts]
+    if len(roles) != len(set(roles)):
+        raise EngineCatalogError(f"{label} artifact roles must be unique")
+    if artifacts and (len(artifacts) != 1 or roles != ["worker"]):
+        raise EngineCatalogError(f"complete {label} needs exactly one worker archive")
+    model_files = (
+        None
+        if payload["modelFiles"] is None
+        else EngineModelDeliveryDescriptor.from_dict(
+            payload["modelFiles"], other_unit_paths=other_unit_paths
+        )
+    )
+    if artifacts and model_files is not None:
+        if artifacts[0].artifact_version != model_files.artifact_version:
+            raise EngineCatalogError("worker and direct model files must share one artifactVersion")
+        if requirement_id == "windowsml-ocr" and not any(
+            item.path == "model/pipeline.json" and item.kind == "derived"
+            for item in model_files.files
+        ):
+            raise EngineCatalogError("OCR direct delivery needs derived model/pipeline.json")
+    unavailable_reason = payload["unavailableReason"]
+    if unavailable_reason is not None and (
+        not isinstance(unavailable_reason, str) or not unavailable_reason.strip()
+    ):
+        raise EngineCatalogError("unavailableReason must be non-empty when present")
+    model_only = requirement_id in MODEL_ONLY_REQUIREMENT_IDS
+    if model_only and artifacts:
+        raise EngineCatalogError("a model unit cannot carry a worker archive")
+    complete = model_files is not None and (bool(artifacts) or model_only)
+    if complete == bool(unavailable_reason):
+        raise EngineCatalogError(f"{label} must be complete or have an unavailableReason")
+    if not complete and (artifacts or model_files is not None):
+        raise EngineCatalogError(f"incomplete {label} cannot expose partial delivery")
+    return artifacts, model_files, unavailable_reason
+
+
+@dataclass(frozen=True, slots=True)
+class EngineContentDescriptor:
+    """One cuda or cpu delivery inside a requirement that publishes several."""
+
+    content_id: str
+    requirement_id: str
+    artifacts: tuple[EngineArtifactDescriptor, ...]
+    model_files: EngineModelDeliveryDescriptor | None
+    unavailable_reason: str | None = None
+
+    @property
+    def model_only(self) -> bool:
+        return self.requirement_id in MODEL_ONLY_REQUIREMENT_IDS
+
+    @property
+    def complete(self) -> bool:
+        return self.model_files is not None and (len(self.artifacts) == 1 or self.model_only)
+
+    @property
+    def artifact_version(self) -> str | None:
+        if not self.complete or self.model_files is None:
+            return None
+        return self.model_files.artifact_version
+
+    @property
+    def download_bytes(self) -> int | None:
+        """Bytes a fresh install of this content downloads."""
+        if not self.complete or self.model_files is None:
+            return None
+        worker = 0 if self.model_only else self.artifacts[0].bytes
+        return worker + self.model_files.extracted_bytes
+
+    def worker_artifact(self) -> EngineArtifactDescriptor:
+        if not self.complete or not self.artifacts:
+            raise EngineCatalogError(f"{self.requirement_id} {self.content_id} has no worker")
+        return self.artifacts[0]
+
+    def model_delivery(self) -> EngineModelDeliveryDescriptor:
+        if not self.complete or self.model_files is None:
+            raise EngineCatalogError(f"{self.requirement_id} {self.content_id} has no model files")
+        return self.model_files
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.content_id,
+            "artifacts": [item.to_dict() for item in self.artifacts],
+            "modelFiles": None if self.model_files is None else self.model_files.to_dict(),
+            "unavailableReason": self.unavailable_reason,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -533,64 +648,70 @@ class EngineRequirementDescriptor:
     artifacts: tuple[EngineArtifactDescriptor, ...]
     model_files: EngineModelDeliveryDescriptor | None
     unavailable_reason: str | None = None
+    contents: tuple[EngineContentDescriptor, ...] = ()
 
     @classmethod
     def from_dict(
         cls, value: object, *, other_unit_paths: frozenset[str] = frozenset()
     ) -> EngineRequirementDescriptor:
         payload = _mapping(value, "engine requirement")
-        _exact_keys(
-            payload,
-            {"requirementId", "artifacts", "modelFiles", "unavailableReason"},
-            "engine requirement",
-        )
-        requirement_id = payload["requirementId"]
-        if not isinstance(requirement_id, str) or not requirement_id:
-            raise EngineCatalogError("engine requirementId must be non-empty")
-        raw_artifacts = payload["artifacts"]
-        if not isinstance(raw_artifacts, list):
-            raise EngineCatalogError("engine requirement artifacts must be a list")
-        artifacts = tuple(EngineArtifactDescriptor.from_dict(item) for item in raw_artifacts)
-        if any(item.requirement_id != requirement_id for item in artifacts):
-            raise EngineCatalogError("artifact requirementId must match its requirement")
-        roles = [item.role for item in artifacts]
-        if len(roles) != len(set(roles)):
-            raise EngineCatalogError("engine requirement artifact roles must be unique")
-        if artifacts and (len(artifacts) != 1 or roles != ["worker"]):
-            raise EngineCatalogError("complete engine requirement needs exactly one worker archive")
-        model_files = (
-            None
-            if payload["modelFiles"] is None
-            else EngineModelDeliveryDescriptor.from_dict(
-                payload["modelFiles"], other_unit_paths=other_unit_paths
-            )
-        )
-        if artifacts and model_files is not None:
-            if artifacts[0].artifact_version != model_files.artifact_version:
-                raise EngineCatalogError(
-                    "worker and direct model files must share one artifactVersion"
-                )
-            if requirement_id == "windowsml-ocr" and not any(
-                item.path == "model/pipeline.json" and item.kind == "derived"
-                for item in model_files.files
-            ):
-                raise EngineCatalogError("OCR direct delivery needs derived model/pipeline.json")
-        unavailable_reason = payload["unavailableReason"]
-        if unavailable_reason is not None and (
-            not isinstance(unavailable_reason, str) or not unavailable_reason.strip()
-        ):
-            raise EngineCatalogError("unavailableReason must be non-empty when present")
-        model_only = requirement_id in MODEL_ONLY_REQUIREMENT_IDS
-        if model_only and artifacts:
-            raise EngineCatalogError("a model unit cannot carry a worker archive")
-        complete = model_files is not None and (bool(artifacts) or model_only)
-        if complete == bool(unavailable_reason):
+        keys = set(payload)
+        if keys == _CONTENT_REQUIREMENT_KEYS:
+            return cls._from_contents(payload, other_unit_paths=other_unit_paths)
+        if keys != _REQUIREMENT_KEYS:
             raise EngineCatalogError(
-                "engine requirement must be complete or have an unavailableReason"
+                "engine requirement fields must be "
+                f"{sorted(_REQUIREMENT_KEYS)} or {sorted(_CONTENT_REQUIREMENT_KEYS)}; "
+                f"found {sorted(payload)}"
             )
-        if not complete and (artifacts or model_files is not None):
-            raise EngineCatalogError("incomplete engine requirement cannot expose partial delivery")
+        requirement_id = _requirement_id(payload["requirementId"])
+        artifacts, model_files, unavailable_reason = _parse_delivery(
+            payload,
+            requirement_id=requirement_id,
+            other_unit_paths=other_unit_paths,
+            label="engine requirement",
+        )
         return cls(requirement_id, artifacts, model_files, unavailable_reason)
+
+    @classmethod
+    def _from_contents(
+        cls, payload: dict[str, Any], *, other_unit_paths: frozenset[str]
+    ) -> EngineRequirementDescriptor:
+        requirement_id = _requirement_id(payload["requirementId"])
+        # Install of a model-only unit never reads contents, so a catalog that
+        # combined them would write state version 1 and drop the content id.
+        if requirement_id in MODEL_ONLY_REQUIREMENT_IDS:
+            raise EngineCatalogError("a model unit cannot declare contents")
+        raw_contents = payload["contents"]
+        if not isinstance(raw_contents, list) or not raw_contents:
+            raise EngineCatalogError("engine requirement contents must be a non-empty list")
+        contents: list[EngineContentDescriptor] = []
+        seen: set[str] = set()
+        for raw in raw_contents:
+            content_payload = _mapping(raw, "engine content")
+            _exact_keys(content_payload, _CONTENT_KEYS, "engine content")
+            content_id = content_payload["id"]
+            if not isinstance(content_id, str) or content_id not in ENGINE_CONTENT_IDS:
+                raise EngineCatalogError("engine content id must be cuda or cpu")
+            if content_id in seen:
+                raise EngineCatalogError("engine content id must be unique")
+            seen.add(content_id)
+            artifacts, model_files, unavailable_reason = _parse_delivery(
+                content_payload,
+                requirement_id=requirement_id,
+                other_unit_paths=other_unit_paths,
+                label="engine content",
+            )
+            contents.append(
+                EngineContentDescriptor(
+                    content_id=content_id,
+                    requirement_id=requirement_id,
+                    artifacts=artifacts,
+                    model_files=model_files,
+                    unavailable_reason=unavailable_reason,
+                )
+            )
+        return cls(requirement_id, (), None, None, tuple(contents))
 
     @property
     def model_only(self) -> bool:
@@ -624,13 +745,40 @@ class EngineRequirementDescriptor:
             raise EngineCatalogError(f"{self.requirement_id} does not have direct model files")
         return self.model_files
 
+    def find_content(self, content_id: str) -> EngineContentDescriptor | None:
+        for item in self.contents:
+            if item.content_id == content_id:
+                return item
+        return None
+
     def to_dict(self) -> dict[str, Any]:
+        if self.contents:
+            return {
+                "requirementId": self.requirement_id,
+                "contents": [item.to_dict() for item in self.contents],
+            }
         return {
             "requirementId": self.requirement_id,
             "artifacts": [item.to_dict() for item in self.artifacts],
             "modelFiles": None if self.model_files is None else self.model_files.to_dict(),
             "unavailableReason": self.unavailable_reason,
         }
+
+
+def _model_deliveries_of(requirement: object) -> list[object]:
+    """Top-level ``modelFiles`` plus each content's, for derivation inputs."""
+
+    if not isinstance(requirement, dict):
+        return []
+    deliveries: list[object] = []
+    if "modelFiles" in requirement:
+        deliveries.append(requirement.get("modelFiles"))
+    contents = requirement.get("contents")
+    if isinstance(contents, list):
+        for content in contents:
+            if isinstance(content, dict):
+                deliveries.append(content.get("modelFiles"))
+    return deliveries
 
 
 def _model_paths_of_other_units(raw_requirements: list[Any], current: object) -> frozenset[str]:
@@ -640,11 +788,11 @@ def _model_paths_of_other_units(raw_requirements: list[Any], current: object) ->
     for other in raw_requirements:
         if other is current or not isinstance(other, dict):
             continue
-        delivery = other.get("modelFiles")
-        files = delivery.get("files") if isinstance(delivery, dict) else None
-        for item in files if isinstance(files, list) else []:
-            if isinstance(item, dict) and isinstance(item.get("path"), str):
-                paths.add(item["path"])
+        for delivery in _model_deliveries_of(other):
+            files = delivery.get("files") if isinstance(delivery, dict) else None
+            for item in files if isinstance(files, list) else []:
+                if isinstance(item, dict) and isinstance(item.get("path"), str):
+                    paths.add(item["path"])
     return frozenset(paths)
 
 
@@ -712,24 +860,46 @@ class ActiveEngineState:
     entry_point: str
     activated_artifacts: tuple[ActivatedArtifact, ...]
     state_version: str = ENGINE_STATE_VERSION
+    content_id: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.state_version == ENGINE_STATE_VERSION:
+            if self.content_id is not None:
+                raise EngineCatalogError("active engine state version 1 cannot name a content")
+            return
+        if self.state_version != ENGINE_CONTENT_STATE_VERSION:
+            raise EngineCatalogError("active engine state version is unsupported")
+        if self.content_id not in ENGINE_CONTENT_IDS:
+            raise EngineCatalogError("active engine contentId must be cuda or cpu")
 
     @classmethod
     def from_dict(cls, value: object) -> ActiveEngineState:
         payload = _mapping(value, "active engine state")
-        _exact_keys(
-            payload,
-            {
-                "stateVersion",
-                "requirementId",
-                "artifactVersion",
-                "workerProtocolVersion",
-                "entryPoint",
-                "activatedArtifacts",
-            },
-            "active engine state",
-        )
-        if payload["stateVersion"] != ENGINE_STATE_VERSION:
-            raise EngineCatalogError("active engine state version is unsupported")
+        version_1_keys = {
+            "stateVersion",
+            "requirementId",
+            "artifactVersion",
+            "workerProtocolVersion",
+            "entryPoint",
+            "activatedArtifacts",
+        }
+        version_2_keys = version_1_keys | {"contentId"}
+        keys = set(payload)
+        if keys == version_1_keys:
+            if payload["stateVersion"] != ENGINE_STATE_VERSION:
+                raise EngineCatalogError("active engine state version is unsupported")
+            content_id = None
+        elif keys == version_2_keys:
+            if payload["stateVersion"] != ENGINE_CONTENT_STATE_VERSION:
+                raise EngineCatalogError("active engine state version is unsupported")
+            content_id = payload["contentId"]
+            if not isinstance(content_id, str) or content_id not in ENGINE_CONTENT_IDS:
+                raise EngineCatalogError("active engine contentId must be cuda or cpu")
+        else:
+            raise EngineCatalogError(
+                "active engine state fields must be "
+                f"{sorted(version_1_keys)} or {sorted(version_2_keys)}; found {sorted(payload)}"
+            )
         if payload["workerProtocolVersion"] != WORKER_PROTOCOL_VERSION:
             raise EngineCatalogError("active engine worker protocol is unsupported")
         requirement_id = payload["requirementId"]
@@ -757,10 +927,11 @@ class ActiveEngineState:
             entry_point=_safe_relative_path(payload["entryPoint"], "entryPoint"),
             activated_artifacts=tuple(artifacts),
             state_version=payload["stateVersion"],
+            content_id=content_id,
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "stateVersion": self.state_version,
             "requirementId": self.requirement_id,
             "artifactVersion": self.artifact_version,
@@ -770,6 +941,10 @@ class ActiveEngineState:
                 {"role": item.role, "sha256": item.sha256} for item in self.activated_artifacts
             ],
         }
+        # Version 2 always has a content id; version 1 must omit the key.
+        if self.content_id is not None:
+            payload["contentId"] = self.content_id
+        return payload
 
 
 def default_catalog_path() -> Path:
@@ -803,6 +978,7 @@ __all__ = [
     "EngineArtifactPart",
     "EngineCatalog",
     "EngineCatalogError",
+    "EngineContentDescriptor",
     "EngineModelDeliveryDescriptor",
     "EngineModelFileDescriptor",
     "EngineRequirementDescriptor",

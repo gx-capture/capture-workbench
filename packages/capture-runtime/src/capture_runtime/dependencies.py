@@ -123,6 +123,7 @@ def build_runtime_dependencies(
         active_engine_resolution_timeout_seconds=(
             settings.extraction.engine_resolution_timeout_seconds
         ),
+        speech_variant=settings.extraction.speech_recognition_variant,
     )
     active_ocr_preflight = ocr_preflight or OcrComputePreflight(
         contract_sha256=runtime_contract_set.sha256,

@@ -16,13 +16,20 @@ from capture_runtime.contracts import OcrComputePreflightV2
 from capture_runtime.install_progress import DownloadedBytes, DownloadProgress
 from capture_runtime.ocr.infrastructure.ocr_preflight import OcrComputeSelection
 from capture_runtime.provisioning.infrastructure.engine_catalog import (
+    ENGINE_CONTENT_STATE_VERSION,
+    ENGINE_STATE_VERSION,
     ActivatedArtifact,
     ActiveEngineState,
     EngineArtifactDescriptor,
     EngineCatalog,
     EngineCatalogError,
+    EngineContentDescriptor,
     EngineModelDeliveryDescriptor,
     EngineRequirementDescriptor,
+)
+from capture_runtime.provisioning.infrastructure.engine_content_selection import (
+    content_id_for_variant,
+    detect_nvidia_driver,
 )
 from capture_runtime.worker_client import InstalledEngine, WorkerClient
 from capture_runtime.worker_process import WorkerExecutionError
@@ -271,10 +278,22 @@ class EngineInstallationManager:
             DEFAULT_ACTIVE_ENGINE_RESOLUTION_TIMEOUT_SECONDS
         ),
         download_cache: VerifiedDownloadCache | None = None,
+        speech_variant: str = "auto",
+        nvidia_driver_present: Callable[[], bool] | None = None,
     ) -> None:
         if not 0 < active_engine_resolution_timeout_seconds <= 300:
             raise ValueError("active engine resolution timeout must be between 0 and 300 seconds")
+        if speech_variant not in {"auto", "cuda", "cpu"}:
+            raise ValueError("CAPTURE_SPEECH_RECOGNITION_VARIANT must be auto, cuda or cpu")
         self.root = root
+        self._speech_variant = speech_variant
+        # None uses the real driver file. Tests pass a callable so a suite never
+        # depends on whether this machine has nvcuda.dll.
+        self._nvidia_driver_present: Callable[[], bool] = (
+            (lambda: detect_nvidia_driver())
+            if nvidia_driver_present is None
+            else nvidia_driver_present
+        )
         self.catalog = catalog
         self.worker_client = worker_client
         # Network downloads go through the machine-wide verified cache, so
@@ -311,6 +330,71 @@ class EngineInstallationManager:
     def requirement(self, requirement_id: str) -> EngineRequirementDescriptor:
         return self.catalog.requirement(requirement_id)
 
+    def choose_content(
+        self, requirement: EngineRequirementDescriptor
+    ) -> tuple[str, EngineContentDescriptor | None]:
+        """The content a fresh listing or install uses.
+
+        ``auto`` asks the driver and prefers that content. When ``auto`` and
+        the catalog does not publish it, the only published content is used.
+        ``cuda`` and ``cpu`` do not ask the driver. A missing forced content
+        is ``(content_id, None)``. Launch reads the recorded content id.
+        Uninstall does not: it removes the requirement tree and frees every
+        content's cached downloads.
+        """
+
+        if not requirement.contents:
+            raise EngineInstallationError(f"{requirement.requirement_id} has no contents")
+        # A forced variant must not stat nvcuda.dll. Only auto asks the driver.
+        driver_present = self._nvidia_driver_present() if self._speech_variant == "auto" else False
+        content_id = content_id_for_variant(self._speech_variant, driver_present=driver_present)
+        chosen = requirement.find_content(content_id)
+        if chosen is None and self._speech_variant == "auto" and len(requirement.contents) == 1:
+            only = requirement.contents[0]
+            return only.content_id, only
+        return content_id, chosen
+
+    def installed_content(self, requirement_id: str) -> EngineContentDescriptor | None:
+        """The content named in ``active.json``, or None when that file names none."""
+
+        requirement = self.requirement(requirement_id)
+        if not requirement.contents:
+            return None
+        state = self._read_active_state(requirement_id)
+        if state is None:
+            return None
+        delivery = self._recorded_delivery(requirement, state)
+        if isinstance(delivery, EngineContentDescriptor):
+            return delivery
+        return None
+
+    def _read_active_state(self, requirement_id: str) -> ActiveEngineState | None:
+        state_path = self._requirement_root(requirement_id) / "active.json"
+        try:
+            return ActiveEngineState.from_dict(json.loads(state_path.read_text(encoding="utf-8")))
+        except (OSError, json.JSONDecodeError, EngineCatalogError):
+            return None
+
+    def _recorded_delivery(
+        self,
+        requirement: EngineRequirementDescriptor,
+        state: ActiveEngineState,
+    ) -> EngineRequirementDescriptor | EngineContentDescriptor | None:
+        """The delivery ``active.json`` names. Never consults the driver."""
+
+        if state.requirement_id != requirement.requirement_id:
+            return None
+        if requirement.contents:
+            if state.content_id is None:
+                return None
+            content = requirement.find_content(state.content_id)
+            if content is None or not content.complete:
+                return None
+            return content
+        if state.content_id is not None:
+            return None
+        return requirement
+
     def active_model_unit(self, requirement_id: str) -> Path | None:
         """The installed directory of a models-only unit, or None when it is not installed."""
 
@@ -341,20 +425,22 @@ class EngineInstallationManager:
 
     def active_engine(self, requirement_id: str) -> InstalledEngine | None:
         requirement = self.requirement(requirement_id)
-        if not requirement.complete or requirement.model_only:
+        if requirement.model_only or not (requirement.complete or requirement.contents):
             return None
-        state_path = self._requirement_root(requirement_id) / "active.json"
-        try:
-            state = ActiveEngineState.from_dict(json.loads(state_path.read_text(encoding="utf-8")))
-        except (OSError, json.JSONDecodeError, EngineCatalogError):
+        state = self._read_active_state(requirement_id)
+        if state is None:
             return None
+        delivery = self._recorded_delivery(requirement, state)
         if (
-            state.requirement_id != requirement_id
-            or state.artifact_version != requirement.artifact_version
+            delivery is None
+            or not delivery.complete
+            or delivery.model_only
+            or delivery.artifact_version is None
+            or state.artifact_version != delivery.artifact_version
         ):
             return None
-        worker_descriptor = requirement.worker_artifact()
-        model_descriptor = requirement.model_delivery()
+        worker_descriptor = delivery.worker_artifact()
+        model_descriptor = delivery.model_delivery()
         expected_digests = {
             "worker": worker_descriptor.sha256,
             "model": model_descriptor.manifest_sha256,
@@ -543,7 +629,7 @@ class EngineInstallationManager:
         report_download: DownloadProgress | None = None,
     ) -> None:
         requirement = self.requirement(requirement_id)
-        if not requirement.complete:
+        if not requirement.contents and not requirement.complete:
             raise EngineInstallationError(
                 requirement.unavailable_reason or "engine catalog entry is incomplete"
             )
@@ -568,7 +654,6 @@ class EngineInstallationManager:
         probe_options: dict[str, object] | None,
         report_download: DownloadProgress | None,
     ) -> None:
-        assert requirement.artifact_version is not None
         requirement_root = self._requirement_root(requirement.requirement_id)
         self._remove_stale_install_residue(requirement_root)
         if requirement.model_only:
@@ -587,8 +672,26 @@ class EngineInstallationManager:
         if self.active_engine(requirement.requirement_id) is not None:
             report_progress(1)
             return
+        # The content is fixed for this install. A later launch reads contentId
+        # from active.json and does not detect the driver again.
+        delivery: EngineRequirementDescriptor | EngineContentDescriptor = requirement
+        content_id: str | None = None
+        if requirement.contents:
+            content_id, chosen = self.choose_content(requirement)
+            if chosen is None:
+                raise EngineInstallationError(
+                    f"No {content_id} content is published for this runtime release."
+                )
+            if not chosen.complete:
+                raise EngineInstallationError(
+                    chosen.unavailable_reason or "engine catalog entry is incomplete"
+                )
+            delivery = chosen
+        artifact_version = delivery.artifact_version
+        if artifact_version is None:
+            raise EngineInstallationError("engine catalog entry is incomplete")
         staging = requirement_root / ".staging" / uuid4().hex
-        version = requirement_root / "versions" / requirement.artifact_version
+        version = requirement_root / "versions" / artifact_version
         # On a first install there is no active version to preserve. Probe the
         # candidate at its final path and activate by writing active.json only;
         # this avoids a transient Windows directory rename denial when a native
@@ -598,15 +701,15 @@ class EngineInstallationManager:
         new_version = (
             version
             if not version.exists()
-            else requirement_root / "versions" / f".{requirement.artifact_version}.{uuid4().hex}"
+            else requirement_root / "versions" / f".{artifact_version}.{uuid4().hex}"
         )
         previous_version = requirement_root / f".previous-{uuid4().hex}"
         staging.mkdir(parents=True)
         new_version.parent.mkdir(parents=True, exist_ok=True)
         activated = False
         try:
-            worker_descriptor = requirement.worker_artifact()
-            model_descriptor = requirement.model_delivery()
+            worker_descriptor = delivery.worker_artifact()
+            model_descriptor = delivery.model_delivery()
             worker_archive = staging / worker_descriptor.file_name
             download_bytes = worker_descriptor.bytes + model_descriptor.extracted_bytes
 
@@ -667,7 +770,7 @@ class EngineInstallationManager:
             )
             probe_engine = InstalledEngine(
                 requirement_id=requirement.requirement_id,
-                artifact_version=requirement.artifact_version,
+                artifact_version=artifact_version,
                 executable=probe_executable,
                 model_dir=new_version / "model" / model_descriptor.entry_point,
                 worker_sha256=sha256_file(probe_executable),
@@ -729,7 +832,7 @@ class EngineInstallationManager:
             )
             engine = InstalledEngine(
                 requirement_id=requirement.requirement_id,
-                artifact_version=requirement.artifact_version,
+                artifact_version=artifact_version,
                 executable=engine_executable,
                 model_dir=self._resolved_child(model_root, model_descriptor.entry_point),
                 worker_sha256=sha256_file(engine_executable),
@@ -754,18 +857,19 @@ class EngineInstallationManager:
             await self.worker_client.shutdown()
             state = ActiveEngineState(
                 requirement_id=requirement.requirement_id,
-                artifact_version=requirement.artifact_version,
+                artifact_version=artifact_version,
                 worker_protocol_version=worker_descriptor.worker_protocol_version,
                 entry_point=(
-                    Path("versions")
-                    / requirement.artifact_version
-                    / "worker"
-                    / worker_descriptor.entry_point
+                    Path("versions") / artifact_version / "worker" / worker_descriptor.entry_point
                 ).as_posix(),
                 activated_artifacts=(
                     ActivatedArtifact("worker", worker_descriptor.sha256),
                     ActivatedArtifact("model", model_descriptor.manifest_sha256),
                 ),
+                state_version=(
+                    ENGINE_CONTENT_STATE_VERSION if content_id is not None else ENGINE_STATE_VERSION
+                ),
+                content_id=content_id,
             )
             activation_error: OSError | None = None
             for activation_attempt in range(3):
@@ -795,7 +899,7 @@ class EngineInstallationManager:
             )
             active_engine = InstalledEngine(
                 requirement_id=requirement.requirement_id,
-                artifact_version=requirement.artifact_version,
+                artifact_version=artifact_version,
                 executable=active_executable,
                 model_dir=self._resolved_child(version / "model", model_descriptor.entry_point),
                 worker_sha256=sha256_file(active_executable),
@@ -811,7 +915,7 @@ class EngineInstallationManager:
                         )
                     )
             report_progress(1)
-            self._remove_inactive_versions(requirement_root, requirement.artifact_version)
+            self._remove_inactive_versions(requirement_root, artifact_version)
         finally:
             _cleanup_install_attempt(
                 staging=staging,

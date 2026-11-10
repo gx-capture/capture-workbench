@@ -136,6 +136,9 @@ class ExtractionRuntimeConfig:
     # An idle OCR worker keeps its DirectML sessions (about 3 GB of GPU memory)
     # this long for the next capture; 0 starts a worker for each capture.
     ocr_worker_idle_seconds: float = 120.0
+    # auto follows the NVIDIA driver; cuda or cpu forces that content.
+    # A requirement without contents ignores it.
+    speech_recognition_variant: str = "auto"
 
 
 def _external_ollama_endpoint(value: str) -> str:
@@ -296,11 +299,14 @@ class RuntimeSettings:
             engine_resolution_timeout_seconds=engine_resolution_timeout_seconds,
             speech_worker_idle_seconds=speech_worker_idle_seconds,
             ocr_worker_idle_seconds=ocr_worker_idle_seconds,
+            speech_recognition_variant=env.get("CAPTURE_SPEECH_RECOGNITION_VARIANT", "auto"),
         )
         if extraction.speech_recognition_model not in {"auto", "tea-asr-1.1", "tea-asr-1.1-mini"}:
             raise ValueError(
                 "CAPTURE_SPEECH_RECOGNITION_MODEL must be auto, tea-asr-1.1 or tea-asr-1.1-mini"
             )
+        if extraction.speech_recognition_variant not in {"auto", "cuda", "cpu"}:
+            raise ValueError("CAPTURE_SPEECH_RECOGNITION_VARIANT must be auto, cuda or cpu")
 
         external_ollama = None
         if provider == "external-ollama":

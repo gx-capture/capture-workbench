@@ -36,6 +36,8 @@ from capture_runtime.install_progress import DownloadProgress
 from capture_runtime.provisioning.infrastructure.engine_catalog import (
     EngineArtifactDescriptor,
     EngineCatalogError,
+    EngineContentDescriptor,
+    EngineRequirementDescriptor,
 )
 from capture_runtime.provisioning.infrastructure.engine_installation import (
     EngineInstallationManager,
@@ -168,28 +170,33 @@ class SystemRuntimeInstaller:
                 if self._engine_manager is None:
                     raise EngineCatalogError("engine manager is unavailable")
                 descriptor = self._engine_manager.requirement(requirement_id)
-                active = self._engine_manager.is_installed(requirement_id) or None
-                worker = (
-                    descriptor.worker_artifact()
-                    if descriptor.complete and not descriptor.model_only
-                    else None
-                )
-                artifact = _artifact_descriptor(worker) if worker is not None else None
-                download_bytes = descriptor.download_bytes
-                status = (
-                    RuntimeRequirementStatus.READY
-                    if active is not None
-                    else RuntimeRequirementStatus.INSTALLABLE
-                    if descriptor.complete
-                    else RuntimeRequirementStatus.UNAVAILABLE
-                )
-                detail = (
-                    None
-                    if active is not None
-                    else descriptor.unavailable_reason
-                    if not descriptor.complete
-                    else "Pinned worker and direct model files are available for installation."
-                )
+                if descriptor.contents:
+                    status, artifact, download_bytes, detail = self._listed_content_requirement(
+                        self._engine_manager, requirement_id, descriptor
+                    )
+                else:
+                    active = self._engine_manager.is_installed(requirement_id) or None
+                    worker = (
+                        descriptor.worker_artifact()
+                        if descriptor.complete and not descriptor.model_only
+                        else None
+                    )
+                    artifact = _artifact_descriptor(worker) if worker is not None else None
+                    download_bytes = descriptor.download_bytes
+                    status = (
+                        RuntimeRequirementStatus.READY
+                        if active is not None
+                        else RuntimeRequirementStatus.INSTALLABLE
+                        if descriptor.complete
+                        else RuntimeRequirementStatus.UNAVAILABLE
+                    )
+                    detail = (
+                        None
+                        if active is not None
+                        else descriptor.unavailable_reason
+                        if not descriptor.complete
+                        else "Pinned worker and direct model files are available for installation."
+                    )
             except EngineCatalogError:
                 status = RuntimeRequirementStatus.UNAVAILABLE
                 artifact = None
@@ -263,6 +270,67 @@ class SystemRuntimeInstaller:
                 )
             )
         return requirements
+
+    def _listed_content_requirement(
+        self,
+        manager: EngineInstallationManager,
+        requirement_id: str,
+        descriptor: EngineRequirementDescriptor,
+    ) -> tuple[
+        RuntimeRequirementStatus,
+        RuntimeArtifactDescriptorV2 | None,
+        int | None,
+        str | None,
+    ]:
+        """Status and size for a requirement that publishes cuda and cpu contents.
+
+        Not installed: the content this machine would download. Installed: the
+        content recorded at install time, so a removal dialog shows what is on
+        disk. Speech stays ``artifact: null`` for every content. A single-file
+        CPU archive can be under the 512 MiB public cap while the parted CUDA
+        archive is not, and hosts must not start that download themselves on
+        only some machines.
+        """
+
+        installed = manager.is_installed(requirement_id)
+        delivery: EngineContentDescriptor | None
+        if installed:
+            delivery = manager.installed_content(requirement_id)
+            content_id = None if delivery is None else delivery.content_id
+            if delivery is None:
+                installed = False
+                content_id, delivery = manager.choose_content(descriptor)
+        else:
+            content_id, delivery = manager.choose_content(descriptor)
+        if delivery is None:
+            return (
+                RuntimeRequirementStatus.UNAVAILABLE,
+                None,
+                None,
+                f"No {content_id} content is published for this runtime release.",
+            )
+        worker = (
+            delivery.worker_artifact() if delivery.complete and not delivery.model_only else None
+        )
+        if requirement_id == SPEECH_RECOGNITION_REQUIREMENT_ID:
+            artifact = None
+        else:
+            artifact = _artifact_descriptor(worker) if worker is not None else None
+        status = (
+            RuntimeRequirementStatus.READY
+            if installed
+            else RuntimeRequirementStatus.INSTALLABLE
+            if delivery.complete
+            else RuntimeRequirementStatus.UNAVAILABLE
+        )
+        detail = (
+            None
+            if installed
+            else delivery.unavailable_reason
+            if not delivery.complete
+            else "Pinned worker and direct model files are available for installation."
+        )
+        return status, artifact, delivery.download_bytes, detail
 
     async def install(
         self,
