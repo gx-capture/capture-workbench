@@ -17,19 +17,28 @@ use super::activation::{
     SuspendedActivationOwner, TerminalJoinFailure, TerminalJoinFailureKind,
 };
 
-/// The typed reason an owned runtime cleanup attempt could not be proven.
+/// Why one owned-process cleanup could not be proven.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeCleanupErrorKind {
+    /// The root process could not be killed from its launch handle.
     Termination,
+    /// The root's exit could not be proven, or its liveness could not be read.
     Liveness,
+    /// Waiting for the root to exit failed after termination was requested.
     Reap,
+    /// A descendant in the ownership boundary was still present, or could not be queried.
     Descendants,
+    /// The launch identity or the ownership lock could not be used.
     Ownership,
+    /// Test-only failure injected before a real cleanup proof is attempted.
     #[cfg(test)]
     Injected,
 }
 
-/// Cleanup failure returned while retaining the process/job ownership handle.
+/// Cleanup failure that keeps the process and job handle for another attempt.
+///
+/// The detail string describes the operating-system or ownership failure. It
+/// does not include the bearer token.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeCleanupError {
     root_pid: u32,
@@ -50,14 +59,22 @@ impl RuntimeCleanupError {
         }
     }
 
+    /// Returns the root process id captured for this cleanup attempt.
+    ///
+    /// Zero means the ownership lock failed before a root id was available.
     pub fn root_pid(&self) -> u32 {
         self.root_pid
     }
 
+    /// Returns the cleanup failure category.
     pub fn kind(&self) -> RuntimeCleanupErrorKind {
         self.kind
     }
 
+    /// Returns the cleanup diagnostic.
+    ///
+    /// The text can include an operating-system error. It does not include
+    /// the bearer token.
     pub fn detail(&self) -> &str {
         &self.detail
     }
@@ -83,8 +100,11 @@ impl std::error::Error for RuntimeCleanupError {}
 /// cleanup authority of its own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GroupLifecycleState {
+    /// The group journal is running and the lease can still be observed.
     Running,
+    /// Close has started and the terminal journal record is not proven.
     Closing,
+    /// The producer journal has a terminal record.
     Terminal,
 }
 
@@ -99,26 +119,32 @@ pub struct GroupObservation {
 }
 
 impl GroupObservation {
+    /// Returns the lifecycle state observed for this group.
     pub fn state(&self) -> GroupLifecycleState {
         self.state
     }
 
+    /// Returns the number of roots in the running journal.
     pub fn root_count(&self) -> usize {
         self.root_count
     }
 
+    /// Reports whether every root was ready at this observation.
     pub fn roots_ready(&self) -> bool {
         self.roots_ready
     }
 
+    /// Reports whether every root was ready at this observation.
     pub fn all_roots_ready(&self) -> bool {
         self.roots_ready
     }
 
+    /// Reports whether every root listener was bound at this observation.
     pub fn listeners_bound(&self) -> bool {
         self.listeners_bound
     }
 
+    /// Reports whether every root listener was bound at this observation.
     pub fn all_listeners_bound(&self) -> bool {
         self.listeners_bound
     }
@@ -137,50 +163,75 @@ pub struct GroupProof {
 }
 
 impl GroupProof {
+    /// Returns the lifecycle state projected from the journal.
     pub fn state(&self) -> GroupLifecycleState {
         self.state
     }
 
+    /// Returns the number of roots recorded for the group.
     pub fn root_count(&self) -> usize {
         self.root_count
     }
 
+    /// Reports whether the journal says every root process was reaped.
+    ///
+    /// Meaningful when [`Self::is_terminal`] is true.
     pub fn root_reaped(&self) -> bool {
         self.root_reaped
     }
 
+    /// Reports whether the journal says every descendant was stopped.
+    ///
+    /// Meaningful when [`Self::is_terminal`] is true.
     pub fn descendants_terminated(&self) -> bool {
         self.descendants_terminated
     }
 
+    /// Reports whether the journal says every listener was released.
+    ///
+    /// Meaningful when [`Self::is_terminal`] is true.
     pub fn listeners_released(&self) -> bool {
         self.listeners_released
     }
 
+    /// Reports whether the journal says the staging scope was released.
+    ///
+    /// Meaningful when [`Self::is_terminal`] is true.
     pub fn staging_released(&self) -> bool {
         self.staging_released
     }
 
+    /// Reports whether [`Self::state`] is [`GroupLifecycleState::Terminal`].
     pub fn is_terminal(&self) -> bool {
         self.state == GroupLifecycleState::Terminal
     }
 }
 
-/// The semantic reason supplied when a live group is closed.  The producer
-/// owns the durable lifecycle transition; this value never crosses into the
-/// journal or native process APIs as an unconstrained string.
+/// Caller label for [`crate::OwnedRuntimeSession::close`].
+///
+/// Neither variant is written to the journal or passed to the process
+/// termination call. Close uses the same producer transition for both.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CloseReason {
+    /// The host is stopping the group.
     Shutdown,
+    /// The host is abandoning the group.
     Cancelled,
 }
 
-/// Stable phase names for sanitized public activation errors.
+/// Phase named by a [`LaunchError`].
+///
+/// The phase says where activation stopped. It does not include a path,
+/// process id, or token.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LaunchPhase {
+    /// The prepared plan or permit was rejected before native acquisition.
     Preparation,
+    /// Staging or process acquisition failed.
     NativeAcquisition,
+    /// Journal or readiness work failed after acquisition started.
     Readiness,
+    /// Cleanup or reconciliation after a failed activation did not finish.
     Reconcile,
 }
 
@@ -189,15 +240,25 @@ pub enum LaunchPhase {
 /// or native diagnostics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LaunchErrorKind {
+    /// The call is not implemented on this target.
     Unsupported,
+    /// The prepared plan or permit was rejected.
     Preparation,
+    /// The staging scope could not be materialized.
     Staging,
+    /// A process or job operation failed.
     Native,
+    /// The journal could not be read or replaced.
     Storage,
+    /// The journal changed under the cleanup owner.
     Conflict,
+    /// The activation cancel flag was set.
     Cancellation,
+    /// The activation budget expired.
     Deadline,
+    /// Reconciliation did not finish.
     Reconcile,
+    /// A cleanup or journal record failed validation.
     Validation,
 }
 
@@ -207,7 +268,10 @@ pub(crate) enum LaunchFailureOwner {
     Reconciled(ReconciledActivationOwner),
 }
 
-/// Sanitized activation failure retaining the producer's exact cleanup owner.
+/// Activation failure that keeps the producer cleanup owner.
+///
+/// `Debug` prints `kind` and `phase` only. Paths, process ids, tokens, and
+/// the private owner are omitted.
 pub struct LaunchError {
     pub(crate) kind: LaunchErrorKind,
     pub(crate) phase: LaunchPhase,
@@ -219,17 +283,33 @@ pub struct LaunchError {
 }
 
 impl LaunchError {
+    /// Returns the failure category.
     pub fn kind(&self) -> LaunchErrorKind {
         self.kind
     }
 
+    /// Returns the phase where activation stopped.
     pub fn phase(&self) -> LaunchPhase {
         self.phase
     }
 
-    /// Retry only the exact retained activation cleanup/reconciliation owner.
-    /// This starts a fresh bounded cleanup attempt and never reruns group
-    /// activation or resets the journal's recovery counters.
+    /// Runs one fresh cleanup against the owner retained in this error.
+    ///
+    /// Uses a new 60 second budget. Does not activate the group again and
+    /// does not reset journal recovery counters. On Windows, an error that
+    /// acquired nothing returns
+    /// [`SemanticActivationCleanupState::NoResourcesAcquired`]. A finished
+    /// read-back returns [`SemanticActivationCleanupState::ReconcileRequired`]
+    /// with native resources closed and the producer staging scope retained.
+    /// On any other target this returns the same error.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(self)` when this value has no cleanup owner or the target
+    /// is not Windows. A failed Windows cleanup returns [`LaunchErrorKind::Reconcile`],
+    /// [`LaunchErrorKind::Native`], [`LaunchErrorKind::Deadline`],
+    /// [`LaunchErrorKind::Conflict`], [`LaunchErrorKind::Storage`], or
+    /// [`LaunchErrorKind::Validation`], with [`LaunchPhase::Reconcile`].
     pub fn retry_cleanup(self) -> Result<ActivationCleanupObservation, Self> {
         #[cfg(not(windows))]
         {
@@ -345,7 +425,9 @@ impl std::error::Error for LaunchError {}
 /// retained a durable record for producer reconciliation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SemanticActivationCleanupState {
+    /// This activation acquired no resource that needs reconciliation.
     NoResourcesAcquired,
+    /// Native resources were closed and the staging scope remains for a later reconcile.
     ReconcileRequired,
 }
 
@@ -360,14 +442,20 @@ pub struct ActivationCleanupObservation {
 }
 
 impl ActivationCleanupObservation {
+    /// Returns whether this attempt acquired nothing or left work to reconcile.
     pub fn state(&self) -> SemanticActivationCleanupState {
         self.state
     }
 
+    /// Reports whether this attempt closed the native resources it owned.
     pub fn native_closed(&self) -> bool {
         self.native_closed
     }
 
+    /// Reports whether the producer staging scope was left in place.
+    ///
+    /// True means this attempt did not release staging. It does not mean
+    /// staging was absent on disk before the attempt.
     pub fn staging_retained(&self) -> bool {
         self.staging_retained
     }
@@ -377,25 +465,46 @@ impl ActivationCleanupObservation {
 /// exact producer owner retained for retry, including late CAS candidates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CleanupPhase {
+    /// Failure while leaving Running, before Closing was committed.
     Running,
+    /// Native cleanup of a Closing owner is not proven yet.
     Closing,
+    /// Native cleanup is proven and staging release is not.
     NativeCleaned,
+    /// Staging release is proven and the terminal journal record is not.
     StagingReleased,
+    /// A terminal candidate was committed but not proven inside the budget.
     TerminalCommittedAfterBudget,
 }
 
+/// Category of a [`CleanupError`].
+///
+/// Formatting this value does not include a path, process id, or token.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CleanupErrorKind {
+    /// The call is not implemented on this target.
     Unsupported,
+    /// The cleanup budget's cancel flag was set.
     Cancelled,
+    /// The cleanup budget expired.
     Deadline,
+    /// The journal changed under the cleanup owner.
     Conflict,
+    /// The journal could not be read or replaced.
     Storage,
+    /// A process or job operation failed.
     Native,
+    /// A listener was not released, or readiness during cleanup was not proven.
     Listener,
+    /// Staging release failed.
     Staging,
+    /// A journal or staging record failed validation.
     Validation,
+    /// The lease no longer held a close owner.
     InvalidState,
+    /// The terminal record was committed after the budget.
+    ///
+    /// [`CleanupError::retry`] must not repeat that compare-and-swap.
     TerminalCommittedAfterBudget,
 }
 
@@ -412,9 +521,10 @@ pub(crate) enum CleanupFailureOwner {
     },
 }
 
-/// Sanitized public cleanup failure.  The exact private owner is retained so
-/// `retry` can resume at the first unproven phase without reconstructing or
-/// reacquiring native state.
+/// Cleanup failure that keeps the owner for [`Self::retry`].
+///
+/// `Debug` prints `kind` and `phase` only. The private owner stays inside
+/// the value so retry can resume at the first unproven phase.
 pub struct CleanupError {
     pub(crate) kind: CleanupErrorKind,
     pub(crate) phase: CleanupPhase,
@@ -423,17 +533,33 @@ pub struct CleanupError {
 }
 
 impl CleanupError {
+    /// Returns the cleanup failure category.
     pub fn kind(&self) -> CleanupErrorKind {
         self.kind
     }
 
+    /// Returns the first unproven cleanup phase retained for retry.
     pub fn phase(&self) -> CleanupPhase {
         self.phase
     }
 
-    /// Retry the exact retained cleanup owner with one fresh 60 second
-    /// absolute budget. No journal attempt counter is reset and no phase CAS
-    /// is repeated after an exact committed candidate is known.
+    /// Resumes the retained cleanup owner with one fresh 60 second budget.
+    ///
+    /// Does not reset a journal attempt counter. When a terminal candidate is
+    /// already known to have been committed, that compare-and-swap is not
+    /// repeated. On any target other than Windows this returns the same error.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`CleanupError`]. On any target other than Windows this is
+    /// the same error. On Windows an error with no retained owner is returned
+    /// unchanged. A failed resume reports the unproven [`CleanupPhase`] and
+    /// one of [`CleanupErrorKind::Cancelled`], [`CleanupErrorKind::Deadline`],
+    /// [`CleanupErrorKind::Conflict`], [`CleanupErrorKind::Storage`],
+    /// [`CleanupErrorKind::Native`], [`CleanupErrorKind::Listener`],
+    /// [`CleanupErrorKind::Staging`], [`CleanupErrorKind::Validation`],
+    /// [`CleanupErrorKind::InvalidState`], or
+    /// [`CleanupErrorKind::TerminalCommittedAfterBudget`].
     pub fn retry(self) -> Result<GroupProof, Self> {
         #[cfg(not(windows))]
         {
@@ -468,37 +594,59 @@ impl fmt::Display for CleanupError {
 
 impl std::error::Error for CleanupError {}
 
+/// Phase named by a [`LifecycleError`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LifecyclePhase {
+    /// The only phase. A failed observation does not close the lease.
     Observe,
 }
 
+/// Category of a failed [`crate::OwnedRuntimeSession::observe`] call.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LifecycleErrorKind {
+    /// The call is not implemented on this target.
     Unsupported,
+    /// The lease lock stayed busy until the observation budget expired.
     Busy,
+    /// The observation budget's cancel flag was set, or a probe reported cancellation.
     Cancellation,
+    /// The 60 second observation budget expired.
     Deadline,
+    /// The running journal or listener evidence changed during the read.
     Conflict,
+    /// The journal could not be read.
     Storage,
+    /// The native ownership record could not be queried.
     Native,
+    /// A root was not ready, or its listener evidence disagreed.
+    ///
+    /// This category revokes further observation on the same lease. It does
+    /// not close the group.
     Listener,
+    /// The plan, schema, command, or staging binding failed revalidation.
     Validation,
+    /// The lease token was already invalidated, or the owner was missing.
     InvalidState,
 }
 
-/// Sanitized read-only observation failure.  A failed observation never
-/// consumes or closes its lease, so the caller retains close authority.
+/// Read-only observation failure.
+///
+/// A failed observation does not take the lease's close owner, except that
+/// [`LifecycleErrorKind::Listener`] invalidates the lease token so a later
+/// observe fails with [`LifecycleErrorKind::InvalidState`]. `Debug` prints
+/// `kind` and `phase` only.
 pub struct LifecycleError {
     pub(crate) kind: LifecycleErrorKind,
     pub(crate) phase: LifecyclePhase,
 }
 
 impl LifecycleError {
+    /// Returns the observation failure category.
     pub fn kind(&self) -> LifecycleErrorKind {
         self.kind
     }
 
+    /// Returns the observation phase. This is always [`LifecyclePhase::Observe`].
     pub fn phase(&self) -> LifecyclePhase {
         self.phase
     }

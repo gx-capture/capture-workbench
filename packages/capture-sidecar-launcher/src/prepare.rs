@@ -36,8 +36,11 @@ use crate::journal_store::ActivationBudget;
 
 const RECEIPT_DOMAIN: &[u8] = b"capture-runtime/group-binding-receipt/v1\0";
 
-/// The producer-created plan is opaque until the later external construction
-/// integration. Its private context is deliberately absent from the journal.
+/// Opaque plan produced by [`crate::build_immutable_group_plan`].
+///
+/// Pass it to [`crate::OwnedRuntimeSession::prepare_group`]. The private
+/// context, including the bearer token and launch command, stays in memory
+/// and is not serialized into the journal.
 pub struct ImmutableGroupPlan {
     pub(crate) value: JournalPlanValue,
     pub(crate) context: Arc<PreparePlanContext>,
@@ -337,25 +340,41 @@ fn finalized_plan_value(
     Ok(value)
 }
 
+/// Failure from plan construction or [`crate::OwnedRuntimeSession::prepare_group`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PrepareError {
+    /// The plan, manifest binding, or journal record failed validation.
     InvalidPlan,
+    /// A journal timestamp field was rejected.
     InvalidTimestamp,
+    /// The sink receipt did not match the binding this call persisted.
     InvalidBinding,
+    /// The operating-system generator could not supply an identifier.
     ReferenceGeneration,
+    /// A journal file for this plan already exists under the producer root.
     JournalAlreadyExists,
+    /// The journal changed between the read and the compare-and-swap.
     JournalConflict,
+    /// The journal file could not be decoded as the expected record.
     JournalCorrupt,
+    /// The encoded journal exceeded its size limit.
     JournalTooLarge,
+    /// The journal replacement did not finish as a confirmed record.
     JournalAmbiguous,
+    /// The journal file or its lock could not be used.
     JournalUnavailable,
+    /// The host sink rejected, failed to store, or returned a bad record.
     Binding(PersistError),
 }
 
+/// Failure while encoding a binding or while the host sink stores one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PersistError {
+    /// The bytes were not a valid canonical binding or receipt.
     InvalidRecord,
+    /// The sink could not read or write its copy of the record.
     Storage,
+    /// The sink refused the binding.
     Rejected,
 }
 
@@ -394,9 +413,10 @@ impl std::fmt::Display for PrepareError {
 
 impl std::error::Error for PrepareError {}
 
-/// An opaque producer-issued reconciliation reference. It is not a journal
-/// path and carries no native process identity; address resolution is only
-/// through the producer-owned store context retained by the opaque plan.
+/// Opaque reconciliation reference issued for one group or root.
+///
+/// This is not a filesystem path and it does not name a process. The launcher
+/// resolves it only through the plan that issued it.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ReconcileRef(String);
 
@@ -415,13 +435,15 @@ impl ReconcileRef {
         validate_opaque(&self.0).map_err(|_| PersistError::InvalidRecord)
     }
 
+    /// Returns the opaque reference text.
     pub fn as_str(&self) -> &str {
         &self.0
     }
 }
 
-/// A single producer-issued binding attempt. Sinks receive it by reference
-/// and can read its opaque value, but cannot construct an arbitrary attempt.
+/// Identifier for one prepare attempt, issued by the launcher.
+///
+/// A sink can read it. Callers cannot construct an arbitrary attempt id.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BindingAttemptId(String);
 
@@ -436,13 +458,16 @@ impl BindingAttemptId {
         validate_opaque(&self.0).map_err(|_| PersistError::InvalidRecord)
     }
 
+    /// Returns the opaque attempt text.
     pub fn as_str(&self) -> &str {
         &self.0
     }
 }
 
-/// One complete immutable root binding. Read-only accessors and the enclosing
-/// binding codec are the sink's persistence interface.
+/// One root inside a [`CompleteGroupBinding`].
+///
+/// The fields are read-only. They contain digests and opaque references, not
+/// the bearer token or a process handle.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RootRefBinding {
     ordinal: u32,
@@ -455,36 +480,50 @@ pub struct RootRefBinding {
 }
 
 impl RootRefBinding {
+    /// Returns this root's zero-based position in the group plan.
     pub fn ordinal(&self) -> u32 {
         self.ordinal
     }
 
+    /// Returns the host role string frozen into the plan.
     pub fn role(&self) -> &str {
         &self.role
     }
 
+    /// Returns the opaque reference for this root.
     pub fn root_ref(&self) -> &ReconcileRef {
         &self.root_ref
     }
 
+    /// Returns the lowercase SHA-256 hex digest of [`Self::root_ref`].
     pub fn root_ref_digest(&self) -> &str {
         &self.root_ref_digest
     }
 
+    /// Returns the host generation frozen into the plan.
+    ///
+    /// A binding that decodes successfully has a non-zero generation.
     pub fn root_generation(&self) -> u64 {
         self.root_generation
     }
 
+    /// Returns the digest of this root's frozen launch specification.
     pub fn spec_digest(&self) -> &str {
         &self.spec_digest
     }
 
+    /// Returns the opaque listener identity reserved for this root.
+    ///
+    /// This is not a bound socket and it is not a process id.
     pub fn reserved_listener_identity(&self) -> &str {
         &self.reserved_listener_identity
     }
 }
 
-/// Complete group binding persisted by the injected sink.
+/// Complete group binding the host sink persists.
+///
+/// The record holds references and digests. It does not hold the bearer
+/// token, executable bytes, or a process handle.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompleteGroupBinding {
     binding_attempt_id: BindingAttemptId,
@@ -496,37 +535,61 @@ pub struct CompleteGroupBinding {
 }
 
 impl CompleteGroupBinding {
+    /// Returns the launcher-issued attempt id.
     pub fn binding_attempt_id(&self) -> &BindingAttemptId {
         &self.binding_attempt_id
     }
 
+    /// Returns the opaque reference for the whole group.
     pub fn group_ref(&self) -> &ReconcileRef {
         &self.group_ref
     }
 
+    /// Returns the lowercase SHA-256 hex digest of the canonical plan.
     pub fn plan_digest(&self) -> &str {
         &self.plan_digest
     }
 
+    /// Returns the lowercase SHA-256 hex digest of [`Self::group_ref`].
     pub fn group_ref_digest(&self) -> &str {
         &self.group_ref_digest
     }
 
+    /// Returns the host group generation frozen into the plan.
+    ///
+    /// A binding that decodes successfully has a non-zero generation.
     pub fn group_generation(&self) -> u64 {
         self.group_generation
     }
 
+    /// Returns the roots in plan order.
     pub fn root_bindings(&self) -> &[RootRefBinding] {
         &self.root_bindings
     }
 
-    /// Encodes one closed canonical JSON record for sink persistence.
+    /// Encodes this binding as canonical JSON.
+    ///
+    /// Checks the references, digests, generations, and plan digest before
+    /// encoding. Does not write a file.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PersistError::InvalidRecord`] when validation fails or the
+    /// JSON encoding fails.
     pub fn encode(&self) -> Result<Vec<u8>, PersistError> {
         self.validate()?;
         serde_json::to_vec(&self.to_wire()).map_err(|_| PersistError::InvalidRecord)
     }
 
-    /// Decodes and validates one closed canonical JSON record.
+    /// Decodes one canonical JSON binding and checks it against its own digest.
+    ///
+    /// Parsing is not enough. The decoded value is encoded again and must be
+    /// byte-identical to `bytes`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PersistError::InvalidRecord`] when the JSON is not a binding,
+    /// a field or digest is invalid, or the canonical re-encoding differs.
     pub fn decode(bytes: &[u8]) -> Result<Self, PersistError> {
         let wire: CompleteGroupBindingWire =
             serde_json::from_slice(bytes).map_err(|_| PersistError::InvalidRecord)?;
@@ -700,7 +763,11 @@ impl RootRefBinding {
     }
 }
 
-/// Closed receipt record returned by a sink after read-back.
+/// Receipt a sink returns after reading back one persisted binding.
+///
+/// `receipt_digest` is the lowercase SHA-256 hex of a fixed domain string
+/// followed by the binding's canonical JSON. The receipt is not activation
+/// authority; prepare recomputes the digest itself.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompleteGroupBindingReceiptV1 {
     binding_attempt_id: BindingAttemptId,
@@ -709,6 +776,14 @@ pub struct CompleteGroupBindingReceiptV1 {
 }
 
 impl CompleteGroupBindingReceiptV1 {
+    /// Builds a receipt by validating `binding` and hashing its canonical JSON.
+    ///
+    /// Does not write a file.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PersistError::InvalidRecord`] when the binding is invalid or
+    /// cannot be encoded.
     pub fn from_binding(binding: CompleteGroupBinding) -> Result<Self, PersistError> {
         binding.validate()?;
         let receipt_digest = digest_bytes(RECEIPT_DOMAIN, &binding.encode()?);
@@ -719,23 +794,43 @@ impl CompleteGroupBindingReceiptV1 {
         })
     }
 
+    /// Returns the attempt id copied onto the receipt.
+    ///
+    /// A receipt that decodes successfully uses the same id as its binding.
     pub fn binding_attempt_id(&self) -> &BindingAttemptId {
         &self.binding_attempt_id
     }
 
+    /// Returns the binding this receipt covers.
     pub fn binding(&self) -> &CompleteGroupBinding {
         &self.binding
     }
 
+    /// Returns the lowercase SHA-256 hex digest of the canonical binding.
     pub fn receipt_digest(&self) -> &str {
         &self.receipt_digest
     }
 
+    /// Encodes this receipt as canonical JSON after recomputing its digest.
+    ///
+    /// Does not write a file.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PersistError::InvalidRecord`] when the binding, attempt id,
+    /// or digest does not match, or the JSON encoding fails.
     pub fn encode(&self) -> Result<Vec<u8>, PersistError> {
         self.validate()?;
         serde_json::to_vec(&self.to_wire()).map_err(|_| PersistError::InvalidRecord)
     }
 
+    /// Decodes one canonical JSON receipt and requires a byte-identical re-encoding.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PersistError::InvalidRecord`] when the JSON is not a receipt,
+    /// the enclosed binding or digest is invalid, or the canonical
+    /// re-encoding differs.
     pub fn decode(bytes: &[u8]) -> Result<Self, PersistError> {
         let wire: CompleteGroupBindingReceiptWire =
             serde_json::from_slice(bytes).map_err(|_| PersistError::InvalidRecord)?;
@@ -778,38 +873,71 @@ impl CompleteGroupBindingReceiptV1 {
     }
 }
 
-/// Shape-validated sink output. This wrapper is not authority: prepare still
-/// independently compares the complete tuple and recomputes the digest.
+/// Receipt that has passed [`CompleteGroupBindingReceiptV1`] validation.
+///
+/// This wrapper is not activation authority. Prepare still compares the
+/// attempt, binding, and recomputed digest on its own.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VerifiedGroupBinding {
     receipt: CompleteGroupBindingReceiptV1,
 }
 
 impl VerifiedGroupBinding {
+    /// Wraps `receipt` after validating its binding and digest.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PersistError::InvalidRecord`] when the receipt's attempt id,
+    /// binding, or digest does not match.
     pub fn from_receipt(receipt: CompleteGroupBindingReceiptV1) -> Result<Self, PersistError> {
         receipt.validate()?;
         Ok(Self { receipt })
     }
 
+    /// Returns the validated receipt.
     pub fn receipt(&self) -> &CompleteGroupBindingReceiptV1 {
         &self.receipt
     }
 }
 
-/// The external sink persists only the complete binding and its closed
-/// receipt. It never supplies the private activation permit.
+/// Host storage for one group binding and its read-back receipt.
+///
+/// Prepare calls [`Self::persist`], then [`Self::read_back`], then
+/// [`Self::verify`]. The sink stores the binding the launcher hands it. It
+/// does not receive the bearer token or the private activation permit.
 pub trait ReconcileRefSink {
+    /// Stores `binding` for `binding_attempt_id`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PersistError::InvalidRecord`] when `binding` cannot be
+    /// encoded, [`PersistError::Storage`] when the sink cannot write it, or
+    /// [`PersistError::Rejected`] when the sink refuses it.
     fn persist(
         &self,
         binding_attempt_id: &BindingAttemptId,
         binding: &CompleteGroupBinding,
     ) -> Result<(), PersistError>;
 
+    /// Reads the receipt previously stored for `binding_attempt_id`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PersistError::Storage`] when the record is missing or
+    /// unreadable, or [`PersistError::InvalidRecord`] when the stored bytes
+    /// are not a valid receipt.
     fn read_back(
         &self,
         binding_attempt_id: &BindingAttemptId,
     ) -> Result<CompleteGroupBindingReceiptV1, PersistError>;
 
+    /// Checks that `read_back` is the receipt for `expected`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PersistError::Rejected`] when the receipt is for a different
+    /// binding, or [`PersistError::InvalidRecord`] when the receipt fails
+    /// validation.
     fn verify(
         &self,
         binding_attempt_id: &BindingAttemptId,
@@ -818,25 +946,34 @@ pub trait ReconcileRefSink {
     ) -> Result<VerifiedGroupBinding, PersistError>;
 }
 
-/// A producer-owned cancellation request for one prepared activation.
+/// Cancellation flag for one [`PreparedGroup`].
 ///
-/// The handle carries only the cancellation signal.  Native resources,
-/// staging identities, journal values, and activation permits remain private
-/// to the producer and are never reachable through this seam.
+/// The handle carries only that flag. It does not expose native resources,
+/// staging paths, journal values, or the activation permit. [`Self::cancel`]
+/// does not by itself kill a process or write the journal.
 #[derive(Clone)]
 pub struct ActivationCancelHandle {
     cancellation: Arc<AtomicBool>,
 }
 
 impl ActivationCancelHandle {
-    /// Request cancellation at the next producer-owned activation boundary.
+    /// Sets the flag checked between activation steps.
+    ///
+    /// Clones of this handle share one flag. A call does not stop a process
+    /// that has already been recorded as running, and it does not affect
+    /// [`crate::OwnedRuntimeSession::observe`] or
+    /// [`crate::OwnedRuntimeSession::close`].
     pub fn cancel(&self) {
         self.cancellation.store(true, Ordering::Release);
     }
 }
 
-/// Opaque, move-only result of prepare. Its full journal value is retained so
-/// activation can revalidate the exact immutable plan later.
+/// Move-only result of [`crate::OwnedRuntimeSession::prepare_group`].
+///
+/// Holds the journal snapshot and the private activation permit so a later
+/// [`crate::OwnedRuntimeSession::activate_group`] can recheck the same plan.
+/// There is no public accessor for the token, journal, or permit.
+/// [`Self::cancel_handle`] is the only public control.
 pub struct PreparedGroup {
     pub(crate) journal_plan: JournalPlanValue,
     pub(crate) context: Arc<PreparePlanContext>,
@@ -918,7 +1055,7 @@ impl ActivationPermitV1 {
 }
 
 impl PreparedGroup {
-    /// Obtain the only public control seam for this prepared activation.
+    /// Returns another handle for this group's activation cancel flag.
     pub fn cancel_handle(&self) -> ActivationCancelHandle {
         ActivationCancelHandle {
             cancellation: Arc::clone(&self.cancellation),

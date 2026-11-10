@@ -10,40 +10,73 @@ use sha2::{Digest, Sha256};
 use crate::constants::{EXPECTED_MANIFEST_VERSION, MAX_RUNTIME_ARTIFACT_BYTES};
 
 /// The runtime manifest fields shared by desktop sidecar hosts.
+///
+/// JSON uses camelCase names and rejects unknown fields. Loading does not
+/// hash the executable; [`verify_sidecar`] does that.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SidecarManifest {
+    /// Manifest contract version. The supported value is `"1"`.
     pub manifest_version: String,
+    /// Runtime release the host expects to launch.
     pub runtime_version: String,
+    /// HTTP API version the runtime reports when ready.
     pub api_version: String,
+    /// Capture document schema version the runtime reports when ready.
     pub capture_document_schema_version: String,
+    /// Operating system. The supported value is `"windows"`.
     pub platform: String,
+    /// CPU architecture. The supported value is `"x86_64"`.
     pub arch: String,
+    /// Executable file name only, with no directory separators.
     pub file_name: String,
+    /// Executable length in bytes, from 1 through 536870912.
     pub bytes: u64,
+    /// Lowercase SHA-256 hex digest of the executable bytes.
     pub sha256: String,
+    /// Readiness schema file name only, with no directory separators.
     pub schema_file_name: String,
+    /// Lowercase SHA-256 hex digest of the readiness schema bytes.
     pub schema_sha256: String,
 }
 
 /// Expected values supplied by the host product for one sidecar release.
+///
+/// [`validate_manifest_contract`] compares these strings for exact equality.
+/// Platform, architecture, manifest version, digests, and byte length are
+/// checked against fixed rules and are not fields of this value.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ManifestExpectations {
+    /// Expected `runtimeVersion`.
     pub runtime_version: String,
+    /// Expected `apiVersion`.
     pub api_version: String,
+    /// Expected `captureDocumentSchemaVersion`.
     pub capture_document_schema_version: String,
+    /// Expected executable file name.
     pub file_name: String,
+    /// Expected readiness schema file name.
     pub schema_file_name: String,
 }
 
-/// A manifest whose executable has passed the shared artifact checks.
+/// A manifest whose executable bytes matched `manifest.sha256`.
 #[derive(Debug, Clone)]
 pub struct VerifiedSidecar {
+    /// Manifest that passed [`validate_manifest_contract`].
     pub manifest: SidecarManifest,
+    /// Path whose regular-file length and SHA-256 matched `manifest`.
     pub executable_path: PathBuf,
 }
 
-/// Loads a sidecar manifest from disk without logging its contents.
+/// Reads a sidecar manifest from `path` and parses it.
+///
+/// The file contents are not logged. This does not open the executable or
+/// check digests.
+///
+/// # Errors
+///
+/// Returns `Err(String)` when the file cannot be read or the text is not the
+/// manifest JSON object.
 pub fn load_manifest(path: &Path) -> Result<SidecarManifest, String> {
     let content = fs::read_to_string(path).map_err(|error| {
         format!(
@@ -55,7 +88,17 @@ pub fn load_manifest(path: &Path) -> Result<SidecarManifest, String> {
         .map_err(|error| format!("Capture runtime manifest is invalid JSON: {error}"))
 }
 
-/// Validates the stable manifest contract and host-specific expected values.
+/// Checks the manifest contract and the host's expected strings.
+///
+/// Requires manifest version `"1"`, platform `"windows"`, architecture
+/// `"x86_64"`, plain file names, an executable length from 1 through
+/// 536870912, and 64-character lowercase SHA-256 hex for the executable and
+/// the schema. Does not read either file.
+///
+/// # Errors
+///
+/// Returns `Err(String)` when any required field disagrees or a digest or
+/// file name is not in the form above.
 pub fn validate_manifest_contract(
     manifest: &SidecarManifest,
     expected: &ManifestExpectations,
@@ -96,7 +139,17 @@ pub fn validate_manifest_contract(
     Ok(())
 }
 
-/// Validates the manifest and executable bytes as one verified sidecar asset.
+/// Loads the manifest, checks its contract, and hashes the executable.
+///
+/// Reads `manifest_path` and then the bytes at `executable_path`. The
+/// executable must be a regular file whose length equals `bytes` and whose
+/// SHA-256 matches `sha256`. No process is started and nothing is written.
+///
+/// # Errors
+///
+/// Returns `Err(String)` when the manifest cannot be loaded or fails
+/// [`validate_manifest_contract`], when the executable is missing or not a
+/// regular file, when its length differs, or when its digest differs.
 pub fn verify_sidecar(
     manifest_path: &Path,
     executable_path: &Path,

@@ -1,3 +1,28 @@
+//! Prepare, start, and supervise a Capture runtime sidecar.
+//!
+//! A host verifies the sidecar manifest and executable, reserves a loopback
+//! port, and either launches one process with [`launch_sidecar`] or builds an
+//! immutable group plan and runs it through [`OwnedRuntimeSession::prepare_group`],
+//! [`OwnedRuntimeSession::activate_group`], and [`OwnedRuntimeSession::close`].
+//! [`verify_sidecar`] hashes the executable and compares it with the manifest
+//! digest. Building a group plan also hashes the readiness schema.
+//! A bearer token is kept in memory, sent on the loopback readiness request,
+//! and copied into the child only when the host put it in the launch
+//! environment. This crate does not write the token to a log or to the
+//! session journal.
+//!
+//! The group lifecycle is implemented on Windows. On any other target,
+//! [`build_immutable_group_plan`] fails with
+//! [`PrepareError::JournalUnavailable`] when the journal store cannot be
+//! constructed, and activate, observe, and close return an unsupported error.
+//! Single-process launch, manifest checks, port reservation, and token
+//! generation still run wherever the crate builds.
+//!
+//! Runtime jobs are ephemeral. The host owns durable source and domain data.
+//! Dropping the last [`OwnedRuntimeSession`] clone stops that launch attempt.
+//! A [`GroupLease`] does not yield a [`GroupProof`] on drop; call
+//! [`OwnedRuntimeSession::close`] when the host needs the terminal proof.
+
 mod constants;
 mod health;
 mod index;
@@ -12,21 +37,26 @@ mod staging;
 
 use std::fmt;
 
+/// Loopback readiness probe.
 pub use health::{probe_ready_once, ProbeResult, ReadyHandshake};
+/// Single-process launch and immutable group-plan construction.
 pub use launcher::{
     build_immutable_group_plan, generate_bearer_token, launch_sidecar,
     launch_sidecar_with_observer, reserve_distinct_loopback_port, reserve_loopback_port,
     GroupRootPlanInput, LaunchOptions, LaunchedSidecar, SidecarLaunchSpec,
 };
+/// Manifest loading and executable digest verification.
 pub use manifest::{
     load_manifest, validate_manifest_contract, verify_sidecar, ManifestExpectations,
     SidecarManifest, VerifiedSidecar,
 };
+/// Group binding records and the host persistence sink.
 pub use prepare::{
     ActivationCancelHandle, BindingAttemptId, CompleteGroupBinding, CompleteGroupBindingReceiptV1,
     ImmutableGroupPlan, PersistError, PrepareError, PreparedGroup, ReconcileRef, ReconcileRefSink,
     RootRefBinding, VerifiedGroupBinding,
 };
+/// Windows group lifecycle and single-process ownership.
 pub use process::{
     ActivationCleanupObservation, CleanupError, CleanupErrorKind, CleanupPhase, CloseReason,
     GroupLease, GroupLifecycleState, GroupObservation, GroupProof, LaunchError, LaunchErrorKind,
@@ -36,6 +66,10 @@ pub use process::{
 };
 
 /// A connection to a ready authenticated sidecar.
+///
+/// `Debug` prints `token` as `[REDACTED]`. Callers must not log or persist
+/// the bearer token. This crate keeps it in memory and sends it on the
+/// loopback readiness request.
 #[derive(Clone, PartialEq, Eq)]
 pub struct SidecarConnection {
     /// Loopback base URL without a trailing slash.
