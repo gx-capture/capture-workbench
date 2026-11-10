@@ -23,9 +23,12 @@ use super::error::{
 use super::error::{LaunchErrorKind, LaunchPhase};
 use super::sidecar_process::OwnedSidecarProcess;
 
-/// A move-only, one-use live group lease.  Its token is invalidated before
-/// close or drop starts, and the private native owner is then dropped through
-/// the existing bounded Job/child fallback only.
+/// Move-only lease for one live runtime group.
+///
+/// [`crate::OwnedRuntimeSession::observe`] borrows it.
+/// [`crate::OwnedRuntimeSession::close`] consumes it. Drop invalidates the
+/// lease token and then drops the private owner, which can stop the owned
+/// job. Drop does not return a [`GroupProof`].
 pub struct GroupLease {
     token: std::sync::atomic::AtomicBool,
     #[cfg(windows)]
@@ -61,6 +64,24 @@ impl Drop for GroupLease {
 /// opaque group seam.
 
 impl OwnedRuntimeSession {
+    /// Starts the roots in `prepared` and returns a live lease.
+    ///
+    /// On Windows this consumes the prepared group, creates its staging
+    /// scope, starts each root, and returns only after the running journal
+    /// record is written. The call uses one 60 second budget and the cancel
+    /// flag from [`PreparedGroup::cancel_handle`]. The bearer token is not
+    /// logged or written to the journal. On failure the returned
+    /// [`LaunchError`] keeps the cleanup owner; call
+    /// [`LaunchError::retry_cleanup`] instead of dropping it unnoticed.
+    ///
+    /// # Errors
+    ///
+    /// On Windows the error kind can be [`crate::LaunchErrorKind::Preparation`],
+    /// [`crate::LaunchErrorKind::Staging`], [`crate::LaunchErrorKind::Native`],
+    /// [`crate::LaunchErrorKind::Storage`], [`crate::LaunchErrorKind::Cancellation`],
+    /// [`crate::LaunchErrorKind::Deadline`], or [`crate::LaunchErrorKind::Reconcile`].
+    /// On any other target the kind is [`crate::LaunchErrorKind::Unsupported`] and
+    /// the phase is [`crate::LaunchPhase::Preparation`].
     pub fn activate_group(prepared: PreparedGroup) -> Result<GroupLease, LaunchError> {
         #[cfg(not(windows))]
         {
@@ -80,6 +101,26 @@ impl OwnedRuntimeSession {
         }
     }
 
+    /// Reads one running group's readiness without taking its close owner.
+    ///
+    /// On Windows this uses a 60 second budget, rechecks the journal, schema
+    /// digest, listeners, and strict readiness probe, and returns an
+    /// observation whose state is [`crate::GroupLifecycleState::Running`]. It does
+    /// not consult [`PreparedGroup::cancel_handle`]. A
+    /// [`LifecycleErrorKind::Listener`] result invalidates the lease token so
+    /// a later observe fails, and it still leaves close authority with the
+    /// caller. Other failures leave the token valid.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LifecycleError`]. On Windows the kind can be
+    /// [`LifecycleErrorKind::Busy`], [`LifecycleErrorKind::Cancellation`],
+    /// [`LifecycleErrorKind::Deadline`], [`LifecycleErrorKind::Conflict`],
+    /// [`LifecycleErrorKind::Storage`], [`LifecycleErrorKind::Native`],
+    /// [`LifecycleErrorKind::Listener`], [`LifecycleErrorKind::Validation`],
+    /// or [`LifecycleErrorKind::InvalidState`]. On any other target the kind
+    /// is [`LifecycleErrorKind::Unsupported`]. The phase is
+    /// [`LifecyclePhase::Observe`].
     pub fn observe(lease: &GroupLease) -> Result<GroupObservation, LifecycleError> {
         #[cfg(not(windows))]
         {
@@ -97,6 +138,25 @@ impl OwnedRuntimeSession {
         }
     }
 
+    /// Stops a live group and returns its terminal proof.
+    ///
+    /// Consumes `lease` and invalidates its token before taking the owner, so
+    /// a new observation cannot start. On Windows this uses a 60 second
+    /// budget, stops the owned processes, releases listeners and staging, and
+    /// writes the terminal journal record. `reason` selects neither a
+    /// different transition nor a journal field; both
+    /// [`CloseReason`] variants follow the same close path and neither is
+    /// stored.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CleanupError`]. On Windows the kind can be any
+    /// [`CleanupErrorKind`] other than [`CleanupErrorKind::Unsupported`].
+    /// [`CleanupErrorKind::InvalidState`] means the lease no longer held an
+    /// owner. On any other target the kind is
+    /// [`CleanupErrorKind::Unsupported`] and the phase is
+    /// [`CleanupPhase::Running`]. Call [`CleanupError::retry`] to resume a
+    /// Windows failure that still holds an owner.
     pub fn close(lease: GroupLease, reason: CloseReason) -> Result<GroupProof, CleanupError> {
         #[cfg(not(windows))]
         {
@@ -189,11 +249,20 @@ pub(crate) fn observe_group_with_budget(
     result
 }
 
-// Fail-closed evidence returned after one legacy launch attempt has been stopped.
+/// Evidence from one completed single-process stop.
+///
+/// [`OwnedRuntimeSession::terminate`] returns success only when both flags
+/// are true. On targets other than Windows, `descendants_terminated` stays
+/// false because there is no job object to query.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RuntimeTerminationProof {
+    /// Process id of the root that was stopped.
     pub root_pid: u32,
+    /// The root was waited on after termination.
     pub root_reaped: bool,
+    /// The job reported no remaining processes.
+    ///
+    /// This is false on targets other than Windows.
     pub descendants_terminated: bool,
 }
 
@@ -227,21 +296,42 @@ pub(crate) struct OwnedRuntimeSessionState {
     cleanup_failures: usize,
 }
 
-/// A cloneable ownership token for one runtime launch attempt.
+/// Cloneable ownership token for one runtime launch attempt.
 ///
-/// The launcher may retain one token while the host registers another token in
-/// its authoritative state before readiness.  The underlying process/job is
-/// released only after the final token proves cleanup, so a readiness failure
-/// cannot strand the native ownership boundary in a local launcher scope.
+/// [`crate::launch_sidecar_with_observer`] keeps one clone and passes another
+/// to the host before readiness is probed. The process and its Windows job
+/// are released only after the last clone proves cleanup. Dropping that last
+/// clone stops the attempt and ignores a cleanup error. Group methods on
+/// this type are a separate lifecycle from [`Self::spawn`].
 #[derive(Clone)]
 pub struct OwnedRuntimeSession {
     inner: Arc<Mutex<OwnedRuntimeSessionState>>,
 }
 
 impl OwnedRuntimeSession {
-    /// Persists and verifies a complete group binding before any native root
-    /// acquisition. The returned value is consumed by the later activation
-    /// seam; external plan construction is intentionally still producer-only.
+    /// Writes the group journal and asks `sink` to store the binding.
+    ///
+    /// Takes the journal lock under `plan`'s producer root, creates the
+    /// journal file when it is absent, writes the address index, and calls
+    /// [`ReconcileRefSink::persist`], [`ReconcileRefSink::read_back`], and
+    /// [`ReconcileRefSink::verify`]. It then compare-and-swaps the journal to
+    /// the prepared-bound record. The bearer token is not written to the
+    /// journal, the index, or the sink record. No listener or root process is
+    /// started. A failure after the initial journal write leaves that file in
+    /// place.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PrepareError::InvalidPlan`] when the plan or address index
+    /// is incomplete, [`PrepareError::InvalidTimestamp`] when a journal
+    /// timestamp is rejected, [`PrepareError::ReferenceGeneration`] when the
+    /// attempt id cannot be generated, and [`PrepareError::InvalidBinding`]
+    /// when the sink receipt does not match the binding.
+    /// [`PrepareError::Binding`] carries the sink's [`crate::PersistError`].
+    /// Journal failures are [`PrepareError::JournalAlreadyExists`],
+    /// [`PrepareError::JournalConflict`], [`PrepareError::JournalCorrupt`],
+    /// [`PrepareError::JournalTooLarge`], [`PrepareError::JournalAmbiguous`],
+    /// or [`PrepareError::JournalUnavailable`].
     pub fn prepare_group(
         plan: &ImmutableGroupPlan,
         sink: &dyn ReconcileRefSink,
@@ -249,6 +339,18 @@ impl OwnedRuntimeSession {
         crate::prepare::prepare_group(plan, sink)
     }
 
+    /// Spawns `command` and wraps it in an ownership token.
+    ///
+    /// On Windows the child is created suspended and without a window,
+    /// assigned to a new kill-on-close job, and resumed only after that
+    /// assignment is checked. A failed assignment stops the child before this
+    /// returns. This does not probe readiness and does not write a journal.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(String)` when the process cannot be started, the job
+    /// cannot be created or assigned, or cleanup of a rejected child fails.
+    /// The cleanup failure is appended to the assignment error.
     pub fn spawn(command: &mut Command) -> Result<Self, String> {
         Ok(Self {
             inner: Arc::new(Mutex::new(OwnedRuntimeSessionState {
@@ -261,6 +363,10 @@ impl OwnedRuntimeSession {
         })
     }
 
+    /// Returns the root process id for this attempt.
+    ///
+    /// After a proven stop, this is the id stored on the termination proof.
+    /// Panics if the ownership lock is poisoned or no process id was recorded.
     pub fn id(&self) -> u32 {
         self.inner
             .lock()
@@ -268,6 +374,15 @@ impl OwnedRuntimeSession {
             .id()
     }
 
+    /// Polls the root without stopping it.
+    ///
+    /// `Ok(None)` means the root is still running. After a proven stop, this
+    /// returns the stored exit status and does not touch a process handle.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`std::io::Error`] when the ownership lock is poisoned or the
+    /// operating system cannot query the child.
     pub fn try_wait(&self) -> io::Result<Option<ExitStatus>> {
         let mut state = self
             .inner
@@ -276,11 +391,22 @@ impl OwnedRuntimeSession {
         state.try_wait()
     }
 
-    /// Observe a root exit and reclaim its descendants before returning it.
+    /// Returns a root exit only after descendant cleanup is proven.
     ///
-    /// A previously observed root exit is retried until the same ownership
-    /// boundary can prove descendant cleanup. Observation alone is never
-    /// reported as cleanup success.
+    /// `Ok(None)` means the root is still running and nothing was killed. When
+    /// the root has exited, this stops the owned job and proves that the root
+    /// and its descendants are gone before returning the status. A previously
+    /// seen exit is retried until that proof succeeds. The process handle
+    /// stays available when the proof fails.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeCleanupError`] with
+    /// [`RuntimeCleanupErrorKind::Ownership`],
+    /// [`RuntimeCleanupErrorKind::Liveness`],
+    /// [`RuntimeCleanupErrorKind::Termination`],
+    /// [`RuntimeCleanupErrorKind::Reap`], or
+    /// [`RuntimeCleanupErrorKind::Descendants`].
     pub fn monitor_root_exit(&self) -> Result<Option<ExitStatus>, RuntimeCleanupError> {
         self.inner
             .lock()
@@ -294,7 +420,20 @@ impl OwnedRuntimeSession {
             .monitor_root_exit()
     }
 
-    /// Stop this attempt exactly once; repeated calls return the same proof.
+    /// Stops this attempt and returns the proof.
+    ///
+    /// The first successful call stops the job, waits for the root, and checks
+    /// descendants. Later calls return that same proof and do not signal the
+    /// process again. A failed call keeps the handle for a retry.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeCleanupError`] with
+    /// [`RuntimeCleanupErrorKind::Ownership`],
+    /// [`RuntimeCleanupErrorKind::Liveness`],
+    /// [`RuntimeCleanupErrorKind::Termination`],
+    /// [`RuntimeCleanupErrorKind::Reap`], or
+    /// [`RuntimeCleanupErrorKind::Descendants`].
     pub fn terminate_and_prove(&self) -> Result<RuntimeTerminationProof, RuntimeCleanupError> {
         self.inner
             .lock()
@@ -308,6 +447,18 @@ impl OwnedRuntimeSession {
             .terminate_and_prove()
     }
 
+    /// Stops this attempt and discards the proof.
+    ///
+    /// Success requires both [`RuntimeTerminationProof::root_reaped`] and
+    /// [`RuntimeTerminationProof::descendants_terminated`]. On targets other
+    /// than Windows the descendant flag stays false, so this call fails after
+    /// the root has been reaped.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same [`RuntimeCleanupError`] kinds as
+    /// [`Self::terminate_and_prove`]. A proof that does not cover both the
+    /// root and its descendants is [`RuntimeCleanupErrorKind::Descendants`].
     pub fn terminate(&self) -> Result<(), RuntimeCleanupError> {
         self.terminate_and_prove().map(|_| ())
     }

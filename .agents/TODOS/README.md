@@ -41,8 +41,7 @@ and procedure: [release-runbook.md](../GUIDES/release-runbook.md).
   (`ConsumerSemanticResultV1`) [#257](https://github.com/gx-capture/capture-workbench/issues/257).
 - Workbench UI: playback of formats WebView2 cannot play [#249](https://github.com/gx-capture/capture-workbench/issues/249);
   engine uninstall in settings [#254](https://github.com/gx-capture/capture-workbench/issues/254).
-- Maintenance: rustdoc for the public `capture-sidecar-launcher` functions
-  [#252](https://github.com/gx-capture/capture-workbench/issues/252); release version literals in tests (Capture, LAW, Cert Prep)
+- Maintenance: release version literals in tests (Capture, LAW, Cert Prep)
   [#253](https://github.com/gx-capture/capture-workbench/issues/253).
 
 [recording-transcription.md](recording-transcription.md) keeps the pointers

@@ -218,22 +218,47 @@ pub(crate) fn probe_service_ready(
     result
 }
 
-/// Readiness handshake returned by `/v2/health/ready`.
+/// Version fields copied from one accepted `/v2/health/ready` response.
+///
+/// The strings match the manifest. They are not a digest of the schema file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReadyHandshake {
+    /// `runtimeVersion` from the response.
     pub runtime_version: String,
+    /// `apiVersion` from the response.
     pub api_version: String,
+    /// `captureDocumentSchemaVersion` from the response.
     pub capture_document_schema_version: String,
 }
 
 /// Result of one bounded readiness probe.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProbeResult {
+    /// HTTP 200 and the handshake matched the manifest.
     Ready(ReadyHandshake),
+    /// No usable answer: connect, I/O, or deadline failure, or HTTP 503.
     NotReady,
 }
 
-/// Probes the authenticated loopback readiness endpoint once.
+/// Probes `GET /v2/health/ready` on `127.0.0.1` once.
+///
+/// Sends `token` in the `Authorization` header and does not log or store it.
+/// The attempt has a one-second deadline and a 250 millisecond connect
+/// timeout. The response is capped at 64 KiB. A ready body must report ready,
+/// include `capabilities`, and carry `runtimeVersion`, `apiVersion`, and
+/// `captureDocumentSchemaVersion` equal to [`SidecarManifest`]. Those version
+/// fields are also accepted under a `versions` object. This probe compares
+/// the strings. It does not hash the readiness schema.
+///
+/// # Errors
+///
+/// Returns `Err(String)` when the socket timeout cannot be set, the response
+/// exceeds 64 KiB, the HTTP framing or status line is malformed, the status
+/// is neither 200 nor 503, the body is not JSON, the payload does not report
+/// ready, `capabilities` is missing, a required version is missing, or a
+/// version disagrees with `manifest`. Connection failure, a later write or
+/// read failure, an expired deadline, and HTTP 503 return
+/// [`ProbeResult::NotReady`].
 pub fn probe_ready_once(
     port: u16,
     token: &str,

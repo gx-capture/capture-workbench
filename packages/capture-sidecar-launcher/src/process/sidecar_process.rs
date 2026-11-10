@@ -21,7 +21,14 @@ use super::native::{
 };
 use super::session::{ensure_termination_proof, RuntimeTerminationProof};
 
-/// A sidecar root process plus its Windows job-object ownership boundary.
+/// One sidecar root process and, on Windows, its job-object boundary.
+///
+/// Prefer [`crate::OwnedRuntimeSession`] for a launch that must be cloned
+/// before readiness. This value is the single-owner handle underneath that
+/// token. On Windows the job is kill-on-close, so dropping this value closes
+/// the job handle and the system kills processes still in the job. That drop
+/// does not wait or return a proof. Call [`Self::terminate`] or
+/// [`Self::terminate_and_prove`] to collect one.
 pub struct OwnedSidecarProcess {
     pub(crate) child: Child,
     #[cfg(windows)]
@@ -31,7 +38,18 @@ pub struct OwnedSidecarProcess {
 }
 
 impl OwnedSidecarProcess {
-    /// Spawns a command suspended, assigns it to a kill-on-close job, then resumes it.
+    /// Spawns `command` and, on Windows, places it in a kill-on-close job.
+    ///
+    /// On Windows the child is created suspended and without a window. It is
+    /// resumed only after the job assignment has been checked. If assignment
+    /// or resume fails, this stops that child before returning. No journal is
+    /// written and readiness is not probed.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(String)` when the process cannot be started, the job
+    /// cannot be created or assigned, or cleanup of that rejected child also
+    /// fails. A cleanup failure is appended to the assignment error.
     pub fn spawn(command: &mut Command) -> Result<Self, String> {
         #[cfg(windows)]
         let mut job = WindowsJob::new()?;
@@ -79,17 +97,55 @@ impl OwnedSidecarProcess {
         })
     }
 
-    /// Checks whether the root process has exited without blocking.
+    /// Polls the root without stopping it.
+    ///
+    /// `Ok(None)` means the root is still running.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`std::io::Error`] when the operating system cannot query the child.
     pub fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
         self.child.try_wait()
     }
 
-    /// Terminates the exact process tree owned by this launch attempt.
+    /// Stops the owned process tree and requires a complete proof.
+    ///
+    /// Success requires the root to be reaped and descendants to be gone. On
+    /// targets other than Windows the descendant flag stays false, so this
+    /// fails after the root has been reaped.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeCleanupError`]. The kind can be
+    /// [`RuntimeCleanupErrorKind::Ownership`],
+    /// [`RuntimeCleanupErrorKind::Liveness`],
+    /// [`RuntimeCleanupErrorKind::Termination`],
+    /// [`RuntimeCleanupErrorKind::Reap`], or
+    /// [`RuntimeCleanupErrorKind::Descendants`].
     pub fn terminate(&mut self) -> Result<(), RuntimeCleanupError> {
         ensure_termination_proof(self.terminate_and_prove()).map(|_| ())
     }
 
-    /// Terminates the owned job and returns fail-closed cleanup evidence.
+    /// Stops the owned job and returns the proof, including a failed descendant check.
+    ///
+    /// On Windows this terminates the job, proves the root from its launch
+    /// handle, waits for that root, and queries remaining job processes. If
+    /// job termination fails, it kills the root from its launch handle and
+    /// then the owned descendants. The returned proof can have
+    /// [`crate::RuntimeTerminationProof::descendants_terminated`] set to
+    /// false. [`Self::terminate`] turns that into an error. On any other
+    /// target the root is killed and waited on, and the descendant flag is
+    /// false.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuntimeCleanupError`] with
+    /// [`RuntimeCleanupErrorKind::Ownership`],
+    /// [`RuntimeCleanupErrorKind::Liveness`],
+    /// [`RuntimeCleanupErrorKind::Termination`],
+    /// [`RuntimeCleanupErrorKind::Reap`], or
+    /// [`RuntimeCleanupErrorKind::Descendants`] when the proof cannot be
+    /// collected. A collected proof whose descendant flag is false is `Ok`.
     pub fn terminate_and_prove(&mut self) -> Result<RuntimeTerminationProof, RuntimeCleanupError> {
         let root_pid = self.id();
         #[cfg(windows)]
@@ -227,10 +283,10 @@ impl OwnedSidecarProcess {
         }
     }
 
-    /// Returns the exact root PID held by this ownership boundary.
+    /// Returns the root process id held by this ownership boundary.
     ///
-    /// Hosts use this only for bounded process-lifecycle verification; it does
-    /// not expose any connection credentials or runtime payload.
+    /// The id is not a connection credential and it does not reveal the
+    /// bearer token.
     pub fn id(&self) -> u32 {
         self.child.id()
     }
