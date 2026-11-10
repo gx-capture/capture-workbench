@@ -37,7 +37,6 @@ and procedure: [release-runbook.md](../GUIDES/release-runbook.md).
   handwriting OCR quality [#250](https://github.com/gx-capture/capture-workbench/issues/250);
   model selection and isolated Ollama proofs [#251](https://github.com/gx-capture/capture-workbench/issues/251);
   late-bind race on the isolated Ollama port [#255](https://github.com/gx-capture/capture-workbench/issues/255);
-  delete the unused `request_ref_codec.py` [#256](https://github.com/gx-capture/capture-workbench/issues/256);
   finish or remove the producer acceptance contract
   (`ConsumerSemanticResultV1`) [#257](https://github.com/gx-capture/capture-workbench/issues/257).
 - Workbench UI: playback of formats WebView2 cannot play [#249](https://github.com/gx-capture/capture-workbench/issues/249);

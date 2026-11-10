@@ -28,7 +28,6 @@ flowchart LR
   n_capture_runtime_problem_registry["capture_runtime.problem_registry"]
   n_capture_runtime_provisioning["capture_runtime.provisioning"]
   n_capture_runtime_release["capture_runtime.release"]
-  n_capture_runtime_request_ref_codec["capture_runtime.request_ref_codec"]
   n_capture_runtime_routes["capture_runtime.routes"]
   n_capture_runtime_services["capture_runtime.services"]
   n_capture_runtime_speech["capture_runtime.speech"]
@@ -128,8 +127,6 @@ flowchart LR
   n_capture_runtime_release --> n_capture_runtime_constants
   n_capture_runtime_release --> n_capture_runtime_contracts
   n_capture_runtime_release --> n_capture_runtime_provisioning
-  n_capture_runtime_request_ref_codec --> n_capture_runtime_capture
-  n_capture_runtime_request_ref_codec --> n_capture_runtime_contracts
   n_capture_runtime_routes --> n_capture_runtime_contract_set
   n_capture_runtime_routes --> n_capture_runtime_contracts
   n_capture_runtime_speech --> n_capture_runtime_worker_payloads
