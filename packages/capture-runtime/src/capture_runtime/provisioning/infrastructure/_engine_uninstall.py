@@ -5,7 +5,11 @@ from __future__ import annotations
 from collections.abc import Iterable
 from pathlib import Path
 
-from capture_runtime.provisioning.infrastructure.engine_catalog import EngineRequirementDescriptor
+from capture_runtime.provisioning.infrastructure.engine_catalog import (
+    EngineArtifactDescriptor,
+    EngineModelDeliveryDescriptor,
+    EngineRequirementDescriptor,
+)
 
 from ._engine_download_cache import VerifiedDownloadCache
 from ._engine_installation_residue import remove_residue_path
@@ -17,16 +21,32 @@ _INSTALLED_MARKERS = ("active.json", STATE_FILE_NAME)
 _KEPT_NAMES = frozenset({".install.lock"})
 
 
-def download_digests(requirement: EngineRequirementDescriptor) -> frozenset[str]:
-    """SHA-256 of every download the cache can hold for a unit."""
-
+def _delivery_digests(
+    artifacts: tuple[EngineArtifactDescriptor, ...],
+    model_files: EngineModelDeliveryDescriptor | None,
+) -> set[str]:
     digests: set[str] = set()
-    for artifact in requirement.artifacts:
+    for artifact in artifacts:
         digests.add(artifact.sha256)
         digests.update(part.sha256 for part in artifact.parts)
-    if requirement.model_files is not None:
-        digests.update(item.sha256 for item in requirement.model_files.files)
-    return frozenset(digests)
+    if model_files is not None:
+        digests.update(item.sha256 for item in model_files.files)
+    return digests
+
+
+def download_digests(requirement: EngineRequirementDescriptor) -> frozenset[str]:
+    """SHA-256 of every download the cache can hold for a unit.
+
+    A requirement with several contents frees every content, including one
+    that was not the content installed on this machine.
+    """
+
+    if requirement.contents:
+        digests: set[str] = set()
+        for content in requirement.contents:
+            digests |= _delivery_digests(content.artifacts, content.model_files)
+        return frozenset(digests)
+    return frozenset(_delivery_digests(requirement.artifacts, requirement.model_files))
 
 
 def digests_used_only_by(

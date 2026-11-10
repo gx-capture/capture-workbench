@@ -2988,6 +2988,29 @@ def test_runtime_settings_reject_an_unknown_speech_recognition_model(model: str)
         )
 
 
+def test_runtime_settings_defaults_the_speech_variant_to_auto() -> None:
+    settings = RuntimeSettings.from_env({"CAPTURE_API_TOKEN": "a" * 32})
+
+    assert settings.extraction.speech_recognition_variant == "auto"
+
+
+@pytest.mark.parametrize("variant", ["auto", "cuda", "cpu"])
+def test_runtime_settings_choose_a_speech_recognition_variant(variant: str) -> None:
+    settings = RuntimeSettings.from_env(
+        {"CAPTURE_API_TOKEN": "a" * 32, "CAPTURE_SPEECH_RECOGNITION_VARIANT": variant}
+    )
+
+    assert settings.extraction.speech_recognition_variant == variant
+
+
+@pytest.mark.parametrize("variant", ["", "CUDA", "gpu", "tea-asr-1.1", "auto "])
+def test_runtime_settings_reject_an_unknown_speech_recognition_variant(variant: str) -> None:
+    with pytest.raises(ValueError, match="CAPTURE_SPEECH_RECOGNITION_VARIANT must be"):
+        RuntimeSettings.from_env(
+            {"CAPTURE_API_TOKEN": "a" * 32, "CAPTURE_SPEECH_RECOGNITION_VARIANT": variant}
+        )
+
+
 def test_runtime_settings_rejects_retired_windowsml_device_override() -> None:
     with pytest.raises(ValueError, match="CAPTURE_WINDOWSML_DEVICE_ID is retired"):
         RuntimeSettings.from_env(
