@@ -10,6 +10,8 @@ from types import ModuleType
 
 import pypdfium2 as pdfium
 
+from capture_runtime.constants import RUNTIME_VERSION
+
 SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "generate_commit_a_fixtures.py"
 FIXTURE_ROOT = Path(__file__).resolve().parents[2] / "model-sources" / "commit-a"
 
@@ -47,7 +49,7 @@ def test_commit_a_generator_reproduces_exact_tracked_bytes() -> None:
 def test_commit_a_provenance_binds_bytes_and_fixed_revisions() -> None:
     provenance = json.loads((FIXTURE_ROOT / "provenance/commit-a.json").read_text("utf-8"))
     assert provenance == json.loads((FIXTURE_ROOT / "provenance/commit-a.json").read_text("utf-8"))
-    assert provenance["releaseVersion"] == "0.9.0"
+    assert provenance["releaseVersion"] == RUNTIME_VERSION
     assert provenance["stage"] == "commit-a"
     assert provenance["licensePath"] == "licenses/LICENSE.txt"
     assert provenance["noticePath"] == "licenses/NOTICE.txt"
