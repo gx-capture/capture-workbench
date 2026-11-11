@@ -653,3 +653,32 @@ def test_cpu_catalog_fails_when_a_primary_path_would_be_included(tmp_path: Path)
     assert result.returncode != 0
     assert "model/primary/LICENSE.txt" in result.stderr
     assert not catalog_path.exists()
+
+
+def test_core_only_lock_ignores_a_passed_cpu_speech_archive(tmp_path: Path) -> None:
+    engine_dir = tmp_path / "engines"
+    engines = _prepare_speech_engines(engine_dir)
+    source_lock, _content = approved_source_lock()
+    source_lock["requirements"] = []
+    source_lock["fixtures"] = []
+    source_lock_path = tmp_path / "model-source-lock.json"
+    source_lock_path.write_bytes(canonical_json_bytes(source_lock))
+    without_cpu = tmp_path / "without" / "capture-engine-catalog.json"
+    with_cpu = tmp_path / "with" / "capture-engine-catalog.json"
+    missing = tmp_path / "missing" / "capture-engine-catalog.json"
+    omitted = _run_catalog(engines, source_lock_path, without_cpu, include_cpu=False)
+    passed = _run_catalog(engines, source_lock_path, with_cpu, include_cpu=True)
+    elsewhere = {
+        **engines,
+        "cpu_archive": tmp_path / "other-dir" / "capture-engine-speech-recognition-cpu.zip",
+        "cpu_manifest": (
+            tmp_path / "other-dir" / "capture-engine-speech-recognition-cpu-files.json"
+        ),
+    }
+    ignored = _run_catalog(elsewhere, source_lock_path, missing, include_cpu=True)
+
+    assert omitted.returncode == 0, omitted.stderr
+    assert passed.returncode == 0, passed.stderr
+    assert ignored.returncode == 0, ignored.stderr
+    assert without_cpu.read_bytes() == with_cpu.read_bytes() == missing.read_bytes()
+    assert json.loads(without_cpu.read_text(encoding="utf-8"))["requirements"] == []

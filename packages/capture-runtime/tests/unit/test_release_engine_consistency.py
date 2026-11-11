@@ -80,7 +80,11 @@ def artifact(
 
 
 def complete_catalog(
-    engine_dir: Path, catalog_path: Path, *, speech_part_bytes: int | None = None
+    engine_dir: Path,
+    catalog_path: Path,
+    *,
+    speech_part_bytes: int | None = None,
+    speech_shape: str = "legacy",
 ) -> None:
     source_lock, _content = approved_source_lock()
     source_lock_sha256 = hashlib.sha256(canonical_json_bytes(source_lock)).hexdigest()
@@ -108,36 +112,72 @@ def complete_catalog(
             "files": locked["files"],
             "manifestVersion": "1",
         }
-        requirements.append(
-            {
-                "requirementId": requirement_id,
-                "artifacts": []
-                if worker_name is None or entry_point is None
-                else [
-                    artifact(
-                        engine_dir,
-                        requirement_id=requirement_id,
-                        file_name=worker_name,
-                        entry_point=entry_point,
-                        part_bytes=speech_part_bytes
-                        if requirement_id == "speech-recognition"
-                        else None,
+        requirement = {
+            "requirementId": requirement_id,
+            "artifacts": []
+            if worker_name is None or entry_point is None
+            else [
+                artifact(
+                    engine_dir,
+                    requirement_id=requirement_id,
+                    file_name=worker_name,
+                    entry_point=entry_point,
+                    part_bytes=(
+                        speech_part_bytes if requirement_id == "speech-recognition" else None
                     ),
-                ],
-                "modelFiles": {
-                    "artifactVersion": locked["artifactVersion"],
-                    "entryCount": len(locked["files"]),
-                    "entryPoint": locked["entryPoint"],
-                    "extractedBytes": sum(item["bytes"] for item in locked["files"]),
-                    "files": locked["files"],
-                    "manifestSha256": hashlib.sha256(
-                        canonical_json_bytes(model_manifest)
-                    ).hexdigest(),
-                    "sourceLockSha256": source_lock_sha256,
-                },
-                "unavailableReason": None,
-            }
-        )
+                ),
+            ],
+            "modelFiles": {
+                "artifactVersion": locked["artifactVersion"],
+                "entryCount": len(locked["files"]),
+                "entryPoint": locked["entryPoint"],
+                "extractedBytes": sum(item["bytes"] for item in locked["files"]),
+                "files": locked["files"],
+                "manifestSha256": hashlib.sha256(canonical_json_bytes(model_manifest)).hexdigest(),
+                "sourceLockSha256": source_lock_sha256,
+            },
+            "unavailableReason": None,
+        }
+        if requirement_id == "speech-recognition" and speech_shape != "legacy":
+            if speech_shape == "incomplete-cpu":
+                cpu_delivery = {
+                    "id": "cpu",
+                    "artifacts": [],
+                    "modelFiles": None,
+                    "unavailableReason": "The CPU speech worker archive was not supplied.",
+                }
+            elif speech_shape == "contents":
+                cpu_delivery = {
+                    "id": "cpu",
+                    "artifacts": [
+                        artifact(
+                            engine_dir,
+                            requirement_id=requirement_id,
+                            file_name="capture-engine-speech-recognition-cpu.zip",
+                            entry_point="capture-engine-speech-recognition-cpu.exe",
+                        )
+                    ],
+                    "modelFiles": requirement["modelFiles"],
+                    "unavailableReason": None,
+                }
+            else:
+                raise AssertionError(speech_shape)
+            requirements.append(
+                {
+                    "requirementId": requirement_id,
+                    "contents": [
+                        {
+                            "id": "cuda",
+                            "artifacts": requirement["artifacts"],
+                            "modelFiles": requirement["modelFiles"],
+                            "unavailableReason": None,
+                        },
+                        cpu_delivery,
+                    ],
+                }
+            )
+        else:
+            requirements.append(requirement)
     catalog_path.write_bytes(
         canonical_json_bytes(
             {
@@ -244,3 +284,83 @@ def test_release_rejects_a_drifted_archive_part(tmp_path: Path) -> None:
             engine_dir=engine_dir,
             engine_catalog=catalog,
         )
+
+
+def _release_build(tmp_path: Path, engine_dir: Path, catalog: Path) -> set[str]:
+    executable = tmp_path / "capture-runtime.exe"
+    executable.write_bytes(b"runtime")
+    schema = write_capture_document_schema(tmp_path / "capture-document-v2.schema.json")
+    build_release_artifacts(
+        executable=executable,
+        schema=schema,
+        output_dir=tmp_path / "release",
+        engine_dir=engine_dir,
+        engine_catalog=catalog,
+    )
+    return {item.name for item in (tmp_path / "release").iterdir()}
+
+
+def test_release_accepts_a_contents_catalog_with_both_speech_archives(tmp_path: Path) -> None:
+    engine_dir = tmp_path / "engines"
+    engine_dir.mkdir()
+    catalog = tmp_path / "capture-engine-catalog.json"
+    complete_catalog(engine_dir, catalog, speech_shape="contents")
+
+    released = _release_build(tmp_path, engine_dir, catalog)
+
+    assert "capture-engine-speech-recognition.zip" in released
+    assert "capture-engine-speech-recognition-files.json" in released
+    assert "capture-engine-speech-recognition-cpu.zip" in released
+    assert "capture-engine-speech-recognition-cpu-files.json" in released
+
+
+def test_release_rejects_a_contents_catalog_missing_the_cpu_archive(tmp_path: Path) -> None:
+    engine_dir = tmp_path / "engines"
+    engine_dir.mkdir()
+    catalog = tmp_path / "capture-engine-catalog.json"
+    complete_catalog(engine_dir, catalog, speech_shape="contents")
+    (engine_dir / "capture-engine-speech-recognition-cpu.zip").unlink()
+    output = tmp_path / "release"
+
+    with pytest.raises(ValueError, match="absent from engine directory"):
+        _release_build(tmp_path, engine_dir, catalog)
+
+    assert not output.exists()
+
+
+def test_release_rejects_an_uncatalogued_zip_beside_a_contents_catalog(tmp_path: Path) -> None:
+    engine_dir = tmp_path / "engines"
+    engine_dir.mkdir()
+    catalog = tmp_path / "capture-engine-catalog.json"
+    complete_catalog(engine_dir, catalog, speech_shape="contents")
+    (engine_dir / "extra.zip").write_bytes(b"extra")
+
+    with pytest.raises(ValueError, match="uncatalogued"):
+        _release_build(tmp_path, engine_dir, catalog)
+
+
+def test_release_rejects_an_incomplete_speech_content(tmp_path: Path) -> None:
+    engine_dir = tmp_path / "engines"
+    engine_dir.mkdir()
+    catalog = tmp_path / "capture-engine-catalog.json"
+    complete_catalog(engine_dir, catalog, speech_shape="incomplete-cpu")
+    output = tmp_path / "release"
+
+    with pytest.raises(ValueError, match="catalog is incomplete"):
+        _release_build(tmp_path, engine_dir, catalog)
+
+    assert not output.exists()
+
+
+def test_release_rejects_a_cpu_zip_that_a_legacy_catalog_does_not_list(tmp_path: Path) -> None:
+    engine_dir = tmp_path / "engines"
+    engine_dir.mkdir()
+    catalog = tmp_path / "capture-engine-catalog.json"
+    complete_catalog(engine_dir, catalog)
+    (engine_dir / "capture-engine-speech-recognition-cpu.zip").write_bytes(b"cpu")
+
+    with pytest.raises(
+        ValueError,
+        match="uncatalogued release artifacts: capture-engine-speech-recognition-cpu.zip",
+    ):
+        _release_build(tmp_path, engine_dir, catalog)

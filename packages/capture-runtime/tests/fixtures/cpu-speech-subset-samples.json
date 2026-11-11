@@ -1,0 +1,260 @@
+{
+  "about": "Shared sample of the cpu speech content rule. cpu_speech_model_delivery (packages/capture-runtime/scripts/model_source_lock.py) and cpuSpeechModelFiles (apps/capture-workbench-desktop/scripts/real-media-model-smoke.ts) must both select cpuPaths from speechFiles. The decoys model/fallback-extra, model/vad and the primary directories, and the notices only they cite, stay out.",
+  "speechFiles": [
+    {
+      "bytes": 1,
+      "kind": "license",
+      "licensePath": null,
+      "noticePath": null,
+      "path": "licenses/LICENSE-Qwen3-ASR.txt",
+      "sha256": "be12be5e093347ee68a44f00897b55576ea25ad1dfa651080525e085d0e3c132"
+    },
+    {
+      "bytes": 2,
+      "kind": "notice",
+      "licensePath": null,
+      "noticePath": null,
+      "path": "licenses/NOTICE-aligner.md",
+      "sha256": "9a801c8c33700a3be892569d92667072e3a72c2f6b688dfdec6cfaf7a992f21a"
+    },
+    {
+      "bytes": 3,
+      "kind": "notice",
+      "licensePath": null,
+      "noticePath": null,
+      "path": "licenses/NOTICE-fallback-architecture.md",
+      "sha256": "57fa6657fd8eed09397d5e2d514506117bf83cb73a70a1d883093e7d31e5c485"
+    },
+    {
+      "bytes": 4,
+      "kind": "notice",
+      "licensePath": null,
+      "noticePath": null,
+      "path": "licenses/NOTICE-fallback-extra.md",
+      "sha256": "72742c1e70a2cf907c5916dea67af41557b81bce31283a20292681021777fb68"
+    },
+    {
+      "bytes": 5,
+      "kind": "notice",
+      "licensePath": null,
+      "noticePath": null,
+      "path": "licenses/NOTICE-fallback.md",
+      "sha256": "e683e36856966cafb84c9ad5d49ce122bb785367fd930935b5261cc1b31526ec"
+    },
+    {
+      "bytes": 6,
+      "kind": "notice",
+      "licensePath": null,
+      "noticePath": null,
+      "path": "licenses/NOTICE-primary-architecture.md",
+      "sha256": "bb3ccae7504714cbc4b40cba38db49978cacc36174ae8da441872ff71571699e"
+    },
+    {
+      "bytes": 7,
+      "kind": "notice",
+      "licensePath": null,
+      "noticePath": null,
+      "path": "licenses/NOTICE-primary.md",
+      "sha256": "8f631e62e8a4d782a5ee49d0b7792030f83dc196505353bf175aef56842191cd"
+    },
+    {
+      "bytes": 8,
+      "kind": "notice",
+      "licensePath": null,
+      "noticePath": null,
+      "path": "licenses/NOTICE-vad.md",
+      "sha256": "00dabbd8e67b133d19424b21f3a89f17b0400c493a890081c6fda10bd8f17633"
+    },
+    {
+      "bytes": 9,
+      "kind": "source",
+      "licensePath": "licenses/LICENSE-Qwen3-ASR.txt",
+      "noticePath": "licenses/NOTICE-aligner.md",
+      "path": "model/aligner/chat_template.jinja",
+      "sha256": "2e414067fad421af64835de949e1c82a85da18b47d930f71231da2792e67e3c1"
+    },
+    {
+      "bytes": 10,
+      "kind": "source",
+      "licensePath": "licenses/LICENSE-Qwen3-ASR.txt",
+      "noticePath": "licenses/NOTICE-aligner.md",
+      "path": "model/aligner/config.json",
+      "sha256": "da73d70a071ab293c3c9848d95e61e0b65edc44dcc6917d7af46d0803380463d"
+    },
+    {
+      "bytes": 11,
+      "kind": "source",
+      "licensePath": "licenses/LICENSE-Qwen3-ASR.txt",
+      "noticePath": "licenses/NOTICE-aligner.md",
+      "path": "model/aligner/model.safetensors",
+      "sha256": "26015fdf71242d7d412ecd3f81a1e4f9be9f73b76905954c1a0b9e837c107c63"
+    },
+    {
+      "bytes": 12,
+      "kind": "source",
+      "licensePath": "licenses/LICENSE-Qwen3-ASR.txt",
+      "noticePath": "licenses/NOTICE-aligner.md",
+      "path": "model/aligner/processor_config.json",
+      "sha256": "fcfb156c1aa086b0999dfade945b2bd3779c68c05b9c92c879f8965fcccb7439"
+    },
+    {
+      "bytes": 13,
+      "kind": "source",
+      "licensePath": "licenses/LICENSE-Qwen3-ASR.txt",
+      "noticePath": "licenses/NOTICE-aligner.md",
+      "path": "model/aligner/tokenizer.json",
+      "sha256": "30263e3b8d77a3d416f69522d0812507cb9a547c7ccc93449230febcc2ae9b89"
+    },
+    {
+      "bytes": 14,
+      "kind": "source",
+      "licensePath": "licenses/LICENSE-Qwen3-ASR.txt",
+      "noticePath": "licenses/NOTICE-aligner.md",
+      "path": "model/aligner/tokenizer_config.json",
+      "sha256": "4ffb70c1f16381f207b193e6a65946d8a27e4c2ff5e299e45104fffd7daf34d3"
+    },
+    {
+      "bytes": 15,
+      "kind": "source",
+      "licensePath": "licenses/LICENSE-Qwen3-ASR.txt",
+      "noticePath": "licenses/NOTICE-fallback-architecture.md",
+      "path": "model/fallback-architecture/chat_template.jinja",
+      "sha256": "94fe2b7ccc9bff40144b5833eae099254dcc657d62a6d52556ab9482eddc6062"
+    },
+    {
+      "bytes": 16,
+      "kind": "source",
+      "licensePath": "licenses/LICENSE-Qwen3-ASR.txt",
+      "noticePath": "licenses/NOTICE-fallback-architecture.md",
+      "path": "model/fallback-architecture/config.json",
+      "sha256": "bddb471a3c8526526b80c29fc5410848295acfe258494e15e9ebc4122ffd84aa"
+    },
+    {
+      "bytes": 17,
+      "kind": "source",
+      "licensePath": "licenses/LICENSE-Qwen3-ASR.txt",
+      "noticePath": "licenses/NOTICE-fallback-architecture.md",
+      "path": "model/fallback-architecture/processor_config.json",
+      "sha256": "768e65fd7165338087ac2993a7c294903f92cf7786768acb5b78cd843b2563fd"
+    },
+    {
+      "bytes": 18,
+      "kind": "source",
+      "licensePath": "licenses/LICENSE-Qwen3-ASR.txt",
+      "noticePath": "licenses/NOTICE-fallback-architecture.md",
+      "path": "model/fallback-architecture/tokenizer.json",
+      "sha256": "b9eac4f7e957f0aa51ee61fb87cd28c9fd4b7e824356278ad9ae59ac49a62f9b"
+    },
+    {
+      "bytes": 19,
+      "kind": "source",
+      "licensePath": "licenses/LICENSE-Qwen3-ASR.txt",
+      "noticePath": "licenses/NOTICE-fallback-architecture.md",
+      "path": "model/fallback-architecture/tokenizer_config.json",
+      "sha256": "519ed30b4e845acae76e6c171bf8fa1e0a1fba01eb0219206a803fa489a4f14b"
+    },
+    {
+      "bytes": 20,
+      "kind": "source",
+      "licensePath": "licenses/LICENSE-Qwen3-ASR.txt",
+      "noticePath": "licenses/NOTICE-fallback-extra.md",
+      "path": "model/fallback-extra/config.json",
+      "sha256": "653abc2e49152bff129b7b10f4fa5323523e85fa0e0f3eb2e0302948281ddcda"
+    },
+    {
+      "bytes": 21,
+      "kind": "source",
+      "licensePath": "licenses/LICENSE-Qwen3-ASR.txt",
+      "noticePath": "licenses/NOTICE-fallback.md",
+      "path": "model/fallback/added_tokens.json",
+      "sha256": "3cbe81d4e209ae8ae687d1c34a4706cfe900fb8cd5f0ce8122767893aeb4c32f"
+    },
+    {
+      "bytes": 22,
+      "kind": "source",
+      "licensePath": "licenses/LICENSE-Qwen3-ASR.txt",
+      "noticePath": "licenses/NOTICE-fallback.md",
+      "path": "model/fallback/generation_config.json",
+      "sha256": "4dd1bfb81bce6f79354172e0d278e3da9f653a563b04e1e30d6a1eeba0b76573"
+    },
+    {
+      "bytes": 23,
+      "kind": "source",
+      "licensePath": "licenses/LICENSE-Qwen3-ASR.txt",
+      "noticePath": "licenses/NOTICE-fallback.md",
+      "path": "model/fallback/model.safetensors",
+      "sha256": "b3f3a654f0929287ec7d95a6865febd812ce5d31c544b9a7ea49d0e708d3ea1c"
+    },
+    {
+      "bytes": 24,
+      "kind": "source",
+      "licensePath": "licenses/LICENSE-Qwen3-ASR.txt",
+      "noticePath": "licenses/NOTICE-fallback.md",
+      "path": "model/fallback/special_tokens_map.json",
+      "sha256": "af168ff080918c66ec8c7bb721a94fe89eb75ac96d5b453b3db0e667865655c0"
+    },
+    {
+      "bytes": 25,
+      "kind": "source",
+      "licensePath": "licenses/LICENSE-Qwen3-ASR.txt",
+      "noticePath": "licenses/NOTICE-fallback.md",
+      "path": "model/fallback/tokenizer.json",
+      "sha256": "ac164d535fb919eed6d84b30de5f4ada0a00f813b9b251def46b7367ccda86f3"
+    },
+    {
+      "bytes": 26,
+      "kind": "source",
+      "licensePath": "licenses/LICENSE-Qwen3-ASR.txt",
+      "noticePath": "licenses/NOTICE-fallback.md",
+      "path": "model/fallback/tokenizer_config.json",
+      "sha256": "fc335fe00c5399eed24a0961c58bd985b0a874dc7281a395fafe736e9f849607"
+    },
+    {
+      "bytes": 27,
+      "kind": "source",
+      "licensePath": "licenses/LICENSE-Qwen3-ASR.txt",
+      "noticePath": "licenses/NOTICE-primary-architecture.md",
+      "path": "model/primary-architecture/config.json",
+      "sha256": "d1bf4599aca6ed54ed69c825440e2a49783debca43a5ebfb75c875bc9b1c064d"
+    },
+    {
+      "bytes": 28,
+      "kind": "source",
+      "licensePath": "licenses/LICENSE-Qwen3-ASR.txt",
+      "noticePath": "licenses/NOTICE-primary.md",
+      "path": "model/primary/model.safetensors",
+      "sha256": "2ef5f1f8f048f9664e21637af03b8686c2f3f93c096430e132c84b0843abbfae"
+    },
+    {
+      "bytes": 29,
+      "kind": "source",
+      "licensePath": "licenses/LICENSE-Qwen3-ASR.txt",
+      "noticePath": "licenses/NOTICE-vad.md",
+      "path": "model/vad/model.onnx",
+      "sha256": "998ad29e667034c0ba608d2d42e2c15ac429afbfbcb1f3dc17d318cc3c44fdef"
+    }
+  ],
+  "cpuPaths": [
+    "licenses/LICENSE-Qwen3-ASR.txt",
+    "licenses/NOTICE-aligner.md",
+    "licenses/NOTICE-fallback-architecture.md",
+    "licenses/NOTICE-fallback.md",
+    "model/aligner/chat_template.jinja",
+    "model/aligner/config.json",
+    "model/aligner/model.safetensors",
+    "model/aligner/processor_config.json",
+    "model/aligner/tokenizer.json",
+    "model/aligner/tokenizer_config.json",
+    "model/fallback-architecture/chat_template.jinja",
+    "model/fallback-architecture/config.json",
+    "model/fallback-architecture/processor_config.json",
+    "model/fallback-architecture/tokenizer.json",
+    "model/fallback-architecture/tokenizer_config.json",
+    "model/fallback/added_tokens.json",
+    "model/fallback/generation_config.json",
+    "model/fallback/model.safetensors",
+    "model/fallback/special_tokens_map.json",
+    "model/fallback/tokenizer.json",
+    "model/fallback/tokenizer_config.json"
+  ]
+}

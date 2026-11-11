@@ -71,7 +71,7 @@
       "cache": true,
       "executor": "nx:run-commands",
       "options": {
-        "command": "node --test tools/release/version-sources.test.ts tools/release/pnpm-lock-reader.test.ts tools/release/sync-versions.test.ts"
+        "command": "node --test tools/release/engine-catalog-parts.test.ts tools/release/version-sources.test.ts tools/release/pnpm-lock-reader.test.ts tools/release/sync-versions.test.ts"
       },
       "dependsOn": [
         "release-version-typecheck",

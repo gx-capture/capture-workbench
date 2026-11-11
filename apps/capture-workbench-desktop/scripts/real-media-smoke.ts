@@ -6,6 +6,7 @@ import { basename, join, resolve } from 'node:path';
 import net from 'node:net';
 
 import { assertStagedRuntime } from './assert-staged-runtime.ts';
+import { catalogDeliveries } from './practical-installed.ts';
 import { appRoot, stagedExecutable } from './stage-runtime.ts';
 import { pathToFileURL } from 'node:url';
 
@@ -205,16 +206,24 @@ function embeddedRequirementReason(
     ),
   );
   if (!requirement) return 'embedded engine catalog does not expose it';
-  const unavailableReason = requirement['unavailableReason'];
-  if (typeof unavailableReason === 'string' && unavailableReason.trim()) {
-    return `embedded engine catalog marks it unavailable: ${unavailableReason}`;
-  }
-  if (
-    !Array.isArray(requirement['artifacts']) ||
-    requirement['artifacts'].length === 0 ||
-    !asObject(requirement['modelFiles'])
-  ) {
+  let deliveries;
+  try {
+    deliveries = catalogDeliveries(requirement);
+  } catch {
     return 'embedded engine catalog does not contain a complete worker/model delivery';
+  }
+  for (const delivery of deliveries) {
+    const unavailableReason = delivery.unavailableReason;
+    if (typeof unavailableReason === 'string' && unavailableReason.trim()) {
+      return `embedded engine catalog marks it unavailable: ${unavailableReason}`;
+    }
+    if (
+      !Array.isArray(delivery.artifacts) ||
+      delivery.artifacts.length === 0 ||
+      !asObject(delivery.modelFiles)
+    ) {
+      return 'embedded engine catalog does not contain a complete worker/model delivery';
+    }
   }
   return '';
 }

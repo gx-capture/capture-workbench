@@ -260,9 +260,13 @@ def main() -> None:
         raise SystemExit(
             "The speech-recognition CPU worker archive and manifest must be passed together."
         )
-    if cpu_archive is not None and (
-        source_lock is None or release_mode(source_lock) == CORE_ONLY_RELEASE_MODE
-    ):
+    core_only = source_lock is not None and release_mode(source_lock) == CORE_ONLY_RELEASE_MODE
+    if core_only:
+        # Core-only publishes no speech unit. A target may always pass the CPU
+        # archive; it is not an input of this catalog.
+        cpu_archive = None
+        cpu_manifest = None
+    elif cpu_archive is not None and source_lock is None:
         raise SystemExit(
             "The speech-recognition CPU worker archive requires the speech model source lock."
         )
@@ -271,7 +275,7 @@ def main() -> None:
         and cpu_archive.parent.resolve() != arguments.ocr_worker_archive.parent.resolve()
     ):
         raise SystemExit("Worker archives must share one engine directory")
-    if source_lock is not None and release_mode(source_lock) == CORE_ONLY_RELEASE_MODE:
+    if core_only:
         speech: dict[str, object] | None = None
     elif cpu_archive is not None and cpu_manifest is not None and source_lock is not None:
         speech = speech_contents(

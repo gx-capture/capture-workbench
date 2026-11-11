@@ -2,7 +2,7 @@ import './test-temp-root.ts';
 import { RELEASE_VERSION } from './release/release-intent.ts';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -61,7 +61,10 @@ async function createFixture(): Promise<string> {
 
 async function createModelFixture(
   extraUnits: readonly (readonly [string, string])[] = [],
-  { splitSpeech = false }: { splitSpeech?: boolean } = {},
+  {
+    splitSpeech = false,
+    speechContents = false,
+  }: { splitSpeech?: boolean; speechContents?: boolean } = {},
 ): Promise<string> {
   const directory = await createFixture();
   const workerAssets = [
@@ -125,6 +128,55 @@ async function createModelFixture(
       unavailableReason: null,
     };
   });
+  if (speechContents) {
+    const cpuFileName = `capture-engine-speech-recognition-cpu-${version}-windows-x64.zip`;
+    const cpuArchive = Buffer.from('speech cpu worker fixture');
+    const cpuManifestName = `${cpuFileName.slice(0, -4)}-files.json`;
+    const cpuManifest = Buffer.from(
+      '{"entryPoint":"capture-engine-speech-recognition-cpu"}\n',
+    );
+    const index = requirements.findIndex(
+      (item) => item.requirementId === 'speech-recognition',
+    );
+    const legacy = requirements[index];
+    pendingWrites.push(writeFile(join(directory, cpuFileName), cpuArchive));
+    pendingWrites.push(
+      writeFile(join(directory, cpuManifestName), cpuManifest),
+    );
+    (requirements as Array<Record<string, unknown>>)[index] = {
+      requirementId: 'speech-recognition',
+      contents: [
+        {
+          id: 'cuda',
+          artifacts: legacy?.artifacts,
+          modelFiles: legacy?.modelFiles,
+          unavailableReason: null,
+        },
+        {
+          id: 'cpu',
+          artifacts: [
+            {
+              role: 'worker',
+              requirementId: 'speech-recognition',
+              artifactVersion: version,
+              workerProtocolVersion: '1',
+              platform: 'windows',
+              arch: 'x86_64',
+              fileName: cpuFileName,
+              bytes: cpuArchive.byteLength,
+              sha256: digest(cpuArchive),
+              extractedBytes: cpuArchive.byteLength,
+              entryPoint: 'capture-engine-speech-recognition-cpu',
+              filesManifestSha256: digest(cpuManifest),
+              url: `https://example.test/v${version}/${cpuFileName}`,
+            },
+          ],
+          modelFiles: legacy?.modelFiles,
+          unavailableReason: null,
+        },
+      ],
+    };
+  }
   await Promise.all(pendingWrites);
   const catalog = {
     catalogVersion: '2',
@@ -330,6 +382,112 @@ test('runtime release verifier accepts a worker archive published as checked par
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test('runtime release verifier accepts both speech contents and no other engine asset', async () => {
+  const directory = await createModelFixture([], { speechContents: true });
+  const cpuZip = `capture-engine-speech-recognition-cpu-${version}-windows-x64.zip`;
+  const cudaZip = `capture-engine-speech-recognition-${version}-windows-x64.zip`;
+  try {
+    const manifest = await verifyRuntimeRelease(directory, version);
+    assert.equal(manifest.runtimeVersion, version);
+    const names = await readdir(directory);
+    for (const name of [
+      cudaZip,
+      `${cudaZip.slice(0, -'.zip'.length)}-files.json`,
+      cpuZip,
+      `${cpuZip.slice(0, -'.zip'.length)}-files.json`,
+    ]) {
+      assert.equal(names.includes(name), true, name);
+    }
+    await writeFile(join(directory, 'extra.zip'), Buffer.from('x'));
+    await assert.rejects(
+      verifyRuntimeRelease(directory, version),
+      /outside the canonical asset set/u,
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('runtime release verifier rejects a contents release that drops a cpu asset', async () => {
+  const cpuZip = `capture-engine-speech-recognition-cpu-${version}-windows-x64.zip`;
+  const missingZip = await createModelFixture([], { speechContents: true });
+  const missingManifest = await createModelFixture([], { speechContents: true });
+  try {
+    await unlink(join(missingZip, cpuZip));
+    await unlink(join(missingManifest, `${cpuZip.slice(0, -'.zip'.length)}-files.json`));
+    await assert.rejects(
+      verifyRuntimeRelease(missingZip, version),
+      /outside the canonical asset set/u,
+    );
+    await assert.rejects(
+      verifyRuntimeRelease(missingManifest, version),
+      /outside the canonical asset set/u,
+    );
+  } finally {
+    await rm(missingZip, { recursive: true, force: true });
+    await rm(missingManifest, { recursive: true, force: true });
+  }
+});
+
+test('runtime release verifier rejects a cpu zip that the legacy catalog does not publish', async () => {
+  const directory = await createModelFixture();
+  try {
+    await writeFile(
+      join(directory, `capture-engine-speech-recognition-cpu-${version}-windows-x64.zip`),
+      Buffer.from('cpu'),
+    );
+    await assert.rejects(
+      verifyRuntimeRelease(directory, version),
+      /outside the canonical asset set/u,
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('runtime release verifier rejects a contents catalog whose keys are not exact', async () => {
+  const extraRequirementKey = await createModelFixture([], { speechContents: true });
+  const extraContentKey = await createModelFixture([], { speechContents: true });
+  try {
+    await rewriteCatalog(extraRequirementKey, (catalog) => {
+      const speech = catalog.requirements.find(
+        (item) => item.requirementId === 'speech-recognition',
+      );
+      speech.extra = true;
+    });
+    await rewriteCatalog(extraContentKey, (catalog) => {
+      const speech = catalog.requirements.find(
+        (item) => item.requirementId === 'speech-recognition',
+      );
+      const contents = speech.contents as Array<Record<string, unknown>>;
+      delete contents[0].unavailableReason;
+    });
+    await assert.rejects(
+      verifyRuntimeRelease(extraRequirementKey, version),
+      /not canonical/u,
+    );
+    await assert.rejects(
+      verifyRuntimeRelease(extraContentKey, version),
+      /not canonical/u,
+    );
+  } finally {
+    await rm(extraRequirementKey, { recursive: true, force: true });
+    await rm(extraContentKey, { recursive: true, force: true });
+  }
+});
+
+async function rewriteCatalog(
+  directory: string,
+  edit: (catalog: { requirements: Array<Record<string, unknown>> }) => void,
+): Promise<void> {
+  const catalogPath = join(directory, 'capture-engine-catalog.json');
+  const catalog = JSON.parse(await readFile(catalogPath, 'utf8')) as {
+    requirements: Array<Record<string, unknown>>;
+  };
+  edit(catalog);
+  await writeFile(catalogPath, canonicalJson(catalog));
+}
 
 test('runtime release verifier rejects a corrupted worker archive part', async () => {
   const directory = await createModelFixture([], { splitSpeech: true });

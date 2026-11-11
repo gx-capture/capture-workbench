@@ -14,6 +14,7 @@ import {
   assertNoAmbientModelOverrides,
   assertRealMediaModelEvidence,
   canonicalJson,
+  cpuSpeechModelFiles,
   desktopRuntimeReady,
   NATIVE_SOURCE_BROKER_DIALOG_CLASSES,
   NATIVE_SOURCE_DIALOG_CLASSES,
@@ -39,6 +40,7 @@ import {
   safeUiAutomationDiagnostics,
   sha256,
   shouldUseBackendReuseReadiness,
+  validateSourceLockAndCatalog,
   whisperCpuFallbackAllowedForSourceLock,
   windowsPowerShellExecutable,
 } from './real-media-model-smoke.ts';
@@ -1010,4 +1012,292 @@ test('desktop model smoke uses generated release catalog and WebView selectors',
   assert.match(source, /releaseGateSatisfied: false/u);
   assert.match(source, /localProductionPreflight: true/u);
   assert.match(source, /consumerE2e: false/u);
+});
+
+type ModelFile = {
+  readonly path: string;
+  readonly bytes: number;
+  readonly sha256: string;
+  readonly licensePath: string | null;
+  readonly noticePath: string | null;
+};
+
+function modelFile(path: string, notice: string | null, bytes = 1): ModelFile {
+  return {
+    path,
+    bytes,
+    sha256: sha256(Buffer.from(path)),
+    licensePath: notice === null ? null : 'licenses/LICENSE.txt',
+    noticePath: notice,
+  };
+}
+
+const speechLockFiles: readonly ModelFile[] = [
+  modelFile('licenses/LICENSE.txt', null),
+  modelFile('licenses/NOTICE-fallback.md', null),
+  modelFile('licenses/NOTICE-primary.md', null),
+  modelFile('model/fallback/model.safetensors', 'licenses/NOTICE-fallback.md', 2),
+  modelFile('model/primary/model.safetensors', 'licenses/NOTICE-primary.md', 3),
+];
+const cpuSpeechFiles = speechLockFiles.filter((item) => !item.path.includes('primary'));
+
+type CatalogEntry = Record<string, unknown> & { contents?: Array<Record<string, unknown>> };
+
+interface ModelContract {
+  readonly lockBytes: Buffer;
+  readonly lock: unknown;
+  readonly lockHash: string;
+  readonly requirements: CatalogEntry[];
+}
+
+function modelFilesFor(files: readonly ModelFile[], lockHash: string): Record<string, unknown> {
+  return {
+    artifactVersion: REAL_MODEL_RELEASE_VERSION,
+    entryPoint: 'model',
+    files,
+    manifestSha256: sha256(canonicalJson({
+      artifactVersion: REAL_MODEL_RELEASE_VERSION,
+      entryPoint: 'model',
+      files,
+      manifestVersion: '1',
+    })),
+    sourceLockSha256: lockHash,
+  };
+}
+
+function modelContract(speech: 'legacy' | 'contents'): ModelContract {
+  const ocrFiles = [modelFile('model/pipeline.json', null)];
+  const lock = {
+    lockVersion: '2',
+    releaseVersion: REAL_MODEL_RELEASE_VERSION,
+    approval: { status: 'approved', blockers: [] },
+    requirements: [
+      {
+        requirementId: 'windowsml-ocr',
+        artifactVersion: REAL_MODEL_RELEASE_VERSION,
+        entryPoint: 'model',
+        files: ocrFiles,
+      },
+      {
+        requirementId: 'speech-recognition',
+        artifactVersion: REAL_MODEL_RELEASE_VERSION,
+        entryPoint: 'model',
+        files: speechLockFiles,
+      },
+    ],
+    fixtures: [
+      {
+        kind: 'ocr',
+        expectedEngine: 'windowsml-ocr',
+        expectedDevice: 'windowsml-dml',
+        expectedModel: 'pp-ocrv6-medium-windowsml',
+        expectedText: 'sample',
+        bytes: 8,
+        pdfBytes: 9,
+        sha256: 'a'.repeat(64),
+        pdfSha256: 'b'.repeat(64),
+      },
+      {
+        kind: 'whisper',
+        expectedEngine: 'speech-recognition',
+        expectedModel: 'tea-asr-1.1',
+        expectedDevice: 'cuda',
+        preferGpu: true,
+        expectedNormalizedOutputSha256: 'e'.repeat(64),
+        sha256: 'f'.repeat(64),
+        bytes: 8,
+        expectedSegmentCount: { minimum: 1, maximum: 2 },
+      },
+    ],
+  };
+  const lockBytes = canonicalJson(lock);
+  const lockHash = sha256(lockBytes);
+  const delivery = (requirementId: string, fileName: string, files: readonly ModelFile[]) => ({
+    artifacts: [
+      {
+        role: 'worker',
+        requirementId,
+        artifactVersion: REAL_MODEL_RELEASE_VERSION,
+        platform: 'windows',
+        arch: 'x86_64',
+        entryPoint: fileName.replace(/\.zip$/u, '.exe'),
+        fileName,
+        bytes: 4,
+        sha256: 'c'.repeat(64),
+        extractedBytes: 1,
+        filesManifestSha256: 'd'.repeat(64),
+        url: `https://example.test/${fileName}`,
+      },
+    ],
+    modelFiles: modelFilesFor(files, lockHash),
+    unavailableReason: null,
+  });
+  const cuda = delivery('speech-recognition', 'capture-engine-speech-recognition.zip', speechLockFiles);
+  const cpu = delivery('speech-recognition', 'capture-engine-speech-recognition-cpu.zip', cpuSpeechFiles);
+  return {
+    lockBytes,
+    lock,
+    lockHash,
+    requirements: [
+      { requirementId: 'windowsml-ocr', ...delivery('windowsml-ocr', 'capture-engine-ocr.zip', ocrFiles) },
+      speech === 'legacy'
+        ? { requirementId: 'speech-recognition', ...cuda }
+        : {
+            requirementId: 'speech-recognition',
+            contents: [{ id: 'cuda', ...cuda }, { id: 'cpu', ...cpu }],
+          },
+    ],
+  };
+}
+
+function validateContract(contract: ModelContract) {
+  const catalog = {
+    catalogVersion: REAL_MODEL_CATALOG_VERSION,
+    runtimeVersion: REAL_MODEL_RELEASE_VERSION,
+    requirements: contract.requirements,
+  };
+  return validateSourceLockAndCatalog(contract.lockBytes, contract.lock, canonicalJson(catalog), catalog);
+}
+
+function speechContent(contract: ModelContract, id: 'cuda' | 'cpu'): Record<string, unknown> {
+  const content = contract.requirements[1]?.contents?.find((item) => item.id === id);
+  assert.ok(content);
+  return content;
+}
+
+test('model catalog validation compares a legacy delivery with the source lock', () => {
+  assert.deepEqual(
+    validateContract(modelContract('legacy')).workerArchives.map((item) => item.fileName),
+    ['capture-engine-ocr.zip', 'capture-engine-speech-recognition.zip'],
+  );
+});
+
+test('model catalog validation accepts cuda and cpu contents and serves the cuda worker', () => {
+  assert.deepEqual(
+    validateContract(modelContract('contents')).workerArchives.map((item) => item.fileName),
+    ['capture-engine-ocr.zip', 'capture-engine-speech-recognition.zip'],
+  );
+});
+
+test('model catalog validation rejects cuda model files that are not the full lock', () => {
+  const contract = modelContract('contents');
+  speechContent(contract, 'cuda').modelFiles = modelFilesFor(cpuSpeechFiles, contract.lockHash);
+  assert.throws(
+    () => validateContract(contract),
+    /^Error: speech-recognition generated model files drifted from the source lock\.$/u,
+  );
+});
+
+test('model catalog validation rejects a speech requirement that publishes only cpu', () => {
+  const contract = modelContract('contents');
+  const speech = contract.requirements[1];
+  assert.ok(speech?.contents);
+  speech.contents = speech.contents.filter((item) => item.id === 'cpu');
+  assert.throws(() => validateContract(contract), /speech-recognition catalog delivery is incomplete or unavailable/u);
+});
+
+const fallbackModel = 'model/fallback/model.safetensors';
+const cpuDrift = /speech-recognition cpu generated model files drifted from the source lock/u;
+const cpuFileVariants: ReadonlyArray<readonly [string, readonly ModelFile[], RegExp]> = [
+  [
+    'a file outside the lock',
+    [...cpuSpeechFiles, modelFile('model/fallback/unlocked.bin', 'licenses/NOTICE-fallback.md')],
+    cpuDrift,
+  ],
+  [
+    'a wrong size',
+    cpuSpeechFiles.map((item) => (item.path === fallbackModel ? { ...item, bytes: item.bytes + 1 } : item)),
+    cpuDrift,
+  ],
+  [
+    'a wrong hash',
+    cpuSpeechFiles.map((item) => (item.path === fallbackModel ? { ...item, sha256: '0'.repeat(64) } : item)),
+    cpuDrift,
+  ],
+  ['a primary path', speechLockFiles, /speech-recognition cpu model files must not include primary paths/u],
+  ['a missing expected path', cpuSpeechFiles.filter((item) => item.path !== 'licenses/NOTICE-fallback.md'), cpuDrift],
+];
+
+for (const [label, files, message] of cpuFileVariants) {
+  test(`model catalog validation rejects a cpu content with ${label}`, () => {
+    const contract = modelContract('contents');
+    speechContent(contract, 'cpu').modelFiles = modelFilesFor(files, contract.lockHash);
+    assert.throws(() => validateContract(contract), message);
+  });
+}
+
+const cpuWorker = (cpu: Record<string, unknown>): Record<string, unknown> => {
+  const [artifact] = cpu.artifacts as Array<Record<string, unknown>>;
+  assert.ok(artifact);
+  return artifact;
+};
+const cpuDeliveryVariants: ReadonlyArray<
+  readonly [string, (cpu: Record<string, unknown>, lockHash: string) => void, RegExp]
+> = [
+  [
+    'a worker of another version',
+    (cpu) => {
+      cpuWorker(cpu).artifactVersion = '0.0.1';
+    },
+    /speech-recognition cpu worker artifact version drifted/u,
+  ],
+  [
+    'an invalid worker digest',
+    (cpu) => {
+      cpuWorker(cpu).sha256 = 'not-a-digest';
+    },
+    /speech-recognition cpu catalog artifact digests are invalid/u,
+  ],
+  [
+    'model files of another version',
+    (cpu, lockHash) => {
+      cpu.modelFiles = { ...modelFilesFor(cpuSpeechFiles, lockHash), artifactVersion: '0.0.1' };
+    },
+    /speech-recognition cpu model artifact version drifted/u,
+  ],
+  [
+    'model files bound to another lock',
+    (cpu) => {
+      cpu.modelFiles = modelFilesFor(cpuSpeechFiles, 'f'.repeat(64));
+    },
+    /speech-recognition cpu catalog model files are not bound to the source lock/u,
+  ],
+  [
+    'a wrong model manifest digest',
+    (cpu, lockHash) => {
+      cpu.modelFiles = { ...modelFilesFor(cpuSpeechFiles, lockHash), manifestSha256: '0'.repeat(64) };
+    },
+    /speech-recognition cpu model manifest hash drifted/u,
+  ],
+  [
+    'no delivery',
+    (cpu) => {
+      cpu.artifacts = [];
+      cpu.modelFiles = null;
+      cpu.unavailableReason = 'not published';
+    },
+    /speech-recognition cpu model delivery must be a JSON object/u,
+  ],
+];
+
+for (const [label, change, message] of cpuDeliveryVariants) {
+  test(`model catalog validation rejects a cpu content with ${label}`, () => {
+    const contract = modelContract('contents');
+    change(speechContent(contract, 'cpu'), contract.lockHash);
+    assert.throws(() => validateContract(contract), message);
+  });
+}
+
+test('cpu speech model files follow the rule the catalog generator applies', async () => {
+  // test_model_source_lock.py checks cpu_speech_model_delivery against this sample.
+  const sample = JSON.parse(
+    await readFile(
+      new URL('../../../packages/capture-runtime/tests/fixtures/cpu-speech-subset-samples.json', import.meta.url),
+      'utf8',
+    ),
+  ) as { speechFiles: unknown[]; cpuPaths: string[] };
+  assert.deepEqual(
+    cpuSpeechModelFiles(sample.speechFiles).map((item) => item.path),
+    sample.cpuPaths,
+  );
 });
