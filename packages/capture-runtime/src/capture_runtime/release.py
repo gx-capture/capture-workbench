@@ -20,9 +20,16 @@ from capture_runtime.contracts import CaptureDocument
 
 if TYPE_CHECKING:
     from capture_runtime.provisioning.infrastructure.engine_catalog import (
+        EngineCatalog,
         EngineContentDescriptor,
         EngineRequirementDescriptor,
     )
+
+# A model-enabled release offers speech recognition as two packs: `cuda` for a
+# machine with the NVIDIA driver and `cpu` for one without (issue #154, product
+# owner 2026-11-11). A release that ships one of them would give some machines
+# no pack, or the 10.5 GB CUDA pack where 3.7 GB would do.
+RELEASE_SPEECH_CONTENT_IDS = frozenset({"cuda", "cpu"})
 
 CAPTURE_DOCUMENT_SCHEMA_ID = (
     "https://github.com/gx-capture/capture-workbench/schema/capture-document-v2.schema.json"
@@ -48,6 +55,26 @@ def _catalog_deliveries(
     if requirement.contents:
         return requirement.contents
     return (requirement,)
+
+
+def assert_release_speech_contents(catalog: EngineCatalog) -> None:
+    """Fail unless ``speech-recognition`` offers exactly the ``cuda`` and ``cpu`` contents.
+
+    A legacy single delivery, the shape releases up to 0.9.0 published, fails
+    too. The runtime's catalog parser still reads it; only a new release may not.
+    """
+
+    speech = next(
+        (item for item in catalog.requirements if item.requirement_id == "speech-recognition"),
+        None,
+    )
+    content_ids = [content.content_id for content in speech.contents] if speech else []
+    if len(content_ids) != len(RELEASE_SPEECH_CONTENT_IDS) or (
+        set(content_ids) != RELEASE_SPEECH_CONTENT_IDS
+    ):
+        raise ValueError(
+            "release engine catalog must offer speech-recognition as the cuda and cpu contents"
+        )
 
 
 def _validated_engine_release_files(
@@ -80,6 +107,7 @@ def _validated_engine_release_files(
     ]
     if incomplete:
         raise ValueError("release engine catalog is incomplete: " + ", ".join(incomplete))
+    assert_release_speech_contents(catalog)
 
     manifests = tuple(
         item

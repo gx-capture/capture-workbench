@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shlex
 import subprocess
 import sys
 import zipfile
@@ -59,6 +60,11 @@ def test_direct_source_lock_generates_catalog_without_model_release_assets(
         f"capture-engine-speech-recognition-{RUNTIME_VERSION}-windows-x64.zip",
         "capture-engine-speech-recognition.exe",
     )
+    cpu_speech_worker, cpu_speech_worker_manifest = archive_pair(
+        engine_dir,
+        f"capture-engine-speech-recognition-cpu-{RUNTIME_VERSION}-windows-x64.zip",
+        "capture-engine-speech-recognition-cpu.exe",
+    )
     source_lock, _content = approved_source_lock()
     source_lock_path = tmp_path / "model-source-lock.json"
     source_lock_path.write_bytes(canonical_json_bytes(source_lock))
@@ -82,6 +88,10 @@ def test_direct_source_lock_generates_catalog_without_model_release_assets(
             str(speech_recognition_worker),
             "--speech-recognition-worker-manifest",
             str(speech_recognition_worker_manifest),
+            "--speech-recognition-cpu-worker-archive",
+            str(cpu_speech_worker),
+            "--speech-recognition-cpu-worker-manifest",
+            str(cpu_speech_worker_manifest),
         ],
         env=environment,
         stdin=subprocess.DEVNULL,
@@ -91,17 +101,23 @@ def test_direct_source_lock_generates_catalog_without_model_release_assets(
 
     catalog = EngineCatalog.from_dict(json.loads(catalog_path.read_text(encoding="utf-8")))
     assert catalog.catalog_version == "2"
-    assert all(requirement.complete for requirement in catalog.requirements)
-    # The vertical reader is models only; every other unit has one worker.
-    assert {
-        requirement.requirement_id: [artifact.role for artifact in requirement.artifacts]
+    deliveries = {
+        requirement.requirement_id: requirement.contents or (requirement,)
         for requirement in catalog.requirements
-    } == {
-        "windowsml-ocr": ["worker"],
-        "speech-recognition": ["worker"],
-        "vertical-japanese-reader": [],
     }
-    assert all(requirement.model_delivery().files for requirement in catalog.requirements)
+    assert all(delivery.complete for items in deliveries.values() for delivery in items)
+    # The vertical reader is models only; every other delivery has one worker.
+    assert {
+        requirement_id: [[artifact.role for artifact in item.artifacts] for item in items]
+        for requirement_id, items in deliveries.items()
+    } == {
+        "windowsml-ocr": [["worker"]],
+        "speech-recognition": [["worker"], ["worker"]],
+        "vertical-japanese-reader": [[]],
+    }
+    assert all(
+        delivery.model_delivery().files for items in deliveries.values() for delivery in items
+    )
 
     executable = tmp_path / "capture-runtime.exe"
     executable.write_bytes(b"runtime")
@@ -117,8 +133,10 @@ def test_direct_source_lock_generates_catalog_without_model_release_assets(
     for artifact in (
         ocr_worker,
         speech_recognition_worker,
+        cpu_speech_worker,
         ocr_worker_manifest,
         speech_recognition_worker_manifest,
+        cpu_speech_worker_manifest,
     ):
         assert (release / artifact.name).is_file()
         assert not (release / f"{artifact.name}.sha256").exists()
@@ -340,6 +358,11 @@ def test_split_worker_archive_is_catalogued_as_parts_and_released(tmp_path: Path
         f"capture-engine-speech-recognition-{RUNTIME_VERSION}-windows-x64.zip",
         "capture-engine-speech-recognition.exe",
     )
+    cpu_worker, cpu_worker_manifest = archive_pair(
+        engine_dir,
+        f"capture-engine-speech-recognition-cpu-{RUNTIME_VERSION}-windows-x64.zip",
+        "capture-engine-speech-recognition-cpu.exe",
+    )
     whole = speech_worker.read_bytes()
     parts = split_archive(speech_worker, part_bytes=200)
     source_lock, _content = approved_source_lock()
@@ -366,6 +389,10 @@ def test_split_worker_archive_is_catalogued_as_parts_and_released(tmp_path: Path
             str(speech_worker),
             "--speech-recognition-worker-manifest",
             str(speech_worker_manifest),
+            "--speech-recognition-cpu-worker-archive",
+            str(cpu_worker),
+            "--speech-recognition-cpu-worker-manifest",
+            str(cpu_worker_manifest),
         ],
         env=environment,
         stdin=subprocess.DEVNULL,
@@ -374,9 +401,9 @@ def test_split_worker_archive_is_catalogued_as_parts_and_released(tmp_path: Path
     )
 
     catalog = EngineCatalog.from_dict(json.loads(catalog_path.read_text(encoding="utf-8")))
-    speech = next(
-        item for item in catalog.requirements if item.requirement_id == "speech-recognition"
-    ).worker_artifact()
+    cuda = catalog.requirement("speech-recognition").find_content("cuda")
+    assert cuda is not None
+    speech = cuda.worker_artifact()
     assert speech.url is None
     assert (speech.bytes, speech.sha256) == (len(whole), hashlib.sha256(whole).hexdigest())
     assert [(part.file_name, part.url) for part in speech.parts] == [
@@ -682,3 +709,65 @@ def test_core_only_lock_ignores_a_passed_cpu_speech_archive(tmp_path: Path) -> N
     assert ignored.returncode == 0, ignored.stderr
     assert without_cpu.read_bytes() == with_cpu.read_bytes() == missing.read_bytes()
     assert json.loads(without_cpu.read_text(encoding="utf-8"))["requirements"] == []
+
+
+def _release_catalog_target_arguments() -> list[str]:
+    """The generator arguments of the Nx ``generate-release-engine-catalog`` target."""
+
+    project = json.loads((SCRIPT_PATH.parents[1] / "project.json").read_text(encoding="utf-8"))
+    command = project["targets"]["generate-release-engine-catalog"]["options"]["command"]
+    words = shlex.split(command)
+    arguments = words[words.index("scripts/generate_engine_catalog.py") + 1 :]
+    return [item.replace("{releaseVersion}", RUNTIME_VERSION) for item in arguments]
+
+
+def test_release_catalog_target_offers_the_cuda_and_cpu_speech_contents(tmp_path: Path) -> None:
+    # Run the generator with the target's own arguments, from a package root
+    # whose dist/engines holds a fixture for every worker archive it names.
+    arguments = _release_catalog_target_arguments()
+    options = dict(zip(arguments[::2], arguments[1::2], strict=True))
+    engine_dir = tmp_path / "dist" / "engines"
+    engine_dir.mkdir(parents=True)
+    for flag, value in options.items():
+        if flag.endswith("-worker-archive"):
+            name = Path(value).name
+            archive_pair(engine_dir, name, name.split(f"-{RUNTIME_VERSION}-")[0] + ".exe")
+    source_lock, _content = approved_source_lock()
+    lock_path = tmp_path / options["--model-source-lock"]
+    lock_path.parent.mkdir(parents=True)
+    lock_path.write_bytes(canonical_json_bytes(source_lock))
+
+    completed = subprocess.run(
+        [sys.executable, str(SCRIPT_PATH), *arguments],
+        cwd=tmp_path,
+        env={**os.environ, "PYTHONPATH": str(SCRIPT_PATH.parents[1] / "src")},
+        stdin=subprocess.DEVNULL,
+        shell=False,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    catalog_path = tmp_path / options["--output"]
+    payload = json.loads(catalog_path.read_text(encoding="utf-8"))
+    speech = next(
+        item for item in payload["requirements"] if item["requirementId"] == "speech-recognition"
+    )
+    assert [item["id"] for item in speech["contents"]] == ["cuda", "cpu"]
+    # The test lock has no speaker unit, so that archive is not a release file here.
+    for path in engine_dir.glob("capture-engine-diarization-*"):
+        path.unlink()
+    executable = tmp_path / "capture-runtime.exe"
+    executable.write_bytes(b"runtime")
+    release = tmp_path / "release"
+    build_release_artifacts(
+        executable=executable,
+        schema=write_capture_document_schema(tmp_path / "capture-document-v2.schema.json"),
+        output_dir=release,
+        engine_dir=engine_dir,
+        engine_catalog=catalog_path,
+    )
+    cpu_zip = Path(options["--speech-recognition-cpu-worker-archive"]).name
+    assert (release / cpu_zip).is_file()
+    assert (release / Path(options["--speech-recognition-cpu-worker-manifest"]).name).is_file()

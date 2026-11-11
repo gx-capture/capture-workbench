@@ -6,10 +6,11 @@ import importlib.util
 import sys
 from pathlib import Path
 from types import ModuleType
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
+from capture_runtime._worker_payloads import WorkerProbeResult, WorkerRunResult, WorkerSegment
 from capture_runtime.capture.infrastructure.capture_worker_client import WorkerClient
 from capture_runtime.constants import RUNTIME_VERSION
 from capture_runtime.provisioning.infrastructure import engine_installation
@@ -20,8 +21,9 @@ from capture_runtime.provisioning.infrastructure.engine_catalog import (
 from capture_runtime.provisioning.infrastructure.engine_installation import (
     EngineInstallationManager,
 )
+from capture_runtime.worker_client import InstalledEngine
 from capture_runtime.worker_contracts import WORKER_PROTOCOL_VERSION
-from tests.direct_model_fixtures import approved_source_lock
+from tests.direct_model_fixtures import approved_source_lock, pending_source_lock
 
 SCRIPT_DIR = Path(__file__).resolve().parents[2] / "scripts"
 MODULE_PATH = SCRIPT_DIR / "verify_release_model_candidate.py"
@@ -391,6 +393,254 @@ def test_candidate_installs_the_cuda_speech_content_on_a_machine_without_a_drive
     assert _first_worker_download(pinned, monkeypatch) == "capture-engine-speech-recognition.zip"
     # The pinned manager never asks the driver.
     assert driver_probes == [False]
+
+
+def test_cpu_pass_installs_the_cpu_speech_content_on_a_machine_with_a_driver(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lock, _content = approved_source_lock()
+    catalog = _candidate_catalog(lock, speech_contents=True)
+    driver_probes: list[bool] = []
+
+    def driver() -> bool:
+        driver_probes.append(True)
+        return True
+
+    monkeypatch.setattr(engine_installation, "detect_nvidia_driver", driver)
+    manager = candidate._candidate_installation_manager(
+        tmp_path / "cpu", catalog, WorkerClient(), tmp_path, speech_variant="cpu"
+    )
+
+    assert _first_worker_download(manager, monkeypatch) == (
+        "capture-engine-speech-recognition-cpu.zip"
+    )
+    assert driver_probes == []
+
+
+def _write_candidate_inputs(
+    tmp_path: Path, lock: dict[str, Any], payload: dict[str, Any]
+) -> tuple[Path, Path]:
+    lock_path = tmp_path / "model-source-lock.json"
+    lock_path.write_bytes(canonical_json_bytes(lock))
+    catalog_path = tmp_path / "capture-engine-catalog.json"
+    catalog_path.write_bytes(canonical_json_bytes(payload))
+    return lock_path, catalog_path
+
+
+def _speech_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    return next(
+        item for item in payload["requirements"] if item["requirementId"] == "speech-recognition"
+    )
+
+
+@pytest.mark.parametrize("shape", ["legacy", "cuda only", "cpu only"])
+def test_model_enabled_candidate_requires_both_speech_contents(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, shape: str
+) -> None:
+    lock, _content = approved_source_lock()
+    payload = _candidate_catalog(lock, speech_contents=shape != "legacy").to_dict()
+    if shape != "legacy":
+        kept = "cuda" if shape == "cuda only" else "cpu"
+        speech = _speech_payload(payload)
+        speech["contents"] = [item for item in speech["contents"] if item["id"] == kept]
+    lock_path, catalog_path = _write_candidate_inputs(tmp_path, lock, payload)
+    monkeypatch.delenv("CAPTURE_PRIVATE_WHISPER_FIXTURE", raising=False)
+    output = tmp_path / "evidence.json"
+
+    with pytest.raises(candidate.EngineInstallationError, match="cuda and cpu contents"):
+        asyncio.run(
+            candidate.verify_candidate(
+                catalog_path=catalog_path,
+                engine_dir=tmp_path,
+                source_lock_path=lock_path,
+                output=output,
+                private_whisper_fixture=None,
+            )
+        )
+    assert not output.exists()
+
+
+def test_model_enabled_candidate_with_both_speech_contents_goes_on_to_the_fixtures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lock, _content = approved_source_lock()
+    payload = _candidate_catalog(lock, speech_contents=True).to_dict()
+    lock_path, catalog_path = _write_candidate_inputs(tmp_path, lock, payload)
+    monkeypatch.delenv("CAPTURE_PRIVATE_WHISPER_FIXTURE", raising=False)
+
+    with pytest.raises(candidate.EngineInstallationError, match="private Whisper fixture"):
+        asyncio.run(
+            candidate.verify_candidate(
+                catalog_path=catalog_path,
+                engine_dir=tmp_path,
+                source_lock_path=lock_path,
+                output=tmp_path / "evidence.json",
+                private_whisper_fixture=None,
+            )
+        )
+
+
+def test_speech_preflight_still_reads_a_legacy_catalog(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lock = pending_source_lock()
+    payload = _candidate_catalog(lock, speech_contents=False).to_dict()
+    lock_path, catalog_path = _write_candidate_inputs(tmp_path, lock, payload)
+    monkeypatch.delenv("CAPTURE_PRIVATE_WHISPER_FIXTURE", raising=False)
+
+    # The legacy catalog passes the binding check and stops only at the
+    # missing private fixture, not at the release rule for both speech packs.
+    with pytest.raises(candidate.EngineInstallationError, match="private Whisper fixture"):
+        asyncio.run(
+            candidate.verify_candidate(
+                catalog_path=catalog_path,
+                engine_dir=tmp_path,
+                source_lock_path=lock_path,
+                output=tmp_path / "evidence.json",
+                private_whisper_fixture=None,
+                preflight=True,
+            )
+        )
+
+
+class _FakeCpuWorker:
+    """Answers the cpu pass's probe and run with chosen provenance."""
+
+    def __init__(
+        self,
+        *,
+        probe_ready: bool = True,
+        probe_device: str = "cpu",
+        model: str = "tea-asr-1.1-mini",
+        device: str = "cpu",
+        text: str = "fixture words",
+    ) -> None:
+        self.probe_ready, self.probe_device = probe_ready, probe_device
+        self.model, self.device, self.text = model, device, text
+        self.probe_options: list[dict[str, object] | None] = []
+        self.run_options: list[dict[str, object]] = []
+
+    async def probe(
+        self,
+        _engine: InstalledEngine,
+        *,
+        include_model: bool,
+        options: dict[str, object] | None = None,
+        timeout_seconds: float = 0,
+    ) -> WorkerProbeResult:
+        assert include_model
+        self.probe_options.append(options)
+        return WorkerProbeResult(
+            ready=self.probe_ready,
+            code_ready=True,
+            assets_ready=self.probe_ready,
+            detail="probe",
+            device=self.probe_device,
+        )
+
+    async def run(
+        self,
+        _engine: InstalledEngine,
+        *,
+        source_path: Path,
+        media_type: str,
+        options: dict[str, object],
+        cancel_event: asyncio.Event,
+        timeout_seconds: float,
+    ) -> WorkerRunResult:
+        self.run_options.append(options)
+        return WorkerRunResult(
+            segments=(
+                WorkerSegment(order=0, text=self.text, start_ms=0, end_ms=1_000),
+                WorkerSegment(order=1, text=self.text, start_ms=1_000, end_ms=2_000),
+            ),
+            engine="speech-recognition",
+            model=self.model,
+            digest="sha256:" + "a" * 64,
+            device=self.device,
+            warnings=(),
+        )
+
+
+def _cpu_engine(tmp_path: Path, content_id: str | None = "cpu") -> InstalledEngine:
+    return InstalledEngine(
+        requirement_id="speech-recognition",
+        artifact_version=RUNTIME_VERSION,
+        executable=tmp_path / "capture-engine-speech-recognition-cpu.exe",
+        model_dir=tmp_path / "model",
+        content_id=content_id,
+    )
+
+
+def _cpu_pass(tmp_path: Path, worker: _FakeCpuWorker, content_id: str | None = "cpu"):
+    lock, _content = approved_source_lock()
+    fixture = next(item for item in lock["fixtures"] if item["kind"] == "whisper")
+    return asyncio.run(
+        candidate._verify_cpu_speech_engine(
+            _cpu_engine(tmp_path, content_id),
+            cast(Any, worker),
+            source_path=tmp_path / "whisper",
+            fixture=fixture,
+        )
+    ), fixture
+
+
+def test_cpu_pass_records_mini_on_the_cpu_without_the_transcript(tmp_path: Path) -> None:
+    worker = _FakeCpuWorker()
+
+    evidence, fixture = _cpu_pass(tmp_path, worker)
+
+    assert worker.probe_options == [{"preferGpu": True, "content": "cpu"}]
+    assert worker.run_options == [
+        {
+            "maxDurationMs": candidate.WHISPER_CANDIDATE_MAX_DURATION_MS,
+            "preferGpu": True,
+            "allowCpuFallback": True,
+            "content": "cpu",
+        }
+    ]
+    assert evidence == {
+        "assertionsPassed": True,
+        "contentId": "cpu",
+        "device": "cpu",
+        "digest": "sha256:" + "a" * 64,
+        "engine": "speech-recognition",
+        "fixtureSha256": fixture["sha256"],
+        "model": "tea-asr-1.1-mini",
+        "normalizedOutputSha256": hashlib.sha256(b"fixture words fixture words").hexdigest(),
+        "requirementId": "speech-recognition",
+        "segmentCount": 2,
+        "segmentsMonotonic": True,
+    }
+    assert b"fixture words" not in canonical_json_bytes(evidence)
+
+
+@pytest.mark.parametrize(
+    ("worker", "content_id", "message"),
+    [
+        (_FakeCpuWorker(model="tea-asr-1.1"), "cpu", "output/provenance"),
+        (_FakeCpuWorker(device="cuda"), "cpu", "output/provenance"),
+        (_FakeCpuWorker(text="   "), "cpu", "output/provenance"),
+        (_FakeCpuWorker(probe_device="cuda"), "cpu", "probe"),
+        (_FakeCpuWorker(probe_ready=False), "cpu", "probe"),
+        (_FakeCpuWorker(), "cuda", "did not activate"),
+        (_FakeCpuWorker(), None, "did not activate"),
+    ],
+    ids=[
+        "the full model",
+        "a cuda device",
+        "an empty transcript",
+        "a cuda probe",
+        "a probe that is not ready",
+        "the cuda content",
+        "a legacy install",
+    ],
+)
+def test_cpu_pass_rejects(
+    tmp_path: Path, worker: _FakeCpuWorker, content_id: str | None, message: str
+) -> None:
+    with pytest.raises(candidate.EngineInstallationError, match=message):
+        _cpu_pass(tmp_path, worker, content_id)
 
 
 def test_candidate_pin_does_not_change_a_legacy_speech_install(

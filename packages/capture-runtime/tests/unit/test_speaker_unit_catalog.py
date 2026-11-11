@@ -150,7 +150,13 @@ def _generate(tmp_path: Path, lock: dict[str, Any], *, with_speaker_worker: bool
     engine_dir = tmp_path / "engines"
     engine_dir.mkdir()
     arguments = [sys.executable, str(SCRIPT_PATH)]
-    for engine in ("ocr", "speech-recognition", *(("diarization",) if with_speaker_worker else ())):
+    engines = (
+        "ocr",
+        "speech-recognition",
+        "speech-recognition-cpu",
+        *(("diarization",) if with_speaker_worker else ()),
+    )
+    for engine in engines:
         archive, manifest = _archive(engine_dir, engine)
         arguments += [f"--{engine}-worker-archive", str(archive)]
         arguments += [f"--{engine}-worker-manifest", str(manifest)]
@@ -268,6 +274,7 @@ def test_a_models_only_unit_enters_the_catalog_and_the_release_without_an_archiv
     assert sorted(path.name for path in release.glob("capture-engine-*.zip")) == [
         f"capture-engine-ocr-{RUNTIME_VERSION}-windows-x64.zip",
         f"capture-engine-speech-recognition-{RUNTIME_VERSION}-windows-x64.zip",
+        f"capture-engine-speech-recognition-cpu-{RUNTIME_VERSION}-windows-x64.zip",
     ]
 
 

@@ -208,6 +208,7 @@ test('real-media runtime environment removes ambient provider and model override
       CAPTURE_WINDOWSML_MODEL_DIR: 'C:\\ambient-ocr',
       CAPTURE_WHISPER_MODELS_DIR: 'C:\\ambient-whisper',
       CAPTURE_REAL_MEDIA_PDF: 'C:\\secret-fixture.pdf',
+      CAPTURE_SPEECH_RECOGNITION_VARIANT: 'cpu',
       OLLAMA_MODELS: 'C:\\ambient-ollama',
     },
   );
@@ -219,6 +220,8 @@ test('real-media runtime environment removes ambient provider and model override
   assert.equal(environment.CAPTURE_REAL_MEDIA_PDF, undefined);
   assert.equal(environment.OLLAMA_MODELS, undefined);
   assert.equal(environment.CAPTURE_WHISPER_PREFER_GPU, 'true');
+  // An ambient cpu cannot reach the runtime: the smoke installs cuda on any machine.
+  assert.equal(environment.CAPTURE_SPEECH_RECOGNITION_VARIANT, 'cuda');
 });
 
 test('source-lock Whisper role is the production worker model provenance', () => {

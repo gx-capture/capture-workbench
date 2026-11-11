@@ -701,6 +701,9 @@ export function runtimeEnvironment(
     CAPTURE_RETENTION_HOURS: '24',
     CAPTURE_MAX_UPLOAD_BYTES: String(50 * 1024 * 1024),
     CAPTURE_WHISPER_PREFER_GPU: String(expectedProvenance.whisperPreferGpu),
+    // The lock's speech fixture is TEA-ASR 1.1, which only the cuda content
+    // carries. Without this a machine with no NVIDIA driver installs cpu.
+    CAPTURE_SPEECH_RECOGNITION_VARIANT: 'cuda',
   };
 }
 

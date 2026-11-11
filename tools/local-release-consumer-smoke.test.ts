@@ -63,7 +63,7 @@ async function createModelFixture(
   extraUnits: readonly (readonly [string, string])[] = [],
   {
     splitSpeech = false,
-    speechContents = false,
+    speechContents = true,
   }: { splitSpeech?: boolean; speechContents?: boolean } = {},
 ): Promise<string> {
   const directory = await createFixture();
@@ -385,20 +385,22 @@ test('runtime release verifier accepts a worker archive published as checked par
 
 test('runtime release verifier accepts both speech contents and no other engine asset', async () => {
   const directory = await createModelFixture([], { speechContents: true });
-  const cpuZip = `capture-engine-speech-recognition-cpu-${version}-windows-x64.zip`;
-  const cudaZip = `capture-engine-speech-recognition-${version}-windows-x64.zip`;
+  const engineAsset = (stem: string) => [
+    `${stem}-${version}-windows-x64.zip`,
+    `${stem}-${version}-windows-x64-files.json`,
+  ];
   try {
     const manifest = await verifyRuntimeRelease(directory, version);
     assert.equal(manifest.runtimeVersion, version);
-    const names = await readdir(directory);
-    for (const name of [
-      cudaZip,
-      `${cudaZip.slice(0, -'.zip'.length)}-files.json`,
-      cpuZip,
-      `${cpuZip.slice(0, -'.zip'.length)}-files.json`,
-    ]) {
-      assert.equal(names.includes(name), true, name);
-    }
+    // The release is exactly the runtime, the catalog, and each worker of
+    // OCR and both speech contents with its files manifest.
+    assert.deepEqual((await readdir(directory)).sort(), [
+      ...RUNTIME_ASSET_NAMES,
+      'capture-engine-catalog.json',
+      ...engineAsset('capture-engine-ocr'),
+      ...engineAsset('capture-engine-speech-recognition'),
+      ...engineAsset('capture-engine-speech-recognition-cpu'),
+    ].sort());
     await writeFile(join(directory, 'extra.zip'), Buffer.from('x'));
     await assert.rejects(
       verifyRuntimeRelease(directory, version),
@@ -430,21 +432,34 @@ test('runtime release verifier rejects a contents release that drops a cpu asset
   }
 });
 
-test('runtime release verifier rejects a cpu zip that the legacy catalog does not publish', async () => {
-  const directory = await createModelFixture();
-  try {
-    await writeFile(
-      join(directory, `capture-engine-speech-recognition-cpu-${version}-windows-x64.zip`),
-      Buffer.from('cpu'),
-    );
-    await assert.rejects(
-      verifyRuntimeRelease(directory, version),
-      /outside the canonical asset set/u,
-    );
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-});
+for (const [label, kept] of [
+  ['a legacy speech delivery', undefined],
+  ['only the cuda speech content', 'cuda'],
+  ['only the cpu speech content', 'cpu'],
+] as const) {
+  test(`runtime release verifier rejects ${label}`, async () => {
+    const directory = await createModelFixture([], { speechContents: kept !== undefined });
+    try {
+      if (kept !== undefined) {
+        await rewriteCatalog(directory, (catalog) => {
+          const speech = catalog.requirements.find(
+            (item) => item.requirementId === 'speech-recognition',
+          );
+          assert.ok(speech);
+          speech.contents = (speech.contents as Array<Record<string, unknown>>).filter(
+            (item) => item.id === kept,
+          );
+        });
+      }
+      await assert.rejects(
+        verifyRuntimeRelease(directory, version),
+        /must offer speech-recognition as the cuda and cpu contents/u,
+      );
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+}
 
 test('runtime release verifier rejects a contents catalog whose keys are not exact', async () => {
   const extraRequirementKey = await createModelFixture([], { speechContents: true });

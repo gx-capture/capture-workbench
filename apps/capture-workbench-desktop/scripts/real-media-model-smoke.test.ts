@@ -12,6 +12,7 @@ import {
   audioCheckpointSatisfied,
   assertCudaPathRetainedForAppLaunch,
   assertNoAmbientModelOverrides,
+  assertNvidiaDriverForCudaSpeechContent,
   assertRealMediaModelEvidence,
   canonicalJson,
   cpuSpeechModelFiles,
@@ -208,6 +209,29 @@ test('ambient provider/model overrides are rejected before launching the app', (
     () => assertNoAmbientModelOverrides({ OLLAMA_MODELS: 'C:\\ambient', PATH: 'C:\\Windows' }),
     /ambient model\/provider overrides/u,
   );
+  for (const name of ['CAPTURE_SPEECH_RECOGNITION_VARIANT', 'CAPTURE_SPEECH_RECOGNITION_MODEL']) {
+    assert.throws(
+      () => assertNoAmbientModelOverrides({ [name]: 'cpu', PATH: 'C:\\Windows' }),
+      /ambient model\/provider overrides/u,
+      name,
+    );
+  }
+});
+
+test('the model smoke needs the NVIDIA driver file that makes the runtime pick cuda', () => {
+  const asked: string[] = [];
+  const present = (path: string) => {
+    asked.push(path);
+    return true;
+  };
+  assert.doesNotThrow(() => assertNvidiaDriverForCudaSpeechContent('C:\\Windows', present));
+  assert.deepEqual(asked, [join('C:\\Windows', 'System32', 'nvcuda.dll')]);
+  for (const systemRoot of ['C:\\Windows', undefined, '  ']) {
+    assert.throws(
+      () => assertNvidiaDriverForCudaSpeechContent(systemRoot, () => false),
+      /needs the NVIDIA driver/u,
+    );
+  }
 });
 
 test('CUDA toolkit locator is retained without weakening provider override isolation', () => {
@@ -1165,10 +1189,10 @@ function speechContent(contract: ModelContract, id: 'cuda' | 'cpu'): Record<stri
   return content;
 }
 
-test('model catalog validation compares a legacy delivery with the source lock', () => {
-  assert.deepEqual(
-    validateContract(modelContract('legacy')).workerArchives.map((item) => item.fileName),
-    ['capture-engine-ocr.zip', 'capture-engine-speech-recognition.zip'],
+test('model catalog validation rejects a legacy speech delivery', () => {
+  assert.throws(
+    () => validateContract(modelContract('legacy')),
+    /^Error: speech-recognition catalog must offer the cuda and cpu contents\.$/u,
   );
 });
 
@@ -1188,13 +1212,18 @@ test('model catalog validation rejects cuda model files that are not the full lo
   );
 });
 
-test('model catalog validation rejects a speech requirement that publishes only cpu', () => {
-  const contract = modelContract('contents');
-  const speech = contract.requirements[1];
-  assert.ok(speech?.contents);
-  speech.contents = speech.contents.filter((item) => item.id === 'cpu');
-  assert.throws(() => validateContract(contract), /speech-recognition catalog delivery is incomplete or unavailable/u);
-});
+for (const kept of ['cpu', 'cuda'] as const) {
+  test(`model catalog validation rejects a speech requirement that publishes only ${kept}`, () => {
+    const contract = modelContract('contents');
+    const speech = contract.requirements[1];
+    assert.ok(speech?.contents);
+    speech.contents = speech.contents.filter((item) => item.id === kept);
+    assert.throws(
+      () => validateContract(contract),
+      /speech-recognition catalog must offer the cuda and cpu contents/u,
+    );
+  });
+}
 
 const fallbackModel = 'model/fallback/model.safetensors';
 const cpuDrift = /speech-recognition cpu generated model files drifted from the source lock/u;

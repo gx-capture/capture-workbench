@@ -5,9 +5,11 @@ product. Speech recognition is TEA-ASR
 ([decision](../DECISIONS/speech-recognition-tea-asr.md)).
 
 Development transcriptions use TEA-ASR 1.1 mini on CUDA
-(`tea-asr-1.1-mini` / `cuda`). The shipping runtime runs TEA-ASR 1.1 on CUDA
-when a GPU is present and that same checkpoint on CPU when it is not. The
-release fixture and the desktop smokes stay on TEA-ASR 1.1 / CUDA. Select mini
+(`tea-asr-1.1-mini` / `cuda`). The shipping runtime installs one of two speech
+packs per machine: with the NVIDIA driver the `cuda` pack (TEA-ASR 1.1 on CUDA,
+that same checkpoint on CPU after a GPU failure), without it the `cpu` pack
+(TEA-ASR 1.1 mini on CPU). The release fixture and the desktop smokes stay on
+TEA-ASR 1.1 / CUDA. Select mini
 with `CAPTURE_SPEECH_RECOGNITION_MODEL=tea-asr-1.1-mini` and disable CPU fallback; see
 `.agents/RESEARCH/tea-asr-1.1-mini-gpu-2026-11-04.md`.
 

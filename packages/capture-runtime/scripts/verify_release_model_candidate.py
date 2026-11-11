@@ -33,9 +33,15 @@ from capture_runtime.provisioning.infrastructure.engine_installation import (
     EngineInstallationError,
     EngineInstallationManager,
 )
+from capture_runtime.release import assert_release_speech_contents
+from capture_runtime.worker_client import InstalledEngine
 
 WHISPER_CANDIDATE_MAX_DURATION_MS = 60 * 60 * 1000
 WHISPER_CANDIDATE_TIMEOUT_SECONDS = 60 * 60
+# The cpu pass transcribes the same private fixture with TEA-ASR-1.1-mini on
+# the CPU, which is several times slower than the CUDA pass.
+CPU_SPEECH_CANDIDATE_TIMEOUT_SECONDS = 3 * 60 * 60
+CPU_SPEECH_CONTENT_MODEL = "tea-asr-1.1-mini"
 
 
 def _whisper_run_options(fixture: dict[str, Any]) -> dict[str, object]:
@@ -225,21 +231,130 @@ def _assert_candidate_catalog_bound(catalog: EngineCatalog, lock: dict[str, Any]
                 raise EngineInstallationError(_UNBOUND_CANDIDATE_CATALOG)
 
 
+def _assert_release_speech_contents(catalog: EngineCatalog) -> None:
+    try:
+        assert_release_speech_contents(catalog)
+    except ValueError as error:
+        raise EngineInstallationError(str(error)) from error
+
+
 def _candidate_installation_manager(
     root: Path,
     catalog: EngineCatalog,
     worker_client: WorkerClient,
     engine_dir: Path,
+    *,
+    speech_variant: str = "cuda",
 ) -> EngineInstallationManager:
-    """Pin ``cuda``: the frozen fixture is tea-asr-1.1 on CUDA, whatever the driver says."""
+    """Pin the speech content, whatever the driver says.
+
+    ``cuda`` by default: the frozen fixture is tea-asr-1.1 on CUDA. The cpu pass
+    pins ``cpu`` so it installs the candidate's own CPU archive on any machine.
+    """
 
     return EngineInstallationManager(
         root,
         catalog,
         worker_client=worker_client,
         downloader=LocalWorkerDownloader(engine_dir),
-        speech_variant="cuda",
+        speech_variant=speech_variant,
     )
+
+
+def _cpu_speech_run_options() -> dict[str, object]:
+    """The runtime's defaults: the cpu content runs on the CPU even when a GPU is preferred."""
+
+    return {
+        "maxDurationMs": WHISPER_CANDIDATE_MAX_DURATION_MS,
+        "preferGpu": True,
+        "allowCpuFallback": True,
+        "content": "cpu",
+    }
+
+
+async def _verify_cpu_speech_engine(
+    engine: InstalledEngine | None,
+    worker_client: WorkerClient,
+    *,
+    source_path: Path,
+    fixture: dict[str, Any],
+) -> dict[str, object]:
+    """Probe and run the installed ``cpu`` content on the fixture's audio.
+
+    No transcript is frozen for this content (product owner, 2026-11-11), so the
+    pass checks provenance, a non-empty transcript and ordered segments. The
+    evidence keeps hashes and counts only, like the CUDA pass.
+    """
+
+    if engine is None or engine.content_id != "cpu":
+        raise EngineInstallationError("candidate cpu speech content did not activate")
+    probe = await worker_client.probe(
+        engine, include_model=True, options={"preferGpu": True, "content": "cpu"}
+    )
+    if not probe.ready or probe.device != "cpu":
+        raise EngineInstallationError("candidate cpu speech worker probe was not ready on cpu")
+    run = await worker_client.run(
+        engine,
+        source_path=source_path,
+        media_type=fixture["mediaType"],
+        options=_cpu_speech_run_options(),
+        cancel_event=asyncio.Event(),
+        timeout_seconds=CPU_SPEECH_CANDIDATE_TIMEOUT_SECONDS,
+    )
+    normalized = _normalized_text(run.segments)
+    monotonic = _segments_monotonic(run.segments)
+    if (
+        not normalized
+        or run.engine != fixture["expectedEngine"]
+        or run.model != CPU_SPEECH_CONTENT_MODEL
+        or run.device != "cpu"
+        or not monotonic
+    ):
+        raise EngineInstallationError("candidate cpu speech output/provenance is invalid")
+    return {
+        "assertionsPassed": True,
+        "contentId": "cpu",
+        "device": run.device,
+        "digest": run.digest,
+        "engine": run.engine,
+        "fixtureSha256": fixture["sha256"],
+        "model": run.model,
+        "normalizedOutputSha256": hashlib.sha256(normalized.encode("utf-8")).hexdigest(),
+        "requirementId": "speech-recognition",
+        "segmentCount": len(run.segments),
+        "segmentsMonotonic": monotonic,
+    }
+
+
+async def _verify_cpu_speech_content(
+    *,
+    root: Path,
+    catalog: EngineCatalog,
+    engine_dir: Path,
+    source_path: Path,
+    fixture: dict[str, Any],
+) -> dict[str, object]:
+    """Install the candidate's own ``cpu`` worker archive and models, then probe and run it."""
+
+    worker_client = WorkerClient()
+    manager = _candidate_installation_manager(
+        root, catalog, worker_client, engine_dir, speech_variant="cpu"
+    )
+    try:
+        await manager.install(
+            "speech-recognition",
+            cancel_event=asyncio.Event(),
+            report_progress=lambda _value: None,
+            probe_options={"preferGpu": True},
+        )
+        return await _verify_cpu_speech_engine(
+            manager.active_engine("speech-recognition"),
+            worker_client,
+            source_path=source_path,
+            fixture=fixture,
+        )
+    finally:
+        await manager.shutdown()
 
 
 async def _verify_whisper_preflight(
@@ -348,6 +463,10 @@ async def verify_candidate(
     lock_sha256 = source_lock_sha256(lock)
     catalog = load_engine_catalog(catalog_path)
     _assert_candidate_catalog_bound(catalog, lock)
+    if not preflight:
+        # The preflight catalog target passes no CPU archive and freezes nothing
+        # for release; a release candidate must carry both speech packs.
+        _assert_release_speech_contents(catalog)
     fixtures = {item["kind"]: item for item in lock["fixtures"]}
     if set(fixtures) != {"ocr", "whisper"}:
         raise EngineInstallationError("candidate requires exact real OCR and Whisper fixtures")
@@ -496,6 +615,17 @@ async def verify_candidate(
                 )
         finally:
             await manager.shutdown()
+        # A second install root, so the cpu pass gets the candidate's own CPU
+        # archive and model subset rather than reusing the cuda install.
+        results.append(
+            await _verify_cpu_speech_content(
+                root=root / "engines-cpu",
+                catalog=catalog,
+                engine_dir=engine_dir,
+                source_path=(fixture_root / "whisper").resolve(),
+                fixture=whisper_fixture,
+            )
+        )
     evidence = {
         "catalogSha256": hashlib.sha256(catalog_path.read_bytes()).hexdigest(),
         "evidenceVersion": "1",
