@@ -730,6 +730,11 @@ async function stopProcess(
     resolveExit = resolvePromise;
   });
   child.once('exit', resolveExit);
+  // The one-file runtime is a bootloader with the server as its child. Stop the
+  // tree while the bootloader is alive: once it is gone the server is an orphan
+  // that only the port lookup below can find, and it keeps the install
+  // directory locked.
+  if (child.pid) forceStopProcessIds([child.pid]);
   child.kill();
   await delay(250);
   const processIds = new Set(listeningProcessIds(port));
