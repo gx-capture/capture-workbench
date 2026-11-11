@@ -141,10 +141,10 @@ Forcing `cpu` on the RTX box exercises everything except driver detection, which
 | CW P1 | `structuring/infrastructure/ollama/system_installer.py:325-331` | `detail` on a ready `cpu` install |
 | CW P1 | `docs/domain/speech.md:69` | the "only `worker_failed`" sentence becomes false |
 | CW P2 | `src/capture_runtime/release.py:56-123` | completeness and artifact walk per content |
-| CW P2 | `scripts/verify_release_model_candidate.py:291-298, 356-361` | per-content check; `speech_variant="cuda"` for the frozen fixture |
+| CW P2 | `scripts/verify_release_model_candidate.py:291-298, 356-361` | per-content check (`cuda` = the lock's delivery, `cpu` = `cpu_speech_model_delivery`); `speech_variant="cuda"` for the frozen fixture |
 | CW P2 | `scripts/generate_engine_catalog.py:263-268` | `core-only` ignores the CPU archive instead of exiting |
 | CW P2 | `tools/release/engine-catalog-parts.ts` (new `catalogDeliveries()`) | one TS walker for both shapes, instead of four copies |
-| CW P2 | `tools/local-release-consumer-smoke.ts:181-326`; `apps/capture-workbench-desktop/scripts/practical-installed.ts:198-233`, `real-media-smoke.ts:212-217`, `real-media-model-smoke.ts:439-480` (lock vs `cuda`), `installed-process-cleanup.ts:31-40` | learn `contents` |
+| CW P2 | `tools/local-release-consumer-smoke.ts:181-326`; `apps/capture-workbench-desktop/scripts/practical-installed.ts:198-233`, `real-media-smoke.ts:212-217`, `real-media-model-smoke.ts:439-480` (lock vs `cuda` and `cpu`), `installed-process-cleanup.ts:31-40` | learn `contents` |
 | CW P3 | `packages/capture-runtime/project.json:572-594` (dependsOn and flags), `:735-743` (add `verify-speech-recognition-cpu-boundary`), `:465` description | the switch |
 | CW P3 | `CHANGELOG.md` Unreleased; runbook `:35-44`, `:365-372` | user-visible change; 19 assets |
 | CW P4 | S8 docs (section C) | words |
@@ -162,7 +162,7 @@ Forcing `cpu` on the RTX box exercises everything except driver detection, which
    - the rule matches the adapter's selection.
 
    Gate: `pnpm run verify:affected`, `pnpm nx run capture-runtime:test`, `capture-runtime:check-contracts` (must show no hash change).
-3. **P2 (CW, not visible; release catalogs are still legacy).** Tests:
+3. **P2 (CW, not visible; release catalogs are still legacy). Done.** Tests:
    - `test_release_engine_consistency.py`: a contents catalog with both zips passes; a missing CPU zip, an extra zip, or an incomplete content fails;
    - `test_generate_engine_catalog.py`: core-only plus CPU flags produces an empty catalog;
    - `local-release-consumer-smoke.test.ts`: lists both zips and their manifests and no extra; legacy still passes;
@@ -172,6 +172,11 @@ Forcing `cpu` on the RTX box exercises everything except driver detection, which
 4. **(Optional) C1 (Cert Prep).** Gate: `pnpm ci:local`.
 5. **P3 (CW, user-visible: the next release ships `cpu`).** Requires L1, P1 and P2.
    - Behavior test: the generated catalog keeps the id `speech-recognition`, with contents `["cuda","cpu"]`, and the consumer smoke lists both zips.
+   - Left open by P2, required before the switch:
+     - A release gate runs the candidate's own `cpu` archive: it installs the `cpu` content from the candidate and transcribes. Today nothing does: the candidate verifier (`verify_release_model_candidate.py`) pins `cuda`, and push CI probes a separately built CPU zip.
+     - The smoke mirrors that serve worker archives (`workerArchives` in `real-media-model-smoke.ts`, `progressive-audio-oracle.ts`) serve only the `cuda` zip. With a `contents` catalog they need the machine with the NVIDIA driver or a forced variant, or they serve both zips.
+     - `CAPTURE_SPEECH_RECOGNITION_VARIANT` joins the ambient-environment guard of the consumer smoke step in `release-candidate.yml` (the `$ambient` check after `local-release-consumer-smoke.ts`, about line 590), so a stray value cannot change which content a release gate installs.
+     - Decide whether a `contents` catalog with only one content may be released. Today a `cuda`-only `contents` catalog passes every tool.
    - Gate, mandatory before merge because CI never runs these targets (runbook `:532-536`): `pnpm nx run capture-runtime:build-release-artifacts --skip-nx-cache`, then `node tools/local-release-consumer-smoke.ts --runtime-dir packages/capture-runtime/dist/release --version 0.9.0`, then section 5 steps 6-11.
 6. **P4 = S8 docs (user-visible: the unit guide in the UI).** Same day as P3, or folded into it.
 7. **Release.** Pre-run both consumer gates (runbook `:457-475`). Cert Prep bumps first, then LAW, which already has L1.

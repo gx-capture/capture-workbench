@@ -87,6 +87,93 @@ test('approved model-enabled lock preserves the generated-catalog path', () => {
   );
 });
 
+const approvedModelLock = {
+  approval: { blockers: [], status: 'approved' },
+  releaseVersion: RELEASE_VERSION,
+  requirements: dependencyOrder.map((requirementId) => ({ requirementId })),
+};
+
+function speechContentsCatalog(cpuUnavailable = false) {
+  return {
+    catalogVersion: '2',
+    runtimeVersion: RELEASE_VERSION,
+    requirements: [
+      {
+        requirementId: 'windowsml-ocr',
+        artifacts: [{ fileName: 'windowsml-ocr.zip' }],
+        modelFiles: { entryPoint: 'model' },
+        unavailableReason: null,
+      },
+      {
+        requirementId: 'speech-recognition',
+        contents: [
+          {
+            id: 'cuda',
+            artifacts: [{ fileName: 'speech-cuda.zip' }],
+            modelFiles: { entryPoint: 'model' },
+            unavailableReason: null,
+          },
+          {
+            id: 'cpu',
+            artifacts: cpuUnavailable ? [] : [{ fileName: 'speech-cpu.zip' }],
+            modelFiles: cpuUnavailable ? null : { entryPoint: 'model' },
+            unavailableReason: cpuUnavailable
+              ? 'cpu speech worker is not published'
+              : null,
+          },
+        ],
+      },
+    ],
+  };
+}
+
+test('real-media preflight accepts a speech requirement whose contents are both complete', () => {
+  assert.doesNotThrow(() =>
+    assertRealMediaRequirementsAvailable(approvedModelLock, speechContentsCatalog()),
+  );
+});
+
+test('real-media preflight rejects a speech content that is unavailable', () => {
+  assert.throws(
+    () =>
+      assertRealMediaRequirementsAvailable(
+        approvedModelLock,
+        speechContentsCatalog(true),
+      ),
+    (error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error);
+      assert.match(message, /speech-recognition/u);
+      assert.match(message, /marks it unavailable/u);
+      return true;
+    },
+  );
+});
+
+test('real-media preflight rejects a speech content without a worker, or a malformed contents list', () => {
+  type SpeechEntry = Record<string, unknown> & { contents: Array<Record<string, unknown>> };
+  const changed = (change: (speech: SpeechEntry) => void) => {
+    const catalog = speechContentsCatalog() as unknown as { requirements: SpeechEntry[] };
+    const speech = catalog.requirements[1];
+    assert.ok(speech);
+    change(speech);
+    return catalog;
+  };
+  const withoutWorker = changed((speech) => {
+    const cpu = speech.contents[1];
+    assert.ok(cpu);
+    cpu.artifacts = [];
+  });
+  const malformed = changed((speech) => {
+    speech.contents = [];
+  });
+  for (const catalog of [withoutWorker, malformed]) {
+    assert.throws(
+      () => assertRealMediaRequirementsAvailable(approvedModelLock, catalog),
+      /speech-recognition \(embedded engine catalog does not contain a complete worker\/model delivery\)/u,
+    );
+  }
+});
+
 test('model-enabled preflight rejects immutable v0.3.8', () => {
   assert.throws(
     () =>

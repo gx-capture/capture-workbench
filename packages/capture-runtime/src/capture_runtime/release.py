@@ -8,7 +8,7 @@ import re
 import shutil
 import zipfile
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from capture_runtime.artifact_parts import JoinedParts, archive_parts
 from capture_runtime.constants import (
@@ -17,6 +17,12 @@ from capture_runtime.constants import (
     RUNTIME_VERSION,
 )
 from capture_runtime.contracts import CaptureDocument
+
+if TYPE_CHECKING:
+    from capture_runtime.provisioning.infrastructure.engine_catalog import (
+        EngineContentDescriptor,
+        EngineRequirementDescriptor,
+    )
 
 CAPTURE_DOCUMENT_SCHEMA_ID = (
     "https://github.com/gx-capture/capture-workbench/schema/capture-document-v2.schema.json"
@@ -32,6 +38,16 @@ def sha256_file(path: Path) -> str:
         while chunk := source.read(1024 * 1024):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _catalog_deliveries(
+    requirement: EngineRequirementDescriptor,
+) -> tuple[EngineRequirementDescriptor | EngineContentDescriptor, ...]:
+    """One legacy delivery, or every content of a requirement that publishes several."""
+
+    if requirement.contents:
+        return requirement.contents
+    return (requirement,)
 
 
 def _validated_engine_release_files(
@@ -57,7 +73,11 @@ def _validated_engine_release_files(
     optional_ids = {"speaker-diarization", "vertical-japanese-reader"}
     if not required_ids <= requirement_ids <= required_ids | optional_ids:
         raise ValueError("release engine catalog requirement set is invalid")
-    incomplete = [item.requirement_id for item in catalog.requirements if not item.complete]
+    incomplete = [
+        item.requirement_id
+        for item in catalog.requirements
+        if any(not delivery.complete for delivery in _catalog_deliveries(item))
+    ]
     if incomplete:
         raise ValueError("release engine catalog is incomplete: " + ", ".join(incomplete))
 
@@ -68,45 +88,52 @@ def _validated_engine_release_files(
     )
     selected: set[Path] = set()
     for requirement in catalog.requirements:
-        for descriptor in requirement.artifacts:
-            name = descriptor.file_name
-            try:
-                parts = archive_parts(engine_dir, name)
-            except FileNotFoundError as error:
-                raise ValueError(
-                    f"catalog artifact is absent from engine directory: {name}"
-                ) from error
-            published = [part.name for part in parts]
-            expected = [part.file_name for part in descriptor.parts] or [name]
-            if published != expected:
-                raise ValueError(f"catalog artifact parts differ from engine directory: {name}")
-            for path, part in zip(parts, descriptor.parts, strict=False):
-                if path.stat().st_size != part.bytes or sha256_file(path) != part.sha256:
-                    raise ValueError(f"catalog artifact part mismatch: {path.name}")
-            if sum(path.stat().st_size for path in parts) != descriptor.bytes:
-                raise ValueError(f"catalog artifact byte count mismatch: {name}")
-            whole = hashlib.sha256()
-            with JoinedParts(parts) as joined:
-                while chunk := joined.read(1024 * 1024):
-                    whole.update(chunk)
-            if whole.hexdigest() != descriptor.sha256:
-                raise ValueError(f"catalog artifact checksum mismatch: {name}")
-            matching_manifests = [
-                item for item in manifests if sha256_file(item) == descriptor.files_manifest_sha256
-            ]
-            if len(matching_manifests) != 1:
-                raise ValueError(
-                    f"catalog artifact needs exactly one matching files manifest: {name}"
-                )
-            manifest = matching_manifests[0]
-            with JoinedParts(parts) as joined, zipfile.ZipFile(joined) as source:
-                if source.read("files-manifest.json") != manifest.read_bytes():
+        for delivery in _catalog_deliveries(requirement):
+            for descriptor in delivery.artifacts:
+                name = descriptor.file_name
+                try:
+                    parts = archive_parts(engine_dir, name)
+                except FileNotFoundError as error:
                     raise ValueError(
-                        f"archive inner manifest differs from the published files manifest: {name}"
+                        f"catalog artifact is absent from engine directory: {name}"
+                    ) from error
+                published = [part.name for part in parts]
+                expected = [part.file_name for part in descriptor.parts] or [name]
+                if published != expected:
+                    raise ValueError(f"catalog artifact parts differ from engine directory: {name}")
+                for path, part in zip(parts, descriptor.parts, strict=False):
+                    if path.stat().st_size != part.bytes or sha256_file(path) != part.sha256:
+                        raise ValueError(f"catalog artifact part mismatch: {path.name}")
+                if sum(path.stat().st_size for path in parts) != descriptor.bytes:
+                    raise ValueError(f"catalog artifact byte count mismatch: {name}")
+                whole = hashlib.sha256()
+                with JoinedParts(parts) as joined:
+                    while chunk := joined.read(1024 * 1024):
+                        whole.update(chunk)
+                if whole.hexdigest() != descriptor.sha256:
+                    raise ValueError(f"catalog artifact checksum mismatch: {name}")
+                matching_manifests = [
+                    item
+                    for item in manifests
+                    if sha256_file(item) == descriptor.files_manifest_sha256
+                ]
+                if len(matching_manifests) != 1:
+                    raise ValueError(
+                        f"catalog artifact needs exactly one matching files manifest: {name}"
                     )
-                if sum(item.file_size for item in source.infolist()) != descriptor.extracted_bytes:
-                    raise ValueError(f"catalog extracted byte count mismatch: {name}")
-            selected.update((*parts, manifest))
+                manifest = matching_manifests[0]
+                with JoinedParts(parts) as joined, zipfile.ZipFile(joined) as source:
+                    if source.read("files-manifest.json") != manifest.read_bytes():
+                        raise ValueError(
+                            "archive inner manifest differs from the published files manifest: "
+                            f"{name}"
+                        )
+                    if (
+                        sum(item.file_size for item in source.infolist())
+                        != descriptor.extracted_bytes
+                    ):
+                        raise ValueError(f"catalog extracted byte count mismatch: {name}")
+                selected.update((*parts, manifest))
 
     engine_files = {
         item

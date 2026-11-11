@@ -11,7 +11,10 @@ from typing import Any
 import httpx
 from model_source_lock import (
     PENDING_WHISPER_FREEZE_BLOCKER,
+    ModelSourceLockError,
+    cpu_speech_model_delivery,
     load_source_lock,
+    model_delivery,
     source_lock_sha256,
 )
 
@@ -19,6 +22,8 @@ from capture_runtime.capture.infrastructure.capture_worker_client import WorkerC
 from capture_runtime.contract_set import load_contract_set
 from capture_runtime.provisioning.infrastructure.engine_catalog import (
     EngineArtifactDescriptor,
+    EngineCatalog,
+    EngineRequirementDescriptor,
     canonical_json_bytes,
     load_engine_catalog,
 )
@@ -183,6 +188,60 @@ async def _copy_private_fixture(
         raise
 
 
+_UNBOUND_CANDIDATE_CATALOG = "candidate catalog is incomplete or not bound to the exact source lock"
+
+
+def _expected_content_delivery(
+    lock: dict[str, Any], requirement: EngineRequirementDescriptor, content_id: str
+) -> dict[str, Any]:
+    """``cuda`` delivers the lock's full unit; ``cpu`` the subset the generator derives."""
+
+    if content_id == "cpu" and requirement.requirement_id == "speech-recognition":
+        return cpu_speech_model_delivery(lock)
+    if content_id == "cuda":
+        return model_delivery(lock, requirement.requirement_id)
+    raise EngineInstallationError(_UNBOUND_CANDIDATE_CATALOG)
+
+
+def _assert_candidate_catalog_bound(catalog: EngineCatalog, lock: dict[str, Any]) -> None:
+    lock_sha256 = source_lock_sha256(lock)
+    for requirement in catalog.requirements:
+        if not requirement.contents:
+            # A legacy delivery keeps the check it has always had.
+            if (
+                not requirement.complete
+                or requirement.model_delivery().source_lock_sha256 != lock_sha256
+            ):
+                raise EngineInstallationError(_UNBOUND_CANDIDATE_CATALOG)
+            continue
+        for content in requirement.contents:
+            if not content.complete:
+                raise EngineInstallationError(_UNBOUND_CANDIDATE_CATALOG)
+            try:
+                expected = _expected_content_delivery(lock, requirement, content.content_id)
+            except (ModelSourceLockError, StopIteration) as error:
+                raise EngineInstallationError(_UNBOUND_CANDIDATE_CATALOG) from error
+            if content.model_delivery().to_dict() != expected:
+                raise EngineInstallationError(_UNBOUND_CANDIDATE_CATALOG)
+
+
+def _candidate_installation_manager(
+    root: Path,
+    catalog: EngineCatalog,
+    worker_client: WorkerClient,
+    engine_dir: Path,
+) -> EngineInstallationManager:
+    """Pin ``cuda``: the frozen fixture is tea-asr-1.1 on CUDA, whatever the driver says."""
+
+    return EngineInstallationManager(
+        root,
+        catalog,
+        worker_client=worker_client,
+        downloader=LocalWorkerDownloader(engine_dir),
+        speech_variant="cuda",
+    )
+
+
 async def _verify_whisper_preflight(
     *,
     lock: dict[str, Any],
@@ -211,11 +270,11 @@ async def _verify_whisper_preflight(
         fixture_path = root / "whisper"
         await _copy_private_fixture(private_fixture, fixture_path, whisper_fixture)
         worker_client = WorkerClient()
-        manager = EngineInstallationManager(
+        manager = _candidate_installation_manager(
             root / "engines",
             catalog,
-            worker_client=worker_client,
-            downloader=LocalWorkerDownloader(engine_dir),
+            worker_client,
+            engine_dir,
         )
         try:
             await manager.install(
@@ -288,14 +347,7 @@ async def verify_candidate(
         _assert_pending_preflight_lock(lock)
     lock_sha256 = source_lock_sha256(lock)
     catalog = load_engine_catalog(catalog_path)
-    for requirement in catalog.requirements:
-        if (
-            not requirement.complete
-            or requirement.model_delivery().source_lock_sha256 != lock_sha256
-        ):
-            raise EngineInstallationError(
-                "candidate catalog is incomplete or not bound to the exact source lock"
-            )
+    _assert_candidate_catalog_bound(catalog, lock)
     fixtures = {item["kind"]: item for item in lock["fixtures"]}
     if set(fixtures) != {"ocr", "whisper"}:
         raise EngineInstallationError("candidate requires exact real OCR and Whisper fixtures")
@@ -353,11 +405,11 @@ async def verify_candidate(
         await _copy_private_fixture(private_fixture, fixture_root / "whisper", whisper_fixture)
 
         worker_client = WorkerClient()
-        manager = EngineInstallationManager(
+        manager = _candidate_installation_manager(
             root / "engines",
             catalog,
-            worker_client=worker_client,
-            downloader=LocalWorkerDownloader(engine_dir),
+            worker_client,
+            engine_dir,
         )
         results = []
         try:

@@ -214,7 +214,8 @@
         "default",
         "^default",
         "toolingCorpus",
-        "{workspaceRoot}/packages/capture-runtime/src/capture_runtime/assets/worker-stage-policy-corpus.json"
+        "{workspaceRoot}/packages/capture-runtime/src/capture_runtime/assets/worker-stage-policy-corpus.json",
+        "{workspaceRoot}/packages/capture-runtime/tests/fixtures/cpu-speech-subset-samples.json"
       ],
       "options": {
         "command": "node --test apps/capture-workbench-desktop/scripts/*.test.ts tools/acceptance-contract.test.ts tools/worker-stage-policy.test.ts tools/three-project-acceptance.test.ts tools/three-project-cleanup-verifier.test.ts tools/check-async-boundary.test.ts tools/finalize-packed-package.test.ts tools/local-release-consumer-smoke.test.ts tools/node24-corepack.test.ts tools/record-candidate-verification.test.ts tools/acceptance-checkpoint-journal.test.ts tools/check-fake-runtime-routes.test.ts"

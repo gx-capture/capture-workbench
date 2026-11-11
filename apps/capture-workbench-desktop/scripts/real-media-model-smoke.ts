@@ -3,6 +3,7 @@ import { RELEASE_VERSION } from '../../../tools/release/release-intent.ts';
 // eslint-disable-next-line @nx/enforce-module-boundaries -- the catalog's `parts` reading is shared with the release tooling.
 import {
   type EngineCatalogWorkerPart,
+  catalogDeliveries,
   engineCatalogWorkerSource,
   workerPublishedFiles,
 } from '../../../tools/release/engine-catalog-parts.ts';
@@ -394,7 +395,153 @@ export function sha256(value: Uint8Array): string {
   return createHash('sha256').update(value).digest('hex');
 }
 
-function validateSourceLockAndCatalog(
+type CatalogDelivery = ReturnType<typeof catalogDeliveries>[number];
+
+// The cpu speech content ships these model directories plus the license and
+// notice files they cite. `cpu_speech_model_delivery` in
+// packages/capture-runtime/scripts/model_source_lock.py is the rule the catalog
+// generator applies; both sides are tested against
+// packages/capture-runtime/tests/fixtures/cpu-speech-subset-samples.json.
+const CPU_SPEECH_MODEL_ROOTS = [
+  'model/aligner',
+  'model/fallback',
+  'model/fallback-architecture',
+] as const;
+const CPU_SPEECH_FORBIDDEN_ROOTS = [
+  'model/primary',
+  'model/primary-architecture',
+] as const;
+
+function pathUnder(path: string, root: string): boolean {
+  return path === root || path.startsWith(`${root}/`);
+}
+
+/** The lock's speech files that the cpu content delivers, in lock order. */
+export function cpuSpeechModelFiles(lockFiles: readonly unknown[]): JsonObject[] {
+  const records = lockFiles.map((item) => asObject(item, 'speech source-lock file'));
+  const byPath = new Map<string, JsonObject>();
+  for (const file of records) {
+    byPath.set(requiredString(file.path, 'speech source-lock path'), file);
+  }
+  const selected = new Set(
+    [...byPath.keys()].filter((path) => CPU_SPEECH_MODEL_ROOTS.some((root) => pathUnder(path, root))),
+  );
+  for (const path of [...selected]) {
+    const file = byPath.get(path);
+    for (const field of ['licensePath', 'noticePath']) {
+      const referenced = file?.[field];
+      if (referenced === null) continue;
+      if (typeof referenced !== 'string' || !byPath.has(referenced)) {
+        throw new Error('speech-recognition cpu model files cite a path that is not locked.');
+      }
+      selected.add(referenced);
+    }
+  }
+  return records.filter((file) => selected.has(String(file.path)));
+}
+
+/**
+ * One delivery against the files the lock says it must carry: worker
+ * metadata, model version, files, lock binding and manifest digest.
+ */
+function verifiedDeliveryWorker(
+  delivery: CatalogDelivery,
+  expectedFiles: readonly unknown[],
+  lockRequirement: JsonObject,
+  sourceLockHash: string,
+  label: string,
+): Omit<WorkerArchive, 'requirementId'> {
+  const { requirementId, artifacts } = delivery;
+  const modelFiles = asObject(delivery.modelFiles, `${label} model delivery`);
+  if (!Array.isArray(artifacts) || artifacts.length !== 1 || delivery.unavailableReason !== null) {
+    throw new Error(`${label} catalog delivery is incomplete or unavailable.`);
+  }
+  const artifact = asObject(artifacts[0], `${label} worker artifact`);
+  if (artifact.role !== 'worker'
+    || artifact.requirementId !== requirementId
+    || artifact.artifactVersion !== REAL_MODEL_RELEASE_VERSION
+    || artifact.platform !== 'windows'
+    || artifact.arch !== 'x86_64'
+    || typeof artifact.entryPoint !== 'string'
+    || !artifact.entryPoint.endsWith('.exe')) {
+    throw new Error(`${label} worker artifact version drifted.`);
+  }
+  if (!Number.isSafeInteger(artifact.bytes) || Number(artifact.bytes) < 1
+    || !Number.isSafeInteger(artifact.extractedBytes) || Number(artifact.extractedBytes) < 1
+    || typeof artifact.fileName !== 'string') {
+    throw new Error(`${label} worker artifact metadata is malformed.`);
+  }
+  const { parts } = engineCatalogWorkerSource(artifact, artifact.fileName, Number(artifact.bytes));
+  if (modelFiles.artifactVersion !== REAL_MODEL_RELEASE_VERSION) {
+    throw new Error(`${label} model artifact version drifted.`);
+  }
+  if (modelFiles.entryPoint !== lockRequirement.entryPoint
+    || !canonicalJson(modelFiles.files).equals(canonicalJson(expectedFiles))) {
+    throw new Error(`${label} generated model files drifted from the source lock.`);
+  }
+  if (modelFiles.sourceLockSha256 !== sourceLockHash) {
+    throw new Error(`${label} catalog model files are not bound to the source lock.`);
+  }
+  const modelManifest = {
+    artifactVersion: modelFiles.artifactVersion,
+    entryPoint: modelFiles.entryPoint,
+    files: modelFiles.files,
+    manifestVersion: '1',
+  };
+  if (modelFiles.manifestSha256 !== sha256(canonicalJson(modelManifest))) {
+    throw new Error(`${label} model manifest hash drifted.`);
+  }
+  if (!/^[a-f0-9]{64}$/u.test(String(artifact.sha256))
+    || !/^[a-f0-9]{64}$/u.test(String(artifact.filesManifestSha256))
+    || !/^[a-f0-9]{64}$/u.test(String(modelFiles.manifestSha256))) {
+    throw new Error(`${label} catalog artifact digests are invalid.`);
+  }
+  return {
+    fileName: requiredString(artifact.fileName, `${label} worker file name`),
+    bytes: Number(artifact.bytes),
+    sha256: requiredString(artifact.sha256, `${label} worker SHA-256`),
+    parts,
+  };
+}
+
+/**
+ * The worker this smoke installs: the legacy delivery, or the `cuda` content.
+ * Both must carry the lock's full files. A `cpu` content must carry exactly
+ * the cpu speech subset of them and no primary path.
+ */
+function verifiedRequirementWorker(
+  requirement: JsonObject,
+  lockRequirement: JsonObject,
+  sourceLockHash: string,
+  requirementId: RequirementId,
+): WorkerArchive {
+  const deliveries = catalogDeliveries(requirement);
+  const installed = deliveries.find((item) => item.contentId === undefined || item.contentId === 'cuda');
+  if (!installed) {
+    throw new Error(`${requirementId} catalog delivery is incomplete or unavailable.`);
+  }
+  // An array of at least one file: checked when the lock was read.
+  const lockFiles = lockRequirement.files as readonly unknown[];
+  const worker = {
+    requirementId,
+    ...verifiedDeliveryWorker(installed, lockFiles, lockRequirement, sourceLockHash, requirementId),
+  };
+  const cpu = deliveries.find((item) => item.contentId === 'cpu');
+  if (cpu) {
+    const label = `${requirementId} cpu`;
+    const files = asObject(cpu.modelFiles, `${label} model delivery`).files;
+    if (Array.isArray(files) && files.some((item) => {
+      const path = asObject(item, `${label} model file`).path;
+      return typeof path === 'string' && CPU_SPEECH_FORBIDDEN_ROOTS.some((root) => pathUnder(path, root));
+    })) {
+      throw new Error(`${label} model files must not include primary paths.`);
+    }
+    verifiedDeliveryWorker(cpu, cpuSpeechModelFiles(lockFiles), lockRequirement, sourceLockHash, label);
+  }
+  return worker;
+}
+
+export function validateSourceLockAndCatalog(
   sourceLockBytes: Buffer,
   sourceLock: unknown,
   catalogBytes: Buffer,
@@ -473,58 +620,7 @@ function validateSourceLockAndCatalog(
     if (!requirement) throw new Error(`Generated model catalog omitted ${requirementId}.`);
     const lockRequirement = lockById.get(requirementId);
     if (!lockRequirement) throw new Error(`Model source lock omitted ${requirementId}.`);
-    const artifacts = requirement.artifacts;
-    const modelFiles = asObject(requirement.modelFiles, `${requirementId} model delivery`);
-    if (!Array.isArray(artifacts) || artifacts.length !== 1 || requirement.unavailableReason !== null) {
-      throw new Error(`${requirementId} catalog delivery is incomplete or unavailable.`);
-    }
-    const artifact = asObject(artifacts[0], `${requirementId} worker artifact`);
-    if (artifact.role !== 'worker'
-      || artifact.requirementId !== requirementId
-      || artifact.artifactVersion !== REAL_MODEL_RELEASE_VERSION
-      || artifact.platform !== 'windows'
-      || artifact.arch !== 'x86_64'
-      || typeof artifact.entryPoint !== 'string'
-      || !artifact.entryPoint.endsWith('.exe')) {
-      throw new Error(`${requirementId} worker artifact version drifted.`);
-    }
-    if (!Number.isSafeInteger(artifact.bytes) || Number(artifact.bytes) < 1
-      || !Number.isSafeInteger(artifact.extractedBytes) || Number(artifact.extractedBytes) < 1
-      || typeof artifact.fileName !== 'string') {
-      throw new Error(`${requirementId} worker artifact metadata is malformed.`);
-    }
-    const { parts } = engineCatalogWorkerSource(artifact, artifact.fileName, Number(artifact.bytes));
-    if (modelFiles.artifactVersion !== REAL_MODEL_RELEASE_VERSION) {
-      throw new Error(`${requirementId} model artifact version drifted.`);
-    }
-    if (modelFiles.entryPoint !== lockRequirement.entryPoint
-      || !canonicalJson(modelFiles.files).equals(canonicalJson(lockRequirement.files))) {
-      throw new Error(`${requirementId} generated model files drifted from the source lock.`);
-    }
-    if (modelFiles.sourceLockSha256 !== sourceLockHash) {
-      throw new Error(`${requirementId} catalog model files are not bound to the source lock.`);
-    }
-    const modelManifest = {
-      artifactVersion: modelFiles.artifactVersion,
-      entryPoint: modelFiles.entryPoint,
-      files: modelFiles.files,
-      manifestVersion: '1',
-    };
-    if (modelFiles.manifestSha256 !== sha256(canonicalJson(modelManifest))) {
-      throw new Error(`${requirementId} model manifest hash drifted.`);
-    }
-    if (!/^[a-f0-9]{64}$/u.test(String(artifact.sha256))
-      || !/^[a-f0-9]{64}$/u.test(String(artifact.filesManifestSha256))
-      || !/^[a-f0-9]{64}$/u.test(String(modelFiles.manifestSha256))) {
-      throw new Error(`${requirementId} catalog artifact digests are invalid.`);
-    }
-    workerArchives.push({
-      requirementId,
-      fileName: requiredString(artifact.fileName, `${requirementId} worker file name`),
-      bytes: Number(artifact.bytes),
-      sha256: requiredString(artifact.sha256, `${requirementId} worker SHA-256`),
-      parts,
-    });
+    workerArchives.push(verifiedRequirementWorker(requirement, lockRequirement, sourceLockHash, requirementId));
   }
 
   const rawFixtures = lock.fixtures;

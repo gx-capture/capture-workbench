@@ -376,7 +376,29 @@ GitHub also attaches the source zip and tarball. A release keeps the assets it w
 Check a new release like this:
 
 - The executable and schema bytes match `capture-runtime-manifest.json` (`sha256`, `schemaSha256`).
-- Each engine archive, split part, and `*-files.json` matches `capture-engine-catalog.json` (`sha256`, `parts[].sha256`, `filesManifestSha256`).
+- Each engine archive, split part, and `*-files.json` matches
+  `capture-engine-catalog.json` (`sha256`, `parts[].sha256`,
+  `filesManifestSha256`). A requirement is either the legacy delivery
+  (`requirementId`, `artifacts`, `modelFiles`, `unavailableReason`) or
+  `requirementId` plus `contents` (each of `cuda` and `cpu` has those
+  delivery fields). A `contents` requirement counts as complete only when
+  each content is. The catalog target does not pass the CPU speech
+  archive, so a published catalog is still the legacy shape. With a
+  `contents` catalog:
+  - `build-release-artifacts` (`release.py`), the local release consumer
+    smoke and the practical installed check verify every content's worker
+    archive, its parts and its `*-files.json` manifest; the consumer smoke
+    also requires exactly those asset names. The real-media smoke only
+    requires every content of the embedded catalog to be complete.
+  - `verify_release_model_candidate.py` and `real-media-model-smoke.ts`
+    compare model deliveries with the source lock: `cuda` must carry the
+    lock's full speech files, and `cpu` exactly the subset that
+    `cpu_speech_model_delivery` in `model_source_lock.py` derives, with the
+    same bytes and sha256 and no `model/primary` path.
+  - No release gate runs the candidate's `cpu` worker yet: the candidate
+    verifier installs `cuda` whatever the machine's driver, the model
+    smoke's mirror serves only the `cuda` archive, and push CI probes a
+    separately built CPU archive (`verify-speech-recognition-cpu-worker`).
 - Every runtime and desktop asset matches `runtimeAssets` in `capture-release-manifest-v1.json` (size and sha256).
 - That manifest's digest is `capture-release-manifest-v1.json.sha256` and `release-index/stable.json` `manifestSha256`.
 

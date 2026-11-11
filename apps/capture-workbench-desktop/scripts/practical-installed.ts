@@ -4,9 +4,14 @@ import { basename, isAbsolute, join, relative, resolve, win32 } from 'node:path'
 // eslint-disable-next-line @nx/enforce-module-boundaries -- the catalog's `parts` reading is shared with the release tooling.
 import {
   type EngineCatalogWorkerPart,
+  catalogDeliveries,
   engineCatalogWorkerSource,
   workerPublishedFiles,
 } from '../../../tools/release/engine-catalog-parts.ts';
+
+// real-media-smoke.ts reads the catalog's deliveries through this module, so it
+// needs no module-boundary exception of its own.
+export { catalogDeliveries };
 
 // Practical installed OCR verifies a normal production build of Capture
 // Workbench side by side with any existing installation. Only the Tauri
@@ -196,40 +201,51 @@ export function verifyRuntimeReleaseDirectory(
   }
   const workers: WorkerArtifact[] = [];
   for (const requirement of catalogValue.requirements) {
-    if (!isRecord(requirement) || !Array.isArray(requirement.artifacts)) {
+    if (!isRecord(requirement)) {
       throw new Error('Runtime engine catalog requirement is malformed.');
     }
-    for (const artifact of requirement.artifacts) {
-      if (
-        !isRecord(artifact) ||
-        artifact.role !== 'worker' ||
-        typeof artifact.fileName !== 'string' ||
-        basename(artifact.fileName) !== artifact.fileName ||
-        typeof artifact.bytes !== 'number' ||
-        !Number.isSafeInteger(artifact.bytes) ||
-        typeof artifact.sha256 !== 'string' ||
-        !SHA256.test(artifact.sha256) ||
-        typeof requirement.requirementId !== 'string'
-      ) {
-        throw new Error('Runtime engine catalog worker artifact is malformed.');
+    let deliveries;
+    try {
+      deliveries = catalogDeliveries(requirement);
+    } catch {
+      throw new Error('Runtime engine catalog requirement is malformed.');
+    }
+    for (const delivery of deliveries) {
+      if (!Array.isArray(delivery.artifacts)) {
+        throw new Error('Runtime engine catalog requirement is malformed.');
       }
-      const source = engineCatalogWorkerSource(artifact, artifact.fileName, artifact.bytes);
-      const releaseUrl = (fileName: string) => `${RELEASE_URL_PREFIX}v${expectedVersion}/${fileName}`;
-      if (
-        source.url === null
-          ? source.parts.some((part) => part.url !== releaseUrl(part.fileName))
-          : source.url !== releaseUrl(artifact.fileName)
-      ) {
-        throw new Error('Runtime engine catalog worker artifact is malformed.');
+      for (const artifact of delivery.artifacts) {
+        if (
+          !isRecord(artifact) ||
+          artifact.role !== 'worker' ||
+          typeof artifact.fileName !== 'string' ||
+          basename(artifact.fileName) !== artifact.fileName ||
+          typeof artifact.bytes !== 'number' ||
+          !Number.isSafeInteger(artifact.bytes) ||
+          typeof artifact.sha256 !== 'string' ||
+          !SHA256.test(artifact.sha256) ||
+          typeof delivery.requirementId !== 'string'
+        ) {
+          throw new Error('Runtime engine catalog worker artifact is malformed.');
+        }
+        const source = engineCatalogWorkerSource(artifact, artifact.fileName, artifact.bytes);
+        const releaseUrl = (fileName: string) => `${RELEASE_URL_PREFIX}v${expectedVersion}/${fileName}`;
+        if (
+          source.url === null
+            ? source.parts.some((part) => part.url !== releaseUrl(part.fileName))
+            : source.url !== releaseUrl(artifact.fileName)
+        ) {
+          throw new Error('Runtime engine catalog worker artifact is malformed.');
+        }
+        workers.push({
+          requirementId: delivery.requirementId,
+          fileName: artifact.fileName,
+          bytes: artifact.bytes,
+          sha256: artifact.sha256,
+          url: source.url,
+          parts: source.parts,
+        });
       }
-      workers.push({
-        requirementId: requirement.requirementId,
-        fileName: artifact.fileName,
-        bytes: artifact.bytes,
-        sha256: artifact.sha256,
-        url: source.url,
-        parts: source.parts,
-      });
     }
   }
   if (!workers.some((worker) => worker.requirementId === 'windowsml-ocr')) {

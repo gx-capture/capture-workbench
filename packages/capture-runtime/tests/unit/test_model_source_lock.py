@@ -377,3 +377,28 @@ def test_source_lock_rejects_release_aggregate_above_ten_gib() -> None:
     model["bytes"] = 4 * 1024**3
     with pytest.raises(model_source_lock.ModelSourceLockError, match="aggregate 10 GiB"):
         model_source_lock.validate_source_lock(candidate)
+
+
+def test_cpu_speech_subset_matches_the_shared_sample() -> None:
+    # real-media-model-smoke.ts applies the same rule to the same sample.
+    sample = json.loads(
+        (Path(__file__).resolve().parents[1] / "fixtures" / "cpu-speech-subset-samples.json")
+        .read_bytes()
+        .decode("utf-8")
+    )
+    lock = {
+        "requirements": [
+            {
+                "requirementId": "speech-recognition",
+                "artifactVersion": "0.0.0",
+                "entryPoint": "model",
+                "files": sample["speechFiles"],
+            }
+        ]
+    }
+
+    delivery = model_source_lock.cpu_speech_model_delivery(lock)
+
+    assert [item["path"] for item in delivery["files"]] == sample["cpuPaths"]
+    by_path = {item["path"]: item for item in sample["speechFiles"]}
+    assert delivery["files"] == [by_path[path] for path in sample["cpuPaths"]]

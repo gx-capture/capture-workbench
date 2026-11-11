@@ -408,3 +408,21 @@ test(
     assert.doesNotThrow(() => process.kill(outsideChild.pid, 0));
   },
 );
+
+test('owned process inventory includes the diarization and cpu speech workers', async (t) => {
+  const harness = cleanupHarness({
+    observerResults: [observerResult('[]')],
+  });
+  t.after(harness.dispose);
+  await observe(harness.cleanup.processesRunningUnder(harness.ownedRoot));
+  const environment = harness.calls[0].options.env as Record<string, string>;
+  const names = JSON.parse(environment.CAPTURE_SMOKE_PROCESS_NAMES) as string[];
+  for (const name of [
+    'capture-engine-ocr.exe',
+    'capture-engine-diarization.exe',
+    'capture-engine-speech-recognition.exe',
+    'capture-engine-speech-recognition-cpu.exe',
+  ]) {
+    assert.equal(names.includes(name), true, name);
+  }
+});

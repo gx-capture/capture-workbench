@@ -17,6 +17,7 @@ import { pipeline } from 'node:stream/promises';
 import { Readable } from 'node:stream';
 import {
   type EngineCatalogWorkerPart,
+  catalogDeliveries,
   engineCatalogWorkerSource,
   workerPublishedFiles,
 } from './release/engine-catalog-parts.ts';
@@ -141,6 +142,138 @@ type CatalogWorkerDescriptor = {
   readonly parts: readonly EngineCatalogWorkerPart[];
 };
 
+function readCatalogWorker(
+  requirementId: string,
+  delivery: {
+    readonly artifacts: unknown;
+    readonly modelFiles: unknown;
+    readonly unavailableReason: unknown;
+  },
+  expectedVersion: string,
+  seenArchives: Set<string>,
+): CatalogWorkerDescriptor {
+  const modelFiles = delivery.modelFiles;
+  if (
+    delivery.unavailableReason !== null ||
+    !Array.isArray(delivery.artifacts) ||
+    delivery.artifacts.length !== 1 ||
+    !isRecord(modelFiles)
+  ) {
+    throw new Error(
+      `Engine catalog requirement is invalid: ${requirementId}.`,
+    );
+  }
+  const artifact = delivery.artifacts[0];
+  if (!isRecord(artifact))
+    throw new Error('Engine catalog worker artifact is invalid.');
+  exactKeys(
+    artifact,
+    [
+      'role',
+      'requirementId',
+      'artifactVersion',
+      'workerProtocolVersion',
+      'platform',
+      'arch',
+      'fileName',
+      'bytes',
+      'sha256',
+      'extractedBytes',
+      'entryPoint',
+      'filesManifestSha256',
+      'parts' in artifact ? 'parts' : 'url',
+    ],
+    'Engine catalog worker artifact',
+  );
+  const artifactBytes = artifact.bytes;
+  const artifactExtractedBytes = artifact.extractedBytes;
+  if (
+    artifact.role !== 'worker' ||
+    artifact.requirementId !== requirementId ||
+    artifact.artifactVersion !== expectedVersion ||
+    artifact.workerProtocolVersion !== WORKER_PROTOCOL_VERSION ||
+    artifact.platform !== 'windows' ||
+    artifact.arch !== 'x86_64' ||
+    typeof artifact.entryPoint !== 'string' ||
+    !artifact.entryPoint ||
+    typeof artifactBytes !== 'number' ||
+    !Number.isSafeInteger(artifactBytes) ||
+    artifactBytes < 1 ||
+    typeof artifactExtractedBytes !== 'number' ||
+    !Number.isSafeInteger(artifactExtractedBytes) ||
+    artifactExtractedBytes < 1
+  ) {
+    throw new Error('Engine catalog worker artifact is invalid.');
+  }
+  assertSafeAssetName(artifact.fileName, 'Engine catalog worker archive');
+  const { parts } = engineCatalogWorkerSource(
+    artifact,
+    artifact.fileName,
+    artifactBytes,
+  );
+  if (
+    !artifact.fileName.endsWith('.zip') ||
+    artifact.fileName.toLowerCase().includes('model')
+  ) {
+    throw new Error('Engine catalog may contain only worker archives.');
+  }
+  assertSha256(artifact.sha256, 'Engine catalog worker archive digest');
+  assertSha256(
+    artifact.filesManifestSha256,
+    'Engine catalog worker manifest digest',
+  );
+  if (seenArchives.has(artifact.fileName)) {
+    throw new Error('Engine catalog worker archive names must be unique.');
+  }
+  seenArchives.add(artifact.fileName);
+
+  exactKeys(
+    modelFiles,
+    [
+      'artifactVersion',
+      'entryCount',
+      'entryPoint',
+      'extractedBytes',
+      'files',
+      'manifestSha256',
+      'sourceLockSha256',
+    ],
+    'Engine catalog model delivery',
+  );
+  const modelEntryCount = modelFiles.entryCount;
+  const modelExtractedBytes = modelFiles.extractedBytes;
+  if (
+    modelFiles.artifactVersion !== expectedVersion ||
+    modelFiles.entryPoint !== 'model' ||
+    typeof modelEntryCount !== 'number' ||
+    !Number.isSafeInteger(modelEntryCount) ||
+    modelEntryCount < 1 ||
+    !Array.isArray(modelFiles.files) ||
+    modelFiles.files.length !== modelEntryCount ||
+    typeof modelExtractedBytes !== 'number' ||
+    !Number.isSafeInteger(modelExtractedBytes) ||
+    modelExtractedBytes < 1
+  ) {
+    throw new Error('Engine catalog model delivery is invalid.');
+  }
+  assertSha256(
+    modelFiles.manifestSha256,
+    'Engine catalog model manifest digest',
+  );
+  assertSha256(
+    modelFiles.sourceLockSha256,
+    'Engine catalog model source-lock digest',
+  );
+  return {
+    requirementId,
+    fileName: artifact.fileName,
+    bytes: artifactBytes,
+    sha256: artifact.sha256,
+    filesManifestSha256: artifact.filesManifestSha256,
+    parts,
+  };
+}
+
 function catalogWorkers(
   raw: unknown,
   expectedVersion: string,
@@ -194,135 +327,72 @@ function catalogWorkers(
       }
       continue;
     }
-    exactKeys(
-      item,
-      ['requirementId', 'artifacts', 'modelFiles', 'unavailableReason'],
-      'Engine catalog requirement',
-    );
+    if ('contents' in item) {
+      exactKeys(
+        item,
+        ['requirementId', 'contents'],
+        'Engine catalog requirement',
+      );
+    } else {
+      exactKeys(
+        item,
+        ['requirementId', 'artifacts', 'modelFiles', 'unavailableReason'],
+        'Engine catalog requirement',
+      );
+    }
     const requirementId = item.requirementId;
     if (
       typeof requirementId !== 'string' ||
-      seenRequirements.has(requirementId) ||
-      item.unavailableReason !== null ||
-      !Array.isArray(item.artifacts) ||
-      item.artifacts.length !== 1 ||
-      !isRecord(item.modelFiles)
+      requirementId.length === 0 ||
+      seenRequirements.has(requirementId)
     ) {
       throw new Error(
         `Engine catalog requirement is invalid: ${String(requirementId)}.`,
       );
     }
     seenRequirements.add(requirementId);
-    const artifact = item.artifacts[0];
-    if (!isRecord(artifact))
-      throw new Error('Engine catalog worker artifact is invalid.');
-    exactKeys(
-      artifact,
-      [
-        'role',
-        'requirementId',
-        'artifactVersion',
-        'workerProtocolVersion',
-        'platform',
-        'arch',
-        'fileName',
-        'bytes',
-        'sha256',
-        'extractedBytes',
-        'entryPoint',
-        'filesManifestSha256',
-        'parts' in artifact ? 'parts' : 'url',
-      ],
-      'Engine catalog worker artifact',
-    );
-    const artifactBytes = artifact.bytes;
-    const artifactExtractedBytes = artifact.extractedBytes;
-    if (
-      artifact.role !== 'worker' ||
-      artifact.requirementId !== requirementId ||
-      artifact.artifactVersion !== expectedVersion ||
-      artifact.workerProtocolVersion !== WORKER_PROTOCOL_VERSION ||
-      artifact.platform !== 'windows' ||
-      artifact.arch !== 'x86_64' ||
-      typeof artifact.entryPoint !== 'string' ||
-      !artifact.entryPoint ||
-      typeof artifactBytes !== 'number' ||
-      !Number.isSafeInteger(artifactBytes) ||
-      artifactBytes < 1 ||
-      typeof artifactExtractedBytes !== 'number' ||
-      !Number.isSafeInteger(artifactExtractedBytes) ||
-      artifactExtractedBytes < 1
-    ) {
-      throw new Error('Engine catalog worker artifact is invalid.');
+    if ('contents' in item) {
+      if (!Array.isArray(item.contents) || item.contents.length === 0) {
+        throw new Error(
+          `Engine catalog requirement is invalid: ${requirementId}.`,
+        );
+      }
+      const seenContentIds = new Set<string>();
+      for (const content of item.contents) {
+        if (!isRecord(content)) {
+          throw new Error(
+            `Engine catalog requirement is invalid: ${requirementId}.`,
+          );
+        }
+        exactKeys(
+          content,
+          ['id', 'artifacts', 'modelFiles', 'unavailableReason'],
+          'Engine catalog content',
+        );
+        const contentId = content.id;
+        if (contentId !== 'cuda' && contentId !== 'cpu') {
+          throw new Error(
+            `Engine catalog requirement is invalid: ${requirementId}.`,
+          );
+        }
+        if (seenContentIds.has(contentId)) {
+          throw new Error(
+            `Engine catalog requirement is invalid: ${requirementId}.`,
+          );
+        }
+        seenContentIds.add(contentId);
+      }
     }
-    assertSafeAssetName(artifact.fileName, 'Engine catalog worker archive');
-    const { parts } = engineCatalogWorkerSource(
-      artifact,
-      artifact.fileName,
-      artifactBytes,
-    );
-    if (
-      !artifact.fileName.endsWith('.zip') ||
-      artifact.fileName.toLowerCase().includes('model')
-    ) {
-      throw new Error('Engine catalog may contain only worker archives.');
+    for (const delivery of catalogDeliveries(item)) {
+      workers.push(
+        readCatalogWorker(
+          requirementId,
+          delivery,
+          expectedVersion,
+          seenArchives,
+        ),
+      );
     }
-    assertSha256(artifact.sha256, 'Engine catalog worker archive digest');
-    assertSha256(
-      artifact.filesManifestSha256,
-      'Engine catalog worker manifest digest',
-    );
-    if (seenArchives.has(artifact.fileName)) {
-      throw new Error('Engine catalog worker archive names must be unique.');
-    }
-    seenArchives.add(artifact.fileName);
-
-    const modelFiles = item.modelFiles;
-    exactKeys(
-      modelFiles,
-      [
-        'artifactVersion',
-        'entryCount',
-        'entryPoint',
-        'extractedBytes',
-        'files',
-        'manifestSha256',
-        'sourceLockSha256',
-      ],
-      'Engine catalog model delivery',
-    );
-    const modelEntryCount = modelFiles.entryCount;
-    const modelExtractedBytes = modelFiles.extractedBytes;
-    if (
-      modelFiles.artifactVersion !== expectedVersion ||
-      modelFiles.entryPoint !== 'model' ||
-      typeof modelEntryCount !== 'number' ||
-      !Number.isSafeInteger(modelEntryCount) ||
-      modelEntryCount < 1 ||
-      !Array.isArray(modelFiles.files) ||
-      modelFiles.files.length !== modelEntryCount ||
-      typeof modelExtractedBytes !== 'number' ||
-      !Number.isSafeInteger(modelExtractedBytes) ||
-      modelExtractedBytes < 1
-    ) {
-      throw new Error('Engine catalog model delivery is invalid.');
-    }
-    assertSha256(
-      modelFiles.manifestSha256,
-      'Engine catalog model manifest digest',
-    );
-    assertSha256(
-      modelFiles.sourceLockSha256,
-      'Engine catalog model source-lock digest',
-    );
-    workers.push({
-      requirementId,
-      fileName: artifact.fileName,
-      bytes: artifactBytes,
-      sha256: artifact.sha256,
-      filesManifestSha256: artifact.filesManifestSha256,
-      parts,
-    });
   }
   return workers;
 }

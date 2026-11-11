@@ -116,3 +116,77 @@ export function workerPublishedFiles(worker: {
         },
       ];
 }
+
+const LEGACY_DELIVERY_KEYS = ['artifacts', 'modelFiles', 'unavailableReason'] as const;
+
+function owns(
+  record: { readonly [key: string]: unknown },
+  key: string,
+): boolean {
+  return Object.prototype.hasOwnProperty.call(record, key);
+}
+
+/**
+ * One legacy delivery, or every content of a requirement that publishes several.
+ * A requirement is exactly one of those shapes. Content ids are `cuda` or `cpu`.
+ */
+export function catalogDeliveries(
+  requirement: { readonly [key: string]: unknown },
+): readonly {
+  readonly requirementId: string;
+  readonly contentId: string | undefined;
+  readonly artifacts: unknown;
+  readonly modelFiles: unknown;
+  readonly unavailableReason: unknown;
+}[] {
+  const requirementId = requirement.requirementId;
+  if (typeof requirementId !== 'string' || requirementId.length === 0) {
+    throw new Error('Engine catalog requirement is invalid.');
+  }
+  const hasContents = owns(requirement, 'contents');
+  const hasLegacyDelivery = LEGACY_DELIVERY_KEYS.some((key) =>
+    owns(requirement, key),
+  );
+  if (hasContents && hasLegacyDelivery) {
+    throw new Error('Engine catalog requirement is invalid.');
+  }
+  if (hasContents) {
+    const raw = requirement.contents;
+    if (!Array.isArray(raw) || raw.length === 0) {
+      throw new Error('Engine catalog requirement is invalid.');
+    }
+    const seen = new Set<string>();
+    return raw.map((item: unknown) => {
+      if (!isRecord(item)) {
+        throw new Error('Engine catalog requirement is invalid.');
+      }
+      const contentId = item.id;
+      if (contentId !== 'cuda' && contentId !== 'cpu') {
+        throw new Error('Engine catalog requirement is invalid.');
+      }
+      if (seen.has(contentId)) {
+        throw new Error('Engine catalog requirement is invalid.');
+      }
+      seen.add(contentId);
+      return {
+        requirementId,
+        contentId,
+        artifacts: item.artifacts,
+        modelFiles: item.modelFiles,
+        unavailableReason: item.unavailableReason,
+      };
+    });
+  }
+  if (!hasLegacyDelivery) {
+    throw new Error('Engine catalog requirement is invalid.');
+  }
+  return [
+    {
+      requirementId,
+      contentId: undefined,
+      artifacts: requirement.artifacts,
+      modelFiles: requirement.modelFiles,
+      unavailableReason: requirement.unavailableReason,
+    },
+  ];
+}

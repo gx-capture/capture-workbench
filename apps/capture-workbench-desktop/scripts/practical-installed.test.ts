@@ -99,7 +99,10 @@ test('generated NSIS must target only the practical variant', () => {
   );
 });
 
-async function releaseFixture(mutate: (files: Map<string, Buffer>) => void = () => undefined) {
+async function releaseFixture(
+  mutate: (files: Map<string, Buffer>) => void = () => undefined,
+  { speechContents = false }: { speechContents?: boolean } = {},
+) {
   const directory = await mkdtemp(join(tmpdir(), 'practical-release-'));
   const executable = Buffer.from('runtime executable bytes');
   const schema = Buffer.from('{"schema":true}');
@@ -112,7 +115,13 @@ async function releaseFixture(mutate: (files: Map<string, Buffer>) => void = () 
     schemaSha256: sha256Hex(schema),
     runtimeVersion: RELEASE_VERSION,
   };
-  const catalog = {
+  const cpuArchiveName = `capture-engine-speech-recognition-cpu-${RELEASE_VERSION}-windows-x64.zip`;
+  const cpuWorker = Buffer.from('cpu speech worker');
+  const catalog: {
+    catalogVersion: string;
+    runtimeVersion: string;
+    requirements: Array<Record<string, unknown>>;
+  } = {
     catalogVersion: '2',
     runtimeVersion: RELEASE_VERSION,
     requirements: [
@@ -149,6 +158,27 @@ async function releaseFixture(mutate: (files: Map<string, Buffer>) => void = () 
       },
     ],
   };
+  if (speechContents) {
+    const speech = catalog.requirements[1];
+    catalog.requirements[1] = {
+      requirementId: 'speech-recognition',
+      contents: [
+        { id: 'cuda', artifacts: speech?.artifacts },
+        {
+          id: 'cpu',
+          artifacts: [
+            {
+              role: 'worker',
+              fileName: cpuArchiveName,
+              url: `${RELEASE_DOWNLOAD}/${cpuArchiveName}`,
+              bytes: cpuWorker.length,
+              sha256: sha256Hex(cpuWorker),
+            },
+          ],
+        },
+      ],
+    };
+  }
   const files = new Map<string, Buffer>([
     [RUNTIME_EXECUTABLE_NAME, executable],
     [RUNTIME_SCHEMA_NAME, schema],
@@ -156,6 +186,7 @@ async function releaseFixture(mutate: (files: Map<string, Buffer>) => void = () 
     [RUNTIME_CATALOG_NAME, Buffer.from(JSON.stringify(catalog))],
     [`capture-engine-ocr-${RELEASE_VERSION}-windows-x64.zip`, worker],
     ...SPEECH_PARTS.map((part, index): [string, Buffer] => [`${SPEECH_ARCHIVE}.00${index + 1}`, part]),
+    ...(speechContents ? [[cpuArchiveName, cpuWorker] as [string, Buffer]] : []),
   ]);
   mutate(files);
   for (const [name, bytes] of files) await writeFile(join(directory, name), bytes);
@@ -264,6 +295,42 @@ test('a worker published as parts is accepted and each part is verified like a s
     t.after(() => rm(fixture.directory, { recursive: true, force: true }));
     assert.throws(() => verifyRuntimeReleaseDirectory(fixture.directory, good.runtimeSha256, RELEASE_VERSION), expected, label);
   }
+});
+
+test('a contents catalog verifies the worker of every content', async (t) => {
+  const cpuArchiveName = `capture-engine-speech-recognition-cpu-${RELEASE_VERSION}-windows-x64.zip`;
+  const good = await releaseFixture(() => undefined, { speechContents: true });
+  t.after(() => rm(good.directory, { recursive: true, force: true }));
+  const release = verifyRuntimeReleaseDirectory(good.directory, good.runtimeSha256, RELEASE_VERSION);
+  assert.deepEqual(
+    release.workers.map((worker) => worker.fileName),
+    [
+      `capture-engine-ocr-${RELEASE_VERSION}-windows-x64.zip`,
+      SPEECH_ARCHIVE,
+      cpuArchiveName,
+    ],
+  );
+  const speech = release.workers[1];
+  const cpu = release.workers[2];
+  assert.equal(speech?.requirementId, 'speech-recognition');
+  assert.equal(speech?.parts.length, 2);
+  assert.equal(cpu?.requirementId, 'speech-recognition');
+  assert.equal(cpu?.url, `${RELEASE_DOWNLOAD}/${cpuArchiveName}`);
+  assert.deepEqual(
+    [...readVerifiedWorkerFiles(release, cpu).keys()],
+    [cpuArchiveName],
+  );
+
+  const incomplete = await releaseFixture((files) => {
+    const catalog = JSON.parse(String(files.get(RUNTIME_CATALOG_NAME)));
+    delete catalog.requirements[1].contents[1].artifacts;
+    files.set(RUNTIME_CATALOG_NAME, Buffer.from(JSON.stringify(catalog)));
+  }, { speechContents: true });
+  t.after(() => rm(incomplete.directory, { recursive: true, force: true }));
+  assert.throws(
+    () => verifyRuntimeReleaseDirectory(incomplete.directory, good.runtimeSha256, RELEASE_VERSION),
+    /malformed/u,
+  );
 });
 
 test('application environment is allowlisted and only rehearsal adds the loopback worker mirror', () => {
