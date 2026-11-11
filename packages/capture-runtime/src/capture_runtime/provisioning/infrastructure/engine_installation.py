@@ -87,6 +87,7 @@ from ._engine_installation_errors import (
     EngineInstallBusyError,
     EngineResolutionTimeoutError,
     ExtractionRuntimeUnavailableError,
+    SpeechModelNotInstalledError,
 )
 from ._engine_installation_lock import ExclusiveInstallFile
 from ._engine_installation_residue import (
@@ -1014,6 +1015,7 @@ __all__ = [
     "EngineInstallationManager",
     "EngineResolutionTimeoutError",
     "ExtractionRuntimeUnavailableError",
+    "SpeechModelNotInstalledError",
     "HttpArtifactDownloader",
     "LocalModelFileDownloader",
     "safe_extract_artifact",

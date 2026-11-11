@@ -16,16 +16,35 @@ from pathlib import Path
 import pytest
 
 import capture_runtime.provisioning.infrastructure.engine_installation as engine_installation_module
+import capture_runtime.speech.infrastructure.progressive_capture as progressive_capture
+from capture_runtime._worker_payloads import WorkerRunResult, WorkerSegment, WorkerWord
+from capture_runtime.capture.application.streaming_capture_service import StreamingCaptureService
+from capture_runtime.capture.infrastructure.capture_extraction import (
+    StandaloneRuntimeCaptureExtractor,
+)
+from capture_runtime.capture.infrastructure.streaming_repository import StreamingRepository
 from capture_runtime.clock import SystemClock
 from capture_runtime.config import ExtractionRuntimeConfig, RuntimeSettings
 from capture_runtime.constants import MAX_RUNTIME_ARTIFACT_BYTES, RUNTIME_VERSION
 from capture_runtime.contracts import (
+    CaptureEngine,
+    CaptureSourceKind,
     OcrAdapterClass,
     OcrComputeMode,
     OcrComputePreflightV2,
+    OpenIngestionV2,
+    RawCaptureSegment,
     RuntimeRequirementsV2,
+    StartCaptureV2,
+    StreamingEventType,
+    StructuringMode,
+    TimeLocator,
 )
 from capture_runtime.dependencies import build_runtime_dependencies
+from capture_runtime.diarization.domain.turn.models import SpeakerTurn
+from capture_runtime.diarization.infrastructure.speaker_worker_result import (
+    WorkerDiarizationResult,
+)
 from capture_runtime.install_progress import DownloadedBytes
 from capture_runtime.provisioning.infrastructure._engine_download_cache import (
     CachingDownloader,
@@ -45,6 +64,11 @@ from capture_runtime.provisioning.infrastructure.engine_installation import (
     EngineInstallBusyError,
     ModelFileDownloader,
 )
+from capture_runtime.speech.infrastructure.progressive_audio import (
+    DecodedAudioWindow,
+    ProgressiveSessionEvent,
+)
+from capture_runtime.speech.infrastructure.progressive_capture import ProgressiveCaptureProcessor
 from capture_runtime.structuring.infrastructure.ollama import SystemRuntimeInstaller
 from capture_runtime.worker_client import InstalledEngine, WorkerProbeResult
 from capture_runtime.worker_process import WorkerExecutionError, WorkerTimeoutError
@@ -2642,3 +2666,474 @@ def test_the_settings_variant_selects_the_listed_content(
     assert listed.status.value == "installable"
     assert listed.artifact is None
     assert listed.download_bytes == cpu.download_bytes
+
+
+_MISSING_CPU_MODEL = (
+    "Speech recognition model tea-asr-1.1 is not in the installed cpu content. "
+    "Set CAPTURE_SPEECH_RECOGNITION_MODEL to auto or tea-asr-1.1-mini, "
+    "or uninstall speech-recognition and install it with "
+    "CAPTURE_SPEECH_RECOGNITION_VARIANT=cuda."
+)
+_INSTALLABLE_DETAIL = "Pinned worker and direct model files are available for installation."
+_WAV = b"RIFF\x00\x00\x00\x00WAVEpayload"
+
+
+def _speech_config(tmp_path: Path, *, model: str, variant: str) -> ExtractionRuntimeConfig:
+    return ExtractionRuntimeConfig(
+        windowsml_model_dir=tmp_path / "windowsml",
+        whisper_models_dir=tmp_path / "whisper",
+        temp_dir=tmp_path / "temp",
+        max_pdf_pages=10,
+        max_image_pixels=100_000,
+        ocr_render_scale=2,
+        max_audio_duration_ms=60_000,
+        whisper_prefer_gpu=True,
+        speech_recognition_model=model,
+        speech_recognition_variant=variant,
+        speech_worker_idle_seconds=0,
+    )
+
+
+def _content_manager(
+    tmp_path: Path,
+    catalog: EngineCatalog,
+    sources: dict[str, Path],
+    *,
+    speech_variant: str,
+    nvidia_driver_present: Callable[[], bool],
+    worker_client: FakeWorkerClient,
+) -> EngineInstallationManager:
+    cache = VerifiedDownloadCache(tmp_path / "cache")
+    return EngineInstallationManager(
+        tmp_path / "engines",
+        catalog,
+        worker_client=worker_client,  # type: ignore[arg-type]
+        downloader=CachingDownloader(CopyDownloader(sources), cache),
+        model_downloader=CachingDownloader(CopyModelDownloader(sources), cache),
+        download_cache=cache,
+        speech_variant=speech_variant,
+        nvidia_driver_present=nvidia_driver_present,
+    )
+
+
+def _speaker_requirement(root: Path, sources: dict[str, Path]) -> dict[str, object]:
+    speaker_name = "capture-engine-speaker-diarization.zip"
+    speaker_worker = _archive(
+        root,
+        requirement_id="speaker-diarization",
+        file_name=speaker_name,
+        entry_point="capture-engine-speaker-diarization.exe",
+        payload=b"speaker-worker",
+    )
+    sources[speaker_name] = root / speaker_name
+    return {
+        "requirementId": "speaker-diarization",
+        "artifacts": [speaker_worker],
+        "modelFiles": _direct_delivery(
+            root,
+            sources,
+            {
+                "licenses/LICENSE.txt": b"license",
+                "notices/NOTICE.txt": b"notice",
+                "model/speaker.bin": b"speaker-weights",
+            },
+        ),
+        "unavailableReason": None,
+    }
+
+
+def _speech_catalog_for(root: Path, *, legacy: bool) -> tuple[EngineCatalog, dict[str, Path]]:
+    if legacy:
+        catalog, sources = _catalog(root)
+        speech = json.loads(json.dumps(catalog.to_dict()["requirements"][0]))
+        speech["requirementId"] = "speech-recognition"
+        speech["artifacts"][0]["requirementId"] = "speech-recognition"
+        requirements = [speech]
+    else:
+        catalog, sources = _speech_contents_catalog(root)
+        requirements = catalog.to_dict()["requirements"]
+    requirements.append(_speaker_requirement(root, sources))
+    return (
+        EngineCatalog.from_dict(
+            {
+                "catalogVersion": "2",
+                "runtimeVersion": RUNTIME_VERSION,
+                "requirements": requirements,
+            }
+        ),
+        sources,
+    )
+
+
+def _model_installer(
+    tmp_path: Path,
+    manager: EngineInstallationManager,
+    *,
+    model: str | None,
+    variant: str,
+) -> SystemRuntimeInstaller:
+    config = None if model is None else _speech_config(tmp_path, model=model, variant=variant)
+    return SystemRuntimeInstaller(
+        _Lifecycle(_LifecycleConfig(tmp_path / "app-data")),  # type: ignore[arg-type]
+        engine_manager=manager,
+        clock=SystemClock(),
+        enabled_requirement_ids={"speech-recognition"},
+        extraction_config=config,
+    )
+
+
+class _RecordingWorkerClient(FakeWorkerClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.runs: list[tuple[str, dict[str, object]]] = []
+        self.diarizations: list[str] = []
+
+    async def run(self, engine: InstalledEngine, **kwargs: object) -> WorkerRunResult:
+        options = kwargs["options"]
+        if not isinstance(options, dict):
+            raise AssertionError("speech worker options must be a mapping")
+        self.runs.append((engine.requirement_id, dict(options)))
+        _report_permille(kwargs)
+        words = (
+            WorkerWord(0, 400, " Good"),
+            WorkerWord(400, 900, " morning"),
+            WorkerWord(1_100, 1_500, " Hello"),
+            WorkerWord(1_500, 1_900, " there"),
+        )
+        return WorkerRunResult(
+            segments=(
+                WorkerSegment(
+                    0,
+                    "Good morning Hello there",
+                    start_ms=0,
+                    end_ms=1_900,
+                    words=words,
+                ),
+            ),
+            engine="speech-recognition",
+            model="tea-asr-1.1",
+            digest=f"sha256:{'2' * 64}",
+            device="cuda",
+            warnings=(),
+            elapsed_ms=1500,
+            stage_ms={
+                "modelLoad": 200,
+                "transcription": 800,
+                "alignerLoad": 100,
+                "alignment": 300,
+            },
+        )
+
+    async def diarize(self, engine: InstalledEngine, **kwargs: object) -> WorkerDiarizationResult:
+        self.diarizations.append(engine.requirement_id)
+        _report_permille(kwargs)
+        turns = (
+            SpeakerTurn(0, 1_000, "SPEAKER_00"),
+            SpeakerTurn(1_000, 2_000, "SPEAKER_01"),
+        )
+        return WorkerDiarizationResult(
+            turns=turns,
+            exclusive_turns=turns,
+            duration_ms=2_000,
+            engine="speaker-diarization",
+            model="nvidia-nemotron-3-diarization",
+            digest=f"sha256:{'3' * 64}",
+            device="cpu",
+            warnings=("Diarization GPU fallback: cuda_out_of_memory",),
+            elapsed_ms=2400,
+            stage_ms={"modelLoad": 300, "inference": 900, "postprocessing": 50},
+        )
+
+
+def _report_permille(kwargs: dict[str, object]) -> None:
+    report = kwargs.get("on_permille")
+    if callable(report):
+        report(500)
+        report(1000)
+
+
+def _patch_streaming_session(
+    monkeypatch: pytest.MonkeyPatch, starts: list[tuple[str | None, str]]
+) -> None:
+    """Finish an allowed streaming capture without starting a real worker process."""
+
+    emitted = False
+
+    class _Session:
+        def __init__(self) -> None:
+            self._closed = False
+
+        @property
+        def alive(self) -> bool:
+            return not self._closed
+
+        async def begin(self, **_kwargs: object) -> None:
+            return None
+
+        async def input(
+            self, _window: object, _cancellation: object, _on_event: object
+        ) -> list[object]:
+            return []
+
+        async def finish(
+            self, _cancellation: object, on_event: Callable[..., object]
+        ) -> list[object]:
+            segment = RawCaptureSegment(
+                segment_id="segment-1",
+                order=0,
+                locator=TimeLocator(start_ms=0, end_ms=1_000),
+                text="hello streaming",
+            )
+            engine = CaptureEngine(
+                engine="speech-recognition",
+                model="tea-asr-1.1-mini",
+                digest=f"sha256:{'a' * 64}",
+                device="cpu",
+            )
+            event = ProgressiveSessionEvent(
+                StreamingEventType.SEGMENT,
+                "extracting",
+                partial_revision=1,
+                covered_until_ms=1_000,
+                segments=(segment,),
+                extraction_engine=engine,
+            )
+            completed = ProgressiveSessionEvent(StreamingEventType.COMPLETED, "completed")
+            await on_event(event)
+            await on_event(completed)
+            return [event, completed]
+
+        async def close(self) -> None:
+            self._closed = True
+
+    async def start(*, engine: InstalledEngine, config: ExtractionRuntimeConfig) -> _Session:
+        starts.append((engine.content_id, config.speech_recognition_model))
+        return _Session()
+
+    def push(self: object, data: bytes) -> list[DecodedAudioWindow]:
+        nonlocal emitted
+        del self
+        if not data or emitted:
+            return []
+        emitted = True
+        return [DecodedAudioWindow(0, 1_000, b"\x00\x02")]
+
+    def finish_decode(self: object) -> list[DecodedAudioWindow]:
+        del self
+        return []
+
+    monkeypatch.setattr(progressive_capture._SessionWorker, "start", start)
+    monkeypatch.setattr(progressive_capture.PyAVIncrementalDecoder, "push", push)
+    monkeypatch.setattr(progressive_capture.PyAVIncrementalDecoder, "finish", finish_decode)
+
+
+def _open_wav(repository: StreamingRepository) -> str:
+    digest = hashlib.sha256(_WAV).hexdigest()
+    ingestion = repository.create_ingestion(
+        OpenIngestionV2(
+            client_request_id="speech-model-content",
+            kind=CaptureSourceKind.AUDIO,
+            file_name="sample.wav",
+            media_type="audio/wav",
+            total_bytes=len(_WAV),
+            source_sha256=digest,
+        )
+    )
+    repository.append_chunk(
+        ingestion.ingestion_id,
+        chunk_index=0,
+        byte_offset=0,
+        data=_WAV,
+        sha256=digest,
+        max_chunk_bytes=4 * 1024 * 1024,
+        declared_total_bytes=len(_WAV),
+    )
+    repository.finalize_ingestion(ingestion.ingestion_id, total_bytes=len(_WAV), sha256=digest)
+    return ingestion.ingestion_id
+
+
+def _assert_speech_options(options: dict[str, object], *, content: str | None, model: str) -> None:
+    # The capture config's variant is the opposite of the installed content.
+    # The worker must see the recorded content id, and no content key when the
+    # engine is legacy.
+    if model == "auto":
+        assert "model" not in options
+    else:
+        assert options["model"] == model
+    if content is None:
+        assert "content" not in options
+    else:
+        assert options["content"] == content
+
+
+@pytest.mark.parametrize(
+    ("content", "model", "allowed"),
+    [
+        ("cpu", "tea-asr-1.1", False),
+        ("cpu", "auto", True),
+        ("cpu", "tea-asr-1.1-mini", True),
+        ("cuda", "tea-asr-1.1", True),
+        (None, "tea-asr-1.1", True),
+    ],
+    ids=["cpu-full", "cpu-auto", "cpu-mini", "cuda-full", "legacy-full"],
+)
+@pytest.mark.parametrize("identify_speakers", [False, True], ids=["streaming", "speakers"])
+def test_a_missing_cpu_model_fails_before_the_worker_starts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    content: str | None,
+    model: str,
+    allowed: bool,
+    identify_speakers: bool,
+) -> None:
+    catalog, sources = _speech_catalog_for(tmp_path, legacy=content is None)
+    client = _RecordingWorkerClient()
+    manager = _content_manager(
+        tmp_path,
+        catalog,
+        sources,
+        speech_variant="cpu" if content is None else "auto",
+        nvidia_driver_present=_reject_driver if content is None else _Driver(content == "cuda"),
+        worker_client=client,
+    )
+    _install(manager, "speech-recognition")
+    _install(manager, "speaker-diarization")
+    installed = manager.active_engine("speech-recognition")
+    assert installed is not None
+    assert installed.content_id == content
+    probes = len(client.probes)
+    starts: list[tuple[str | None, str]] = []
+    _patch_streaming_session(monkeypatch, starts)
+    # Disagree with the installed content so a variant cannot select the model.
+    variant = "cuda" if content == "cpu" else "cpu"
+    config = _speech_config(tmp_path, model=model, variant=variant)
+
+    async def scenario() -> None:
+        clock = SystemClock()
+        repository = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+        repository.initialize()
+        ingestion_id = _open_wav(repository)
+        service = StreamingCaptureService(
+            repository,
+            clock=clock,
+            processor=ProgressiveCaptureProcessor(
+                clock=clock,
+                config=config,
+                engine_manager=manager,
+                staging_root=tmp_path / "staging",
+            ),
+            extractor=StandaloneRuntimeCaptureExtractor(clock, config, engine_manager=manager),
+        )
+        operation = service.start_capture_use_case.execute(
+            StartCaptureV2(
+                client_request_id="speech-model-content",
+                ingestion_id=ingestion_id,
+                structuring_mode=StructuringMode.HOST,
+                identify_speakers=identify_speakers,
+            )
+        )
+        task = service._tasks[operation.capture_id]
+        await task
+        captured = service.get_capture(operation.capture_id)
+        if allowed:
+            assert captured.status.value == "awaiting_structuring"
+            assert captured.error is None
+            if identify_speakers:
+                assert starts == []
+                assert [item[0] for item in client.runs] == ["speech-recognition"]
+                _assert_speech_options(client.runs[0][1], content=content, model=model)
+                assert client.diarizations == ["speaker-diarization"]
+                text = service.raw(operation.capture_id).source_text
+                assert text == "Good morning\nHello there"
+            else:
+                assert starts == [(content, model)]
+                assert client.runs == []
+                assert client.diarizations == []
+                assert service.raw(operation.capture_id).source_text == "hello streaming"
+        else:
+            assert captured.status.value == "failed"
+            assert captured.error is not None
+            assert captured.error.code == "requirement_unavailable"
+            assert captured.error.stage == "extraction"
+            assert captured.error.retryable is False
+            assert captured.error.message == _MISSING_CPU_MODEL
+            assert starts == []
+            assert client.runs == []
+            assert client.diarizations == []
+        assert len(client.probes) == probes
+        await service.shutdown()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("content", "model", "detail"),
+    [
+        ("cpu", "tea-asr-1.1", _MISSING_CPU_MODEL),
+        ("cpu", "auto", None),
+        ("cpu", "tea-asr-1.1-mini", None),
+        ("cuda", "tea-asr-1.1", None),
+        (None, "tea-asr-1.1", None),
+    ],
+    ids=["cpu-full", "cpu-auto", "cpu-mini", "cuda-full", "legacy-full"],
+)
+def test_a_ready_speech_requirement_names_only_a_missing_cpu_model(
+    tmp_path: Path, content: str | None, model: str, detail: str | None
+) -> None:
+    catalog, sources = _speech_catalog_for(tmp_path, legacy=content is None)
+    manager = _content_manager(
+        tmp_path,
+        catalog,
+        sources,
+        speech_variant="cpu" if content is None else "auto",
+        nvidia_driver_present=_reject_driver if content is None else _Driver(content == "cuda"),
+        worker_client=FakeWorkerClient(),
+    )
+    _install(manager, "speech-recognition")
+    listed = _listed(
+        _model_installer(
+            tmp_path,
+            manager,
+            model=model,
+            variant="cuda" if content == "cpu" else "cpu",
+        ),
+        "speech-recognition",
+    )
+
+    assert listed.status.value == "ready"
+    assert listed.detail == detail
+
+
+def test_a_ready_cpu_install_omits_detail_when_no_model_is_configured(tmp_path: Path) -> None:
+    catalog, sources = _speech_contents_catalog(tmp_path)
+    manager, _cache, _downloader = _cached_manager(
+        tmp_path, catalog, sources, nvidia_driver_present=_Driver(False)
+    )
+    _install(manager, "speech-recognition")
+    installer = _requirements_installer(tmp_path, manager, "speech-recognition")
+
+    listed = _listed(installer, "speech-recognition")
+
+    assert listed.status.value == "ready"
+    assert listed.detail is None
+    assert listed.artifact is None
+
+
+def test_an_uninstalled_cpu_candidate_keeps_todays_installable_detail(tmp_path: Path) -> None:
+    catalog, sources = _speech_contents_catalog(tmp_path)
+    manager = _content_manager(
+        tmp_path,
+        catalog,
+        sources,
+        speech_variant="auto",
+        nvidia_driver_present=_Driver(False),
+        worker_client=FakeWorkerClient(),
+    )
+    listed = _listed(
+        _model_installer(tmp_path, manager, model="tea-asr-1.1", variant="cuda"),
+        "speech-recognition",
+    )
+
+    assert listed.status.value == "installable"
+    assert listed.detail == _INSTALLABLE_DETAIL
+    assert listed.artifact is None

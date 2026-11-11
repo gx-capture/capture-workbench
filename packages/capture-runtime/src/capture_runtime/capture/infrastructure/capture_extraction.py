@@ -94,9 +94,13 @@ from capture_runtime.ocr.infrastructure.ocr_worker_result import (
     WorkerOcrProgress,
 )
 from capture_runtime.provisioning.infrastructure.engine_catalog import EngineCatalogError
+from capture_runtime.provisioning.infrastructure.engine_content_selection import (
+    speech_model_not_installed_message,
+)
 from capture_runtime.provisioning.infrastructure.engine_installation import (
     EngineInstallationManager,
     ExtractionRuntimeUnavailableError,
+    SpeechModelNotInstalledError,
 )
 from capture_runtime.speech.application.use_cases import TranscribeAudio
 from capture_runtime.worker_client import InstalledEngine
@@ -856,6 +860,12 @@ class StandaloneRuntimeCaptureExtractor:
         if requirement_id == SPEECH_RECOGNITION_REQUIREMENT_ID and engine.content_id is not None:
             worker_options["content"] = engine.content_id
         try:
+            if requirement_id == SPEECH_RECOGNITION_REQUIREMENT_ID:
+                missing = speech_model_not_installed_message(
+                    engine.content_id, self.config.speech_recognition_model
+                )
+                if missing is not None:
+                    raise SpeechModelNotInstalledError(missing)
             if page_manifest is not None:
                 worker_options = {
                     **worker_options,

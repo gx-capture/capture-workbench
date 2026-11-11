@@ -65,6 +65,7 @@ from capture_runtime.ocr.infrastructure.ocr_projection import OcrPipeline
 from capture_runtime.ocr.infrastructure.ocr_worker_result import OcrWorkerFailure
 from capture_runtime.provisioning.infrastructure.engine_installation import (
     ExtractionRuntimeUnavailableError,
+    SpeechModelNotInstalledError,
 )
 from capture_runtime.speech.infrastructure.progressive_audio import (
     ProgressiveAudioError,
@@ -487,6 +488,15 @@ class StreamingCaptureService:
                 ),
                 stage="structuring" if raw_written else "extraction",
             )
+        except SpeechModelNotInstalledError as error:
+            # The generic requirement handler below drops the message and retries.
+            self._fail(
+                capture_id,
+                "requirement_unavailable",
+                _safe_failure_message(error),
+                stage="extraction",
+                retryable=False,
+            )
         except (RuntimeUnavailableError, ExtractionRuntimeUnavailableError) as error:
             self._fail(
                 capture_id,
@@ -838,6 +848,8 @@ def _find_ocr_worker_failure(error: BaseException) -> OcrWorkerFailure | None:
 def _safe_failure_message(error: BaseException) -> str:
     if isinstance(error, ProgressiveCaptureError):
         return str(error)[:500] or "Progressive audio processing failed."
+    if isinstance(error, SpeechModelNotInstalledError):
+        return str(error)[:500]
     return "Progressive audio processing failed at a bounded runtime boundary."
 
 
