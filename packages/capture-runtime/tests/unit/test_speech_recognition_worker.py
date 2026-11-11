@@ -7,6 +7,9 @@ import pytest
 
 import capture_runtime.workers.speech_recognition_main as whisper_main
 from capture_runtime.constants import RUNTIME_VERSION
+from capture_runtime.provisioning.infrastructure.engine_content_selection import (
+    speech_content_allows_model,
+)
 from capture_runtime.speech.infrastructure import speech_recognition as speech_backend
 from capture_runtime.speech.infrastructure.speech_recognition import TeaAsrAdapter
 from capture_runtime.worker_contracts import WorkerRequest
@@ -399,3 +402,35 @@ def test_session_worker_rejects_an_unknown_content(
     with pytest.raises(ValueError, match="content is invalid"):
         whisper_main._session()
     assert constructors == []
+
+
+@pytest.mark.parametrize("content", [None, "cuda", "cpu"])
+@pytest.mark.parametrize("model", ["auto", "tea-asr-1.1", "tea-asr-1.1-mini"])
+def test_a_content_allows_a_model_exactly_when_the_worker_loads_one(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    content: str | None,
+    model: str,
+) -> None:
+    # The runtime rule and TeaAsrAdapter choose independently. This pins them:
+    # allowed means the adapter loads a checkpoint; refused means it raises
+    # before that load. prefer_gpu is false so device selection is not the signal.
+    model_root = tmp_path / "models"
+    model_tree(model_root)
+    source = tmp_path / "fixture.wav"
+    source.write_bytes(b"RIFF" + b"\x00" * 8 + b"WAVE")
+    request = _request(
+        model_root,
+        source,
+        prefer_gpu=False,
+        model=None if model == "auto" else model,
+        content=content,
+    )
+
+    if not speech_content_allows_model(content, model):
+        with pytest.raises(EngineRuntimeUnavailableError, match="^model not installed$"):
+            _run_with_factory(monkeypatch, request, fail_cuda=False)
+        return
+
+    _result, calls, _constructors = _run_with_factory(monkeypatch, request, fail_cuda=False)
+    assert calls

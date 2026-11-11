@@ -6,8 +6,11 @@ decide again after install: the chosen content is written into ``active.json``.
 
 ``capture_runtime.config`` cannot import provisioning, so the environment
 variable is validated there. This module only answers which content id a
-fresh install would use. Tests pass their own driver callable into
-``EngineInstallationManager`` and never call :func:`detect_nvidia_driver`
+fresh install would use, and which speech models that installed content can
+run. The rule stays here because import-linter forbids provisioning from
+importing the speech adapter, while capture and the requirement listing are
+downstream and may import this module. Tests pass their own driver callable
+into ``EngineInstallationManager`` and never call :func:`detect_nvidia_driver`
 against this machine.
 """
 
@@ -61,7 +64,44 @@ def _system_root(environ: Mapping[str, str]) -> str | None:
     return None
 
 
+# ``auto`` on a cpu content loads mini. The full checkpoint is not in that pack.
+_CPU_SPEECH_MODELS = frozenset({"auto", "tea-asr-1.1-mini"})
+
+
+def speech_content_allows_model(content_id: str | None, model: str) -> bool:
+    """Whether this installed content can run the model the worker would receive.
+
+    ``cpu`` can run ``auto`` and ``tea-asr-1.1-mini``. ``cuda`` and a legacy
+    engine with no content id can run every model. An unknown content id is
+    not treated as ``cuda``; callers leave that failure to the worker.
+    """
+
+    if content_id == "cpu":
+        return model in _CPU_SPEECH_MODELS
+    if content_id in {None, "cuda"}:
+        return True
+    return False
+
+
+def speech_model_not_installed_message(content_id: str | None, model: str) -> str | None:
+    """The host-facing sentence when an installed ``cpu`` content lacks ``model``.
+
+    ``cuda``, a legacy engine, and a model the content can run return None.
+    """
+
+    if content_id != "cpu" or speech_content_allows_model(content_id, model):
+        return None
+    return (
+        f"Speech recognition model {model} is not in the installed cpu content. "
+        "Set CAPTURE_SPEECH_RECOGNITION_MODEL to auto or tea-asr-1.1-mini, "
+        "or uninstall speech-recognition and install it with "
+        "CAPTURE_SPEECH_RECOGNITION_VARIANT=cuda."
+    )
+
+
 __all__ = [
     "content_id_for_variant",
     "detect_nvidia_driver",
+    "speech_content_allows_model",
+    "speech_model_not_installed_message",
 ]

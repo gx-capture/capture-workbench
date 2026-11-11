@@ -19,6 +19,10 @@ class ExtractionRuntimeUnavailableError(RuntimeError):
     """Raised when the runtime requirement an extraction needs is not installed and ready."""
 
 
+class SpeechModelNotInstalledError(ExtractionRuntimeUnavailableError):
+    """Raised when the requested speech model is not in the installed content."""
+
+
 # Preserve the established public module path for tracebacks, reprs, and
 # consumers that inspect these exception types.
 EngineInstallationError.__module__ = (
@@ -33,6 +37,9 @@ EngineResolutionTimeoutError.__module__ = (
 ExtractionRuntimeUnavailableError.__module__ = (
     "capture_runtime.provisioning.infrastructure.engine_installation"
 )
+SpeechModelNotInstalledError.__module__ = (
+    "capture_runtime.provisioning.infrastructure.engine_installation"
+)
 
 
 __all__ = [
@@ -40,4 +47,5 @@ __all__ = [
     "EngineInstallationError",
     "EngineResolutionTimeoutError",
     "ExtractionRuntimeUnavailableError",
+    "SpeechModelNotInstalledError",
 ]

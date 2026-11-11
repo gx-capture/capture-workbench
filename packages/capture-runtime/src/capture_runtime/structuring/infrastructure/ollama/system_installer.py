@@ -39,6 +39,9 @@ from capture_runtime.provisioning.infrastructure.engine_catalog import (
     EngineContentDescriptor,
     EngineRequirementDescriptor,
 )
+from capture_runtime.provisioning.infrastructure.engine_content_selection import (
+    speech_model_not_installed_message,
+)
 from capture_runtime.provisioning.infrastructure.engine_installation import (
     EngineInstallationManager,
     sha256_file,
@@ -111,7 +114,7 @@ class SystemRuntimeInstaller:
             raise ValueError("model_readiness_poll_interval_seconds must be non-negative")
         self._lifecycle = lifecycle
         self._engine_manager = engine_manager
-        del extraction_config
+        self._extraction_config = extraction_config
         del ocr_adapter, whisper_adapter, http_client_factory
         self._runner = command_runner or AsyncSubprocessCommandRunner()
         self._resolve_winget = winget_resolver or (lambda: shutil.which("winget"))
@@ -330,6 +333,18 @@ class SystemRuntimeInstaller:
             if not delivery.complete
             else "Pinned worker and direct model files are available for installation."
         )
+        # auto and mini still run on a cpu install, so the status stays ready.
+        # Hosts treat any other status as unavailable.
+        if (
+            installed
+            and requirement_id == SPEECH_RECOGNITION_REQUIREMENT_ID
+            and self._extraction_config is not None
+        ):
+            missing_model = speech_model_not_installed_message(
+                content_id, self._extraction_config.speech_recognition_model
+            )
+            if missing_model is not None:
+                detail = missing_model
         return status, artifact, delivery.download_bytes, detail
 
     async def install(

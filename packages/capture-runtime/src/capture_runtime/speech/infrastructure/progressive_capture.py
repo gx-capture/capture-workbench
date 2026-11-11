@@ -29,9 +29,13 @@ from capture_runtime.contracts import (
     TimeLocator,
     project_source_text,
 )
+from capture_runtime.provisioning.infrastructure.engine_content_selection import (
+    speech_model_not_installed_message,
+)
 from capture_runtime.provisioning.infrastructure.engine_installation import (
     EngineInstallationManager,
     ExtractionRuntimeUnavailableError,
+    SpeechModelNotInstalledError,
 )
 from capture_runtime.speech.infrastructure.progressive_audio import (
     DEFAULT_HEARTBEAT_MS,
@@ -446,6 +450,14 @@ class ProgressiveCaptureProcessor:
             raise ExtractionRuntimeUnavailableError(
                 "Runtime requirement speech-recognition is not installed and ready."
             )
+        # Before a session worker is started or a warm one is reused. The worker's
+        # own "model not installed" check remains, but that failure never reaches
+        # the host as this sentence.
+        missing = speech_model_not_installed_message(
+            engine.content_id, self.config.speech_recognition_model
+        )
+        if missing is not None:
+            raise SpeechModelNotInstalledError(missing)
         return engine
 
     @staticmethod
