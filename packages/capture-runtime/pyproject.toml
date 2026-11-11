@@ -34,6 +34,12 @@ speech-recognition = [
   "torch==2.11.0",
   "numpy>=2.0.0,<3.0.0",
 ]
+speech-recognition-cpu = [
+  "transformers==5.20.2",
+  "librosa==1.0.0",
+  "torch==2.11.0",
+  "numpy>=2.0.0,<3.0.0",
+]
 diarization = [
   "transformers==5.20.2",
   "librosa==1.0.0",
@@ -66,9 +72,14 @@ packages = ["src/capture_runtime"]
 "src/capture_runtime/assets/ocr-profile.json" = "capture_runtime/assets/ocr-profile.json"
 
 [tool.uv]
-# Speech recognition runs CUDA PyTorch; diarization runs CPU PyTorch, which keeps its
-# worker archive small. Each worker builds in its own environment.
-conflicts = [[{ extra = "speech-recognition" }, { extra = "diarization" }]]
+# speech-recognition resolves CUDA PyTorch on Windows. diarization and
+# speech-recognition-cpu resolve CPU PyTorch from PyPI, which keeps those worker
+# archives small. Each worker builds in its own environment. The CUDA extra conflicts
+# with each CPU extra; the two CPU extras do not conflict with each other.
+conflicts = [
+  [{ extra = "speech-recognition" }, { extra = "diarization" }],
+  [{ extra = "speech-recognition" }, { extra = "speech-recognition-cpu" }],
+]
 
 [tool.uv.sources]
 torch = [

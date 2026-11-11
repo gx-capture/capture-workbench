@@ -162,3 +162,22 @@ def test_canonical_names_catch_alternate_spellings_and_direct_references() -> No
 
     with pytest.raises(ValueError, match="unparseable requirement"):
         _dependency_name("not a requirement")
+
+
+def test_cpu_speech_extra_uses_cpu_torch_and_conflicts_with_cuda_speech() -> None:
+    project = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))
+    optional = project["project"]["optional-dependencies"]
+    assert optional["speech-recognition-cpu"] == optional["speech-recognition"]
+
+    conflicts = project["tool"]["uv"]["conflicts"]
+    assert [{"extra": "speech-recognition"}, {"extra": "diarization"}] in conflicts
+    assert [{"extra": "speech-recognition"}, {"extra": "speech-recognition-cpu"}] in conflicts
+
+    torch_sources = project["tool"]["uv"]["sources"]["torch"]
+    assert torch_sources == [
+        {
+            "index": "pytorch-cu128",
+            "extra": "speech-recognition",
+            "marker": "sys_platform == 'win32'",
+        }
+    ]

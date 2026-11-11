@@ -32,6 +32,16 @@ source of truth for inputs.
 - Known limitations: handwriting OCR quality (printed text is the floor); page
   structure of dense vertical periodical scans and pages that mix directions;
   about a fifth of furigana on textbook pages is not set aside.
+- Push CI on `main` also builds a CPU-only speech recognition worker archive,
+  `capture-engine-speech-recognition-cpu-<version>-windows-x64.zip`, from the
+  `speech-recognition-cpu` extra (CPU PyTorch, environment
+  `.venv-speech-recognition-cpu`). Releases do not ship it yet:
+  `build-release-artifacts` and `generate-release-engine-catalog` do not take
+  this archive. The published speech worker remains the CUDA archive (about
+  2.95 GB, parted into files under 2 GB). The CPU archive is one zip of
+  302 MiB (316,666,018 bytes at 0.9.0, about 825 MB extracted), with no CUDA
+  runtime libraries. Size budgets
+  still cover only the runtime executable and the NSIS installer.
 
 ## Published: 0.9.0 (minor)
 

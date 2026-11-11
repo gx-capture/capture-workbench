@@ -33,6 +33,20 @@ CORE_REQUIRED = (
 )
 OCR_FORBIDDEN = ("transformers", "torch", "huggingface_hub")
 SPEECH_FORBIDDEN = ("paddleocr", "paddlex", "pypdfium2", "cv2")
+# cu128 ships these inside filenames such as cublas64_12.dll and nvJitLink_120_0.dll.
+# reject() matches a path segment, which those names are not. There is no checked-in
+# inventory of the CUDA worker; these stems are the runtime libraries named for this check.
+CUDA_RUNTIME_LIBRARY_NAMES = (
+    "cublas",
+    "cudnn",
+    "cudart",
+    "nvrtc",
+    "cufft",
+    "cusparse",
+    "cusolver",
+    "nvjitlink",
+)
+_NATIVE_LIBRARY_SUFFIXES = (".dll", ".pyd", ".so", ".dylib")
 OTHER_PLATFORM = ("/linux", "/darwin", "aarch64", "arm64")
 
 
@@ -70,6 +84,29 @@ def write_inventory(path: Path | None, inventory: str) -> None:
         return
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(inventory.rstrip() + "\n", encoding="utf-8")
+
+
+def _native_library_name(name: str) -> bool:
+    return name.endswith(_NATIVE_LIBRARY_SUFFIXES) or ".so." in name
+
+
+def cuda_runtime_libraries(inventory: str) -> list[str]:
+    found: list[str] = []
+    lowered = inventory.casefold().replace("\\", "/")
+    for line in lowered.splitlines():
+        name = line.rsplit("/", 1)[-1]
+        if not _native_library_name(name):
+            continue
+        for token in CUDA_RUNTIME_LIBRARY_NAMES:
+            if token in name and token not in found:
+                found.append(token)
+    return found
+
+
+def reject_cuda_runtime(inventory: str, label: str) -> None:
+    found = cuda_runtime_libraries(inventory)
+    if found:
+        raise SystemExit(f"{label} boundary violation; cuda-runtime={found}")
 
 
 def reject(inventory: str, forbidden: tuple[str, ...], label: str) -> None:
@@ -120,10 +157,12 @@ def main() -> None:
     parser.add_argument("--core", type=Path)
     parser.add_argument("--ocr-worker", type=Path)
     parser.add_argument("--speech-recognition-worker", type=Path)
+    parser.add_argument("--speech-recognition-cpu-worker", type=Path)
     parser.add_argument("--core-inventory", type=Path)
     parser.add_argument("--core-recursive-inventory", type=Path)
     parser.add_argument("--ocr-inventory", type=Path)
     parser.add_argument("--speech-recognition-inventory", type=Path)
+    parser.add_argument("--speech-recognition-cpu-inventory", type=Path)
     arguments = parser.parse_args()
     if arguments.core:
         recursive_inventory = executable_inventory(arguments.core)
@@ -143,7 +182,19 @@ def main() -> None:
         inventory = zip_inventory(arguments.speech_recognition_worker)
         reject(inventory, SPEECH_FORBIDDEN, "Speech recognition worker")
         write_inventory(arguments.speech_recognition_inventory, inventory)
-    if not any((arguments.core, arguments.ocr_worker, arguments.speech_recognition_worker)):
+    if arguments.speech_recognition_cpu_worker:
+        inventory = zip_inventory(arguments.speech_recognition_cpu_worker)
+        reject(inventory, SPEECH_FORBIDDEN, "CPU speech recognition worker")
+        reject_cuda_runtime(inventory, "CPU speech recognition worker")
+        write_inventory(arguments.speech_recognition_cpu_inventory, inventory)
+    if not any(
+        (
+            arguments.core,
+            arguments.ocr_worker,
+            arguments.speech_recognition_worker,
+            arguments.speech_recognition_cpu_worker,
+        )
+    ):
         raise SystemExit("at least one artifact must be supplied")
 
 
