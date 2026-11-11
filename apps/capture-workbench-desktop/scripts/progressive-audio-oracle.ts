@@ -1,5 +1,3 @@
-// eslint-disable-next-line @nx/enforce-module-boundaries -- repository tooling reads shared release intent.
-import { RELEASE_VERSION } from '../../../tools/release/release-intent.ts';
 // Manual step before `smoke-real-media-model` with audio: runs a real
 // progressive Whisper capture of CAPTURE_PROGRESSIVE_AUDIO_ORACLE_SOURCE and
 // writes the reference evidence to CAPTURE_PROGRESSIVE_AUDIO_ORACLE_OUTPUT.
@@ -24,6 +22,7 @@ import {
 } from './progressive-audio-evidence.ts';
 import { createTrackedProcessTreeTerminator } from './installed-process-cleanup.ts';
 import { reserveLoopbackPort } from './installed-browser.ts';
+import { catalogDeliveries } from './practical-installed.ts';
 
 const workspaceRoot = resolve(import.meta.dirname, '../..', '..');
 const runtimeExecutable = resolve(
@@ -162,28 +161,54 @@ async function waitForReady(baseUrl: string, child: ReturnType<typeof spawn>): P
   throw new Error('Progressive audio oracle runtime readiness timed out.');
 }
 
+/**
+ * The release files of the speech `cuda` content's worker: one archive or its
+ * parts (the CUDA worker is published as parts since 0.7.0). The oracle forces
+ * that content, so the mirror serves nothing else.
+ */
+export function cudaSpeechWorkerFileNames(catalog: unknown): readonly string[] {
+  const requirements = typeof catalog === 'object' && catalog !== null
+    ? (catalog as { readonly requirements?: unknown }).requirements
+    : undefined;
+  const speech = Array.isArray(requirements)
+    ? requirements.find((item: unknown) => typeof item === 'object' && item !== null
+      && (item as { readonly requirementId?: unknown }).requirementId === 'speech-recognition')
+    : undefined;
+  if (!speech) throw new Error('Progressive audio oracle catalog has no speech recognition requirement.');
+  const delivery = catalogDeliveries(speech as Record<string, unknown>)
+    .find((item) => item.contentId === 'cuda' || item.contentId === undefined);
+  const artifacts = delivery?.artifacts;
+  const artifact = Array.isArray(artifacts) && artifacts.length > 0 ? asRecord(artifacts[0]) : undefined;
+  if (!artifact) throw new Error('Progressive audio oracle catalog has no cuda speech worker.');
+  const names = Array.isArray(artifact.parts)
+    ? artifact.parts.map((part: unknown) => asRecord(part).fileName)
+    : [artifact.fileName];
+  if (names.length === 0 || names.some((name) => typeof name !== 'string' || !/^[\w.-]+$/u.test(name))) {
+    throw new Error('Progressive audio oracle catalog names an unsafe speech worker file.');
+  }
+  return names as string[];
+}
+
 async function startWorkerMirror(port: number): Promise<Server> {
-  const archivePath = join(
-    workspaceRoot,
-    'packages',
-    'capture-runtime',
-    'dist',
-    'release',
-    `capture-engine-speech-recognition-${RELEASE_VERSION}-windows-x64.zip`,
-  );
-  const archiveName = `capture-engine-speech-recognition-${RELEASE_VERSION}-windows-x64.zip`;
-  const archiveMetadata = await stat(archivePath).catch(() => undefined);
-  if (!archiveMetadata?.isFile()) throw new Error('Progressive audio oracle worker archive is missing.');
+  const releaseRoot = join(workspaceRoot, 'packages', 'capture-runtime', 'dist', 'release');
+  const catalog: unknown = JSON.parse(await readFile(join(releaseRoot, 'capture-engine-catalog.json'), 'utf8'));
+  const files = new Map<string, number>();
+  for (const name of cudaSpeechWorkerFileNames(catalog)) {
+    const metadata = await stat(join(releaseRoot, name)).catch(() => undefined);
+    if (!metadata?.isFile()) throw new Error('Progressive audio oracle worker archive is missing.');
+    files.set(`/${name}`, metadata.size);
+  }
   const server = createServer((request, response) => {
-    if (request.method !== 'GET' || request.url !== `/${archiveName}`) {
+    const size = request.method === 'GET' && request.url ? files.get(request.url) : undefined;
+    if (size === undefined || !request.url) {
       response.writeHead(404).end();
       return;
     }
     response.writeHead(200, {
-      'content-length': String(archiveMetadata.size),
+      'content-length': String(size),
       'content-type': 'application/zip',
     });
-    createReadStream(archivePath).pipe(response);
+    createReadStream(join(releaseRoot, request.url.slice(1))).pipe(response);
   });
   await new Promise<void>((resolvePromise, reject) => {
     server.once('error', reject);
@@ -265,6 +290,9 @@ async function run(): Promise<void> {
       CAPTURE_STRUCTURING_PROVIDER: 'host',
       CAPTURE_WHISPER_PREFER_GPU: '1',
       CAPTURE_WHISPER_ALLOW_CPU_FALLBACK: '1',
+      // The model smoke compares against this oracle on tea-asr-1.1, which
+      // only the cuda content carries; never let the driver check pick cpu.
+      CAPTURE_SPEECH_RECOGNITION_VARIANT: 'cuda',
       CAPTURE_SMOKE_WORKER_MIRROR_OPT_IN: '1',
       CAPTURE_SMOKE_WORKER_MIRROR_URL: `http://127.0.0.1:${workerMirrorPort}`,
     },

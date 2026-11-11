@@ -17,8 +17,11 @@ export interface CaptureUnitGuide {
 
 // The facts other than download size follow the pinned model cards in the
 // release model-source lock (TEA-ASR-1.1 bda08df, TEA-ASR-1.1-mini 98c5804,
-// Nemotron-3-Diarization f667ed7) and the 0.8.0 worker archives; update them
-// with the lock. Sizes come from the runtime's downloadBytes.
+// Nemotron-3-Diarization f667ed7) and the published worker archives; update
+// them with the lock. Speech recognition ships as two packs, the `cuda` and
+// `cpu` contents of `speech-recognition`, and the runtime picks one for the
+// machine; the guide is shown before that choice, so it describes both. Sizes
+// come from the runtime's downloadBytes, which is the pack this machine gets.
 const ZH_TW: Readonly<Record<string, CaptureUnitGuide>> = {
   'speech-recognition': {
     name: '台灣語音轉文字（TEA-ASR 1.1）',
@@ -27,8 +30,9 @@ const ZH_TW: Readonly<Record<string, CaptureUnitGuide>> = {
     languages:
       '適用：台灣華語，以及華語夾雜英語的日常對話、會議與課堂錄音。日語、英語等其他語言需由主程式指定語言，但模型未針對它們調校；台語、客語不在訓練範圍內。',
     hardware:
-      '有 NVIDIA GPU 時在 GPU 上執行 TEA-ASR 1.1（約 20 億參數）；沒有 GPU 時在 CPU 上執行同一個模型，速度明顯較慢。',
-    download: '兩種大小的辨識模型、對齊時間點的 Qwen3 模型與 GPU 執行環境。',
+      '裝有 NVIDIA 顯示卡驅動程式的電腦會下載 GPU 版：在 GPU 上執行 TEA-ASR 1.1（約 20 億參數），GPU 出錯時改在 CPU 上執行同一個模型。沒有這個驅動程式的電腦會下載 CPU 版：在 CPU 上執行較小的 TEA-ASR 1.1 mini，速度比 GPU 慢。',
+    download:
+      'GPU 版：兩種大小的辨識模型、對齊時間點的 Qwen3 模型與 GPU 執行環境。CPU 版：TEA-ASR 1.1 mini、同一個對齊模型與 CPU 執行環境。',
     license:
       'TEA-ASR 採 MIT 授權，基礎模型 Qwen3-ASR 採 Apache-2.0。全程在這台電腦上執行，錄音不會上傳。',
   },
@@ -52,9 +56,9 @@ const EN: Readonly<Record<string, CaptureUnitGuide>> = {
     languages:
       'Suited to Taiwan Mandarin, including everyday conversation, meetings and lectures that mix in English. Other languages such as Japanese or English can be requested by the host app, but the model is not tuned for them; Taiwanese Hokkien and Hakka are outside its training.',
     hardware:
-      'With an NVIDIA GPU it runs TEA-ASR 1.1 (about 2 billion parameters) on the GPU; without one it runs the same model on the CPU, which is much slower.',
+      'A computer with the NVIDIA graphics driver downloads the GPU pack: TEA-ASR 1.1 (about 2 billion parameters) runs on the GPU, and on the CPU if the GPU fails. A computer without that driver downloads the CPU pack: the smaller TEA-ASR 1.1 mini runs on the CPU, more slowly than on a GPU.',
     download:
-      'Recognition models in two sizes, a Qwen3 model that aligns the times, and the GPU runtime.',
+      'GPU pack: recognition models in two sizes, a Qwen3 model that aligns the times, and the GPU runtime. CPU pack: TEA-ASR 1.1 mini, the same alignment model, and the CPU runtime.',
     license:
       'TEA-ASR is MIT-licensed; its base model Qwen3-ASR is Apache-2.0. Everything runs on this computer; recordings are never uploaded.',
   },

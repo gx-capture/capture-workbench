@@ -112,7 +112,7 @@ How each piece reacts to a `contents` requirement and to two extra assets:
 **Smallest path.** `release/version.json` is still 0.9.0, so the published archives have the expected names.
 1. Build the CPU worker: `pnpm nx run capture-runtime:build-speech-recognition-cpu-worker` (about 4 min, 302 MiB).
 2. Put the other three workers in `packages/capture-runtime/dist/engines`, without the `.sha256` files: `gh release download v0.9.0 -R gx-capture/capture-workbench -D packages/capture-runtime/dist/engines -p 'capture-engine-ocr-0.9.0-windows-x64*' -p 'capture-engine-diarization-0.9.0-windows-x64*' -p 'capture-engine-speech-recognition-0.9.0-windows-x64*'`. That is about 3.4 GB; the CUDA parts are only hashed and are never fetched with `cpu`. Alternatively build them with the three `build-*-worker` targets.
-3. Generate the catalog with the S7 target command (after P3: `pnpm nx run capture-runtime:generate-release-engine-catalog`). Before P3: the command at `project.json:592` plus `--speech-recognition-cpu-worker-archive dist/engines/capture-engine-speech-recognition-cpu-0.9.0-windows-x64.zip --speech-recognition-cpu-worker-manifest dist/engines/capture-engine-speech-recognition-cpu-0.9.0-windows-x64-files.json`.
+3. Generate the catalog: `pnpm nx run capture-runtime:generate-release-engine-catalog` (P3 passes the CPU archive and manifest).
 4. Build the exe: `pnpm nx run capture-runtime:prepare-production-environment`, then in `packages/capture-runtime` run `uv run --no-sync --python 3.13 python scripts/build_executable.py --layout onefile --catalog dist/catalog/capture-engine-catalog.json`.
 5. Serve the workers: `python -m http.server 8765 --bind 127.0.0.1 --directory packages/capture-runtime/dist/engines`.
 6. Start `dist/executable/capture-runtime.exe serve --port P` with these settings:
@@ -170,7 +170,13 @@ Forcing `cpu` on the RTX box exercises everything except driver detection, which
 
    Gate: `verify:affected`, `capture-runtime:test`, the `capture-workbench-desktop` node test target (`project.json:220`). P1 and P2 are independent and can go in either order.
 4. **(Optional) C1 (Cert Prep).** Gate: `pnpm ci:local`.
-5. **P3 (CW, user-visible: the next release ships `cpu`).** Requires L1, P1 and P2.
+5. **P3 (CW, user-visible: the next release ships `cpu`). Done in this change, with P4.** Requires L1, P1 and P2.
+   - Done: `generate-release-engine-catalog` depends on `build-speech-recognition-cpu-worker` and passes its archive and manifest; `build-release-artifacts` also depends on `verify-speech-recognition-cpu-boundary`. `core-only` still yields an empty catalog (the generator ignores the CPU flags there).
+   - Done: `release.py` (`assert_release_speech_contents`), `verify_release_model_candidate.py` (not in `--preflight-speech-recognition`), `local-release-consumer-smoke.ts` and `real-media-model-smoke.ts` fail a model-enabled release whose speech requirement is legacy or has one content (decision 3 below). `practical-installed.ts` and `real-media-smoke.ts` still read both shapes, so a published 0.9.0 release can still be checked; the tag audit, `resolve-capture-release.ts` and `verify-release-candidate.ts` never read the speech shape.
+   - Done: the candidate verifier runs a second pass that installs the candidate's own `cpu` archive and model subset (variant pinned `cpu`, own install root), probes it and transcribes the same private fixture the `cuda` pass uses, asserting `tea-asr-1.1-mini` / `cpu`, a non-empty transcript and ordered segments. Nothing is frozen for it (decision 2).
+   - Done: `real-media-smoke.ts` and `progressive-audio-oracle.ts` force `CAPTURE_SPEECH_RECOGNITION_VARIANT=cuda`; the oracle's mirror now serves the `cuda` content's parts from the catalog. `real-media-model-smoke.ts` launches the desktop app, whose `launch_policy.rs` does not pass the variant, so it requires `%SystemRoot%\System32\nvcuda.dll` before it starts and its mirror stays `cuda`-only.
+   - Done: `CAPTURE_SPEECH_RECOGNITION_*` joins the ambient guard in `release-candidate.yml` and in `real-media-model-smoke.ts`. `runtime-candidate.yml` has no such guard.
+   - Workflows: only `runtime-candidate.yml` runs `build-release-artifacts` (`release-candidate.yml` reuses the runtime candidate). Its 90-minute timeout covers the extra CPU build; push CI's `runtime` job already builds all four workers on one runner. Assembly, the release manifest and both publishers list the runtime directory, so the two new assets needed no code change.
    - Behavior test: the generated catalog keeps the id `speech-recognition`, with contents `["cuda","cpu"]`, and the consumer smoke lists both zips.
    - Left open by P2, required before the switch:
      - A release gate runs the candidate's own `cpu` archive: it installs the `cpu` content from the candidate and transcribes. Today nothing does: the candidate verifier (`verify_release_model_candidate.py`) pins `cuda`, and push CI probes a separately built CPU zip.
@@ -178,7 +184,7 @@ Forcing `cpu` on the RTX box exercises everything except driver detection, which
      - `CAPTURE_SPEECH_RECOGNITION_VARIANT` joins the ambient-environment guard of the consumer smoke step in `release-candidate.yml` (the `$ambient` check after `local-release-consumer-smoke.ts`, about line 590), so a stray value cannot change which content a release gate installs.
      - Decide whether a `contents` catalog with only one content may be released. Today a `cuda`-only `contents` catalog passes every tool.
    - Gate, mandatory before merge because CI never runs these targets (runbook `:532-536`): `pnpm nx run capture-runtime:build-release-artifacts --skip-nx-cache`, then `node tools/local-release-consumer-smoke.ts --runtime-dir packages/capture-runtime/dist/release --version 0.9.0`, then section 5 steps 6-11.
-6. **P4 = S8 docs (user-visible: the unit guide in the UI).** Same day as P3, or folded into it.
+6. **P4 = S8 docs (user-visible: the unit guide in the UI). Done, folded into P3.** The sentences of section C are rewritten; the unit guide describes both packs.
 7. **Release.** Pre-run both consumer gates (runbook `:457-475`). Cert Prep bumps first, then LAW, which already has L1.
 
 ## C. S8: sentences that become false once `cpu` is offered
@@ -226,6 +232,15 @@ Forcing `cpu` on the RTX box exercises everything except driver detection, which
 
 ## E. Questions for the product owner
 
+Answered by the product owner on 2026-11-11 (issue #154):
+
+1. `auto` end-to-end evidence is the development machine with `CAPTURE_SPEECH_RECOGNITION_VARIANT=cpu`, plus the driver-detection unit tests. No extra machine.
+2. The `cpu` pack's release evidence is one manual TEA-ASR-1.1-mini transcription on CPU, recorded in the runbook. The lock and the frozen private fixture stay `tea-asr-1.1` / `cuda`.
+3. After the switch a release carries both contents; a `speech-recognition` requirement with one content fails the release candidate.
+4. The unit guide describes both packs; its title stays.
+
+Question 3 below (Cert Prep's whisper inventory) stays open. The questions as asked:
+
 1. Is there a Windows machine or VM with no NVIDIA driver for the `auto` end-to-end check? If not, is forcing `cpu` on the RTX 4060 box plus the S2 unit tests enough release evidence?
 2. Release evidence for the `cpu` pack: the lock and the private fixture stay on `tea-asr-1.1`/`cuda`. Is one manual CPU transcription with mini, recorded in the runbook, enough? A frozen CPU fixture would change the lock and needs your approval.
 3. Cert Prep's strict-local candidate path still pins `capture-engine-whisper-*` (`capture-candidate-gate.mts:176-194`) and has failed on every real candidate since 0.7.0. Repair it or delete it?
@@ -235,7 +250,7 @@ Forcing `cpu` on the RTX box exercises everything except driver detection, which
 
 - **No CI coverage of the switch.** Only the local build of `build-release-artifacts` and the runtime candidate exercise P3.
 - **Duplicated rule.** The runtime's content→models rule copies the worker's selection; the test in P1 pins them together.
-- **Smokes that install through the desktop cannot force the variant.** The release smokes must run on a machine with the NVIDIA driver to stay on `cuda`.
+- **Smokes that install through the desktop cannot force the variant.** `real-media-model-smoke.ts` now refuses to start without the NVIDIA driver, so it stays on `cuda`.
 - **Plan file vs CI:** the plan says the CI runtime job has a 90-minute timeout; `ci.yml:214` says 60 (the job took 20 min).
 
 ### Critical Files for Implementation

@@ -18,17 +18,28 @@
 
 # Speech development tests
 
-The shipping runtime uses the GPU when one is present and the model supports it,
-and the CPU when no GPU is present. By default, speech recognition runs TEA-ASR 1.1
-on CUDA or, with no GPU, that same checkpoint on CPU. An explicitly chosen model
-also stays the same across devices and CPU retries.
+Speech recognition ships as two packs, the `cuda` and `cpu` contents of
+`speech-recognition`, and what runs by default follows the installed pack. A
+machine with the NVIDIA driver (`System32\nvcuda.dll`) installs `cuda`: TEA-ASR 1.1
+on CUDA, and that same checkpoint on CPU after a classified GPU failure. A machine
+without it installs `cpu`: TEA-ASR 1.1 mini on CPU. `CAPTURE_SPEECH_RECOGNITION_VARIANT`
+(`auto`, `cuda`, `cpu`) overrides the choice at install time; the installed pack
+is never re-detected. An explicit `CAPTURE_SPEECH_RECOGNITION_MODEL=tea-asr-1.1`
+on a `cpu` installation fails the capture with `requirement_unavailable`; mini
+runs on either pack. Do not "fix" the `cpu` pack back to TEA-ASR 1.1.
 
 A development test that transcribes real audio uses TEA-ASR 1.1 mini on CUDA
 and checks provenance `tea-asr-1.1-mini` with device `cuda`. Set
 `CAPTURE_SPEECH_RECOGNITION_MODEL=tea-asr-1.1-mini` and
 `CAPTURE_WHISPER_ALLOW_CPU_FALLBACK=false`. Follow
 `.agents/RESEARCH/tea-asr-1.1-mini-gpu-2026-11-04.md`. Release smokes and the
-private speech fixture stay on `tea-asr-1.1` / `cuda`.
+private speech fixture stay on `tea-asr-1.1` / `cuda`, and those smokes force the
+`cuda` pack: the candidate verifier and the real-media smokes set the variant,
+and the desktop model smoke, which cannot, requires the NVIDIA driver. The
+`cpu` pack has no frozen transcript: the candidate verifier also installs the
+candidate's own `cpu` pack and checks provenance `tea-asr-1.1-mini` / `cpu`, and
+its release evidence is one manual mini transcription on CPU, recorded in the
+release runbook.
 
 # Architecture
 

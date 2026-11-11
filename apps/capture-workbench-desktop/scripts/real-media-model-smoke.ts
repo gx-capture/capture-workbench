@@ -10,7 +10,7 @@ import {
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
-import { createReadStream } from 'node:fs';
+import { createReadStream, statSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { copyFile, lstat, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join, relative, resolve } from 'node:path';
@@ -505,9 +505,9 @@ function verifiedDeliveryWorker(
 }
 
 /**
- * The worker this smoke installs: the legacy delivery, or the `cuda` content.
- * Both must carry the lock's full files. A `cpu` content must carry exactly
- * the cpu speech subset of them and no primary path.
+ * The worker this smoke installs: OCR's single delivery, or speech's `cuda`
+ * content. Both must carry the lock's full files. Speech must also offer the
+ * `cpu` content, which carries exactly the cpu speech subset and no primary path.
  */
 function verifiedRequirementWorker(
   requirement: JsonObject,
@@ -516,6 +516,12 @@ function verifiedRequirementWorker(
   requirementId: RequirementId,
 ): WorkerArchive {
   const deliveries = catalogDeliveries(requirement);
+  if (
+    requirementId === 'speech-recognition'
+    && deliveries.map((item) => item.contentId ?? '').sort().join(',') !== 'cpu,cuda'
+  ) {
+    throw new Error('speech-recognition catalog must offer the cuda and cpu contents.');
+  }
   const installed = deliveries.find((item) => item.contentId === undefined || item.contentId === 'cuda');
   if (!installed) {
     throw new Error(`${requirementId} catalog delivery is incomplete or unavailable.`);
@@ -1013,9 +1019,27 @@ async function startCandidateWorkerMirror(expected: ExpectedProvenance): Promise
 
 export function assertNoAmbientModelOverrides(environment: Record<string, string>): void {
   const forbidden = Object.keys(environment).filter((name) =>
-    /^(?:CAPTURE_(?:USER_MODEL_DIR|EXTRACTION_PROVIDER|STRUCTURING_PROVIDER|OLLAMA_[A-Z0-9_]+|WINDOWSML_[A-Z0-9_]+|WHISPER_[A-Z0-9_]+)|OLLAMA_(?:MODELS|HOST))$/u.test(name),
+    /^(?:CAPTURE_(?:USER_MODEL_DIR|EXTRACTION_PROVIDER|STRUCTURING_PROVIDER|OLLAMA_[A-Z0-9_]+|WINDOWSML_[A-Z0-9_]+|WHISPER_[A-Z0-9_]+|SPEECH_RECOGNITION_[A-Z0-9_]+)|OLLAMA_(?:MODELS|HOST))$/u.test(name),
   );
   if (forbidden.length > 0) throw new Error('Real model smoke environment contains ambient model/provider overrides.');
+}
+
+/**
+ * The desktop app cannot force a speech content, so the runtime's `auto`
+ * installs `cuda` only where the NVIDIA driver is: `System32\nvcuda.dll`
+ * under SystemRoot, the file engine_content_selection.py checks. This smoke's
+ * oracle is the frozen tea-asr-1.1 / cuda fixture and its mirror serves only
+ * the cuda archive, so a machine without the driver stops here instead of
+ * asking the mirror for the cpu pack.
+ */
+export function assertNvidiaDriverForCudaSpeechContent(
+  systemRoot: string | undefined,
+  isFile: (path: string) => boolean = (path) => statSync(path, { throwIfNoEntry: false })?.isFile() ?? false,
+): void {
+  const root = systemRoot?.trim();
+  if (!root || !isFile(join(root, 'System32', 'nvcuda.dll'))) {
+    throw new Error('Real model smoke needs the NVIDIA driver, because the desktop installs the cuda speech content only where it is present.');
+  }
 }
 
 export function assertCudaPathRetainedForAppLaunch(
@@ -3683,6 +3707,7 @@ async function run(): Promise<void> {
   const reuseRunData = process.argv.includes('--reuse-run-data');
   assertNoAmbientModelOverrides(process.env as Record<string, string>);
   const expected = await loadReleaseModelContract();
+  assertNvidiaDriverForCudaSpeechContent(process.env.SystemRoot);
   await firstValueFrom(assertStagedRuntime('release'));
   await rm(smokeRoot, { recursive: true, force: true });
   if (!reuseRunData) await rm(runRoot, { recursive: true, force: true });

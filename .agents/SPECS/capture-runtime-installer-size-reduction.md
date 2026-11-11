@@ -211,11 +211,11 @@ boundary is unchanged.
 
 Release build order is worker executables, files manifests/ZIPs, engine
 catalog, core executable, schema/runtime manifest, core-only NSIS, then the
-size report. A GitHub Release has 17 assets:
+size report. A GitHub Release has 19 assets:
 
 - core runtime executable, runtime manifest, and schema;
-- OCR, speech recognition and speaker diarization worker archives (or their
-  parts) and files manifests;
+- OCR, CUDA speech recognition, CPU speech recognition and speaker
+  diarization worker archives (or their parts) and files manifests;
 - engine catalog;
 - NSIS installer;
 - `capture-release-manifest-v1.json` and its `.sha256`, plus the candidate
@@ -223,7 +223,7 @@ size report. A GitHub Release has 17 assets:
 
 The size report, including the PyInstaller inventory, xref, and warnings, is
 the CI artifact `capture-size-report-<version>-<run>`. It is not one of the
-17 GitHub Release assets. Digests of the runtime and engine
+19 GitHub Release assets. Digests of the runtime and engine
 files are the runtime manifest, the engine catalog, and `runtimeAssets` in
 the release manifest.
 

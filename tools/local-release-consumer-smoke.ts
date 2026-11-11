@@ -59,6 +59,10 @@ const OPTIONAL_MODEL_REQUIREMENT_IDS: readonly unknown[] = [
 const MODEL_ONLY_REQUIREMENT_IDS: readonly unknown[] = [
   'vertical-japanese-reader',
 ];
+// A model-enabled release offers speech recognition as the `cuda` pack and the
+// `cpu` pack (issue #154); `assert_release_speech_contents` in release.py is the
+// same rule at build time.
+const RELEASE_SPEECH_CONTENT_IDS = ['cpu', 'cuda'] as const;
 
 export type RuntimeReleaseManifest = {
   readonly manifestVersion: string;
@@ -351,13 +355,13 @@ function catalogWorkers(
       );
     }
     seenRequirements.add(requirementId);
+    const seenContentIds = new Set<string>();
     if ('contents' in item) {
       if (!Array.isArray(item.contents) || item.contents.length === 0) {
         throw new Error(
           `Engine catalog requirement is invalid: ${requirementId}.`,
         );
       }
-      const seenContentIds = new Set<string>();
       for (const content of item.contents) {
         if (!isRecord(content)) {
           throw new Error(
@@ -382,6 +386,15 @@ function catalogWorkers(
         }
         seenContentIds.add(contentId);
       }
+    }
+    if (
+      requirementId === 'speech-recognition' &&
+      [...seenContentIds].sort().join(',') !== RELEASE_SPEECH_CONTENT_IDS.join(',')
+    ) {
+      // A legacy speech delivery leaves the set empty, so it fails here too.
+      throw new Error(
+        'Engine catalog must offer speech-recognition as the cuda and cpu contents.',
+      );
     }
     for (const delivery of catalogDeliveries(item)) {
       workers.push(

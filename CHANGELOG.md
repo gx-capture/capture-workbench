@@ -41,14 +41,49 @@ so the next release bumps its minor version.
   and `runtime-size-report.json` are no longer release assets. Hosts verify
   the executable against `capture-runtime-manifest.json` and the workers
   against the engine catalog. `capture-release-manifest-v1.json.sha256` and
-  the three `*-files.json` assets stay. The size report is the CI artifact
+  the `*-files.json` assets stay; there are four of them now (OCR, both speech
+  recognition packs, diarization). The size report is the CI artifact
   `capture-size-report-<version>-<run>`.
+
+### Speech recognition pack per machine
+
+Speech recognition ships as two packs, so a computer without an NVIDIA GPU no
+longer downloads the GPU runtime and the large model it cannot use (issue #154).
+
+- The engine catalog offers `speech-recognition` as two contents. `cuda` is
+  today's pack: the CUDA worker with TEA-ASR 1.1, TEA-ASR 1.1 mini and the
+  aligner, about 10.5 GB. `cpu` is a CPU worker
+  (`capture-engine-speech-recognition-cpu-<version>-windows-x64.zip`, one file
+  of about 302 MiB) with mini and the aligner, about 3.72 GB.
+- The runtime picks the pack when it installs: `cuda` when the NVIDIA driver is
+  present (`%SystemRoot%\System32\nvcuda.dll`), `cpu` otherwise. The runtime
+  setting `CAPTURE_SPEECH_RECOGNITION_VARIANT` (`auto`, `cuda`, `cpu`) forces
+  one. The installed pack is kept until it is uninstalled.
+- On the CPU pack, transcripts report model `tea-asr-1.1-mini` and device
+  `cpu`. `CAPTURE_SPEECH_RECOGNITION_MODEL=tea-asr-1.1` on a CPU pack fails the
+  capture with `requirement_unavailable` (stage `extraction`, not retryable)
+  before a worker starts; the requirement stays `ready` and its `detail` says
+  how to fix it.
+- `GET /v2/runtime/requirements` reports the size of the pack this machine
+  would download, and once installed, of the installed pack. Mini and aligner
+  files already in the machine-wide engine cache are not downloaded again.
+- A full release has 19 assets instead of 17: the CPU worker archive and its
+  `-files.json` are new. The requirement id, the contract set and the capture
+  document schema are unchanged.
+- Hosts: LAW's catalog reader must read `contents` before it moves to this
+  release, or staging fails with "Invalid Capture engine requirement." Cert Prep
+  needs only the usual pin bump. A host that sets
+  `CAPTURE_SPEECH_RECOGNITION_MODEL=tea-asr-1.1` on machines without the NVIDIA
+  driver also sets `CAPTURE_SPEECH_RECOGNITION_VARIANT=cuda` before installing.
+- After a version bump, speech recognition is reinstalled as usual; on a machine
+  without the driver that reinstall downloads the CPU pack.
 
 ### Speech device
 
-- TEA-ASR 1.1 runs on CUDA when a GPU is present and on CPU when it is not. A
-  failed GPU attempt retries that same checkpoint on CPU. The runtime no longer
-  switches to TEA-ASR 1.1 mini because the device is CPU.
+- On the CUDA pack, TEA-ASR 1.1 runs on CUDA when a GPU is present and on CPU
+  when it is not. A failed GPU attempt retries that same checkpoint on CPU; a run
+  no longer switches to TEA-ASR 1.1 mini because the device is CPU. Mini on the
+  CPU is the CPU pack, which a machine without the NVIDIA driver installs.
 
 ### Compatibility policy
 
@@ -75,8 +110,10 @@ Speech recognition always ran TEA-ASR-1.1 on the GPU and TEA-ASR-1.1-mini on the
 CPU, so mini could not use the GPU (issue #273).
 
 - The runtime setting `CAPTURE_SPEECH_RECOGNITION_MODEL` is `auto` (the
-  default, TEA-ASR-1.1 on either device), `tea-asr-1.1` or `tea-asr-1.1-mini`. A chosen
-  model runs on either device, also on the CPU retry after a CUDA failure.
+  default: the installed pack's model, TEA-ASR-1.1 on the CUDA pack and
+  TEA-ASR-1.1-mini on the CPU pack), `tea-asr-1.1` or `tea-asr-1.1-mini`. On the
+  CUDA pack a chosen model runs on either device, also on the CPU retry after a
+  CUDA failure. The CPU pack holds only mini.
 - When CUDA is tried and when it falls back to the CPU are unchanged.
   Provenance reports the model and device that produced the result.
 - `CAPTURE_WHISPER_PRIMARY_MODEL` and `CAPTURE_WHISPER_FALLBACK_MODEL` are

@@ -84,8 +84,10 @@ def complete_catalog(
     catalog_path: Path,
     *,
     speech_part_bytes: int | None = None,
-    speech_shape: str = "legacy",
+    speech_shape: str = "contents",
 ) -> None:
+    """A release catalog whose speech is the ``cuda`` and ``cpu`` contents by default."""
+
     source_lock, _content = approved_source_lock()
     source_lock_sha256 = hashlib.sha256(canonical_json_bytes(source_lock)).hexdigest()
     requirements = []
@@ -139,14 +141,25 @@ def complete_catalog(
             "unavailableReason": None,
         }
         if requirement_id == "speech-recognition" and speech_shape != "legacy":
+            cuda_delivery = {
+                "id": "cuda",
+                "artifacts": requirement["artifacts"],
+                "modelFiles": requirement["modelFiles"],
+                "unavailableReason": None,
+            }
             if speech_shape == "incomplete-cpu":
-                cpu_delivery = {
-                    "id": "cpu",
-                    "artifacts": [],
-                    "modelFiles": None,
-                    "unavailableReason": "The CPU speech worker archive was not supplied.",
-                }
-            elif speech_shape == "contents":
+                contents = [
+                    cuda_delivery,
+                    {
+                        "id": "cpu",
+                        "artifacts": [],
+                        "modelFiles": None,
+                        "unavailableReason": "The CPU speech worker archive was not supplied.",
+                    },
+                ]
+            elif speech_shape == "cuda-only":
+                contents = [cuda_delivery]
+            else:
                 cpu_delivery = {
                     "id": "cpu",
                     "artifacts": [
@@ -160,22 +173,11 @@ def complete_catalog(
                     "modelFiles": requirement["modelFiles"],
                     "unavailableReason": None,
                 }
-            else:
-                raise AssertionError(speech_shape)
-            requirements.append(
-                {
-                    "requirementId": requirement_id,
-                    "contents": [
-                        {
-                            "id": "cuda",
-                            "artifacts": requirement["artifacts"],
-                            "modelFiles": requirement["modelFiles"],
-                            "unavailableReason": None,
-                        },
-                        cpu_delivery,
-                    ],
-                }
-            )
+                contents = {
+                    "contents": [cuda_delivery, cpu_delivery],
+                    "cpu-only": [cpu_delivery],
+                }[speech_shape]
+            requirements.append({"requirementId": requirement_id, "contents": contents})
         else:
             requirements.append(requirement)
     catalog_path.write_bytes(
@@ -352,15 +354,15 @@ def test_release_rejects_an_incomplete_speech_content(tmp_path: Path) -> None:
     assert not output.exists()
 
 
-def test_release_rejects_a_cpu_zip_that_a_legacy_catalog_does_not_list(tmp_path: Path) -> None:
+@pytest.mark.parametrize("speech_shape", ["legacy", "cuda-only", "cpu-only"])
+def test_release_requires_both_speech_contents(tmp_path: Path, speech_shape: str) -> None:
     engine_dir = tmp_path / "engines"
     engine_dir.mkdir()
     catalog = tmp_path / "capture-engine-catalog.json"
-    complete_catalog(engine_dir, catalog)
-    (engine_dir / "capture-engine-speech-recognition-cpu.zip").write_bytes(b"cpu")
+    complete_catalog(engine_dir, catalog, speech_shape=speech_shape)
+    output = tmp_path / "release"
 
-    with pytest.raises(
-        ValueError,
-        match="uncatalogued release artifacts: capture-engine-speech-recognition-cpu.zip",
-    ):
+    with pytest.raises(ValueError, match="speech-recognition as the cuda and cpu contents"):
         _release_build(tmp_path, engine_dir, catalog)
+
+    assert not output.exists()

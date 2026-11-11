@@ -189,7 +189,7 @@ ordinary-sized handoff.
 
 The publisher derives the canonical expected release asset names from the
 complete catalog plus core runtime, worker archives, files manifests, and the
-installer. A full release has 17 assets. Checksum sidecars and the size report
+installer. A full release has 19 assets. Checksum sidecars and the size report
 are not among them. The size report is the CI artifact
 `capture-size-report-<version>-<run>`.
 Model file/ZIP names are forbidden. Before package publication and on

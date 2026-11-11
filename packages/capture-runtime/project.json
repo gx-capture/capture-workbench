@@ -462,7 +462,7 @@
         "{projectRoot}/dist/engines/capture-engine-speech-recognition-cpu-*-files.json"
       ],
       "metadata": {
-        "description": "Packages the speech recognition worker on CPU PyTorch in its own environment (.venv-speech-recognition-cpu). Releases do not ship this archive yet."
+        "description": "Packages the speech recognition worker on CPU PyTorch in its own environment (.venv-speech-recognition-cpu). The release catalog offers it as the cpu content of speech-recognition."
       },
       "options": {
         "cwd": "packages/capture-runtime",
@@ -499,7 +499,7 @@
         "{projectRoot}/dist/speech-recognition-cpu-worker-inventory.txt"
       ],
       "metadata": {
-        "description": "Rejects a CPU speech worker archive that contains a CUDA runtime library or a module the speech workers already forbid. Not a release target."
+        "description": "Rejects a CPU speech worker archive that contains a CUDA runtime library or a module the speech workers already forbid. build-release-artifacts depends on it."
       },
       "options": {
         "cwd": "packages/capture-runtime",
@@ -576,6 +576,7 @@
         "build-ocr-worker",
         "build-speech-recognition-worker",
         "build-diarization-worker",
+        "build-speech-recognition-cpu-worker",
         "validate-model-source-lock"
       ],
       "inputs": [
@@ -585,11 +586,11 @@
         "{projectRoot}/dist/catalog/capture-engine-catalog.json"
       ],
       "metadata": {
-        "description": "Generates an empty core-only catalog or a fully approved model-enabled publication catalog."
+        "description": "Generates an empty core-only catalog or a fully approved model-enabled publication catalog, whose speech-recognition requirement offers the cuda and cpu contents."
       },
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "node ../../tools/release/run-with-release-version.ts uv run --no-sync --python 3.13 python scripts/generate_engine_catalog.py --model-source-lock model-sources/release-model-source-lock.json --output dist/catalog/capture-engine-catalog.json --ocr-worker-archive dist/engines/capture-engine-ocr-{releaseVersion}-windows-x64.zip --ocr-worker-manifest dist/engines/capture-engine-ocr-{releaseVersion}-windows-x64-files.json --speech-recognition-worker-archive dist/engines/capture-engine-speech-recognition-{releaseVersion}-windows-x64.zip --speech-recognition-worker-manifest dist/engines/capture-engine-speech-recognition-{releaseVersion}-windows-x64-files.json --diarization-worker-archive dist/engines/capture-engine-diarization-{releaseVersion}-windows-x64.zip --diarization-worker-manifest dist/engines/capture-engine-diarization-{releaseVersion}-windows-x64-files.json"
+        "command": "node ../../tools/release/run-with-release-version.ts uv run --no-sync --python 3.13 python scripts/generate_engine_catalog.py --model-source-lock model-sources/release-model-source-lock.json --output dist/catalog/capture-engine-catalog.json --ocr-worker-archive dist/engines/capture-engine-ocr-{releaseVersion}-windows-x64.zip --ocr-worker-manifest dist/engines/capture-engine-ocr-{releaseVersion}-windows-x64-files.json --speech-recognition-worker-archive dist/engines/capture-engine-speech-recognition-{releaseVersion}-windows-x64.zip --speech-recognition-worker-manifest dist/engines/capture-engine-speech-recognition-{releaseVersion}-windows-x64-files.json --diarization-worker-archive dist/engines/capture-engine-diarization-{releaseVersion}-windows-x64.zip --diarization-worker-manifest dist/engines/capture-engine-diarization-{releaseVersion}-windows-x64-files.json --speech-recognition-cpu-worker-archive dist/engines/capture-engine-speech-recognition-cpu-{releaseVersion}-windows-x64.zip --speech-recognition-cpu-worker-manifest dist/engines/capture-engine-speech-recognition-cpu-{releaseVersion}-windows-x64-files.json"
       }
     },
     "verify-release-model-candidate": {
@@ -739,6 +740,7 @@
         "build-production-executable",
         "generate-production-schema",
         "verify-worker-boundaries",
+        "verify-speech-recognition-cpu-boundary",
         "verify-production-core-boundary"
       ],
       "inputs": [

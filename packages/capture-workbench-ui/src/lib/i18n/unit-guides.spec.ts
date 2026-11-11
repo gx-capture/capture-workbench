@@ -15,18 +15,14 @@ function guideFields(guide: CaptureUnitGuide): readonly string[] {
 
 describe('CAPTURE_UNIT_GUIDES', () => {
   it('says what a download contains and never a GB or MB size', () => {
-    expect(CAPTURE_UNIT_GUIDES['zh-TW']['speech-recognition']?.download).toBe(
-      '兩種大小的辨識模型、對齊時間點的 Qwen3 模型與 GPU 執行環境。',
-    );
-    expect(CAPTURE_UNIT_GUIDES.en['speech-recognition']?.download).toBe(
-      'Recognition models in two sizes, a Qwen3 model that aligns the times, and the GPU runtime.',
-    );
-    expect(CAPTURE_UNIT_GUIDES['zh-TW']['speaker-diarization']?.download).toBe(
-      '說話者辨識模型與 CPU 執行環境。',
-    );
-    expect(CAPTURE_UNIT_GUIDES.en['speaker-diarization']?.download).toBe(
-      'The speaker-identification model and the CPU runtime.',
-    );
+    for (const catalog of Object.values(CAPTURE_UNIT_GUIDES)) {
+      // Shown before the runtime picks a pack for this machine, so the speech
+      // guide describes the GPU pack and the CPU pack.
+      const speechDownload = catalog['speech-recognition']?.download ?? '';
+      expect(speechDownload).toContain('GPU');
+      expect(speechDownload).toContain('CPU');
+      expect(catalog['speaker-diarization']?.download).toContain('CPU');
+    }
 
     for (const catalog of Object.values(CAPTURE_UNIT_GUIDES)) {
       for (const guide of Object.values(catalog)) {

@@ -1,6 +1,6 @@
 # Capture Workbench release runbook
 
-Current as of 2026-11-10. This is the operational procedure for publishing a
+Current as of 2026-11-11. This is the operational procedure for publishing a
 Capture Workbench release and moving its consumers. Workflow files remain the
 source of truth for inputs.
 
@@ -32,16 +32,64 @@ source of truth for inputs.
 - Known limitations: handwriting OCR quality (printed text is the floor); page
   structure of dense vertical periodical scans and pages that mix directions;
   about a fifth of furigana on textbook pages is not set aside.
-- Push CI on `main` also builds a CPU-only speech recognition worker archive,
-  `capture-engine-speech-recognition-cpu-<version>-windows-x64.zip`, from the
-  `speech-recognition-cpu` extra (CPU PyTorch, environment
-  `.venv-speech-recognition-cpu`). Releases do not ship it yet:
-  `build-release-artifacts` and `generate-release-engine-catalog` do not take
-  this archive. The published speech worker remains the CUDA archive (about
-  2.95 GB, parted into files under 2 GB). The CPU archive is one zip of
-  302 MiB (316,666,018 bytes at 0.9.0, about 825 MB extracted), with no CUDA
-  runtime libraries. Size budgets
-  still cover only the runtime executable and the NSIS installer.
+- Speech recognition ships as two packs from the next release (issue #154,
+  see "Next release: two speech recognition packs" below). The CUDA worker
+  archive (about 2.95 GB, parted into files under 2 GB) is the `cuda` content
+  of `speech-recognition`. The CPU worker archive,
+  `capture-engine-speech-recognition-cpu-<version>-windows-x64.zip`, built from
+  the `speech-recognition-cpu` extra (CPU PyTorch, environment
+  `.venv-speech-recognition-cpu`), is the `cpu` content: one zip of 302 MiB
+  (316,666,018 bytes at 0.9.0, about 825 MB extracted) with no CUDA runtime
+  libraries. `generate-release-engine-catalog` builds and passes it, and
+  `build-release-artifacts` also runs `verify-speech-recognition-cpu-boundary`.
+  Push CI on `main` builds and probes it too. Size budgets still cover only
+  the runtime executable and the NSIS installer.
+
+## Next release: two speech recognition packs
+
+- What changes: a full release publishes 19 assets instead of 17. The new ones
+  are `capture-engine-speech-recognition-cpu-<version>-windows-x64.zip` and its
+  `-files.json`, so there are four `*-files.json`; the Route A runtime release
+  gains the same two. The contract set and the capture document schema do not
+  change.
+- Hosts, when they bump:
+  - LAW: its catalog reader must read `contents` first (the LAW change that
+    walks `requirement.contents[].artifacts`). Without it, staging and
+    `release-desktop` throw "Invalid Capture engine requirement." It must be
+    on LAW `main` before the release candidate's consumer gate pre-run.
+  - Cert Prep: only the usual pin bump.
+  - A host that sets `CAPTURE_SPEECH_RECOGNITION_MODEL=tea-asr-1.1` on machines
+    without the NVIDIA driver also sets `CAPTURE_SPEECH_RECOGNITION_VARIANT=cuda`
+    before installing, or its captures fail with `requirement_unavailable`.
+- Users: on a machine without the driver the speech reinstall after the bump
+  downloads about 3.72 GB instead of about 10.5 GB, and transcripts report
+  `tea-asr-1.1-mini` / `cpu`. Mini and aligner files already in the engine
+  cache are restored without downloading. Hosts that show `downloadBytes` need
+  no change.
+- Release evidence for the `cpu` pack (product owner, 2026-11-11): one manual
+  transcription with TEA-ASR-1.1-mini on the CPU, recorded in this release's
+  "Published" section below. The model-source lock and the frozen private
+  fixture stay `tea-asr-1.1` / `cuda`. Steps, with the runtime candidate's
+  `runtime` directory or a local `build-release-artifacts` output:
+  1. Serve the engine archives over a loopback mirror (for example
+     `python -m http.server 8765 --bind 127.0.0.1` in that directory).
+  2. Start `capture-runtime-x86_64-pc-windows-msvc.exe serve --port <P>` with
+     `CAPTURE_SMOKE_WORKER_MIRROR_OPT_IN=1`,
+     `CAPTURE_SMOKE_WORKER_MIRROR_URL=http://127.0.0.1:8765`,
+     `CAPTURE_SPEECH_RECOGNITION_VARIANT=cpu`, a short `CAPTURE_APP_DATA_DIR`,
+     `CAPTURE_PORT=<P>` and `CAPTURE_API_TOKEN`.
+  3. `GET /v2/runtime/requirements` shows speech `installable` with
+     `downloadBytes` about 3.72e9. Install it with
+     `POST /v2/runtime/installations` and wait for `completed`; the
+     requirement's `active.json` names `contentId` `cpu`.
+  4. Transcribe a short recording through the Python client and check
+     provenance `tea-asr-1.1-mini` / `cpu`.
+  5. Record the date, runtime version, candidate run, `downloadBytes`, the
+     elapsed time and the provenance. Never record the recording, its name or
+     its transcript.
+  The `auto` choice is covered by the same run with the variant forced to
+  `cpu` plus the unit tests of the driver check; no machine without a driver is
+  needed (product owner, 2026-11-11).
 
 ## Published: 0.9.0 (minor)
 
@@ -364,10 +412,10 @@ missing ones.
 
 ## GitHub Release assets
 
-From the next release, a full release publishes 17 assets:
+From the next release, a full release publishes 19 assets:
 
 - Runtime: `capture-runtime-x86_64-pc-windows-msvc.exe`, `capture-runtime-manifest.json`, `capture-document-v2.schema.json`.
-- Engines: `capture-engine-catalog.json`; each worker archive (speech recognition is `capture-engine-speech-recognition-<version>-windows-x64.zip.001` and `.zip.002`); and the three `*-files.json` manifests (OCR, speech recognition, diarization).
+- Engines: `capture-engine-catalog.json`; each worker archive (the CUDA speech recognition worker is `capture-engine-speech-recognition-<version>-windows-x64.zip.001` and `.zip.002`, the CPU one is the single `capture-engine-speech-recognition-cpu-<version>-windows-x64.zip`); and the four `*-files.json` manifests (OCR, speech recognition, CPU speech recognition, diarization).
 - Desktop: `Capture.Workbench_<version>_x64-setup.exe`.
 - Evidence: `candidate-manifest.json`, `capture-runtime-candidate-manifest.json` (the Route A seed), `capture-contract-snapshot.json`, `capture-release-manifest-v1.json`, and `capture-release-manifest-v1.json.sha256`.
 
@@ -382,27 +430,47 @@ Check a new release like this:
   (`requirementId`, `artifacts`, `modelFiles`, `unavailableReason`) or
   `requirementId` plus `contents` (each of `cuda` and `cpu` has those
   delivery fields). A `contents` requirement counts as complete only when
-  each content is. The catalog target does not pass the CPU speech
-  archive, so a published catalog is still the legacy shape. With a
-  `contents` catalog:
-  - `build-release-artifacts` (`release.py`), the local release consumer
-    smoke and the practical installed check verify every content's worker
-    archive, its parts and its `*-files.json` manifest; the consumer smoke
-    also requires exactly those asset names. The real-media smoke only
-    requires every content of the embedded catalog to be complete.
+  each content is. Releases up to 0.9.0 published the legacy shape. From
+  the next release `speech-recognition` must be `contents` with exactly
+  `cuda` and `cpu`:
+  - `build-release-artifacts` (`release.py`), the candidate verifier, the
+    local release consumer smoke and the real-media model smoke fail a
+    model-enabled release whose speech requirement is the legacy delivery or
+    has a single content.
+  - `build-release-artifacts`, the local release consumer smoke and the
+    practical installed check verify every content's worker archive, its
+    parts and its `*-files.json` manifest; the consumer smoke also requires
+    exactly those asset names. The real-media smoke only requires every
+    content of the embedded catalog to be complete.
+  - Re-checking a published legacy release still works: the practical
+    installed check and the real-media smoke read both shapes, and the tag
+    audit (`audit-release-tag.ts`), `resolve-capture-release.ts` and
+    `verify-release-candidate.ts` do not read the speech requirement's shape.
   - `verify_release_model_candidate.py` and `real-media-model-smoke.ts`
     compare model deliveries with the source lock: `cuda` must carry the
     lock's full speech files, and `cpu` exactly the subset that
     `cpu_speech_model_delivery` in `model_source_lock.py` derives, with the
     same bytes and sha256 and no `model/primary` path.
-  - No release gate runs the candidate's `cpu` worker yet: the candidate
-    verifier installs `cuda` whatever the machine's driver, the model
-    smoke's mirror serves only the `cuda` archive, and push CI probes a
-    separately built CPU archive (`verify-speech-recognition-cpu-worker`).
+  - `verify_release_model_candidate.py` runs both packs. It installs `cuda`
+    whatever the machine's driver and checks the frozen private fixture. It
+    then installs the candidate's own `cpu` archive and model subset in a
+    second install root, probes it and transcribes the same private audio,
+    requiring `tea-asr-1.1-mini` / `cpu`, a non-empty transcript and ordered
+    segments; no transcript is frozen for this pack, and the evidence keeps
+    only hashes and counts. On the CPU this pass can take far longer than
+    the CUDA one (its run timeout is 3 hours).
+  - Smokes whose oracle is `tea-asr-1.1` / `cuda` force that pack: the
+    real-media smoke and the progressive audio oracle set
+    `CAPTURE_SPEECH_RECOGNITION_VARIANT=cuda`. The real-media model smoke
+    goes through the desktop app, which cannot pass the variant, so it
+    requires the NVIDIA driver (`%SystemRoot%\System32\nvcuda.dll`) and its
+    mirror serves only the `cuda` archive. Its ambient-environment check, and
+    the one in `release-candidate.yml`, reject any
+    `CAPTURE_SPEECH_RECOGNITION_*` variable.
 - Every runtime and desktop asset matches `runtimeAssets` in `capture-release-manifest-v1.json` (size and sha256).
 - That manifest's digest is `capture-release-manifest-v1.json.sha256` and `release-index/stable.json` `manifestSha256`.
 
-The packaging budget still fails the release candidate when a measured size exceeds its budget. The size report is the CI artifact `capture-size-report-<version>-<run>`. It is not one of the 17 release assets.
+The packaging budget still fails the release candidate when a measured size exceeds its budget. The size report is the CI artifact `capture-size-report-<version>-<run>`. It is not one of the 19 release assets.
 
 Candidate checksums stay inside the candidate artifact and are not release assets: `checksums/*.sha256`, `candidate-manifest.json.sha256`, and the same files on the package and runtime candidates. They are the expected digests recorded before the release manifest exists.
 
@@ -416,10 +484,13 @@ Candidate checksums stay inside the candidate artifact and are not release asset
    commit. Record each run ID, `candidateId`, and the SHA-256 of its
    `candidate-manifest.json`. Download the small package artifact. The runtime
    candidate prints its `candidateId` ("Assembled runtime candidate") but not
-   the manifest hash, and its artifact is about 3.5 GB: read only
+   the manifest hash, and its artifact is about 3.8 GB with the CPU speech
+   worker: read only
    `candidate-manifest.json` from the artifact zip with HTTP range requests
    (Python `zipfile` over a range-reading file object, on the blob URL that
-   `GET /repos/{repo}/actions/artifacts/{id}/zip` redirects to).
+   `GET /repos/{repo}/actions/artifacts/{id}/zip` redirects to). Then run the
+   manual `cpu` speech pack transcription against this runtime candidate and
+   record it (see "Next release: two speech recognition packs").
 3. Route A: dispatch `package-promote.yml`, then `runtime-promote.yml`. The
    runtime promotion requires a successful `workflow_dispatch` package promotion
    on `main` whose commit contains the candidate source.

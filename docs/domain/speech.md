@@ -60,7 +60,7 @@ sequenceDiagram
 
 ## 已安裝的內容
 
-發行目錄尚未提供 `cpu` 內容時，語音需求沒有 `contents`。那種安裝與 `cuda` 內容使用同一套模型與裝置規則。
+發行目錄把語音需求分成 `cuda` 與 `cpu` 兩種內容。有 NVIDIA 驅動的機器安裝 `cuda`，沒有的安裝 `cpu`；選擇規則見[引擎供應](provisioning.md#一個需求的多個內容)。0.9.0 以前的發行目錄只有單一交付，沒有 `contents`；那種舊安裝與 `cuda` 內容使用同一套模型與裝置規則。
 
 狀態 `"2"` 的安裝把 `contentId` 交給語音 worker：一次擷取的執行選項是 `content`，串流工作階段的環境變數是 `CAPTURE_SESSION_SPEECH_CONTENT`。沒有內容 id 的引擎不送這兩項，行為與今日相同。這個 id 是安裝當下記下的值，啟動時不重新偵測顯示卡，也不依磁碟上有哪些模型資料夾來猜測。未知的內容 id 直接失敗，不會當成 `cuda`。
 
