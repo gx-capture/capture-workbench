@@ -136,6 +136,36 @@ def test_indeterminate_dedicated_adapter_blocks_integrated_selection() -> None:
     assert _plan(_snapshot(high=(dgpu, igpu), ordinary=(igpu, dgpu))) is None
 
 
+def test_positive_unavailable_dgpu_selects_usable_igpu() -> None:
+    dgpu = _adapter(
+        index=1,
+        adapter_class=OcrAdapterClass.DEDICATED,
+        luid="00000000000000bb",
+        rank=0,
+        assessment="positive-unavailable",
+    )
+    igpu = _adapter(
+        index=0,
+        adapter_class=OcrAdapterClass.INTEGRATED,
+        luid="00000000000000aa",
+        rank=1,
+        assessment="positive-usable",
+    )
+
+    selection = _plan(_snapshot(high=(dgpu, igpu), ordinary=(igpu, dgpu)))
+
+    assert selection is not None
+    assert selection.execution_plan.mode is OcrComputeMode.GPU_DML
+    assert selection.execution_plan.adapter_class is OcrAdapterClass.INTEGRATED
+    assert selection.execution_plan.dml_device_id == 0
+    assert selection.execution_plan.high_performance_rank == 1
+    assert selection.execution_plan.identity is not None
+    assert selection.execution_plan.identity.luid == "00000000000000aa"
+    assert selection.readiness.mode is OcrComputeMode.GPU_DML
+    assert selection.readiness.adapter_class is OcrAdapterClass.INTEGRATED
+    assert selection.readiness.user_notice_required is False
+
+
 def test_all_positive_unavailable_adapters_select_cpu_with_notice() -> None:
     dgpu = _adapter(
         index=1,
