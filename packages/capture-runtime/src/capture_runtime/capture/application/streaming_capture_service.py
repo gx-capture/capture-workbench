@@ -5,9 +5,10 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+from collections.abc import Coroutine
 from contextlib import suppress
 from pathlib import Path
-from typing import TypedDict
+from typing import Any, TypedDict
 
 from pydantic import ValidationError
 
@@ -85,6 +86,7 @@ from capture_runtime.structuring.infrastructure.structuring import (
 from capture_runtime.structuring.infrastructure.structuring_provider import (
     CaptureStructuringProvider,
 )
+from capture_runtime.worker_process import complete_worker_cleanup
 
 MAX_EVENT_SEGMENTS = 1_000
 # A speech session's end is not the capture's: the capture publishes its next
@@ -146,15 +148,41 @@ class StreamingCaptureService:
             discard_result=self._clear_pending_execution_proof,
         )
 
-    def request_cancel(self, capture_id: str) -> None:
-        self._clear_pending_execution_proof(capture_id)
+    def _cancel_task(self, capture_id: str) -> None:
+        """Cancel a normalized task at most once, including while it stops workers."""
         self._cancellations.setdefault(capture_id, asyncio.Event()).set()
+        task = self._tasks.get(capture_id)
+        if task is not None and not task.done() and not task.cancelling():
+            task.cancel()
+
+    def request_cancel(self, capture_id: str) -> None:
+        normalized = self.repository.get_capture(capture_id).capture_id
+        self._clear_pending_execution_proof(normalized)
+        self._cancel_task(normalized)
 
     def get_ingestion(self, ingestion_id: str) -> IngestionV2:
         return self.repository.get_ingestion(ingestion_id)
 
-    def delete_ingestion(self, ingestion_id: str) -> None:
-        self.repository.delete_ingestion(ingestion_id)
+    async def delete_ingestion(self, ingestion_id: str) -> None:
+        normalized = self.repository.get_ingestion(ingestion_id).ingestion_id
+        tasks = []
+        for capture_id, task in tuple(self._tasks.items()):
+            operation = self.repository.get_capture(capture_id)
+            if operation.ingestion_id != normalized:
+                continue
+            if operation.status not in {
+                StreamingCaptureStatus.COMPLETED,
+                StreamingCaptureStatus.FAILED,
+                StreamingCaptureStatus.CANCELLED,
+            }:
+                # The repository maps a live, non-terminal capture to the
+                # existing ingestion_delete_rejected problem without mutation.
+                self.repository.delete_ingestion(normalized)
+                return
+            tasks.append(task)
+        if tasks:
+            await asyncio.wait(tasks)
+        self.repository.delete_ingestion(normalized)
 
     def get_capture(self, capture_id: str) -> CaptureOperationV2:
         return self.repository.get_capture(capture_id)
@@ -276,27 +304,35 @@ class StreamingCaptureService:
             idempotency_key=idempotency_key,
         )
 
-    def delete_capture(self, capture_id: str) -> None:
-        self._clear_pending_execution_proof(capture_id)
-        task = self._tasks.pop(capture_id, None)
-        if task is not None and not task.done():
-            task.cancel()
-        self._cancellations.pop(capture_id, None)
-        self.repository.delete_capture(capture_id)
+    async def delete_capture(self, capture_id: str) -> None:
+        normalized = self.repository.get_capture(capture_id).capture_id
+        task = self._tasks.get(normalized)
+        if task is not None:
+            # Record the cancellation first: if this request is abandoned while it
+            # waits, the capture is terminal and its source can be removed later,
+            # instead of staying "extracting" with no task behind it.
+            self.repository.cancel_capture(normalized)
+            self._cancel_task(normalized)
+            # wait() neither cancels the worker on request disconnect nor
+            # propagates the worker task's own cancellation or exception.
+            await asyncio.wait({task})
+        self.repository.delete_capture(normalized)
+        self._clear_pending_execution_proof(normalized)
+        self._cancellations.pop(normalized, None)
 
-    async def shutdown(self) -> None:
+    async def close(self) -> None:
         self._shutting_down = True
         self._pending_execution_proofs.clear()
-        tasks = list(self._tasks.values())
-        for task in tasks:
-            task.cancel()
-        for task in tasks:
-            with suppress(asyncio.CancelledError):
-                await task
-        self._tasks.clear()
+        tasks = tuple(self._tasks.values())
+        for capture_id in tuple(self._tasks):
+            self._cancel_task(capture_id)
+        if tasks:
+            await complete_worker_cleanup(asyncio.create_task(asyncio.wait(tasks)))
         self._cancellations.clear()
-        self._pending_execution_proofs.clear()
         await self._release_warm_speech_worker(shutdown=True)
+
+    async def shutdown(self) -> None:
+        await self.close()
 
     def has_active_capture(self) -> bool:
         return self.repository.has_active_capture()
@@ -318,6 +354,15 @@ class StreamingCaptureService:
     def resume_captures(self) -> None:
         self._engines_available.set()
 
+    @staticmethod
+    async def _retire(retirement: Coroutine[Any, Any, None]) -> None:
+        """Stay joined to a warm worker's retirement when the capture is cancelled.
+
+        The worker has already left the warm cache; abandoning the wait would
+        leave its process and GPU memory behind until shutdown.
+        """
+        await complete_worker_cleanup(asyncio.create_task(retirement))
+
     async def _release_warm_speech_worker(self, *, shutdown: bool = False) -> None:
         # A warm speech worker holds about 6 GB of GPU memory; buffered speech,
         # speaker and OCR extraction need it, and shutdown must not leave it.
@@ -333,6 +378,7 @@ class StreamingCaptureService:
             await release()
 
     def _schedule(self, capture_id: str) -> None:
+        capture_id = self.repository.get_capture(capture_id).capture_id
         if (
             (self._processor is None and self._extractor is None)
             or capture_id in self._tasks
@@ -340,12 +386,19 @@ class StreamingCaptureService:
         ):
             return
         cancellation = self._cancellations.setdefault(capture_id, asyncio.Event())
+        self.repository.set_capture_running(capture_id, True)
         task = asyncio.create_task(
             self._process(capture_id, cancellation),
             name=f"progressive-capture-{capture_id}",
         )
         self._tasks[capture_id] = task
-        task.add_done_callback(lambda _completed: self._tasks.pop(capture_id, None))
+
+        def finished(_completed: asyncio.Task[None]) -> None:
+            self.repository.set_capture_running(capture_id, False)
+            self._tasks.pop(capture_id, None)
+            self._cancellations.pop(capture_id, None)
+
+        task.add_done_callback(finished)
 
     async def _process(self, capture_id: str, cancellation: asyncio.Event) -> None:
         raw_written = False
@@ -374,11 +427,11 @@ class StreamingCaptureService:
                     retryable=False,
                 )
             if operation.kind is CaptureSourceKind.AUDIO:
-                await self._release_warm_ocr_worker()
+                await self._retire(self._release_warm_ocr_worker())
             if identify_speakers and self._extractor is not None:
                 # Speakers are decided over the whole recording, so this path
                 # transcribes it in one pass instead of progressive windows.
-                extraction = await self._extract_buffered_source(
+                extraction = await self._extract_finalized_source(
                     capture_id,
                     operation.source,
                     operation.kind,
@@ -399,7 +452,7 @@ class StreamingCaptureService:
                     )
                 )
             elif operation.kind is not CaptureSourceKind.AUDIO and self._extractor is not None:
-                extraction = await self._extract_buffered_source(
+                extraction = await self._extract_finalized_source(
                     capture_id,
                     operation.source,
                     operation.kind,
@@ -550,7 +603,7 @@ class StreamingCaptureService:
                 stage="structuring" if raw_written else "extraction",
             )
 
-    async def _extract_buffered_source(
+    async def _extract_finalized_source(
         self,
         capture_id: str,
         source: CaptureSource,
@@ -567,10 +620,17 @@ class StreamingCaptureService:
             )
         if cancellation.is_set():
             raise asyncio.CancelledError
-        await self._release_warm_speech_worker()
+        await self._retire(self._release_warm_speech_worker())
         try:
-            content = await asyncio.to_thread(source_path.read_bytes)
-            sniffed = extractor.sniff(content[:SNIFF_BYTES])
+            content: bytes | Path
+            if declared_kind is CaptureSourceKind.AUDIO:
+                content = source_path
+                with source_path.open("rb") as recording:
+                    prefix = recording.read(SNIFF_BYTES)
+            else:
+                content = await asyncio.to_thread(source_path.read_bytes)
+                prefix = content[:SNIFF_BYTES]
+            sniffed = extractor.sniff(prefix)
         except UnsupportedMediaError as error:
             raise ProgressiveCaptureError(
                 "Uploaded source content is not a supported capture kind.",

@@ -184,6 +184,20 @@ class _WarmWorker:
     requests: int = 0
 
 
+async def complete_worker_cleanup[T](pending: asyncio.Task[T]) -> T:
+    """Keep worker termination joined despite cancellation, then propagate it."""
+    cancelled = False
+    while not pending.done():
+        try:
+            await asyncio.shield(pending)
+        except asyncio.CancelledError:
+            cancelled = True
+    result = pending.result()
+    if cancelled:
+        raise asyncio.CancelledError
+    return result
+
+
 class WorkerProcess:
     """Launch and clean up only subprocesses created by this owner."""
 
@@ -412,21 +426,26 @@ class WorkerProcess:
                 )
             return response
         finally:
-            for task_name in ("read_task", "exit_task", "cancel_task", "timeout_task"):
-                task = locals().get(task_name)
-                if isinstance(task, asyncio.Task) and not task.done():
-                    task.cancel()
+            owned_tasks = locals().copy()
+
+            async def cleanup() -> None:
+                for task_name in ("read_task", "exit_task", "cancel_task", "timeout_task"):
+                    task = owned_tasks.get(task_name)
+                    if isinstance(task, asyncio.Task) and not task.done():
+                        task.cancel()
+                        with suppress(asyncio.CancelledError):
+                            await task
+                if process.returncode is None or process.pid in self._windows_job_handles:
+                    await self._stop(process, initial_grace=0)
+                stderr_drain = owned_tasks.get("stderr_task")
+                if isinstance(stderr_drain, asyncio.Task) and not stderr_drain.done():
+                    stderr_drain.cancel()
                     with suppress(asyncio.CancelledError):
-                        await task
-            if process.returncode is None or process.pid in self._windows_job_handles:
-                await self._stop(process, initial_grace=0)
-            stderr_drain = locals().get("stderr_task")
-            if isinstance(stderr_drain, asyncio.Task) and not stderr_drain.done():
-                stderr_drain.cancel()
-                with suppress(asyncio.CancelledError):
-                    await stderr_drain
-            async with self._lock:
-                self._active.discard(process)
+                        await stderr_drain
+                async with self._lock:
+                    self._active.discard(process)
+
+            await complete_worker_cleanup(asyncio.create_task(cleanup()))
 
     async def _spawn(self, executable: Path) -> asyncio.subprocess.Process:
         executable_path = subprocess_path(executable)
@@ -530,7 +549,7 @@ class WorkerProcess:
             if keep:
                 await self._park(warm, idle_seconds)
             else:
-                await self._retire(warm)
+                await complete_worker_cleanup(asyncio.create_task(self._retire(warm)))
 
     async def _exchange(
         self,

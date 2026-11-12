@@ -11,8 +11,9 @@ import importlib.util
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from itertools import chain
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from capture_runtime.constants import DIARIZATION_REQUIREMENT_ID
 from capture_runtime.diarization.infrastructure.speaker_turns import SPEAKER_LABEL, SpeakerTurn
@@ -113,14 +114,14 @@ def decode_mono_16k(
         stream = next((item for item in container.streams if item.type == "audio"), None)
         if stream is None:
             raise ValueError("Source has no audio stream.")
-        frames: list[Any] = [*container.decode(stream), None]
-        for frame in frames:
+        for frame in chain(container.decode(stream), (None,)):
             if should_cancel():
                 raise InterruptedError("Speaker diarization was cancelled.")
-            for decoded in resampler.resample(frame) or ():
-                pcm.extend(bytes(decoded.planes[0])[: int(decoded.samples) * 2])
-                if len(pcm) > max_bytes:
+            for decoded in resampler.resample(cast("av.AudioFrame | None", frame)) or ():
+                sample_bytes = int(decoded.samples) * 2
+                if len(pcm) + sample_bytes > max_bytes:
                     raise ValueError("Audio duration exceeds the configured limit.")
+                pcm.extend(memoryview(decoded.planes[0])[:sample_bytes])
     if not pcm:
         raise ValueError("Source has no audio samples.")
     return pcm
@@ -209,7 +210,8 @@ class NemotronDiarizationAdapter:
         duration_ms = round(len(pcm) // 2 * 1000 / SAMPLE_RATE)
         self._report_stage("diarization-audio-decode-complete")
         torch = self._torch_module()
-        audio = torch.frombuffer(pcm, dtype=torch.int16).to(torch.float32).div(32768.0).numpy()
+        audio = torch.frombuffer(pcm, dtype=torch.int16).to(torch.float32).div_(32768.0).numpy()
+        del pcm
         device = "cuda" if self.prefer_gpu and self.cuda_available() else "cpu"
         if self.prefer_gpu and device == "cpu" and not self.allow_cpu_fallback:
             raise EngineRuntimeUnavailableError("Diarization CUDA device is unavailable.")
