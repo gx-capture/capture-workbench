@@ -30,8 +30,9 @@ persistence, and cleanup boundaries.
 - Native code canonicalizes the configured root and selected fixture, requires
   the root to own the smoke TEMP/app-data layout, and requires the fixture to be
   a strict descendant.
-- The selected path must be a non-symlink regular file, non-empty, at most
-  50 MiB, and use the existing source extension allowlist.
+- The selected path must be a non-symlink regular file, non-empty, within the
+  library limit for its kind (2 GiB for the audio fixture, 50 MiB for the PDF),
+  and use the existing source extension allowlist.
 - After registry validation, the command calls the existing
   `LibraryStore::import_source`, which repeats size, signature, extension, and
   copy validation.

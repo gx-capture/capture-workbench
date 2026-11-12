@@ -38,6 +38,8 @@ const runtimeExecutable = resolve(
 );
 const sourcePath = process.env.CAPTURE_PROGRESSIVE_AUDIO_ORACLE_SOURCE?.trim();
 const outputPath = process.env.CAPTURE_PROGRESSIVE_AUDIO_ORACLE_OUTPUT?.trim();
+// The desktop's recording limit.
+const ORACLE_MAX_SOURCE_BYTES = 2 * 1024 * 1024 * 1024;
 // Keep the frozen worker extraction tree short. Windows can reject a valid
 // catalog archive before the worker probe when the owned app-data root is
 // deeply nested under the workspace.
@@ -266,7 +268,7 @@ async function run(): Promise<void> {
     throw new Error('Progressive audio oracle source and output are required.');
   }
   const sourceMetadata = await lstat(sourcePath).catch(() => undefined);
-  if (!sourceMetadata?.isFile() || sourceMetadata.isSymbolicLink() || sourceMetadata.size < 1 || sourceMetadata.size > 50 * 1024 * 1024) {
+  if (!sourceMetadata?.isFile() || sourceMetadata.isSymbolicLink() || sourceMetadata.size < 1 || sourceMetadata.size > ORACLE_MAX_SOURCE_BYTES) {
     throw new Error('Progressive audio oracle source must be a regular file within the smoke limit.');
   }
   const source = await readFile(sourcePath);
@@ -288,6 +290,9 @@ async function run(): Promise<void> {
       CAPTURE_ALLOWED_ORIGINS: origin,
       CAPTURE_APP_DATA_DIR: join(appData, 'runtime'),
       CAPTURE_STRUCTURING_PROVIDER: 'host',
+      // The runtime's default upload limit is lower than the recordings the
+      // oracle admits.
+      CAPTURE_MAX_UPLOAD_BYTES: String(ORACLE_MAX_SOURCE_BYTES),
       CAPTURE_WHISPER_PREFER_GPU: '1',
       CAPTURE_WHISPER_ALLOW_CPU_FALLBACK: '1',
       // The model smoke compares against this oracle on tea-asr-1.1, which

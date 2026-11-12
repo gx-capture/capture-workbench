@@ -4,7 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::library::MAX_SOURCE_BYTES;
+use crate::library::max_source_bytes;
 use serde::Deserialize;
 
 const FIXTURE_ROOT_ENV: &str = "CAPTURE_SMOKE_FIXTURE_ROOT";
@@ -83,7 +83,14 @@ impl ModelSmokeFixtureRegistry {
         if source_metadata.file_type().is_symlink() || !source_metadata.file_type().is_file() {
             return Err("Model smoke fixture must be a regular non-symlink file.".into());
         }
-        if source_metadata.len() == 0 || source_metadata.len() > MAX_SOURCE_BYTES as u64 {
+        if source_metadata.len() == 0
+            || source_metadata.len()
+                > max_source_bytes(if fixture_key == "audio" {
+                    "audio/mpeg"
+                } else {
+                    "application/pdf"
+                })
+        {
             return Err("Model smoke fixture exceeds the desktop library limit.".into());
         }
         let extension = source

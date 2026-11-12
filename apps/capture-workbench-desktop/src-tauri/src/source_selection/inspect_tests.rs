@@ -54,7 +54,7 @@ fn sparse_oversize_is_rejected_without_reading_it() {
     let source = dir.path().join("large.pdf");
     File::create(&source)
         .unwrap()
-        .set_len(MAX_SOURCE_BYTES as u64 + 1)
+        .set_len(RECORDING_MAX_SOURCE_BYTES + 1)
         .unwrap();
     assert_eq!(
         inspect_source(&source, SourceSelectionKind::All)
@@ -113,4 +113,48 @@ fn canonical_local_paths_are_accepted() {
     let directory = tempfile::tempdir().unwrap();
     assert!(is_local(&fs::canonicalize(directory.path()).unwrap()));
     assert!(!is_local(Path::new("relative.pdf")));
+}
+
+#[test]
+fn per_kind_limits_follow_verified_signatures() {
+    let dir = tempfile::tempdir().unwrap();
+    for (name, signature, accepted) in [
+        ("recording.mp3", b"ID3recording".as_slice(), true),
+        ("document.pdf", b"%PDF-1.7".as_slice(), false),
+        ("image.png", b"\x89PNG\r\n\x1a\n".as_slice(), false),
+    ] {
+        let path = dir.path().join(name);
+        fs::write(&path, signature).unwrap();
+        File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_len(crate::library::DOCUMENT_MAX_SOURCE_BYTES + 1)
+            .unwrap();
+        let result = inspect_source(&path, SourceSelectionKind::All);
+        if accepted {
+            assert!(result.is_ok());
+        } else {
+            assert_eq!(result.err().unwrap(), Reason::TooLarge);
+        }
+    }
+}
+
+#[test]
+fn recording_over_two_gib_is_rejected_before_reading() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("large.mp3");
+    fs::write(&path, b"ID3recording").unwrap();
+    File::options()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_len(RECORDING_MAX_SOURCE_BYTES + 1)
+        .unwrap();
+    assert_eq!(
+        inspect_source(&path, SourceSelectionKind::All)
+            .err()
+            .unwrap(),
+        Reason::TooLarge
+    );
 }

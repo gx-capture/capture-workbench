@@ -1,6 +1,6 @@
 use crate::{
     contracts::{SourceRejectionReason as Reason, SourceSelectionKind},
-    library::{validation::verified_media_type, MAX_SOURCE_BYTES},
+    library::{max_source_bytes, validation::verified_media_type, RECORDING_MAX_SOURCE_BYTES},
 };
 use std::{
     fs::{self, File},
@@ -60,7 +60,7 @@ pub(crate) fn inspect_source(
     path: &Path,
     kind: SourceSelectionKind,
 ) -> Result<OpenedSource, Reason> {
-    inspect(path, kind, MAX_SOURCE_BYTES as u64).map_err(|error| error.reason())
+    inspect(path, kind, RECORDING_MAX_SOURCE_BYTES).map_err(|error| error.reason())
 }
 
 #[cfg(any(test, feature = "model-smoke-app-data"))]
@@ -129,6 +129,9 @@ fn inspect(
             )
         })?
         .to_owned();
+    if byte_length > max_source_bytes(&media_type) {
+        return Err(Failure::TooLarge);
+    }
     if matches!(kind, SourceSelectionKind::Documents)
         && !matches!(
             media_type.as_str(),

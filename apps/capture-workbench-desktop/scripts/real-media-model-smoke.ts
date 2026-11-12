@@ -749,8 +749,9 @@ async function regularInput(
   } catch {
     throw new Error(`${envName} must point to a readable regular file.`);
   }
-  if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size < 1 || metadata.size > 50 * 1024 * 1024) {
-    throw new Error(`${envName} must point to a non-empty regular file within the 50 MiB limit.`);
+  const maxSourceBytes = kind === 'audio' ? 2 * 1024 * 1024 * 1024 : 50 * 1024 * 1024;
+  if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size < 1 || metadata.size > maxSourceBytes) {
+    throw new Error(`${envName} must point to a non-empty regular file within the limit (recordings 2 GiB, documents 50 MiB).`);
   }
   try {
     await copyFile(inputPath, destination);

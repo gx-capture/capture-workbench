@@ -29,6 +29,6 @@
 - `LibraryCaptureUpdate.clearCaptureId` is the only operation that clears a
   stored runtime ID. Omitting both capture-ID fields preserves the current ID.
 - Renderer file validation is fail-fast and matches the native allowlist. The
-  Rust validation (type signature and 50 MiB) remains the final authority.
+  Rust validation (type signature and the size limit for the kind) remains the final authority.
 - Native file pickers, binary/streaming IPC, store/component decomposition,
   shared smoke helpers, and typed runtime response DTOs are deferred.

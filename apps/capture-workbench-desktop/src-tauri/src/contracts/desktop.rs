@@ -127,7 +127,9 @@ fn acceptance_pdf_page_numbers_for_scope(scope: Option<&str>) -> Option<Vec<u32>
 
 #[cfg(test)]
 mod tests {
-    use super::{acceptance_pdf_page_numbers_for_scope, BackendConfig, DesktopRuntimeStatus};
+    #[cfg(not(feature = "acceptance-app-data"))]
+    use super::BackendConfig;
+    use super::{acceptance_pdf_page_numbers_for_scope, DesktopRuntimeStatus};
 
     #[test]
     fn acceptance_scope_is_exactly_page_one() {

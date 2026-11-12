@@ -13,10 +13,23 @@ const INDEX_FILE_NAME: &str = "library-index-v1.json";
 const INDEX_BACKUP_FILE_NAME: &str = "library-index-v1.backup.json";
 const TRANSACTION_FILE_NAME: &str = "library-transaction-v1.json";
 const INDEX_VERSION: u8 = 1;
-pub(crate) const MAX_SOURCE_BYTES: usize = 50 * 1024 * 1024;
+/// PDF and image sources; also the largest source the app loads for playback.
+pub(crate) const DOCUMENT_MAX_SOURCE_BYTES: u64 = 50 * 1024 * 1024;
+/// Recordings: audio, and video whose audio track is transcribed (issue #155).
+pub(crate) const RECORDING_MAX_SOURCE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+const IMPORT_FREE_SPACE_MARGIN: u64 = 512 * 1024 * 1024;
+pub(crate) const NOT_ENOUGH_DISK_SPACE: &str = "Not enough free disk space to import this file.";
 const SOURCE_FILE_NAME: &str = "source.bin";
 const RAW_FILE_NAME: &str = "raw.json";
 const RESULT_FILE_NAME: &str = "result.json";
+
+pub(crate) fn max_source_bytes(media_type: &str) -> u64 {
+    if validation::RECORDING_MEDIA_TYPES.contains(&media_type) {
+        RECORDING_MAX_SOURCE_BYTES
+    } else {
+        DOCUMENT_MAX_SOURCE_BYTES
+    }
+}
 
 #[cfg(test)]
 thread_local! {
@@ -71,6 +84,100 @@ mod tests {
     use super::*;
     use std::fs::OpenOptions;
     use std::io::{Seek, SeekFrom, Write};
+
+    #[test]
+    fn recording_import_and_playback_have_separate_limits() {
+        let directory = tempfile::tempdir().expect("app data");
+        let library = LibraryStore::open(directory.path()).expect("library");
+        let path = directory.path().join("recording.mp3");
+        fs::write(&path, b"ID3recording").expect("recording");
+        OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .expect("source")
+            .set_len(DOCUMENT_MAX_SOURCE_BYTES + 1)
+            .expect("sparse length");
+        let source = crate::source_selection::inspect::inspect_source(
+            &path,
+            crate::contracts::SourceSelectionKind::All,
+        )
+        .expect("recording above document limit");
+        let imported = library
+            .import_opened_with_free_space(source, None, |_| Ok(Some(u64::MAX)))
+            .expect("large recording import");
+        assert_eq!(imported.byte_length, DOCUMENT_MAX_SOURCE_BYTES + 1);
+        let request = LibraryDocumentRequest {
+            document_id: imported.document_id.clone(),
+        };
+        let started = std::time::Instant::now();
+        assert_eq!(
+            library.source_bytes(request.clone()).unwrap_err(),
+            "This recording is too large to play in the app."
+        );
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+        // A stale small index entry must not bypass the file metadata guard.
+        library.lock_index().unwrap().documents[0].byte_length = 12;
+        let stored = library
+            .document_directory(&imported.document_id)
+            .unwrap()
+            .join(SOURCE_FILE_NAME);
+        OpenOptions::new()
+            .write(true)
+            .open(&stored)
+            .unwrap()
+            .set_len(RECORDING_MAX_SOURCE_BYTES)
+            .unwrap();
+        let started = std::time::Instant::now();
+        assert_eq!(
+            library.source_bytes(request.clone()).unwrap_err(),
+            "This recording is too large to play in the app."
+        );
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+        fs::write(&stored, b"ID3recording").unwrap();
+        assert_eq!(library.source_bytes(request).unwrap(), b"ID3recording");
+    }
+
+    #[test]
+    fn disk_budget_is_checked_before_staging_or_publication() {
+        let directory = tempfile::tempdir().expect("app data");
+        let library = LibraryStore::open(directory.path()).expect("library");
+        let path = directory.path().join("recording.mp3");
+        fs::write(&path, b"ID3recording").unwrap();
+        let inspect = || {
+            crate::source_selection::inspect::inspect_source(
+                &path,
+                crate::contracts::SourceSelectionKind::All,
+            )
+            .unwrap()
+        };
+        let size = inspect().byte_length;
+        let required = 2 * size + 512 * 1024 * 1024;
+        let error = library
+            .import_opened_with_free_space(inspect(), None, |volume| {
+                assert_eq!(volume, library.root);
+                Ok(Some(required - 1))
+            })
+            .unwrap_err();
+        assert_eq!(error, "Not enough free disk space to import this file.");
+        assert_eq!(
+            fs::read_dir(library.staging_directory()).unwrap().count(),
+            0
+        );
+        assert_eq!(fs::read_dir(library.root.join("items")).unwrap().count(), 0);
+        assert!(library
+            .list(LibraryListRequest::default())
+            .unwrap()
+            .is_empty());
+        let imported = library
+            .import_opened_with_free_space(inspect(), None, |_| Ok(Some(required)))
+            .unwrap();
+        assert_eq!(imported.byte_length, size);
+        assert_eq!(
+            fs::read_dir(library.staging_directory()).unwrap().count(),
+            0
+        );
+        assert_eq!(fs::read_dir(library.root.join("items")).unwrap().count(), 1);
+    }
 
     struct TransactionFailureGuard;
 
@@ -1399,7 +1506,7 @@ mod tests {
             .expect("exact source");
         exact_file.write_all(b"%PDF-").expect("signature");
         exact_file
-            .seek(SeekFrom::Start(MAX_SOURCE_BYTES as u64 - 1))
+            .seek(SeekFrom::Start(DOCUMENT_MAX_SOURCE_BYTES - 1))
             .expect("seek");
         exact_file.write_all(&[0]).expect("limit byte");
         drop(exact_file);
@@ -1411,7 +1518,7 @@ mod tests {
                 ..Default::default()
             })
             .expect("exact limit");
-        assert_eq!(imported.byte_length, MAX_SOURCE_BYTES as u64);
+        assert_eq!(imported.byte_length, DOCUMENT_MAX_SOURCE_BYTES);
 
         let oversized = directory.path().join("oversized.pdf");
         let mut oversized_file = OpenOptions::new()
@@ -1422,7 +1529,7 @@ mod tests {
             .expect("oversized source");
         oversized_file.write_all(b"%PDF-").expect("signature");
         oversized_file
-            .set_len(MAX_SOURCE_BYTES as u64 + 1)
+            .set_len(DOCUMENT_MAX_SOURCE_BYTES + 1)
             .expect("oversized length");
         drop(oversized_file);
         let error = library
@@ -1441,7 +1548,7 @@ mod tests {
                 entry
                     .ok()
                     .and_then(|item| fs::metadata(item.path()).ok())
-                    .is_some_and(|metadata| metadata.len() > MAX_SOURCE_BYTES as u64)
+                    .is_some_and(|metadata| metadata.len() > DOCUMENT_MAX_SOURCE_BYTES)
             }));
     }
 

@@ -88,13 +88,7 @@ impl SourceSelections {
         let source = self.take(owner, &request.selection_token)?;
         library
             .import_opened(source, request.capture_options)
-            .map_err(|error| {
-                if error == "Selected source changed during import." {
-                    error
-                } else {
-                    "Selected source could not be imported.".into()
-                }
-            })
+            .map_err(import_error)
     }
     pub(crate) fn watch(
         &self,
@@ -221,6 +215,17 @@ impl Drop for DialogGuard {
             self.selections.prune(&mut registry);
             registry.dialogs.remove(&self.owner);
         }
+    }
+}
+/// Library errors can name internal state; only messages the user can act on
+/// pass the selection boundary.
+fn import_error(error: String) -> String {
+    if error == "Selected source changed during import."
+        || error == crate::library::NOT_ENOUGH_DISK_SPACE
+    {
+        error
+    } else {
+        "Selected source could not be imported.".into()
     }
 }
 #[cfg(test)]
