@@ -5,7 +5,6 @@ Recommendation: retain v2 chunked ingestion, raise the desktop recording ceiling
 ## Evidence boundary
 
 - The findings come from reading `main` at `b2ae360`. They describe source behavior, not installed-product acceptance; line numbers refer to that commit.
-- One finding was also probed: the missing idempotency headers in the upload path (item 8 of "Upload and transcription path today").
 - Paths are repository-relative unless prefixed with `../cert-prep/` (the Cert Prep consumer repository).
 
 ## Current size limits and failures
@@ -46,7 +45,7 @@ If another host bypasses that desktop guard, v2 ingestion can accept the bytes t
 5. Audio uses `runtime_start_streaming_capture`; PDF/image use `runtime_create_capture`. Both native implementations already upload the stored file through v2 ingestion: `apps/capture-workbench/src/app/services/desktop-workspace-capture.service.ts:286`, `apps/capture-workbench-desktop/src-tauri/src/runtime_client.rs:147`, `apps/capture-workbench-desktop/src-tauri/src/runtime_client.rs:226`.
 6. Native upload reads sequential **1 MiB chunks**, copies each into the HTTP request, sends range/digest/idempotency headers, then rereads the file to compute final SHA-256. It does not buffer the complete upload: `apps/capture-workbench-desktop/src-tauri/src/runtime_client.rs:373`, `apps/capture-workbench-desktop/src-tauri/src/runtime_client.rs:442`.
 7. The native transport has 60-second socket timeouts and no retry loop. Failed upload/finalize/start triggers best-effort ingestion deletion: `apps/capture-workbench-desktop/src-tauri/src/runtime_client/transport.rs:17`, `apps/capture-workbench-desktop/src-tauri/src/runtime_client/transport.rs:44`, `apps/capture-workbench-desktop/src-tauri/src/runtime_client.rs:298`.
-8. **Adjacent defect:** the recording-specific open/start requests omit the required `X-Idempotency-Key` header. The runtime requires it, with an integration test covering that requirement. A probe through the runtime's test client confirmed it: the body the desktop sends, without the header, is answered 422 `validation_error` (header `X-Idempotency-Key` missing) on both `POST /v2/ingestions` and `POST /v2/captures`, and 201 with the matching key. The failure has not been reproduced in the running desktop app; slice 1a starts with a test that does. Repair before large-file acceptance: `apps/capture-workbench-desktop/src-tauri/src/runtime_client.rs:240`, `apps/capture-workbench-desktop/src-tauri/src/runtime_client.rs:280`, `packages/capture-runtime/src/capture_runtime/capture/api/streaming.py:85`, `packages/capture-runtime/tests/integration/test_streaming_api.py:532`.
+8. Both native paths send the required `X-Idempotency-Key` (equal to the body's `clientRequestId`) when they open the ingestion and start the capture, and share one helper for open, upload and finalize (`upload_ingestion_source` in `apps/capture-workbench-desktop/src-tauri/src/runtime_client.rs`). The runtime answers 422 without the header and 409 when it differs from the body.
 9. Production ingestion is disk-backed under `<runtime-app-data>/jobs/streaming/ingestions/<id>/source.bin`; chunk append flushes/fsyncs, metadata records accepted chunks, and final hashing reads in 1 MiB blocks: `packages/capture-runtime/src/capture_runtime/dependencies.py:205`, `packages/capture-runtime/src/capture_runtime/capture/infrastructure/_streaming_persistence.py:33`, `packages/capture-runtime/src/capture_runtime/capture/infrastructure/_streaming_persistence.py:62`, `packages/capture-runtime/src/capture_runtime/capture/infrastructure/streaming_repository.py:187`.
 10. Identical accepted chunks replay safely; conflicting/out-of-order chunks fail. Finalization replay uses stored metadata: `packages/capture-runtime/src/capture_runtime/capture/domain/ingestion/models.py:69`, `packages/capture-runtime/src/capture_runtime/capture/infrastructure/streaming_repository.py:206`.
 11. Without speakers, the runtime reads the finalized source in 1 MiB blocks into a second compressed spool. PyAV decodes/resamples audio; bounded PCM windows cross the binary worker pipe. The worker writes a temporary WAV per window for ASR: `packages/capture-runtime/src/capture_runtime/speech/infrastructure/progressive_capture.py:296`, `packages/capture-runtime/src/capture_runtime/speech/infrastructure/progressive_capture.py:367`, `packages/capture-runtime/src/capture_runtime/speech/infrastructure/progressive_decoder.py:87`, `packages/capture-runtime/src/capture_runtime/speech/infrastructure/progressive_whisper.py:45`.
@@ -101,12 +100,11 @@ The public wire contract stays unchanged, but observable admission policy change
 
 Change mode: edit existing owners, with small private helpers only where needed. Delete renderer path plumbing and obsolete source-text assertions. Size pressure is large across boundaries; avoid a general upload framework or unrelated library rewrite. Each slice below is intended to stay around ten files, including tests.
 
-1. **Repair native upload protocol and replay. Public contract: no. Capabilities: no.** Two pull requests:
-   - **1a (defect fix).** Edit `apps/capture-workbench-desktop/src-tauri/src/runtime_client.rs:226`: supply the required matching open/start keys and validate the returned IDs. Start with a native HTTP behavior test beside `apps/capture-workbench-desktop/src-tauri/src/runtime_client.rs:789` whose server rejects a request without the key, as the runtime does.
-   - **1b (replay).** Edit `runtime_client.rs` and `runtime_client/transport.rs:36`: honor the advertised chunk limit and retain the same chunk/index/digest on bounded transient retries. Reuse ingestion offsets on retry; distinguish uncertain start success from definite rejection before deleting the ingestion. Add cooperative cancellation and keep identifiers available while an upload is pending.
-   - Tests for 1b: lost acknowledgements, conflicts, cancellation and cleanup at the native HTTP boundary, and a real-runtime boundary test for open/upload/finalize/start.
+1. **Replay in the native upload. Public contract: no. Capabilities: no.**
+   - Edit `apps/capture-workbench-desktop/src-tauri/src/runtime_client.rs` and `runtime_client/transport.rs:36`: honor the advertised chunk limit and retain the same chunk/index/digest on bounded transient retries. Reuse ingestion offsets on retry; distinguish uncertain start success from definite rejection before deleting the ingestion. Add cooperative cancellation and keep identifiers available while an upload is pending.
+   - Tests: lost acknowledgements, conflicts, cancellation and cleanup at the native HTTP boundary, and a real-runtime boundary test for open/upload/finalize/start.
    - Gates: `pnpm nx run capture-workbench-desktop:cargo-test`, `pnpm nx run capture-workbench-desktop:package-qa-test`, `pnpm nx run capture-runtime:test-integration`.
-   - Visible result: existing-size recording uploads satisfy the actual v2 protocol and recover safely from transient failures.
+   - Visible result: recording uploads recover safely from transient failures.
 
 2. **Enforce source policy in runtime admission. Public contract: unchanged schema; review behavior line by line. Capabilities: no.**
    - Edit `packages/capture-runtime/src/capture_runtime/config.py:250`, `dependencies.py:205`, `capture/application/use_cases.py:26`, `capture/application/streaming_capture_service.py:108`, and `capture/api/streaming.py:85`; add one private policy owner.
@@ -202,18 +200,18 @@ Full large-recording playback can be a separate issue because #155’s acceptanc
 - Keep bearer tokens in native transport; current transport attaches them only to loopback requests and redacts responses: `apps/capture-workbench-desktop/src-tauri/src/runtime_client/transport.rs:19`, `apps/capture-workbench-desktop/src-tauri/src/runtime_client/transport.rs:60`.
 - Never log/report source paths, filenames, transcripts, audio or credentials. Acceptance reports contain sizes, timings, result/provenance status and sanitized failures only. Private recordings remain on the machine.
 
-## Product decisions and assumptions
+## Product decisions
 
-These are asked on issue #155. Slices 1, 2, 3 and 5 do not depend on the answers. Slices 4, 6, 7 and 8 wait for them.
+Decided by the product owner on issue #155 (2026-11-12).
 
-| Decision | Recommendation / assumption if unanswered |
+| Decision | Outcome |
 |---|---|
-| Maximum source size | 2 GiB per recording initially; 50 MiB PDF/image. Larger ceilings require another disk/resource assessment. |
-| Maximum duration | Retain 90 minutes and enforce it across progressive and speaker modes. Increasing to multi-hour recordings changes CPU, speaker-memory and cancellation budgets. |
-| Video containers | Include existing supported containers and transcribe their audio track; no new public `video` kind. Existing native classification already maps recordings to `audio`: `apps/capture-workbench-desktop/src-tauri/src/runtime_client.rs:155`. |
-| Durable library copy | Keep one owned copy for reliable retry after originals move. Assume sufficient disk and explicit deletion; reference-only storage is a different lifecycle design. |
-| Large-file playback | Defer range playback, ship safe unavailability messaging here. If playback is mandatory for #155, add a separate range-playback slice before acceptance. |
-| Speaker identification | Include it within the same size/duration envelope; do not silently disable it for large recordings. |
+| Maximum source size | 2 GiB per recording; 50 MiB for PDF and image. |
+| Maximum duration | 90 minutes, enforced on the progressive and the speaker paths alike. |
+| Video containers | Supported: the audio track is transcribed, with no new public `video` kind. Subtitles may follow later, so segment timestamps must stay usable for a video's timeline. |
+| Durable library copy | The library keeps one owned copy, so a retry works after the original moves. |
+| Large-file playback | Not in this issue; discussed in issue #327. Here a large recording shows that playback is unavailable instead of loading the file into the renderer. |
+| Speaker identification | Supported for large recordings within the same size and duration limits. |
 
 ## Risks
 

@@ -167,50 +167,26 @@ pub(crate) fn create_capture(
     let config = state.backend_config()?;
     let ingestion_request_id = format!("{}-ingestion", input.client_request_id);
     let pdf_page_numbers = input.pdf_page_numbers.clone();
-    let ingestion = request(
+    let open_body = json_body(json!({
+        "protocolVersion": "2",
+        "clientRequestId": ingestion_request_id,
+        "kind": source_kind,
+        "mode": "file",
+        "fileName": source.file_name.clone(),
+        "mediaType": source.media_type.clone(),
+        "totalBytes": source.bytes,
+    }))?;
+    let ingestion_id =
+        upload_ingestion_source(&config, &source, open_body, &input.client_request_id)?;
+    let capture_body =
+        capture_start_body(&input.client_request_id, &ingestion_id, pdf_page_numbers);
+    let result = request(
         &config,
         "POST",
-        "/v2/ingestions",
-        Some(json_body(json!({
-            "protocolVersion": "2",
-            "clientRequestId": ingestion_request_id,
-            "kind": source_kind,
-            "mode": "file",
-            "fileName": source.file_name,
-            "mediaType": source.media_type,
-            "totalBytes": source.bytes,
-        }))?),
-        Some(&ingestion_request_id),
-    )?;
-    let ingestion_id = ingestion
-        .get("ingestionId")
-        .and_then(Value::as_str)
-        .ok_or_else(|| "Capture Runtime ingestion response is invalid.".to_string())?;
-    validate_opaque_id(ingestion_id)?;
-    let result = (|| {
-        upload_source_chunks(&config, &source, ingestion_id, &input.client_request_id)?;
-        let source_digest = source_sha256(&source)?;
-        request(
-            &config,
-            "POST",
-            &format!("/v2/ingestions/{ingestion_id}/finalize"),
-            Some(json_body(json!({
-                "protocolVersion": "2",
-                "totalBytes": source.bytes,
-                "sha256": source_digest,
-            }))?),
-            None,
-        )?;
-        let capture_body =
-            capture_start_body(&input.client_request_id, ingestion_id, pdf_page_numbers);
-        request(
-            &config,
-            "POST",
-            "/v2/captures",
-            Some(json_body(capture_body)?),
-            Some(&input.client_request_id),
-        )
-    })();
+        "/v2/captures",
+        Some(json_body(capture_body)?),
+        Some(&input.client_request_id),
+    );
     if result.is_err() {
         let _ = request(
             &config,
@@ -237,67 +213,49 @@ pub(crate) fn start_streaming_capture(
         return Err("Progressive capture is available only for recordings.".into());
     }
     let config = state.backend_config()?;
-    let ingestion = request_with_headers(
-        &config,
+    start_streaming_capture_inner(&config, &source, &input)
+}
+
+fn start_streaming_capture_inner(
+    config: &BackendConfig,
+    source: &RuntimeSourceFile,
+    input: &RuntimeStreamingCaptureInput,
+) -> Result<Value, String> {
+    let open_body = RequestBody {
+        bytes: serde_json::to_vec(&json!({
+            "clientRequestId": format!("{}-ingestion", input.client_request_id),
+            "kind": "audio",
+            "mode": "file",
+            "fileName": source.file_name.clone(),
+            "mediaType": source.media_type.clone(),
+            "totalBytes": source.bytes,
+        }))
+        .map_err(|_| "Progressive ingestion request cannot be encoded.".to_string())?,
+        content_type: "application/json".into(),
+    };
+    let ingestion_id =
+        upload_ingestion_source(config, source, open_body, &input.client_request_id)?;
+    let capture_body = RequestBody {
+        bytes: serde_json::to_vec(&json!({
+            "clientRequestId": input.client_request_id,
+            "ingestionId": ingestion_id,
+            "structuringMode": input.structuring_mode,
+            "startPolicy": "eager",
+            "identifySpeakers": input.identify_speakers,
+        }))
+        .map_err(|_| "Progressive capture request cannot be encoded.".to_string())?,
+        content_type: "application/json".into(),
+    };
+    let result = request(
+        config,
         "POST",
-        "/v2/ingestions",
-        Some(RequestBody {
-            bytes: serde_json::to_vec(&json!({
-                "clientRequestId": format!("{}-ingestion", input.client_request_id),
-                "kind": "audio",
-                "mode": "file",
-                "fileName": source.file_name.clone(),
-                "mediaType": source.media_type.clone(),
-                "totalBytes": source.bytes,
-            }))
-            .map_err(|_| "Progressive ingestion request cannot be encoded.".to_string())?,
-            content_type: "application/json".into(),
-        }),
-        None,
-        &[],
-    )?;
-    let ingestion_id = ingestion
-        .get("ingestionId")
-        .and_then(Value::as_str)
-        .ok_or_else(|| "Progressive ingestion response is invalid.".to_string())?;
-    let result = (|| {
-        upload_source_chunks(&config, &source, ingestion_id, &input.client_request_id)?;
-        let source_digest = source_sha256(&source)?;
-        request_json(
-            state,
-            "POST",
-            &format!("/v2/ingestions/{ingestion_id}/finalize"),
-            Some(RequestBody {
-                bytes: serde_json::to_vec(&json!({
-                    "totalBytes": source.bytes,
-                    "sha256": source_digest,
-                }))
-                .map_err(|_| "Progressive finalize request cannot be encoded.".to_string())?,
-                content_type: "application/json".into(),
-            }),
-            None,
-        )?;
-        request_json(
-            state,
-            "POST",
-            "/v2/captures",
-            Some(RequestBody {
-                bytes: serde_json::to_vec(&json!({
-                    "clientRequestId": input.client_request_id,
-                    "ingestionId": ingestion_id,
-                    "structuringMode": input.structuring_mode,
-                    "startPolicy": "eager",
-                    "identifySpeakers": input.identify_speakers,
-                }))
-                .map_err(|_| "Progressive capture request cannot be encoded.".to_string())?,
-                content_type: "application/json".into(),
-            }),
-            None,
-        )
-    })();
+        "/v2/captures",
+        Some(capture_body),
+        Some(&input.client_request_id),
+    );
     if result.is_err() {
-        let _ = request_json(
-            state,
+        let _ = request(
+            config,
             "DELETE",
             &format!("/v2/ingestions/{ingestion_id}"),
             None,
@@ -305,6 +263,53 @@ pub(crate) fn start_streaming_capture(
         );
     }
     result
+}
+
+fn upload_ingestion_source(
+    config: &BackendConfig,
+    source: &RuntimeSourceFile,
+    open_body: RequestBody,
+    client_request_id: &str,
+) -> Result<String, String> {
+    let ingestion_request_id = format!("{client_request_id}-ingestion");
+    let ingestion = request(
+        config,
+        "POST",
+        "/v2/ingestions",
+        Some(open_body),
+        Some(&ingestion_request_id),
+    )?;
+    let ingestion_id = ingestion
+        .get("ingestionId")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "Capture Runtime ingestion response is invalid.".to_string())?;
+    validate_opaque_id(ingestion_id)?;
+    let result = (|| {
+        upload_source_chunks(config, source, ingestion_id, client_request_id)?;
+        let source_digest = source_sha256(source)?;
+        request(
+            config,
+            "POST",
+            &format!("/v2/ingestions/{ingestion_id}/finalize"),
+            Some(json_body(json!({
+                "protocolVersion": "2",
+                "totalBytes": source.bytes,
+                "sha256": source_digest,
+            }))?),
+            None,
+        )
+    })();
+    if let Err(error) = result {
+        let _ = request(
+            config,
+            "DELETE",
+            &format!("/v2/ingestions/{ingestion_id}"),
+            None,
+            None,
+        );
+        return Err(error);
+    }
+    Ok(ingestion_id.to_string())
 }
 
 pub(crate) fn streaming_capture(
@@ -800,6 +805,7 @@ mod tests {
         let bytes = vec![0x41_u8; STREAM_CHUNK_BYTES + 17];
         let source_bytes = bytes.len() as u64;
         fs::write(&source_path, &bytes).expect("source");
+        let _guard = TempFileGuard(source_path.clone());
         let server = thread::spawn(move || {
             for expected in [
                 (0_u64, 0_u64, STREAM_CHUNK_BYTES as u64 - 1),
@@ -1027,5 +1033,289 @@ mod tests {
         assert!(conflict.expect_err("conflict").contains("HTTP 409"));
 
         server.join().expect("server");
+    }
+
+    struct TempFileGuard(PathBuf);
+
+    impl Drop for TempFileGuard {
+        fn drop(&mut self) {
+            let _ = fs::remove_file(&self.0);
+        }
+    }
+
+    fn test_backend_config(port: u16) -> BackendConfig {
+        BackendConfig {
+            base_url: format!("http://127.0.0.1:{port}"),
+            token: "secret-token".into(),
+            runtime_version: env!("CARGO_PKG_VERSION").into(),
+            api_version: "2.0".into(),
+            capture_document_schema_version: "2".into(),
+        }
+    }
+
+    fn create_test_source_file(
+        name: &str,
+        content: &[u8],
+        media_type: &str,
+    ) -> (TempFileGuard, RuntimeSourceFile) {
+        let path = PathBuf::from(std::env::temp_dir()).join(format!(
+            "capture-workbench-{}-{}-{}.bin",
+            name,
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        fs::write(&path, content).expect("write test source file");
+        let source = RuntimeSourceFile {
+            file_name: format!("{name}.mp3"),
+            media_type: media_type.to_string(),
+            path: path.clone(),
+            bytes: content.len() as u64,
+        };
+        (TempFileGuard(path), source)
+    }
+
+    fn handle_idempotent_post(
+        stream: &mut TcpStream,
+        request: &str,
+        expected_path: &str,
+        success_status: &str,
+        success_body: &str,
+    ) -> String {
+        assert!(request.starts_with(&format!("POST {expected_path} HTTP/1.1")));
+        let separator = request.find("\r\n\r\n").expect("headers separator");
+        let headers_part = &request[..separator];
+        let body_part = &request[separator + 4..];
+
+        let idempotency_header = headers_part
+            .lines()
+            .find_map(|line| line.strip_prefix("X-Idempotency-Key: "));
+
+        let body_json: Value = serde_json::from_str(body_part).expect("valid json body");
+        let client_request_id = body_json.get("clientRequestId").and_then(Value::as_str);
+
+        match idempotency_header {
+            None => {
+                let error = r#"{"code":"validation_error","message":"Missing X-Idempotency-Key"}"#;
+                write!(
+                    stream,
+                    "HTTP/1.1 422 Unprocessable Entity\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    error.len(),
+                    error
+                )
+                .expect("write 422");
+                String::new()
+            }
+            Some(key) if Some(key) != client_request_id => {
+                let error = r#"{"code":"idempotency_conflict","message":"Key mismatch"}"#;
+                write!(
+                    stream,
+                    "HTTP/1.1 409 Conflict\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    error.len(),
+                    error
+                )
+                .expect("write 409");
+                String::new()
+            }
+            Some(key) => {
+                write!(
+                    stream,
+                    "HTTP/1.1 {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    success_status,
+                    success_body.len(),
+                    success_body
+                )
+                .expect("write success response");
+                key.to_string()
+            }
+        }
+    }
+
+    #[test]
+    fn recording_path_sends_required_idempotency_keys_and_returns_capture_json() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("listener");
+        let port = listener.local_addr().expect("address").port();
+        let (_guard, source) =
+            create_test_source_file("streaming-rec", b"small audio content", "audio/mpeg");
+        let config = test_backend_config(port);
+        let input = RuntimeStreamingCaptureInput {
+            document_id: "0123456789abcdef0123456789abcdef".into(),
+            client_request_id: "test-client-req".into(),
+            structuring_mode: "host".into(),
+            identify_speakers: false,
+        };
+
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept ingestion");
+            let req = read_http_request(&mut stream);
+            let ingestion_key = handle_idempotent_post(
+                &mut stream,
+                &req,
+                "/v2/ingestions",
+                "201 Created",
+                r#"{"ingestionId":"ingestion-stream-1"}"#,
+            );
+
+            drop(stream);
+            let (mut stream, _) = listener.accept().expect("accept chunk");
+            let req = read_http_request(&mut stream);
+            assert!(req.starts_with("PUT /v2/ingestions/ingestion-stream-1/chunks/0 HTTP/1.1"));
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{{}}"
+            )
+            .expect("write chunk response");
+
+            drop(stream);
+            let (mut stream, _) = listener.accept().expect("accept finalize");
+            let req = read_http_request(&mut stream);
+            assert!(req.starts_with("POST /v2/ingestions/ingestion-stream-1/finalize HTTP/1.1"));
+            let finalize_body = r#"{"ingestionId":"ingestion-stream-1","status":"ready"}"#;
+            write!(
+                stream,
+                "HTTP/1.1 201 Created\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                finalize_body.len(),
+                finalize_body
+            )
+            .expect("write finalize response");
+
+            drop(stream);
+            let (mut stream, _) = listener.accept().expect("accept capture");
+            let req = read_http_request(&mut stream);
+            let capture_key = handle_idempotent_post(
+                &mut stream,
+                &req,
+                "/v2/captures",
+                "201 Created",
+                r#"{"captureId":"capture-stream-1","status":"queued"}"#,
+            );
+
+            (ingestion_key, capture_key)
+        });
+
+        let result =
+            start_streaming_capture_inner(&config, &source, &input).expect("capture call succeeds");
+        let (ingestion_key, capture_key) = server.join().expect("server thread");
+
+        assert_eq!(result["captureId"], "capture-stream-1");
+        assert_eq!(result["status"], "queued");
+        assert_eq!(ingestion_key, "test-client-req-ingestion");
+        assert_eq!(capture_key, "test-client-req");
+    }
+
+    #[test]
+    fn recording_path_rejects_invalid_ingestion_id_before_uploading_chunks() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("listener");
+        let port = listener.local_addr().expect("address").port();
+        let (_guard, source) =
+            create_test_source_file("streaming-invalid-id", b"audio-bytes", "audio/mpeg");
+        let config = test_backend_config(port);
+        let input = RuntimeStreamingCaptureInput {
+            document_id: "0123456789abcdef0123456789abcdef".into(),
+            client_request_id: "test-client-req".into(),
+            structuring_mode: "host".into(),
+            identify_speakers: false,
+        };
+
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept ingestion");
+            let req = read_http_request(&mut stream);
+            assert!(req.starts_with("POST /v2/ingestions HTTP/1.1"));
+            let body = r#"{"ingestionId":"../invalid_id"}"#;
+            write!(
+                stream,
+                "HTTP/1.1 201 Created\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .expect("write response");
+        });
+
+        let error = start_streaming_capture_inner(&config, &source, &input)
+            .expect_err("should reject invalid ingestionId");
+        assert_eq!(error, "Capture Runtime identifier is invalid.");
+        server.join().expect("server thread");
+    }
+
+    #[test]
+    fn recording_path_deletes_ingestion_when_capture_start_fails() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("listener");
+        let port = listener.local_addr().expect("address").port();
+        let (_guard, source) =
+            create_test_source_file("streaming-fail", b"audio-bytes", "audio/mpeg");
+        let config = test_backend_config(port);
+        let input = RuntimeStreamingCaptureInput {
+            document_id: "0123456789abcdef0123456789abcdef".into(),
+            client_request_id: "test-client-req".into(),
+            structuring_mode: "host".into(),
+            identify_speakers: false,
+        };
+
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept ingestion");
+            let req = read_http_request(&mut stream);
+            assert!(req.starts_with("POST /v2/ingestions HTTP/1.1"));
+            let body = r#"{"ingestionId":"ingestion-delete-test"}"#;
+            write!(
+                stream,
+                "HTTP/1.1 201 Created\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .expect("write ingestion response");
+
+            drop(stream);
+            let (mut stream, _) = listener.accept().expect("accept chunk");
+            let req = read_http_request(&mut stream);
+            assert!(req.starts_with("PUT /v2/ingestions/ingestion-delete-test/chunks/0 HTTP/1.1"));
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{{}}"
+            )
+            .expect("write chunk response");
+
+            drop(stream);
+            let (mut stream, _) = listener.accept().expect("accept finalize");
+            let req = read_http_request(&mut stream);
+            assert!(req.starts_with("POST /v2/ingestions/ingestion-delete-test/finalize HTTP/1.1"));
+            let body = r#"{"ingestionId":"ingestion-delete-test","status":"ready"}"#;
+            write!(
+                stream,
+                "HTTP/1.1 201 Created\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .expect("write finalize response");
+
+            drop(stream);
+            let (mut stream, _) = listener.accept().expect("accept capture");
+            let req = read_http_request(&mut stream);
+            assert!(req.starts_with("POST /v2/captures HTTP/1.1"));
+            let body = r#"{"code":"internal_error","message":"capture failed"}"#;
+            write!(
+                stream,
+                "HTTP/1.1 500 Internal Server Error\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .expect("write capture 500");
+
+            drop(stream);
+            let (mut stream, _) = listener.accept().expect("accept delete");
+            let req = read_http_request(&mut stream);
+            assert!(req.starts_with("DELETE /v2/ingestions/ingestion-delete-test HTTP/1.1"));
+            write!(
+                stream,
+                "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            )
+            .expect("write delete response");
+        });
+
+        let error = start_streaming_capture_inner(&config, &source, &input)
+            .expect_err("capture start should fail");
+        assert!(error.contains("HTTP 500"));
+        server.join().expect("server thread");
     }
 }
