@@ -861,3 +861,54 @@ def test_startup_removes_an_expired_capture_whose_source_exceeds_a_lowered_limit
     with pytest.raises(StreamingRecordNotFoundError):
         restarted.get_ingestion(ingestion_id)
     assert not (tmp_path / "streaming" / "ingestions" / ingestion_id).exists()
+
+
+def test_a_replayed_chunk_replaces_the_tail_of_a_failed_write(tmp_path: Path) -> None:
+    repository = StreamingRepository(
+        tmp_path, clock=MutableClock(), retention_hours=24, policy=_DEFAULT_POLICY
+    )
+    repository.initialize()
+    source = b"abcdef"
+    ingestion_id, digest = _open(repository, source)
+    repository.append_chunk(
+        ingestion_id,
+        chunk_index=0,
+        byte_offset=0,
+        data=b"abc",
+        sha256=hashlib.sha256(b"abc").hexdigest(),
+        max_chunk_bytes=3,
+        declared_total_bytes=6,
+    )
+    # A write that failed halfway left bytes after the accepted chunk.
+    path = repository.source_path(ingestion_id)
+    path.write_bytes(b"abcpartial-failed-write")
+    assert repository.get_ingestion(ingestion_id).received_bytes == 3
+
+    # A chunk at the wrong offset is still rejected and changes nothing.
+    with pytest.raises(StreamingTransitionError):
+        repository.append_chunk(
+            ingestion_id,
+            chunk_index=1,
+            byte_offset=4,
+            data=b"def",
+            sha256=hashlib.sha256(b"def").hexdigest(),
+            max_chunk_bytes=3,
+            declared_total_bytes=6,
+        )
+    assert path.read_bytes() == b"abcpartial-failed-write"
+
+    # The replay lands at its offset, and the source finalizes with its digest.
+    repository.append_chunk(
+        ingestion_id,
+        chunk_index=1,
+        byte_offset=3,
+        data=b"def",
+        sha256=hashlib.sha256(b"def").hexdigest(),
+        max_chunk_bytes=3,
+        declared_total_bytes=6,
+    )
+    assert (
+        repository.finalize_ingestion(ingestion_id, total_bytes=6, sha256=digest).status
+        is StreamingIngestionStatus.READY
+    )
+    assert path.read_bytes() == source
