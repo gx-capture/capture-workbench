@@ -103,10 +103,12 @@ Merged: the idempotency keys of the recording start (PR #328), slice 2 (the runt
 Change mode: edit existing owners, with small private helpers only where needed. Delete renderer path plumbing and obsolete source-text assertions. Size pressure is large across boundaries; avoid a general upload framework or unrelated library rewrite. Each slice below is intended to stay around ten files, including tests.
 
 1. **Replay in the native upload. Public contract: no. Capabilities: no.**
-   - Edit `apps/capture-workbench-desktop/src-tauri/src/runtime_client.rs` and `runtime_client/transport.rs:36`: honor the advertised chunk limit and retain the same chunk/index/digest on bounded transient retries. Reuse ingestion offsets on retry; distinguish uncertain start success from definite rejection before deleting the ingestion. Add cooperative cancellation and keep identifiers available while an upload is pending.
-   - Tests: lost acknowledgements, conflicts, cancellation and cleanup at the native HTTP boundary, and a real-runtime boundary test for open/upload/finalize/start.
-   - Gates: `pnpm nx run capture-workbench-desktop:cargo-test`, `pnpm nx run capture-workbench-desktop:package-qa-test`, `pnpm nx run capture-runtime:test-integration`.
-   - Visible result: recording uploads recover safely from transient failures.
+   - Edit `apps/capture-workbench-desktop/src-tauri/src/runtime_client.rs` and `runtime_client/transport.rs`: retry a transient failure (no complete response, or 502/503/504) with the identical request, three attempts in total, for chunks, finalize and the two idempotent POSTs; any other status is a definite answer.
+   - Compute the source digest while uploading instead of reading the file a second time.
+   - When the start request stays unconfirmed after the retries, do not delete the ingestion: the capture may own it. A definite rejection still deletes it.
+   - Tests at the native HTTP boundary: lost responses, 503, conflicts that are not retried, the unconfirmed start, one pass over the file.
+   - Gates: `pnpm nx run capture-workbench-desktop:cargo-test`, `pnpm run verify:affected`.
+   - Visible result: recording uploads recover from transient failures.
 
 4. **Remove compressed-source buffering from speaker mode. Public contract: no. Capabilities: no.**
    - Edit `packages/capture-runtime/src/capture_runtime/capture/application/streaming_capture_service.py:376`, `capture/infrastructure/capture_extraction.py:604`, `capture/infrastructure/audio_run_timeout.py:10`, `workers/speech_recognition_main.py:244`, and `workers/diarization_main.py:149`.
@@ -120,26 +122,26 @@ Change mode: edit existing owners, with small private helpers only where needed.
 5. **Make library import a bounded disk transaction. Public contract: no. Capabilities: no.**
    - Edit `apps/capture-workbench-desktop/src-tauri/src/library/store.rs:185`, `library/validation.rs:74`, `library/filesystem.rs:7`, and `library.rs:16`.
    - Verify prefix/type first, stream an opened regular file into a private staging item, enforce count during copying, then atomically publish the item/index. Keep activation at 50 MiB in this slice.
-   - Preserve the existing library copy and basename behavior. Hash during upload rather than rereading the file solely for finalization.
+   - Preserve the existing library copy and basename behavior.
    - Add disk-full, mutation, cancellation, exact-limit, symlink/reparse, failed-index-publication, and restart-orphan tests beside `apps/capture-workbench-desktop/src-tauri/src/library.rs:1188`.
    - Gates: desktop `cargo-test`, `cargo-fmt-check`, and `package-qa-test` through `pnpm nx run`.
    - Visible result: import memory is independent of compressed file size; interrupted imports do not publish partial documents.
 
-6. **Move selection authority into Rust. Public contract: desktop IPC changes only. Capabilities: YES, line-by-line review.**
-   - Edit `apps/capture-workbench-desktop/src-tauri/src/commands.rs:136`, `contracts/library.rs:512`, `lib.rs:25`, `capabilities/default.json:6`, and `apps/capture-workbench/src/app/services/desktop-library.service.ts:33`; add a private native selection registry and tests.
-   - Implement token selection/import/discard and sanitized native drop notifications. Tokens bind to the main window, expire, and reference validated native selections rather than accepting renderer paths.
-   - Each Tauri command added must have a caller in the same pull request, or the dead-code gate fails. So this slice moves the picker and drop handling of the existing import to the token route, and slice 7 migrates the queues and removes the path route. Do not raise the limit yet.
-   - Test arbitrary-path IPC rejection on the new route, forged/expired/cross-window tokens, dialog cancellation, raw drag-event subscription denial, and basename-only messages.
-   - Gates: desktop `cargo-test`, `package-qa-test`, `contract-consistency`, and renderer `typecheck`.
-   - Visible result: the new native-owned route is available; activation waits for all consumers to migrate.
+6. **Move selection authority into Rust. Public contract: desktop IPC changes only. Capabilities: YES, line-by-line review.** Design: [large-recording-selection-tokens.md](large-recording-selection-tokens.md).
+   - Rust opens the dialog and receives drops; the renderer gets selection tokens with a base name, size and media type; importing consumes a token. The workspace picker, the OCR picker and the drop all move in this slice, and the path command `library_import_source` is removed with them.
+   - The capability denies event listening and the renderer-side dialog; the queues hold selections instead of paths.
+   - Do not raise the limit yet.
+   - Gates: desktop `cargo-test`, `package-qa-test`, `package-qa` for the packaged boundary check, renderer `test` and `typecheck`, `pnpm run verify:affected`.
+   - Visible result: picking and dropping files work as before; no path crosses to the renderer.
 
-7. **Migrate queues and activate large recordings. Public contract: no runtime change. Capabilities: final restriction review.**
-   - Edit renderer services at `apps/capture-workbench/src/app/services/desktop-workspace.store.ts:332`, `desktop-workspace-capture.service.ts:115`, `capture-queue.store.ts:142`, and `ocr-queue.ts:40`; edit native constants at `apps/capture-workbench-desktop/src-tauri/src/constants/runtime.rs:2`.
-   - Replace path queues with token/basename metadata, preserve PDF options and sequential processing, remove the old arbitrary-path IPC registration and renderer dialog/drop subscriptions, then enable 2 GiB recordings.
-   - Add UI behavior tests for picker/drop import, ASR continuation, OCR queue options, cancelled selections and retry. Prove a >50 MiB selection never sends file bytes or paths through renderer IPC.
-   - Keep playback safe: reject large `library_source_bytes` reads natively before allocation and explain playback unavailability in the UI. Add a direct-command regression test.
+7. **Activate large recordings. Public contract: no runtime change. Capabilities: final restriction review.**
+   - Raise the desktop limits for recordings to 2 GiB (`apps/capture-workbench-desktop/src-tauri/src/constants/runtime.rs`, the library limit per kind); PDF and image stay at 50 MiB.
+   - Cancel a pending import or upload from the UI (a command with its renderer caller), with cooperative cancellation in the native upload.
+   - Keep playback safe: reject large `library_source_bytes` reads natively before allocation and say in the UI that playback is unavailable (issue #327 covers playing large recordings).
+   - Check free disk space before an import and name the shortage in the error.
+   - Drop `core:default` from the capability once a packaged run shows the renderer calls nothing in `core:*`.
    - Gates: `pnpm nx run capture-workbench:test`, `pnpm nx run capture-workbench:typecheck`, desktop `cargo-test`/`package-qa-test`, and browser proof.
-   - Visible result: >50 MiB desktop import/transcription is enabled; the renderer uses opaque identities throughout.
+   - Visible result: a recording over 50 MiB can be imported and transcribed in the desktop app.
 
 8. **Crash cleanup, package QA and installed acceptance. Public contract: no. Capabilities: packaged verification.**
    - Edit recovery owners at `packages/capture-runtime/src/capture_runtime/capture/infrastructure/_streaming_persistence.py:99`, `streaming_repository.py:123`, `packages/capture-runtime/src/capture_runtime/app.py:150`, and native library recovery at `apps/capture-workbench-desktop/src-tauri/src/library/store.rs:96`.
