@@ -79,7 +79,7 @@ After slice 7, once a packaged run shows the renderer calls nothing in `core:*`:
 - `DesktopLibraryService`: `selectSources(kind)` and `droppedSources()` return selection batches; `importSelection(selection, captureOptions?)` replaces `createSource` and `importSource`; `discardSelections(selections)`. The dialog and webview imports go.
 - `DesktopTauriCommandService.watch(command, channelArg)` wraps a `Channel` so tests mock the service and never build one.
 - `CaptureQueueStore` and `DesktopWorkspaceStore` hold selections instead of paths; names come from `fileName`; what they refuse is discarded.
-- The workspace imports every selection of a batch first, then runs the captures in the same order. Today each file waits for the previous capture to finish, which would let later tokens expire during a long transcription.
+- The workspace imports every selection of a batch first, then runs the captures in the same order: waiting for each capture before the next import would let later tokens expire during a long transcription. The documents that wait for their turn are held by the capture service, so the OCR queue, which starts queued documents on its own, does not start them early or twice.
 - A message per rejection reason (zh-TW and en).
 
 ### Fallback if a packaged run shows a path can still reach JavaScript
@@ -93,7 +93,7 @@ Set `dragDropEnabled` to `false` for the window: Rust then sees no drops, the dr
 - Commands as plain functions: the original renamed and replaced after selection still imports the chosen bytes; truncation after selection fails; a request with `sourcePath` does not deserialize; a drop batch carries base names only; no subscriber, no selections.
 - Renderer: command arguments carry `selectionToken` and never a path; refused selections are discarded; drop routing; the second selection is imported before the first capture finishes.
 - The source-text assertions about the dialog and drop plumbing in `apps/capture-workbench-desktop/scripts/desktop-contract.test.ts` become a data assertion on the parsed capability file and the command list.
-- Packaged check (`capture-workbench-desktop:package-qa`): from the page, `plugin:event|listen` for the drag events, `plugin:dialog|open`, `library_import_source` and `library_import_selection` with a forged token are all refused; during a picker import no IPC request or response contains the fixture directory. A real OS drag is not driven by the harness; a manual drop is part of the installed acceptance (slice 8).
+- Packaged check (a step of `capture-workbench-desktop:smoke-installed-deterministic`, which needs an interactive desktop): from the page, `plugin:event|listen` for the drag events, `plugin:dialog|open`, `library_import_source` and `library_import_selection` with a forged token are all refused; during a picker import no IPC request or response contains the fixture directory. The IPC is recorded from the network (requests to `ipc.localhost`): the webview defines `__TAURI_INTERNALS__.invoke` as read-only, so it cannot be wrapped. Picking a file and a real OS drag are checked by hand (issue #338).
 
 ## Open points
 

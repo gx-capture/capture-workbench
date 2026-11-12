@@ -8,8 +8,10 @@ mod launcher;
 mod library;
 #[cfg(feature = "model-smoke-app-data")]
 mod model_smoke_fixtures;
+mod random_id;
 mod resources;
 mod runtime_client;
+mod source_selection;
 mod state;
 
 use std::{fs, path::PathBuf, sync::Arc};
@@ -29,7 +31,10 @@ macro_rules! desktop_invoke_handler {
             commands::desktop_compute_status,
             commands::desktop_set_prefer_gpu,
             commands::runtime_ready,
-            commands::library_import_source,
+            commands::library_select_sources,
+            commands::library_watch_native_sources,
+            commands::library_import_selection,
+            commands::library_discard_selections,
             commands::library_update_capture,
             commands::library_list,
             commands::library_get,
@@ -113,6 +118,7 @@ pub fn run() {
             let library = library::LibraryStore::open(&data_dir)?;
             let state = DesktopState::new(data_dir);
             app.manage(Arc::new(library));
+            app.manage(Arc::new(source_selection::SourceSelections::default()));
             app.manage(state.clone());
             #[cfg(feature = "model-smoke-app-data")]
             app.manage(model_smoke_fixtures);
@@ -127,6 +133,16 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
+            if let Some(selections) = window.try_state::<Arc<source_selection::SourceSelections>>()
+            {
+                match event {
+                    tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) => {
+                        selections.drop_paths(window.label().into(), paths.clone())
+                    }
+                    tauri::WindowEvent::Destroyed => selections.destroy(window.label()),
+                    _ => {}
+                }
+            }
             if matches!(
                 event,
                 tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed

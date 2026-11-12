@@ -10,10 +10,10 @@ use crate::{
     config::DesktopRuntimeStatus,
     contracts::{
         LibraryCaptureUpdate, LibraryDocumentDetail, LibraryDocumentRequest,
-        LibraryDocumentSummary, LibraryExportPayload, LibraryExportRequest,
-        LibraryImportSourceRequest, LibraryListRequest, RuntimeCreateCaptureInput, RuntimeIdInput,
-        RuntimeInstallationStartInput, RuntimeModelInstallationStartInput, RuntimeRequirementInput,
-        RuntimeStreamingCaptureInput, RuntimeStreamingEventsInput,
+        LibraryDocumentSummary, LibraryExportPayload, LibraryExportRequest, LibraryListRequest,
+        RuntimeCreateCaptureInput, RuntimeIdInput, RuntimeInstallationStartInput,
+        RuntimeModelInstallationStartInput, RuntimeRequirementInput, RuntimeStreamingCaptureInput,
+        RuntimeStreamingEventsInput,
     },
     library::LibraryStore,
     resources::RuntimeAssets,
@@ -21,6 +21,8 @@ use crate::{
     state::DesktopState,
 };
 
+#[cfg(feature = "model-smoke-app-data")]
+use crate::contracts::LibraryImportSourceRequest;
 #[cfg(feature = "model-smoke-app-data")]
 use crate::model_smoke_fixtures::{ModelSmokeFixtureRegistry, ModelSmokeImportFixtureRequest};
 
@@ -133,12 +135,68 @@ where
 }
 
 #[tauri::command]
-pub(crate) async fn library_import_source(
+pub(crate) async fn library_select_sources(
+    window: tauri::Window,
+    selections: tauri::State<'_, Arc<crate::source_selection::SourceSelections>>,
+    request: crate::contracts::LibrarySelectSourcesRequest,
+) -> Result<crate::contracts::LibrarySourceSelectionBatch, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let selections = Arc::clone(selections.inner());
+    let guard = selections.begin_dialog(window.label())?;
+    run_blocking(move || {
+        let _guard = guard;
+        let mut extensions = vec!["pdf", "png", "jpg", "jpeg"];
+        if matches!(request.kind, crate::contracts::SourceSelectionKind::All) {
+            extensions.extend(crate::library::validation::RECORDING_EXTENSIONS);
+        }
+        let files = window
+            .dialog()
+            .file()
+            .set_parent(&window)
+            .add_filter("Capture sources", &extensions)
+            .blocking_pick_files()
+            .unwrap_or_default();
+        let mut paths = Vec::new();
+        let mut rejected = Vec::new();
+        for file in files {
+            match file.into_path() {
+                Ok(path) => paths.push(path),
+                Err(_) => rejected.push(crate::contracts::SourceRejectionReason::NotLocal),
+            }
+        }
+        let mut batch = selections.inspect_batch(window.label(), paths, request.kind)?;
+        batch.rejected.extend(rejected);
+        Ok(batch)
+    })
+    .await
+}
+#[tauri::command]
+pub(crate) async fn library_watch_native_sources(
+    window: tauri::Window,
+    selections: tauri::State<'_, Arc<crate::source_selection::SourceSelections>>,
+    on_event: tauri::ipc::Channel<crate::contracts::LibrarySourceSelectionBatch>,
+) -> Result<(), String> {
+    selections.watch(window.label(), on_event)
+}
+#[tauri::command]
+pub(crate) async fn library_import_selection(
+    window: tauri::Window,
+    selections: tauri::State<'_, Arc<crate::source_selection::SourceSelections>>,
     library: tauri::State<'_, Arc<LibraryStore>>,
-    request: LibraryImportSourceRequest,
+    request: crate::contracts::LibraryImportSelectionRequest,
 ) -> Result<LibraryDocumentSummary, String> {
+    let owner = window.label().to_owned();
+    let selections = Arc::clone(selections.inner());
     let library = Arc::clone(library.inner());
-    run_blocking(move || library.import_source(request)).await
+    run_blocking(move || selections.import(&owner, request, &library)).await
+}
+#[tauri::command]
+pub(crate) async fn library_discard_selections(
+    window: tauri::Window,
+    selections: tauri::State<'_, Arc<crate::source_selection::SourceSelections>>,
+    request: crate::contracts::LibraryDiscardSelectionsRequest,
+) -> Result<(), String> {
+    selections.discard(window.label(), &request.selection_tokens)
 }
 
 #[cfg(feature = "model-smoke-app-data")]

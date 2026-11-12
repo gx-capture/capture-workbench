@@ -12,8 +12,6 @@ export type OcrUserStatus =
   | 'needs-attention'
   | 'cancelled';
 
-const OCR_EXTENSIONS = new Set(['pdf', 'png', 'jpg', 'jpeg']);
-
 export interface OcrQueueView {
   readonly documentId: string;
   readonly fileName: string;
@@ -32,29 +30,10 @@ export function pdfPagePrefix(count: number): number[] {
   return Array.from({ length: count }, (_, index) => index + 1);
 }
 
-export function ocrFileExtension(fileName: string): string {
-  const dot = fileName.lastIndexOf('.');
-  return dot < 0 ? '' : fileName.slice(dot + 1).toLowerCase();
-}
-
-/** Last path segment. The dialog and drag-drop events yield native paths. */
-export function ocrFileName(path: string): string {
-  const parts = path.split(/[/\\]/u);
-  return parts[parts.length - 1] ?? path;
-}
-
 export function isOcrMediaType(mediaType: string): boolean {
   return mediaType === 'application/pdf'
     || mediaType === 'image/png'
     || mediaType === 'image/jpeg';
-}
-
-/** A reason to refuse one path, or null when the queue may import it. Size is the host's check. */
-export function refuseOcrFile(fileName: string): string | null {
-  if (!OCR_EXTENSIONS.has(ocrFileExtension(fileName))) {
-    return desktopMessages().ocrUnsupportedFile(fileName);
-  }
-  return null;
 }
 
 /** Blank means every page. Anything else must be a whole number from 1 to 500. */

@@ -445,7 +445,6 @@ test('blocking native I/O is isolated behind async Tauri commands', async () => 
   );
   assert.match(commands, /tauri::async_runtime::spawn_blocking/u);
   for (const command of [
-    'library_import_source',
     'library_update_capture',
     'library_list',
     'library_get',
@@ -471,56 +470,21 @@ test('blocking native I/O is isolated behind async Tauri commands', async () => 
   assert.match(commands, /pub(?:\(crate\))? fn desktop_runtime_status/u);
 });
 
-test('native source import keeps path IPC in the library service', async () => {
-  const workspaceRoot = join(appRoot, '..', '..');
-  const [renderer, contracts, capability, desktopHost] =
-    await Promise.all([
-      readFile(
-        join(
-          workspaceRoot,
-          'apps',
-          'capture-workbench',
-          'src',
-          'app',
-          'services',
-          'desktop-library.service.ts',
-        ),
-        'utf8',
-      ),
-      readFile(
-        join(appRoot, 'src-tauri', 'src', 'contracts', 'library.rs'),
-        'utf8',
-      ),
-      readFile(
-        join(appRoot, 'src-tauri', 'capabilities', 'default.json'),
-        'utf8',
-      ),
-      readFile(join(appRoot, 'src-tauri', 'src', 'lib.rs'), 'utf8'),
-    ]);
-  const capabilityContract = JSON.parse(capability);
-  assert.deepEqual(capabilityContract.windows, ['main']);
-  assert.deepEqual(capabilityContract.permissions, [
-    'core:default',
-    'dialog:allow-open',
+test('native selection capability and registered command data enforce the renderer boundary', async () => {
+  const capability = JSON.parse(await readFile(join(appRoot, 'src-tauri', 'capabilities', 'default.json'), 'utf8'));
+  assert.deepEqual(capability.windows, ['main']);
+  assert.deepEqual(capability.permissions, [
+    'core:default', 'core:event:deny-listen', 'core:event:deny-unlisten',
+    'core:event:deny-emit', 'core:event:deny-emit-to', 'dialog:deny-open',
   ]);
-  assert.doesNotMatch(
-    JSON.stringify(capabilityContract.permissions),
-    /dialog:(?:default|allow-(?:ask|confirm|message|save))/u,
-  );
-  assert.match(desktopHost, /plugin\(tauri_plugin_dialog::init\(\)\)/u);
-  assert.match(renderer, /open\(\{[\s\S]*multiple: true/u);
-  assert.match(renderer, /onDragDropEvent/u);
-  assert.match(renderer, /library_import_source/u);
-  assert.match(renderer, /request: \{ sourcePath \}/u);
-  assert.doesNotMatch(
-    renderer,
-    /arrayBuffer\(|Array\.from\(|Uint8Array|FileList/u,
-  );
-  const summary = contracts.match(
-    /pub(?:\(crate\))? struct LibraryDocumentSummary \{(?<body>[\s\S]*?)\r?\n\}/u,
-  )?.groups?.['body'];
-  assert.ok(summary);
-  assert.doesNotMatch(summary, /path|bytes/u);
+  const host = await readFile(join(appRoot, 'src-tauri', 'src', 'lib.rs'), 'utf8');
+  const list = host.split('tauri::generate_handler![')[1]?.split(']')[0];
+  assert.ok(list);
+  const commands = list.split(',').map((entry) => entry.trim());
+  for (const command of ['library_select_sources', 'library_watch_native_sources', 'library_import_selection', 'library_discard_selections']) {
+    assert.ok(commands.includes(`commands::${command}`));
+  }
+  assert.ok(!commands.includes('commands::library_import_source'));
 });
 
 test('native cleanup is PID-scoped and never executable-name scoped', async () => {

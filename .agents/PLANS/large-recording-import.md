@@ -37,8 +37,8 @@ A host that sends a recording over its configured `maxUploadBytes` is refused wh
 
 ## Upload and transcription path today
 
-1. The renderer calls the dialog plugin and receives native path strings. Tauri drops also deliver `event.payload.paths`; neither flow uses opaque tokens: `apps/capture-workbench/src/app/services/desktop-library.service.ts:33`, `apps/capture-workbench/src/app/services/desktop-library.service.ts:59`.
-2. Those strings cross IPC as `LibraryImportSourceRequest.source_path`: `apps/capture-workbench/src/app/services/desktop-library.service.ts:81`, `apps/capture-workbench-desktop/src-tauri/src/contracts/library.rs:512`.
+1. Rust opens the native file dialog (`library_select_sources`) and receives native drops (`WindowEvent::DragDrop`); it inspects each path, keeps the opened file, and gives the renderer a selection: a one-time token, the base name, the size and the media type. Drop batches reach the renderer through a channel (`library_watch_native_sources`): `apps/capture-workbench-desktop/src-tauri/src/commands.rs`, `apps/capture-workbench-desktop/src-tauri/src/source_selection.rs`, `apps/capture-workbench-desktop/src-tauri/src/source_selection/inspect.rs`, `apps/capture-workbench/src/app/services/desktop-library.service.ts`.
+2. The renderer imports by token (`library_import_selection`) and discards what it refuses (`library_discard_selections`). No path crosses IPC in either direction; the command that took a path is gone: `apps/capture-workbench-desktop/src-tauri/src/contracts/selection.rs`.
 3. Rust rejects a final-component symlink/non-file, canonicalizes, opens the file once, takes the length from the handle, reads a 512-byte prefix and verifies signature/extension: `apps/capture-workbench-desktop/src-tauri/src/library/store.rs` (`import_source`).
 4. Import streams the file in 1 MiB blocks to `<app-data>/library/staging/<random id>`, counting bytes (more or fewer than the length seen is "changed during import"), then creates the item and renames the staged file to `<app-data>/library/items/<document-id>/source.bin` and saves the index; a failure removes the staged file and the item directory. It does not hash or deduplicate. Startup removes staging entries untouched for an hour and never touches `items/`, because another running instance shares the directory.
 5. Audio uses `runtime_start_streaming_capture`; PDF/image use `runtime_create_capture`. Both native implementations already upload the stored file through v2 ingestion: `apps/capture-workbench/src/app/services/desktop-workspace-capture.service.ts:286`, `apps/capture-workbench-desktop/src-tauri/src/runtime_client.rs:147`, `apps/capture-workbench-desktop/src-tauri/src/runtime_client.rs:226`.
@@ -64,16 +64,16 @@ A host that sends a recording over its configured `maxUploadBytes` is refused wh
 
 ## Renderer path boundary
 
-- Current permissions are `core:default` and `dialog:allow-open`; no filesystem plugin permission is granted: `apps/capture-workbench-desktop/src-tauri/capabilities/default.json:6`.
-- `library_import_source` takes a native path. Library get/list/export/source-bytes and both capture-start commands use document IDs; summaries return basename/media type/size, not the original path: `apps/capture-workbench-desktop/src-tauri/src/contracts/library.rs:512`, `apps/capture-workbench-desktop/src-tauri/src/contracts/library.rs:551`, `apps/capture-workbench-desktop/src-tauri/src/contracts/library.rs:573`, `apps/capture-workbench-desktop/src-tauri/src/runtime_client.rs:152`.
-- The smoke-only `model_smoke_import_fixture` already resolves a fixture key inside Rust: `apps/capture-workbench-desktop/src-tauri/src/commands.rs:146`.
-- Paths additionally live in the renderer’s OCR queue and workspace routing, so fixing only the ASR picker is insufficient: `apps/capture-workbench/src/app/services/capture-queue.store.ts:183`, `apps/capture-workbench/src/app/services/ocr-queue.ts:40`, `apps/capture-workbench/src/app/services/desktop-workspace.store.ts:540`.
-- Library summary errors are arbitrary strings, and renderer sanitization removes tokens rather than filesystem paths. Native filesystem errors can be interpolated into IPC errors. No comprehensive log-path exclusion was established: `apps/capture-workbench-desktop/src-tauri/src/library/store.rs:391`, `apps/capture-workbench/src/app/services/desktop-library.service.ts:155`.
-- Required design: Rust owns dialogs and native drop handling. Return only random, window-bound, expiring selection tokens plus basename/size/type; import consumes a token. Keep raw paths and opened handles exclusively in Rust.
-- Replace renderer dialog permission with the narrow native commands. Remove broad event-listening access or explicitly deny raw Tauri drag-enter/drop subscriptions; deliver sanitized native notifications through a narrow IPC channel. Merely removing `onDragDropEvent` is insufficient security proof.
-- Required commands: native selection, native-source notification registration, token import/discard, and cancellation for a pending import/upload. Remove the renderer-callable arbitrary-path import shape.
-- Do not grant `fs:default`, read-file scopes, recursive directory scopes, arbitrary path-to-URL conversion, or a runtime HTTP endpoint accepting native paths.
-- The exact packaged Tauri ACL/drop behavior remains unverified. Prove that attempted raw JavaScript subscriptions cannot receive paths before accepting this slice.
+Design and the verified Tauri facts: [large-recording-selection-tokens.md](large-recording-selection-tokens.md).
+
+- The capability keeps `core:default` and denies event listening and emitting and the renderer-side dialog: `apps/capture-workbench-desktop/src-tauri/capabilities/default.json`. A native drop reaches JavaScript only through a registered listener, so with `listen` denied no path arrives in the webview.
+- Selections are bound to the window, expire after 30 minutes, work once, and hold the opened file rather than a path; at most 64 are alive. Only regular files on a local disk are accepted (no links, UNC, device or network-drive paths): `apps/capture-workbench-desktop/src-tauri/src/source_selection.rs`, `apps/capture-workbench-desktop/src-tauri/src/source_selection/inspect.rs`.
+- The renderer's queues hold selections. A batch is imported completely before its captures run in order, and the documents that wait for their turn are held so that the OCR queue does not start them: `apps/capture-workbench/src/app/services/capture-queue.store.ts`, `apps/capture-workbench/src/app/services/desktop-workspace.store.ts`, `apps/capture-workbench/src/app/services/desktop-workspace-capture.service.ts`.
+- Library get/list/export/source-bytes and both capture-start commands use document ids; summaries return base name, media type and size.
+- The smoke-only `model_smoke_import_fixture` resolves a fixture key inside Rust: `apps/capture-workbench-desktop/src-tauri/src/commands.rs`.
+- On an installed build the page was shown to be refused when it subscribes to the drag events, opens the renderer-side dialog, calls the removed path command or imports with a forged token (`apps/capture-workbench-desktop/scripts/installed-renderer-boundary.ts`, a step of the installed deterministic smoke). The page's IPC is audited from the network, because the webview keeps `invoke` read-only.
+- Picking a file in the native dialog and a real drag from the file manager need an interactive desktop; that manual check is issue #338.
+- Never granted: `fs:*`, read-file scopes, recursive directory scopes, path-to-URL conversion, or a runtime HTTP endpoint that accepts native paths.
 
 ## Other hosts
 
@@ -97,16 +97,9 @@ The public wire contract stays unchanged, but observable admission policy change
 
 ## Implementation slices, in merge order
 
-Merged: the idempotency keys of the recording start (PR #328), slice 1 (the native upload replays a transient failure and hashes while it uploads), slice 2 (the runtime enforces its size limits at admission), slice 3 (a finalized recording is decoded once), slice 4 (the speaker path reads the recording from its file; the workers accept recordings up to 2 GiB) and slice 5 (the library import streams to disk). The remaining slices keep their numbers.
+Merged: the idempotency keys of the recording start (PR #328), slice 1 (the native upload replays a transient failure and hashes while it uploads), slice 2 (the runtime enforces its size limits at admission), slice 3 (a finalized recording is decoded once), slice 4 (the speaker path reads the recording from its file; the workers accept recordings up to 2 GiB), slice 5 (the library import streams to disk) and slice 6 (the native side owns source selection; the renderer handles tokens). The remaining slices keep their numbers.
 
 Change mode: edit existing owners, with small private helpers only where needed. Delete renderer path plumbing and obsolete source-text assertions. Size pressure is large across boundaries; avoid a general upload framework or unrelated library rewrite. Each slice below is intended to stay around ten files, including tests.
-
-6. **Move selection authority into Rust. Public contract: desktop IPC changes only. Capabilities: YES, line-by-line review.** Design: [large-recording-selection-tokens.md](large-recording-selection-tokens.md).
-   - Rust opens the dialog and receives drops; the renderer gets selection tokens with a base name, size and media type; importing consumes a token. The workspace picker, the OCR picker and the drop all move in this slice, and the path command `library_import_source` is removed with them.
-   - The capability denies event listening and the renderer-side dialog; the queues hold selections instead of paths.
-   - Do not raise the limit yet.
-   - Gates: desktop `cargo-test`, `package-qa-test`, `package-qa` for the packaged boundary check, renderer `test` and `typecheck`, `pnpm run verify:affected`.
-   - Visible result: picking and dropping files work as before; no path crosses to the renderer.
 
 7. **Activate large recordings. Public contract: no runtime change. Capabilities: final restriction review.**
    - Raise the desktop limits for recordings to 2 GiB (`apps/capture-workbench-desktop/src-tauri/src/constants/runtime.rs`, the library limit per kind); PDF and image stay at 50 MiB.

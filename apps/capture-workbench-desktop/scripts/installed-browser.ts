@@ -1,3 +1,4 @@
+import { beginRendererBoundary, finishRendererBoundary, cancelRendererBoundary } from './installed-renderer-boundary.ts';
 import { newDocumentId } from './installed-document-selection.ts';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -342,6 +343,7 @@ function captureFixture(page, fixture, appPid, fixtureDirectory, diagnostics) {
     concatMap(() => defer(() => from(documentIds(page.locator('.document-card')))).pipe(
       tap((ids: string[]) => { beforeIds = ids; }),
     )),
+    concatMap(() => trackSmokeStep(diagnostics.timeline, 'renderer boundary', () => defer(() => from(beginRendererBoundary(page))))),
     concatMap(() =>
       trackSmokeStep(diagnostics.timeline, 'source picker', () => defer(() =>
         from(
@@ -381,6 +383,7 @@ function captureFixture(page, fixture, appPid, fixtureDirectory, diagnostics) {
         `Installed ${fixture.sourceKind} import did not create a new document card.`,
       )).pipe(map(() => diagnosticCard)),
     ),
+    concatMap((card) => defer(() => from(finishRendererBoundary(page, fixtureDirectory))).pipe(map(() => card))),
     concatMap((card) =>
       trackSmokeStep(diagnostics.timeline, 'completion wait', () => waitUntil(
         () =>
@@ -411,6 +414,10 @@ function captureFixture(page, fixture, appPid, fixtureDirectory, diagnostics) {
         }),
       );
     }),
+    catchError((error) => defer(() => from(cancelRendererBoundary(page))).pipe(
+      catchError(() => of(undefined)),
+      switchMap(() => throwError(() => error)),
+    )),
     catchError((error) => diagnostics.cards.some((card) => card.fileName === fixture.fileName)
       ? throwError(() => error)
       : incompleteCaptureError(page, diagnosticCard, error, fixture, diagnostics)),

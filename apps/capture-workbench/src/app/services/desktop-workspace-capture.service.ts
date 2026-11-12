@@ -20,6 +20,7 @@ import {
   tap,
   throwError,
   timer,
+  toArray,
 } from 'rxjs';
 import type {
   CaptureEvent,
@@ -38,7 +39,7 @@ import type {
   OcrEvidenceV1,
 } from '../contracts';
 import { buildOcrEvidence } from '../contracts';
-import { DesktopLibraryService } from './desktop-library.service';
+import { DesktopLibraryService, type DesktopSourceSelection } from './desktop-library.service';
 import {
   DesktopRuntimeClientService,
   type DesktopCaptureOperation,
@@ -105,19 +106,40 @@ export class DesktopWorkspaceCaptureService {
   private readonly runtime = inject(DesktopRuntimeClientService);
   private readonly library = inject(DesktopLibraryService);
   private readonly activeCaptures = new Map<string, ActiveCapture>();
+  /** Documents of a batch that are imported and wait for their turn. */
+  private readonly awaitingTurn = new Set<string>();
 
-  /** Reports whether a document currently has an active capture operation. */
+  /**
+   * Reports whether a capture runs for the document or a batch has already
+   * scheduled one, so that nothing else starts it in the meantime.
+   */
   hasActiveCapture(documentId: string): boolean {
-    return this.activeCaptures.has(documentId);
+    return this.activeCaptures.has(documentId) || this.awaitingTurn.has(documentId);
   }
 
   /** Enqueues sources while preserving the existing sequential capture policy. */
-  addSourcePaths$(
-    paths: readonly string[],
+  addSelections$(
+    selections: readonly DesktopSourceSelection[],
     host: DesktopWorkspaceCaptureHost,
   ): Observable<void> {
-    return from(paths).pipe(
-      concatMap((sourcePath) => this.captureNewSource$(sourcePath, host)),
+    return from(selections).pipe(
+      concatMap((selection) => this.library.importSelection(selection).pipe(
+        catchError((error: unknown) => { host.setMessage(errorMessage(error)); return EMPTY; }),
+      )),
+      toArray(),
+      switchMap((documents) => {
+        // The whole batch is in the library now. Hold every document until its
+        // turn: the OCR queue would otherwise start the waiting ones at once.
+        for (const document of documents) this.awaitingTurn.add(document.documentId);
+        return from(documents).pipe(
+          concatMap((document) => this.continueImported$(document, host).pipe(
+            finalize(() => this.awaitingTurn.delete(document.documentId)),
+          )),
+          finalize(() => {
+            for (const document of documents) this.awaitingTurn.delete(document.documentId);
+          }),
+        );
+      }),
     );
   }
 
@@ -203,19 +225,6 @@ export class DesktopWorkspaceCaptureService {
   private applyStreamingEvent(active: ActiveCapture, event: CaptureEvent): void {
     active.lastEventSequence = Math.max(active.lastEventSequence, event.sequence);
     active.lastStage = event.stage;
-  }
-
-  private captureNewSource$(
-    sourcePath: string,
-    host: DesktopWorkspaceCaptureHost,
-  ): Observable<void> {
-    return this.library.createSource(sourcePath).pipe(
-      switchMap((document) => this.continueImported$(document, host)),
-      catchError((error) => {
-        host.setMessage(errorMessage(error));
-        return EMPTY;
-      }),
-    );
   }
 
   /** Selects the imported file and starts it, unless its recognition unit is missing. */

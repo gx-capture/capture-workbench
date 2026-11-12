@@ -3,9 +3,9 @@ import { TestBed } from '@angular/core/testing';
 import type { RuntimeInstallation, RuntimeRequirement } from '@gx-capture/capture-workbench-ui';
 import { of, Subject } from 'rxjs';
 import type { DesktopCaptureOptions, DesktopLibrarySummary } from '../contracts';
-import { setDesktopLocale } from '../i18n/desktop-messages';
+import { desktopMessages, setDesktopLocale } from '../i18n/desktop-messages';
 import { CaptureQueueStore } from './capture-queue.store';
-import { DesktopLibraryService } from './desktop-library.service';
+import { DesktopLibraryService, type DesktopSourceSelection } from './desktop-library.service';
 import type { DesktopCaptureOperation } from './desktop-runtime-client.service';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
 import { DesktopWorkspaceCaptureService } from './desktop-workspace-capture.service';
@@ -22,11 +22,11 @@ describe('CaptureQueueStore', () => {
     TestBed.tick();
 
     harness.store.pageCountText.set('3');
-    harness.store.importPaths([String.raw`C:\fixtures\charge.pdf`]);
+    harness.store.importSelections({ rejected: [], selections: [selection('charge.pdf')] });
     TestBed.tick();
 
-    expect(harness.library.importSource).toHaveBeenCalledWith(
-      String.raw`C:\fixtures\charge.pdf`,
+    expect(harness.library.importSelection).toHaveBeenCalledWith(
+      selection('charge.pdf'),
       { pdfPageCount: 3 },
     );
     expect(harness.rows()[0]?.userStatus).toBe('waiting');
@@ -49,7 +49,7 @@ describe('CaptureQueueStore', () => {
     harness.store.attach();
     TestBed.tick();
 
-    harness.store.importPaths([String.raw`C:\fixtures\charge.pdf`]);
+    harness.store.importSelections({ rejected: [], selections: [selection('charge.pdf')] });
     TestBed.tick();
     await settle();
 
@@ -67,18 +67,21 @@ describe('CaptureQueueStore', () => {
     TestBed.tick();
 
     harness.store.pageCountText.set('0');
-    harness.store.importPaths([
-      String.raw`C:\fixtures\notes.txt`,
-      String.raw`C:\fixtures\range.pdf`,
-      String.raw`C:\fixtures\scan.png`,
-    ]);
+    harness.store.importSelections({ rejected: [], selections: [
+      selection('notes.txt'),
+      selection('range.pdf'),
+      selection('scan.png'),
+    ] });
     TestBed.tick();
 
-    expect(harness.store.importError()).toContain('notes.txt');
-    expect(harness.store.importError()).toContain('Capture PDF page selection is invalid.');
-    expect(harness.library.createSource).toHaveBeenCalledTimes(1);
-    expect(harness.library.createSource).toHaveBeenCalledWith(String.raw`C:\fixtures\scan.png`);
-    expect(harness.library.importSource).not.toHaveBeenCalled();
+    expect(harness.store.importError()).toContain('(1)');
+    expect(harness.store.importError()).not.toContain('notes.txt');
+    expect(harness.store.importError()).toContain(desktopMessages().ocrPageCountInvalid);
+    expect(harness.library.importSelection).toHaveBeenCalledTimes(1);
+    expect(harness.library.importSelection).toHaveBeenCalledWith(selection('scan.png'), undefined);
+    expect(harness.library.discardSelections).toHaveBeenCalledWith([
+      selection('notes.txt'), selection('range.pdf'),
+    ]);
     expect(harness.rows().map((row) => row.fileName)).toEqual(['scan.png']);
   });
 
@@ -86,7 +89,7 @@ describe('CaptureQueueStore', () => {
     const harness = configure({ ocrReady: true });
     harness.store.attach();
     TestBed.tick();
-    harness.store.importPaths([String.raw`C:\fixtures\charge.pdf`]);
+    harness.store.importSelections({ rejected: [], selections: [selection('charge.pdf')] });
     TestBed.tick();
     await settle();
 
@@ -141,7 +144,7 @@ describe('CaptureQueueStore', () => {
     const harness = configure({ ocrReady: true, job: runningJob() });
     harness.store.attach();
     TestBed.tick();
-    harness.store.importPaths([String.raw`C:\fixtures\charge.pdf`]);
+    harness.store.importSelections({ rejected: [], selections: [selection('charge.pdf')] });
     TestBed.tick();
 
     expect(harness.rows()[0]?.userStatus).toBe('processing');
@@ -154,12 +157,13 @@ describe('CaptureQueueStore', () => {
       doc({ documentId: 'a'.repeat(32), fileName: 'kept.pdf', status: 'queued' }),
     ];
     const library = {
+      discardSelections: vi.fn(() => of(undefined)),
       list: vi.fn(() => of([...docs])),
       get: vi.fn((documentId: string) => of(
         docs.find((item) => item.documentId === documentId) ?? docs[0],
       )),
-      createSource: vi.fn((sourcePath: string) => {
-        const fileName = sourcePath.split(/[/\\]/u).pop() ?? 'added.png';
+      importSelection: vi.fn((selectionTokenInput: DesktopSourceSelection) => {
+        const fileName = selectionTokenInput.fileName;
         const summary = doc({
           documentId: 'b'.repeat(32),
           fileName,
@@ -175,8 +179,8 @@ describe('CaptureQueueStore', () => {
         return of(undefined);
       }),
       updateCapture: vi.fn(() => of(docs[0])),
-      droppedSources: vi.fn(() => of([])),
-      selectSources: vi.fn(() => of([])),
+      droppedSources: vi.fn(() => of({ selections: [], rejected: [] })),
+      selectSources: vi.fn(() => of({ selections: [], rejected: [] })),
     };
     const requirements = signal<readonly RuntimeRequirement[]>([requirement('installable')]);
     const runtime = {
@@ -247,7 +251,7 @@ describe('CaptureQueueStore', () => {
     TestBed.tick();
     expect(queue.rows().map((row) => row.fileName)).toEqual([]);
 
-    workspace.addSourcePaths([String.raw`C:\fixtures\added.png`]);
+    workspace.addSelections({ rejected: [], selections: [selection('added.png')] });
     TestBed.tick();
     expect(queue.rows().map((row) => row.fileName)).toEqual(['added.png']);
     confirm.mockRestore();
@@ -266,23 +270,12 @@ function configure(options: { readonly ocrReady: boolean; readonly job?: Desktop
   };
   const library = {
     list: vi.fn(() => of([...docs])),
-    createSource: vi.fn((sourcePath: string) => {
-      const fileName = sourcePath.split(/[/\\]/u).pop() ?? sourcePath;
-      const summary = doc({
-        fileName,
-        mediaType: fileName.endsWith('.png') ? 'image/png' : 'application/pdf',
+    discardSelections: vi.fn(() => of(undefined)),
+    importSelection: vi.fn((input: DesktopSourceSelection, captureOptions?: DesktopCaptureOptions) => {
+      const fileName = input.fileName;
+      const summary = doc({ fileName, mediaType: input.mediaType,
+        ...(captureOptions ? { captureOptions } : {}),
         documentId: fileName === 'scan.png' ? 'e'.repeat(32) : 'b'.repeat(32),
-      });
-      docs.unshift(summary);
-      return of(summary);
-    }),
-    importSource: vi.fn((sourcePath: string, captureOptions: DesktopCaptureOptions) => {
-      const fileName = sourcePath.split(/[/\\]/u).pop() ?? sourcePath;
-      const summary = doc({
-        fileName,
-        mediaType: 'application/pdf',
-        captureOptions,
-        documentId: 'b'.repeat(32),
       });
       docs.unshift(summary);
       return of(summary);
@@ -401,4 +394,9 @@ function settle(): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, 20);
   });
+}
+
+function selection(fileName: string): DesktopSourceSelection {
+  return { selectionToken: fileName.padEnd(32, '0'), fileName, byteLength: 16,
+    mediaType: fileName.endsWith('.png') ? 'image/png' : fileName.endsWith('.wav') ? 'audio/wav' : fileName.endsWith('.txt') ? 'text/plain' : 'application/pdf' };
 }

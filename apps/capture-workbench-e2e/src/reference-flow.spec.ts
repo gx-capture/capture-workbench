@@ -67,6 +67,17 @@ test('drops a PDF without OCR, installs it, and exports the raw text', async ({ 
   expect(await readFile(saved, 'utf8')).toBe('第一頁\n\n第二頁');
 });
 
+test('imports an OCR selection through the native picker command', async ({ page }) => {
+  await openDesktop(page, [requirement('windowsml-ocr', 'WindowsML OCR', 'installable', 144_000_000)], '/ocr');
+  await page.getByTestId('first-run-dismiss').click();
+  await page.getByTestId('ocr-dropzone').getByRole('button').click();
+  await expect(page.getByTestId('ocr-queue-row').filter({ hasText: 'charge.pdf' })).toHaveAttribute('data-user-status', 'waiting');
+  const calls = await page.evaluate(() => (globalThis as { __captureInvokedCommands?: string[] }).__captureInvokedCommands ?? []);
+  expect(calls).toContain('library_select_sources');
+  expect(calls).toContain('library_import_selection');
+  expect(calls).not.toContain('library_import_source');
+});
+
 test('keeps a waiting OCR file after the window reloads', async ({ page }) => {
   await openDesktop(
     page,
@@ -335,18 +346,26 @@ async function openDesktop(
         };
         transformCallback: (...args: unknown[]) => number;
       };
-      __captureEmitTauriEvent?: (event: string, payload: unknown) => void;
-      __captureTauriListenerCount?: (event: string) => number;
-      __TAURI_EVENT_PLUGIN_INTERNALS__: {
-        unregisterListener: (event: string, eventId: number) => void;
-      };
+      __captureDropSources?: (fileName: string) => void;
+      __captureNativeSourcesReady?: boolean;
     }
     const target = globalThis as unknown as TauriTestGlobal;
     let nextCallbackId = 1;
-    let nextEventId = 1;
     let nextInstallSeq = 1;
     const callbacks = new Map<number, (eventData: unknown) => void>();
-    const listeners = new Map<string, number[]>();
+    let sourceChannel: { onmessage?: (batch: unknown) => void } | undefined;
+    let sequence = 0;
+    const selected = new Map<string, { selectionToken: string; fileName: string; byteLength: number; mediaType: string }>();
+    const batchFor = (fileName: string) => {
+      const selectionToken = (++sequence).toString(16).padStart(32, '0');
+      const item = { selectionToken, fileName, byteLength: 12,
+        mediaType: fileName.endsWith('.png') ? 'image/png' : fileName.endsWith('.jpg') || fileName.endsWith('.jpeg') ? 'image/jpeg' : 'application/pdf' };
+      selected.set(selectionToken, item);
+      return { selections: [item], rejected: [] };
+    };
+    const sendBatch = (batch: unknown) => {
+      sourceChannel?.onmessage?.(batch);
+    };
     const mutableRequirements = runtimeRequirements.map((item) => ({ ...item }));
     const installations = new Map<string, Record<string, unknown>>();
     const pollCounts = new Map<string, number>();
@@ -507,12 +526,7 @@ async function openDesktop(
     target.isTauri = true;
     target.__captureInvokedCommands = [];
     target.__captureStartedRequirementIds = [];
-    target.__captureTauriListenerCount = (event: string) => (listeners.get(event) ?? []).length;
-    target.__captureEmitTauriEvent = (event: string, payload: unknown) => {
-      for (const handlerId of listeners.get(event) ?? []) {
-        callbacks.get(handlerId)?.({ event, id: handlerId, payload });
-      }
-    };
+    target.__captureDropSources = (fileName) => sendBatch(batchFor(fileName));
     target.__TAURI_INTERNALS__ = {
       metadata: {
         currentWindow: { label: 'main' },
@@ -536,8 +550,7 @@ async function openDesktop(
           };
           readonly request?: Record<string, unknown>;
           readonly update?: Record<string, unknown>;
-          readonly event?: string;
-          readonly handler?: number;
+          readonly onEvent?: { onmessage?: (batch: unknown) => void };
         };
         if (command === 'desktop_runtime_status') {
           return Promise.resolve({ status: 'ready', detail: 'Capture Runtime 已準備完成。' });
@@ -679,22 +692,30 @@ async function openDesktop(
         if (command === 'library_list') {
           return Promise.resolve(documents.map((item) => listedSummary(item)));
         }
-        if (command === 'library_import_source') {
+        if (command === 'library_select_sources') return Promise.resolve(batchFor('charge.pdf'));
+        if (command === 'library_watch_native_sources') {
+          sourceChannel = args.onEvent;
+          target.__captureNativeSourcesReady = true;
+          return Promise.resolve(null);
+        }
+        if (command === 'library_discard_selections') {
+          const tokens = args.request?.['selectionTokens'];
+          if (Array.isArray(tokens)) for (const token of tokens) selected.delete(String(token));
+          return Promise.resolve(null);
+        }
+        if (command === 'library_import_selection') {
           const request = args.request ?? {};
-          const sourcePath = typeof request['sourcePath'] === 'string' ? request['sourcePath'] : '';
-          const fileName = sourcePath.split(/[/\\]/u).pop() || 'source.pdf';
-          const lower = fileName.toLowerCase();
-          const mediaType = lower.endsWith('.png')
-            ? 'image/png'
-            : lower.endsWith('.jpg') || lower.endsWith('.jpeg')
-              ? 'image/jpeg'
-              : 'application/pdf';
+          const token = String(request['selectionToken'] ?? '');
+          const selection = selected.get(token);
+          if (!selection) return Promise.reject(new Error('Selected source is no longer available. Choose it again.'));
+          selected.delete(token);
+          const { fileName, mediaType } = selection;
           const options = request['captureOptions'];
           const pdfPageCount = options !== null && typeof options === 'object'
             ? (options as { readonly pdfPageCount?: unknown }).pdfPageCount
             : undefined;
           const document: StoredDoc = {
-            documentId: 'b'.repeat(32),
+            documentId: selection.selectionToken,
             fileName,
             mediaType,
             byteLength: 12,
@@ -755,22 +776,8 @@ async function openDesktop(
         if (installOptions.ocrJourney && command === 'runtime_delete_capture') {
           return Promise.resolve(null);
         }
-        if (command === 'plugin:event|listen') {
-          const eventName = typeof args.event === 'string' ? args.event : '';
-          const handlerId = typeof args.handler === 'number' ? args.handler : -1;
-          const bucket = listeners.get(eventName) ?? [];
-          bucket.push(handlerId);
-          listeners.set(eventName, bucket);
-          return Promise.resolve(nextEventId++);
-        }
-        if (command === 'plugin:event|unlisten') {
-          return Promise.resolve(null);
-        }
         return Promise.reject(new Error(`Unexpected command: ${command}`));
       },
-    };
-    target.__TAURI_EVENT_PLUGIN_INTERNALS__ = {
-      unregisterListener: () => undefined,
     };
   }, {
     runtimeRequirements: requirements,
@@ -780,24 +787,12 @@ async function openDesktop(
   await page.goto(path);
 }
 
-/** Drops one PDF the way the desktop app receives it: a Tauri drag-drop path. */
+/** Delivers the batch emitted by native drop inspection, through the registered channel. */
 async function dropPdf(page: Page, fileName: string): Promise<void> {
-  const sourcePath = `C:\\fixtures\\${fileName}`;
-  await page.waitForFunction(() => {
-    const target = globalThis as {
-      __captureTauriListenerCount?: (event: string) => number;
-    };
-    return (target.__captureTauriListenerCount?.('tauri://drag-drop') ?? 0) > 0;
-  });
-  await page.evaluate((path) => {
-    const target = globalThis as {
-      __captureEmitTauriEvent?: (event: string, payload: unknown) => void;
-    };
-    target.__captureEmitTauriEvent?.('tauri://drag-drop', {
-      paths: [path],
-      position: { x: 0, y: 0 },
-    });
-  }, sourcePath);
+  await page.waitForFunction(() => (globalThis as { __captureNativeSourcesReady?: boolean }).__captureNativeSourcesReady);
+  await page.evaluate((name) => {
+    (globalThis as { __captureDropSources?: (fileName: string) => void }).__captureDropSources?.(name);
+  }, fileName);
 }
 
 function requirement(
