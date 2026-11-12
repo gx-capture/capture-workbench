@@ -2857,8 +2857,6 @@ def _patch_streaming_session(
 ) -> None:
     """Finish an allowed streaming capture without starting a real worker process."""
 
-    emitted = False
-
     class _Session:
         def __init__(self) -> None:
             self._closed = False
@@ -2910,21 +2908,11 @@ def _patch_streaming_session(
         starts.append((engine.content_id, config.speech_recognition_model))
         return _Session()
 
-    def push(self: object, data: bytes) -> list[DecodedAudioWindow]:
-        nonlocal emitted
-        del self
-        if not data or emitted:
-            return []
-        emitted = True
-        return [DecodedAudioWindow(0, 1_000, b"\x00\x02")]
-
-    def finish_decode(self: object) -> list[DecodedAudioWindow]:
-        del self
-        return []
+    def decode_windows(self: object):
+        yield DecodedAudioWindow(0, 1_000, b"\x00\x02")
 
     monkeypatch.setattr(progressive_capture._SessionWorker, "start", start)
-    monkeypatch.setattr(progressive_capture.PyAVIncrementalDecoder, "push", push)
-    monkeypatch.setattr(progressive_capture.PyAVIncrementalDecoder, "finish", finish_decode)
+    monkeypatch.setattr(progressive_capture.PyAVFileDecoder, "windows", decode_windows)
 
 
 def _open_wav(repository: StreamingRepository) -> str:
@@ -3020,7 +3008,6 @@ def test_a_missing_cpu_model_fails_before_the_worker_starts(
                 clock=clock,
                 config=config,
                 engine_manager=manager,
-                staging_root=tmp_path / "staging",
             ),
             extractor=StandaloneRuntimeCaptureExtractor(clock, config, engine_manager=manager),
         )

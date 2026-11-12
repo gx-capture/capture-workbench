@@ -83,16 +83,6 @@ class SpeechRecognitionWindowTranscriber:
             path.unlink(missing_ok=True)
 
 
-class DirectWindowDecoder:
-    """No-op decoder for the worker protocol, which receives decoded windows."""
-
-    def push(self, _data: bytes) -> Iterable[DecodedAudioWindow]:
-        return ()
-
-    def finish(self) -> Iterable[DecodedAudioWindow]:
-        return ()
-
-
 class ProgressiveWhisperWorkerBackend:
     """Bind the binary worker protocol to one progressive session per START."""
 
@@ -137,7 +127,6 @@ class ProgressiveWhisperWorkerBackend:
 
 
 __all__ = [
-    "DirectWindowDecoder",
     "SpeechRecognitionWindowTranscriber",
     "ProgressiveWhisperWorkerBackend",
 ]

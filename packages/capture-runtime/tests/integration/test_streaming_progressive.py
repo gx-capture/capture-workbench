@@ -152,7 +152,6 @@ def _warm_processor(
         clock=FixedClock(),
         config=config,
         engine_manager=None,  # type: ignore[arg-type]
-        staging_root=tmp_path,
     )
     return processor, spawned
 
@@ -465,9 +464,11 @@ class FailingDecoderProcessor:
 
 
 def _open(
-    repository: StreamingRepository, kind: CaptureSourceKind = CaptureSourceKind.AUDIO
+    repository: StreamingRepository,
+    kind: CaptureSourceKind = CaptureSourceKind.AUDIO,
+    *,
+    source: bytes = b"audio-fixture",
 ) -> tuple[str, str]:
-    source = b"audio-fixture"
     digest = hashlib.sha256(source).hexdigest()
     ingestion = repository.create_ingestion(
         OpenIngestionV2(
@@ -988,16 +989,14 @@ class _ScriptedSessionWorker:
 
 class _ThreeWindowDecoder:
     def __init__(self, *_args, **_kwargs) -> None:
-        self.windows = [
+        self.windows_list = [
             DecodedAudioWindow(start, start + 1_000, b"pcm") for start in (0, 1_000, 2_000)
         ]
 
-    def push(self, _chunk: bytes) -> list[DecodedAudioWindow]:
-        windows, self.windows = self.windows, []
-        return windows
+    duration_ms = 4_000
 
-    def finish(self) -> list[DecodedAudioWindow]:
-        return []
+    def windows(self):
+        yield from self.windows_list
 
 
 def test_an_audio_capture_reports_its_duration_and_covered_time(
@@ -1019,13 +1018,8 @@ def test_an_audio_capture_reports_its_duration_and_covered_time(
         monkeypatch.setattr(_SessionWorker, "start", start)
         monkeypatch.setattr(processor, "_resolve_engine", lambda: resolve("speech-recognition"))
         monkeypatch.setattr(
-            "capture_runtime.speech.infrastructure.progressive_capture.PyAVIncrementalDecoder",
+            "capture_runtime.speech.infrastructure.progressive_capture.PyAVFileDecoder",
             _ThreeWindowDecoder,
-        )
-        # The container probe says the recording is 4 s; transcription covers 3 s.
-        monkeypatch.setattr(
-            "capture_runtime.speech.infrastructure.progressive_capture._source_duration_ms",
-            lambda _path: 4_000,
         )
         repository = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
         repository.initialize()
@@ -1058,5 +1052,221 @@ def test_an_audio_capture_reports_its_duration_and_covered_time(
         reloaded.initialize()
         again = reloaded.get_capture(operation.capture_id)
         assert (again.duration_ms, again.covered_until_ms) == (4_000, 3_000)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("limit_ms", [60_000, 1_500])
+def test_finalized_ingestion_decodes_without_spool_and_maps_duration_overflow(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    limit_ms: int,
+) -> None:
+    import io
+    import wave
+    from contextlib import closing
+
+    import capture_runtime.speech.infrastructure.progressive_capture as capture_module
+
+    async def scenario() -> None:
+        processor, _ = _warm_processor(tmp_path, monkeypatch, idle=0)
+        processor.config = replace(processor.config, max_audio_duration_ms=limit_ms)
+        identity = FakeProgressiveProcessor(FixedClock()).engine
+        pulls = 0
+        original_windows = capture_module.PyAVFileDecoder.windows
+
+        def observed_windows(decoder):
+            nonlocal pulls
+            with closing(original_windows(decoder)) as windows:
+                for window in windows:
+                    pulls += 1
+                    yield window
+
+        monkeypatch.setattr(capture_module.PyAVFileDecoder, "windows", observed_windows)
+
+        class Worker(_ScriptedSessionWorker):
+            async def input(self, window, cancellation, on_event):
+                # The decoder must wait while the consumer owns this window.
+                pending_before = pulls
+                await asyncio.sleep(0.01)
+                assert pulls == pending_before
+                assert not list(tmp_path.rglob("*.spool"))
+                return await super().input(window, cancellation, on_event)
+
+        async def start(*, engine, config):
+            return Worker(identity)
+
+        async def resolve():
+            return _engine(tmp_path)
+
+        monkeypatch.setattr(_SessionWorker, "start", start)
+        monkeypatch.setattr(processor, "_resolve_engine", resolve)
+        monkeypatch.setattr(capture_module, "DEFAULT_WINDOW_MS", 1_000)
+        monkeypatch.setattr(capture_module, "DEFAULT_OVERLAP_MS", 200)
+        content = io.BytesIO()
+        with wave.open(content, "wb") as audio:
+            audio.setnchannels(1)
+            audio.setsampwidth(2)
+            audio.setframerate(16_000)
+            audio.writeframes(bytes(16_000 * 2 * 3))
+        repository = StreamingRepository(
+            tmp_path / "streaming", clock=FixedClock(), retention_hours=4
+        )
+        repository.initialize()
+        ingestion_id, _ = _open(repository, source=content.getvalue())
+        service = StreamingCaptureService(repository, clock=FixedClock(), processor=processor)
+        operation = service.start_capture_use_case.execute(
+            StartCaptureV2(
+                client_request_id="finalized-recording",
+                ingestion_id=ingestion_id,
+                structuring_mode=StructuringMode.HOST,
+            )
+        )
+        try:
+            for _ in range(200):
+                current = service.get_capture(operation.capture_id)
+                if current.status.value in {"awaiting_structuring", "failed"}:
+                    break
+                await asyncio.sleep(0.01)
+            if limit_ms == 60_000:
+                assert current.status.value == "awaiting_structuring"
+                assert current.covered_until_ms == 3_000
+                assert current.duration_ms == 3_000
+            else:
+                assert current.status.value == "failed"
+                assert current.error is not None
+                assert (current.error.code, current.error.stage, current.error.retryable) == (
+                    "worker_failed",
+                    "extraction",
+                    True,
+                )
+                assert current.covered_until_ms >= 1_000
+            assert not list(tmp_path.rglob("*.spool"))
+        finally:
+            await service.shutdown()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("cancel_count", [1, 2, 3])
+def test_cancelling_during_decode_joins_the_decoder_and_releases_source(
+    tmp_path, monkeypatch, cancel_count
+):
+    import threading
+    import wave
+    from contextlib import suppress
+
+    import av
+
+    async def scenario():
+        path = tmp_path / "recording.wav"
+        with wave.open(str(path), "wb") as audio:
+            audio.setnchannels(1)
+            audio.setsampwidth(2)
+            audio.setframerate(16_000)
+            audio.writeframes(bytes(16_000 * 2 * 3))
+        processor, spawned = _warm_processor(tmp_path, monkeypatch, idle=0)
+
+        async def begin(self, **_kwargs):
+            return None
+
+        monkeypatch.setattr(_FakeSessionWorker, "begin", begin, raising=False)
+
+        async def resolve():
+            return _engine(tmp_path)
+
+        monkeypatch.setattr(processor, "_resolve_engine", resolve)
+        original_open = av.open
+        entered = threading.Event()
+        released = threading.Event()
+        closed = threading.Event()
+        close_count = 0
+        worker_close_count = 0
+        generators = []
+        from capture_runtime.speech.infrastructure.progressive_decoder import PyAVFileDecoder
+
+        original_windows = PyAVFileDecoder.windows
+        original_close = _FakeSessionWorker.close
+
+        def windows(decoder):
+            generator = original_windows(decoder)
+            generators.append(generator)
+            return generator
+
+        async def close_worker(worker):
+            nonlocal worker_close_count
+            worker_close_count += 1
+            assert closed.is_set()
+            await original_close(worker)
+
+        monkeypatch.setattr(PyAVFileDecoder, "windows", windows)
+        monkeypatch.setattr(_FakeSessionWorker, "close", close_worker)
+
+        class Container:
+            def __init__(self):
+                self.container = original_open(str(path))
+                self.streams = self.container.streams
+                self.duration = self.container.duration
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                nonlocal close_count
+                close_count += 1
+                self.container.close()
+                closed.set()
+
+            def decode(self, stream):
+                for frame in self.container.decode(stream):
+                    entered.set()
+                    assert released.wait(5)
+                    yield frame
+
+        monkeypatch.setattr(av, "open", lambda *_args: Container())
+
+        async def sink(_events, _partial):
+            return None
+
+        task = asyncio.create_task(
+            processor.process(
+                capture_id="cancel-decode",
+                source=CaptureSource(
+                    sha256="a" * 64,
+                    file_name="recording.wav",
+                    media_type="audio/wav",
+                    bytes=path.stat().st_size,
+                ),
+                source_path=path,
+                cancellation=asyncio.Event(),
+                sink=sink,
+            )
+        )
+        try:
+            for _ in range(200):
+                if entered.is_set():
+                    break
+                await asyncio.sleep(0.01)
+            assert entered.is_set()
+            for _ in range(cancel_count):
+                task.cancel()
+                await asyncio.sleep(0)
+                await asyncio.sleep(0)
+            assert not task.done()
+            released.set()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert closed.is_set() and close_count == 1
+            assert not generators[0].gi_running
+            assert generators[0].gi_frame is None
+            assert spawned[0].closed and worker_close_count == 1
+            path.unlink()
+        finally:
+            released.set()
+            if not task.done():
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
+            await processor.shutdown()
 
     asyncio.run(scenario())

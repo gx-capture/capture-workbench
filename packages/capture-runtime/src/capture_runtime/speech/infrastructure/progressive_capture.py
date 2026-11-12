@@ -46,8 +46,9 @@ from capture_runtime.speech.infrastructure.progressive_audio import (
     ProgressiveSessionEvent,
 )
 from capture_runtime.speech.infrastructure.progressive_decoder import (
+    AudioDurationExceededError,
     ProgressiveDecoderError,
-    PyAVIncrementalDecoder,
+    PyAVFileDecoder,
 )
 from capture_runtime.speech.infrastructure.whisper_session import (
     SESSION_PROTOCOL_VERSION,
@@ -63,8 +64,6 @@ from capture_runtime.worker_stage_policy import (
     WORKER_STAGE_PATTERN,
     sanitize_worker_stage_sequence,
 )
-
-STREAM_READ_BYTES = 1024 * 1024
 
 
 class ProgressiveCaptureError(RuntimeError):
@@ -176,20 +175,6 @@ class _WarmWorker:
     expiry: asyncio.Task[None]
 
 
-def _source_duration_ms(path: Path) -> int | None:
-    """The recording's length, for progress; None when its container does not say."""
-
-    try:
-        import av
-
-        with av.open(str(path)) as container:
-            if container.duration:
-                return max(1, int(container.duration) // 1000)
-    except Exception:
-        return None
-    return None
-
-
 def _with_progress(
     event: ProgressiveSessionEvent, duration_ms: int | None
 ) -> ProgressiveSessionEvent:
@@ -231,12 +216,10 @@ class ProgressiveCaptureProcessor:
         clock: Clock,
         config: ExtractionRuntimeConfig,
         engine_manager: EngineInstallationManager,
-        staging_root: Path,
     ) -> None:
         self.clock = clock
         self.config = config
         self.engine_manager = engine_manager
-        self.staging_root = staging_root
         self._warm: _WarmWorker | None = None
 
     async def _acquire(self, engine: InstalledEngine) -> _SessionWorker:
@@ -293,14 +276,14 @@ class ProgressiveCaptureProcessor:
                 "Progressive Whisper engine could not be prepared.",
                 code="progressive_engine_resolution_failed",
             ) from error
-        spool_path = self.staging_root / f"progressive-{capture_id}.spool"
         try:
-            decoder = PyAVIncrementalDecoder(
-                spool_path,
+            decoder = PyAVFileDecoder(
+                source_path,
+                max_duration_ms=self.config.max_audio_duration_ms,
+                should_cancel=cancellation.is_set,
                 sample_rate=16_000,
                 window_ms=DEFAULT_WINDOW_MS,
                 overlap_ms=DEFAULT_OVERLAP_MS,
-                max_spool_bytes=source.bytes,
             )
         except (ProgressiveDecoderError, ValueError) as error:
             raise ProgressiveCaptureError(
@@ -309,10 +292,9 @@ class ProgressiveCaptureProcessor:
             ) from error
         state = _ProgressiveState(source, capture_id, self.clock)
         events: list[ProgressiveSessionEvent] = []
-        duration_ms = await asyncio.to_thread(_source_duration_ms, source_path)
 
         async def emit_event(event: ProgressiveSessionEvent) -> None:
-            event = _with_progress(event, duration_ms)
+            event = _with_progress(event, decoder.duration_ms)
             state.apply(event)
             try:
                 partial = (
@@ -356,61 +338,45 @@ class ProgressiveCaptureProcessor:
                     "Progressive Whisper worker could not be started.",
                     code="progressive_worker_start_failed",
                 ) from error
+            windows = decoder.windows()
             try:
-                source_file = source_path.open("rb")
-            except OSError as error:
-                raise ProgressiveCaptureError(
-                    "Progressive audio source could not be opened.",
-                    code="progressive_source_open_failed",
-                ) from error
-            with source_file:
-                while chunk := source_file.read(STREAM_READ_BYTES):
+                while not _terminal_event(events):
                     self._check_cancel(cancellation)
+                    # Pull only after the previous window is acknowledged. Shield the
+                    # thread so cancellation can join it before closing its container.
+                    pending = asyncio.create_task(asyncio.to_thread(next, windows, None))
                     try:
-                        windows = decoder.push(chunk)
-                    except (ProgressiveCaptureError, ProgressiveDecoderError):
+                        window = await asyncio.shield(pending)
+                    except asyncio.CancelledError:
+                        cancellation.set()
+                        with suppress(Exception, asyncio.CancelledError):
+                            await _complete_cleanup(pending)
                         raise
-                    except Exception as error:
+                    except InterruptedError:
+                        if cancellation.is_set():
+                            raise asyncio.CancelledError from None
+                        raise
+                    except AudioDurationExceededError as error:
                         raise ProgressiveCaptureError(
-                            "Progressive audio decoder failed while reading the source.",
-                            code="progressive_decoder_process_failed",
+                            "Worker operation failed.",
+                            code="worker_failed",
+                            stage="extraction",
+                            retryable=True,
                         ) from error
-                    for window in windows:
-                        try:
-                            events = await worker.input(window, cancellation, emit_event)
-                        except ProgressiveCaptureError:
-                            raise
-                        except Exception as error:
-                            raise ProgressiveCaptureError(
-                                "Progressive Whisper worker failed while processing a window.",
-                                code="progressive_worker_input_failed",
-                            ) from error
-                        if _terminal_event(events):
-                            break
-                    if _terminal_event(events):
+                    if window is None:
                         break
-            if not _terminal_event(events):
-                try:
-                    final_windows = decoder.finish()
-                except (ProgressiveCaptureError, ProgressiveDecoderError):
-                    raise
-                except Exception as error:
-                    raise ProgressiveCaptureError(
-                        "Progressive audio decoder failed while finalizing the source.",
-                        code="progressive_decoder_finish_failed",
-                    ) from error
-                for window in final_windows:
+                    self._check_cancel(cancellation)
                     try:
                         events = await worker.input(window, cancellation, emit_event)
                     except ProgressiveCaptureError:
                         raise
                     except Exception as error:
                         raise ProgressiveCaptureError(
-                            "Progressive Whisper worker failed while processing the final window.",
+                            "Progressive Whisper worker failed while processing a window.",
                             code="progressive_worker_input_failed",
                         ) from error
-                    if _terminal_event(events):
-                        break
+            finally:
+                windows.close()
             if not _terminal_event(events):
                 try:
                     events = await worker.finish(cancellation, emit_event)
@@ -441,8 +407,7 @@ class ProgressiveCaptureProcessor:
             if reusable:
                 await self._park(_worker_key(engine, self.config), worker)
             else:
-                await worker.close()
-            spool_path.unlink(missing_ok=True)
+                await _complete_cleanup(asyncio.create_task(worker.close()))
 
     async def _resolve_engine(self) -> InstalledEngine:
         engine = await self.engine_manager.resolve_active_engine(SPEECH_RECOGNITION_REQUIREMENT_ID)
@@ -464,6 +429,21 @@ class ProgressiveCaptureProcessor:
     def _check_cancel(cancellation: asyncio.Event) -> None:
         if cancellation.is_set():
             raise asyncio.CancelledError
+
+
+async def _complete_cleanup[T](pending: asyncio.Task[T]) -> T:
+    """Join cleanup despite repeated caller cancellation, then propagate it."""
+
+    cancelled = False
+    while not pending.done():
+        try:
+            await asyncio.shield(pending)
+        except asyncio.CancelledError:
+            cancelled = True
+    result = pending.result()
+    if cancelled:
+        raise asyncio.CancelledError
+    return result
 
 
 def _session_worker_launch(executable: Path) -> tuple[list[str], str]:
@@ -833,4 +813,4 @@ def _json_object(payload: bytes) -> dict[str, Any]:
     return value
 
 
-__all__ = ["ProgressiveCaptureError", "ProgressiveCaptureProcessor", "STREAM_READ_BYTES"]
+__all__ = ["ProgressiveCaptureError", "ProgressiveCaptureProcessor"]

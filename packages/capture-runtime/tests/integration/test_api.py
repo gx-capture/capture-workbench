@@ -300,3 +300,15 @@ def test_v2_uninstall_conflicts_while_a_capture_is_active(settings_factory) -> N
     assert (in_use.status_code, in_use.json()["error"]["code"]) == (409, "requirement_in_use")
     assert after.status_code == 200, after.text
     assert "speech-recognition" not in installer.ready
+
+
+def test_startup_removes_legacy_spools_and_uploads_but_preserves_unrelated_files(
+    settings_factory,
+):
+    settings = settings_factory()
+    staging = settings.staging_root
+    staging.mkdir(parents=True, exist_ok=True)
+    for name in ("progressive-old-capture.spool", "abandoned.upload", "keep.spool", "notes.txt"):
+        (staging / name).write_bytes(b"recording")
+    with TestClient(create_app(settings)):
+        assert {path.name for path in staging.iterdir()} == {"keep.spool", "notes.txt"}

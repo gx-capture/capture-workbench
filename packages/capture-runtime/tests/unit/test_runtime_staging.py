@@ -25,13 +25,10 @@ def test_run_staging_defaults_under_app_data(tmp_path: Path) -> None:
     assert settings.staging_root == app_data_dir / "jobs" / "staging"
 
 
-def test_runtime_dependencies_share_the_app_data_staging_root(tmp_path: Path) -> None:
+def test_runtime_dependencies_keep_the_app_data_staging_root(tmp_path: Path) -> None:
     app_data_dir = tmp_path / "app-data"
     staging_root = app_data_dir / "jobs" / "staging"
 
     dependencies = build_runtime_dependencies(_settings(app_data_dir))
 
     assert dependencies.staging_root == staging_root
-    processor = dependencies.streaming_capture_service._processor
-    assert processor is not None
-    assert processor.staging_root == staging_root

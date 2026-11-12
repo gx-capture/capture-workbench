@@ -358,11 +358,8 @@ def prepare(request: WorkerRequestModel) -> None:
 
 
 def _session() -> None:
-    from capture_runtime.clock import SystemClock
-    from capture_runtime.contracts import CaptureSource
     from capture_runtime.speech.infrastructure.progressive_audio import ProgressiveAudioSession
     from capture_runtime.speech.infrastructure.progressive_whisper import (
-        DirectWindowDecoder,
         SpeechRecognitionWindowTranscriber,
         ProgressiveWhisperWorkerBackend,
     )
@@ -390,20 +387,10 @@ def _session() -> None:
     _import_speech_runtime()
 
     def new_session(metadata: dict[str, Any]) -> ProgressiveAudioSession:
-        source = metadata["source"]
         return ProgressiveAudioSession(
-            CaptureSource(
-                sha256=source["sha256"],
-                file_name=source["fileName"],
-                media_type=source["mediaType"],
-                bytes=source["bytes"],
-            ),
-            capture_id=metadata["sessionId"],
-            decoder=DirectWindowDecoder(),
             transcriber=SpeechRecognitionWindowTranscriber(
                 adapter, temp_dir=temp_dir, language=metadata.get("spokenLanguage")
             ),
-            clock=SystemClock(),
         )
 
     serve_session(

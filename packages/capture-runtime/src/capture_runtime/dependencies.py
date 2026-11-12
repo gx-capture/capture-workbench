@@ -215,7 +215,6 @@ def build_runtime_dependencies(
             clock=runtime_clock,
             config=settings.extraction,
             engine_manager=engine_manager,
-            staging_root=staging_root,
         )
     )
     streaming_capture_service = StreamingCaptureService(

@@ -4,19 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Protocol
 
-from capture_runtime.clock import Clock
 from capture_runtime.contracts import (
     CaptureEngine,
     CaptureFailureV2,
-    CaptureSource,
-    PartialCaptureV2,
     RawCaptureSegment,
     StreamingEventType,
     TimeLocator,
-    project_source_text,
 )
 from capture_runtime.speech.application.use_cases import TranscribeAudioWindow
 from capture_runtime.speech.domain import (
@@ -36,10 +31,6 @@ class ProgressiveAudioError(RuntimeError):
     """Base class for safe progressive-session failures."""
 
 
-class ProgressiveBackpressureError(ProgressiveAudioError):
-    pass
-
-
 class ProgressiveSessionClosedError(ProgressiveAudioError):
     pass
 
@@ -52,12 +43,6 @@ WhisperWindowSegment = WindowTranscriptSegment
 
 
 WhisperWindowResult = WindowTranscript
-
-
-class IncrementalAudioDecoder(Protocol):
-    def push(self, data: bytes) -> Iterable[DecodedAudioWindow]: ...
-
-    def finish(self) -> Iterable[DecodedAudioWindow]: ...
 
 
 class WhisperWindowTranscriber(Protocol):
@@ -80,42 +65,23 @@ class ProgressiveSessionEvent:
 
 
 class ProgressiveAudioSession:
-    """Deep module for bounded decode, merge, checkpoint, and watchdog policy."""
+    """Merge decoded window transcripts and emit checkpoints."""
 
     def __init__(
         self,
-        source: CaptureSource,
         *,
-        capture_id: str,
-        decoder: IncrementalAudioDecoder,
         transcriber: WhisperWindowTranscriber,
-        clock: Clock,
         window_ms: int = DEFAULT_WINDOW_MS,
         overlap_ms: int = DEFAULT_OVERLAP_MS,
         checkpoint_ms: int = DEFAULT_CHECKPOINT_MS,
-        heartbeat_ms: int = DEFAULT_HEARTBEAT_MS,
-        stall_timeout_ms: int = DEFAULT_STALL_TIMEOUT_MS,
-        max_buffer_bytes: int = MAX_PROGRESSIVE_WINDOW_BYTES,
     ) -> None:
         if not 0 < overlap_ms < window_ms:
             raise ValueError("overlap must be positive and smaller than the window")
-        if min(window_ms, checkpoint_ms, heartbeat_ms, stall_timeout_ms, max_buffer_bytes) <= 0:
-            raise ValueError("progressive timing and buffer limits must be positive")
-        if max_buffer_bytes > MAX_PROGRESSIVE_WINDOW_BYTES:
-            raise ValueError("progressive buffer exceeds the runtime safety limit")
-        self.source = source
-        self.capture_id = capture_id
-        self.decoder = decoder
-        self.transcriber = transcriber
+        if min(window_ms, checkpoint_ms) <= 0:
+            raise ValueError("progressive timing limits must be positive")
         self._transcribe_window = TranscribeAudioWindow(transcriber)
-        self.clock = clock
-        self.window_ms = window_ms
         self.overlap_ms = overlap_ms
         self.checkpoint_ms = checkpoint_ms
-        self.heartbeat_ms = heartbeat_ms
-        self.stall_timeout_ms = stall_timeout_ms
-        self.max_buffer_bytes = max_buffer_bytes
-        self._buffered_bytes = 0
         self._covered_until_ms = 0
         self._next_checkpoint_ms = checkpoint_ms
         self._partial_revision = 0
@@ -126,82 +92,24 @@ class ProgressiveAudioSession:
         self._engine: CaptureEngine | None = None
         self._warnings: list[str] = []
         self._pending_events: list[ProgressiveSessionEvent] = []
-        self._last_progress_at = clock.now()
-        self._last_heartbeat_at = self._last_progress_at
         self._terminal = False
         self._finished = False
 
     @property
-    def terminal(self) -> bool:
-        return self._terminal
-
-    @property
-    def completed(self) -> bool:
-        return self._terminal and self._finished and bool(self._segments)
-
-    @property
     def extraction_engine(self) -> CaptureEngine | None:
         return self._engine
-
-    @property
-    def covered_until_ms(self) -> int:
-        return self._covered_until_ms
-
-    @property
-    def partial(self) -> PartialCaptureV2:
-        if self._engine is None:
-            raise ProgressiveAudioError("partial capture is not available before transcription")
-        return PartialCaptureV2(
-            capture_id=self.capture_id,
-            source=self.source,
-            revision=self._partial_revision,
-            covered_until_ms=self._covered_until_ms,
-            segments=list(self._segments),
-            source_text=project_source_text(self._segments),
-            extraction_engine=self._engine,
-            updated_at=self.clock.now(),
-        )
-
-    def feed(self, data: bytes) -> list[ProgressiveSessionEvent]:
-        self._ensure_open()
-        if not data:
-            return self.drain_events()
-        if self._buffered_bytes + len(data) > self.max_buffer_bytes:
-            raise ProgressiveBackpressureError("progressive decoder input buffer is full")
-        self._buffered_bytes += len(data)
-        try:
-            windows = tuple(self.decoder.push(data))
-        finally:
-            self._buffered_bytes = 0
-        for window in windows:
-            self._consume(window)
-        return self.drain_events()
 
     def consume_window(self, window: DecodedAudioWindow) -> list[ProgressiveSessionEvent]:
         """Consume an already decoded bounded window from the worker seam."""
 
         self._ensure_open()
         result = self._transcribe_window.execute(window)
-        self.consume_window_result(window, result)
-        return self.drain_events()
-
-    def consume_window_result(
-        self,
-        window: DecodedAudioWindow,
-        result: WhisperWindowResult,
-    ) -> None:
-        """Merge a bounded worker result without exposing session internals."""
-
-        self._ensure_open()
         self._consume_result(window, result)
+        return self.drain_events()
 
     def finish(self) -> list[ProgressiveSessionEvent]:
         self._ensure_open()
         self._finished = True
-        for window in tuple(self.decoder.finish()):
-            self._consume(window)
-        if self._terminal:
-            return self.drain_events()
         self._seal_held_tail()
         if not self._segments:
             # Only now, with the whole recording heard, does no text mean no
@@ -234,14 +142,6 @@ class ProgressiveAudioSession:
         self._pending_events = []
         return events
 
-    def _consume(self, window: DecodedAudioWindow) -> None:
-        if window.end_ms <= self._covered_until_ms:
-            return
-        if window.start_ms > self._covered_until_ms + self.overlap_ms:
-            raise ProgressiveAudioError("decoded audio windows have a gap")
-        result = self._transcribe_window.execute(window)
-        self._consume_result(window, result)
-
     def _consume_result(self, window: DecodedAudioWindow, result: WhisperWindowResult) -> None:
         self._engine = result.extraction_engine
         for warning in result.warnings:
@@ -250,7 +150,6 @@ class ProgressiveAudioSession:
         boundary_ms = self._release_held_tail(window)
         self._merge_segments(window, result.segments, from_ms=boundary_ms)
         self._covered_until_ms = max(self._covered_until_ms, window.end_ms)
-        self._last_progress_at = self.clock.now()
         self._emit_due_checkpoints()
 
     def _release_held_tail(self, window: DecodedAudioWindow) -> int:
@@ -393,10 +292,6 @@ class ProgressiveAudioSession:
             raise ProgressiveSessionClosedError("progressive audio session is closed")
 
 
-def _elapsed_ms(start: datetime, end: datetime) -> int:
-    return max(0, round((end - start).total_seconds() * 1000))
-
-
 def _midpoint(timed: tuple[int, int, str]) -> int:
     return (timed[0] + timed[1]) // 2
 
@@ -437,11 +332,9 @@ __all__ = [
     "DEFAULT_STALL_TIMEOUT_MS",
     "DEFAULT_WINDOW_MS",
     "DecodedAudioWindow",
-    "IncrementalAudioDecoder",
     "MAX_PROGRESSIVE_WINDOW_BYTES",
     "ProgressiveAudioError",
     "ProgressiveAudioSession",
-    "ProgressiveBackpressureError",
     "ProgressiveSessionClosedError",
     "ProgressiveSessionEvent",
     "WhisperWindowResult",
