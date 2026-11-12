@@ -1,3 +1,4 @@
+import { MAX_PLAYBACK_BYTES } from '../services/recording-playback';
 import { RUNTIME_VERSION } from '@gx-capture/capture-runtime-client';
 import { signal, type WritableSignal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
@@ -12,6 +13,7 @@ import type {
 } from '@gx-capture/capture-workbench-ui';
 import { HistoryPage } from './history-page';
 import {
+  desktopMessages,
   DESKTOP_LOCALE_STORAGE_KEY,
   setDesktopLocale,
 } from '../i18n/desktop-messages';
@@ -366,7 +368,7 @@ it('lists the speakers of a transcript, plays a sample and stores a name', async
   expect(store.nameSpeaker).toHaveBeenCalledWith('c'.repeat(32), 'SPEAKER_00', 'Mr. Chen');
 
   (root.querySelector('[data-testid="load-speaker-samples"]') as HTMLButtonElement).click();
-  expect(store.loadSpeakerSamples).toHaveBeenCalledWith('c'.repeat(32), 'audio/wav');
+  expect(store.loadSpeakerSamples).toHaveBeenCalledWith('c'.repeat(32), 'audio/wav', 16);
 
   const option = root.querySelector('[data-testid="identify-speakers"]') as HTMLInputElement;
   option.checked = true;
@@ -674,11 +676,26 @@ it('lists a recording as timed lines and plays it from a line', async () => {
   expect(lines[1].textContent).toContain('法官');
   expect(root.querySelector('[data-testid="recording-player"]')).toBeNull();
 
+  const smallRecording = store.selected() as { byteLength: number };
+  store.selected.set({ ...smallRecording, byteLength: MAX_PLAYBACK_BYTES + 1 });
+  fixture.detectChanges();
+  expect(root.querySelector('[data-testid="large-recording-playback-note"]')?.textContent)
+    .toContain(desktopMessages().largeRecordingPlaybackUnavailable);
+  expect(root.querySelector('[data-testid="load-recording"]')).toBeNull();
+  expect(root.querySelectorAll('[data-testid="transcript-line"]')).toHaveLength(2);
+  const largeTime = root.querySelector('.transcript-time') as HTMLButtonElement;
+  expect(largeTime.disabled).toBe(true);
+  largeTime.click();
+  expect(store.loadSpeakerSamples).not.toHaveBeenCalled();
+  store.selected.set(smallRecording);
+  fixture.detectChanges();
+
   // The recording is loaded on the first request to play it.
   (lines[1].querySelector('button') as HTMLButtonElement).click();
   expect(store.loadSpeakerSamples).toHaveBeenCalledWith(
     'd'.repeat(32),
     'video/x-matroska',
+    10,
   );
 
   (store.recordingUrl as unknown as WritableSignal<string | null>).set('blob:hearing');

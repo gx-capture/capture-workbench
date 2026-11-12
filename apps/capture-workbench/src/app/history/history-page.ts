@@ -1,3 +1,4 @@
+import { playbackUnavailable } from '../services/recording-playback';
 import {
   ChangeDetectionStrategy,
   Component,
@@ -66,6 +67,7 @@ import { EngineCard } from '../engine-card/engine-card';
 export class HistoryPage {
   protected readonly store = inject(DesktopWorkspaceStore);
   protected readonly m = desktopMessages;
+  protected readonly playbackUnavailable = playbackUnavailable;
   protected readonly locale = desktopLocale;
   protected readonly locales = DESKTOP_LOCALES;
   protected readonly formatTime = formatRecordingTime;
@@ -101,16 +103,21 @@ export class HistoryPage {
 
   /** Plays the recording from a transcript line, loading it first if needed. */
   protected playFrom(
-    item: { readonly documentId: string; readonly mediaType: string },
+    item: {
+      readonly documentId: string;
+      readonly mediaType: string;
+      readonly byteLength: number;
+    },
     startMs: number,
   ): void {
+    if (playbackUnavailable(item.byteLength)) return;
     const player = this.recordingPlayer()?.nativeElement;
     if (player && this.store.recordingUrl(item.documentId)) {
       this.seek(player, startMs);
       return;
     }
     this.pendingPlayFromMs = startMs;
-    this.store.loadSpeakerSamples(item.documentId, item.mediaType);
+    this.store.loadSpeakerSamples(item.documentId, item.mediaType, item.byteLength);
   }
 
   protected playPending(player: HTMLMediaElement): void {

@@ -1,3 +1,4 @@
+import { playbackUnavailable } from './recording-playback';
 import { selectionRejectionMessages } from './source-selection-messages';
 import {
   computed,
@@ -410,7 +411,15 @@ export class DesktopWorkspaceStore {
   }
 
   /** Loads the source file once so the speakers' samples can be played. */
-  loadSpeakerSamples(documentId: string, mediaType: string): void {
+  loadSpeakerSamples(
+    documentId: string,
+    mediaType: string,
+    byteLength: number,
+  ): void {
+    if (playbackUnavailable(byteLength)) {
+      this.message.set(desktopMessages().largeRecordingPlaybackUnavailable);
+      return;
+    }
     if (this.sampleSources().has(documentId)) return;
     this.library.sourceBytes(documentId).subscribe({
       next: (bytes) => {

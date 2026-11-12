@@ -1,3 +1,5 @@
+import { MAX_PLAYBACK_BYTES } from './recording-playback';
+import { desktopMessages } from '../i18n/desktop-messages';
 import { Router } from '@angular/router';
 import { CaptureQueueStore } from './capture-queue.store';
 import { RUNTIME_VERSION } from '@gx-capture/capture-runtime-client';
@@ -50,6 +52,29 @@ const failedOcrCaptureIds = new Set([
 ]);
 
 describe('DesktopWorkspaceStore', () => {
+  it('refuses large playback without asking native code for bytes', () => {
+    const sourceBytes = vi.fn();
+    const store = initializeStore(libraryStub({ sourceBytes }), runtimeStub());
+    store.loadSpeakerSamples(summary.documentId, 'audio/mpeg', MAX_PLAYBACK_BYTES + 1);
+    expect(sourceBytes).not.toHaveBeenCalled();
+    expect(store.message()).toBe(desktopMessages().largeRecordingPlaybackUnavailable);
+  });
+
+  it('loads a small recording for playback', () => {
+    const sourceBytes = vi.fn(() => of(new ArrayBuffer(12)));
+    const originalCreateUrl = Object.getOwnPropertyDescriptor(URL, 'createObjectURL');
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: vi.fn(() => 'blob:small') });
+    try {
+      const store = initializeStore(libraryStub({ sourceBytes }), runtimeStub());
+      store.loadSpeakerSamples(summary.documentId, 'audio/mpeg', 12);
+      expect(sourceBytes).toHaveBeenCalledWith(summary.documentId);
+      expect(store.recordingUrl(summary.documentId)).toBe('blob:small');
+    } finally {
+      if (originalCreateUrl) Object.defineProperty(URL, 'createObjectURL', originalCreateUrl);
+      else Reflect.deleteProperty(URL, 'createObjectURL');
+    }
+  });
+
   it('retains a terminal model installation identity for UI and Tauri diagnostics', () => {
     const failedInstallation = {
       installationId: 'model-installation-1',

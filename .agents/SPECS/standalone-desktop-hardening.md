@@ -29,8 +29,8 @@ and durable before it replaces PR #4.
 - Source inputs accept PDF, PNG, JPEG and the recordings listed in
   `RECORDING_EXTENSIONS`/`RECORDING_MEDIA_TYPES` of
   `apps/capture-workbench-desktop/src-tauri/src/library/validation.rs`, with
-  byte length `1..=50 MiB`. Larger recordings are
-  [#155](https://github.com/gx-capture/capture-workbench/issues/155).
+  a non-empty byte length of at most 2 GiB for a recording and 50 MiB for PDF
+  and image ([#155](https://github.com/gx-capture/capture-workbench/issues/155)).
 
 ## Capture lifecycle
 

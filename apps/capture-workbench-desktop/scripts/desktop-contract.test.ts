@@ -499,27 +499,6 @@ test('native cleanup is PID-scoped and never executable-name scoped', async () =
   assert.doesNotMatch(source, /'\/IM'\s*,/u);
 });
 
-test('desktop launcher advertises the bounded 50 MiB upload policy', async () => {
-  const constants = await readFile(
-    join(appRoot, 'src-tauri', 'src', 'constants', 'runtime.rs'),
-    'utf8',
-  );
-  const launchPolicy = await readFile(
-    join(appRoot, 'src-tauri', 'src', 'launch_policy.rs'),
-    'utf8',
-  );
-  assert.match(
-    constants,
-    /DEFAULT_MAX_UPLOAD_BYTES:\s*u64\s*=\s*50\s*\*\s*1024\s*\*\s*1024/u,
-  );
-  assert.match(launchPolicy, /"CAPTURE_MAX_UPLOAD_BYTES"/u);
-  assert.match(launchPolicy, /DEFAULT_MAX_UPLOAD_BYTES\.to_string\(\)/u);
-  assert.doesNotMatch(
-    launchPolicy,
-    /CAPTURE_OLLAMA_MODEL|CAPTURE_OLLAMA_PROFILE_ID/u,
-  );
-});
-
 test('desktop launcher crate metadata uses a crates.io-supported category', async () => {
   const cargoManifest = await readFile(
     join(

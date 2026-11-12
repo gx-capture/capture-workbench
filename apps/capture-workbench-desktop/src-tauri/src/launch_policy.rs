@@ -244,6 +244,9 @@ mod tests {
         assert!(environment
             .iter()
             .any(|(name, value)| { *name == "CAPTURE_WHISPER_PREFER_GPU" && value == "true" }));
+        assert!(environment
+            .iter()
+            .any(|(name, value)| { *name == "CAPTURE_MAX_UPLOAD_BYTES" && value == "2147483648" }));
     }
 
     #[test]

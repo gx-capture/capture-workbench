@@ -144,7 +144,7 @@ fn inspection_rejects_oversize_recordings_and_signature_changes() {
     let (dir, path) = fixture();
     let oversized = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
     oversized
-        .set_len(crate::library::MAX_SOURCE_BYTES as u64 + 1)
+        .set_len(crate::library::RECORDING_MAX_SOURCE_BYTES + 1)
         .unwrap();
     drop(oversized);
     assert_eq!(
@@ -441,4 +441,17 @@ fn failed_drop_delivery_releases_admitted_selections() {
         .unwrap();
     selections.process_drop("main", vec![path]).unwrap();
     assert!(selections.lock().unwrap().entries.is_empty());
+}
+#[test]
+fn import_errors_keep_only_actionable_messages() {
+    for message in [
+        "Selected source changed during import.",
+        crate::library::NOT_ENOUGH_DISK_SPACE,
+    ] {
+        assert_eq!(import_error(message.to_string()), message);
+    }
+    assert_eq!(
+        import_error("Capture library index cannot be written: details".into()),
+        "Selected source could not be imported."
+    );
 }

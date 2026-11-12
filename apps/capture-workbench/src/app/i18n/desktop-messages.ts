@@ -100,6 +100,7 @@ export interface DesktopMessages {
   readonly transcript: string;
   readonly transcriptHint: string;
   readonly loadRecording: string;
+  readonly largeRecordingPlaybackUnavailable: string;
   readonly playFrom: (time: string) => string;
   readonly liveTranscript: string;
   readonly heardUntil: (time: string) => string;
@@ -190,7 +191,7 @@ const ZH_TW: DesktopMessages = {
   sourceRejections: {
     unsupported: (count) => `不支援的檔案格式 (${count})`,
     empty: (count) => `檔案是空的 (${count})`,
-    tooLarge: (count) => `檔案超過大小限制 (${count})`,
+    tooLarge: (count) => `檔案超過大小限制：錄音 2 GiB，文件與圖片 50 MiB (${count})`,
     notRegularFile: (count) => `必須選擇一般檔案 (${count})`,
     notLocal: (count) => `只能選擇本機磁碟的檔案 (${count})`,
     unreadable: (count) => `無法讀取檔案 (${count})`,
@@ -281,6 +282,7 @@ const ZH_TW: DesktopMessages = {
   transcript: '逐字稿',
   transcriptHint: '點時間即可從那一刻播放錄音，核對聽到的內容。',
   loadRecording: '載入錄音',
+  largeRecordingPlaybackUnavailable: '大型錄音暫時無法播放，仍可查看逐字稿。',
   playFrom: (time) => `從 ${time} 播放`,
   liveTranscript: '即時逐字稿',
   heardUntil: (time) => `已聽到 ${time}`,
@@ -416,7 +418,7 @@ const EN: DesktopMessages = {
   sourceRejections: {
     unsupported: (count) => `Unsupported source format (${count})`,
     empty: (count) => `Empty source (${count})`,
-    tooLarge: (count) => `Source exceeds the size limit (${count})`,
+    tooLarge: (count) => `Source exceeds the size limit: recordings 2 GiB, documents and images 50 MiB (${count})`,
     notRegularFile: (count) => `Source must be a regular file (${count})`,
     notLocal: (count) => `Source must be on a local disk (${count})`,
     unreadable: (count) => `Source cannot be read (${count})`,
@@ -507,6 +509,7 @@ const EN: DesktopMessages = {
   transcript: 'Transcript',
   transcriptHint: 'Select a time to play the recording from that moment and check what was heard.',
   loadRecording: 'Load recording',
+  largeRecordingPlaybackUnavailable: 'Playback of large recordings is not available yet. The transcript is still shown.',
   playFrom: (time) => `Play from ${time}`,
   liveTranscript: 'Live transcript',
   heardUntil: (time) => `Heard up to ${time}`,

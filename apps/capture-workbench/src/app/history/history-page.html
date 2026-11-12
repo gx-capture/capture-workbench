@@ -253,19 +253,21 @@
         <section class="review-block transcript" data-testid="document-transcript">
           <h3>{{ m().transcript }}</h3>
           <p>{{ m().transcriptHint }}</p>
-          @if (store.recordingUrl(item.documentId); as recordingUrl) {
+          @if (playbackUnavailable(item.byteLength)) {
+            <p data-testid="large-recording-playback-note">{{ m().largeRecordingPlaybackUnavailable }}</p>
+          } @else if (store.recordingUrl(item.documentId); as recordingUrl) {
             @if (item.mediaType.startsWith('video/')) {
               <video #recordingPlayer controls preload="metadata" data-testid="recording-player" [src]="recordingUrl" (loadedmetadata)="playPending(recordingPlayer)"></video>
             } @else {
               <audio #recordingPlayer controls preload="metadata" data-testid="recording-player" [src]="recordingUrl" (loadedmetadata)="playPending(recordingPlayer)"></audio>
             }
           } @else {
-            <button mat-stroked-button type="button" data-testid="load-recording" (click)="store.loadSpeakerSamples(item.documentId, item.mediaType)">{{ m().loadRecording }}</button>
+            <button mat-stroked-button type="button" data-testid="load-recording" (click)="store.loadSpeakerSamples(item.documentId, item.mediaType, item.byteLength)">{{ m().loadRecording }}</button>
           }
           <ol class="transcript-lines" data-testid="transcript-lines">
             @for (line of store.transcriptLines(item); track line.segmentId) {
               <li data-testid="transcript-line" [attr.data-start-ms]="line.startMs">
-                <button type="button" class="transcript-time" [attr.aria-label]="m().playFrom(line.timeLabel)" (click)="playFrom(item, line.startMs)">{{ line.timeLabel }}</button>
+                <button type="button" class="transcript-time" [disabled]="playbackUnavailable(item.byteLength)" [attr.aria-label]="m().playFrom(line.timeLabel)" (click)="playFrom(item, line.startMs)">{{ line.timeLabel }}</button>
                 @if (line.speaker) {
                   <strong>{{ line.speaker }}</strong>
                 }
@@ -309,8 +311,10 @@
             <div data-testid="document-speakers">
               <h3>{{ m().speakers }}</h3>
               <p>{{ m().speakersHint }}</p>
-              @if (!store.sampleSources().has(item.documentId)) {
-                <button mat-stroked-button type="button" data-testid="load-speaker-samples" (click)="store.loadSpeakerSamples(item.documentId, item.mediaType)">{{ m().loadSamples }}</button>
+              @if (playbackUnavailable(item.byteLength)) {
+                <p>{{ m().largeRecordingPlaybackUnavailable }}</p>
+              } @else if (!store.sampleSources().has(item.documentId)) {
+                <button mat-stroked-button type="button" data-testid="load-speaker-samples" (click)="store.loadSpeakerSamples(item.documentId, item.mediaType, item.byteLength)">{{ m().loadSamples }}</button>
               }
               @for (speaker of item.result.speakers; track speaker.speakerId) {
                 <div data-testid="document-speaker" [attr.data-speaker-id]="speaker.speakerId">
@@ -318,7 +322,7 @@
                     <span>{{ speaker.speakerId }}</span>
                     <input type="text" maxlength="100" autocomplete="off" [value]="speaker.displayName ?? ''" [placeholder]="m().speakerName" (change)="store.nameSpeaker(item.documentId, speaker.speakerId, $any($event.target).value)" />
                   </label>
-                  @if (store.speakerSampleUrl(item.documentId, speaker.sample); as sampleUrl) {
+                  @if (!playbackUnavailable(item.byteLength) && store.speakerSampleUrl(item.documentId, speaker.sample); as sampleUrl) {
                     <audio controls preload="none" [src]="sampleUrl"></audio>
                   } @else if (!speaker.sample) {
                     <small>{{ m().noSample }}</small>

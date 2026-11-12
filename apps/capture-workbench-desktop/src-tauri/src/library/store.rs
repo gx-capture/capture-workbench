@@ -1,5 +1,8 @@
 #[cfg(any(test, feature = "model-smoke-app-data"))]
-use super::MAX_SOURCE_BYTES;
+use super::RECORDING_MAX_SOURCE_BYTES;
+use super::{
+    max_source_bytes, DOCUMENT_MAX_SOURCE_BYTES, IMPORT_FREE_SPACE_MARGIN, NOT_ENOUGH_DISK_SPACE,
+};
 #[cfg(any(test, feature = "model-smoke-app-data"))]
 use crate::contracts::LibraryImportSourceRequest;
 use std::{
@@ -283,7 +286,7 @@ impl LibraryStore {
         &self,
         request: LibraryImportSourceRequest,
     ) -> Result<LibraryDocumentSummary, String> {
-        self.import_source_bounded(request, MAX_SOURCE_BYTES)
+        self.import_source_bounded(request, RECORDING_MAX_SOURCE_BYTES as usize)
     }
 
     #[cfg(any(test, feature = "model-smoke-app-data"))]
@@ -304,11 +307,29 @@ impl LibraryStore {
 
     pub(crate) fn import_opened(
         &self,
+        source: crate::source_selection::inspect::OpenedSource,
+        capture_options: Option<LibraryCaptureOptions>,
+    ) -> Result<LibraryDocumentSummary, String> {
+        self.import_opened_with_free_space(source, capture_options, available_space)
+    }
+
+    pub(super) fn import_opened_with_free_space(
+        &self,
         mut source: crate::source_selection::inspect::OpenedSource,
         capture_options: Option<LibraryCaptureOptions>,
+        free_space: impl FnOnce(&Path) -> Result<Option<u64>, String>,
     ) -> Result<LibraryDocumentSummary, String> {
         if let Some(options) = &capture_options {
             super::validation::validate_capture_options(options)?;
+        }
+        if source.byte_length == 0 || source.byte_length > max_source_bytes(&source.media_type) {
+            return Err("Selected source exceeds the desktop library limit.".into());
+        }
+        // Room for the library copy, the runtime's ingestion copy on the same
+        // volume, and a margin for everything else that writes there.
+        let required = 2 * source.byte_length + IMPORT_FREE_SPACE_MARGIN;
+        if free_space(&self.root)?.is_some_and(|free| free < required) {
+            return Err(NOT_ENOUGH_DISK_SPACE.into());
         }
         let changed = || "Selected source changed during import.".to_string();
         if source.handle.metadata().map_err(|_| changed())?.len() != source.byte_length {
@@ -496,8 +517,27 @@ impl LibraryStore {
         let source_path = self
             .document_directory(&document.document_id)?
             .join(SOURCE_FILE_NAME);
-        let bytes = fs::read(source_path)
-            .map_err(|error| format!("Capture library source cannot be read: {error}"))?;
+        const PLAYBACK_TOO_LARGE: &str = "This recording is too large to play in the app.";
+        if document.byte_length > DOCUMENT_MAX_SOURCE_BYTES {
+            return Err(PLAYBACK_TOO_LARGE.into());
+        }
+        let mut source = File::open(source_path)
+            .map_err(|_| "Capture library source cannot be read.".to_string())?;
+        let metadata = source
+            .metadata()
+            .map_err(|_| "Capture library source cannot be inspected.".to_string())?;
+        if metadata.len() > DOCUMENT_MAX_SOURCE_BYTES {
+            return Err(PLAYBACK_TOO_LARGE.into());
+        }
+        // Bound the read as well: a source can grow after its metadata was checked.
+        let mut bytes = Vec::new();
+        (&mut source)
+            .take(DOCUMENT_MAX_SOURCE_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|_| "Capture library source cannot be read.".to_string())?;
+        if bytes.len() as u64 > DOCUMENT_MAX_SOURCE_BYTES {
+            return Err(PLAYBACK_TOO_LARGE.into());
+        }
         Ok(LibrarySourcePayload {
             document_id: document.document_id,
             file_name: document.file_name,
@@ -772,4 +812,30 @@ mod export_text_tests {
         );
         assert_eq!(export_text(&json!({})), None);
     }
+}
+
+#[cfg(windows)]
+fn available_space(directory: &Path) -> Result<Option<u64>, String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
+    let path: Vec<u16> = directory.as_os_str().encode_wide().chain(Some(0)).collect();
+    let mut free = 0;
+    // The library already exists; Windows resolves its containing volume.
+    let success = unsafe {
+        GetDiskFreeSpaceExW(
+            path.as_ptr(),
+            &mut free,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    };
+    if success == 0 {
+        return Err("Free disk space cannot be checked.".into());
+    }
+    Ok(Some(free))
+}
+
+#[cfg(not(windows))]
+fn available_space(_directory: &Path) -> Result<Option<u64>, String> {
+    Ok(None)
 }

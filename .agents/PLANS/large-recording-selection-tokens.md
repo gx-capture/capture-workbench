@@ -45,7 +45,7 @@ A rejection carries a reason code only, never a name or a path; the renderer tur
 
 1. `symlink_metadata`: reject symlinks, junctions and anything that is not a regular file.
 2. `canonicalize`, then require a local disk path: the first component is a verbatim drive prefix. UNC, device and volume-GUID paths are `NotLocal`. A drive whose type is remote, unknown or without a root is also `NotLocal` (`GetDriveTypeW`, feature flags on the existing `windows-sys` dependency).
-3. Open the canonical path once; take the length from the handle. Empty is `Empty`; over the limit for the kind is `TooLarge` (the limit stays 50 MiB until slice 7).
+3. Open the canonical path once; take the length from the handle. Empty is `Empty`; over the limit for the kind (recordings 2 GiB, PDF and image 50 MiB) is `TooLarge`.
 4. Read a prefix, check the base name, verify the signature against the extension. The `Documents` kind accepts PDF, PNG and JPEG only.
 
 `LibraryStore::import_opened(source, options)` imports from the handle (slice 5's streaming copy) and fails with "Selected source changed during import." when the length or the signature no longer matches.
@@ -72,7 +72,7 @@ After slice 6:
   "core:event:deny-emit", "core:event:deny-emit-to", "dialog:deny-open"]
 ```
 
-After slice 7, once a packaged run shows the renderer calls nothing in `core:*`: drop `core:default` and add the remaining `dialog:deny-*` entries. The denies stay so that re-adding a default set later cannot restore them silently. Never granted: `fs:*`, asset-protocol scopes, path-to-URL conversion.
+In slice 8 of the import plan, once a packaged run shows the renderer calls nothing in `core:*`: drop `core:default` and add the remaining `dialog:deny-*` entries. The denies stay so that re-adding a default set later cannot restore them silently. Never granted: `fs:*`, asset-protocol scopes, path-to-URL conversion.
 
 ### Renderer
 
@@ -98,5 +98,5 @@ Set `dragDropEnabled` to `false` for the window: Rust then sees no drops, the dr
 ## Open points
 
 - OneDrive placeholder files are accepted; opening one downloads it, which can be slow.
-- The 30-minute expiry against batches of multi-GiB recordings is revisited with cancellation in slice 7.
+- A batch imports every selection before its first capture starts, so only the import copies count against the 30-minute expiry; many multi-GiB recordings on a slow disk could still outlast it.
 - Removing `core:default` needs the packaged evidence named above.

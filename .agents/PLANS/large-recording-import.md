@@ -11,8 +11,8 @@ Recommendation: retain v2 chunked ingestion, raise the desktop recording ceiling
 
 | Layer / source kind | Definition and enforcement today |
 |---|---|
-| Desktop, every supported kind | `MAX_SOURCE_BYTES = 50 * 1024 * 1024`: `apps/capture-workbench-desktop/src-tauri/src/library.rs:16`. Byte-input validation rejects empty/oversized inputs: `library/validation.rs:28`. Native import rejects metadata over that limit before reading, then bounds the read: `library/store.rs:201`, `library/store.rs:223`. These last two paths are under the same `src-tauri/src/` directory. |
-| Desktop runtime configuration | The launcher passes 50 MiB as `CAPTURE_MAX_UPLOAD_BYTES`: `apps/capture-workbench-desktop/src-tauri/src/constants/runtime.rs:2`, `apps/capture-workbench-desktop/src-tauri/src/launch_policy.rs:73`. |
+| Desktop, per kind | `max_source_bytes` in `apps/capture-workbench-desktop/src-tauri/src/library.rs`: recordings 2 GiB, PDF and image 50 MiB. The source inspection refuses an empty source or one over 2 GiB before reading it, and a document over 50 MiB once its signature is known: `source_selection/inspect.rs`. The import checks the limit again and bounds the copy: `library/store.rs`. These paths are under the same `src-tauri/src/` directory. |
+| Desktop runtime configuration | The launcher passes 2 GiB as `CAPTURE_MAX_UPLOAD_BYTES`: `apps/capture-workbench-desktop/src-tauri/src/constants/runtime.rs`, `apps/capture-workbench-desktop/src-tauri/src/launch_policy.rs`. |
 | Runtime configuration/readiness | `CAPTURE_MAX_UPLOAD_BYTES` defaults to 50 MiB and is checked only for positivity: `packages/capture-runtime/src/capture_runtime/config.py:250`. Readiness advertises it as `capabilities.maxUploadBytes`: `packages/capture-runtime/src/capture_runtime/provisioning/api/runtime.py:74`. |
 | Production v2 ingestion | Opening an ingestion rejects a declared total over the limit for its kind with 422 `validation_error`, before any record or file exists: recordings (`audio`) up to the configured `max_upload_bytes`, PDF and image up to `min(max_upload_bytes, 50 MiB)`. A source declared `audio` and larger than 50 MiB must start with a recording signature; a chunk that shows otherwise is rejected with 409 `chunk_rejected` and not stored. Recovered records over the limit are pruned unless a capture still uses them: `packages/capture-runtime/src/capture_runtime/capture/domain/size_policy.py`, `packages/capture-runtime/src/capture_runtime/capture/application/use_cases.py`, `packages/capture-runtime/src/capture_runtime/capture/infrastructure/streaming_repository.py`. |
 | Ingestion chunks | Maximum 4 MiB per chunk: `packages/capture-runtime/src/capture_runtime/capture/infrastructure/streaming.py:23`. Headers and actual body are checked: `packages/capture-runtime/src/capture_runtime/capture/api/streaming.py:129`, `packages/capture-runtime/src/capture_runtime/capture/api/streaming.py:579`. |
@@ -97,24 +97,20 @@ The public wire contract stays unchanged, but observable admission policy change
 
 ## Implementation slices, in merge order
 
-Merged: the idempotency keys of the recording start (PR #328), slice 1 (the native upload replays a transient failure and hashes while it uploads), slice 2 (the runtime enforces its size limits at admission), slice 3 (a finalized recording is decoded once), slice 4 (the speaker path reads the recording from its file; the workers accept recordings up to 2 GiB), slice 5 (the library import streams to disk) and slice 6 (the native side owns source selection; the renderer handles tokens). The remaining slices keep their numbers.
+Merged: the idempotency keys of the recording start (PR #328), slice 1 (the native upload replays a transient failure and hashes while it uploads), slice 2 (the runtime enforces its size limits at admission), slice 3 (a finalized recording is decoded once), slice 4 (the speaker path reads the recording from its file; the workers accept recordings up to 2 GiB), slice 5 (the library import streams to disk), slice 6 (the native side owns source selection; the renderer handles tokens) and slice 7a (the desktop accepts recordings up to 2 GiB, checks free disk space before an import and does not load a recording over 50 MiB for playback). The remaining slices keep their numbers.
 
 Change mode: edit existing owners, with small private helpers only where needed. Delete renderer path plumbing and obsolete source-text assertions. Size pressure is large across boundaries; avoid a general upload framework or unrelated library rewrite. Each slice below is intended to stay around ten files, including tests.
 
-7. **Activate large recordings. Public contract: no runtime change. Capabilities: final restriction review.**
-   - Raise the desktop limits for recordings to 2 GiB (`apps/capture-workbench-desktop/src-tauri/src/constants/runtime.rs`, the library limit per kind); PDF and image stay at 50 MiB.
-   - Cancel a pending import or upload from the UI (a command with its renderer caller), with cooperative cancellation in the native upload.
-   - Keep playback safe: reject large `library_source_bytes` reads natively before allocation and say in the UI that playback is unavailable (issue #327 covers playing large recordings).
-   - Check free disk space before an import and name the shortage in the error.
-   - Drop `core:default` from the capability once a packaged run shows the renderer calls nothing in `core:*`.
-   - Gates: `pnpm nx run capture-workbench:test`, `pnpm nx run capture-workbench:typecheck`, desktop `cargo-test`/`package-qa-test`, and browser proof.
-   - Visible result: a recording over 50 MiB can be imported and transcribed in the desktop app.
+7. **Cancel an upload. Public contract: no runtime change.** (7b; 7a is merged.)
+   - Cancel a pending upload from the UI (a command with its renderer caller), with cooperative cancellation in the native upload. The library import copy is local and is not cancelled.
+   - Gates: `pnpm nx run capture-workbench:test`, `pnpm nx run capture-workbench:typecheck`, desktop `cargo-test`/`package-qa-test`.
+   - Visible result: cancelling a document while it uploads stops the upload, and the document ends as cancelled.
 
 8. **Crash cleanup, package QA and installed acceptance. Public contract: no. Capabilities: packaged verification.**
    - Edit recovery owners at `packages/capture-runtime/src/capture_runtime/capture/infrastructure/_streaming_persistence.py:99`, `streaming_repository.py:123`, `packages/capture-runtime/src/capture_runtime/app.py:150`, and native library recovery at `apps/capture-workbench-desktop/src-tauri/src/library/store.rs:96`.
    - Reconcile source length with durable accepted-chunk metadata after crashes; remove abandoned import directories, malformed orphan ingestions and worker/window temporary files without touching active work.
-   - Update audio-specific smoke admission at `apps/capture-workbench-desktop/scripts/real-media-model-smoke.ts:752` and `progressive-audio-oracle.ts:269`; retain PDF/image caps. Extend installed acceptance through the native selection route.
-   - Replace obsolete regex assertions about path-based renderer import and fixed launcher size with behavior tests: `apps/capture-workbench-desktop/scripts/desktop-contract.test.ts:510`, `apps/capture-workbench-desktop/scripts/desktop-contract.test.ts:542`.
+   - Extend installed acceptance through the native selection route, with a recording over 50 MiB.
+   - Drop `core:default` from the capability once a packaged run shows the renderer calls nothing in `core:*`.
    - Gates: desktop package QA and affected builds; rebuild runtime plus both speech packs and diarization worker, then run installed acceptance. Packaging definitions are in `packages/capture-runtime/project.json:395`, `packages/capture-runtime/project.json:416`, `packages/capture-runtime/project.json:454`.
    - Visible result: the feature has crash/cancel evidence and works in the installed desktop product, not only source tests.
 
@@ -134,7 +130,7 @@ Change mode: edit existing owners, with small private helpers only where needed.
 ## Disk, memory and cleanup budget
 
 - Today, a recording exists as original + library copy + runtime ingestion; the workers read the ingestion file itself.
-- For a 1 GiB source, target **approximately 2 GiB additional disk** beyond the original: 1 GiB library copy and 1 GiB runtime ingestion, plus small metadata/window files. Reserve/check space on each destination volume with headroom; checks do not replace handling write failures.
+- For a 1 GiB source, target **approximately 2 GiB additional disk** beyond the original: 1 GiB library copy and 1 GiB runtime ingestion, plus small metadata/window files. Before an import the desktop requires free space of twice the source size plus 512 MiB on the library volume, where the runtime's app data also lives (`apps/capture-workbench-desktop/src-tauri/src/library/store.rs`); the check does not replace handling write failures.
 - Target compressed-data buffers of a few MiB, independent of source size. Models/VRAM and transcript growth are separate budgets.
 - At 16 kHz mono, a 90-minute waveform is about 165 MiB as int16 or 330 MiB as float32. Speaker mode retains duration-proportional memory; measure its conversion/model peaks rather than promising a fixed RSS ceiling.
 - Cancel before library publication removes staging; cancel upload deletes unowned ingestion; cancel transcription stops workers before deleting ephemeral source data. A published library copy remains available for retry until explicit user deletion.
@@ -143,9 +139,9 @@ Change mode: edit existing owners, with small private helpers only where needed.
 
 ## Playback scope
 
-Playback currently loads the complete source into the renderer; it uses Blob URLs, not range requests or a recording asset protocol: `apps/capture-workbench/src/app/services/desktop-workspace.store.ts:409`. Loading is user-triggered: `apps/capture-workbench/src/app/history/history-page.html:263`. CSP currently permits Blob media: `apps/capture-workbench-desktop/src-tauri/tauri.conf.json:26`.
+Playback loads the complete source into the renderer through Blob URLs, not range requests or a recording asset protocol, and only for sources up to 50 MiB (`apps/capture-workbench/src/app/services/recording-playback.ts`). Loading is user-triggered from the document page. For a larger recording the page shows that playback is unavailable and keeps the transcript and its timestamps, and `library_source_bytes` refuses the source natively before reading it. CSP permits Blob media: `apps/capture-workbench-desktop/src-tauri/tauri.conf.json:26`.
 
-Full large-recording playback can be a separate issue because #155’s acceptance is import/transcription. The backend size guard and clear UI message belong here so the newly admitted file cannot trigger a giant IPC allocation. Follow-up playback should use a document-ID-bound range service/protocol; never expose the native path.
+Playing large recordings is issue #327. It should use a document-ID-bound range service or protocol and never expose the native path.
 
 ## Security requirements
 

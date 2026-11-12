@@ -56,7 +56,7 @@ test('keyed fixture command delegates to the existing native import validation p
   assert.match(registry, /fs::canonicalize\(source\)/u);
   assert.match(registry, /canonical\.starts_with\(&self\.root\)/u);
   assert.match(registry, /file_type\(\)\.is_symlink\(\)/u);
-  assert.match(registry, /MAX_SOURCE_BYTES/u);
+  assert.match(registry, /max_source_bytes/u);
   assert.match(registry, /extension_allowed_for_key/u);
 });
 
