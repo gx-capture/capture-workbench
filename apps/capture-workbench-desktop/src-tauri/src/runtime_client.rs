@@ -6,9 +6,9 @@ use sha2::{Digest, Sha256};
 use crate::{
     config::BackendConfig,
     contracts::{
-        RuntimeCreateCaptureInput, RuntimeIdInput, RuntimeInstallationStartInput,
-        RuntimeModelInstallationStartInput, RuntimeRequirementInput, RuntimeStreamingCaptureInput,
-        RuntimeStreamingEventsInput,
+        RuntimeCancelUploadInput, RuntimeCreateCaptureInput, RuntimeIdInput,
+        RuntimeInstallationStartInput, RuntimeModelInstallationStartInput, RuntimeRequirementInput,
+        RuntimeStreamingCaptureInput, RuntimeStreamingEventsInput,
     },
     library::{LibraryStore, RuntimeSourceFile, RECORDING_MEDIA_TYPES},
     state::DesktopState,
@@ -18,7 +18,10 @@ const STREAM_CHUNK_BYTES: usize = 1024 * 1024;
 
 mod sse;
 mod transport;
+mod upload_cancellation;
 mod validation;
+
+pub(crate) use upload_cancellation::{Upload, UploadCancellations};
 
 use transport::{
     is_http_rejection, request, request_sse, request_with_headers, request_with_retry, RequestBody,
@@ -146,10 +149,18 @@ pub(crate) fn model_installation(
     )
 }
 
+pub(crate) fn cancel_upload(
+    uploads: &UploadCancellations,
+    input: RuntimeCancelUploadInput,
+) -> Result<(), String> {
+    uploads.request(&input.client_request_id)
+}
+
 pub(crate) fn create_capture(
     state: &DesktopState,
     library: &LibraryStore,
     input: RuntimeCreateCaptureInput,
+    upload: &Upload,
 ) -> Result<Value, String> {
     validate_document_id(&input.document_id)?;
     validate_client_request_id(&input.client_request_id)?;
@@ -178,10 +189,16 @@ pub(crate) fn create_capture(
         "mediaType": source.media_type.clone(),
         "totalBytes": source.bytes,
     }))?;
-    let ingestion_id =
-        upload_ingestion_source(&config, &source, open_body, &input.client_request_id)?;
+    let ingestion_id = upload_ingestion_source(
+        &config,
+        &source,
+        open_body,
+        &input.client_request_id,
+        upload,
+    )?;
     let capture_body =
         capture_start_body(&input.client_request_id, &ingestion_id, pdf_page_numbers);
+    cancel_before_capture_start(&config, &ingestion_id, upload)?;
     let result = request_with_retry(
         &config,
         "POST",
@@ -197,6 +214,7 @@ pub(crate) fn start_streaming_capture(
     state: &DesktopState,
     library: &LibraryStore,
     input: RuntimeStreamingCaptureInput,
+    upload: &Upload,
 ) -> Result<Value, String> {
     validate_document_id(&input.document_id)?;
     validate_client_request_id(&input.client_request_id)?;
@@ -207,13 +225,14 @@ pub(crate) fn start_streaming_capture(
         return Err("Progressive capture is available only for recordings.".into());
     }
     let config = state.backend_config()?;
-    start_streaming_capture_inner(&config, &source, &input)
+    start_streaming_capture_inner(&config, &source, &input, upload)
 }
 
 fn start_streaming_capture_inner(
     config: &BackendConfig,
     source: &RuntimeSourceFile,
     input: &RuntimeStreamingCaptureInput,
+    upload: &Upload,
 ) -> Result<Value, String> {
     let open_body = RequestBody {
         bytes: serde_json::to_vec(&json!({
@@ -228,7 +247,7 @@ fn start_streaming_capture_inner(
         content_type: "application/json".into(),
     };
     let ingestion_id =
-        upload_ingestion_source(config, source, open_body, &input.client_request_id)?;
+        upload_ingestion_source(config, source, open_body, &input.client_request_id, upload)?;
     let capture_body = RequestBody {
         bytes: serde_json::to_vec(&json!({
             "clientRequestId": input.client_request_id,
@@ -240,6 +259,7 @@ fn start_streaming_capture_inner(
         .map_err(|_| "Progressive capture request cannot be encoded.".to_string())?,
         content_type: "application/json".into(),
     };
+    cancel_before_capture_start(config, &ingestion_id, upload)?;
     let result = request_with_retry(
         config,
         "POST",
@@ -249,6 +269,24 @@ fn start_streaming_capture_inner(
         &[],
     );
     finish_capture_start(config, &ingestion_id, result)
+}
+
+fn cancel_before_capture_start(
+    config: &BackendConfig,
+    ingestion_id: &str,
+    upload: &Upload,
+) -> Result<(), String> {
+    if let Err(error) = upload.check() {
+        let _ = request(
+            config,
+            "DELETE",
+            &format!("/v2/ingestions/{ingestion_id}"),
+            None,
+            None,
+        );
+        return Err(error);
+    }
+    Ok(())
 }
 
 fn finish_capture_start(
@@ -277,7 +315,9 @@ fn upload_ingestion_source(
     source: &RuntimeSourceFile,
     open_body: RequestBody,
     client_request_id: &str,
+    upload: &Upload,
 ) -> Result<String, String> {
+    upload.check()?;
     let ingestion_request_id = format!("{client_request_id}-ingestion");
     let ingestion = request_with_retry(
         config,
@@ -287,14 +327,16 @@ fn upload_ingestion_source(
         Some(&ingestion_request_id),
         &[],
     )
-    .map_err(|error| error.message)?;
+    .map_err(|error| upload.outcome(error.message))?;
     let ingestion_id = ingestion
         .get("ingestionId")
         .and_then(Value::as_str)
         .ok_or_else(|| "Capture Runtime ingestion response is invalid.".to_string())?;
     validate_opaque_id(ingestion_id)?;
     let result = (|| {
-        let source_digest = upload_source_chunks(config, source, ingestion_id, client_request_id)?;
+        let source_digest =
+            upload_source_chunks(config, source, ingestion_id, client_request_id, upload)?;
+        upload.check()?;
         request_with_retry(
             config,
             "POST",
@@ -317,7 +359,7 @@ fn upload_ingestion_source(
             None,
             None,
         );
-        return Err(error);
+        return Err(upload.outcome(error));
     }
     Ok(ingestion_id.to_string())
 }
@@ -390,6 +432,7 @@ fn upload_source_chunks(
     source: &RuntimeSourceFile,
     ingestion_id: &str,
     request_id: &str,
+    upload: &Upload,
 ) -> Result<String, String> {
     let mut file = std::fs::File::open(&source.path)
         .map_err(|_| "Capture library source cannot be opened for streaming.".to_string())?;
@@ -398,6 +441,7 @@ fn upload_source_chunks(
     let mut chunk_index = 0_u64;
     let mut buffer = vec![0_u8; STREAM_CHUNK_BYTES];
     while offset < source.bytes {
+        upload.check()?;
         let remaining = (source.bytes - offset) as usize;
         let target = remaining.min(STREAM_CHUNK_BYTES);
         file.read_exact(&mut buffer[..target])
@@ -855,6 +899,7 @@ mod tests {
             },
             "ingestion-1",
             "request-1",
+            &test_upload(),
         )
         .expect("upload");
         server.join().expect("server");
@@ -1042,6 +1087,12 @@ mod tests {
         }
     }
 
+    fn test_upload() -> Upload {
+        std::sync::Arc::new(UploadCancellations::default())
+            .begin("test-upload")
+            .expect("upload")
+    }
+
     fn test_backend_config(port: u16) -> BackendConfig {
         BackendConfig {
             base_url: format!("http://127.0.0.1:{port}"),
@@ -1133,6 +1184,192 @@ mod tests {
     }
 
     #[test]
+    fn cancel_upload_command_accepts_unknown_ids_and_rejects_invalid_ids() {
+        let registry = std::sync::Arc::new(UploadCancellations::default());
+        // A cancel that overtakes its start command is kept for that upload.
+        cancel_upload(
+            &registry,
+            RuntimeCancelUploadInput {
+                client_request_id: "early-upload".into(),
+            },
+        )
+        .expect("unknown upload accepted");
+        assert_eq!(
+            registry
+                .begin("early-upload")
+                .expect("upload")
+                .check()
+                .unwrap_err(),
+            "Upload was cancelled."
+        );
+        let upload = registry.begin("active-upload").expect("new upload");
+        assert!(cancel_upload(
+            &registry,
+            RuntimeCancelUploadInput {
+                client_request_id: "invalid/id".into(),
+            }
+        )
+        .is_err());
+        upload
+            .check()
+            .expect("rejected cancellation leaves active uploads unchanged");
+    }
+
+    #[test]
+    fn recording_path_cancellation_boundaries_and_registry_cleanup() {
+        // The server marks cancellation before closing a response, so the next
+        // client request observes it deterministically, without sleeps.
+        for boundary in [
+            "open", "chunk", "chunk-1", "finalize", "capture", "failure", "success",
+        ] {
+            let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("listener");
+            let config = test_backend_config(listener.local_addr().expect("address").port());
+            let (_guard, source) = create_test_source_file(
+                "cancel-upload",
+                &vec![b'x'; STREAM_CHUNK_BYTES + 1],
+                "audio/mpeg",
+            );
+            let input = RuntimeStreamingCaptureInput {
+                document_id: "0123456789abcdef0123456789abcdef".into(),
+                client_request_id: "cancel-boundary".into(),
+                structuring_mode: "host".into(),
+                identify_speakers: false,
+            };
+            let registry = std::sync::Arc::new(UploadCancellations::default());
+            let server_registry = std::sync::Arc::clone(&registry);
+            let server = thread::spawn(move || {
+                let mut steps = vec![("POST /v2/ingestions HTTP/1.1", "open")];
+                if boundary != "open" {
+                    steps.push((
+                        "PUT /v2/ingestions/ingestion-cancel/chunks/0 HTTP/1.1",
+                        "chunk",
+                    ));
+                }
+                if !matches!(boundary, "open" | "chunk" | "failure") {
+                    steps.push((
+                        "PUT /v2/ingestions/ingestion-cancel/chunks/1 HTTP/1.1",
+                        "chunk-1",
+                    ));
+                    if boundary != "chunk-1" {
+                        steps.push((
+                            "POST /v2/ingestions/ingestion-cancel/finalize HTTP/1.1",
+                            "finalize",
+                        ));
+                    }
+                }
+                if matches!(boundary, "capture" | "success") {
+                    steps.push(("POST /v2/captures HTTP/1.1", "capture"));
+                } else {
+                    steps.push(("DELETE /v2/ingestions/ingestion-cancel HTTP/1.1", "delete"));
+                }
+                for (expected, step) in steps {
+                    let (mut stream, _) = listener.accept().expect("accept");
+                    let request = read_http_request(&mut stream);
+                    assert!(
+                        request.starts_with(expected),
+                        "unexpected request at {boundary}/{step}"
+                    );
+                    if boundary == step {
+                        server_registry.request("cancel-boundary").expect("cancel");
+                    }
+                    let (status, body) = match step {
+                        "open" => ("201 Created", r#"{"ingestionId":"ingestion-cancel"}"#),
+                        "capture" => (
+                            "201 Created",
+                            r#"{"captureId":"capture-cancel","status":"queued"}"#,
+                        ),
+                        "chunk" if boundary == "failure" => ("422 Unprocessable Entity", "{}"),
+                        _ => ("200 OK", "{}"),
+                    };
+                    write!(stream, "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).expect("response");
+                    drop(stream);
+                }
+                listener.set_nonblocking(true).expect("nonblocking");
+                assert!(listener.accept().is_err(), "no additional request");
+            });
+            let result = (|| {
+                let upload = registry.begin(&input.client_request_id)?;
+                start_streaming_capture_inner(&config, &source, &input, &upload)
+            })();
+            server.join().expect("server");
+            match boundary {
+                "capture" | "success" => assert_eq!(
+                    result.expect("capture succeeds")["captureId"],
+                    "capture-cancel"
+                ),
+                "failure" => assert!(result.is_err()),
+                _ => assert_eq!(
+                    result.expect_err("upload cancelled"),
+                    "Upload was cancelled."
+                ),
+            }
+            // A live duplicate is rejected; reuse after every outcome proves removal.
+            let reused = registry
+                .begin(&input.client_request_id)
+                .expect("entry removed");
+            assert!(registry.begin(&input.client_request_id).is_err());
+            reused.check().expect("late cancellation is not retained");
+        }
+    }
+
+    #[test]
+    fn recording_path_cancelled_during_chunk_retries_reports_the_cancellation() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("listener");
+        let config = test_backend_config(listener.local_addr().expect("address").port());
+        let (_guard, source) = create_test_source_file("cancel-retry", b"ID3audio", "audio/mpeg");
+        let input = RuntimeStreamingCaptureInput {
+            document_id: "0123456789abcdef0123456789abcdef".into(),
+            client_request_id: "cancel-retry".into(),
+            structuring_mode: "host".into(),
+            identify_speakers: false,
+        };
+        let registry = std::sync::Arc::new(UploadCancellations::default());
+        let server_registry = std::sync::Arc::clone(&registry);
+        let server = thread::spawn(move || {
+            let chunk = "PUT /v2/ingestions/ingestion-retry/chunks/0 HTTP/1.1";
+            let steps = [
+                ("POST /v2/ingestions HTTP/1.1", "201 Created"),
+                (chunk, "503 Service Unavailable"),
+                (chunk, "503 Service Unavailable"),
+                (chunk, "503 Service Unavailable"),
+                ("DELETE /v2/ingestions/ingestion-retry HTTP/1.1", "200 OK"),
+            ];
+            for (index, (expected, status)) in steps.into_iter().enumerate() {
+                let (mut stream, _) = listener.accept().expect("accept");
+                let request = read_http_request(&mut stream);
+                assert!(request.starts_with(expected), "unexpected request {index}");
+                if index == 1 {
+                    // The user cancels while the first attempt fails transiently.
+                    server_registry.request("cancel-retry").expect("cancel");
+                }
+                let body = if index == 0 {
+                    r#"{"ingestionId":"ingestion-retry"}"#
+                } else {
+                    "{}"
+                };
+                write!(
+                    stream,
+                    "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .expect("response");
+                drop(stream);
+            }
+            listener.set_nonblocking(true).expect("nonblocking");
+            assert!(listener.accept().is_err(), "no additional request");
+        });
+        let result = (|| {
+            let upload = registry.begin(&input.client_request_id)?;
+            start_streaming_capture_inner(&config, &source, &input, &upload)
+        })();
+        server.join().expect("server");
+        assert_eq!(
+            result.expect_err("upload cancelled"),
+            "Upload was cancelled."
+        );
+    }
+
+    #[test]
     fn recording_path_sends_required_idempotency_keys_and_returns_capture_json() {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("listener");
         let port = listener.local_addr().expect("address").port();
@@ -1194,8 +1431,8 @@ mod tests {
             (ingestion_key, capture_key)
         });
 
-        let result =
-            start_streaming_capture_inner(&config, &source, &input).expect("capture call succeeds");
+        let result = start_streaming_capture_inner(&config, &source, &input, &test_upload())
+            .expect("capture call succeeds");
         let (ingestion_key, capture_key) = server.join().expect("server thread");
 
         assert_eq!(result["captureId"], "capture-stream-1");
@@ -1232,7 +1469,7 @@ mod tests {
             .expect("write response");
         });
 
-        let error = start_streaming_capture_inner(&config, &source, &input)
+        let error = start_streaming_capture_inner(&config, &source, &input, &test_upload())
             .expect_err("should reject invalid ingestionId");
         assert_eq!(error, "Capture Runtime identifier is invalid.");
         server.join().expect("server thread");
@@ -1312,7 +1549,7 @@ mod tests {
             .expect("write delete response");
         });
 
-        let error = start_streaming_capture_inner(&config, &source, &input)
+        let error = start_streaming_capture_inner(&config, &source, &input, &test_upload())
             .expect_err("capture start should fail");
         assert!(error.contains("HTTP 500"));
         server.join().expect("server thread");
@@ -1408,7 +1645,7 @@ mod tests {
             // forbidden extra request is observed rather than connection-refused.
             listener
         });
-        let result = start_streaming_capture_inner(&config, &source, &input);
+        let result = start_streaming_capture_inner(&config, &source, &input, &test_upload());
         let listener = server.join().expect("server");
         assert!(listener.accept().is_err(), "unexpected additional request");
         if succeeds {

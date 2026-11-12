@@ -94,6 +94,9 @@ describe('CaptureQueueStore', () => {
     await settle();
 
     harness.store.cancel('b'.repeat(32));
+    // The upload was still running, so its native cancel is asked for first.
+    expect(harness.runtime.cancelUpload).toHaveBeenCalledTimes(1);
+    // If the capture is created anyway, it is cancelled through the runtime.
     harness.created.next(runningJob());
     await settle();
 
@@ -313,6 +316,7 @@ function configure(options: { readonly ocrReady: boolean; readonly job?: Desktop
     createCapture: vi.fn(() => options.job ? of(options.job) : created),
     getCapture: vi.fn(() => new Subject<DesktopCaptureOperation>()),
     cancelCapture: vi.fn(() => new Subject<DesktopCaptureOperation>()),
+    cancelUpload: vi.fn(() => of(undefined)),
     getRaw: vi.fn(() => of(null)),
     getOcr: vi.fn(() => new Subject()),
     deleteCapture: vi.fn(() => of(undefined)),

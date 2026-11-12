@@ -148,6 +148,12 @@ export class DesktopRuntimeClientService {
     return this.commands.invoke('runtime_get_model_installation', { input: { id: installationId } }, signal);
   }
 
+  cancelUpload(clientRequestId: string): Observable<void> {
+    return this.commands.invoke<null>('runtime_cancel_upload', {
+      input: { clientRequestId },
+    }).pipe(map(() => undefined));
+  }
+
   createCapture(
     documentId: string,
     clientRequestId: string,

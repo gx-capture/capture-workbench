@@ -11,9 +11,9 @@ use crate::{
     contracts::{
         LibraryCaptureUpdate, LibraryDocumentDetail, LibraryDocumentRequest,
         LibraryDocumentSummary, LibraryExportPayload, LibraryExportRequest, LibraryListRequest,
-        RuntimeCreateCaptureInput, RuntimeIdInput, RuntimeInstallationStartInput,
-        RuntimeModelInstallationStartInput, RuntimeRequirementInput, RuntimeStreamingCaptureInput,
-        RuntimeStreamingEventsInput,
+        RuntimeCancelUploadInput, RuntimeCreateCaptureInput, RuntimeIdInput,
+        RuntimeInstallationStartInput, RuntimeModelInstallationStartInput, RuntimeRequirementInput,
+        RuntimeStreamingCaptureInput, RuntimeStreamingEventsInput,
     },
     library::LibraryStore,
     resources::RuntimeAssets,
@@ -353,26 +353,41 @@ pub(crate) async fn runtime_get_model_installation(
 }
 
 #[tauri::command]
+pub(crate) async fn runtime_cancel_upload(
+    uploads: tauri::State<'_, Arc<runtime_client::UploadCancellations>>,
+    input: RuntimeCancelUploadInput,
+) -> Result<(), String> {
+    runtime_client::cancel_upload(uploads.inner().as_ref(), input)
+}
+
+#[tauri::command]
 pub(crate) async fn runtime_create_capture(
     state: tauri::State<'_, DesktopState>,
     library: tauri::State<'_, Arc<LibraryStore>>,
+    uploads: tauri::State<'_, Arc<runtime_client::UploadCancellations>>,
     input: RuntimeCreateCaptureInput,
 ) -> Result<serde_json::Value, String> {
     let state = state.inner().clone();
     let library = Arc::clone(library.inner());
-    run_blocking(move || runtime_client::create_capture(&state, library.as_ref(), input)).await
+    let upload = uploads.begin(&input.client_request_id)?;
+    run_blocking(move || runtime_client::create_capture(&state, library.as_ref(), input, &upload))
+        .await
 }
 
 #[tauri::command]
 pub(crate) async fn runtime_start_streaming_capture(
     state: tauri::State<'_, DesktopState>,
     library: tauri::State<'_, Arc<LibraryStore>>,
+    uploads: tauri::State<'_, Arc<runtime_client::UploadCancellations>>,
     input: RuntimeStreamingCaptureInput,
 ) -> Result<serde_json::Value, String> {
     let state = state.inner().clone();
     let library = Arc::clone(library.inner());
-    run_blocking(move || runtime_client::start_streaming_capture(&state, library.as_ref(), input))
-        .await
+    let upload = uploads.begin(&input.client_request_id)?;
+    run_blocking(move || {
+        runtime_client::start_streaming_capture(&state, library.as_ref(), input, &upload)
+    })
+    .await
 }
 
 #[tauri::command]

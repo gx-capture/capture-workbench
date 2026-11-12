@@ -122,6 +122,28 @@ describe('DesktopRuntimeClientService', () => {
     expect(commands.invoke).toHaveBeenCalledWith('runtime_requirements', {}, undefined);
   });
 
+  it('marks native upload cancellation with the original client request id', () => {
+    const commands = {
+      invoke: vi.fn((command: string) => command === 'desktop_runtime_status'
+        ? of({ status: 'ready', detail: 'Runtime ready' })
+        : command === 'runtime_ready' ? of(readyPayload) : of(null)),
+    };
+    TestBed.configureTestingModule({
+      providers: [
+        { provide: DesktopTauriCommandService, useValue: commands },
+        DesktopRuntimeClientService,
+      ],
+    });
+    const service = TestBed.inject(DesktopRuntimeClientService);
+    let completed = false;
+    service.cancelUpload('pending-upload').subscribe(() => completed = true);
+
+    expect(completed).toBe(true);
+    expect(commands.invoke).toHaveBeenCalledWith('runtime_cancel_upload', {
+      input: { clientRequestId: 'pending-upload' },
+    });
+  });
+
   it('accepts only an ordered PDF page scope advertised by the native acceptance seam', () => {
     const commands = {
       invoke: vi.fn((command: string) => command === 'desktop_runtime_status'

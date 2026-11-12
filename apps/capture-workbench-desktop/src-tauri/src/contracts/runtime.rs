@@ -52,3 +52,9 @@ pub(crate) struct RuntimeIdInput {
 pub(crate) struct RuntimeRequirementInput {
     pub requirement_id: String,
 }
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RuntimeCancelUploadInput {
+    pub client_request_id: String,
+}

@@ -1585,6 +1585,46 @@ describe('DesktopWorkspaceStore', () => {
     },
   );
 
+  it.each(['application/pdf', 'audio/mpeg'])(
+    'cancels a pending %s upload once and records a cancelled document',
+    (mediaType) => {
+      const pending = new Subject<CaptureOperation>();
+      const createCapture = vi.fn((_documentId: string, _clientRequestId: string) => pending);
+      const startStreamingCapture = vi.fn((_input: { clientRequestId: string }) => pending);
+      const cancelUpload = vi.fn(() => of(undefined));
+      const updateCapture = vi.fn((update: Record<string, unknown>) =>
+        of({ ...summary, mediaType, ...update } as DesktopLibrarySummary));
+      const client = runtimeStub({ createCapture, startStreamingCapture, cancelUpload });
+      const store = initializeStore(libraryStub({
+        get: vi.fn(() => of({ ...summary, mediaType })),
+        list: vi.fn(() => of([{ ...summary, mediaType }])),
+        updateCapture,
+      }), client);
+
+      store.retry(summary.documentId);
+      const requestId = mediaType === 'audio/mpeg'
+        ? startStreamingCapture.mock.calls[0][0].clientRequestId
+        : createCapture.mock.calls[0][1];
+      store.cancel(summary.documentId);
+      store.cancel(summary.documentId);
+
+      expect(cancelUpload).toHaveBeenCalledOnce();
+      expect(cancelUpload).toHaveBeenCalledWith(requestId);
+      pending.error(new Error('Upload was cancelled.'));
+      TestBed.tick();
+
+      expect(captureUpdates(updateCapture)).toContainEqual({
+        documentId: summary.documentId,
+        status: 'canceled',
+        stage: 'cancelled',
+        clearCaptureId: true,
+      });
+      expect(captureUpdates(updateCapture).some((update) => update['status'] === 'failed')).toBe(false);
+      expect(store.busyIds().has(summary.documentId)).toBe(false);
+      expect(client.cancelCapture).not.toHaveBeenCalled();
+    },
+  );
+
   it('remembers repeated cancel clicks before create resolves and sends one independent request', () => {
     const created = new Subject<CaptureOperation>();
     const cancelCapture = vi.fn(() => of(cancelledJob));
@@ -1631,6 +1671,7 @@ describe('DesktopWorkspaceStore', () => {
       TestBed.tick();
 
       expect(cancelCapture).toHaveBeenCalledOnce();
+      expect(client.cancelUpload).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
     }
@@ -2465,6 +2506,7 @@ function runtimeStub(overrides: Record<string, unknown> = {}) {
     cancelInstallation: vi.fn(),
     startModelInstallation: vi.fn(),
     getModelInstallation: vi.fn(),
+    cancelUpload: vi.fn(() => of(undefined)),
     createCapture: vi.fn(() => of(completedJob)),
     getCapture: vi.fn(() => of(completedJob)),
     cancelCapture: vi.fn(() => of(cancelledJob)),
