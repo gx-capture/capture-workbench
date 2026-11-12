@@ -2235,7 +2235,6 @@ describe('DesktopWorkspaceStore', () => {
       stage: 'completed',
     } satisfies DesktopLibrarySummary;
     const deleteDocument = vi.fn(() => of(undefined));
-    const confirm = vi.spyOn(globalThis, 'confirm').mockReturnValue(true);
     const store = initializeStore(
       libraryStub({
         list: vi.fn(() => of([first, second])),
@@ -2249,13 +2248,11 @@ describe('DesktopWorkspaceStore', () => {
     expect(deleteDocument).toHaveBeenCalledOnce();
     expect(deleteDocument).toHaveBeenCalledWith(second.documentId);
     expect(deleteDocument).not.toHaveBeenCalledWith(first.documentId);
-    confirm.mockRestore();
   });
 
   it('blocks direct deletion while a native capture is active', () => {
     const pendingCapture = new Subject<CaptureOperation>();
     const deleteDocument = vi.fn(() => of(undefined));
-    const confirm = vi.spyOn(globalThis, 'confirm').mockReturnValue(true);
     const library = libraryStub({
       createSource: vi.fn(() => of(summary)),
       delete: deleteDocument,
@@ -2270,9 +2267,7 @@ describe('DesktopWorkspaceStore', () => {
     store.delete(summary.documentId);
 
     expect(deleteDocument).not.toHaveBeenCalled();
-    expect(confirm).not.toHaveBeenCalled();
     pendingCapture.complete();
-    confirm.mockRestore();
   });
 
   it('refreshes the selected document after processing and runtime ID updates', () => {
@@ -2300,7 +2295,6 @@ describe('DesktopWorkspaceStore', () => {
       captureId: 'capture-retained',
     } satisfies DesktopLibrarySummary;
     const deleteDocument = vi.fn(() => of(undefined));
-    const confirm = vi.spyOn(globalThis, 'confirm').mockReturnValue(true);
     const store = initializeStore(
       libraryStub({
         list: vi.fn(() => of([retained])),
@@ -2312,8 +2306,6 @@ describe('DesktopWorkspaceStore', () => {
     store.delete(retained.documentId);
 
     expect(deleteDocument).not.toHaveBeenCalled();
-    expect(confirm).not.toHaveBeenCalled();
-    confirm.mockRestore();
   });
 });
 

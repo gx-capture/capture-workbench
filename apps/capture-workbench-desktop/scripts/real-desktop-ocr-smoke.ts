@@ -2667,22 +2667,13 @@ async function deleteCompletedDocument(
     fileName,
     'Standalone desktop cleanup must verify the exact selected filename.',
   );
-  // The Tauri WebView routes globalThis.confirm to plugin:dialog|confirm, which
-  // is blocked by the packaged ACL and opens a native dialog Playwright cannot
-  // accept. Override only the page-scoped confirm so cleanup stays deterministic.
-  await page.evaluate(() => {
-    Object.defineProperty(globalThis, 'confirm', {
-      configurable: true,
-      writable: true,
-      value: () => true,
-    });
-  });
   await waitUntil(
     () => detailPane.locator('button.danger').last().isEnabled().then((enabled) => enabled || undefined),
     30_000,
     'Standalone desktop smoke cleanup delete action remained disabled.',
   );
   await detailPane.getByRole('button', { name: '刪除', exact: true }).click();
+  await page.getByTestId('document-delete-confirm').click();
   await card.waitFor({ state: 'hidden', timeout: 30_000 });
   return true;
 }

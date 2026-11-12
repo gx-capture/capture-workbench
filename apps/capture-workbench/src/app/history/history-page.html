@@ -351,7 +351,7 @@
         }
         <button mat-stroked-button type="button" [disabled]="!item.result" (click)="store.export(item.documentId, 'text')">{{ m().exportText }}</button>
         <button mat-stroked-button type="button" [disabled]="!item.result" (click)="store.export(item.documentId, 'json')">{{ m().exportJson }}</button>
-        <button mat-button type="button" class="danger" data-testid="document-delete" [attr.data-document-id]="item.documentId" [disabled]="store.busyIds().has(item.documentId) || !!item.captureId" (click)="store.delete(item.documentId)">{{ m().delete }}</button>
+        <button mat-button type="button" class="danger" data-testid="document-delete" [attr.data-document-id]="item.documentId" [disabled]="store.busyIds().has(item.documentId) || !!item.captureId" (click)="askDelete(item)">{{ m().delete }}</button>
         @if (store.busyIds().has(item.documentId)) {
           <small>{{ m().cancelFirst }}</small>
         } @else if (item.captureId) {
@@ -365,4 +365,49 @@
       </div>
     }
   </aside>
+
+  <brn-alert-dialog
+    [state]="deleteDialogState()"
+    (stateChanged)="onDeleteDialogState($event)"
+  >
+    <brn-alert-dialog-overlay class="bg-foreground/40" />
+    <ng-template brnAlertDialogContent>
+      @if (pendingDelete(); as pending) {
+        <div
+          class="bg-popover text-popover-foreground w-[min(28rem,calc(100vw-2rem))] rounded-xl p-6 shadow-lg"
+          data-testid="document-delete-dialog"
+        >
+          <h2 brnAlertDialogTitle class="text-lg font-semibold">
+            {{ m().confirmDelete }}
+          </h2>
+          <p brnAlertDialogDescription class="text-muted-foreground mt-2 text-sm">
+            {{ pending.fileName }}
+          </p>
+          <div class="mt-6 flex justify-end gap-2">
+            <button
+              hlmBtn
+              type="button"
+              variant="outline"
+              size="sm"
+              brnDialogClose
+              data-testid="document-delete-cancel"
+              (click)="cancelDelete()"
+            >
+              {{ m().confirmDeleteCancel }}
+            </button>
+            <button
+              hlmBtn
+              type="button"
+              variant="destructive"
+              size="sm"
+              data-testid="document-delete-confirm"
+              (click)="confirmDelete()"
+            >
+              {{ m().delete }}
+            </button>
+          </div>
+        </div>
+      }
+    </ng-template>
+  </brn-alert-dialog>
 </div>
