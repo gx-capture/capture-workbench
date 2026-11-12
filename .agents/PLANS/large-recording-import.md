@@ -40,8 +40,8 @@ A host that sends a recording over its configured `maxUploadBytes` is refused wh
 
 1. The renderer calls the dialog plugin and receives native path strings. Tauri drops also deliver `event.payload.paths`; neither flow uses opaque tokens: `apps/capture-workbench/src/app/services/desktop-library.service.ts:33`, `apps/capture-workbench/src/app/services/desktop-library.service.ts:59`.
 2. Those strings cross IPC as `LibraryImportSourceRequest.source_path`: `apps/capture-workbench/src/app/services/desktop-library.service.ts:81`, `apps/capture-workbench-desktop/src-tauri/src/contracts/library.rs:512`.
-3. Rust rejects a final-component symlink/non-file, canonicalizes, compares metadata, reads the complete file into a `Vec`, and verifies signature/extension: `apps/capture-workbench-desktop/src-tauri/src/library/store.rs:195`, `apps/capture-workbench-desktop/src-tauri/src/library/store.rs:218`.
-4. Import creates a new library item and writes a copy as `<app-data>/library/items/<document-id>/source.bin`. It does not hash or deduplicate that import. Atomic writing uses a temporary filename and rename: `apps/capture-workbench-desktop/src-tauri/src/library/store.rs:96`, `apps/capture-workbench-desktop/src-tauri/src/library/store.rs:141`, `apps/capture-workbench-desktop/src-tauri/src/library/filesystem.rs:7`.
+3. Rust rejects a final-component symlink/non-file, canonicalizes, opens the file once, takes the length from the handle, reads a 512-byte prefix and verifies signature/extension: `apps/capture-workbench-desktop/src-tauri/src/library/store.rs` (`import_source`).
+4. Import streams the file in 1 MiB blocks to `<app-data>/library/staging/<random id>`, counting bytes (more or fewer than the length seen is "changed during import"), then creates the item and renames the staged file to `<app-data>/library/items/<document-id>/source.bin` and saves the index; a failure removes the staged file and the item directory. It does not hash or deduplicate. Startup removes staging entries untouched for an hour and never touches `items/`, because another running instance shares the directory.
 5. Audio uses `runtime_start_streaming_capture`; PDF/image use `runtime_create_capture`. Both native implementations already upload the stored file through v2 ingestion: `apps/capture-workbench/src/app/services/desktop-workspace-capture.service.ts:286`, `apps/capture-workbench-desktop/src-tauri/src/runtime_client.rs:147`, `apps/capture-workbench-desktop/src-tauri/src/runtime_client.rs:226`.
 6. Native upload reads sequential **1 MiB chunks**, copies each into the HTTP request, sends range/digest/idempotency headers, then rereads the file to compute final SHA-256. It does not buffer the complete upload: `apps/capture-workbench-desktop/src-tauri/src/runtime_client.rs:373`, `apps/capture-workbench-desktop/src-tauri/src/runtime_client.rs:442`.
 7. The native transport has 60-second socket timeouts and no retry loop. Failed upload/finalize/start triggers best-effort ingestion deletion: `apps/capture-workbench-desktop/src-tauri/src/runtime_client/transport.rs:17`, `apps/capture-workbench-desktop/src-tauri/src/runtime_client/transport.rs:44`, `apps/capture-workbench-desktop/src-tauri/src/runtime_client.rs:298`.
@@ -55,7 +55,7 @@ A host that sends a recording over its configured `maxUploadBytes` is refused wh
 
 ## Whole-file memory inventory
 
-- Rust import: complete compressed `Vec`; library byte retrieval: complete compressed `Vec` and IPC response. Evidence: `apps/capture-workbench-desktop/src-tauri/src/library/store.rs:220`, `apps/capture-workbench-desktop/src-tauri/src/library/store.rs:390`, `apps/capture-workbench-desktop/src-tauri/src/commands.rs:200`.
+- Library byte retrieval (playback): complete compressed `Vec` and IPC response. Evidence: `apps/capture-workbench-desktop/src-tauri/src/library/store.rs` (`load_source`), `apps/capture-workbench-desktop/src-tauri/src/commands.rs` (`library_source_bytes`). The import itself holds 1 MiB.
 - Renderer playback: complete `ArrayBuffer` and Blob-backed object URL. Evidence: `apps/capture-workbench/src/app/services/desktop-workspace.store.ts:409`.
 - Buffered runtime extraction: complete compressed Python `bytes`, including speaker mode and PDF/image. Evidence: `packages/capture-runtime/src/capture_runtime/capture/application/streaming_capture_service.py:570`.
 - Whole-recording speech: all decoded pieces, concatenated waveform, float32 conversion; inference subsequently chunks audio, but decoding already holds the whole waveform. Evidence: `packages/capture-runtime/src/capture_runtime/speech/infrastructure/speech_recognition.py:334`, `packages/capture-runtime/src/capture_runtime/speech/infrastructure/speech_recognition.py:351`, `packages/capture-runtime/src/capture_runtime/speech/infrastructure/speech_recognition.py:45`.
@@ -98,7 +98,7 @@ The public wire contract stays unchanged, but observable admission policy change
 
 ## Implementation slices, in merge order
 
-Merged: the idempotency keys of the recording start (PR #328), slice 2 (the runtime enforces its size limits at admission) and slice 3 (a finalized recording is decoded once). The remaining slices keep their numbers.
+Merged: the idempotency keys of the recording start (PR #328), slice 2 (the runtime enforces its size limits at admission), slice 3 (a finalized recording is decoded once) and slice 5 (the library import streams to disk). The remaining slices keep their numbers.
 
 Change mode: edit existing owners, with small private helpers only where needed. Delete renderer path plumbing and obsolete source-text assertions. Size pressure is large across boundaries; avoid a general upload framework or unrelated library rewrite. Each slice below is intended to stay around ten files, including tests.
 
@@ -118,14 +118,6 @@ Change mode: edit existing owners, with small private helpers only where needed.
    - Add mocked-worker path/size tests and speaker-mode cancellation/cleanup tests; verify optional speakers do not restore compressed-file buffering.
    - Gates: `pnpm nx run capture-runtime:test`, `pnpm nx run capture-runtime:lint-architecture`, `pnpm nx run capture-runtime:check-contracts`.
    - Visible result: large recording transcription can also support speaker identification within the duration budget.
-
-5. **Make library import a bounded disk transaction. Public contract: no. Capabilities: no.**
-   - Edit `apps/capture-workbench-desktop/src-tauri/src/library/store.rs:185`, `library/validation.rs:74`, `library/filesystem.rs:7`, and `library.rs:16`.
-   - Verify prefix/type first, stream an opened regular file into a private staging item, enforce count during copying, then atomically publish the item/index. Keep activation at 50 MiB in this slice.
-   - Preserve the existing library copy and basename behavior.
-   - Add disk-full, mutation, cancellation, exact-limit, symlink/reparse, failed-index-publication, and restart-orphan tests beside `apps/capture-workbench-desktop/src-tauri/src/library.rs:1188`.
-   - Gates: desktop `cargo-test`, `cargo-fmt-check`, and `package-qa-test` through `pnpm nx run`.
-   - Visible result: import memory is independent of compressed file size; interrupted imports do not publish partial documents.
 
 6. **Move selection authority into Rust. Public contract: desktop IPC changes only. Capabilities: YES, line-by-line review.** Design: [large-recording-selection-tokens.md](large-recording-selection-tokens.md).
    - Rust opens the dialog and receives drops; the renderer gets selection tokens with a base name, size and media type; importing consumes a token. The workspace picker, the OCR picker and the drop all move in this slice, and the path command `library_import_source` is removed with them.

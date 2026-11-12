@@ -489,14 +489,6 @@ fn format_bounded_confidence(value: f64) -> String {
     format!("{integer}.{fraction}")
 }
 
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct LibrarySourceInput {
-    pub file_name: String,
-    pub media_type: String,
-    pub bytes: Vec<u8>,
-}
-
 /// Options stored with a file before a capture starts.
 ///
 /// `pdf_page_count` is the only value this host sends: pages `1..=K`.

@@ -473,7 +473,7 @@ test('blocking native I/O is isolated behind async Tauri commands', async () => 
 
 test('native source import keeps path IPC in the library service', async () => {
   const workspaceRoot = join(appRoot, '..', '..');
-  const [renderer, contracts, library, capability, desktopHost] =
+  const [renderer, contracts, capability, desktopHost] =
     await Promise.all([
       readFile(
         join(
@@ -491,7 +491,6 @@ test('native source import keeps path IPC in the library service', async () => {
         join(appRoot, 'src-tauri', 'src', 'contracts', 'library.rs'),
         'utf8',
       ),
-      readFile(join(appRoot, 'src-tauri', 'src', 'library.rs'), 'utf8'),
       readFile(
         join(appRoot, 'src-tauri', 'capabilities', 'default.json'),
         'utf8',
@@ -522,9 +521,6 @@ test('native source import keeps path IPC in the library service', async () => {
   )?.groups?.['body'];
   assert.ok(summary);
   assert.doesNotMatch(summary, /path|bytes/u);
-  assert.match(library, /fs::canonicalize/u);
-  assert.match(library, /take\(MAX_SOURCE_BYTES as u64 \+ 1\)/u);
-  assert.match(library, /verified_media_type/u);
 });
 
 test('native cleanup is PID-scoped and never executable-name scoped', async () => {

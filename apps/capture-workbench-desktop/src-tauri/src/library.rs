@@ -6,7 +6,7 @@ use std::fs;
 #[cfg(test)]
 use crate::contracts::{
     LibraryCaptureOptions, LibraryCaptureUpdate, LibraryDocumentRequest,
-    LibraryImportSourceRequest, LibraryListRequest, LibrarySourceInput, OcrEvidenceV1,
+    LibraryImportSourceRequest, LibraryListRequest, OcrEvidenceV1,
 };
 
 const INDEX_FILE_NAME: &str = "library-index-v1.json";
@@ -49,20 +49,16 @@ mod store;
 mod transaction;
 mod validation;
 
-// Source-level contract retained for the desktop QA gate: `LibraryStore::import_source`
-// delegates the path boundary to `fs::canonicalize`, bounds reads with
-// `.take(MAX_SOURCE_BYTES as u64 + 1)`, and verifies the file signature through
-// `verified_media_type` before the source enters the durable library.
-
 pub(crate) use filesystem::{
     atomic_write, load_backup_index, read_json_optional, remove_file_if_exists, stem,
 };
 pub(crate) use store::LibraryIndex;
 pub(crate) use store::{LibraryStore, RuntimeSourceFile};
 pub(crate) use transaction::{commit_library_transaction, recover_library_transaction};
-pub(crate) use validation::{
-    validate_document_id, validate_source_input, validate_status, RECORDING_MEDIA_TYPES,
-};
+pub(crate) use validation::{validate_document_id, validate_status, RECORDING_MEDIA_TYPES};
+
+#[cfg(test)]
+use store::LibrarySourceInput;
 
 #[cfg(test)]
 pub(crate) use transaction::{
@@ -908,16 +904,9 @@ mod tests {
     }
 
     #[test]
-    fn rejects_paths_and_invalid_document_ids() {
+    fn rejects_invalid_document_ids() {
         let directory = tempfile::tempdir().expect("temporary app data");
         let library = LibraryStore::open(directory.path()).expect("library");
-        assert!(library
-            .create_source(LibrarySourceInput {
-                file_name: "../secret.pdf".into(),
-                media_type: "application/pdf".into(),
-                bytes: vec![1]
-            })
-            .is_err());
         assert!(library
             .get(LibraryDocumentRequest {
                 document_id: "../secret".into()
@@ -1069,55 +1058,6 @@ mod tests {
     }
 
     #[test]
-    fn source_validation_matches_renderer_limits_and_allowlist() {
-        for (media_type, file_name) in [
-            ("application/pdf", "fixture.pdf"),
-            ("image/png", "fixture.png"),
-            ("image/jpeg", "fixture.jpg"),
-            ("audio/wav", "fixture.wav"),
-            ("audio/mpeg", "fixture.mp3"),
-            ("audio/mp4", "fixture.m4a"),
-            ("audio/ogg", "voice.ogg"),
-            ("video/x-matroska", "hearing.mkv"),
-            ("video/x-ms-asf", "dictation.wma"),
-        ] {
-            assert!(validate_source_input(&LibrarySourceInput {
-                file_name: file_name.into(),
-                media_type: media_type.into(),
-                bytes: vec![1],
-            })
-            .is_ok());
-        }
-
-        assert!(validate_source_input(&LibrarySourceInput {
-            file_name: "limit.pdf".into(),
-            media_type: "application/pdf".into(),
-            bytes: vec![1; MAX_SOURCE_BYTES],
-        })
-        .is_ok());
-        assert!(validate_source_input(&LibrarySourceInput {
-            file_name: "empty.pdf".into(),
-            media_type: "application/pdf".into(),
-            bytes: Vec::new(),
-        })
-        .is_err());
-        assert!(validate_source_input(&LibrarySourceInput {
-            file_name: "large.pdf".into(),
-            media_type: "application/pdf".into(),
-            bytes: vec![1; MAX_SOURCE_BYTES + 1],
-        })
-        .is_err());
-        for (media_type, file_name) in [("image/webp", "image.webp"), ("text/plain", "notes.txt")] {
-            assert!(validate_source_input(&LibrarySourceInput {
-                file_name: file_name.into(),
-                media_type: media_type.into(),
-                bytes: vec![1],
-            })
-            .is_err());
-        }
-    }
-
-    #[test]
     fn recordings_are_recognized_by_signature_whatever_their_recording_extension() {
         use super::validation::verified_media_type;
 
@@ -1182,6 +1122,269 @@ mod tests {
             })
             .expect_err("signature mismatch");
         assert!(!error.contains(&mismatch.to_string_lossy().to_string()));
+        assert_eq!(
+            error,
+            "Selected source extension does not match its signature."
+        );
+
+        let unsupported = directory.path().join("unsupported.pdf");
+        fs::write(&unsupported, b"not a supported signature").expect("unsupported");
+        let error = library
+            .import_source(LibraryImportSourceRequest {
+                source_path: unsupported.to_string_lossy().into_owned(),
+                ..Default::default()
+            })
+            .expect_err("unsupported signature");
+        assert_eq!(error, "Selected source signature is unsupported.");
+
+        let empty = directory.path().join("empty.pdf");
+        fs::write(&empty, b"").expect("empty");
+        let error = library
+            .import_source(LibraryImportSourceRequest {
+                source_path: empty.to_string_lossy().into_owned(),
+                ..Default::default()
+            })
+            .expect_err("empty file");
+        assert_eq!(error, "Selected source exceeds the desktop library limit.");
+
+        let nested_dir = directory.path().join("nested");
+        fs::create_dir(&nested_dir).expect("nested dir");
+        let relative_source = nested_dir.join("..").join("private-source.pdf");
+        let canonical_imported = library
+            .import_source(LibraryImportSourceRequest {
+                source_path: relative_source.to_string_lossy().into_owned(),
+                ..Default::default()
+            })
+            .expect("canonical path import");
+        assert_eq!(canonical_imported.file_name, "private-source.pdf");
+    }
+
+    #[test]
+    fn streaming_import_accepts_source_larger_than_copy_buffer_byte_for_byte() {
+        let directory = tempfile::tempdir().expect("temporary app data");
+        let source_path = directory.path().join("large-audio.mp3");
+
+        let total_size = 3 * 1024 * 1024 + 17;
+        let mut content = Vec::with_capacity(total_size);
+        content.extend_from_slice(b"ID3\x03\x00\x00\x00\x00\x00\x00");
+        while content.len() < total_size {
+            let next_byte = ((content.len() * 37 + 13) % 251) as u8;
+            content.push(next_byte);
+        }
+        assert_eq!(content.len(), total_size);
+        fs::write(&source_path, &content).expect("write large audio source");
+
+        let library = LibraryStore::open(directory.path()).expect("library");
+        let imported = library
+            .import_source(LibraryImportSourceRequest {
+                source_path: source_path.to_string_lossy().into_owned(),
+                ..Default::default()
+            })
+            .expect("streaming import");
+
+        assert_eq!(imported.file_name, "large-audio.mp3");
+        assert_eq!(imported.media_type, "audio/mpeg");
+        assert_eq!(imported.byte_length, total_size as u64);
+
+        let stored_bytes = library
+            .source_bytes(LibraryDocumentRequest {
+                document_id: imported.document_id,
+            })
+            .expect("source bytes");
+        assert_eq!(stored_bytes, content);
+
+        let staging_entries = fs::read_dir(library.root.join("staging"))
+            .expect("staging dir")
+            .count();
+        assert_eq!(
+            staging_entries, 0,
+            "staging directory must be empty after import"
+        );
+    }
+
+    #[test]
+    fn import_with_injected_small_limit_accepts_boundary_and_cleans_on_rejection() {
+        let directory = tempfile::tempdir().expect("temporary app data");
+        let library = LibraryStore::open(directory.path()).expect("library");
+        let small_limit = 1024usize;
+
+        let exact_path = directory.path().join("exact.mp3");
+        let mut exact_bytes = Vec::with_capacity(small_limit);
+        exact_bytes.extend_from_slice(b"ID3\x03\x00\x00\x00\x00\x00\x00");
+        exact_bytes.resize(small_limit, 0x5a);
+        fs::write(&exact_path, &exact_bytes).expect("exact source");
+
+        let imported = library
+            .import_source_bounded(
+                LibraryImportSourceRequest {
+                    source_path: exact_path.to_string_lossy().into_owned(),
+                    ..Default::default()
+                },
+                small_limit,
+            )
+            .expect("exact limit accepted");
+        assert_eq!(imported.byte_length, small_limit as u64);
+
+        let oversized_path = directory.path().join("oversized.mp3");
+        let mut oversized_bytes = Vec::with_capacity(small_limit + 1);
+        oversized_bytes.extend_from_slice(b"ID3\x03\x00\x00\x00\x00\x00\x00");
+        oversized_bytes.resize(small_limit + 1, 0x5a);
+        fs::write(&oversized_path, &oversized_bytes).expect("oversized source");
+
+        let error = library
+            .import_source_bounded(
+                LibraryImportSourceRequest {
+                    source_path: oversized_path.to_string_lossy().into_owned(),
+                    ..Default::default()
+                },
+                small_limit,
+            )
+            .expect_err("oversized must be rejected");
+        assert_eq!(error, "Selected source exceeds the desktop library limit.");
+
+        let staging_count = fs::read_dir(library.root.join("staging"))
+            .expect("staging dir")
+            .count();
+        assert_eq!(staging_count, 0);
+
+        let item_dirs: Vec<_> = fs::read_dir(library.root.join("items"))
+            .expect("items dir")
+            .filter_map(|entry| entry.ok())
+            .collect();
+        assert_eq!(item_dirs.len(), 1);
+        assert_eq!(
+            item_dirs[0].file_name().to_string_lossy(),
+            imported.document_id
+        );
+    }
+
+    #[test]
+    fn copy_to_staging_fails_and_cleans_staging_file_on_length_mismatch() {
+        let directory = tempfile::tempdir().expect("temporary app data");
+        let staging_file = directory.path().join("staging-mismatch.bin");
+
+        let data_10 = b"0123456789";
+        let error_overflow = LibraryStore::copy_to_staging(&data_10[..], &staging_file, 5)
+            .expect_err("copy must fail when stream yields more than expected");
+        assert_eq!(error_overflow, "Selected source changed during import.");
+        assert!(
+            !staging_file.exists(),
+            "staged file must be removed after overflow error"
+        );
+
+        let data_5 = b"01234";
+        let error_underflow = LibraryStore::copy_to_staging(&data_5[..], &staging_file, 10)
+            .expect_err("copy must fail when stream ends early");
+        assert_eq!(error_underflow, "Selected source changed during import.");
+        assert!(
+            !staging_file.exists(),
+            "staged file must be removed after early end error"
+        );
+    }
+
+    #[test]
+    fn failed_index_publication_rolls_back_staging_item_and_index() {
+        let directory = tempfile::tempdir().expect("temporary app data");
+        let source_path = directory.path().join("source.wav");
+        let mut wav_bytes = Vec::new();
+        wav_bytes.extend_from_slice(b"RIFF\x24\x00\x00\x00WAVEfmt ");
+        wav_bytes.resize(100, 0);
+        fs::write(&source_path, &wav_bytes).expect("source wav");
+
+        let library = LibraryStore::open(directory.path()).expect("library");
+
+        let _guard = TransactionFailureGuard::at("save-index");
+        let error = library
+            .import_source(LibraryImportSourceRequest {
+                source_path: source_path.to_string_lossy().into_owned(),
+                ..Default::default()
+            })
+            .expect_err("save index failure");
+        assert!(error.contains("injected transaction failure: save-index"));
+
+        let items_count = fs::read_dir(library.root.join("items"))
+            .expect("items dir")
+            .count();
+        assert_eq!(
+            items_count, 0,
+            "no item directory should remain after save failure"
+        );
+
+        let staging_count = fs::read_dir(library.root.join("staging"))
+            .expect("staging dir")
+            .count();
+        assert_eq!(
+            staging_count, 0,
+            "no staged file should remain after save failure"
+        );
+
+        let listed = library
+            .list(LibraryListRequest::default())
+            .expect("list documents");
+        assert!(
+            listed.is_empty(),
+            "index must not contain the rolled back document"
+        );
+    }
+
+    #[test]
+    fn startup_removes_only_abandoned_staging_entries_and_keeps_items_and_index() {
+        let directory = tempfile::tempdir().expect("temporary app data");
+        let source_path = directory.path().join("good.pdf");
+        fs::write(&source_path, b"%PDF-1.7\nvalid content").expect("good source");
+
+        let library = LibraryStore::open(directory.path()).expect("open library first time");
+        let imported = library
+            .import_source(LibraryImportSourceRequest {
+                source_path: source_path.to_string_lossy().into_owned(),
+                ..Default::default()
+            })
+            .expect("import document");
+
+        let staging_dir = library.root.join("staging");
+        let abandoned_file = staging_dir.join("abandoned-file");
+        fs::write(&abandoned_file, b"leftover data").expect("abandoned file");
+        let abandoned_directory = staging_dir.join("abandoned-directory");
+        fs::create_dir(&abandoned_directory).expect("abandoned directory");
+        fs::write(abandoned_directory.join("inner"), b"inner").expect("inner file");
+        // What another running instance is importing right now.
+        let active_file = staging_dir.join("active-file");
+        fs::write(&active_file, b"being imported").expect("active file");
+
+        drop(library);
+
+        // Opening again at once removes nothing: every entry is fresh.
+        let reopened = LibraryStore::open(directory.path()).expect("reopen library");
+        assert!(abandoned_file.exists());
+        assert!(abandoned_directory.exists());
+        assert!(active_file.exists());
+
+        // Later, the entries nobody touched are abandoned; one that is still
+        // being written is not.
+        let later = std::time::SystemTime::now() + store::STAGING_ABANDONED_AFTER;
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&active_file)
+            .expect("active file handle")
+            .set_modified(later)
+            .expect("touch active file");
+        store::clean_staging_directory(&staging_dir, later);
+        assert!(!abandoned_file.exists());
+        assert!(!abandoned_directory.exists());
+        assert!(active_file.exists());
+
+        let listed = reopened
+            .list(LibraryListRequest::default())
+            .expect("list documents");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].document_id, imported.document_id);
+
+        let item_path = reopened
+            .root
+            .join("items")
+            .join(&imported.document_id)
+            .join("source.bin");
+        assert!(item_path.exists());
     }
 
     #[test]
@@ -1246,12 +1449,16 @@ mod tests {
     fn native_import_rejects_directories_and_symlinks() {
         let directory = tempfile::tempdir().expect("temporary app data");
         let library = LibraryStore::open(directory.path()).expect("library");
-        assert!(library
+        let dir_err = library
             .import_source(LibraryImportSourceRequest {
                 source_path: directory.path().to_string_lossy().into_owned(),
                 ..Default::default()
             })
-            .is_err());
+            .expect_err("directory rejected");
+        assert_eq!(
+            dir_err,
+            "Selected source must be a regular non-symlink file."
+        );
 
         let target = directory.path().join("target.pdf");
         let link = directory.path().join("linked.pdf");
@@ -1261,12 +1468,16 @@ mod tests {
         #[cfg(unix)]
         let symlink_result = std::os::unix::fs::symlink(&target, &link);
         if symlink_result.is_ok() {
-            assert!(library
+            let link_err = library
                 .import_source(LibraryImportSourceRequest {
                     source_path: link.to_string_lossy().into_owned(),
                     ..Default::default()
                 })
-                .is_err());
+                .expect_err("symlink rejected");
+            assert_eq!(
+                link_err,
+                "Selected source must be a regular non-symlink file."
+            );
         }
     }
 

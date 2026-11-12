@@ -1,9 +1,9 @@
 use std::{
     fs::{self, File},
-    io::{ErrorKind, Read},
+    io::{ErrorKind, Read, Write},
     path::{Path, PathBuf},
     sync::Mutex,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use rand::{rngs::OsRng, RngCore};
@@ -13,16 +13,24 @@ use serde_json::Value;
 use crate::contracts::{
     LibraryCaptureOptions, LibraryCaptureUpdate, LibraryDocumentDetail, LibraryDocumentRequest,
     LibraryDocumentSummary, LibraryExportFormat, LibraryExportPayload, LibraryExportRequest,
-    LibraryImportSourceRequest, LibraryListRequest, LibrarySourceInput, LibrarySourcePayload,
+    LibraryImportSourceRequest, LibraryListRequest, LibrarySourcePayload,
 };
 
 use super::transaction::{prepare_transaction_entry, LibraryTransaction, TransactionStage};
 use super::{
-    atomic_write, commit_library_transaction, load_backup_index, read_json_optional,
-    recover_library_transaction, stem, validate_document_id, validate_source_input,
-    validate_status, INDEX_BACKUP_FILE_NAME, INDEX_FILE_NAME, INDEX_VERSION, MAX_SOURCE_BYTES,
-    RAW_FILE_NAME, RESULT_FILE_NAME, SOURCE_FILE_NAME,
+    atomic_write, commit_library_transaction, inject_transaction_failure, load_backup_index,
+    read_json_optional, recover_library_transaction, stem, validate_document_id, validate_status,
+    INDEX_BACKUP_FILE_NAME, INDEX_FILE_NAME, INDEX_VERSION, MAX_SOURCE_BYTES, RAW_FILE_NAME,
+    RESULT_FILE_NAME, SOURCE_FILE_NAME,
 };
+
+/// Test fixture input for `LibraryStore::create_source`.
+#[cfg(test)]
+pub(crate) struct LibrarySourceInput {
+    pub(crate) file_name: String,
+    pub(crate) media_type: String,
+    pub(crate) bytes: Vec<u8>,
+}
 
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -97,6 +105,8 @@ impl LibraryStore {
         let root = app_data_dir.join("library");
         fs::create_dir_all(root.join("items"))
             .map_err(|error| format!("Capture library cannot be created: {error}"))?;
+        let staging_dir = root.join("staging");
+        clean_staging_directory(&staging_dir, SystemTime::now());
         recover_library_transaction(&root)?;
         let index_path = root.join(INDEX_FILE_NAME);
         let index = match fs::read(&index_path) {
@@ -130,35 +140,34 @@ impl LibraryStore {
         })
     }
 
-    #[cfg(test)]
-    pub(crate) fn create_source(
+    fn publish_source(
         &self,
-        input: LibrarySourceInput,
-    ) -> Result<LibraryDocumentSummary, String> {
-        self.create_source_with_options(input, None)
-    }
-
-    pub(crate) fn create_source_with_options(
-        &self,
-        input: LibrarySourceInput,
+        file_name: String,
+        media_type: String,
+        byte_length: u64,
         capture_options: Option<LibraryCaptureOptions>,
+        staged_path: &Path,
     ) -> Result<LibraryDocumentSummary, String> {
-        validate_source_input(&input)?;
-        if let Some(options) = &capture_options {
-            super::validation::validate_capture_options(options)?;
-        }
         let now = now_ms()?;
         let document_id = random_document_id()?;
         let document_directory = self.document_directory(&document_id)?;
-        fs::create_dir_all(&document_directory).map_err(|error| {
-            format!("Capture library source directory cannot be created: {error}")
-        })?;
-        atomic_write(&document_directory.join(SOURCE_FILE_NAME), &input.bytes)?;
+        if let Err(error) = fs::create_dir_all(&document_directory) {
+            let _ = fs::remove_file(staged_path);
+            return Err(format!(
+                "Capture library source directory cannot be created: {error}"
+            ));
+        }
+        let source_path = document_directory.join(SOURCE_FILE_NAME);
+        if let Err(error) = fs::rename(staged_path, &source_path) {
+            let _ = fs::remove_file(staged_path);
+            let _ = fs::remove_dir_all(&document_directory);
+            return Err(format!("Capture library source cannot be placed: {error}"));
+        }
         let document = StoredDocument {
             document_id,
-            file_name: input.file_name,
-            media_type: input.media_type,
-            byte_length: input.bytes.len() as u64,
+            file_name,
+            media_type,
+            byte_length,
             created_at_ms: now,
             updated_at_ms: now,
             status: "queued".into(),
@@ -182,9 +191,100 @@ impl LibraryStore {
         Ok(summary)
     }
 
+    pub(super) fn staging_directory(&self) -> PathBuf {
+        self.root.join("staging")
+    }
+
+    pub(super) fn copy_to_staging(
+        mut reader: impl Read,
+        staging_path: &Path,
+        expected_length: u64,
+    ) -> Result<(), String> {
+        let mut file = File::create(staging_path)
+            .map_err(|error| format!("Capture library staging file cannot be created: {error}"))?;
+        const COPY_BUFFER_BYTES: usize = 1024 * 1024;
+        let mut buffer = vec![0_u8; COPY_BUFFER_BYTES];
+        let mut total_copied: u64 = 0;
+
+        let copy_result: Result<(), String> = (|| {
+            loop {
+                let bytes_read = reader
+                    .read(&mut buffer)
+                    .map_err(|_| "Selected source cannot be read.".to_string())?;
+                if bytes_read == 0 {
+                    break;
+                }
+                total_copied += bytes_read as u64;
+                if total_copied > expected_length {
+                    return Err("Selected source changed during import.".into());
+                }
+                file.write_all(&buffer[..bytes_read])
+                    .map_err(|error| format!("Capture library cannot be written: {error}"))?;
+            }
+            if total_copied != expected_length {
+                return Err("Selected source changed during import.".into());
+            }
+            file.flush()
+                .map_err(|error| format!("Capture library cannot be written: {error}"))?;
+            file.sync_all()
+                .map_err(|error| format!("Capture library cannot be written: {error}"))?;
+            Ok(())
+        })();
+
+        drop(file);
+
+        if let Err(error) = copy_result {
+            let _ = fs::remove_file(staging_path);
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    /// Test fixture: a document whose source is the given bytes.
+    #[cfg(test)]
+    pub(crate) fn create_source(
+        &self,
+        input: LibrarySourceInput,
+    ) -> Result<LibraryDocumentSummary, String> {
+        self.create_source_with_options(input, None)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn create_source_with_options(
+        &self,
+        input: LibrarySourceInput,
+        capture_options: Option<LibraryCaptureOptions>,
+    ) -> Result<LibraryDocumentSummary, String> {
+        if let Some(options) = &capture_options {
+            super::validation::validate_capture_options(options)?;
+        }
+        let staging_dir = self.staging_directory();
+        fs::create_dir_all(&staging_dir).map_err(|error| {
+            format!("Capture library staging directory cannot be created: {error}")
+        })?;
+        let staging_path = staging_dir.join(random_document_id()?);
+        let byte_length = input.bytes.len() as u64;
+        Self::copy_to_staging(&input.bytes[..], &staging_path, byte_length)?;
+        self.publish_source(
+            input.file_name,
+            input.media_type,
+            byte_length,
+            capture_options,
+            &staging_path,
+        )
+    }
+
     pub(crate) fn import_source(
         &self,
         request: LibraryImportSourceRequest,
+    ) -> Result<LibraryDocumentSummary, String> {
+        self.import_source_bounded(request, MAX_SOURCE_BYTES)
+    }
+
+    pub(super) fn import_source_bounded(
+        &self,
+        request: LibraryImportSourceRequest,
+        max_bytes: usize,
     ) -> Result<LibraryDocumentSummary, String> {
         if let Some(options) = &request.capture_options {
             super::validation::validate_capture_options(options)?;
@@ -198,7 +298,7 @@ impl LibraryStore {
         if source_metadata.file_type().is_symlink() || !source_metadata.file_type().is_file() {
             return Err("Selected source must be a regular non-symlink file.".into());
         }
-        if source_metadata.len() == 0 || source_metadata.len() > MAX_SOURCE_BYTES as u64 {
+        if source_metadata.len() == 0 || source_metadata.len() > max_bytes as u64 {
             return Err("Selected source exceeds the desktop library limit.".into());
         }
 
@@ -215,25 +315,39 @@ impl LibraryStore {
             .ok_or_else(|| "Selected source file name is invalid.".to_string())?
             .to_string();
 
-        let mut reader =
+        let mut handle =
             File::open(&canonical).map_err(|_| "Selected source cannot be opened.".to_string())?;
-        let mut bytes = Vec::with_capacity(canonical_metadata.len() as usize);
-        reader
-            .by_ref()
-            .take(MAX_SOURCE_BYTES as u64 + 1)
-            .read_to_end(&mut bytes)
-            .map_err(|_| "Selected source cannot be read.".to_string())?;
-        if bytes.len() as u64 != canonical_metadata.len() {
+        let handle_metadata = handle
+            .metadata()
+            .map_err(|_| "Selected source cannot be inspected.".to_string())?;
+        if !handle_metadata.is_file() || handle_metadata.len() != canonical_metadata.len() {
             return Err("Selected source changed during import.".into());
         }
-        let media_type = super::validation::verified_media_type(&file_name, &bytes)?;
-        self.create_source_with_options(
-            LibrarySourceInput {
-                file_name,
-                media_type: media_type.into(),
-                bytes,
-            },
+        let expected_length = handle_metadata.len();
+
+        const PREFIX_BYTES: usize = 512;
+        let prefix_len = std::cmp::min(expected_length, PREFIX_BYTES as u64) as usize;
+        let mut prefix = vec![0_u8; prefix_len];
+        handle
+            .read_exact(&mut prefix)
+            .map_err(|_| "Selected source changed during import.".to_string())?;
+        let media_type = super::validation::verified_media_type(&file_name, &prefix)?;
+
+        let staging_dir = self.staging_directory();
+        fs::create_dir_all(&staging_dir).map_err(|error| {
+            format!("Capture library staging directory cannot be created: {error}")
+        })?;
+        let staging_path = staging_dir.join(random_document_id()?);
+
+        let reader = (&prefix[..]).chain(handle);
+        Self::copy_to_staging(reader, &staging_path, expected_length)?;
+
+        self.publish_source(
+            file_name,
+            media_type.into(),
+            expected_length,
             request.capture_options,
+            &staging_path,
         )
     }
 
@@ -505,6 +619,8 @@ impl LibraryStore {
     }
 
     fn save_index(&self, index: &LibraryIndex) -> Result<(), String> {
+        inject_transaction_failure("save-index")
+            .map_err(|error| format!("Capture library index cannot be written: {error}"))?;
         let bytes = serde_json::to_vec_pretty(index)
             .map_err(|error| format!("Capture library index cannot be encoded: {error}"))?;
         let index_path = self.root.join(INDEX_FILE_NAME);
@@ -514,6 +630,42 @@ impl LibraryStore {
             })?;
         }
         atomic_write(&index_path, &bytes)
+    }
+}
+
+/// How long a staging entry must be untouched before startup treats it as
+/// abandoned. An import in progress writes to its entry all the time and
+/// publishes it right after the copy, so an entry this old has no owner.
+pub(super) const STAGING_ABANDONED_AFTER: Duration = Duration::from_secs(60 * 60);
+
+/// Removes what an interrupted import left behind. Only entries older than
+/// `STAGING_ABANDONED_AFTER` go: another running instance of the application
+/// shares this directory and may be importing right now. Best effort: an entry
+/// that cannot be read or removed is tried again at the next start, and must
+/// not keep the library from opening.
+pub(super) fn clean_staging_directory(staging_dir: &Path, now: SystemTime) {
+    if fs::create_dir_all(staging_dir).is_err() {
+        return;
+    }
+    let Ok(entries) = fs::read_dir(staging_dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let abandoned = entry
+            .metadata()
+            .and_then(|metadata| metadata.modified())
+            .ok()
+            .and_then(|modified| now.duration_since(modified).ok())
+            .is_some_and(|age| age >= STAGING_ABANDONED_AFTER);
+        if !abandoned {
+            continue;
+        }
+        let path = entry.path();
+        if entry.file_type().is_ok_and(|file_type| file_type.is_dir()) {
+            let _ = fs::remove_dir_all(&path);
+        } else {
+            let _ = fs::remove_file(&path);
+        }
     }
 }
 

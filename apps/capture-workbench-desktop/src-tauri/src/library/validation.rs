@@ -1,35 +1,6 @@
 use std::path::Path;
 
-use crate::contracts::{LibraryCaptureOptions, LibrarySourceInput};
-
-use super::MAX_SOURCE_BYTES;
-
-pub(crate) fn validate_source_input(input: &LibrarySourceInput) -> Result<(), String> {
-    let file_name = input.file_name.trim();
-    if file_name.is_empty()
-        || file_name.len() > 255
-        || file_name
-            .bytes()
-            .any(|byte| byte.is_ascii_control() || matches!(byte, b'"' | b'\\'))
-        || Path::new(file_name)
-            .file_name()
-            .and_then(|name| name.to_str())
-            != Some(file_name)
-    {
-        return Err("Capture source file name is invalid.".into());
-    }
-    if !matches!(
-        input.media_type.as_str(),
-        "application/pdf" | "image/png" | "image/jpeg"
-    ) && !RECORDING_MEDIA_TYPES.contains(&input.media_type.as_str())
-    {
-        return Err("Capture source media type is unsupported.".into());
-    }
-    if input.bytes.is_empty() || input.bytes.len() > MAX_SOURCE_BYTES {
-        return Err("Capture source exceeds the desktop library limit.".into());
-    }
-    Ok(())
-}
+use crate::contracts::LibraryCaptureOptions;
 
 /// Recordings the runtime transcribes: audio, and video whose audio track is
 /// transcribed. Phones often give a recording an extension that does not name
