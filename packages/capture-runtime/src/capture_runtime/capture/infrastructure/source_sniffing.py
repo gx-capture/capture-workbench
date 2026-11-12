@@ -82,9 +82,22 @@ def _audio_media_type(content: bytes) -> str | None:
     return None
 
 
+def recording_prefix_verdict(prefix: bytes) -> bool | None:
+    """Whether a source that starts with `prefix` is a recording.
+
+    `None` while the prefix is shorter than `SNIFF_BYTES` and no signature
+    matches yet: a host may split the first bytes over several chunks.
+    """
+    try:
+        return sniff_source(prefix).kind is CaptureSourceKind.AUDIO
+    except UnsupportedMediaError:
+        return False if len(prefix) >= SNIFF_BYTES else None
+
+
 __all__ = [
     "SNIFF_BYTES",
     "SniffedSource",
     "UnsupportedMediaError",
+    "recording_prefix_verdict",
     "sniff_source",
 ]

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from capture_runtime.capture.application.streaming_capture_service import StreamingCaptureService
+from capture_runtime.capture.domain.size_policy import SourceSizePolicy
 from capture_runtime.capture.infrastructure.capture_extraction import (
     CaptureExtractor,
     StandaloneRuntimeCaptureExtractor,
@@ -202,10 +203,12 @@ def build_runtime_dependencies(
             retention_hours=settings.retention_hours,
         )
     )
+    policy = SourceSizePolicy(settings.max_upload_bytes)
     streaming_repository = StreamingRepository(
         settings.app_data_dir / "jobs" / "streaming",
         clock=runtime_clock,
         retention_hours=settings.retention_hours,
+        policy=policy,
     )
     staging_root = settings.staging_root
     progressive_processor = (
@@ -223,6 +226,7 @@ def build_runtime_dependencies(
         processor=progressive_processor,
         extractor=active_extractor,
         structurer=active_structurer,
+        policy=policy,
     )
     structuring_session_repository = StructuringSessionRepository(
         settings.app_data_dir / "jobs" / "structuring-sessions",

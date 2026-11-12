@@ -9,6 +9,10 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from capture_runtime.capture.application.streaming_capture_service import StreamingCaptureService
+from capture_runtime.capture.domain.size_policy import (
+    DOCUMENT_MAX_UPLOAD_BYTES,
+    SourceSizePolicy,
+)
 from capture_runtime.capture.infrastructure.capture_extraction import (
     CaptureExtractionOutcome,
     OcrExtractionFailure,
@@ -50,7 +54,12 @@ def test_streaming_ocr_failure_records_private_artifact_before_public_projection
 ) -> None:
     async def scenario() -> None:
         clock = FixedClock()
-        repository = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+        repository = StreamingRepository(
+            tmp_path / "streaming",
+            clock=clock,
+            retention_hours=4,
+            policy=SourceSizePolicy(DOCUMENT_MAX_UPLOAD_BYTES),
+        )
         repository.initialize()
         content = b"%PDF-1.7 failure evidence fixture"
         digest = hashlib.sha256(content).hexdigest()
@@ -131,6 +140,7 @@ def test_streaming_ocr_failure_records_private_artifact_before_public_projection
         service = StreamingCaptureService(
             repository,
             clock=clock,
+            policy=SourceSizePolicy(DOCUMENT_MAX_UPLOAD_BYTES),
             extractor=FailingExtractor(),  # type: ignore[arg-type]
             execution_evidence_sink=AcceptanceOcrExecutionEvidenceSink(
                 root,
@@ -221,7 +231,12 @@ os._exit(7)
                     ),
                 )
 
-        repository = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+        repository = StreamingRepository(
+            tmp_path / "streaming",
+            clock=clock,
+            retention_hours=4,
+            policy=SourceSizePolicy(DOCUMENT_MAX_UPLOAD_BYTES),
+        )
         repository.initialize()
         ingestion = repository.create_ingestion(
             OpenIngestionV2(
@@ -266,6 +281,7 @@ os._exit(7)
         service = StreamingCaptureService(
             repository,
             clock=clock,
+            policy=SourceSizePolicy(DOCUMENT_MAX_UPLOAD_BYTES),
             extractor=extractor,
             execution_evidence_sink=AcceptanceOcrExecutionEvidenceSink(
                 root,

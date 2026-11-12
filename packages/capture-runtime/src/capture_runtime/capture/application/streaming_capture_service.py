@@ -20,6 +20,7 @@ from capture_runtime.capture.application.use_cases import (
     PollCaptureEvents,
     StartCapture,
 )
+from capture_runtime.capture.domain.size_policy import SourceSizePolicy
 from capture_runtime.capture.infrastructure.capture_extraction import (
     CaptureExtractionOutcome,
     CaptureExtractor,
@@ -101,6 +102,7 @@ class StreamingCaptureService:
         repository: StreamingRepository,
         *,
         clock: Clock,
+        policy: SourceSizePolicy,
         processor: ProgressiveCaptureProcessor | None = None,
         extractor: CaptureExtractor | None = None,
         structurer: CaptureStructuringProvider | None = None,
@@ -131,7 +133,7 @@ class StreamingCaptureService:
         self._engines_available = asyncio.Event()
         self._engines_available.set()
 
-        self.open_ingestion_use_case = OpenIngestion(repository)
+        self.open_ingestion_use_case = OpenIngestion(repository, policy=policy)
         self.append_chunk_use_case = AppendChunk(repository, max_chunk_bytes=max_chunk_bytes)
         self.finalize_ingestion_use_case = FinalizeIngestion(repository, schedule=self._schedule)
         self.start_capture_use_case = StartCapture(repository, schedule=self._schedule)

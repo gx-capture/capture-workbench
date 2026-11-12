@@ -15,6 +15,7 @@ from pydantic import ValidationError
 
 from capture_runtime.capture.domain.ingestion.models import IngestionChunk, IngestionTransitionError
 from capture_runtime.capture.domain.operation.models import CaptureTransitionError
+from capture_runtime.capture.domain.size_policy import SourceSizePolicy
 from capture_runtime.capture.infrastructure._streaming_persistence import (
     _atomic_json,
     _file_sha256,
@@ -35,6 +36,10 @@ from capture_runtime.capture.infrastructure._streaming_transitions import (
     _mark_ingestion_ready,
     _mark_structuring,
     operation_domain,
+)
+from capture_runtime.capture.infrastructure.source_sniffing import (
+    SNIFF_BYTES,
+    recording_prefix_verdict,
 )
 from capture_runtime.clock import Clock
 from capture_runtime.contracts import (
@@ -109,10 +114,18 @@ def _progress_update(operation: CaptureOperationV2, event: CaptureEventV2) -> di
 class StreamingRepository:
     """A bounded, recoverable repository behind the streaming service seam."""
 
-    def __init__(self, root: Path, *, clock: Clock, retention_hours: int) -> None:
+    def __init__(
+        self,
+        root: Path,
+        *,
+        clock: Clock,
+        retention_hours: int,
+        policy: SourceSizePolicy,
+    ) -> None:
         self.root = root
         self._clock = clock
         self._retention = timedelta(hours=retention_hours)
+        self._policy = policy
         self._ingestions: dict[str, _IngestionRecord] = {}
         self._ingestion_idempotency: dict[str, str] = {}
         self._captures: dict[str, _CaptureRecord] = {}
@@ -184,6 +197,7 @@ class StreamingRepository:
                 raise StreamingTransitionError(str(error)) from error
             if updated is current:
                 return self._ingestion_snapshot(record)
+            self._require_recording_signature(record, ingestion_id, byte_offset, data)
             self._persistence.append_source(
                 self._ingestion_directory(ingestion_id) / "source.bin", data
             )
@@ -192,6 +206,26 @@ class StreamingRepository:
             record.next_offset = updated.received_bytes
             self._persist_ingestion(record)
             return self._ingestion_snapshot(record)
+
+    def _require_recording_signature(
+        self, record: _IngestionRecord, ingestion_id: str, byte_offset: int, data: bytes
+    ) -> None:
+        """A source over the document limit must start like a recording.
+
+        Checked on each new chunk that still lies inside the signature window,
+        before it is stored: bytes already accepted are never changed.
+        """
+        if byte_offset >= SNIFF_BYTES or not self._policy.needs_recording_signature(
+            record.request.kind, record.request.total_bytes
+        ):
+            return
+        stored = b""
+        if byte_offset:
+            source_path = self._ingestion_directory(ingestion_id) / "source.bin"
+            with source_path.open("rb") as source:
+                stored = source.read(byte_offset)
+        if recording_prefix_verdict((stored + data)[:SNIFF_BYTES]) is False:
+            raise StreamingTransitionError("source content is not a recording")
 
     def finalize_ingestion(
         self,
@@ -678,10 +712,22 @@ class StreamingRepository:
             expired_ingestions = [
                 ingestion_id
                 for ingestion_id, record in self._ingestions.items()
-                if record.expires_at <= now and ingestion_id not in active_ingestions
+                if (
+                    record.expires_at <= now
+                    or not self._policy.is_allowed(record.request.kind, record.request.total_bytes)
+                )
+                and ingestion_id not in active_ingestions
             ]
             for ingestion_id in expired_ingestions:
-                self.delete_ingestion(ingestion_id)
+                record = self._ingestions.get(ingestion_id)
+                if record is not None:
+                    self._delete_ingestion_record(record, ingestion_id)
+
+    def _delete_ingestion_record(self, record: _IngestionRecord, normalized: str) -> None:
+        self._ingestions.pop(normalized, None)
+        self._ingestion_idempotency.pop(record.request.client_request_id, None)
+        directory = self._ingestion_directory(normalized)
+        self._persistence.delete_ingestion_directory(directory)
 
     def delete_ingestion(self, ingestion_id: str) -> None:
         with self._lock:
@@ -693,10 +739,7 @@ class StreamingRepository:
                 for operation in (capture.operation for capture in self._captures.values())
             ):
                 raise StreamingTransitionError("ingestion has an active capture")
-            self._ingestions.pop(normalized, None)
-            self._ingestion_idempotency.pop(record.request.client_request_id, None)
-            directory = self._ingestion_directory(normalized)
-            self._persistence.delete_ingestion_directory(directory)
+            self._delete_ingestion_record(record, normalized)
 
     def source_path(self, ingestion_id: str) -> Path:
         with self._lock:

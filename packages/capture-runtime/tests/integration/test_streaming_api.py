@@ -6,8 +6,10 @@ import hashlib
 import json
 import threading
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from io import BytesIO
+from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -15,6 +17,8 @@ import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
+from capture_runtime.app import create_app
+from capture_runtime.capture.domain.size_policy import DOCUMENT_MAX_UPLOAD_BYTES
 from capture_runtime.capture.infrastructure.capture_extraction import (
     CaptureExtractionOutcome,
     OcrExtractionFailure,
@@ -23,6 +27,7 @@ from capture_runtime.capture.infrastructure.capture_extraction import (
 from capture_runtime.capture.infrastructure.capture_worker_client import WorkerClient
 from capture_runtime.capture.infrastructure.source_sniffing import SniffedSource
 from capture_runtime.clock import SystemClock
+from capture_runtime.config import RuntimeSettings
 from capture_runtime.contract_set import SCHEMA_DIALECT
 from capture_runtime.contracts import (
     CaptureBlock,
@@ -2299,3 +2304,255 @@ def test_a_transcript_longer_than_one_event_is_published_in_several(client: Test
     ]
     assert counts == [1_000, 1_000, 300]
     assert len(repository.read_partial(operation.capture_id).segments) == 2_300
+
+
+def test_streaming_api_source_size_policy_open_boundaries_and_rejection(
+    settings_factory: Callable[..., RuntimeSettings],
+) -> None:
+    sixty_mib = 60 * 1024 * 1024
+    fifty_mib = DOCUMENT_MAX_UPLOAD_BYTES
+    settings = settings_factory(CAPTURE_MAX_UPLOAD_BYTES=str(sixty_mib))
+    app_data_dir = Path(settings.app_data_dir)
+    ingestions_root = app_data_dir / "jobs" / "streaming" / "ingestions"
+
+    with TestClient(
+        create_app(settings),
+        base_url=f"http://127.0.0.1:{settings.port}",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+    ) as client:
+        # 1. Audio: limit is 60 MiB
+        audio_ok = client.post(
+            "/v2/ingestions",
+            json={
+                "clientRequestId": "open-audio-limit-ok",
+                "fileName": "audio.mp3",
+                "mediaType": "audio/mpeg",
+                "kind": "audio",
+                "totalBytes": sixty_mib,
+            },
+            headers={"X-Idempotency-Key": "open-audio-limit-ok"},
+        )
+        assert audio_ok.status_code == 201, audio_ok.text
+
+        audio_rejected = client.post(
+            "/v2/ingestions",
+            json={
+                "clientRequestId": "open-audio-limit-exceeded",
+                "fileName": "audio.mp3",
+                "mediaType": "audio/mpeg",
+                "kind": "audio",
+                "totalBytes": sixty_mib + 1,
+            },
+            headers={"X-Idempotency-Key": "open-audio-limit-exceeded"},
+        )
+        assert audio_rejected.status_code == 422
+        assert audio_rejected.json()["error"]["code"] == "validation_error"
+        msg = audio_rejected.json()["error"]["message"]
+        assert "size limit" in msg.lower()
+        assert "audio.mp3" not in msg
+        assert "/" not in msg and "\\" not in msg
+        # No directory created for the rejected ingestion
+        assert not (ingestions_root / "open-audio-limit-exceeded").exists()
+
+        # Retry with same clientRequestId and valid size succeeds
+        audio_retry = client.post(
+            "/v2/ingestions",
+            json={
+                "clientRequestId": "open-audio-limit-exceeded",
+                "fileName": "audio.mp3",
+                "mediaType": "audio/mpeg",
+                "kind": "audio",
+                "totalBytes": sixty_mib,
+            },
+            headers={"X-Idempotency-Key": "open-audio-limit-exceeded"},
+        )
+        assert audio_retry.status_code == 201, audio_retry.text
+
+        # 2. PDF: limit is min(60 MiB, 50 MiB) = 50 MiB
+        pdf_ok = client.post(
+            "/v2/ingestions",
+            json={
+                "clientRequestId": "open-pdf-limit-ok",
+                "fileName": "doc.pdf",
+                "mediaType": "application/pdf",
+                "kind": "pdf",
+                "totalBytes": fifty_mib,
+            },
+            headers={"X-Idempotency-Key": "open-pdf-limit-ok"},
+        )
+        assert pdf_ok.status_code == 201, pdf_ok.text
+
+        pdf_rejected = client.post(
+            "/v2/ingestions",
+            json={
+                "clientRequestId": "open-pdf-limit-exceeded",
+                "fileName": "doc.pdf",
+                "mediaType": "application/pdf",
+                "kind": "pdf",
+                "totalBytes": fifty_mib + 1,
+            },
+            headers={"X-Idempotency-Key": "open-pdf-limit-exceeded"},
+        )
+        assert pdf_rejected.status_code == 422
+        assert pdf_rejected.json()["error"]["code"] == "validation_error"
+        pdf_msg = pdf_rejected.json()["error"]["message"]
+        assert "size limit" in pdf_msg.lower()
+        assert "doc.pdf" not in pdf_msg
+        assert "/" not in pdf_msg and "\\" not in pdf_msg
+        assert not (ingestions_root / "open-pdf-limit-exceeded").exists()
+
+        pdf_retry = client.post(
+            "/v2/ingestions",
+            json={
+                "clientRequestId": "open-pdf-limit-exceeded",
+                "fileName": "doc.pdf",
+                "mediaType": "application/pdf",
+                "kind": "pdf",
+                "totalBytes": fifty_mib,
+            },
+            headers={"X-Idempotency-Key": "open-pdf-limit-exceeded"},
+        )
+        assert pdf_retry.status_code == 201, pdf_retry.text
+
+        # 3. Image: limit is min(60 MiB, 50 MiB) = 50 MiB
+        image_ok = client.post(
+            "/v2/ingestions",
+            json={
+                "clientRequestId": "open-image-limit-ok",
+                "fileName": "pic.png",
+                "mediaType": "image/png",
+                "kind": "image",
+                "totalBytes": fifty_mib,
+            },
+            headers={"X-Idempotency-Key": "open-image-limit-ok"},
+        )
+        assert image_ok.status_code == 201, image_ok.text
+
+        image_rejected = client.post(
+            "/v2/ingestions",
+            json={
+                "clientRequestId": "open-image-limit-exceeded",
+                "fileName": "pic.png",
+                "mediaType": "image/png",
+                "kind": "image",
+                "totalBytes": fifty_mib + 1,
+            },
+            headers={"X-Idempotency-Key": "open-image-limit-exceeded"},
+        )
+        assert image_rejected.status_code == 422
+        assert image_rejected.json()["error"]["code"] == "validation_error"
+        img_msg = image_rejected.json()["error"]["message"]
+        assert "size limit" in img_msg.lower()
+        assert "pic.png" not in img_msg
+        assert "/" not in img_msg and "\\" not in img_msg
+        assert not (ingestions_root / "open-image-limit-exceeded").exists()
+
+        image_retry = client.post(
+            "/v2/ingestions",
+            json={
+                "clientRequestId": "open-image-limit-exceeded",
+                "fileName": "pic.png",
+                "mediaType": "image/png",
+                "kind": "image",
+                "totalBytes": fifty_mib,
+            },
+            headers={"X-Idempotency-Key": "open-image-limit-exceeded"},
+        )
+        assert image_retry.status_code == 201, image_retry.text
+
+
+def test_streaming_api_chunk_zero_audio_sniffing_and_cleanup(
+    settings_factory: Callable[..., RuntimeSettings],
+) -> None:
+    sixty_mib = 60 * 1024 * 1024
+    declared_total = DOCUMENT_MAX_UPLOAD_BYTES + 1000
+    settings = settings_factory(CAPTURE_MAX_UPLOAD_BYTES=str(sixty_mib))
+    app_data_dir = Path(settings.app_data_dir)
+
+    with TestClient(
+        create_app(settings),
+        base_url=f"http://127.0.0.1:{settings.port}",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+    ) as client:
+        # Open audio source with totalBytes > 50 MiB
+        opened = client.post(
+            "/v2/ingestions",
+            json={
+                "clientRequestId": "audio-forged-pdf-open",
+                "fileName": "memo.wav",
+                "mediaType": "audio/wav",
+                "kind": "audio",
+                "totalBytes": declared_total,
+            },
+            headers={"X-Idempotency-Key": "audio-forged-pdf-open"},
+        )
+        assert opened.status_code == 201, opened.text
+        ingestion_id = opened.json()["ingestionId"]
+        ingestion_dir = app_data_dir / "jobs" / "streaming" / "ingestions" / ingestion_id
+
+        # Chunk 0 contains PDF header: rejected at chunk 0
+        pdf_chunk = b"%PDF-1.7 disguise in chunk 0"
+        chunk_response = client.put(
+            f"/v2/ingestions/{ingestion_id}/chunks/0",
+            content=pdf_chunk,
+            headers={
+                "Content-Range": f"bytes 0-{len(pdf_chunk) - 1}/{declared_total}",
+                "Digest": f"sha-256={hashlib.sha256(pdf_chunk).hexdigest()}",
+                "X-Idempotency-Key": "audio-forged-chunk-0",
+            },
+        )
+        assert chunk_response.status_code == 409
+        assert chunk_response.json()["error"]["code"] == "chunk_rejected"
+
+        # The rejected chunk is not stored.
+        source_bin = ingestion_dir / "source.bin"
+        assert source_bin.read_bytes() == b""
+
+        # Same declared total with genuine audio signature is accepted
+        valid_opened = client.post(
+            "/v2/ingestions",
+            json={
+                "clientRequestId": "audio-genuine-wav-open",
+                "fileName": "real.wav",
+                "mediaType": "audio/wav",
+                "kind": "audio",
+                "totalBytes": declared_total,
+            },
+            headers={"X-Idempotency-Key": "audio-genuine-wav-open"},
+        )
+        assert valid_opened.status_code == 201, valid_opened.text
+        valid_ingestion_id = valid_opened.json()["ingestionId"]
+        valid_dir = app_data_dir / "jobs" / "streaming" / "ingestions" / valid_ingestion_id
+
+        wav_header = (
+            b"RIFF\x24\x00\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00\x44\xac\x00\x00"
+            b"\x88\x58\x01\x00\x02\x00\x10\x00data\x00\x00\x00\x00"
+        )
+        valid_chunk = client.put(
+            f"/v2/ingestions/{valid_ingestion_id}/chunks/0",
+            content=wav_header,
+            headers={
+                "Content-Range": f"bytes 0-{len(wav_header) - 1}/{declared_total}",
+                "Digest": f"sha-256={hashlib.sha256(wav_header).hexdigest()}",
+                "X-Idempotency-Key": "audio-genuine-chunk-0",
+            },
+        )
+        assert valid_chunk.status_code == 200, valid_chunk.text
+        valid_source_bin = valid_dir / "source.bin"
+        assert valid_source_bin.exists()
+        assert valid_source_bin.read_bytes() == wav_header
+
+
+def test_streaming_api_readiness_reports_configured_max_upload_bytes(
+    settings_factory: Callable[..., RuntimeSettings],
+) -> None:
+    custom_limit = 77 * 1024 * 1024
+    settings = settings_factory(CAPTURE_MAX_UPLOAD_BYTES=str(custom_limit))
+    with TestClient(
+        create_app(settings),
+        base_url=f"http://127.0.0.1:{settings.port}",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+    ) as client:
+        ready = client.get("/v2/health/ready")
+        assert ready.status_code == 200, ready.text
+        assert ready.json()["capabilities"]["maxUploadBytes"] == custom_limit

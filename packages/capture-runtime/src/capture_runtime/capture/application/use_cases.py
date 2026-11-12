@@ -8,6 +8,11 @@ from collections.abc import Callable
 
 from capture_runtime.capture.application.ports import CaptureRepository
 from capture_runtime.capture.domain.operation import CaptureOperation
+from capture_runtime.capture.domain.size_policy import (
+    SOURCE_SIZE_EXCEEDED_MESSAGE,
+    IngestionSourceSizeExceededError,
+    SourceSizePolicy,
+)
 from capture_runtime.clock import Clock
 from capture_runtime.contracts import (
     CaptureDocument,
@@ -26,10 +31,17 @@ from capture_runtime.contracts import (
 class OpenIngestion:
     """Open a chunked or direct file ingestion session."""
 
-    def __init__(self, repository: CaptureRepository) -> None:
+    def __init__(
+        self,
+        repository: CaptureRepository,
+        policy: SourceSizePolicy,
+    ) -> None:
         self._repository = repository
+        self._policy = policy
 
     def execute(self, request: OpenIngestionV2) -> IngestionV2:
+        if not self._policy.is_allowed(request.kind, request.total_bytes):
+            raise IngestionSourceSizeExceededError(SOURCE_SIZE_EXCEEDED_MESSAGE)
         return self._repository.create_ingestion(request)
 
 
