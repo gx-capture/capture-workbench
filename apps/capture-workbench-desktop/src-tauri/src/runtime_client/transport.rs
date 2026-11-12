@@ -41,10 +41,97 @@ pub(super) fn request_with_headers(
     idempotency_key: Option<&str>,
     extra_headers: &[(&str, String)],
 ) -> Result<Value, String> {
+    request_classified(
+        config,
+        method,
+        path,
+        body.as_ref(),
+        idempotency_key,
+        extra_headers,
+    )
+    .map_err(|error| error.message)
+}
+
+pub(super) struct RequestError {
+    pub(super) message: String,
+    pub(super) transient: bool,
+}
+
+impl From<String> for RequestError {
+    fn from(message: String) -> Self {
+        Self {
+            message,
+            transient: false,
+        }
+    }
+}
+
+impl RequestError {
+    fn transient(message: String) -> Self {
+        Self {
+            message,
+            transient: true,
+        }
+    }
+}
+
+const RETRY_DELAYS: [Duration; 2] = [Duration::from_millis(200), Duration::from_secs(1)];
+
+pub(super) fn request_with_retry(
+    config: &BackendConfig,
+    method: &str,
+    path: &str,
+    body: Option<RequestBody>,
+    idempotency_key: Option<&str>,
+    extra_headers: &[(&str, String)],
+) -> Result<Value, RequestError> {
+    retry_request(
+        || {
+            request_classified(
+                config,
+                method,
+                path,
+                body.as_ref(),
+                idempotency_key,
+                extra_headers,
+            )
+        },
+        retry_wait,
+    )
+}
+
+fn retry_wait(delay: Duration) {
+    // Tests replay at once; a waiting test would only be slower.
+    if !cfg!(test) {
+        std::thread::sleep(delay);
+    }
+}
+
+fn retry_request(
+    mut send: impl FnMut() -> Result<Value, RequestError>,
+    mut wait: impl FnMut(Duration),
+) -> Result<Value, RequestError> {
+    for delay in RETRY_DELAYS {
+        match send() {
+            Err(error) if error.transient => wait(delay),
+            result => return result,
+        }
+    }
+    send()
+}
+
+fn request_classified(
+    config: &BackendConfig,
+    method: &str,
+    path: &str,
+    body: Option<&RequestBody>,
+    idempotency_key: Option<&str>,
+    extra_headers: &[(&str, String)],
+) -> Result<Value, RequestError> {
     let port = loopback_port(&config.base_url)?;
     let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
     let mut stream = TcpStream::connect_timeout(&address, REQUEST_TIMEOUT)
-        .map_err(|_| "Capture Runtime is unavailable.".to_string())?;
+        .map_err(|_| RequestError::transient("Capture Runtime is unavailable.".to_string()))?;
     stream
         .set_read_timeout(Some(REQUEST_TIMEOUT))
         .map_err(|_| "Capture Runtime connection cannot be configured.".to_string())?;
@@ -53,8 +140,8 @@ pub(super) fn request_with_headers(
         .map_err(|_| "Capture Runtime connection cannot be configured.".to_string())?;
 
     let (body_bytes, content_type) = match body {
-        Some(body) => (body.bytes, Some(body.content_type)),
-        None => (Vec::new(), None),
+        Some(body) => (body.bytes.as_slice(), Some(body.content_type.as_str())),
+        None => (&[][..], None),
     };
     let mut headers = format!(
         "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nOrigin: http://tauri.localhost\r\nAuthorization: Bearer {}\r\nAccept: application/json\r\nContent-Length: {}\r\nConnection: close\r\n",
@@ -73,17 +160,25 @@ pub(super) fn request_with_headers(
     headers.push_str("\r\n");
     stream
         .write_all(headers.as_bytes())
-        .and_then(|_| stream.write_all(&body_bytes))
-        .map_err(|_| "Capture Runtime request could not be sent.".to_string())?;
+        .and_then(|_| stream.write_all(body_bytes))
+        .map_err(|_| {
+            RequestError::transient("Capture Runtime request could not be sent.".to_string())
+        })?;
     let mut response = Vec::new();
     stream
         .take(MAX_RUNTIME_RESPONSE_BYTES + 1)
         .read_to_end(&mut response)
-        .map_err(|error| {
-            format!("Capture Runtime response could not be read for {method} {path}: {error}.")
+        .map_err(|_| {
+            response_rejection(&response).unwrap_or_else(|| {
+                RequestError::transient("Capture Runtime response could not be read.".to_string())
+            })
         })?;
     if response.len() as u64 > MAX_RUNTIME_RESPONSE_BYTES {
-        return Err("Capture Runtime response exceeded the desktop safety limit.".into());
+        return Err(
+            "Capture Runtime response exceeded the desktop safety limit."
+                .to_string()
+                .into(),
+        );
     }
     parse_response(&response, &config.token)
 }
@@ -125,39 +220,57 @@ pub(super) fn request_sse(
     sse::parse_response(&response, &config.token)
 }
 
-fn parse_response(response: &[u8], token: &str) -> Result<Value, String> {
+fn response_rejection(response: &[u8]) -> Option<RequestError> {
+    let line_end = response.windows(2).position(|window| window == b"\r\n")?;
+    let status = std::str::from_utf8(&response[..line_end])
+        .ok()?
+        .split_whitespace()
+        .nth(1)?
+        .parse::<u16>()
+        .ok()?;
+    if (200..300).contains(&status) {
+        return None;
+    }
+    Some(RequestError {
+        message: format!("Capture Runtime request was rejected with HTTP {status}."),
+        transient: matches!(status, 502 | 503 | 504),
+    })
+}
+
+fn parse_response(response: &[u8], token: &str) -> Result<Value, RequestError> {
+    // A received rejection is decisive even if the peer closes before sending
+    // the remaining headers or body. Only gateway failures permit replay.
+    if let Some(error) = response_rejection(response) {
+        return Err(error);
+    }
     let separator = response
         .windows(4)
         .position(|window| window == b"\r\n\r\n")
         .ok_or_else(|| {
-            format!(
+            RequestError::transient(format!(
                 "Capture Runtime response was malformed ({}).",
                 response_diagnostic(response)
-            )
+            ))
         })?;
-    let headers = std::str::from_utf8(&response[..separator])
-        .map_err(|_| "Capture Runtime response headers were invalid.".to_string())?;
+    let headers = std::str::from_utf8(&response[..separator]).map_err(|_| {
+        RequestError::transient("Capture Runtime response headers were invalid.".to_string())
+    })?;
     let status = headers
         .lines()
         .next()
         .and_then(|line| line.split_whitespace().nth(1))
         .and_then(|value| value.parse::<u16>().ok())
         .ok_or_else(|| {
-            format!(
+            RequestError::transient(format!(
                 "Capture Runtime response status was malformed ({}).",
                 response_diagnostic(response)
-            )
+            ))
         })?;
-    if !(200..300).contains(&status) {
-        return Err(format!(
-            "Capture Runtime request was rejected with HTTP {status}."
-        ));
-    }
     if status == 204 {
         return Ok(Value::Null);
     }
     let body = &response[separator + 4..];
-    let body = decode_body(headers, body)?;
+    let body = decode_body(headers, body).map_err(RequestError::transient)?;
     let mut value: Value = serde_json::from_slice(&body)
         .map_err(|_| "Capture Runtime response was not valid JSON.".to_string())?;
     redact_token(&mut value, token);
@@ -242,6 +355,89 @@ fn response_diagnostic(response: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::{decode_body, response_diagnostic};
+
+    #[test]
+    fn retry_budget_and_delays_are_bounded() {
+        let mut attempts = 0;
+        let mut delays = Vec::new();
+        let result = super::retry_request(
+            || {
+                attempts += 1;
+                Err(super::RequestError::transient("unavailable".into()))
+            },
+            |delay| delays.push(delay),
+        );
+        assert!(result.is_err());
+        assert_eq!(attempts, 3);
+        assert_eq!(delays, super::RETRY_DELAYS);
+    }
+
+    #[test]
+    fn definite_rejection_does_not_wait_or_retry() {
+        let mut attempts = 0;
+        let result = super::retry_request(
+            || {
+                attempts += 1;
+                super::parse_response(b"HTTP/1.1 500 Failure\r\n", "secret")
+            },
+            |_| panic!("definite rejection must not wait"),
+        );
+        assert!(result.is_err());
+        assert_eq!(attempts, 1);
+    }
+
+    #[test]
+    fn response_classification_preserves_definite_statuses() {
+        for status in [409, 422, 500, 502, 503, 504] {
+            let response = format!("HTTP/1.1 {status} Failure\r\nContent-Length: 0\r\n\r\n");
+            let error = super::parse_response(response.as_bytes(), "secret")
+                .err()
+                .expect("rejection");
+            assert_eq!(error.transient, matches!(status, 502..=504));
+        }
+        for response in [
+            &b""[..],
+            &b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\n{}"[..],
+        ] {
+            assert!(
+                super::parse_response(response, "secret")
+                    .err()
+                    .expect("incomplete")
+                    .transient
+            );
+        }
+    }
+
+    #[test]
+    fn definite_failure_does_not_wait_or_retry() {
+        let mut attempts = 0;
+        let result = super::retry_request(
+            || {
+                attempts += 1;
+                Err("Capture Runtime request was rejected with HTTP 500."
+                    .to_string()
+                    .into())
+            },
+            |_| panic!("definite failures must not wait"),
+        );
+        assert!(result.is_err());
+        assert_eq!(attempts, 1);
+    }
+
+    #[test]
+    fn rejection_status_is_preserved_when_the_response_is_incomplete() {
+        for status in [409, 422, 500, 502, 503, 504] {
+            let response = format!("HTTP/1.1 {status} Failure\r\nContent-Length: 100\r\n");
+            let error = super::parse_response(response.as_bytes(), "secret")
+                .err()
+                .expect("rejection");
+            assert_eq!(error.transient, matches!(status, 502..=504));
+            assert_eq!(
+                error.message,
+                format!("Capture Runtime request was rejected with HTTP {status}.")
+            );
+        }
+    }
 
     #[test]
     fn malformed_response_diagnostic_never_includes_response_bytes() {

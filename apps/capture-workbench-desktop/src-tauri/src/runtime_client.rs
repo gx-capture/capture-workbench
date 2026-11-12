@@ -20,7 +20,9 @@ mod sse;
 mod transport;
 mod validation;
 
-use transport::{is_http_rejection, request, request_sse, request_with_headers, RequestBody};
+use transport::{
+    is_http_rejection, request, request_sse, request_with_headers, request_with_retry, RequestBody,
+};
 use validation::{
     validate_client_request_id, validate_document_id, validate_model_option_id, validate_opaque_id,
     validate_pdf_page_numbers, validate_requirement_id, validate_structuring_mode,
@@ -180,23 +182,15 @@ pub(crate) fn create_capture(
         upload_ingestion_source(&config, &source, open_body, &input.client_request_id)?;
     let capture_body =
         capture_start_body(&input.client_request_id, &ingestion_id, pdf_page_numbers);
-    let result = request(
+    let result = request_with_retry(
         &config,
         "POST",
         "/v2/captures",
         Some(json_body(capture_body)?),
         Some(&input.client_request_id),
+        &[],
     );
-    if result.is_err() {
-        let _ = request(
-            &config,
-            "DELETE",
-            &format!("/v2/ingestions/{ingestion_id}"),
-            None,
-            None,
-        );
-    }
-    result
+    finish_capture_start(&config, &ingestion_id, result)
 }
 
 pub(crate) fn start_streaming_capture(
@@ -246,23 +240,36 @@ fn start_streaming_capture_inner(
         .map_err(|_| "Progressive capture request cannot be encoded.".to_string())?,
         content_type: "application/json".into(),
     };
-    let result = request(
+    let result = request_with_retry(
         config,
         "POST",
         "/v2/captures",
         Some(capture_body),
         Some(&input.client_request_id),
+        &[],
     );
-    if result.is_err() {
-        let _ = request(
-            config,
-            "DELETE",
-            &format!("/v2/ingestions/{ingestion_id}"),
-            None,
-            None,
-        );
+    finish_capture_start(config, &ingestion_id, result)
+}
+
+fn finish_capture_start(
+    config: &BackendConfig,
+    ingestion_id: &str,
+    result: Result<Value, transport::RequestError>,
+) -> Result<Value, String> {
+    match result {
+        Err(error) if error.transient => Err("Capture could not be confirmed.".into()),
+        Err(error) => {
+            let _ = request(
+                config,
+                "DELETE",
+                &format!("/v2/ingestions/{ingestion_id}"),
+                None,
+                None,
+            );
+            Err(error.message)
+        }
+        Ok(value) => Ok(value),
     }
-    result
 }
 
 fn upload_ingestion_source(
@@ -272,22 +279,23 @@ fn upload_ingestion_source(
     client_request_id: &str,
 ) -> Result<String, String> {
     let ingestion_request_id = format!("{client_request_id}-ingestion");
-    let ingestion = request(
+    let ingestion = request_with_retry(
         config,
         "POST",
         "/v2/ingestions",
         Some(open_body),
         Some(&ingestion_request_id),
-    )?;
+        &[],
+    )
+    .map_err(|error| error.message)?;
     let ingestion_id = ingestion
         .get("ingestionId")
         .and_then(Value::as_str)
         .ok_or_else(|| "Capture Runtime ingestion response is invalid.".to_string())?;
     validate_opaque_id(ingestion_id)?;
     let result = (|| {
-        upload_source_chunks(config, source, ingestion_id, client_request_id)?;
-        let source_digest = source_sha256(source)?;
-        request(
+        let source_digest = upload_source_chunks(config, source, ingestion_id, client_request_id)?;
+        request_with_retry(
             config,
             "POST",
             &format!("/v2/ingestions/{ingestion_id}/finalize"),
@@ -297,7 +305,9 @@ fn upload_ingestion_source(
                 "sha256": source_digest,
             }))?),
             None,
+            &[],
         )
+        .map_err(|error| error.message)
     })();
     if let Err(error) = result {
         let _ = request(
@@ -380,9 +390,10 @@ fn upload_source_chunks(
     source: &RuntimeSourceFile,
     ingestion_id: &str,
     request_id: &str,
-) -> Result<(), String> {
+) -> Result<String, String> {
     let mut file = std::fs::File::open(&source.path)
         .map_err(|_| "Capture library source cannot be opened for streaming.".to_string())?;
+    let mut hasher = Sha256::new();
     let mut offset = 0_u64;
     let mut chunk_index = 0_u64;
     let mut buffer = vec![0_u8; STREAM_CHUNK_BYTES];
@@ -392,9 +403,10 @@ fn upload_source_chunks(
         file.read_exact(&mut buffer[..target])
             .map_err(|_| "Capture library source changed during streaming upload.".to_string())?;
         let bytes = &buffer[..target];
+        hasher.update(bytes);
         let digest = hex_digest(bytes);
         let end = offset + bytes.len() as u64 - 1;
-        request_with_headers(
+        request_with_retry(
             config,
             "PUT",
             &format!("/v2/ingestions/{ingestion_id}/chunks/{chunk_index}"),
@@ -410,11 +422,20 @@ fn upload_source_chunks(
                 ),
                 ("Digest", format!("sha-256={digest}")),
             ],
-        )?;
+        )
+        .map_err(|error| error.message)?;
         offset += bytes.len() as u64;
         chunk_index += 1;
     }
-    Ok(())
+    let mut extra = [0_u8; 1];
+    if file
+        .read(&mut extra)
+        .map_err(|_| "Capture library source cannot be hashed.".to_string())?
+        != 0
+    {
+        return Err("Capture library source changed during finalization.".into());
+    }
+    Ok(format!("{:x}", hasher.finalize()))
 }
 
 fn json_body(value: Value) -> Result<RequestBody, String> {
@@ -442,28 +463,6 @@ fn capture_start_body(
         body["pdfPageNumbers"] = json!(page_numbers);
     }
     body
-}
-
-fn source_sha256(source: &RuntimeSourceFile) -> Result<String, String> {
-    let mut file = std::fs::File::open(&source.path)
-        .map_err(|_| "Capture library source cannot be opened for finalization.".to_string())?;
-    let mut hasher = Sha256::new();
-    let mut buffer = vec![0_u8; STREAM_CHUNK_BYTES];
-    let mut read_bytes = 0_u64;
-    loop {
-        let count = file
-            .read(&mut buffer)
-            .map_err(|_| "Capture library source cannot be hashed.".to_string())?;
-        if count == 0 {
-            break;
-        }
-        read_bytes += count as u64;
-        hasher.update(&buffer[..count]);
-    }
-    if read_bytes != source.bytes {
-        return Err("Capture library source changed during finalization.".into());
-    }
-    Ok(format!("{:x}", hasher.finalize()))
 }
 
 fn hex_digest(bytes: &[u8]) -> String {
@@ -1317,5 +1316,147 @@ mod tests {
             .expect_err("capture start should fail");
         assert!(error.contains("HTTP 500"));
         server.join().expect("server thread");
+    }
+    // Each script entry consumes exactly one connection; dropping it is required
+    // because the native transport reads to EOF before issuing the next request.
+    fn replay_scenario(stage: usize, failures: usize, status: Option<u16>, succeeds: bool) {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("listener");
+        let port = listener.local_addr().expect("address").port();
+        let content = vec![b'a'; STREAM_CHUNK_BYTES + 17];
+        let expected_digest = hex_digest(&content);
+        let (_guard, source) = create_test_source_file("replay", &content, "audio/mpeg");
+        let config = test_backend_config(port);
+        let input = RuntimeStreamingCaptureInput {
+            document_id: "0123456789abcdef0123456789abcdef".into(),
+            client_request_id: "replay-request".into(),
+            structuring_mode: "host".into(),
+            identify_speakers: false,
+        };
+        let server = thread::spawn(move || {
+            let paths = [
+                "POST /v2/ingestions HTTP/1.1",
+                "PUT /v2/ingestions/replay-ingestion/chunks/0 HTTP/1.1",
+                "PUT /v2/ingestions/replay-ingestion/chunks/1 HTTP/1.1",
+                "POST /v2/ingestions/replay-ingestion/finalize HTTP/1.1",
+                "POST /v2/captures HTTP/1.1",
+            ];
+            for (index, path) in paths.iter().enumerate() {
+                let attempts = if index == stage {
+                    failures + usize::from(succeeds)
+                } else {
+                    1
+                };
+                let mut first_request = None;
+                for attempt in 0..attempts {
+                    let (mut stream, _) = listener.accept().expect("accept request");
+                    let req = read_http_request(&mut stream);
+                    assert!(req.starts_with(path), "unexpected request route");
+                    if let Some(first) = &first_request {
+                        // Avoid printing authenticated request bytes on failure.
+                        assert!(&req == first, "replay must be byte-identical");
+                    } else {
+                        first_request = Some(req.clone());
+                    }
+                    if index == 3 {
+                        let (_, body) = req.split_once("\r\n\r\n").expect("body");
+                        let body: Value = serde_json::from_str(body).expect("finalize json");
+                        assert_eq!(body["sha256"], expected_digest);
+                        assert_eq!(body["totalBytes"], (STREAM_CHUNK_BYTES + 17) as u64);
+                    }
+                    if index == stage && attempt < failures {
+                        if let Some(status) = status {
+                            write!(
+                                stream,
+                                "HTTP/1.1 {status} Failure\r\nContent-Length: 0\r\n\r\n"
+                            )
+                            .expect("failure");
+                        }
+                    } else {
+                        let body = match index {
+                            0 => r#"{"ingestionId":"replay-ingestion"}"#,
+                            4 => r#"{"captureId":"replay-capture"}"#,
+                            _ => "{}",
+                        };
+                        write!(
+                            stream,
+                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{}",
+                            body.len(),
+                            body
+                        )
+                        .expect("success");
+                    }
+                    drop(stream);
+                }
+                if index == stage && !succeeds {
+                    // An exhausted transient start may already own the source.
+                    if stage != 4 || !matches!(status, None | Some(502..=504)) {
+                        let (mut stream, _) = listener.accept().expect("accept cleanup");
+                        let req = read_http_request(&mut stream);
+                        assert!(req.starts_with("DELETE /v2/ingestions/replay-ingestion HTTP/1.1"));
+                        write!(
+                            stream,
+                            "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n"
+                        )
+                        .expect("cleanup");
+                        drop(stream);
+                    }
+                    break;
+                }
+            }
+            listener.set_nonblocking(true).expect("nonblocking");
+            // Keep the listener alive until the caller has returned, so a
+            // forbidden extra request is observed rather than connection-refused.
+            listener
+        });
+        let result = start_streaming_capture_inner(&config, &source, &input);
+        let listener = server.join().expect("server");
+        assert!(listener.accept().is_err(), "unexpected additional request");
+        if succeeds {
+            assert_eq!(result.expect("capture")["captureId"], "replay-capture");
+        } else if stage == 4 && matches!(status, None | Some(502..=504)) {
+            assert_eq!(
+                result.expect_err("unconfirmed"),
+                "Capture could not be confirmed."
+            );
+        } else {
+            assert!(result.is_err());
+        }
+    }
+
+    #[test]
+    fn upload_replays_lost_responses_and_gateway_failures_identically() {
+        for stage in [0, 1, 3, 4] {
+            for status in [None, Some(502), Some(503), Some(504)] {
+                replay_scenario(stage, 1, status, true);
+            }
+        }
+    }
+
+    #[test]
+    fn exhausted_chunk_stops_before_next_chunk_and_cleans_up() {
+        for status in [None, Some(503)] {
+            replay_scenario(1, 3, status, false);
+        }
+    }
+
+    #[test]
+    fn exhausted_finalize_cleans_up() {
+        replay_scenario(3, 3, None, false);
+        replay_scenario(3, 3, Some(503), false);
+    }
+
+    #[test]
+    fn rejected_chunk_is_not_retried_and_cleans_up() {
+        for status in [409, 422] {
+            replay_scenario(1, 1, Some(status), false);
+        }
+    }
+
+    #[test]
+    fn start_cleanup_depends_on_confirmation() {
+        replay_scenario(4, 1, Some(500), false);
+        for status in [None, Some(503)] {
+            replay_scenario(4, 3, status, false);
+        }
     }
 }

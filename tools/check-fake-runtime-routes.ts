@@ -63,7 +63,7 @@ export function hostRoutes(sources: readonly string[]): Set<string> {
   const routes = new Set<string>();
   // The native transport takes method then path; accept literal and format! paths.
   for (const body of bodies.values()) {
-    for (const call of body.matchAll(/\brequest(?:_json|_with_headers)?\s*\(\s*[^,]+,\s*"(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)"\s*,\s*/gu)) {
+    for (const call of body.matchAll(/\brequest(?:_json|_with_headers|_with_retry)?\s*\(\s*[^,]+,\s*"(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)"\s*,\s*/gu)) {
       let expression = body.slice(call.index + call[0].length);
       const variable = /^&?(\w+)\s*,/u.exec(expression)?.[1];
       if (variable) {
