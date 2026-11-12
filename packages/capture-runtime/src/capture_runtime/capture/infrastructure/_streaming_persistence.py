@@ -70,8 +70,17 @@ class _StreamingRepositoryPersistence:
         (directory / "events.jsonl").touch()
 
     @staticmethod
-    def append_source(path: Path, data: bytes) -> None:
-        with path.open("ab") as source:
+    def write_source(path: Path, offset: int, data: bytes) -> None:
+        """Write a chunk at its accepted offset.
+
+        A write that failed halfway (a full disk) leaves bytes after the last
+        accepted chunk; appending the replay after them would shift every later
+        chunk. Truncating to the offset first replaces that tail; accepted bytes
+        before the offset are never changed.
+        """
+        with path.open("r+b") as source:
+            source.truncate(offset)
+            source.seek(offset)
             source.write(data)
             source.flush()
             os.fsync(source.fileno())

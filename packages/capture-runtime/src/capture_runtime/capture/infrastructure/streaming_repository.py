@@ -200,8 +200,8 @@ class StreamingRepository:
             if updated is current:
                 return self._ingestion_snapshot(record)
             self._require_recording_signature(record, ingestion_id, byte_offset, data)
-            self._persistence.append_source(
-                self._ingestion_directory(ingestion_id) / "source.bin", data
+            self._persistence.write_source(
+                self._ingestion_directory(ingestion_id) / "source.bin", record.next_offset, data
             )
             record.accepted_chunks[chunk_index] = (byte_offset, len(data), sha256)
             record.next_chunk_index = updated.next_chunk_index

@@ -24,6 +24,8 @@
 
 `Ingestion` 以 `append` 與 `finalize` 守住分塊順序、重送一致性、大小與摘要。`CaptureOperation` 管理合法轉換、主機提交與拉取結構化前置條件及終態事件。相同狀態可冪等重入，終態不可轉回活動狀態；非同步完成與取消的重播由 repository 在鎖內處理。`CaptureCompleted` 保留完整完成時間，作為終止事件的時間來源。
 
+分塊寫在已接受的位移上：先截掉位移之後的內容再寫入並 fsync，之後才更新 metadata。寫到一半失敗（例如磁碟已滿）留下的尾端，會被重送的分塊取代而不會使後續分塊錯位；已接受的位元組不會改變。
+
 ```mermaid
 classDiagram
   Ingestion : append(chunk)
