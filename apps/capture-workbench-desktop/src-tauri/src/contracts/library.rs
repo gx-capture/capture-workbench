@@ -501,10 +501,11 @@ pub(crate) struct LibraryCaptureOptions {
     pub pdf_page_count: Option<u32>,
 }
 
+#[cfg(any(test, feature = "model-smoke-app-data"))]
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LibraryImportSourceRequest {
-    /// Native path from the file dialog or a Tauri drag-drop event.
+    /// Native fixture input, available only to tests and the model smoke.
     #[serde(default)]
     pub source_path: String,
     #[serde(default)]

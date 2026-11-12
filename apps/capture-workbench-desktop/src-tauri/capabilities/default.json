@@ -2,6 +2,15 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Minimum permissions for the Capture Workbench desktop window.",
-  "windows": ["main"],
-  "permissions": ["core:default", "dialog:allow-open"]
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    "core:event:deny-listen",
+    "core:event:deny-unlisten",
+    "core:event:deny-emit",
+    "core:event:deny-emit-to",
+    "dialog:deny-open"
+  ]
 }

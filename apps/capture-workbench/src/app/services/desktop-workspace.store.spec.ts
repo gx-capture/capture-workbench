@@ -1,3 +1,5 @@
+import { Router } from '@angular/router';
+import { CaptureQueueStore } from './capture-queue.store';
 import { RUNTIME_VERSION } from '@gx-capture/capture-runtime-client';
 import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
@@ -5,8 +7,9 @@ import type { CaptureOcrProjection } from '@gx-capture/capture-runtime-client';
 import type { CaptureOperation, OcrComputePreflight } from '@gx-capture/capture-workbench-ui';
 import { EMPTY, finalize, of, Subject, throwError } from 'rxjs';
 import type { DesktopLibraryDetail, DesktopLibrarySummary } from '../contracts';
-import { DesktopLibraryService } from './desktop-library.service';
+import { DesktopLibraryService, type DesktopSourceSelection } from './desktop-library.service';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
+import { DesktopWorkspaceCaptureService } from './desktop-workspace-capture.service';
 import { DesktopWorkspaceStore } from './desktop-workspace.store';
 import {
   FIRST_RUN_DISMISSED_STORAGE_KEY,
@@ -348,11 +351,11 @@ describe('DesktopWorkspaceStore', () => {
   });
 
   it('allows an OCR-ready import when host structuring is unavailable', () => {
-    const createSource = vi.fn(() => of(summary));
+    const importSelection = vi.fn(() => of(summary));
     const startInstallation = vi.fn();
     const startModelInstallation = vi.fn();
     const store = initializeStore(
-      libraryStub({ createSource }),
+      libraryStub({ importSelection }),
       runtimeStub({
         startInstallation,
         startModelInstallation,
@@ -391,12 +394,12 @@ describe('DesktopWorkspaceStore', () => {
     expect(store.ocrReady()).toBe(true);
     expect(store.requestedMissing()).toEqual([]);
 
-    store.addSourcePaths([String.raw`C:\private\scan.pdf`]);
+    store.addSelections({ rejected: [], selections: [selection('scan.pdf')] });
     TestBed.tick();
 
     expect(startInstallation).not.toHaveBeenCalled();
     expect(startModelInstallation).not.toHaveBeenCalled();
-    expect(createSource).toHaveBeenCalledWith(String.raw`C:\private\scan.pdf`);
+    expect(importSelection).toHaveBeenCalledWith(selection('scan.pdf'));
   });
 
   it('clears the status message once the runtime is ready', () => {
@@ -455,7 +458,7 @@ describe('DesktopWorkspaceStore', () => {
 
   it('asks for Whisper only when an allowed audio source is selected', () => {
     const library = libraryStub({
-      createSource: vi.fn(() =>
+      importSelection: vi.fn(() =>
         of({
           ...summary,
           fileName: 'voice.wav',
@@ -475,7 +478,7 @@ describe('DesktopWorkspaceStore', () => {
     });
     const store = initializeStore(library, client);
 
-    store.addSourcePaths([String.raw`C:\private\voice.wav`]);
+    store.addSelections({ rejected: [], selections: [selection('voice.wav')] });
     TestBed.tick();
 
     expect(store.state()).toBe('ready');
@@ -483,7 +486,7 @@ describe('DesktopWorkspaceStore', () => {
       'speech-recognition',
     ]);
     expect(store.message()).toBe('處理錄音需要先下載台灣語音轉文字（TEA-ASR 1.1）。');
-    expect(library.createSource).toHaveBeenCalledOnce();
+    expect(library.importSelection).toHaveBeenCalledOnce();
   });
 
   it('never asks an ASR-only user for OCR and transcribes recordings when OCR is not installed', () => {
@@ -499,7 +502,7 @@ describe('DesktopWorkspaceStore', () => {
     const deleteStreamingCapture = vi.fn(() => of(undefined));
     const startInstallation = vi.fn();
     const library = libraryStub({
-      createSource: vi.fn(() => of(audioDoc)),
+      importSelection: vi.fn(() => of(audioDoc)),
       list: vi.fn(() => of([audioDoc])),
       get: vi.fn(() => of(audioDoc as DesktopLibraryDetail)),
     });
@@ -538,7 +541,7 @@ describe('DesktopWorkspaceStore', () => {
     expect(store.asrReady()).toBe(true);
     expect(store.ocrReady()).toBe(false);
 
-    store.addSourcePaths([String.raw`C:\private\interview.wav`]);
+    store.addSelections({ rejected: [], selections: [selection('interview.wav')] });
     TestBed.tick();
 
     expect(startInstallation).not.toHaveBeenCalled();
@@ -555,7 +558,7 @@ describe('DesktopWorkspaceStore', () => {
     const startStreamingCapture = vi.fn(() => of(completedJob));
     const createCapture = vi.fn(() => of(completedJob));
     const library = libraryStub({
-      createSource: vi.fn(() => of(audioDoc)),
+      importSelection: vi.fn(() => of(audioDoc)),
       list: vi.fn(() => of([])),
       get: vi.fn(() => of(audioDoc as DesktopLibraryDetail)),
     });
@@ -580,7 +583,7 @@ describe('DesktopWorkspaceStore', () => {
     });
     const store = initializeStore(library, client);
 
-    store.addSourcePaths([String.raw`C:\private\interview.wav`]);
+    store.addSelections({ rejected: [], selections: [selection('interview.wav')] });
     TestBed.tick();
 
     expect(startStreamingCapture).toHaveBeenCalledOnce();
@@ -2250,11 +2253,77 @@ describe('DesktopWorkspaceStore', () => {
     expect(deleteDocument).not.toHaveBeenCalledWith(first.documentId);
   });
 
+  it('routes native drop batches to OCR on the OCR page and imports them on history', () => {
+    const dropped = new Subject<{ selections: readonly DesktopSourceSelection[]; rejected: [] }>();
+    const queue = { importSelections: vi.fn() };
+    const router = { url: '/ocr' };
+    TestBed.configureTestingModule({ providers: [
+      { provide: Router, useValue: router },
+      { provide: CaptureQueueStore, useValue: queue },
+    ] });
+    const library = libraryStub({ droppedSources: vi.fn(() => dropped) });
+    initializeStore(library, runtimeStub());
+    const batch = { selections: [selection('chosen.pdf')], rejected: [] as [] };
+    dropped.next(batch);
+    expect(queue.importSelections).toHaveBeenCalledWith(batch);
+    expect(library.importSelection).not.toHaveBeenCalled();
+    router.url = '/history';
+    dropped.next(batch);
+    expect(library.importSelection).toHaveBeenCalledWith(batch.selections[0]);
+  });
+
+  it('imports the entire batch before waiting for the first capture', () => {
+    const pending = new Subject<CaptureOperation>();
+    const imported = vi.fn((input: DesktopSourceSelection) => of({
+      ...summary, documentId: input.fileName === 'first.pdf' ? '1'.repeat(32) : '2'.repeat(32),
+    }));
+    const createCapture = vi.fn(() => pending);
+    const store = initializeStore(libraryStub({ importSelection: imported }), runtimeStub({ createCapture }));
+    store.addSelections({ selections: [selection('first.pdf'), selection('second.pdf')], rejected: [] });
+    TestBed.tick();
+    expect(imported).toHaveBeenCalledTimes(2);
+    expect(createCapture).toHaveBeenCalledTimes(1);
+    // The second document waits for its turn: nothing else may start it.
+    const lifecycle = TestBed.inject(DesktopWorkspaceCaptureService);
+    expect(lifecycle.hasActiveCapture('2'.repeat(32))).toBe(true);
+    pending.complete();
+  });
+
+  it('starts the next document of a batch when the previous capture ends, and then holds none', () => {
+    const captures = [new Subject<CaptureOperation>(), new Subject<CaptureOperation>()];
+    const imported = vi.fn((input: DesktopSourceSelection) => of({
+      ...summary, documentId: input.fileName === 'first.pdf' ? '1'.repeat(32) : '2'.repeat(32),
+    }));
+    let started = 0;
+    const createCapture = vi.fn(() => captures[started++]);
+    const store = initializeStore(libraryStub({ importSelection: imported }), runtimeStub({ createCapture }));
+    const lifecycle = TestBed.inject(DesktopWorkspaceCaptureService);
+    store.addSelections({ selections: [selection('first.pdf'), selection('second.pdf')], rejected: [] });
+    TestBed.tick();
+    expect(createCapture).toHaveBeenCalledTimes(1);
+    captures[0].complete();
+    TestBed.tick();
+    expect(createCapture).toHaveBeenCalledTimes(2);
+    captures[1].complete();
+    TestBed.tick();
+    expect(lifecycle.hasActiveCapture('1'.repeat(32))).toBe(false);
+    expect(lifecycle.hasActiveCapture('2'.repeat(32))).toBe(false);
+  });
+
+  it('discards a refused batch when the runtime is unavailable', () => {
+    const library = libraryStub();
+    const runtime = runtimeStub();
+    const store = initializeStore(library, runtime);
+    runtime.ready.set(false);
+    store.addSelections({ selections: [selection('first.pdf')], rejected: [] });
+    expect(library.discardSelections).toHaveBeenCalledWith([selection('first.pdf')]);
+  });
+
   it('blocks direct deletion while a native capture is active', () => {
     const pendingCapture = new Subject<CaptureOperation>();
     const deleteDocument = vi.fn(() => of(undefined));
     const library = libraryStub({
-      createSource: vi.fn(() => of(summary)),
+      importSelection: vi.fn(() => of(summary)),
       delete: deleteDocument,
     });
     const store = initializeStore(
@@ -2262,7 +2331,7 @@ describe('DesktopWorkspaceStore', () => {
       runtimeStub({ createCapture: vi.fn(() => pendingCapture) }),
     );
 
-    store.addSourcePaths(['C:\\private\\active.pdf']);
+    store.addSelections({ rejected: [], selections: [selection('active.pdf')] });
     TestBed.tick();
     store.delete(summary.documentId);
 
@@ -2330,9 +2399,10 @@ function libraryStub(overrides: Record<string, unknown> = {}) {
   return Object.assign({
     list: vi.fn(() => of<readonly DesktopLibrarySummary[]>([])),
     get: vi.fn(() => of<DesktopLibraryDetail>(summary)),
-    selectSources: vi.fn(() => of<readonly string[]>([])),
+    discardSelections: vi.fn(() => of(undefined)),
+    selectSources: vi.fn(() => of({ selections: [], rejected: [] })),
     droppedSources: vi.fn(() => EMPTY),
-    createSource: vi.fn(() => of(summary)),
+    importSelection: vi.fn(() => of(summary)),
     updateCapture: vi.fn(() => of(summary)),
     export: vi.fn(),
     delete: vi.fn(() => of(undefined)),
@@ -2494,4 +2564,9 @@ function ocrProjection(
 async function settleCaptureLifecycle(): Promise<void> {
   await new Promise<void>((resolve) => globalThis.setTimeout(resolve, 25));
   await Promise.resolve();
+}
+
+function selection(fileName: string): DesktopSourceSelection {
+  return { selectionToken: fileName.padEnd(32, '0'), fileName, byteLength: 16,
+    mediaType: fileName.endsWith('.png') ? 'image/png' : fileName.endsWith('.wav') ? 'audio/wav' : 'application/pdf' };
 }

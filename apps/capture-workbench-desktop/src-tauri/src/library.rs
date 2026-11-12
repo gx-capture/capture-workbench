@@ -47,7 +47,7 @@ fn inject_transaction_failure(_point: &str) -> io::Result<()> {
 mod filesystem;
 mod store;
 mod transaction;
-mod validation;
+pub(crate) mod validation;
 
 pub(crate) use filesystem::{
     atomic_write, load_backup_index, read_json_optional, remove_file_if_exists, stem,

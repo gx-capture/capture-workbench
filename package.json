@@ -47,7 +47,6 @@
     "@spartan-ng/brain": "1.9.0",
     "@tailwindcss/postcss": "4.3.3",
     "@tauri-apps/api": "2.12.4",
-    "@tauri-apps/plugin-dialog": "2.8.4",
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
     "rxjs": "~7.8.2",

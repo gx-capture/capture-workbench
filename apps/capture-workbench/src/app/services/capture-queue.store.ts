@@ -2,8 +2,9 @@ import { computed, DestroyRef, effect, Injectable, inject, signal } from '@angul
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { catchError, concatMap, EMPTY, finalize, from } from 'rxjs';
 import type { DesktopCaptureOptions, DesktopLibrarySummary } from '../contracts';
+import { selectionRejectionMessages } from './source-selection-messages';
 import { desktopMessages } from '../i18n/desktop-messages';
-import { DesktopLibraryService } from './desktop-library.service';
+import { DesktopLibraryService, type DesktopSourceSelection, type DesktopSourceSelectionBatch } from './desktop-library.service';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
 import { DesktopWorkspaceCaptureService, type DesktopWorkspaceCaptureHost } from './desktop-workspace-capture.service';
 import { DesktopWorkspaceFormattingService } from './desktop-workspace-formatting.service';
@@ -17,14 +18,9 @@ import { RecognitionFeaturesStore } from './recognition-features.store';
 import {
   describeOcrDocument,
   isOcrMediaType,
-  ocrFileExtension,
-  ocrFileName,
   parsePdfPageCount,
-  refuseOcrFile,
   renderRawOcrText,
 } from './ocr-queue';
-
-const OCR_PICKER_EXTENSIONS = ['pdf', 'png', 'jpg', 'jpeg'] as const;
 
 @Injectable({ providedIn: 'root' })
 /** Import, waiting queue, start, cancel, retry and progress for the OCR page. */
@@ -137,54 +133,56 @@ export class CaptureQueueStore {
       });
   }
 
-  /** Opens the existing picker, limited to PDF and image files, then queues the paths. */
+  /** Opens the existing picker, limited to PDF and image files, then queues the selections. */
   chooseFiles(): void {
-    this.library.selectSources(OCR_PICKER_EXTENSIONS)
+    this.library.selectSources('documents')
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
-        next: (paths) => {
-          this.importPaths(paths);
+        next: (batch) => {
+          this.importSelections(batch);
         },
         error: (error: unknown) => this.importError.set(errorMessage(error)),
       });
   }
 
   /**
-   * Saves each accepted path as a waiting document. Capture starts later, when OCR is ready.
+   * Saves each accepted selection as a waiting document. Capture starts later, when OCR is ready.
    * The host reads the file and checks its size.
    */
-  importPaths(paths: readonly string[]): void {
+  importSelections(batch: DesktopSourceSelectionBatch): void {
     const pageCount = parsePdfPageCount(this.pageCountText());
+    const rejected = [...batch.rejected];
     const errors: string[] = [];
-    const accepted: { readonly path: string; readonly options?: DesktopCaptureOptions }[] = [];
-    for (const path of paths) {
-      const name = ocrFileName(path);
-      const refused = refuseOcrFile(name);
-      if (refused) {
-        errors.push(refused);
+    const refusedSelections: DesktopSourceSelection[] = [];
+    const accepted: { readonly selection: DesktopSourceSelection; readonly options?: DesktopCaptureOptions }[] = [];
+    for (const selection of batch.selections) {
+      if (!isOcrMediaType(selection.mediaType)) {
+        rejected.push('unsupported');
+        refusedSelections.push(selection);
         continue;
       }
-      const pdf = ocrFileExtension(name) === 'pdf';
+      const pdf = selection.mediaType === 'application/pdf';
       if (pdf && pageCount === 'invalid') {
-        errors.push(`${name}: ${desktopMessages().ocrPageCountInvalid}`);
+        errors.push(desktopMessages().ocrPageCountInvalid);
+        refusedSelections.push(selection);
         continue;
       }
       accepted.push({
-        path,
+        selection,
         ...(pdf && typeof pageCount === 'number' ? { options: { pdfPageCount: pageCount } } : {}),
       });
     }
+    errors.unshift(...selectionRejectionMessages({ selections: [], rejected }));
+    this.library.discardSelections(refusedSelections).subscribe({ error: () => undefined });
     this.importError.set(errors.join('\n'));
     if (accepted.length === 0) return;
     from(accepted)
       .pipe(
         concatMap((item) => {
-          const request = item.options
-            ? this.library.importSource(item.path, item.options)
-            : this.library.createSource(item.path);
+          const request = this.library.importSelection(item.selection, item.options);
           return request.pipe(
             catchError((error: unknown) => {
-              errors.push(`${ocrFileName(item.path)}: ${errorMessage(error)}`);
+              errors.push(errorMessage(error));
               this.importError.set(errors.join('\n'));
               return EMPTY;
             }),

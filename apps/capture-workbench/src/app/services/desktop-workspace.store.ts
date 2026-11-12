@@ -1,3 +1,4 @@
+import { selectionRejectionMessages } from './source-selection-messages';
 import {
   computed,
   DestroyRef,
@@ -23,7 +24,7 @@ import type {
   DesktopLibrarySummary,
 } from '../contracts';
 import { CaptureQueueStore } from './capture-queue.store';
-import { DesktopLibraryService } from './desktop-library.service';
+import { DesktopLibraryService, type DesktopSourceSelectionBatch } from './desktop-library.service';
 import { DesktopWorkspaceFormattingService } from './desktop-workspace-formatting.service';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
 import {
@@ -226,7 +227,7 @@ export class DesktopWorkspaceStore {
         .droppedSources()
         .pipe(takeUntilDestroyed(this.destroyRef))
         .subscribe({
-          next: (paths) => this.routeDroppedSources(paths),
+          next: (batch) => this.routeDroppedSources(batch),
           error: (error: unknown) => this.message.set(errorMessage(error)),
         });
     }
@@ -326,19 +327,23 @@ export class DesktopWorkspaceStore {
     this.features.installSelectedModel();
   }
 
-  /** Opens the host source picker and enqueues the selected paths. */
+  /** Opens the host source picker and enqueues the selected selections. */
   chooseSources(): void {
     if (!this.runtime.ready() || !this.canCapture()) return;
     this.library.selectSources().subscribe({
-      next: (paths) => this.addSourcePaths(paths),
+      next: (batch) => this.addSelections(batch),
       error: (error: unknown) => this.message.set(errorMessage(error)),
     });
   }
 
-  /** Enqueues source paths through the capture lifecycle collaborator. */
-  addSourcePaths(paths: readonly string[]): void {
-    if (!this.runtime.ready() || !this.canCapture()) return;
-    this.captureLifecycle.addSourcePaths$(paths, this.captureHost).subscribe({
+  /** Enqueues selections through the capture lifecycle collaborator. */
+  addSelections(batch: DesktopSourceSelectionBatch): void {
+    this.message.set(selectionRejectionMessages(batch).join('\n'));
+    if (!this.runtime.ready() || !this.canCapture()) {
+      this.library.discardSelections(batch.selections).subscribe({ error: () => undefined });
+      return;
+    }
+    this.captureLifecycle.addSelections$(batch.selections, this.captureHost).subscribe({
       error: (error: unknown) => this.message.set(errorMessage(error)),
     });
   }
@@ -536,15 +541,15 @@ export class DesktopWorkspaceStore {
   }
 
   /**
-   * The one drag-drop subscription. On `/ocr` the paths wait in the OCR queue.
+   * The one drag-drop subscription. On `/ocr` the selections wait in the OCR queue.
    * Anywhere else they start capture, as this workspace always did.
    */
-  private routeDroppedSources(paths: readonly string[]): void {
+  private routeDroppedSources(batch: DesktopSourceSelectionBatch): void {
     if (this.onOcrPage()) {
-      this.injector.get(CaptureQueueStore).importPaths(paths);
+      this.injector.get(CaptureQueueStore).importSelections(batch);
       return;
     }
-    this.addSourcePaths(paths);
+    this.addSelections(batch);
   }
 
   private onOcrPage(): boolean {

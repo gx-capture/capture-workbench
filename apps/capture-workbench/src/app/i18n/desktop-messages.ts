@@ -14,6 +14,7 @@ export type PlaceholderRoute = 'asr';
 
 /** Every piece of text the desktop app shows. */
 export interface DesktopMessages {
+  readonly sourceRejections: Readonly<Record<'unsupported' | 'empty' | 'tooLarge' | 'notRegularFile' | 'notLocal' | 'unreadable' | 'limitReached', (count: number) => string>>;
   readonly languageName: string;
   readonly language: string;
   readonly navigation: string;
@@ -176,7 +177,6 @@ export interface DesktopMessages {
   readonly ocrRestart: string;
   readonly ocrInterrupted: string;
   readonly ocrRetry: string;
-  readonly ocrUnsupportedFile: (name: string) => string;
   readonly ocrPageCountInvalid: string;
   readonly ocrInstallNamed: (name: string) => string;
   readonly ocrCancelNamed: (name: string) => string;
@@ -187,6 +187,15 @@ export interface DesktopMessages {
 }
 
 const ZH_TW: DesktopMessages = {
+  sourceRejections: {
+    unsupported: (count) => `不支援的檔案格式 (${count})`,
+    empty: (count) => `檔案是空的 (${count})`,
+    tooLarge: (count) => `檔案超過大小限制 (${count})`,
+    notRegularFile: (count) => `必須選擇一般檔案 (${count})`,
+    notLocal: (count) => `只能選擇本機磁碟的檔案 (${count})`,
+    unreadable: (count) => `無法讀取檔案 (${count})`,
+    limitReached: (count) => `已達選取數量上限 (${count})`,
+  },
   languageName: '中文',
   language: '語言',
   navigation: 'Capture Workbench 導覽',
@@ -394,7 +403,6 @@ const ZH_TW: DesktopMessages = {
   ocrRestart: '重新開始',
   ocrInterrupted: '已中斷',
   ocrRetry: '重試',
-  ocrUnsupportedFile: (name) => `${name} 不是 PDF 或圖片。`,
   ocrPageCountInvalid: 'Capture PDF page selection is invalid.',
   ocrInstallNamed: (name) => `安裝文字辨識以處理 ${name}`,
   ocrCancelNamed: (name) => `取消 ${name}`,
@@ -405,6 +413,15 @@ const ZH_TW: DesktopMessages = {
 };
 
 const EN: DesktopMessages = {
+  sourceRejections: {
+    unsupported: (count) => `Unsupported source format (${count})`,
+    empty: (count) => `Empty source (${count})`,
+    tooLarge: (count) => `Source exceeds the size limit (${count})`,
+    notRegularFile: (count) => `Source must be a regular file (${count})`,
+    notLocal: (count) => `Source must be on a local disk (${count})`,
+    unreadable: (count) => `Source cannot be read (${count})`,
+    limitReached: (count) => `Selection limit reached (${count})`,
+  },
   languageName: 'English',
   language: 'Language',
   navigation: 'Capture Workbench navigation',
@@ -616,7 +633,6 @@ const EN: DesktopMessages = {
   ocrRestart: 'Start again',
   ocrInterrupted: 'Interrupted',
   ocrRetry: 'Retry',
-  ocrUnsupportedFile: (name) => `${name} is not a PDF or an image.`,
   ocrPageCountInvalid: 'Capture PDF page selection is invalid.',
   ocrInstallNamed: (name) => `Install text recognition for ${name}`,
   ocrCancelNamed: (name) => `Cancel ${name}`,

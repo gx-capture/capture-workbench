@@ -44,14 +44,14 @@ flowchart LR
 ## 不變條件
 
 - bearer token 只存在記憶體，不寫進紀錄或檔案。
-- 選擇檔案與拖放都把本機路徑交給畫面。`library_import_source` 收 `{ sourcePath }`，由主機自己讀檔；位元組不經過 IPC。匯出仍經 Tauri 指令。空檔與超過上限由主機拒絕。
+- Rust 開啟檔案選擇視窗並接收原生拖放，檢查本機一般檔案與格式後保留已開啟的 handle。畫面只收到一次性、限視窗、30 分鐘有效的 selection token，以及基本檔名、大小與媒體類型；`library_import_selection` 消耗 token 後串流匯入。路徑不經過 IPC，空檔與超過 50 MiB 的來源由主機拒絕。最多保留 64 個 selection；丟棄、到期或視窗銷毀即釋放 handle。事件訂閱及 renderer dialog 權限明確拒絕。
 - 文件庫的寫入先記交易日誌再提交（`library/transaction.rs`），寫到一半中斷不會留下不一致的索引。
 - 擷取結束時，先把結果存進文件庫，再刪除 runtime 端的擷取。
 - 主機只啟動通過 manifest 與執行檔驗證的 runtime。
 
 ## 主要流程
 
-`/ocr` 把匯入和擷取分開。丟進來或選取的 PDF、圖片以本機路徑呼叫 `library_import_source`，文件庫立刻記成 `queued`、沒有 `captureId`，畫面顯示等待中。`windowsml-ocr` 還沒安裝也一樣。安裝完成後，等待中的文件自己開始擷取，不需要再按一次。整個視窗只有一個拖放訂閱：在 `/ocr` 路徑進入這個佇列，在其他頁面則照舊工作台立刻開始擷取。`/history` 的選擇檔案仍接受錄音。
+`/ocr` 把匯入和擷取分開。丟進來或選取的 PDF、圖片以 selection token 呼叫 `library_import_selection`，文件庫立刻記成 `queued`、沒有 `captureId`，畫面顯示等待中。`windowsml-ocr` 還沒安裝也一樣。安裝完成後，等待中的文件自己開始擷取，不需要再按一次。整個視窗只有一個原生 drop channel：在 `/ocr` 路徑進入這個佇列，在其他頁面則由工作台先匯入整批 selection，再依序開始擷取。`/history` 的選擇檔案仍接受錄音。
 
 ```mermaid
 sequenceDiagram
@@ -62,7 +62,9 @@ sequenceDiagram
   participant RT as runtime sidecar
   Tauri->>L: 驗證 manifest 與執行檔，啟動 sidecar
   L-->>Tauri: 端點與 token（記憶體）
-  UI->>Tauri: library_import_source（sourcePath）
+  UI->>Tauri: library_select_sources / library_watch_native_sources
+  Tauri-->>UI: selectionToken、基本檔名、大小、媒體類型
+  UI->>Tauri: library_import_selection（selectionToken）
   Tauri->>Lib: 寫入來源檔，狀態 queued
   Note over UI,Lib: /ocr 停在這裡，直到文字辨識就緒
   UI->>Tauri: runtime_create_capture 或 runtime_start_streaming_capture
@@ -89,3 +91,5 @@ PDF 可以帶 `captureOptions`，目前只有 `pdfPageCount`（前 K 頁，只�
 - launcher 只有一條啟動路徑：每次啟動用新的 loopback port 與 token，runtime 放進 `KILL_ON_JOB_CLOSE` 的 Job；主機結束時系統關閉 Job 並停掉整棵程序樹。launcher 不寫磁碟、不記錄啟動過的程序；當機後殘留的檔案由 runtime 啟動時清掉（見 [Phase 2 SPEC 的 runtime process lifecycle](../../.agents/SPECS/capture-runtime-042-p2-hardening.md#runtime-process-lifecycle)）。
 - 測試用的假 runtime 只在 QA 安裝檔（Capture Workbench QA Fake Data）與 deterministic smoke 使用，資料寫在獨立目錄，不碰使用者真實的 App 資料（見 [desktop README](../../apps/capture-workbench-desktop/README.md)）。
 - 改 UI 模組或殼層資料夾時，同一個 PR 更新 `sheriff.config.ts` 並執行 `pnpm run architecture:update`。
+
+工作台先匯入同批的所有 selection，再依序擷取，避免後續 token 在前一份錄音轉錄期間過期。佇列拒絕的 selection 立即交還 Rust 丟棄；原生拒絕原因依批次計數呈現，不含來源路徑或檔名。

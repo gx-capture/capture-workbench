@@ -240,6 +240,13 @@ function exceptionReason(relativePath) {
   ) {
     return 'installed desktop/release CLI process boundary';
   }
+  if (
+    relativePath ===
+    'apps/capture-workbench-desktop/scripts/installed-renderer-boundary.ts'
+  ) {
+    // Its page-side functions await Tauri IPC inside Playwright's page.evaluate.
+    return 'packaged renderer IPC probe boundary';
+  }
   if (/\.(spec|test)\.ts$/u.test(relativePath)) {
     return 'Angular/Node test-runner boundary';
   }

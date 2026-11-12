@@ -6,7 +6,6 @@ import {
   describeOcrDocument,
   parsePdfPageCount,
   pdfPagePrefix,
-  refuseOcrFile,
   renderRawOcrText,
 } from './ocr-queue';
 
@@ -82,10 +81,7 @@ describe('OCR queue presentation', () => {
     expect(renderRawOcrText({ ...raw, segments: [] } as RawCapture)).toBe('fallback');
   });
 
-  it('refuses an unsupported file by name and keeps a 1..K page prefix', () => {
-    expect(refuseOcrFile('notes.txt')).toContain('notes.txt');
-    expect(refuseOcrFile('charge.pdf')).toBeNull();
-    expect(refuseOcrFile('scan.PNG')).toBeNull();
+  it('keeps a 1..K page prefix', () => {
     expect(parsePdfPageCount('')).toBeNull();
     expect(parsePdfPageCount('3')).toBe(3);
     expect(parsePdfPageCount('0')).toBe('invalid');
