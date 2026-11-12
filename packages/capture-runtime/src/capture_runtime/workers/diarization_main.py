@@ -14,13 +14,14 @@ from pathlib import Path
 from threading import Event
 from typing import TYPE_CHECKING, Any
 
+from capture_runtime.constants import RECORDING_MAX_SOURCE_BYTES
+
 from capture_runtime.worker_stage_policy import sanitize_worker_stage
 
 if TYPE_CHECKING:
     from capture_runtime.worker_contracts import WorkerRequest as WorkerRequestModel
 
 STAGE_PREFIX = "capture-worker-stage:"
-MAX_SOURCE_BYTES = 50 * 1024 * 1024
 
 
 def _report_stage(stage: str) -> None:
@@ -146,7 +147,11 @@ def _run(request: WorkerRequestModel, cancellation: Event, progress: Any = None)
     if not isinstance(source_value, str) or not isinstance(options, dict):
         raise ValueError("Diarization run paths/options are invalid")
     source = Path(source_value)
-    if not source.is_absolute() or not source.is_file() or source.stat().st_size > MAX_SOURCE_BYTES:
+    if (
+        not source.is_absolute()
+        or not source.is_file()
+        or not 0 < source.stat().st_size <= RECORDING_MAX_SOURCE_BYTES
+    ):
         raise ValueError("Diarization run paths/options are invalid")
     max_duration_ms = options.get("maxDurationMs")
     prefer_gpu = options.get("preferGpu")

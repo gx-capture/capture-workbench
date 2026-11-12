@@ -129,6 +129,7 @@ class StreamingRepository:
         self._ingestions: dict[str, _IngestionRecord] = {}
         self._ingestion_idempotency: dict[str, str] = {}
         self._captures: dict[str, _CaptureRecord] = {}
+        self._running_captures: set[str] = set()
         self._capture_idempotency: dict[str, str] = {}
         self._persistence = _StreamingRepositoryPersistence(root)
         self._lock = threading.RLock()
@@ -139,6 +140,7 @@ class StreamingRepository:
             self._ingestions.clear()
             self._ingestion_idempotency.clear()
             self._captures.clear()
+            self._running_captures.clear()
             self._capture_idempotency.clear()
             self._load_ingestions()
             self._load_captures()
@@ -669,6 +671,15 @@ class StreamingRepository:
             )
             return record.operation
 
+    def set_capture_running(self, capture_id: str, running: bool) -> None:
+        """Protect source ownership until the worker task has fully stopped."""
+        with self._lock:
+            if running:
+                self._get_capture(capture_id)
+                self._running_captures.add(capture_id)
+            else:
+                self._running_captures.discard(capture_id)
+
     def delete_capture(self, capture_id: str) -> None:
         """Delete a capture, and its uploaded source once no capture uses it.
 
@@ -678,6 +689,8 @@ class StreamingRepository:
         with self._lock:
             record = self._get_capture(capture_id)
             normalized = record.operation.capture_id
+            if normalized in self._running_captures:
+                raise StreamingTransitionError("capture workers are still running")
             self._captures.pop(normalized, None)
             self._capture_idempotency.pop(record.request.client_request_id, None)
             directory = self._capture_directory(normalized)
@@ -699,7 +712,7 @@ class StreamingRepository:
             expired_captures = [
                 capture_id
                 for capture_id, record in self._captures.items()
-                if record.operation.updated_at < cutoff
+                if record.operation.updated_at < cutoff and capture_id not in self._running_captures
             ]
             for capture_id in expired_captures:
                 self.delete_capture(capture_id)
@@ -708,6 +721,7 @@ class StreamingRepository:
                 record.operation.ingestion_id
                 for record in self._captures.values()
                 if record.operation.status not in _TERMINAL_CAPTURE_STATUSES
+                or record.operation.capture_id in self._running_captures
             }
             expired_ingestions = [
                 ingestion_id
@@ -735,7 +749,10 @@ class StreamingRepository:
             record = self._get_ingestion(normalized)
             if any(
                 operation.ingestion_id == normalized
-                and operation.status not in _TERMINAL_CAPTURE_STATUSES
+                and (
+                    operation.status not in _TERMINAL_CAPTURE_STATUSES
+                    or operation.capture_id in self._running_captures
+                )
                 for operation in (capture.operation for capture in self._captures.values())
             ):
                 raise StreamingTransitionError("ingestion has an active capture")

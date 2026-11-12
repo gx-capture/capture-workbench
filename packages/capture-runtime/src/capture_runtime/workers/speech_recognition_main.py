@@ -14,6 +14,8 @@ from pathlib import Path
 from threading import Event
 from typing import TYPE_CHECKING, Any
 
+from capture_runtime.constants import RECORDING_MAX_SOURCE_BYTES
+
 from capture_runtime.worker_stage_policy import (
     sanitize_worker_stage,
     speech_import_os_failure_stage,
@@ -115,7 +117,7 @@ def _import_capture_runtime() -> tuple[Any, Any, Any, Any]:
 TeaAsrAdapter, WorkerRequest, serve, permille_reporter = _import_capture_runtime()
 _report_stage("python-import-capture-runtime-complete")
 
-MAX_SOURCE_BYTES = 50 * 1024 * 1024
+
 _SPEECH_CONTENTS = frozenset({"cuda", "cpu"})
 
 
@@ -244,7 +246,7 @@ def _run(request: WorkerRequestModel, cancellation: Event, progress: Any = None)
     if (
         not source.is_absolute()
         or not source.is_file()
-        or source.stat().st_size > MAX_SOURCE_BYTES
+        or not 0 < source.stat().st_size <= RECORDING_MAX_SOURCE_BYTES
         or not model_path.is_absolute()
         or not model_path.is_dir()
         or not isinstance(options, dict)

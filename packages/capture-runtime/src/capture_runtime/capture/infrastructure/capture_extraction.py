@@ -27,7 +27,11 @@ from capture_runtime._pdf_source import (
 from capture_runtime._worker_payloads import WorkerRunResult
 from capture_runtime.capture.infrastructure.audio_run_timeout import audio_run_timeout_seconds
 from capture_runtime.capture.infrastructure.pdf_page_selection import is_ascending_page_numbers
-from capture_runtime.capture.infrastructure.source_sniffing import SniffedSource, sniff_source
+from capture_runtime.capture.infrastructure.source_sniffing import (
+    SNIFF_BYTES,
+    SniffedSource,
+    sniff_source,
+)
 from capture_runtime.clock import Clock
 from capture_runtime.config import ExtractionRuntimeConfig
 from capture_runtime.constants import (
@@ -39,6 +43,7 @@ from capture_runtime.constants import (
 from capture_runtime.contracts import (
     CaptureEngine,
     CaptureOcrProjectionV3,
+    CaptureRequirementId,
     CaptureSource,
     CaptureSourceKind,
     CaptureSpeaker,
@@ -105,7 +110,11 @@ from capture_runtime.provisioning.infrastructure.engine_installation import (
 from capture_runtime.speech.application.use_cases import TranscribeAudio
 from capture_runtime.worker_client import InstalledEngine
 from capture_runtime.worker_probe import EngineRuntimeUnavailableError
-from capture_runtime.worker_process import DEFAULT_RUN_TIMEOUT_SECONDS, WorkerCancelledError
+from capture_runtime.worker_process import (
+    DEFAULT_RUN_TIMEOUT_SECONDS,
+    WorkerCancelledError,
+    complete_worker_cleanup,
+)
 
 if TYPE_CHECKING:
     from capture_runtime.ocr.infrastructure.ocr_page_result import OcrAdapter
@@ -185,7 +194,7 @@ class CaptureExtractor(Protocol):
 
     async def extract(
         self,
-        content: bytes,
+        content: bytes | Path,
         source: CaptureSource,
         cancel_event: asyncio.Event,
         *,
@@ -441,7 +450,7 @@ class StandaloneRuntimeCaptureExtractor:
 
     async def extract(
         self,
-        content: bytes,
+        content: bytes | Path,
         source: CaptureSource,
         cancel_event: asyncio.Event,
         *,
@@ -462,7 +471,7 @@ class StandaloneRuntimeCaptureExtractor:
                 speaker_progress=speaker_progress,
                 spoken_language=spoken_language,
             )
-        if identify_speakers:
+        if identify_speakers or isinstance(content, Path):
             raise ExtractionRuntimeUnavailableError(
                 "Speaker identification needs the installed worker runtime."
             )
@@ -480,7 +489,7 @@ class StandaloneRuntimeCaptureExtractor:
 
     async def _extract_with_workers(
         self,
-        content: bytes,
+        content: bytes | Path,
         source: CaptureSource,
         cancel_event: asyncio.Event,
         *,
@@ -490,7 +499,7 @@ class StandaloneRuntimeCaptureExtractor:
         speaker_progress: Callable[[str, int], None] | None = None,
         spoken_language: str | None = None,
     ) -> CaptureExtractionOutcome:
-        sniffed = self.sniff(content)
+        sniffed = self.sniff(self._source_prefix(content))
         self._checkpoint(cancel_event)
         ocr_projection = None
         expected_ocr_pages: tuple[OcrPageManifest, ...] | None = None
@@ -501,6 +510,8 @@ class StandaloneRuntimeCaptureExtractor:
         suggested_units: set[str] = set()
         try:
             if sniffed.kind is CaptureSourceKind.PDF:
+                if isinstance(content, Path):
+                    raise ValueError("Document extraction requires buffered content.")
                 expected_ocr_pages = self._preflight_pdf_manifest(
                     content,
                     cancel_event,
@@ -552,6 +563,8 @@ class StandaloneRuntimeCaptureExtractor:
                     processed_page_numbers=[page.page for page in result.pages],
                 )
             elif sniffed.kind is CaptureSourceKind.IMAGE:
+                if isinstance(content, Path):
+                    raise ValueError("Document extraction requires buffered content.")
                 if pdf_page_numbers is not None:
                     raise ValueError("PDF page selection is only valid for PDF sources.")
                 expected_ocr_pages = self._preflight_image_manifest(content, cancel_event)
@@ -668,7 +681,7 @@ class StandaloneRuntimeCaptureExtractor:
             extraction_engine=engine,
             diarization_engine=diarization_engine,
             speakers=speakers,
-            suggested_units=sorted(suggested_units),
+            suggested_units=cast(list[CaptureRequirementId], sorted(suggested_units)),
             warnings=_unique_warnings(warnings),
             ocr_page_scope=ocr_page_scope,
             created_at=self._clock.now(),
@@ -732,11 +745,11 @@ class StandaloneRuntimeCaptureExtractor:
     async def _prepare_worker_run(
         self,
         requirement_id: str,
-        content: bytes,
+        content: bytes | Path,
         media_type: str,
         options: dict[str, object],
     ) -> tuple[InstalledEngine, Path, dict[str, object], Path | None]:
-        """Resolve the engine and write the source file. The caller deletes that file."""
+        """Resolve the engine; borrow paths or create a caller-owned buffered copy."""
 
         assert self.engine_manager is not None
         worker_options = dict(options)
@@ -791,7 +804,7 @@ class StandaloneRuntimeCaptureExtractor:
             vertical_reader_dir = await self._vertical_reader_dir()
         return (
             engine,
-            self._worker_source(content, media_type),
+            content if isinstance(content, Path) else self._worker_source(content, media_type),
             worker_options,
             vertical_reader_dir,
         )
@@ -839,7 +852,7 @@ class StandaloneRuntimeCaptureExtractor:
     async def _run_worker(
         self,
         requirement_id: str,
-        content: bytes,
+        content: bytes | Path,
         media_type: str,
         options: dict[str, object],
         cancel_event: asyncio.Event,
@@ -873,19 +886,44 @@ class StandaloneRuntimeCaptureExtractor:
                 }
             assert self.engine_manager is not None
             worker_client = cast(_EngineWorkerClient, self.engine_manager.worker_client)
-            return await worker_client.run(
-                engine,
-                source_path=path,
-                media_type=media_type,
-                options=worker_options,
-                cancel_event=cancel_event,
-                timeout_seconds=timeout_seconds,
-                ocr_progress=ocr_progress,
-                on_permille=progress,
-                vertical_reader_dir=vertical_reader_dir,
+            return await self._await_worker(
+                asyncio.create_task(
+                    worker_client.run(
+                        engine,
+                        source_path=path,
+                        media_type=media_type,
+                        options=worker_options,
+                        cancel_event=cancel_event,
+                        timeout_seconds=timeout_seconds,
+                        ocr_progress=ocr_progress,
+                        on_permille=progress,
+                        vertical_reader_dir=vertical_reader_dir,
+                    )
+                ),
+                cancel_event,
             )
+
         finally:
-            path.unlink(missing_ok=True)
+            if not isinstance(content, Path):
+                path.unlink(missing_ok=True)
+
+    @staticmethod
+    async def _await_worker[T](pending: asyncio.Task[T], cancellation: asyncio.Event) -> T:
+        try:
+            return await asyncio.shield(pending)
+        except asyncio.CancelledError as cancelled:
+            cancellation.set()
+            try:
+                await complete_worker_cleanup(pending)
+            finally:
+                raise cancelled
+
+    @staticmethod
+    def _source_prefix(content: bytes | Path) -> bytes:
+        if isinstance(content, Path):
+            with content.open("rb") as source:
+                return source.read(SNIFF_BYTES)
+        return content[:SNIFF_BYTES]
 
     def _worker_source(self, content: bytes, media_type: str) -> Path:
         """Write the source where a worker can read it; the caller deletes it."""
@@ -915,7 +953,7 @@ class StandaloneRuntimeCaptureExtractor:
 
     async def _run_diarization(
         self,
-        content: bytes,
+        content: bytes | Path,
         media_type: str,
         cancel_event: asyncio.Event,
         progress: Callable[[int], None] | None,
@@ -932,24 +970,31 @@ class StandaloneRuntimeCaptureExtractor:
             raise ExtractionRuntimeUnavailableError(
                 f"Runtime requirement {DIARIZATION_REQUIREMENT_ID} is not installed and ready."
             )
-        path = self._worker_source(content, media_type)
+        path = content if isinstance(content, Path) else self._worker_source(content, media_type)
         try:
             worker_client = cast(_EngineWorkerClient, self.engine_manager.worker_client)
-            return await DiarizeAudio(worker_client).execute(
-                engine,
-                source_path=path,
-                media_type=media_type,
-                options={
-                    "maxDurationMs": self.config.max_audio_duration_ms,
-                    "preferGpu": self.config.whisper_prefer_gpu,
-                    "allowCpuFallback": True,
-                },
-                cancel_event=cancel_event,
-                timeout_seconds=timeout_seconds,
-                on_permille=progress,
+            return await self._await_worker(
+                asyncio.create_task(
+                    DiarizeAudio(worker_client).execute(
+                        engine,
+                        source_path=path,
+                        media_type=media_type,
+                        options={
+                            "maxDurationMs": self.config.max_audio_duration_ms,
+                            "preferGpu": self.config.whisper_prefer_gpu,
+                            "allowCpuFallback": True,
+                        },
+                        cancel_event=cancel_event,
+                        timeout_seconds=timeout_seconds,
+                        on_permille=progress,
+                    )
+                ),
+                cancel_event,
             )
+
         finally:
-            path.unlink(missing_ok=True)
+            if not isinstance(content, Path):
+                path.unlink(missing_ok=True)
 
     def _ocr_pdf_page_manifest(
         self,

@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from io import BytesIO
+from pathlib import Path
 
 from capture_runtime.worker_process import DEFAULT_RUN_TIMEOUT_SECONDS
 
 
-def audio_run_timeout_seconds(content: bytes, max_duration_ms: int) -> float:
+def audio_run_timeout_seconds(content: bytes | Path, max_duration_ms: int) -> float:
     """How long one Whisper or speaker-diarization run on this audio may take.
 
     Both take time in proportion to the recording, and diarization runs on the
@@ -21,11 +22,12 @@ def audio_run_timeout_seconds(content: bytes, max_duration_ms: int) -> float:
     return DEFAULT_RUN_TIMEOUT_SECONDS + duration_seconds
 
 
-def audio_duration_seconds(content: bytes) -> float | None:
+def audio_duration_seconds(content: bytes | Path) -> float | None:
     try:
         import av
 
-        with av.open(BytesIO(content), mode="r") as container:
+        source = str(content) if isinstance(content, Path) else BytesIO(content)
+        with av.open(source, mode="r") as container:
             if container.duration is None:
                 return None
             return container.duration / 1_000_000

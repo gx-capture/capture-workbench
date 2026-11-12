@@ -190,7 +190,7 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
     @router.delete("/ingestions/{ingestion_id}", status_code=status.HTTP_204_NO_CONTENT)
     async def delete_ingestion(ingestion_id: str) -> Response:
         try:
-            service.delete_ingestion(ingestion_id)
+            await service.delete_ingestion(ingestion_id)
         except StreamingRecordNotFoundError as error:
             raise ApiProblem(404, "ingestion_not_found", "Ingestion was not found.") from error
         except StreamingTransitionError as error:
@@ -574,7 +574,7 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
     @router.delete("/captures/{capture_id}", status_code=status.HTTP_204_NO_CONTENT)
     async def delete_capture(capture_id: str) -> Response:
         try:
-            service.delete_capture(capture_id)
+            await service.delete_capture(capture_id)
         except StreamingRecordNotFoundError as error:
             raise ApiProblem(
                 404, "capture_not_found", "Streaming capture was not found."

@@ -2287,7 +2287,7 @@ def test_a_transcript_longer_than_one_event_is_published_in_several(client: Test
     service._extractor = Extractor()
 
     asyncio.run(
-        service._extract_buffered_source(
+        service._extract_finalized_source(
             operation.capture_id,
             operation.source,
             CaptureSourceKind.AUDIO,

@@ -5,11 +5,16 @@ from __future__ import annotations
 import asyncio
 import hashlib
 from collections.abc import Callable
+from pathlib import Path
 
 from capture_runtime._pdf_source import PdfPageSelectionError
 from capture_runtime.capture.infrastructure.capture_extraction import CaptureExtractionOutcome
 from capture_runtime.capture.infrastructure.pdf_page_selection import is_pdf_page_selection
-from capture_runtime.capture.infrastructure.source_sniffing import SniffedSource, sniff_source
+from capture_runtime.capture.infrastructure.source_sniffing import (
+    SNIFF_BYTES,
+    SniffedSource,
+    sniff_source,
+)
 from capture_runtime.clock import Clock
 from capture_runtime.contracts import (
     CaptureEngine,
@@ -41,7 +46,7 @@ class DeterministicCaptureExtractor:
 
     async def extract(
         self,
-        content: bytes,
+        content: bytes | Path,
         source: CaptureSource,
         cancel_event: asyncio.Event,
         *,
@@ -51,7 +56,13 @@ class DeterministicCaptureExtractor:
         speaker_progress: Callable[[str, int], None] | None = None,
         spoken_language: str | None = None,
     ) -> CaptureExtractionOutcome:
-        sniffed = self.sniff(content)
+        if isinstance(content, Path):
+            with content.open("rb") as recording:
+                sniffed = self.sniff(recording.read(SNIFF_BYTES))
+                recording.seek(0)
+                content = recording.read(1024 * 1024)
+        else:
+            sniffed = self.sniff(content[:SNIFF_BYTES])
         if self._delay_seconds:
             try:
                 await asyncio.wait_for(cancel_event.wait(), timeout=self._delay_seconds)

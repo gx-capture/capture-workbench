@@ -172,7 +172,7 @@ def _adapter(
             self.values = array("f", self.values)
             return self
 
-        def div(self, scale: float) -> Waveform:
+        def div_(self, scale: float) -> Waveform:
             assert scale == 32768.0
             self.values = array("f", (sample / scale for sample in self.values))
             return self
