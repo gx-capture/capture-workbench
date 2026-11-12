@@ -17,6 +17,10 @@ from capture_runtime.capture.domain.operation import (
     PageLocator,
     TimeRange,
 )
+from capture_runtime.capture.domain.size_policy import (
+    DOCUMENT_MAX_UPLOAD_BYTES,
+    SourceSizePolicy,
+)
 from capture_runtime.contracts import (
     CaptureSourceKind,
     FinalizeIngestionV2,
@@ -168,9 +172,13 @@ def test_capture_use_cases_run_upload_schedule_replay_and_cancel(tmp_path, monke
     from capture_runtime.contracts import StreamingEventType
 
     clock = SystemClock()
-    repository = StreamingRepository(tmp_path, clock=clock, retention_hours=4)
+    repository = StreamingRepository(
+        tmp_path, clock=clock, retention_hours=4, policy=SourceSizePolicy(DOCUMENT_MAX_UPLOAD_BYTES)
+    )
     repository.initialize()
-    service = StreamingCaptureService(repository, clock=clock)
+    service = StreamingCaptureService(
+        repository, clock=clock, policy=SourceSizePolicy(DOCUMENT_MAX_UPLOAD_BYTES)
+    )
     scheduled = []
     service.start_capture_use_case = StartCapture(repository, schedule=scheduled.append)
     service.finalize_ingestion_use_case = FinalizeIngestion(repository, schedule=scheduled.append)
@@ -222,7 +230,9 @@ def test_capture_use_cases_run_upload_schedule_replay_and_cancel(tmp_path, monke
         repository.append_event(
             operation.capture_id, event_type=StreamingEventType.HEARTBEAT, stage="late"
         )
-    restarted = StreamingRepository(tmp_path, clock=clock, retention_hours=4)
+    restarted = StreamingRepository(
+        tmp_path, clock=clock, retention_hours=4, policy=SourceSizePolicy(DOCUMENT_MAX_UPLOAD_BYTES)
+    )
     restarted.initialize()
     assert restarted.get_capture(operation.capture_id) == cancelled
     with pytest.raises(StreamingTransitionError):

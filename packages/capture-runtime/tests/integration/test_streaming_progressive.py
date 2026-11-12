@@ -11,6 +11,10 @@ from pathlib import Path
 import pytest
 
 from capture_runtime.capture.application.streaming_capture_service import StreamingCaptureService
+from capture_runtime.capture.domain.size_policy import (
+    DOCUMENT_MAX_UPLOAD_BYTES,
+    SourceSizePolicy,
+)
 from capture_runtime.capture.infrastructure.streaming_repository import StreamingRepository
 from capture_runtime.clock import Clock
 from capture_runtime.config import ExtractionRuntimeConfig
@@ -498,12 +502,18 @@ def test_progressive_runtime_materializes_partial_raw_result_and_terminal_events
 ) -> None:
     async def scenario() -> None:
         clock = FixedClock()
-        repository = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+        repository = StreamingRepository(
+            tmp_path / "streaming",
+            clock=clock,
+            retention_hours=4,
+            policy=SourceSizePolicy(DOCUMENT_MAX_UPLOAD_BYTES),
+        )
         repository.initialize()
         ingestion_id, _ = _open(repository)
         service = StreamingCaptureService(
             repository,
             clock=clock,
+            policy=SourceSizePolicy(DOCUMENT_MAX_UPLOAD_BYTES),
             processor=FakeProgressiveProcessor(clock),  # type: ignore[arg-type]
             structurer=FakeCaptureStructuringProvider(clock),
         )
@@ -538,7 +548,12 @@ def test_an_audio_capture_first_releases_a_warm_ocr_worker(tmp_path: Path) -> No
     # A warm OCR worker holds DirectML sessions in GPU memory that speech needs.
     async def scenario() -> None:
         clock = FixedClock()
-        repository = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+        repository = StreamingRepository(
+            tmp_path / "streaming",
+            clock=clock,
+            retention_hours=4,
+            policy=SourceSizePolicy(DOCUMENT_MAX_UPLOAD_BYTES),
+        )
         repository.initialize()
         ingestion_id, _ = _open(repository)
         released: list[bool] = []
@@ -550,6 +565,7 @@ def test_an_audio_capture_first_releases_a_warm_ocr_worker(tmp_path: Path) -> No
         service = StreamingCaptureService(
             repository,
             clock=clock,
+            policy=SourceSizePolicy(DOCUMENT_MAX_UPLOAD_BYTES),
             processor=FakeProgressiveProcessor(clock),  # type: ignore[arg-type]
             extractor=Extractor(),  # type: ignore[arg-type]
             structurer=FakeCaptureStructuringProvider(clock),
@@ -579,12 +595,18 @@ def test_progressive_runtime_does_not_publish_the_session_end_as_the_capture_end
     # extracting, so hosts that stop at `completed` read a stale snapshot.
     async def scenario() -> None:
         clock = FixedClock()
-        repository = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+        repository = StreamingRepository(
+            tmp_path / "streaming",
+            clock=clock,
+            retention_hours=4,
+            policy=SourceSizePolicy(DOCUMENT_MAX_UPLOAD_BYTES),
+        )
         repository.initialize()
         ingestion_id, _ = _open(repository)
         service = StreamingCaptureService(
             repository,
             clock=clock,
+            policy=SourceSizePolicy(DOCUMENT_MAX_UPLOAD_BYTES),
             processor=SessionEndingProcessor(clock),  # type: ignore[arg-type]
             structurer=FakeCaptureStructuringProvider(clock),
         )
@@ -616,12 +638,18 @@ def test_progressive_runtime_preserves_structuring_phase_failure_after_raw_mater
 ) -> None:
     async def scenario() -> None:
         clock = FixedClock()
-        repository = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+        repository = StreamingRepository(
+            tmp_path / "streaming",
+            clock=clock,
+            retention_hours=4,
+            policy=SourceSizePolicy(DOCUMENT_MAX_UPLOAD_BYTES),
+        )
         repository.initialize()
         ingestion_id, _ = _open(repository)
         service = StreamingCaptureService(
             repository,
             clock=clock,
+            policy=SourceSizePolicy(DOCUMENT_MAX_UPLOAD_BYTES),
             processor=FakeProgressiveProcessor(clock),  # type: ignore[arg-type]
             structurer=FailingStructurer(),  # type: ignore[arg-type]
         )
@@ -652,12 +680,18 @@ def test_progressive_runtime_exposes_bounded_decoder_failure(
 ) -> None:
     async def scenario() -> None:
         clock = FixedClock()
-        repository = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+        repository = StreamingRepository(
+            tmp_path / "streaming",
+            clock=clock,
+            retention_hours=4,
+            policy=SourceSizePolicy(DOCUMENT_MAX_UPLOAD_BYTES),
+        )
         repository.initialize()
         ingestion_id, _ = _open(repository)
         service = StreamingCaptureService(
             repository,
             clock=clock,
+            policy=SourceSizePolicy(DOCUMENT_MAX_UPLOAD_BYTES),
             processor=FailingDecoderProcessor(),  # type: ignore[arg-type]
             structurer=FakeCaptureStructuringProvider(clock),
         )
@@ -687,12 +721,18 @@ def test_streaming_runtime_fails_when_audio_processor_is_unavailable(
 ) -> None:
     async def scenario() -> None:
         clock = FixedClock()
-        repository = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+        repository = StreamingRepository(
+            tmp_path / "streaming",
+            clock=clock,
+            retention_hours=4,
+            policy=SourceSizePolicy(DOCUMENT_MAX_UPLOAD_BYTES),
+        )
         repository.initialize()
         ingestion_id, _ = _open(repository)
         service = StreamingCaptureService(
             repository,
             clock=clock,
+            policy=SourceSizePolicy(DOCUMENT_MAX_UPLOAD_BYTES),
             processor=None,
             extractor=DeterministicCaptureExtractor(clock),
             structurer=FakeCaptureStructuringProvider(clock),
@@ -743,13 +783,19 @@ def test_an_audio_capture_hands_its_spoken_language_to_recognition(
 ) -> None:
     async def scenario() -> None:
         clock = FixedClock()
-        repository = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+        repository = StreamingRepository(
+            tmp_path / "streaming",
+            clock=clock,
+            retention_hours=4,
+            policy=SourceSizePolicy(DOCUMENT_MAX_UPLOAD_BYTES),
+        )
         repository.initialize()
         ingestion_id, _ = _open(repository)
         processor = LanguageRecordingProcessor(clock)
         service = StreamingCaptureService(
             repository,
             clock=clock,
+            policy=SourceSizePolicy(DOCUMENT_MAX_UPLOAD_BYTES),
             processor=processor,  # type: ignore[arg-type]
             structurer=FakeCaptureStructuringProvider(clock),
         )
@@ -771,12 +817,18 @@ def test_an_audio_capture_hands_its_spoken_language_to_recognition(
 def test_a_spoken_language_on_a_non_audio_capture_fails_it(tmp_path: Path) -> None:
     async def scenario() -> None:
         clock = FixedClock()
-        repository = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+        repository = StreamingRepository(
+            tmp_path / "streaming",
+            clock=clock,
+            retention_hours=4,
+            policy=SourceSizePolicy(DOCUMENT_MAX_UPLOAD_BYTES),
+        )
         repository.initialize()
         ingestion_id, _ = _open(repository, CaptureSourceKind.IMAGE)
         service = StreamingCaptureService(
             repository,
             clock=clock,
+            policy=SourceSizePolicy(DOCUMENT_MAX_UPLOAD_BYTES),
             processor=LanguageRecordingProcessor(clock),  # type: ignore[arg-type]
             extractor=DeterministicCaptureExtractor(clock),
             structurer=FakeCaptureStructuringProvider(clock),
@@ -914,12 +966,18 @@ def test_session_start_names_the_spoken_language_only_when_given(language: str |
 def test_a_capture_started_while_an_engine_is_uninstalled_waits_for_it(tmp_path: Path) -> None:
     async def scenario() -> None:
         clock = FixedClock()
-        repository = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+        repository = StreamingRepository(
+            tmp_path / "streaming",
+            clock=clock,
+            retention_hours=4,
+            policy=SourceSizePolicy(DOCUMENT_MAX_UPLOAD_BYTES),
+        )
         repository.initialize()
         ingestion_id, _ = _open(repository)
         service = StreamingCaptureService(
             repository,
             clock=clock,
+            policy=SourceSizePolicy(DOCUMENT_MAX_UPLOAD_BYTES),
             processor=FakeProgressiveProcessor(clock),  # type: ignore[arg-type]
             structurer=FakeCaptureStructuringProvider(clock),
         )
@@ -1021,10 +1079,20 @@ def test_an_audio_capture_reports_its_duration_and_covered_time(
             "capture_runtime.speech.infrastructure.progressive_capture.PyAVFileDecoder",
             _ThreeWindowDecoder,
         )
-        repository = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+        repository = StreamingRepository(
+            tmp_path / "streaming",
+            clock=clock,
+            retention_hours=4,
+            policy=SourceSizePolicy(DOCUMENT_MAX_UPLOAD_BYTES),
+        )
         repository.initialize()
         ingestion_id, _ = _open(repository)
-        service = StreamingCaptureService(repository, clock=clock, processor=processor)
+        service = StreamingCaptureService(
+            repository,
+            clock=clock,
+            policy=SourceSizePolicy(DOCUMENT_MAX_UPLOAD_BYTES),
+            processor=processor,
+        )
         operation = service.start_capture_use_case.execute(
             StartCaptureV2(
                 client_request_id="duration-capture",
@@ -1048,7 +1116,12 @@ def test_an_audio_capture_reports_its_duration_and_covered_time(
         assert timed == [(1_000, 4_000), (2_000, 4_000), (3_000, 4_000)]
         await service.shutdown()
 
-        reloaded = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+        reloaded = StreamingRepository(
+            tmp_path / "streaming",
+            clock=clock,
+            retention_hours=4,
+            policy=SourceSizePolicy(DOCUMENT_MAX_UPLOAD_BYTES),
+        )
         reloaded.initialize()
         again = reloaded.get_capture(operation.capture_id)
         assert (again.duration_ms, again.covered_until_ms) == (4_000, 3_000)
@@ -1110,11 +1183,19 @@ def test_finalized_ingestion_decodes_without_spool_and_maps_duration_overflow(
             audio.setframerate(16_000)
             audio.writeframes(bytes(16_000 * 2 * 3))
         repository = StreamingRepository(
-            tmp_path / "streaming", clock=FixedClock(), retention_hours=4
+            tmp_path / "streaming",
+            clock=FixedClock(),
+            retention_hours=4,
+            policy=SourceSizePolicy(DOCUMENT_MAX_UPLOAD_BYTES),
         )
         repository.initialize()
         ingestion_id, _ = _open(repository, source=content.getvalue())
-        service = StreamingCaptureService(repository, clock=FixedClock(), processor=processor)
+        service = StreamingCaptureService(
+            repository,
+            clock=FixedClock(),
+            policy=SourceSizePolicy(DOCUMENT_MAX_UPLOAD_BYTES),
+            processor=processor,
+        )
         operation = service.start_capture_use_case.execute(
             StartCaptureV2(
                 client_request_id="finalized-recording",

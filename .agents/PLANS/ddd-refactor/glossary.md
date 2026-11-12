@@ -83,6 +83,8 @@
 | 中文 | 程式名稱 | 意義 |
 | --- | --- | --- |
 | 匯入轉換錯誤 | `IngestionTransitionError` | 分塊或來源狀態不允許所要求的操作。 |
+| 來源大小超出限制 | `IngestionSourceSizeExceededError` | 來源大小超過該種類所允許的上限。 |
+| 來源大小政策 | `SourceSizePolicy` | 依來源種類判定允許的位元組上限及錄音特徵檢查需求。 |
 | 擷取轉換錯誤 | `CaptureTransitionError` | 擷取狀態不允許所要求的操作。 |
 | 工作階段轉換錯誤 | `SessionTransitionError` | 批次順序或工作階段狀態不允許提交。 |
 | 結構化驗證錯誤 | `StructuringValidationError` | 語意輸出無法安全投影。 |

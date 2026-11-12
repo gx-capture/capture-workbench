@@ -12,6 +12,10 @@ from typing import Annotated
 from fastapi import APIRouter, Header, Path, Request, Response, status
 from fastapi.responses import StreamingResponse
 
+from capture_runtime.capture.domain.size_policy import (
+    SOURCE_SIZE_EXCEEDED_MESSAGE,
+    IngestionSourceSizeExceededError,
+)
 from capture_runtime.capture.infrastructure.streaming_repository import (
     StreamingIdempotencyConflictError,
     StreamingPartialNotFoundError,
@@ -91,6 +95,8 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
         _require_matching_idempotency_key(idempotency_key, request.client_request_id)
         try:
             return open_ingestion_use_case.execute(request)
+        except IngestionSourceSizeExceededError as error:
+            raise ApiProblem(422, "validation_error", SOURCE_SIZE_EXCEEDED_MESSAGE) from error
         except StreamingIdempotencyConflictError as error:
             raise ApiProblem(
                 409,

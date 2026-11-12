@@ -105,6 +105,10 @@ advertised at `GET /v2/health/ready`; streaming capabilities are advertised at
 The capture lifecycle uses `/v2/ingestions` and `/v2/captures`; runtime
 requirements, model options, and installations use `/v2/runtime/*`.
 
+### Ingestion size limits
+
+Source ingestion (`POST /v2/ingestions`) enforces byte limits per declared source kind: recordings (`audio`) may reach the configured `CAPTURE_MAX_UPLOAD_BYTES` (default 50 MiB), while document sources (`pdf` and `image`) are capped at `min(CAPTURE_MAX_UPLOAD_BYTES, 50 MiB)`. A source declared `audio` and larger than 50 MiB must start with a recording signature: the chunk that shows otherwise is rejected with `chunk_rejected` and is not stored. Readiness (`GET /v2/health/ready`) reports the configured `CAPTURE_MAX_UPLOAD_BYTES` in `capabilities.maxUploadBytes`.
+
 The immutable contract catalog is authenticated separately at
 `GET /meta/v2/contracts`. The index points to a content-addressed bundle at
 `/meta/v2/contracts/sha256/{sha256}`. Responses carry the bundle ETag, digest,

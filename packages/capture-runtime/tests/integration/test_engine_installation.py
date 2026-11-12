@@ -19,6 +19,10 @@ import capture_runtime.provisioning.infrastructure.engine_installation as engine
 import capture_runtime.speech.infrastructure.progressive_capture as progressive_capture
 from capture_runtime._worker_payloads import WorkerRunResult, WorkerSegment, WorkerWord
 from capture_runtime.capture.application.streaming_capture_service import StreamingCaptureService
+from capture_runtime.capture.domain.size_policy import (
+    DOCUMENT_MAX_UPLOAD_BYTES,
+    SourceSizePolicy,
+)
 from capture_runtime.capture.infrastructure.capture_extraction import (
     StandaloneRuntimeCaptureExtractor,
 )
@@ -2998,12 +3002,18 @@ def test_a_missing_cpu_model_fails_before_the_worker_starts(
 
     async def scenario() -> None:
         clock = SystemClock()
-        repository = StreamingRepository(tmp_path / "streaming", clock=clock, retention_hours=4)
+        repository = StreamingRepository(
+            tmp_path / "streaming",
+            clock=clock,
+            retention_hours=4,
+            policy=SourceSizePolicy(DOCUMENT_MAX_UPLOAD_BYTES),
+        )
         repository.initialize()
         ingestion_id = _open_wav(repository)
         service = StreamingCaptureService(
             repository,
             clock=clock,
+            policy=SourceSizePolicy(DOCUMENT_MAX_UPLOAD_BYTES),
             processor=ProgressiveCaptureProcessor(
                 clock=clock,
                 config=config,

@@ -14,9 +14,9 @@ Recommendation: retain v2 chunked ingestion, raise the desktop recording ceiling
 | Desktop, every supported kind | `MAX_SOURCE_BYTES = 50 * 1024 * 1024`: `apps/capture-workbench-desktop/src-tauri/src/library.rs:16`. Byte-input validation rejects empty/oversized inputs: `library/validation.rs:28`. Native import rejects metadata over that limit before reading, then bounds the read: `library/store.rs:201`, `library/store.rs:223`. These last two paths are under the same `src-tauri/src/` directory. |
 | Desktop runtime configuration | The launcher passes 50 MiB as `CAPTURE_MAX_UPLOAD_BYTES`: `apps/capture-workbench-desktop/src-tauri/src/constants/runtime.rs:2`, `apps/capture-workbench-desktop/src-tauri/src/launch_policy.rs:73`. |
 | Runtime configuration/readiness | `CAPTURE_MAX_UPLOAD_BYTES` defaults to 50 MiB and is checked only for positivity: `packages/capture-runtime/src/capture_runtime/config.py:250`. Readiness advertises it as `capabilities.maxUploadBytes`: `packages/capture-runtime/src/capture_runtime/provisioning/api/runtime.py:74`. |
-| Production v2 ingestion | **The advertised total-byte ceiling is not enforced.** Open delegates directly to repository creation; creation allocates a record/file without consulting that setting: `packages/capture-runtime/src/capture_runtime/capture/application/use_cases.py:26`, `packages/capture-runtime/src/capture_runtime/capture/infrastructure/streaming_repository.py:134`. |
+| Production v2 ingestion | Opening an ingestion rejects a declared total over the limit for its kind with 422 `validation_error`, before any record or file exists: recordings (`audio`) up to the configured `max_upload_bytes`, PDF and image up to `min(max_upload_bytes, 50 MiB)`. A source declared `audio` and larger than 50 MiB must start with a recording signature; a chunk that shows otherwise is rejected with 409 `chunk_rejected` and not stored. Recovered records over the limit are pruned unless a capture still uses them: `packages/capture-runtime/src/capture_runtime/capture/domain/size_policy.py`, `packages/capture-runtime/src/capture_runtime/capture/application/use_cases.py`, `packages/capture-runtime/src/capture_runtime/capture/infrastructure/streaming_repository.py`. |
 | Ingestion chunks | Maximum 4 MiB per chunk: `packages/capture-runtime/src/capture_runtime/capture/infrastructure/streaming.py:23`. Headers and actual body are checked: `packages/capture-runtime/src/capture_runtime/capture/api/streaming.py:129`, `packages/capture-runtime/src/capture_runtime/capture/api/streaming.py:579`. |
-| Ingestion total | Positive declared total, contiguous ordered chunks, no bytes beyond that declared total, matching final count/digest; no configured absolute total ceiling: `packages/capture-runtime/src/capture_runtime/contracts/__init__.py:637`, `packages/capture-runtime/src/capture_runtime/capture/domain/ingestion/models.py:63`, `packages/capture-runtime/src/capture_runtime/capture/domain/ingestion/models.py:86`. |
+| Ingestion total | Positive declared total, contiguous ordered chunks, no bytes beyond that declared total, matching final count/digest (the ceiling is the row above): `packages/capture-runtime/src/capture_runtime/contracts/__init__.py:637`, `packages/capture-runtime/src/capture_runtime/capture/domain/ingestion/models.py:63`, `packages/capture-runtime/src/capture_runtime/capture/domain/ingestion/models.py:86`. |
 | Speech worker, whole-recording operation | Independent 50 MiB compressed-source guard: `packages/capture-runtime/src/capture_runtime/workers/speech_recognition_main.py:118`, `packages/capture-runtime/src/capture_runtime/workers/speech_recognition_main.py:244`. |
 | Diarization worker | Independent 50 MiB guard: `packages/capture-runtime/src/capture_runtime/workers/diarization_main.py:23`, `packages/capture-runtime/src/capture_runtime/workers/diarization_main.py:149`. |
 | OCR worker, PDF/image | Independent 50 MiB guard: `packages/capture-runtime/src/capture_runtime/workers/ocr_main.py:82`, `packages/capture-runtime/src/capture_runtime/workers/ocr_main.py:507`. |
@@ -25,7 +25,7 @@ Recommendation: retain v2 chunked ingestion, raise the desktop recording ceiling
 
 A normal **60 MiB desktop recording fails during library import**, before any runtime ingestion or capture exists. The message is **“Selected source exceeds the desktop library limit.”** There is no problem code or runtime stage; the renderer displays the command error through its import error handler. Evidence: `apps/capture-workbench-desktop/src-tauri/src/library/store.rs:201`, `apps/capture-workbench/src/app/services/desktop-workspace-capture.service.ts:212`.
 
-If another host bypasses that desktop guard, v2 ingestion can accept the bytes today. A whole-recording worker subsequently rejects them; worker exceptions become `worker_failed`, while uncategorized extraction failures become `progressive_failed`, stage `extraction`, message “Progressive audio processing failed.” This is a source-derived conditional outcome, not a reproduced run: `packages/capture-runtime/src/capture_runtime/workers/server.py:211`, `packages/capture-runtime/src/capture_runtime/capture/application/streaming_capture_service.py:539`.
+A host that sends a recording over its configured `maxUploadBytes` is refused when it opens the ingestion (422 `validation_error`). A recording within that limit but over 50 MiB is still refused later by the whole-recording workers' own 50 MiB guards (speaker identification), which slice 4 raises: `packages/capture-runtime/src/capture_runtime/workers/speech_recognition_main.py`, `packages/capture-runtime/src/capture_runtime/workers/diarization_main.py`.
 
 ## Public contract and client checks
 
@@ -98,7 +98,7 @@ The public wire contract stays unchanged, but observable admission policy change
 
 ## Implementation slices, in merge order
 
-Merged: the idempotency keys of the recording start (PR #328) and slice 3, decoding a finalized recording once. The remaining slices keep their numbers.
+Merged: the idempotency keys of the recording start (PR #328), slice 2 (the runtime enforces its size limits at admission) and slice 3 (a finalized recording is decoded once). The remaining slices keep their numbers.
 
 Change mode: edit existing owners, with small private helpers only where needed. Delete renderer path plumbing and obsolete source-text assertions. Size pressure is large across boundaries; avoid a general upload framework or unrelated library rewrite. Each slice below is intended to stay around ten files, including tests.
 
@@ -107,14 +107,6 @@ Change mode: edit existing owners, with small private helpers only where needed.
    - Tests: lost acknowledgements, conflicts, cancellation and cleanup at the native HTTP boundary, and a real-runtime boundary test for open/upload/finalize/start.
    - Gates: `pnpm nx run capture-workbench-desktop:cargo-test`, `pnpm nx run capture-workbench-desktop:package-qa-test`, `pnpm nx run capture-runtime:test-integration`.
    - Visible result: recording uploads recover safely from transient failures.
-
-2. **Enforce source policy in runtime admission. Public contract: unchanged schema; review behavior line by line. Capabilities: no.**
-   - Edit `packages/capture-runtime/src/capture_runtime/config.py:250`, `dependencies.py:205`, `capture/application/use_cases.py:26`, `capture/application/streaming_capture_service.py:108`, and `capture/api/streaming.py:85`; add one private policy owner.
-   - Reject oversize declared totals before creating files. Revalidate recovered records and actual byte totals. Keep 4 MiB chunk/frame limits unchanged.
-   - Validate bounded signature bytes against declared kind; do not allow a PDF labelled “audio” to acquire the recording allowance. Existing sniffing needs only 200 bytes: `packages/capture-runtime/src/capture_runtime/capture/infrastructure/source_sniffing.py:20`.
-   - Add table-driven kind/limit tests and API tests for exact boundary, boundary+1, forged kind, dishonest range/length, no file on rejection, and matching readiness.
-   - Gates: `pnpm nx run capture-runtime:test`, `pnpm nx run capture-runtime:check-contracts`, `pnpm nx run capture-runtime:lint-architecture`.
-   - Visible result: configured runtime limits become real; desktop remains at 50 MiB until activation.
 
 4. **Remove compressed-source buffering from speaker mode. Public contract: no. Capabilities: no.**
    - Edit `packages/capture-runtime/src/capture_runtime/capture/application/streaming_capture_service.py:376`, `capture/infrastructure/capture_extraction.py:604`, `capture/infrastructure/audio_run_timeout.py:10`, `workers/speech_recognition_main.py:244`, and `workers/diarization_main.py:149`.
