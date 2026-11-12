@@ -64,6 +64,7 @@ import { desktopMessages } from '../i18n/desktop-messages';
 import { pdfPagePrefix } from './ocr-queue';
 
 interface ActiveCapture {
+  clientRequestId?: string;
   captureId?: string;
   streaming: boolean;
   lastEventSequence: number;
@@ -195,6 +196,12 @@ export class DesktopWorkspaceCaptureService {
     const active = this.activeCaptures.get(documentId);
     if (active && !active.cancelRequested) {
       active.cancelRequested = true;
+      if (!active.captureId && active.clientRequestId) {
+        this.runtime.cancelUpload(active.clientRequestId).pipe(
+          take(1),
+          catchError(() => EMPTY),
+        ).subscribe();
+      }
       active.cancelWake.next();
     }
   }
@@ -273,6 +280,7 @@ export class DesktopWorkspaceCaptureService {
     return defer(() => {
       if (!this.runtime.ready() || this.activeCaptures.has(documentId)) return EMPTY;
       const active: ActiveCapture = {
+        clientRequestId: crypto.randomUUID(),
         streaming: this.isAudioDocument(documentId, host, mediaType),
         lastEventSequence: 0,
         rawPersisted: false,
@@ -307,7 +315,9 @@ export class DesktopWorkspaceCaptureService {
     host: DesktopWorkspaceCaptureHost,
     pdfPageNumbers?: readonly number[],
   ): Observable<void> {
-    return this.runtime.createCapture(documentId, crypto.randomUUID(), pdfPageNumbers).pipe(
+    if (active.cancelRequested) return throwError(() => new Error('Upload was cancelled.'));
+    const clientRequestId = active.clientRequestId ??= crypto.randomUUID();
+    return this.runtime.createCapture(documentId, clientRequestId, pdfPageNumbers).pipe(
       switchMap((job) => {
         active.captureId = job.captureId;
         this.rememberSourceIdentity(active, job);
@@ -334,9 +344,11 @@ export class DesktopWorkspaceCaptureService {
     active: ActiveCapture,
     host: DesktopWorkspaceCaptureHost,
   ): Observable<void> {
+    if (active.cancelRequested) return throwError(() => new Error('Upload was cancelled.'));
+    const clientRequestId = active.clientRequestId ??= crypto.randomUUID();
     return this.runtime.startStreamingCapture({
       documentId,
-      clientRequestId: crypto.randomUUID(),
+      clientRequestId,
       structuringMode: 'runtime',
       identifySpeakers:
         host.identifySpeakers() && isFeatureReady(host.requirements(), 'asr.speakers'),
@@ -948,6 +960,14 @@ export class DesktopWorkspaceCaptureService {
         stage: active.lastStage ?? 'recovery_required',
         recoveryCode: active.cancelSent ? 'cancel_failed' : 'capture_recovery_required',
         recoveryMessage: errorMessage(error),
+      });
+    }
+    if (active.cancelRequested && errorMessage(error) === 'Upload was cancelled.') {
+      return this.library.updateCapture({
+        documentId,
+        status: 'canceled',
+        stage: 'cancelled',
+        clearCaptureId: true,
       });
     }
     return this.library.updateCapture({

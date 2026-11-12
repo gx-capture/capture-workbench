@@ -9,9 +9,9 @@ pub(crate) use library::{
     LibraryListRequest, LibrarySourcePayload, OcrEvidenceV1,
 };
 pub(crate) use runtime::{
-    RuntimeCreateCaptureInput, RuntimeIdInput, RuntimeInstallationStartInput,
-    RuntimeModelInstallationStartInput, RuntimeRequirementInput, RuntimeStreamingCaptureInput,
-    RuntimeStreamingEventsInput,
+    RuntimeCancelUploadInput, RuntimeCreateCaptureInput, RuntimeIdInput,
+    RuntimeInstallationStartInput, RuntimeModelInstallationStartInput, RuntimeRequirementInput,
+    RuntimeStreamingCaptureInput, RuntimeStreamingEventsInput,
 };
 
 mod selection;

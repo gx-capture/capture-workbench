@@ -50,6 +50,7 @@ macro_rules! desktop_invoke_handler {
             commands::runtime_model_options,
             commands::runtime_start_model_installation,
             commands::runtime_get_model_installation,
+            commands::runtime_cancel_upload,
             commands::runtime_create_capture,
             commands::runtime_start_streaming_capture,
             commands::runtime_get_capture,
@@ -119,6 +120,7 @@ pub fn run() {
             let state = DesktopState::new(data_dir);
             app.manage(Arc::new(library));
             app.manage(Arc::new(source_selection::SourceSelections::default()));
+            app.manage(Arc::new(runtime_client::UploadCancellations::default()));
             app.manage(state.clone());
             #[cfg(feature = "model-smoke-app-data")]
             app.manage(model_smoke_fixtures);
