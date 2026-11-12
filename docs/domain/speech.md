@@ -67,3 +67,27 @@ sequenceDiagram
 `cuda` 與舊安裝：`auto` 與 `tea-asr-1.1` 載入 `primary`，回報模型 `tea-asr-1.1`。偏好 GPU 且 CUDA 可用時使用 CUDA；被歸類的 CUDA 失敗以同一個檢查點在 CPU 重試。明確的 `tea-asr-1.1-mini` 維持 mini。`probe` 要求 primary、mini、兩邊的架構目錄與 aligner。
 
 `cpu` 內容沒有 GPU 路徑，一律在 CPU 上執行。`preferGpu` 與 `allowCpuFallback` 不改變裝置，也不會因為不允許 CPU 後援而回報 CUDA 裝置不存在。`auto` 載入 TEA-ASR-1.1-mini，回報模型 `tea-asr-1.1-mini`、裝置 `cpu`。明確的 `tea-asr-1.1-mini` 同樣載入 mini。明確的 `tea-asr-1.1` 在任何 worker 啟動或沿用之前失敗，不會改載 mini。擷取以既有的 `requirement_unavailable` 失敗，階段是 `extraction`，`retryable` 為 false。訊息說明這個模型不在已安裝的 `cpu` 內容，並請把 `CAPTURE_SPEECH_RECOGNITION_MODEL` 設成 `auto` 或 `tea-asr-1.1-mini`，或是解除安裝 `speech-recognition` 後以 `CAPTURE_SPEECH_RECOGNITION_VARIANT=cuda` 重新安裝。`GET /v2/runtime/requirements` 仍是 `ready`（`auto` 與 mini 仍可執行），`detail` 是同一句話。worker 內部仍以 `model not installed` 拒絕，留作第二道檢查。`probe` 在 mini、它的架構目錄與 aligner 都存在時就緒，不要求 primary。
+
+## Finalized recording decoding
+
+Without speaker identification, `PyAVFileDecoder.windows()` opens the finalized
+ingestion directly once, probes duration on that container, and decodes its audio
+track forward. It resamples to mono signed 16-bit PCM at 16 kHz and flushes the
+resampler at EOF. Windows span 120 seconds with 30 seconds of overlap and a
+4 MiB payload ceiling, including a final partial window. The iterator waits for
+each worker input acknowledgement before advancing; there is no compressed
+spool copy. Exact decoded sample counts enforce `max_audio_duration_ms`
+independently of metadata. Overflow fails with `worker_failed`, stage
+`extraction`, retryable `true`, as for whole-recording speech. Cancellation
+signals the decoder, joins the active decode thread despite repeated task
+cancellation, then closes the iterator/container and worker exactly once.
+Probed duration remains a progress estimate. Window boundaries use cumulative
+decoded sample counts, never summed rounded frame durations. PCM slices use
+absolute sample positions; the final window includes every remaining sample,
+with its integer-millisecond end truncated by less than 1 ms. Transcript offsets
+are relative to each window's true start. Pulling waits for the preceding worker
+acknowledgement, which bounds backpressure without a push input buffer.
+
+Startup also removes `progressive-*.spool` left by crashed older runtimes.
+Retain this migration cleanup until no supported upgrade path starts from a
+runtime that wrote spools (versions up to 0.9.x); unrelated staging files remain.

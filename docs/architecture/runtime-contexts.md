@@ -163,7 +163,6 @@ flowchart LR
   n_capture_runtime_worker_process --> n_capture_runtime_worker_stage_policy
   n_capture_runtime_worker_stage_policy --> n_capture_runtime_generated_worker_stage_policy
   n_capture_runtime_workers --> n_capture_runtime_capture
-  n_capture_runtime_workers --> n_capture_runtime_clock
   n_capture_runtime_workers --> n_capture_runtime_constants
   n_capture_runtime_workers --> n_capture_runtime_contracts
   n_capture_runtime_workers --> n_capture_runtime_diarization

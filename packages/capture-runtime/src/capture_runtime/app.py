@@ -150,11 +150,12 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         runtime_dependencies.staging_root.mkdir(parents=True, exist_ok=True)
-        for abandoned_upload in (
-            *runtime_dependencies.staging_root.glob("*.upload"),
-            *runtime_dependencies.staging_root.glob("*.spool"),
-        ):
+        for abandoned_upload in runtime_dependencies.staging_root.glob("*.upload"):
             abandoned_upload.unlink(missing_ok=True)
+        # Remove this once no supported upgrade path starts from a runtime
+        # that wrote progressive spool files (versions up to 0.9.x).
+        for abandoned_spool in runtime_dependencies.staging_root.glob("progressive-*.spool"):
+            abandoned_spool.unlink(missing_ok=True)
         runtime_dependencies.streaming_repository.initialize()
         runtime_dependencies.installation_repository.initialize()
         runtime_dependencies.model_installation_repository.initialize()
