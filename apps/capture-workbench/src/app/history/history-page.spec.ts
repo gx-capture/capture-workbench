@@ -702,3 +702,195 @@ it('lists a recording as timed lines and plays it from a line', async () => {
   (lines[0].querySelector('button') as HTMLButtonElement).click();
   expect(currentTime).toBe(284.05);
 });
+
+describe('HistoryPage delete confirmation', () => {
+  const selectedDoc = {
+    documentId: 'doc-delete-test',
+    fileName: 'contract.pdf',
+    mediaType: 'application/pdf',
+    byteLength: 2048,
+    createdAtMs: 1,
+    updatedAtMs: 1,
+    status: 'completed',
+    stage: 'completed',
+  };
+
+  afterEach(() => {
+    document.body.querySelectorAll('.cdk-overlay-container').forEach((node) => {
+      node.remove();
+    });
+  });
+
+  it('pressing Delete opens the dialog and does not call store.delete', async () => {
+    const store = workspaceStub(selectedDoc);
+    await TestBed.configureTestingModule({
+      imports: [HistoryPage],
+      providers: [
+        provideNoopAnimations(),
+        { provide: DesktopWorkspaceStore, useValue: store },
+      ],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(HistoryPage);
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    const deleteBtn = fixture.nativeElement.querySelector(
+      '[data-testid="document-delete"]',
+    ) as HTMLButtonElement;
+    expect(deleteBtn).not.toBeNull();
+    deleteBtn.click();
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const dialog = document.querySelector(
+      '[data-testid="document-delete-dialog"]',
+    ) as HTMLElement;
+    expect(dialog).not.toBeNull();
+    expect(dialog.textContent).toContain('確定要刪除這份文件嗎？');
+    expect(dialog.textContent).toContain('contract.pdf');
+    expect(store.delete).not.toHaveBeenCalled();
+  });
+
+  it('Cancel closes the dialog without calling store.delete', async () => {
+    const store = workspaceStub(selectedDoc);
+    await TestBed.configureTestingModule({
+      imports: [HistoryPage],
+      providers: [
+        provideNoopAnimations(),
+        { provide: DesktopWorkspaceStore, useValue: store },
+      ],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(HistoryPage);
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    const deleteBtn = fixture.nativeElement.querySelector(
+      '[data-testid="document-delete"]',
+    ) as HTMLButtonElement;
+    deleteBtn.click();
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const dialog = document.querySelector(
+      '[data-testid="document-delete-dialog"]',
+    ) as HTMLElement;
+    expect(dialog).not.toBeNull();
+
+    const cancelBtn = dialog.querySelector(
+      '[data-testid="document-delete-cancel"]',
+    ) as HTMLButtonElement;
+    expect(cancelBtn).not.toBeNull();
+    cancelBtn.click();
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    expect(
+      document.querySelector('[data-testid="document-delete-dialog"]'),
+    ).toBeNull();
+    expect(store.delete).not.toHaveBeenCalled();
+  });
+
+  it('Confirm calls store.delete once with the right document id and closes the dialog', async () => {
+    const store = workspaceStub(selectedDoc);
+    await TestBed.configureTestingModule({
+      imports: [HistoryPage],
+      providers: [
+        provideNoopAnimations(),
+        { provide: DesktopWorkspaceStore, useValue: store },
+      ],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(HistoryPage);
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    const deleteBtn = fixture.nativeElement.querySelector(
+      '[data-testid="document-delete"]',
+    ) as HTMLButtonElement;
+    deleteBtn.click();
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const dialog = document.querySelector(
+      '[data-testid="document-delete-dialog"]',
+    ) as HTMLElement;
+    expect(dialog).not.toBeNull();
+
+    const confirmBtn = dialog.querySelector(
+      '[data-testid="document-delete-confirm"]',
+    ) as HTMLButtonElement;
+    expect(confirmBtn).not.toBeNull();
+    confirmBtn.click();
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    expect(store.delete).toHaveBeenCalledTimes(1);
+    expect(store.delete).toHaveBeenCalledWith('doc-delete-test');
+    expect(
+      document.querySelector('[data-testid="document-delete-dialog"]'),
+    ).toBeNull();
+  });
+
+  it('a disabled Delete button for a busy document opens nothing', async () => {
+    const store = workspaceStub(selectedDoc);
+    store.busyIds.set(new Set(['doc-delete-test']));
+    await TestBed.configureTestingModule({
+      imports: [HistoryPage],
+      providers: [
+        provideNoopAnimations(),
+        { provide: DesktopWorkspaceStore, useValue: store },
+      ],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(HistoryPage);
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    const deleteBtn = fixture.nativeElement.querySelector(
+      '[data-testid="document-delete"]',
+    ) as HTMLButtonElement;
+    expect(deleteBtn.disabled).toBe(true);
+    deleteBtn.click();
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    expect(
+      document.querySelector('[data-testid="document-delete-dialog"]'),
+    ).toBeNull();
+    expect(store.delete).not.toHaveBeenCalled();
+  });
+
+  it('a disabled Delete button for a document with captureId opens nothing', async () => {
+    const docWithCaptureId = {
+      ...selectedDoc,
+      captureId: 'capture-running-123',
+    };
+    const store = workspaceStub(docWithCaptureId);
+    await TestBed.configureTestingModule({
+      imports: [HistoryPage],
+      providers: [
+        provideNoopAnimations(),
+        { provide: DesktopWorkspaceStore, useValue: store },
+      ],
+    }).compileComponents();
+    const fixture = TestBed.createComponent(HistoryPage);
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    const deleteBtn = fixture.nativeElement.querySelector(
+      '[data-testid="document-delete"]',
+    ) as HTMLButtonElement;
+    expect(deleteBtn.disabled).toBe(true);
+    deleteBtn.click();
+    fixture.detectChanges();
+    await fixture.whenStable();
+
+    expect(
+      document.querySelector('[data-testid="document-delete-dialog"]'),
+    ).toBeNull();
+    expect(store.delete).not.toHaveBeenCalled();
+  });
+});

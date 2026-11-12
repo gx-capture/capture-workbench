@@ -4,6 +4,7 @@ import {
   ElementRef,
   computed,
   inject,
+  signal,
   viewChild,
 } from '@angular/core';
 import { MatButton } from '@angular/material/button';
@@ -17,6 +18,9 @@ import {
   CAPTURE_UNIT_GUIDES,
   CaptureRuntimeComputeStatusComponent,
 } from '@gx-capture/capture-workbench-ui';
+import { BrnAlertDialogImports } from '@spartan-ng/brain/alert-dialog';
+import { BrnDialogClose } from '@spartan-ng/brain/dialog';
+import { HlmButtonImports } from '@spartan-ng/helm/button';
 import {
   DESKTOP_LOCALES,
   DESKTOP_MESSAGES,
@@ -53,6 +57,9 @@ import { EngineCard } from '../engine-card/engine-card';
     MatSpinner,
     CaptureRuntimeComputeStatusComponent,
     EngineCard,
+    BrnAlertDialogImports,
+    BrnDialogClose,
+    HlmButtonImports,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
@@ -68,6 +75,13 @@ export class HistoryPage {
   protected readonly guides = computed(() => CAPTURE_UNIT_GUIDES[this.locale()]);
   protected readonly speechPackOpen = computed(() =>
     this.store.speechPack().some((unit) => unit.status !== 'ready'),
+  );
+  protected readonly pendingDelete = signal<{
+    readonly documentId: string;
+    readonly fileName: string;
+  } | null>(null);
+  protected readonly deleteDialogState = computed(() =>
+    this.pendingDelete() === null ? 'closed' : 'open',
   );
   private readonly recordingPlayer =
     viewChild<ElementRef<HTMLMediaElement>>('recordingPlayer');
@@ -114,5 +128,32 @@ export class HistoryPage {
 
   protected partialFor(documentId: string) {
     return this.store.partialFor?.(documentId) ?? null;
+  }
+
+  protected askDelete(item: {
+    readonly documentId: string;
+    readonly fileName: string;
+    readonly captureId?: string;
+  }): void {
+    if (this.store.busyIds().has(item.documentId) || item.captureId) return;
+    this.pendingDelete.set({
+      documentId: item.documentId,
+      fileName: item.fileName,
+    });
+  }
+
+  protected confirmDelete(): void {
+    const pending = this.pendingDelete();
+    if (!pending) return;
+    this.store.delete(pending.documentId);
+    this.pendingDelete.set(null);
+  }
+
+  protected cancelDelete(): void {
+    this.pendingDelete.set(null);
+  }
+
+  protected onDeleteDialogState(state: 'open' | 'closed'): void {
+    if (state === 'closed') this.pendingDelete.set(null);
   }
 }

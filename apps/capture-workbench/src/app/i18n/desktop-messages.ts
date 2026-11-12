@@ -110,6 +110,7 @@ export interface DesktopMessages {
   readonly cancelBeforeDelete: string;
   readonly waitBeforeDelete: string;
   readonly confirmDelete: string;
+  readonly confirmDeleteCancel: string;
   readonly modelPhase: {
     readonly queued: string;
     readonly failed: string;
@@ -282,6 +283,7 @@ const ZH_TW: DesktopMessages = {
   cancelBeforeDelete: '請先取消處理，再刪除文件。',
   waitBeforeDelete: '處理尚未結束，請稍候再刪除。',
   confirmDelete: '確定要刪除這份文件嗎？',
+  confirmDeleteCancel: '取消',
   modelPhase: {
     queued: '等待開始',
     failed: '模型下載失敗',
@@ -499,6 +501,7 @@ const EN: DesktopMessages = {
   cancelBeforeDelete: 'Cancel processing before deleting the document.',
   waitBeforeDelete: 'Processing has not finished. Delete the document later.',
   confirmDelete: 'Delete this document?',
+  confirmDeleteCancel: 'Cancel',
   modelPhase: {
     queued: 'Waiting to start',
     failed: 'Model download failed',

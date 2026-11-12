@@ -376,7 +376,6 @@ export class DesktopWorkspaceStore {
       this.message.set(desktopMessages().waitBeforeDelete);
       return;
     }
-    if (!globalThis.confirm(desktopMessages().confirmDelete)) return;
     this.library.delete(documentId).subscribe({
       next: () => {
         this.releaseSampleSource(documentId);
