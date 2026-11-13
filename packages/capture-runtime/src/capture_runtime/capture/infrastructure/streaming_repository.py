@@ -133,6 +133,7 @@ class StreamingRepository:
         self._ingestion_idempotency: dict[str, str] = {}
         self._captures: dict[str, _CaptureRecord] = {}
         self._running_captures: set[str] = set()
+        self._terminal_event_pending: set[str] = set()
         # Ingestions whose startup recovery hit an I/O failure. They stay protected
         # from pruning for the life of this process; the next start retries them.
         self._recovery_deferred: set[str] = set()
@@ -147,6 +148,7 @@ class StreamingRepository:
             self._ingestion_idempotency.clear()
             self._captures.clear()
             self._running_captures.clear()
+            self._terminal_event_pending.clear()
             self._capture_idempotency.clear()
             self._recovery_deferred.clear()
             invalid_directories = self._load_ingestions()
@@ -162,7 +164,7 @@ class StreamingRepository:
                     directory_id = directory.name
                 if directory_id not in referenced:
                     self._persistence.delete_ingestion_directory(directory)
-            protected: set[str] = set()
+            protected: set[str] = set(self._recovery_deferred)
             for record in self._ingestions.values():
                 try:
                     if record.status is StreamingIngestionStatus.OPEN:
@@ -363,7 +365,9 @@ class StreamingRepository:
 
     def get_capture(self, capture_id: str) -> CaptureOperationV2:
         with self._lock:
-            return self._get_capture(capture_id).operation
+            record = self._get_capture(capture_id)
+            self._repair_pending_terminal_event_locked(record)
+            return record.operation
 
     def capture_request(self, capture_id: str) -> StartCaptureV2:
         with self._lock:
@@ -477,12 +481,19 @@ class StreamingRepository:
                 self._capture_directory(capture_id) / "events.jsonl", event
             )
             record.operation = updated
-            self._persist_capture(record)
+            try:
+                self._persist_capture(record)
+            except OSError:
+                if operation.status in _TERMINAL_CAPTURE_STATUSES:
+                    # A later read reconciles the durable event with saved metadata.
+                    record.operation = operation
+                raise
             return event
 
     def read_events(self, capture_id: str, *, after_sequence: int) -> list[CaptureEventV2]:
         with self._lock:
             record = self._get_capture(capture_id)
+            self._repair_pending_terminal_event_locked(record)
             if after_sequence < -1:
                 raise ValueError("event cursor must not be less than -1")
             path = self._capture_directory(capture_id) / "events.jsonl"
@@ -682,16 +693,25 @@ class StreamingRepository:
     def _complete_capture_locked(
         self, record: _CaptureRecord, *, now: datetime
     ) -> CaptureOperationV2:
+        previous = record.operation
         record.operation = _complete_capture(record.operation, now=now)
-        self._persist_capture(record)
+        try:
+            self._persist_capture(record)
+        except OSError:
+            record.operation = previous
+            raise
         event = operation_domain(record.operation).completed_event(now)
-        self.append_event(
-            event.capture_id,
-            event_type=StreamingEventType.COMPLETED,
-            _terminal_transition=True,
-            _created_at=event.completed_at,
-            stage="completed",
-        )
+        try:
+            self.append_event(
+                event.capture_id,
+                event_type=StreamingEventType.COMPLETED,
+                _terminal_transition=True,
+                _created_at=event.completed_at,
+                stage="completed",
+            )
+        except OSError:
+            self._terminal_event_pending.add(record.operation.capture_id)
+            raise
         return record.operation
 
     def fail_capture(self, capture_id: str, failure: CaptureFailureV2) -> CaptureOperationV2:
@@ -712,14 +732,71 @@ class StreamingRepository:
             # Memory must match disk: a failure that was not saved did not happen.
             record.operation = previous
             raise
-        self.append_event(
-            record.operation.capture_id,
-            event_type=StreamingEventType.FAILED,
-            _terminal_transition=True,
-            stage=failure.stage or "failed",
-            error=failure,
-        )
+        try:
+            self.append_event(
+                record.operation.capture_id,
+                event_type=StreamingEventType.FAILED,
+                _terminal_transition=True,
+                stage=failure.stage or "failed",
+                error=failure,
+            )
+        except OSError:
+            self._terminal_event_pending.add(record.operation.capture_id)
+            raise
         return record.operation
+
+    def _repair_pending_terminal_event_locked(self, record: _CaptureRecord) -> None:
+        """Best effort: a repair that fails stays pending and never blocks a read.
+
+        Deletion reads the capture first; a full disk must not keep the user from
+        deleting the capture that would free the space.
+        """
+        capture_id = record.operation.capture_id
+        if capture_id not in self._terminal_event_pending:
+            return
+        try:
+            self._repair_terminal_event_locked(record)
+        except OSError:
+            _LOGGER.warning("Terminal event repair deferred after an I/O failure")
+            return
+        self._terminal_event_pending.discard(capture_id)
+
+    def _repair_terminal_event_locked(self, record: _CaptureRecord) -> None:
+        """Reconcile a persisted terminal operation with its durable event log."""
+        operation = record.operation
+        if operation.status not in _TERMINAL_CAPTURE_STATUSES:
+            return
+        path = self._capture_directory(operation.capture_id) / "events.jsonl"
+        last = self._persistence.recover_last_event(path)
+        sequence = 0 if last is None else last[0]
+        event_type = {
+            StreamingCaptureStatus.COMPLETED: StreamingEventType.COMPLETED,
+            StreamingCaptureStatus.FAILED: StreamingEventType.FAILED,
+            StreamingCaptureStatus.CANCELLED: StreamingEventType.CANCELLED,
+        }[operation.status]
+        if last is None or last[1] != event_type.value:
+            failure = operation.error if operation.status is StreamingCaptureStatus.FAILED else None
+            event = CaptureEventV2(
+                event_id=f"{operation.capture_id}/{sequence + 1}",
+                sequence=sequence + 1,
+                capture_id=operation.capture_id,
+                kind=operation.kind,
+                event_type=event_type,
+                stage=(failure.stage or "failed") if failure else operation.status.value,
+                error=failure,
+                progress=operation.progress,
+                created_at=operation.updated_at,
+            )
+            self._persistence.append_event(path, event)
+            sequence += 1
+        if operation.last_event_sequence != sequence:
+            record.operation = operation.model_copy(update={"last_event_sequence": sequence})
+            try:
+                self._persist_capture(record)
+            except OSError:
+                # The event is durable, but keep metadata in memory equal to disk.
+                record.operation = operation
+                raise
 
     def read_partial(self, capture_id: str) -> PartialCaptureV2:
         with self._lock:
@@ -739,14 +816,23 @@ class StreamingRepository:
             if record.operation.status in _TERMINAL_CAPTURE_STATUSES:
                 return record.operation
             now = self._clock.now()
+            previous = record.operation
             record.operation = _cancel_capture(record.operation, now=now)
-            self._persist_capture(record)
-            self.append_event(
-                capture_id,
-                event_type=StreamingEventType.CANCELLED,
-                _terminal_transition=True,
-                stage="cancelled",
-            )
+            try:
+                self._persist_capture(record)
+            except OSError:
+                record.operation = previous
+                raise
+            try:
+                self.append_event(
+                    capture_id,
+                    event_type=StreamingEventType.CANCELLED,
+                    _terminal_transition=True,
+                    stage="cancelled",
+                )
+            except OSError:
+                self._terminal_event_pending.add(record.operation.capture_id)
+                raise
             return record.operation
 
     def set_capture_running(self, capture_id: str, running: bool) -> None:
@@ -770,6 +856,7 @@ class StreamingRepository:
             if normalized in self._running_captures:
                 raise StreamingTransitionError("capture workers are still running")
             self._captures.pop(normalized, None)
+            self._terminal_event_pending.discard(normalized)
             self._capture_idempotency.pop(record.request.client_request_id, None)
             directory = self._capture_directory(normalized)
             self._persistence.delete_capture_directory(directory)
@@ -907,15 +994,29 @@ class StreamingRepository:
             # An event written just before its metadata save failed is on disk: the
             # next event continues after it instead of reusing its sequence.
             try:
-                logged = self._persistence.recover_last_event_sequence(
-                    self._capture_directory(record.operation.capture_id) / "events.jsonl"
+                logged = (
+                    self._persistence.recover_last_event_sequence(
+                        self._capture_directory(record.operation.capture_id) / "events.jsonl"
+                    )
+                    if record.operation.status not in _TERMINAL_CAPTURE_STATUSES
+                    else None
                 )
             except OSError:
                 logged = None
-            if logged is not None and logged > record.operation.last_event_sequence:
+            if (
+                record.operation.status not in _TERMINAL_CAPTURE_STATUSES
+                and logged is not None
+                and logged > record.operation.last_event_sequence
+            ):
                 update["last_event_sequence"] = logged
             record.operation = record.operation.model_copy(update=update)
             self._captures[record.operation.capture_id] = record
+            try:
+                self._repair_terminal_event_locked(record)
+            except OSError:
+                self._terminal_event_pending.add(record.operation.capture_id)
+                _LOGGER.warning("Startup terminal event recovery deferred after an I/O failure")
+                self._recovery_deferred.add(ingestion_id)
             self._capture_idempotency[record.request.client_request_id] = (
                 record.operation.capture_id
             )

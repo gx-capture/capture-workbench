@@ -23,15 +23,19 @@ from capture_runtime.contracts import CaptureEventV2
 _LOGGER = logging.getLogger(__name__)
 
 
-def _event_sequence(line: bytes) -> int | None:
-    """The sequence of one event-log line, or None for a blank or damaged line."""
+def _event_summary(line: bytes) -> tuple[int, str | None] | None:
+    """The sequence and event type of one event-log line, or None for a blank or damaged line."""
     if not line.strip():
         return None
     try:
-        sequence = json.loads(line.decode("utf-8"))["sequence"]
+        payload = json.loads(line.decode("utf-8"))
+        sequence = payload["sequence"]
     except (KeyError, TypeError, ValueError):
         return None
-    return sequence if isinstance(sequence, int) and not isinstance(sequence, bool) else None
+    if not isinstance(sequence, int) or isinstance(sequence, bool):
+        return None
+    event_type = payload.get("eventType")
+    return sequence, event_type if isinstance(event_type, str) else None
 
 
 def _atomic_json(path: Path, payload: object) -> None:
@@ -197,7 +201,13 @@ class _StreamingRepositoryPersistence:
 
     @staticmethod
     def recover_last_event_sequence(path: Path) -> int | None:
-        """The sequence of the last complete event in a capture's log, or None.
+        """The sequence of the last complete event, repairing a damaged tail."""
+        last = _StreamingRepositoryPersistence.recover_last_event(path)
+        return None if last is None else last[0]
+
+    @staticmethod
+    def recover_last_event(path: Path) -> tuple[int, str | None] | None:
+        """The sequence and type of the last complete event, in one log read.
 
         A crash can leave the last line unfinished. Startup repairs it so the next
         event starts on a line of its own: a tail that is a whole event gets its
@@ -209,7 +219,7 @@ class _StreamingRepositoryPersistence:
             return None
         if raw and not raw.endswith(b"\n"):
             cut = raw.rfind(b"\n") + 1
-            if _event_sequence(raw[cut:]) is not None:
+            if _event_summary(raw[cut:]) is not None:
                 with path.open("ab") as log:
                     log.write(b"\n")
                     log.flush()
@@ -222,9 +232,9 @@ class _StreamingRepositoryPersistence:
                     os.fsync(log.fileno())
                 raw = raw[:cut]
         for line in reversed(raw.split(b"\n")):
-            sequence = _event_sequence(line)
-            if sequence is not None:
-                return sequence
+            last = _event_summary(line)
+            if last is not None:
+                return last
         return None
 
     def delete_capture_directory(self, directory: Path) -> None:

@@ -20,6 +20,7 @@ from capture_runtime.capture.infrastructure.streaming_repository import (
 )
 from capture_runtime.clock import Clock
 from capture_runtime.contracts import (
+    CaptureFailureV2,
     CaptureSourceKind,
     IngestionV2,
     OpenIngestionV2,
@@ -1233,3 +1234,240 @@ def test_startup_failed_source_remains_protected_by_active_capture(tmp_path):
     assert repository.get_ingestion(ingestion_id).status is StreamingIngestionStatus.FAILED
     assert repository.get_capture(capture).status is StreamingCaptureStatus.EXTRACTING
     assert path.read_bytes() == b"ab"
+
+
+@pytest.mark.parametrize("status", ["completed", "failed", "cancelled"])
+@pytest.mark.parametrize("recovery", ["restart", "operation", "events", "damaged-tail"])
+def test_terminal_event_repair(tmp_path, monkeypatch, status, recovery):
+    def repository_at_root():
+        repo = StreamingRepository(
+            tmp_path, clock=MutableClock(), retention_hours=24, policy=_DEFAULT_POLICY
+        )
+        repo.initialize()
+        return repo
+
+    repository = repository_at_root()
+    capture = _ready_pdf_capture(repository)
+    previous = repository.get_capture(capture).last_event_sequence
+    metadata = tmp_path / "captures" / capture / "metadata.json"
+    log = metadata.with_name("events.jsonl")
+    append = repository._persistence.append_event
+
+    def denied(*args, **kwargs):
+        raise OSError("private-path-and-content")
+
+    monkeypatch.setattr(repository._persistence, "append_event", denied)
+    with pytest.raises(OSError):
+        if status == "completed":
+            repository.complete_capture(capture)
+        elif status == "failed":
+            repository.fail_capture(
+                capture, CaptureFailureV2(code="test_failure", message="failure", stage="ocr")
+            )
+        else:
+            repository.cancel_capture(capture)
+    persisted = json.loads(metadata.read_text(encoding="utf-8"))["operation"]
+    assert persisted["status"] == status
+    assert capture in repository._terminal_event_pending
+    monkeypatch.setattr(repository._persistence, "append_event", append)
+    if recovery == "damaged-tail":
+        with log.open("ab") as stream:
+            stream.write(b'{"sequence":')
+    if recovery in {"restart", "damaged-tail"}:
+        repository = repository_at_root()
+    elif recovery == "operation":
+        repository.get_capture(capture)
+    events = repository.read_events(capture, after_sequence=0)
+    terminal = [event for event in events if event.event_type.value == status]
+    assert len(terminal) == 1
+    assert capture not in repository._terminal_event_pending
+    before_second_read = log.read_bytes()
+    repository.read_events(capture, after_sequence=0)
+    assert log.read_bytes() == before_second_read
+    assert terminal[0].sequence == previous + 1
+    assert terminal[0].progress == persisted["progress"]
+    assert terminal[0].stage == ("ocr" if status == "failed" else status)
+    if status == "failed":
+        assert terminal[0].error.code == "test_failure"
+    assert repository.get_capture(capture).last_event_sequence == previous + 1
+    saved = json.loads(metadata.read_text(encoding="utf-8"))["operation"]
+    assert saved["lastEventSequence"] == previous + 1
+    before = (log.read_bytes(), metadata.read_bytes())
+    repository_at_root()
+    repository_at_root()
+    assert (log.read_bytes(), metadata.read_bytes()) == before
+
+
+@pytest.mark.parametrize("status", ["completed", "failed", "cancelled"])
+def test_startup_leaves_existing_terminal_event_unchanged(tmp_path, status):
+    repository = StreamingRepository(
+        tmp_path, clock=MutableClock(), retention_hours=24, policy=_DEFAULT_POLICY
+    )
+    repository.initialize()
+    capture = _ready_pdf_capture(repository)
+    if status == "failed":
+        repository.fail_capture(capture, CaptureFailureV2(code="test_failure", message="failure"))
+    else:
+        if status == "completed":
+            repository.complete_capture(capture)
+        else:
+            repository.cancel_capture(capture)
+    directory = tmp_path / "captures" / capture
+    before = [(directory / name).read_bytes() for name in ("metadata.json", "events.jsonl")]
+    repository.initialize()
+    assert [(directory / name).read_bytes() for name in ("metadata.json", "events.jsonl")] == before
+
+
+def test_startup_defers_terminal_event_io_failure_without_disclosing_content(
+    tmp_path, monkeypatch, caplog
+):
+    repository = StreamingRepository(
+        tmp_path, clock=MutableClock(), retention_hours=24, policy=_DEFAULT_POLICY
+    )
+    repository.initialize()
+    capture = _ready_pdf_capture(repository)
+
+    def denied(*args, **kwargs):
+        raise OSError("private-path-and-content")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(repository._persistence, "append_event", denied)
+        with pytest.raises(OSError):
+            repository.cancel_capture(capture)
+        repository.initialize()
+        repository.prune_expired()
+    assert "terminal event recovery deferred" in caplog.text
+    assert "private-path-and-content" not in caplog.text
+    repository.initialize()
+    events = repository.read_events(capture, after_sequence=0)
+    assert events[-1].event_type is StreamingEventType.CANCELLED
+
+
+def test_terminal_event_repair_does_not_duplicate_a_write_that_raised(tmp_path, monkeypatch):
+    repository = StreamingRepository(
+        tmp_path, clock=MutableClock(), retention_hours=24, policy=_DEFAULT_POLICY
+    )
+    repository.initialize()
+    capture = _ready_pdf_capture(repository)
+    previous = repository.get_capture(capture).last_event_sequence
+    append = repository._persistence.append_event
+
+    def written_then_failed(path, event):
+        append(path, event)
+        raise OSError("flush failed")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(repository._persistence, "append_event", written_then_failed)
+        with pytest.raises(OSError):
+            repository.cancel_capture(capture)
+    repository.initialize()
+    events = repository.read_events(capture, after_sequence=0)
+    assert len([event for event in events if event.event_type is StreamingEventType.CANCELLED]) == 1
+    assert repository.get_capture(capture).last_event_sequence == previous + 1
+    metadata = tmp_path / "captures" / capture / "metadata.json"
+    saved = json.loads(metadata.read_text(encoding="utf-8"))["operation"]
+    assert saved["lastEventSequence"] == previous + 1
+
+
+@pytest.mark.parametrize("status", ["completed", "failed", "cancelled"])
+def test_unsaved_terminal_status_is_not_repaired_as_terminal(tmp_path, monkeypatch, status):
+    repository = StreamingRepository(
+        tmp_path, clock=MutableClock(), retention_hours=24, policy=_DEFAULT_POLICY
+    )
+    repository.initialize()
+    capture = _ready_pdf_capture(repository)
+    before = repository.get_capture(capture)
+    log = tmp_path / "captures" / capture / "events.jsonl"
+    content = log.read_bytes()
+
+    def denied(*args, **kwargs):
+        raise OSError("metadata write failed")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(repository, "_persist_capture", denied)
+        with pytest.raises(OSError):
+            if status == "completed":
+                repository.complete_capture(capture)
+            elif status == "failed":
+                repository.fail_capture(
+                    capture, CaptureFailureV2(code="test_failure", message="failure")
+                )
+            else:
+                repository.cancel_capture(capture)
+    assert repository.get_capture(capture) == before
+    assert log.read_bytes() == content
+
+
+@pytest.mark.parametrize("status", ["completed", "failed", "cancelled"])
+@pytest.mark.parametrize("restart", [False, True])
+def test_complete_terminal_log_reads_do_not_run_recovery(tmp_path, monkeypatch, status, restart):
+    repository = StreamingRepository(
+        tmp_path, clock=MutableClock(), retention_hours=24, policy=_DEFAULT_POLICY
+    )
+    repository.initialize()
+    capture = _ready_pdf_capture(repository)
+    if status == "failed":
+        repository.fail_capture(capture, CaptureFailureV2(code="test_failure", message="failure"))
+    elif status == "completed":
+        repository.complete_capture(capture)
+    else:
+        repository.cancel_capture(capture)
+    if restart:
+        repository.initialize()
+
+    def unexpected_recovery(*args, **kwargs):
+        raise AssertionError("complete terminal log must not be scanned for repair")
+
+    monkeypatch.setattr(repository._persistence, "recover_last_event", unexpected_recovery)
+    monkeypatch.setattr(repository._persistence, "recover_last_event_sequence", unexpected_recovery)
+    monkeypatch.setattr(repository._persistence, "append_event", unexpected_recovery)
+    monkeypatch.setattr(repository._persistence, "persist_capture", unexpected_recovery)
+    assert repository.get_capture(capture).status.value == status
+    events = repository.read_events(capture, after_sequence=0)
+    assert events[-1].event_type.value == status
+
+
+def test_pending_terminal_repair_failure_never_blocks_reads_or_deletion(tmp_path, monkeypatch):
+    repository = StreamingRepository(
+        tmp_path, clock=MutableClock(), retention_hours=24, policy=_DEFAULT_POLICY
+    )
+    repository.initialize()
+    capture = _ready_pdf_capture(repository)
+
+    def denied(*args, **kwargs):
+        raise OSError("event write failed")
+
+    with monkeypatch.context() as patch:
+        # A full disk: every event write keeps failing.
+        patch.setattr(repository._persistence, "append_event", denied)
+        with pytest.raises(OSError):
+            repository.cancel_capture(capture)
+        # Reads return what is saved and keep the repair pending.
+        assert repository.get_capture(capture).status is StreamingCaptureStatus.CANCELLED
+        events = repository.read_events(capture, after_sequence=-1)
+        assert StreamingEventType.CANCELLED not in [event.event_type for event in events]
+        assert capture in repository._terminal_event_pending
+        # Deleting the capture, which frees the space, still works.
+        repository.delete_capture(capture)
+    assert capture not in repository._terminal_event_pending
+
+
+def test_terminal_startup_repair_reads_log_once(tmp_path, monkeypatch):
+    repository = StreamingRepository(
+        tmp_path, clock=MutableClock(), retention_hours=24, policy=_DEFAULT_POLICY
+    )
+    repository.initialize()
+    capture = _ready_pdf_capture(repository)
+    repository.cancel_capture(capture)
+    log = tmp_path / "captures" / capture / "events.jsonl"
+    original = Path.read_bytes
+    reads = []
+
+    def counted(path):
+        if path == log:
+            reads.append(path)
+        return original(path)
+
+    monkeypatch.setattr(Path, "read_bytes", counted)
+    repository.initialize()
+    assert reads == [log]
