@@ -44,6 +44,30 @@ describe('CaptureQueueStore', () => {
     );
   });
 
+  it('lists and starts waiting files in import order, oldest first (#348)', async () => {
+    const harness = configure({ ocrReady: false });
+    // The library lists newest first; first.pdf and second.png share a timestamp.
+    harness.docs.push(
+      doc({ documentId: 'c'.repeat(32), fileName: 'third.jpg', mediaType: 'image/jpeg', createdAtMs: 3 }),
+      doc({ documentId: 'd'.repeat(32), fileName: 'second.png', mediaType: 'image/png', createdAtMs: 2 }),
+      doc({ documentId: 'a'.repeat(32), fileName: 'first.pdf', createdAtMs: 2 }),
+    );
+    harness.store.attach();
+    TestBed.tick();
+
+    expect(harness.rows().map((row) => row.fileName)).toEqual(['first.pdf', 'second.png', 'third.jpg']);
+
+    harness.requirements.set([requirement('ready')]);
+    TestBed.tick();
+    await settle();
+
+    expect(harness.runtime.createCapture.mock.calls.map((call) => (call as unknown[])[0])).toEqual([
+      'a'.repeat(32),
+      'd'.repeat(32),
+      'c'.repeat(32),
+    ]);
+  });
+
   it('starts a file at once when OCR is already ready', async () => {
     const harness = configure({ ocrReady: true });
     harness.store.attach();

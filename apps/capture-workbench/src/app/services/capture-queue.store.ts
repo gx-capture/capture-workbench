@@ -17,6 +17,7 @@ import {
 import { RecognitionFeaturesStore } from './recognition-features.store';
 import {
   describeOcrDocument,
+  inImportOrder,
   isOcrMediaType,
   parsePdfPageCount,
   renderRawOcrText,
@@ -53,7 +54,7 @@ export class CaptureQueueStore {
     identifySpeakers: () => false,
   };
 
-  readonly rows = computed(() => this.sharedDocuments()
+  readonly rows = computed(() => inImportOrder(this.sharedDocuments())
     .filter((document) => isOcrMediaType(document.mediaType))
     .map((document) => describeOcrDocument({
       document,
@@ -83,7 +84,8 @@ export class CaptureQueueStore {
 
   private readonly workEffect = effect(() => {
     if (!this.attached() || !this.runtime.started()) return;
-    const documents = this.sharedDocuments();
+    // Waiting files start in the order they were imported, the order the queue shows.
+    const documents = inImportOrder(this.sharedDocuments());
     if (this.features.isFeatureReady('ocr')) this.startWaiting(documents);
     this.reattachRunning(documents);
   });

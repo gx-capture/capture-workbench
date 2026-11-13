@@ -25,6 +25,15 @@ export interface OcrQueueView {
   readonly canExport: boolean;
 }
 
+/**
+ * Queue order (#348): oldest import first, so a batch is shown and started in the order
+ * it was selected. The library lists newest first, so documents imported in the same
+ * millisecond keep the reverse of the library's order (the sort is stable).
+ */
+export function inImportOrder<T extends { readonly createdAtMs: number }>(documents: readonly T[]): T[] {
+  return [...documents].reverse().sort((left, right) => left.createdAtMs - right.createdAtMs);
+}
+
 /** Pages `1..=count`, the only range this host sends. */
 export function pdfPagePrefix(count: number): number[] {
   return Array.from({ length: count }, (_, index) => index + 1);
