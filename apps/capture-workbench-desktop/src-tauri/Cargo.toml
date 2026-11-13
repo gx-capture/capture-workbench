@@ -33,6 +33,7 @@ tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2.7.2"
 
 [target.'cfg(windows)'.dependencies]
+tauri-plugin-single-instance = "2.5.5"
 windows-sys = { version = "0.61", features = [
   "Win32_Foundation",
   "Win32_Storage_FileSystem",

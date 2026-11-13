@@ -132,6 +132,21 @@ uv run --python 3.13 pytest -q
 The packaged executable includes both contract asset files under
 `capture_runtime/assets` and performs a startup route-inventory drift check.
 
+## Runtime startup and app-data lock
+
+`capture-runtime serve` (entry `capture_runtime.__main__:main`) resolves
+`RuntimeSettings.from_env()` (`CAPTURE_APP_DATA_DIR`, defaulting to
+`%LOCALAPPDATA%/CaptureWorkbench/runtime` on Windows) and acquires a non-blocking
+exclusive OS lock on `<app_data_dir>/runtime.lock` (`msvcrt.locking` on Windows,
+`fcntl.flock` on POSIX) before running startup sweeps or creating the FastAPI app.
+The file handle stays open for the lifetime of the runtime process so the OS
+releases the lock on normal exit or process death. If another Capture Runtime
+still holds the lock after a 10-second wait (Windows releases a stopped
+process's lock asynchronously, so a quick restart retries), startup leaves existing files untouched, prints
+`capture-runtime: the app data directory is in use by another Capture Runtime.`
+to stderr (without the directory path), and exits with code `10`
+(`EXIT_APP_DATA_IN_USE`).
+
 ## Speaker diarization worker
 
 `capture-engine-diarization` is a separately packaged worker that answers "who

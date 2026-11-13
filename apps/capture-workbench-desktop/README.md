@@ -4,6 +4,12 @@ This Tauri 2 app is the Windows 11 x64, local-first Capture Workbench product.
 It owns the user's private source/result library and starts one verified
 Capture Runtime sidecar with a memory-only bearer token.
 
+The Windows product runs as a single instance. Starting it again restores a
+minimized main window, shows and focuses it, and exits the second process.
+Second-launch arguments and working directory are ignored. Builds with
+`acceptance-app-data` or `model-smoke-app-data` (including deterministic QA)
+skip the single-instance lock so isolated test runs and the product can coexist.
+
 The desktop host starts one verified `capture-runtime` sidecar on a random loopback port with a memory-only 256-bit bearer token. Its product provider is an isolated Ollama lane with dedicated app data, model storage, port, profile, and PID file.
 
 ## Acceptance targets
