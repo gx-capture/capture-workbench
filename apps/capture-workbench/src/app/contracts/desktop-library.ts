@@ -19,6 +19,10 @@ export type DesktopLibraryStatus =
 export interface DesktopCaptureOptions {
   /** Pages `1..=K`. Omitted means the whole document, apart from any harness scope. */
   readonly pdfPageCount?: number | null;
+  /** Optional spoken language tag (`zh`, `en`, `ja`, etc.) for speech recognition. */
+  readonly spokenLanguage?: string | null;
+  /** Whether to label speakers when speaker-diarization is ready. */
+  readonly identifySpeakers?: boolean | null;
 }
 
 export interface DesktopLibrarySummary {

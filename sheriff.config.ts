@@ -27,7 +27,6 @@ export const config: SheriffConfig = {
     'apps/capture-workbench/src/app/history': ['shell:feature'],
     'apps/capture-workbench/src/app/settings': ['shell:feature'],
     'apps/capture-workbench/src/app/engine-card': ['shell:feature'],
-    'apps/capture-workbench/src/app/placeholder': ['shell:feature'],
     'apps/capture-workbench/src/app/services': ['shell:service'],
     'apps/capture-workbench/src/app/contracts': ['shell:contract'],
     'apps/capture-workbench/src/app/i18n': ['shell:i18n'],

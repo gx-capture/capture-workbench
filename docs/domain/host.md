@@ -54,7 +54,13 @@ flowchart LR
 
 ## 主要流程
 
-`/ocr` 把匯入和擷取分開。丟進來或選取的 PDF、圖片以 selection token 呼叫 `library_import_selection`，文件庫立刻記成 `queued`、沒有 `captureId`，畫面顯示等待中。`windowsml-ocr` 還沒安裝也一樣。安裝完成後，等待中的文件自己開始擷取，不需要再按一次。整個視窗只有一個原生 drop channel：在 `/ocr` 路徑進入這個佇列，在其他頁面則由工作台先匯入整批 selection，再依序開始擷取。`/history` 的選擇檔案仍接受錄音。
+ASR 佇列透過擷取服務的公開 `reattach$` 與 `startDocument$` 協調擷取，沿用匯入時儲存的語言與說話者選項。每個 capture ID 只自動重新連接一次；失敗後由使用者明確重試或重新開始。新嘗試會清除舊的即時逐字稿，畫面只採用目前 capture ID 的 partial。
+
+ASR 的顯示與啟動順序共用 OCR 的匯入順序選擇器：先反轉文件庫的新到舊順序，再依建立時間穩定排序，同毫秒匯入仍按選取順序處理。取消等待中文件時立即保留取消中的 ID，請求結束前不會啟動；成功或失敗都釋放保留。批次匯入逐筆收集錯誤，單筆失敗不會阻止後續檔案匯入。
+
+語音辨識已就緒而說話者辨識未安裝時，ASR 選項列顯示小型外框安裝按鈕與預估大小；安裝排隊或執行中改顯示簡短的進度文字。大小與百分比由佇列 store 推導，取消安裝留在「設定 › 辨識功能」。
+
+`/ocr` 與 `/asr` 把匯入和擷取分開。丟進來或選取的檔案以 selection token 呼叫 `library_import_selection`，文件庫立刻記成 `queued`、沒有 `captureId`，畫面顯示等待中；對應的辨識引擎（`windowsml-ocr` 或 `speech-recognition`）還沒安裝也一樣，安裝完成後等待中的檔案會自己開始擷取，不需要再按一次。`library_select_sources` 支援 `documents`、`recordings` 與 `all` 三種選取類型（`/ocr` 用 `documents`、`/asr` 用 `recordings`、`/history` 用 `all`）。整個視窗只有一個原生 drop channel：在 `/ocr` 路徑進入 OCR 佇列、在 `/asr` 路徑進入 ASR 佇列（拒絕非錄音格式），在其他頁面則由工作台先匯入整批 selection，再依序開始擷取。
 
 ```mermaid
 sequenceDiagram
@@ -69,7 +75,7 @@ sequenceDiagram
   Tauri-->>UI: selectionToken、基本檔名、大小、媒體類型
   UI->>Tauri: library_import_selection（selectionToken）
   Tauri->>Lib: 寫入來源檔，狀態 queued
-  Note over UI,Lib: /ocr 停在這裡，直到文字辨識就緒
+  Note over UI,Lib: /ocr、/asr 停在這裡，直到對應辨識功能就緒
   UI->>Tauri: runtime_create_capture 或 runtime_start_streaming_capture
   Tauri->>RT: 上傳來源，開始擷取
   RT-->>Tauri: 進度、原始文字、結果
@@ -79,9 +85,9 @@ sequenceDiagram
   Tauri->>RT: 刪除 runtime 端的擷取
 ```
 
-等待中的文件留在文件庫。重新載入視窗後，佇列仍列出它們，並接回還在跑的擷取。整個程式重開後，runtime 作業已經消失的文件標成 `recovery_required`，`/ocr` 顯示已中斷，可以重新開始。
+等待中的檔案留在文件庫。重新載入視窗後，佇列仍列出它們，並接回還在跑的擷取。整個程式重開後，runtime 作業已經消失的文件或錄音標成 `recovery_required`，佇列顯示已中斷，可以重新開始。
 
-PDF 可以帶 `captureOptions`，目前只有 `pdfPageCount`（前 K 頁，只接受 `1..=K`，最多 500）。舊索引沒有這個欄位也讀得回來。直書日文閱讀器沒有逐次開關：runtime 在 `vertical-japanese-reader` 已安裝時會自己把它交給辨識工作。
+PDF 可以帶 `captureOptions` 的 `pdfPageCount`（前 K 頁，只接受 `1..=K`，最多 500）。錄音可以帶 `spokenLanguage`（依 runtime 合約的語系代碼，畫面提供 `zh`／`en`／`ja`，主機轉送 `POST /v2/captures` 並拒絕無效值，錯誤不含路徑）與 `identifySpeakers`；`/asr` 佇列與自動啟動順序依匯入順序（`createdAtMs` 升冪，同時間保留加入順序，#348），進行中時透過 `streamingOperations` 與 `streamingPartials` 顯示即時逐字稿與「已聽到／總長」。舊索引沒有這個欄位也讀得回來。直書日文閱讀器沒有逐次開關：runtime 在 `vertical-japanese-reader` 已安裝時會自己把它交給辨識工作。
 
 `/ocr` 的 `.txt` 由畫面用文件庫裡的原始文字組成（頁面順序，頁與頁之間空一行），不新增匯出指令。沒有 Ollama 的結構化結果時，只要原始文字在，這一頁就算完成。列表上的 `hasRaw` 表示原始文字已經寫進文件庫。
 

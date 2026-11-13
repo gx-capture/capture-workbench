@@ -61,6 +61,31 @@ describe('DesktopLibraryService native source import', () => {
     });
   });
 
+  it('requests the recordings picker kind and imports spokenLanguage options', async () => {
+    const { commands, service } = configure();
+    await firstValueFrom(service.selectSources('recordings'));
+    expect(commands.invoke).toHaveBeenCalledWith('library_select_sources', {
+      request: { kind: 'recordings' },
+    });
+
+    const recordingSelection = {
+      ...selection('meeting.mp3'),
+      mediaType: 'audio/mpeg',
+    };
+    await firstValueFrom(
+      service.importSelection(recordingSelection, {
+        spokenLanguage: 'ja',
+        identifySpeakers: true,
+      }),
+    );
+    expect(commands.invoke).toHaveBeenCalledWith('library_import_selection', {
+      request: {
+        selectionToken: recordingSelection.selectionToken,
+        captureOptions: { spokenLanguage: 'ja', identifySpeakers: true },
+      },
+    });
+  });
+
   it('keeps ordinary library responses path-free', async () => {
     const { service } = configure();
 

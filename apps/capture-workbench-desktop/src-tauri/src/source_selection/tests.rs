@@ -302,7 +302,8 @@ fn rejected_options_preserve_selection_and_index_and_import_errors_are_safe() {
             .import(
                 "main",
                 request(Some(LibraryCaptureOptions {
-                    pdf_page_count: Some(0)
+                    pdf_page_count: Some(0),
+                    ..Default::default()
                 })),
                 &library
             )

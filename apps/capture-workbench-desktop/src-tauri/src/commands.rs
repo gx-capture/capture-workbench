@@ -134,6 +134,20 @@ where
         .map_err(|_| "Capture Workbench background operation failed.".to_string())?
 }
 
+fn picker_extensions(kind: crate::contracts::SourceSelectionKind) -> Vec<&'static str> {
+    match kind {
+        crate::contracts::SourceSelectionKind::Documents => vec!["pdf", "png", "jpg", "jpeg"],
+        crate::contracts::SourceSelectionKind::Recordings => {
+            crate::library::validation::RECORDING_EXTENSIONS.to_vec()
+        }
+        crate::contracts::SourceSelectionKind::All => {
+            let mut extensions = vec!["pdf", "png", "jpg", "jpeg"];
+            extensions.extend(crate::library::validation::RECORDING_EXTENSIONS);
+            extensions
+        }
+    }
+}
+
 #[tauri::command]
 pub(crate) async fn library_select_sources(
     window: tauri::Window,
@@ -145,10 +159,7 @@ pub(crate) async fn library_select_sources(
     let guard = selections.begin_dialog(window.label())?;
     run_blocking(move || {
         let _guard = guard;
-        let mut extensions = vec!["pdf", "png", "jpg", "jpeg"];
-        if matches!(request.kind, crate::contracts::SourceSelectionKind::All) {
-            extensions.extend(crate::library::validation::RECORDING_EXTENSIONS);
-        }
+        let extensions = picker_extensions(request.kind);
         let files = window
             .dialog()
             .file()

@@ -32,14 +32,29 @@ pub(crate) const RECORDING_MEDIA_TYPES: &[&str] = &[
     "video/mp2t",
 ];
 
-/// `pdf_page_count` is a `1..=K` prefix. The desktop host refuses any other range.
+/// Validates capture options stored with a document (`pdf_page_count` and `spoken_language`).
 pub(crate) fn validate_capture_options(options: &LibraryCaptureOptions) -> Result<(), String> {
     if let Some(count) = options.pdf_page_count {
         if count == 0 || count > 500 {
             return Err("Capture PDF page selection is invalid.".into());
         }
     }
+    if let Some(language) = options.spoken_language.as_deref() {
+        validate_spoken_language(language)?;
+    }
     Ok(())
+}
+
+/// Validates a spoken language against the runtime contract's `spokenLanguage` enum.
+pub(crate) fn validate_spoken_language(value: &str) -> Result<(), String> {
+    if matches!(
+        value,
+        "zh" | "yue" | "en" | "ja" | "ko" | "fr" | "de" | "it" | "pt" | "ru" | "es"
+    ) {
+        Ok(())
+    } else {
+        Err("Capture spoken language is invalid.".into())
+    }
 }
 
 pub(crate) fn verified_media_type(file_name: &str, bytes: &[u8]) -> Result<&'static str, String> {

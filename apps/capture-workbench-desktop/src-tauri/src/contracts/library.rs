@@ -491,14 +491,20 @@ fn format_bounded_confidence(value: f64) -> String {
 
 /// Options stored with a file before a capture starts.
 ///
-/// `pdf_page_count` is the only value this host sends: pages `1..=K`.
-/// Start-capture has no vertical-Japanese flag. The runtime passes that
-/// reader into the worker when the unit is installed.
+/// `pdf_page_count` is `1..=K`.
+/// `spoken_language` and `identify_speakers` let queued recordings retain their
+/// ASR options until speech recognition is ready. Start-capture has no
+/// vertical-Japanese flag; the runtime passes that reader into the worker when
+/// the unit is installed.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LibraryCaptureOptions {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pdf_page_count: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spoken_language: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identify_speakers: Option<bool>,
 }
 
 #[cfg(any(test, feature = "model-smoke-app-data"))]

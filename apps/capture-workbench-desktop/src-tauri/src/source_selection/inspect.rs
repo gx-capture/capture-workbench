@@ -142,6 +142,13 @@ fn inspect(
             "Selected source signature is unsupported.",
         ));
     }
+    if matches!(kind, SourceSelectionKind::Recordings)
+        && !crate::library::RECORDING_MEDIA_TYPES.contains(&media_type.as_str())
+    {
+        return Err(Failure::Unsupported(
+            "Selected source signature is unsupported.",
+        ));
+    }
     Ok(OpenedSource {
         handle,
         file_name,

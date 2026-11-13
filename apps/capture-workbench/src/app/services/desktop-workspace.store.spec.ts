@@ -1,6 +1,7 @@
 import { MAX_PLAYBACK_BYTES } from './recording-playback';
 import { desktopMessages } from '../i18n/desktop-messages';
 import { Router } from '@angular/router';
+import { AsrQueueStore } from './asr-queue.store';
 import { CaptureQueueStore } from './capture-queue.store';
 import { RUNTIME_VERSION } from '@gx-capture/capture-runtime-client';
 import { signal } from '@angular/core';
@@ -2319,19 +2320,26 @@ describe('DesktopWorkspaceStore', () => {
     expect(deleteDocument).not.toHaveBeenCalledWith(first.documentId);
   });
 
-  it('routes native drop batches to OCR on the OCR page and imports them on history', () => {
+  it('routes native drop batches to OCR on /ocr, ASR on /asr, and imports them on history', () => {
     const dropped = new Subject<{ selections: readonly DesktopSourceSelection[]; rejected: [] }>();
-    const queue = { importSelections: vi.fn() };
+    const ocrQueue = { importSelections: vi.fn() };
+    const asrQueue = { importSelections: vi.fn() };
     const router = { url: '/ocr' };
     TestBed.configureTestingModule({ providers: [
       { provide: Router, useValue: router },
-      { provide: CaptureQueueStore, useValue: queue },
+      { provide: CaptureQueueStore, useValue: ocrQueue },
+      { provide: AsrQueueStore, useValue: asrQueue },
     ] });
     const library = libraryStub({ droppedSources: vi.fn(() => dropped) });
     initializeStore(library, runtimeStub());
     const batch = { selections: [selection('chosen.pdf')], rejected: [] as [] };
     dropped.next(batch);
-    expect(queue.importSelections).toHaveBeenCalledWith(batch);
+    expect(ocrQueue.importSelections).toHaveBeenCalledWith(batch);
+    expect(library.importSelection).not.toHaveBeenCalled();
+    router.url = '/asr';
+    const recordingBatch = { selections: [selection('chosen.wav')], rejected: [] as [] };
+    dropped.next(recordingBatch);
+    expect(asrQueue.importSelections).toHaveBeenCalledWith(recordingBatch);
     expect(library.importSelection).not.toHaveBeenCalled();
     router.url = '/history';
     dropped.next(batch);

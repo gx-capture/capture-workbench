@@ -143,7 +143,7 @@ describe('App shell and recognition pages', () => {
     expect(
       page.querySelector('[data-testid="asr-install-panel"]'),
     ).not.toBeNull();
-    expect(page.querySelector('a[href="/history"]')).toBeNull();
+    expect(page.querySelector('[data-testid="asr-dropzone"]')).toBeNull();
 
     const cards = [
       ...page.querySelectorAll('[data-testid="engine-card"]'),
@@ -166,8 +166,10 @@ describe('App shell and recognition pages', () => {
     fixture.detectChanges();
 
     expect(page.querySelector('[data-testid="asr-install-panel"]')).toBeNull();
-    const link = page.querySelector('a[href="/history"]');
-    expect(link?.textContent?.trim()).toBe('前往紀錄加入錄音');
+    expect(page.querySelector('[data-testid="asr-dropzone"]')).not.toBeNull();
+    expect(
+      page.querySelector('[data-testid="asr-choose-files"]')?.textContent?.trim(),
+    ).toBe('選擇檔案');
   });
 
   it('redirects /settings to /settings/engines and renders expandable recognition engine rows with install, cancel, and retry actions', async () => {

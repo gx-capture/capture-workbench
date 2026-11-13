@@ -142,7 +142,7 @@ test('lets an ASR-only user install speech recognition on /asr without ever requ
   await expect(page.getByTestId('runtime-status')).toHaveAttribute('data-state', 'ready');
   const panel = page.getByTestId('asr-install-panel');
   await expect(panel).toBeVisible();
-  await expect(page.getByRole('link', { name: '前往紀錄加入錄音' })).toHaveCount(0);
+  await expect(page.getByTestId('asr-dropzone')).toHaveCount(0);
   await expect(panel.getByText('WindowsML OCR')).toHaveCount(0);
 
   const speechCard = panel.locator('[data-testid="engine-card"][data-requirement-id="speech-recognition"]');
@@ -150,7 +150,7 @@ test('lets an ASR-only user install speech recognition on /asr without ever requ
   await speechCard.getByTestId('engine-card-install').click();
 
   await expect(panel).toHaveCount(0);
-  await expect(page.getByRole('link', { name: '前往紀錄加入錄音' })).toBeVisible();
+  await expect(page.getByTestId('asr-dropzone')).toBeVisible();
 
   const startedIds = await page.evaluate(() => {
     const target = globalThis as unknown as {
