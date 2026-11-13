@@ -143,6 +143,7 @@ export interface DesktopMessages {
   readonly later: string;
   readonly optionalSuffix: string;
   readonly firstRunTitle: string;
+  readonly firstRunHint: string;
   readonly firstRunOcrLabel: string;
   readonly firstRunOcrSummary: string;
   readonly firstRunAsrLabel: string;
@@ -159,7 +160,13 @@ export interface DesktopMessages {
   readonly engineName: Readonly<Record<string, string | undefined>>;
   readonly enginePurpose: Readonly<Record<string, string | undefined>>;
   readonly engineStatus: Readonly<Record<string, string | undefined>>;
+  readonly ocrSubtitle: string;
   readonly ocrDropHint: string;
+  readonly ocrDropSupported: string;
+  readonly ocrDropNotInstalledHint: string;
+  readonly ocrAllPages: string;
+  readonly ocrQueueTitle: string;
+  readonly ocrQueueCount: (count: number) => string;
   readonly ocrColFile: string;
   readonly ocrColPages: string;
   readonly ocrColStatus: string;
@@ -171,12 +178,14 @@ export interface DesktopMessages {
   readonly ocrStatusCancelled: string;
   readonly ocrNeedsEngine: (size: string | null) => string;
   readonly ocrPageProgress: (done: number, total: number) => string;
+  readonly ocrProgressNamed: (name: string) => string;
   readonly ocrFirstPages: string;
   readonly ocrPagesUnit: string;
   readonly ocrView: string;
   readonly ocrExportTxt: string;
   readonly ocrRestart: string;
   readonly ocrInterrupted: string;
+  readonly ocrInterruptedHint: string;
   readonly ocrRetry: string;
   readonly ocrPageCountInvalid: string;
   readonly ocrInstallNamed: (name: string) => string;
@@ -349,7 +358,8 @@ const ZH_TW: DesktopMessages = {
   removeEngineNotFound: '找不到這項功能',
   later: '稍後再說',
   optionalSuffix: '（選用）',
-  firstRunTitle: '需要時再安裝辨識功能',
+  firstRunTitle: '要安裝哪些辨識功能？',
+  firstRunHint: '只下載你勾選的項目，之後也可以在「設定」裡加裝或移除。',
   firstRunOcrLabel: '文字辨識',
   firstRunOcrSummary: '讀出掃描檔與照片的文字',
   firstRunAsrLabel: '錄音轉文字',
@@ -386,7 +396,13 @@ const ZH_TW: DesktopMessages = {
     manual_action_required: '需手動處理',
     unavailable: '無法安裝',
   },
+  ocrSubtitle: '讀出掃描檔與照片裡的文字。檔案與結果都留在這台電腦。',
   ocrDropHint: '拖曳 PDF 或圖片到這裡',
+  ocrDropSupported: '支援 PDF、PNG、JPG，單檔最大 50 MiB',
+  ocrDropNotInstalledHint: '還沒安裝文字辨識也可以先加入，安裝完成後自動開始。',
+  ocrAllPages: '全部',
+  ocrQueueTitle: '佇列',
+  ocrQueueCount: (count) => `${count} 個檔案`,
   ocrColFile: '檔名',
   ocrColPages: '頁數',
   ocrColStatus: '狀態',
@@ -398,12 +414,14 @@ const ZH_TW: DesktopMessages = {
   ocrStatusCancelled: '已取消',
   ocrNeedsEngine: (size) => size ? `需要文字辨識（${size}）` : '需要文字辨識',
   ocrPageProgress: (done, total) => `第 ${done}/${total} 頁`,
-  ocrFirstPages: '前',
+  ocrProgressNamed: (name) => `${name} 的進度`,
+  ocrFirstPages: 'PDF 只辨識前',
   ocrPagesUnit: '頁',
   ocrView: '檢視',
   ocrExportTxt: '匯出 .txt',
   ocrRestart: '重新開始',
   ocrInterrupted: '已中斷',
+  ocrInterruptedHint: '上次關閉程式時尚未完成。',
   ocrRetry: '重試',
   ocrPageCountInvalid: 'Capture PDF page selection is invalid.',
   ocrInstallNamed: (name) => `安裝文字辨識以處理 ${name}`,
@@ -578,7 +596,8 @@ const EN: DesktopMessages = {
   removeEngineNotFound: 'This feature was not found.',
   later: 'Maybe later',
   optionalSuffix: ' (optional)',
-  firstRunTitle: 'Install recognition features when you need them',
+  firstRunTitle: 'Which recognition features do you want to install?',
+  firstRunHint: 'Only checked items will be downloaded. You can add or remove them later in Settings.',
   firstRunOcrLabel: 'Text recognition',
   firstRunOcrSummary: 'Read text from scans and photos',
   firstRunAsrLabel: 'Speech to text',
@@ -617,7 +636,13 @@ const EN: DesktopMessages = {
     manual_action_required: 'Manual step required',
     unavailable: 'Unavailable',
   },
+  ocrSubtitle: 'Read text from scans and photos. Files and results stay on this computer.',
   ocrDropHint: 'Drop a PDF or images here',
+  ocrDropSupported: 'Supports PDF, PNG, JPG, up to 50 MiB per file',
+  ocrDropNotInstalledHint: 'You can add files before text recognition is installed; they will start automatically once installation finishes.',
+  ocrAllPages: 'All',
+  ocrQueueTitle: 'Queue',
+  ocrQueueCount: (count) => `${count} file${count === 1 ? '' : 's'}`,
   ocrColFile: 'File',
   ocrColPages: 'Pages',
   ocrColStatus: 'Status',
@@ -629,12 +654,14 @@ const EN: DesktopMessages = {
   ocrStatusCancelled: 'Canceled',
   ocrNeedsEngine: (size) => size ? `Text recognition is required (${size})` : 'Text recognition is required',
   ocrPageProgress: (done, total) => `Page ${done}/${total}`,
-  ocrFirstPages: 'First',
+  ocrProgressNamed: (name) => `Progress for ${name}`,
+  ocrFirstPages: 'Recognise only first',
   ocrPagesUnit: 'pages',
   ocrView: 'View',
   ocrExportTxt: 'Export .txt',
   ocrRestart: 'Start again',
   ocrInterrupted: 'Interrupted',
+  ocrInterruptedHint: 'Not finished before the app was last closed.',
   ocrRetry: 'Retry',
   ocrPageCountInvalid: 'Capture PDF page selection is invalid.',
   ocrInstallNamed: (name) => `Install text recognition for ${name}`,

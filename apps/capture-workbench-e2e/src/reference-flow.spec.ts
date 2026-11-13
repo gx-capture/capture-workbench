@@ -113,7 +113,7 @@ test('shows the first-run recognition card on /ocr and remembers dismissing it a
 
   const card = page.getByTestId('first-run-card');
   await expect(card).toBeVisible();
-  await expect(card.getByRole('heading', { name: '需要時再安裝辨識功能' })).toBeVisible();
+  await expect(card.getByRole('heading', { name: '要安裝哪些辨識功能？' })).toBeVisible();
   await expect(card.getByTestId('first-run-size-ocr')).toHaveText('約 144 MB');
   await expect(card.getByTestId('first-run-size-asr')).toHaveText('約 2.8 GB');
   await expect(card.getByTestId('first-run-size-speakers')).toHaveText('約 300 MB');

@@ -1,6 +1,6 @@
 # Capture Workbench：以 OCR 與 ASR 為核心的 UI/UX 重新設計提案
 
-Status: approved 2026-11-02; all §6 recommendations accepted. Product decision: Workbench is a product with two primary features, **文件轉文字 (OCR)** and **錄音轉逐字稿 (ASR)**. Phases 1 (PR #139) and 2 (PR #149) are merged. Phase 3 (PR #306) adds the `/ocr` queue. The remaining phases are issues (§5), under [epic #152](https://github.com/gx-capture/capture-workbench/issues/152).
+Status: approved 2026-11-02; all §6 recommendations accepted. Product decision: Workbench is a product with two primary features, **文件轉文字 (OCR)** and **錄音轉逐字稿 (ASR)**. Phases 1 (PR #139) and 2 (PR #149) are merged. Phase 3 (PR #306) adds the `/ocr` queue; the approved visual design from artboards Main.dc.html and OcrFirstRun.dc.html was applied on 2026-11-13. The remaining phases are issues (§5), under [epic #152](https://github.com/gx-capture/capture-workbench/issues/152).
 
 ## 1. Current state
 
@@ -79,7 +79,7 @@ Phases 1 and 2 are in `apps/capture-workbench/src/app`:
 ┌──────────────┬─────────────────────────────────────────────────────┐
 │ Capture      │ 文件轉文字                                          │
 │              │ ┌─────────────────────────────────────────────────┐ │
-│▸ 文件轉文字  │ │ 需要時再安裝辨識功能                            │ │
+│▸ 文件轉文字  │ │ 要安裝哪些辨識功能？                            │ │
 │  錄音轉逐字稿│ │ ○ 文字辨識   讀出掃描檔與照片的文字   約 144 MB │ │
 │  紀錄        │ │ ○ 錄音轉文字 把錄音轉成逐字稿        約 2.8 GB  │ │
 │  設定        │ │   └ ○ 說話者辨識                     約 0.3 GB  │ │
