@@ -47,7 +47,8 @@ flowchart LR
 - Rust 開啟檔案選擇視窗並接收原生拖放，檢查本機一般檔案與格式後保留已開啟的 handle。畫面只收到一次性、限視窗、30 分鐘有效的 selection token，以及基本檔名、大小與媒體類型；`library_import_selection` 消耗 token 後串流匯入。路徑不經過 IPC，空檔由主機拒絕；錄音（含轉錄音軌的影片）上限為 2 GiB，PDF 與圖片仍為 50 MiB。匯入前要求可用磁碟空間至少為來源大小的兩倍加 512 MiB，以容納資料庫與 runtime 的副本。超過 50 MiB 的錄音不載入畫面播放，仍顯示逐字稿與時間戳記。最多保留 64 個 selection；丟棄、到期或視窗銷毀即釋放 handle。事件訂閱及 renderer dialog 權限明確拒絕。
 - 文件庫的寫入先記交易日誌再提交（`library/transaction.rs`），寫到一半中斷不會留下不一致的索引。
 - 交易失敗後，主機立即在執行中回復（回滾或完成，與開啟時相同）並從磁碟重新載入索引，之後才接受下一次寫入（#343）。回復失敗時讀取照常，寫入在索引鎖內先重試回復；仍失敗就拒絕，不改動已存的資料。留下的已提交日誌同樣要先完成，後續交易才不會覆蓋它。匯入在複製來源時不持有索引鎖，只在寫入索引時取得。
-- If roll-forward cleanup fails, reload the durable index only for a validated journal that commits or has applied every entry. Keep writes blocked until recovery finishes. Rollback and unreadable or invalid journals retain the in-memory index.
+- 向前完成的回復失敗時（例如清理失敗），只有日誌有效、且所有目標檔都已就位時才重新載入索引，寫入仍保持封鎖直到回復完成；回滾或無法讀取的日誌則保留記憶體中的索引。
+- 當機後的文件庫在 `open` 時收尾：完成交易回復並讀取主索引後，處理 `items/` 中最後修改已超過一小時、不是符號連結或重新剖析點的目錄。名稱為合法文件 ID 但未被索引引用的目錄（匯入在寫索引前中斷）會移除；刪除留下的 `<id>.deleting`，若文件仍在索引中就改回原名（刪除在寫索引前中斷），否則移除。使用備份索引，或索引不存在而 `items/` 有內容時，不移除也不改名任何項目目錄，並在索引記下 `orphanCleanupDisabled`：之後每次儲存都帶著它，這份文件庫從此不再做孤兒清理，因為備份可能少列已發布的文件。`items/` 本身若是符號連結或 junction，也不清理。
 - 擷取結束時，先把結果存進文件庫，再刪除 runtime 端的擷取。
 - 上傳期間取消文件時，原生端在分段之間停止上傳並刪除 runtime 端的 ingestion，文件記為已取消。取消若比上傳的開始更早送達，會保留到該上傳開始時套用；上傳完成後才送達的取消，改由 renderer 透過 runtime 取消已建立的擷取。
 - 主機只啟動通過 manifest 與執行檔驗證的 runtime。

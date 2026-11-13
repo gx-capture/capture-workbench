@@ -49,6 +49,11 @@ pub(crate) struct LibraryIndex {
     recovery_pending: bool,
     pub(super) version: u8,
     pub(super) documents: Vec<StoredDocument>,
+    /// Set for good once the index came from the recovery copy (or was missing) while
+    /// item directories existed: that index may omit published documents, and every
+    /// later save carries the flag, so a restart never treats those as crash orphans.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(super) orphan_cleanup_disabled: bool,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -121,35 +126,46 @@ pub(crate) struct RuntimeSourceFile {
 
 impl LibraryStore {
     pub(crate) fn open(app_data_dir: &Path) -> Result<Self, String> {
+        Self::open_at(app_data_dir, SystemTime::now())
+    }
+
+    fn open_at(app_data_dir: &Path, now: SystemTime) -> Result<Self, String> {
         let root = app_data_dir.join("library");
         fs::create_dir_all(root.join("items"))
             .map_err(|error| format!("Capture library cannot be created: {error}"))?;
         let staging_dir = root.join("staging");
-        clean_staging_directory(&staging_dir, SystemTime::now());
+        clean_staging_directory(&staging_dir, now);
         recover_library_transaction(&root)?;
-        let index = Self::read_index(&root)?;
+        let (index, primary_index) = Self::read_index(&root)?;
+        // Only an index read from its primary file, and never since restored from the
+        // recovery copy, lists every item; otherwise unreferenced directories stay.
+        if primary_index && !index.orphan_cleanup_disabled {
+            clean_orphan_item_directories(&root.join("items"), &index, now);
+        }
         Ok(Self {
             root,
             index: Mutex::new(index),
         })
     }
 
-    fn read_index(root: &Path) -> Result<LibraryIndex, String> {
+    /// The index and whether it was read from its primary file.
+    fn read_index(root: &Path) -> Result<(LibraryIndex, bool), String> {
         let index_path = root.join(INDEX_FILE_NAME);
-        let index = match fs::read(&index_path) {
+        let (mut index, primary_index) = match fs::read(&index_path) {
             Ok(bytes) => match serde_json::from_slice::<LibraryIndex>(&bytes) {
-                Ok(index) => index,
-                Err(primary_error) => load_backup_index(root).map_err(|backup_error| {
+                Ok(index) => (index, true),
+                Err(primary_error) => (load_backup_index(root).map_err(|backup_error| {
                     format!(
                         "Capture library index is invalid ({primary_error}); recovery copy is unavailable: {backup_error}"
                     )
-                })?,
+                })?, false),
             },
-            Err(error) if error.kind() == ErrorKind::NotFound => LibraryIndex {
+            Err(error) if error.kind() == ErrorKind::NotFound => (LibraryIndex {
                 recovery_pending: false,
                 version: INDEX_VERSION,
                 documents: Vec::new(),
-            },
+                orphan_cleanup_disabled: false,
+            }, false),
             Err(error) => return Err(format!("Capture library index cannot be read: {error}")),
         };
         if index.version != INDEX_VERSION {
@@ -162,7 +178,10 @@ impl LibraryStore {
         {
             evidence.validate()?;
         }
-        Ok(index)
+        if !primary_index && has_item_directories(&root.join("items")) {
+            index.orphan_cleanup_disabled = true;
+        }
+        Ok((index, primary_index))
     }
 
     fn publish_source(
@@ -704,11 +723,12 @@ impl LibraryStore {
         let recovery = recover_library_transaction(&self.root);
         if recovery.is_err() && pending_transaction_rolls_forward(&self.root) == Some(true) {
             // Durable replacements remain authoritative even if cleanup must retry.
-            if let Ok(recovered) = Self::read_index(&self.root) {
+            if let Ok((recovered, _)) = Self::read_index(&self.root) {
                 *index = recovered;
             }
         }
-        let recovered = recovery.and_then(|()| Self::read_index(&self.root));
+        let recovered =
+            recovery.and_then(|()| Self::read_index(&self.root).map(|(index, _)| index));
         match recovered {
             Ok(recovered) => {
                 *index = recovered;
@@ -770,6 +790,100 @@ impl LibraryStore {
 /// abandoned. An import in progress writes to its entry all the time and
 /// publishes it right after the copy, so an entry this old has no owner.
 pub(super) const STAGING_ABANDONED_AFTER: Duration = Duration::from_secs(60 * 60);
+
+/// Finishes what a crash interrupted in `items/`: a publish that placed its
+/// source but did not save the index, and a delete (`<id>` renamed to
+/// `<id>.deleting` before the index is saved). Only a primary index proves
+/// that an old item has no owner. Unknown entries and links are kept; failures
+/// are retried at the next open.
+/// Whether `items/` holds anything. An unreadable directory counts as non-empty, so
+/// a doubtful case disables orphan cleanup rather than allowing it.
+fn has_item_directories(items_dir: &Path) -> bool {
+    match fs::read_dir(items_dir) {
+        Ok(mut entries) => entries.next().is_some(),
+        Err(error) => error.kind() != ErrorKind::NotFound,
+    }
+}
+
+fn clean_orphan_item_directories(items_dir: &Path, index: &LibraryIndex, now: SystemTime) {
+    // `items/` itself must be this library's own directory: through a link or junction
+    // the entries would belong to another library, which this index does not describe.
+    if !real_directory(items_dir) {
+        return;
+    }
+    let Ok(entries) = fs::read_dir(items_dir) else {
+        return;
+    };
+    let indexed = |document_id: &str| {
+        index.documents.iter().any(|document| {
+            // Windows resolves hexadecimal directory names without case sensitivity.
+            document.document_id == document_id
+                || (cfg!(windows) && document.document_id.eq_ignore_ascii_case(document_id))
+        })
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        let (document_id, tombstone) = match name.strip_suffix(".deleting") {
+            Some(document_id) => (document_id, true),
+            None => (name, false),
+        };
+        if validate_document_id(document_id).is_err() {
+            continue;
+        }
+        let listed = indexed(document_id);
+        if !tombstone && listed {
+            continue;
+        }
+        let path = entry.path();
+        if !abandoned_directory(&path, now) {
+            continue;
+        }
+        if tombstone && listed {
+            // The delete stopped before its index was saved: the document is
+            // still listed, so it gets its directory back.
+            let restored = items_dir.join(document_id);
+            if !restored.exists() {
+                let _ = fs::rename(&path, restored);
+            }
+        } else {
+            let _ = fs::remove_dir_all(&path);
+        }
+    }
+}
+
+/// The metadata of `path` when it is a real directory: not a symlink, and on
+/// Windows not a junction or other reparse point (links are never followed).
+fn real_directory_metadata(path: &Path) -> Option<fs::Metadata> {
+    let metadata = fs::symlink_metadata(path).ok()?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return None;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        // FILE_ATTRIBUTE_REPARSE_POINT
+        if metadata.file_attributes() & 0x400 != 0 {
+            return None;
+        }
+    }
+    Some(metadata)
+}
+
+fn real_directory(path: &Path) -> bool {
+    real_directory_metadata(path).is_some()
+}
+
+/// A real directory (not a link) untouched for longer than another running
+/// instance of the application could still be working on it.
+fn abandoned_directory(path: &Path, now: SystemTime) -> bool {
+    real_directory_metadata(path)
+        .and_then(|metadata| metadata.modified().ok())
+        .and_then(|modified| now.duration_since(modified).ok())
+        .is_some_and(|age| age > STAGING_ABANDONED_AFTER)
+}
 
 /// Removes what an interrupted import left behind. Only entries older than
 /// `STAGING_ABANDONED_AFTER` go: another running instance of the application
@@ -865,9 +979,260 @@ fn export_text(result: &Value) -> Option<String> {
 }
 
 #[cfg(test)]
-mod export_text_tests {
-    use super::export_text;
+mod tests {
+    use super::*;
     use serde_json::json;
+
+    fn old_item(items: &Path, id: &str) -> PathBuf {
+        let path = items.join(id);
+        fs::create_dir_all(&path).expect("item directory");
+        fs::write(path.join(SOURCE_FILE_NAME), b"interrupted import").expect("source");
+        path
+    }
+
+    fn after_abandonment(path: &Path) -> SystemTime {
+        fs::metadata(path)
+            .expect("metadata")
+            .modified()
+            .expect("modified time")
+            + STAGING_ABANDONED_AFTER
+            + Duration::from_secs(1)
+    }
+
+    #[test]
+    fn orphan_cleanup_preserves_recent_indexed_and_unknown_entries() {
+        let directory = tempfile::tempdir().expect("app data");
+        let library = LibraryStore::open(directory.path()).expect("library");
+        let document = library
+            .create_source(LibrarySourceInput {
+                file_name: "kept.pdf".into(),
+                media_type: "application/pdf".into(),
+                bytes: b"indexed source".to_vec(),
+            })
+            .expect("indexed source");
+        let items = library.root.join("items");
+        let orphan = old_item(&items, "11111111111111111111111111111111");
+        let recent = old_item(&items, "22222222222222222222222222222222");
+        let unknown = old_item(&items, "not-an-id");
+        let stray = items.join("33333333333333333333333333333333");
+        fs::write(&stray, b"stray file").expect("stray file");
+        let index = library.lock_index().expect("index").clone();
+        // At the exact age limit, an item is still retained.
+        let recent_modified = fs::metadata(&recent).unwrap().modified().unwrap();
+        clean_orphan_item_directories(&items, &index, recent_modified);
+        assert!(recent.is_dir());
+        clean_orphan_item_directories(
+            &items,
+            &index,
+            fs::metadata(&orphan).unwrap().modified().unwrap() + STAGING_ABANDONED_AFTER,
+        );
+        assert!(orphan.is_dir());
+        // Give the recent item a future timestamp without sleeping.
+        let now = after_abandonment(&orphan);
+        #[cfg(windows)]
+        let recent_handle = {
+            use std::os::windows::fs::OpenOptionsExt;
+            File::options()
+                .access_mode(0x100) // FILE_WRITE_ATTRIBUTES
+                .custom_flags(0x02000000) // FILE_FLAG_BACKUP_SEMANTICS
+                .open(&recent)
+                .expect("directory handle")
+        };
+        #[cfg(not(windows))]
+        let recent_handle = File::open(&recent).expect("directory handle");
+        recent_handle.set_modified(now).expect("recent timestamp");
+        clean_orphan_item_directories(&items, &index, now);
+        assert!(!orphan.exists());
+        assert!(recent.is_dir());
+        assert!(items.join(document.document_id).is_dir());
+        assert!(unknown.is_dir());
+        assert!(stray.is_file());
+    }
+
+    #[test]
+    fn open_preserves_items_without_a_primary_index() {
+        for backup in [false, true] {
+            let directory = tempfile::tempdir().expect("app data");
+            let root = directory.path().join("library");
+            let orphan = old_item(&root.join("items"), "11111111111111111111111111111111");
+            if backup {
+                fs::write(root.join(INDEX_FILE_NAME), b"invalid index").expect("primary");
+                fs::write(
+                    root.join(INDEX_BACKUP_FILE_NAME),
+                    serde_json::to_vec(&LibraryIndex {
+                        version: INDEX_VERSION,
+                        documents: Vec::new(),
+                        ..Default::default()
+                    })
+                    .unwrap(),
+                )
+                .expect("backup");
+            }
+            LibraryStore::open_at(directory.path(), after_abandonment(&orphan))
+                .expect("open conservatively");
+            assert!(orphan.join(SOURCE_FILE_NAME).is_file());
+        }
+    }
+
+    #[test]
+    fn a_backup_recovery_disables_orphan_cleanup_for_good() {
+        let directory = tempfile::tempdir().expect("app data");
+        let root = directory.path().join("library");
+        // B was published but the recovery copy predates it.
+        let omitted = old_item(&root.join("items"), "22222222222222222222222222222222");
+        fs::write(root.join(INDEX_FILE_NAME), b"invalid index").expect("primary");
+        fs::write(
+            root.join(INDEX_BACKUP_FILE_NAME),
+            serde_json::to_vec(&LibraryIndex {
+                version: INDEX_VERSION,
+                documents: Vec::new(),
+                ..Default::default()
+            })
+            .unwrap(),
+        )
+        .expect("backup");
+        let now = after_abandonment(&omitted);
+        let recovered = LibraryStore::open_at(directory.path(), now).expect("open from backup");
+        // A write saves the incomplete index as the primary file.
+        recovered
+            .create_source(LibrarySourceInput {
+                file_name: "new.pdf".into(),
+                media_type: "application/pdf".into(),
+                bytes: b"new source".to_vec(),
+            })
+            .expect("import after recovery");
+        drop(recovered);
+        let saved: serde_json::Value =
+            serde_json::from_slice(&fs::read(root.join(INDEX_FILE_NAME)).unwrap()).unwrap();
+        assert_eq!(saved["orphanCleanupDisabled"], true);
+        let reopened = LibraryStore::open_at(directory.path(), now).expect("reopen");
+        assert!(omitted.join(SOURCE_FILE_NAME).is_file());
+        assert_eq!(
+            reopened.list(LibraryListRequest::default()).unwrap().len(),
+            1
+        );
+    }
+
+    #[test]
+    fn orphan_cleanup_never_follows_a_linked_items_directory() {
+        let directory = tempfile::tempdir().expect("app data");
+        let other = tempfile::tempdir().expect("another library's items");
+        let elsewhere = old_item(other.path(), "33333333333333333333333333333333");
+        let root = directory.path().join("library");
+        fs::create_dir_all(&root).expect("library root");
+        let items = root.join("items");
+        // A junction needs no privilege on Windows; skip where no link can be made.
+        #[cfg(windows)]
+        let linked = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(&items)
+            .arg(other.path())
+            .output()
+            .is_ok_and(|output| output.status.success());
+        #[cfg(not(windows))]
+        let linked = std::os::unix::fs::symlink(other.path(), &items).is_ok();
+        if !linked {
+            return;
+        }
+        let index = LibraryIndex {
+            version: INDEX_VERSION,
+            documents: Vec::new(),
+            ..Default::default()
+        };
+        clean_orphan_item_directories(&items, &index, after_abandonment(&elsewhere));
+        assert!(elsewhere.join(SOURCE_FILE_NAME).is_file());
+    }
+
+    #[test]
+    fn a_normal_library_keeps_its_index_format() {
+        let directory = tempfile::tempdir().expect("app data");
+        let library = LibraryStore::open(directory.path()).expect("library");
+        library
+            .create_source(LibrarySourceInput {
+                file_name: "kept.pdf".into(),
+                media_type: "application/pdf".into(),
+                bytes: b"indexed source".to_vec(),
+            })
+            .expect("indexed source");
+        let saved: serde_json::Value =
+            serde_json::from_slice(&fs::read(library.root.join(INDEX_FILE_NAME)).unwrap()).unwrap();
+        assert!(saved.get("orphanCleanupDisabled").is_none());
+    }
+
+    #[test]
+    fn open_cleans_an_interrupted_publish_and_keeps_indexed_sources_readable() {
+        let directory = tempfile::tempdir().expect("app data");
+        let library = LibraryStore::open(directory.path()).expect("library");
+        let document = library
+            .create_source(LibrarySourceInput {
+                file_name: "kept.pdf".into(),
+                media_type: "application/pdf".into(),
+                bytes: b"indexed source".to_vec(),
+            })
+            .expect("indexed source");
+        let orphan = old_item(
+            &library.root.join("items"),
+            "11111111111111111111111111111111",
+        );
+        let now = after_abandonment(&orphan);
+        // Lookups cannot perform cleanup, even for an unindexed source.
+        assert!(library
+            .find_document("11111111111111111111111111111111")
+            .is_err());
+        assert!(orphan.is_dir());
+        drop(library);
+        let reopened = LibraryStore::open_at(directory.path(), now).expect("reopen");
+        assert!(!orphan.exists());
+        let request = LibraryDocumentRequest {
+            document_id: document.document_id,
+        };
+        assert_eq!(
+            reopened.get(request.clone()).unwrap().summary.file_name,
+            "kept.pdf"
+        );
+        assert_eq!(
+            reopened.load_source(request).unwrap().bytes,
+            b"indexed source"
+        );
+    }
+
+    #[test]
+    fn open_finishes_an_interrupted_delete_either_way() {
+        let directory = tempfile::tempdir().expect("app data");
+        let library = LibraryStore::open(directory.path()).expect("library");
+        let listed = library
+            .create_source(LibrarySourceInput {
+                file_name: "listed.pdf".into(),
+                media_type: "application/pdf".into(),
+                bytes: b"still listed".to_vec(),
+            })
+            .expect("listed source");
+        let items = library.root.join("items");
+        // The crash came before the index was saved: the document is still listed.
+        let listed_directory = items.join(&listed.document_id);
+        let listed_tombstone = listed_directory.with_extension("deleting");
+        fs::rename(&listed_directory, &listed_tombstone).expect("tombstone");
+        // The crash came after the index was saved: nothing lists it any more.
+        let removed_tombstone = old_item(&items, "11111111111111111111111111111111.deleting");
+        drop(library);
+
+        // A recent tombstone may belong to a delete that is still running.
+        LibraryStore::open(directory.path()).expect("reopen");
+        assert!(listed_tombstone.is_dir() && removed_tombstone.is_dir());
+
+        let now = after_abandonment(&listed_tombstone).max(after_abandonment(&removed_tombstone));
+        let reopened = LibraryStore::open_at(directory.path(), now).expect("reopen later");
+        assert!(!listed_tombstone.exists() && !removed_tombstone.exists());
+        assert_eq!(
+            reopened
+                .load_source(LibraryDocumentRequest {
+                    document_id: listed.document_id,
+                })
+                .unwrap()
+                .bytes,
+            b"still listed"
+        );
+    }
 
     fn spoken(speakers: serde_json::Value) -> serde_json::Value {
         json!({
