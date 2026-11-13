@@ -56,6 +56,10 @@ flowchart LR
 
 ASR 佇列透過擷取服務的公開 `reattach$` 與 `startDocument$` 協調擷取，沿用匯入時儲存的語言與說話者選項。每個 capture ID 只自動重新連接一次；失敗後由使用者明確重試或重新開始。新嘗試會清除舊的即時逐字稿，畫面只採用目前 capture ID 的 partial。
 
+ASR 的顯示與啟動順序共用 OCR 的匯入順序選擇器：先反轉文件庫的新到舊順序，再依建立時間穩定排序，同毫秒匯入仍按選取順序處理。取消等待中文件時立即保留取消中的 ID，請求結束前不會啟動；成功或失敗都釋放保留。批次匯入逐筆收集錯誤，單筆失敗不會阻止後續檔案匯入。
+
+語音辨識已就緒而說話者辨識未安裝時，ASR 選項列顯示小型外框安裝按鈕與預估大小；安裝排隊或執行中改顯示簡短的進度文字。大小與百分比由佇列 store 推導，取消安裝留在「設定 › 辨識功能」。
+
 `/ocr` 與 `/asr` 把匯入和擷取分開。丟進來或選取的檔案以 selection token 呼叫 `library_import_selection`，文件庫立刻記成 `queued`、沒有 `captureId`，畫面顯示等待中；對應的辨識引擎（`windowsml-ocr` 或 `speech-recognition`）還沒安裝也一樣，安裝完成後等待中的檔案會自己開始擷取，不需要再按一次。`library_select_sources` 支援 `documents`、`recordings` 與 `all` 三種選取類型（`/ocr` 用 `documents`、`/asr` 用 `recordings`、`/history` 用 `all`）。整個視窗只有一個原生 drop channel：在 `/ocr` 路徑進入 OCR 佇列、在 `/asr` 路徑進入 ASR 佇列（拒絕非錄音格式），在其他頁面則由工作台先匯入整批 selection，再依序開始擷取。
 
 ```mermaid

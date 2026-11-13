@@ -50,8 +50,8 @@ describe('ASR queue selectors', () => {
 
     expect(ordered.map((item) => item.fileName)).toEqual([
       'oldest.m4a',
-      'tie-a.wav',
       'tie-b.mp4',
+      'tie-a.wav',
       'newer.mp3',
     ]);
   });

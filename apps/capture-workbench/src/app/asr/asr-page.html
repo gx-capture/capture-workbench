@@ -105,19 +105,27 @@
           >
             {{ m().asrSpeakersNoPartialHint }}
           </p>
-        } @else if (queue.optionalSpeakerUnit(); as speakerUnit) {
+        } @else if (queue.optionalSpeakerInstall(); as speakerInstall) {
           <div
-            class="w-full border-t border-border pt-2"
+            class="flex items-center"
             data-testid="asr-optional-speakers"
           >
-            <app-engine-card
-              [requirement]="speakerUnit"
-              [installation]="features.installationFor(speakerUnit.requirementId)"
-              [installing]="features.installing()"
-              (install)="features.installUnit($event)"
-              (cancelInstall)="features.cancelInstallation($event)"
-              (retry)="features.retryInstallation($event)"
-            />
+            @if (speakerInstall.installing) {
+              <span class="text-xs text-muted-foreground" aria-live="polite">
+                {{ speakerInstall.label }}
+              </span>
+            } @else {
+              <button
+                hlmBtn
+                variant="outline"
+                size="sm"
+                type="button"
+                data-testid="asr-install-speakers"
+                (click)="queue.installSpeakers()"
+              >
+                {{ speakerInstall.label }}
+              </button>
+            }
           </div>
         }
       </div>
@@ -241,18 +249,20 @@
         <p class="text-xs text-muted-foreground">
           {{ queue.speechReady() ? m().asrEmptyHintReady : m().asrEmptyHintInstall }}
         </p>
-        <button
-          hlmBtn
-          variant="outline"
-          size="sm"
-          type="button"
-          class="mt-2"
-          data-testid="asr-empty-choose-files"
-          [disabled]="!queue.speechReady()"
-          (click)="queue.chooseFiles()"
-        >
-          {{ m().chooseFiles }}
-        </button>
+        @if (!queue.speechReady()) {
+          <!-- Disabled until speech is installed; once ready the drop zone carries the action. -->
+          <button
+            hlmBtn
+            variant="outline"
+            size="sm"
+            type="button"
+            class="mt-2"
+            data-testid="asr-empty-choose-files"
+            disabled
+          >
+            {{ m().chooseFiles }}
+          </button>
+        }
       </div>
     } @else {
       <div

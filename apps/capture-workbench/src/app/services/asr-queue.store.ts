@@ -9,7 +9,7 @@ import {
 } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { Router } from '@angular/router';
-import { concatMap, finalize, from, tap, toArray } from 'rxjs';
+import { catchError, concatMap, EMPTY, finalize, from, tap, toArray } from 'rxjs';
 import type {
   DesktopCaptureOptions,
   DesktopLibraryDetail,
@@ -68,6 +68,7 @@ export class AsrQueueStore {
   private readonly loadedUpdatedAt = new Map<string, number>();
   private readonly loadingDetails = new Set<string>();
   private readonly startingIds = new Set<string>();
+  private readonly pendingCancellationIds = new Set<string>();
   private readonly attemptedReattachments = new Set<string>();
   private attached = false;
 
@@ -81,16 +82,21 @@ export class AsrQueueStore {
 
   readonly speechPack = this.features.speechPack;
 
-  readonly optionalSpeakerUnit = computed(
-    () =>
-      this.features
-        .speechPack()
-        .find(
-          (unit) =>
-            unit.requirementId === 'speaker-diarization'
-            && unit.status !== 'ready',
-        ) ?? null,
-  );
+  readonly optionalSpeakerInstall = computed(() => {
+    const unit = this.features.requirements().find(
+      (candidate) => candidate.requirementId === 'speaker-diarization',
+    );
+    if (!unit || unit.status === 'ready') return null;
+    const installation = this.features.installationFor('speaker-diarization');
+    const installing = installation?.status === 'queued' || installation?.status === 'running';
+    const messages = desktopMessages();
+    return {
+      installing,
+      label: installing
+        ? messages.asrInstallingSpeakers(installationPercent(installation))
+        : messages.asrInstallSpeakers(formatApproximateBytes(unit.downloadBytes)),
+    };
+  });
 
   readonly speechSizeLabel = computed(() => {
     const unit = this.features
@@ -259,7 +265,13 @@ export class AsrQueueStore {
     from(recordings)
       .pipe(
         concatMap((selection) =>
-          this.library.importSelection(selection, captureOptions),
+          this.library.importSelection(selection, captureOptions).pipe(
+            catchError((error: unknown) => {
+              messages.push(errorMessage(error));
+              this.importError.set(messages.join('\n'));
+              return EMPTY;
+            }),
+          ),
         ),
         toArray(),
         takeUntilDestroyed(this.destroyRef),
@@ -282,8 +294,10 @@ export class AsrQueueStore {
   }
 
   cancel(documentId: string): void {
+    if (this.pendingCancellationIds.has(documentId)) return;
     const target = this.documents().find((item) => item.documentId === documentId);
     if (target?.status === 'queued' && !this.capture.hasActiveCapture(documentId)) {
+      this.pendingCancellationIds.add(documentId);
       this.library
         .updateCapture({
           documentId,
@@ -291,7 +305,10 @@ export class AsrQueueStore {
           stage: 'cancelled',
           clearCaptureId: true,
         })
-        .pipe(takeUntilDestroyed(this.destroyRef))
+        .pipe(
+          finalize(() => this.pendingCancellationIds.delete(documentId)),
+          takeUntilDestroyed(this.destroyRef),
+        )
         .subscribe({
           next: () => this.workspace.refreshDocuments(),
           error: (error: unknown) =>
@@ -398,6 +415,7 @@ export class AsrQueueStore {
     const next = recordings.find(
       (document) =>
         document.status === 'queued'
+        && !this.pendingCancellationIds.has(document.documentId)
         && !this.startingIds.has(document.documentId),
     );
     if (!next) return;

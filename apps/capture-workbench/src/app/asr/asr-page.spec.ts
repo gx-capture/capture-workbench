@@ -64,19 +64,12 @@ describe('AsrPage', () => {
         (r) => r.requirementId === 'speaker-diarization' && r.status === 'ready',
       ),
     );
-    const optionalSpeakerUnit = computed(
-      () =>
-        requirements().find(
-          (r) => r.requirementId === 'speaker-diarization' && r.status !== 'ready',
-        ) ?? null,
-    );
-
     const queue = {
       attach: vi.fn(),
       speechReady,
       speakersReady,
       speechPack: requirements,
-      optionalSpeakerUnit,
+      optionalSpeakerInstall: signal({ installing: false, label: '安裝說話者辨識（約 300 MB）' }),
       spokenLanguage,
       identifySpeakers,
       importError: signal(options.importError ?? ''),
@@ -87,6 +80,7 @@ describe('AsrPage', () => {
       setIdentifySpeakers: vi.fn((enabled: boolean) => identifySpeakers.set(enabled)),
       chooseFiles: vi.fn(),
       install: vi.fn(),
+      installSpeakers: vi.fn(),
       cancel: vi.fn(),
       retry: vi.fn(),
       restart: vi.fn(),
@@ -141,18 +135,35 @@ describe('AsrPage', () => {
   });
 
   it('renders drop zone, language selector, optional speaker install vs checkbox, and speaker note', () => {
-    const { fixture: withoutSpeakers, features } = setup({
+    const { fixture: withoutSpeakers, queue: withoutSpeakersQueue } = setup({
       speechReady: true,
       speakersReady: false,
     });
     const el1 = withoutSpeakers.nativeElement as HTMLElement;
     expect(el1.querySelector('[data-testid="asr-dropzone"]')).not.toBeNull();
+    // With speech ready the drop zone carries 選擇檔案; the empty queue has no second button.
+    expect(el1.querySelector('[data-testid="asr-empty-choose-files"]')).toBeNull();
     expect(el1.querySelector('[data-testid="asr-identify-speakers"]')).toBeNull();
     const optInstall = el1.querySelector(
-      '[data-testid="asr-optional-speakers"] [data-testid="engine-card-install"]',
+      '[data-testid="asr-optional-speakers"] [data-testid="asr-install-speakers"]',
     ) as HTMLButtonElement;
     optInstall.click();
-    expect(features.installUnit).toHaveBeenCalledWith('speaker-diarization');
+    expect(optInstall.textContent?.trim()).toBe('安裝說話者辨識（約 300 MB）');
+    expect(withoutSpeakersQueue.installSpeakers).toHaveBeenCalledTimes(1);
+    expect(el1.querySelector('[data-testid="asr-optional-speakers"] app-engine-card')).toBeNull();
+
+    withoutSpeakersQueue.optionalSpeakerInstall.set({
+      installing: true, label: '正在安裝說話者辨識 0%',
+    });
+    withoutSpeakers.detectChanges();
+    expect(el1.querySelector('[data-testid="asr-install-speakers"]')).toBeNull();
+    expect(el1.querySelector('[data-testid="asr-optional-speakers"]')?.textContent).toContain('正在安裝說話者辨識 0%');
+    withoutSpeakersQueue.optionalSpeakerInstall.set({
+      installing: true, label: '正在安裝說話者辨識 50%',
+    });
+    withoutSpeakers.detectChanges();
+    expect(el1.querySelector('[data-testid="asr-optional-speakers"]')?.textContent).toContain('正在安裝說話者辨識 50%');
+    expect(el1.querySelector('[data-testid="engine-card-cancel"]')).toBeNull();
 
     TestBed.resetTestingModule();
     const { fixture: withSpeakers, queue } = setup({
@@ -181,7 +192,7 @@ describe('AsrPage', () => {
 
   it.each([
     { speechReady: false, requirementId: 'speech-recognition' as const },
-    { speechReady: true, requirementId: 'speaker-diarization' as const },
+    { speechReady: false, requirementId: 'speaker-diarization' as const },
   ])('binds engine cancellation and retry for $requirementId', ({ speechReady, requirementId }) => {
     const installation: RuntimeInstallation = {
       installationId: 'install-1',

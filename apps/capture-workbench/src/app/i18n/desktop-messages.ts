@@ -202,6 +202,8 @@ export interface DesktopMessages {
   readonly asrSpeakersLabel: string;
   readonly asrSpeakersNoPartialHint: string;
   readonly asrSpeakersOptionalTitle: string;
+  readonly asrInstallSpeakers: (size: string | null) => string;
+  readonly asrInstallingSpeakers: (percent: number) => string;
   readonly asrHeardOf: (heard: string, total: string) => string;
   readonly asrLiveProgressLabel: (fileName: string) => string;
   readonly asrLivePartialNote: string;
@@ -458,6 +460,8 @@ const ZH_TW: DesktopMessages = {
   asrSpeakersLabel: '分辨說話者',
   asrSpeakersNoPartialHint: '分辨說話者時，要整段完成才看得到逐字稿。',
   asrSpeakersOptionalTitle: '說話者辨識（選用）',
+  asrInstallSpeakers: (size) => `安裝說話者辨識${size ? `（${size}）` : ''}`,
+  asrInstallingSpeakers: (percent) => `正在安裝說話者辨識 ${percent}%`,
   asrHeardOf: (heard, total) => `已聽到 ${heard}／${total}`,
   asrLiveProgressLabel: (fileName) => `${fileName} 的進度`,
   asrLivePartialNote: '灰色的是即時結果，整段完成後會再校正。',
@@ -718,6 +722,8 @@ const EN: DesktopMessages = {
   asrSpeakersLabel: 'Identify speakers',
   asrSpeakersNoPartialHint: 'When identifying speakers, the transcript appears once the full recording finishes.',
   asrSpeakersOptionalTitle: 'Speaker identification (optional)',
+  asrInstallSpeakers: (size) => `Install speaker identification${size ? ` (${size})` : ''}`,
+  asrInstallingSpeakers: (percent) => `Installing speaker identification ${percent}%`,
   asrHeardOf: (heard, total) => `Heard ${heard} / ${total}`,
   asrLiveProgressLabel: (fileName) => `Progress for ${fileName}`,
   asrLivePartialNote: 'Gray lines are live previews and will be refined once finished.',

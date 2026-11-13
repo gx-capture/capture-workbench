@@ -10,6 +10,7 @@ import {
   isAudioMediaType,
 } from './desktop-workspace.selectors';
 import { playbackUnavailable } from './recording-playback';
+import { inImportOrder } from './ocr-queue';
 
 export type AsrSpokenLanguage = 'zh' | 'en' | 'ja';
 
@@ -67,14 +68,7 @@ export interface AsrQueueView {
 export function sortAsrDocumentsOldestFirst(
   documents: readonly DesktopLibrarySummary[],
 ): readonly DesktopLibrarySummary[] {
-  return documents
-    .map((document, index) => ({ document, index }))
-    .filter(({ document }) => isAudioMediaType(document.mediaType))
-    .sort((left, right) => {
-      const diff = left.document.createdAtMs - right.document.createdAtMs;
-      return diff !== 0 ? diff : left.index - right.index;
-    })
-    .map(({ document }) => document);
+  return inImportOrder(documents).filter((document) => isAudioMediaType(document.mediaType));
 }
 
 export function asrStatusText(
