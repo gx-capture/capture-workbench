@@ -16,14 +16,17 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import errno
 import hashlib
 import os
 import re
 import time
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import Protocol
 from uuid import uuid4
+
+from capture_runtime.file_lock import lock_descriptor
 
 CACHE_DIR_ENV = "CAPTURE_ENGINE_CACHE_DIR"
 # An entry an install still links to costs no space and is kept. One that no
@@ -218,7 +221,7 @@ class VerifiedDownloadCache:
         cutoff = time.time() - self._max_idle_seconds
         for path in self._root.glob("*/*"):
             try:
-                if path == keep or not path.is_file():
+                if path.parent.name == ".locks" or path == keep or not path.is_file():
                     continue
                 details = path.stat()
                 if details.st_nlink == 1 and details.st_mtime < cutoff:
@@ -242,15 +245,6 @@ class CachingDownloader[Descriptor: _VerifiedDescriptor]:
         cancel_event: asyncio.Event,
         progress: Callable[[int], None],
     ) -> None:
-        if await asyncio.to_thread(
-            self._cache.restore,
-            descriptor.sha256,
-            descriptor.bytes,
-            destination,
-            cancel_event=cancel_event,
-            progress=progress,
-        ):
-            return
         entry = self._cache._entry(descriptor.sha256)
         if entry is None:
             await self._inner.download(
@@ -260,6 +254,42 @@ class CachingDownloader[Descriptor: _VerifiedDescriptor]:
                 progress=progress,
             )
             await asyncio.to_thread(self._cache.store, descriptor.sha256, destination)
+            return
+        async with self._entry_lock(descriptor.sha256, cancel_event):
+            # Cooperatively cancel and drain the holder: cancelling its task would
+            # abandon to_thread work while the entry lock is being released.
+            task = asyncio.create_task(
+                self._download_locked(descriptor, destination, entry, cancel_event, progress)
+            )
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                cancel_event.set()
+                while not task.done():
+                    with contextlib.suppress(asyncio.CancelledError, Exception):
+                        await asyncio.shield(task)
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    task.result()
+                raise
+
+    async def _download_locked(
+        self,
+        descriptor: Descriptor,
+        destination: Path,
+        entry: Path,
+        cancel_event: asyncio.Event,
+        progress: Callable[[int], None],
+    ) -> None:
+        if cancel_event.is_set():
+            raise asyncio.CancelledError
+        if await asyncio.to_thread(
+            self._cache.restore,
+            descriptor.sha256,
+            descriptor.bytes,
+            destination,
+            cancel_event=cancel_event,
+            progress=progress,
+        ):
             return
         # The install destination lives in a staging directory that is removed
         # on cancel. Downloading into the cache entry keeps the partial file.
@@ -277,6 +307,28 @@ class CachingDownloader[Descriptor: _VerifiedDescriptor]:
             cancel_event=cancel_event,
         )
         await asyncio.to_thread(self._cache.store, descriptor.sha256, entry)
+
+    @contextlib.asynccontextmanager
+    async def _entry_lock(self, sha256: str, cancel_event: asyncio.Event) -> AsyncIterator[None]:
+        path = self._cache._root / ".locks" / f"{sha256}.lock"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        descriptor = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            # Independent descriptors also conflict within one process on both
+            # platforms. Keep the file in place so all callers lock one inode.
+            while True:
+                if cancel_event.is_set():
+                    raise asyncio.CancelledError
+                try:
+                    lock_descriptor(descriptor)
+                    break
+                except OSError as error:
+                    if error.errno not in {errno.EACCES, errno.EAGAIN, errno.EWOULDBLOCK}:
+                        raise
+                await asyncio.sleep(0.25)
+            yield
+        finally:
+            os.close(descriptor)
 
 
 def with_shared_cache[Descriptor: _VerifiedDescriptor](

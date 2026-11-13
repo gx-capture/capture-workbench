@@ -36,6 +36,23 @@ _PDF_OCR_E2E_LOCAL_MODEL_OPT_IN = "CAPTURE_PDF_OCR_E2E_LOCAL_MODEL_OPT_IN"
 _PDF_OCR_E2E_LOCAL_MODEL_ROOT = "CAPTURE_PDF_OCR_E2E_LOCAL_MODEL_ROOT"
 
 
+async def _file_operation[**P, T](
+    operation: Callable[P, T], *args: P.args, **kwargs: P.kwargs
+) -> T:
+    # A cancelled coroutine must finish its file IO before its caller releases
+    # the cache lock or cleans up the partial download.
+    task = asyncio.create_task(asyncio.to_thread(operation, *args, **kwargs))
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        while not task.done():
+            with suppress(asyncio.CancelledError, Exception):
+                await asyncio.shield(task)
+        with suppress(asyncio.CancelledError, Exception):
+            task.result()
+        raise
+
+
 def _facade_download_chunk_bytes() -> int:
     from .engine_installation import DOWNLOAD_CHUNK_BYTES
 
@@ -770,7 +787,7 @@ async def _stream_verified(
     part = plan.parts[0]
     received = part.segments[0].received
     digest = (
-        await asyncio.to_thread(_digest_prefix, plan.part_path, received, wording.incomplete)
+        await _file_operation(_digest_prefix, plan.part_path, received, wording.incomplete)
         if received
         else _new_digest()
     )
@@ -860,7 +877,7 @@ async def _fill_closed_ranges(
 
 
 async def _verify_part(plan: _Plan, part: _PartState) -> None:
-    digest = await asyncio.to_thread(_region_sha256, plan.part_path, part.offset, part.size)
+    digest = await _file_operation(_region_sha256, plan.part_path, part.offset, part.size)
     if digest != part.sha256:
         raise _CorruptDownload(_ARTIFACT_PART.checksum)
 
@@ -939,14 +956,14 @@ class HttpArtifactDownloader:
                         progress=report,
                     )
             if not streamed:
-                await asyncio.to_thread(
+                await _file_operation(
                     _verify_hashed_file,
                     plan.part_path,
                     descriptor.bytes,
                     descriptor.sha256,
                     _ARTIFACT,
                 )
-            await asyncio.to_thread(plan.commit)
+            await _file_operation(plan.commit)
         except _CorruptDownload:
             plan.discard()
             raise
@@ -1317,7 +1334,7 @@ class HttpModelFileDownloader:
         progress(plan.received_total())
         try:
             if plan.fully_present():
-                await asyncio.to_thread(
+                await _file_operation(
                     _verify_hashed_file,
                     plan.part_path,
                     descriptor.bytes,
@@ -1337,7 +1354,7 @@ class HttpModelFileDownloader:
                         progress=progress,
                         wording=_DIRECT_MODEL,
                     )
-            await asyncio.to_thread(plan.commit)
+            await _file_operation(plan.commit)
         except _CorruptDownload:
             plan.discard()
             raise

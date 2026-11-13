@@ -14,6 +14,7 @@ source_modules = [
   "capture_runtime.config",
   "capture_runtime.constants",
   "capture_runtime.clock",
+  "capture_runtime.file_lock",
 ]
 forbidden_modules = [
   "capture_runtime.contracts",
@@ -713,6 +714,7 @@ source_modules = [
   "capture_runtime.config",
   "capture_runtime.constants",
   "capture_runtime.clock",
+  "capture_runtime.file_lock",
   "capture_runtime.contracts",
   "capture_runtime.contract_set",
   "capture_runtime._contract_set_bundle",
@@ -809,6 +811,7 @@ source_modules = [
   "capture_runtime.config",
   "capture_runtime.constants",
   "capture_runtime.clock",
+  "capture_runtime.file_lock",
   "capture_runtime.contracts",
   "capture_runtime.contract_set",
   "capture_runtime._contract_set_bundle",
