@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
+import os
 import re
 import threading
 from datetime import datetime, timedelta
@@ -78,6 +80,7 @@ class StreamingPartialNotFoundError(StreamingRecordNotFoundError):
 
 _SAFE_ID = re.compile(r"^[0-9a-f-]{36}$")
 _MAX_EVENT_REPLAY = 1_024
+_LOGGER = logging.getLogger(__name__)
 
 
 def _identifier(value: str) -> str:
@@ -130,6 +133,9 @@ class StreamingRepository:
         self._ingestion_idempotency: dict[str, str] = {}
         self._captures: dict[str, _CaptureRecord] = {}
         self._running_captures: set[str] = set()
+        # Ingestions whose startup recovery hit an I/O failure. They stay protected
+        # from pruning for the life of this process; the next start retries them.
+        self._recovery_deferred: set[str] = set()
         self._capture_idempotency: dict[str, str] = {}
         self._persistence = _StreamingRepositoryPersistence(root)
         self._lock = threading.RLock()
@@ -142,9 +148,75 @@ class StreamingRepository:
             self._captures.clear()
             self._running_captures.clear()
             self._capture_idempotency.clear()
-            self._load_ingestions()
-            self._load_captures()
+            self._recovery_deferred.clear()
+            invalid_directories = self._load_ingestions()
+            all_captures_loaded = self._load_captures()
+            # A crash in create_ingestion leaves a directory without metadata;
+            # nothing can reach it, so it only holds disk space. When a capture
+            # could not be loaded, its reference is unknown: keep them all.
+            referenced = {record.operation.ingestion_id for record in self._captures.values()}
+            for directory in invalid_directories if all_captures_loaded else []:
+                try:
+                    directory_id = _identifier(directory.name)
+                except StreamingRecordNotFoundError:
+                    directory_id = directory.name
+                if directory_id not in referenced:
+                    self._persistence.delete_ingestion_directory(directory)
+            protected: set[str] = set()
+            for record in self._ingestions.values():
+                try:
+                    if record.status is StreamingIngestionStatus.OPEN:
+                        self._reconcile_open_source(record)
+                    if record.status is StreamingIngestionStatus.FAILED:
+                        for capture in self._captures.values():
+                            if (
+                                capture.operation.ingestion_id == record.ingestion_id
+                                and capture.operation.status is StreamingCaptureStatus.WAITING_INPUT
+                            ):
+                                self._fail_capture_locked(
+                                    capture,
+                                    CaptureFailureV2(
+                                        code="streaming_source_unavailable",
+                                        message=(
+                                            "Streaming source content is unavailable after restart."
+                                        ),
+                                        stage="input",
+                                    ),
+                                )
+                except OSError:
+                    # Do not include exception text: it may contain a user path.
+                    _LOGGER.warning("Startup ingestion recovery deferred after an I/O failure")
+                    protected.add(record.ingestion_id)
+            self._recovery_deferred = protected
             self.prune_expired()
+
+    def _reconcile_open_source(self, record: _IngestionRecord) -> None:
+        """Reconcile accepted bytes; defer inaccessible files until another start."""
+        # Resolution is inside the caller's OSError boundary too.
+        source_path = self._ingestion_directory(record.ingestion_id) / "source.bin"
+        try:
+            size = source_path.stat().st_size
+        except FileNotFoundError:
+            size = -1
+        if size >= record.next_offset:
+            # Even an exact-length source must be readable for finalization and
+            # extraction. A locked/unreadable source is left untouched rather
+            # than expiring potentially valid bytes on a temporary I/O failure.
+            with source_path.open("r+b" if size > record.next_offset else "rb") as source:
+                source.read(1)
+                if size > record.next_offset:
+                    source.truncate(record.next_offset)
+                    source.flush()
+                    os.fsync(source.fileno())
+            return
+        previous_status, previous_expiry = record.status, record.expires_at
+        record.status = StreamingIngestionStatus.FAILED
+        record.expires_at = self._clock.now()
+        try:
+            self._persist_ingestion(record)
+        except OSError:
+            record.status, record.expires_at = previous_status, previous_expiry
+            raise
 
     def create_ingestion(self, request: OpenIngestionV2) -> IngestionV2:
         with self._lock:
@@ -632,8 +704,14 @@ class StreamingRepository:
         if record.operation.status in _TERMINAL_CAPTURE_STATUSES:
             return record.operation
         now = self._clock.now()
+        previous = record.operation
         record.operation = _fail_capture(record.operation, failure, now=now)
-        self._persist_capture(record)
+        try:
+            self._persist_capture(record)
+        except OSError:
+            # Memory must match disk: a failure that was not saved did not happen.
+            record.operation = previous
+            raise
         self.append_event(
             record.operation.capture_id,
             event_type=StreamingEventType.FAILED,
@@ -704,6 +782,7 @@ class StreamingRepository:
     def prune_expired(self) -> None:
         with self._lock:
             now = self._clock.now()
+            protected_ingestions = self._recovery_deferred
             cutoff = now - self._retention
             # A terminal capture expires one retention period after it ended. An
             # unfinished one with no activity for that long is abandoned (a host
@@ -712,12 +791,14 @@ class StreamingRepository:
             expired_captures = [
                 capture_id
                 for capture_id, record in self._captures.items()
-                if record.operation.updated_at < cutoff and capture_id not in self._running_captures
+                if record.operation.updated_at < cutoff
+                and capture_id not in self._running_captures
+                and record.operation.ingestion_id not in protected_ingestions
             ]
             for capture_id in expired_captures:
                 self.delete_capture(capture_id)
 
-            active_ingestions = {
+            active_ingestions = protected_ingestions | {
                 record.operation.ingestion_id
                 for record in self._captures.values()
                 if record.operation.status not in _TERMINAL_CAPTURE_STATUSES
@@ -803,20 +884,42 @@ class StreamingRepository:
     def _persist_capture(self, record: _CaptureRecord) -> None:
         self._persistence.persist_capture(record)
 
-    def _load_ingestions(self) -> None:
-        for record in self._persistence.load_ingestions(
+    def _load_ingestions(self) -> list[Path]:
+        records, invalid_directories = self._persistence.load_ingestions(
             _identifier,
             datetime_parser=datetime_from_text,
-        ):
+        )
+        for record in records:
             self._ingestions[record.ingestion_id] = record
             self._ingestion_idempotency[record.request.client_request_id] = record.ingestion_id
 
-    def _load_captures(self) -> None:
-        for record in self._persistence.load_captures(self._ingestions):
+        return invalid_directories
+
+    def _load_captures(self) -> bool:
+        """Load captures; returns whether every capture directory could be loaded."""
+        records, complete = self._persistence.load_captures(self._ingestions)
+        for record in records:
+            try:
+                ingestion_id = _identifier(record.operation.ingestion_id)
+            except StreamingRecordNotFoundError:
+                ingestion_id = record.operation.ingestion_id
+            update: dict[str, object] = {"ingestion_id": ingestion_id}
+            # An event written just before its metadata save failed is on disk: the
+            # next event continues after it instead of reusing its sequence.
+            try:
+                logged = self._persistence.last_event_sequence(
+                    self._capture_directory(record.operation.capture_id) / "events.jsonl"
+                )
+            except OSError:
+                logged = None
+            if logged is not None and logged > record.operation.last_event_sequence:
+                update["last_event_sequence"] = logged
+            record.operation = record.operation.model_copy(update=update)
             self._captures[record.operation.capture_id] = record
             self._capture_idempotency[record.request.client_request_id] = (
                 record.operation.capture_id
             )
+        return complete
 
 
 __all__ = [

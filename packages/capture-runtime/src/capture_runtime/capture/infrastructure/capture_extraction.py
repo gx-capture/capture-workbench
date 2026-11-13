@@ -38,7 +38,9 @@ from capture_runtime.constants import (
     DIARIZATION_REQUIREMENT_ID,
     SPEECH_RECOGNITION_REQUIREMENT_ID,
     VERTICAL_READER_REQUIREMENT_ID,
+    WHISPER_TEMP_PREFIX,
     WINDOWSML_REQUIREMENT_ID,
+    WORKER_SOURCE_TEMP_PREFIX,
 )
 from capture_runtime.contracts import (
     CaptureEngine,
@@ -931,7 +933,7 @@ class StandaloneRuntimeCaptureExtractor:
         self.config.temp_dir.mkdir(parents=True, exist_ok=True)
         suffix = _SOURCE_SUFFIXES.get(media_type, ".source")
         with tempfile.NamedTemporaryFile(
-            prefix="capture-worker-source-",
+            prefix=WORKER_SOURCE_TEMP_PREFIX,
             suffix=suffix,
             dir=self.config.temp_dir,
             delete=False,
@@ -1384,7 +1386,7 @@ class StandaloneRuntimeCaptureExtractor:
         suffix = _SOURCE_SUFFIXES.get(media_type, ".audio")
         self.config.temp_dir.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(
-            prefix="capture-workbench-whisper-",
+            prefix=WHISPER_TEMP_PREFIX,
             suffix=suffix,
             dir=self.config.temp_dir,
             delete=False,

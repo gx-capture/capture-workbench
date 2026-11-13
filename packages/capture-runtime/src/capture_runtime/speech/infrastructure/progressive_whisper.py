@@ -8,6 +8,7 @@ from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
 
+from capture_runtime.constants import PROGRESSIVE_WINDOW_TEMP_PREFIX
 from capture_runtime.contracts import CaptureEngine
 from capture_runtime.speech.infrastructure.progressive_audio import (
     DecodedAudioWindow,
@@ -43,7 +44,7 @@ class SpeechRecognitionWindowTranscriber:
     def transcribe(self, window: DecodedAudioWindow) -> WhisperWindowResult:
         self.temp_dir.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(
-            prefix="capture-progressive-window-",
+            prefix=PROGRESSIVE_WINDOW_TEMP_PREFIX,
             suffix=".wav",
             dir=self.temp_dir,
             delete=False,
