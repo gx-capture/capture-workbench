@@ -19,6 +19,11 @@ import {
   formatApproximateBytes,
   installationPercent,
 } from '../services/desktop-workspace.selectors';
+import {
+  ocrChipClasses,
+  ocrChipVariant,
+  type OcrUserStatus,
+} from '../services/ocr-queue';
 import { RecognitionFeaturesStore } from '../services/recognition-features.store';
 
 @Component({
@@ -87,6 +92,14 @@ export class OcrPage {
   protected readonly activePercent = computed(() =>
     installationPercent(this.activeRunningInstallation()),
   );
+
+  protected readonly ocrReady = computed(() =>
+    this.features.isFeatureReady('ocr'),
+  );
+
+  protected chipClass(status: OcrUserStatus): string {
+    return ocrChipClasses(ocrChipVariant(status));
+  }
 
   protected isSelected(requirementId: CaptureRequirementId): boolean {
     return this.selectedIds().includes(requirementId);

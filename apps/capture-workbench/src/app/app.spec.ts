@@ -82,7 +82,7 @@ describe('App shell and recognition pages', () => {
       '[data-testid="first-run-card"]',
     ) as HTMLElement;
     expect(card).not.toBeNull();
-    expect(card.textContent).toContain('需要時再安裝辨識功能');
+    expect(card.textContent).toContain('要安裝哪些辨識功能？');
     expect(
       card.querySelector('[data-testid="first-run-size-ocr"]')?.textContent,
     ).toContain('約 144 MB');

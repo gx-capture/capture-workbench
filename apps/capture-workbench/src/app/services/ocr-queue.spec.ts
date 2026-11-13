@@ -4,6 +4,8 @@ import { setDesktopLocale } from '../i18n/desktop-messages';
 import type { DesktopCaptureOperation } from './desktop-runtime-client.service';
 import {
   describeOcrDocument,
+  ocrChipClasses,
+  ocrChipVariant,
   parsePdfPageCount,
   pdfPagePrefix,
   renderRawOcrText,
@@ -86,6 +88,37 @@ describe('OCR queue presentation', () => {
     expect(parsePdfPageCount('3')).toBe(3);
     expect(parsePdfPageCount('0')).toBe('invalid');
     expect(pdfPagePrefix(3)).toEqual([1, 2, 3]);
+  });
+
+  it('maps OCR user statuses to chip variants and classes', () => {
+    expect(ocrChipVariant('processing')).toBe('running');
+    expect(ocrChipVariant('waiting')).toBe('waiting');
+    expect(ocrChipVariant('cancelled')).toBe('waiting');
+    expect(ocrChipVariant('done')).toBe('done');
+    expect(ocrChipVariant('needs-attention')).toBe('error');
+
+    expect(ocrChipClasses('running')).toContain('bg-secondary');
+    expect(ocrChipClasses('waiting')).toContain('border-border');
+    expect(ocrChipClasses('done')).toContain('bg-muted');
+    expect(ocrChipClasses('error')).toContain('text-destructive');
+  });
+
+  it('includes chipVariant and progressPercent in the described document', () => {
+    const queuedDoc = view(doc({ status: 'queued' }));
+    expect(queuedDoc.chipVariant).toBe('waiting');
+    expect(queuedDoc.progressPercent).toBeNull();
+
+    const runningDoc = view(doc({ status: 'processing', captureId: 'capture-1' }), {
+      job: {
+        status: 'running',
+        stage: 'extracting',
+        progress: 0.75,
+        pagesDone: 9,
+        pagesTotal: 12,
+      } as DesktopCaptureOperation,
+    });
+    expect(runningDoc.chipVariant).toBe('running');
+    expect(runningDoc.progressPercent).toBe(75);
   });
 });
 

@@ -170,6 +170,96 @@ describe('OcrPage queue', () => {
     expect(waiting.querySelector('[data-testid="ocr-row-install"]')).toBeNull();
     expect(waiting.querySelector('[data-testid="ocr-row-install-progress"]')?.textContent).toContain('40%');
   });
+
+  it('renders header, drop zone, first-run card, and queue in the approved design', async () => {
+    const requirements = signal<readonly RuntimeRequirement[]>([
+      requirement('windowsml-ocr', 'installable', 144_000_000),
+      requirement('speech-recognition', 'installable', 2_800_000_000),
+      requirement('speaker-diarization', 'installable', 300_000_000),
+    ]);
+    const documents = [
+      doc({ fileName: 'charge.pdf', status: 'queued' }),
+    ];
+    TestBed.configureTestingModule({
+      imports: [OcrPage],
+      providers: [
+        provideRouter([]),
+        { provide: DesktopLibraryService, useValue: { list: () => of(documents), get: vi.fn() } },
+        {
+          provide: DesktopRuntimeClientService,
+          useValue: {
+            started: signal(true),
+            ready: signal(true),
+            pdfPageNumbers: signal(undefined),
+            ocrCompute: signal(null),
+          },
+        },
+        {
+          provide: RecognitionFeaturesStore,
+          useValue: {
+            requirements,
+            installations: signal({}),
+            installing: signal(false),
+            firstRunDismissed: signal(false),
+            firstRunInstallableUnits: signal(requirements()),
+            showFirstRunCard: signal(true),
+            activeInstallation: signal<RuntimeInstallation | null>(null),
+            isFeatureReady: (feature: RecognitionFeature) => isFeatureReady(requirements(), feature),
+            installUnit: vi.fn(),
+            installFirstRunSelection: vi.fn(),
+            cancelInstallation: vi.fn(),
+            dismissFirstRun: vi.fn(),
+            requestedRequirements: signal(new Set()),
+          },
+        },
+        {
+          provide: DesktopWorkspaceStore,
+          useValue: { allDocuments: signal(documents), refreshDocuments: vi.fn() },
+        },
+        DesktopWorkspaceCaptureService,
+        CaptureQueueStore,
+      ],
+    });
+
+    const fixture = TestBed.createComponent(OcrPage);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const page = fixture.nativeElement as HTMLElement;
+
+    // Header
+    const header = page.querySelector('header');
+    expect(header?.textContent).toContain('文件轉文字');
+    expect(header?.textContent).toContain('讀出掃描檔與照片裡的文字。檔案與結果都留在這台電腦。');
+
+    // First-run card
+    const firstRunCard = page.querySelector('[data-testid="first-run-card"]');
+    expect(firstRunCard).not.toBeNull();
+    expect(firstRunCard?.textContent).toContain('要安裝哪些辨識功能？');
+    expect(firstRunCard?.textContent).toContain('只下載你勾選的項目，之後也可以在「設定」裡加裝或移除。');
+    expect(firstRunCard?.querySelector('[data-testid="first-run-install"]')).not.toBeNull();
+    expect(firstRunCard?.querySelector('[data-testid="first-run-dismiss"]')).not.toBeNull();
+
+    // Drop zone
+    const dropzone = page.querySelector('[data-testid="ocr-dropzone"]');
+    expect(dropzone?.textContent).toContain('拖曳 PDF 或圖片到這裡');
+    expect(dropzone?.textContent).toContain('PDF 只辨識前');
+    const pageCountInput = page.querySelector('[data-testid="ocr-page-count"]') as HTMLInputElement;
+    expect(pageCountInput.placeholder).toBe('全部');
+
+    // Queue section
+    const queueTitle = page.querySelector('#queue-title');
+    expect(queueTitle?.textContent).toBe('佇列');
+    const queueSection = queueTitle?.closest('section');
+    expect(queueSection?.textContent).toContain('1 個檔案');
+
+    // Status chip styling
+    const waitingRow = row(page, 'charge.pdf');
+    const statusChip = waitingRow.querySelector('[data-testid="ocr-row-status"] span');
+    expect(statusChip?.textContent?.trim()).toBe('等待中');
+    expect(statusChip?.className).toContain('border-border');
+  });
 });
 
 function row(page: HTMLElement, fileName: string): HTMLElement {

@@ -12,6 +12,38 @@ export type OcrUserStatus =
   | 'needs-attention'
   | 'cancelled';
 
+export type OcrChipVariant = 'running' | 'waiting' | 'done' | 'error';
+
+/** Maps an OCR user status to its chip styling variant. */
+export function ocrChipVariant(status: OcrUserStatus): OcrChipVariant {
+  switch (status) {
+    case 'processing':
+      return 'running';
+    case 'done':
+      return 'done';
+    case 'needs-attention':
+      return 'error';
+    case 'waiting':
+    case 'cancelled':
+    default:
+      return 'waiting';
+  }
+}
+
+/** Returns the Tailwind CSS classes for the given chip variant. */
+export function ocrChipClasses(variant: OcrChipVariant): string {
+  switch (variant) {
+    case 'running':
+      return 'bg-secondary text-secondary-foreground';
+    case 'waiting':
+      return 'border border-border text-muted-foreground';
+    case 'done':
+      return 'bg-muted text-secondary-foreground';
+    case 'error':
+      return 'bg-destructive/10 text-destructive';
+  }
+}
+
 export interface OcrQueueView {
   readonly documentId: string;
   readonly fileName: string;
@@ -19,6 +51,8 @@ export interface OcrQueueView {
   readonly userStatus: OcrUserStatus;
   readonly statusText: string;
   readonly progressText: string;
+  readonly progressPercent: number | null;
+  readonly chipVariant: OcrChipVariant;
   readonly needsInstall: boolean;
   readonly installPercent: number | null;
   readonly interrupted: boolean;
@@ -103,6 +137,9 @@ export function describeOcrDocument(input: {
   const jobActive = input.job !== undefined && isActiveJob(input.job);
   const described = describeStatus(document, input.busy || jobActive);
   const waiting = described.userStatus === 'waiting';
+  const percent = typeof input.job?.progress === 'number' && Number.isFinite(input.job.progress)
+    ? Math.round(Math.min(Math.max(input.job.progress, 0), 1) * 100)
+    : null;
   return {
     documentId: document.documentId,
     fileName: document.fileName,
@@ -112,6 +149,8 @@ export function describeOcrDocument(input: {
     progressText: described.userStatus === 'processing'
       ? progressText(input.job)
       : '',
+    progressPercent: described.userStatus === 'processing' ? percent : null,
+    chipVariant: ocrChipVariant(described.userStatus),
     needsInstall: waiting && !input.ocrReady,
     installPercent: waiting && !input.ocrReady ? input.installPercent : null,
     interrupted: described.interrupted,
