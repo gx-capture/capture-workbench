@@ -23,7 +23,10 @@ use crate::contracts::{
     LibraryListRequest, LibrarySourcePayload,
 };
 
-use super::transaction::{prepare_transaction_entry, LibraryTransaction, TransactionStage};
+use super::transaction::{
+    pending_transaction_rolls_forward, prepare_transaction_entry, LibraryTransaction,
+    TransactionStage,
+};
 use super::{
     atomic_write, commit_library_transaction, inject_transaction_failure, load_backup_index,
     read_json_optional, recover_library_transaction, stem, validate_document_id, validate_status,
@@ -42,6 +45,8 @@ pub(crate) struct LibrarySourceInput {
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LibraryIndex {
+    #[serde(skip)]
+    recovery_pending: bool,
     pub(super) version: u8,
     pub(super) documents: Vec<StoredDocument>,
 }
@@ -100,6 +105,13 @@ pub(crate) struct LibraryStore {
     pub(super) index: Mutex<LibraryIndex>,
 }
 
+struct StagedSource {
+    file_name: String,
+    media_type: String,
+    byte_length: u64,
+    path: PathBuf,
+}
+
 pub(crate) struct RuntimeSourceFile {
     pub(crate) file_name: String,
     pub(crate) media_type: String,
@@ -115,17 +127,26 @@ impl LibraryStore {
         let staging_dir = root.join("staging");
         clean_staging_directory(&staging_dir, SystemTime::now());
         recover_library_transaction(&root)?;
+        let index = Self::read_index(&root)?;
+        Ok(Self {
+            root,
+            index: Mutex::new(index),
+        })
+    }
+
+    fn read_index(root: &Path) -> Result<LibraryIndex, String> {
         let index_path = root.join(INDEX_FILE_NAME);
         let index = match fs::read(&index_path) {
             Ok(bytes) => match serde_json::from_slice::<LibraryIndex>(&bytes) {
                 Ok(index) => index,
-                Err(primary_error) => load_backup_index(&root).map_err(|backup_error| {
+                Err(primary_error) => load_backup_index(root).map_err(|backup_error| {
                     format!(
                         "Capture library index is invalid ({primary_error}); recovery copy is unavailable: {backup_error}"
                     )
                 })?,
             },
             Err(error) if error.kind() == ErrorKind::NotFound => LibraryIndex {
+                recovery_pending: false,
                 version: INDEX_VERSION,
                 documents: Vec::new(),
             },
@@ -141,32 +162,33 @@ impl LibraryStore {
         {
             evidence.validate()?;
         }
-        Ok(Self {
-            root,
-            index: Mutex::new(index),
-        })
+        Ok(index)
     }
 
     fn publish_source(
         &self,
-        file_name: String,
-        media_type: String,
-        byte_length: u64,
+        mut index: std::sync::MutexGuard<'_, LibraryIndex>,
+        source: StagedSource,
         capture_options: Option<LibraryCaptureOptions>,
-        staged_path: &Path,
     ) -> Result<LibraryDocumentSummary, String> {
+        let StagedSource {
+            file_name,
+            media_type,
+            byte_length,
+            path: staged_path,
+        } = source;
         let now = now_ms()?;
         let document_id = random_id()?;
         let document_directory = self.document_directory(&document_id)?;
         if let Err(error) = fs::create_dir_all(&document_directory) {
-            let _ = fs::remove_file(staged_path);
+            let _ = fs::remove_file(&staged_path);
             return Err(format!(
                 "Capture library source directory cannot be created: {error}"
             ));
         }
         let source_path = document_directory.join(SOURCE_FILE_NAME);
-        if let Err(error) = fs::rename(staged_path, &source_path) {
-            let _ = fs::remove_file(staged_path);
+        if let Err(error) = fs::rename(&staged_path, &source_path) {
+            let _ = fs::remove_file(&staged_path);
             let _ = fs::remove_dir_all(&document_directory);
             return Err(format!("Capture library source cannot be placed: {error}"));
         }
@@ -188,7 +210,6 @@ impl LibraryStore {
             capture_options,
         };
         let summary = document.summary(false);
-        let mut index = self.lock_index()?;
         index.documents.insert(0, document);
         if let Err(error) = self.save_index(&index) {
             index.documents.remove(0);
@@ -265,6 +286,8 @@ impl LibraryStore {
         if let Some(options) = &capture_options {
             super::validation::validate_capture_options(options)?;
         }
+        // Refuse before staging; the index lock is not held while the source is copied.
+        drop(self.lock_index_for_write()?);
         let staging_dir = self.staging_directory();
         fs::create_dir_all(&staging_dir).map_err(|error| {
             format!("Capture library staging directory cannot be created: {error}")
@@ -272,12 +295,16 @@ impl LibraryStore {
         let staging_path = staging_dir.join(random_id()?);
         let byte_length = input.bytes.len() as u64;
         Self::copy_to_staging(&input.bytes[..], &staging_path, byte_length)?;
+        let index = self.lock_index_for_publish(&staging_path)?;
         self.publish_source(
-            input.file_name,
-            input.media_type,
-            byte_length,
+            index,
+            StagedSource {
+                file_name: input.file_name,
+                media_type: input.media_type,
+                byte_length,
+                path: staging_path,
+            },
             capture_options,
-            &staging_path,
         )
     }
 
@@ -353,17 +380,24 @@ impl LibraryStore {
             .handle
             .seek(SeekFrom::Start(0))
             .map_err(|_| changed())?;
+        // Refuse before staging; the index lock is not held while a large source
+        // (up to 2 GiB) is copied, so reads stay responsive during the copy.
+        drop(self.lock_index_for_write()?);
         let staging_dir = self.staging_directory();
         fs::create_dir_all(&staging_dir)
             .map_err(|_| "Capture library staging directory cannot be created.".to_string())?;
         let staging_path = staging_dir.join(random_id()?);
         Self::copy_to_staging(source.handle, &staging_path, source.byte_length)?;
+        let index = self.lock_index_for_publish(&staging_path)?;
         self.publish_source(
-            source.file_name,
-            source.media_type,
-            source.byte_length,
+            index,
+            StagedSource {
+                file_name: source.file_name,
+                media_type: source.media_type,
+                byte_length: source.byte_length,
+                path: staging_path,
+            },
             capture_options,
-            &staging_path,
         )
     }
 
@@ -381,7 +415,7 @@ impl LibraryStore {
                 "Capture library update cannot set and clear a runtime identifier together.".into(),
             );
         }
-        let mut index = self.lock_index()?;
+        let mut index = self.lock_index_for_write()?;
         let position = index
             .documents
             .iter()
@@ -456,7 +490,7 @@ impl LibraryStore {
                 format!("Capture library recovery copy cannot be written: {error}")
             })?;
         }
-        commit_library_transaction(
+        let committed = commit_library_transaction(
             &self.root,
             LibraryTransaction {
                 transaction_id,
@@ -468,8 +502,26 @@ impl LibraryStore {
                 entries: prepared.iter().map(|entry| entry.journal.clone()).collect(),
             },
             prepared,
-        )?;
+        );
+        if let Err(error) = committed {
+            // Every commit exit is covered, including failed progress writes and
+            // failed rollback. Keep reads available if disk recovery still fails.
+            index.recovery_pending = true;
+            let _ = self.recover_index(&mut index);
+            return Err(error);
+        }
         *index = next_index;
+        // Even Committed journals block writes until cleanup succeeds: they cannot
+        // roll back, but a later transaction must not overwrite their journal.
+        if self
+            .root
+            .join(super::TRANSACTION_FILE_NAME)
+            .try_exists()
+            .unwrap_or(true)
+        {
+            index.recovery_pending = true;
+            let _ = self.recover_index(&mut index);
+        }
         Ok(summary)
     }
 
@@ -608,7 +660,7 @@ impl LibraryStore {
 
     pub(crate) fn delete(&self, request: LibraryDocumentRequest) -> Result<(), String> {
         validate_document_id(&request.document_id)?;
-        let mut index = self.lock_index()?;
+        let mut index = self.lock_index_for_write()?;
         let position = index
             .documents
             .iter()
@@ -646,6 +698,52 @@ impl LibraryStore {
         self.index
             .lock()
             .map_err(|_| "Capture library state is unavailable.".to_string())
+    }
+
+    fn recover_index(&self, index: &mut LibraryIndex) -> Result<(), String> {
+        let recovery = recover_library_transaction(&self.root);
+        if recovery.is_err() && pending_transaction_rolls_forward(&self.root) == Some(true) {
+            // Durable replacements remain authoritative even if cleanup must retry.
+            if let Ok(recovered) = Self::read_index(&self.root) {
+                *index = recovered;
+            }
+        }
+        let recovered = recovery.and_then(|()| Self::read_index(&self.root));
+        match recovered {
+            Ok(recovered) => {
+                *index = recovered;
+                Ok(())
+            }
+            Err(_) => {
+                index.recovery_pending = true;
+                Err("The document library needs recovery; restart Capture Workbench or free disk space and try again.".into())
+            }
+        }
+    }
+
+    /// Write lock for publishing a staged source; a refusal removes the staged copy.
+    fn lock_index_for_publish(
+        &self,
+        staged: &Path,
+    ) -> Result<std::sync::MutexGuard<'_, LibraryIndex>, String> {
+        self.lock_index_for_write().inspect_err(|_| {
+            let _ = fs::remove_file(staged);
+        })
+    }
+
+    fn lock_index_for_write(&self) -> Result<std::sync::MutexGuard<'_, LibraryIndex>, String> {
+        let mut index = self.lock_index()?;
+        if index.recovery_pending
+            || self
+                .root
+                .join(super::TRANSACTION_FILE_NAME)
+                .try_exists()
+                .unwrap_or(true)
+        {
+            index.recovery_pending = true;
+            self.recover_index(&mut index)?;
+        }
+        Ok(index)
     }
 
     pub(super) fn document_directory(&self, document_id: &str) -> Result<PathBuf, String> {

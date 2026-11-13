@@ -5,7 +5,7 @@ use std::fs;
 
 #[cfg(test)]
 use crate::contracts::{
-    LibraryCaptureOptions, LibraryCaptureUpdate, LibraryDocumentRequest,
+    LibraryCaptureOptions, LibraryCaptureUpdate, LibraryDocumentRequest, LibraryDocumentSummary,
     LibraryImportSourceRequest, LibraryListRequest, OcrEvidenceV1,
 };
 
@@ -40,9 +40,21 @@ thread_local! {
 #[cfg(test)]
 fn inject_transaction_failure(point: &str) -> io::Result<()> {
     TRANSACTION_FAILURE_POINT.with(|configured| {
-        let should_fail = configured.borrow().as_deref() == Some(point);
+        // Comma-separated failures allow a one-shot commit fault followed by a
+        // persistent recovery fault (a trailing `*`), scoped to this test thread.
+        let mut configured = configured.borrow_mut();
+        let points: Vec<_> = configured.as_deref().unwrap_or("").split(',').collect();
+        let should_fail = points
+            .iter()
+            .any(|candidate| candidate.trim_end_matches('*') == point);
         if should_fail {
-            configured.borrow_mut().take();
+            *configured = Some(
+                points
+                    .into_iter()
+                    .filter(|candidate| *candidate != point)
+                    .collect::<Vec<_>>()
+                    .join(","),
+            );
             Err(io::Error::other(format!(
                 "injected transaction failure: {point}"
             )))
@@ -798,6 +810,10 @@ mod tests {
             "rename-1-target",
             "rename-2-backup",
             "rename-2-target",
+            "replacing-journal",
+            "progress-journal-0",
+            "progress-journal-1",
+            "progress-journal-2",
         ] {
             let directory = tempfile::tempdir().expect("temporary app data");
             let library = LibraryStore::open(directory.path()).expect("library");
@@ -842,6 +858,215 @@ mod tests {
             assert_eq!(recovered.result.expect("result")["targetText"], "before");
             assert!(!reopened.root.join(TRANSACTION_FILE_NAME).exists());
         }
+    }
+
+    fn library_snapshot(root: &std::path::Path) -> Vec<(std::path::PathBuf, Vec<u8>)> {
+        fn visit(
+            root: &std::path::Path,
+            path: &std::path::Path,
+            files: &mut Vec<(std::path::PathBuf, Vec<u8>)>,
+        ) {
+            for entry in fs::read_dir(path).expect("directory") {
+                let path = entry.expect("entry").path();
+                if path.is_dir() {
+                    files.push((path.strip_prefix(root).unwrap().to_owned(), Vec::new()));
+                    visit(root, &path, files);
+                } else {
+                    files.push((
+                        path.strip_prefix(root).unwrap().to_owned(),
+                        fs::read(&path).unwrap(),
+                    ));
+                }
+            }
+        }
+        let mut files = Vec::new();
+        visit(root, root, &mut files);
+        files.sort();
+        files
+    }
+
+    fn recovery_source(library: &LibraryStore) -> LibraryDocumentSummary {
+        library
+            .create_source(LibrarySourceInput {
+                file_name: "recovery.pdf".into(),
+                media_type: "application/pdf".into(),
+                bytes: b"pdf bytes".to_vec(),
+            })
+            .expect("source")
+    }
+
+    #[test]
+    fn failed_progress_after_index_replacement_recovers_before_next_import() {
+        let directory = tempfile::tempdir().expect("app data");
+        let library = LibraryStore::open(directory.path()).unwrap();
+        let created = recovery_source(&library);
+        library
+            .update_capture(completed_update(&created.document_id, "before"))
+            .unwrap();
+        let guard = TransactionFailureGuard::at("progress-journal-2");
+        library
+            .update_capture(completed_update(&created.document_id, "after"))
+            .expect_err("progress failure");
+        assert!(!library.root.join(TRANSACTION_FILE_NAME).exists());
+        let original_list = library.list(LibraryListRequest::default()).unwrap();
+        drop(guard);
+        let reopened = LibraryStore::open(directory.path()).unwrap();
+        assert_eq!(
+            serde_json::to_value(original_list).unwrap(),
+            serde_json::to_value(reopened.list(LibraryListRequest::default()).unwrap()).unwrap(),
+        );
+        let imported = recovery_source(&library);
+        let reopened = LibraryStore::open(directory.path()).unwrap();
+        assert_eq!(
+            reopened.list(LibraryListRequest::default()).unwrap().len(),
+            2
+        );
+        reopened
+            .get(LibraryDocumentRequest {
+                document_id: imported.document_id,
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn pending_recovery_refuses_writes_without_changes_and_allows_reads() {
+        let directory = tempfile::tempdir().expect("app data");
+        let library = LibraryStore::open(directory.path()).unwrap();
+        let created = recovery_source(&library);
+        library
+            .update_capture(completed_update(&created.document_id, "before"))
+            .unwrap();
+        let guard = TransactionFailureGuard::at("progress-journal-2,rollback*");
+        library
+            .update_capture(completed_update(&created.document_id, "after"))
+            .expect_err("progress failure");
+        let source = directory.path().join("refused.pdf");
+        fs::write(&source, b"%PDF-1.7\nfixture").unwrap();
+        let before = library_snapshot(&library.root);
+        let request = || LibraryDocumentRequest {
+            document_id: created.document_id.clone(),
+        };
+        let errors = [
+            library
+                .import_source(LibraryImportSourceRequest {
+                    source_path: source.to_string_lossy().into_owned(),
+                    ..Default::default()
+                })
+                .unwrap_err(),
+            library
+                .create_source(LibrarySourceInput {
+                    file_name: "refused.pdf".into(),
+                    media_type: "application/pdf".into(),
+                    bytes: vec![1],
+                })
+                .unwrap_err(),
+            library
+                .update_capture(completed_update(&created.document_id, "refused"))
+                .unwrap_err(),
+            library.delete(request()).unwrap_err(),
+        ];
+        for error in errors {
+            assert_eq!(error, "The document library needs recovery; restart Capture Workbench or free disk space and try again.");
+        }
+        assert_eq!(before, library_snapshot(&library.root));
+        assert_eq!(
+            library.list(LibraryListRequest::default()).unwrap().len(),
+            1
+        );
+        library.get(request()).expect("read detail while pending");
+        assert_eq!(library.source_bytes(request()).unwrap(), b"pdf bytes");
+        library
+            .export(crate::contracts::LibraryExportRequest {
+                document_id: created.document_id.clone(),
+                format: crate::contracts::LibraryExportFormat::Text,
+            })
+            .expect("export while pending");
+        drop(guard);
+        let imported = recovery_source(&library);
+        let reopened = LibraryStore::open(directory.path()).unwrap();
+        reopened
+            .get(LibraryDocumentRequest {
+                document_id: imported.document_id,
+            })
+            .unwrap();
+        assert_eq!(
+            reopened.get(request()).unwrap().result.unwrap()["targetText"],
+            "before"
+        );
+    }
+
+    #[test]
+    fn retained_committed_journal_blocks_writes_until_finalized() {
+        for fault in ["cleanup-journal*", "committed-journal,cleanup-journal*"] {
+            let directory = tempfile::tempdir().expect("app data");
+            let library = LibraryStore::open(directory.path()).unwrap();
+            let created = recovery_source(&library);
+            let guard = TransactionFailureGuard::at(fault);
+            let result =
+                library.update_capture(completed_update(&created.document_id, "committed"));
+            assert_eq!(result.is_err(), fault.starts_with("committed-journal"));
+            let before = library_snapshot(&library.root);
+            assert!(library
+                .delete(LibraryDocumentRequest {
+                    document_id: created.document_id.clone(),
+                })
+                .unwrap_err()
+                .contains("needs recovery"));
+            assert_eq!(before, library_snapshot(&library.root));
+            assert_eq!(
+                library.list(LibraryListRequest::default()).unwrap().len(),
+                1
+            );
+            let in_memory = library.list(LibraryListRequest::default()).unwrap();
+            assert_eq!(in_memory[0].status, "completed");
+            drop(guard);
+            let recovered = LibraryStore::open(directory.path()).unwrap();
+            assert_eq!(
+                serde_json::to_value(&in_memory).unwrap(),
+                serde_json::to_value(recovered.list(LibraryListRequest::default()).unwrap())
+                    .unwrap(),
+            );
+            recovery_source(&library);
+            let reopened = LibraryStore::open(directory.path()).unwrap();
+            assert_eq!(
+                reopened
+                    .get(LibraryDocumentRequest {
+                        document_id: created.document_id,
+                    })
+                    .unwrap()
+                    .result
+                    .unwrap()["targetText"],
+                "committed"
+            );
+            assert_eq!(
+                reopened.list(LibraryListRequest::default()).unwrap().len(),
+                2
+            );
+        }
+    }
+
+    #[test]
+    fn failed_roll_forward_with_missing_target_keeps_the_loaded_index() {
+        let directory = tempfile::tempdir().expect("app data");
+        let library = LibraryStore::open(directory.path()).unwrap();
+        let created = recovery_source(&library);
+        let guard = TransactionFailureGuard::at("committed-journal,cleanup-journal*");
+        library
+            .update_capture(completed_update(&created.document_id, "committed"))
+            .expect_err("committed journal write failure");
+        // The retained journal rolls forward, but its index target is now gone, so
+        // recovery fails; reading the missing index would show an empty library.
+        fs::remove_file(library.root.join(INDEX_FILE_NAME)).unwrap();
+        assert!(library
+            .delete(LibraryDocumentRequest {
+                document_id: created.document_id.clone(),
+            })
+            .unwrap_err()
+            .contains("needs recovery"));
+        let listed = library.list(LibraryListRequest::default()).unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].document_id, created.document_id);
+        drop(guard);
     }
 
     #[test]
@@ -991,7 +1216,7 @@ mod tests {
             .update_capture(completed_update(&created.document_id, "before"))
             .expect("baseline");
 
-        let guard = TransactionFailureGuard::at("cleanup-journal");
+        let guard = TransactionFailureGuard::at("cleanup-journal*");
         library
             .update_capture(completed_update(&created.document_id, "after"))
             .expect("committed update");
