@@ -75,8 +75,15 @@ input {
   font: inherit;
 }
 
+/* Keyboard focus: one visible ring on every control, never on mouse clicks. Zero
+   specificity, so a component's own focus style still wins. */
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
 /* Status badges and install progress, shared by the workspace and the speech pack. */
-.status { padding: .25rem .45rem; color: #49675c; background: #e5e8d9; font: 800 .58rem var(--mono); text-transform: uppercase; }
+.status { padding: .25rem .45rem; color: #49675c; background: #e5e8d9; font-size: .72rem; font-weight: 700; }
 .status[data-status='failed'] { color: #8a3826; background: #f1d5c9; }
 .install-progress { display: grid; gap: .45rem; min-width: min(22rem, 100%); margin-top: .75rem; padding: .8rem; color: #426158; background: #f0f2e8; border: 1px solid #d4dcca; }
 .install-progress-heading { display: flex; justify-content: space-between; gap: .75rem; font-size: .78rem; }
