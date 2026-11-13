@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import errno
-import importlib
 import os
 import time
 from pathlib import Path
-from typing import Any
+
+from capture_runtime.file_lock import lock_descriptor
 
 APP_DATA_LOCK_FILENAME = "runtime.lock"
 _RETRY_INTERVAL_SECONDS = 0.1
@@ -56,7 +56,7 @@ class AppDataDirectoryLock:
             raise AppDataLockError("the app data directory lock could not be opened") from error
 
         try:
-            _lock_descriptor(descriptor)
+            lock_descriptor(descriptor)
         except OSError as error:
             os.close(descriptor)
             if error.errno in _LOCK_CONTENTION_ERRNOS:
@@ -87,16 +87,6 @@ class AppDataDirectoryLock:
 
     def __exit__(self, *_errors: object) -> None:
         self.release()
-
-
-def _lock_descriptor(descriptor: int) -> None:
-    os.lseek(descriptor, 0, os.SEEK_SET)
-    if os.name == "nt":
-        msvcrt: Any = importlib.import_module("msvcrt")
-        msvcrt.locking(descriptor, msvcrt.LK_NBLCK, 1)
-    else:
-        fcntl: Any = importlib.import_module("fcntl")
-        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
 
 
 def _write_pid(descriptor: int) -> None:
