@@ -5,7 +5,14 @@ from fastapi.testclient import TestClient
 from capture_runtime.app import create_app
 from capture_runtime.constants import RUNTIME_VERSION
 from capture_runtime.contract_set import load_contract_set
-from capture_runtime.contracts import OcrAdapterClass, OcrComputeMode, OcrComputePreflightV2
+from capture_runtime.contracts import (
+    OcrAdapterClass,
+    OcrComputeMode,
+    OcrComputePreflightV2,
+    OpenIngestionV2,
+    StartCaptureV2,
+    StructuringMode,
+)
 from capture_runtime.dependencies import build_runtime_dependencies
 from capture_runtime.ocr.infrastructure.ocr_preflight import (
     OcrComputePreflight,
@@ -312,3 +319,62 @@ def test_startup_removes_legacy_spools_and_uploads_but_preserves_unrelated_files
         (staging / name).write_bytes(b"recording")
     with TestClient(create_app(settings)):
         assert {path.name for path in staging.iterdir()} == {"keep.spool", "notes.txt"}
+
+
+def test_startup_cleans_only_owned_worker_temporary_files(settings_factory, tmp_path):
+    from capture_runtime.constants import WORKER_TEMP_PREFIXES
+
+    settings = settings_factory()
+    temporary = settings.extraction.temp_dir
+    temporary.mkdir(parents=True)
+    names = [prefix + "abandoned.wav" for prefix in WORKER_TEMP_PREFIXES]
+    for name in names:
+        (temporary / name).write_bytes(b"audio")
+    directory = temporary / (WORKER_TEMP_PREFIXES[0] + "directory")
+    directory.mkdir()
+    (directory / "nested.wav").write_bytes(b"keep")
+    (temporary / "keep.wav").write_bytes(b"keep")
+    with TestClient(create_app(settings)):
+        assert all(not (temporary / name).exists() for name in names)
+        assert (directory / "nested.wav").read_bytes() == b"keep"
+        assert (temporary / "keep.wav").read_bytes() == b"keep"
+
+    outside = tmp_path / "shared-temp"
+    outside.mkdir()
+    for name in names:
+        (outside / name).write_bytes(b"shared")
+    shared_settings = settings_factory(CAPTURE_EXTRACTION_TEMP_DIR=str(outside))
+    with TestClient(create_app(shared_settings)):
+        assert all((outside / name).read_bytes() == b"shared" for name in names)
+
+
+def test_startup_reports_failed_waiting_capture_to_host(settings_factory):
+    settings = settings_factory()
+    app = create_app(settings)
+    repository = app.state.streaming_repository
+    repository.initialize()
+    ingestion = repository.create_ingestion(
+        OpenIngestionV2(
+            client_request_id="restart-ingestion",
+            file_name="sample.mp3",
+            media_type="audio/mpeg",
+            total_bytes=4,
+        )
+    )
+    capture = repository.create_capture(
+        StartCaptureV2(
+            client_request_id="restart-capture",
+            ingestion_id=ingestion.ingestion_id,
+            structuring_mode=StructuringMode.HOST,
+        )
+    )
+    repository.source_path(ingestion.ingestion_id).unlink()
+    with TestClient(
+        app,
+        base_url=f"http://127.0.0.1:{settings.port}",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+    ) as client:
+        response = client.get(f"/v2/captures/{capture.capture_id}")
+        assert response.status_code == 200, response.text
+        assert response.json()["status"] == "failed"
+        assert response.json()["error"]["code"] == "streaming_source_unavailable"

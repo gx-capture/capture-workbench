@@ -863,7 +863,8 @@ def test_startup_removes_an_expired_capture_whose_source_exceeds_a_lowered_limit
     assert not (tmp_path / "streaming" / "ingestions" / ingestion_id).exists()
 
 
-def test_a_replayed_chunk_replaces_the_tail_of_a_failed_write(tmp_path: Path) -> None:
+@pytest.mark.parametrize("restart", [False, True])
+def test_uncommitted_source_tail_is_replaced(tmp_path: Path, restart: bool) -> None:
     repository = StreamingRepository(
         tmp_path, clock=MutableClock(), retention_hours=24, policy=_DEFAULT_POLICY
     )
@@ -879,12 +880,10 @@ def test_a_replayed_chunk_replaces_the_tail_of_a_failed_write(tmp_path: Path) ->
         max_chunk_bytes=3,
         declared_total_bytes=6,
     )
-    # A write that failed halfway left bytes after the accepted chunk.
     path = repository.source_path(ingestion_id)
     path.write_bytes(b"abcpartial-failed-write")
     assert repository.get_ingestion(ingestion_id).received_bytes == 3
-
-    # A chunk at the wrong offset is still rejected and changes nothing.
+    assert path.read_bytes() == b"abcpartial-failed-write"
     with pytest.raises(StreamingTransitionError):
         repository.append_chunk(
             ingestion_id,
@@ -896,8 +895,9 @@ def test_a_replayed_chunk_replaces_the_tail_of_a_failed_write(tmp_path: Path) ->
             declared_total_bytes=6,
         )
     assert path.read_bytes() == b"abcpartial-failed-write"
-
-    # The replay lands at its offset, and the source finalizes with its digest.
+    if restart:
+        repository.initialize()
+        assert path.read_bytes() == b"abc"
     repository.append_chunk(
         ingestion_id,
         chunk_index=1,
@@ -912,3 +912,324 @@ def test_a_replayed_chunk_replaces_the_tail_of_a_failed_write(tmp_path: Path) ->
         is StreamingIngestionStatus.READY
     )
     assert path.read_bytes() == source
+
+
+@pytest.mark.parametrize("missing", [False, True])
+def test_startup_fails_incomplete_source_and_prunes_unowned_ingestion(
+    tmp_path: Path, missing: bool
+) -> None:
+    repository = StreamingRepository(
+        tmp_path, clock=MutableClock(), retention_hours=24, policy=_DEFAULT_POLICY
+    )
+    repository.initialize()
+    ingestion_id, _ = _open(repository, b"abcdef")
+    repository.append_chunk(
+        ingestion_id,
+        chunk_index=0,
+        byte_offset=0,
+        data=b"abc",
+        sha256=hashlib.sha256(b"abc").hexdigest(),
+        max_chunk_bytes=3,
+        declared_total_bytes=6,
+    )
+    capture = _start(repository, ingestion_id, "protect-incomplete")
+    path = repository.source_path(ingestion_id)
+    if missing:
+        path.unlink()
+    else:
+        path.write_bytes(b"ab")
+    repository.initialize()
+    failed = repository.get_capture(capture)
+    assert failed.status is StreamingCaptureStatus.FAILED
+    assert failed.error.code == "streaming_source_unavailable"
+    events = repository.read_events(capture, after_sequence=-1)
+    assert events[-1].event_type is StreamingEventType.FAILED
+    assert not path.parent.exists()
+    repository.initialize()
+    assert repository.get_capture(capture).status is StreamingCaptureStatus.FAILED
+
+
+@pytest.mark.parametrize(
+    "status", [status for status in StreamingIngestionStatus if status.value != "open"]
+)
+def test_startup_does_not_reconcile_other_statuses(
+    tmp_path: Path, status: StreamingIngestionStatus
+) -> None:
+    repository = StreamingRepository(
+        tmp_path, clock=MutableClock(), retention_hours=24, policy=_DEFAULT_POLICY
+    )
+    repository.initialize()
+    ingestion_id = _ready_ingestion(repository, b"abc", client_request_id="other-status")
+    path = repository.source_path(ingestion_id)
+    metadata_path = path.parent / "metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["status"] = status.value
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    path.write_bytes(b"abc-tail")
+    repository.initialize()
+    assert repository.get_ingestion(ingestion_id).status is status
+    assert path.read_bytes() == b"abc-tail"
+
+
+def test_startup_deletes_only_unreferenced_invalid_ingestion_directories(tmp_path: Path) -> None:
+    repository = StreamingRepository(
+        tmp_path, clock=MutableClock(), retention_hours=24, policy=_DEFAULT_POLICY
+    )
+    repository.initialize()
+    valid_id = _ready_ingestion(repository, b"abc", client_request_id="valid")
+    protected_id = _ready_ingestion(repository, b"def", client_request_id="protected")
+    _start(repository, protected_id, "protect-orphan")
+    protected = repository.source_path(protected_id).parent
+    (protected / "metadata.json").unlink()
+    ingestions = tmp_path / "ingestions"
+    missing = ingestions / "missing"
+    invalid = ingestions / "invalid"
+    for directory in (missing, invalid):
+        directory.mkdir()
+        (directory / "source.bin").write_bytes(b"orphan")
+    (invalid / "metadata.json").write_text("{", encoding="utf-8")
+    stray = ingestions / "stray"
+    stray.write_bytes(b"keep")
+    repository.initialize()
+    assert not missing.exists()
+    assert not invalid.exists()
+    assert protected.is_dir()
+    assert stray.read_bytes() == b"keep"
+    assert repository.get_ingestion(valid_id).status is StreamingIngestionStatus.READY
+
+
+@pytest.mark.parametrize("uppercase_reference", [False, True])
+def test_startup_protects_case_variant_orphan_reference(tmp_path, uppercase_reference):
+    repository = StreamingRepository(
+        tmp_path, clock=MutableClock(), retention_hours=24, policy=_DEFAULT_POLICY
+    )
+    repository.initialize()
+    ingestion_id, _ = _open(repository, b"abc")
+    capture = _start(repository, ingestion_id, "case-reference")
+    directory = repository.source_path(ingestion_id).parent
+    (directory / "metadata.json").unlink()
+    if uppercase_reference:
+        metadata_path = tmp_path / "captures" / capture / "metadata.json"
+        payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+        payload["operation"]["ingestionId"] = ingestion_id.upper()
+        metadata_path.write_text(json.dumps(payload), encoding="utf-8")
+    else:
+        directory = directory.rename(directory.with_name(ingestion_id.upper()))
+    repository.initialize()
+    assert (directory / "source.bin").exists()
+    assert repository.get_capture(capture).status is StreamingCaptureStatus.WAITING_INPUT
+
+
+@pytest.mark.parametrize("failure_point", ["persist", "resolve", "read"])
+def test_startup_defers_io_failure_without_pruning(tmp_path, monkeypatch, caplog, failure_point):
+    clock = MutableClock()
+    repository = StreamingRepository(
+        tmp_path, clock=clock, retention_hours=24, policy=_DEFAULT_POLICY
+    )
+    repository.initialize()
+    ingestion_id = _ready_ingestion(repository, b"abc", client_request_id="io-recovery")
+    capture = _start(repository, ingestion_id, "io-protected-capture")
+    source = repository.source_path(ingestion_id)
+    metadata_path = source.parent / "metadata.json"
+    payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+    payload["status"] = "open"
+    metadata_path.write_text(json.dumps(payload), encoding="utf-8")
+    capture_path = tmp_path / "captures" / capture / "metadata.json"
+    capture_payload = json.loads(capture_path.read_text(encoding="utf-8"))
+    capture_payload["operation"]["status"] = "waiting_input"
+    capture_payload["operation"]["source"] = None
+    capture_path.write_text(json.dumps(capture_payload), encoding="utf-8")
+    before = metadata_path.read_bytes()
+    capture_before = capture_path.read_bytes()
+    if failure_point == "persist":
+        source.write_bytes(b"ab")
+    clock.current += timedelta(days=3)
+    original_open = Path.open
+
+    def denied(*args, **kwargs):
+        raise PermissionError("private-user-path bearer-secret")
+
+    if failure_point == "persist":
+        monkeypatch.setattr(repository, "_persist_ingestion", denied)
+    elif failure_point == "resolve":
+        monkeypatch.setattr(repository, "_ingestion_directory", denied)
+    else:
+
+        def guarded_open(path, *args, **kwargs):
+            if path == source:
+                return denied()
+            return original_open(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "open", guarded_open)
+    repository.initialize()
+    assert repository.get_ingestion(ingestion_id).status is StreamingIngestionStatus.OPEN
+    assert metadata_path.read_bytes() == before
+    assert source.exists()
+    assert capture_path.read_bytes() == capture_before
+    assert repository.get_capture(capture).status is StreamingCaptureStatus.WAITING_INPUT
+    assert "recovery deferred" in caplog.text
+    assert "private-user-path" not in caplog.text
+    assert "bearer-secret" not in caplog.text
+    # The first request prunes again; the deferral protects for the life of the process.
+    repository.prune_expired()
+    assert repository.get_ingestion(ingestion_id).status is StreamingIngestionStatus.OPEN
+    assert repository.get_capture(capture).status is StreamingCaptureStatus.WAITING_INPUT
+    assert source.exists()
+
+
+def test_startup_keeps_memory_and_disk_equal_when_failing_a_capture_cannot_be_saved(
+    tmp_path, monkeypatch
+):
+    clock = MutableClock()
+    repository = StreamingRepository(
+        tmp_path, clock=clock, retention_hours=24, policy=_DEFAULT_POLICY
+    )
+    repository.initialize()
+    ingestion_id = _ready_ingestion(repository, b"abc", client_request_id="fail-save")
+    capture = _start(repository, ingestion_id, "fail-save-capture")
+    source = repository.source_path(ingestion_id)
+    metadata_path = source.parent / "metadata.json"
+    payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+    payload["status"] = "open"
+    metadata_path.write_text(json.dumps(payload), encoding="utf-8")
+    capture_path = tmp_path / "captures" / capture / "metadata.json"
+    capture_payload = json.loads(capture_path.read_text(encoding="utf-8"))
+    capture_payload["operation"]["status"] = "waiting_input"
+    capture_payload["operation"]["source"] = None
+    capture_path.write_text(json.dumps(capture_payload), encoding="utf-8")
+    capture_before = capture_path.read_bytes()
+    source.write_bytes(b"ab")  # shorter than accepted: the ingestion fails at startup
+
+    def denied(*_args, **_kwargs):
+        raise PermissionError("locked")
+
+    monkeypatch.setattr(repository, "_persist_capture", denied)
+    repository.initialize()
+    # Saving the failed capture was refused, so memory keeps what disk still says.
+    assert repository.get_capture(capture).status is StreamingCaptureStatus.WAITING_INPUT
+    assert capture_path.read_bytes() == capture_before
+    repository.prune_expired()
+    assert repository.get_capture(capture).status is StreamingCaptureStatus.WAITING_INPUT
+    assert source.exists()
+
+
+def test_startup_keeps_invalid_ingestions_when_a_capture_cannot_be_loaded(tmp_path, monkeypatch):
+    repository = StreamingRepository(
+        tmp_path, clock=MutableClock(), retention_hours=24, policy=_DEFAULT_POLICY
+    )
+    repository.initialize()
+    ingestion_id = _ready_ingestion(repository, b"abc", client_request_id="hidden-reference")
+    capture = _start(repository, ingestion_id, "hidden-reference-capture")
+    ingestion_directory = repository.source_path(ingestion_id).parent
+    (ingestion_directory / "metadata.json").unlink()  # the ingestion now looks invalid
+    capture_metadata = tmp_path / "captures" / capture / "metadata.json"
+    original_read_text = Path.read_text
+
+    def guarded_read_text(path, *args, **kwargs):
+        if path == capture_metadata:
+            raise PermissionError("locked")
+        return original_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", guarded_read_text)
+    repository.initialize()
+    # The capture that references it could not be read, so its source stays.
+    assert (ingestion_directory / "source.bin").read_bytes() == b"abc"
+
+
+def test_startup_continues_the_event_sequence_after_the_logged_events(tmp_path):
+    repository = StreamingRepository(
+        tmp_path, clock=MutableClock(), retention_hours=24, policy=_DEFAULT_POLICY
+    )
+    repository.initialize()
+    ingestion_id = _ready_ingestion(repository, b"abc", client_request_id="sequence")
+    capture = _start(repository, ingestion_id, "sequence-capture")
+    saved = repository.get_capture(capture).last_event_sequence
+    events_path = tmp_path / "captures" / capture / "events.jsonl"
+    lines = [line for line in events_path.read_text(encoding="utf-8").splitlines() if line]
+    # An event reached the log but its metadata save failed before the crash.
+    extra = json.loads(lines[-1])
+    extra["sequence"] = saved + 1
+    extra["eventId"] = f"{capture}/{saved + 1}"
+    events_path.write_text("\n".join([*lines, json.dumps(extra)]) + "\n", encoding="utf-8")
+    repository.initialize()
+    assert repository.get_capture(capture).last_event_sequence == saved + 1
+
+
+@pytest.mark.parametrize("tail", ["partial", "whole-without-newline", "invalid-utf8"])
+def test_startup_repairs_a_damaged_event_log_tail(tmp_path, tail):
+    repository = StreamingRepository(
+        tmp_path, clock=MutableClock(), retention_hours=24, policy=_DEFAULT_POLICY
+    )
+    repository.initialize()
+    ingestion_id = _ready_ingestion(repository, b"abc", client_request_id=f"tail-{tail}")
+    capture = _start(repository, ingestion_id, f"tail-capture-{tail}")
+    saved = repository.get_capture(capture).last_event_sequence
+    events_path = tmp_path / "captures" / capture / "events.jsonl"
+    lines = [line for line in events_path.read_bytes().split(b"\n") if line]
+    logged = json.loads(lines[-1])
+    logged["sequence"] = saved + 1
+    logged["eventId"] = f"{capture}/{saved + 1}"
+    complete = json.dumps(logged).encode("utf-8")
+    if tail == "partial":
+        # A complete event, then a crash in the middle of the next line.
+        content = b"\n".join([*lines, complete]) + b"\n" + complete[:20]
+        expected, expected_lines = saved + 1, len(lines) + 1
+    elif tail == "whole-without-newline":
+        content = b"\n".join([*lines, complete])
+        expected, expected_lines = saved + 1, len(lines) + 1
+    else:
+        # A damaged line must not stop startup; the last good line still counts.
+        content = b"\n".join([*lines, complete, b'{"sequence": \xff\xfe}']) + b"\n"
+        expected, expected_lines = saved + 1, len(lines) + 2
+    events_path.write_bytes(content)
+    repository.initialize()
+    assert repository.get_capture(capture).last_event_sequence == expected
+    repaired = events_path.read_bytes()
+    assert repaired.endswith(b"\n")
+    assert len([line for line in repaired.split(b"\n") if line]) == expected_lines
+
+
+def test_startup_keeps_an_ingestion_whose_metadata_is_unreadable(tmp_path, monkeypatch, caplog):
+    repository = StreamingRepository(
+        tmp_path, clock=MutableClock(), retention_hours=24, policy=_DEFAULT_POLICY
+    )
+    repository.initialize()
+    ingestion_id = _ready_ingestion(repository, b"abc", client_request_id="unreadable")
+    directory = repository.source_path(ingestion_id).parent
+    metadata_path = directory / "metadata.json"
+    original_read_bytes = Path.read_bytes
+
+    def guarded_read_bytes(path):
+        if path == metadata_path:
+            raise PermissionError("private-user-path")
+        return original_read_bytes(path)
+
+    monkeypatch.setattr(Path, "read_bytes", guarded_read_bytes)
+    repository.initialize()
+    # A lock or permission problem is not proof of damage: nothing is deleted.
+    assert directory.is_dir()
+    assert metadata_path.is_file()
+    assert "unreadable at startup" in caplog.text
+    assert "private-user-path" not in caplog.text
+    monkeypatch.setattr(Path, "read_bytes", original_read_bytes)
+    repository.initialize()
+    assert repository.get_ingestion(ingestion_id).status is StreamingIngestionStatus.READY
+
+
+def test_startup_failed_source_remains_protected_by_active_capture(tmp_path):
+    repository = StreamingRepository(
+        tmp_path, clock=MutableClock(), retention_hours=24, policy=_DEFAULT_POLICY
+    )
+    repository.initialize()
+    ingestion_id = _ready_ingestion(repository, b"abc", client_request_id="active-recovery")
+    capture = _start(repository, ingestion_id, "active-source")
+    path = repository.source_path(ingestion_id)
+    metadata_path = path.parent / "metadata.json"
+    payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+    payload["status"] = "open"
+    metadata_path.write_text(json.dumps(payload), encoding="utf-8")
+    path.write_bytes(b"ab")
+    repository.initialize()
+    assert repository.get_ingestion(ingestion_id).status is StreamingIngestionStatus.FAILED
+    assert repository.get_capture(capture).status is StreamingCaptureStatus.EXTRACTING
+    assert path.read_bytes() == b"ab"

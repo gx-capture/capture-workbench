@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import shutil
 from collections.abc import Callable, Mapping
@@ -18,6 +19,19 @@ from capture_runtime.capture.infrastructure._streaming_records import (
     _IngestionRecord,
 )
 from capture_runtime.contracts import CaptureEventV2
+
+_LOGGER = logging.getLogger(__name__)
+
+
+def _event_sequence(line: bytes) -> int | None:
+    """The sequence of one event-log line, or None for a blank or damaged line."""
+    if not line.strip():
+        return None
+    try:
+        sequence = json.loads(line.decode("utf-8"))["sequence"]
+    except (KeyError, TypeError, ValueError):
+        return None
+    return sequence if isinstance(sequence, int) and not isinstance(sequence, bool) else None
 
 
 def _atomic_json(path: Path, payload: object) -> None:
@@ -110,33 +124,53 @@ class _StreamingRepositoryPersistence:
         identifier: Callable[[str], str],
         *,
         datetime_parser: Callable[[str], datetime] = datetime_from_text,
-    ) -> list[_IngestionRecord]:
+    ) -> tuple[list[_IngestionRecord], list[Path]]:
         records: list[_IngestionRecord] = []
+        invalid_directories: list[Path] = []
         for directory in (self.root / "ingestions").iterdir():
+            if not directory.is_dir() or directory.is_symlink():
+                continue
             try:
-                payload = json.loads((directory / "metadata.json").read_text(encoding="utf-8"))
+                raw = (directory / "metadata.json").read_bytes()
+            except FileNotFoundError:
+                # A crash in create_ingestion before its metadata: nothing can reach it.
+                invalid_directories.append(directory)
+                continue
+            except OSError:
+                # Unreadable now (a lock, a permission) is not proof of damage: keep
+                # the directory; the next start reads it again.
+                _LOGGER.warning("Ingestion metadata unreadable at startup; left in place")
+                continue
+            try:
+                payload = json.loads(raw.decode("utf-8"))
                 record = _IngestionRecord.load(
                     payload,
                     ingestion_id=identifier(str(payload["ingestionId"])),
                     datetime_from_text=datetime_parser,
                 )
             except (
-                OSError,
                 KeyError,
                 TypeError,
                 ValueError,
                 ValidationError,
                 json.JSONDecodeError,
             ):
+                invalid_directories.append(directory)
                 continue
             records.append(record)
-        return records
+        return records, invalid_directories
 
     def load_captures(
         self,
         ingestions: Mapping[str, _IngestionRecord],
-    ) -> list[_CaptureRecord]:
+    ) -> tuple[list[_CaptureRecord], bool]:
+        """Loadable captures, and whether every capture directory could be read.
+
+        A capture that cannot be loaded still references its ingestion; when one is
+        skipped, the caller cannot know every reference.
+        """
         records: list[_CaptureRecord] = []
+        complete = True
         for directory in (self.root / "captures").iterdir():
             try:
                 payload = json.loads((directory / "metadata.json").read_text(encoding="utf-8"))
@@ -156,9 +190,42 @@ class _StreamingRepositoryPersistence:
                 ValidationError,
                 json.JSONDecodeError,
             ):
+                complete = False
                 continue
             records.append(record)
-        return records
+        return records, complete
+
+    @staticmethod
+    def recover_last_event_sequence(path: Path) -> int | None:
+        """The sequence of the last complete event in a capture's log, or None.
+
+        A crash can leave the last line unfinished. Startup repairs it so the next
+        event starts on a line of its own: a tail that is a whole event gets its
+        newline, anything else is cut. Lines that cannot be decoded are skipped.
+        """
+        try:
+            raw = path.read_bytes()
+        except FileNotFoundError:
+            return None
+        if raw and not raw.endswith(b"\n"):
+            cut = raw.rfind(b"\n") + 1
+            if _event_sequence(raw[cut:]) is not None:
+                with path.open("ab") as log:
+                    log.write(b"\n")
+                    log.flush()
+                    os.fsync(log.fileno())
+                raw += b"\n"
+            else:
+                with path.open("r+b") as log:
+                    log.truncate(cut)
+                    log.flush()
+                    os.fsync(log.fileno())
+                raw = raw[:cut]
+        for line in reversed(raw.split(b"\n")):
+            sequence = _event_sequence(line)
+            if sequence is not None:
+                return sequence
+        return None
 
     def delete_capture_directory(self, directory: Path) -> None:
         if directory.parent.resolve() != (self.root / "captures").resolve():

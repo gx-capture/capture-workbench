@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import secrets
+import stat
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from pathlib import Path
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, FastAPI, Request, Security
@@ -20,7 +22,7 @@ from capture_runtime.capture.api.streaming import register_streaming_routes
 from capture_runtime.capture.infrastructure.capture_extraction import CaptureExtractor
 from capture_runtime.clock import Clock
 from capture_runtime.config import RuntimeSettings
-from capture_runtime.constants import RUNTIME_VERSION
+from capture_runtime.constants import RUNTIME_VERSION, WORKER_TEMP_PREFIXES
 from capture_runtime.contract_set import (
     ContractSet,
     ContractSetError,
@@ -110,6 +112,31 @@ def _normalized_authority(value: str) -> str | None:
     return f"{parsed.hostname.lower()}:{port}"
 
 
+def _remove_abandoned_worker_files(temp_dir: Path, app_data_dir: Path) -> None:
+    """Remove worker temporary files a previous process left behind.
+
+    Only in a temp directory inside this runtime's app data: an overridden
+    directory may be shared with another runtime that is running. Best effort:
+    a file that is in use or already gone is left for the next start.
+    """
+    temp_dir = temp_dir.resolve()
+    app_data_dir = app_data_dir.resolve()
+    if temp_dir == app_data_dir or not temp_dir.is_relative_to(app_data_dir):
+        return
+    try:
+        entries = list(temp_dir.iterdir())
+    except OSError:
+        return
+    for entry in entries:
+        if not entry.name.startswith(WORKER_TEMP_PREFIXES):
+            continue
+        try:
+            if stat.S_ISREG(entry.lstat().st_mode):
+                entry.unlink()
+        except OSError:
+            continue
+
+
 def create_app(
     settings: RuntimeSettings | None = None,
     *,
@@ -156,6 +183,9 @@ def create_app(
         # that wrote progressive spool files (versions up to 0.9.x).
         for abandoned_spool in runtime_dependencies.staging_root.glob("progressive-*.spool"):
             abandoned_spool.unlink(missing_ok=True)
+        _remove_abandoned_worker_files(
+            runtime_settings.extraction.temp_dir, runtime_settings.app_data_dir
+        )
         runtime_dependencies.streaming_repository.initialize()
         runtime_dependencies.installation_repository.initialize()
         runtime_dependencies.model_installation_repository.initialize()
