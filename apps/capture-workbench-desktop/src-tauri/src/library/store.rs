@@ -806,6 +806,11 @@ fn has_item_directories(items_dir: &Path) -> bool {
 }
 
 fn clean_orphan_item_directories(items_dir: &Path, index: &LibraryIndex, now: SystemTime) {
+    // `items/` itself must be this library's own directory: through a link or junction
+    // the entries would belong to another library, which this index does not describe.
+    if !real_directory(items_dir) {
+        return;
+    }
     let Ok(entries) = fs::read_dir(items_dir) else {
         return;
     };
@@ -849,26 +854,33 @@ fn clean_orphan_item_directories(items_dir: &Path, index: &LibraryIndex, now: Sy
     }
 }
 
-/// A real directory (not a link) untouched for longer than another running
-/// instance of the application could still be working on it.
-fn abandoned_directory(path: &Path, now: SystemTime) -> bool {
-    let Ok(metadata) = fs::symlink_metadata(path) else {
-        return false;
-    };
+/// The metadata of `path` when it is a real directory: not a symlink, and on
+/// Windows not a junction or other reparse point (links are never followed).
+fn real_directory_metadata(path: &Path) -> Option<fs::Metadata> {
+    let metadata = fs::symlink_metadata(path).ok()?;
     if !metadata.is_dir() || metadata.file_type().is_symlink() {
-        return false;
+        return None;
     }
     #[cfg(windows)]
     {
         use std::os::windows::fs::MetadataExt;
-        // FILE_ATTRIBUTE_REPARSE_POINT: junctions and other links are never followed.
+        // FILE_ATTRIBUTE_REPARSE_POINT
         if metadata.file_attributes() & 0x400 != 0 {
-            return false;
+            return None;
         }
     }
-    metadata
-        .modified()
-        .ok()
+    Some(metadata)
+}
+
+fn real_directory(path: &Path) -> bool {
+    real_directory_metadata(path).is_some()
+}
+
+/// A real directory (not a link) untouched for longer than another running
+/// instance of the application could still be working on it.
+fn abandoned_directory(path: &Path, now: SystemTime) -> bool {
+    real_directory_metadata(path)
+        .and_then(|metadata| metadata.modified().ok())
         .and_then(|modified| now.duration_since(modified).ok())
         .is_some_and(|age| age > STAGING_ABANDONED_AFTER)
 }
@@ -1099,6 +1111,36 @@ mod tests {
             reopened.list(LibraryListRequest::default()).unwrap().len(),
             1
         );
+    }
+
+    #[test]
+    fn orphan_cleanup_never_follows_a_linked_items_directory() {
+        let directory = tempfile::tempdir().expect("app data");
+        let other = tempfile::tempdir().expect("another library's items");
+        let elsewhere = old_item(other.path(), "33333333333333333333333333333333");
+        let root = directory.path().join("library");
+        fs::create_dir_all(&root).expect("library root");
+        let items = root.join("items");
+        // A junction needs no privilege on Windows; skip where no link can be made.
+        #[cfg(windows)]
+        let linked = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(&items)
+            .arg(other.path())
+            .output()
+            .is_ok_and(|output| output.status.success());
+        #[cfg(not(windows))]
+        let linked = std::os::unix::fs::symlink(other.path(), &items).is_ok();
+        if !linked {
+            return;
+        }
+        let index = LibraryIndex {
+            version: INDEX_VERSION,
+            documents: Vec::new(),
+            ..Default::default()
+        };
+        clean_orphan_item_directories(&items, &index, after_abandonment(&elsewhere));
+        assert!(elsewhere.join(SOURCE_FILE_NAME).is_file());
     }
 
     #[test]
