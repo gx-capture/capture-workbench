@@ -81,6 +81,7 @@ export interface DesktopMessages {
   readonly speechPackHint: string;
   readonly unitReady: string;
   readonly unitUnavailable: string;
+  readonly guideDetails: string;
   readonly guideSummary: string;
   readonly guideLanguages: string;
   readonly guideHardware: string;
@@ -294,6 +295,7 @@ const ZH_TW: DesktopMessages = {
   speechPackHint: '處理錄音時才需要，PDF 與圖片不受影響。看完說明，依需要下載。',
   unitReady: '已安裝',
   unitUnavailable: '無法下載',
+  guideDetails: '詳細說明',
   guideSummary: '特性',
   guideLanguages: '適用語言',
   guideHardware: '硬體',
@@ -552,6 +554,7 @@ const EN: DesktopMessages = {
   speechPackHint: 'Only recordings need it; PDFs and images work without it. Read about each part, then download what you want.',
   unitReady: 'Installed',
   unitUnavailable: 'Not downloadable',
+  guideDetails: 'Details',
   guideSummary: 'What it does',
   guideLanguages: 'Languages',
   guideHardware: 'Hardware',

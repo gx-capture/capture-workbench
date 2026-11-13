@@ -118,6 +118,10 @@ describe('AsrPage', () => {
 
     expect(queue.attach).toHaveBeenCalledTimes(1);
     expect(el.querySelector('[data-testid="asr-install-panel"]')).not.toBeNull();
+    // The engine notes are folded by default; name, size and the install action stay visible.
+    const details = el.querySelector('[data-testid="engine-card-details"]') as HTMLDetailsElement | null;
+    expect(details).not.toBeNull();
+    expect(details?.open).toBe(false);
     expect(el.querySelector('[data-testid="asr-dropzone"]')).toBeNull();
     expect(el.querySelector('[data-testid="asr-queue-empty"]')?.textContent).toContain(
       '還沒有錄音',

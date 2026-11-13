@@ -72,19 +72,28 @@
 
   <div hlmCardContent class="flex flex-col gap-3">
     @if (guide(); as g) {
-      <dl
-        class="grid grid-cols-[4.5rem_1fr] gap-x-3 gap-y-1.5 text-xs leading-relaxed"
-        data-testid="engine-card-guide"
-      >
-        <dt class="text-muted-foreground font-medium">{{ m().guideSummary }}</dt>
-        <dd>{{ g.summary }}</dd>
-        <dt class="text-muted-foreground font-medium">{{ m().guideLanguages }}</dt>
-        <dd>{{ g.languages }}</dd>
-        <dt class="text-muted-foreground font-medium">{{ m().guideHardware }}</dt>
-        <dd>{{ g.hardware }}</dd>
-        <dt class="text-muted-foreground font-medium">{{ m().guideLicense }}</dt>
-        <dd>{{ g.license }}</dd>
-      </dl>
+      <!-- The notes stay in the DOM but folded: name, size and the action are what a user scans. -->
+      <details class="text-xs" data-testid="engine-card-details">
+        <summary
+          class="text-muted-foreground hover:text-foreground w-fit cursor-pointer rounded-sm select-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+          data-testid="engine-card-details-toggle"
+        >
+          {{ m().guideDetails }}
+        </summary>
+        <dl
+          class="mt-2 grid grid-cols-[4.5rem_1fr] gap-x-3 gap-y-1.5 leading-relaxed"
+          data-testid="engine-card-guide"
+        >
+          <dt class="text-muted-foreground font-medium">{{ m().guideSummary }}</dt>
+          <dd>{{ g.summary }}</dd>
+          <dt class="text-muted-foreground font-medium">{{ m().guideLanguages }}</dt>
+          <dd>{{ g.languages }}</dd>
+          <dt class="text-muted-foreground font-medium">{{ m().guideHardware }}</dt>
+          <dd>{{ g.hardware }}</dd>
+          <dt class="text-muted-foreground font-medium">{{ m().guideLicense }}</dt>
+          <dd>{{ g.license }}</dd>
+        </dl>
+      </details>
     } @else if (requirement().detail) {
       <p class="text-muted-foreground text-xs">{{ requirement().detail }}</p>
     }
