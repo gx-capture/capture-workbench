@@ -1155,6 +1155,40 @@ def test_startup_continues_the_event_sequence_after_the_logged_events(tmp_path):
     assert repository.get_capture(capture).last_event_sequence == saved + 1
 
 
+@pytest.mark.parametrize("tail", ["partial", "whole-without-newline", "invalid-utf8"])
+def test_startup_repairs_a_damaged_event_log_tail(tmp_path, tail):
+    repository = StreamingRepository(
+        tmp_path, clock=MutableClock(), retention_hours=24, policy=_DEFAULT_POLICY
+    )
+    repository.initialize()
+    ingestion_id = _ready_ingestion(repository, b"abc", client_request_id=f"tail-{tail}")
+    capture = _start(repository, ingestion_id, f"tail-capture-{tail}")
+    saved = repository.get_capture(capture).last_event_sequence
+    events_path = tmp_path / "captures" / capture / "events.jsonl"
+    lines = [line for line in events_path.read_bytes().split(b"\n") if line]
+    logged = json.loads(lines[-1])
+    logged["sequence"] = saved + 1
+    logged["eventId"] = f"{capture}/{saved + 1}"
+    complete = json.dumps(logged).encode("utf-8")
+    if tail == "partial":
+        # A complete event, then a crash in the middle of the next line.
+        content = b"\n".join([*lines, complete]) + b"\n" + complete[:20]
+        expected, expected_lines = saved + 1, len(lines) + 1
+    elif tail == "whole-without-newline":
+        content = b"\n".join([*lines, complete])
+        expected, expected_lines = saved + 1, len(lines) + 1
+    else:
+        # A damaged line must not stop startup; the last good line still counts.
+        content = b"\n".join([*lines, complete, b'{"sequence": \xff\xfe}']) + b"\n"
+        expected, expected_lines = saved + 1, len(lines) + 2
+    events_path.write_bytes(content)
+    repository.initialize()
+    assert repository.get_capture(capture).last_event_sequence == expected
+    repaired = events_path.read_bytes()
+    assert repaired.endswith(b"\n")
+    assert len([line for line in repaired.split(b"\n") if line]) == expected_lines
+
+
 def test_startup_keeps_an_ingestion_whose_metadata_is_unreadable(tmp_path, monkeypatch, caplog):
     repository = StreamingRepository(
         tmp_path, clock=MutableClock(), retention_hours=24, policy=_DEFAULT_POLICY

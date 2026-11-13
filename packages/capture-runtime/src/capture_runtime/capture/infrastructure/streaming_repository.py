@@ -907,7 +907,7 @@ class StreamingRepository:
             # An event written just before its metadata save failed is on disk: the
             # next event continues after it instead of reusing its sequence.
             try:
-                logged = self._persistence.last_event_sequence(
+                logged = self._persistence.recover_last_event_sequence(
                     self._capture_directory(record.operation.capture_id) / "events.jsonl"
                 )
             except OSError:

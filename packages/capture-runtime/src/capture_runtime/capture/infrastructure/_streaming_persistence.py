@@ -23,6 +23,17 @@ from capture_runtime.contracts import CaptureEventV2
 _LOGGER = logging.getLogger(__name__)
 
 
+def _event_sequence(line: bytes) -> int | None:
+    """The sequence of one event-log line, or None for a blank or damaged line."""
+    if not line.strip():
+        return None
+    try:
+        sequence = json.loads(line.decode("utf-8"))["sequence"]
+    except (KeyError, TypeError, ValueError):
+        return None
+    return sequence if isinstance(sequence, int) and not isinstance(sequence, bool) else None
+
+
 def _atomic_json(path: Path, payload: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
@@ -185,20 +196,35 @@ class _StreamingRepositoryPersistence:
         return records, complete
 
     @staticmethod
-    def last_event_sequence(path: Path) -> int | None:
-        """The sequence of the last event in a capture's log, or None without one."""
+    def recover_last_event_sequence(path: Path) -> int | None:
+        """The sequence of the last complete event in a capture's log, or None.
+
+        A crash can leave the last line unfinished. Startup repairs it so the next
+        event starts on a line of its own: a tail that is a whole event gets its
+        newline, anything else is cut. Lines that cannot be decoded are skipped.
+        """
         try:
-            lines = path.read_text(encoding="utf-8").splitlines()
+            raw = path.read_bytes()
         except FileNotFoundError:
             return None
-        for line in reversed(lines):
-            if not line:
-                continue
-            try:
-                sequence = json.loads(line)["sequence"]
-            except (KeyError, TypeError, ValueError):
-                return None
-            return sequence if isinstance(sequence, int) else None
+        if raw and not raw.endswith(b"\n"):
+            cut = raw.rfind(b"\n") + 1
+            if _event_sequence(raw[cut:]) is not None:
+                with path.open("ab") as log:
+                    log.write(b"\n")
+                    log.flush()
+                    os.fsync(log.fileno())
+                raw += b"\n"
+            else:
+                with path.open("r+b") as log:
+                    log.truncate(cut)
+                    log.flush()
+                    os.fsync(log.fileno())
+                raw = raw[:cut]
+        for line in reversed(raw.split(b"\n")):
+            sequence = _event_sequence(line)
+            if sequence is not None:
+                return sequence
         return None
 
     def delete_capture_directory(self, directory: Path) -> None:
