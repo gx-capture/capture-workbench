@@ -10,7 +10,7 @@ use crate::{
         RuntimeInstallationStartInput, RuntimeModelInstallationStartInput, RuntimeRequirementInput,
         RuntimeStreamingCaptureInput, RuntimeStreamingEventsInput,
     },
-    library::{LibraryStore, RuntimeSourceFile, RECORDING_MEDIA_TYPES},
+    library::{validate_spoken_language, LibraryStore, RuntimeSourceFile, RECORDING_MEDIA_TYPES},
     state::DesktopState,
 };
 
@@ -210,15 +210,23 @@ pub(crate) fn create_capture(
     finish_capture_start(&config, &ingestion_id, result)
 }
 
+fn validate_streaming_capture_input(input: &RuntimeStreamingCaptureInput) -> Result<(), String> {
+    validate_document_id(&input.document_id)?;
+    validate_client_request_id(&input.client_request_id)?;
+    validate_structuring_mode(&input.structuring_mode)?;
+    if let Some(language) = input.spoken_language.as_deref() {
+        validate_spoken_language(language)?;
+    }
+    Ok(())
+}
+
 pub(crate) fn start_streaming_capture(
     state: &DesktopState,
     library: &LibraryStore,
     input: RuntimeStreamingCaptureInput,
     upload: &Upload,
 ) -> Result<Value, String> {
-    validate_document_id(&input.document_id)?;
-    validate_client_request_id(&input.client_request_id)?;
-    validate_structuring_mode(&input.structuring_mode)?;
+    validate_streaming_capture_input(&input)?;
     let source = library.runtime_source_file(&input.document_id)?;
     // Audio, or video whose audio track is transcribed.
     if !RECORDING_MEDIA_TYPES.contains(&source.media_type.as_str()) {
@@ -226,6 +234,19 @@ pub(crate) fn start_streaming_capture(
     }
     let config = state.backend_config()?;
     start_streaming_capture_inner(&config, &source, &input, upload)
+}
+
+fn streaming_capture_body(input: &RuntimeStreamingCaptureInput, ingestion_id: &str) -> Value {
+    let mut body = serde_json::Map::new();
+    body.insert("clientRequestId".into(), json!(input.client_request_id));
+    body.insert("ingestionId".into(), json!(ingestion_id));
+    body.insert("structuringMode".into(), json!(input.structuring_mode));
+    body.insert("startPolicy".into(), json!("eager"));
+    body.insert("identifySpeakers".into(), json!(input.identify_speakers));
+    if let Some(language) = input.spoken_language.as_deref() {
+        body.insert("spokenLanguage".into(), json!(language));
+    }
+    Value::Object(body)
 }
 
 fn start_streaming_capture_inner(
@@ -249,14 +270,8 @@ fn start_streaming_capture_inner(
     let ingestion_id =
         upload_ingestion_source(config, source, open_body, &input.client_request_id, upload)?;
     let capture_body = RequestBody {
-        bytes: serde_json::to_vec(&json!({
-            "clientRequestId": input.client_request_id,
-            "ingestionId": ingestion_id,
-            "structuringMode": input.structuring_mode,
-            "startPolicy": "eager",
-            "identifySpeakers": input.identify_speakers,
-        }))
-        .map_err(|_| "Progressive capture request cannot be encoded.".to_string())?,
+        bytes: serde_json::to_vec(&streaming_capture_body(input, &ingestion_id))
+            .map_err(|_| "Progressive capture request cannot be encoded.".to_string())?,
         content_type: "application/json".into(),
     };
     cancel_before_capture_start(config, &ingestion_id, upload)?;
@@ -1234,6 +1249,7 @@ mod tests {
                 client_request_id: "cancel-boundary".into(),
                 structuring_mode: "host".into(),
                 identify_speakers: false,
+                spoken_language: None,
             };
             let registry = std::sync::Arc::new(UploadCancellations::default());
             let server_registry = std::sync::Arc::clone(&registry);
@@ -1322,6 +1338,7 @@ mod tests {
             client_request_id: "cancel-retry".into(),
             structuring_mode: "host".into(),
             identify_speakers: false,
+            spoken_language: None,
         };
         let registry = std::sync::Arc::new(UploadCancellations::default());
         let server_registry = std::sync::Arc::clone(&registry);
@@ -1381,6 +1398,7 @@ mod tests {
             client_request_id: "test-client-req".into(),
             structuring_mode: "host".into(),
             identify_speakers: false,
+            spoken_language: None,
         };
 
         let server = thread::spawn(move || {
@@ -1453,6 +1471,7 @@ mod tests {
             client_request_id: "test-client-req".into(),
             structuring_mode: "host".into(),
             identify_speakers: false,
+            spoken_language: None,
         };
 
         let server = thread::spawn(move || {
@@ -1487,6 +1506,7 @@ mod tests {
             client_request_id: "test-client-req".into(),
             structuring_mode: "host".into(),
             identify_speakers: false,
+            spoken_language: None,
         };
 
         let server = thread::spawn(move || {
@@ -1568,6 +1588,7 @@ mod tests {
             client_request_id: "replay-request".into(),
             structuring_mode: "host".into(),
             identify_speakers: false,
+            spoken_language: None,
         };
         let server = thread::spawn(move || {
             let paths = [
@@ -1694,6 +1715,49 @@ mod tests {
         replay_scenario(4, 1, Some(500), false);
         for status in [None, Some(503)] {
             replay_scenario(4, 3, status, false);
+        }
+    }
+
+    #[test]
+    fn streaming_capture_body_serializes_with_and_without_spoken_language() {
+        let with_language: RuntimeStreamingCaptureInput = serde_json::from_value(json!({
+            "documentId": "0123456789abcdef0123456789abcdef",
+            "clientRequestId": "lang-req",
+            "structuringMode": "runtime",
+            "identifySpeakers": true,
+            "spokenLanguage": "ja",
+        }))
+        .expect("input with spokenLanguage");
+        validate_streaming_capture_input(&with_language).expect("valid language");
+        let encoded_with = streaming_capture_body(&with_language, "ing-1");
+        assert_eq!(encoded_with["spokenLanguage"], "ja");
+        assert_eq!(encoded_with["identifySpeakers"], true);
+
+        let without_language: RuntimeStreamingCaptureInput = serde_json::from_value(json!({
+            "documentId": "0123456789abcdef0123456789abcdef",
+            "clientRequestId": "nolang-req",
+            "structuringMode": "runtime",
+        }))
+        .expect("input without spokenLanguage");
+        validate_streaming_capture_input(&without_language).expect("none language");
+        let encoded_without = streaming_capture_body(&without_language, "ing-2");
+        assert!(encoded_without.get("spokenLanguage").is_none());
+        assert_eq!(encoded_without["identifySpeakers"], false);
+    }
+
+    #[test]
+    fn streaming_capture_rejects_invalid_spoken_language_without_paths() {
+        for bad in ["", "tlh", "zh-TW", "C:\\recordings\\secret.mp3"] {
+            let input = RuntimeStreamingCaptureInput {
+                document_id: "0123456789abcdef0123456789abcdef".into(),
+                client_request_id: "bad-lang".into(),
+                structuring_mode: "runtime".into(),
+                identify_speakers: false,
+                spoken_language: Some(bad.into()),
+            };
+            let error = validate_streaming_capture_input(&input).expect_err("invalid rejected");
+            assert_eq!(error, "Capture spoken language is invalid.");
+            assert!(!error.contains("secret.mp3"));
         }
     }
 }

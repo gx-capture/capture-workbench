@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "camelCase")]
 pub(crate) enum SourceSelectionKind {
     Documents,
+    Recordings,
     All,
 }
 #[derive(Deserialize)]

@@ -32,6 +32,9 @@ pub(crate) struct RuntimeStreamingCaptureInput {
     /// Ask the runtime to label who speaks each segment.
     #[serde(default)]
     pub identify_speakers: bool,
+    /// Optional spoken language tag (`zh`, `en`, `ja`, etc.) for speech recognition.
+    #[serde(default)]
+    pub spoken_language: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]

@@ -9,8 +9,6 @@ const DEFAULT_DESKTOP_LOCALE: DesktopLocale = 'zh-TW';
 
 /** Pages the shell's left navigation leads to. */
 export type ShellRoute = 'ocr' | 'asr' | 'history' | 'settings';
-/** Pages whose intake still links to the history workspace. */
-export type PlaceholderRoute = 'asr';
 
 /** Every piece of text the desktop app shows. */
 export interface DesktopMessages {
@@ -30,10 +28,6 @@ export interface DesktopMessages {
   readonly title: string;
   readonly mainNavigation: string;
   readonly nav: Readonly<Record<ShellRoute, string>>;
-  readonly comingSoon: string;
-  readonly placeholder: Readonly<
-    Record<PlaceholderRoute, { readonly summary: string; readonly action: string }>
-  >;
   readonly noModel: string;
   readonly setupTitle: string;
   readonly needsSetup: string;
@@ -194,6 +188,30 @@ export interface DesktopMessages {
   readonly ocrRestartNamed: (name: string) => string;
   readonly ocrViewNamed: (name: string) => string;
   readonly ocrExportNamed: (name: string) => string;
+  readonly asrSubtitle: string;
+  readonly asrInstallTitle: string;
+  readonly asrInstallHint: string;
+  readonly asrEmptyTitle: string;
+  readonly asrEmptyHintInstall: string;
+  readonly asrEmptyHintReady: string;
+  readonly asrDropSectionLabel: string;
+  readonly asrDropHint: string;
+  readonly asrDropFormats: string;
+  readonly asrLanguageLabel: string;
+  readonly asrSpokenLanguage: Readonly<Record<'zh' | 'en' | 'ja', string>>;
+  readonly asrSpeakersLabel: string;
+  readonly asrSpeakersNoPartialHint: string;
+  readonly asrSpeakersOptionalTitle: string;
+  readonly asrHeardOf: (heard: string, total: string) => string;
+  readonly asrLiveProgressLabel: (fileName: string) => string;
+  readonly asrLivePartialNote: string;
+  readonly asrQueueSummary: (count: number) => string;
+  readonly asrColDuration: string;
+  readonly asrSpeakerCount: (count: number) => string;
+  readonly asrPlaybackUnsupported: string;
+  readonly asrExport: string;
+  readonly asrExportNamed: (name: string) => string;
+  readonly asrInstallNamed: (name: string) => string;
 }
 
 const ZH_TW: DesktopMessages = {
@@ -221,10 +239,6 @@ const ZH_TW: DesktopMessages = {
   title: '文件擷取工作台',
   mainNavigation: '主要功能',
   nav: { ocr: '文件轉文字', asr: '錄音轉逐字稿', history: '紀錄', settings: '設定' },
-  comingSoon: '即將推出',
-  placeholder: {
-    asr: { summary: '把錄音轉成標有時間的逐字稿。', action: '前往紀錄加入錄音' },
-  },
   noModel: '未選擇模型',
   setupTitle: '首次設定',
   needsSetup: '處理文件前，需要先下載必要元件。',
@@ -430,6 +444,30 @@ const ZH_TW: DesktopMessages = {
   ocrRestartNamed: (name) => `重新開始 ${name}`,
   ocrViewNamed: (name) => `檢視 ${name}`,
   ocrExportNamed: (name) => `匯出 ${name} 的文字`,
+  asrSubtitle: '把錄音轉成有時間標記的逐字稿。錄音不會離開這台電腦。',
+  asrInstallTitle: '先安裝語音辨識',
+  asrInstallHint: '下載期間其他功能照常可用。',
+  asrEmptyTitle: '還沒有錄音',
+  asrEmptyHintInstall: '安裝完成後，拖曳錄音或影片到這裡，或按「選擇檔案」。',
+  asrEmptyHintReady: '拖曳錄音或影片到這裡，或按「選擇檔案」。',
+  asrDropSectionLabel: '加入錄音',
+  asrDropHint: '拖曳錄音或影片到這裡',
+  asrDropFormats: 'MP3、M4A、WAV、MP4 等，每個檔案最長 90 分鐘、最大 2 GiB',
+  asrLanguageLabel: '語言',
+  asrSpokenLanguage: { zh: '中文', en: '英文', ja: '日文' },
+  asrSpeakersLabel: '分辨說話者',
+  asrSpeakersNoPartialHint: '分辨說話者時，要整段完成才看得到逐字稿。',
+  asrSpeakersOptionalTitle: '說話者辨識（選用）',
+  asrHeardOf: (heard, total) => `已聽到 ${heard}／${total}`,
+  asrLiveProgressLabel: (fileName) => `${fileName} 的進度`,
+  asrLivePartialNote: '灰色的是即時結果，整段完成後會再校正。',
+  asrQueueSummary: (count) => `${count} 個檔案，依加入順序處理`,
+  asrColDuration: '長度',
+  asrSpeakerCount: (count) => `${count} 位說話者`,
+  asrPlaybackUnsupported: '這種格式無法在這裡播放，逐字稿照常可看。',
+  asrExport: '匯出',
+  asrExportNamed: (name) => `匯出 ${name} 的逐字稿`,
+  asrInstallNamed: (name) => `安裝語音辨識以處理 ${name}`,
 };
 
 const EN: DesktopMessages = {
@@ -457,10 +495,6 @@ const EN: DesktopMessages = {
   title: 'Capture Workbench',
   mainNavigation: 'Main',
   nav: { ocr: 'Document to text', asr: 'Recording to transcript', history: 'History', settings: 'Settings' },
-  comingSoon: 'Coming soon',
-  placeholder: {
-    asr: { summary: 'Turn recordings into timed transcripts.', action: 'Add recordings in History' },
-  },
   noModel: 'No model selected',
   setupTitle: 'First-time setup',
   needsSetup: 'Required components must be downloaded before processing.',
@@ -670,6 +704,31 @@ const EN: DesktopMessages = {
   ocrRestartNamed: (name) => `Start ${name} again`,
   ocrViewNamed: (name) => `View ${name}`,
   ocrExportNamed: (name) => `Export text for ${name}`,
+  asrSubtitle: 'Turn recordings into timed transcripts. Audio stays on this computer.',
+  asrInstallTitle: 'Install speech recognition first',
+  asrInstallHint: 'Other features stay usable during the download.',
+  asrEmptyTitle: 'No recordings yet',
+  asrEmptyHintInstall: 'Once installed, drag recordings or videos here or click Choose files.',
+  asrEmptyHintReady: 'Drag recordings or videos here or click Choose files.',
+  asrDropSectionLabel: 'Add recordings',
+  asrDropHint: 'Drag recordings or videos here',
+  asrDropFormats: 'MP3, M4A, WAV, MP4 and more — up to 90 minutes and 2 GiB per file',
+  asrLanguageLabel: 'Language',
+  asrSpokenLanguage: { zh: 'Chinese', en: 'English', ja: 'Japanese' },
+  asrSpeakersLabel: 'Identify speakers',
+  asrSpeakersNoPartialHint: 'When identifying speakers, the transcript appears once the full recording finishes.',
+  asrSpeakersOptionalTitle: 'Speaker identification (optional)',
+  asrHeardOf: (heard, total) => `Heard ${heard} / ${total}`,
+  asrLiveProgressLabel: (fileName) => `Progress for ${fileName}`,
+  asrLivePartialNote: 'Gray lines are live previews and will be refined once finished.',
+  asrQueueSummary: (count) =>
+    `${count} ${count === 1 ? 'file' : 'files'}, processed in import order`,
+  asrColDuration: 'Duration',
+  asrSpeakerCount: (count) => (count === 1 ? '1 speaker' : `${count} speakers`),
+  asrPlaybackUnsupported: 'This recording cannot be played here; the transcript is still readable.',
+  asrExport: 'Export',
+  asrExportNamed: (name) => `Export transcript for ${name}`,
+  asrInstallNamed: (name) => `Install speech recognition for ${name}`,
 };
 
 export const DESKTOP_MESSAGES: Readonly<Record<DesktopLocale, DesktopMessages>> =

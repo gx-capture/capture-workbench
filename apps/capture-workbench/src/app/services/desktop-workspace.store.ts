@@ -24,6 +24,7 @@ import type {
   DesktopLibraryDetail,
   DesktopLibrarySummary,
 } from '../contracts';
+import { AsrQueueStore } from './asr-queue.store';
 import { CaptureQueueStore } from './capture-queue.store';
 import { DesktopLibraryService, type DesktopSourceSelectionBatch } from './desktop-library.service';
 import { DesktopWorkspaceFormattingService } from './desktop-workspace-formatting.service';
@@ -550,20 +551,24 @@ export class DesktopWorkspaceStore {
   }
 
   /**
-   * The one drag-drop subscription. On `/ocr` the selections wait in the OCR queue.
-   * Anywhere else they start capture, as this workspace always did.
+   * The one drag-drop subscription. On `/ocr` or `/asr` the selections wait in that
+   * page's queue. Anywhere else they start capture, as this workspace always did.
    */
   private routeDroppedSources(batch: DesktopSourceSelectionBatch): void {
-    if (this.onOcrPage()) {
+    const path = this.currentRoutePath();
+    if (path === '/ocr') {
       this.injector.get(CaptureQueueStore).importSelections(batch);
+      return;
+    }
+    if (path === '/asr') {
+      this.injector.get(AsrQueueStore).importSelections(batch);
       return;
     }
     this.addSelections(batch);
   }
 
-  private onOcrPage(): boolean {
-    const path = (this.router?.url ?? '').split(/[?#]/u)[0] ?? '';
-    return path === '/ocr';
+  private currentRoutePath(): string {
+    return (this.router?.url ?? '').split(/[?#]/u)[0] ?? '';
   }
 
   private reloadDocumentState(documentId: string): void {

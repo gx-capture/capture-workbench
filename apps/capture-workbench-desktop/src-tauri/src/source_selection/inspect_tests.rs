@@ -40,8 +40,16 @@ fn kinds_signatures_and_lengths_are_inspected_before_admission() {
     let recording = dir.path().join("source.mp3");
     fs::write(&recording, b"ID3recording").unwrap();
     assert!(inspect_source(&recording, SourceSelectionKind::All).is_ok());
+    assert!(inspect_source(&recording, SourceSelectionKind::Recordings).is_ok());
     assert_eq!(
         inspect_source(&recording, SourceSelectionKind::Documents)
+            .err()
+            .unwrap(),
+        Reason::Unsupported
+    );
+    fs::write(&source, b"%PDF-1.7\nfixture").unwrap();
+    assert_eq!(
+        inspect_source(&source, SourceSelectionKind::Recordings)
             .err()
             .unwrap(),
         Reason::Unsupported

@@ -11,7 +11,6 @@ flowchart LR
   n_apps_capture_workbench_src_app_history["apps/capture-workbench/src/app/history<br/>shell:feature"]
   n_apps_capture_workbench_src_app_i18n["apps/capture-workbench/src/app/i18n<br/>shell:i18n"]
   n_apps_capture_workbench_src_app_ocr["apps/capture-workbench/src/app/ocr<br/>shell:feature"]
-  n_apps_capture_workbench_src_app_placeholder["apps/capture-workbench/src/app/placeholder<br/>shell:feature"]
   n_apps_capture_workbench_src_app_services["apps/capture-workbench/src/app/services<br/>shell:service"]
   n_apps_capture_workbench_src_app_settings["apps/capture-workbench/src/app/settings<br/>shell:feature"]
   n_apps_capture_workbench_src_app_ui_button_src["apps/capture-workbench/src/app/ui/button/src<br/>shell:ui"]
@@ -30,8 +29,9 @@ flowchart LR
   n_root["root<br/>root"]
   n_apps_capture_workbench_src_app_asr --> n_apps_capture_workbench_src_app_engine_card
   n_apps_capture_workbench_src_app_asr --> n_apps_capture_workbench_src_app_i18n
-  n_apps_capture_workbench_src_app_asr --> n_apps_capture_workbench_src_app_placeholder
   n_apps_capture_workbench_src_app_asr --> n_apps_capture_workbench_src_app_services
+  n_apps_capture_workbench_src_app_asr --> n_apps_capture_workbench_src_app_ui_button_src
+  n_apps_capture_workbench_src_app_asr --> n_apps_capture_workbench_src_app_ui_table_src
   n_apps_capture_workbench_src_app_contracts --> n_packages_capture_runtime_client_src
   n_apps_capture_workbench_src_app_contracts --> n_packages_capture_workbench_ui_src
   n_apps_capture_workbench_src_app_engine_card --> n_apps_capture_workbench_src_app_i18n
@@ -50,9 +50,6 @@ flowchart LR
   n_apps_capture_workbench_src_app_ocr --> n_apps_capture_workbench_src_app_ui_card_src
   n_apps_capture_workbench_src_app_ocr --> n_apps_capture_workbench_src_app_ui_table_src
   n_apps_capture_workbench_src_app_ocr --> n_packages_capture_workbench_ui_src
-  n_apps_capture_workbench_src_app_placeholder --> n_apps_capture_workbench_src_app_i18n
-  n_apps_capture_workbench_src_app_placeholder --> n_apps_capture_workbench_src_app_ui_button_src
-  n_apps_capture_workbench_src_app_placeholder --> n_apps_capture_workbench_src_app_ui_card_src
   n_apps_capture_workbench_src_app_services --> n_apps_capture_workbench_src_app_contracts
   n_apps_capture_workbench_src_app_services --> n_apps_capture_workbench_src_app_i18n
   n_apps_capture_workbench_src_app_services --> n_packages_capture_runtime_client_src

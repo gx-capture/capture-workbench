@@ -80,7 +80,9 @@ pub(crate) use filesystem::{
 pub(crate) use store::LibraryIndex;
 pub(crate) use store::{LibraryStore, RuntimeSourceFile};
 pub(crate) use transaction::{commit_library_transaction, recover_library_transaction};
-pub(crate) use validation::{validate_document_id, validate_status, RECORDING_MEDIA_TYPES};
+pub(crate) use validation::{
+    validate_document_id, validate_spoken_language, validate_status, RECORDING_MEDIA_TYPES,
+};
 
 #[cfg(test)]
 use store::LibrarySourceInput;
@@ -1824,6 +1826,7 @@ mod tests {
                 source_path: source.to_string_lossy().into_owned(),
                 capture_options: Some(LibraryCaptureOptions {
                     pdf_page_count: Some(3),
+                    ..Default::default()
                 }),
                 ..Default::default()
             })
@@ -1887,6 +1890,7 @@ mod tests {
                     .into_owned(),
                 capture_options: Some(LibraryCaptureOptions {
                     pdf_page_count: Some(0),
+                    ..Default::default()
                 }),
                 ..Default::default()
             })
@@ -1933,5 +1937,59 @@ mod tests {
         assert_eq!(listed.len(), 1);
         assert!(listed[0].capture_options.is_none());
         assert!(!listed[0].has_raw);
+    }
+
+    #[test]
+    fn spoken_language_options_serialize_and_reject_invalid_values() {
+        let with_lang = LibraryCaptureOptions {
+            spoken_language: Some("ja".into()),
+            identify_speakers: Some(true),
+            ..Default::default()
+        };
+        let encoded = serde_json::to_value(&with_lang).expect("encode with spokenLanguage");
+        assert_eq!(encoded["spokenLanguage"], "ja");
+        assert_eq!(encoded["identifySpeakers"], true);
+        assert!(encoded.get("pdfPageCount").is_none());
+
+        let without_lang = LibraryCaptureOptions::default();
+        let encoded_empty =
+            serde_json::to_value(&without_lang).expect("encode without spokenLanguage");
+        assert!(encoded_empty.get("spokenLanguage").is_none());
+
+        let directory = tempfile::tempdir().expect("temporary app data");
+        let recording = directory.path().join("meeting.mp3");
+        fs::write(&recording, b"ID3recording").expect("recording");
+        let library = LibraryStore::open(directory.path()).expect("library");
+
+        let imported = library
+            .import_source(LibraryImportSourceRequest {
+                source_path: recording.to_string_lossy().into_owned(),
+                capture_options: Some(with_lang),
+                ..Default::default()
+            })
+            .expect("valid spokenLanguage accepted");
+        let opts = imported.capture_options.expect("stored options");
+        assert_eq!(opts.spoken_language.as_deref(), Some("ja"));
+        assert_eq!(opts.identify_speakers, Some(true));
+
+        let secret_path = directory
+            .path()
+            .join("secret-dir")
+            .to_string_lossy()
+            .into_owned();
+        for bad in ["", "tlh", "zh-TW", secret_path.as_str()] {
+            let error = library
+                .import_source(LibraryImportSourceRequest {
+                    source_path: recording.to_string_lossy().into_owned(),
+                    capture_options: Some(LibraryCaptureOptions {
+                        spoken_language: Some(bad.into()),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                })
+                .expect_err("invalid spokenLanguage rejected");
+            assert_eq!(error, "Capture spoken language is invalid.");
+            assert!(!error.contains("secret-dir"));
+        }
     }
 }

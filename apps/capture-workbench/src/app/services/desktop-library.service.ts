@@ -30,7 +30,7 @@ export interface DesktopSourceSelectionBatch {
 export class DesktopLibraryService {
   private readonly commands = inject(DesktopTauriCommandService);
 
-  selectSources(kind: 'documents' | 'all' = 'all'): Observable<DesktopSourceSelectionBatch> {
+  selectSources(kind: 'documents' | 'recordings' | 'all' = 'all'): Observable<DesktopSourceSelectionBatch> {
     return this.commands.invoke('library_select_sources', { request: { kind } });
   }
 

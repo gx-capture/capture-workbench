@@ -1,16 +1,25 @@
 <section
-  class="mx-auto flex max-w-2xl flex-col gap-6 px-8 py-10"
+  class="mx-auto flex max-w-4xl flex-col gap-7 px-8 py-10"
   data-testid="page-asr"
 >
-  <h1 class="text-2xl font-semibold">{{ m().nav.asr }}</h1>
+  <header class="flex flex-col gap-1.5">
+    <h1 class="text-2xl font-bold text-foreground">{{ m().nav.asr }}</h1>
+    <p class="text-sm text-muted-foreground">{{ m().asrSubtitle }}</p>
+  </header>
 
-  @if (showInstallPanel()) {
-    <div class="flex flex-col gap-4" data-testid="asr-install-panel">
-      <p class="text-muted-foreground text-sm">{{ m().asrPanelHint }}</p>
-      @for (unit of features.speechPack(); track unit.requirementId) {
+  @if (!queue.speechReady()) {
+    <section
+      class="flex flex-col rounded-xl border border-border bg-card px-6 pt-5 pb-2"
+      data-testid="asr-install-panel"
+      aria-labelledby="asr-install-title"
+    >
+      <h2 id="asr-install-title" class="pb-1 text-lg font-bold text-foreground">
+        {{ m().asrInstallTitle }}
+      </h2>
+      <p class="pb-3.5 text-xs text-muted-foreground">{{ m().asrInstallHint }}</p>
+      @for (unit of queue.speechPack(); track unit.requirementId) {
         <app-engine-card
           [requirement]="unit"
-          [optional]="unit.requirementId === 'speaker-diarization'"
           [installation]="features.installationFor(unit.requirementId)"
           [installing]="features.installing()"
           (install)="features.installUnit($event)"
@@ -18,20 +27,395 @@
           (retry)="features.retryInstallation($event)"
         />
       }
-    </div>
+    </section>
   } @else {
-    <app-placeholder-page page="asr" />
+    <section
+      class="flex flex-col gap-4 rounded-xl border border-dashed border-border bg-card px-6 py-5"
+      data-testid="asr-dropzone"
+      [attr.aria-label]="m().asrDropSectionLabel"
+    >
+      <div class="flex flex-wrap items-center gap-x-6 gap-y-4">
+        <svg
+          aria-hidden="true"
+          width="28"
+          height="28"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.6"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          class="size-7 shrink-0 text-primary"
+        >
+          <rect x="9" y="3" width="6" height="11" rx="3" />
+          <path d="M5 11a7 7 0 0 0 14 0" />
+          <path d="M12 18v3" />
+        </svg>
+        <div class="flex min-w-60 flex-1 flex-col gap-0.5">
+          <p class="font-semibold text-foreground">{{ m().asrDropHint }}</p>
+          <p class="text-xs text-muted-foreground">{{ m().asrDropFormats }}</p>
+        </div>
+        <button
+          hlmBtn
+          type="button"
+          data-testid="asr-choose-files"
+          (click)="queue.chooseFiles()"
+        >
+          {{ m().chooseFiles }}
+        </button>
+      </div>
 
-    @if (optionalSpeakerUnit(); as speakerUnit) {
-      <app-engine-card
-        [requirement]="speakerUnit"
-        [optional]="true"
-        [installation]="features.installationFor(speakerUnit.requirementId)"
-        [installing]="features.installing()"
-        (install)="features.installUnit($event)"
-        (cancelInstall)="features.cancelInstallation($event)"
-        (retry)="features.retryInstallation($event)"
-      />
-    }
+      <div class="flex flex-wrap items-center gap-x-7 gap-y-3 border-t border-border pt-3.5">
+        <label
+          for="asr-lang"
+          class="flex items-center gap-2 text-sm text-secondary-foreground"
+        >
+          <span>{{ m().asrLanguageLabel }}</span>
+          <select
+            id="asr-lang"
+            data-testid="asr-language-select"
+            class="min-h-9 rounded-md border border-border bg-card px-3 text-sm text-foreground hover:border-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+            [value]="queue.spokenLanguage()"
+            (change)="onLanguageChange($event)"
+          >
+            @for (lang of languages; track lang) {
+              <option [value]="lang">{{ m().asrSpokenLanguage[lang] }}</option>
+            }
+          </select>
+        </label>
+
+        @if (queue.speakersReady()) {
+          <label
+            for="asr-speakers"
+            class="flex cursor-pointer items-center gap-2 text-sm text-secondary-foreground"
+          >
+            <input
+              id="asr-speakers"
+              type="checkbox"
+              data-testid="asr-identify-speakers"
+              class="size-4 accent-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+              [checked]="queue.identifySpeakers()"
+              (change)="onIdentifySpeakersChange($event)"
+            />
+            <span>{{ m().asrSpeakersLabel }}</span>
+          </label>
+          <p
+            class="min-w-60 flex-1 text-xs text-muted-foreground"
+            data-testid="asr-speakers-note"
+          >
+            {{ m().asrSpeakersNoPartialHint }}
+          </p>
+        } @else if (queue.optionalSpeakerUnit(); as speakerUnit) {
+          <div
+            class="w-full border-t border-border pt-2"
+            data-testid="asr-optional-speakers"
+          >
+            <app-engine-card
+              [requirement]="speakerUnit"
+              [installation]="features.installationFor(speakerUnit.requirementId)"
+              [installing]="features.installing()"
+              (install)="features.installUnit($event)"
+              (cancelInstall)="features.cancelInstallation($event)"
+              (retry)="features.retryInstallation($event)"
+            />
+          </div>
+        }
+      </div>
+
+      @if (queue.importError(); as importError) {
+        <p
+          class="text-sm whitespace-pre-line text-destructive"
+          data-testid="asr-import-error"
+          role="alert"
+        >
+          {{ importError }}
+        </p>
+      }
+    </section>
   }
+
+  @if (queue.liveCapture(); as live) {
+    <section
+      class="flex flex-col gap-3.5 rounded-xl border border-border bg-card px-6 pt-5 pb-2"
+      data-testid="asr-live-card"
+      aria-labelledby="asr-live-title"
+    >
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div class="flex min-w-0 flex-col gap-0.5">
+          <h2 id="asr-live-title" class="text-lg font-bold text-foreground">
+            {{ live.fileName }}
+          </h2>
+          <p
+            class="text-xs text-muted-foreground tabular-nums"
+            data-testid="asr-live-heard"
+          >
+            {{ live.heardLabel }}
+          </p>
+        </div>
+        <button
+          hlmBtn
+          variant="outline"
+          size="sm"
+          type="button"
+          data-testid="asr-live-cancel"
+          [attr.aria-label]="m().ocrCancelNamed(live.fileName)"
+          (click)="queue.cancel(live.documentId)"
+        >
+          {{ m().cancelInstall }}
+        </button>
+      </div>
+
+      <div
+        class="h-1.5 w-full overflow-hidden rounded-full bg-muted"
+        role="progressbar"
+        data-testid="asr-live-progress"
+        [attr.aria-label]="m().asrLiveProgressLabel(live.fileName)"
+        [attr.aria-valuenow]="live.percent"
+        aria-valuemin="0"
+        aria-valuemax="100"
+      >
+        <span
+          class="block h-full rounded-full bg-primary transition-[width]"
+          [style.width.%]="live.percent"
+        ></span>
+      </div>
+
+      @if (live.lines.length > 0) {
+        <div
+          class="flex flex-col"
+          data-testid="streaming-partial"
+          [attr.data-covered-until-ms]="live.coveredUntilMs"
+          [attr.data-partial-revision]="live.partialRevision"
+          aria-live="polite"
+        >
+          @for (line of live.lines; track line.segmentId) {
+            <div
+              class="grid grid-cols-[4.5rem_minmax(0,1fr)] gap-4 border-t border-border py-3"
+              data-testid="asr-live-line"
+              [attr.data-partial]="line.partial"
+            >
+              <time class="pt-0.5 text-sm text-muted-foreground tabular-nums">
+                {{ line.timeLabel }}
+              </time>
+              <p
+                class="text-base leading-relaxed"
+                [class.text-muted-foreground]="line.partial"
+                [class.text-foreground]="!line.partial"
+              >
+                {{ line.text }}
+              </p>
+            </div>
+          }
+        </div>
+        <p
+          class="py-1 pb-3 text-xs text-muted-foreground"
+          data-testid="asr-live-note"
+        >
+          {{ m().asrLivePartialNote }}
+        </p>
+      }
+    </section>
+  }
+
+  <section class="flex flex-col gap-3" aria-labelledby="asr-queue-title">
+    <div class="flex items-baseline justify-between gap-3">
+      <h2 id="asr-queue-title" class="text-lg font-bold text-foreground">
+        {{ m().queue }}
+      </h2>
+      @if (queue.rows().length > 0) {
+        <p
+          class="text-xs text-muted-foreground"
+          data-testid="asr-queue-summary"
+        >
+          {{ m().asrQueueSummary(queue.rows().length) }}
+        </p>
+      }
+    </div>
+
+    @if (queue.rows().length === 0) {
+      <div
+        class="flex flex-col items-start gap-1.5 rounded-xl border border-dashed border-border bg-card px-6 py-7"
+        data-testid="asr-queue-empty"
+      >
+        <p class="font-semibold text-foreground">{{ m().asrEmptyTitle }}</p>
+        <p class="text-xs text-muted-foreground">
+          {{ queue.speechReady() ? m().asrEmptyHintReady : m().asrEmptyHintInstall }}
+        </p>
+        <button
+          hlmBtn
+          variant="outline"
+          size="sm"
+          type="button"
+          class="mt-2"
+          data-testid="asr-empty-choose-files"
+          [disabled]="!queue.speechReady()"
+          (click)="queue.chooseFiles()"
+        >
+          {{ m().chooseFiles }}
+        </button>
+      </div>
+    } @else {
+      <div
+        hlmTableContainer
+        class="rounded-xl border border-border bg-card px-3 py-1"
+      >
+        <table hlmTable data-testid="asr-queue">
+          <thead hlmTHead>
+            <tr hlmTr>
+              <th hlmTh>{{ m().ocrColFile }}</th>
+              <th hlmTh>{{ m().asrColDuration }}</th>
+              <th hlmTh class="w-2/5">{{ m().ocrColStatus }}</th>
+              <th hlmTh class="text-right">{{ m().ocrColAction }}</th>
+            </tr>
+          </thead>
+          <tbody hlmTBody>
+            @for (row of queue.rows(); track row.documentId) {
+              <tr
+                hlmTr
+                data-testid="asr-queue-row"
+                [attr.data-document-id]="row.documentId"
+                [attr.data-user-status]="row.userStatus"
+              >
+                <td hlmTd class="font-medium text-foreground">
+                  {{ row.fileName }}
+                </td>
+                <td
+                  hlmTd
+                  class="whitespace-nowrap tabular-nums"
+                  data-testid="asr-row-duration"
+                >
+                  {{ row.durationLabel }}
+                </td>
+                <td hlmTd data-testid="asr-row-status" aria-live="polite">
+                  <div class="flex flex-col items-start gap-1">
+                    <span
+                      class="inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold whitespace-nowrap"
+                      data-testid="asr-row-chip"
+                      [class]="chipClasses(row.userStatus)"
+                    >
+                      {{ row.statusText }}
+                    </span>
+                    @if (row.speakerCount !== null) {
+                      <span
+                        class="text-xs text-muted-foreground"
+                        data-testid="asr-row-speakers"
+                      >
+                        {{ m().asrSpeakerCount(row.speakerCount) }}
+                      </span>
+                    }
+                    @if (row.playbackUnavailable) {
+                      <span
+                        class="text-xs text-muted-foreground"
+                        data-testid="asr-row-playback-note"
+                      >
+                        {{ m().asrPlaybackUnsupported }}
+                      </span>
+                    }
+                    @if (row.needsInstall && row.installPercent === null) {
+                      <span class="text-xs text-muted-foreground">
+                        {{ m().asrInstallTitle }}
+                      </span>
+                    }
+                    @if (row.needsInstall && row.installPercent !== null) {
+                      <span
+                        class="text-xs text-muted-foreground"
+                        data-testid="asr-row-install-progress"
+                      >
+                        {{ row.installPercent }}%
+                      </span>
+                    }
+                    @if (row.errorMessage) {
+                      <span class="text-xs text-destructive">
+                        {{ row.errorMessage }}
+                      </span>
+                    }
+                  </div>
+                </td>
+                <td hlmTd class="text-right whitespace-nowrap">
+                  <div class="flex flex-wrap justify-end gap-2">
+                    @if (row.needsInstall && row.installPercent === null) {
+                      <button
+                        hlmBtn
+                        size="sm"
+                        type="button"
+                        data-testid="asr-row-install"
+                        [attr.aria-label]="m().asrInstallNamed(row.fileName)"
+                        (click)="queue.install()"
+                      >
+                        {{ m().offerInstall }}
+                      </button>
+                    }
+                    @if (row.userStatus === 'processing' || row.userStatus === 'waiting') {
+                      <button
+                        hlmBtn
+                        variant="outline"
+                        size="sm"
+                        type="button"
+                        data-testid="asr-row-cancel"
+                        [attr.aria-label]="m().ocrCancelNamed(row.fileName)"
+                        (click)="queue.cancel(row.documentId)"
+                      >
+                        {{ m().cancelInstall }}
+                      </button>
+                    }
+                    @if (row.userStatus === 'needs-attention' && row.interrupted) {
+                      <button
+                        hlmBtn
+                        variant="outline"
+                        size="sm"
+                        type="button"
+                        data-testid="asr-row-restart"
+                        [attr.aria-label]="m().ocrRestartNamed(row.fileName)"
+                        (click)="queue.restart(row.documentId)"
+                      >
+                        {{ m().ocrRestart }}
+                      </button>
+                    }
+                    @if ((row.userStatus === 'needs-attention' && !row.interrupted) || row.userStatus === 'cancelled') {
+                      <button
+                        hlmBtn
+                        variant="outline"
+                        size="sm"
+                        type="button"
+                        data-testid="asr-row-retry"
+                        [attr.aria-label]="m().ocrRetryNamed(row.fileName)"
+                        (click)="queue.retry(row.documentId)"
+                      >
+                        {{ m().ocrRetry }}
+                      </button>
+                    }
+                    @if (row.userStatus === 'done') {
+                      <button
+                        hlmBtn
+                        variant="outline"
+                        size="sm"
+                        type="button"
+                        data-testid="asr-row-view"
+                        [attr.aria-label]="m().ocrViewNamed(row.fileName)"
+                        (click)="queue.view(row.documentId)"
+                      >
+                        {{ m().ocrView }}
+                      </button>
+                      <button
+                        hlmBtn
+                        variant="outline"
+                        size="sm"
+                        type="button"
+                        data-testid="asr-row-export"
+                        [disabled]="!row.canExport"
+                        [attr.aria-label]="m().asrExportNamed(row.fileName)"
+                        (click)="queue.exportTxt(row.documentId)"
+                      >
+                        {{ m().asrExport }}
+                      </button>
+                    }
+                  </div>
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    }
+  </section>
 </section>

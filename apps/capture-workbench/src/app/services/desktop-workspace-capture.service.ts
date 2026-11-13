@@ -101,6 +101,8 @@ export interface DesktopWorkspaceCaptureHost {
 export class DesktopWorkspaceCaptureService {
   readonly busyIds = signal<ReadonlySet<string>>(new Set());
   readonly streamingPartials = signal<ReadonlyMap<string, PartialCapture>>(new Map());
+  /** Live streaming operations, so the ASR queue can show audio time progress. */
+  readonly streamingOperations = signal<ReadonlyMap<string, CaptureOperation>>(new Map());
   /** Live one-shot jobs, so a queue can show page progress that the library does not store. */
   readonly jobs = signal<ReadonlyMap<string, DesktopCaptureOperation>>(new Map());
 
@@ -346,16 +348,20 @@ export class DesktopWorkspaceCaptureService {
   ): Observable<void> {
     if (active.cancelRequested) return throwError(() => new Error('Upload was cancelled.'));
     const clientRequestId = active.clientRequestId ??= crypto.randomUUID();
+    const options = this.captureOptionsFor(documentId, host);
     return this.runtime.startStreamingCapture({
       documentId,
       clientRequestId,
       structuringMode: 'runtime',
       identifySpeakers:
-        host.identifySpeakers() && isFeatureReady(host.requirements(), 'asr.speakers'),
+        (options?.identifySpeakers ?? host.identifySpeakers())
+        && isFeatureReady(host.requirements(), 'asr.speakers'),
+      ...(options?.spokenLanguage ? { spokenLanguage: options.spokenLanguage } : {}),
     }).pipe(
       switchMap((operation) => {
         active.captureId = operation.captureId;
         active.lastStage = operation.status;
+        this.rememberStreamingOperation(documentId, operation);
         return this.library.updateCapture({
           documentId,
           captureId: operation.captureId,
@@ -408,12 +414,16 @@ export class DesktopWorkspaceCaptureService {
       }),
     );
     if (!active.cancelRequested || active.cancelSent) {
-      return events$.pipe(switchMap(() => this.runtime.getStreamingCapture(operation.captureId)));
+      return events$.pipe(
+        switchMap(() => this.runtime.getStreamingCapture(operation.captureId)),
+        tap((next) => this.rememberStreamingOperation(documentId, next)),
+      );
     }
     active.cancelSent = true;
     return this.runtime.cancelStreamingCapture(operation.captureId).pipe(
       switchMap(() => events$),
       switchMap(() => this.runtime.getStreamingCapture(operation.captureId)),
+      tap((next) => this.rememberStreamingOperation(documentId, next)),
     );
   }
 
@@ -495,7 +505,10 @@ export class DesktopWorkspaceCaptureService {
         ? this.retryRuntimeCleanup$(document)
         : active.streaming
           ? this.runtime.getStreamingCapture(document.captureId).pipe(
-            tap((operation) => active.lastStage = operation.status),
+            tap((operation) => {
+              active.lastStage = operation.status;
+              this.rememberStreamingOperation(document.documentId, operation);
+            }),
             switchMap((operation) => this.waitForStreamingTerminal$(
               document.documentId,
               operation,
@@ -540,6 +553,7 @@ export class DesktopWorkspaceCaptureService {
         active.cancelWake.complete();
         this.activeCaptures.delete(documentId);
         this.forgetJob(documentId);
+        this.forgetStreamingOperation(documentId);
         this.markBusy(documentId, false);
       }),
       map(() => undefined),
@@ -980,19 +994,43 @@ export class DesktopWorkspaceCaptureService {
     });
   }
 
+  private captureOptionsFor(
+    documentId: string,
+    host: DesktopWorkspaceCaptureHost,
+  ) {
+    const document = host.documents().find((item) => item.documentId === documentId)
+      ?? (host.selected()?.documentId === documentId ? host.selected() : undefined);
+    return document?.captureOptions;
+  }
+
   private pdfPageNumbersFor(
     documentId: string,
     host: DesktopWorkspaceCaptureHost,
     mediaType?: string,
   ): readonly number[] | undefined {
     if (!this.isPdfDocument(documentId, host, mediaType)) return undefined;
-    const document = host.documents().find((item) => item.documentId === documentId)
-      ?? (host.selected()?.documentId === documentId ? host.selected() : undefined);
-    const count = document?.captureOptions?.pdfPageCount;
+    const count = this.captureOptionsFor(documentId, host)?.pdfPageCount;
     if (typeof count === 'number' && Number.isInteger(count) && count >= 1 && count <= 500) {
       return pdfPagePrefix(count);
     }
     return this.runtime.pdfPageNumbers();
+  }
+
+  private rememberStreamingOperation(documentId: string, operation: CaptureOperation): void {
+    this.streamingOperations.update((current) => {
+      const next = new Map(current);
+      next.set(documentId, operation);
+      return next;
+    });
+  }
+
+  private forgetStreamingOperation(documentId: string): void {
+    this.streamingOperations.update((current) => {
+      if (!current.has(documentId)) return current;
+      const next = new Map(current);
+      next.delete(documentId);
+      return next;
+    });
   }
 
   private rememberJob(documentId: string, job: DesktopCaptureOperation): void {
