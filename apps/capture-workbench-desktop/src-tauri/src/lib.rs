@@ -74,7 +74,21 @@ macro_rules! desktop_invoke_handler {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let builder = tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    // Register first, before any other plugin or runtime/library setup. Isolated
+    // QA features can share the product identifier, so they skip this lock.
+    #[cfg(all(
+        windows,
+        not(any(feature = "acceptance-app-data", feature = "model-smoke-app-data"))
+    ))]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _, _| {
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.unminimize();
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
+    }));
+    let builder = builder
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             // Tauri creates configured windows before running `setup`, which does not
