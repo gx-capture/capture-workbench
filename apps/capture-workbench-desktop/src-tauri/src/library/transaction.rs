@@ -118,6 +118,8 @@ pub(crate) fn commit_library_transaction(
     }
     write_transaction_journal(root, &transaction)?;
     transaction.stage = TransactionStage::Replacing;
+    inject_transaction_failure("replacing-journal")
+        .map_err(|_| "Capture library transaction stage cannot be written.".to_string())?;
     write_transaction_journal(root, &transaction)?;
 
     for (index, entry) in transaction.entries.iter().enumerate() {
@@ -144,16 +146,42 @@ pub(crate) fn commit_library_transaction(
             return Err(error);
         }
         transaction.applied_entries += 1;
+        inject_transaction_failure(&format!("progress-journal-{index}"))
+            .map_err(|_| "Capture library transaction progress cannot be written.".to_string())?;
         write_transaction_journal(root, &transaction)?;
     }
 
     transaction.stage = TransactionStage::Committed;
+    inject_transaction_failure("committed-journal")
+        .map_err(|_| "Capture library transaction stage cannot be written.".to_string())?;
     write_transaction_journal(root, &transaction)?;
     if finalize_library_transaction(root, &transaction).is_err() {
         // A committed journal is intentionally retained for `open()` to finish.
         return Ok(());
     }
     Ok(())
+}
+
+/// Unknown or invalid journals must never cause a speculative index reload, and
+/// neither may a roll-forward whose targets are not all in place yet (reading a
+/// missing index would show an empty library).
+pub(crate) fn pending_transaction_rolls_forward(root: &Path) -> Option<bool> {
+    let bytes = fs::read(root.join(TRANSACTION_FILE_NAME)).ok()?;
+    let transaction: LibraryTransaction = serde_json::from_slice(&bytes).ok()?;
+    validate_transaction(&transaction).ok()?;
+    let mut targets_in_place = true;
+    for entry in &transaction.entries {
+        let target = transaction_path(root, &entry.target_file_name).ok()?;
+        transaction_path(root, &entry.temporary_file_name).ok()?;
+        transaction_path(root, &entry.backup_file_name).ok()?;
+        targets_in_place &= target.is_file();
+    }
+    let rolls_forward = transaction.stage == TransactionStage::Committed
+        || transaction.applied_entries == transaction.entries.len();
+    if rolls_forward && !targets_in_place {
+        return None;
+    }
+    Some(rolls_forward)
 }
 
 pub(crate) fn recover_library_transaction(root: &Path) -> Result<(), String> {
@@ -196,6 +224,8 @@ fn rollback_library_transaction(
     root: &Path,
     transaction: &LibraryTransaction,
 ) -> Result<(), String> {
+    inject_transaction_failure("rollback")
+        .map_err(|_| "Capture library transaction cannot be rolled back.".to_string())?;
     for entry in transaction.entries.iter().rev() {
         let target = transaction_path(root, &entry.target_file_name)?;
         let temporary = transaction_path(root, &entry.temporary_file_name)?;
