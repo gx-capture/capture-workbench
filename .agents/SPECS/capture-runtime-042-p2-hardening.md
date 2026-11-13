@@ -164,6 +164,14 @@ There is one launch path and it writes nothing to disk:
 - **Host crash or kill.** The system closes the host's Job handle and stops
   the runtime root and every descendant (the onefile child, Ollama, and the
   workers), which releases their listeners. Nothing blocks the next start.
+- **App-data directory lock.** `capture-runtime serve` acquires a
+  non-blocking exclusive OS lock on `<app_data_dir>/runtime.lock`
+  (`storage/app_data_lock.py`) before running any startup sweep or creating the
+  FastAPI app, and keeps the file handle open until the process exits. If
+  another Capture Runtime still holds that lock after a 10-second wait
+  (Windows releases a stopped process's lock asynchronously), startup leaves existing files
+  untouched, writes one path-free line to stderr, and exits with code `10`
+  (`EXIT_APP_DATA_IN_USE`).
 - **Runtime startup sweeps.** The runtime cleans its own leftovers when it
   starts: `_MEI*` extraction folders
   (`_frozen_extraction_residue.py`), `*.upload` and `*.spool` files in
