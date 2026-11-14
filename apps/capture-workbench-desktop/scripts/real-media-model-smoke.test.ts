@@ -2,7 +2,7 @@
 import '../../../tools/test-temp-root.ts';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -17,10 +17,8 @@ import {
   canonicalJson,
   cpuSpeechModelFiles,
   desktopRuntimeReady,
-  NATIVE_SOURCE_BROKER_DIALOG_CLASSES,
-  NATIVE_SOURCE_DIALOG_CLASSES,
+  nativeDialogUiAutomationDefinitions,
   nativeDialogUiAutomationScript,
-  nativeOpenDialogUiAutomation,
   REAL_MODEL_CATALOG_VERSION,
   REAL_MODEL_DEPENDENCY_ORDER_SCOPE,
   REAL_MODEL_AUDIO_CAPTURE_TIMEOUT_MS,
@@ -482,67 +480,6 @@ test('native click maps emulated CSS viewport coordinates to the real client rec
   );
 });
 
-test('native dialog UIA script is process-owned, localization-independent, and metadata-only', () => {
-  const script = nativeDialogUiAutomationScript();
-  assert.deepEqual(NATIVE_SOURCE_DIALOG_CLASSES, ['#32770']);
-  assert.deepEqual(NATIVE_SOURCE_BROKER_DIALOG_CLASSES, ['CabinetWClass', 'ApplicationFrameWindow']);
-  assert.match(script, /UIAutomationClient/u);
-  assert.match(script, /GetWindowThreadProcessId/u);
-  assert.match(script, /EnumWindows/u);
-  assert.match(script, /GetClassName/u);
-  assert.match(script, /GW_OWNER/u);
-  assert.match(script, /GetForegroundWindow/u);
-  assert.match(script, /IsWindowEnabled/u);
-  assert.match(script, /AttachThreadInput/u);
-  assert.match(script, /BringWindowToTop/u);
-  assert.match(script, /SetForegroundWindow/u);
-  assert.match(script, /WindowPattern/u);
-  assert.match(script, /IsModal/u);
-  assert.match(script, /GetProcessById/u);
-  assert.match(script, /BrokerProcess/u);
-  assert.match(script, /'ApplicationFrameHost'/u);
-  assert.match(script, /'PickerHost'/u);
-  assert.match(script, /UIA\|stage=ready\|code=activated/u);
-  assert.match(script, /UIA\|stage=target-window\|code=count-invalid/u);
-  assert.match(script, /UIA\|stage=target-activation\|code=failed/u);
-  assert.match(script, /baselineWindowHandles/u);
-  assert.match(script, /targetMainWindowHandles/u);
-  assert.match(script, /Tauri Window/u);
-  assert.match(script, /FileNameControlHost/u);
-  assert.match(script, /(?:'1001'|'1148')/u);
-  assert.match(script, /ValuePattern/u);
-  assert.match(script, /InvokePattern/u);
-  assert.match(script, /SelectionItemPattern/u);
-  assert.match(script, /NameProperty/u);
-  assert.match(script, /ConvertTo-SendKeysLiteral/u);
-  assert.match(script, /SendWait\(\(ConvertTo-SendKeysLiteral/u);
-  assert.doesNotMatch(script, /Clipboard/u);
-  assert.doesNotMatch(script, /SendMessageTimeoutText/u);
-  assert.match(script, /Write-ElementDiagnostics 'TOP'/u);
-  assert.match(script, /commonDialogClasses -contains/u);
-  assert.match(script, /brokerDialogClasses -contains/u);
-  assert.match(script, /Test-BrokeredDialog/u);
-  const eligibility = script.match(/\$facts\.Eligible =(?<criteria>[\s\S]*?)\n {2}\} catch/u)?.groups?.criteria || '';
-  for (const criterion of [
-    'ClassAllowed',
-    'DifferentProcess',
-    'BrokerProcess',
-    'PickerControls',
-    'Foreground',
-    'Modal',
-    'NewWindow',
-    'SingleTarget',
-    'TargetStillOwned',
-    'TargetWasEnabled',
-    'TargetDisabled',
-  ]) {
-    assert.match(eligibility, new RegExp(`\\$facts\\.${criterion}`, 'u'));
-  }
-  assert.doesNotMatch(script, /Current\.Name/u);
-  assert.doesNotMatch(script, /GetWindowText/u);
-  assert.doesNotMatch(script, /(?:Open|\u958b\u555f|\u6253\u5f00|\u958b\u304f).*Button/iu);
-});
-
 test('native dialog diagnostics reject values and private paths', () => {
   const safe = 'TOP|pid=42|relation=target|aid=FileNameControlHost|type=ControlType.ComboBox|class=ComboBox|patterns=Value';
   assert.equal(safeUiAutomationDiagnostics(`${safe}\n`), safe);
@@ -695,7 +632,7 @@ test('native dialog UIA script parses in Windows PowerShell', { skip: process.pl
 $tokens = $null
 $errors = $null
 [void][System.Management.Automation.Language.Parser]::ParseInput(
-  $env:CAPTURE_SMOKE_UIA_SCRIPT,
+  [Console]::In.ReadToEnd(),
   [ref]$tokens,
   [ref]$errors
 )
@@ -711,10 +648,10 @@ if ($errors.Count -ne 0) {
     ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', parser],
     {
       encoding: 'utf8',
+      input: nativeDialogUiAutomationScript(),
       env: {
         SystemRoot: systemRoot,
         Path: process.env.Path || process.env.PATH || '',
-        CAPTURE_SMOKE_UIA_SCRIPT: nativeDialogUiAutomationScript(),
       },
       windowsHide: true,
     },
@@ -726,214 +663,178 @@ if ($errors.Count -ne 0) {
   );
 });
 
-test('native dialog UIA helper selects a benign file through the Windows common dialog', {
-  skip: process.platform !== 'win32' || process.env.CAPTURE_SMOKE_PICKER_TEST !== '1',
+function runPickerStubCase(body: string): { keys: string[]; clicks: number; result: boolean; diagnostics: string[] } {
+  const script = nativeDialogUiAutomationDefinitions() + `
+$script:keys = New-Object 'System.Collections.Generic.List[string]'
+$script:clicks = 0
+$script:foregroundCalls = 0
+function Invoke-RawKeySend([string]$value) { $script:keys.Add($value) }
+function Invoke-RawClick([int]$x, [int]$y) { $script:clicks++; return $true }
+function Get-NativeRoot([IntPtr]$handle) { return $handle }
+function Get-ForegroundRoot { return [IntPtr]42 }
+function Invoke-PickerActivation([IntPtr]$handle) { return $false }
+function Test-TargetEnabled { return $false }
+function Start-Sleep { param($Milliseconds) }
+$dialog = [pscustomobject]@{ Current = [pscustomobject]@{ NativeWindowHandle = 42 } }
+$env:CAPTURE_SMOKE_DIALOG_FILE = 'C:\\fixture.txt'
+$diagnostics = @(& {
+${body}
+} 6>&1 | ForEach-Object {
+  if ($_ -is [bool]) { $script:result = $_ } else { [string]$_ }
+})
+@{ keys = @($script:keys.ToArray()); clicks = $script:clicks; result = $script:result; diagnostics = $diagnostics } | ConvertTo-Json -Compress
+`;
+  const result = spawnSync(windowsPowerShellExecutable(),
+    ['-NoLogo', '-NoProfile', '-NonInteractive', '-STA', '-Command', '& ([scriptblock]::Create([Console]::In.ReadToEnd()))'],
+    { input: script, encoding: 'utf8', windowsHide: true, timeout: 30_000 });
+  assert.equal(result.status, 0, String(result.error || result.stderr));
+  assert.equal(result.stderr, '', result.stderr);
+  return JSON.parse(result.stdout.trim());
+}
+
+const powershellSkip = process.platform !== 'win32' ? 'Requires Windows PowerShell' : false;
+const refusedDiagnostic = 'UIA|stage=input-guard|code=foreground-not-owned';
+
+test('brokered fallback refuses input when activation fails', { skip: powershellSkip }, () => {
+  const result = runPickerStubCase(`
+function Get-ForegroundRoot { return [IntPtr]99 }
+Invoke-BrokeredPickerKeyboardFallback $dialog`);
+  assert.equal(result.result, false);
+  assert.deepEqual(result.keys, []);
+  assert.deepEqual(result.diagnostics, [refusedDiagnostic]);
+});
+
+test('brokered fallback sends the fixture when the picker owns the foreground', { skip: powershellSkip }, () => {
+  const result = runPickerStubCase('Invoke-BrokeredPickerKeyboardFallback $dialog');
+  assert.equal(result.result, true);
+  assert.ok(result.keys.length > 0);
+  assert.ok(result.keys.includes('C:\\fixture.txt'));
+});
+
+test('brokered fallback stops immediately when foreground ownership is lost', { skip: powershellSkip }, () => {
+  const result = runPickerStubCase(`
+function Get-ForegroundRoot {
+  $script:foregroundCalls++
+  if ($script:foregroundCalls -eq 1) { return [IntPtr]42 }
+  return [IntPtr]99
+}
+Invoke-BrokeredPickerKeyboardFallback $dialog`);
+  assert.equal(result.result, false);
+  assert.deepEqual(result.keys, ['%n']);
+  assert.deepEqual(result.diagnostics, [refusedDiagnostic]);
+});
+
+test('brokered fallback refuses a dialog without a native handle', { skip: powershellSkip }, () => {
+  const result = runPickerStubCase(`
+$dialog.Current.NativeWindowHandle = 0
+Invoke-BrokeredPickerKeyboardFallback $dialog`);
+  assert.equal(result.result, false);
+  assert.deepEqual(result.keys, []);
+  assert.deepEqual(result.diagnostics, [refusedDiagnostic]);
+});
+
+test('guarded click refuses another foreground window', { skip: powershellSkip }, () => {
+  const result = runPickerStubCase(`
+function Get-ForegroundRoot { return [IntPtr]99 }
+Invoke-GuardedClick $dialog 10 20`);
+  assert.equal(result.result, false);
+  assert.equal(result.clicks, 0);
+  assert.deepEqual(result.diagnostics, [refusedDiagnostic]);
+});
+
+test('classic dialog selects a fixture without keyboard input', {
+  skip: process.platform !== 'win32' || process.env.CAPTURE_SMOKE_REAL_DIALOG_TEST !== '1'
+    ? 'Opens a window; requires Windows and CAPTURE_SMOKE_REAL_DIALOG_TEST=1' : false,
   timeout: 45_000,
 }, async () => {
-  const systemRoot = process.env.SystemRoot || 'C:\\Windows';
   const temporary = await mkdtemp(join(tmpdir(), 'capture-picker-uia-'));
   const fixture = join(temporary, 'picker-probe.txt');
   const readySignal = join(temporary, 'open-dialog.signal');
-  const activatedSignal = join(temporary, 'target-activated.signal');
   await writeFile(fixture, 'picker probe\n', 'utf8');
   const hostScript = `
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms
-Add-Type @'
-using System;
-using System.Runtime.InteropServices;
-using System.Threading;
-
-public static class CaptureSmokeNativeTarget {
-  private const uint WM_DESTROY = 0x0002;
-  private const uint WM_CLOSE = 0x0010;
-  private const int SW_SHOWNOACTIVATE = 4;
-  private const uint WS_OVERLAPPEDWINDOW = 0x00CF0000;
-  private static readonly ManualResetEventSlim Ready = new ManualResetEventSlim(false);
-  private static readonly WndProc WindowProcedure = HandleMessage;
-  private static IntPtr windowHandle = IntPtr.Zero;
-
-  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-  private struct WNDCLASSEX {
-    public uint cbSize;
-    public uint style;
-    public WndProc lpfnWndProc;
-    public int cbClsExtra;
-    public int cbWndExtra;
-    public IntPtr hInstance;
-    public IntPtr hIcon;
-    public IntPtr hCursor;
-    public IntPtr hbrBackground;
-    public string lpszMenuName;
-    public string lpszClassName;
-    public IntPtr hIconSm;
-  }
-
-  [StructLayout(LayoutKind.Sequential)]
-  private struct MSG {
-    public IntPtr hwnd;
-    public uint message;
-    public UIntPtr wParam;
-    public IntPtr lParam;
-    public uint time;
-    public int x;
-    public int y;
-  }
-
-  private delegate IntPtr WndProc(IntPtr hwnd, uint message, UIntPtr wParam, IntPtr lParam);
-
-  [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
-  private static extern IntPtr GetModuleHandle(string moduleName);
-
-  [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-  private static extern ushort RegisterClassEx(ref WNDCLASSEX windowClass);
-
-  [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-  private static extern IntPtr CreateWindowEx(uint extendedStyle, string className, string windowName, uint style,
-    int x, int y, int width, int height, IntPtr parent, IntPtr menu, IntPtr instance, IntPtr parameter);
-
-  [DllImport("user32.dll")]
-  private static extern bool ShowWindow(IntPtr hwnd, int command);
-
-  [DllImport("user32.dll")]
-  private static extern int GetMessage(out MSG message, IntPtr hwnd, uint minimum, uint maximum);
-
-  [DllImport("user32.dll")]
-  private static extern bool TranslateMessage(ref MSG message);
-
-  [DllImport("user32.dll")]
-  private static extern IntPtr DispatchMessage(ref MSG message);
-
-  [DllImport("user32.dll")]
-  private static extern IntPtr DefWindowProc(IntPtr hwnd, uint message, UIntPtr wParam, IntPtr lParam);
-
-  [DllImport("user32.dll")]
-  private static extern void PostQuitMessage(int exitCode);
-
-  [DllImport("user32.dll")]
-  private static extern bool PostMessage(IntPtr hwnd, uint message, UIntPtr wParam, IntPtr lParam);
-
-  [DllImport("user32.dll")]
-  private static extern IntPtr GetForegroundWindow();
-
-  public static IntPtr Start() {
-    var thread = new Thread(RunWindowLoop) { IsBackground = true };
-    thread.SetApartmentState(ApartmentState.STA);
-    thread.Start();
-    if (!Ready.Wait(5000) || windowHandle == IntPtr.Zero) {
-      throw new InvalidOperationException("Native target window did not start.");
-    }
-    return windowHandle;
-  }
-
-  public static bool IsForeground(IntPtr expectedHandle) {
-    return expectedHandle != IntPtr.Zero && GetForegroundWindow() == expectedHandle;
-  }
-
-  public static void Stop(IntPtr expectedHandle) {
-    if (expectedHandle != IntPtr.Zero) {
-      PostMessage(expectedHandle, WM_CLOSE, UIntPtr.Zero, IntPtr.Zero);
-    }
-  }
-
-  private static void RunWindowLoop() {
-    var instance = GetModuleHandle(null);
-    var windowClass = new WNDCLASSEX {
-      cbSize = (uint)Marshal.SizeOf(typeof(WNDCLASSEX)),
-      lpfnWndProc = WindowProcedure,
-      hInstance = instance,
-      lpszClassName = "Tauri_Window"
-    };
-    if (RegisterClassEx(ref windowClass) == 0) {
-      Ready.Set();
-      return;
-    }
-    windowHandle = CreateWindowEx(0, "Tauri_Window", string.Empty, WS_OVERLAPPEDWINDOW,
-      20, 20, 320, 200, IntPtr.Zero, IntPtr.Zero, instance, IntPtr.Zero);
-    if (windowHandle == IntPtr.Zero) {
-      Ready.Set();
-      return;
-    }
-    ShowWindow(windowHandle, SW_SHOWNOACTIVATE);
-    Ready.Set();
-    MSG message;
-    while (GetMessage(out message, IntPtr.Zero, 0, 0) > 0) {
-      TranslateMessage(ref message);
-      DispatchMessage(ref message);
-    }
-  }
-
-  private static IntPtr HandleMessage(IntPtr hwnd, uint message, UIntPtr wParam, IntPtr lParam) {
-    if (message == WM_DESTROY) {
-      PostQuitMessage(0);
-      return IntPtr.Zero;
-    }
-    return DefWindowProc(hwnd, message, wParam, lParam);
-  }
-}
-'@
-$targetWindow = [CaptureSmokeNativeTarget]::Start()
-$deadline = [DateTime]::UtcNow.AddSeconds(10)
-while (-not (Test-Path -LiteralPath $env:CAPTURE_SMOKE_DIALOG_SIGNAL)) {
-  if ([DateTime]::UtcNow -ge $deadline) { exit 4 }
-  Start-Sleep -Milliseconds 25
-}
-if (-not [CaptureSmokeNativeTarget]::IsForeground($targetWindow)) { exit 5 }
-Set-Content -LiteralPath $env:CAPTURE_SMOKE_ACTIVATED_SIGNAL -Value 'activated'
-$dialog = New-Object System.Windows.Forms.OpenFileDialog
-$dialog.CheckFileExists = $true
-$dialog.Multiselect = $false
-$owner = New-Object System.Windows.Forms.NativeWindow
-$owner.AssignHandle($targetWindow)
-try {
-  $result = $dialog.ShowDialog($owner)
-} finally {
-  $owner.ReleaseHandle()
-  [CaptureSmokeNativeTarget]::Stop($targetWindow)
-}
-if ($result -ne [System.Windows.Forms.DialogResult]::OK) { exit 2 }
-if ($dialog.FileName -cne $env:CAPTURE_SMOKE_DIALOG_FILE) { exit 3 }
-exit 0
+$form = New-Object System.Windows.Forms.Form
+$form.Text = 'Tauri Window'
+$form.Add_Shown({
+  [Console]::WriteLine('HWND=' + $form.Handle.ToInt64())
+  $timer = New-Object System.Windows.Forms.Timer
+  $timer.Interval = 25
+  $timer.Add_Tick({
+    if (-not (Test-Path -LiteralPath $env:CAPTURE_SMOKE_DIALOG_SIGNAL)) { return }
+    $timer.Stop()
+    $dialog = New-Object System.Windows.Forms.OpenFileDialog
+    try {
+      if ($dialog.ShowDialog($form) -eq [System.Windows.Forms.DialogResult]::OK) {
+        [Console]::WriteLine($dialog.FileName)
+      }
+    } finally { $dialog.Dispose(); $form.Close() }
+  }.GetNewClosure())
+  $timer.Start()
+}.GetNewClosure())
+[System.Windows.Forms.Application]::Run($form)
+$form.Dispose()
 `;
-  const host = spawn(
-    windowsPowerShellExecutable(systemRoot),
-    ['-NoLogo', '-NoProfile', '-NonInteractive', '-STA', '-Command', hostScript],
-    {
-      env: {
-        SystemRoot: systemRoot,
-        Path: process.env.Path || process.env.PATH || '',
-        TEMP: process.env.TEMP || '',
-        TMP: process.env.TMP || '',
-        CAPTURE_SMOKE_DIALOG_FILE: fixture,
-        CAPTURE_SMOKE_DIALOG_SIGNAL: readySignal,
-        CAPTURE_SMOKE_ACTIVATED_SIGNAL: activatedSignal,
-      },
-      stdio: 'ignore',
-      windowsHide: true,
-    },
-  );
+  const host = spawn(windowsPowerShellExecutable(),
+    ['-NoLogo', '-NoProfile', '-NonInteractive', '-STA', '-Command', hostScript], {
+      env: { ...process.env, CAPTURE_SMOKE_DIALOG_SIGNAL: readySignal },
+      stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
+    });
+  let hostOutput = '';
+  host.stdout.on('data', (chunk: Buffer) => { hostOutput += chunk.toString(); });
   const hostExit = new Promise<number | null>((resolvePromise, reject) => {
     host.once('error', reject);
     host.once('close', resolvePromise);
   });
   try {
-    assert.ok(host.pid, 'The Windows common-dialog test host must expose a PID.');
-    await nativeOpenDialogUiAutomation(fixture, host.pid, async () => {
-      await writeFile(readySignal, 'ready\n', 'utf8');
-      const deadline = Date.now() + 5_000;
-      while (Date.now() < deadline) {
-        try {
-          await access(activatedSignal);
-          return;
-        } catch {
-          await new Promise((resolvePromise) => setTimeout(resolvePromise, 25));
-        }
-      }
-      assert.fail('The helper must foreground the exact PID-scoped target before the dialog opens.');
+    assert.ok(host.pid);
+    // The host starts hidden (windowsHide), so it has no main window handle to
+    // look up; it reports its form's handle instead.
+    const hostHandleDeadline = Date.now() + 15_000;
+    let hostHandle: string | undefined;
+    while (hostHandle === undefined && Date.now() < hostHandleDeadline) {
+      hostHandle = /^HWND=(\d+)\r?$/mu.exec(hostOutput)?.[1];
+      if (hostHandle === undefined) await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
+    }
+    assert.ok(hostHandle, 'The dialog host did not report its window handle.');
+    const definitions = nativeDialogUiAutomationDefinitions();
+    // A WinForms host has a generated class name; production Tauri uses its fixed class.
+    const script = definitions + `
+function Get-TargetMainWindowHandles { return @([long]${hostHandle}) }
+$script:keyCount = 0
+function Invoke-RawKeySend([string]$value) { $script:keyCount++; throw 'Unexpected keyboard input' }
+try { & {
+` + nativeDialogUiAutomationScript().slice(definitions.length) + `
+} } finally { [Console]::WriteLine('KEYCOUNT=' + $script:keyCount) }
+`;
+    const automation = spawn(windowsPowerShellExecutable(),
+      ['-NoLogo', '-NoProfile', '-NonInteractive', '-STA', '-Command', '& ([scriptblock]::Create([Console]::In.ReadToEnd()))'], {
+        env: { ...process.env, CAPTURE_SMOKE_APP_PID: String(host.pid), CAPTURE_SMOKE_DIALOG_FILE: fixture },
+        stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
+      });
+    let output = '';
+    const automationExit = new Promise<number | null>((resolvePromise, reject) => {
+      automation.once('error', reject);
+      automation.once('close', resolvePromise);
     });
-    assert.equal(await hostExit, 0, 'The common dialog must return the exact benign fixture selected by UIA.');
+    let signaled = false;
+    automation.stdout.on('data', (chunk: Buffer) => {
+      output += chunk.toString();
+      if (!signaled && output.includes('UIA|stage=ready|code=listening')) {
+        signaled = true;
+        void writeFile(readySignal, 'ready\n', 'utf8');
+      }
+    });
+    const watchdog = setTimeout(() => { automation.kill(); host.kill(); }, 35_000);
+    try {
+      automation.stdin.end(script);
+      assert.equal(await automationExit, 0, output);
+      assert.match(output, /KEYCOUNT=0/u);
+      assert.equal(await hostExit, 0);
+      assert.equal(hostOutput.trim().split(/\r?\n/u).at(-1), fixture);
+    } finally { clearTimeout(watchdog); automation.kill(); }
   } finally {
-    if (host.exitCode === null) host.kill();
+    host.kill();
     await rm(temporary, { recursive: true, force: true });
   }
 });
@@ -986,12 +887,6 @@ test('desktop model smoke uses generated release catalog and WebView selectors',
   ]) {
     assert.match(source, new RegExp(`(?:getByTestId\\('[^']*${selector}[^']*'\\)|data-testid="${selector}")`, 'u'));
   }
-  assert.match(source, /UIAutomationClient/u);
-  assert.match(source, /AutomationIdProperty/u);
-  assert.match(source, /ValuePattern/u);
-  assert.match(source, /InvokePattern/u);
-  assert.match(source, /'TextBox'/u);
-  assert.match(source, /unrelated toolbar AddButton/u);
   assert.match(source, /CAPTURE_SMOKE_APP_PID/u);
   assert.match(source, /CAPTURE_WHISPER_PREFER_GPU/u);
   assert.doesNotMatch(source, /FindWindow\('#32770'/u);

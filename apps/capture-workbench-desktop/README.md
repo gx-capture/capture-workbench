@@ -70,6 +70,12 @@ The fake executable, manifest, schema and provenance are staged only under
 Its separate Cargo output is `src-tauri/target/deterministic-qa`, with installers
 in `x86_64-pc-windows-msvc/release/bundle/nsis` below that directory.
 `package-qa` and the installed deterministic smoke consume this QA installer.
+The smokes drive the classic file dialog with window messages (`WM_SETTEXT` on
+the file-name field, then `WM_COMMAND`/`IDOK`), without keyboard input or focus,
+so that step also runs in a background session. A brokered (Explorer-hosted)
+picker uses UI Automation with a keyboard fallback. Every keyboard send and
+mouse click requires the picker to own the foreground root window; activation
+is attempted once before refusing input, and a refused fallback exits with code 10.
 The installer name, window title and build output label its fake runtime and fake data.
 These artifacts must never be published as product releases.
 

@@ -1173,7 +1173,18 @@ public static class CaptureSmokeNativeMouse {
   private static extern bool SetCursorPos(int x, int y);
 
   [DllImport("user32.dll")]
+  private static extern IntPtr GetForegroundWindow();
+
+  [DllImport("user32.dll")]
+  private static extern IntPtr GetAncestor(IntPtr handle, uint flags);
+
+  [DllImport("user32.dll")]
   private static extern void mouse_event(uint flags, uint x, uint y, uint data, UIntPtr extraInfo);
+
+  private static bool OwnsForeground(IntPtr handle) {
+    IntPtr targetRoot = GetAncestor(handle, 2);
+    return targetRoot != IntPtr.Zero && GetAncestor(GetForegroundWindow(), 2) == targetRoot;
+  }
 
   public static void Click(IntPtr handle, double xRatio, double yRatio) {
     Rect rect;
@@ -1188,10 +1199,13 @@ public static class CaptureSmokeNativeMouse {
     }
     Point point = new Point { X = clientX, Y = clientY };
     if (!ClientToScreen(handle, ref point)) throw new InvalidOperationException("ClientToScreen failed.");
-    if (!SetForegroundWindow(handle) || !SetCursorPos(point.X, point.Y)) {
+    SetForegroundWindow(handle);
+    System.Threading.Thread.Sleep(100);
+    // The click goes to whatever window is under the cursor, so refuse it
+    // unless the packaged window really owns the foreground.
+    if (!OwnsForeground(handle) || !SetCursorPos(point.X, point.Y) || !OwnsForeground(handle)) {
       throw new InvalidOperationException("Native window activation failed.");
     }
-    System.Threading.Thread.Sleep(100);
     mouse_event(0x0002, 0, 0, 0, UIntPtr.Zero);
     mouse_event(0x0004, 0, 0, 0, UIntPtr.Zero);
   }
@@ -1235,9 +1249,7 @@ export function modelSmokeFixtureEnvironment(paths: {
   };
 }
 
-export function nativeDialogUiAutomationScript(): string {
-  const commonDialogClasses = NATIVE_SOURCE_DIALOG_CLASSES.map((value) => `'${value}'`).join(', ');
-  const brokerDialogClasses = NATIVE_SOURCE_BROKER_DIALOG_CLASSES.map((value) => `'${value}'`).join(', ');
+export function nativeDialogUiAutomationDefinitions(): string {
   return `
 $ErrorActionPreference = 'Stop'
 trap {
@@ -1246,6 +1258,182 @@ trap {
   Write-Output ('UIA|stage=unhandled|code=exception|type=' + $exceptionType + '|error=' + $errorId + '|line=' + [string]$_.InvocationInfo.ScriptLineNumber)
   exit 9
 }
+Add-Type @'
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using System.Text;
+
+public static class CaptureClassicDialogOwner {
+  private const uint WM_SETTEXT = 0x000C;
+  private const uint WM_COMMAND = 0x0111;
+  private const uint SMTO_ABORTIFHUNG = 0x0002;
+  private const int IDOK = 1;
+  private const int FILENAME_CONTROL_ID = 1148;
+
+  private delegate bool EnumWindowsProc(IntPtr handle, IntPtr parameter);
+
+  [DllImport("user32.dll")]
+  [return: MarshalAs(UnmanagedType.Bool)]
+  private static extern bool EnumWindows(EnumWindowsProc callback, IntPtr parameter);
+
+  [DllImport("user32.dll")]
+  [return: MarshalAs(UnmanagedType.Bool)]
+  private static extern bool EnumChildWindows(IntPtr parent, EnumWindowsProc callback, IntPtr parameter);
+
+  [DllImport("user32.dll")]
+  private static extern uint GetWindowThreadProcessId(IntPtr handle, out uint processId);
+
+  [DllImport("user32.dll")]
+  private static extern int GetDlgCtrlID(IntPtr handle);
+
+  [DllImport("user32.dll")]
+  private static extern IntPtr GetParent(IntPtr handle);
+
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+  private static extern int GetClassName(IntPtr handle, StringBuilder className, int maximumCount);
+
+  [DllImport("user32.dll")]
+  [return: MarshalAs(UnmanagedType.Bool)]
+  private static extern bool IsWindow(IntPtr handle);
+
+  [DllImport("user32.dll")]
+  [return: MarshalAs(UnmanagedType.Bool)]
+  private static extern bool IsWindowVisible(IntPtr handle);
+
+  [DllImport("user32.dll")]
+  [return: MarshalAs(UnmanagedType.Bool)]
+  private static extern bool IsWindowEnabled(IntPtr handle);
+
+  [DllImport("user32.dll", EntryPoint = "SendMessageTimeoutW", CharSet = CharSet.Unicode, SetLastError = true)]
+  private static extern IntPtr SendMessageTimeout(IntPtr handle, uint message, IntPtr wParam, string lParam, uint flags, uint timeoutMs, out IntPtr result);
+
+  [DllImport("user32.dll")]
+  [return: MarshalAs(UnmanagedType.Bool)]
+  private static extern bool PostMessage(IntPtr handle, uint message, IntPtr wParam, IntPtr lParam);
+
+  [DllImport("user32.dll")]
+  [return: MarshalAs(UnmanagedType.Bool)]
+  public static extern bool SetProcessDpiAwarenessContext(IntPtr value);
+
+  private static string ClassName(IntPtr handle) {
+    var buffer = new StringBuilder(256);
+    int length = GetClassName(handle, buffer, buffer.Capacity);
+    return length > 0 ? buffer.ToString() : string.Empty;
+  }
+
+  private static string SafeToken(string value) {
+    if (string.IsNullOrWhiteSpace(value)) return "-";
+    var builder = new StringBuilder(Math.Min(value.Length, 80));
+    for (int i = 0; i < value.Length && builder.Length < 80; i++) {
+      char ch = value[i];
+      bool allowed = (ch >= 'A' && ch <= 'Z')
+        || (ch >= 'a' && ch <= 'z')
+        || (ch >= '0' && ch <= '9')
+        || ch == '_' || ch == '.' || ch == '#' || ch == ',' || ch == ':' || ch == '=' || ch == '-';
+      builder.Append(allowed ? ch : '_');
+    }
+    return builder.Length > 0 ? builder.ToString() : "-";
+  }
+
+  public static IntPtr FindDialog(uint processId, string[] allowedClasses) {
+    IntPtr found = IntPtr.Zero;
+    EnumWindows((handle, _) => {
+      if (handle == IntPtr.Zero || !IsWindow(handle) || !IsWindowVisible(handle)) return true;
+      uint actualProcessId;
+      GetWindowThreadProcessId(handle, out actualProcessId);
+      if (actualProcessId != processId) return true;
+      string cls = ClassName(handle);
+      for (int i = 0; i < allowedClasses.Length; i++) {
+        if (string.Equals(cls, allowedClasses[i], StringComparison.Ordinal)) {
+          found = handle;
+          return false;
+        }
+      }
+      return true;
+    }, IntPtr.Zero);
+    return found;
+  }
+
+  public static IntPtr FindFilenameEdit(IntPtr dialog) {
+    if (dialog == IntPtr.Zero || !IsWindow(dialog)) return IntPtr.Zero;
+    IntPtr found = IntPtr.Zero;
+    EnumChildWindows(dialog, (handle, _) => {
+      if (!string.Equals(ClassName(handle), "Edit", StringComparison.Ordinal)) return true;
+      int id = GetDlgCtrlID(handle);
+      IntPtr parent = GetParent(handle);
+      int parentId = parent != IntPtr.Zero ? GetDlgCtrlID(parent) : 0;
+      if (id == FILENAME_CONTROL_ID || parentId == FILENAME_CONTROL_ID) {
+        found = handle;
+        return false;
+      }
+      return true;
+    }, IntPtr.Zero);
+    if (found != IntPtr.Zero) return found;
+
+    IntPtr comboBoxEx = IntPtr.Zero;
+    EnumChildWindows(dialog, (handle, _) => {
+      if (string.Equals(ClassName(handle), "ComboBoxEx32", StringComparison.Ordinal)) {
+        comboBoxEx = handle;
+        if (GetDlgCtrlID(handle) == FILENAME_CONTROL_ID) return false;
+      }
+      return true;
+    }, IntPtr.Zero);
+    if (comboBoxEx == IntPtr.Zero) return IntPtr.Zero;
+
+    EnumChildWindows(comboBoxEx, (handle, _) => {
+      if (string.Equals(ClassName(handle), "Edit", StringComparison.Ordinal)) {
+        found = handle;
+        return false;
+      }
+      return true;
+    }, IntPtr.Zero);
+    return found;
+  }
+
+  private static IntPtr FindChildButton(IntPtr dialog, int controlId) {
+    IntPtr found = IntPtr.Zero;
+    EnumChildWindows(dialog, (handle, _) => {
+      if (GetDlgCtrlID(handle) == controlId && string.Equals(ClassName(handle), "Button", StringComparison.Ordinal)) {
+        found = handle;
+        return false;
+      }
+      return true;
+    }, IntPtr.Zero);
+    return found;
+  }
+
+  public static bool SetEditText(IntPtr editHandle, string value) {
+    if (editHandle == IntPtr.Zero || value == null) return false;
+    IntPtr result;
+    return SendMessageTimeout(editHandle, WM_SETTEXT, IntPtr.Zero, value, SMTO_ABORTIFHUNG, 5000, out result) != IntPtr.Zero;
+  }
+  public static bool SubmitDialog(IntPtr dialog) {
+    if (dialog == IntPtr.Zero || !IsWindow(dialog)) return false;
+    return PostMessage(dialog, WM_COMMAND, (IntPtr)IDOK, FindChildButton(dialog, IDOK));
+  }
+  public static bool IsDialogOpen(IntPtr dialog) {
+    return dialog != IntPtr.Zero && IsWindow(dialog) && IsWindowVisible(dialog);
+  }
+  public static string[] GetDialogChildDiagnostics(IntPtr dialog) {
+    var lines = new List<string>();
+    if (dialog == IntPtr.Zero || !IsWindow(dialog)) return lines.ToArray();
+    lines.Add("UIA|stage=dialog-info|class=" + SafeToken(ClassName(dialog))
+      + "|visible=" + (IsWindowVisible(dialog) ? "true" : "false")
+      + "|enabled=" + (IsWindowEnabled(dialog) ? "true" : "false"));
+    EnumChildWindows(dialog, (handle, _) => {
+      if (lines.Count >= 60) return false;
+      lines.Add("UIA|child-id=" + GetDlgCtrlID(handle)
+        + "|class=" + SafeToken(ClassName(handle))
+        + "|visible=" + (IsWindowVisible(handle) ? "true" : "false")
+        + "|enabled=" + (IsWindowEnabled(handle) ? "true" : "false"));
+      return true;
+    }, IntPtr.Zero);
+    return lines.ToArray();
+  }
+}
+'@
+
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
 Add-Type -AssemblyName System.Windows.Forms
@@ -1290,6 +1478,9 @@ public static class CaptureDialogOwner {
 
   [DllImport("user32.dll")]
   public static extern IntPtr GetForegroundWindow();
+
+  [DllImport("user32.dll")]
+  public static extern IntPtr GetAncestor(IntPtr handle, uint flags);
 
   [DllImport("user32.dll")]
   [return: MarshalAs(UnmanagedType.Bool)]
@@ -1341,17 +1532,6 @@ public static class CaptureDialogOwner {
     return true;
   }
 
-  public static bool SetEditText(IntPtr handle, string value) {
-    if (handle == IntPtr.Zero || value == null) return false;
-    IntPtr buffer = Marshal.StringToHGlobalUni(value);
-    try {
-      IntPtr result;
-      return SendMessageTimeout(handle, 0x000C, IntPtr.Zero, buffer, 0x0002, 2000, out result) != IntPtr.Zero;
-    } finally {
-      Marshal.FreeHGlobal(buffer);
-    }
-  }
-
   public static long[] SnapshotTopLevelWindowHandles() {
     var handles = new List<long>();
     EnumWindows((handle, _) => {
@@ -1380,40 +1560,6 @@ public static class CaptureDialogOwner {
       return true;
     }, IntPtr.Zero);
     return found;
-  }
-
-  public static bool ActivateExactWindow(IntPtr handle, uint processId, string expectedClass) {
-    if (!HasExactIdentity(handle, processId, expectedClass, true)) return false;
-    if (GetForegroundWindow() == handle) return true;
-    if (IsIconic(handle)) ShowWindowAsync(handle, SW_RESTORE);
-
-    uint verifiedProcessId;
-    var targetThreadId = GetWindowThreadProcessId(handle, out verifiedProcessId);
-    if (targetThreadId == 0 || verifiedProcessId != processId) return false;
-    var currentThreadId = GetCurrentThreadId();
-    var foregroundHandle = GetForegroundWindow();
-    uint foregroundProcessId;
-    var foregroundThreadId = foregroundHandle == IntPtr.Zero
-      ? 0
-      : GetWindowThreadProcessId(foregroundHandle, out foregroundProcessId);
-    var attachedTarget = false;
-    var attachedForeground = false;
-    try {
-      if (targetThreadId != currentThreadId) {
-        attachedTarget = AttachThreadInput(currentThreadId, targetThreadId, true);
-      }
-      if (foregroundThreadId != 0 && foregroundThreadId != currentThreadId && foregroundThreadId != targetThreadId) {
-        attachedForeground = AttachThreadInput(currentThreadId, foregroundThreadId, true);
-      }
-      BringWindowToTop(handle);
-      SetForegroundWindow(handle);
-      SetActiveWindow(handle);
-      SetFocus(handle);
-    } finally {
-      if (attachedForeground) AttachThreadInput(currentThreadId, foregroundThreadId, false);
-      if (attachedTarget) AttachThreadInput(currentThreadId, targetThreadId, false);
-    }
-    return HasExactIdentity(handle, processId, expectedClass, true) && GetForegroundWindow() == handle;
   }
 
   public static bool ActivateWindow(IntPtr handle) {
@@ -1461,10 +1607,9 @@ public static class CaptureDialogOwner {
 }
 '@
 
-$root = [System.Windows.Automation.AutomationElement]::RootElement
-$targetProcessId = [int]$env:CAPTURE_SMOKE_APP_PID
-$commonDialogClasses = @(${commonDialogClasses})
-$brokerDialogClasses = @(${brokerDialogClasses})
+function Get-TargetMainWindowHandles {
+  return [CaptureDialogOwner]::FindExactTopLevelWindows([uint32]$targetProcessId, 'Tauri Window')
+}
 
 function Get-SafeMetadata($value) {
   if ($null -eq $value) { return '-' }
@@ -1505,12 +1650,12 @@ function Get-ElementState($element) {
   }
 }
 
-function Invoke-NativeElementClick($element) {
+function Invoke-NativeElementClick($dialog, $element) {
   if ($null -eq $element) { return $false }
   try {
     $point = New-Object System.Windows.Point
     if ($element.TryGetClickablePoint([ref]$point)) {
-      return [CaptureDialogOwner]::ClickAt([int]$point.X, [int]$point.Y)
+      return (Invoke-GuardedClick $dialog ([int]$point.X) ([int]$point.Y))
     }
     # Explorer's brokered picker can expose a visible control without a
     # clickable point from its UIA provider. Its screen-space bounding rectangle
@@ -1519,7 +1664,7 @@ function Invoke-NativeElementClick($element) {
     if ($rectangle.Width -le 0 -or $rectangle.Height -le 0) { return $false }
     $x = [int][Math]::Round($rectangle.X + ($rectangle.Width / 2))
     $y = [int][Math]::Round($rectangle.Y + ($rectangle.Height / 2))
-    return [CaptureDialogOwner]::ClickAt($x, $y)
+    return (Invoke-GuardedClick $dialog $x $y)
   } catch {
     return $false
   }
@@ -1691,83 +1836,56 @@ function ConvertTo-SendKeysLiteral([string]$value) {
   return $builder.ToString()
 }
 
-function Invoke-SendKeysText([string]$value) {
-  [System.Windows.Forms.SendKeys]::SendWait((ConvertTo-SendKeysLiteral $value))
+function Invoke-RawKeySend([string]$value) {
+  [System.Windows.Forms.SendKeys]::SendWait($value)
 }
 
-function Find-FilenameTarget($dialog) {
-  # Windows 11's brokered FileOpenPicker is an existing Explorer window rather
-  # than a classic #32770 dialog. Its file-name control is exposed as a
-  # TextBox, and unlike the keyboard fallback it can be addressed without
-  # depending on the foreground window or localized labels.
-  foreach ($automationId in @('FileNameControlHost', 'TextBox')) {
-    $filenameHost = Find-ByAutomationId $dialog $automationId
-    if ($null -eq $filenameHost) { continue }
-    $action = Get-ValueAction $filenameHost
-    if ($null -ne $action) { return @{ Element = $filenameHost; Action = $action } }
-    $hostNodes = $filenameHost.FindAll(
-      [System.Windows.Automation.TreeScope]::Descendants,
-      [System.Windows.Automation.Condition]::TrueCondition
-    )
-    foreach ($node in $hostNodes) {
-      $action = Get-ValueAction $node
-      if ($null -ne $action) { return @{ Element = $node; Action = $action } }
-    }
-  }
+function Invoke-RawClick([int]$x, [int]$y) {
+  return [CaptureDialogOwner]::ClickAt($x, $y)
+}
 
-  $filenameHost = Find-ByAutomationId $dialog 'FileNameControlHost'
-  if ($null -ne $filenameHost) {
-    $action = Get-ValueAction $filenameHost
-    if ($null -ne $action) { return @{ Element = $filenameHost; Action = $action } }
-    $hostNodes = $filenameHost.FindAll(
-      [System.Windows.Automation.TreeScope]::Descendants,
-      [System.Windows.Automation.Condition]::TrueCondition
-    )
-    foreach ($node in $hostNodes) {
-      $action = Get-ValueAction $node
-      if ($null -ne $action) { return @{ Element = $node; Action = $action } }
-    }
-  }
+function Get-NativeRoot([IntPtr]$handle) {
+  return [CaptureDialogOwner]::GetAncestor($handle, 2)
+}
 
-  foreach ($automationId in @('1148', '1001')) {
-    $condition = New-Object System.Windows.Automation.PropertyCondition(
-      [System.Windows.Automation.AutomationElement]::AutomationIdProperty,
-      $automationId
-    )
-    $candidates = $dialog.FindAll([System.Windows.Automation.TreeScope]::Descendants, $condition)
-    foreach ($preferredClass in @('Edit', 'ComboBox', 'ComboBoxEx32')) {
-      foreach ($candidate in $candidates) {
-        try {
-          if ($candidate.Current.ClassName -ne $preferredClass) { continue }
-        } catch { continue }
-        $action = Get-ValueAction $candidate
-        if ($null -ne $action) { return @{ Element = $candidate; Action = $action } }
-        try {
-          if ($candidate.Current.ClassName -eq 'Edit' -and $candidate.Current.NativeWindowHandle -ne 0) {
-            return @{ Element = $candidate; Action = @{ Kind = 'Win32Text'; Handle = [IntPtr]$candidate.Current.NativeWindowHandle } }
-          }
-        } catch { }
+function Get-ForegroundRoot {
+  return Get-NativeRoot ([CaptureDialogOwner]::GetForegroundWindow())
+}
+
+function Invoke-PickerActivation([IntPtr]$handle) {
+  return [CaptureDialogOwner]::ActivateWindow($handle)
+}
+
+function Test-TargetEnabled {
+  return [CaptureDialogOwner]::IsWindowEnabled($targetHandle)
+}
+
+function Test-PickerInputOwnership($dialog) {
+  try {
+    $handle = [IntPtr]$dialog.Current.NativeWindowHandle
+    if ($handle -ne [IntPtr]::Zero) {
+      $pickerRoot = Get-NativeRoot $handle
+      if ($pickerRoot -ne [IntPtr]::Zero) {
+        if ((Get-ForegroundRoot) -eq $pickerRoot) { return $true }
+        try { [void](Invoke-PickerActivation $handle) } catch { }
+        if ((Get-ForegroundRoot) -eq $pickerRoot) { return $true }
       }
     }
-  }
-  $editCondition = New-Object System.Windows.Automation.PropertyCondition(
-    [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
-    [System.Windows.Automation.ControlType]::Edit
-  )
-  $editCandidates = $dialog.FindAll(
-    [System.Windows.Automation.TreeScope]::Descendants,
-    $editCondition
-  )
-  foreach ($edit in $editCandidates) {
-    $action = Get-ValueAction $edit
-    if ($null -ne $action) { return @{ Element = $edit; Action = $action } }
-    try {
-      if ($edit.Current.NativeWindowHandle -ne 0) {
-        return @{ Element = $edit; Action = @{ Kind = 'Win32Text'; Handle = [IntPtr]$edit.Current.NativeWindowHandle } }
-      }
-    } catch { }
-  }
-  return $null
+  } catch { }
+  $script:pickerInputRefused = $true
+  Write-Host 'UIA|stage=input-guard|code=foreground-not-owned'
+  return $false
+}
+
+function Invoke-GuardedKeys($dialog, [string]$value) {
+  if (-not (Test-PickerInputOwnership $dialog)) { return $false }
+  Invoke-RawKeySend $value
+  return $true
+}
+
+function Invoke-GuardedClick($dialog, [int]$x, [int]$y) {
+  if (-not (Test-PickerInputOwnership $dialog)) { return $false }
+  return Invoke-RawClick $x $y
 }
 
 function Get-LegacyInvokeAction($element) {
@@ -1900,7 +2018,8 @@ function Find-BrokeredFileTarget($dialog) {
       [System.Windows.Automation.TreeScope]::Descendants,
       $listCondition
     )
-    Write-Output ('UIA|stage=brokered-list|code=observed|count=' + [string]$listItems.Count + '|matches=' + [string]$items.Count)
+    # Write-Host: this function's pipeline output is its return value.
+    Write-Host ('UIA|stage=brokered-list|code=observed|count=' + [string]$listItems.Count + '|matches=' + [string]$items.Count)
     $script:BrokeredListProbeWritten = $true
   }
   foreach ($item in $items) {
@@ -1915,9 +2034,9 @@ function Find-BrokeredFileTarget($dialog) {
   return $null
 }
 
-function Invoke-BrokeredItemClick($itemElement) {
+function Invoke-BrokeredItemClick($dialog, $itemElement) {
   if ($null -eq $itemElement) { return $false }
-  if (Invoke-NativeElementClick $itemElement) { return $true }
+  if (Invoke-NativeElementClick $dialog $itemElement) { return $true }
   try {
     $nodes = $itemElement.FindAll(
       [System.Windows.Automation.TreeScope]::Descendants,
@@ -1928,7 +2047,7 @@ function Invoke-BrokeredItemClick($itemElement) {
         if (-not [bool]$node.Current.IsEnabled -or [bool]$node.Current.IsOffscreen) { continue }
         $rectangle = Get-ElementRectangle $node
         if ($null -eq $rectangle) { continue }
-        if (Invoke-NativeElementClick $node) { return $true }
+        if (Invoke-NativeElementClick $dialog $node) { return $true }
       } catch { }
     }
   } catch { }
@@ -1958,12 +2077,12 @@ function Invoke-BrokeredPicker($dialog) {
   # exact fixture ListItem and acknowledge the picker commit control. The
   # path/name is used only as an input to UIA and never emitted in diagnostics.
   try { $dialog.SetFocus() } catch { }
-  $filename.SetFocus()
-  [System.Windows.Forms.SendKeys]::SendWait('^l')
+  try { $filename.SetFocus() } catch { }
+  if (-not (Invoke-GuardedKeys $dialog '^l')) { return $false }
   Start-Sleep -Milliseconds 100
-  [System.Windows.Forms.SendKeys]::SendWait('^a')
-  Invoke-SendKeysText $directory
-  [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
+  if (-not (Invoke-GuardedKeys $dialog '^a')) { return $false }
+  if (-not (Invoke-GuardedKeys $dialog (ConvertTo-SendKeysLiteral $directory))) { return $false }
+  if (-not (Invoke-GuardedKeys $dialog '{ENTER}')) { return $false }
   $itemDeadline = [DateTime]::UtcNow.AddSeconds(10)
   $item = $null
   while ([DateTime]::UtcNow -lt $itemDeadline) {
@@ -1983,11 +2102,11 @@ function Invoke-BrokeredPicker($dialog) {
   try {
     $action.Pattern.SetValue($env:CAPTURE_SMOKE_DIALOG_FILE)
     try { $filename.SetFocus() } catch { }
-    [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
+    [void](Invoke-GuardedKeys $dialog '{ENTER}')
     Write-Output 'UIA|stage=brokered-file|code=full-path-commit'
     $fullPathDeadline = [DateTime]::UtcNow.AddSeconds(5)
     while ([DateTime]::UtcNow -lt $fullPathDeadline) {
-      if ([CaptureDialogOwner]::IsWindowEnabled($targetHandle)) { exit 0 }
+      if (Test-TargetEnabled) { exit 0 }
       if (-not (Test-DialogStillOpen $dialog $dialogHandle)) {
         Write-Output 'UIA|stage=brokered-file|code=dialog-closed-after-full-path'
         exit 0
@@ -2006,21 +2125,20 @@ function Invoke-BrokeredPicker($dialog) {
   }
   Write-Output 'UIA|stage=brokered-file|code=selected'
   Write-Output ('UIA|stage=brokered-file|code=selection-state|selected=' + (Get-SelectionState $item.Element))
-  $nativeItemClicked = Invoke-BrokeredItemClick $item.Element
+  $nativeItemClicked = Invoke-BrokeredItemClick $dialog $item.Element
   Write-Output ('UIA|stage=brokered-file|code=native-click|result=' + (Get-BoolMetadata $nativeItemClicked))
   Start-Sleep -Milliseconds 250
-  if ([CaptureDialogOwner]::IsWindowEnabled($targetHandle)) { exit 0 }
+  if (Test-TargetEnabled) { exit 0 }
   if (-not (Test-DialogStillOpen $dialog $dialogHandle)) {
     Write-Output 'UIA|stage=brokered-file|code=dialog-closed-after-item-click'
     exit 0
   }
-  try { [void][CaptureDialogOwner]::ActivateWindow($dialogHandle) } catch { }
   try { $item.Element.SetFocus() } catch { }
-  [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
+  [void](Invoke-GuardedKeys $dialog '{ENTER}')
   Write-Output 'UIA|stage=brokered-file|code=keyboard-commit'
   $keyboardCommitDeadline = [DateTime]::UtcNow.AddSeconds(5)
   while ([DateTime]::UtcNow -lt $keyboardCommitDeadline) {
-    if ([CaptureDialogOwner]::IsWindowEnabled($targetHandle)) { exit 0 }
+    if (Test-TargetEnabled) { exit 0 }
     if (-not (Test-DialogStillOpen $dialog $dialogHandle)) {
       Write-Output 'UIA|stage=brokered-file|code=dialog-closed-after-keyboard-commit'
       exit 0
@@ -2031,14 +2149,13 @@ function Invoke-BrokeredPicker($dialog) {
   # SelectionItemPattern. Ctrl+A is the non-localized native selection signal
   # for the current folder; with the isolated fixture directory it selects
   # exactly the verified fixture before Enter commits the picker.
-  try { [void][CaptureDialogOwner]::ActivateWindow($dialogHandle) } catch { }
-  [System.Windows.Forms.SendKeys]::SendWait('^a')
+  [void](Invoke-GuardedKeys $dialog '^a')
   Start-Sleep -Milliseconds 150
-  [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
+  [void](Invoke-GuardedKeys $dialog '{ENTER}')
   Write-Output 'UIA|stage=brokered-file|code=select-all-commit'
   $selectAllDeadline = [DateTime]::UtcNow.AddSeconds(5)
   while ([DateTime]::UtcNow -lt $selectAllDeadline) {
-    if ([CaptureDialogOwner]::IsWindowEnabled($targetHandle)) { exit 0 }
+    if (Test-TargetEnabled) { exit 0 }
     if (-not (Test-DialogStillOpen $dialog $dialogHandle)) {
       Write-Output 'UIA|stage=brokered-file|code=dialog-closed-after-select-all'
       exit 0
@@ -2061,7 +2178,7 @@ function Invoke-BrokeredPicker($dialog) {
     Write-Output ('UIA|stage=brokered-win32|code=commit-control-click|result=' + (Get-BoolMetadata ($sent -ne [IntPtr]::Zero)))
     $win32Deadline = [DateTime]::UtcNow.AddSeconds(5)
     while ([DateTime]::UtcNow -lt $win32Deadline) {
-      if ([CaptureDialogOwner]::IsWindowEnabled($targetHandle)) { exit 0 }
+      if (Test-TargetEnabled) { exit 0 }
       if (-not (Test-DialogStillOpen $dialog $dialogHandle)) {
         Write-Output 'UIA|stage=brokered-win32|code=dialog-closed-after-commit-control'
         exit 0
@@ -2073,7 +2190,7 @@ function Invoke-BrokeredPicker($dialog) {
   if ($null -ne $itemInvoke) {
     $itemInvoke.Pattern.Invoke()
     Start-Sleep -Milliseconds 500
-    if ([CaptureDialogOwner]::IsWindowEnabled($targetHandle)) { exit 0 }
+    if (Test-TargetEnabled) { exit 0 }
     if (-not (Test-DialogStillOpen $dialog $dialogHandle)) {
       Write-Output 'UIA|stage=brokered-file|code=dialog-closed-after-item-invoke'
       exit 0
@@ -2085,7 +2202,7 @@ function Invoke-BrokeredPicker($dialog) {
       $itemLegacyInvoke.Pattern.DoDefaultAction()
       Write-Output 'UIA|stage=brokered-file|code=legacy-default-action'
       Start-Sleep -Milliseconds 500
-      if ([CaptureDialogOwner]::IsWindowEnabled($targetHandle)) { exit 0 }
+      if (Test-TargetEnabled) { exit 0 }
       if (-not (Test-DialogStillOpen $dialog $dialogHandle)) {
         Write-Output 'UIA|stage=brokered-file|code=dialog-closed-after-legacy-action'
         exit 0
@@ -2103,21 +2220,20 @@ function Invoke-BrokeredPicker($dialog) {
     return $false
   }
   Write-ElementDiagnostics 'UIA' $open.Element 'brokered-add-target'
-  try { [void][CaptureDialogOwner]::ActivateWindow($dialogHandle) } catch { }
-  $nativeClicked = Invoke-NativeElementClick $open.Element
+  $nativeClicked = Invoke-NativeElementClick $dialog $open.Element
   Write-Output ('UIA|stage=brokered-add|code=native-click|result=' + (Get-BoolMetadata $nativeClicked))
   Start-Sleep -Milliseconds 250
-  if ([CaptureDialogOwner]::IsWindowEnabled($targetHandle)) { exit 0 }
+  if (Test-TargetEnabled) { exit 0 }
   if ($open.Action.Kind -eq 'Invoke') {
     try { $open.Element.SetFocus() } catch { }
     $open.Action.Pattern.Invoke()
     Start-Sleep -Milliseconds 150
-    if (-not [CaptureDialogOwner]::IsWindowEnabled($targetHandle)) {
-      [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
+    if (-not (Test-TargetEnabled)) {
+      [void](Invoke-GuardedKeys $dialog '{ENTER}')
     }
   } elseif ($open.Action.Kind -eq 'Keyboard') {
     $open.Element.SetFocus()
-    [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
+    [void](Invoke-GuardedKeys $dialog '{ENTER}')
   } else {
     $messageResult = [IntPtr]::Zero
     $sent = [CaptureDialogOwner]::SendMessageTimeout($open.Action.Handle, 0x00F5, [IntPtr]::Zero, [IntPtr]::Zero, 0x0002, 2000, [ref]$messageResult)
@@ -2126,14 +2242,13 @@ function Invoke-BrokeredPicker($dialog) {
   Write-Output 'UIA|stage=brokered-add|code=invoked'
   $retryClick = $false
   Start-Sleep -Milliseconds 250
-  if (-not [CaptureDialogOwner]::IsWindowEnabled($targetHandle)) {
-    try { [void][CaptureDialogOwner]::ActivateWindow($dialogHandle) } catch { }
-    $retryClick = Invoke-NativeElementClick $open.Element
+  if (-not (Test-TargetEnabled)) {
+      $retryClick = Invoke-NativeElementClick $dialog $open.Element
     Write-Output ('UIA|stage=brokered-add|code=native-click-retry|result=' + (Get-BoolMetadata $retryClick))
   }
   $dialogDeadline = [DateTime]::UtcNow.AddSeconds(5)
   while ([DateTime]::UtcNow -lt $dialogDeadline) {
-    if ([CaptureDialogOwner]::IsWindowEnabled($targetHandle)) { exit 0 }
+    if (Test-TargetEnabled) { exit 0 }
     Start-Sleep -Milliseconds 100
   }
   Write-Output 'UIA|stage=brokered-add|code=timeout'
@@ -2142,33 +2257,25 @@ function Invoke-BrokeredPicker($dialog) {
 }
 
 function Invoke-BrokeredPickerKeyboardFallback($dialog) {
-  if ([CaptureDialogOwner]::IsWindowEnabled($targetHandle)) { return $false }
-  $dialogHandle = [IntPtr]::Zero
-  try { $dialogHandle = [IntPtr]$dialog.Current.NativeWindowHandle } catch { }
-  $activated = $false
-  if ($dialogHandle -ne [IntPtr]::Zero) {
-    $activated = [CaptureDialogOwner]::ActivateWindow($dialogHandle)
-  }
-  Write-Output ('UIA|stage=keyboard-fallback|code=activate|dialog=' + (Get-BoolMetadata $activated))
-  Start-Sleep -Milliseconds 150
+  if (Test-TargetEnabled) { return $false }
   # The Windows 11 broker can expose only the existing Explorer shell window
   # through UIA. Alt+N reaches the file-name field in the common dialog, while
   # the second Enter also covers the brokered picker after it resolves the
   # selected path. No text is logged by this fallback.
-  [System.Windows.Forms.SendKeys]::SendWait('%n')
+  if (-not (Invoke-GuardedKeys $dialog '%n')) { return $false }
   Start-Sleep -Milliseconds 100
-  Invoke-SendKeysText $env:CAPTURE_SMOKE_DIALOG_FILE
-  [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
+  if (-not (Invoke-GuardedKeys $dialog (ConvertTo-SendKeysLiteral $env:CAPTURE_SMOKE_DIALOG_FILE))) { return $false }
+  if (-not (Invoke-GuardedKeys $dialog '{ENTER}')) { return $false }
   Start-Sleep -Milliseconds 250
-  if (-not [CaptureDialogOwner]::IsWindowEnabled($targetHandle)) {
-    [System.Windows.Forms.SendKeys]::SendWait('^l')
+  if (-not (Test-TargetEnabled)) {
+    if (-not (Invoke-GuardedKeys $dialog '^l')) { return $false }
     Start-Sleep -Milliseconds 100
-    Invoke-SendKeysText $env:CAPTURE_SMOKE_DIALOG_FILE
-    [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
+    if (-not (Invoke-GuardedKeys $dialog (ConvertTo-SendKeysLiteral $env:CAPTURE_SMOKE_DIALOG_FILE))) { return $false }
+    if (-not (Invoke-GuardedKeys $dialog '{ENTER}')) { return $false }
     Start-Sleep -Milliseconds 250
-    [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
+    if (-not (Invoke-GuardedKeys $dialog '{ENTER}')) { return $false }
   }
-  Write-Output 'UIA|stage=keyboard-fallback|code=sent'
+  Write-Host 'UIA|stage=keyboard-fallback|code=sent'
   return $true
 }
 
@@ -2301,45 +2408,80 @@ function Test-DialogStillOpen($dialog, [IntPtr]$handle) {
   return $false
 }
 
-$targetMainWindowHandles = @([CaptureDialogOwner]::FindExactTopLevelWindows(
-  [uint32]$targetProcessId,
-  'Tauri Window'
-))
+`;
+}
+
+export function nativeDialogUiAutomationScript(): string {
+  const commonDialogClasses = NATIVE_SOURCE_DIALOG_CLASSES.map((value) => `'${value}'`).join(', ');
+  const brokerDialogClasses = NATIVE_SOURCE_BROKER_DIALOG_CLASSES.map((value) => `'${value}'`).join(', ');
+  return nativeDialogUiAutomationDefinitions() + `
+try {
+  [void][CaptureClassicDialogOwner]::SetProcessDpiAwarenessContext([IntPtr]::new(-4))
+} catch { }
+$dialogFile = [string]$env:CAPTURE_SMOKE_DIALOG_FILE
+if ([string]::IsNullOrWhiteSpace($dialogFile)) {
+  Write-Output 'UIA|stage=input|code=missing'
+  exit 8
+}
+
+$root = [System.Windows.Automation.AutomationElement]::RootElement
+$targetProcessId = [int]$env:CAPTURE_SMOKE_APP_PID
+$commonDialogClasses = @(${commonDialogClasses})
+$brokerDialogClasses = @(${brokerDialogClasses})
+
+$targetMainWindowHandles = @(Get-TargetMainWindowHandles)
 if ($targetMainWindowHandles.Count -ne 1) {
   Write-Output ('UIA|stage=target-window|code=count-invalid|count=' + [string]$targetMainWindowHandles.Count)
   exit 6
 }
 $targetHandle = [IntPtr][long]$targetMainWindowHandles[0]
-$activationDeadline = [DateTime]::UtcNow.AddSeconds(3)
-$targetActivated = $false
-while ([DateTime]::UtcNow -lt $activationDeadline) {
-  try {
-    $targetElement = [System.Windows.Automation.AutomationElement]::FromHandle($targetHandle)
-    $targetElement.SetFocus()
-  } catch { }
-  if ([CaptureDialogOwner]::ActivateExactWindow($targetHandle, [uint32]$targetProcessId, 'Tauri Window')) {
-    $targetActivated = $true
-    break
-  }
-  Start-Sleep -Milliseconds 100
-}
-if (-not $targetActivated) {
-  Write-Output 'UIA|stage=target-activation|code=failed|count=1'
-  exit 7
-}
-
 $baselineWindowHandles = New-Object 'System.Collections.Generic.HashSet[long]'
 foreach ($handle in [CaptureDialogOwner]::SnapshotTopLevelWindowHandles()) {
   [void]$baselineWindowHandles.Add([long]$handle)
 }
 $targetMainWindowWasEnabled = [CaptureDialogOwner]::IsWindowEnabled($targetHandle)
-Write-Output 'UIA|stage=ready|code=activated'
+Write-Output 'UIA|stage=ready|code=listening'
 if ($env:E2E_ACCEPTANCE_DIAGNOSTICS -eq '1') {
   Write-TopLevelDiagnostics
 }
 
 $deadline = [DateTime]::UtcNow.AddSeconds(30)
 while ([DateTime]::UtcNow -lt $deadline) {
+  # Classic dialog: native window messages only, without foreground changes.
+  $dialogHandle = [CaptureClassicDialogOwner]::FindDialog([uint32]$targetProcessId, $commonDialogClasses)
+  if ($dialogHandle -ne [IntPtr]::Zero) {
+    $editDeadline = [DateTime]::UtcNow.AddSeconds(2)
+    $editHandle = [IntPtr]::Zero
+    while ([DateTime]::UtcNow -lt $editDeadline) {
+      $editHandle = [CaptureClassicDialogOwner]::FindFilenameEdit($dialogHandle)
+      if ($editHandle -ne [IntPtr]::Zero) { break }
+      Start-Sleep -Milliseconds 50
+    }
+    if ($editHandle -eq [IntPtr]::Zero) {
+      Write-Output 'UIA|stage=find-edit|code=missing'
+      [CaptureClassicDialogOwner]::GetDialogChildDiagnostics($dialogHandle) | Write-Output
+      exit 2
+    }
+    if (-not [CaptureClassicDialogOwner]::SetEditText($editHandle, $dialogFile)) {
+      Write-Output 'UIA|stage=set-value|code=failed'
+      [CaptureClassicDialogOwner]::GetDialogChildDiagnostics($dialogHandle) | Write-Output
+      exit 3
+    }
+    if (-not [CaptureClassicDialogOwner]::SubmitDialog($dialogHandle)) {
+      Write-Output 'UIA|stage=invoke-open|code=failed'
+      [CaptureClassicDialogOwner]::GetDialogChildDiagnostics($dialogHandle) | Write-Output
+      exit 4
+    }
+    $closeDeadline = [DateTime]::UtcNow.AddSeconds(10)
+    while ([DateTime]::UtcNow -lt $closeDeadline) {
+      if (-not [CaptureClassicDialogOwner]::IsDialogOpen($dialogHandle)) { exit 0 }
+      Start-Sleep -Milliseconds 100
+    }
+    Write-Output 'UIA|stage=close-dialog|code=timeout'
+    [CaptureClassicDialogOwner]::GetDialogChildDiagnostics($dialogHandle) | Write-Output
+    exit 5
+  }
+  # Brokered picker: validated UI Automation and keyboard fallback.
   $windows = @($root.FindAll(
     [System.Windows.Automation.TreeScope]::Children,
     [System.Windows.Automation.Condition]::TrueCondition
@@ -2372,9 +2514,7 @@ while ([DateTime]::UtcNow -lt $deadline) {
     try {
       $current = $dialog.Current
       if ($current.ControlType -ne [System.Windows.Automation.ControlType]::Window) { continue }
-      if ($relation -ne 'other' -and $commonDialogClasses -contains [string]$current.ClassName) {
-        $dialogKind = 'common'
-    } elseif (Test-BrokeredDialog $dialog) {
+      if (Test-BrokeredDialog $dialog) {
         $dialogKind = 'brokered'
         $relation = 'brokered'
         Write-Output 'UIA|stage=brokered-flow|code=dialog-found'
@@ -2392,13 +2532,8 @@ while ([DateTime]::UtcNow -lt $deadline) {
         }
       }
       if ($brokeredSucceeded) { exit 0 }
-      Write-Output 'UIA|stage=brokered-flow|code=commit-unacknowledged'
-      Write-DialogDiagnostics $dialog $relation
-      exit 5
-    }
-    $filename = Find-FilenameTarget $dialog
-    if ($null -eq $filename) {
-      if ($dialogKind -eq 'brokered' -and (Invoke-BrokeredPickerKeyboardFallback $dialog)) {
+      $script:pickerInputRefused = $false
+      if (Invoke-BrokeredPickerKeyboardFallback $dialog) {
         $fallbackDeadline = [DateTime]::UtcNow.AddSeconds(10)
         while ([DateTime]::UtcNow -lt $fallbackDeadline) {
           if ([CaptureDialogOwner]::IsWindowEnabled($targetHandle)) { exit 0 }
@@ -2408,70 +2543,12 @@ while ([DateTime]::UtcNow -lt $deadline) {
         Write-TopLevelDiagnostics
         exit 5
       }
-      continue
-    }
-    try {
-      if ($filename.Action.Kind -eq 'Value') {
-        $filename.Action.Pattern.SetValue($env:CAPTURE_SMOKE_DIALOG_FILE)
-      } elseif ($filename.Action.Kind -eq 'Win32Text') {
-        if (-not [CaptureDialogOwner]::SetEditText($filename.Action.Handle, $env:CAPTURE_SMOKE_DIALOG_FILE)) {
-          throw 'Filename control did not accept WM_SETTEXT.'
-        }
-      } else {
-        $filename.Element.SetFocus()
-        Start-Sleep -Milliseconds 50
-        Invoke-SendKeysText $env:CAPTURE_SMOKE_DIALOG_FILE
-      }
-      if ($dialogKind -eq 'brokered') {
-        # CabinetWClass exposes the brokered picker's path/file field as a
-        # TextBox. ValuePattern changes the control but does not commit the
-        # navigation/selection until the native Enter signal is delivered.
-        # This is still process-owned UI automation; it does not use or alter
-        # the user's clipboard.
-        $filename.Element.SetFocus()
-        [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
-        Start-Sleep -Milliseconds 300
-        if (-not (Test-DialogStillOpen $dialog ([IntPtr]$dialog.Current.NativeWindowHandle))) { exit 0 }
-      }
-    } catch {
-      Write-Output 'UIA|stage=set-value|code=failed'
+      if ($script:pickerInputRefused) { exit 10 }
+      Write-Output 'UIA|stage=brokered-flow|code=commit-unacknowledged'
       Write-DialogDiagnostics $dialog $relation
-      exit 2
+      exit 5
     }
 
-    $open = Find-OpenTarget $dialog
-    if ($null -eq $open) {
-      Write-Output 'UIA|stage=find-open|code=missing'
-      Write-DialogDiagnostics $dialog $relation
-      exit 3
-    }
-
-    try {
-      if ($open.Action.Kind -eq 'Invoke') {
-        $open.Action.Pattern.Invoke()
-      } elseif ($open.Action.Kind -eq 'Keyboard') {
-        $open.Element.SetFocus()
-        [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
-      } else {
-        $messageResult = [IntPtr]::Zero
-        $sent = [CaptureDialogOwner]::SendMessageTimeout($open.Action.Handle, 0x00F5, [IntPtr]::Zero, [IntPtr]::Zero, 0x0002, 2000, [ref]$messageResult)
-        if ($sent -eq [IntPtr]::Zero) { throw 'Open control did not accept BM_CLICK.' }
-      }
-    } catch {
-      Write-Output 'UIA|stage=invoke-open|code=failed'
-      Write-DialogDiagnostics $dialog $relation
-      exit 4
-    }
-
-    $dialogHandle = $dialog.Current.NativeWindowHandle
-    $dialogDeadline = [DateTime]::UtcNow.AddSeconds(10)
-    while ([DateTime]::UtcNow -lt $dialogDeadline) {
-      if (-not (Test-DialogStillOpen $dialog ([IntPtr]$dialogHandle))) { exit 0 }
-      Start-Sleep -Milliseconds 100
-    }
-    Write-Output 'UIA|stage=close-dialog|code=timeout'
-    Write-DialogDiagnostics $dialog $relation
-    exit 5
   }
   Start-Sleep -Milliseconds 100
 }
@@ -2499,8 +2576,8 @@ export function safeUiAutomationDiagnostics(output: string): string {
 class NativePickerAutomationError extends Error {
   readonly diagnostics: string;
 
-  constructor(diagnostics: string) {
-    super(`Native source picker automation failed.${diagnostics === 'none' ? '' : ` diagnostics=${diagnostics}`}`);
+  constructor(diagnostics: string, inputRefused = false) {
+    super(`Native source picker automation failed.${inputRefused ? ' Picker input refused because the foreground is not owned by the picker.' : ''}${diagnostics === 'none' ? '' : ` diagnostics=${diagnostics}`}`);
     this.name = 'NativePickerAutomationError';
     this.diagnostics = diagnostics;
   }
@@ -2702,7 +2779,7 @@ export async function nativeOpenDialogUiAutomation(
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
   });
-  const readyMarker = 'UIA|stage=ready|code=activated';
+  const readyMarker = 'UIA|stage=ready|code=listening';
   let stdout = '';
   let stderr = '';
   let readySettled = false;
@@ -2754,7 +2831,6 @@ export async function nativeOpenDialogUiAutomation(
     settleResult({ code: null, stdout, stderr });
   }, 60_000);
   if (resultSettled) clearTimeout(childTimeout);
-  if (resultSettled) clearTimeout(childTimeout);
   const readyTimeout = setTimeout(failReady, 15_000);
   try {
     await ready;
@@ -2785,7 +2861,7 @@ export async function nativeOpenDialogUiAutomation(
   if (completed.code !== 0) {
     const diagnostics = safeUiAutomationDiagnostics(completed.stdout);
     await removeScript();
-    throw new NativePickerAutomationError(diagnostics);
+    throw new NativePickerAutomationError(diagnostics, completed.code === 10);
   }
   if (process.env.E2E_ACCEPTANCE_DIAGNOSTICS === '1') {
     const diagnostics = safeUiAutomationDiagnostics(completed.stdout);
