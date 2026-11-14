@@ -757,6 +757,7 @@ Add-Type -AssemblyName System.Windows.Forms
 $form = New-Object System.Windows.Forms.Form
 $form.Text = 'Tauri Window'
 $form.Add_Shown({
+  [Console]::WriteLine('HWND=' + $form.Handle.ToInt64())
   $timer = New-Object System.Windows.Forms.Timer
   $timer.Interval = 25
   $timer.Add_Tick({
@@ -787,18 +788,19 @@ $form.Dispose()
   });
   try {
     assert.ok(host.pid);
+    // The host starts hidden (windowsHide), so it has no main window handle to
+    // look up; it reports its form's handle instead.
+    const hostHandleDeadline = Date.now() + 15_000;
+    let hostHandle: string | undefined;
+    while (hostHandle === undefined && Date.now() < hostHandleDeadline) {
+      hostHandle = /^HWND=(\d+)\r?$/mu.exec(hostOutput)?.[1];
+      if (hostHandle === undefined) await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
+    }
+    assert.ok(hostHandle, 'The dialog host did not report its window handle.');
     const definitions = nativeDialogUiAutomationDefinitions();
     // A WinForms host has a generated class name; production Tauri uses its fixed class.
     const script = definitions + `
-function Get-TargetMainWindowHandles {
-  $hostDeadline = [DateTime]::UtcNow.AddSeconds(10)
-  do {
-    $hostHandle = (Get-Process -Id $targetProcessId).MainWindowHandle
-    if ($hostHandle -ne [IntPtr]::Zero) { return @($hostHandle.ToInt64()) }
-    Start-Sleep -Milliseconds 25
-  } while ([DateTime]::UtcNow -lt $hostDeadline)
-  return @()
-}
+function Get-TargetMainWindowHandles { return @([long]${hostHandle}) }
 $script:keyCount = 0
 function Invoke-RawKeySend([string]$value) { $script:keyCount++; throw 'Unexpected keyboard input' }
 try { & {
@@ -829,7 +831,7 @@ try { & {
       assert.equal(await automationExit, 0, output);
       assert.match(output, /KEYCOUNT=0/u);
       assert.equal(await hostExit, 0);
-      assert.equal(hostOutput.trim(), fixture);
+      assert.equal(hostOutput.trim().split(/\r?\n/u).at(-1), fixture);
     } finally { clearTimeout(watchdog); automation.kill(); }
   } finally {
     host.kill();
