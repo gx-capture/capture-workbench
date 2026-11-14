@@ -177,3 +177,10 @@ pnpm nx run capture-runtime:build-diarization-worker
 
 The `diarization` dependency group installs CPU PyTorch. GPU diarization needs
 a CUDA build of PyTorch in the worker environment.
+
+The built-in `ollama` provider chooses a fresh ephemeral `127.0.0.1` port for
+each bounded lease and verifies the listening PID against its direct `ollama serve`
+child before using HTTP or CLI commands. Failed ownership/bind attempts stop the
+child and retry up to five times. `CAPTURE_OLLAMA_HOST` is silently ignored;
+the runtime overrides inherited `OLLAMA_HOST` for its child and install commands.
+`external-ollama` continues to use `CAPTURE_OLLAMA_ENDPOINT` unchanged.

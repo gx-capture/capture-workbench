@@ -7,6 +7,7 @@ import json
 import threading
 from collections.abc import Callable, Mapping
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -82,7 +83,6 @@ class FakeProcessController:
 def _ollama_config(tmp_path: Path) -> OllamaRuntimeConfig:
     root = tmp_path / "ollama"
     return OllamaRuntimeConfig(
-        host_url="http://127.0.0.1:11555",
         app_data_dir=root,
         pid_file=root / "ollama.pid.json",
         models_dir=root / "models",
@@ -127,6 +127,7 @@ def _installer(
     lifecycle = IsolatedOllamaLifecycle(
         config,
         process_controller=controller,
+        listener_owner=SimpleNamespace(listener_pid=lambda _port: 4242),
         executable_resolver=lambda: "C:/Program Files/Ollama/ollama.exe",
         clock=SystemClock(),
     )
@@ -154,7 +155,7 @@ def _installer(
 
 
 def _tags_response(config: OllamaRuntimeConfig, models: list[dict[str, str]]) -> httpx.Response:
-    request = httpx.Request("GET", f"{config.host_url}/api/tags")
+    request = httpx.Request("GET", "http://127.0.0.1:11555/api/tags")
     return httpx.Response(200, request=request, json={"models": models})
 
 
@@ -172,13 +173,17 @@ def test_lifecycle_start_is_idempotent_and_uses_only_isolated_state(tmp_path: Pa
     lifecycle = IsolatedOllamaLifecycle(
         config,
         process_controller=controller,
+        listener_owner=SimpleNamespace(listener_pid=lambda _port: 4242),
+        port_selector=lambda: 11555,
         executable_resolver=lambda: "ollama.exe",
         clock=SystemClock(),
     )
 
     assert lifecycle.start() == lifecycle.start() == 4242
     assert controller.spawned == [["ollama.exe", "serve"]]
+    # The child listens on the port the lifecycle chose for this lease.
     assert controller.environments[0]["OLLAMA_HOST"] == "127.0.0.1:11555"
+    assert lifecycle.host_url == "http://127.0.0.1:11555"
     assert controller.environments[0]["OLLAMA_MODELS"] == str(config.models_dir)
 
 
@@ -335,7 +340,7 @@ def test_model_install_waits_for_owned_ollama_server_before_pull(
     monkeypatch.setattr(
         installer,
         "_verify_pulled_model",
-        lambda _option: ("a" * 64, 123),
+        lambda _option, _lease_url: ("a" * 64, 123),
     )
 
     asyncio.run(

@@ -77,12 +77,12 @@ def _lifecycle(tmp_path: Path, controller: _Controller) -> IsolatedOllamaLifecyc
     root.mkdir()
     return IsolatedOllamaLifecycle(
         OllamaRuntimeConfig(
-            host_url="http://127.0.0.1:11555",
             app_data_dir=root,
             pid_file=root / "pid.json",
             models_dir=root / "models",
         ),
         process_controller=controller,
+        listener_owner=SimpleNamespace(listener_pid=lambda _port: 4242),
         executable_resolver=lambda: "ollama.exe",
         clock=SystemClock(),
     )

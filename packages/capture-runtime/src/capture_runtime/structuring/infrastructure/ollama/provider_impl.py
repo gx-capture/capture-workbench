@@ -85,9 +85,10 @@ class OllamaCaptureStructuringProvider:
             engine_identity = await self._wait_until_ready(cancel_event, profile_id)
             self._engine_identity = engine_identity
             async with httpx.AsyncClient(
-                base_url=self._lifecycle.config.host_url,
+                base_url=self._lifecycle.host_url,
                 timeout=self._timeout,
                 follow_redirects=False,
+                trust_env=False,
                 transport=self._transport,
             ) as client:
 
@@ -122,7 +123,7 @@ class OllamaCaptureStructuringProvider:
         cancel_event: asyncio.Event,
         profile_id: str,
     ) -> str:
-        self._require_owned_process()
+        self._require_owned_process(str(client.base_url).rstrip("/"))
         request = asyncio.create_task(
             client.post(
                 "/api/generate",
@@ -160,7 +161,7 @@ class OllamaCaptureStructuringProvider:
                 await asyncio.gather(request, return_exceptions=True)
                 raise asyncio.CancelledError
             response = await request
-            self._require_owned_process()
+            self._require_owned_process(str(client.base_url).rstrip("/"))
             response.raise_for_status()
             payload = response.json()
             candidate = payload.get("response")
@@ -179,18 +180,19 @@ class OllamaCaptureStructuringProvider:
     ) -> CaptureEngine:
         deadline = asyncio.get_running_loop().time() + 30
         async with httpx.AsyncClient(
-            base_url=self._lifecycle.config.host_url,
+            base_url=self._lifecycle.host_url,
             timeout=2,
             follow_redirects=False,
+            trust_env=False,
             transport=self._transport,
         ) as client:
             while asyncio.get_running_loop().time() < deadline:
                 if cancel_event.is_set():
                     raise asyncio.CancelledError
-                self._require_owned_process()
+                self._require_owned_process(str(client.base_url).rstrip("/"))
                 try:
                     response = await client.get("/api/tags")
-                    self._require_owned_process()
+                    self._require_owned_process(str(client.base_url).rstrip("/"))
                     if response.status_code == 200:
                         models = response.json().get("models", [])
                         for model in models:
@@ -234,8 +236,10 @@ class OllamaCaptureStructuringProvider:
             return self._lifecycle.config.profile_id
         raise RuntimeUnavailableError("model_selection_required")
 
-    def _require_owned_process(self) -> None:
-        if not self._lifecycle.owns_running_process():
+    def _require_owned_process(self, expected_url: str) -> None:
+        # The lease must still be the one this client was created for: an
+        # installation can restart Ollama on another port while a capture waits.
+        if not self._lifecycle.owns_running_process() or self._lifecycle.host_url != expected_url:
             raise RuntimeUnavailableError(
                 "isolated Ollama process stopped before provider response validation"
             )

@@ -5320,7 +5320,6 @@ def _lifecycle(tmp_path: Path) -> IsolatedOllamaLifecycle:
     root = tmp_path / "ollama"
     return IsolatedOllamaLifecycle(
         OllamaRuntimeConfig(
-            host_url="http://127.0.0.1:12439",
             app_data_dir=root,
             pid_file=root / "ollama.pid.json",
             models_dir=root / "models",

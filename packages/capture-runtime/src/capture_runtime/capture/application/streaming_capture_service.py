@@ -908,6 +908,8 @@ def _find_ocr_worker_failure(error: BaseException) -> OcrWorkerFailure | None:
 
 
 def _safe_failure_message(error: BaseException) -> str:
+    if isinstance(error, RuntimeUnavailableError):
+        return "Structuring failed at a bounded runtime boundary."
     if isinstance(error, ProgressiveCaptureError):
         return str(error)[:500] or "Progressive audio processing failed."
     if isinstance(error, SpeechModelNotInstalledError):
