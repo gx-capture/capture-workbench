@@ -1,4 +1,6 @@
-import { beginRendererBoundary, finishRendererBoundary, cancelRendererBoundary } from './installed-renderer-boundary.ts';
+import { assertLargeRecordingRequests } from './installed-large-recording.ts';
+import { generateLargeRecording, readLargeRecordingRequests } from './installed-large-recording-fixture.ts';
+import { beginRendererBoundary, connectRendererBoundary, assertInstalledCapture, forbidRecordingSourceBytes, finishRendererBoundary, cancelRendererBoundary } from './installed-renderer-boundary.ts';
 import { newDocumentId } from './installed-document-selection.ts';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -8,7 +10,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import net from 'node:net';
 import { join } from 'node:path';
 
-import { chromium, type Browser, type Locator, type Page } from '@playwright/test';
+import type { Browser, Locator, Page } from '@playwright/test';
 import {
   catchError,
   concatMap,
@@ -179,6 +181,7 @@ export function connectToInstalledWebView(
   port: number,
   appProcess: ChildProcess,
   webViewDataDirectory: string,
+  auditRenderer = false,
 ): Observable<{ browser: Browser; port: number }> {
   const deadline = Date.now() + installedWebViewCdpReadyTimeoutMs;
   const processTerminated = race(
@@ -209,6 +212,7 @@ export function connectToInstalledWebView(
           appProcess,
           deadline,
           undefined,
+          auditRenderer,
         ).pipe(map((browser) => ({ browser, port: resolvedPort }))),
       ),
     ),
@@ -304,7 +308,7 @@ export function installedPage(browser: Browser, appProcess: ChildProcess): Obser
   return defer(findPage) as Observable<Page>;
 }
 
-function connectAttempt(endpoint, appProcess, deadline, lastError) {
+function connectAttempt(endpoint, appProcess, deadline, lastError, auditRenderer = false) {
   if (appProcess.exitCode !== null) {
     return throwError(
       () =>
@@ -321,12 +325,14 @@ function connectAttempt(endpoint, appProcess, deadline, lastError) {
         ),
     );
   }
-  return defer(() =>
-    from(chromium.connectOverCDP(endpoint, { timeout: 2_000 })),
-  ).pipe(
-    catchError((error) =>
-      timer(250).pipe(
-        concatMap(() => connectAttempt(endpoint, appProcess, deadline, error)),
+  let recorderAttached = false;
+  return defer(() => from(connectRendererBoundary(endpoint, auditRenderer, (attached) => {
+    recorderAttached = attached;
+  }))).pipe(
+    catchError((error) => recorderAttached
+      ? throwError(() => new Error('WebView connection failed after startup recording began; refusing to discard session evidence.', { cause: error }))
+      : timer(250).pipe(
+        concatMap(() => connectAttempt(endpoint, appProcess, deadline, error, auditRenderer)),
       ),
     ),
   );
@@ -337,13 +343,21 @@ function captureFixture(page, fixture, appPid, fixtureDirectory, diagnostics) {
   const importButton = page.getByTestId('source-import');
   let diagnosticCard = page.locator('.document-card[data-document-id=""]');
   let beforeIds: string[] = [];
+  let documentId: string;
+  let requestLogOffset = 0;
   const documentIds = (cards) => cards.evaluateAll((elements) =>
     elements.map((element) => element.getAttribute('data-document-id')).filter(Boolean));
-  return defer(() => from(writeFile(filePath, fixture.buffer))).pipe(
+  return defer(() => fixture.buffer ? from(writeFile(filePath, fixture.buffer)) : of(undefined)).pipe(
+    concatMap(() => fixture.bytes
+      ? defer(() => from(readLargeRecordingRequests(join(fixtureDirectory, 'deterministic-requests.jsonl')))).pipe(
+        tap((entries) => {
+          requestLogOffset = entries.length;
+        }),
+      )
+      : of(undefined)),
     concatMap(() => defer(() => from(documentIds(page.locator('.document-card')))).pipe(
       tap((ids: string[]) => { beforeIds = ids; }),
     )),
-    concatMap(() => trackSmokeStep(diagnostics.timeline, 'renderer boundary', () => defer(() => from(beginRendererBoundary(page))))),
     concatMap(() =>
       trackSmokeStep(diagnostics.timeline, 'source picker', () => defer(() =>
         from(
@@ -376,6 +390,8 @@ function captureFixture(page, fixture, appPid, fixtureDirectory, diagnostics) {
           const id = newDocumentId(beforeIds, ids);
           if (!id) return of(false);
           if (!/^[a-zA-Z0-9_-]+$/u.test(id)) throw new Error('Invalid document card identifier.');
+          documentId = id;
+          if (fixture.bytes) forbidRecordingSourceBytes(page, id);
           diagnosticCard = page.locator(`.document-card[data-document-id="${id}"]`);
           return defer(() => from(diagnosticCard.isVisible()));
         })),
@@ -383,14 +399,13 @@ function captureFixture(page, fixture, appPid, fixtureDirectory, diagnostics) {
         `Installed ${fixture.sourceKind} import did not create a new document card.`,
       )).pipe(map(() => diagnosticCard)),
     ),
-    concatMap((card) => defer(() => from(finishRendererBoundary(page, fixtureDirectory))).pipe(map(() => card))),
     concatMap((card) =>
       trackSmokeStep(diagnostics.timeline, 'completion wait', () => waitUntil(
         () =>
           defer(() => from(card.locator('.status').textContent({ timeout: 1_000 }))).pipe(
             map((status) => status === '已完成'),
           ),
-        45_000,
+        fixture.completionTimeoutMs ?? 45_000,
         `Installed ${fixture.sourceKind} capture did not complete.`,
       )).pipe(
         catchError((error) => incompleteCaptureError(page, card, error, fixture, diagnostics)),
@@ -404,14 +419,18 @@ function captureFixture(page, fixture, appPid, fixtureDirectory, diagnostics) {
         from(result.waitFor({ state: 'visible', timeout: 15_000 })),
       ).pipe(
         concatMap(() => defer(() => from(result.textContent()))),
-        map((text) => {
-          assert.ok(String(text ?? '').trim(), 'Installed result preview was empty.');
-          return {
+        concatMap((text) => defer(() => from(assertInstalledCapture(page, documentId, fixture, text))).pipe(
+          concatMap(() => fixture.bytes
+            ? defer(() => from(readLargeRecordingRequests(join(fixtureDirectory, 'deterministic-requests.jsonl')))).pipe(
+              tap((entries) => assertLargeRecordingRequests(entries.slice(requestLogOffset), fixture.bytes)),
+            )
+            : of(undefined)),
+          map(() => ({
             sourceKind: fixture.sourceKind,
             fileName: fixture.fileName,
             targetTextVisible: true,
-          };
-        }),
+          })),
+        )),
       );
     }),
     catchError((error) => defer(() => from(cancelRendererBoundary(page))).pipe(
@@ -434,6 +453,7 @@ export function exerciseInstalledUi(page, appPid, fixtureDirectory, diagnostics 
         .waitFor({ state: 'visible', timeout: 30_000 }),
     ),
   ).pipe(
+    concatMap(() => defer(() => from(beginRendererBoundary(page)))),
     concatMap(() => prepareFirstRun(page)),
     concatMap(() =>
       defer(() =>
@@ -456,16 +476,23 @@ export function exerciseInstalledUi(page, appPid, fixtureDirectory, diagnostics 
       );
     }),
     concatMap((model) =>
-      from(fixtures).pipe(
+      defer(() => from(generateLargeRecording(join(fixtureDirectory, 'installed-large-recording.wav')))).pipe(
+        map((largeFixture) => [...fixtures, largeFixture]),
+        switchMap((allFixtures) => from(allFixtures)),
         concatMap((fixture) =>
           captureFixture(page, fixture, appPid, fixtureDirectory, diagnostics),
         ),
         toArray(),
-        map((captures) => ({
-          productTitle: 'Capture Workbench',
-          model,
-          captures,
-        })),
+        concatMap((captures) =>
+          defer(() => from(finishRendererBoundary(page, fixtureDirectory))).pipe(
+            map((rendererIpcCommands) => ({
+              rendererIpcCommands,
+              productTitle: 'Capture Workbench',
+              model,
+              captures,
+            })),
+          ),
+        ),
       ),
     ),
   );

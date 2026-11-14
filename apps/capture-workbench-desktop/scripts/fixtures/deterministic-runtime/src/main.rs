@@ -57,6 +57,14 @@ fn handle_connection(
             return;
         }
     };
+    let body_bytes = request.body.len();
+    let capture_ingestion = if request.method == "POST" && request.path == "/v2/captures" {
+        serde_json::from_slice::<serde_json::Value>(&request.body)
+            .ok()
+            .and_then(|body| body["ingestionId"].as_str().map(str::to_owned))
+    } else {
+        None
+    };
     let origin = request.headers.get("origin").cloned();
     let method = request.method.clone();
     let path = request.path.clone();
@@ -64,7 +72,18 @@ fn handle_connection(
         AuthorizationDecision::Authorized => state.route(request),
         AuthorizationDecision::Respond(response) => response,
     };
-    record_request(request_log, &method, &path, &response);
+    if request_log
+        .record_measured(
+            &method,
+            &path,
+            &response,
+            body_bytes,
+            capture_ingestion.as_deref(),
+        )
+        .is_err()
+    {
+        exit_with_error("Deterministic request log could not be written.");
+    }
     write_response(
         &mut stream,
         response.with_cors(policy.permitted_origin(origin.as_deref())),
@@ -72,7 +91,10 @@ fn handle_connection(
 }
 
 fn record_request(log: &RequestLog, method: &str, path: &str, response: &http::Response) {
-    if log.record(method, path, response).is_err() {
+    if log
+        .record_measured(method, path, response, 0, None)
+        .is_err()
+    {
         // Never print OS errors, which may contain the configured private path.
         exit_with_error("Deterministic request log could not be written.");
     }

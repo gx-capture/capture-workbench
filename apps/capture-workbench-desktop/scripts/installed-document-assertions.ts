@@ -34,10 +34,10 @@ export function assertCaptureDocumentForFixture(document, fixture) {
   );
   assert.equal(document.source.fileName, fixture.fileName);
   assert.equal(document.source.mediaType, fixture.mimeType);
-  assert.equal(document.source.bytes, fixture.buffer.length);
+  assert.equal(document.source.bytes, fixture.bytes ?? fixture.buffer.length);
   assert.equal(
     document.source.sha256,
-    createHash('sha256').update(fixture.buffer).digest('hex'),
+    fixture.sha256 ?? createHash('sha256').update(fixture.buffer).digest('hex'),
   );
   assert.match(document.source.sha256, /^[0-9a-f]{64}$/u);
 

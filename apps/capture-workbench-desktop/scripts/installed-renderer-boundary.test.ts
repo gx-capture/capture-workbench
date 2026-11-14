@@ -1,14 +1,18 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import test from 'node:test';
-import type { Page } from '@playwright/test';
-import { beginRendererBoundary, finishRendererBoundary, cancelRendererBoundary } from './installed-renderer-boundary.ts';
+import { chromium, type Browser, type Page } from '@playwright/test';
+import { beginRendererBoundary, finishRendererBoundary, cancelRendererBoundary, recordRendererBoundary, forbidRecordingSourceBytes, startRendererBoundary, connectRendererBoundary, closeBrowserRendererBoundary } from './installed-renderer-boundary.ts';
 
 test('renderer boundary probes denied commands and audits the picker and the import from the network', async () => {
   const fixture = configure();
   try {
     await beginRendererBoundary(fixture.page);
-    assert.equal(fixture.calls.length, 5);
+    assert.deepEqual(fixture.calls.map((item) => item.command), [
+      'plugin:event|listen', 'plugin:event|listen', 'plugin:dialog|open',
+      'plugin:app|version', 'plugin:window|title',
+      'library_import_source', 'library_import_selection',
+    ]);
     assert.deepEqual(fixture.calls.slice(0, 2).map((item) => item.args.event), ['tauri://drag-enter', 'tauri://drag-drop']);
     fixture.ipc('library_select_sources', { request: { kind: 'all' } }, { selections: [{ selectionToken: 'a'.repeat(32), fileName: 'chosen.pdf' }], rejected: [] });
     fixture.ipc('library_import_selection', { request: { selectionToken: 'a'.repeat(32) } }, { documentId: 'b'.repeat(32) });
@@ -126,6 +130,9 @@ function configure(override?: (command: string) => Promise<unknown> | undefined)
       emitRequest(url, JSON.stringify(args));
       events.emit('response', {
         url: () => url,
+        // Tauri answers every IPC request with HTTP 200; the header carries the outcome.
+        ok: () => true,
+        headers: () => ({ 'tauri-response': command.startsWith('plugin:') && response !== 'success' ? 'error' : 'ok' }),
         text: () => response instanceof Error ? Promise.reject(response) : Promise.resolve(JSON.stringify(response)),
       });
     },
@@ -135,4 +142,159 @@ function configure(override?: (command: string) => Promise<unknown> | undefined)
       else delete (target as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
     },
   };
+}
+
+
+test('session recording includes startup and probe command names, sorted without arguments', async () => {
+  const fixture = configure((command) => {
+    fixture.ipc(command, fixture.calls.at(-1)?.args, { error: 'refused' });
+    return undefined;
+  });
+  try {
+    recordRendererBoundary(fixture.page);
+    fixture.ipc('startup_command', { token: 'private' }, {});
+    await beginRendererBoundary(fixture.page);
+    fixture.ipc('plugin:event|listen', { secret: 'private' }, { error: 'refused' });
+    fixture.ipc('library_select_sources', {}, {});
+    fixture.ipc('library_import_selection', {}, {});
+    fixture.ipc('startup_command', {}, {});
+    assert.deepEqual(await finishRendererBoundary(fixture.page, 'C:\\private-fixtures'),
+      ['library_import_selection', 'library_import_source', 'library_select_sources', 'plugin:app|version', 'plugin:dialog|open', 'plugin:event|listen', 'plugin:window|title', 'startup_command']);
+  } finally { fixture.restore(); }
+});
+
+test('successful plugin command and any source-byte request for the large document fail', async () => {
+  for (const plugin of [true, false]) {
+    const fixture = configure();
+    try {
+      await beginRendererBoundary(fixture.page);
+      fixture.ipc('library_select_sources', {}, {});
+      fixture.ipc('library_import_selection', {}, {});
+      if (plugin) fixture.ipc('plugin:window|show', { secret: 'private' }, 'success');
+      else {
+        fixture.ipc('library_source_bytes', { request: { documentId: 'large' } }, {});
+        forbidRecordingSourceBytes(fixture.page, 'large');
+      }
+      await assert.rejects(finishRendererBoundary(fixture.page, 'C:\\private-fixtures'),
+        plugin ? /successfully invoked a plugin/u : /loaded a large recording/u);
+    } finally { fixture.restore(); }
+  }
+});
+
+
+test('startup CDP recording precedes debugger resume and survives adoption by Playwright', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalSocket = globalThis.WebSocket;
+  const holder: { socket?: FakeSocket } = {};
+  class FakeSocket extends EventTarget {
+    enabled = false;
+    closed = false;
+    constructor() { super(); queueMicrotask(() => this.dispatchEvent(new Event('open'))); }
+    message(value: unknown) { this.dispatchEvent(new MessageEvent('message', { data: JSON.stringify(value) })); }
+    send(serialized: string) {
+      const request = JSON.parse(serialized);
+      if (request.method === 'Network.enable') this.enabled = true;
+      queueMicrotask(() => this.message({ id: request.id, result: request.method === 'Network.getResponseBody' ? { body: '{}' } : {} }));
+    }
+    exchange(command: string, status = 200, method = 'POST') {
+      assert.equal(this.enabled, true);
+      const requestId = `${command}-${Math.random()}`;
+      this.message({ method: 'Network.requestWillBeSent', params: { requestId, request: { method, url: `http://ipc.localhost/${encodeURIComponent(command)}`, postData: '{"secret":"transient"}' } } });
+      this.message({ method: 'Network.responseReceived', params: { requestId, response: { status } } });
+      this.message({ method: 'Network.loadingFinished', params: { requestId } });
+    }
+    close() { this.closed = true; }
+  }
+  globalThis.fetch = (async () => ({ json: async () => [{ type: 'page', webSocketDebuggerUrl: 'ws://127.0.0.1/fake' }] })) as typeof fetch;
+  globalThis.WebSocket = class extends FakeSocket {
+    constructor() { super(); Object.assign(holder, { socket: this }); }
+  } as unknown as typeof WebSocket;
+  const fixture = configure();
+  try {
+    const boundary = await startRendererBoundary('http://127.0.0.1:1234');
+    const socket = holder.socket;
+    assert.ok(socket);
+    socket.exchange('startup_command');
+    socket.exchange('plugin:event|listen', 200, 'OPTIONS');
+    socket.exchange('plugin:event|listen', 400);
+    boundary.adopt(fixture.page);
+    socket.exchange('library_select_sources');
+    socket.exchange('library_import_selection');
+    assert.deepEqual(await finishRendererBoundary(fixture.page, 'C:\\private-fixtures'),
+      ['library_import_selection', 'library_select_sources', 'plugin:event|listen', 'startup_command']);
+    assert.equal(socket.closed, true);
+  } finally {
+    fixture.restore();
+    globalThis.fetch = originalFetch;
+    globalThis.WebSocket = originalSocket;
+  }
+});
+
+for (const failure of ['page', 'session', 'resume', 'none']) {
+  test(`connection owns recorder cleanup when adoption reaches ${failure}`, async () => {
+    const originalFetch = globalThis.fetch;
+    const originalSocket = globalThis.WebSocket;
+    const originalConnect = chromium.connectOverCDP;
+    let socketCloses = 0;
+    let browserCloses = 0;
+    class Socket extends EventTarget {
+      constructor() {
+        super();
+        queueMicrotask(() => this.dispatchEvent(new Event('open')));
+      }
+      send(serialized: string) {
+        const { id } = JSON.parse(serialized);
+        queueMicrotask(() => this.dispatchEvent(new MessageEvent('message', {
+          data: JSON.stringify({ id, result: {} }),
+        })));
+      }
+      close() {
+        socketCloses++;
+        this.dispatchEvent(new Event('close'));
+      }
+    }
+    const page = {
+      url: () => 'about:blank',
+      context: () => ({
+        newCDPSession: async () => {
+          if (failure === 'session') throw new Error('session failure');
+          return {
+            send: async () => {
+              if (failure === 'resume') throw new Error('resume failure');
+            },
+            detach: async () => undefined,
+          };
+        },
+      }),
+    } as unknown as Page;
+    const browser = {
+      contexts: () => [{ pages: () => failure === 'page' ? [page, page] : [page] }],
+      once: () => undefined,
+      close: async () => { browserCloses++; },
+    } as unknown as Browser;
+    globalThis.fetch = (async () => ({
+      json: async () => [{ type: 'page', webSocketDebuggerUrl: 'ws://127.0.0.1/fake' }],
+    })) as unknown as typeof fetch;
+    globalThis.WebSocket = Socket as unknown as typeof WebSocket;
+    chromium.connectOverCDP = (async () => browser) as typeof chromium.connectOverCDP;
+    try {
+      if (failure === 'none') {
+        assert.equal(await connectRendererBoundary('http://127.0.0.1:1234', true, () => undefined), browser);
+        assert.equal(socketCloses, 0);
+        closeBrowserRendererBoundary(browser);
+        closeBrowserRendererBoundary(browser);
+        await cancelRendererBoundary(page);
+        assert.equal(browserCloses, 0);
+      } else {
+        await assert.rejects(connectRendererBoundary('http://127.0.0.1:1234', true, () => undefined));
+        assert.equal(browserCloses, 1);
+        closeBrowserRendererBoundary(browser);
+      }
+      assert.equal(socketCloses, 1);
+    } finally {
+      chromium.connectOverCDP = originalConnect;
+      globalThis.fetch = originalFetch;
+      globalThis.WebSocket = originalSocket;
+    }
+  });
 }
