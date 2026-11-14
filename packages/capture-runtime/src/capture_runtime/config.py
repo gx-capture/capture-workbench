@@ -81,28 +81,17 @@ def _default_app_data(env: Mapping[str, str]) -> Path:
 
 @dataclass(frozen=True, slots=True)
 class OllamaRuntimeConfig:
-    host_url: str
     app_data_dir: Path
     pid_file: Path
     models_dir: Path
     base_model: str = CAPTURE_OLLAMA_BASE_MODEL
     profile_id: str = CAPTURE_OLLAMA_PROFILE_ID
 
-    @property
-    def host_address(self) -> str:
-        parsed = urlsplit(self.host_url)
-        if parsed.hostname != "127.0.0.1" or parsed.port is None:
-            raise ValueError("CAPTURE_OLLAMA_HOST must be an HTTP loopback URL with a port")
-        return f"127.0.0.1:{parsed.port}"
-
-    def process_environment(self, base: Mapping[str, str] | None = None) -> dict[str, str]:
+    def process_environment(
+        self, host_address: str, base: Mapping[str, str] | None = None
+    ) -> dict[str, str]:
         result = sanitized_child_environment(base)
-        result.update(
-            {
-                "OLLAMA_HOST": self.host_address,
-                "OLLAMA_MODELS": str(self.models_dir),
-            }
-        )
+        result.update({"OLLAMA_HOST": host_address, "OLLAMA_MODELS": str(self.models_dir)})
         return result
 
 
@@ -321,22 +310,7 @@ class RuntimeSettings:
                 api_key=_external_ollama_api_key(env.get("CAPTURE_OLLAMA_API_KEY")),
             )
 
-        ollama_host = (
-            "http://127.0.0.1:11439"
-            if provider == "external-ollama"
-            else env.get("CAPTURE_OLLAMA_HOST") or "http://127.0.0.1:11439"
-        )
-        parsed_ollama_host = urlsplit(ollama_host)
-        if (
-            parsed_ollama_host.scheme != "http"
-            or parsed_ollama_host.hostname != "127.0.0.1"
-            or parsed_ollama_host.port is None
-            or parsed_ollama_host.path not in {"", "/"}
-        ):
-            raise ValueError("CAPTURE_OLLAMA_HOST must be http://127.0.0.1:<port>")
-
         ollama = OllamaRuntimeConfig(
-            host_url=ollama_host.rstrip("/"),
             app_data_dir=ollama_app_data,
             pid_file=Path(
                 env.get("CAPTURE_OLLAMA_PID_FILE") or ollama_app_data / "ollama.pid.json"
@@ -345,8 +319,6 @@ class RuntimeSettings:
             base_model=env.get("CAPTURE_OLLAMA_MODEL", CAPTURE_OLLAMA_BASE_MODEL),
             profile_id=profile_id,
         )
-        # Validate the derived child-process address now, before starting the server.
-        _ = ollama.host_address
         return cls(
             host=host,
             port=port,

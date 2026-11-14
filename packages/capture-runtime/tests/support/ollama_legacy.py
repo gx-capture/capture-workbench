@@ -23,7 +23,7 @@ async def install_legacy_model(
     if executable is None:
         raise ManualActionRequiredError("Install the Ollama application first")
     installer._lifecycle.start()
-    environment = installer._lifecycle.config.process_environment()
+    environment = installer._lifecycle.process_environment()
     report_progress(0.1)
     pull = await installer._runner.run(
         [executable, "pull", installer._lifecycle.config.base_model],

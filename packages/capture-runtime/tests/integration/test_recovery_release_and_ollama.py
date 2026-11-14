@@ -10,6 +10,7 @@ import time
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -169,7 +170,6 @@ class FakeProcessController:
 
 def _ollama_config(tmp_path: Path) -> OllamaRuntimeConfig:
     return OllamaRuntimeConfig(
-        host_url="http://127.0.0.1:11555",
         app_data_dir=tmp_path / "ollama",
         pid_file=tmp_path / "ollama" / "pid.json",
         models_dir=tmp_path / "ollama" / "models",
@@ -204,7 +204,7 @@ def test_capture_child_environment_strips_provider_overrides_and_secrets(
         # Speech recognition and diarization fail to load a model without it.
         "USERNAME": "capture-user",
     }
-    environment = _ollama_config(tmp_path).process_environment(poisoned)
+    environment = _ollama_config(tmp_path).process_environment("127.0.0.1:11555", poisoned)
     assert environment["OLLAMA_HOST"] == "127.0.0.1:11555"
     assert environment["OLLAMA_MODELS"] == str(tmp_path / "ollama" / "models")
     for forbidden in (
@@ -286,7 +286,7 @@ def test_external_ollama_ignores_owned_ollama_host_override() -> None:
 
     assert settings.external_ollama is not None
     assert settings.external_ollama.endpoint_url == "https://ollama.example.test"
-    assert settings.ollama.host_url == "http://127.0.0.1:11439"
+    assert not hasattr(settings.ollama, "host_url")
 
 
 def test_ollama_lifecycle_stops_only_its_owned_process(tmp_path: Path) -> None:
@@ -294,6 +294,7 @@ def test_ollama_lifecycle_stops_only_its_owned_process(tmp_path: Path) -> None:
     lifecycle = IsolatedOllamaLifecycle(
         _ollama_config(tmp_path),
         process_controller=controller,
+        listener_owner=SimpleNamespace(listener_pid=lambda _port: 4242),
         executable_resolver=lambda: "C:/Program Files/Ollama/ollama.exe",
         clock=SystemClock(),
     )
@@ -438,6 +439,7 @@ def test_ollama_lifecycle_refuses_unowned_live_pid(tmp_path: Path) -> None:
     lifecycle = IsolatedOllamaLifecycle(
         config,
         process_controller=controller,
+        listener_owner=SimpleNamespace(listener_pid=lambda _port: 4242),
         executable_resolver=lambda: "ollama.exe",
         clock=SystemClock(),
     )

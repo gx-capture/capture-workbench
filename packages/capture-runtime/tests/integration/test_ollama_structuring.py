@@ -36,6 +36,7 @@ class FixedClock(Clock):
 
 class FakeLifecycle:
     def __init__(self, config: OllamaRuntimeConfig) -> None:
+        self.host_url = "http://127.0.0.1:11555"
         self.config = config
         self.starts = 0
         self.stops = 0
@@ -56,7 +57,6 @@ class FakeLifecycle:
 
 def _config(tmp_path: Path) -> OllamaRuntimeConfig:
     return OllamaRuntimeConfig(
-        host_url="http://127.0.0.1:11555",
         app_data_dir=tmp_path / "ollama",
         pid_file=tmp_path / "ollama" / "pid.json",
         models_dir=tmp_path / "ollama" / "models",

@@ -59,6 +59,7 @@ from capture_runtime.structuring.infrastructure.ollama.installer_runtime import 
 from capture_runtime.structuring.infrastructure.ollama.lifecycle_impl import (
     IsolatedOllamaLifecycle,
     ManualActionRequiredError,
+    RuntimeUnavailableError,
 )
 
 
@@ -396,8 +397,9 @@ class SystemRuntimeInstaller:
         self._lifecycle.start()
         try:
             await self._wait_for_ollama_server(cancel_event)
-            environment = self._lifecycle.config.process_environment()
             report_progress(0.1)
+            environment = self._lifecycle.process_environment()
+            self._require_lease(f"http://{environment['OLLAMA_HOST']}")
             pull = await self._runner.run(
                 [executable, "pull", option.model_reference],
                 environment=environment,
@@ -407,13 +409,18 @@ class SystemRuntimeInstaller:
             )
             if pull.return_code != 0:
                 raise RuntimeError(f"Ollama model pull failed ({pull.return_code})")
-            observed_digest, observed_bytes = self._verify_pulled_model(option)
+            self._require_lease(f"http://{environment['OLLAMA_HOST']}")
+            observed_digest, observed_bytes = self._verify_pulled_model(
+                option, f"http://{environment['OLLAMA_HOST']}"
+            )
             report_progress(0.75)
             modelfile = self._lifecycle.config.app_data_dir / "Capture.Modelfile"
             modelfile_bytes = option.profile_spec_bytes
             if hashlib.sha256(modelfile_bytes).hexdigest() != option.profile_spec_sha256:
                 raise RuntimeError("Ollama profile specification digest is invalid")
             modelfile.write_bytes(modelfile_bytes)
+            environment = self._lifecycle.process_environment()
+            self._require_lease(f"http://{environment['OLLAMA_HOST']}")
             create = await self._runner.run(
                 [
                     executable,
@@ -427,6 +434,7 @@ class SystemRuntimeInstaller:
                 cancel_event=cancel_event,
                 timeout_seconds=600,
             )
+            self._require_lease(f"http://{environment['OLLAMA_HOST']}")
             if create.return_code != 0:
                 raise RuntimeError(f"Ollama capture profile creation failed ({create.return_code})")
             _atomic_json(
@@ -452,19 +460,21 @@ class SystemRuntimeInstaller:
             self._lifecycle.stop()
 
     async def _wait_for_ollama_server(self, cancel_event: asyncio.Event) -> None:
+        lease_url = self._lifecycle.host_url
         deadline = asyncio.get_running_loop().time() + 30
         while asyncio.get_running_loop().time() < deadline:
             if cancel_event.is_set():
                 raise asyncio.CancelledError
-            if not self._lifecycle.owns_running_process():
-                raise RuntimeError("Capture Ollama process exited before readiness")
+            self._require_lease(lease_url)
             try:
                 response = await asyncio.to_thread(
                     httpx.get,
-                    f"{self._lifecycle.config.host_url}/api/tags",
+                    f"{lease_url}/api/tags",
                     timeout=2,
                     follow_redirects=False,
+                    trust_env=False,
                 )
+                self._require_lease(lease_url)
                 if response.status_code == 200:
                     return
             except httpx.HTTPError:
@@ -472,13 +482,24 @@ class SystemRuntimeInstaller:
             await asyncio.sleep(0.2)
         raise RuntimeError("Capture Ollama server did not become ready")
 
-    def _verify_pulled_model(self, option: RuntimeModelOption) -> tuple[str, int]:
+    def _require_lease(self, expected_url: str) -> None:
+        if self._lifecycle.host_url != expected_url:
+            raise RuntimeUnavailableError("isolated Ollama lease changed during installation")
+
+    def _verify_pulled_model(
+        self, option: RuntimeModelOption, lease_url: str | None = None
+    ) -> tuple[str, int]:
+        if lease_url is None:
+            lease_url = self._lifecycle.host_url
         try:
+            self._require_lease(lease_url)
             response = httpx.get(
-                f"{self._lifecycle.config.host_url}/api/tags",
+                f"{lease_url}/api/tags",
                 timeout=5,
                 follow_redirects=False,
+                trust_env=False,
             )
+            self._require_lease(lease_url)
             response.raise_for_status()
             models = response.json().get("models", [])
         except (httpx.HTTPError, AttributeError, TypeError, ValueError) as error:

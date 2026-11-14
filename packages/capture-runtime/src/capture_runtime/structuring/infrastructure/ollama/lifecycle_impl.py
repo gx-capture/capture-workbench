@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 import threading
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,6 +17,11 @@ from capture_runtime._windows_job import create_kill_on_close_job, terminate_and
 from capture_runtime.clock import Clock
 from capture_runtime.config import OllamaRuntimeConfig
 from capture_runtime.structuring.infrastructure.model_catalog import ActiveModelSelectionStore
+from capture_runtime.structuring.infrastructure.ollama.listener_owner import (
+    ListenerOwner,
+    SystemListenerOwner,
+    choose_loopback_port,
+)
 
 
 class OllamaOwnershipError(RuntimeError):
@@ -296,7 +302,14 @@ class IsolatedOllamaLifecycle:
         process_controller: ProcessController | None = None,
         executable_resolver: Callable[[], str | None] | None = None,
         clock: Clock,
+        listener_owner: ListenerOwner | None = None,
+        port_selector: Callable[[], int] = choose_loopback_port,
+        listener_timeout_seconds: float = 10,
     ) -> None:
+        self._listener_owner = listener_owner or SystemListenerOwner()
+        self._port_selector = port_selector
+        self._listener_timeout = listener_timeout_seconds
+        self._host_url: str | None = None
         self.config = config
         self._controller = process_controller or SubprocessController()
         self._resolve_executable = executable_resolver or (lambda: shutil.which("ollama"))
@@ -311,43 +324,97 @@ class IsolatedOllamaLifecycle:
         """Return whether this lifecycle still owns a live Ollama process."""
 
         with self._lock:
-            return self._owned is not None and self._owned.poll() is None
+            return (
+                self._owned is not None
+                and self._owned.poll() is None
+                and self._host_url is not None
+                and self._listener_owner.listener_pid(int(self._host_url.rsplit(":", 1)[1]))
+                == self._owned.pid
+                and self._owned.poll() is None
+            )
+
+    @property
+    def host_url(self) -> str:
+        # Under the lock: start() holds it until the listener is verified, so a
+        # reader never sees the URL of a lease that is still being checked.
+        with self._lock:
+            if not self.owns_running_process() or self._host_url is None:
+                raise RuntimeUnavailableError("isolated Ollama listener ownership is not verified")
+            return self._host_url
+
+    def process_environment(self) -> dict[str, str]:
+        return self.config.process_environment(self.host_url.removeprefix("http://"))
 
     def active_model_selection(self) -> dict[str, object] | None:
         return ActiveModelSelectionStore(self.config.app_data_dir).load()
 
     def start(self) -> int:
         with self._lock:
-            if self._owned is not None and self._owned.poll() is None:
+            if self.owns_running_process():
+                assert self._owned is not None
                 return self._owned.pid
+            self.stop()
             self._reject_unowned_live_pid()
             executable = self.executable()
             if executable is None:
                 raise RuntimeUnavailableError("Ollama executable is not installed")
             self.config.app_data_dir.mkdir(parents=True, exist_ok=True)
             self.config.models_dir.mkdir(parents=True, exist_ok=True)
-            owned = self._controller.spawn(
-                executable,
-                ["serve"],
-                environment=self.config.process_environment(),
-                cwd=self.config.app_data_dir,
-                output_path=self.config.app_data_dir / "ollama.log",
-            )
-            self._owned = owned
-            payload: dict[str, object] = {
-                "pid": owned.pid,
-                "profileId": self.config.profile_id,
-                "startedAt": self._clock.now().isoformat(),
-            }
-            creation_time = _raw_creation_time(self._controller.process_creation_time(owned.pid))
-            if creation_time is not None:
-                payload["processCreationTime"] = creation_time
-            _atomic_json(self.config.pid_file, payload)
+            for _ in range(5):
+                try:
+                    port = self._port_selector()
+                    self._host_url = f"http://127.0.0.1:{port}"
+                    owned = self._controller.spawn(
+                        executable,
+                        ["serve"],
+                        environment=self.config.process_environment(f"127.0.0.1:{port}"),
+                        cwd=self.config.app_data_dir,
+                        output_path=self.config.app_data_dir / "ollama.log",
+                    )
+                    self._owned = owned
+                    deadline = time.monotonic() + self._listener_timeout
+                    while owned.poll() is None:
+                        owner = self._listener_owner.listener_pid(port)
+                        # shell=False launches the server directly: other PIDs fail closed.
+                        if owner == owned.pid:
+                            break
+                        if owner is not None or time.monotonic() >= deadline:
+                            break
+                        time.sleep(0.05)
+                    if self.owns_running_process():
+                        break
+                except OSError:
+                    pass
+                except BaseException:
+                    # Anything else must not leave a started child behind.
+                    self.stop()
+                    raise
+                self.stop()
+            else:
+                raise RuntimeUnavailableError(
+                    "isolated Ollama listener could not be verified after 5 attempts"
+                )
+            try:
+                payload: dict[str, object] = {
+                    "pid": owned.pid,
+                    "profileId": self.config.profile_id,
+                    "startedAt": self._clock.now().isoformat(),
+                }
+                creation_time = _raw_creation_time(
+                    self._controller.process_creation_time(owned.pid)
+                )
+                if creation_time is not None:
+                    payload["processCreationTime"] = creation_time
+                _atomic_json(self.config.pid_file, payload)
+            except BaseException:
+                self.stop()
+                raise
             return owned.pid
 
     def stop(self) -> None:
         with self._lock:
             owned = self._owned
+            self._host_url = None
             if owned is None:
                 return
             self._owned = None
