@@ -21,9 +21,13 @@ residue.
   structured target text plus rendered structured blocks.
 - Lifecycle authority: the packaged executable and its acceptance-only
   readiness/process signals, not a renderer reload.
-- Native input boundary: Windows UI Automation drives the brokered file picker;
-  the test then reattaches to the packaged WebView2 CDP session and waits for an
-  exact `library_list` acknowledgement for the fixture filename.
+- Native input boundary: window messages drive the classic file dialog without
+  keyboard input; Windows UI Automation, with a keyboard fallback, drives a
+  brokered (Explorer-hosted) file picker. Every key send and mouse click
+  requires the picker to own the foreground window: after one failed activation
+  attempt the input is refused, and a refused keyboard fallback exits with
+  code 10. The test then reattaches to the packaged WebView2 CDP session and
+  waits for an exact `library_list` acknowledgement for the fixture filename.
 - Evidence: an acceptance manifest containing checkpoint artifacts, semantic
   verification counts/provenance, errors, and cleanup status.
 
