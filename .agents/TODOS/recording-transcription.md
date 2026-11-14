@@ -19,6 +19,7 @@ with `CAPTURE_SPEECH_RECOGNITION_MODEL=tea-asr-1.1-mini` and disable CPU fallbac
   transcript. Tracked with the packaged real OCR/ASR run:
   https://github.com/gx-capture/capture-workbench/issues/163
 - [ ] Recordings over 50 MiB, up to 2 GiB (the desktop imports and transcribes
-  them; installed acceptance and crash cleanup remain):
+  them; the installed smoke and a real transcription from source have passed;
+  a run with the packaged speech worker remains):
   https://github.com/gx-capture/capture-workbench/issues/155
 - [ ] Playback of formats WebView2 cannot play (WMA, AMR, AVI): https://github.com/gx-capture/capture-workbench/issues/249
