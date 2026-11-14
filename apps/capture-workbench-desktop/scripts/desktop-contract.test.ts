@@ -473,10 +473,16 @@ test('blocking native I/O is isolated behind async Tauri commands', async () => 
 test('native selection capability and registered command data enforce the renderer boundary', async () => {
   const capability = JSON.parse(await readFile(join(appRoot, 'src-tauri', 'capabilities', 'default.json'), 'utf8'));
   assert.deepEqual(capability.windows, ['main']);
-  assert.deepEqual(capability.permissions, [
-    'core:default', 'core:event:deny-listen', 'core:event:deny-unlisten',
-    'core:event:deny-emit', 'core:event:deny-emit-to', 'dialog:deny-open',
-  ]);
+  // The window is granted nothing: every entry is a deny, so a default set
+  // added later cannot silently restore event listening or renderer dialogs.
+  const permissions: string[] = capability.permissions;
+  assert.deepEqual(permissions.filter((permission) => !/:deny-[a-z-]+$/u.test(permission)), []);
+  for (const denied of [
+    'core:event:deny-listen', 'core:event:deny-unlisten', 'core:event:deny-emit', 'core:event:deny-emit-to',
+    'dialog:deny-open', 'dialog:deny-save', 'dialog:deny-message', 'dialog:deny-ask', 'dialog:deny-confirm',
+  ]) {
+    assert.ok(permissions.includes(denied), `${denied} is missing from the capability.`);
+  }
   const host = await readFile(join(appRoot, 'src-tauri', 'src', 'lib.rs'), 'utf8');
   const list = host.split('tauri::generate_handler![')[1]?.split(']')[0];
   assert.ok(list);

@@ -10,6 +10,7 @@ use std::{
 use serde_json::{json, Value};
 
 use crate::http::Response;
+use sha2::{Digest, Sha256};
 
 pub struct RequestLog(Option<Mutex<File>>);
 
@@ -29,16 +30,63 @@ impl RequestLog {
             .map(|file| Self(file.map(Mutex::new)))
     }
 
+    #[cfg(test)]
     pub fn record(&self, method: &str, path: &str, response: &Response) -> io::Result<()> {
+        self.record_measured(method, path, response, 0, None)
+    }
+
+    pub fn record_measured(
+        &self,
+        method: &str,
+        path: &str,
+        response: &Response,
+        body_bytes: usize,
+        capture_ingestion: Option<&str>,
+    ) -> io::Result<()> {
         if let Some(file) = &self.0 {
             let mut file = file
                 .lock()
                 .map_err(|_| io::Error::other("Request log lock failed."))?;
-            serde_json::to_writer(&mut *file, &entry(method, path, response))?;
+            let mut value = entry(method, path, response);
+            add_upload_measurements(&mut value, path, response, body_bytes, capture_ingestion);
+            serde_json::to_writer(&mut *file, &value)?;
             file.write_all(b"\n")?;
             file.flush()?;
         }
         Ok(())
+    }
+}
+
+fn add_upload_measurements(
+    value: &mut Value,
+    path: &str,
+    response: &Response,
+    body_bytes: usize,
+    capture_ingestion: Option<&str>,
+) {
+    value["bodyBytes"] = body_bytes.into();
+    let parts: Vec<_> = path
+        .split('?')
+        .next()
+        .unwrap_or_default()
+        .split('/')
+        .collect();
+    let id = match parts.as_slice() {
+        ["", "v2", "ingestions", id, ..] => Some(*id),
+        ["", "v2", "ingestions"] => response
+            .body
+            .as_ref()
+            .and_then(|body| body["ingestionId"].as_str()),
+        ["", "v2", "captures"] => capture_ingestion,
+        _ => None,
+    };
+    if let Some(id) = id {
+        value["ingestionKey"] = format!("{:x}", Sha256::digest(id.as_bytes())).into();
+    }
+    if let ["", "v2", "ingestions", _, "chunks", index] = parts.as_slice() {
+        if let Ok(index) = index.parse::<u64>() {
+            value["chunkIndex"] = index.into();
+        }
     }
 }
 
@@ -199,6 +247,34 @@ mod tests {
             route_template("/v2/ingestions/id/finalize?private"),
             "/v2/ingestions/{ingestionId}/finalize"
         );
+    }
+
+    #[test]
+    fn upload_measurements_correlate_without_persisting_identifiers_or_payloads() {
+        let response = Response::json(201, json!({"ingestionId": "private-id"}));
+        let mut open = entry("POST", "/v2/ingestions", &response);
+        add_upload_measurements(&mut open, "/v2/ingestions", &response, 123, None);
+        let mut chunk = entry("PUT", "/v2/ingestions/private-id/chunks/7", &response);
+        add_upload_measurements(
+            &mut chunk,
+            "/v2/ingestions/private-id/chunks/7",
+            &response,
+            1048576,
+            None,
+        );
+        let mut capture = entry("POST", "/v2/captures", &response);
+        add_upload_measurements(
+            &mut capture,
+            "/v2/captures",
+            &response,
+            100,
+            Some("private-id"),
+        );
+        assert_eq!(open["ingestionKey"], chunk["ingestionKey"]);
+        assert_eq!(open["ingestionKey"], capture["ingestionKey"]);
+        assert_eq!(chunk["chunkIndex"], 7);
+        assert_eq!(chunk["bodyBytes"], 1048576);
+        assert!(!chunk.to_string().contains("private-id"));
     }
 
     #[test]

@@ -65,14 +65,13 @@ Removed: the command `library_import_source` and its registration. `model_smoke_
 
 ### Capability (`src-tauri/capabilities/default.json`)
 
-After slice 6:
-
 ```json
-"permissions": ["core:default", "core:event:deny-listen", "core:event:deny-unlisten",
-  "core:event:deny-emit", "core:event:deny-emit-to", "dialog:deny-open"]
+"permissions": ["core:event:deny-listen", "core:event:deny-unlisten",
+  "core:event:deny-emit", "core:event:deny-emit-to", "dialog:deny-open",
+  "dialog:deny-save", "dialog:deny-message", "dialog:deny-ask", "dialog:deny-confirm"]
 ```
 
-In slice 8 of the import plan, once a packaged run shows the renderer calls nothing in `core:*`: drop `core:default` and add the remaining `dialog:deny-*` entries. The denies stay so that re-adding a default set later cannot restore them silently. Never granted: `fs:*`, asset-protocol scopes, path-to-URL conversion.
+The window is granted no plugin permission. `core:default` was dropped in slice 8 of the import plan after a packaged run recorded every IPC command the renderer invokes from WebView start: only the application's own commands, which need no permission, and a `Channel`, whose data fetch is exempt from the permission check. The denies stay so that adding a default set later cannot restore event listening or renderer dialogs silently. Never granted: `fs:*`, asset-protocol scopes, path-to-URL conversion.
 
 ### Renderer
 
@@ -93,10 +92,9 @@ Set `dragDropEnabled` to `false` for the window: Rust then sees no drops, the dr
 - Commands as plain functions: the original renamed and replaced after selection still imports the chosen bytes; truncation after selection fails; a request with `sourcePath` does not deserialize; a drop batch carries base names only; no subscriber, no selections.
 - Renderer: command arguments carry `selectionToken` and never a path; refused selections are discarded; drop routing; the second selection is imported before the first capture finishes.
 - The source-text assertions about the dialog and drop plumbing in `apps/capture-workbench-desktop/scripts/desktop-contract.test.ts` become a data assertion on the parsed capability file and the command list.
-- Packaged check (a step of `capture-workbench-desktop:smoke-installed-deterministic`, which needs an interactive desktop): from the page, `plugin:event|listen` for the drag events, `plugin:dialog|open`, `library_import_source` and `library_import_selection` with a forged token are all refused; during a picker import no IPC request or response contains the fixture directory. The IPC is recorded from the network (requests to `ipc.localhost`): the webview defines `__TAURI_INTERNALS__.invoke` as read-only, so it cannot be wrapped. Picking a file and a real OS drag are checked by hand (issue #338).
+- Packaged check (a step of `capture-workbench-desktop:smoke-installed-deterministic`, which needs an interactive desktop): from the page, `plugin:event|listen` for the drag events, `plugin:dialog|open`, the core commands `plugin:app|version` and `plugin:window|title`, `library_import_source` and `library_import_selection` with a forged token are all refused; no `plugin:*` command succeeds at any point of the session; during a picker import no IPC request or response contains the fixture directory. The IPC is recorded from the network (requests to `ipc.localhost`): the webview defines `__TAURI_INTERNALS__.invoke` as read-only, so it cannot be wrapped. Picking a file and a real OS drag are checked by hand (issue #338).
 
 ## Open points
 
 - OneDrive placeholder files are accepted; opening one downloads it, which can be slow.
 - A batch imports every selection before its first capture starts, so only the import copies count against the 30-minute expiry; many multi-GiB recordings on a slow disk could still outlast it.
-- Removing `core:default` needs the packaged evidence named above.

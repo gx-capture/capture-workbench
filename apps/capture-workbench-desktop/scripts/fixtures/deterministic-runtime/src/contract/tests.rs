@@ -252,6 +252,75 @@ fn chunked_upload_crosses_the_host_one_mebibyte_boundary() {
 }
 
 #[test]
+fn desktop_sized_recording_completes_over_fifty_two_tcp_chunks() {
+    let started = std::time::Instant::now();
+    let state = FixtureState::new(FixtureSettings {
+        api_token: "fixture-test-credential-unused-by-routing".into(),
+        // The desktop launch policy passes this value to both real and fake runtimes.
+        max_upload_bytes: 2 * 1024 * 1024 * 1024,
+    });
+    let total = 52 * 1024 * 1024;
+    let mut request = open_request("audio", "audio/wav", AUDIO);
+    let mut metadata: Value = serde_json::from_slice(&request.body).unwrap();
+    metadata["totalBytes"] = total.into();
+    request.body = serde_json::to_vec(&metadata).unwrap();
+    let opened = exchange(&state, request, 201);
+    let id = opened["ingestionId"].as_str().unwrap();
+    let mut chunk = vec![0; 1024 * 1024];
+    chunk[..4].copy_from_slice(b"RIFF");
+    chunk[4..8].copy_from_slice(&((total - 8) as u32).to_le_bytes());
+    chunk[8..16].copy_from_slice(b"WAVEfmt ");
+    chunk[16..20].copy_from_slice(&16_u32.to_le_bytes());
+    chunk[20..22].copy_from_slice(&1_u16.to_le_bytes());
+    chunk[22..24].copy_from_slice(&2_u16.to_le_bytes());
+    chunk[24..28].copy_from_slice(&48_000_u32.to_le_bytes());
+    chunk[28..32].copy_from_slice(&192_000_u32.to_le_bytes());
+    chunk[32..34].copy_from_slice(&4_u16.to_le_bytes());
+    chunk[34..36].copy_from_slice(&16_u16.to_le_bytes());
+    chunk[36..40].copy_from_slice(b"data");
+    chunk[40..44].copy_from_slice(&((total - 44) as u32).to_le_bytes());
+    let marker = b"CAPTURE_TEXT:Installed large recording words";
+    chunk[44..44 + marker.len()].copy_from_slice(marker);
+    let mut digest = Sha256::new();
+    for index in 0..52 {
+        digest.update(&chunk);
+        let uploaded = exchange(
+            &state,
+            chunk_request(id, index, index * chunk.len(), total, &chunk),
+            200,
+        );
+        assert_eq!(uploaded["nextChunkIndex"], index + 1);
+        chunk.fill(0);
+    }
+    let finalized = exchange(
+        &state,
+        json_request(
+            "POST",
+            &format!("/v2/ingestions/{id}/finalize"),
+            None,
+            json!({"totalBytes": total, "sha256": format!("{:x}", digest.finalize())}),
+        ),
+        200,
+    );
+    assert_eq!(finalized["receivedBytes"], total);
+    let capture = exchange(&state, start_request(id, "host"), 202);
+    assert_eq!(capture["status"], "completed");
+    let result = get(
+        &state,
+        &format!(
+            "/v2/captures/{}/result",
+            capture["captureId"].as_str().unwrap()
+        ),
+        200,
+    );
+    assert_eq!(
+        result["result"]["sourceText"],
+        "Installed large recording words"
+    );
+    eprintln!("52-chunk local TCP recording path: {:?}", started.elapsed());
+}
+
+#[test]
 fn retries_are_idempotent_and_conflicting_metadata_is_rejected() {
     let state = fixture();
     let first = exchange(&state, open_request("pdf", "application/pdf", PDF), 201);

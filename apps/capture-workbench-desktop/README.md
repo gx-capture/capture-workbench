@@ -176,7 +176,18 @@ corepack pnpm nx run capture-workbench-desktop:smoke-installed-deterministic --s
 It refuses to run over an existing QA install,
 uses an owned run directory below `tmp/capture-workbench-desktop/installed-smoke`, launches
 WebView2 debugging with process-scoped environment variables, and uploads one
-deterministic PDF, image, and audio fixture through the installed UI. Cleanup
+deterministic PDF, image, and audio fixture through the installed UI, plus a streamed,
+run-local 52 MiB PCM WAV (48 kHz, 16-bit stereo; 180-second completion budget).
+The large recording must complete, show its expected document and playback-unavailable
+explanation, and never request source bytes. The fake request log proves 52 ordered
+1 MiB chunks between ingestion creation and finalization, followed by capture creation;
+no request may carry the whole recording. `installed-smoke.json` includes sorted,
+unique `rendererIpcCommands` names only. WebView2 starts paused with `WEBVIEW2_WAIT_FOR_SCRIPT_DEBUGGER`; an independent
+CDP network recorder attaches before Playwright resumes startup and stays attached
+through the entire UI exercise, including the refused probes. Successful plugin
+calls fail the smoke. The window's capability grants no plugin permission, so the
+probes include two core commands (`plugin:app|version`, `plugin:window|title`)
+that must be refused. Cleanup
 must prove that owned processes, the CDP port, install directory, registry
 entries, and isolated data are gone before the target succeeds.
 

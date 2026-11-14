@@ -1,3 +1,4 @@
+import { closeBrowserRendererBoundary } from './installed-renderer-boundary.ts';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import {
@@ -19,6 +20,7 @@ import {
   concatMap,
   defer,
   firstValueFrom,
+  finalize,
   from,
   map,
   of,
@@ -732,6 +734,7 @@ export function runInstalledDeterministicSmoke(
                 },
                 cdpPort,
               );
+              if (expectedSource === 'deterministic') appEnvironment.WEBVIEW2_WAIT_FOR_SCRIPT_DEBUGGER = '1';
               return (expectedSource === 'deterministic'
                 ? defer(() => from(writeFile(
                     join(temporaryDirectory, 'capture-deterministic-request-log.json'),
@@ -756,6 +759,7 @@ export function runInstalledDeterministicSmoke(
                   cdpPort,
                   state.appProcess,
                   webViewDataDirectory,
+                  expectedSource === 'deterministic',
                 )).pipe(
                   tap(({ browser, port }) => {
                     state.browser = browser;
@@ -808,9 +812,11 @@ export function runInstalledDeterministicSmoke(
           state.exerciseError = installedAppExerciseError(error, diagnostics);
           return of(undefined);
         }),
+        finalize(() => closeBrowserRendererBoundary(state.browser)),
       );
 
       const cleanupRun = installAndExercise.pipe(
+        tap(() => closeBrowserRendererBoundary(state.browser)),
         concatMap(() =>
           attempt(
             state.appProcess
@@ -1030,6 +1036,7 @@ export function runInstalledDeterministicSmoke(
               model: state.exerciseResult.model,
             },
             captures: state.exerciseResult.captures,
+            rendererIpcCommands: state.exerciseResult.rendererIpcCommands,
             cleanup: state.cleanup,
             realAppDataGuard: { status: realAppDataGuard, before: realAppDataBefore, after: realAppDataAfter },
             disclaimer:
