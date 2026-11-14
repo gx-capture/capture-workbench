@@ -15,12 +15,6 @@ and procedure: [release-runbook.md](../GUIDES/release-runbook.md).
   [#161](https://github.com/gx-capture/capture-workbench/issues/161) (diagnostics; remove Angular Material),
   [#162](https://github.com/gx-capture/capture-workbench/issues/162) (Web Component sizes from the runtime),
   [#163](https://github.com/gx-capture/capture-workbench/issues/163) (packaged real OCR/ASR run, pixel baselines).
-- Runtime items: speech recognition as a CUDA unit and a CPU-only mini unit
-  [#154](https://github.com/gx-capture/capture-workbench/issues/154);
-  recordings over 50 MiB by native path
-  [#155](https://github.com/gx-capture/capture-workbench/issues/155);
-  cross-process lock for the shared download cache
-  [#185](https://github.com/gx-capture/capture-workbench/issues/185).
 - DDD refactor, epic [#169](https://github.com/gx-capture/capture-workbench/issues/169):
   W5–W9 [#173](https://github.com/gx-capture/capture-workbench/issues/173)–[#177](https://github.com/gx-capture/capture-workbench/issues/177);
   real-input comparison after W2–W4
@@ -41,4 +35,4 @@ and procedure: [release-runbook.md](../GUIDES/release-runbook.md).
   [#253](https://github.com/gx-capture/capture-workbench/issues/253).
 
 [recording-transcription.md](recording-transcription.md) keeps the pointers
-that issue #155 links to.
+for recording transcription.
