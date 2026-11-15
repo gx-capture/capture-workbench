@@ -89,9 +89,12 @@ routes. The pull-request `checks` job runs this gate.
 
 ## Opt-in real Ollama smoke
 
-After the desktop app has prepared an isolated app-data directory, a user may prove a
-staged release runtime against one real PDF. This target is excluded from normal CI and never
-downloads a model itself:
+A user may prove a staged release runtime (`stage-product-runtime`) against one
+real PDF and an existing app-data directory. This target is excluded from normal
+CI. It opens no window. When the directory lacks the OCR engine, the Ollama
+runtime or the selected model, the smoke installs them through the runtime,
+which downloads them; a directory the desktop app has already prepared needs no
+download:
 
 ```powershell
 $env:CAPTURE_REAL_SMOKE_PDF = 'C:\path\to\user-provided.pdf'
@@ -207,22 +210,21 @@ real WindowsML, TEA-ASR, Ollama, or licensed-fixture behavior.
 
 ## Loopback ownership boundary
 
-The current sidecar interface accepts port numbers rather than already-bound
-sockets. The desktop host therefore cannot hold a reservation while the runtime
-binds. Startup mitigates that TOCTOU window with at most three attempts within
-one 60-second budget; every attempt uses previously unused runtime/Ollama ports
-and a new bearer token. A failed attempt is stopped through its own Windows job
-object before another attempt begins. The desktop host never deletes the shared
-Ollama PID record; the runtime lifecycle reconciles it only after proving the
-recorded PID is no longer alive, or that the PID now belongs to another process
-(its creation time differs from the recorded one). Shutdown cancellation prevents further attempts.
-On Windows the runtime root is created suspended, assigned to that attempt's
-job object, and only then resumed, so a one-file bootloader child cannot escape
-the ownership boundary before assignment.
+The sidecar interface accepts a runtime port number rather than an already-bound
+socket, so the desktop host cannot hold a reservation while the runtime binds.
+Startup mitigates that TOCTOU window with at most three attempts within one
+60-second budget; every attempt uses a previously unused runtime port and a new
+bearer token, and the runtime HTTP port is proven bound by the authenticated
+readiness handshake. A failed attempt is stopped through its own Windows job
+object before another attempt begins. Shutdown cancellation prevents further
+attempts. On Windows the runtime root is created suspended, assigned to that
+attempt's job object, and only then resumed, so a one-file bootloader child
+cannot escape the ownership boundary before assignment.
 
-The runtime HTTP port is proven bound by the authenticated readiness handshake.
-The isolated Ollama port can still be claimed by another process after runtime
-readiness but before Ollama is started later. Fully eliminating that late-bind
-race requires a future runtime contract that accepts an inherited socket (or
-performs its own bind-and-launch recovery); the desktop host never resolves it by
-killing an unrelated process ([#255](https://github.com/gx-capture/capture-workbench/issues/255)).
+The built-in Ollama's port is chosen by the runtime at each start, and the
+runtime verifies that the listener is its own child before any HTTP or CLI call,
+so the desktop host passes no Ollama address. The desktop host never kills an
+unrelated process and never deletes the shared Ollama PID record; the runtime
+lifecycle reconciles that record only after proving the recorded PID is no
+longer alive, or that the PID now belongs to another process (its creation time
+differs from the recorded one).

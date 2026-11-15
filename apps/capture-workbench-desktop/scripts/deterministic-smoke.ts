@@ -60,7 +60,7 @@ export function runDeterministicSmoke(): Observable<{ report: unknown; reportPat
       concatMap(() => defer(() => from(rm(join(outputDirectory, 'smoke.json'), { force: true })))),
       concatMap(() => defer(() => from(mkdir(join(runtimeData, 'ollama', 'models'), { recursive: true })))),
       concatMap(() => launchReadyRuntime(requestLogPath)),
-      concatMap(({ child, ready, runtimePort, ollamaPort, token, host, origin }) => {
+      concatMap(({ child, ready, runtimePort, token, host, origin }) => {
         const context = { runtimePort, host, origin, token };
         return withOwnedRuntime(child, () => {
           validateReady(ready);
@@ -83,7 +83,6 @@ export function runDeterministicSmoke(): Observable<{ report: unknown; reportPat
                   captureIdField: true, resultEnvelope: true, rawDiagnosticOnly: true,
                 },
                 runtimePortIsDynamic: runtimePort > 0,
-                ollamaPortIsIndependent: ollamaPort !== runtimePort,
                 maxUploadBytes: DETERMINISTIC_MAX_UPLOAD_BYTES,
                 authentication: policyEvidence, requirements: requirementEvidence,
                 captures, hostStructuring,

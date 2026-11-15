@@ -35,6 +35,25 @@ so the next release bumps its minor version.
 - The runtime no longer reads `CAPTURE_RUN_STAGING_DIR`; only the removed
   group activation set it. Staging is always `app_data/jobs/staging`.
 
+### The runtime owns the built-in Ollama's port
+
+The desktop host reserved a loopback port, released it and passed it to the
+runtime, so another local process could take the port before Ollama started and
+receive extracted document text (issue #255).
+
+- For the built-in provider the runtime picks an ephemeral `127.0.0.1` port at
+  every start and, before any HTTP or CLI call, checks that the listener is the
+  `ollama serve` child it started. A bind failure or a foreign listener stops
+  the child and retries on a new port (five attempts), then the capture fails
+  with `requirement_unavailable`.
+- `CAPTURE_OLLAMA_HOST` is no longer read for the built-in provider, and the
+  runtime sets the child's `OLLAMA_HOST` itself. A host that still passes
+  either variable is not affected: the values are ignored. The external
+  provider (`CAPTURE_OLLAMA_ENDPOINT`) is unchanged.
+- The desktop launcher no longer reserves an Ollama port or passes
+  `CAPTURE_OLLAMA_HOST` and `OLLAMA_HOST`.
+- The contract set is unchanged.
+
 ### Release assets
 
 - From the next release, the per-asset `.sha256` files of the runtime assets

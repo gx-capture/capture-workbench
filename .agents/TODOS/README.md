@@ -27,8 +27,7 @@ and procedure: [release-runbook.md](../GUIDES/release-runbook.md).
   vertical Japanese reader follow-ups (detector licence, DirectML evidence,
   furigana review) [#248](https://github.com/gx-capture/capture-workbench/issues/248);
   handwriting OCR quality [#250](https://github.com/gx-capture/capture-workbench/issues/250);
-  model selection and isolated Ollama proofs [#251](https://github.com/gx-capture/capture-workbench/issues/251);
-  late-bind race on the isolated Ollama port [#255](https://github.com/gx-capture/capture-workbench/issues/255).
+  model selection and isolated Ollama proofs [#251](https://github.com/gx-capture/capture-workbench/issues/251).
 - Workbench UI: playback of formats WebView2 cannot play [#249](https://github.com/gx-capture/capture-workbench/issues/249);
   engine uninstall in settings [#254](https://github.com/gx-capture/capture-workbench/issues/254).
 - Maintenance: release version literals in tests (Capture, LAW, Cert Prep)

@@ -61,7 +61,6 @@ async function main(): Promise<void> {
 
   await observe(assertStagedRuntime('release'));
   const runtimePort = await reservePort();
-  const ollamaPort = await reservePort(runtimePort);
   const token = randomBytes(32).toString('hex');
   const host = `127.0.0.1:${runtimePort}`;
   const origin = 'http://tauri.localhost';
@@ -69,7 +68,7 @@ async function main(): Promise<void> {
     cwd: resolve(stagedExecutable, '..'),
     windowsHide: true,
     stdio: 'ignore',
-    env: realRuntimeEnvironment({ appData, runtimePort, ollamaPort, token }),
+    env: realRuntimeEnvironment({ appData, runtimePort, token }),
   });
   let captureId: string | undefined;
   try {
@@ -205,7 +204,7 @@ async function prepareSelectedModel(
   await waitForModelInstallation(port, host, origin, token, installation);
 }
 
-function realRuntimeEnvironment(input: { appData: string; runtimePort: number; ollamaPort: number; token: string }): NodeJS.ProcessEnv {
+function realRuntimeEnvironment(input: { appData: string; runtimePort: number; token: string }): NodeJS.ProcessEnv {
   const environment: NodeJS.ProcessEnv = {};
   for (const name of ['COMSPEC', 'NUMBER_OF_PROCESSORS', 'OS', 'PATH', 'PATHEXT', 'PROCESSOR_ARCHITECTURE', 'PROCESSOR_IDENTIFIER', 'PROCESSOR_LEVEL', 'PROCESSOR_REVISION', 'PROGRAMDATA', 'SYSTEMDRIVE', 'SYSTEMROOT', 'USERPROFILE', 'WINDIR']) {
     if (process.env[name]) environment[name] = process.env[name];
@@ -216,8 +215,8 @@ function realRuntimeEnvironment(input: { appData: string; runtimePort: number; o
     CAPTURE_ALLOWED_HOSTS: `127.0.0.1:${input.runtimePort}`, CAPTURE_ALLOWED_ORIGINS: 'http://tauri.localhost,tauri://localhost',
     CAPTURE_ENABLE_API_DOCS: 'false', CAPTURE_APP_DATA_DIR: join(input.appData, 'runtime'),
     CAPTURE_STRUCTURING_PROVIDER: 'ollama', CAPTURE_RETENTION_HOURS: '24', CAPTURE_MAX_UPLOAD_BYTES: String(50 * 1024 * 1024),
-    CAPTURE_OLLAMA_HOST: `http://127.0.0.1:${input.ollamaPort}`, CAPTURE_OLLAMA_APP_DATA: join(input.appData, 'ollama'),
-    CAPTURE_OLLAMA_PID_FILE: join(input.appData, 'ollama', 'ollama.pid'), OLLAMA_HOST: `127.0.0.1:${input.ollamaPort}`,
+    CAPTURE_OLLAMA_APP_DATA: join(input.appData, 'ollama'),
+    CAPTURE_OLLAMA_PID_FILE: join(input.appData, 'ollama', 'ollama.pid'),
     OLLAMA_MODELS: join(input.appData, 'ollama', 'models'),
   };
 }
@@ -325,14 +324,14 @@ async function requireDirectory(path: string, name: string): Promise<void> {
   if (!metadata?.isDirectory()) throw new Error(`${name} must be an existing prepared app-data directory.`);
 }
 
-function reservePort(excluded?: number): Promise<number> {
+function reservePort(): Promise<number> {
   return new Promise((resolvePort, reject) => {
     const server = net.createServer();
     server.once('error', reject);
     server.listen(0, '127.0.0.1', () => {
       const address = server.address();
       const port = typeof address === 'object' && address ? address.port : 0;
-      server.close((error) => error ? reject(error) : port && port !== excluded ? resolvePort(port) : reservePort(excluded).then(resolvePort, reject));
+      server.close((error) => error ? reject(error) : port ? resolvePort(port) : reservePort().then(resolvePort, reject));
     });
   });
 }

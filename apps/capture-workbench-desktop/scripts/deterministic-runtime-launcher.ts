@@ -68,12 +68,7 @@ export function launchReadyRuntime(requestLogPath?: string) {
 
 function launchAttempt(requestLogPath?: string) {
   return reservePort().pipe(
-    concatMap((runtimePort) =>
-      reservePort(runtimePort).pipe(
-        map((ollamaPort) => ({ runtimePort, ollamaPort })),
-      ),
-    ),
-    switchMap(({ runtimePort, ollamaPort }) => {
+    switchMap((runtimePort) => {
       const token = randomBytes(32).toString('hex');
       const host = `127.0.0.1:${runtimePort}`;
       const origin = 'http://tauri.localhost';
@@ -97,10 +92,8 @@ function launchAttempt(requestLogPath?: string) {
             CAPTURE_STRUCTURING_PROVIDER: 'fake',
             CAPTURE_RETENTION_HOURS: '24',
             CAPTURE_MAX_UPLOAD_BYTES: String(maxUploadBytes),
-            CAPTURE_OLLAMA_HOST: `http://127.0.0.1:${ollamaPort}`,
             CAPTURE_OLLAMA_APP_DATA: join(runtimeData, 'ollama'),
             CAPTURE_OLLAMA_PID_FILE: join(runtimeData, 'ollama', 'ollama.pid'),
-            OLLAMA_HOST: `http://127.0.0.1:${ollamaPort}`,
             OLLAMA_MODELS: join(runtimeData, 'ollama', 'models'),
           },
         },
@@ -109,7 +102,7 @@ function launchAttempt(requestLogPath?: string) {
       child.on('error', (error) => { spawnError = error; });
       const output = captureChildOutput(child);
       return waitForReady({ runtimePort, host, origin, token, child }).pipe(
-        map((ready) => ({ child, ready, runtimePort, ollamaPort, token, host, origin })),
+        map((ready) => ({ child, ready, runtimePort, token, host, origin })),
         catchError((error: unknown) =>
           terminateOwnedTree(child).pipe(
             switchMap(() =>
@@ -151,7 +144,7 @@ function captureChildOutput(child: ReturnType<typeof spawn>) {
   };
 }
 
-function reservePort(excluded?: number): Observable<number> {
+function reservePort(): Observable<number> {
   return new Observable<number>((subscriber) => {
     const server = net.createServer();
     let retrySubscription: { unsubscribe(): void } | undefined;
@@ -162,8 +155,8 @@ function reservePort(excluded?: number): Observable<number> {
       server.close((error) => {
         if (error) {
           subscriber.error(error);
-        } else if (port === 0 || port === excluded) {
-          retrySubscription = reservePort(excluded).subscribe(subscriber);
+        } else if (port === 0) {
+          retrySubscription = reservePort().subscribe(subscriber);
         } else {
           subscriber.next(port);
           subscriber.complete();

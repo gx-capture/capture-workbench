@@ -9,7 +9,6 @@ use crate::{
 
 pub(crate) struct LaunchPolicy {
     pub(crate) runtime_port: u16,
-    pub(crate) ollama_port: u16,
     pub(crate) token: String,
     data_dir: PathBuf,
 }
@@ -73,20 +72,12 @@ impl LaunchPolicy {
                 DEFAULT_MAX_UPLOAD_BYTES.to_string(),
             ),
             (
-                "CAPTURE_OLLAMA_HOST",
-                format!("http://{LOOPBACK_HOST}:{}", self.ollama_port),
-            ),
-            (
                 "CAPTURE_OLLAMA_APP_DATA",
                 self.ollama_data_dir().to_string_lossy().into_owned(),
             ),
             (
                 "CAPTURE_OLLAMA_PID_FILE",
                 self.ollama_pid_file().to_string_lossy().into_owned(),
-            ),
-            (
-                "OLLAMA_HOST",
-                format!("{LOOPBACK_HOST}:{}", self.ollama_port),
             ),
             (
                 "OLLAMA_MODELS",
@@ -194,17 +185,12 @@ impl LaunchPolicyFactory {
 
     pub(crate) fn next(&mut self) -> Result<LaunchPolicy, String> {
         let runtime_port = reserve_distinct_loopback_port(&self.used_ports)?;
-        let mut excluded_ports = self.used_ports.clone();
-        excluded_ports.insert(runtime_port);
-        let ollama_port = reserve_distinct_loopback_port(&excluded_ports)?;
         let token = self.next_token()?;
 
         self.used_ports.insert(runtime_port);
-        self.used_ports.insert(ollama_port);
         self.used_tokens.insert(token.clone());
         Ok(LaunchPolicy {
             runtime_port,
-            ollama_port,
             token,
             data_dir: self.data_dir.clone(),
         })
@@ -235,7 +221,6 @@ mod tests {
     fn runtime_environment_explicitly_prefers_whisper_gpu() {
         let environment = LaunchPolicy {
             runtime_port: 43123,
-            ollama_port: 43124,
             token: "a".repeat(64),
             data_dir: PathBuf::from("C:\\capture-workbench"),
         }
@@ -257,7 +242,6 @@ mod tests {
             .unwrap();
         let environment = LaunchPolicy {
             runtime_port: 43123,
-            ollama_port: 43124,
             token: "a".repeat(64),
             data_dir: directory.path().to_path_buf(),
         }
@@ -266,6 +250,27 @@ mod tests {
         assert!(environment
             .iter()
             .any(|(name, value)| { *name == "CAPTURE_WHISPER_PREFER_GPU" && value == "false" }));
+    }
+
+    #[test]
+    fn runtime_environment_omits_ollama_host_and_keeps_isolated_ollama_paths() {
+        let environment = LaunchPolicy {
+            runtime_port: 43123,
+            token: "a".repeat(64),
+            data_dir: PathBuf::from("C:\\capture-workbench"),
+        }
+        .environment();
+
+        assert!(!environment
+            .iter()
+            .any(|(name, _)| *name == "CAPTURE_OLLAMA_HOST" || *name == "OLLAMA_HOST"));
+        for required in [
+            "CAPTURE_OLLAMA_APP_DATA",
+            "CAPTURE_OLLAMA_PID_FILE",
+            "OLLAMA_MODELS",
+        ] {
+            assert!(environment.iter().any(|(name, _)| *name == required));
+        }
     }
 
     #[test]
