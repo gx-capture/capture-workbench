@@ -2,6 +2,180 @@
 
 ## Unreleased
 
+### Compatibility policy
+
+Capture Workbench follows an explicit 0.x compatibility policy:
+
+- While the runtime is `0.x`, a minor-version change may be breaking.
+- Capture Workbench clients therefore require the same runtime major and minor
+  version during the readiness handshake; patch updates remain compatible.
+- The in-scope consumers are the published Web Component package, Cert
+  Prep's Angular, Python, and desktop hosts, and LAW's web app and Python AI
+  service. They must be deployed on the same minor before a runtime release
+  is enabled.
+- `compatibleRuntimeMinor` is a temporary, explicit break-glass setting for a
+  coordinated rollback or split-minor migration. Remove the override after the
+  consumer and runtime are aligned; reverting the consumer package is the
+  rollback path if an undiscovered incompatibility is found.
+
+The consumer consistency check is a permanent CI gate for the declared
+runtime, package lock, Python host, desktop host, and browser host versions.
+
+## 0.10.0
+
+A minor release. Speech recognition ships as two packs, so a computer without
+an NVIDIA GPU installs a CPU pack of about 3.72 GB instead of the 10.5 GB CUDA
+pack; a host can choose the speech recognition model apart from the device; the
+runtime owns the built-in Ollama's port; a full release publishes 19 assets
+instead of 28; and the sidecar launcher crate keeps only the launch path hosts
+use, which removes part of its public API. The contract set (`91ff5ff5…`), the
+capture document schema (`5452631c…`) and the models are unchanged from 0.9.0.
+The Web Component and the Python client refuse a runtime of another minor, so
+every consumer moves together with the runtime.
+
+### Breaking for clients and hosts: moving from 0.9.0
+
+- Runtime minor 10. The contract-set SHA-256 is unchanged
+  (`91ff5ff5cef6d68774cf036878843503f171044bf8c4a9f6a62e7fb418ce2380`, as in
+  0.9.0). The Web Component requires the same runtime major and minor at the
+  readiness handshake (see "Compatibility policy"), and the Python client
+  requires a runtime of exactly its own version. A 0.9.x Web Component or
+  Python client therefore refuses a 0.10.0 runtime, and the 0.10.0 ones refuse
+  a 0.9.x runtime. Bump the runtime and every Capture client together; the
+  pinned contract-set hash stays. Tests that quote runtime minor 9 move to 10.
+- `capture-sidecar-launcher` 0.10.0 removes the group lifecycle (R3) API; the
+  removed and the unchanged items are listed under "Sidecar launcher keeps one
+  launch path" below. A host that uses only `launch_sidecar`,
+  `launch_sidecar_with_observer` and `OwnedRuntimeSession` (`spawn`,
+  `terminate_and_prove`, `terminate`) builds unchanged. The runtime no longer
+  reads `CAPTURE_RUN_STAGING_DIR`.
+- Speech recognition pack: when it installs speech recognition, the runtime
+  picks `cuda` if the NVIDIA driver is present and `cpu` otherwise;
+  `CAPTURE_SPEECH_RECOGNITION_VARIANT` (`auto`, `cuda`, `cpu`) forces one. A
+  host that sets `CAPTURE_SPEECH_RECOGNITION_MODEL=tea-asr-1.1` on machines
+  without the driver also sets `CAPTURE_SPEECH_RECOGNITION_VARIANT=cuda`
+  before installing, or its captures fail with `requirement_unavailable`. A
+  host that reads the engine catalog itself must read the `contents` of
+  `speech-recognition` (`requirement.contents[].artifacts`).
+- Built-in Ollama: `CAPTURE_OLLAMA_HOST` is no longer read for the built-in
+  provider, and the runtime sets the child's `OLLAMA_HOST` itself. A host can
+  stop passing both; values it still passes are ignored. The external provider
+  (`CAPTURE_OLLAMA_ENDPOINT`) is unchanged.
+- Release assets: the nine per-asset `.sha256` files of the runtime assets,
+  `runtime-size-report.json` and its `.sha256` are no longer published. Verify
+  the executable and the schema against `capture-runtime-manifest.json`, and
+  each worker archive, part and `*-files.json` against
+  `capture-engine-catalog.json`. New assets:
+  `capture-engine-speech-recognition-cpu-0.10.0-windows-x64.zip` and its
+  `-files.json`.
+- `CAPTURE_WHISPER_PRIMARY_MODEL` and `CAPTURE_WHISPER_FALLBACK_MODEL` are
+  removed; they never reached the worker.
+
+### Consumers
+
+Cert Prep moves first, then LAW, each together with the runtime:
+
+- Cert Prep: bump every Capture pin (`@gx-capture/capture-workbench-ui`,
+  `@gx-capture/capture-runtime-client`, the Python client and
+  `capture-sidecar-launcher`) to exactly 0.10.0; the pinned contract-set
+  SHA-256 stays. Tests that quote runtime minor 9 move to 10. Cert Prep no
+  longer reads the runtime assets' `.sha256` files
+  (`WodenWang820118/cert-prep#133`).
+- LAW: its catalog reader must walk `requirement.contents[].artifacts` before
+  it moves to this release, or staging and `release-desktop` fail with
+  "Invalid Capture engine requirement."; that change must be on LAW `main`
+  before the release candidate's consumer gate. Then bump the Python client
+  with `apps/law-prep-ai-service/src/app/capture_version.py`, the npm packages
+  its web app uses, `capture-sidecar-launcher` where used, and their test
+  samples (runtime minor).
+
+### Speech recognition pack per machine
+
+Speech recognition ships as two packs, so a computer without an NVIDIA GPU no
+longer downloads the GPU runtime and the large model it cannot use (issue #154).
+
+- The engine catalog offers `speech-recognition` as two contents. `cuda` is
+  the 0.9.0 pack: the CUDA worker with TEA-ASR 1.1, TEA-ASR 1.1 mini and the
+  aligner, about 10.5 GB. `cpu` is a CPU worker
+  (`capture-engine-speech-recognition-cpu-<version>-windows-x64.zip`, one file
+  of about 302 MiB) with mini and the aligner, about 3.72 GB.
+- The runtime picks the pack when it installs: `cuda` when the NVIDIA driver is
+  present (`%SystemRoot%\System32\nvcuda.dll`), `cpu` otherwise. The runtime
+  setting `CAPTURE_SPEECH_RECOGNITION_VARIANT` (`auto`, `cuda`, `cpu`) forces
+  one. The installed pack is kept until it is uninstalled.
+- On the CPU pack, transcripts report model `tea-asr-1.1-mini` and device
+  `cpu`. `CAPTURE_SPEECH_RECOGNITION_MODEL=tea-asr-1.1` on a CPU pack fails the
+  capture with `requirement_unavailable` (stage `extraction`, not retryable)
+  before a worker starts; the requirement stays `ready` and its `detail` says
+  how to fix it.
+- `GET /v2/runtime/requirements` reports the size of the pack this machine
+  would download, and once installed, of the installed pack. Mini and aligner
+  files already in the machine-wide engine cache are not downloaded again.
+- The CPU worker archive and its `-files.json` are new release assets (see
+  "Release assets"). The requirement id, the contract set and the capture
+  document schema are unchanged.
+- Hosts: LAW's catalog reader must read `contents` before it moves to this
+  release, or staging fails with "Invalid Capture engine requirement." Cert Prep
+  needs only the usual pin bump. A host that sets
+  `CAPTURE_SPEECH_RECOGNITION_MODEL=tea-asr-1.1` on machines without the NVIDIA
+  driver also sets `CAPTURE_SPEECH_RECOGNITION_VARIANT=cuda` before installing.
+- After a version bump, speech recognition is reinstalled as usual; on a machine
+  without the driver that reinstall downloads the CPU pack.
+
+### Speech recognition model is chosen apart from the device
+
+Speech recognition always ran TEA-ASR-1.1 on the GPU and TEA-ASR-1.1-mini on the
+CPU, so mini could not use the GPU (issue #273).
+
+- The runtime setting `CAPTURE_SPEECH_RECOGNITION_MODEL` is `auto` (the
+  default: the installed pack's model, TEA-ASR-1.1 on the CUDA pack and
+  TEA-ASR-1.1-mini on the CPU pack), `tea-asr-1.1` or `tea-asr-1.1-mini`. On the
+  CUDA pack a chosen model runs on either device, also on the CPU retry after a
+  CUDA failure. The CPU pack holds only mini.
+- When CUDA is tried and when it falls back to the CPU are unchanged.
+  Provenance reports the model and device that produced the result.
+- `CAPTURE_WHISPER_PRIMARY_MODEL` and `CAPTURE_WHISPER_FALLBACK_MODEL` are
+  removed: they were validated but never reached the worker.
+- A runtime setting, not a capture option: the contract set is unchanged. The
+  desktop app does not expose it yet.
+
+### Speech device
+
+- On the CUDA pack, TEA-ASR 1.1 runs on CUDA when a GPU is present and on CPU
+  when it is not. A failed GPU attempt retries that same checkpoint on CPU; a run
+  no longer switches to TEA-ASR 1.1 mini because the device is CPU. Mini on the
+  CPU is the CPU pack, which a machine without the NVIDIA driver installs.
+
+### The runtime owns the built-in Ollama's port
+
+The desktop host reserved a loopback port, released it and passed it to the
+runtime, so another local process could take the port before Ollama started and
+receive extracted document text (issue #255).
+
+- For the built-in provider the runtime picks an ephemeral `127.0.0.1` port at
+  every start and, before any HTTP or CLI call, checks that the listener is the
+  `ollama serve` child it started. A bind failure or a foreign listener stops
+  the child and retries on a new port (five attempts), then the capture fails
+  with `requirement_unavailable`.
+- `CAPTURE_OLLAMA_HOST` is no longer read for the built-in provider, and the
+  runtime sets the child's `OLLAMA_HOST` itself. A host that still passes
+  either variable is not affected: the values are ignored. The external
+  provider (`CAPTURE_OLLAMA_ENDPOINT`) is unchanged.
+- The desktop launcher no longer reserves an Ollama port or passes
+  `CAPTURE_OLLAMA_HOST` and `OLLAMA_HOST`.
+- The contract set is unchanged.
+
+### Release assets
+
+- The per-asset `.sha256` files of the runtime assets and
+  `runtime-size-report.json` (with its `.sha256`) are no longer release assets,
+  so a full release publishes 19 assets instead of 0.9.0's 28. Hosts verify
+  the executable against `capture-runtime-manifest.json` and the workers
+  against the engine catalog. `capture-release-manifest-v1.json.sha256` and
+  the `*-files.json` assets stay; there are four of them now (OCR, both speech
+  recognition packs, diarization). The size report is the CI artifact
+  `capture-size-report-<version>-<run>`.
+
 ### Sidecar launcher keeps one launch path (breaking for the launcher crate)
 
 `capture-sidecar-launcher` drops its group lifecycle (R3), the launch journal,
@@ -9,7 +183,7 @@ run staging and restart reconciliation. No host used them. Desktop, Cert Prep
 and LAW keep the launch path they use: a fresh loopback port and token per
 attempt, every root in a kill-on-close Job object, and the runtime's startup
 sweeps. The crate writes nothing to disk. This changes the crate's public API,
-so the next release bumps its minor version.
+which is why the crate moves to a new minor version with this release.
 
 - Removed functions and methods: `build_immutable_group_plan`,
   `OwnedRuntimeSession::prepare_group`, `OwnedRuntimeSession::activate_group`,
@@ -34,111 +208,6 @@ so the next release bumps its minor version.
   `reserve_distinct_loopback_port`.
 - The runtime no longer reads `CAPTURE_RUN_STAGING_DIR`; only the removed
   group activation set it. Staging is always `app_data/jobs/staging`.
-
-### The runtime owns the built-in Ollama's port
-
-The desktop host reserved a loopback port, released it and passed it to the
-runtime, so another local process could take the port before Ollama started and
-receive extracted document text (issue #255).
-
-- For the built-in provider the runtime picks an ephemeral `127.0.0.1` port at
-  every start and, before any HTTP or CLI call, checks that the listener is the
-  `ollama serve` child it started. A bind failure or a foreign listener stops
-  the child and retries on a new port (five attempts), then the capture fails
-  with `requirement_unavailable`.
-- `CAPTURE_OLLAMA_HOST` is no longer read for the built-in provider, and the
-  runtime sets the child's `OLLAMA_HOST` itself. A host that still passes
-  either variable is not affected: the values are ignored. The external
-  provider (`CAPTURE_OLLAMA_ENDPOINT`) is unchanged.
-- The desktop launcher no longer reserves an Ollama port or passes
-  `CAPTURE_OLLAMA_HOST` and `OLLAMA_HOST`.
-- The contract set is unchanged.
-
-### Release assets
-
-- From the next release, the per-asset `.sha256` files of the runtime assets
-  and `runtime-size-report.json` are no longer release assets. Hosts verify
-  the executable against `capture-runtime-manifest.json` and the workers
-  against the engine catalog. `capture-release-manifest-v1.json.sha256` and
-  the `*-files.json` assets stay; there are four of them now (OCR, both speech
-  recognition packs, diarization). The size report is the CI artifact
-  `capture-size-report-<version>-<run>`.
-
-### Speech recognition pack per machine
-
-Speech recognition ships as two packs, so a computer without an NVIDIA GPU no
-longer downloads the GPU runtime and the large model it cannot use (issue #154).
-
-- The engine catalog offers `speech-recognition` as two contents. `cuda` is
-  today's pack: the CUDA worker with TEA-ASR 1.1, TEA-ASR 1.1 mini and the
-  aligner, about 10.5 GB. `cpu` is a CPU worker
-  (`capture-engine-speech-recognition-cpu-<version>-windows-x64.zip`, one file
-  of about 302 MiB) with mini and the aligner, about 3.72 GB.
-- The runtime picks the pack when it installs: `cuda` when the NVIDIA driver is
-  present (`%SystemRoot%\System32\nvcuda.dll`), `cpu` otherwise. The runtime
-  setting `CAPTURE_SPEECH_RECOGNITION_VARIANT` (`auto`, `cuda`, `cpu`) forces
-  one. The installed pack is kept until it is uninstalled.
-- On the CPU pack, transcripts report model `tea-asr-1.1-mini` and device
-  `cpu`. `CAPTURE_SPEECH_RECOGNITION_MODEL=tea-asr-1.1` on a CPU pack fails the
-  capture with `requirement_unavailable` (stage `extraction`, not retryable)
-  before a worker starts; the requirement stays `ready` and its `detail` says
-  how to fix it.
-- `GET /v2/runtime/requirements` reports the size of the pack this machine
-  would download, and once installed, of the installed pack. Mini and aligner
-  files already in the machine-wide engine cache are not downloaded again.
-- A full release has 19 assets instead of 17: the CPU worker archive and its
-  `-files.json` are new. The requirement id, the contract set and the capture
-  document schema are unchanged.
-- Hosts: LAW's catalog reader must read `contents` before it moves to this
-  release, or staging fails with "Invalid Capture engine requirement." Cert Prep
-  needs only the usual pin bump. A host that sets
-  `CAPTURE_SPEECH_RECOGNITION_MODEL=tea-asr-1.1` on machines without the NVIDIA
-  driver also sets `CAPTURE_SPEECH_RECOGNITION_VARIANT=cuda` before installing.
-- After a version bump, speech recognition is reinstalled as usual; on a machine
-  without the driver that reinstall downloads the CPU pack.
-
-### Speech device
-
-- On the CUDA pack, TEA-ASR 1.1 runs on CUDA when a GPU is present and on CPU
-  when it is not. A failed GPU attempt retries that same checkpoint on CPU; a run
-  no longer switches to TEA-ASR 1.1 mini because the device is CPU. Mini on the
-  CPU is the CPU pack, which a machine without the NVIDIA driver installs.
-
-### Compatibility policy
-
-Capture Workbench follows an explicit 0.x compatibility policy:
-
-- While the runtime is `0.x`, a minor-version change may be breaking.
-- Capture Workbench clients therefore require the same runtime major and minor
-  version during the readiness handshake; patch updates remain compatible.
-- The in-scope consumers for the current `0.4.x` line are the published
-  Web Component package, Cert Prep's Angular, Python, and desktop hosts, and
-  LAW's web app and Python AI service. They must be deployed on the same
-  minor before a runtime release is enabled.
-- `compatibleRuntimeMinor` is a temporary, explicit break-glass setting for a
-  coordinated rollback or split-minor migration. Remove the override after the
-  consumer and runtime are aligned; reverting the consumer package is the
-  rollback path if an undiscovered incompatibility is found.
-
-The consumer consistency check is a permanent CI gate for the declared
-runtime, package lock, Python host, desktop host, and browser host versions.
-
-### Speech recognition model is chosen apart from the device
-
-Speech recognition always ran TEA-ASR-1.1 on the GPU and TEA-ASR-1.1-mini on the
-CPU, so mini could not use the GPU (issue #273).
-
-- The runtime setting `CAPTURE_SPEECH_RECOGNITION_MODEL` is `auto` (the
-  default: the installed pack's model, TEA-ASR-1.1 on the CUDA pack and
-  TEA-ASR-1.1-mini on the CPU pack), `tea-asr-1.1` or `tea-asr-1.1-mini`. On the
-  CUDA pack a chosen model runs on either device, also on the CPU retry after a
-  CUDA failure. The CPU pack holds only mini.
-- When CUDA is tried and when it falls back to the CPU are unchanged.
-  Provenance reports the model and device that produced the result.
-- `CAPTURE_WHISPER_PRIMARY_MODEL` and `CAPTURE_WHISPER_FALLBACK_MODEL` are
-  removed: they were validated but never reached the worker.
-- A runtime setting, not a capture option: the contract set is unchanged. The
-  desktop app does not expose it yet.
 
 ## 0.9.0
 

@@ -12,7 +12,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 LOCK_VERSION = "2"
-COMMIT_A_SHA = "e2c41aed8d8b6d42bfc4474c19c13a21d8d8ff5c"
+COMMIT_A_SHA = "3834db24e5d9bb321c17bd0b866d9bd38c780f0c"
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 # Release CI invokes this script with --no-project before installing the runtime.
 # Read the repository's declared owner without importing the runtime package.
@@ -407,8 +407,10 @@ def _validate_ocr_fixture(value: object) -> dict[str, Any]:
         raise ModelSourceLockError("OCR fixture must bind Commit A")
     for key in ("sha256", "licenseSha256", "noticeSha256", "pdfSha256"):
         _sha256(fixture[key], f"ocr fixture {key}")
-    if fixture["licenseBytes"] != 1087 or fixture["noticeBytes"] != 303:
-        raise ModelSourceLockError("OCR fixture license/NOTICE bytes drifted")
+    # The NOTICE names the release version, so its length changes with the
+    # version; the Commit A blob check below binds its bytes and SHA instead.
+    if fixture["licenseBytes"] != 1087:
+        raise ModelSourceLockError("OCR fixture license bytes drifted")
     _first_party_url(fixture["url"], "fixtures/ocr-reference.png", "OCR fixture url")
     _first_party_git_blob(
         revision=revision,
