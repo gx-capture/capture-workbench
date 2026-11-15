@@ -981,7 +981,11 @@ export function runInstalledDeterministicSmoke(
           if (!realAppDataBefore || !realAppDataDirectory) return;
           realAppDataGuard = 'failed';
           realAppDataAfter = await snapshotRealAppData(realAppDataDirectory);
-          assertRealAppDataUnchanged(realAppDataBefore, realAppDataAfter);
+          assertRealAppDataUnchanged(
+            realAppDataBefore,
+            realAppDataAfter,
+            expectedSource === 'release' ? 'product' : 'isolated',
+          );
           realAppDataGuard = 'passed';
         }))),
         // Snapshot after stopping the fake, before deleting its isolated TEMP.
