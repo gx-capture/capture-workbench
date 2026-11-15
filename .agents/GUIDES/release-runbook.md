@@ -688,3 +688,10 @@ candidate with `node tools/install-capture-workbench-dependencies.mts
 - Consumer tests that quote the client's runtime minor (`runtime minor 4`) fail
   on a minor bump; LAW's `test_startup_timeout_waits_for_owner_cleanup` is
   timing-sensitive and failed once in CI on an unrelated change.
+- The release-preparation pull request runs only the affected lint, type-check
+  and unit-test targets. Before merging it, run
+  `pnpm nx run capture-workbench-e2e:e2e` locally: the Web Component refuses a
+  runtime of another minor, so a test double that reports a fixed runtime
+  version fails the reference flow only after the bump (0.10.0: the OCR journey
+  pinned `0.9.0`; it now reports `RELEASE_VERSION`). Push CI on `main` runs the
+  reference flow, and a failure there means a new release-source commit.
