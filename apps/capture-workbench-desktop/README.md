@@ -90,11 +90,15 @@ routes. The pull-request `checks` job runs this gate.
 ## Opt-in real Ollama smoke
 
 A user may prove a staged release runtime (`stage-product-runtime`) against one
-real PDF and an existing app-data directory. This target is excluded from normal
-CI. It opens no window. When the directory lacks the OCR engine, the Ollama
-runtime or the selected model, the smoke installs them through the runtime,
-which downloads them; a directory the desktop app has already prepared needs no
-download:
+real PDF and an existing app-data directory over the v2 ingestion and capture
+flow (`POST /v2/ingestions`, chunked `PUT /v2/ingestions/{id}/chunks/{i}`,
+`POST /v2/ingestions/{id}/finalize`, `POST /v2/captures`). This target is
+excluded from normal CI and opens no window. When the directory lacks them, the
+smoke installs the `windowsml-ocr` engine and the `qwen3.5-0.8b-v1` model
+through the runtime; a directory the desktop app has already prepared needs no
+download. Ollama itself must already be installed on `PATH` unless
+`CAPTURE_REAL_SMOKE_ALLOW_OLLAMA_INSTALL=1` is set, in which case the runtime
+installs `ollama-runtime` system-wide with `winget`:
 
 ```powershell
 $env:CAPTURE_REAL_SMOKE_PDF = 'C:\path\to\user-provided.pdf'
@@ -102,7 +106,11 @@ $env:CAPTURE_REAL_SMOKE_APP_DATA = 'C:\prepared\Capture Workbench app-data'
 corepack pnpm nx run capture-workbench-desktop:smoke-real-ollama
 ```
 
-It accepts only that source PDF and records no source path or bearer token in its evidence.
+For a build that is not published yet, set
+`CAPTURE_REAL_SMOKE_WORKER_MIRROR_URL` to a loopback mirror
+(`http://127.0.0.1:<port>`) to opt into the local worker mirror. The smoke
+records no source path, document content, bearer token, or mirror URL in its
+evidence (`tmp/capture-workbench-desktop/real-ollama-smoke/real-ollama-smoke.json`).
 
 ## Opt-in staged-runtime three-media diagnostic
 

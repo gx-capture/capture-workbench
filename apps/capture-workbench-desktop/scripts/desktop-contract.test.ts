@@ -559,19 +559,6 @@ test('WindowsML bundle provenance is runtime-owned without a hard-coded release 
   assert.match(requirements, /WINDOWSML_BUNDLE_SHA256/u);
 });
 
-test('real Ollama smoke uses the capture contract and validates profile provenance', async () => {
-  const source = await readFile(
-    join(appRoot, 'scripts', 'real-ollama-smoke.ts'),
-    'utf8',
-  );
-  assert.match(source, /form\.set\('sourceKind', 'pdf'\)/u);
-  assert.match(source, /runtime\/model-options/u);
-  assert.match(source, /qwen3\.5-0\.8b-v1/u);
-  assert.match(source, /capture-workbench-qwen3\.5-0\.8b-structure-v1/u);
-  assert.match(source, /\^sha256:\[a-f0-9\]\{64\}/u);
-  assert.doesNotMatch(source, /CAPTURE_WINDOWSML_BUNDLE/u);
-});
-
 test('release candidate workflow is dispatch-only, exact-commit, and immutable', async () => {
   const workspaceRoot = join(appRoot, '..', '..');
   const workflow = await readFile(

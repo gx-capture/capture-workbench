@@ -25,6 +25,8 @@
     "scripts/real-desktop-ocr-smoke.ts",
     "scripts/real-ocr-result-assertions.ts",
     "scripts/real-ocr-result-assertions.test.ts",
+    "scripts/real-ollama-smoke.ts",
+    "scripts/real-ollama-smoke.test.ts",
     "../../tools/acceptance-contract.ts",
     "../../tools/acceptance-checkpoint-journal.test.ts",
     "../../tools/three-project-acceptance.ts",
