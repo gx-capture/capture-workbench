@@ -16,14 +16,17 @@ source of truth for inputs.
   GitHub release (runtime exe, OCR, speech recognition and diarization
   engines, catalog). Consumers' release workflows that attest the release
   manifest need the full route.
-- **0.10.0** is prepared as a minor release from `main` (the product owner's
-  decision); see "Prepared: 0.10.0" below.
+- **0.10.0** is published through Route A only (2026-11-15): the registries
+  and the `v0.10.0` runtime release carry it, and consumers pin it. It has no
+  desktop installer, no `capture-release-manifest-v1.json` and the stable
+  pointer still names 0.9.0, because its release candidate cannot pass
+  `verify-windows-install` (see "Published through Route A: 0.10.0" below).
+  The next release takes the full route.
 - Releases after 0.8.0 publish no Java SDK. Maven publication was removed on
   2026-10-31 (no consumer used it); versions through 0.8.0 stay on GitHub
   Packages.
-- Consumers on their `main` branches pin 0.9.0: Cert Prep
-  (`WodenWang820118/cert-prep#116`) and LAW (`WodenWang820118/gx.law-prep#336`).
-  They move to 0.10.0 in that order.
+- Consumers on their `main` branches pin 0.10.0: Cert Prep
+  (`WodenWang820118/cert-prep#142`) and LAW (`WodenWang820118/gx.law-prep#382`).
 - The workspace runs Nx 24 with task-based affected. The pull request `checks`
   job and `pnpm run verify:affected` lint, type-check, and unit-test only the
   projects a change affects. Push CI on `main` still verifies every project.
@@ -36,7 +39,7 @@ source of truth for inputs.
   structure of dense vertical periodical scans and pages that mix directions;
   about a fifth of furigana on textbook pages is not set aside.
 - Speech recognition ships as two packs from 0.10.0 (issue #154, see
-  "Prepared: 0.10.0" below). The CUDA worker
+  "Published through Route A: 0.10.0" below). The CUDA worker
   archive (about 2.95 GB, parted into files under 2 GB) is the `cuda` content
   of `speech-recognition`. The CPU worker archive,
   `capture-engine-speech-recognition-cpu-<version>-windows-x64.zip`, built from
@@ -48,13 +51,21 @@ source of truth for inputs.
   Push CI on `main` builds and probes it too. Size budgets still cover only
   the runtime executable and the NSIS installer.
 
-## Prepared: 0.10.0 (minor)
+## Published through Route A: 0.10.0 (minor)
 
-- Prepared on 2026-11-15 for Route A, then the full route. Runs: package
-  candidate `<run>`, runtime candidate `<run>` (`model-enabled`), package
-  promote `<run>`, runtime promote `<run>` (`registries`), release candidate
-  `<run>`, consumer gates `<run>`, release promotion `<run>` (`all`). Source
-  commit `<sha>` (merge of the release PR).
+- Published on 2026-11-15 through Route A only. Runs: package candidate
+  43694978756 (candidate `9340e428…`, manifest `ba85612a…`), runtime candidate
+  43695168834 (`model-enabled`; candidate `b11b7bd4…`, manifest `a3a78e61…`),
+  package promote 43702784865, runtime promote 43702964332 (`registries`).
+  Source commit `b0924a8` (merge of PR #373). The first candidates
+  (43682269376 and 43682540780, for `b890158`) were refused by the promotion
+  and rebuilt; see the pitfalls.
+- No full route: release candidate 43704963630 built the installer and passed
+  the cross-framework, runtime-product and model-enabled verifications, but
+  `verify-windows-install` fails for this source commit on every run (the
+  installed smoke's real app-data guard; see the pitfalls). No consumer gate
+  and no release promotion ran. The decision (product owner, 2026-11-15) is to
+  leave 0.10.0 as it is and take the full route with the next release.
 - Contents: two speech recognition packs (issue #154), the speech recognition
   model chosen apart from the device (issue #273), the runtime-owned built-in
   Ollama port (issue #255, PRs #368 and #369), the release-asset reduction
@@ -64,11 +75,22 @@ source of truth for inputs.
   runtime minor, so 0.9.x clients refuse a 0.10.0 runtime at the handshake.
   `capture-sidecar-launcher` 0.10.0 removes public API (see the changelog).
 - Model-source Commit A `3834db2` (annotated tag
-  `capture-runtime-model-sources-v0.10.0`, to be pushed before the
-  candidates). The lock pins the same models as 0.9.0, with the same approval
-  record. OCR profile `capture-workbench-ocr-8530e3130b89f10b`.
-- Consumers: Cert Prep first, then LAW; both bump every Capture pin and tests
-  that quote runtime minor 9; the contract-set hash stays.
+  `capture-runtime-model-sources-v0.10.0`, pushed before the candidates). The
+  lock pins the same models as 0.9.0, with the same approval record. OCR
+  profile `capture-workbench-ocr-8530e3130b89f10b`.
+- Consumers: Cert Prep first (`cert-prep#142`), then LAW
+  (`gx.law-prep#382`); both bumped every Capture pin; the contract-set hash
+  stays and `resolve-capture-release` reports `no-impact`.
+- `cpu` speech pack evidence: manual transcription on 2026-11-15 (Windows 11,
+  no GPU override) against runtime candidate 43695168834; the runtime reported
+  0.10.0. With `CAPTURE_SPEECH_RECOGNITION_VARIANT=cpu` and the model left on
+  `auto`, speech showed `installable` with `downloadBytes` 3,746,379,569; the
+  installation completed and `active.json` names `contentId` `cpu` (993 s with
+  every download in the first run against the superseded candidate
+  43682540780, 97 s here with the model files restored from the engine cache).
+  A 75 s `zh` excerpt transcribed in 55.2 s end to end (model load 10.6 s,
+  transcription 21.1 s, aligner load 4.5 s, alignment 11.0 s): provenance
+  `tea-asr-1.1-mini` / `cpu`, 4 ordered, time-located segments, no warnings.
 
 ### Two speech recognition packs
 
@@ -92,8 +114,8 @@ source of truth for inputs.
   cache are restored without downloading. Hosts that show `downloadBytes` need
   no change.
 - Release evidence for the `cpu` pack (product owner, 2026-11-11): one manual
-  transcription with TEA-ASR-1.1-mini on the CPU, recorded in the
-  "Published: 0.10.0" section once the release is published. The model-source lock and the frozen private
+  transcription with TEA-ASR-1.1-mini on the CPU, recorded in the release's
+  section above. The model-source lock and the frozen private
   fixture stay `tea-asr-1.1` / `cuda`. Steps, with the runtime candidate's
   `runtime` directory or a local `build-release-artifacts` output:
   1. Serve the engine archives over a loopback mirror (for example
@@ -102,7 +124,11 @@ source of truth for inputs.
      `CAPTURE_SMOKE_WORKER_MIRROR_OPT_IN=1`,
      `CAPTURE_SMOKE_WORKER_MIRROR_URL=http://127.0.0.1:8765`,
      `CAPTURE_SPEECH_RECOGNITION_VARIANT=cpu`, a short `CAPTURE_APP_DATA_DIR`,
-     `CAPTURE_PORT=<P>` and `CAPTURE_API_TOKEN`.
+     `CAPTURE_PORT=<P>`, `CAPTURE_API_TOKEN` and
+     `CAPTURE_STRUCTURING_PROVIDER=host` (the default provider is Ollama). A
+     hand-built environment must keep `USERNAME`: PyTorch reads the user name
+     while the model loads, and without it the capture fails with
+     `session_failed` at `speech-model-load-cpu-failed-oserror`.
   3. `GET /v2/runtime/requirements` shows speech `installable` with
      `downloadBytes` about 3.72e9. Install it with
      `POST /v2/runtime/installations` and wait for `completed`; the
@@ -515,7 +541,8 @@ Candidate checksums stay inside the candidate artifact and are not release asset
    (Python `zipfile` over a range-reading file object, on the blob URL that
    `GET /repos/{repo}/actions/artifacts/{id}/zip` redirects to). Then run the
    manual `cpu` speech pack transcription against this runtime candidate and
-   record it (see "Two speech recognition packs" under "Prepared: 0.10.0").
+   record it (see "Two speech recognition packs" under
+   "Published through Route A: 0.10.0").
 3. Route A: dispatch `package-promote.yml`, then `runtime-promote.yml`. The
    runtime promotion requires a successful `workflow_dispatch` package promotion
    on `main` whose commit contains the candidate source.
@@ -695,3 +722,23 @@ candidate with `node tools/install-capture-workbench-dependencies.mts
   version fails the reference flow only after the bump (0.10.0: the OCR journey
   pinned `0.9.0`; it now reports `RELEASE_VERSION`). Push CI on `main` runs the
   reference flow, and a failure there means a new release-source commit.
+- Dispatch the package, runtime and release candidates while the head of
+  `main` is the release-source commit, and merge nothing to `main` between
+  them. Each promotion requires the candidate run's `headSha` (the head of the
+  dispatch ref) to equal `source_commit`; the candidate workflows themselves
+  only require the commit to be reachable from `main`, so a candidate built for
+  an older commit succeeds and is then refused by `package-promote.yml`
+  ("not a successful exact-source package candidate") before anything is
+  published. 0.10.0: the first candidates named `b890158` after `main` had
+  moved to `b0924a8`; both were rebuilt for `b0924a8`.
+- The installed smoke's `--release` mode runs only in
+  `release-candidate.yml` (`verify-windows-install`), on a runner that has
+  never started the product. The release build has no app-data redirect, so it
+  creates the real product app-data and its library there. The real app-data
+  guard (`installed-app-data-guard.ts`) therefore has two rules: the
+  deterministic QA build must leave the real app-data untouched, and the
+  release build may create the directory and its library folder, but nothing
+  that existed may be removed and the library index must stay as it was. A
+  release candidate built from a commit before this rule (0.10.0's `b0924a8`)
+  fails `verify-windows-install` on every run; the checks run from the source
+  commit, so the fix needs a new release-source commit.

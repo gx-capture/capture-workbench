@@ -8,13 +8,48 @@ export interface AppDataSnapshot {
   readonly index: { readonly mtimeNs: string; readonly bytes: string } | null;
 }
 
-export function assertRealAppDataUnchanged(before: AppDataSnapshot, after: AppDataSnapshot): void {
+/**
+ * Where the installed app under test keeps its data:
+ * - `isolated`: the deterministic QA build, redirected to the smoke's run directory.
+ * - `product`: the release build, which has no redirect and uses the real product app-data.
+ */
+export type InstalledAppDataUse = 'isolated' | 'product';
+
+/** The release build is the only installed source without an app-data redirect. */
+export function installedAppDataUse(source: string): InstalledAppDataUse {
+  return source === 'release' ? 'product' : 'isolated';
+}
+
+/**
+ * An isolated app must leave the real product app-data exactly as it was. The
+ * release build creates the product directory and its library folder when it
+ * starts on a machine that has none (every clean CI runner), so for it the
+ * guard accepts those two appearing. Nothing that existed may be gone, and the
+ * library index must be as it was, present or absent: starting the app does
+ * not write it, and the release smoke imports nothing.
+ */
+export function assertRealAppDataUnchanged(
+  before: AppDataSnapshot,
+  after: AppDataSnapshot,
+  use: InstalledAppDataUse,
+): void {
+  if (use === 'product') {
+    if ((before.directoryExists && !after.directoryExists) ||
+        (before.libraryExists && !after.libraryExists) ||
+        !sameIndex(before.index, after.index)) {
+      throw new Error('Real product app-data changed during the installed smoke (an existing directory or library was removed, or the library index changed).');
+    }
+    return;
+  }
   if (before.directoryExists !== after.directoryExists ||
       before.libraryExists !== after.libraryExists ||
-      before.index?.mtimeNs !== after.index?.mtimeNs ||
-      before.index?.bytes !== after.index?.bytes) {
+      !sameIndex(before.index, after.index)) {
     throw new Error('Real product app-data changed during the installed smoke (directory existence or library index metadata). Isolation failed.');
   }
+}
+
+function sameIndex(before: AppDataSnapshot['index'], after: AppDataSnapshot['index']): boolean {
+  return before?.mtimeNs === after?.mtimeNs && before?.bytes === after?.bytes;
 }
 
 // Resolve via Windows' known-folder API through .NET, never an APPDATA override.

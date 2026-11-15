@@ -34,7 +34,7 @@ import {
 } from 'rxjs';
 
 import { deterministicQaNsis, deterministicQaProductName } from './deterministic-qa.ts';
-import { assertRealAppDataUnchanged, realProductAppDataDirectory, snapshotRealAppData } from './installed-app-data-guard.ts';
+import { assertRealAppDataUnchanged, installedAppDataUse, realProductAppDataDirectory, snapshotRealAppData } from './installed-app-data-guard.ts';
 import type { AppDataSnapshot } from './installed-app-data-guard.ts';
 import { assertStagedRuntime } from './assert-staged-runtime.ts';
 import {
@@ -981,7 +981,11 @@ export function runInstalledDeterministicSmoke(
           if (!realAppDataBefore || !realAppDataDirectory) return;
           realAppDataGuard = 'failed';
           realAppDataAfter = await snapshotRealAppData(realAppDataDirectory);
-          assertRealAppDataUnchanged(realAppDataBefore, realAppDataAfter);
+          assertRealAppDataUnchanged(
+            realAppDataBefore,
+            realAppDataAfter,
+            installedAppDataUse(expectedSource),
+          );
           realAppDataGuard = 'passed';
         }))),
         // Snapshot after stopping the fake, before deleting its isolated TEMP.
