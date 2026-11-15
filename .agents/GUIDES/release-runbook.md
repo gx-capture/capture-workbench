@@ -1,6 +1,6 @@
 # Capture Workbench release runbook
 
-Current as of 2026-11-11. This is the operational procedure for publishing a
+Current as of 2026-11-15. This is the operational procedure for publishing a
 Capture Workbench release and moving its consumers. Workflow files remain the
 source of truth for inputs.
 
@@ -16,11 +16,14 @@ source of truth for inputs.
   GitHub release (runtime exe, OCR, speech recognition and diarization
   engines, catalog). Consumers' release workflows that attest the release
   manifest need the full route.
+- **0.10.0** is prepared as a minor release from `main` (the product owner's
+  decision); see "Prepared: 0.10.0" below.
 - Releases after 0.8.0 publish no Java SDK. Maven publication was removed on
   2026-10-31 (no consumer used it); versions through 0.8.0 stay on GitHub
   Packages.
 - Consumers on their `main` branches pin 0.9.0: Cert Prep
   (`WodenWang820118/cert-prep#116`) and LAW (`WodenWang820118/gx.law-prep#336`).
+  They move to 0.10.0 in that order.
 - The workspace runs Nx 24 with task-based affected. The pull request `checks`
   job and `pnpm run verify:affected` lint, type-check, and unit-test only the
   projects a change affects. Push CI on `main` still verifies every project.
@@ -32,8 +35,8 @@ source of truth for inputs.
 - Known limitations: handwriting OCR quality (printed text is the floor); page
   structure of dense vertical periodical scans and pages that mix directions;
   about a fifth of furigana on textbook pages is not set aside.
-- Speech recognition ships as two packs from the next release (issue #154,
-  see "Next release: two speech recognition packs" below). The CUDA worker
+- Speech recognition ships as two packs from 0.10.0 (issue #154, see
+  "Prepared: 0.10.0" below). The CUDA worker
   archive (about 2.95 GB, parted into files under 2 GB) is the `cuda` content
   of `speech-recognition`. The CPU worker archive,
   `capture-engine-speech-recognition-cpu-<version>-windows-x64.zip`, built from
@@ -45,13 +48,35 @@ source of truth for inputs.
   Push CI on `main` builds and probes it too. Size budgets still cover only
   the runtime executable and the NSIS installer.
 
-## Next release: two speech recognition packs
+## Prepared: 0.10.0 (minor)
 
-- What changes: a full release publishes 19 assets instead of 17. The new ones
-  are `capture-engine-speech-recognition-cpu-<version>-windows-x64.zip` and its
-  `-files.json`, so there are four `*-files.json`; the Route A runtime release
-  gains the same two. The contract set and the capture document schema do not
-  change.
+- Prepared on 2026-11-15 for Route A, then the full route. Runs: package
+  candidate `<run>`, runtime candidate `<run>` (`model-enabled`), package
+  promote `<run>`, runtime promote `<run>` (`registries`), release candidate
+  `<run>`, consumer gates `<run>`, release promotion `<run>` (`all`). Source
+  commit `<sha>` (merge of the release PR).
+- Contents: two speech recognition packs (issue #154), the speech recognition
+  model chosen apart from the device (issue #273), the runtime-owned built-in
+  Ollama port (issue #255, PRs #368 and #369), the release-asset reduction
+  (issue #278) and the launcher crate's removal of the group lifecycle (R3).
+- Compatibility: contract-set SHA-256 unchanged (`91ff5ff5…`, as in 0.9.0);
+  capture document schema unchanged (`5452631c…`). Clients require the same
+  runtime minor, so 0.9.x clients refuse a 0.10.0 runtime at the handshake.
+  `capture-sidecar-launcher` 0.10.0 removes public API (see the changelog).
+- Model-source Commit A `3834db2` (annotated tag
+  `capture-runtime-model-sources-v0.10.0`, to be pushed before the
+  candidates). The lock pins the same models as 0.9.0, with the same approval
+  record. OCR profile `capture-workbench-ocr-8530e3130b89f10b`.
+- Consumers: Cert Prep first, then LAW; both bump every Capture pin and tests
+  that quote runtime minor 9; the contract-set hash stays.
+
+### Two speech recognition packs
+
+- What changes: a full release publishes 19 assets instead of 0.9.0's 28: the
+  per-asset `.sha256` files and the size report are gone, and the new
+  `capture-engine-speech-recognition-cpu-<version>-windows-x64.zip` and its
+  `-files.json` make four `*-files.json`; the Route A runtime release gains the
+  same two. The contract set and the capture document schema do not change.
 - Hosts, when they bump:
   - LAW: its catalog reader must read `contents` first (the LAW change that
     walks `requirement.contents[].artifacts`). Without it, staging and
@@ -67,8 +92,8 @@ source of truth for inputs.
   cache are restored without downloading. Hosts that show `downloadBytes` need
   no change.
 - Release evidence for the `cpu` pack (product owner, 2026-11-11): one manual
-  transcription with TEA-ASR-1.1-mini on the CPU, recorded in this release's
-  "Published" section below. The model-source lock and the frozen private
+  transcription with TEA-ASR-1.1-mini on the CPU, recorded in the
+  "Published: 0.10.0" section once the release is published. The model-source lock and the frozen private
   fixture stay `tea-asr-1.1` / `cuda`. Steps, with the runtime candidate's
   `runtime` directory or a local `build-release-artifacts` output:
   1. Serve the engine archives over a loopback mirror (for example
@@ -412,7 +437,7 @@ missing ones.
 
 ## GitHub Release assets
 
-From the next release, a full release publishes 19 assets:
+From 0.10.0, a full release publishes 19 assets:
 
 - Runtime: `capture-runtime-x86_64-pc-windows-msvc.exe`, `capture-runtime-manifest.json`, `capture-document-v2.schema.json`.
 - Engines: `capture-engine-catalog.json`; each worker archive (the CUDA speech recognition worker is `capture-engine-speech-recognition-<version>-windows-x64.zip.001` and `.zip.002`, the CPU one is the single `capture-engine-speech-recognition-cpu-<version>-windows-x64.zip`); and the four `*-files.json` manifests (OCR, speech recognition, CPU speech recognition, diarization).
@@ -431,8 +456,8 @@ Check a new release like this:
   `requirementId` plus `contents` (each of `cuda` and `cpu` has those
   delivery fields). A `contents` requirement counts as complete only when
   each content is. Releases up to 0.9.0 published the legacy shape. From
-  the next release `speech-recognition` must be `contents` with exactly
-  `cuda` and `cpu`:
+  0.10.0 `speech-recognition` must be `contents` with exactly `cuda` and
+  `cpu`:
   - `build-release-artifacts` (`release.py`), the candidate verifier, the
     local release consumer smoke and the real-media model smoke fail a
     model-enabled release whose speech requirement is the legacy delivery or
@@ -490,7 +515,7 @@ Candidate checksums stay inside the candidate artifact and are not release asset
    (Python `zipfile` over a range-reading file object, on the blob URL that
    `GET /repos/{repo}/actions/artifacts/{id}/zip` redirects to). Then run the
    manual `cpu` speech pack transcription against this runtime candidate and
-   record it (see "Next release: two speech recognition packs").
+   record it (see "Two speech recognition packs" under "Prepared: 0.10.0").
 3. Route A: dispatch `package-promote.yml`, then `runtime-promote.yml`. The
    runtime promotion requires a successful `workflow_dispatch` package promotion
    on `main` whose commit contains the candidate source.
@@ -604,8 +629,9 @@ candidate with `node tools/install-capture-workbench-dependencies.mts
   set the version in `scripts/generate_commit_a_fixtures.py`, regenerate, commit
   only `model-sources/commit-a/` (Commit A), push it with the annotated tag
   `capture-runtime-model-sources-v<version>`, then put its SHA in
-  `COMMIT_A_SHA` and the lock, recompute the digests of the first-party files
-  from the committed bytes, and copy `commit-a/model/pipeline.json` to
+  `COMMIT_A_SHA` and the lock, recompute the digests and byte counts of the
+  first-party files from the committed bytes (the NOTICE names the version, so
+  its size follows the version string's length), and copy `commit-a/model/pipeline.json` to
   `src/capture_runtime/assets/ocr-profile.json`. The lock's approval record
   changes only with the owner's consent.
 - Version management has two stages: ordinary source/tests reference a scoped
@@ -634,6 +660,13 @@ candidate with `node tools/install-capture-workbench-dependencies.mts
 - A minor version bump also needs `CAPTURE_RUNTIME_MINOR` in
   `packages/capture-workbench-ui/src/lib/constants/runtime.ts`; the version sync
   and its check do not own it, and `capture-angular:test` is what fails.
+- Lock refresh after a version bump: `cargo update -p <crate> --offline`
+  changes only the first-party version lines. Once a project's version
+  changes, uv re-resolves its whole lock (an implicit `uv run` does too) and
+  can rewrite the environment markers of unrelated packages: keep only the
+  first-party `version` line of each `uv.lock` and confirm with
+  `uv lock --check --offline`. Once the lock passes that check, later
+  `uv run` targets leave it alone; check `git diff --stat` before committing.
 - Local `build-release-artifacts` after a version bump: delete the previous
   version's files from `packages/capture-runtime/dist/engines` and run with
   `--skip-nx-cache`, or the cache restores them and the catalog step rejects them.
@@ -645,8 +678,9 @@ candidate with `node tools/install-capture-workbench-dependencies.mts
   `tar` reads `C:` as a remote host). Run it where `tar` resolves to
   `C:\Windows\System32\tar.exe` (`Get-Command tar`): a PowerShell started from
   Git Bash inherits Git's `tar` first.
-- Consumer migrations in a fresh worktree: Nx can hang or pick the wrong
-  workspace unless `NX_WORKSPACE_ROOT_PATH` is unset and `NX_DAEMON=false`.
+- Fresh worktrees, of this repository (the release-source branch) and of
+  consumers: Nx can hang or pick the wrong workspace unless
+  `NX_WORKSPACE_ROOT_PATH` is unset and `NX_DAEMON=false`.
   LAW's pre-commit runs `cargo check` (create the sidecar placeholder with
   `tauri:prepare-sidecar-placeholder` and `resources/.ci-placeholder` as CI
   does). GitHub Packages npm auth for a local `pnpm install`: a temporary

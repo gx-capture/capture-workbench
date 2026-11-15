@@ -292,7 +292,7 @@ def test_approved_lock_generates_checksum_pinned_manifest_equivalent(
         ),
         (
             lambda payload: payload["fixtures"][0].update({"licenseBytes": 1024 * 1024 + 1}),
-            "license/NOTICE bytes drifted",
+            "license bytes drifted",
         ),
         (
             lambda payload: payload["fixtures"][0].update(
