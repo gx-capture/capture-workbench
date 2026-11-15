@@ -737,7 +737,8 @@ candidate with `node tools/install-capture-workbench-dependencies.mts
   creates the real product app-data and its library there. The real app-data
   guard (`installed-app-data-guard.ts`) therefore has two rules: the
   deterministic QA build must leave the real app-data untouched, and the
-  release build may create it but must not remove or change what existed. A
+  release build may create the directory and its library folder, but nothing
+  that existed may be removed and the library index must stay as it was. A
   release candidate built from a commit before this rule (0.10.0's `b0924a8`)
   fails `verify-windows-install` on every run; the checks run from the source
   commit, so the fix needs a new release-source commit.

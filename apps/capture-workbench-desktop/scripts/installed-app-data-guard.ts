@@ -15,12 +15,18 @@ export interface AppDataSnapshot {
  */
 export type InstalledAppDataUse = 'isolated' | 'product';
 
+/** The release build is the only installed source without an app-data redirect. */
+export function installedAppDataUse(source: string): InstalledAppDataUse {
+  return source === 'release' ? 'product' : 'isolated';
+}
+
 /**
  * An isolated app must leave the real product app-data exactly as it was. The
- * release build creates the product directory and its library when it starts
- * on a machine that has none (every clean CI runner), so for it the guard
- * requires only that what existed before is still there and that an existing
- * library index is unchanged: the release smoke imports nothing.
+ * release build creates the product directory and its library folder when it
+ * starts on a machine that has none (every clean CI runner), so for it the
+ * guard accepts those two appearing. Nothing that existed may be gone, and the
+ * library index must be as it was, present or absent: starting the app does
+ * not write it, and the release smoke imports nothing.
  */
 export function assertRealAppDataUnchanged(
   before: AppDataSnapshot,
@@ -30,8 +36,8 @@ export function assertRealAppDataUnchanged(
   if (use === 'product') {
     if ((before.directoryExists && !after.directoryExists) ||
         (before.libraryExists && !after.libraryExists) ||
-        (before.index !== null && !sameIndex(before.index, after.index))) {
-      throw new Error('Real product app-data changed during the installed smoke (an existing directory, library or library index was removed or modified).');
+        !sameIndex(before.index, after.index)) {
+      throw new Error('Real product app-data changed during the installed smoke (an existing directory or library was removed, or the library index changed).');
     }
     return;
   }
