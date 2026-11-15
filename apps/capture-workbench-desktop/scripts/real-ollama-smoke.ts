@@ -1,8 +1,9 @@
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import net from 'node:net';
 import { basename, join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import { assertStagedRuntime } from './assert-staged-runtime.ts';
 import { appRoot, stagedExecutable } from './stage-runtime.ts';
@@ -11,16 +12,31 @@ const workspaceRoot = resolve(appRoot, '..', '..');
 const outputDirectory = join(workspaceRoot, 'tmp', 'capture-workbench-desktop', 'real-ollama-smoke');
 const maxWaitMs = 10 * 60_000;
 const maxInstallationWaitMs = 75 * 60_000;
+const ingestionChunkBytes = 1024 * 1024;
 const coreRequirementIds = [
   'windowsml-ocr',
   'ollama-runtime',
 ] as const;
+const terminalCaptureStatuses = new Set(['completed', 'failed', 'cancelled']);
+const expectedStructuringEngine = 'ollama';
+const expectedStructuringModel = 'capture-workbench-qwen3.5-0.8b-structure-v1';
+const sha256DigestPattern = /^sha256:[a-f0-9]{64}$/u;
 
-interface CaptureJob {
+interface CaptureFailure {
+  readonly code?: string;
+  readonly message?: string;
+  readonly stage?: string | null;
+}
+
+interface CaptureOperation {
   readonly captureId: string;
   readonly status: string;
-  readonly stage: string;
-  readonly error?: { readonly message?: string } | null;
+  readonly error?: CaptureFailure | null;
+}
+
+interface IngestionResponse {
+  readonly ingestionId: string;
+  readonly status: string;
 }
 
 interface RuntimeRequirement {
@@ -43,12 +59,170 @@ interface RuntimeModelInstallation {
   readonly error?: { readonly message?: string } | null;
 }
 
+export interface StructuringProvenance {
+  readonly engine: typeof expectedStructuringEngine;
+  readonly model: typeof expectedStructuringModel;
+  readonly digest: string;
+}
+
+export interface ExtractedOllamaResult {
+  readonly schemaVersion: unknown;
+  readonly structuringEngine: StructuringProvenance;
+}
+
+export interface RealOllamaSmokeEvidence {
+  readonly evidenceKind: 'real-isolated-ollama-smoke';
+  readonly releaseGateSatisfied: true;
+  readonly sourceKind: 'pdf';
+  readonly schemaVersion: unknown;
+  readonly structuringEngine: StructuringProvenance;
+  readonly workerMirrorUsed: boolean;
+}
+
+export function validateWorkerMirrorUrl(rawUrl: string | undefined): string | undefined {
+  if (rawUrl === undefined) return undefined;
+  const trimmed = rawUrl.trim();
+  if (trimmed === '') return undefined;
+  const prefix = 'http://127.0.0.1:';
+  if (!trimmed.startsWith(prefix)) {
+    throw new Error('CAPTURE_REAL_SMOKE_WORKER_MIRROR_URL must use http://127.0.0.1:<port>.');
+  }
+  const portText = trimmed.slice(prefix.length);
+  if (!/^\d+$/u.test(portText)) {
+    throw new Error(
+      'CAPTURE_REAL_SMOKE_WORKER_MIRROR_URL must specify a numeric port without path, query, or credentials.',
+    );
+  }
+  const port = Number(portText);
+  if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
+    throw new Error('CAPTURE_REAL_SMOKE_WORKER_MIRROR_URL port must be between 1 and 65535.');
+  }
+  return `${prefix}${port}`;
+}
+
+export function isTerminalCaptureStatus(status: string): boolean {
+  return terminalCaptureStatuses.has(status);
+}
+
+export function buildOpenIngestionRequest(input: {
+  readonly clientRequestId: string;
+  readonly fileName: string;
+  readonly totalBytes: number;
+  readonly sourceSha256: string;
+}): {
+  readonly protocolVersion: '2';
+  readonly kind: 'pdf';
+  readonly mode: 'file';
+  readonly clientRequestId: string;
+  readonly fileName: string;
+  readonly mediaType: 'application/pdf';
+  readonly totalBytes: number;
+  readonly sourceSha256: string;
+} {
+  return {
+    protocolVersion: '2',
+    kind: 'pdf',
+    mode: 'file',
+    clientRequestId: input.clientRequestId,
+    fileName: input.fileName,
+    mediaType: 'application/pdf',
+    totalBytes: input.totalBytes,
+    sourceSha256: input.sourceSha256,
+  };
+}
+
+export function buildFinalizeIngestionRequest(input: {
+  readonly totalBytes: number;
+  readonly sha256: string;
+}): {
+  readonly protocolVersion: '2';
+  readonly totalBytes: number;
+  readonly sha256: string;
+} {
+  return {
+    protocolVersion: '2',
+    totalBytes: input.totalBytes,
+    sha256: input.sha256,
+  };
+}
+
+export function buildStartCaptureRequest(input: {
+  readonly clientRequestId: string;
+  readonly ingestionId: string;
+}): {
+  readonly protocolVersion: '2';
+  readonly clientRequestId: string;
+  readonly ingestionId: string;
+  readonly structuringMode: 'runtime';
+  readonly targetLanguage: 'zh-TW';
+  readonly startPolicy: 'eager';
+} {
+  return {
+    protocolVersion: '2',
+    clientRequestId: input.clientRequestId,
+    ingestionId: input.ingestionId,
+    structuringMode: 'runtime',
+    targetLanguage: 'zh-TW',
+    startPolicy: 'eager',
+  };
+}
+
+export function extractOllamaStructuringProvenance(payload: unknown): ExtractedOllamaResult {
+  const envelope = asRecord(payload);
+  const document = asRecord(envelope?.['result']);
+  const structuring = asRecord(document?.['structuringEngine']);
+  if (
+    !document ||
+    !structuring ||
+    structuring['engine'] !== expectedStructuringEngine ||
+    structuring['model'] !== expectedStructuringModel ||
+    typeof structuring['digest'] !== 'string' ||
+    !sha256DigestPattern.test(structuring['digest'])
+  ) {
+    throw new Error('Real capture result does not contain isolated Ollama profile provenance.');
+  }
+  return {
+    schemaVersion: document['schemaVersion'],
+    structuringEngine: {
+      engine: expectedStructuringEngine,
+      model: expectedStructuringModel,
+      digest: structuring['digest'],
+    },
+  };
+}
+
+export function buildRealOllamaSmokeEvidence(input: {
+  readonly schemaVersion: unknown;
+  readonly structuringEngine: StructuringProvenance;
+  readonly workerMirrorUsed: boolean;
+}): RealOllamaSmokeEvidence {
+  return {
+    evidenceKind: 'real-isolated-ollama-smoke',
+    releaseGateSatisfied: true,
+    sourceKind: 'pdf',
+    schemaVersion: input.schemaVersion,
+    structuringEngine: {
+      engine: input.structuringEngine.engine,
+      model: input.structuringEngine.model,
+      digest: input.structuringEngine.digest,
+    },
+    workerMirrorUsed: input.workerMirrorUsed,
+  };
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
 async function main(): Promise<void> {
   if (process.platform !== 'win32') {
     throw new Error('Real Ollama smoke is Windows-only.');
   }
   const sourcePath = requiredPath('CAPTURE_REAL_SMOKE_PDF');
   const appData = requiredPath('CAPTURE_REAL_SMOKE_APP_DATA');
+  const workerMirrorUrl = validateWorkerMirrorUrl(process.env['CAPTURE_REAL_SMOKE_WORKER_MIRROR_URL']);
   if (!sourcePath.toLowerCase().endsWith('.pdf')) {
     throw new Error('CAPTURE_REAL_SMOKE_PDF must identify a PDF.');
   }
@@ -58,61 +232,97 @@ async function main(): Promise<void> {
   if (sourceBytes.length === 0 || sourceBytes.length > 50 * 1024 * 1024) {
     throw new Error('CAPTURE_REAL_SMOKE_PDF must contain 1 through 52428800 bytes.');
   }
+  const sourceSha = createHash('sha256').update(sourceBytes).digest('hex');
 
   await observe(assertStagedRuntime('release'));
   const runtimePort = await reservePort();
   const token = randomBytes(32).toString('hex');
-  const host = `127.0.0.1:${runtimePort}`;
   const origin = 'http://tauri.localhost';
   const child = spawn(stagedExecutable, ['serve', '--host', '127.0.0.1', '--port', String(runtimePort)], {
     cwd: resolve(stagedExecutable, '..'),
     windowsHide: true,
     stdio: 'ignore',
-    env: realRuntimeEnvironment({ appData, runtimePort, token }),
+    env: realRuntimeEnvironment({ appData, runtimePort, token, workerMirrorUrl }),
   });
   let captureId: string | undefined;
   try {
-    await waitForReady(runtimePort, host, origin, token, child);
-    await prepareCoreRequirements(runtimePort, host, origin, token);
-    await prepareSelectedModel(runtimePort, host, origin, token);
-    const form = new FormData();
-    form.set('sourceKind', 'pdf');
-    form.set('structuringMode', 'runtime');
-    form.set('targetLanguage', 'zh-TW');
-    form.set('file', new Blob([sourceBytes], { type: 'application/pdf' }), basename(sourcePath));
-    const created = await request<CaptureJob>(runtimePort, host, origin, token, '/v2/captures', {
-      method: 'POST', headers: { 'x-idempotency-key': randomUUID() }, body: form,
+    await waitForReady(runtimePort, origin, token, child);
+    await prepareCoreRequirements(runtimePort, origin, token);
+    await prepareSelectedModel(runtimePort, origin, token);
+
+    const ingestionKey = randomUUID();
+    const ingestion = await request<IngestionResponse>(runtimePort, origin, token, '/v2/ingestions', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-idempotency-key': ingestionKey,
+      },
+      body: JSON.stringify(buildOpenIngestionRequest({
+        clientRequestId: ingestionKey,
+        fileName: basename(sourcePath),
+        totalBytes: sourceBytes.length,
+        sourceSha256: sourceSha,
+      })),
+    });
+
+    for (let index = 0, offset = 0; offset < sourceBytes.length; index += 1, offset += ingestionChunkBytes) {
+      const chunk = sourceBytes.subarray(offset, Math.min(sourceBytes.length, offset + ingestionChunkBytes));
+      await request<void>(runtimePort, origin, token, `/v2/ingestions/${ingestion.ingestionId}/chunks/${index}`, {
+        method: 'PUT',
+        headers: {
+          'content-type': 'application/octet-stream',
+          'content-range': `bytes ${offset}-${offset + chunk.length - 1}/${sourceBytes.length}`,
+          digest: `sha-256=${createHash('sha256').update(chunk).digest('hex')}`,
+          'x-idempotency-key': randomUUID(),
+        },
+        body: new Uint8Array(chunk),
+      });
+    }
+
+    await request<IngestionResponse>(runtimePort, origin, token, `/v2/ingestions/${ingestion.ingestionId}/finalize`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(buildFinalizeIngestionRequest({
+        totalBytes: sourceBytes.length,
+        sha256: sourceSha,
+      })),
+    });
+
+    const captureKey = randomUUID();
+    const created = await request<CaptureOperation>(runtimePort, origin, token, '/v2/captures', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-idempotency-key': captureKey,
+      },
+      body: JSON.stringify(buildStartCaptureRequest({
+        clientRequestId: captureKey,
+        ingestionId: ingestion.ingestionId,
+      })),
     });
     captureId = created.captureId;
-    const terminal = await waitForTerminal(runtimePort, host, origin, token, captureId);
+
+    const terminal = await waitForTerminal(runtimePort, origin, token, captureId);
     if (terminal.status !== 'completed') {
-      throw new Error(`Real capture ended as ${terminal.status}: ${terminal.error?.message ?? terminal.stage}`);
+      throw new Error(
+        `Real capture ended as ${terminal.status}: ${terminal.error?.message ?? terminal.error?.code ?? 'no detail'}`,
+      );
     }
-    const result = await request<Record<string, unknown>>(
-      runtimePort, host, origin, token, `/v2/captures/${captureId}/result`,
-    );
-    const structuring = result['structuringEngine'] as Record<string, unknown> | undefined;
-    if (
-      !structuring ||
-      structuring['engine'] !== 'ollama' ||
-      structuring['model'] !== 'capture-workbench-qwen3.5-0.8b-structure-v1' ||
-      typeof structuring['digest'] !== 'string' ||
-      !/^sha256:[a-f0-9]{64}$/u.test(structuring['digest'])
-    ) {
-      throw new Error('Real capture result does not contain isolated Ollama profile provenance.');
-    }
+
+    const result = await request<unknown>(runtimePort, origin, token, `/v2/captures/${captureId}/result`);
+    const extracted = extractOllamaStructuringProvenance(result);
+    const evidence = buildRealOllamaSmokeEvidence({
+      schemaVersion: extracted.schemaVersion,
+      structuringEngine: extracted.structuringEngine,
+      workerMirrorUsed: workerMirrorUrl !== undefined,
+    });
+
     await mkdir(outputDirectory, { recursive: true });
-    await writeFile(join(outputDirectory, 'real-ollama-smoke.json'), `${JSON.stringify({
-      evidenceKind: 'real-isolated-ollama-smoke',
-      releaseGateSatisfied: true,
-      sourceKind: 'pdf',
-      schemaVersion: result['schemaVersion'],
-      structuringEngine: { engine: structuring['engine'], model: structuring['model'], digest: structuring['digest'] },
-    }, null, 2)}\n`, 'utf8');
+    await writeFile(join(outputDirectory, 'real-ollama-smoke.json'), `${JSON.stringify(evidence, null, 2)}\n`, 'utf8');
     process.stdout.write(`Real Ollama smoke report: ${join(outputDirectory, 'real-ollama-smoke.json')}\n`);
   } finally {
     if (captureId) {
-      await request<void>(runtimePort, host, origin, token, `/v2/captures/${captureId}`, { method: 'DELETE' }).catch(() => undefined);
+      await request<void>(runtimePort, origin, token, `/v2/captures/${captureId}`, { method: 'DELETE' }).catch(() => undefined);
     }
     terminateOwnedTree(child.pid);
   }
@@ -120,13 +330,11 @@ async function main(): Promise<void> {
 
 async function prepareCoreRequirements(
   port: number,
-  host: string,
   origin: string,
   token: string,
 ): Promise<void> {
   const listed = await request<{ readonly items: readonly RuntimeRequirement[] }>(
     port,
-    host,
     origin,
     token,
     '/v2/runtime/requirements',
@@ -137,6 +345,14 @@ async function prepareCoreRequirements(
       throw new Error(`Real runtime did not expose required ${requirementId}.`);
     }
     if (requirement.status === 'ready') continue;
+    if (
+      requirementId === 'ollama-runtime' &&
+      process.env['CAPTURE_REAL_SMOKE_ALLOW_OLLAMA_INSTALL']?.trim() !== '1'
+    ) {
+      throw new Error(
+        'Ollama must already be installed on this machine (on PATH) unless CAPTURE_REAL_SMOKE_ALLOW_OLLAMA_INSTALL=1 is set.',
+      );
+    }
     if (requirement.status !== 'installable') {
       throw new Error(
         `Real runtime cannot prepare ${requirementId}: ${requirement.status}${requirement.detail ? ` (${requirement.detail})` : ''}.`,
@@ -144,7 +360,6 @@ async function prepareCoreRequirements(
     }
     const started = await request<RuntimeInstallation>(
       port,
-      host,
       origin,
       token,
       '/v2/runtime/installations',
@@ -157,11 +372,10 @@ async function prepareCoreRequirements(
         body: JSON.stringify({ requirementId, consent: true }),
       },
     );
-    await waitForInstallation(port, host, origin, token, started);
+    await waitForInstallation(port, origin, token, started);
   }
   const verified = await request<{ readonly items: readonly RuntimeRequirement[] }>(
     port,
-    host,
     origin,
     token,
     '/v2/runtime/requirements',
@@ -176,19 +390,17 @@ async function prepareCoreRequirements(
 
 async function prepareSelectedModel(
   port: number,
-  host: string,
   origin: string,
   token: string,
 ): Promise<void> {
   const options = await request<{
     readonly items: readonly { readonly optionId: string; readonly status: string }[];
-  }>(port, host, origin, token, '/v2/runtime/model-options');
+  }>(port, origin, token, '/v2/runtime/model-options');
   const option = options.items.find((item) => item.optionId === 'qwen3.5-0.8b-v1');
   if (!option) throw new Error('Real runtime did not expose the qwen3.5 0.8B model option.');
   if (option.status === 'active') return;
   const installation = await request<RuntimeModelInstallation>(
     port,
-    host,
     origin,
     token,
     '/v2/runtime/model-installations',
@@ -201,27 +413,63 @@ async function prepareSelectedModel(
       body: JSON.stringify({ optionId: option.optionId, consent: true }),
     },
   );
-  await waitForModelInstallation(port, host, origin, token, installation);
+  await waitForModelInstallation(port, origin, token, installation);
 }
 
-function realRuntimeEnvironment(input: { appData: string; runtimePort: number; token: string }): NodeJS.ProcessEnv {
+function realRuntimeEnvironment(input: {
+  readonly appData: string;
+  readonly runtimePort: number;
+  readonly token: string;
+  readonly workerMirrorUrl?: string;
+}): NodeJS.ProcessEnv {
   const environment: NodeJS.ProcessEnv = {};
-  for (const name of ['COMSPEC', 'NUMBER_OF_PROCESSORS', 'OS', 'PATH', 'PATHEXT', 'PROCESSOR_ARCHITECTURE', 'PROCESSOR_IDENTIFIER', 'PROCESSOR_LEVEL', 'PROCESSOR_REVISION', 'PROGRAMDATA', 'SYSTEMDRIVE', 'SYSTEMROOT', 'USERPROFILE', 'WINDIR']) {
+  for (const name of [
+    'COMSPEC',
+    'LOCALAPPDATA',
+    'NUMBER_OF_PROCESSORS',
+    'OS',
+    'PATH',
+    'PATHEXT',
+    'PROCESSOR_ARCHITECTURE',
+    'PROCESSOR_IDENTIFIER',
+    'PROCESSOR_LEVEL',
+    'PROCESSOR_REVISION',
+    'PROGRAMDATA',
+    'SYSTEMDRIVE',
+    'SYSTEMROOT',
+    'TEMP',
+    'TMP',
+    'USERPROFILE',
+    'WINDIR',
+  ]) {
     if (process.env[name]) environment[name] = process.env[name];
   }
   return {
     ...environment,
-    CAPTURE_HOST: '127.0.0.1', CAPTURE_PORT: String(input.runtimePort), CAPTURE_API_TOKEN: input.token,
-    CAPTURE_ALLOWED_HOSTS: `127.0.0.1:${input.runtimePort}`, CAPTURE_ALLOWED_ORIGINS: 'http://tauri.localhost,tauri://localhost',
-    CAPTURE_ENABLE_API_DOCS: 'false', CAPTURE_APP_DATA_DIR: join(input.appData, 'runtime'),
-    CAPTURE_STRUCTURING_PROVIDER: 'ollama', CAPTURE_RETENTION_HOURS: '24', CAPTURE_MAX_UPLOAD_BYTES: String(50 * 1024 * 1024),
+    CAPTURE_HOST: '127.0.0.1',
+    CAPTURE_PORT: String(input.runtimePort),
+    CAPTURE_API_TOKEN: input.token,
+    CAPTURE_ALLOWED_HOSTS: `127.0.0.1:${input.runtimePort}`,
+    CAPTURE_ALLOWED_ORIGINS: 'http://tauri.localhost,tauri://localhost',
+    CAPTURE_ENABLE_API_DOCS: 'false',
+    CAPTURE_APP_DATA_DIR: join(input.appData, 'runtime'),
+    CAPTURE_STRUCTURING_PROVIDER: 'ollama',
+    CAPTURE_RETENTION_HOURS: '24',
+    CAPTURE_MAX_UPLOAD_BYTES: String(50 * 1024 * 1024),
     CAPTURE_OLLAMA_APP_DATA: join(input.appData, 'ollama'),
     CAPTURE_OLLAMA_PID_FILE: join(input.appData, 'ollama', 'ollama.pid'),
     OLLAMA_MODELS: join(input.appData, 'ollama', 'models'),
+    ...(input.workerMirrorUrl
+      ? {
+          CAPTURE_SMOKE_WORKER_MIRROR_OPT_IN: '1',
+          CAPTURE_SMOKE_WORKER_MIRROR_URL: input.workerMirrorUrl,
+          CAPTURE_ENGINE_CACHE_DIR: 'off',
+        }
+      : {}),
   };
 }
 
-async function request<T>(port: number, host: string, origin: string, token: string, path: string, init: RequestInit = {}): Promise<T> {
+async function request<T>(port: number, origin: string, token: string, path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(`http://127.0.0.1:${port}${path}`, {
     ...init,
     headers: { authorization: `Bearer ${token}`, origin, ...init.headers },
@@ -231,12 +479,12 @@ async function request<T>(port: number, host: string, origin: string, token: str
   return response.json() as Promise<T>;
 }
 
-async function waitForReady(port: number, host: string, origin: string, token: string, child: ReturnType<typeof spawn>): Promise<void> {
+async function waitForReady(port: number, origin: string, token: string, child: ReturnType<typeof spawn>): Promise<void> {
   const deadline = Date.now() + 60_000;
   while (Date.now() < deadline) {
     if (child.exitCode !== null) throw new Error('Real runtime exited before readiness.');
     try {
-      const ready = await request<{ readonly ready: boolean }>(port, host, origin, token, '/v2/health/ready');
+      const ready = await request<{ readonly ready: boolean }>(port, origin, token, '/v2/health/ready');
       if (ready.ready) return;
     } catch { /* Runtime is still starting. */ }
     await delay(500);
@@ -244,11 +492,11 @@ async function waitForReady(port: number, host: string, origin: string, token: s
   throw new Error('Real runtime did not become ready before the timeout.');
 }
 
-async function waitForTerminal(port: number, host: string, origin: string, token: string, captureId: string): Promise<CaptureJob> {
+async function waitForTerminal(port: number, origin: string, token: string, captureId: string): Promise<CaptureOperation> {
   const deadline = Date.now() + maxWaitMs;
   while (Date.now() < deadline) {
-    const job = await request<CaptureJob>(port, host, origin, token, `/v2/captures/${captureId}`);
-    if (!['queued', 'running'].includes(job.status)) return job;
+    const operation = await request<CaptureOperation>(port, origin, token, `/v2/captures/${captureId}`);
+    if (isTerminalCaptureStatus(operation.status)) return operation;
     await delay(750);
   }
   throw new Error('Real capture did not reach a terminal state before the timeout.');
@@ -256,7 +504,6 @@ async function waitForTerminal(port: number, host: string, origin: string, token
 
 async function waitForInstallation(
   port: number,
-  host: string,
   origin: string,
   token: string,
   installation: RuntimeInstallation,
@@ -265,7 +512,6 @@ async function waitForInstallation(
   while (Date.now() < deadline) {
     const current = await request<RuntimeInstallation>(
       port,
-      host,
       origin,
       token,
       `/v2/runtime/installations/${installation.installationId}`,
@@ -283,7 +529,6 @@ async function waitForInstallation(
 
 async function waitForModelInstallation(
   port: number,
-  host: string,
   origin: string,
   token: string,
   installation: RuntimeModelInstallation,
@@ -292,7 +537,6 @@ async function waitForModelInstallation(
   while (Date.now() < deadline) {
     const current = await request<RuntimeModelInstallation>(
       port,
-      host,
       origin,
       token,
       `/v2/runtime/model-installations/${installation.installationId}`,
@@ -347,7 +591,12 @@ function observe<T>(observable: { subscribe: (observer: { next: (value: T) => vo
   return new Promise((resolveValue, reject) => observable.subscribe({ next: resolveValue, error: reject }));
 }
 
-void main().catch((error: unknown) => {
-  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-  process.exitCode = 1;
-});
+if (
+  process.argv[1] &&
+  pathToFileURL(resolve(process.argv[1])).href === import.meta.url
+) {
+  void main().catch((error: unknown) => {
+    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    process.exitCode = 1;
+  });
+}
