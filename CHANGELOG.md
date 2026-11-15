@@ -9,10 +9,10 @@ Capture Workbench follows an explicit 0.x compatibility policy:
 - While the runtime is `0.x`, a minor-version change may be breaking.
 - Capture Workbench clients therefore require the same runtime major and minor
   version during the readiness handshake; patch updates remain compatible.
-- The in-scope consumers for the current `0.4.x` line are the published
-  Web Component package, Cert Prep's Angular, Python, and desktop hosts, and
-  LAW's web app and Python AI service. They must be deployed on the same
-  minor before a runtime release is enabled.
+- The in-scope consumers are the published Web Component package, Cert
+  Prep's Angular, Python, and desktop hosts, and LAW's web app and Python AI
+  service. They must be deployed on the same minor before a runtime release
+  is enabled.
 - `compatibleRuntimeMinor` is a temporary, explicit break-glass setting for a
   coordinated rollback or split-minor migration. Remove the override after the
   consumer and runtime are aligned; reverting the consumer package is the
@@ -30,18 +30,19 @@ runtime owns the built-in Ollama's port; a full release publishes 19 assets
 instead of 28; and the sidecar launcher crate keeps only the launch path hosts
 use, which removes part of its public API. The contract set (`91ff5ff5…`), the
 capture document schema (`5452631c…`) and the models are unchanged from 0.9.0.
-Clients still require the same runtime minor, so a 0.10.0 runtime needs 0.10.0
-clients and every consumer moves with it.
+The Web Component and the Python client refuse a runtime of another minor, so
+every consumer moves together with the runtime.
 
 ### Breaking for clients and hosts: moving from 0.9.0
 
 - Runtime minor 10. The contract-set SHA-256 is unchanged
   (`91ff5ff5cef6d68774cf036878843503f171044bf8c4a9f6a62e7fb418ce2380`, as in
-  0.9.0), but clients require the same runtime major and minor at the
-  readiness handshake (see "Compatibility policy"), so 0.9.x clients refuse a
-  0.10.0 runtime and 0.10.0 clients refuse a 0.9.x runtime. Bump the runtime
-  and every Capture client together; the pinned contract-set hash stays.
-  Tests that quote runtime minor 9 move to 10.
+  0.9.0). The Web Component requires the same runtime major and minor at the
+  readiness handshake (see "Compatibility policy"), and the Python client
+  requires a runtime of exactly its own version. A 0.9.x Web Component or
+  Python client therefore refuses a 0.10.0 runtime, and the 0.10.0 ones refuse
+  a 0.9.x runtime. Bump the runtime and every Capture client together; the
+  pinned contract-set hash stays. Tests that quote runtime minor 9 move to 10.
 - `capture-sidecar-launcher` 0.10.0 removes the group lifecycle (R3) API; the
   removed and the unchanged items are listed under "Sidecar launcher keeps one
   launch path" below. A host that uses only `launch_sidecar`,
