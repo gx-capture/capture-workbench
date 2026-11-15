@@ -43,7 +43,7 @@ test('drops a PDF without OCR, installs it, and exports the raw text', async ({ 
     page,
     [requirement('windowsml-ocr', 'WindowsML OCR', 'installable', 144_000_000)],
     '/ocr',
-    { completeInstallOnPoll: 2, ocrJourney: true, runtimeVersion: '0.9.0' },
+    { completeInstallOnPoll: 2, ocrJourney: true },
   );
 
   await page.getByTestId('first-run-dismiss').click();
@@ -323,8 +323,6 @@ interface OpenDesktopOptions {
   readonly ocrJourney?: boolean;
   /** Keep the fake library in sessionStorage so a reload still lists it. */
   readonly persistLibrary?: boolean;
-  /** Overrides the runtime version the fake reports. The OCR journey uses 0.9.0. */
-  readonly runtimeVersion?: string;
 }
 
 async function openDesktop(
@@ -781,7 +779,7 @@ async function openDesktop(
     };
   }, {
     runtimeRequirements: requirements,
-    runtimeVersion: options.runtimeVersion ?? RELEASE_VERSION,
+    runtimeVersion: RELEASE_VERSION,
     installOptions: options,
   });
   await page.goto(path);
