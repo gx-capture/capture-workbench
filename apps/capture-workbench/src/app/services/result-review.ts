@@ -1,16 +1,68 @@
 import type { RawCapture } from '@gx-capture/capture-workbench-ui';
-import type { DesktopLibraryDetail } from '../contracts';
+import type { DesktopLibraryDetail, DesktopLibraryEdits } from '../contracts';
 import { desktopMessages } from '../i18n/desktop-messages';
 import { detailDurationMs } from './asr-queue';
 import {
   formatRecordingTime,
   isAudioMediaType,
   isPdfMediaType,
+  transcriptLines,
+  type TranscriptLine,
 } from './desktop-workspace.selectors';
+import { groupRawOcrPages, type OcrPageText } from './ocr-queue';
 
 type CaptureSpeaker = NonNullable<RawCapture['speakers']>[number];
 
 export type ResultKind = 'ocr' | 'asr';
+
+export interface EditedOcrPage extends OcrPageText {
+  readonly recognizedText: string;
+  readonly edited: boolean;
+}
+
+export interface EditedTranscriptLine extends TranscriptLine {
+  readonly recognizedText: string;
+  readonly edited: boolean;
+}
+
+/** Applies whole-page edits without changing raw segments or creating orphan pages. */
+export function resultPages(
+  raw: RawCapture,
+  edits?: DesktopLibraryEdits,
+): readonly EditedOcrPage[] {
+  return groupRawOcrPages(raw).map((page) => ({
+    ...page,
+    recognizedText: page.text,
+    text: ownEdit(edits?.ocrPages, String(page.page)) ?? page.text,
+    edited: ownEdit(edits?.ocrPages, String(page.page)) !== undefined,
+  }));
+}
+
+/** Applies segment edits and speaker names while keeping each recognized line. */
+export function resultLines(
+  raw: RawCapture,
+  speakers: readonly CaptureSpeaker[],
+  edits?: DesktopLibraryEdits,
+): readonly EditedTranscriptLine[] {
+  const names = new Map(raw.segments.flatMap((segment) => {
+    const id = segment.speaker;
+    const name = id == null ? undefined : ownEdit(edits?.speakerNames, id);
+    return id != null && name !== undefined ? [[id, name.trim()] as const] : [];
+  }));
+  const namedSpeakers = [...speakers.map((speaker) => ({
+    ...speaker, displayName: names.get(speaker.speakerId) ?? speaker.displayName,
+  })), ...[...names].map(([speakerId, displayName]) => ({ speakerId, displayName }))];
+  return transcriptLines(raw, namedSpeakers).map((line) => ({
+    ...line,
+    recognizedText: line.text,
+    text: ownEdit(edits?.transcriptLines, line.segmentId) ?? line.text,
+    edited: ownEdit(edits?.transcriptLines, line.segmentId) !== undefined,
+  }));
+}
+
+function ownEdit(map: Readonly<Record<string, string>> | undefined, key: string): string | undefined {
+  return map && Object.prototype.hasOwnProperty.call(map, key) ? map[key] : undefined;
+}
 
 export interface ResultSpeakerView {
   readonly speakerId: string;
@@ -76,10 +128,12 @@ export function resultSpeakersList(detail: DesktopLibraryDetail): readonly Captu
 export function buildResultSpeakers(
   speakers: readonly CaptureSpeaker[],
   recordingUrl: string | null,
+  edits?: DesktopLibraryEdits,
 ): readonly ResultSpeakerView[] {
   return speakers.map((speaker) => ({
     speakerId: speaker.speakerId,
-    displayName: speaker.displayName?.trim() || speaker.speakerId,
+    displayName: ownEdit(edits?.speakerNames, speaker.speakerId)?.trim()
+      ?? (speaker.displayName?.trim() || speaker.speakerId),
     sampleUrl:
       recordingUrl && speaker.sample
         ? `${recordingUrl}#t=${speaker.sample.startMs / 1000},${speaker.sample.endMs / 1000}`

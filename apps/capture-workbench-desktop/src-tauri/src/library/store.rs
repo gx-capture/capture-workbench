@@ -19,8 +19,9 @@ use serde_json::Value;
 
 use crate::contracts::{
     LibraryCaptureOptions, LibraryCaptureUpdate, LibraryDocumentDetail, LibraryDocumentRequest,
-    LibraryDocumentSummary, LibraryExportFormat, LibraryExportPayload, LibraryExportRequest,
-    LibraryListRequest, LibrarySourcePayload,
+    LibraryDocumentSummary, LibraryEditMaps, LibraryEdits, LibraryExportFormat,
+    LibraryExportPayload, LibraryExportRequest, LibraryListRequest, LibrarySourcePayload,
+    MAX_EDITS_BYTES,
 };
 
 use super::transaction::{
@@ -30,8 +31,8 @@ use super::transaction::{
 use super::{
     atomic_write, commit_library_transaction, inject_transaction_failure, load_backup_index,
     read_json_optional, recover_library_transaction, stem, validate_document_id, validate_status,
-    INDEX_BACKUP_FILE_NAME, INDEX_FILE_NAME, INDEX_VERSION, RAW_FILE_NAME, RESULT_FILE_NAME,
-    SOURCE_FILE_NAME,
+    EDITS_FILE_NAME, INDEX_BACKUP_FILE_NAME, INDEX_FILE_NAME, INDEX_VERSION, RAW_FILE_NAME,
+    RESULT_FILE_NAME, SOURCE_FILE_NAME,
 };
 
 /// Test fixture input for `LibraryStore::create_source`.
@@ -115,6 +116,24 @@ struct StagedSource {
     media_type: String,
     byte_length: u64,
     path: PathBuf,
+}
+
+fn read_edits(path: &Path) -> Result<Option<LibraryEdits>, ()> {
+    let file = match File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Err(()),
+    };
+    let mut bytes = Vec::new();
+    file.take(MAX_EDITS_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| ())?;
+    if bytes.len() > MAX_EDITS_BYTES {
+        return Err(());
+    }
+    let edits: LibraryEdits = serde_json::from_slice(&bytes).map_err(|_| ())?;
+    edits.validate().map_err(|_| ())?;
+    Ok(Some(edits))
 }
 
 pub(crate) struct RuntimeSourceFile {
@@ -478,6 +497,20 @@ impl LibraryStore {
 
         let transaction_id = random_id()?;
         let mut prepared = Vec::new();
+        // An empty replacement is a tombstone carried by the same journal as raw.
+        // Rollback restores old edits; roll-forward can never expose them with new raw.
+        let reset_edits = update.raw.is_some()
+            && directory.join(RAW_FILE_NAME).is_file()
+            && directory.join(EDITS_FILE_NAME).exists();
+        if reset_edits {
+            prepared.push(prepare_transaction_entry(
+                &self.root,
+                &directory.join(EDITS_FILE_NAME),
+                &transaction_id,
+                serde_json::to_vec(&LibraryEdits::new(LibraryEditMaps::default(), now_ms()?))
+                    .map_err(|_| "edits could not be encoded.".to_string())?,
+            )?);
+        }
         if let Some(raw) = &update.raw {
             prepared.push(prepare_transaction_entry(
                 &self.root,
@@ -541,6 +574,11 @@ impl LibraryStore {
             index.recovery_pending = true;
             let _ = self.recover_index(&mut index);
         }
+        // Only discard the tombstone after its journal is gone. A crash or a
+        // cleanup error can leave an empty file, which readers ignore safely.
+        if reset_edits && !index.recovery_pending {
+            let _ = super::remove_file_if_exists(&directory.join(EDITS_FILE_NAME));
+        }
         Ok(summary)
     }
 
@@ -569,15 +607,63 @@ impl LibraryStore {
         &self,
         request: LibraryDocumentRequest,
     ) -> Result<LibraryDocumentDetail, String> {
-        let document = self.find_document(&request.document_id)?;
+        validate_document_id(&request.document_id)?;
+        // Keep raw and edits from the same committed generation while reading.
+        let index = self.lock_index()?;
+        let document = index
+            .documents
+            .iter()
+            .find(|document| document.document_id == request.document_id)
+            .ok_or_else(|| "Capture library document was not found.".to_string())?;
         let directory = self.document_directory(&document.document_id)?;
         let raw = read_json_optional(&directory.join(RAW_FILE_NAME))?;
+        let (edits, edits_unreadable) = match read_edits(&directory.join(EDITS_FILE_NAME)) {
+            Ok(edits) => (edits.filter(|edits| !edits.is_empty()), false),
+            Err(()) => (None, true),
+        };
         Ok(LibraryDocumentDetail {
             summary: document.summary(raw.is_some()),
             raw,
+            edits,
+            edits_unreadable,
             result: read_json_optional(&directory.join(RESULT_FILE_NAME))?,
-            ocr_evidence: document.ocr_evidence,
+            ocr_evidence: document.ocr_evidence.clone(),
         })
+    }
+
+    pub(crate) fn save_edits(
+        &self,
+        document_id: &str,
+        maps: LibraryEditMaps,
+    ) -> Result<LibraryEdits, String> {
+        validate_document_id(document_id)?;
+        let index = self.lock_index_for_write()?;
+        if !index
+            .documents
+            .iter()
+            .any(|document| document.document_id == document_id)
+        {
+            return Err("Capture library document was not found.".into());
+        }
+        let directory = self.document_directory(document_id)?;
+        if read_json_optional(&directory.join(RAW_FILE_NAME))?.is_none() {
+            return Err("edits require a raw result.".into());
+        }
+        let mut edits = LibraryEdits::new(maps, now_ms()?);
+        edits.validate()?;
+        for name in edits.speaker_names.values_mut() {
+            *name = name.trim().to_string();
+        }
+        let path = directory.join(EDITS_FILE_NAME);
+        if edits.is_empty() {
+            super::remove_file_if_exists(&path)
+                .map_err(|_| "edits could not be saved.".to_string())?;
+        } else {
+            let bytes = serde_json::to_vec(&edits)
+                .map_err(|_| "edits could not be encoded.".to_string())?;
+            atomic_write(&path, &bytes).map_err(|_| "edits could not be saved.".to_string())?;
+        }
+        Ok(edits)
     }
 
     pub(crate) fn load_source(

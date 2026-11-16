@@ -10,10 +10,11 @@ use crate::{
     config::DesktopRuntimeStatus,
     contracts::{
         LibraryCaptureUpdate, LibraryDocumentDetail, LibraryDocumentRequest,
-        LibraryDocumentSummary, LibraryExportPayload, LibraryExportRequest, LibraryListRequest,
-        RuntimeCancelUploadInput, RuntimeCreateCaptureInput, RuntimeIdInput,
-        RuntimeInstallationStartInput, RuntimeModelInstallationStartInput, RuntimeRequirementInput,
-        RuntimeStreamingCaptureInput, RuntimeStreamingEventsInput,
+        LibraryDocumentSummary, LibraryEdits, LibraryExportPayload, LibraryExportRequest,
+        LibraryListRequest, LibrarySaveEditsRequest, RuntimeCancelUploadInput,
+        RuntimeCreateCaptureInput, RuntimeIdInput, RuntimeInstallationStartInput,
+        RuntimeModelInstallationStartInput, RuntimeRequirementInput, RuntimeStreamingCaptureInput,
+        RuntimeStreamingEventsInput,
     },
     library::LibraryStore,
     resources::RuntimeAssets,
@@ -254,6 +255,15 @@ pub(crate) async fn library_get(
 ) -> Result<LibraryDocumentDetail, String> {
     let library = Arc::clone(library.inner());
     run_blocking(move || library.get(request)).await
+}
+
+#[tauri::command]
+pub(crate) async fn library_save_edits(
+    library: tauri::State<'_, Arc<LibraryStore>>,
+    request: LibrarySaveEditsRequest,
+) -> Result<LibraryEdits, String> {
+    let library = Arc::clone(library.inner());
+    run_blocking(move || library.save_edits(&request.document_id, request.edits)).await
 }
 
 #[tauri::command]

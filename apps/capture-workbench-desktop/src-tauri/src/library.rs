@@ -21,6 +21,7 @@ const IMPORT_FREE_SPACE_MARGIN: u64 = 512 * 1024 * 1024;
 pub(crate) const NOT_ENOUGH_DISK_SPACE: &str = "Not enough free disk space to import this file.";
 const SOURCE_FILE_NAME: &str = "source.bin";
 const RAW_FILE_NAME: &str = "raw.json";
+const EDITS_FILE_NAME: &str = "edits.json";
 const RESULT_FILE_NAME: &str = "result.json";
 
 pub(crate) fn max_source_bytes(media_type: &str) -> u64 {
@@ -98,6 +99,215 @@ mod tests {
     use super::*;
     use std::fs::OpenOptions;
     use std::io::{Seek, SeekFrom, Write};
+
+    fn page_edit(text: &str) -> crate::contracts::LibraryEditMaps {
+        crate::contracts::LibraryEditMaps {
+            ocr_pages: [("3".into(), text.into())].into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn edits_round_trip_restore_and_failed_replace_preserve_recognition_and_index() {
+        let directory = tempfile::tempdir().unwrap();
+        let library = LibraryStore::open(directory.path()).unwrap();
+        let id = recovery_source(&library).document_id;
+        assert!(library
+            .save_edits(&id, page_edit("edit"))
+            .unwrap_err()
+            .contains("raw"));
+        assert!(library
+            .save_edits(&"f".repeat(32), page_edit("edit"))
+            .is_err());
+        library
+            .update_capture(completed_update(&id, "recognized"))
+            .unwrap();
+        let item = library.root.join("items").join(&id);
+        let index_before = fs::read(library.root.join(INDEX_FILE_NAME)).unwrap();
+        fs::write(item.join("edits.tmp"), b"crashed write").unwrap();
+        let mut maps = page_edit("edited");
+        maps.transcript_lines
+            .insert("segment".into(), "line edit".into());
+        maps.speaker_names.insert("speaker".into(), " Name ".into());
+        let saved = library.save_edits(&id, maps).unwrap();
+        assert_eq!(saved.speaker_names["speaker"], "Name");
+        assert!(saved.updated_at_ms > 0);
+        assert!(!item.join("edits.tmp").exists());
+        assert_eq!(
+            fs::read(library.root.join(INDEX_FILE_NAME)).unwrap(),
+            index_before
+        );
+        let request = || LibraryDocumentRequest {
+            document_id: id.clone(),
+        };
+        assert_eq!(library.get(request()).unwrap().edits, Some(saved.clone()));
+        let previous = fs::read(item.join(EDITS_FILE_NAME)).unwrap();
+        let mut invalid = page_edit("private edit text");
+        invalid
+            .ocr_pages
+            .insert("01".into(), "private edit text".into());
+        assert_eq!(
+            library.save_edits(&id, invalid).unwrap_err(),
+            "edits ocrPages is out of bounds."
+        );
+        assert_eq!(fs::read(item.join(EDITS_FILE_NAME)).unwrap(), previous);
+        {
+            let _guard = TransactionFailureGuard::at("atomic-rename");
+            assert_eq!(
+                library.save_edits(&id, page_edit("new")).unwrap_err(),
+                "edits could not be saved."
+            );
+        }
+        assert_eq!(fs::read(item.join(EDITS_FILE_NAME)).unwrap(), previous);
+        assert_eq!(
+            library.get(request()).unwrap().raw.unwrap()["sourceText"],
+            "recognized"
+        );
+        library
+            .save_edits(&id, page_edit("next save overwrites leftover"))
+            .unwrap();
+        assert!(!item.join("edits.tmp").exists());
+        assert!(library
+            .save_edits(&id, Default::default())
+            .unwrap()
+            .is_empty());
+        assert!(!item.join(EDITS_FILE_NAME).exists());
+        assert!(library.get(request()).unwrap().edits.is_none());
+    }
+
+    #[test]
+    fn unreadable_edits_leave_document_readable_and_file_untouched() {
+        let directory = tempfile::tempdir().unwrap();
+        let library = LibraryStore::open(directory.path()).unwrap();
+        let id = recovery_source(&library).document_id;
+        library
+            .update_capture(completed_update(&id, "recognized"))
+            .unwrap();
+        let path = library.root.join("items").join(&id).join(EDITS_FILE_NAME);
+        for bytes in [
+            b"{broken".to_vec(),
+            serde_json::to_vec(&crate::contracts::LibraryEdits::new(
+                crate::contracts::LibraryEditMaps {
+                    ocr_pages: [("01".into(), "private".into())].into(),
+                    ..Default::default()
+                },
+                1,
+            ))
+            .unwrap(),
+            vec![b' '; crate::contracts::MAX_EDITS_BYTES + 1],
+        ] {
+            fs::write(&path, &bytes).unwrap();
+            let detail = library
+                .get(LibraryDocumentRequest {
+                    document_id: id.clone(),
+                })
+                .unwrap();
+            assert!(detail.edits_unreadable);
+            assert!(detail.edits.is_none());
+            assert_eq!(detail.raw.unwrap()["sourceText"], "recognized");
+            assert_eq!(fs::read(&path).unwrap(), bytes);
+        }
+    }
+
+    #[test]
+    fn edits_survive_backup_index_restore_and_are_deleted_with_item() {
+        let directory = tempfile::tempdir().unwrap();
+        let library = LibraryStore::open(directory.path()).unwrap();
+        let id = recovery_source(&library).document_id;
+        library
+            .update_capture(completed_update(&id, "recognized"))
+            .unwrap();
+        let edits = library.save_edits(&id, page_edit("edited")).unwrap();
+        fs::copy(
+            library.root.join(INDEX_FILE_NAME),
+            library.root.join(INDEX_BACKUP_FILE_NAME),
+        )
+        .unwrap();
+        fs::write(library.root.join(INDEX_FILE_NAME), b"broken").unwrap();
+        drop(library);
+        let reopened = LibraryStore::open(directory.path()).unwrap();
+        assert_eq!(
+            reopened
+                .get(LibraryDocumentRequest {
+                    document_id: id.clone()
+                })
+                .unwrap()
+                .edits,
+            Some(edits)
+        );
+        reopened
+            .delete(LibraryDocumentRequest {
+                document_id: id.clone(),
+            })
+            .unwrap();
+        assert!(!reopened.root.join("items").join(id).exists());
+    }
+
+    #[test]
+    fn rerun_edits_tombstone_rolls_back_or_forward_with_raw() {
+        for fault in [
+            "rename-1-target",
+            "progress-journal-0",
+            "progress-journal-0,rollback*",
+            "progress-journal-3",
+            "cleanup-journal*",
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let library = LibraryStore::open(directory.path()).unwrap();
+            let id = recovery_source(&library).document_id;
+            library
+                .update_capture(completed_update(&id, "old"))
+                .unwrap();
+            library.save_edits(&id, page_edit("old edit")).unwrap();
+            let guard = TransactionFailureGuard::at(fault);
+            let _ = library.update_capture(completed_update(&id, "new"));
+            // Every mutation, including edits, must refuse a journal whose cleanup still fails.
+            if fault == "cleanup-journal*" {
+                assert!(library.save_edits(&id, page_edit("blocked")).is_err());
+            }
+            drop(guard);
+            drop(library);
+            let reopened = LibraryStore::open(directory.path()).unwrap();
+            let detail = reopened
+                .get(LibraryDocumentRequest {
+                    document_id: id.clone(),
+                })
+                .unwrap();
+            if detail.raw.unwrap()["sourceText"] == "new" {
+                assert!(detail.edits.is_none());
+            } else {
+                assert_eq!(detail.edits.unwrap().ocr_pages["3"], "old edit");
+            }
+            // Saving recovers any pending transaction before touching edits.
+            reopened.save_edits(&id, page_edit("current edit")).unwrap();
+        }
+    }
+
+    #[test]
+    fn saving_edits_recovers_an_unfinished_rerun_before_writing() {
+        let directory = tempfile::tempdir().unwrap();
+        let library = LibraryStore::open(directory.path()).unwrap();
+        let id = recovery_source(&library).document_id;
+        library
+            .update_capture(completed_update(&id, "old"))
+            .unwrap();
+        library.save_edits(&id, page_edit("old edit")).unwrap();
+        let guard = TransactionFailureGuard::at("progress-journal-1,rollback*");
+        assert!(library
+            .update_capture(completed_update(&id, "new"))
+            .is_err());
+        assert!(library.save_edits(&id, page_edit("blocked")).is_err());
+        drop(guard);
+        library
+            .save_edits(&id, page_edit("after recovery"))
+            .unwrap();
+        let detail = library
+            .get(LibraryDocumentRequest { document_id: id })
+            .unwrap();
+        assert_eq!(detail.raw.unwrap()["sourceText"], "old");
+        assert_eq!(detail.edits.unwrap().ocr_pages["3"], "after recovery");
+        assert!(!library.root.join(TRANSACTION_FILE_NAME).exists());
+    }
 
     #[test]
     fn recording_import_and_playback_have_separate_limits() {

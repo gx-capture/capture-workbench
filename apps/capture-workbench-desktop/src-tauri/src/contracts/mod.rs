@@ -5,8 +5,9 @@ mod runtime;
 pub use desktop::{BackendConfig, DesktopRuntimeStatus};
 pub(crate) use library::{
     LibraryCaptureOptions, LibraryCaptureUpdate, LibraryDocumentDetail, LibraryDocumentRequest,
-    LibraryDocumentSummary, LibraryExportFormat, LibraryExportPayload, LibraryExportRequest,
-    LibraryListRequest, LibrarySourcePayload, OcrEvidenceV1,
+    LibraryDocumentSummary, LibraryEditMaps, LibraryEdits, LibraryExportFormat,
+    LibraryExportPayload, LibraryExportRequest, LibraryListRequest, LibrarySaveEditsRequest,
+    LibrarySourcePayload, OcrEvidenceV1, MAX_EDITS_BYTES,
 };
 pub(crate) use runtime::{
     RuntimeCancelUploadInput, RuntimeCreateCaptureInput, RuntimeIdInput,

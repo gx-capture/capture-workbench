@@ -7,6 +7,7 @@ import { map, Observable } from 'rxjs';
 import type {
   DesktopCaptureOptions,
   DesktopLibraryDetail,
+  DesktopLibraryEdits,
   DesktopLibraryExport,
   DesktopLibraryStatus,
   DesktopLibrarySummary,
@@ -64,6 +65,19 @@ export class DesktopLibraryService {
         request: { documentId },
       }, signal)
       .pipe(map(sanitizeDetail));
+  }
+
+  saveEdits(
+    documentId: string,
+    edits: Pick<DesktopLibraryEdits, 'ocrPages' | 'transcriptLines' | 'speakerNames'>,
+  ): Observable<DesktopLibraryEdits> {
+    return this.commands.invoke<DesktopLibraryEdits>('library_save_edits', {
+      request: { documentId, edits: {
+        ocrPages: edits.ocrPages,
+        transcriptLines: edits.transcriptLines,
+        speakerNames: edits.speakerNames,
+      } },
+    });
   }
 
   updateCapture(input: {

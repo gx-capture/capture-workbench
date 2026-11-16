@@ -18,10 +18,7 @@ import { DesktopWorkspaceFormattingService } from './desktop-workspace-formattin
 import {
   errorMessage,
   isPdfMediaType,
-  transcriptLines,
-  type TranscriptLine,
 } from './desktop-workspace.selectors';
-import { groupRawOcrPages, type OcrPageText } from './ocr-queue';
 import {
   PdfPageRenderer,
   type PdfDocumentHandle,
@@ -30,6 +27,10 @@ import { playbackUnavailable as isPlaybackOverLimit } from './recording-playback
 import {
   buildResultDetails,
   buildResultSpeakers,
+  resultPages,
+  resultLines,
+  type EditedOcrPage,
+  type EditedTranscriptLine,
   isNotFoundError,
   resultKind,
   resultSpeakersList,
@@ -131,15 +132,17 @@ export class ResultReviewStore {
 
   // --- OCR state ---
 
-  readonly pages = computed<readonly OcrPageText[]>(() => {
+  readonly editsUnreadable = computed(() => this.detail()?.editsUnreadable === true);
+
+  readonly pages = computed<readonly EditedOcrPage[]>(() => {
     const d = this.detail();
     if (!d?.raw || this.kind() !== 'ocr') return [];
-    return groupRawOcrPages(d.raw);
+    return resultPages(d.raw, d.edits);
   });
 
   private readonly selectedPageNumber = signal<number | null>(null);
 
-  readonly currentPage = computed<OcrPageText | null>(() => {
+  readonly currentPage = computed<EditedOcrPage | null>(() => {
     const list = this.pages();
     if (list.length === 0) return null;
     const selected = this.selectedPageNumber();
@@ -236,16 +239,16 @@ export class ResultReviewStore {
 
   // --- ASR transcript & speakers ---
 
-  readonly lines = computed<readonly TranscriptLine[]>(() => {
+  readonly lines = computed<readonly EditedTranscriptLine[]>(() => {
     const d = this.detail();
     if (!d?.raw || this.kind() !== 'asr') return [];
-    return transcriptLines(d.raw, resultSpeakersList(d));
+    return resultLines(d.raw, resultSpeakersList(d), d.edits);
   });
 
   readonly speakers = computed<readonly ResultSpeakerView[]>(() => {
     const d = this.detail();
     if (!d || this.kind() !== 'asr' || !this.hasResult()) return [];
-    return buildResultSpeakers(resultSpeakersList(d), this.recordingUrl());
+    return buildResultSpeakers(resultSpeakersList(d), this.recordingUrl(), d.edits);
   });
 
   // --- Details ---
