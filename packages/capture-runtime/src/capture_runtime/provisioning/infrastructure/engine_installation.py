@@ -72,6 +72,8 @@ from ._engine_installation_download import (
     HttpModelFileDownloader,
     LocalModelFileDownloader,
     ModelFileDownloader,
+    _commit_operation,
+    _file_operation,
 )
 from ._engine_installation_download import (
     pdf_ocr_e2e_local_model_root as _pdf_ocr_e2e_local_model_root_impl,
@@ -894,8 +896,11 @@ class EngineInstallationManager:
             )
             activation_error: OSError | None = None
             for activation_attempt in range(3):
+                if cancel_event.is_set():
+                    raise asyncio.CancelledError
                 try:
-                    _activate_version(
+                    await _commit_operation(
+                        _activate_version,
                         version=version,
                         new_version=new_version,
                         previous_version=previous_version,
@@ -906,6 +911,8 @@ class EngineInstallationManager:
                     break
                 except OSError as error:
                     activation_error = error
+                    if cancel_event.is_set():
+                        raise asyncio.CancelledError from error
                     operation = getattr(error, "activation_operation", None)
                     if operation not in {"move_existing_version", "move_new_version"}:
                         raise
@@ -914,6 +921,9 @@ class EngineInstallationManager:
                     await asyncio.sleep(1)
             if activation_error is not None:
                 raise activation_error
+            # The new version is active from here on: a cancel that arrives now
+            # is too late, and reporting it would leave a cancelled job with an
+            # installed engine.
             activated = True
             active_executable = self._resolved_child(
                 version / "worker", worker_descriptor.entry_point
@@ -939,7 +949,9 @@ class EngineInstallationManager:
             report_progress(1)
             self._remove_inactive_versions(requirement_root, artifact_version)
         finally:
-            _cleanup_install_attempt(
+            cleanup_operation = _commit_operation if activated else _file_operation
+            await cleanup_operation(
+                _cleanup_install_attempt,
                 staging=staging,
                 new_version=new_version,
                 previous_version=previous_version,

@@ -8,6 +8,7 @@ import tempfile
 from collections.abc import Callable
 from pathlib import Path
 
+from capture_runtime.file_lock import replace_with_retry
 from capture_runtime.provisioning.infrastructure.engine_catalog import (
     ActiveEngineState,
     canonical_json_bytes,
@@ -62,7 +63,7 @@ def atomic_write_json(path: Path, payload: object) -> None:
             writer.write(canonical_json_bytes(payload))
             writer.flush()
             os.fsync(writer.fileno())
-        os.replace(temporary, path)
+        replace_with_retry(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
 
@@ -81,19 +82,19 @@ def activate_version(
         return
     if version.exists():
         try:
-            os.replace(version, previous_version)
+            replace_with_retry(version, previous_version)
         except OSError as error:
             raise ActivationFilesystemError("move_existing_version", error) from error
     try:
         try:
-            os.replace(new_version, version)
+            replace_with_retry(new_version, version)
         except OSError as error:
             raise ActivationFilesystemError("move_new_version", error) from error
         write_state(active_state_path, state.to_dict())
     except BaseException:
         shutil.rmtree(version, ignore_errors=True)
         if previous_version.exists():
-            os.replace(previous_version, version)
+            replace_with_retry(previous_version, version)
         raise
     if previous_version.exists():
         shutil.rmtree(previous_version, ignore_errors=True)
@@ -111,7 +112,7 @@ def cleanup_install_attempt(
     if not activated:
         shutil.rmtree(new_version, ignore_errors=True)
         if previous_version.exists() and not version.exists():
-            os.replace(previous_version, version)
+            replace_with_retry(previous_version, version)
 
 
 __all__ = [

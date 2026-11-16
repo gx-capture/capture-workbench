@@ -9,12 +9,12 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import shutil
 from collections.abc import Callable
 from pathlib import Path
 from uuid import uuid4
 
+from capture_runtime.file_lock import replace_with_retry
 from capture_runtime.install_progress import DownloadedBytes, DownloadProgress
 from capture_runtime.provisioning.infrastructure.engine_catalog import (
     EngineCatalogError,
@@ -23,7 +23,7 @@ from capture_runtime.provisioning.infrastructure.engine_catalog import (
 )
 
 from ._engine_installation_artifacts import verify_direct_model_files
-from ._engine_installation_download import ModelFileDownloader
+from ._engine_installation_download import ModelFileDownloader, _commit_operation, _file_operation
 from ._engine_installation_errors import EngineInstallationError
 
 STATE_FILE_NAME = "active-model.json"
@@ -140,7 +140,9 @@ async def install_model_unit(
         state_path.unlink(missing_ok=True)
         if final.exists():
             shutil.rmtree(final)
-        os.replace(staging, final)
+        await _file_operation(replace_with_retry, staging, final)
+        if cancel_event.is_set():
+            raise asyncio.CancelledError
         pending = state_path.with_suffix(f".{uuid4().hex}.tmp")
         pending.write_text(
             json.dumps(
@@ -155,7 +157,11 @@ async def install_model_unit(
             ),
             encoding="utf-8",
         )
-        os.replace(pending, state_path)
+        try:
+            await _commit_operation(replace_with_retry, pending, state_path)
+        finally:
+            pending.unlink(missing_ok=True)
+        # The state file makes the unit active; a cancel after it is too late.
         report_progress(1)
     finally:
         shutil.rmtree(staging, ignore_errors=True)
