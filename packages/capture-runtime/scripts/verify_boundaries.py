@@ -14,6 +14,7 @@ CORE_FORBIDDEN = (
     "cv2",
     "transformers",
     "huggingface_hub",
+    "numpy",
     "onnxruntime",
     "paddleocr",
     "paddlex",

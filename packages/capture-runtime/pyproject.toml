@@ -53,6 +53,12 @@ capture-runtime = "capture_runtime.__main__:main"
 [dependency-groups]
 dev = [
   "mypy>=1.14.0,<2.0.0",
+  # numpy and OpenCV are worker dependencies (speech extras; paddlex brings
+  # opencv-contrib-python). They are here only so the unit tests that need
+  # them run in the ordinary test environment; the core executable excludes
+  # both (pyinstaller/capture-runtime.spec, scripts/verify_boundaries.py).
+  "numpy>=2.0.0,<3.0.0",
+  "opencv-contrib-python>=4.10.0,<5.0.0",
   "pillow>=11.0.0,<13.0.0",
   "pyinstaller>=6.19.0,<7.0.0",
   "pypdfium2>=5.0.0,<6.0.0",
