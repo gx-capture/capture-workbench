@@ -280,6 +280,7 @@ function pageLabel(
   }
   const chosen = document.captureOptions?.pdfPageCount;
   if (typeof chosen === 'number' && chosen >= 1) return String(chosen);
+  if (typeof document.pageCount === 'number') return String(document.pageCount);
   return '—';
 }
 

@@ -496,6 +496,8 @@ async function openDesktop(
       captureId?: string;
       captureOptions?: Record<string, unknown>;
       hasRaw?: boolean;
+      pageCount?: number;
+      durationMs?: number;
     }
     const historyDocument = (): StoredDoc => ({
       documentId: historyId,
@@ -562,7 +564,30 @@ async function openDesktop(
     }
     const listedSummary = (document: StoredDoc): StoredDoc => {
       const hasRaw = rawByDocument.has(document.documentId) || document.hasRaw === true;
-      return hasRaw ? { ...document, hasRaw: true } : { ...document };
+      const raw = rawByDocument.get(document.documentId) as {
+        ocrPageScope?: { sourcePageCount?: number; processedPageNumbers?: readonly number[] };
+        segments?: readonly { text: string; locator: { kind: string; page?: number; endMs?: number } }[];
+      } | undefined;
+      const summary = hasRaw ? { ...document, hasRaw: true } : { ...document };
+      if (/^(audio|video)\//u.test(document.mediaType)) {
+        const durationMs = Math.max(0, ...(raw?.segments ?? [])
+          .filter((segment) => segment.locator.kind === 'time')
+          .map((segment) => segment.locator.endMs ?? 0));
+        delete summary.pageCount;
+        if (durationMs > 0) summary.durationMs = durationMs;
+      } else if (raw) {
+        const pages = new Set([
+          ...(raw.segments ?? []).filter((segment) =>
+            segment.locator.kind === 'page' && segment.text.trim() !== '',
+          ).map((segment) => segment.locator.page),
+          ...(raw.ocrPageScope?.processedPageNumbers ?? []),
+        ]);
+        const chosen = document.captureOptions?.['pdfPageCount'];
+        summary.pageCount = raw.ocrPageScope?.sourcePageCount
+          ?? (pages.size > 0 ? pages.size :
+            document.mediaType === 'application/pdf' ? (typeof chosen === 'number' ? chosen : undefined) : 1);
+      }
+      return summary;
     };
     let ocrPolls = 0;
     let activeOcrPages: readonly number[] | null = null;

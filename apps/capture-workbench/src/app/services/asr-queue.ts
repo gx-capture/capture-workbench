@@ -96,7 +96,6 @@ export function describeAsrDocument(input: {
   readonly document: DesktopLibrarySummary;
   readonly detail?: DesktopLibraryDetail;
   readonly operation?: CaptureOperation;
-  readonly knownDurationMs?: number;
   readonly busy: boolean;
   readonly speechReady: boolean;
   readonly installPercent: number | null;
@@ -106,9 +105,8 @@ export function describeAsrDocument(input: {
   const described = describeStatus(document, input.busy || opActive);
   const waiting = described.userStatus === 'waiting';
   const durationMs =
-    validDuration(input.operation?.durationMs)
-    ?? validDuration(input.knownDurationMs)
-    ?? detailDurationMs(detail);
+    (described.userStatus === 'processing' ? validDuration(input.operation?.durationMs) : null)
+    ?? validDuration(document.durationMs);
   const speakerCount =
     described.userStatus === 'done' && detail?.result?.speakers
       ? (detail.result.speakers.length > 0 ? detail.result.speakers.length : null)
