@@ -75,7 +75,11 @@
     "typecheck": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "pnpm exec tsc --noEmit -p packages/capture-workbench-ui/tsconfig.lib.json"
+        "commands": [
+          "pnpm exec tsc --noEmit -p packages/capture-workbench-ui/tsconfig.lib.json",
+          "pnpm exec tsc --noEmit -p packages/capture-workbench-ui/tsconfig.spec.json"
+        ],
+        "parallel": false
       }
     },
     "lint": {

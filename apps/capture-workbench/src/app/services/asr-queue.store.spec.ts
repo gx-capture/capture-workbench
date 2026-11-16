@@ -29,7 +29,7 @@ function requirement(
     status,
     kind: 'runtime',
     requiredFor: ['capture'],
-    installStrategy: 'automatic',
+    installStrategy: 'runtime-catalog',
     detail: null,
     downloadBytes: 2_800_000_000,
   };
@@ -358,8 +358,8 @@ describe('AsrQueueStore', () => {
     expect(capture.restartLost$).toHaveBeenCalledWith(doneDoc.documentId, expect.anything());
 
     store.view(doneDoc.documentId);
-    expect(workspace.select).toHaveBeenCalledWith(doneDoc.documentId);
-    expect(router.navigateByUrl).toHaveBeenCalledWith('/history');
+    expect(workspace.select).not.toHaveBeenCalled();
+    expect(router.navigateByUrl).toHaveBeenCalledWith(`/history/${doneDoc.documentId}`);
 
     store.exportTxt(doneDoc.documentId);
     expect(library.export).toHaveBeenCalledWith(doneDoc.documentId, 'text');

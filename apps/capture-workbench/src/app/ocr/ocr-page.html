@@ -365,7 +365,7 @@
                         hlmBtn
                         variant="outline"
                         size="sm"
-                        routerLink="/history"
+                        [routerLink]="['/history', row.documentId]"
                         data-testid="ocr-row-view"
                         [attr.aria-label]="m().ocrViewNamed(row.fileName)"
                       >

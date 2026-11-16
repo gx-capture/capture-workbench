@@ -32,18 +32,15 @@ const summary: DesktopLibrarySummary = {
 
 const runningJob = job({
   captureId: 'capture-1',
-  status: 'running',
-  stage: 'extracting',
+  status: 'extracting',
 });
 const completedJob = job({
   captureId: 'capture-1',
   status: 'completed',
-  stage: 'completed',
 });
 const cancelledJob = job({
   captureId: 'capture-1',
   status: 'cancelled',
-  stage: 'cancelled',
 });
 const raw = { sourceText: 'OCR text' };
 const result = { targetText: 'translated text' };
@@ -355,7 +352,7 @@ describe('DesktopWorkspaceStore', () => {
           status: 'installable',
           kind: 'engine',
           requiredFor: ['capture'],
-          installStrategy: 'automatic',
+          installStrategy: 'runtime-catalog',
         },
         {
           requirementId: 'ollama-runtime',
@@ -499,7 +496,7 @@ describe('DesktopWorkspaceStore', () => {
         status: 'missing',
         kind: 'model',
         requiredFor: ['audio'],
-        installStrategy: 'automatic',
+        installStrategy: 'runtime-catalog',
       }])),
     });
     const store = initializeStore(library, client);
@@ -982,7 +979,6 @@ describe('DesktopWorkspaceStore', () => {
     const terminal = job({
       captureId: 'capture-terminal-error',
       status: 'failed',
-      stage: 'failed',
       error: { code: 'terminal_error', message: 'terminal evidence' },
     });
     const store = initializeStore(
@@ -1034,7 +1030,6 @@ describe('DesktopWorkspaceStore', () => {
     const terminal = job({
       captureId: 'capture-zero-page',
       status: 'failed',
-      stage: 'failed',
       error: { code: 'terminal_error', message: 'terminal evidence' },
     });
     const deleteCapture = vi.fn(() => of(undefined));
@@ -1082,7 +1077,7 @@ describe('DesktopWorkspaceStore', () => {
       : _case === 'identity mismatch'
         ? 'capture-identity-mismatch'
         : 'capture-malformed';
-    const terminal = job({ captureId, status: 'completed', stage: 'completed' });
+    const terminal = job({ captureId, status: 'completed' });
     const getOcr = vi.fn(getOcrFactory);
     const store = initializeStore(
       libraryStub({ updateCapture }),
@@ -1219,12 +1214,11 @@ describe('DesktopWorkspaceStore', () => {
 
   it('stops polling at awaiting_structuring and durably commits OCR before runtime cleanup', async () => {
     const captureId = 'capture-ocr-first';
-    const created = job({ captureId, status: 'created', stage: 'created' });
-    const extracting = job({ captureId, status: 'extracting', stage: 'extracting' });
+    const created = job({ captureId, status: 'created' });
+    const extracting = job({ captureId, status: 'extracting' });
     const awaitingStructuring = job({
       captureId,
       status: 'awaiting_structuring',
-      stage: 'awaiting_structuring',
     });
     const events: string[] = [];
     const updateCapture = vi.fn((update: Record<string, unknown>) => {
@@ -1342,12 +1336,11 @@ describe('DesktopWorkspaceStore', () => {
 
   it('retains the runtime job when awaiting OCR durability fails before cleanup', async () => {
     const captureId = 'capture-ocr-first-durable-failure';
-    const created = job({ captureId, status: 'created', stage: 'created' });
-    const extracting = job({ captureId, status: 'extracting', stage: 'extracting' });
+    const created = job({ captureId, status: 'created' });
+    const extracting = job({ captureId, status: 'extracting' });
     const awaitingStructuring = job({
       captureId,
       status: 'awaiting_structuring',
-      stage: 'awaiting_structuring',
     });
     const events: string[] = [];
     const updateCapture = vi.fn((update: Record<string, unknown>) => {
@@ -1438,12 +1431,11 @@ describe('DesktopWorkspaceStore', () => {
     'fails closed at the OCR checkpoint for %s',
     async (_case, projectionFactory) => {
       const captureId = `capture-ocr-checkpoint-${_case.replace(/ /g, '-')}`;
-      const created = job({ captureId, status: 'created', stage: 'created' });
-      const extracting = job({ captureId, status: 'extracting', stage: 'extracting' });
+      const created = job({ captureId, status: 'created' });
+      const extracting = job({ captureId, status: 'extracting' });
       const awaitingStructuring = job({
         captureId,
         status: 'awaiting_structuring',
-        stage: 'awaiting_structuring',
       });
       const updateCapture = vi.fn((update: Record<string, unknown>) =>
         of({ ...summary, ...update } as DesktopLibrarySummary));
@@ -1852,7 +1844,6 @@ describe('DesktopWorkspaceStore', () => {
       const terminal = job({
         captureId,
         status: terminalStatus,
-        stage: terminalStatus,
         ...(terminalStatus === 'failed'
           ? { error: { code: 'terminal_error', message: 'terminal evidence' } }
           : {}),
@@ -1979,7 +1970,6 @@ describe('DesktopWorkspaceStore', () => {
       const terminal = job({
         captureId: 'capture-terminal-error',
         status: runtimeStatus,
-        stage: runtimeStatus,
         error: {
           code: 'terminal_error',
           message: 'terminal evidence',
@@ -2074,7 +2064,6 @@ describe('DesktopWorkspaceStore', () => {
     const terminal = job({
       captureId: 'capture-double-write',
       status: 'failed',
-      stage: 'failed',
       error: {
         code: 'terminal_error',
         message: 'terminal evidence',
@@ -2564,6 +2553,7 @@ function job(input: Record<string, unknown>): CaptureOperation {
     partialRevision: 0,
     lastEventSequence: 0,
     createdAt: '2026-07-20T00:00:00Z',
+    updatedAt: '2026-07-20T00:00:00Z',
     source: {
       sha256: 'a'.repeat(64),
       fileName: 'fixture.pdf',

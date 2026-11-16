@@ -4,6 +4,7 @@ import { setDesktopLocale } from '../i18n/desktop-messages';
 import type { DesktopCaptureOperation } from './desktop-runtime-client.service';
 import {
   describeOcrDocument,
+  groupRawOcrPages,
   ocrChipClasses,
   ocrChipVariant,
   parsePdfPageCount,
@@ -52,12 +53,18 @@ describe('OCR queue presentation', () => {
   it('shows page progress only as the processing step', () => {
     const described = view(doc({ status: 'processing', captureId: 'capture-1' }), {
       job: {
-        status: 'running',
-        stage: 'extracting',
+        protocolVersion: '2',
+        captureId: 'capture-1',
+        ingestionId: 'ingestion-1',
+        status: 'extracting',
         progress: 0.75,
         pagesDone: 9,
         pagesTotal: 12,
-      } as DesktopCaptureOperation,
+        partialRevision: 0,
+        lastEventSequence: 0,
+        createdAt: '2026-11-10T00:00:00Z',
+        updatedAt: '2026-11-10T00:00:00Z',
+      },
     });
 
     expect(described.userStatus).toBe('processing');
@@ -81,6 +88,31 @@ describe('OCR queue presentation', () => {
 
     expect(renderRawOcrText(raw)).toBe('第一頁甲\n第一頁乙\n\n第二頁');
     expect(renderRawOcrText({ ...raw, segments: [] } as RawCapture)).toBe('fallback');
+  });
+
+  it('groups raw OCR pages by page and segment order, skipping blanks and keeping empty processed pages', () => {
+    const raw = {
+      sourceText: 'fallback',
+      ocrPageScope: {
+        sourcePageCount: 3,
+        requestedPageNumbers: [1, 2, 3],
+        processedPageNumbers: [1, 2, 3],
+      },
+      segments: [
+        { order: 1, locator: { kind: 'page', page: 3 }, text: '第三頁乙' },
+        { order: 0, locator: { kind: 'page', page: 3 }, text: '第三頁甲' },
+        { order: 0, locator: { kind: 'page', page: 2 }, text: '   ' },
+        { order: 0, locator: { kind: 'page', page: 1 }, text: '第一頁' },
+      ],
+    } as unknown as RawCapture;
+
+    expect(groupRawOcrPages(raw)).toEqual([
+      { page: 1, text: '第一頁' },
+      { page: 2, text: '' },
+      { page: 3, text: '第三頁甲\n第三頁乙' },
+    ]);
+    expect(renderRawOcrText(raw)).toBe('第一頁\n\n第三頁甲\n第三頁乙');
+    expect(groupRawOcrPages(null)).toEqual([]);
   });
 
   it('keeps a 1..K page prefix', () => {
@@ -110,12 +142,18 @@ describe('OCR queue presentation', () => {
 
     const runningDoc = view(doc({ status: 'processing', captureId: 'capture-1' }), {
       job: {
-        status: 'running',
-        stage: 'extracting',
+        protocolVersion: '2',
+        captureId: 'capture-1',
+        ingestionId: 'ingestion-1',
+        status: 'extracting',
         progress: 0.75,
         pagesDone: 9,
         pagesTotal: 12,
-      } as DesktopCaptureOperation,
+        partialRevision: 0,
+        lastEventSequence: 0,
+        createdAt: '2026-11-10T00:00:00Z',
+        updatedAt: '2026-11-10T00:00:00Z',
+      },
     });
     expect(runningDoc.chipVariant).toBe('running');
     expect(runningDoc.progressPercent).toBe(75);

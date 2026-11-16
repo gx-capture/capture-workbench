@@ -46,11 +46,8 @@ export interface StreamingTerminalResultV2 {
   readonly result: CaptureDocument;
 }
 
-/** Neutral v2 operation envelope returned by the desktop one-shot bridge. */
-export type DesktopCaptureOperation = Omit<CaptureOperation, 'status'> & {
-  readonly status: CaptureOperation['status'] | 'queued' | 'running';
-  readonly stage?: string;
-};
+/** v2 operation envelope returned by the desktop one-shot bridge. */
+export type DesktopCaptureOperation = CaptureOperation;
 export const DESKTOP_RUNTIME_READY_TIMEOUT_MS = 3 * 60_000;
 
 @Injectable({ providedIn: 'root' })

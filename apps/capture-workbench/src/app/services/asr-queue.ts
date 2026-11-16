@@ -252,7 +252,7 @@ function validDuration(value: number | null | undefined): number | null {
     : null;
 }
 
-function detailDurationMs(detail: DesktopLibraryDetail | undefined): number | null {
+export function detailDurationMs(detail: DesktopLibraryDetail | undefined): number | null {
   if (!detail) return null;
   let maxEndMs = 0;
   for (const segment of detail.raw?.segments ?? []) {
