@@ -14,9 +14,12 @@ import {
   assertNoAmbientModelOverrides,
   assertNvidiaDriverForCudaSpeechContent,
   assertRealMediaModelEvidence,
+  buildModelSmokeLaunchEnvironment,
   canonicalJson,
   cpuSpeechModelFiles,
   desktopRuntimeReady,
+  generatedCatalogCandidates,
+  mediaTypeFor,
   nativeDialogUiAutomationDefinitions,
   nativeDialogUiAutomationScript,
   REAL_MODEL_CATALOG_VERSION,
@@ -29,9 +32,11 @@ import {
   modelSmokeFixtureEnvironment,
   normalizedNativeClickPoint,
   normalizedOcrTextDigest,
+  normalizedTranscriptDigest,
   requirementCompletedAfterConsent,
   runtimeModelOptionActive,
   runtimeRequirementsReady,
+  safeInputName,
   safeSmokeFailureMessage,
   safeTerminalDocumentFailure,
   safeTerminalInstallationFailure,
@@ -39,6 +44,7 @@ import {
   safeUiAutomationDiagnostics,
   sha256,
   shouldUseBackendReuseReadiness,
+  startInjectedCapture,
   validateSourceLockAndCatalog,
   whisperCpuFallbackAllowedForSourceLock,
   windowsPowerShellExecutable,
@@ -372,20 +378,79 @@ test('model smoke fixture injection returns only a bounded document ID', () => {
 });
 
 test('model smoke waits for the exact retry action after selecting an injected document', async () => {
-  const source = await readFile(new URL('./real-media-model-smoke.ts', import.meta.url), 'utf8');
-  const cardClick = source.indexOf('await document.card.click();');
-  const detailWait = source.indexOf("await detail.waitFor({ state: 'visible', timeout: 30_000 });", cardClick);
-  const retryWait = source.indexOf("await retry.waitFor({ state: 'visible', timeout: 30_000 });");
-  const retryCount = source.indexOf('if (await retry.count() !== 1)', retryWait);
-  const captureReadyWait = source.indexOf('await waitForCaptureReady(page);', retryCount);
-  const retryClick = source.indexOf('await retry.click();', retryCount);
-  assert.ok(cardClick >= 0);
-  assert.ok(detailWait > cardClick);
-  assert.ok(retryWait > cardClick);
-  assert.ok(retryCount > retryWait);
-  assert.ok(captureReadyWait > retryCount);
-  assert.ok(retryClick > retryCount);
-  assert.ok(retryClick > captureReadyWait);
+  const calls: string[] = [];
+  const fakePage = {} as Parameters<typeof startInjectedCapture>[0];
+  await startInjectedCapture(fakePage, 'a'.repeat(32), {
+    waitForDocument: async (id) => {
+      calls.push(`waitForDocument:${id}`);
+      return {
+        clickCard: async () => {
+          calls.push('card.click');
+        },
+      };
+    },
+    waitForDetailVisible: async () => {
+      calls.push('detail.waitFor');
+    },
+    waitForRetryVisible: async () => {
+      calls.push('retry.waitFor');
+    },
+    countRetry: async () => {
+      calls.push('retry.count');
+      return 1;
+    },
+    waitForCaptureReady: async () => {
+      calls.push('waitForCaptureReady');
+    },
+    clickRetry: async () => {
+      calls.push('retry.click');
+    },
+    waitForCaptureAccepted: async (id) => {
+      calls.push(`waitForCaptureAccepted:${id}`);
+    },
+  });
+  assert.deepEqual(calls, [
+    `waitForDocument:${'a'.repeat(32)}`,
+    'card.click',
+    'detail.waitFor',
+    'retry.waitFor',
+    'retry.count',
+    'waitForCaptureReady',
+    'retry.click',
+    `waitForCaptureAccepted:${'a'.repeat(32)}`,
+  ]);
+
+  const rejectedCalls: string[] = [];
+  await assert.rejects(
+    startInjectedCapture(fakePage, 'b'.repeat(32), {
+      waitForDocument: async () => ({
+        clickCard: async () => {
+          rejectedCalls.push('card.click');
+        },
+      }),
+      waitForDetailVisible: async () => {
+        rejectedCalls.push('detail.waitFor');
+      },
+      waitForRetryVisible: async () => {
+        rejectedCalls.push('retry.waitFor');
+      },
+      countRetry: async () => {
+        rejectedCalls.push('retry.count');
+        return 0;
+      },
+      waitForCaptureReady: async () => {
+        rejectedCalls.push('waitForCaptureReady');
+      },
+      clickRetry: async () => {
+        rejectedCalls.push('retry.click');
+      },
+      waitForCaptureAccepted: async () => {
+        rejectedCalls.push('waitForCaptureAccepted');
+      },
+    }),
+    /exact UI processing action/u,
+  );
+  assert.deepEqual(rejectedCalls, ['card.click', 'detail.waitFor', 'retry.waitFor', 'retry.count']);
 });
 
 test('private OCR oracle hashes normalized source text without exposing its contents', () => {
@@ -864,73 +929,57 @@ test('desktop target runs the UI model smoke after staged runtime and build', as
   ]);
 });
 
-test('desktop model smoke uses generated release catalog and WebView selectors', async () => {
-  const source = await readFile(new URL('./real-media-model-smoke.ts', import.meta.url), 'utf8');
-  assert.match(source, /['"]dist['"][\s\S]*['"]release['"][\s\S]*capture-engine-catalog\.json/u);
-  assert.doesNotMatch(source, /src[\\/]capture_runtime[\\/]assets[\\/]engine-catalog\.json/u);
-  for (const selector of [
-    'runtime-setup',
-    'runtime-requirement',
-    'runtime-install',
-    'model-selection',
-    'model-option',
-    'model-install',
-    'model-install-progress',
-    'source-import',
-    'document-card',
-    'document-detail',
-    'document-raw',
-    'document-result',
-    'document-provenance',
-    'document-extraction-provenance',
-    'document-delete',
-  ]) {
-    assert.match(source, new RegExp(`(?:getByTestId\\('[^']*${selector}[^']*'\\)|data-testid="${selector}")`, 'u'));
+test('desktop model smoke resolves generated release catalogs and launch environment', () => {
+  assert.match(generatedCatalogCandidates[0], /packages[\\/]capture-runtime[\\/]dist[\\/]release[\\/]capture-engine-catalog\.json$/u);
+  for (const candidate of generatedCatalogCandidates) {
+    assert.doesNotMatch(candidate, /src[\\/]capture_runtime[\\/]assets[\\/]engine-catalog\.json/u);
   }
-  assert.match(source, /CAPTURE_SMOKE_APP_PID/u);
-  assert.match(source, /CAPTURE_WHISPER_PREFER_GPU/u);
-  assert.doesNotMatch(source, /FindWindow\('#32770'/u);
-  assert.doesNotMatch(source, /async function nativeOpenDialog\(/u);
-  assert.doesNotMatch(source, /SetWindowText|FindWindow\(|SendMessage\(/u);
-  assert.doesNotMatch(source, /locator\('body'\)\.innerText/u);
-  assert.doesNotMatch(source, /function importThroughUi/u);
-  assert.doesNotMatch(source, /selection\.count\(\)/u);
-  assert.match(source, /invokeTauriCommand\(page, 'runtime_get_model_installation'/u);
-  assert.match(source, /invokeTauriCommand\(page, 'runtime_model_options'/u);
-  assert.match(source, /invokeTauriCommand\(page, 'model_smoke_import_fixture', \{\s*request: \{ fixtureKey \}/u);
-  assert.match(source, /CAPTURE_SMOKE_FIXTURE_ROOT = runRoot/u);
-  assert.match(source, /modelSmokeFixtureEnvironment\(\{/u);
-  assert.match(source, /CAPTURE_SMOKE_FIXTURE_PDF: paths\.pdf/u);
-  assert.match(source, /CAPTURE_SMOKE_FIXTURE_IMAGE: paths\.image/u);
-  assert.match(source, /CAPTURE_SMOKE_FIXTURE_AUDIO: paths\.audio/u);
-  assert.match(source, /sourceImportMode: REAL_MODEL_SOURCE_IMPORT_MODE/u);
-  assert.match(source, /nativePickerExercised: false/u);
-  assert.match(source, /await retry\.waitFor\(\{ state: 'visible', timeout: 30_000 \}\)/u);
-  assert.match(source, /throwIfTerminalDocumentFailure/u);
-  assert.match(source, /model-private-audio\.mp3/u);
-  assert.match(source, /CAPTURE_REAL_MEDIA_MODEL_OCR_TEXT_SHA256/u);
-  assert.match(source, /private OCR output oracle/u);
-  assert.doesNotMatch(source, /Get-CimInstance|Win32_Process/u);
-  assert.match(source, /audio\/mpeg/u);
-  assert.match(source, /REAL_MODEL_AUDIO_CAPTURE_TIMEOUT_MS/u);
-  assert.match(source, /data-covered-until-ms/u);
-  assert.match(source, /progressive checkpoint/u);
-  assert.match(source, /extractionDurationMs/u);
-  assert.match(source, /normalizedTranscriptDigest/u);
-  assert.ok(
-    source.indexOf('UI raw extraction did not become visible')
-      < source.indexOf('UI result and provenance did not become visible'),
-    'The bounded extraction assertion must observe raw before waiting for the terminal result.',
+
+  const root = join(tmpdir(), 'capture-model-smoke-launch-env');
+  const env = buildModelSmokeLaunchEnvironment(
+    { PATH: 'C:\\Windows\\System32' },
+    {
+      root,
+      appData: join(root, 'a'),
+      localAppData: join(root, 'l'),
+      temporary: join(root, 't'),
+      webViewData: join(root, 'w'),
+    },
+    { pdf: 'owned-pdf', image: 'owned-image', audio: 'owned-audio' },
+    { preferGpu: true, device: 'cuda' },
+    false,
   );
-  assert.doesNotMatch(source, /sha256\(Buffer\.from\(rawText/u);
-  assert.doesNotMatch(source, /digestFromProvenance/u);
-  assert.match(source, /modelDependencyOrder: \[\.\.\.installationOrder\]/u);
-  assert.match(source, /selectedModelOptionId: 'qwen3\.5-0\.8b-v1'/u);
-  assert.match(source, /modelDependencyOrderScope: REAL_MODEL_DEPENDENCY_ORDER_SCOPE/u);
-  assert.doesNotMatch(source, /pids\.unshift\(/u);
-  assert.match(source, /releaseGateSatisfied: false/u);
-  assert.match(source, /localProductionPreflight: true/u);
-  assert.match(source, /consumerE2e: false/u);
+  assert.equal(env.CAPTURE_SMOKE_APP_DATA_ROOT, join(root, 'a'));
+  assert.equal(env.CAPTURE_SMOKE_FIXTURE_ROOT, root);
+  assert.equal(env.CAPTURE_SMOKE_FIXTURE_PDF, 'owned-pdf');
+  assert.equal(env.CAPTURE_SMOKE_FIXTURE_IMAGE, 'owned-image');
+  assert.equal(env.CAPTURE_SMOKE_FIXTURE_AUDIO, 'owned-audio');
+  assert.equal(env.CAPTURE_WHISPER_PREFER_GPU, 'true');
+  assert.equal(env.CAPTURE_WHISPER_ALLOW_CPU_FALLBACK, 'false');
+
+  const audioOnlyEnv = buildModelSmokeLaunchEnvironment(
+    { PATH: 'C:\\Windows\\System32' },
+    {
+      root,
+      appData: join(root, 'a'),
+      localAppData: join(root, 'l'),
+      temporary: join(root, 't'),
+      webViewData: join(root, 'w'),
+    },
+    { pdf: 'owned-pdf', image: 'owned-image', audio: 'owned-audio' },
+    { preferGpu: true, device: 'cuda' },
+    true,
+  );
+  assert.equal(audioOnlyEnv.CAPTURE_WHISPER_ALLOW_CPU_FALLBACK, 'true');
+
+  assert.equal(safeInputName('audio'), 'model-private-audio.mp3');
+  assert.equal(mediaTypeFor('audio'), 'audio/mpeg');
+
+  const firstDigest = normalizedTranscriptDigest(['  hello  ', 'world\n!']);
+  const secondDigest = normalizedTranscriptDigest(['hello world !']);
+  assert.equal(firstDigest, secondDigest);
+  assert.match(firstDigest, /^[a-f0-9]{64}$/u);
+  assert.throws(() => normalizedTranscriptDigest(['   ']), /transcript was empty/u);
 });
 
 type ModelFile = {

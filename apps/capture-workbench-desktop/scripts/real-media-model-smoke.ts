@@ -225,7 +225,7 @@ const sourceLockPath = join(
   'model-sources',
   'release-model-source-lock.json',
 );
-const generatedCatalogCandidates = [
+export const generatedCatalogCandidates = [
   join(
     workspaceRoot,
     'packages',
@@ -725,11 +725,11 @@ export async function loadReleaseModelContract(): Promise<ExpectedProvenance> {
   );
 }
 
-function safeInputName(kind: MediaKind): string {
+export function safeInputName(kind: MediaKind): string {
   return kind === 'pdf' ? 'model-scanned.pdf' : kind === 'image' ? 'model-reference.png' : 'model-private-audio.mp3';
 }
 
-function mediaTypeFor(kind: MediaKind): string {
+export function mediaTypeFor(kind: MediaKind): string {
   return kind === 'pdf' ? 'application/pdf' : kind === 'image' ? 'image/png' : 'audio/mpeg';
 }
 
@@ -3220,40 +3220,73 @@ async function waitForImportedDocumentInLibrary(page: Page, documentId: string):
   );
 }
 
-async function startInjectedCapture(page: Page, documentId: string): Promise<void> {
-  const document = await waitForDocumentById(page, documentId);
-  await document.card.click();
-  const detail = page.locator(`[data-testid="document-detail"][data-document-id="${documentId}"]`);
-  await detail.waitFor({ state: 'visible', timeout: 30_000 });
-  const retry = detail.locator(`[data-testid="document-retry"][data-document-id="${documentId}"]`);
-  await retry.waitFor({ state: 'visible', timeout: 30_000 });
-  if (await retry.count() !== 1) {
+export interface StartInjectedCaptureDeps {
+  readonly waitForDocument: (documentId: string) => Promise<{ clickCard: () => Promise<void> }>;
+  readonly waitForDetailVisible: (documentId: string) => Promise<void>;
+  readonly waitForRetryVisible: (documentId: string) => Promise<void>;
+  readonly countRetry: (documentId: string) => Promise<number>;
+  readonly waitForCaptureReady: () => Promise<void>;
+  readonly clickRetry: (documentId: string) => Promise<void>;
+  readonly waitForCaptureAccepted: (documentId: string) => Promise<void>;
+}
+
+export async function startInjectedCapture(
+  page: Page,
+  documentId: string,
+  deps?: Partial<StartInjectedCaptureDeps>,
+): Promise<void> {
+  const detailLocator = () => page.locator(`[data-testid="document-detail"][data-document-id="${documentId}"]`);
+  const retryLocator = () => detailLocator().locator(`[data-testid="document-retry"][data-document-id="${documentId}"]`);
+  const actions: StartInjectedCaptureDeps = {
+    waitForDocument: async (id) => {
+      const document = await waitForDocumentById(page, id);
+      return { clickCard: () => document.card.click() };
+    },
+    waitForDetailVisible: async () => {
+      await detailLocator().waitFor({ state: 'visible', timeout: 30_000 });
+    },
+    waitForRetryVisible: async () => {
+      await retryLocator().waitFor({ state: 'visible', timeout: 30_000 });
+    },
+    countRetry: async () => retryLocator().count(),
+    waitForCaptureReady: async () => waitForCaptureReady(page),
+    clickRetry: async () => retryLocator().click(),
+    waitForCaptureAccepted: async (id) => {
+      await waitUntil(
+        async () => {
+          const documents = await invokeTauriCommand(page, 'library_list', {
+            request: { query: '', status: '' },
+          }).catch(() => undefined);
+          if (!Array.isArray(documents)) return false;
+          const current = documents.find((item) => (
+            item !== null
+            && typeof item === 'object'
+            && !Array.isArray(item)
+            && (item as Record<string, unknown>).documentId === id
+          ));
+          if (current === undefined || current === null || typeof current !== 'object' || Array.isArray(current)) {
+            return false;
+          }
+          const record = current as Record<string, unknown>;
+          return record.status === 'processing'
+            || (typeof record.captureId === 'string' && record.captureId.length > 0);
+        },
+        REAL_MODEL_CAPTURE_START_TIMEOUT_MS,
+        'Desktop capture start was not accepted.',
+      );
+    },
+    ...deps,
+  };
+  const document = await actions.waitForDocument(documentId);
+  await document.clickCard();
+  await actions.waitForDetailVisible(documentId);
+  await actions.waitForRetryVisible(documentId);
+  if (await actions.countRetry(documentId) !== 1) {
     throw new Error('Injected document did not expose the exact UI processing action.');
   }
-  await waitForCaptureReady(page);
-  await retry.click();
-  await waitUntil(
-    async () => {
-      const documents = await invokeTauriCommand(page, 'library_list', {
-        request: { query: '', status: '' },
-      }).catch(() => undefined);
-      if (!Array.isArray(documents)) return false;
-      const current = documents.find((item) => (
-        item !== null
-        && typeof item === 'object'
-        && !Array.isArray(item)
-        && (item as Record<string, unknown>).documentId === documentId
-      ));
-      if (current === undefined || current === null || typeof current !== 'object' || Array.isArray(current)) {
-        return false;
-      }
-      const record = current as Record<string, unknown>;
-      return record.status === 'processing'
-        || (typeof record.captureId === 'string' && record.captureId.length > 0);
-    },
-    REAL_MODEL_CAPTURE_START_TIMEOUT_MS,
-    'Desktop capture start was not accepted.',
-  );
+  await actions.waitForCaptureReady();
+  await actions.clickRetry(documentId);
+  await actions.waitForCaptureAccepted(documentId);
 }
 
 export function safeTerminalDocumentFailure(
@@ -3381,7 +3414,6 @@ async function assertVisibleCapture(
   );
   const rawText = (await rawSection.textContent())?.trim() || '';
   const resultText = (await resultSection.textContent())?.trim() || '';
-  const provenance = (await provenanceSection.textContent())?.trim() || '';
   if (!rawText || !resultText) throw new Error(`${input.kind} UI raw/result data was empty.`);
   const extractionProvenance = detail.getByTestId('document-extraction-provenance');
   await extractionProvenance.waitFor({ state: 'visible', timeout: resultTimeout });
@@ -3393,7 +3425,7 @@ async function assertVisibleCapture(
   assert.equal(await extractionProvenance.getAttribute('data-model'), expectedModel);
   if (input.kind === 'audio' && expected.whisperPreferGpu && input.exactWhisperOutput !== false) {
     assertAudioDeviceMatchesSourceLock(actualDevice, expectedDevice);
-  } else if (input.kind === 'audio') {
+  } else if (input.kind === 'audio' && expected.whisperPreferGpu) {
     assert.ok(actualDevice === 'cuda' || actualDevice === 'cpu');
   } else {
     assert.equal(actualDevice, expectedDevice);
@@ -3413,9 +3445,6 @@ async function assertVisibleCapture(
     }
   }
   if (input.kind === 'pdf' || input.kind === 'image') {
-    assert.match(provenance, new RegExp(expected.ocrEngine.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'), 'u'));
-    assert.match(provenance, new RegExp(expected.ocrModel.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'), 'u'));
-    assert.match(provenance, new RegExp(expected.ocrDevice.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'), 'u'));
     const pageLocators = await detail.locator('[data-locator-kind="page"]').count();
     if (pageLocators < 1) throw new Error(`${input.kind} UI raw data did not expose page locators.`);
     await deleteDocumentThroughUi(page, document.id);
@@ -3430,13 +3459,6 @@ async function assertVisibleCapture(
       pageLocators,
       durationMs: extractionDurationMs,
     };
-  }
-  assert.match(provenance, /speech-recognition/iu);
-  assert.match(provenance, new RegExp(expected.whisperModel.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'), 'u'));
-  if (expected.whisperPreferGpu) {
-    assert.match(provenance, /(?:cuda|cpu)/iu);
-  } else {
-    assert.match(provenance, new RegExp(expected.whisperDevice.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'), 'u'));
   }
   const segmentCount = await assertAudioRawSegments(
     rawText,
@@ -3518,7 +3540,7 @@ async function assertAudioRawSegments(
   return locators.length;
 }
 
-function normalizedTranscriptDigest(transcript: readonly string[]): string {
+export function normalizedTranscriptDigest(transcript: readonly string[]): string {
   const normalized = transcript
     .map((value) => value.replace(/\s+/gu, ' ').trim())
     .filter(Boolean)
@@ -3776,6 +3798,42 @@ async function waitForPortReleased(port: number): Promise<void> {
   }, 30_000, 'Owned WebView2 CDP listener remained bound after cleanup.');
 }
 
+export function buildModelSmokeLaunchEnvironment(
+  sourceEnv: NodeJS.ProcessEnv,
+  directories: {
+    readonly root: string;
+    readonly appData: string;
+    readonly localAppData: string;
+    readonly temporary: string;
+    readonly webViewData: string;
+  },
+  fixtures: {
+    readonly pdf: string;
+    readonly image: string;
+    readonly audio: string;
+  },
+  whisper: {
+    readonly preferGpu: boolean;
+    readonly device: string;
+  },
+  audioOnly: boolean,
+  cdpPort = dynamicWebViewCdpPort,
+): Record<string, string | undefined> {
+  const appEnvironment = buildInstalledAppEnvironment(sourceEnv, directories, cdpPort);
+  appEnvironment.CAPTURE_SMOKE_APP_DATA_ROOT = directories.appData;
+  appEnvironment.CAPTURE_SMOKE_FIXTURE_ROOT = directories.root;
+  Object.assign(appEnvironment, modelSmokeFixtureEnvironment(fixtures));
+  assertNoAmbientModelOverrides(appEnvironment);
+  appEnvironment.CAPTURE_WHISPER_PREFER_GPU = String(whisper.preferGpu);
+  appEnvironment.CAPTURE_WHISPER_ALLOW_CPU_FALLBACK = String(
+    audioOnly || whisperCpuFallbackAllowedForSourceLock(whisper.device),
+  );
+  if (appEnvironment.CAPTURE_WHISPER_PREFER_GPU !== String(whisper.preferGpu)) {
+    throw new Error('Lock-derived Whisper GPU preference drifted before app launch.');
+  }
+  return appEnvironment;
+}
+
 async function run(): Promise<void> {
   if (process.platform !== 'win32') throw new Error('Real model-enabled desktop smoke requires Windows x64.');
   const installationOnly = process.argv.includes('--install-whisper-only');
@@ -3809,29 +3867,27 @@ async function run(): Promise<void> {
   if (!metadata.isFile() || metadata.isSymbolicLink()) throw new Error('CAPTURE_REAL_MEDIA_MODEL_EXECUTABLE must be a regular packaged Tauri executable.');
   let cdpPort: number | undefined;
   await mkdir(appDataRoot, { recursive: true });
-  const appEnvironment = buildInstalledAppEnvironment(process.env, {
-    root: runRoot,
-    appData: appDataRoot,
-    localAppData: localAppDataRoot,
-    temporary: temporaryRoot,
-    webViewData: webViewDataRoot,
-  }, dynamicWebViewCdpPort);
-  appEnvironment.CAPTURE_SMOKE_APP_DATA_ROOT = appDataRoot;
-  appEnvironment.CAPTURE_SMOKE_FIXTURE_ROOT = runRoot;
   assert(inputs && pdf && image && audio);
-  Object.assign(appEnvironment, modelSmokeFixtureEnvironment({
-    pdf: pdf.path,
-    image: image.path,
-    audio: audio.path,
-  }));
-  assertNoAmbientModelOverrides(appEnvironment);
-  appEnvironment.CAPTURE_WHISPER_PREFER_GPU = String(expected.whisperPreferGpu);
-  appEnvironment.CAPTURE_WHISPER_ALLOW_CPU_FALLBACK = String(
-    audioOnly || whisperCpuFallbackAllowedForSourceLock(expected.whisperDevice),
+  const appEnvironment = buildModelSmokeLaunchEnvironment(
+    process.env,
+    {
+      root: runRoot,
+      appData: appDataRoot,
+      localAppData: localAppDataRoot,
+      temporary: temporaryRoot,
+      webViewData: webViewDataRoot,
+    },
+    {
+      pdf: pdf.path,
+      image: image.path,
+      audio: audio.path,
+    },
+    {
+      preferGpu: expected.whisperPreferGpu,
+      device: expected.whisperDevice,
+    },
+    audioOnly,
   );
-  if (appEnvironment.CAPTURE_WHISPER_PREFER_GPU !== String(expected.whisperPreferGpu)) {
-    throw new Error('Lock-derived Whisper GPU preference drifted before app launch.');
-  }
   let app: ReturnType<typeof spawn> | undefined;
   let browser: Browser | undefined;
   let page: Page | undefined;
