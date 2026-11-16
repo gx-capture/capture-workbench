@@ -1,6 +1,7 @@
 import { Component } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
-import { provideRouter, Router } from '@angular/router';
+import { provideRouter } from '@angular/router';
+import { RouterTestingHarness } from '@angular/router/testing';
 import { setDesktopLocale } from '../i18n/desktop-messages';
 import { SettingsPage } from './settings-page';
 
@@ -11,9 +12,10 @@ describe('SettingsPage', () => {
   beforeEach(() => setDesktopLocale('zh-TW'));
   afterEach(() => setDesktopLocale('zh-TW'));
 
+  // The layout is rendered by the router, as in the app, so its relative
+  // links resolve against the settings route.
   async function setup(initialUrl = '/settings/engines') {
     TestBed.configureTestingModule({
-      imports: [SettingsPage],
       providers: [
         provideRouter([
           {
@@ -30,13 +32,8 @@ describe('SettingsPage', () => {
       ],
     });
 
-    const router = TestBed.inject(Router);
-    await router.navigateByUrl(initialUrl);
-    const fixture = TestBed.createComponent(SettingsPage);
-    fixture.detectChanges();
-    await fixture.whenStable();
-    fixture.detectChanges();
-    return { fixture, router, el: fixture.nativeElement as HTMLElement };
+    const harness = await RouterTestingHarness.create(initialUrl);
+    return { harness, el: harness.routeNativeElement as HTMLElement };
   }
 
   it('renders the 設定 heading, labelled sub-navigation, and three links', async () => {
@@ -59,7 +56,7 @@ describe('SettingsPage', () => {
   });
 
   it('marks the active entry with aria-current="page" when navigating', async () => {
-    const { fixture, router, el } = await setup('/settings/engines');
+    const { harness, el } = await setup('/settings/engines');
 
     expect(
       el.querySelector('[data-testid="settings-nav-engines"]')?.getAttribute('aria-current'),
@@ -68,10 +65,8 @@ describe('SettingsPage', () => {
       el.querySelector('[data-testid="settings-nav-compute"]')?.getAttribute('aria-current'),
     ).toBeNull();
 
-    await router.navigateByUrl('/settings/compute');
-    fixture.detectChanges();
-    await fixture.whenStable();
-    fixture.detectChanges();
+    await harness.navigateByUrl('/settings/compute');
+    harness.detectChanges();
 
     expect(
       el.querySelector('[data-testid="settings-nav-compute"]')?.getAttribute('aria-current'),
@@ -82,10 +77,10 @@ describe('SettingsPage', () => {
   });
 
   it('updates labels when switching to English', async () => {
-    const { fixture, el } = await setup();
+    const { harness, el } = await setup();
 
     setDesktopLocale('en');
-    fixture.detectChanges();
+    harness.detectChanges();
 
     expect(el.querySelector('h1')?.textContent?.trim()).toBe('Settings');
     expect(
