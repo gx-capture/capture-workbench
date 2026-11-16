@@ -113,27 +113,6 @@ export function parsePdfPageList(value: string): readonly number[] | null | 'inv
   return [...selected].sort((left, right) => left - right);
 }
 
-/** Formats an ascending list of page numbers into compact range notation (e.g. `1-5, 8`). */
-export function formatPdfPageList(pages: readonly number[]): string {
-  if (pages.length === 0) return '';
-  const sorted = [...pages].sort((left, right) => left - right);
-  const parts: string[] = [];
-  let start = sorted[0];
-  let end = sorted[0];
-  for (let index = 1; index < sorted.length; index += 1) {
-    const page = sorted[index];
-    if (page === end + 1) {
-      end = page;
-    } else {
-      parts.push(start === end ? String(start) : `${start}-${end}`);
-      start = page;
-      end = page;
-    }
-  }
-  parts.push(start === end ? String(start) : `${start}-${end}`);
-  return parts.join(', ');
-}
-
 function normalizePageText(value: string): string {
   return value
     .replace(/\s+/gu, '')

@@ -4,7 +4,6 @@ import { setDesktopLocale } from '../i18n/desktop-messages';
 import type { DesktopCaptureOperation } from './desktop-runtime-client.service';
 import {
   describeOcrDocument,
-  formatPdfPageList,
   groupRawOcrPages,
   ocrChipClasses,
   ocrChipVariant,
@@ -144,9 +143,6 @@ describe('OCR queue presentation', () => {
       expect(parsePdfPageList(invalid)).toBe('invalid');
     }
 
-    expect(formatPdfPageList([])).toBe('');
-    expect(formatPdfPageList([1, 2, 3, 4, 5, 8])).toBe('1-5, 8');
-    expect(formatPdfPageList([3, 7, 8, 20])).toBe('3, 7-8, 20');
   });
 
   it('shows the selected page count on waiting PDF rows when pdfPageNumbers is stored', () => {
