@@ -750,8 +750,8 @@ test('release installed smoke verifies the packaged shell without auto-installin
   assert.equal(deterministicCalls, 1);
 });
 
-function captureFixture(locatorKind) {
-  const sourceKind = locatorKind === 'time' ? 'audio' : 'image';
+function captureFixture(locatorKind: 'page' | 'time') {
+  const sourceKind: 'audio' | 'image' = locatorKind === 'time' ? 'audio' : 'image';
   const fileName = locatorKind === 'time' ? 'fixture.wav' : 'fixture.png';
   const mimeType = locatorKind === 'time' ? 'audio/wav' : 'image/png';
   const expectedTexts = ['fixture words'];

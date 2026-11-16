@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 
 export interface InstalledCaptureFixtureExpectation {
   readonly sourceKind: 'pdf' | 'image' | 'audio';
@@ -6,6 +7,8 @@ export interface InstalledCaptureFixtureExpectation {
   readonly mimeType: string;
   readonly sha256?: string;
   readonly bytes?: number;
+  /** The source bytes of a small fixture; a generated large one gives `bytes` and `sha256` instead. */
+  readonly buffer?: Buffer;
   readonly locatorKind: 'page' | 'time';
   readonly expectedSegments: number;
   readonly expectedTexts: readonly string[];
@@ -53,11 +56,14 @@ export function assertRawCaptureForFixture(
   assertExactKeys(source, ['bytes', 'fileName', 'mediaType', 'sha256'], 'Raw capture source');
   assert.equal(source['fileName'], fixture.fileName);
   assert.equal(source['mediaType'], fixture.mimeType);
-  assert.match(String(source['sha256']), /^[0-9a-f]{64}$/u);
-  if (fixture.sha256 !== undefined) assert.equal(source['sha256'], fixture.sha256);
-  const bytes = source['bytes'];
-  assert.equal(typeof bytes === 'number' && Number.isSafeInteger(bytes) && bytes > 0, true);
-  if (fixture.bytes !== undefined) assert.equal(bytes, fixture.bytes);
+  // The stored source must be the file the smoke imported, byte for byte.
+  const expectedSha256 = fixture.sha256
+    ?? (fixture.buffer ? createHash('sha256').update(fixture.buffer).digest('hex') : undefined);
+  assert.ok(expectedSha256, 'Installed fixture has no digest to compare with.');
+  assert.equal(source['sha256'], expectedSha256);
+  const expectedBytes = fixture.bytes ?? fixture.buffer?.length;
+  assert.ok(expectedBytes, 'Installed fixture has no size to compare with.');
+  assert.equal(source['bytes'], expectedBytes);
 
   assertEngine(
     capture['extractionEngine'],

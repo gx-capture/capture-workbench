@@ -468,7 +468,7 @@ function captureFixture(page, fixture, appPid, fixtureDirectory, diagnostics) {
         ? defer(() => from(row.getByTestId('asr-row-playback-note').waitFor({ state: 'visible', timeout: 5_000 }))).pipe(
           concatMap(() => defer(() => from(row.getByTestId('asr-row-playback-note').textContent()))),
           tap((note) => {
-            assert.ok(note?.trim(), 'Large recording row playback note was empty.');
+            assert.ok(String(note ?? '').trim(), 'Large recording row playback note was empty.');
           }),
           map(() => row),
         )

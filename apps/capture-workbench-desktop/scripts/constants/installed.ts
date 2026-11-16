@@ -6,14 +6,6 @@ export const UNINSTALL_REGISTRY_KEY =
   'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Capture Workbench';
 export const REGISTRY_VIEWS = ['64', '32'];
 
-export const CAPTURE_BLOCK_TYPES = new Set([
-  'heading',
-  'paragraph',
-  'list-item',
-  'table',
-  'quote',
-  'transcript',
-]);
 export const CHILD_ENVIRONMENT_ALLOWLIST = [
   'COMSPEC',
   'CUDA_PATH',
@@ -34,31 +26,31 @@ export const CHILD_ENVIRONMENT_ALLOWLIST = [
 
 export const INSTALLED_FIXTURES = [
   {
-    sourceKind: 'pdf',
+    sourceKind: 'pdf' as const,
     fileName: 'installed-fixture.pdf',
     mimeType: 'application/pdf',
     buffer: Buffer.from(
       '%PDF-1.7\nCAPTURE_TEXT:Installed PDF page one\fInstalled PDF page two',
       'utf8',
     ),
-    locatorKind: 'page',
+    locatorKind: 'page' as const,
     expectedSegments: 2,
     expectedTexts: ['Installed PDF page one', 'Installed PDF page two'],
   },
   {
-    sourceKind: 'image',
+    sourceKind: 'image' as const,
     fileName: 'installed-fixture.png',
     mimeType: 'image/png',
     buffer: Buffer.concat([
       Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
       Buffer.from('CAPTURE_TEXT:Installed image words', 'utf8'),
     ]),
-    locatorKind: 'page',
+    locatorKind: 'page' as const,
     expectedSegments: 1,
     expectedTexts: ['Installed image words'],
   },
   {
-    sourceKind: 'audio',
+    sourceKind: 'audio' as const,
     fileName: 'installed-fixture.wav',
     mimeType: 'audio/wav',
     buffer: Buffer.concat([
@@ -70,7 +62,7 @@ export const INSTALLED_FIXTURES = [
         'utf8',
       ),
     ]),
-    locatorKind: 'time',
+    locatorKind: 'time' as const,
     expectedSegments: 2,
     expectedTexts: ['Installed audio one', 'Installed audio two'],
   },

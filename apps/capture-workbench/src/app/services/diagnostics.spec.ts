@@ -87,6 +87,25 @@ describe('diagnostics pure functions', () => {
       contractSetVersion: null,
       contractSha256: null,
     });
+
+    // The readiness check itself failed: there is no status object at all.
+    expect(
+      buildDiagnosticsRuntimeView({
+        state: 'error',
+        workspaceMessage: 'No desktop host',
+        runtimeStatus: null,
+        ocrCompute: null,
+        messages,
+      }),
+    ).toEqual({
+      state: 'error',
+      statusLabel: messages.diagnosticsRuntimeError,
+      errorMessage: 'No desktop host',
+      runtimeVersion: null,
+      apiVersion: null,
+      contractSetVersion: null,
+      contractSha256: null,
+    });
   });
 
   it('computes provenance for a document without a structured result and without evidence', () => {
