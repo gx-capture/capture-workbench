@@ -35,10 +35,6 @@ export class ResultExportStore {
     });
   });
 
-  constructor() {
-    void this.documentChange;
-  }
-
   download(format: 'text' | 'markdown' | 'srt' | 'vtt'): void { this.run(format, false); }
   copy(): void { this.run('text', true); }
 
