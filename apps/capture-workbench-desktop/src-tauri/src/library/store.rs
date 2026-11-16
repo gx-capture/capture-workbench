@@ -747,31 +747,45 @@ impl LibraryStore {
         &self,
         request: LibraryExportRequest,
     ) -> Result<LibraryExportPayload, String> {
-        let document = self.find_document(&request.document_id)?;
-        let directory = self.document_directory(&document.document_id)?;
-        match request.format {
-            LibraryExportFormat::Json => {
-                let result = read_json_optional(&directory.join(RESULT_FILE_NAME))?
-                    .ok_or_else(|| "Capture library result is not available.".to_string())?;
-                Ok(LibraryExportPayload {
-                    file_name: format!("{}.json", stem(&document.file_name)),
-                    media_type: "application/json".into(),
-                    content: serde_json::to_string_pretty(&result)
-                        .map_err(|error| format!("Capture export cannot be encoded: {error}"))?,
-                })
-            }
-            LibraryExportFormat::Text => {
-                let result = read_json_optional(&directory.join(RESULT_FILE_NAME))?
-                    .ok_or_else(|| "Capture library result is not available.".to_string())?;
-                let content = export_text(&result)
-                    .ok_or_else(|| "Capture result has no exportable text.".to_string())?;
-                Ok(LibraryExportPayload {
-                    file_name: format!("{}.txt", stem(&document.file_name)),
-                    media_type: "text/plain;charset=utf-8".into(),
-                    content,
-                })
-            }
+        super::export::page_label(request.page_label.as_deref())?;
+        let directory = self.document_directory(&request.document_id)?;
+        if matches!(request.format, LibraryExportFormat::Json) {
+            let document = self.find_document(&request.document_id)?;
+            let result = read_json_optional(&directory.join(RESULT_FILE_NAME))
+                .map_err(|_| "Capture library result cannot be read.".to_string())?
+                .ok_or_else(|| "Capture library result is not available.".to_string())?;
+            return Ok(LibraryExportPayload {
+                file_name: format!("{}.json", stem(&document.file_name)),
+                media_type: "application/json".into(),
+                content: serde_json::to_string_pretty(&result)
+                    .map_err(|_| "Capture export cannot be encoded.".to_string())?,
+            });
         }
+        // Match get(): raw and edits belong to one committed generation.
+        let (document, raw, edits) = {
+            let index = self.lock_index()?;
+            let document = index
+                .documents
+                .iter()
+                .find(|document| document.document_id == request.document_id)
+                .ok_or_else(|| "Capture library document was not found.".to_string())?
+                .clone();
+            let raw = read_json_optional(&directory.join(RAW_FILE_NAME))
+                .map_err(|_| "Capture library raw result cannot be read.".to_string())?;
+            let edits = read_edits(&directory.join(EDITS_FILE_NAME)).ok().flatten();
+            (document, raw, edits)
+        };
+        let result = read_json_optional(&directory.join(RESULT_FILE_NAME))
+            .map_err(|_| "Capture library result cannot be read.".to_string())?;
+        super::export::render(
+            &document.file_name,
+            &document.media_type,
+            raw.as_ref(),
+            result.as_ref(),
+            edits.as_ref(),
+            &request.format,
+            request.page_label.as_deref(),
+        )
     }
 
     /// The stored source file, for playing a speaker's sample in the window.
@@ -1025,65 +1039,94 @@ fn now_ms() -> Result<u64, String> {
         .map_err(|_| "Capture library clock is invalid.".into())
 }
 
-fn text_of<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
-    value.get(key).and_then(Value::as_str)
-}
-
-/// Text of a result. A transcript with speakers reads "name: what they said",
-/// using the name a person gave the speaker when there is one.
-fn export_text(result: &Value) -> Option<String> {
-    let plain = || {
-        result
-            .get("targetText")
-            .or_else(|| result.get("sourceText"))
-            .and_then(Value::as_str)
-            .map(str::to_owned)
-    };
-    let speakers = match result.get("speakers").and_then(Value::as_array) {
-        Some(speakers) if !speakers.is_empty() => speakers,
-        _ => return plain(),
-    };
-    let (Some(blocks), Some(segments)) = (
-        result.get("blocks").and_then(Value::as_array),
-        result.get("rawSegments").and_then(Value::as_array),
-    ) else {
-        return plain();
-    };
-    let names: std::collections::HashMap<&str, &str> = speakers
-        .iter()
-        .filter_map(|speaker| {
-            let id = text_of(speaker, "speakerId")?;
-            let name = text_of(speaker, "displayName")
-                .map(str::trim)
-                .filter(|name| !name.is_empty())
-                .unwrap_or(id);
-            Some((id, name))
-        })
-        .collect();
-    let speaker_of: std::collections::HashMap<&str, &str> = segments
-        .iter()
-        .filter_map(|segment| Some((text_of(segment, "segmentId")?, text_of(segment, "speaker")?)))
-        .collect();
-    let lines: Vec<String> = blocks
-        .iter()
-        .filter_map(|block| {
-            let text = text_of(block, "targetText")?;
-            let name = text_of(block, "sourceSegmentId")
-                .and_then(|segment| speaker_of.get(segment))
-                .and_then(|speaker| names.get(speaker));
-            Some(match name {
-                Some(name) => format!("{name}: {text}"),
-                None => text.to_owned(),
-            })
-        })
-        .collect();
-    Some(lines.join("\n"))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn export_reads_saved_edits_and_restores_recognized_text() {
+        let directory = tempfile::tempdir().expect("app data");
+        let library = LibraryStore::open(directory.path()).expect("library");
+        let document = library
+            .create_source(LibrarySourceInput {
+                file_name: "page.png".into(),
+                media_type: "image/png".into(),
+                bytes: b"source".to_vec(),
+            })
+            .unwrap();
+        let item = library.document_directory(&document.document_id).unwrap();
+        let raw = json!({"segments":[{
+            "segmentId":"page-1", "order":0, "text":"recognized",
+            "locator":{"kind":"page", "page":1}
+        }]});
+        fs::write(item.join(RAW_FILE_NAME), serde_json::to_vec(&raw).unwrap()).unwrap();
+        let request = || LibraryExportRequest {
+            document_id: document.document_id.clone(),
+            format: LibraryExportFormat::Text,
+            page_label: None,
+        };
+        library
+            .save_edits(
+                &document.document_id,
+                LibraryEditMaps {
+                    ocr_pages: [("1".into(), "corrected".into())].into(),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(library.export(request()).unwrap().content, "corrected");
+        library
+            .save_edits(&document.document_id, LibraryEditMaps::default())
+            .unwrap();
+        assert!(!item.join(EDITS_FILE_NAME).exists());
+        assert_eq!(library.export(request()).unwrap().content, "recognized");
+        fs::write(item.join(EDITS_FILE_NAME), b"{broken").unwrap();
+        assert_eq!(library.export(request()).unwrap().content, "recognized");
+        assert_eq!(
+            read_json_optional(&item.join(RAW_FILE_NAME)).unwrap(),
+            Some(raw)
+        );
+    }
+
+    #[test]
+    fn legacy_export_and_json_keep_using_the_stored_result() {
+        let directory = tempfile::tempdir().expect("app data");
+        let library = LibraryStore::open(directory.path()).unwrap();
+        let document = library
+            .create_source(LibrarySourceInput {
+                file_name: "old.pdf".into(),
+                media_type: "application/pdf".into(),
+                bytes: b"source".to_vec(),
+            })
+            .unwrap();
+        let item = library.document_directory(&document.document_id).unwrap();
+        let result = json!({"targetText":"structured"});
+        fs::write(
+            item.join(RESULT_FILE_NAME),
+            serde_json::to_vec(&result).unwrap(),
+        )
+        .unwrap();
+        let request = |format| LibraryExportRequest {
+            document_id: document.document_id.clone(),
+            format,
+            page_label: None,
+        };
+        assert_eq!(
+            library
+                .export(request(LibraryExportFormat::Text))
+                .unwrap()
+                .content,
+            "structured"
+        );
+        let payload = library.export(request(LibraryExportFormat::Json)).unwrap();
+        assert_eq!(payload.file_name, "old.json");
+        assert_eq!(payload.media_type, "application/json");
+        assert_eq!(
+            serde_json::from_str::<Value>(&payload.content).unwrap(),
+            result
+        );
+    }
 
     fn old_item(items: &Path, id: &str) -> PathBuf {
         let path = items.join(id);
@@ -1334,48 +1377,6 @@ mod tests {
                 .bytes,
             b"still listed"
         );
-    }
-
-    fn spoken(speakers: serde_json::Value) -> serde_json::Value {
-        json!({
-            "targetText": "Good morning\nHello there\nmm",
-            "speakers": speakers,
-            "rawSegments": [
-                {"segmentId": "segment-1", "speaker": "SPEAKER_00"},
-                {"segmentId": "segment-2", "speaker": "SPEAKER_01"},
-                {"segmentId": "segment-3", "speaker": null}
-            ],
-            "blocks": [
-                {"sourceSegmentId": "segment-1", "targetText": "Good morning"},
-                {"sourceSegmentId": "segment-2", "targetText": "Hello there"},
-                {"sourceSegmentId": "segment-3", "targetText": "mm"}
-            ]
-        })
-    }
-
-    #[test]
-    fn transcript_lines_carry_the_given_name_or_the_anonymous_label() {
-        let result = spoken(json!([
-            {"speakerId": "SPEAKER_00", "displayName": " Ms. Lin "},
-            {"speakerId": "SPEAKER_01", "displayName": null}
-        ]));
-        assert_eq!(
-            export_text(&result).as_deref(),
-            Some("Ms. Lin: Good morning\nSPEAKER_01: Hello there\nmm")
-        );
-    }
-
-    #[test]
-    fn a_result_without_speakers_exports_its_plain_text() {
-        assert_eq!(
-            export_text(&spoken(json!([]))).as_deref(),
-            Some("Good morning\nHello there\nmm")
-        );
-        assert_eq!(
-            export_text(&json!({"sourceText": "page one"})).as_deref(),
-            Some("page one")
-        );
-        assert_eq!(export_text(&json!({})), None);
     }
 }
 
