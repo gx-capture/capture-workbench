@@ -150,16 +150,22 @@ export function expectedVisibleOcrPagesForRaw(
 export function assertVisibleOcrPageText(
   visibleResult: unknown,
   expectedText: string,
+  options: { readonly trim?: boolean } = {},
 ): string {
-  const visibleText = typeof visibleResult === 'string'
-    ? visibleResult.replace(/\r\n/gu, '\n').trim()
+  const shouldTrim = options.trim ?? true;
+  const normalizedVisible = typeof visibleResult === 'string'
+    ? visibleResult.replace(/\r\n/gu, '\n')
     : '';
+  const visibleText = shouldTrim ? normalizedVisible.trim() : normalizedVisible;
+  const expectedNormalized = shouldTrim
+    ? expectedText.trim()
+    : expectedText.replace(/\r\n/gu, '\n');
   if (expectedText.trim().length > 0) {
-    assert.ok(visibleText.length > 0, 'Installed result preview was empty.');
+    assert.ok(visibleText.trim().length > 0, 'Installed result preview was empty.');
   } else {
     assert.ok(typeof visibleResult === 'string', 'Installed result preview was missing.');
   }
-  assert.equal(visibleText, expectedText.trim());
+  assert.equal(visibleText, expectedNormalized);
   return visibleText;
 }
 

@@ -163,12 +163,14 @@ export function assertRealOcrOnlyResult(
     assert.equal(segmentIds.has(segment.segmentId), false, `visible OCR segments[${index}] segmentId must be unique.`);
     segmentIds.add(segment.segmentId);
     assert.equal(segment.order, index, `visible OCR segments[${index}] order`);
-    assertNonEmptyString(segment.text, `visible OCR segments[${index}] text`);
+    assert.equal(typeof segment.text, 'string', `visible OCR segments[${index}] text must be a string.`);
     assertRealOcrLocator(segment.locator, `visible OCR segments[${index}] locator`);
   }
+  const nonEmptySegments = view.rawSegments.filter((segment) => segment.text.trim() !== '');
+  assert.ok(nonEmptySegments.length > 0, 'visible OCR result must contain at least one non-empty segment.');
   assert.equal(
     view.rawText,
-    view.rawSegments.map((segment) => segment.text).join('\n'),
+    nonEmptySegments.map((segment) => segment.text).join('\n'),
     'visible OCR text must be the exact segment projection.',
   );
 

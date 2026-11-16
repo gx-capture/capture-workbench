@@ -269,6 +269,56 @@ test('fails when a visible result is empty', () => {
   );
 });
 
+test('accepts empty segments skipped by the page while keeping structural checks and untrimmed text', () => {
+  const rawSegments: RealOcrUiResult['rawSegments'] = [
+    {
+      segmentId: 'segment-1',
+      order: 0,
+      locator: { kind: 'page', page: 1 },
+      text: '  the snow man made a fluffy hat  ',
+    },
+    {
+      segmentId: 'segment-empty',
+      order: 1,
+      locator: { kind: 'page', page: 1 },
+      text: '   ',
+    },
+    {
+      segmentId: 'segment-2',
+      order: 2,
+      locator: { kind: 'page', page: 1 },
+      text: 'with a hatband near the igloo',
+    },
+  ];
+  assert.deepEqual(
+    assertRealOcrOnlyResult(
+      {
+        rawText: '  the snow man made a fluffy hat  \nwith a hatband near the igloo',
+        rawSegments,
+      },
+      expectation,
+      'ocr_test_image.jpeg',
+    ),
+    {
+      rawSegmentCount: 3,
+      structuredBlockCount: 0,
+      expectedAnchorCount: 4,
+      matchedAnchorCount: 4,
+    },
+  );
+  assert.throws(
+    () => assertRealOcrOnlyResult(
+      {
+        rawText: 'snow man fluffy hat hatband igloo',
+        rawSegments: [{ segmentId: 'only-empty', order: 0, locator: { kind: 'page', page: 1 }, text: '' }],
+      },
+      expectation,
+      'ocr_test_image.jpeg',
+    ),
+    /at least one non-empty segment/u,
+  );
+});
+
 test('fails when OCR identities or locators are not one-to-one and valid', () => {
   const original = view();
   const duplicate = {

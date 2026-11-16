@@ -14,12 +14,14 @@ import type { Browser, Page } from '@playwright/test';
 
 import {
   acceptanceScreenshot,
+  assertDiagnosticsMatchesDurableOcr,
   assertPhase1PageOnePdfSemanticEvidence,
   assertExpectedOcrDevice,
   assertOcrExecutionProofMatchesInstalledJourney,
   assertRealDesktopSmokeEvidence,
   closeOwnedDesktopRoot,
   connectToPackagedPage,
+  deleteCompletedDocument,
   DesktopOcrTerminalFailure,
   DesktopOcrLifecycleFailure,
   emitAcceptanceSemanticEvidence,
@@ -30,8 +32,10 @@ import {
   isOwnedSmokeDocumentName,
   parseOcrProvenance,
   readAndAssertVisibleOcrPages,
+  readDurableOcrProvenance,
   readOcrComputeModeFromSettings,
   readOcrProvenance,
+  readWindowsMlOcrRequirementStatus,
   requestDesktopTeardown,
   realDesktopRuntimeReadyTimeoutMs,
   realDesktopTeardownTimeoutMs,
@@ -1255,6 +1259,7 @@ test('OCR polling waits until captureId clears and durable checkpoint settles at
   let detailReads = 0;
   const result = await waitForDesktopOcrCompletion(page, row, 1_000, {
     documentId: 'document-1',
+    durableCompletion: 'ocr-checkpoint',
     observeLiveness: async () => ({
       appAlive: true,
       runtimeAlive: true,
@@ -1278,6 +1283,47 @@ test('OCR polling waits until captureId clears and durable checkpoint settles at
   assert.equal(detailReads, 2);
 });
 
+test('OCR polling accepts completed-with-raw only when durableCompletion allows it', async () => {
+  const row = {
+    getAttribute: async (name: string) => name === 'data-user-status' ? 'done' : 'document-1',
+  } as unknown as ReturnType<Page['locator']>;
+  const page = {} as unknown as Page;
+  const baseRecovery = {
+    documentId: 'document-1',
+    observeLiveness: async () => ({
+      appAlive: true,
+      runtimeAlive: true,
+      cdpOpen: true,
+      teardownRequested: false,
+      appExitCode: null,
+      appSignal: null,
+    }),
+    reattach: async () => ({ browser: {} as never, page }),
+    exactOcrQueueRow: () => row,
+    readDurableDetail: async () => ({
+      status: 'completed',
+      stage: 'completed',
+      captureId: null,
+      raw: { segments: [] },
+      result: { blocks: [] },
+    }),
+  };
+
+  await assert.rejects(
+    waitForDesktopOcrCompletion(page, row, 250, {
+      ...baseRecovery,
+      durableCompletion: 'ocr-checkpoint',
+    }),
+    /awaiting_confirmation \/ awaiting_structuring/u,
+  );
+
+  const allowed = await waitForDesktopOcrCompletion(page, row, 250, {
+    ...baseRecovery,
+    durableCompletion: 'ocr-checkpoint-or-completed',
+  });
+  assert.equal(allowed.row, row);
+});
+
 test('OCR polling reads durable failure code when queue row enters needs-attention', async () => {
   const row = {
     getAttribute: async (name: string) => name === 'data-user-status' ? 'needs-attention' : 'document-1',
@@ -1287,6 +1333,7 @@ test('OCR polling reads durable failure code when queue row enters needs-attenti
   await assert.rejects(
     waitForDesktopOcrCompletion(page, row, 250, {
       documentId: 'document-1',
+      durableCompletion: 'ocr-checkpoint',
       observeLiveness: async () => ({
         appAlive: true,
         runtimeAlive: true,
@@ -1440,6 +1487,7 @@ test('OCR polling reattaches once after target loss and preserves the imported d
     250,
     {
       documentId,
+      durableCompletion: 'ocr-checkpoint',
       observeLiveness: async () => ({
         appAlive: true,
         runtimeAlive: true,
@@ -1482,6 +1530,7 @@ test('OCR polling fails with typed lifecycle evidence when the host dies and nev
   await assert.rejects(
     waitForDesktopOcrCompletion({} as Page, oldRow, 250, {
       documentId: 'document-keep-identity',
+      durableCompletion: 'ocr-checkpoint',
       observeLiveness: async () => ({
         appAlive: false,
         runtimeAlive: true,
@@ -1521,6 +1570,7 @@ test('OCR polling rejects a reattached row whose document identity changed', asy
   await assert.rejects(
     waitForDesktopOcrCompletion({} as Page, oldRow, 250, {
       documentId: 'document-keep-identity',
+      durableCompletion: 'ocr-checkpoint',
       observeLiveness: async () => ({
         appAlive: true,
         runtimeAlive: true,
@@ -1559,6 +1609,7 @@ test('OCR polling fails closed after a second target loss without a second reatt
   await assert.rejects(
     waitForDesktopOcrCompletion({} as Page, oldRow, 250, {
       documentId: 'document-keep-identity',
+      durableCompletion: 'ocr-checkpoint',
       observeLiveness: async () => ({
         appAlive: true,
         runtimeAlive: true,
@@ -1597,6 +1648,7 @@ test('OCR polling fails closed with a typed runtime-root-exit when runtime liven
   await assert.rejects(
     waitForDesktopOcrCompletion({} as Page, oldRow, 250, {
       documentId: 'document-keep-identity',
+      durableCompletion: 'ocr-checkpoint',
       observeLiveness: async () => ({
         appAlive: true,
         runtimeAlive: false,
@@ -1632,6 +1684,7 @@ test('OCR polling fails closed with typed target-loss when CDP is closed', async
   await assert.rejects(
     waitForDesktopOcrCompletion({} as Page, oldRow, 250, {
       documentId: 'document-keep-identity',
+      durableCompletion: 'ocr-checkpoint',
       observeLiveness: async () => ({
         appAlive: true,
         runtimeAlive: true,
@@ -1667,6 +1720,7 @@ test('OCR polling fails closed with typed target-loss when teardown has started'
   await assert.rejects(
     waitForDesktopOcrCompletion({} as Page, oldRow, 250, {
       documentId: 'document-keep-identity',
+      durableCompletion: 'ocr-checkpoint',
       observeLiveness: async () => ({
         appAlive: true,
         runtimeAlive: true,
@@ -1904,6 +1958,10 @@ test('first-run OCR setup unchecks ASR and speakers, retries once on filesystem 
       if (testId === 'runtime-status' && name === 'data-state') return 'ready';
       return null;
     },
+    textContent: async () => null,
+    evaluateAll: async () => (testId === 'engine-row'
+      ? [{ id: 'windowsml-ocr', status: ocrEngineStatus, text: 'OCR' }]
+      : []),
   });
 
   const engineRowLocator = {
@@ -1939,7 +1997,7 @@ test('first-run OCR setup unchecks ASR and speakers, retries once on filesystem 
   const engineDetailsLocator = {
     isVisible: async () => detailsExpanded && ocrEngineStatus === 'failed',
     getByTestId: (childId: string) => ({
-      textContent: async () => (childId === 'engine-row-error' ? 'installation_filesystem: transient lock' : ''),
+      textContent: async () => (childId === 'engine-row-error' ? 'Transient disk lock' : ''),
     }),
   };
 
@@ -1949,6 +2007,23 @@ test('first-run OCR setup unchecks ASR and speakers, retries once on filesystem 
     locator: (selector: string) => {
       if (selector === '[data-testid="engine-row"][data-requirement-id="windowsml-ocr"]') return engineRowLocator;
       if (selector === '[data-testid="engine-row-details"][data-requirement-id="windowsml-ocr"]') return engineDetailsLocator;
+      return {};
+    },
+    evaluate: async (_fn: unknown, payload: { readonly commandName?: string }) => {
+      if (payload?.commandName === 'runtime_requirements') {
+        return { items: [{ requirementId: 'windowsml-ocr', status: 'installable' }] };
+      }
+      if (payload?.commandName === 'runtime_list_installations') {
+        return {
+          items: ocrEngineStatus === 'failed'
+            ? [{
+                requirementId: 'windowsml-ocr',
+                status: 'failed',
+                error: { code: 'installation_filesystem', message: 'Transient disk lock' },
+              }]
+            : [],
+        };
+      }
       return {};
     },
   } as unknown as Page;
@@ -1965,6 +2040,142 @@ test('first-run OCR setup unchecks ASR and speakers, retries once on filesystem 
   assert.equal(retryClicks, 1);
   assert.equal(route, 'ocr');
   assert.deepEqual(events, ['consent', 'install-started', 'install-progress', 'install-started', 'install-retry']);
+});
+
+test('first-run OCR setup handles already-ready, active-installation, dismissed-card, and non-filesystem failure paths', async () => {
+  const readyPage = {
+    url: () => 'http://tauri.localhost/ocr',
+    getByTestId: (id: string) => ({
+      waitFor: async () => undefined,
+      isVisible: async () => id === 'page-ocr',
+      getAttribute: async () => (id === 'runtime-status' ? 'ready' : null),
+      evaluateAll: async () => [],
+    }),
+    evaluate: async (_fn: unknown, payload: { readonly commandName?: string }) => (
+      payload?.commandName === 'runtime_requirements'
+        ? { items: [{ requirementId: 'windowsml-ocr', status: 'ready' }] }
+        : { items: [] }
+    ),
+  } as unknown as Page;
+
+  assert.equal(await readWindowsMlOcrRequirementStatus(readyPage), 'ready');
+  assert.deepEqual(await runOcrFirstRunSetup(readyPage), { installRequired: false });
+  await assert.rejects(
+    () => runOcrFirstRunSetup(readyPage, { failIfAlreadyReady: true }),
+    /unexpectedly started already ready/u,
+  );
+
+  // Dismissed card falls back to /settings/engines when !failIfAlreadyReady and fails when failIfAlreadyReady.
+  let dismissedRoute: 'ocr' | 'settings-engines' = 'ocr';
+  let rowInstallClicks = 0;
+  let dismissedStatus: 'installable' | 'ready' = 'installable';
+  const dismissedRow = {
+    waitFor: async () => undefined,
+    getAttribute: async () => dismissedStatus,
+    textContent: async () => 'OCR',
+    getByTestId: (childId: string) => ({
+      isEnabled: async () => true,
+      click: async () => {
+        if (childId === 'engine-row-install') {
+          rowInstallClicks += 1;
+          dismissedStatus = 'ready';
+        }
+      },
+    }),
+  };
+  const dismissedPage = {
+    url: () => (dismissedRoute === 'ocr' ? 'http://tauri.localhost/ocr' : 'http://tauri.localhost/settings/engines'),
+    getByTestId: (id: string) => ({
+      waitFor: async () => undefined,
+      isVisible: async () => {
+        if (id === 'page-ocr') return dismissedRoute === 'ocr';
+        if (id === 'page-settings-engines') return dismissedRoute === 'settings-engines';
+        return false;
+      },
+      click: async () => {
+        if (id === 'nav-settings') dismissedRoute = 'settings-engines';
+        if (id === 'nav-ocr') dismissedRoute = 'ocr';
+      },
+      getAttribute: async () => (id === 'runtime-status' ? 'ready' : null),
+      evaluateAll: async () => [],
+    }),
+    locator: (selector: string) => (
+      selector === '[data-testid="engine-row"][data-requirement-id="windowsml-ocr"]' ? dismissedRow : {}
+    ),
+    evaluate: async (_fn: unknown, payload: { readonly commandName?: string }) => (
+      payload?.commandName === 'runtime_requirements'
+        ? { items: [{ requirementId: 'windowsml-ocr', status: 'installable' }] }
+        : { items: [] }
+    ),
+  } as unknown as Page;
+
+  await assert.rejects(
+    () => runOcrFirstRunSetup(dismissedPage, { failIfAlreadyReady: true, firstRunCardTimeoutMs: 20 }),
+    /did not present the text recognition card/u,
+  );
+  assert.deepEqual(
+    await runOcrFirstRunSetup(dismissedPage, { firstRunCardTimeoutMs: 20 }),
+    { installRequired: true },
+  );
+  assert.equal(rowInstallClicks, 1);
+
+  // Active/failed installation goes straight to Settings › Engines and fails with sanitized host code + message.
+  let activeRoute: 'ocr' | 'settings-engines' = 'ocr';
+  let detailsShown = false;
+  const failingRow = {
+    waitFor: async () => undefined,
+    getAttribute: async () => 'failed',
+    textContent: async () => 'OCR row',
+    getByTestId: (childId: string) => ({
+      click: async () => {
+        if (childId === 'engine-row-toggle') detailsShown = true;
+      },
+    }),
+  };
+  const activeFailingPage = {
+    url: () => (activeRoute === 'ocr' ? 'http://tauri.localhost/ocr' : 'http://tauri.localhost/settings/engines'),
+    getByTestId: (id: string) => ({
+      waitFor: async () => undefined,
+      isVisible: async () => (id === 'page-ocr' ? activeRoute === 'ocr' : activeRoute === 'settings-engines'),
+      click: async () => {
+        if (id === 'nav-settings') activeRoute = 'settings-engines';
+      },
+      getAttribute: async () => (id === 'runtime-status' ? 'ready' : null),
+      evaluateAll: async () => [],
+    }),
+    locator: (selector: string) => {
+      if (selector === '[data-testid="engine-row"][data-requirement-id="windowsml-ocr"]') return failingRow;
+      if (selector === '[data-testid="engine-row-details"][data-requirement-id="windowsml-ocr"]') {
+        return {
+          isVisible: async () => detailsShown,
+          getByTestId: () => ({ textContent: async () => 'Checksum mismatch while downloading OCR pack' }),
+        };
+      }
+      return {};
+    },
+    evaluate: async (_fn: unknown, payload: { readonly commandName?: string }) => {
+      if (payload?.commandName === 'runtime_requirements') {
+        return { items: [{ requirementId: 'windowsml-ocr', status: 'installable' }] };
+      }
+      if (payload?.commandName === 'runtime_list_installations') {
+        return {
+          items: [{
+            requirementId: 'windowsml-ocr',
+            status: 'failed',
+            error: { code: 'download_failed', message: 'Checksum mismatch while downloading OCR pack' },
+          }],
+        };
+      }
+      return {};
+    },
+  } as unknown as Page;
+
+  await assert.rejects(
+    () => runOcrFirstRunSetup(activeFailingPage, { firstRunCardTimeoutMs: 20 }),
+    /status=failed; errorCode=download_failed: Checksum mismatch while downloading OCR pack/u,
+  );
+  assert.equal(activeRoute, 'settings-engines');
+  assert.equal(detailsShown, true);
 });
 
 test('Settings › Compute observation navigates cleanly and supports DML and CPU variants', async () => {
@@ -2061,6 +2272,135 @@ test('multi-page OCR result and diagnostics provenance verification', async () =
     },
   });
   assert.equal(durableSegments.length, 2);
+  const durable = readDurableOcrProvenance({
+    raw: {
+      extractionEngine: {
+        engine: 'windowsml-ocr',
+        model: 'pp-ocrv6-medium-windowsml',
+        device: 'windowsml-dml',
+        digest: 'a'.repeat(64),
+      },
+    },
+  });
+  assert.deepEqual(durable, {
+    engine: 'windowsml-ocr',
+    model: 'pp-ocrv6-medium-windowsml',
+    device: 'windowsml-dml',
+    digest: 'a'.repeat(64),
+  });
+
+  const extractionDigest = 'b'.repeat(64);
+  const evidenceDigest = 'c'.repeat(64);
+  let renderedEvidenceDigest = evidenceDigest;
+  const diagnosticsFakePage = {
+    getByTestId: (id: string) => ({
+      waitFor: async () => undefined,
+      isVisible: async () => id === 'diagnostics-evidence-digest',
+      textContent: async () => (id === 'diagnostics-evidence-digest' ? renderedEvidenceDigest : null),
+      getAttribute: async (attr: string) => {
+        if (id === 'diagnostics-document' && attr === 'data-document-id') return 'doc-1';
+        if (id === 'diagnostics-extraction-provenance') {
+          if (attr === 'data-engine') return 'windowsml-ocr';
+          if (attr === 'data-model') return 'pp-ocrv6-medium-windowsml';
+          if (attr === 'data-device') return 'windowsml-dml';
+          if (attr === 'data-digest') return extractionDigest;
+        }
+        return null;
+      },
+      click: async () => undefined,
+    }),
+  } as unknown as Page;
+
+  const matchingDetail = {
+    raw: {
+      extractionEngine: {
+        engine: 'windowsml-ocr',
+        model: 'pp-ocrv6-medium-windowsml',
+        device: 'windowsml-dml',
+        digest: extractionDigest,
+      },
+    },
+    ocrEvidence: {
+      digest: evidenceDigest,
+    },
+  };
+  await assertDiagnosticsMatchesDurableOcr(diagnosticsFakePage, matchingDetail, 'doc-1');
+
+  renderedEvidenceDigest = 'd'.repeat(64);
+  await assert.rejects(
+    () => assertDiagnosticsMatchesDurableOcr(diagnosticsFakePage, matchingDetail, 'doc-1'),
+    /evidence digest/u,
+  );
+  renderedEvidenceDigest = evidenceDigest;
+  await assert.rejects(
+    () => assertDiagnosticsMatchesDurableOcr(
+      diagnosticsFakePage,
+      {
+        ...matchingDetail,
+        raw: {
+          extractionEngine: {
+            engine: 'windowsml-ocr',
+            model: 'pp-ocrv6-medium-windowsml',
+            device: 'windowsml-dml',
+            digest: 'e'.repeat(64),
+          },
+        },
+      },
+      'doc-1',
+    ),
+    /extraction digest/u,
+  );
+});
+
+test('deleteCompletedDocument deletes from /history and confirms removal via library_list', async () => {
+  let deletedInUi = false;
+  let libraryRecords: Array<{ readonly documentId: string; readonly fileName: string }> = [
+    { documentId: 'doc-delete', fileName: 'sample.pdf' },
+  ];
+  let listCalls = 0;
+
+  const historyRow = {
+    count: async () => (deletedInUi ? 0 : 1),
+    getAttribute: async (name: string) => {
+      if (name === 'data-document-id') return 'doc-delete';
+      if (name === 'data-user-status') return 'done';
+      return null;
+    },
+    locator: () => ({ textContent: async () => 'sample.pdf' }),
+    getByTestId: () => ({
+      isEnabled: async () => true,
+      click: async () => undefined,
+    }),
+    waitFor: async ({ state }: { readonly state?: string }) => {
+      if (state === 'hidden') deletedInUi = true;
+    },
+  };
+
+  const fakePage = {
+    locator: (selector: string) => {
+      if (selector === '[data-testid="history-row"][data-document-id="doc-delete"]') return historyRow;
+      return { getByText: () => ({}) };
+    },
+    getByTestId: (id: string) => ({
+      isVisible: async () => id === 'page-history' || id === 'history-table',
+      waitFor: async () => undefined,
+      click: async () => {
+        if (id === 'history-delete-confirm') deletedInUi = true;
+      },
+    }),
+    evaluate: async (_fn: unknown, payload: { readonly commandName?: string }) => {
+      if (payload?.commandName === 'library_list') {
+        listCalls += 1;
+        if (listCalls >= 2) libraryRecords = [];
+        return libraryRecords;
+      }
+      return [];
+    },
+  } as unknown as Page;
+
+  assert.equal(await deleteCompletedDocument(fakePage, 'sample.pdf', 'doc-delete'), true);
+  assert.equal(deletedInUi, true);
+  assert.equal(listCalls, 2);
 });
 
 test('runtime error and diagnostics helpers inspect runtime-status and engine rows', async () => {
@@ -2095,5 +2435,16 @@ test('runtime error and diagnostics helpers inspect runtime-status and engine ro
   const diagnostics = JSON.parse(await runtimeSetupDiagnostics(fakePage)) as { runtimeState: string; runtimeError?: string };
   assert.equal(diagnostics.runtimeState, 'error');
   assert.equal(diagnostics.runtimeError, 'Sidecar exited unexpectedly');
+
+  const brokenPage = {
+    url: () => {
+      throw new Error('page crashed');
+    },
+    getByTestId: () => {
+      throw new Error('target closed');
+    },
+  } as unknown as Page;
+  assert.equal(await visibleRuntimeError(brokenPage), undefined);
+  assert.equal(await runtimeSetupDiagnostics(brokenPage), 'diagnostics-unavailable');
 });
 

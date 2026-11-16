@@ -58,6 +58,7 @@ import {
   type ProcessImageRecord,
 } from './practical-installed.ts';
 import {
+  assertDiagnosticsMatchesDurableOcr,
   assertDurableOcrCheckpoint,
   closePackagedBrowser,
   connectToPackagedPage,
@@ -69,11 +70,8 @@ import {
   queryPackagedUiState,
   readAndAssertVisibleOcrPages,
   readDurableLibraryDetail,
-  readDurableOcrEvidenceDigest,
-  readDurableOcrProvenance,
   readImportedSourceSha256,
   readOcrComputeModeFromSettings,
-  readOcrProvenance,
   reattachToPackagedPage,
   requestDesktopTeardown,
   reservePort,
@@ -447,6 +445,7 @@ export async function runPracticalInstalledOcr(args: PracticalRunArguments): Pro
     await queueRow.waitFor({ state: 'visible', timeout: 60_000 });
     const completed = await waitForDesktopOcrCompletion(activePage(), queueRow, ocrTimeoutMs, {
       documentId,
+      durableCompletion: 'ocr-checkpoint',
       observeLiveness: async () => ({
         appAlive: app?.exitCode === null && app?.signalCode === null,
         runtimeAlive: (await sampler.sample()).some(
@@ -475,17 +474,7 @@ export async function runPracticalInstalledOcr(args: PracticalRunArguments): Pro
 
     const importedSourceSha256 = readImportedSourceSha256(detail);
     assertDurableOcrCheckpoint(detail, { sourceKind, sourceSha256: args.inputSha256, rawSegments: segments });
-    const durable = readDurableOcrProvenance(detail);
-    const durableDigest = readDurableOcrEvidenceDigest(detail);
-    const diagnosticsProvenance = await readOcrProvenance(page, documentId);
-    if (
-      diagnosticsProvenance.engine !== durable.engine
-      || diagnosticsProvenance.model !== durable.model
-      || diagnosticsProvenance.device !== durable.device
-      || (durableDigest !== undefined && diagnosticsProvenance.digest !== durableDigest)
-    ) {
-      throw new Error('Diagnostics OCR provenance differs from durable extraction provenance.');
-    }
+    const durable = await assertDiagnosticsMatchesDurableOcr(page, detail, documentId);
     if ((durable.device === 'windowsml-dml') !== (preflight.mode === 'gpu-dml')) {
       throw new Error('Durable OCR device differs from the authenticated compute preflight.');
     }
@@ -511,7 +500,9 @@ export async function runPracticalInstalledOcr(args: PracticalRunArguments): Pro
         computeMode: preflight.mode,
       },
       ocr: {
-        ...durable,
+        engine: durable.engine,
+        model: durable.model,
+        device: durable.device,
         segmentCount: segments.length,
         characterCount: segments.reduce((total, segment) => total + segment.text.length, 0),
       },
