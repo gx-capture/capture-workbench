@@ -244,9 +244,22 @@ describe('OcrPage queue', () => {
     // Drop zone
     const dropzone = page.querySelector('[data-testid="ocr-dropzone"]');
     expect(dropzone?.textContent).toContain('拖曳 PDF 或圖片到這裡');
-    expect(dropzone?.textContent).toContain('PDF 只辨識前');
-    const pageCountInput = page.querySelector('[data-testid="ocr-page-count"]') as HTMLInputElement;
-    expect(pageCountInput.placeholder).toBe('全部');
+    expect(dropzone?.textContent).toContain('頁碼');
+    const pagesInput = page.querySelector('[data-testid="ocr-pages"]') as HTMLInputElement;
+    expect(pagesInput.type).toBe('text');
+    expect(pagesInput.inputMode).toBe('text');
+    expect(pagesInput.placeholder).toBe('1-5, 8, 10-12');
+    expect(pagesInput.getAttribute('aria-invalid')).toBeNull();
+    expect(page.querySelector('[data-testid="ocr-pages-error"]')).toBeNull();
+
+    pagesInput.value = '5-1';
+    pagesInput.dispatchEvent(new Event('input'));
+    fixture.detectChanges();
+    expect(pagesInput.getAttribute('aria-invalid')).toBe('true');
+    expect(pagesInput.getAttribute('aria-describedby')).toBe('ocr-pages-error');
+    const pagesError = page.querySelector('[data-testid="ocr-pages-error"]');
+    expect(pagesError?.getAttribute('role')).toBe('alert');
+    expect(pagesError?.textContent?.trim()).toBeTruthy();
 
     // Queue section
     const queueTitle = page.querySelector('#queue-title');

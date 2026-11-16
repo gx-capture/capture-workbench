@@ -54,7 +54,7 @@ pub(super) fn validate_structuring_mode(value: &str) -> Result<(), String> {
 
 const MAX_PDF_PAGE_SELECTION: usize = 500;
 
-pub(super) fn validate_pdf_page_numbers(value: &[u32]) -> Result<(), String> {
+pub(crate) fn validate_pdf_page_numbers(value: &[u32]) -> Result<(), String> {
     if value.is_empty() || value.len() > MAX_PDF_PAGE_SELECTION {
         return Err("Capture PDF page selection is invalid.".into());
     }

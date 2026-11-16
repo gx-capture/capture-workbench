@@ -7,8 +7,7 @@ import {
   groupRawOcrPages,
   ocrChipClasses,
   ocrChipVariant,
-  parsePdfPageCount,
-  pdfPagePrefix,
+  parsePdfPageList,
 } from './ocr-queue';
 
 describe('OCR queue presentation', () => {
@@ -108,11 +107,49 @@ describe('OCR queue presentation', () => {
     expect(groupRawOcrPages(null)).toEqual([]);
   });
 
-  it('keeps a 1..K page prefix', () => {
-    expect(parsePdfPageCount('')).toBeNull();
-    expect(parsePdfPageCount('3')).toBe(3);
-    expect(parsePdfPageCount('0')).toBe('invalid');
-    expect(pdfPagePrefix(3)).toEqual([1, 2, 3]);
+  it('parses and formats PDF page selections', () => {
+    expect(parsePdfPageList('')).toBeNull();
+    expect(parsePdfPageList('   ')).toBeNull();
+    expect(parsePdfPageList('3')).toEqual([3]);
+    expect(parsePdfPageList('1-5, 8, 10-12')).toEqual([1, 2, 3, 4, 5, 8, 10, 11, 12]);
+    expect(parsePdfPageList('8, 1-5')).toEqual([1, 2, 3, 4, 5, 8]);
+    expect(parsePdfPageList(' １ – ３ ， ８ 、 １０ ～ １２ ， １３ — １４ ')).toEqual([
+      1, 2, 3, 8, 10, 11, 12, 13, 14,
+    ]);
+    expect(parsePdfPageList('2~4')).toEqual([2, 3, 4]);
+    expect(parsePdfPageList('10～12—14')).toBe('invalid');
+    expect(parsePdfPageList('4294967295')).toEqual([4_294_967_295]);
+    expect(parsePdfPageList('1-500')).toHaveLength(500);
+
+    for (const invalid of [
+      '0',
+      '0-3',
+      '5-1',
+      '1-5, 3',
+      '1-3, 3-5',
+      '2, 2',
+      '1-501',
+      '1-300, 301-501',
+      '1-1000000',
+      '4294967296',
+      'abc',
+      '1-',
+      '-5',
+      '1-2-3',
+      '1,',
+      ',1',
+      '1,,2',
+    ]) {
+      expect(parsePdfPageList(invalid)).toBe('invalid');
+    }
+
+  });
+
+  it('shows the selected page count on waiting PDF rows when pdfPageNumbers is stored', () => {
+    expect(view(doc({
+      status: 'queued',
+      captureOptions: { pdfPageNumbers: [3, 7, 8, 20] },
+    })).pageLabel).toBe('4');
   });
 
   it('maps OCR user statuses to chip variants and classes', () => {

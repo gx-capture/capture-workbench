@@ -168,7 +168,8 @@ export interface DesktopMessages {
   readonly ocrDropHint: string;
   readonly ocrDropSupported: string;
   readonly ocrDropNotInstalledHint: string;
-  readonly ocrAllPages: string;
+  readonly ocrPagesLabel: string;
+  readonly ocrPagesPlaceholder: string;
   readonly ocrQueueTitle: string;
   readonly ocrQueueCount: (count: number) => string;
   readonly ocrColFile: string;
@@ -183,15 +184,13 @@ export interface DesktopMessages {
   readonly ocrNeedsEngine: (size: string | null) => string;
   readonly ocrPageProgress: (done: number, total: number) => string;
   readonly ocrProgressNamed: (name: string) => string;
-  readonly ocrFirstPages: string;
-  readonly ocrPagesUnit: string;
   readonly ocrView: string;
   readonly ocrExportTxt: string;
   readonly ocrRestart: string;
   readonly ocrInterrupted: string;
   readonly ocrInterruptedHint: string;
   readonly ocrRetry: string;
-  readonly ocrPageCountInvalid: string;
+  readonly ocrPageSelectionInvalid: string;
   readonly ocrInstallNamed: (name: string) => string;
   readonly ocrCancelNamed: (name: string) => string;
   readonly ocrRetryNamed: (name: string) => string;
@@ -259,6 +258,7 @@ export interface DesktopMessages {
   readonly resultPdfPreviewFailed: string;
   readonly resultOcrEmpty: string;
   readonly resultPageLabel: (page: number, total: number) => string;
+  readonly resultSelectedPageLabel: (page: number, position: number, total: number) => string;
   readonly resultPreviousPage: string;
   readonly resultNextPage: string;
   readonly resultColTime: string;
@@ -494,7 +494,8 @@ const ZH_TW: DesktopMessages = {
   ocrDropHint: '拖曳 PDF 或圖片到這裡',
   ocrDropSupported: '支援 PDF、PNG、JPG，單檔最大 50 MiB',
   ocrDropNotInstalledHint: '還沒安裝文字辨識也可以先加入，安裝完成後自動開始。',
-  ocrAllPages: '全部',
+  ocrPagesLabel: '頁碼',
+  ocrPagesPlaceholder: '1-5, 8, 10-12',
   ocrQueueTitle: '佇列',
   ocrQueueCount: (count) => `${count} 個檔案`,
   ocrColFile: '檔名',
@@ -509,15 +510,13 @@ const ZH_TW: DesktopMessages = {
   ocrNeedsEngine: (size) => size ? `需要文字辨識（${size}）` : '需要文字辨識',
   ocrPageProgress: (done, total) => `第 ${done}/${total} 頁`,
   ocrProgressNamed: (name) => `${name} 的進度`,
-  ocrFirstPages: 'PDF 只辨識前',
-  ocrPagesUnit: '頁',
   ocrView: '檢視',
   ocrExportTxt: '匯出 .txt',
   ocrRestart: '重新開始',
   ocrInterrupted: '已中斷',
   ocrInterruptedHint: '上次關閉程式時尚未完成。',
   ocrRetry: '重試',
-  ocrPageCountInvalid: 'Capture PDF page selection is invalid.',
+  ocrPageSelectionInvalid: '頁碼格式不正確，請輸入例如 1-5, 8, 10-12（最多 500 頁）。',
   ocrInstallNamed: (name) => `安裝文字辨識以處理 ${name}`,
   ocrCancelNamed: (name) => `取消 ${name}`,
   ocrRetryNamed: (name) => `重試 ${name}`,
@@ -585,6 +584,7 @@ const ZH_TW: DesktopMessages = {
   resultPdfPreviewFailed: '無法顯示這份 PDF 的頁面影像，仍可查看辨識文字。',
   resultOcrEmpty: '沒有辨識到文字。',
   resultPageLabel: (page, total) => `${page} / ${total}`,
+  resultSelectedPageLabel: (page, position, total) => `第 ${page} 頁（${position} / ${total}）`,
   resultPreviousPage: '上一頁',
   resultNextPage: '下一頁',
   resultColTime: '時間',
@@ -824,7 +824,8 @@ const EN: DesktopMessages = {
   ocrDropHint: 'Drop a PDF or images here',
   ocrDropSupported: 'Supports PDF, PNG, JPG, up to 50 MiB per file',
   ocrDropNotInstalledHint: 'You can add files before text recognition is installed; they will start automatically once installation finishes.',
-  ocrAllPages: 'All',
+  ocrPagesLabel: 'Pages',
+  ocrPagesPlaceholder: '1-5, 8, 10-12',
   ocrQueueTitle: 'Queue',
   ocrQueueCount: (count) => `${count} file${count === 1 ? '' : 's'}`,
   ocrColFile: 'File',
@@ -839,15 +840,13 @@ const EN: DesktopMessages = {
   ocrNeedsEngine: (size) => size ? `Text recognition is required (${size})` : 'Text recognition is required',
   ocrPageProgress: (done, total) => `Page ${done}/${total}`,
   ocrProgressNamed: (name) => `Progress for ${name}`,
-  ocrFirstPages: 'Recognise only first',
-  ocrPagesUnit: 'pages',
   ocrView: 'View',
   ocrExportTxt: 'Export .txt',
   ocrRestart: 'Start again',
   ocrInterrupted: 'Interrupted',
   ocrInterruptedHint: 'Not finished before the app was last closed.',
   ocrRetry: 'Retry',
-  ocrPageCountInvalid: 'Capture PDF page selection is invalid.',
+  ocrPageSelectionInvalid: 'Invalid page selection. Enter pages such as 1-5, 8, 10-12 (up to 500 pages).',
   ocrInstallNamed: (name) => `Install text recognition for ${name}`,
   ocrCancelNamed: (name) => `Cancel ${name}`,
   ocrRetryNamed: (name) => `Retry ${name}`,
@@ -916,6 +915,7 @@ const EN: DesktopMessages = {
   resultPdfPreviewFailed: 'Unable to display this PDF page image. The recognized text is still available.',
   resultOcrEmpty: 'No recognized text.',
   resultPageLabel: (page, total) => `${page} / ${total}`,
+  resultSelectedPageLabel: (page, position, total) => `Page ${page} (${position} of ${total})`,
   resultPreviousPage: 'Previous page',
   resultNextPage: 'Next page',
   resultColTime: 'Time',
