@@ -129,67 +129,6 @@ export class OcrSemanticEvidenceValidationError extends Error {
 }
 
 /**
- * Projects only a durable `library_get` detail. The runtime capture is not
- * queried, and all source/result text is used only as transient validation
- * input for non-empty and approved-anchor checks.
- */
-export function buildOcrSemanticEvidence(
-  detail: unknown,
-  expected: OcrSemanticEvidenceExpectedIdentity,
-): OcrSemanticEvidenceV1 {
-  const identity = validateExpectedIdentity(expected);
-  const library = record(detail, 'library detail');
-  const evidence = validateDurableOcrEvidence(library.ocrEvidence, identity);
-  if (library.status !== evidence.status) invalid('library status does not match OCR evidence status');
-
-  const raw = readRawSummary(library.raw, identity.sourceSha256);
-  const result = readResultSummary(library.result);
-  const anchors = countAnchors(raw.sourceText, identity.anchors);
-  const pages = evidence.pages.map((page, index) => toSemanticPage(page, index + 1));
-
-  if (evidence.status === 'completed') {
-    if (!raw.present || !result.present || !raw.nonEmpty || !result.nonEmpty) {
-      invalid('completed library detail must retain non-empty raw and result');
-    }
-    if (anchors.matchedCount !== anchors.expectedCount) invalid('critical OCR anchor was not found');
-  }
-  if (identity.sourceKind === 'image') {
-    if (evidence.status !== 'completed' || evidence.pageCount !== 1 || pages[0]?.status !== 'recognized') {
-      invalid('real image OCR must be one recognized page');
-    }
-    const page = pages[0];
-    if (page.normalizedCharCount <= 0 || page.boxCount <= 0 || page.confidenceSummary.numericCount <= 0) {
-      invalid('real image OCR must have characters, boxes, and numeric confidence');
-    }
-  }
-
-  const outputWithoutFailure = {
-    schemaVersion: 1 as const,
-    artifactPath: OCR_SEMANTIC_EVIDENCE_ARTIFACT,
-    runId: identity.runId,
-    fixtureName: identity.fixtureName,
-    sourceKind: identity.sourceKind,
-    sourceSha256: identity.sourceSha256,
-    captureId: evidence.captureId,
-    status: evidence.status,
-    ocrDevice: identity.executionProof?.device ?? identity.ocrDevice,
-    pageCount: evidence.pageCount,
-    pages,
-    provenance: toSemanticProvenance(evidence.provenance),
-    rawNonEmpty: raw.nonEmpty,
-    rawSegmentCount: raw.segmentCount,
-    rawNonEmptySegmentCount: raw.nonEmptySegmentCount,
-    resultNonEmpty: result.nonEmpty,
-    resultBlockCount: result.blockCount,
-    resultNonEmptyBlockCount: result.nonEmptyBlockCount,
-    criticalAnchors: anchors,
-    evidenceDigest: evidence.digest,
-    ...(evidence.failure === undefined ? {} : { failure: toSemanticFailure(evidence.failure) }),
-  };
-  return outputWithoutFailure;
-}
-
-/**
  * Projects the durable OCR checkpoint before structuring has run. The
  * checkpoint deliberately has no structured result; the durable OCR evidence
  * and authenticated execution proof remain the only sources of semantic truth.
@@ -537,16 +476,6 @@ function toSemanticProvenance(value: Record<string, unknown>): OcrSemanticProven
   };
 }
 
-function toSemanticFailure(value: unknown): OcrSemanticFailureV1 {
-  const failure = record(value, 'failure');
-  return {
-    code: failure.code as string,
-    message: failure.message as string,
-    ...(failure.stage === undefined ? {} : { stage: failure.stage as string }),
-    ...(failure.retryable === undefined ? {} : { retryable: failure.retryable as boolean }),
-  };
-}
-
 function readRawSummary(value: unknown, expectedSourceSha256: string): {
   readonly present: boolean;
   readonly sourceText: string;
@@ -572,32 +501,6 @@ function readRawSummary(value: unknown, expectedSourceSha256: string): {
     nonEmpty: raw.sourceText.trim().length > 0,
     segmentCount: raw.segments.length,
     nonEmptySegmentCount,
-  };
-}
-
-function readResultSummary(value: unknown): {
-  readonly present: boolean;
-  readonly nonEmpty: boolean;
-  readonly blockCount: number;
-  readonly nonEmptyBlockCount: number;
-} {
-  if (value === undefined || value === null) return { present: false, nonEmpty: false, blockCount: 0, nonEmptyBlockCount: 0 };
-  const result = record(value, 'durable result');
-  if (typeof result.targetText !== 'string') invalid('durable result targetText');
-  if (!Array.isArray(result.blocks)) invalid('durable result blocks');
-  const nonEmptyBlockCount = result.blocks.filter((block) => {
-    const recordValue = record(block, 'durable result block');
-    return typeof recordValue.sourceText === 'string'
-      && recordValue.sourceText.trim().length > 0
-      && typeof recordValue.targetText === 'string'
-      && recordValue.targetText.trim().length > 0;
-  }).length;
-  if (nonEmptyBlockCount !== result.blocks.length) invalid('durable result contains an empty block');
-  return {
-    present: true,
-    nonEmpty: result.targetText.trim().length > 0,
-    blockCount: result.blocks.length,
-    nonEmptyBlockCount,
   };
 }
 

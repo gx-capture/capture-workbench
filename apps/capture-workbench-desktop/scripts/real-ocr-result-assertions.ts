@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile, stat } from 'node:fs/promises';
 import { basename, resolve } from 'node:path';
 
-export interface RealOcrExpectation {
+interface RealOcrExpectation {
   readonly schemaVersion: 1;
   readonly sourceFileName?: string;
   readonly rawTextIncludes: readonly string[];
@@ -30,25 +30,14 @@ export type RealOcrLocator =
   | { readonly kind: 'page'; readonly page: number }
   | { readonly kind: 'time'; readonly startMs: number; readonly endMs: number };
 
-export interface RealOcrUiBlock {
-  readonly blockId: string;
-  readonly order: number;
-  readonly sourceSegmentId: string;
-  readonly locator: RealOcrLocator;
-  readonly sourceText: string;
-  readonly targetText: string;
-}
-
 export interface RealOcrUiResult {
   readonly rawText: string;
   readonly rawSegments: readonly RealOcrUiSegment[];
-  readonly structuredText: string;
-  readonly structuredBlocks: readonly RealOcrUiBlock[];
 }
 
-export interface RealOcrVerification {
+interface RealOcrOnlyVerification {
   readonly rawSegmentCount: number;
-  readonly structuredBlockCount: number;
+  readonly structuredBlockCount: 0;
   readonly expectedAnchorCount: number;
   readonly matchedAnchorCount: number;
 }
@@ -158,19 +147,21 @@ function normalizeDurableOcrSegments(value: unknown): unknown {
   });
 }
 
-export function assertRealOcrResult(
+/**
+ * Verifies the raw OCR projection and ordered expectation anchors at the OCR checkpoint.
+ */
+export function assertRealOcrOnlyResult(
   view: RealOcrUiResult,
   expectation: RealOcrExpectation,
   inputFileName: string,
-): RealOcrVerification {
+): RealOcrOnlyVerification {
   assertNonEmptyString(view.rawText, 'visible OCR raw text');
   assert.ok(view.rawSegments.length > 0, 'visible OCR result must contain at least one segment.');
+  const segmentIds = new Set<string>();
   for (const [index, segment] of view.rawSegments.entries()) {
     assertNonEmptyString(segment.segmentId, `visible OCR segments[${index}] segmentId`);
-    assert.ok(
-      view.rawSegments.findIndex((candidate) => candidate.segmentId === segment.segmentId) === index,
-      `visible OCR segments[${index}] segmentId must be unique.`,
-    );
+    assert.equal(segmentIds.has(segment.segmentId), false, `visible OCR segments[${index}] segmentId must be unique.`);
+    segmentIds.add(segment.segmentId);
     assert.equal(segment.order, index, `visible OCR segments[${index}] order`);
     assertNonEmptyString(segment.text, `visible OCR segments[${index}] text`);
     assertRealOcrLocator(segment.locator, `visible OCR segments[${index}] locator`);
@@ -191,38 +182,12 @@ export function assertRealOcrResult(
     );
     anchorCursor = anchorPosition + anchor.length;
   }
-  const matchedAnchorCount = expectation.rawTextIncludes.length;
-
-  assertNonEmptyString(view.structuredText, 'visible structured result text');
-  assert.equal(
-    view.structuredBlocks.length,
-    view.rawSegments.length,
-    'structured result must contain one block per OCR segment.',
-  );
-  for (const [index, block] of view.structuredBlocks.entries()) {
-    const segment = view.rawSegments[index];
-    assertNonEmptyString(block.blockId, `visible structured blocks[${index}] blockId`);
-    assert.ok(
-      view.structuredBlocks.findIndex((candidate) => candidate.blockId === block.blockId) === index,
-      `visible structured blocks[${index}] blockId must be unique.`,
-    );
-    assert.equal(block.order, index, `visible structured blocks[${index}] order`);
-    assert.equal(block.sourceSegmentId, segment.segmentId, `visible structured blocks[${index}] sourceSegmentId`);
-    assert.deepEqual(block.locator, segment.locator, `visible structured blocks[${index}] locator`);
-    assert.equal(block.sourceText, segment.text, `visible structured blocks[${index}] sourceText`);
-    assertNonEmptyString(block.targetText, `visible structured blocks[${index}] targetText`);
-  }
-  assert.equal(
-    view.structuredText,
-    view.structuredBlocks.map((block) => block.targetText).join('\n'),
-    'visible structured result must be the exact block target projection.',
-  );
 
   return {
     rawSegmentCount: view.rawSegments.length,
-    structuredBlockCount: view.structuredBlocks.length,
+    structuredBlockCount: 0,
     expectedAnchorCount: expectation.rawTextIncludes.length,
-    matchedAnchorCount,
+    matchedAnchorCount: expectation.rawTextIncludes.length,
   };
 }
 

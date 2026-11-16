@@ -4,6 +4,7 @@ import { chromium, type Browser, type Page, type Request, type Response } from '
 import { isPackagedWorkbenchUrl } from './packaged-workbench-page.ts';
 import {
   assertRawCaptureForFixture,
+  assertVisibleOcrPageText,
   expectedVisibleResultForRaw,
   type InstalledCaptureFixtureExpectation,
 } from './installed-document-assertions.ts';
@@ -392,9 +393,7 @@ export async function assertInstalledCapture(
   assertRawCaptureForFixture(detail.raw, fixture);
   const expected = expectedVisibleResultForRaw(detail.raw, fixture);
   if (expected.kind === 'page') {
-    const visibleText = typeof visibleResult === 'string' ? visibleResult.trim() : '';
-    assert.ok(visibleText.length > 0, 'Installed result preview was empty.');
-    assert.equal(visibleText, expected.text);
+    assertVisibleOcrPageText(visibleResult, expected.text);
   } else {
     const visibleLines = Array.isArray(visibleResult)
       ? visibleResult.map((line) => String(line ?? '').trim())

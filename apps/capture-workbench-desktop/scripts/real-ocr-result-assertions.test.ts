@@ -8,7 +8,7 @@ import { test } from 'node:test';
 
 import {
   assertDurableOcrSegmentsEqual,
-  assertRealOcrResult,
+  assertRealOcrOnlyResult,
   loadRealOcrExpectation,
   normalizeOcrText,
   type RealOcrUiResult,
@@ -35,19 +35,9 @@ function view(): RealOcrUiResult {
       text: 'the hatband is near the igloo',
     },
   ];
-  const structuredBlocks = rawSegments.map((segment, index) => ({
-    blockId: `block-${index + 1}`,
-    order: index,
-    sourceSegmentId: segment.segmentId,
-    locator: segment.locator,
-    sourceText: segment.text,
-    targetText: segment.text,
-  }));
   return {
     rawText: rawSegments.map((segment) => segment.text).join('\n'),
     rawSegments,
-    structuredText: structuredBlocks.map((block) => block.targetText).join('\n'),
-    structuredBlocks,
   };
 }
 
@@ -244,12 +234,12 @@ test('requires exact time locator values', () => {
   }
 });
 
-test('accepts visible OCR and structured projections with semantic anchors', () => {
+test('accepts visible OCR projections with semantic anchors', () => {
   assert.deepEqual(
-    assertRealOcrResult(view(), expectation, 'ocr_test_image.jpeg'),
+    assertRealOcrOnlyResult(view(), expectation, 'ocr_test_image.jpeg'),
     {
       rawSegmentCount: 2,
-      structuredBlockCount: 2,
+      structuredBlockCount: 0,
       expectedAnchorCount: 4,
       matchedAnchorCount: 4,
     },
@@ -262,33 +252,20 @@ test('fails when the real OCR text misses an expected anchor', () => {
     index === 1 ? { ...segment, text: 'the hatband is near the house' } : segment,
   );
   const candidate = {
-    ...original,
     rawSegments,
     rawText: rawSegments.map((segment) => segment.text).join('\n'),
   } satisfies RealOcrUiResult;
   assert.throws(
-    () => assertRealOcrResult(candidate, expectation, 'ocr_test_image.jpeg'),
+    () => assertRealOcrOnlyResult(candidate, expectation, 'ocr_test_image.jpeg'),
     /did not contain the expected text anchor: igloo/u,
   );
 });
 
-test('fails when structured result detaches from raw OCR segments', () => {
-  const original = view();
-  const structuredBlocks = original.structuredBlocks.map((block, index) =>
-    index === 1 ? { ...block, sourceText: 'wrong text' } : block,
-  );
-  const candidate = { ...original, structuredBlocks } satisfies RealOcrUiResult;
-  assert.throws(
-    () => assertRealOcrResult(candidate, expectation, 'ocr_test_image.jpeg'),
-    /sourceText/u,
-  );
-});
-
 test('fails when a visible result is empty', () => {
-  const candidate = { ...view(), structuredText: '' } satisfies RealOcrUiResult;
+  const candidate = { ...view(), rawText: '' } satisfies RealOcrUiResult;
   assert.throws(
-    () => assertRealOcrResult(candidate, expectation, 'ocr_test_image.jpeg'),
-    /visible structured result text/u,
+    () => assertRealOcrOnlyResult(candidate, expectation, 'ocr_test_image.jpeg'),
+    /visible OCR raw text/u,
   );
 });
 
@@ -298,7 +275,7 @@ test('fails when OCR identities or locators are not one-to-one and valid', () =>
     ...original,
     rawSegments: original.rawSegments.map((segment) => ({ ...segment, segmentId: 'duplicate' })),
   } satisfies RealOcrUiResult;
-  assert.throws(() => assertRealOcrResult(duplicate, expectation, 'ocr_test_image.jpeg'), /must be unique/u);
+  assert.throws(() => assertRealOcrOnlyResult(duplicate, expectation, 'ocr_test_image.jpeg'), /must be unique/u);
 
   const invalidLocator = {
     ...original,
@@ -306,7 +283,7 @@ test('fails when OCR identities or locators are not one-to-one and valid', () =>
       ? { ...segment, locator: { kind: 'page', page: Number.NaN } }
       : segment),
   } satisfies RealOcrUiResult;
-  assert.throws(() => assertRealOcrResult(invalidLocator, expectation, 'ocr_test_image.jpeg'), /positive integer/u);
+  assert.throws(() => assertRealOcrOnlyResult(invalidLocator, expectation, 'ocr_test_image.jpeg'), /positive integer/u);
 });
 
 test('fails closed on a malformed OCR expectation manifest', async () => {
