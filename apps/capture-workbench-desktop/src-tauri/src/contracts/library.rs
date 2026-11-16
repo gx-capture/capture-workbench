@@ -469,7 +469,7 @@ impl OcrEvidenceV1 {
 }
 
 fn validate_page(page: &OcrEvidencePageV1, previous_page: u64) -> Result<(), String> {
-    if page.page <= previous_page {
+    if page.page <= previous_page || page.page > u64::from(u32::MAX) {
         return Err("OCR evidence pages must be in ascending order.".into());
     }
     if page.raster.width == 0

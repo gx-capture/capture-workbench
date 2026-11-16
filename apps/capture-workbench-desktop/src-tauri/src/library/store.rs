@@ -34,6 +34,34 @@ use super::{
     RESULT_FILE_NAME, SOURCE_FILE_NAME,
 };
 
+fn validate_evidence_requested_pages(
+    evidence: &crate::contracts::OcrEvidenceV1,
+    requested_pages: Option<&[u32]>,
+) -> Result<(), String> {
+    if evidence.status != "completed" {
+        return Ok(());
+    }
+    let matches = match requested_pages {
+        Some(expected) => {
+            evidence.pages.len() == expected.len()
+                && evidence
+                    .pages
+                    .iter()
+                    .zip(expected.iter())
+                    .all(|(page, expected_page)| page.page == u64::from(*expected_page))
+        }
+        None => evidence
+            .pages
+            .iter()
+            .enumerate()
+            .all(|(index, page)| page.page == (index + 1) as u64),
+    };
+    if !matches {
+        return Err("OCR evidence pages do not match the requested pages.".into());
+    }
+    Ok(())
+}
+
 /// Test fixture input for `LibraryStore::create_source`.
 #[cfg(test)]
 pub(crate) struct LibrarySourceInput {
@@ -466,6 +494,14 @@ impl LibraryStore {
             if evidence.status != update.status {
                 return Err("OCR evidence status must match the terminal library update.".into());
             }
+            let effective_options = update
+                .capture_options
+                .as_ref()
+                .or(document.capture_options.as_ref());
+            let requested_pages: Option<Vec<u32>> = effective_options
+                .and_then(|options| options.pdf_page_count)
+                .map(|count| (1..=count).collect());
+            validate_evidence_requested_pages(evidence, requested_pages.as_deref())?;
             if let Some(existing) = &document.ocr_evidence {
                 if existing != evidence {
                     return Err(

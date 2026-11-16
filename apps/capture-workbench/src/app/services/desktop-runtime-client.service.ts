@@ -319,6 +319,7 @@ function isOcrComputePreflight(
 }
 
 const MAX_PDF_PAGE_SELECTION = 500;
+const MAX_PDF_PAGE_NUMBER = 4_294_967_295;
 
 function isPdfPageNumbers(value: unknown): value is readonly number[] {
   if (!Array.isArray(value) || value.length < 1 || value.length > MAX_PDF_PAGE_SELECTION) {
@@ -326,7 +327,11 @@ function isPdfPageNumbers(value: unknown): value is readonly number[] {
   }
   let previous = 0;
   for (const page of value) {
-    if (!Number.isSafeInteger(page) || page <= previous) {
+    if (
+      !Number.isSafeInteger(page)
+      || page <= previous
+      || page > MAX_PDF_PAGE_NUMBER
+    ) {
       return false;
     }
     previous = page;

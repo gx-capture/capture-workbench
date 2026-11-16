@@ -9,6 +9,7 @@ import { defer, from, map, throwError, type Observable } from 'rxjs';
 const SHA256 = /^[a-f0-9]{64}$/u;
 const MODEL_DIGEST = /^sha256:[a-f0-9]{64}$/u;
 const MAX_PAGES = 500;
+const MAX_PAGE_NUMBER = 4_294_967_295;
 const MAX_BOXES = 100_000;
 const MAX_TEXT_LENGTH = 8_000_000;
 
@@ -25,6 +26,7 @@ export interface OcrEvidenceExpectedIdentity {
 export interface OcrEvidenceInput {
   readonly projection: CaptureOcrProjection;
   readonly expected: OcrEvidenceExpectedIdentity;
+  readonly requestedPages?: readonly number[] | null;
 }
 
 export interface OcrEvidenceFailureV1 {
@@ -102,7 +104,8 @@ export class OcrEvidenceValidationError extends Error {
 export function buildOcrEvidence(input: OcrEvidenceInput): Observable<OcrEvidenceV1> {
   return defer(() => {
     const expected = validateExpectedIdentity(input?.expected);
-    const projection = validateProjection(input?.projection, expected);
+    const requestedPages = validateRequestedPages(input?.requestedPages);
+    const projection = validateProjection(input?.projection, expected, requestedPages);
     const provenance = toEvidenceProvenance(projection, expected.workerSha256);
     const internalPages = projection.pages.map((page) => toInternalEvidencePage(page));
     const pages = internalPages.map(({ evidence }) => evidence);
@@ -144,9 +147,25 @@ function validateExpectedIdentity(value: unknown): OcrEvidenceExpectedIdentity {
   return expected as unknown as OcrEvidenceExpectedIdentity;
 }
 
+function validateRequestedPages(value: unknown): readonly number[] | null {
+  if (value === undefined || value === null) return null;
+  if (!Array.isArray(value) || value.length < 1 || value.length > MAX_PAGES) {
+    invalid('requestedPages');
+  }
+  let previous = 0;
+  for (const page of value) {
+    if (!Number.isSafeInteger(page) || page <= previous || page > MAX_PAGE_NUMBER) {
+      invalid('requestedPages');
+    }
+    previous = page;
+  }
+  return value as readonly number[];
+}
+
 function validateProjection(
   value: unknown,
   expected: OcrEvidenceExpectedIdentity,
+  requestedPages: readonly number[] | null,
 ): CaptureOcrProjection {
   const projection = record(value, 'projection');
   requireExactKeys(
@@ -198,6 +217,11 @@ function validateProjection(
     if (pages.some((value) => record(value, 'page')['status'] === 'failed')) invalid('completed projection contains failed page');
     if (!pages.some((value) => record(value, 'page')['status'] === 'recognized')) invalid('completed projection requires recognized page');
     if (documentProvenance.status !== 'resolved') invalid('completed projection provenance');
+    const matchesRequested = requestedPages === null
+      ? pages.every((value, index) => (value as Record<string, unknown>)['page'] === index + 1)
+      : pages.length === requestedPages.length
+        && pages.every((value, index) => (value as Record<string, unknown>)['page'] === requestedPages[index]);
+    if (!matchesRequested) invalid('projection pages do not match requested pages');
   } else {
     if (projection['failure'] === undefined || projection['failure'] === null) invalid('failed projection failure');
     validateFailure(projection['failure'], 'projection failure');
@@ -215,7 +239,11 @@ function validatePage(
   const page = record(value, indexLabel);
   requireExactKeys(page, ['page', 'status', 'raster', 'provenance'], indexLabel, ['text', 'boxes', 'confidence', 'failure']);
   const pageNumber = page['page'];
-  if (!Number.isSafeInteger(pageNumber) || (pageNumber as number) <= previousPage) {
+  if (
+    !Number.isSafeInteger(pageNumber)
+    || (pageNumber as number) <= previousPage
+    || (pageNumber as number) > MAX_PAGE_NUMBER
+  ) {
     invalid(`${indexLabel} ordering`);
   }
   const validatedPage = pageNumber as number;
