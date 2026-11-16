@@ -4,8 +4,7 @@ import type { Page } from '@playwright/test';
 import { firstValueFrom } from 'rxjs';
 import {
   isPackagedWorkbenchUrl,
-  SHOW_HISTORY_WORKSPACE_EXPRESSION,
-  showHistoryWorkspace,
+  navigatePackagedRoute,
 } from './packaged-workbench-page.ts';
 
 test('packaged page lookup accepts every route of the packaged app and nothing else', () => {
@@ -17,63 +16,66 @@ test('packaged page lookup accepts every route of the packaged app and nothing e
   assert.equal(isPackagedWorkbenchUrl('not a url'), false);
 });
 
-test('history workspace navigates via pushState + popstate and waits for the workspace', async () => {
-  const steps: string[] = [];
-  await firstValueFrom(
-    showHistoryWorkspace(fakePage('http://tauri.localhost/ocr', steps)),
-  );
-
-  assert.deepEqual(steps, [
-    'evaluate /workspace',
-    'wait workbench-root attached',
-  ]);
-});
-
-test('history workspace is left alone when it is already shown', async () => {
-  const steps: string[] = [];
-  await firstValueFrom(
-    showHistoryWorkspace(fakePage('http://tauri.localhost/workspace', steps)),
-  );
-
-  assert.deepEqual(steps, []);
-});
-
-test('CDP probe expression pushes /workspace and dispatches popstate only away from the legacy workspace', () => {
+test('route navigation pushes the path and dispatches popstate in the page', async () => {
   const pushed: string[] = [];
   const events: string[] = [];
-  const run = (pathname: string) =>
-    new Function(
-      'location',
-      'history',
-      'dispatchEvent',
-      SHOW_HISTORY_WORKSPACE_EXPRESSION,
-    )(
-      { pathname },
-      { pushState: (_s: unknown, _t: string, url: string) => pushed.push(url) },
-      (event: Event) => events.push(event.type),
-    );
+  await firstValueFrom(
+    navigatePackagedRoute(fakePage('http://tauri.localhost/ocr', pushed, events), '/asr'),
+  );
 
-  run('/workspace');
-  assert.deepEqual(pushed, []);
-  assert.deepEqual(events, []);
-  run('/ocr');
-  assert.deepEqual(pushed, ['/workspace']);
+  assert.deepEqual(pushed, ['/asr']);
   assert.deepEqual(events, ['popstate']);
-  run('/history');
-  assert.deepEqual(pushed, ['/workspace', '/workspace']);
-  assert.deepEqual(events, ['popstate', 'popstate']);
 });
 
-function fakePage(url: string, steps: string[]): Page {
+test('route navigation leaves a page that is already on the route alone', async () => {
+  const pushed: string[] = [];
+  const events: string[] = [];
+  await firstValueFrom(
+    navigatePackagedRoute(fakePage('http://tauri.localhost/asr', pushed, events), '/asr'),
+  );
+
+  assert.deepEqual(pushed, []);
+  assert.deepEqual(events, []);
+});
+
+test('route navigation rejects a path that is not absolute', () => {
+  assert.throws(
+    () => navigatePackagedRoute(fakePage('http://tauri.localhost/ocr', [], []), 'asr'),
+    /must start with '\/'/u,
+  );
+});
+
+// Runs the function the helper hands to `page.evaluate` against stand-ins for
+// the page's globals, so the test covers what really executes in the WebView.
+function fakePage(url: string, pushed: string[], events: string[]): Page {
   return {
     url: () => url,
-    evaluate: async (_fn: unknown, path: string) => {
-      steps.push(`evaluate ${path}`);
+    evaluate: async (pageFunction: (routePath: string) => void, routePath: string) => {
+      const scope = globalThis as unknown as Record<string, unknown>;
+      const previous = {
+        location: Object.getOwnPropertyDescriptor(scope, 'location'),
+        history: Object.getOwnPropertyDescriptor(scope, 'history'),
+        dispatchEvent: Object.getOwnPropertyDescriptor(scope, 'dispatchEvent'),
+      };
+      const define = (name: string, value: unknown): void => {
+        Object.defineProperty(scope, name, { value, configurable: true, writable: true });
+      };
+      define('location', { pathname: new URL(url).pathname });
+      define('history', {
+        pushState: (_state: unknown, _title: string, path: string) => pushed.push(path),
+      });
+      define('dispatchEvent', (event: Event) => {
+        events.push(event.type);
+        return true;
+      });
+      try {
+        pageFunction(routePath);
+      } finally {
+        for (const [name, descriptor] of Object.entries(previous)) {
+          if (descriptor) Object.defineProperty(scope, name, descriptor);
+          else delete scope[name];
+        }
+      }
     },
-    getByTestId: (testId: string) => ({
-      waitFor: async (options: { state: string }) => {
-        steps.push(`wait ${testId} ${options.state}`);
-      },
-    }),
   } as unknown as Page;
 }
