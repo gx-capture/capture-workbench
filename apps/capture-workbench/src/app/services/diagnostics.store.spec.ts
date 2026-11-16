@@ -127,6 +127,48 @@ describe('DiagnosticsStore', () => {
     expect(store.exportError()).toBe('匯出 JSON 失敗，請重試。');
     expect(store.exportError()).not.toContain('secret');
   });
+
+  it('copies a digest to the clipboard and reports status', async () => {
+    vi.useFakeTimers();
+    const writeText = vi.fn(() => Promise.resolve());
+    const originalClipboard = navigator.clipboard;
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+    try {
+      const { store } = setupStore(null);
+      store.copyDigest('abc123');
+      await vi.advanceTimersByTimeAsync(0);
+      expect(writeText).toHaveBeenCalledWith('abc123');
+      expect(store.copyStatus()).toBe('已複製');
+    } finally {
+      Object.defineProperty(navigator, 'clipboard', {
+        configurable: true,
+        value: originalClipboard,
+      });
+    }
+  });
+
+  it('reports a localized error when copying a digest fails', async () => {
+    vi.useFakeTimers();
+    const originalClipboard = navigator.clipboard;
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: vi.fn(() => Promise.reject(new Error('denied'))) },
+    });
+    try {
+      const { store } = setupStore(null);
+      store.copyDigest('abc123');
+      await vi.advanceTimersByTimeAsync(0);
+      expect(store.copyStatus()).toBe('複製失敗，請重試。');
+    } finally {
+      Object.defineProperty(navigator, 'clipboard', {
+        configurable: true,
+        value: originalClipboard,
+      });
+    }
+  });
 });
 
 function setupStore(

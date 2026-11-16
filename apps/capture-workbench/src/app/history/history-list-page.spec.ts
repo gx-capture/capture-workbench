@@ -81,7 +81,7 @@ describe('HistoryListPage', () => {
   });
   it('renders the named confirmation and binds both buttons', async () => {
     const { fixture, store } = setup();
-    store.pendingDelete.set({ documentId: 'a', fileName: 'fixture.pdf', kind: 'ocr', userStatus: 'done', statusText: '完成', extent: '1', updatedAtMs: 1, canDelete: true });
+    store.pendingDelete.set({ documentId: 'a', fileName: 'fixture.pdf', kind: 'ocr', userStatus: 'done', statusText: '完成', extent: '1', updatedAtMs: 1, updatedAt: '2026/11/16 14:05', canDelete: true });
     fixture.detectChanges();
     await fixture.whenStable();
     const dialog = document.querySelector<HTMLElement>('[data-testid="history-delete-dialog"]');

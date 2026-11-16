@@ -1,7 +1,7 @@
-import { computed, effect, inject, Injectable, signal } from '@angular/core';
-import { rxResource, toSignal } from '@angular/core/rxjs-interop';
+import { computed, DestroyRef, effect, inject, Injectable, signal } from '@angular/core';
+import { rxResource, takeUntilDestroyed, toSignal } from '@angular/core/rxjs-interop';
 import { ActivatedRoute } from '@angular/router';
-import { finalize } from 'rxjs';
+import { defer, finalize, from, throwError } from 'rxjs';
 import type { DesktopLibraryDetail } from '../contracts';
 import { desktopMessages } from '../i18n/desktop-messages';
 import { DesktopLibraryService } from './desktop-library.service';
@@ -22,6 +22,7 @@ export class DiagnosticsStore {
   private readonly formatting = inject(DesktopWorkspaceFormattingService);
   private readonly runtime = inject(DesktopRuntimeClientService);
   private readonly workspace = inject(DesktopWorkspaceStore);
+  private readonly destroyRef = inject(DestroyRef);
 
   private readonly queryParamMap = toSignal(this.route.queryParamMap);
 
@@ -81,14 +82,35 @@ export class DiagnosticsStore {
 
   readonly exporting = signal(false);
   readonly exportError = signal<string | null>(null);
+  readonly copyStatus = signal<string | null>(null);
 
   private readonly clearExportErrorOnDocumentChange = effect(() => {
     this.documentId();
     this.exportError.set(null);
+    this.copyStatus.set(null);
   });
 
   reconnect(): void {
     this.workspace.initialize();
+  }
+
+  copyDigest(digest: string): void {
+    defer(() => {
+      const clipboard = globalThis.navigator?.clipboard;
+      if (!clipboard?.writeText) {
+        return throwError(() => new Error('Clipboard unavailable'));
+      }
+      return from(clipboard.writeText(digest));
+    })
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: () => {
+          this.copyStatus.set(desktopMessages().exportCopied);
+        },
+        error: () => {
+          this.copyStatus.set(desktopMessages().exportCopyFailed);
+        },
+      });
   }
 
   exportJson(): void {

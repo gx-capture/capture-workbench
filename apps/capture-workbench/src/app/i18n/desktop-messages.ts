@@ -17,6 +17,8 @@ export interface DesktopMessages {
   readonly historyRecording: string;
   readonly historyExtent: string;
   readonly historyUpdated: string;
+  readonly historySubtitle: string;
+  readonly historyCount: (count: number) => string;
   readonly historyNoMatches: string;
   readonly historyDeleteFailed: string;
   readonly historyDeleteNamed: (name: string) => string;
@@ -245,6 +247,13 @@ export interface DesktopMessages {
   readonly exportMarkdown: string;
   readonly exportSrt: string;
   readonly exportVtt: string;
+  readonly exportDownload: string;
+  readonly exportCopyNote: string;
+  readonly exportPlainTextDesc: string;
+  readonly exportRecordingPlainTextDesc: string;
+  readonly exportMarkdownDesc: string;
+  readonly exportSrtDesc: string;
+  readonly exportVttDesc: string;
   readonly exportCopy: string;
   readonly exportCopied: string;
   readonly exportDownloaded: string;
@@ -272,11 +281,13 @@ export interface DesktopMessages {
   readonly resultDetailCreatedAt: string;
   readonly resultDetailUpdatedAt: string;
   readonly settingsNavigation: string;
+  readonly settingsSubtitle: string;
   readonly settingsComputeTitle: string;
   readonly settingsGeneralTitle: string;
   readonly computeOcrTitle: string;
   readonly computeAsrTitle: string;
   readonly computeOcrPending: string;
+  readonly computeOcrCpu: string;
   readonly computeAsrPending: string;
   readonly computeAsrCudaDetected: string;
   readonly computeAsrCpuOnly: string;
@@ -299,6 +310,8 @@ export interface DesktopMessages {
   readonly diagnosticsProvenanceModel: string;
   readonly diagnosticsProvenanceDevice: string;
   readonly diagnosticsProvenanceDigest: string;
+  readonly diagnosticsCopy: string;
+  readonly diagnosticsCopyDigestNamed: (name: string) => string;
   readonly diagnosticsEvidenceTitle: string;
   readonly diagnosticsExportFailed: string;
   readonly diagnosticsBackToResult: string;
@@ -321,6 +334,8 @@ const ZH_TW: DesktopMessages = {
   historyRecording: '錄音',
   historyExtent: '長度/頁數',
   historyUpdated: '更新時間',
+  historySubtitle: '所有已加入的文件與錄音，依更新時間排列。',
+  historyCount: (count) => `共 ${count} 筆`,
   historyNoMatches: '沒有符合篩選條件的紀錄。',
   historyDeleteFailed: '無法刪除文件，請稍後再試。',
   historyDeleteNamed: (name) => `刪除 ${name}`,
@@ -589,6 +604,13 @@ const ZH_TW: DesktopMessages = {
   exportMarkdown: 'Markdown (.md)',
   exportSrt: '字幕 SRT (.srt)',
   exportVtt: '字幕 WebVTT (.vtt)',
+  exportDownload: '下載',
+  exportCopyNote: '複製純文字內容到剪貼簿',
+  exportPlainTextDesc: '純文字，可貼到任何地方',
+  exportRecordingPlainTextDesc: '每行含時間與說話者',
+  exportMarkdownDesc: '含標題，適合筆記軟體',
+  exportSrtDesc: '影片字幕，多數播放器可用',
+  exportVttDesc: '網頁影片字幕',
   exportCopy: '複製全部',
   exportCopied: '已複製',
   exportDownloaded: '已匯出',
@@ -619,11 +641,13 @@ const ZH_TW: DesktopMessages = {
   resultDetailCreatedAt: '建立時間',
   resultDetailUpdatedAt: '更新時間',
   settingsNavigation: '設定導覽',
+  settingsSubtitle: '管理辨識引擎、運算裝置與應用程式偏好設定。',
   settingsComputeTitle: '運算裝置',
   settingsGeneralTitle: '一般',
   computeOcrTitle: '文字辨識',
   computeAsrTitle: '語音轉文字',
   computeOcrPending: '尚未偵測到文字辨識運算裝置。',
+  computeOcrCpu: 'CPU',
   computeAsrPending: '正在偵測語音運算裝置…',
   computeAsrCudaDetected: '偵測到 CUDA GPU',
   computeAsrCpuOnly: 'CPU（未偵測到可用的 CUDA 驅動程式）',
@@ -646,6 +670,8 @@ const ZH_TW: DesktopMessages = {
   diagnosticsProvenanceModel: '模型',
   diagnosticsProvenanceDevice: '裝置',
   diagnosticsProvenanceDigest: '雜湊',
+  diagnosticsCopy: '複製',
+  diagnosticsCopyDigestNamed: (name) => `複製${name}`,
   diagnosticsEvidenceTitle: 'OCR 證據摘要',
   diagnosticsExportFailed: '匯出 JSON 失敗，請重試。',
   diagnosticsBackToResult: '返回詳細資訊',
@@ -668,6 +694,8 @@ const EN: DesktopMessages = {
   historyRecording: 'Recording',
   historyExtent: 'Length / pages',
   historyUpdated: 'Updated',
+  historySubtitle: 'All imported documents and recordings, sorted by most recently updated.',
+  historyCount: (count) => `${count} ${count === 1 ? 'item' : 'items'}`,
   historyNoMatches: 'No records match the filters.',
   historyDeleteFailed: 'Could not delete the document. Please try again later.',
   historyDeleteNamed: (name) => `Delete ${name}`,
@@ -678,7 +706,7 @@ const EN: DesktopMessages = {
   queue: 'Queue',
   history: 'History',
   searchDocuments: 'Search documents',
-  searchPlaceholder: 'File name',
+  searchPlaceholder: 'Search file names',
   statusFilter: 'Status',
   all: 'All',
   ready: 'Ready',
@@ -941,6 +969,13 @@ const EN: DesktopMessages = {
   exportMarkdown: 'Markdown (.md)',
   exportSrt: 'Subtitles SRT (.srt)',
   exportVtt: 'Subtitles WebVTT (.vtt)',
+  exportDownload: 'Download',
+  exportCopyNote: 'Copies plain-text content to clipboard',
+  exportPlainTextDesc: 'Plain text you can paste anywhere',
+  exportRecordingPlainTextDesc: 'Each line includes timestamp and speaker',
+  exportMarkdownDesc: 'With headings, suited for note-taking apps',
+  exportSrtDesc: 'Video subtitles supported by most players',
+  exportVttDesc: 'Subtitles for web video players',
   exportCopy: 'Copy all',
   exportCopied: 'Copied',
   exportDownloaded: 'Exported',
@@ -971,11 +1006,13 @@ const EN: DesktopMessages = {
   resultDetailCreatedAt: 'Created',
   resultDetailUpdatedAt: 'Updated',
   settingsNavigation: 'Settings navigation',
+  settingsSubtitle: 'Manage recognition engines, compute devices, and application preferences.',
   settingsComputeTitle: 'Compute',
   settingsGeneralTitle: 'General',
   computeOcrTitle: 'Text recognition',
   computeAsrTitle: 'Speech to text',
   computeOcrPending: 'Text recognition compute device has not been detected yet.',
+  computeOcrCpu: 'CPU',
   computeAsrPending: 'Detecting speech compute device…',
   computeAsrCudaDetected: 'CUDA GPU detected',
   computeAsrCpuOnly: 'CPU (no CUDA driver detected)',
@@ -998,6 +1035,8 @@ const EN: DesktopMessages = {
   diagnosticsProvenanceModel: 'Model',
   diagnosticsProvenanceDevice: 'Device',
   diagnosticsProvenanceDigest: 'Digest',
+  diagnosticsCopy: 'Copy',
+  diagnosticsCopyDigestNamed: (name) => `Copy ${name}`,
   diagnosticsEvidenceTitle: 'OCR evidence summary',
   diagnosticsExportFailed: 'Failed to export JSON. Please try again.',
   diagnosticsBackToResult: 'Back to details',

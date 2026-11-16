@@ -5,6 +5,7 @@ import { HlmButtonImports } from '@spartan-ng/helm/button';
 import { HlmTableImports } from '@spartan-ng/helm/table';
 import { desktopMessages } from '../i18n/desktop-messages';
 import { HistoryListStore } from '../services/history-list.store';
+import { ocrChipClasses, ocrChipVariant, type OcrUserStatus } from '../services/ocr-queue';
 
 @Component({
   selector: 'app-history-list-page',
@@ -18,5 +19,9 @@ export class HistoryListPage {
 
   constructor() {
     inject(DestroyRef).onDestroy(() => this.store.clearTransientState());
+  }
+
+  protected chipClass(status: OcrUserStatus): string {
+    return ocrChipClasses(ocrChipVariant(status));
   }
 }

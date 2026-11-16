@@ -1,8 +1,18 @@
 <section
-  class="flex max-w-4xl flex-col gap-6"
+  class="flex flex-col gap-6"
   data-testid="page-settings-diagnostics"
 >
-  <h2 class="text-lg font-semibold">{{ m().settingsDiagnosticsTitle }}</h2>
+  <div class="flex flex-wrap items-center justify-between gap-2">
+    <h2 class="text-lg font-semibold">{{ m().settingsDiagnosticsTitle }}</h2>
+    <p
+      role="status"
+      aria-live="polite"
+      class="text-xs text-muted-foreground"
+      data-testid="diagnostics-copy-status"
+    >
+      {{ store.copyStatus() }}
+    </p>
+  </div>
 
   @let runtime = store.runtimeView();
   @if (store.documentId(); as docId) {
@@ -68,7 +78,22 @@
                 <dd>{{ device }}</dd>
               }
               <dt class="font-medium text-muted-foreground">{{ m().diagnosticsProvenanceDigest }}</dt>
-              <dd class="select-all break-all font-mono text-xs">{{ ext.digest }}</dd>
+              <dd class="min-w-0">
+                <div class="flex items-start justify-between gap-3">
+                  <span class="select-all break-all font-mono text-xs">{{ ext.digest }}</span>
+                  <button
+                    hlmBtn
+                    variant="outline"
+                    size="sm"
+                    type="button"
+                    data-testid="diagnostics-copy-extraction-digest"
+                    [attr.aria-label]="m().diagnosticsCopyDigestNamed(m().diagnosticsExtractionProvenance + ' ' + m().diagnosticsProvenanceDigest)"
+                    (click)="store.copyDigest(ext.digest)"
+                  >
+                    {{ m().diagnosticsCopy }}
+                  </button>
+                </div>
+              </dd>
             </dl>
           </div>
         }
@@ -90,7 +115,22 @@
               <dt class="font-medium text-muted-foreground">{{ m().diagnosticsProvenanceModel }}</dt>
               <dd>{{ str.model }}</dd>
               <dt class="font-medium text-muted-foreground">{{ m().diagnosticsProvenanceDigest }}</dt>
-              <dd class="select-all break-all font-mono text-xs">{{ str.digest }}</dd>
+              <dd class="min-w-0">
+                <div class="flex items-start justify-between gap-3">
+                  <span class="select-all break-all font-mono text-xs">{{ str.digest }}</span>
+                  <button
+                    hlmBtn
+                    variant="outline"
+                    size="sm"
+                    type="button"
+                    data-testid="diagnostics-copy-structuring-digest"
+                    [attr.aria-label]="m().diagnosticsCopyDigestNamed(m().diagnosticsStructuringProvenance + ' ' + m().diagnosticsProvenanceDigest)"
+                    (click)="store.copyDigest(str.digest)"
+                  >
+                    {{ m().diagnosticsCopy }}
+                  </button>
+                </div>
+              </dd>
             </dl>
           </div>
         }
@@ -109,11 +149,26 @@
               <dt class="font-medium text-muted-foreground">{{ m().ocrColPages }}</dt>
               <dd data-testid="diagnostics-evidence-pages">{{ evidence.pageCount }}</dd>
               <dt class="font-medium text-muted-foreground">{{ m().diagnosticsProvenanceDigest }}</dt>
-              <dd
-                class="select-all break-all font-mono text-xs"
-                data-testid="diagnostics-evidence-digest"
-              >
-                {{ evidence.digest }}
+              <dd class="min-w-0">
+                <div class="flex items-start justify-between gap-3">
+                  <span
+                    class="select-all break-all font-mono text-xs"
+                    data-testid="diagnostics-evidence-digest"
+                  >
+                    {{ evidence.digest }}
+                  </span>
+                  <button
+                    hlmBtn
+                    variant="outline"
+                    size="sm"
+                    type="button"
+                    data-testid="diagnostics-copy-evidence-digest"
+                    [attr.aria-label]="m().diagnosticsCopyDigestNamed(m().diagnosticsEvidenceTitle + ' ' + m().diagnosticsProvenanceDigest)"
+                    (click)="store.copyDigest(evidence.digest)"
+                  >
+                    {{ m().diagnosticsCopy }}
+                  </button>
+                </div>
               </dd>
             </dl>
           </div>
@@ -169,11 +224,26 @@
       }
       @if (runtime.contractSha256; as contractSha256) {
         <dt class="font-medium text-muted-foreground">{{ m().diagnosticsContractDigest }}</dt>
-        <dd
-          class="select-all break-all font-mono text-xs"
-          data-testid="diagnostics-contract-digest"
-        >
-          {{ contractSha256 }}
+        <dd class="min-w-0">
+          <div class="flex items-start justify-between gap-3">
+            <span
+              class="select-all break-all font-mono text-xs"
+              data-testid="diagnostics-contract-digest"
+            >
+              {{ contractSha256 }}
+            </span>
+            <button
+              hlmBtn
+              variant="outline"
+              size="sm"
+              type="button"
+              data-testid="diagnostics-copy-contract-digest"
+              [attr.aria-label]="m().diagnosticsCopyDigestNamed(m().diagnosticsContractDigest)"
+              (click)="store.copyDigest(contractSha256)"
+            >
+              {{ m().diagnosticsCopy }}
+            </button>
+          </div>
         </dd>
       }
     </dl>
@@ -236,14 +306,22 @@
               [attr.data-model-option-id]="option.optionId"
               [attr.data-status]="option.status"
               [value]="option.optionId"
-              [checked]="features.selectedModelOptionId() === option.optionId"
+              [checked]="(features.selectedModelOptionId() ?? features.activeModelOption()?.optionId) === option.optionId"
               [disabled]="features.installing()"
               (change)="features.selectModelOption(option.optionId)"
             />
-            <span class="flex flex-col">
+            <span class="flex flex-1 flex-col">
               <strong class="font-medium">{{ option.displayName }}</strong>
               <small class="text-xs text-muted-foreground">{{ option.modelReference }}</small>
             </span>
+            @if (modelSizeLabel(option.expectedBytes); as size) {
+              <span
+                class="text-xs text-muted-foreground tabular-nums"
+                data-testid="diagnostics-model-size"
+              >
+                {{ size }}
+              </span>
+            }
           </label>
         }
       </fieldset>

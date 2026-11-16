@@ -43,8 +43,10 @@ describe('DiagnosticsPage', () => {
       document: signal<DiagnosticsDocumentView | null>(options.document ?? null),
       exporting: signal(false),
       exportError: signal<string | null>(null),
+      copyStatus: signal<string | null>(null),
       reconnect: vi.fn(),
       exportJson: vi.fn(),
+      copyDigest: vi.fn(),
     };
 
     const features = {
@@ -108,6 +110,9 @@ describe('DiagnosticsPage', () => {
     expect(el.querySelector('[data-testid="diagnostics-contract-digest"]')?.textContent?.trim()).toBe('a'.repeat(64));
     expect(el.querySelectorAll('[data-testid="diagnostics-model-option"]')).toHaveLength(1);
     expect(el.querySelector('[data-testid="diagnostics-document"]')).toBeNull();
+
+    (el.querySelector('[data-testid="diagnostics-copy-contract-digest"]') as HTMLButtonElement).click();
+    expect(store.copyDigest).toHaveBeenCalledWith('a'.repeat(64));
   });
 
   it('shows error message and reconnect action when runtime is in error state', () => {

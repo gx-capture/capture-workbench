@@ -1,5 +1,5 @@
 <section
-  class="flex max-w-4xl flex-col gap-6"
+  class="flex flex-col gap-6"
   data-testid="page-settings-compute"
 >
   <h2 class="text-lg font-semibold">{{ m().settingsComputeTitle }}</h2>
@@ -14,11 +14,16 @@
       {{ m().computeOcrTitle }}
     </h3>
     @if (compute.ocrCompute(); as ocr) {
-      <gx-capture-runtime-compute-status
-        [preflight]="ocr"
-        [gpuLabel]="m().gpuAcceleration"
-        [cpuNotice]="m().cpuNotice"
-      />
+      <div class="text-sm text-muted-foreground">
+        <gx-capture-runtime-compute-status
+          [preflight]="ocr"
+          [gpuLabel]="m().gpuAcceleration"
+          [cpuNotice]="m().cpuNotice"
+        />
+        @if (ocr.mode === 'cpu-fallback' && !(ocr.userNoticeRequired && ocr.noticeCode === 'ocr_cpu_fallback')) {
+          <p data-testid="compute-ocr-detected">{{ m().computeOcrCpu }}</p>
+        }
+      </div>
     } @else {
       <p class="text-sm text-muted-foreground" data-testid="compute-ocr-pending">
         {{ m().computeOcrPending }}
