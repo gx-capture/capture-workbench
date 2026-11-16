@@ -18,6 +18,12 @@ export class ResultSpeakersPage {
   protected readonly store = inject(ResultReviewStore);
   protected readonly m = desktopMessages;
 
+  /** Enter that confirms an input-method candidate is not a commit. */
+  protected nameOnEnter(event: Event, speakerId: string, name: string): void {
+    if ((event as KeyboardEvent).isComposing) return;
+    this.store.nameSpeaker(speakerId, name);
+  }
+
   constructor() {
     effect(() => {
       if (this.store.hasResult()) {

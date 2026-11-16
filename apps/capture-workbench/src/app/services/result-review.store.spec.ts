@@ -3,7 +3,7 @@ import { TestBed } from '@angular/core/testing';
 import { ActivatedRoute, convertToParamMap } from '@angular/router';
 import type { RawCapture } from '@gx-capture/capture-workbench-ui';
 import { BehaviorSubject, of, Subject, throwError } from 'rxjs';
-import type { DesktopLibraryDetail } from '../contracts';
+import type { DesktopLibraryDetail, DesktopLibraryEdits } from '../contracts';
 import { setDesktopLocale } from '../i18n/desktop-messages';
 import { DesktopLibraryService } from './desktop-library.service';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
@@ -39,6 +39,7 @@ describe('ResultReviewStore', () => {
     readonly id?: string;
     readonly get?: ReturnType<typeof vi.fn>;
     readonly sourceBytes?: ReturnType<typeof vi.fn>;
+    readonly saveEdits?: ReturnType<typeof vi.fn>;
     readonly pdfOpen?: ReturnType<typeof vi.fn>;
   } = {}) {
     const paramMap$ = new BehaviorSubject(
@@ -46,6 +47,7 @@ describe('ResultReviewStore', () => {
     );
     const library = {
       get: options.get ?? vi.fn(() => of(makeDetail())),
+      saveEdits: options.saveEdits ?? vi.fn((_id: string, edits: DesktopLibraryEdits) => of(edits)),
       sourceBytes: options.sourceBytes ?? vi.fn(() => of(new ArrayBuffer(8))),
     };
     const runtime = {
@@ -80,6 +82,221 @@ describe('ResultReviewStore', () => {
     TestBed.tick();
     return { store, library, paramMap$, pdfRenderer, defaultHandle };
   }
+
+  describe('editing and autosave', () => {
+    const raw = { sourceText: 'recognized', segments: [
+      { segmentId: 'p1', order: 0, locator: { kind: 'page', page: 1 }, text: 'recognized' },
+      { segmentId: 'p2', order: 1, locator: { kind: 'page', page: 2 }, text: 'second' },
+    ] } as unknown as RawCapture;
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => {
+      TestBed.resetTestingModule();
+      vi.useRealTimers();
+    });
+    const load = () => vi.fn(() => of(makeDetail({ raw })));
+
+    it('updates immediately, coalesces quick changes and saves the whole copy after 600ms', () => {
+      const { store, library } = setup({ get: load() });
+      store.editPage(1, 'first correction');
+      expect(store.currentPage()?.text).toBe('first correction');
+      expect(store.saveState()).toBe('pending');
+      vi.advanceTimersByTime(300);
+      store.editPage(2, 'second correction');
+      vi.advanceTimersByTime(599);
+      expect(library.saveEdits).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
+      expect(library.saveEdits).toHaveBeenCalledTimes(1);
+      expect(library.saveEdits).toHaveBeenCalledWith(DOC_ID, expect.objectContaining({
+        ocrPages: { '1': 'first correction', '2': 'second correction' }, transcriptLines: {}, speakerNames: {},
+      }));
+      expect(store.saveState()).toBe('saved');
+    });
+
+    it('serializes edits made during a save, including restoring the loaded value', () => {
+      const first = new Subject<DesktopLibraryEdits>();
+      const saveEdits = vi.fn().mockReturnValueOnce(first).mockImplementation((_id: string, edits: DesktopLibraryEdits) => of(edits));
+      const { store } = setup({ get: load(), saveEdits });
+      store.editPage(1, 'changed');
+      vi.advanceTimersByTime(600);
+      expect(store.saveState()).toBe('saving');
+      store.restorePage(1);
+      vi.advanceTimersByTime(1000);
+      expect(saveEdits).toHaveBeenCalledTimes(1);
+      first.next(saveEdits.mock.calls[0][1]);
+      first.complete();
+      expect(saveEdits).toHaveBeenCalledTimes(2);
+      expect(saveEdits.mock.calls[1][1].ocrPages).toEqual({});
+      expect(store.currentPage()?.text).toBe('recognized');
+      expect(store.saveState()).toBe('saved');
+    });
+
+    it('restores a saved correction by removing its entry', () => {
+      const { store, library } = setup({ get: load() });
+      store.editPage(1, 'changed');
+      vi.advanceTimersByTime(600);
+      store.restorePage(1);
+      expect(store.currentPage()?.edited).toBe(false);
+      vi.advanceTimersByTime(600);
+      expect(library.saveEdits).toHaveBeenLastCalledWith(DOC_ID, expect.objectContaining({ ocrPages: {} }));
+    });
+
+    it('reports a safe save error and retries the current copy', () => {
+      const saveEdits = vi.fn().mockReturnValueOnce(throwError(() => new Error('private document text')))
+        .mockImplementation((_id: string, edits: DesktopLibraryEdits) => of(edits));
+      const { store } = setup({ get: load(), saveEdits });
+      store.editPage(1, 'changed');
+      vi.advanceTimersByTime(600);
+      expect(store.saveState()).toBe('failed');
+      expect(store.saveError()).toBeTruthy();
+      expect(store.saveError()).not.toContain('private');
+      store.retrySave();
+      expect(saveEdits).toHaveBeenCalledTimes(2);
+      expect(store.saveState()).toBe('saved');
+      expect(store.saveError()).toBeNull();
+    });
+
+    it('never saves unchanged, ignored or reverted input, even on destroy', () => {
+      const { store, library } = setup({ get: load() });
+      store.editPage(1, 'recognized');
+      store.editPage(99, 'orphan');
+      store.retrySave();
+      store.editPage(1, 'temporary');
+      store.restorePage(1);
+      vi.advanceTimersByTime(1000);
+      TestBed.resetTestingModule();
+      expect(library.saveEdits).not.toHaveBeenCalled();
+    });
+
+    it('flushes one pending save on destroy and cancels the debounce timer', () => {
+      const { store, library } = setup({ get: load() });
+      store.editPage(1, 'changed');
+      TestBed.resetTestingModule();
+      vi.advanceTimersByTime(1000);
+      expect(library.saveEdits).toHaveBeenCalledTimes(1);
+    });
+
+    it('flushes the old document on route change without leaking edits or status', () => {
+      const get = vi.fn((id: string) => of(makeDetail({ documentId: id, raw })));
+      const { store, library, paramMap$ } = setup({ get });
+      store.editPage(1, 'old correction');
+      paramMap$.next(convertToParamMap({ id: 'b'.repeat(32) }));
+      TestBed.tick();
+      expect(library.saveEdits).toHaveBeenCalledWith(DOC_ID, expect.objectContaining({ ocrPages: { '1': 'old correction' } }));
+      expect(store.currentPage()?.text).toBe('recognized');
+      expect(store.saveState()).toBe('idle');
+    });
+
+    it('keeps unsaved corrections when detail emits again for the same document', async () => {
+      const details = new Subject<DesktopLibraryDetail>();
+      const { store } = setup({ get: vi.fn(() => details) });
+      details.next(makeDetail({ raw }));
+      // The resource publishes a streamed value after a microtask.
+      await vi.advanceTimersByTimeAsync(0);
+      TestBed.tick();
+      store.editPage(1, 'local');
+      details.next(makeDetail({ raw, updatedAtMs: 99 }));
+      // The resource publishes a streamed value after a microtask.
+      await vi.advanceTimersByTimeAsync(0);
+      TestBed.tick();
+      expect(store.currentPage()?.text).toBe('local');
+    });
+
+    it('rejects oversized input without changing or saving the working copy', () => {
+      const { store, library } = setup({ get: load() });
+      store.editPage(1, 'x'.repeat(1024 * 1024 + 1));
+      expect(store.editError()).toBeTruthy();
+      expect(store.currentPage()?.text).toBe('recognized');
+      vi.advanceTimersByTime(600);
+      expect(library.saveEdits).not.toHaveBeenCalled();
+    });
+
+    it('applies transcript and speaker changes to all views and saves all maps together', () => {
+      const transcript = { sourceText: 'one two', speakers: [{ speakerId: 'sp1', displayName: 'Speaker' }], segments: [
+        { segmentId: 's1', order: 0, locator: { kind: 'time', startMs: 0, endMs: 1000 }, speaker: 'sp1', text: 'one' },
+        { segmentId: 's2', order: 1, locator: { kind: 'time', startMs: 1000, endMs: 2000 }, speaker: 'sp1', text: 'two' },
+      ] } as unknown as RawCapture;
+      const { store, library } = setup({ get: vi.fn(() => of(makeDetail({ mediaType: 'audio/mpeg', raw: transcript }))) });
+      store.editLine('s1', 'corrected');
+      store.nameSpeaker('sp1', ' Alice ');
+      expect(store.lines().map((line) => line.speaker)).toEqual(['Alice', 'Alice']);
+      expect(store.lines()[0].text).toBe('corrected');
+      expect(store.speakers()[0].displayName).toBe('Alice');
+      vi.advanceTimersByTime(600);
+      expect(library.saveEdits).toHaveBeenLastCalledWith(DOC_ID, expect.objectContaining({
+        ocrPages: {}, transcriptLines: { s1: 'corrected' }, speakerNames: { sp1: 'Alice' },
+      }));
+      store.editLine('s1', 'x'.repeat(64 * 1024 + 1));
+      expect(store.editError()).toBeTruthy();
+      store.nameSpeaker('sp1', 'x'.repeat(101));
+      expect(store.editError()).toBeTruthy();
+      vi.advanceTimersByTime(600);
+      expect(library.saveEdits).toHaveBeenCalledTimes(1);
+      store.restoreLine('s1');
+      store.nameSpeaker('sp1', '');
+      expect(store.lines()[0]).toMatchObject({ text: 'one', edited: false, speaker: 'Speaker' });
+      vi.advanceTimersByTime(600);
+      expect(library.saveEdits).toHaveBeenLastCalledWith(DOC_ID, expect.objectContaining({ transcriptLines: {}, speakerNames: {} }));
+    });
+
+    it('takes refreshed edits when the working copy is clean', async () => {
+      const details = new Subject<DesktopLibraryDetail>();
+      const { store, library } = setup({ get: vi.fn(() => details) });
+      details.next(makeDetail({ raw }));
+      // The resource publishes a streamed value after a microtask.
+      await vi.advanceTimersByTimeAsync(0);
+      TestBed.tick();
+      details.next(makeDetail({ raw, edits: { schemaVersion: 1, updatedAtMs: 10,
+        ocrPages: { '1': 'refreshed' }, transcriptLines: {}, speakerNames: {} } }));
+      // The resource publishes a streamed value after a microtask.
+      await vi.advanceTimersByTimeAsync(0);
+      TestBed.tick();
+      expect(store.currentPage()?.text).toBe('refreshed');
+      expect(library.saveEdits).not.toHaveBeenCalled();
+    });
+
+    it('finishes the last correction after destroy without overlapping the in-flight save', () => {
+      const first = new Subject<DesktopLibraryEdits>();
+      const saveEdits = vi.fn().mockReturnValueOnce(first).mockImplementation((_id: string, edits: DesktopLibraryEdits) => of(edits));
+      const { store } = setup({ get: load(), saveEdits });
+      store.editPage(1, 'first');
+      vi.advanceTimersByTime(600);
+      store.editPage(1, 'last');
+      TestBed.resetTestingModule();
+      expect(saveEdits).toHaveBeenCalledTimes(1);
+      first.next(saveEdits.mock.calls[0][1]);
+      first.complete();
+      expect(saveEdits).toHaveBeenCalledTimes(2);
+      expect(saveEdits.mock.calls[1][1].ocrPages).toEqual({ '1': 'last' });
+    });
+
+    it('serializes saves across a document change and ignores old-document completion status', () => {
+      const first = new Subject<DesktopLibraryEdits>();
+      const saveEdits = vi.fn().mockReturnValueOnce(first).mockImplementation((_id: string, edits: DesktopLibraryEdits) => of(edits));
+      const { store, paramMap$ } = setup({ get: vi.fn((id: string) => of(makeDetail({ documentId: id, raw }))), saveEdits });
+      store.editPage(1, 'old');
+      vi.advanceTimersByTime(600);
+      paramMap$.next(convertToParamMap({ id: 'b'.repeat(32) }));
+      TestBed.tick();
+      store.editPage(1, 'new');
+      vi.advanceTimersByTime(600);
+      expect(saveEdits).toHaveBeenCalledTimes(1);
+      first.next(saveEdits.mock.calls[0][1]);
+      first.complete();
+      expect(saveEdits).toHaveBeenCalledTimes(2);
+      expect(saveEdits.mock.calls[1][0]).toBe('b'.repeat(32));
+      expect(saveEdits.mock.calls[1][1].ocrPages).toEqual({ '1': 'new' });
+      expect(store.currentPage()?.text).toBe('new');
+      expect(store.saveState()).toBe('saved');
+    });
+
+    it('exposes an unreadable notice and still accepts new corrections', () => {
+      const { store, library } = setup({ get: vi.fn(() => of(makeDetail({ raw, editsUnreadable: true }))) });
+      expect(store.editsNotice()).toBeTruthy();
+      store.editPage(1, 'new');
+      vi.advanceTimersByTime(600);
+      expect(library.saveEdits).toHaveBeenCalledTimes(1);
+    });
+  });
 
   it('loads document detail by route id', () => {
     const detail = makeDetail({ fileName: 'brief.pdf' });

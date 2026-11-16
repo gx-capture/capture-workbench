@@ -215,6 +215,17 @@ export interface DesktopMessages {
   readonly asrExport: string;
   readonly asrExportNamed: (name: string) => string;
   readonly asrInstallNamed: (name: string) => string;
+  readonly resultEdited: string;
+  readonly resultRestore: string;
+  readonly resultEditText: string;
+  readonly resultSaving: string;
+  readonly resultSaved: string;
+  readonly resultSaveFailed: string;
+  readonly resultRetrySave: string;
+  readonly resultPageTooLong: string;
+  readonly resultLineTooLong: string;
+  readonly resultNameInvalid: string;
+  readonly resultEditsUnreadable: string;
   readonly resultBack: string;
   readonly resultTitle: string;
   readonly resultNavigation: string;
@@ -498,6 +509,17 @@ const ZH_TW: DesktopMessages = {
   asrExport: '匯出',
   asrExportNamed: (name) => `匯出 ${name} 的逐字稿`,
   asrInstallNamed: (name) => `安裝語音辨識以處理 ${name}`,
+  resultEdited: '已編輯',
+  resultRestore: '還原',
+  resultEditText: '編輯文字',
+  resultSaving: '儲存中',
+  resultSaved: '已儲存',
+  resultSaveFailed: '儲存失敗',
+  resultRetrySave: '重試',
+  resultPageTooLong: '頁面文字不可超過 1 MiB。',
+  resultLineTooLong: '逐字稿文字不可超過 64 KiB。',
+  resultNameInvalid: '說話者名字不可超過 100 個字元或包含控制字元。',
+  resultEditsUnreadable: '無法讀取先前的修正；儲存新的修正會取代它們。',
   resultBack: '返回',
   resultTitle: '檢視結果',
   resultNavigation: '結果檢視導覽',
@@ -786,6 +808,17 @@ const EN: DesktopMessages = {
   asrExport: 'Export',
   asrExportNamed: (name) => `Export transcript for ${name}`,
   asrInstallNamed: (name) => `Install speech recognition for ${name}`,
+  resultEdited: 'Edited',
+  resultRestore: 'Restore',
+  resultEditText: 'Edit text',
+  resultSaving: 'Saving',
+  resultSaved: 'Saved',
+  resultSaveFailed: 'Save failed',
+  resultRetrySave: 'Retry',
+  resultPageTooLong: 'Page text must not exceed 1 MiB.',
+  resultLineTooLong: 'Line text must not exceed 64 KiB.',
+  resultNameInvalid: 'Speaker names must not exceed 100 characters or contain control characters.',
+  resultEditsUnreadable: 'Earlier corrections could not be read. Saving new corrections replaces them.',
   resultBack: 'Back',
   resultTitle: 'Result',
   resultNavigation: 'Result sections',

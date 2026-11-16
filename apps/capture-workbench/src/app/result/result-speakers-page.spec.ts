@@ -24,6 +24,7 @@ describe('ResultSpeakersPage', () => {
       statusText: signal('完成'),
       playbackUnavailableMessage: signal<string | null>(null),
       speakers: signal(speakers),
+      nameSpeaker: vi.fn(),
       loadSource: vi.fn(),
     };
 
@@ -34,8 +35,21 @@ describe('ResultSpeakersPage', () => {
 
     const fixture = TestBed.createComponent(ResultSpeakersPage);
     fixture.detectChanges();
-    return { el: fixture.nativeElement as HTMLElement };
+    return { store, el: fixture.nativeElement as HTMLElement };
   }
+
+  it('commits speaker names on Enter and blur, including clearing the name', () => {
+    const { el, store } = setup([{ speakerId: 'sp1', displayName: 'Speaker', sampleUrl: null }]);
+    const input = el.querySelector('[data-testid="result-speaker-input"]') as HTMLInputElement;
+    expect(input.maxLength).toBe(100);
+    expect(input.getAttribute('aria-label')).toBeTruthy();
+    input.value = 'Alice';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    expect(store.nameSpeaker).toHaveBeenCalledWith('sp1', 'Alice');
+    input.value = '';
+    input.dispatchEvent(new Event('blur'));
+    expect(store.nameSpeaker).toHaveBeenLastCalledWith('sp1', '');
+  });
 
   it('renders speaker names and sample audio elements', () => {
     const { el } = setup([

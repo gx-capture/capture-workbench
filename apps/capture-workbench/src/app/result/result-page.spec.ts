@@ -23,6 +23,11 @@ describe('ResultPage', () => {
         updatedAtMs: 200,
         status: 'completed',
       }),
+      saveState: signal('idle'),
+      saveError: signal<string | null>(null),
+      editError: signal<string | null>(null),
+      editsNotice: signal<string | null>(null),
+      retrySave: vi.fn(),
       loading: signal(false),
       loadError: signal<string | null>(null),
       kind: signal(options.kind),
@@ -41,8 +46,32 @@ describe('ResultPage', () => {
 
     const fixture = TestBed.createComponent(ResultPage);
     fixture.detectChanges();
-    return { fixture, el: fixture.nativeElement as HTMLElement };
+    return { fixture, store, el: fixture.nativeElement as HTMLElement };
   }
+
+  it('renders pending, saving, saved and failed status with retry and correction notices', () => {
+    const { fixture, el, store } = setup({ kind: 'ocr', fileName: 'test.pdf' });
+    const status = () => el.querySelector('[data-testid="result-save-status"]')?.textContent?.trim();
+    expect(status()).toBe('');
+    for (const state of ['pending', 'saving']) {
+      store.saveState.set(state);
+      fixture.detectChanges();
+      expect(status()).toBe('儲存中');
+    }
+    store.saveState.set('saved');
+    fixture.detectChanges();
+    expect(status()).toBe('已儲存');
+    store.saveState.set('failed');
+    store.saveError.set('儲存失敗');
+    store.editsNotice.set('Earlier corrections could not be read.');
+    store.editError.set('Input exceeds the limit.');
+    fixture.detectChanges();
+    expect(status()).toContain('儲存失敗');
+    (el.querySelector('[data-testid="result-save-retry"]') as HTMLButtonElement).click();
+    expect(store.retrySave).toHaveBeenCalledTimes(1);
+    expect(el.querySelector('[data-testid="result-edits-notice"]')?.textContent).toContain('Earlier corrections');
+    expect(el.querySelector('[data-testid="result-edit-error"]')?.getAttribute('role')).toBe('alert');
+  });
 
   it('shows 內容 and 詳細資訊 without 說話者 for an OCR document', () => {
     const { el } = setup({ kind: 'ocr', fileName: 'contract.pdf' });

@@ -48,6 +48,10 @@ describe('ResultContentPage', () => {
       isVideo: signal(false),
       lines: signal<readonly TranscriptLine[]>([]),
       activeSeek: signal<ResultSeekRequest | null>(null),
+      editPage: vi.fn(),
+      restorePage: vi.fn(),
+      editLine: vi.fn(),
+      restoreLine: vi.fn(),
       loadSource: vi.fn(),
       requestSeek: vi.fn(),
       onMediaCanPlay: vi.fn(),
@@ -64,6 +68,54 @@ describe('ResultContentPage', () => {
     return { fixture, store, el: fixture.nativeElement as HTMLElement };
   }
 
+  it('binds page typing and only offers restore for an edited page', () => {
+    const currentPage = signal({ page: 1, text: 'recognized', recognizedText: 'recognized', edited: false });
+    const { fixture, el, store } = setup({ currentPage });
+    const textarea = el.querySelector('[data-testid="result-page-text"]') as HTMLTextAreaElement;
+    textarea.value = 'correction';
+    textarea.dispatchEvent(new Event('input'));
+    expect(store.editPage).toHaveBeenCalledWith(1, 'correction');
+    expect(el.querySelector('[data-testid="result-page-restore"]')).toBeNull();
+    currentPage.set({ page: 1, text: 'correction', recognizedText: 'recognized', edited: true });
+    fixture.detectChanges();
+    expect(el.querySelector('[data-testid="result-page-edited"]')).not.toBeNull();
+    (el.querySelector('[data-testid="result-page-restore"]') as HTMLButtonElement).click();
+    expect(store.restorePage).toHaveBeenCalledWith(1);
+  });
+
+  it('edits transcript text by double-click or button, commits on Enter or blur and cancels on Escape', () => {
+    const { fixture, el, store } = setup({ kind: signal('asr'), isPdf: signal(false),
+      lines: signal([{ segmentId: 's1', startMs: 0, timeLabel: '0:00', text: 'recognized', recognizedText: 'recognized', edited: true }]),
+    });
+    (el.querySelector('[data-testid="result-line-text"]') as HTMLElement).dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    fixture.detectChanges();
+    const input = el.querySelector('[data-testid="result-line-input"]') as HTMLTextAreaElement;
+    expect(input.hidden).toBe(false);
+    expect(document.activeElement).toBe(input);
+    input.value = 'corrected';
+    input.dispatchEvent(new Event('input'));
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    fixture.detectChanges();
+    expect(store.editLine).toHaveBeenCalledExactlyOnceWith('s1', 'corrected');
+    (el.querySelector('[data-testid="result-line-edit"]') as HTMLButtonElement).click();
+    fixture.detectChanges();
+    input.value = 'cancelled';
+    input.dispatchEvent(new Event('input'));
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    input.dispatchEvent(new Event('blur'));
+    fixture.detectChanges();
+    expect(store.editLine).toHaveBeenCalledTimes(1);
+    expect(input.hidden).toBe(true);
+    (el.querySelector('[data-testid="result-line-edit"]') as HTMLButtonElement).click();
+    fixture.detectChanges();
+    input.value = 'blur correction';
+    input.dispatchEvent(new Event('input'));
+    input.dispatchEvent(new Event('blur'));
+    expect(store.editLine).toHaveBeenLastCalledWith('s1', 'blur correction');
+    (el.querySelector('[data-testid="result-line-restore"]') as HTMLButtonElement).click();
+    expect(store.restoreLine).toHaveBeenCalledWith('s1');
+  });
+
   it('renders PDF canvas, data-rendered-page, OCR page text, and page controls', () => {
     const { el, store } = setup();
 
@@ -72,7 +124,7 @@ describe('ResultContentPage', () => {
     expect(canvas.getAttribute('data-rendered-page')).toBe('1');
     expect(canvas.classList.contains('hidden')).toBe(false);
     expect(store.renderCurrentPdfPage).toHaveBeenCalledWith(canvas, expect.any(Number));
-    expect(el.querySelector('[data-testid="result-page-text"]')?.textContent).toBe('第一頁文字');
+    expect((el.querySelector('[data-testid="result-page-text"]') as HTMLTextAreaElement).value).toBe('第一頁文字');
     expect(el.querySelector('[data-testid="result-page-indicator"]')?.textContent?.trim()).toBe('1 / 2');
 
     const prev = el.querySelector('[data-testid="result-page-prev"]') as HTMLButtonElement;
@@ -105,7 +157,7 @@ describe('ResultContentPage', () => {
     expect(el.querySelector('[data-testid="result-pdf-error"]')?.textContent?.trim()).toBe(
       '無法顯示這份 PDF 的頁面影像，仍可查看辨識文字。',
     );
-    expect(el.querySelector('[data-testid="result-page-text"]')?.textContent).toBe('第一頁文字');
+    expect((el.querySelector('[data-testid="result-page-text"]') as HTMLTextAreaElement).value).toBe('第一頁文字');
   });
 
   it('renders ASR player and transcript rows and requests seek on time click', () => {

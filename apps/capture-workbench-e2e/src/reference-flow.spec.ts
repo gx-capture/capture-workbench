@@ -54,7 +54,7 @@ test('drops a PDF without OCR, installs it, and exports the raw text', async ({ 
     page,
     [requirement('windowsml-ocr', 'WindowsML OCR', 'installable', 144_000_000)],
     '/ocr',
-    { completeInstallOnPoll: 2, ocrJourney: true },
+    { completeInstallOnPoll: 2, ocrJourney: true, persistLibrary: true },
   );
 
   await page.getByTestId('first-run-dismiss').click();
@@ -82,22 +82,46 @@ test('drops a PDF without OCR, installs it, and exports the raw text', async ({ 
   const pdfCanvas = page.getByTestId('result-source-pdf-canvas');
   await expect(pdfCanvas).toHaveAttribute('data-rendered-page', '1');
   expect(await pdfCanvas.evaluate((el: HTMLCanvasElement) => el.width)).toBeGreaterThan(0);
-  await expect(page.getByTestId('result-page-text')).toContainText('第一頁');
+  await expect(page.getByTestId('result-page-text')).toHaveValue('第一頁');
+  await page.getByTestId('result-page-text').fill('Corrected first page');
+  await expect(page.getByTestId('result-save-status')).toHaveText('已儲存');
+  await page.reload();
+  await expect(page.getByTestId('result-page-text')).toHaveValue('Corrected first page');
+  await expect(page.getByTestId('result-page-edited')).toBeVisible();
+  await page.getByTestId('result-page-restore').click();
+  await expect(page.getByTestId('result-page-text')).toHaveValue('第一頁');
+  await expect(page.getByTestId('result-page-restore')).toHaveCount(0);
+  await expect(page.getByTestId('result-save-status')).toHaveText('已儲存');
   await page.getByTestId('result-page-next').click();
   await expect(pdfCanvas).toHaveAttribute('data-rendered-page', '2');
-  await expect(page.getByTestId('result-page-text')).toContainText('第二頁');
+  await expect(page.getByTestId('result-page-text')).toHaveValue('第二頁');
   await page.getByTestId('result-nav-details').click();
   await expect(page.getByTestId('result-detail-filename')).toHaveText('charge.pdf');
 });
 
 test('shows persisted page and transcript edits and speaker names on result pages', async ({ page }) => {
   await openDesktop(page, [], `/history/${'a'.repeat(32)}/content`, { editedResults: true });
-  await expect(page.getByTestId('result-page-text')).toHaveText('Edited page three');
+  await expect(page.getByTestId('result-page-text')).toHaveValue('Edited page three');
   await page.goto(`/history/${'b'.repeat(32)}/content`);
   await expect(page.getByTestId('result-line-text')).toHaveText('Edited transcript line');
   await expect(page.getByTestId('result-line-speaker')).toHaveText('Named speaker');
+  await page.getByTestId('result-line-text').dblclick();
+  await page.getByTestId('result-line-input').fill('Corrected transcript');
+  await page.getByTestId('result-line-input').press('Enter');
+  await expect(page.getByTestId('result-line-text')).toHaveText('Corrected transcript');
+  await expect(page.getByTestId('result-save-status')).toHaveText('已儲存');
+  await page.getByTestId('result-line-restore').click();
+  await expect(page.getByTestId('result-line-text')).toHaveText('recognized line');
   await page.getByTestId('result-nav-speakers').click();
   await expect(page.getByTestId('result-speaker-name')).toHaveText('Named speaker');
+  await page.getByTestId('result-speaker-input').fill('Alice');
+  await page.getByTestId('result-speaker-input').press('Enter');
+  await expect(page.getByTestId('result-save-status')).toHaveText('已儲存');
+  await page.getByTestId('result-nav-content').click();
+  await expect(page.getByTestId('result-line-speaker')).toHaveText('Alice');
+  await page.getByTestId('result-line-time').click();
+  await expect(page.getByTestId('result-player')).toBeVisible();
+
 });
 
 test('imports an OCR selection through the native picker command', async ({ page }) => {

@@ -108,10 +108,18 @@
         }
 
         @if (store.currentPage(); as page) {
-          <div
-            class="whitespace-pre-wrap select-text rounded-lg border border-border bg-card p-4 text-sm leading-relaxed"
+          <textarea
+            class="min-h-64 w-full rounded-lg border border-border bg-card p-4 text-sm leading-relaxed"
             data-testid="result-page-text"
-          >{{ page.text }}</div>
+            [attr.aria-label]="m().resultEditText"
+            [value]="page.text"
+            (input)="store.editPage(page.page, $any($event.target).value)"
+          ></textarea>
+          @if (page.edited) {
+            <span class="text-xs" data-testid="result-page-edited">{{ m().resultEdited }}</span>
+            <button hlmBtn variant="outline" size="sm" type="button" data-testid="result-page-restore"
+              (click)="store.restorePage(page.page)">{{ m().resultRestore }}</button>
+          }
         } @else {
           <p
             class="text-sm text-muted-foreground"
@@ -207,9 +215,27 @@
                 <td
                   hlmTd
                   class="whitespace-pre-wrap select-text align-top"
-                  data-testid="result-line-text"
                 >
-                  {{ line.text }}
+                  <textarea #lineInput
+                    class="w-full rounded border border-border bg-card p-2"
+                    data-testid="result-line-input"
+                    [hidden]="editingLine() !== line.segmentId"
+                    [attr.aria-label]="m().resultEditText"
+                    [value]="editingLine() === line.segmentId ? lineDraft() : line.text"
+                    (input)="lineDraft.set($any($event.target).value)"
+                    (keydown.enter)="commitLineOnEnter($event, line.segmentId)"
+                    (keydown.escape)="editingLine.set(null)"
+                    (blur)="commitLine(line.segmentId)"></textarea>
+                  @if (editingLine() !== line.segmentId) {
+                    <span data-testid="result-line-text" (dblclick)="beginLine(line.segmentId, line.text, lineInput)">{{ line.text }}</span>
+                    <button hlmBtn variant="ghost" size="sm" type="button" data-testid="result-line-edit"
+                      (click)="beginLine(line.segmentId, line.text, lineInput)">{{ m().resultEditText }}</button>
+                  }
+                  @if (line.edited) {
+                    <span class="text-xs" data-testid="result-line-edited">{{ m().resultEdited }}</span>
+                    <button hlmBtn variant="ghost" size="sm" type="button" data-testid="result-line-restore"
+                      (click)="store.restoreLine(line.segmentId)">{{ m().resultRestore }}</button>
+                  }
                 </td>
               </tr>
             }

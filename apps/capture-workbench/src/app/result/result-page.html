@@ -33,6 +33,24 @@
       {{ error }}
     </p>
   } @else if (store.detail()) {
+    <div role="status" aria-live="polite" data-testid="result-save-status">
+      @switch (store.saveState()) {
+        @case ('pending') { {{ m().resultSaving }} }
+        @case ('saving') { {{ m().resultSaving }} }
+        @case ('saved') { {{ m().resultSaved }} }
+        @case ('failed') {
+          {{ store.saveError() }}
+          <button hlmBtn variant="outline" size="sm" type="button" data-testid="result-save-retry"
+            (click)="store.retrySave()">{{ m().resultRetrySave }}</button>
+        }
+      }
+    </div>
+    @if (store.editsNotice(); as notice) {
+      <p role="status" class="text-sm" data-testid="result-edits-notice">{{ notice }}</p>
+    }
+    @if (store.editError(); as message) {
+      <p role="alert" class="text-sm text-destructive" data-testid="result-edit-error">{{ message }}</p>
+    }
     <div class="flex min-h-0 flex-1 flex-col gap-6 md:flex-row">
       <nav
         class="flex w-full shrink-0 flex-row gap-1 md:w-44 md:flex-col"
