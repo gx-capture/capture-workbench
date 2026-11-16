@@ -171,3 +171,53 @@ export function buildResultDetails(
     updatedAtLabel: formatting.formatDate(detail.updatedAtMs),
   };
 }
+
+
+/** Map equality ignores host timestamps and insertion order. */
+export function sameResultEdits(a: DesktopLibraryEdits, b: DesktopLibraryEdits): boolean {
+  return (['ocrPages', 'transcriptLines', 'speakerNames'] as const).every((field) => {
+    const keys = Object.keys(a[field]);
+    return keys.length === Object.keys(b[field]).length
+      && keys.every((key) => ownEdit(b[field], key) === a[field][key]);
+  });
+}
+
+export type ResultEditCommand =
+  | { readonly field: 'ocrPages'; readonly key: number; readonly text: string | null }
+  | { readonly field: 'transcriptLines' | 'speakerNames'; readonly key: string; readonly text: string | null };
+
+/** Validates before replacing an immutable map; null means restore recognized content. */
+export function applyResultEdit(
+  detail: DesktopLibraryDetail,
+  edits: DesktopLibraryEdits,
+  command: ResultEditCommand,
+): { readonly edits: DesktopLibraryEdits; readonly error: string | null } {
+  const { field, key } = command;
+  const raw = detail.raw;
+  if (!raw) return { edits, error: null };
+  const recognized = field === 'ocrPages'
+    ? resultPages(raw).find((page) => page.page === key)?.text
+    : field === 'transcriptLines'
+      ? resultLines(raw, []).find((line) => line.segmentId === key)?.text
+      : resultSpeakersList(detail).find((speaker) => speaker.speakerId === key)?.displayName;
+  const exists = field === 'speakerNames'
+    ? resultSpeakersList(detail).some((speaker) => speaker.speakerId === key)
+    : recognized !== undefined;
+  if (!exists) return { edits, error: null };
+  let text = command.text;
+  if (field !== 'speakerNames' && text === recognized) text = null;
+  if (field === 'speakerNames' && text !== null) {
+    // Rust char::is_control covers Unicode Cc, including C1 controls.
+    if (/\p{Cc}/u.test(text) || [...text.trim()].length > 100) {
+      return { edits, error: desktopMessages().resultNameInvalid };
+    }
+    text = text.trim() || null;
+  } else if (text !== null && new TextEncoder().encode(text).length > (field === 'ocrPages' ? 1024 * 1024 : 64 * 1024)) {
+    return { edits, error: field === 'ocrPages' ? desktopMessages().resultPageTooLong : desktopMessages().resultLineTooLong };
+  }
+  if (text === recognized) text = null;
+  const map = { ...edits[field] };
+  if (text === null) delete map[String(key)];
+  else Object.defineProperty(map, String(key), { value: text, enumerable: true, configurable: true, writable: true });
+  return { edits: { ...edits, [field]: map }, error: null };
+}

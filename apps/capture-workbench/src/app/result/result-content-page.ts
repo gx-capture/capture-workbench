@@ -1,9 +1,11 @@
 import {
   ChangeDetectionStrategy,
   Component,
+  computed,
   type ElementRef,
   effect,
   inject,
+  signal,
   untracked,
   viewChild,
 } from '@angular/core';
@@ -26,6 +28,24 @@ export class ResultContentPage {
   private readonly pdfCanvas = viewChild<ElementRef<HTMLCanvasElement>>('pdfCanvas');
   private readonly sourcePane = viewChild<ElementRef<HTMLElement>>('sourcePane');
 
+  protected readonly editingLine = signal<string | null>(null);
+  protected readonly lineDraft = signal('');
+  private readonly previewPage = computed(() => this.store.currentPage()?.page);
+
+  protected beginLine(segmentId: string, text: string, input: HTMLTextAreaElement): void {
+    this.editingLine.set(segmentId);
+    this.lineDraft.set(text);
+    input.value = text;
+    input.hidden = false;
+    input.focus();
+  }
+
+  protected commitLine(segmentId: string): void {
+    if (this.editingLine() !== segmentId) return;
+    this.store.editLine(segmentId, this.lineDraft());
+    this.editingLine.set(null);
+  }
+
   constructor() {
     effect(() => {
       if (this.store.hasResult()) {
@@ -35,7 +55,7 @@ export class ResultContentPage {
 
     effect(() => {
       if (!this.store.isPdf()) return;
-      const page = this.store.currentPage();
+      const page = this.previewPage();
       const state = this.store.pdfState();
       const canvas = this.pdfCanvas()?.nativeElement;
       const container = this.sourcePane()?.nativeElement;

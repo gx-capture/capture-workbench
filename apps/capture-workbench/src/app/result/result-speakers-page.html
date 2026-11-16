@@ -31,6 +31,13 @@
           <span class="font-medium" data-testid="result-speaker-name">
             {{ speaker.displayName }}
           </span>
+          <input #nameInput type="text" maxlength="100"
+            class="rounded border border-border bg-card px-3 py-2"
+            data-testid="result-speaker-input"
+            [attr.aria-label]="m().speakerName"
+            [value]="speaker.displayName"
+            (keydown.enter)="$event.isComposing || store.nameSpeaker(speaker.speakerId, nameInput.value)"
+            (blur)="store.nameSpeaker(speaker.speakerId, nameInput.value)" />
           @if (speaker.sampleUrl; as sampleUrl) {
             <audio
               controls

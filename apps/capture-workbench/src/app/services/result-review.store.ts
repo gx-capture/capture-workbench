@@ -9,8 +9,8 @@ import {
 } from '@angular/core';
 import { rxResource, toSignal } from '@angular/core/rxjs-interop';
 import { ActivatedRoute } from '@angular/router';
-import { map, type Subscription } from 'rxjs';
-import type { DesktopLibraryDetail } from '../contracts';
+import { map, timer, type Subscription } from 'rxjs';
+import type { DesktopLibraryDetail, DesktopLibraryEdits } from '../contracts';
 import { desktopMessages } from '../i18n/desktop-messages';
 import { DesktopLibraryService } from './desktop-library.service';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
@@ -25,6 +25,9 @@ import {
 } from './pdf-page-renderer.service';
 import { playbackUnavailable as isPlaybackOverLimit } from './recording-playback';
 import {
+  applyResultEdit,
+  sameResultEdits,
+  type ResultEditCommand,
   buildResultDetails,
   buildResultSpeakers,
   resultPages,
@@ -40,6 +43,14 @@ import {
   type ResultSeekRequest,
   type ResultSpeakerView,
 } from './result-review';
+
+interface EditSession {
+  readonly id: string;
+  working: DesktopLibraryEdits;
+  saved: DesktopLibraryEdits;
+  inFlight: boolean;
+  timer: Subscription | null;
+}
 
 export type PdfPreviewState = 'idle' | 'loading' | 'ready' | 'failed';
 
@@ -130,6 +141,133 @@ export class ResultReviewStore {
     return d.recoveryMessage ?? d.errorMessage ?? null;
   });
 
+  private session: EditSession | null = null;
+  private activeSave: EditSession | null = null;
+  private readonly queuedSaves = new Set<EditSession>();
+  private readonly editSessions = new Map<string, EditSession>();
+  private readonly workingEdits = signal<DesktopLibraryEdits>({
+    schemaVersion: 1, updatedAtMs: 0, ocrPages: {}, transcriptLines: {}, speakerNames: {},
+  });
+  readonly saveState = signal<'idle' | 'pending' | 'saving' | 'saved' | 'failed'>('idle');
+  readonly saveError = signal<string | null>(null);
+  readonly editError = signal<string | null>(null);
+  readonly editsNotice = computed(() => this.editsUnreadable() ? desktopMessages().resultEditsUnreadable : null);
+
+  private readonly syncEdits = effect(() => {
+    const id = this.documentId();
+    const detail = this.detail();
+    untracked(() => {
+      if (this.session && this.session.id !== id) {
+        this.leaveEdits(this.session);
+        this.session = null;
+      }
+      if (!detail || detail.documentId !== id) return;
+      const retained = this.editSessions.get(detail.documentId);
+      if (!this.session && retained && (retained.inFlight || !sameResultEdits(retained.working, retained.saved))) {
+        this.session = retained;
+        this.workingEdits.set(retained.working);
+        this.saveState.set(retained.inFlight ? 'saving' : 'pending');
+        this.saveError.set(null);
+        this.editError.set(null);
+        this.saveEdits(retained);
+        return;
+      }
+      if (this.session && (!sameResultEdits(this.session.working, this.session.saved) || this.session.inFlight)) return;
+      const edits: DesktopLibraryEdits = detail.edits ?? {
+        schemaVersion: 1, updatedAtMs: 0, ocrPages: {}, transcriptLines: {}, speakerNames: {},
+      };
+      this.session = { id: detail.documentId, working: edits, saved: edits, inFlight: false, timer: null };
+      this.editSessions.set(detail.documentId, this.session);
+      this.workingEdits.set(edits);
+      this.saveState.set('idle');
+      this.saveError.set(null);
+      this.editError.set(null);
+    });
+  });
+
+  editPage(page: number, text: string): void { this.changeEdit({ field: 'ocrPages', key: page, text }); }
+  restorePage(page: number): void { this.changeEdit({ field: 'ocrPages', key: page, text: null }); }
+  editLine(segmentId: string, text: string): void { this.changeEdit({ field: 'transcriptLines', key: segmentId, text }); }
+  restoreLine(segmentId: string): void { this.changeEdit({ field: 'transcriptLines', key: segmentId, text: null }); }
+  nameSpeaker(speakerId: string, text: string): void { this.changeEdit({ field: 'speakerNames', key: speakerId, text }); }
+  retrySave(): void {
+    if (this.session) {
+      this.session.timer?.unsubscribe();
+      this.session.timer = null;
+      this.saveEdits(this.session);
+    }
+  }
+
+  private changeEdit(command: ResultEditCommand): void {
+    const session = this.session;
+    const detail = this.detail();
+    if (!session || !detail || session.id !== this.documentId()) return;
+    const result = applyResultEdit(detail, session.working, command);
+    this.editError.set(result.error);
+    if (result.error || sameResultEdits(session.working, result.edits)) return;
+    session.working = result.edits;
+    this.workingEdits.set(result.edits);
+    this.saveError.set(null);
+    session.timer?.unsubscribe();
+    session.timer = null;
+    if (session.inFlight) return;
+    if (sameResultEdits(session.working, session.saved)) {
+      this.saveState.set('idle');
+      return;
+    }
+    this.saveState.set('pending');
+    session.timer = timer(600).subscribe(() => {
+      session.timer = null;
+      this.saveEdits(session);
+    });
+  }
+
+  private leaveEdits(session: EditSession): void {
+    session.timer?.unsubscribe();
+    session.timer = null;
+    this.saveEdits(session);
+  }
+
+  private saveEdits(session: EditSession): void {
+    if (session.inFlight || sameResultEdits(session.working, session.saved)) return;
+    if (this.activeSave) {
+      this.queuedSaves.add(session);
+      if (this.session === session && !this.destroyed) this.saveState.set('pending');
+      return;
+    }
+    const snapshot = session.working;
+    this.activeSave = session;
+    session.inFlight = true;
+    const visible = () => this.session === session && !this.destroyed && this.documentId() === session.id;
+    if (visible()) { this.saveState.set('saving'); this.saveError.set(null); }
+    this.library.saveEdits(session.id, snapshot).subscribe({
+      next: () => { session.saved = snapshot; },
+      error: () => {
+        if (visible()) {
+          this.saveState.set('failed');
+          this.saveError.set(desktopMessages().resultSaveFailed);
+        }
+        this.finishSave(session, !sameResultEdits(snapshot, session.working));
+      },
+      complete: () => {
+        if (visible() && sameResultEdits(session.working, session.saved)) this.saveState.set('saved');
+        this.finishSave(session, true);
+      },
+    });
+  }
+
+  private finishSave(session: EditSession, saveNewer: boolean): void {
+    session.inFlight = false;
+    this.activeSave = null;
+    if (saveNewer && !sameResultEdits(session.working, session.saved)) this.queuedSaves.add(session);
+    // Only one request can run, including saves flushed for a previous document.
+    for (const queued of this.queuedSaves) {
+      this.queuedSaves.delete(queued);
+      this.saveEdits(queued);
+      if (this.activeSave) break;
+    }
+  }
+
   // --- OCR state ---
 
   readonly editsUnreadable = computed(() => this.detail()?.editsUnreadable === true);
@@ -137,7 +275,7 @@ export class ResultReviewStore {
   readonly pages = computed<readonly EditedOcrPage[]>(() => {
     const d = this.detail();
     if (!d?.raw || this.kind() !== 'ocr') return [];
-    return resultPages(d.raw, d.edits);
+    return resultPages(d.raw, this.workingEdits());
   });
 
   private readonly selectedPageNumber = signal<number | null>(null);
@@ -242,13 +380,13 @@ export class ResultReviewStore {
   readonly lines = computed<readonly EditedTranscriptLine[]>(() => {
     const d = this.detail();
     if (!d?.raw || this.kind() !== 'asr') return [];
-    return resultLines(d.raw, resultSpeakersList(d), d.edits);
+    return resultLines(d.raw, resultSpeakersList(d), this.workingEdits());
   });
 
   readonly speakers = computed<readonly ResultSpeakerView[]>(() => {
     const d = this.detail();
     if (!d || this.kind() !== 'asr' || !this.hasResult()) return [];
-    return buildResultSpeakers(resultSpeakersList(d), this.recordingUrl(), d.edits);
+    return buildResultSpeakers(resultSpeakersList(d), this.recordingUrl(), this.workingEdits());
   });
 
   // --- Details ---
@@ -285,7 +423,9 @@ export class ResultReviewStore {
   constructor() {
     // Reference effect so Angular keeps it alive for the store's lifetime.
     void this.resetOnDocumentChange;
+    void this.syncEdits;
     this.destroyRef.onDestroy(() => {
+      if (this.session) this.leaveEdits(this.session);
       this.destroyed = true;
       this.cancelInFlightSource();
       this.cancelPdfWork();
