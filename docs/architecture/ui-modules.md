@@ -47,6 +47,7 @@ flowchart LR
   n_apps_capture_workbench_src_app_history --> n_apps_capture_workbench_src_app_ui_button_src
   n_apps_capture_workbench_src_app_history --> n_apps_capture_workbench_src_app_ui_table_src
   n_apps_capture_workbench_src_app_history --> n_packages_capture_workbench_ui_src
+  n_apps_capture_workbench_src_app_ocr --> n_apps_capture_workbench_src_app_engine_card
   n_apps_capture_workbench_src_app_ocr --> n_apps_capture_workbench_src_app_i18n
   n_apps_capture_workbench_src_app_ocr --> n_apps_capture_workbench_src_app_services
   n_apps_capture_workbench_src_app_ocr --> n_apps_capture_workbench_src_app_ui_button_src
@@ -62,6 +63,7 @@ flowchart LR
   n_apps_capture_workbench_src_app_services --> n_apps_capture_workbench_src_app_i18n
   n_apps_capture_workbench_src_app_services --> n_packages_capture_runtime_client_src
   n_apps_capture_workbench_src_app_services --> n_packages_capture_workbench_ui_src
+  n_apps_capture_workbench_src_app_settings --> n_apps_capture_workbench_src_app_engine_card
   n_apps_capture_workbench_src_app_settings --> n_apps_capture_workbench_src_app_i18n
   n_apps_capture_workbench_src_app_settings --> n_apps_capture_workbench_src_app_services
   n_apps_capture_workbench_src_app_settings --> n_apps_capture_workbench_src_app_ui_button_src

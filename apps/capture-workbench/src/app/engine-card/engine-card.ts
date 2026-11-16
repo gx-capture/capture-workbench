@@ -14,10 +14,8 @@ import {
 import { HlmButtonImports } from '@spartan-ng/helm/button';
 import { HlmCardImports } from '@spartan-ng/helm/card';
 import { desktopLocale, desktopMessages } from '../i18n/desktop-messages';
-import {
-  formatApproximateBytes,
-  installationPercent,
-} from '../services/desktop-workspace.selectors';
+import { formatApproximateBytes } from '../services/desktop-workspace.selectors';
+import { InstallProgress } from './install-progress';
 
 /**
  * Displays one recognition engine unit: its model guide facts from
@@ -28,7 +26,7 @@ import {
 @Component({
   selector: 'app-engine-card',
   templateUrl: './engine-card.html',
-  imports: [HlmButtonImports, HlmCardImports],
+  imports: [HlmButtonImports, HlmCardImports, InstallProgress],
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class EngineCard {
@@ -64,7 +62,4 @@ export class EngineCard {
       this.requirement().status !== 'ready'
     );
   });
-  protected readonly percent = computed(() =>
-    installationPercent(this.installation()),
-  );
 }

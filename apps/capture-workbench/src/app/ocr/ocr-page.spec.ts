@@ -60,6 +60,7 @@ describe('OcrPage queue', () => {
             firstRunDismissed: signal(true),
             firstRunInstallableUnits: signal([]),
             showFirstRunCard: signal(false),
+            startingRequirementId: signal(null),
             activeInstallation: signal<RuntimeInstallation | null>(null),
             isFeatureReady: (feature: RecognitionFeature) => isFeatureReady(requirements(), feature),
             installUnit,
@@ -133,6 +134,7 @@ describe('OcrPage queue', () => {
             firstRunDismissed: signal(true),
             firstRunInstallableUnits: signal([]),
             showFirstRunCard: signal(false),
+            startingRequirementId: signal(null),
             activeInstallation: signal({
               installationId: 'inst-1',
               requirementId: 'windowsml-ocr',
@@ -168,7 +170,72 @@ describe('OcrPage queue', () => {
 
     const waiting = row(fixture.nativeElement as HTMLElement, 'charge.pdf');
     expect(waiting.querySelector('[data-testid="ocr-row-install"]')).toBeNull();
-    expect(waiting.querySelector('[data-testid="ocr-row-install-progress"]')?.textContent).toContain('40%');
+    expect(waiting.querySelector('[data-testid="ocr-row-install-progress"]')?.textContent).toContain('正在下載 40%');
+    const card = (fixture.nativeElement as HTMLElement).querySelector('[data-testid="ocr-install-progress"]');
+    expect(card?.querySelector('[data-testid="install-progress-label"]')?.textContent).toContain('正在下載 40%');
+    expect(card?.querySelector('[role="progressbar"]')?.getAttribute('aria-valuenow')).toBe('40');
+    expect(card?.querySelector('progress')).toBeNull();
+  });
+
+  it('shows the progress card as soon as an installation is requested, before the runtime has answered', async () => {
+    const requirements = signal<readonly RuntimeRequirement[]>([
+      requirement('windowsml-ocr', 'installable', 144_000_000),
+    ]);
+    TestBed.configureTestingModule({
+      imports: [OcrPage],
+      providers: [
+        provideRouter([]),
+        {
+          provide: DesktopLibraryService,
+          useValue: {
+            list: () => of([doc({ fileName: 'charge.pdf', status: 'queued' })]),
+            get: vi.fn(),
+          },
+        },
+        {
+          provide: DesktopRuntimeClientService,
+          useValue: { started: signal(true), ready: signal(true), pdfPageNumbers: signal(undefined), ocrCompute: signal(null) },
+        },
+        {
+          provide: RecognitionFeaturesStore,
+          useValue: {
+            requirements,
+            installing: signal(true),
+            firstRunDismissed: signal(true),
+            firstRunInstallableUnits: signal([]),
+            showFirstRunCard: signal(false),
+            startingRequirementId: signal('windowsml-ocr'),
+            activeInstallation: signal<RuntimeInstallation | null>(null),
+            isFeatureReady: (feature: RecognitionFeature) => isFeatureReady(requirements(), feature),
+            installUnit: vi.fn(),
+            installFirstRunSelection: vi.fn(),
+            cancelInstallation: vi.fn(),
+            dismissFirstRun: vi.fn(),
+            requestedRequirements: signal(new Set()),
+          },
+        },
+        {
+          provide: DesktopWorkspaceStore,
+          useValue: {
+            allDocuments: signal([doc({ fileName: 'charge.pdf', status: 'queued' })]),
+            refreshDocuments: vi.fn(),
+          },
+        },
+        DesktopWorkspaceCaptureService,
+        CaptureQueueStore,
+      ],
+    });
+
+    const fixture = TestBed.createComponent(OcrPage);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const card = (fixture.nativeElement as HTMLElement).querySelector('[data-testid="ocr-install-progress"]');
+    expect(card?.getAttribute('data-requirement-id')).toBe('windowsml-ocr');
+    expect(card?.querySelector('[data-testid="install-progress-label"]')?.textContent).toContain('正在準備安裝…');
+    // Nothing to cancel until the runtime has answered with an installation.
+    expect(card?.querySelector('[data-testid="ocr-install-cancel"]')).toBeNull();
   });
 
   it('renders header, drop zone, first-run card, and queue in the approved design', async () => {
@@ -203,6 +270,7 @@ describe('OcrPage queue', () => {
             firstRunDismissed: signal(false),
             firstRunInstallableUnits: signal(requirements()),
             showFirstRunCard: signal(true),
+            startingRequirementId: signal(null),
             activeInstallation: signal<RuntimeInstallation | null>(null),
             isFeatureReady: (feature: RecognitionFeature) => isFeatureReady(requirements(), feature),
             installUnit: vi.fn(),

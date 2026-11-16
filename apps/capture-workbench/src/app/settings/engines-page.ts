@@ -16,11 +16,11 @@ import { BrnDialogClose } from '@spartan-ng/brain/dialog';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
 import { HlmCardImports } from '@spartan-ng/helm/card';
 import { HlmTableImports } from '@spartan-ng/helm/table';
+import { InstallProgress } from '../engine-card/install-progress';
 import { desktopLocale, desktopMessages } from '../i18n/desktop-messages';
 import {
   captureNeedsRequirement,
   formatApproximateBytes,
-  installationPercent,
 } from '../services/desktop-workspace.selectors';
 import { DesktopWorkspaceStore } from '../services/desktop-workspace.store';
 import { RecognitionFeaturesStore } from '../services/recognition-features.store';
@@ -34,6 +34,7 @@ import { RecognitionFeaturesStore } from '../services/recognition-features.store
     HlmTableImports,
     BrnAlertDialogImports,
     BrnDialogClose,
+    InstallProgress,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
@@ -76,9 +77,22 @@ export class EnginesPage {
     return this.features.installationFor(unit.requirementId);
   }
 
+  /** The unit's installation while it is queued or running; it can be cancelled. */
+  protected runningInstallation(
+    unit: RuntimeRequirement,
+  ): RuntimeInstallation | null {
+    const installation = this.installationFor(unit);
+    return installation?.status === 'queued' || installation?.status === 'running'
+      ? installation
+      : null;
+  }
+
+  /** Also true while the start request is in flight, so progress shows with the click. */
   protected isRunning(unit: RuntimeRequirement): boolean {
-    const status = this.installationFor(unit)?.status;
-    return status === 'queued' || status === 'running';
+    return (
+      this.runningInstallation(unit) !== null ||
+      this.features.startingRequirementId() === unit.requirementId
+    );
   }
 
   protected isFailed(unit: RuntimeRequirement): boolean {
@@ -115,10 +129,6 @@ export class EnginesPage {
 
   protected installLabel(unit: RuntimeRequirement): string {
     return this.m().installWithSize(this.sizeLabel(unit));
-  }
-
-  protected percentFor(unit: RuntimeRequirement): number {
-    return installationPercent(this.installationFor(unit));
   }
 
   protected engineName(unit: RuntimeRequirement): string {

@@ -14,6 +14,10 @@ import {
   formatApproximateBytes,
   installationPercent,
 } from './desktop-workspace.selectors';
+import {
+  installationProgress,
+  installationProgressLabel,
+} from './installation-progress';
 import { RecognitionFeaturesStore } from './recognition-features.store';
 import {
   describeOcrDocument,
@@ -75,12 +79,24 @@ export class CaptureQueueStore {
     return formatApproximateBytes(requirement?.downloadBytes);
   });
 
-  private readonly ocrInstallPercent = computed(() => {
+  private readonly runningOcrInstallation = computed(() => {
     const active = this.features.activeInstallation();
     if (!active || active.requirementId !== 'windowsml-ocr') return null;
     if (active.status !== 'queued' && active.status !== 'running') return null;
-    return installationPercent(active);
+    return active;
   });
+
+  private readonly ocrInstallPercent = computed(() => {
+    const running = this.runningOcrInstallation();
+    return running ? installationPercent(running) : null;
+  });
+
+  /** What a waiting file shows while text recognition installs. */
+  readonly ocrInstallLabel = computed(() =>
+    installationProgressLabel(
+      installationProgress(this.runningOcrInstallation()),
+      desktopMessages(),
+    ));
 
   private readonly loadEffect = effect(() => {
     if (!this.attached() || !this.runtime.started()) return;

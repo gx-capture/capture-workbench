@@ -67,6 +67,7 @@ export class RecognitionFeaturesStore {
   readonly runtimeStarted = this.runtime.started;
   readonly installing = this.installation.installing;
   readonly activeInstallation = this.installation.activeInstallation;
+  readonly startingRequirementId = this.installation.startingRequirementId;
   readonly activeModelInstallation = this.installation.activeModelInstallation;
   readonly selectedModelOptionId = this.installation.selectedModelOptionId;
   readonly installationPercent = computed(() =>
