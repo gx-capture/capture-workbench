@@ -158,8 +158,8 @@
       </mat-card>
     }
 
-    @if (store.ocrCompute(); as compute) {
-      <gx-capture-runtime-compute-status [preflight]="compute" [gpuLabel]="m().gpuAcceleration" [cpuNotice]="m().cpuNotice" />
+    @if (compute.ocrCompute(); as ocrCompute) {
+      <gx-capture-runtime-compute-status [preflight]="ocrCompute" [gpuLabel]="m().gpuAcceleration" [cpuNotice]="m().cpuNotice" />
     }
 
     <mat-card class="intake" appearance="outlined" [class.is-disabled]="!store.canCapture()">
@@ -170,9 +170,9 @@
         <input type="checkbox" data-testid="identify-speakers" [checked]="store.identifySpeakers()" (change)="store.identifySpeakers.set($any($event.target).checked)" />
         {{ m().identifySpeakers }}
       </label>
-      @if (store.speechGpu(); as gpu) {
+      @if (compute.speechGpu(); as gpu) {
         <label class="intake-hint">
-          <input type="checkbox" data-testid="prefer-gpu" [checked]="gpu.preferGpu" [disabled]="!store.canChangeCompute()" (change)="store.setPreferGpu($any($event.target).checked)" />
+          <input type="checkbox" data-testid="prefer-gpu" [checked]="gpu.preferGpu" [disabled]="!compute.canChangeCompute()" (change)="compute.setPreferGpu($any($event.target).checked)" />
           {{ m().useGpuForSpeech }}
         </label>
       }

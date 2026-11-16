@@ -24,12 +24,13 @@ import { BrnDialogClose } from '@spartan-ng/brain/dialog';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
 import {
   DESKTOP_LOCALES,
-  DESKTOP_MESSAGES,
+  desktopLanguageName,
   desktopLocale,
   desktopMessages,
   setDesktopLocale,
   type DesktopLocale,
 } from '../i18n/desktop-messages';
+import { ComputeSettingsStore } from '../services/compute-settings.store';
 import {
   formatApproximateBytes,
   formatRecordingTime,
@@ -66,6 +67,7 @@ import { EngineCard } from '../engine-card/engine-card';
 })
 export class HistoryPage {
   protected readonly store = inject(DesktopWorkspaceStore);
+  protected readonly compute = inject(ComputeSettingsStore);
   protected readonly m = desktopMessages;
   protected readonly playbackUnavailable = playbackUnavailable;
   protected readonly locale = desktopLocale;
@@ -94,7 +96,7 @@ export class HistoryPage {
   }
 
   protected languageName(locale: DesktopLocale): string {
-    return DESKTOP_MESSAGES[locale].languageName;
+    return desktopLanguageName(locale);
   }
 
   protected openFilePicker(): void {

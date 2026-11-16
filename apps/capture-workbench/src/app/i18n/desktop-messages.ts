@@ -262,6 +262,17 @@ export interface DesktopMessages {
   readonly resultDetailStatus: string;
   readonly resultDetailCreatedAt: string;
   readonly resultDetailUpdatedAt: string;
+  readonly settingsNavigation: string;
+  readonly settingsComputeTitle: string;
+  readonly settingsGeneralTitle: string;
+  readonly computeOcrTitle: string;
+  readonly computeAsrTitle: string;
+  readonly computeOcrPending: string;
+  readonly computeAsrPending: string;
+  readonly computeAsrCudaDetected: string;
+  readonly computeAsrCpuOnly: string;
+  readonly computeSaving: string;
+  readonly computeBusyHint: string;
 }
 
 const ZH_TW: DesktopMessages = {
@@ -568,6 +579,17 @@ const ZH_TW: DesktopMessages = {
   resultDetailStatus: '狀態',
   resultDetailCreatedAt: '建立時間',
   resultDetailUpdatedAt: '更新時間',
+  settingsNavigation: '設定導覽',
+  settingsComputeTitle: '運算裝置',
+  settingsGeneralTitle: '一般',
+  computeOcrTitle: '文字辨識',
+  computeAsrTitle: '語音轉文字',
+  computeOcrPending: '尚未偵測到文字辨識運算裝置。',
+  computeAsrPending: '正在偵測語音運算裝置…',
+  computeAsrCudaDetected: '偵測到 CUDA GPU',
+  computeAsrCpuOnly: 'CPU（未偵測到可用的 CUDA 驅動程式）',
+  computeSaving: '正在儲存並重新啟動運算服務…',
+  computeBusyHint: '安裝或辨識進行中，暫時無法變更此設定。',
 };
 
 const EN: DesktopMessages = {
@@ -879,6 +901,17 @@ const EN: DesktopMessages = {
   resultDetailStatus: 'Status',
   resultDetailCreatedAt: 'Created',
   resultDetailUpdatedAt: 'Updated',
+  settingsNavigation: 'Settings navigation',
+  settingsComputeTitle: 'Compute',
+  settingsGeneralTitle: 'General',
+  computeOcrTitle: 'Text recognition',
+  computeAsrTitle: 'Speech to text',
+  computeOcrPending: 'Text recognition compute device has not been detected yet.',
+  computeAsrPending: 'Detecting speech compute device…',
+  computeAsrCudaDetected: 'CUDA GPU detected',
+  computeAsrCpuOnly: 'CPU (no CUDA driver detected)',
+  computeSaving: 'Saving and restarting the compute service…',
+  computeBusyHint: 'Cannot change this while an installation or recognition is running.',
 };
 
 export const DESKTOP_MESSAGES: Readonly<Record<DesktopLocale, DesktopMessages>> =
@@ -902,6 +935,10 @@ export const desktopLocale = signal<DesktopLocale>(readStoredLocale());
 export const desktopMessages = computed(
   () => DESKTOP_MESSAGES[desktopLocale()],
 );
+
+export function desktopLanguageName(locale: DesktopLocale): string {
+  return DESKTOP_MESSAGES[locale].languageName;
+}
 
 /** Switches the language and remembers the choice on this computer. */
 export function setDesktopLocale(locale: DesktopLocale): void {

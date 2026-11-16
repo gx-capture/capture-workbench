@@ -1,0 +1,34 @@
+<section
+  class="flex h-full flex-col gap-6 px-8 py-7"
+  data-testid="page-settings"
+>
+  <header class="border-b border-border pb-4">
+    <h1 class="text-2xl font-semibold tracking-tight">{{ m().nav.settings }}</h1>
+  </header>
+
+  <div class="flex min-h-0 flex-1 flex-col gap-6 md:flex-row">
+    <nav
+      class="flex w-full shrink-0 flex-row gap-1 md:w-44 md:flex-col"
+      data-testid="settings-subnav"
+      [attr.aria-label]="m().settingsNavigation"
+    >
+      @for (item of navItems(); track item.route) {
+        <a
+          hlmBtn
+          variant="ghost"
+          class="justify-start md:w-full"
+          [routerLink]="item.route"
+          routerLinkActive="bg-sidebar-accent font-semibold text-sidebar-accent-foreground"
+          ariaCurrentWhenActive="page"
+          [attr.data-testid]="item.testId"
+        >
+          {{ item.label }}
+        </a>
+      }
+    </nav>
+
+    <div class="min-w-0 flex-1 overflow-auto">
+      <router-outlet />
+    </div>
+  </div>
+</section>

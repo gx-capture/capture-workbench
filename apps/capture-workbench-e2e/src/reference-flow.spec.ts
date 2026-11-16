@@ -388,7 +388,39 @@ test('does not run a deterministic provider in an unconfigured browser', async (
   await expect(page.getByText(/deterministic/i)).toHaveCount(0);
 });
 
+test('navigates settings sub-pages, toggles speech GPU preference, and switches language', async ({ page }) => {
+  await openDesktop(page, [], '/settings', { cudaAvailable: true });
+
+  await expect(page).toHaveURL(/\/settings\/engines$/u);
+  const subnav = page.getByRole('navigation', { name: '設定導覽' });
+  await expect(subnav.getByRole('link')).toHaveText(['辨識功能', '運算裝置', '一般']);
+  await expect(subnav.getByTestId('settings-nav-engines')).toHaveAttribute('aria-current', 'page');
+
+  await subnav.getByTestId('settings-nav-compute').click();
+  await expect(page).toHaveURL(/\/settings\/compute$/u);
+  await expect(subnav.getByTestId('settings-nav-compute')).toHaveAttribute('aria-current', 'page');
+  await expect(page.getByTestId('ocr-compute-status')).toHaveText('GPU 加速');
+
+  const preferGpu = page.getByTestId('compute-prefer-gpu');
+  await expect(preferGpu).toBeChecked();
+  await preferGpu.click();
+  await expect(preferGpu).not.toBeChecked();
+
+  await subnav.getByTestId('settings-nav-general').click();
+  await expect(page).toHaveURL(/\/settings\/general$/u);
+  await expect(subnav.getByTestId('settings-nav-general')).toHaveAttribute('aria-current', 'page');
+
+  const shellNav = page.getByRole('navigation', { name: '主要功能' });
+  await expect(shellNav.getByTestId('nav-settings')).toHaveText('設定');
+  await page.locator('[data-testid="general-language-option"][data-locale="en"]').click();
+  await expect(page.getByRole('navigation', { name: 'Main' }).getByTestId('nav-settings')).toHaveText('Settings');
+
+  await page.locator('[data-testid="general-language-option"][data-locale="zh-TW"]').click();
+  await expect(shellNav.getByTestId('nav-settings')).toHaveText('設定');
+});
+
 interface OpenDesktopOptions {
+  readonly cudaAvailable?: boolean;
   readonly editedResults?: boolean;
   readonly completeInstallOnPoll?: number;
   readonly holdRunningUntilCancel?: boolean;
@@ -445,6 +477,7 @@ async function openDesktop(
     const installations = new Map<string, Record<string, unknown>>();
     const pollCounts = new Map<string, number>();
     let cancelledOnce = false;
+    let preferGpu = true;
     const historyId = 'a'.repeat(32);
     const libraryKey = 'capture-workbench.e2e-ocr-library';
     interface StoredDoc {
@@ -680,7 +713,18 @@ async function openDesktop(
           return Promise.resolve({ status: 'ready', detail: 'Capture Runtime 已準備完成。' });
         }
         if (command === 'desktop_compute_status') {
-          return Promise.resolve({ cudaAvailable: false, preferGpu: true });
+          return Promise.resolve({
+            cudaAvailable: Boolean(installOptions.cudaAvailable),
+            preferGpu,
+          });
+        }
+        if (command === 'desktop_set_prefer_gpu') {
+          const payload = rawArgs as { readonly preferGpu?: boolean } | undefined;
+          preferGpu = Boolean(payload?.preferGpu);
+          return Promise.resolve({
+            cudaAvailable: Boolean(installOptions.cudaAvailable),
+            preferGpu,
+          });
         }
         if (command === 'runtime_ready') {
           return Promise.resolve({

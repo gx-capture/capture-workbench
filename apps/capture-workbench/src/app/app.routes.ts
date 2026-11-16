@@ -7,7 +7,10 @@ import { ResultDetailsPage } from './result/result-details-page';
 import { ResultExportPage } from './result/result-export-page';
 import { ResultPage } from './result/result-page';
 import { ResultSpeakersPage } from './result/result-speakers-page';
+import { ComputePage } from './settings/compute-page';
 import { EnginesPage } from './settings/engines-page';
+import { GeneralPage } from './settings/general-page';
+import { SettingsPage } from './settings/settings-page';
 
 /** The shell's pages; OCR is the home page (.agents/PLANS/workbench-ocr-asr-ux.md §2). */
 export const appRoutes: Routes = [
@@ -26,7 +29,15 @@ export const appRoutes: Routes = [
       { path: 'details', component: ResultDetailsPage },
     ],
   },
-  { path: 'settings', pathMatch: 'full', redirectTo: 'settings/engines' },
-  { path: 'settings/engines', component: EnginesPage },
+  {
+    path: 'settings',
+    component: SettingsPage,
+    children: [
+      { path: '', pathMatch: 'full', redirectTo: 'engines' },
+      { path: 'engines', component: EnginesPage },
+      { path: 'compute', component: ComputePage },
+      { path: 'general', component: GeneralPage },
+    ],
+  },
   { path: '**', redirectTo: 'ocr' },
 ];
