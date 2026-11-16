@@ -528,9 +528,13 @@ Candidate checksums stay inside the candidate artifact and are not release asset
 ## Procedure
 
 1. Merge the release source to `main` and wait for **push** CI on that commit
-   (`ci.yml`). Release candidates verify it with `tools/verify-main-ci.ts`.
-   `ci.yml` skips commits that change only Markdown or `.agents/`, so name the
-   latest `main` commit that changed code.
+   (`ci.yml`), whose `installer` job includes the release-mode installed smoke
+   (`installed-deterministic-smoke.ts --release`). To pre-flight a branch before
+   merging, dispatch `ci.yml` (`workflow_dispatch`), which runs only
+   `installer`. Release candidates verify the `push` run on `main` with
+   `tools/verify-main-ci.ts` (never a `workflow_dispatch` run). `ci.yml` skips
+   commits that change only Markdown or `.agents/`, so name the latest `main`
+   commit that changed code.
 2. Dispatch `package-candidate.yml` and `runtime-candidate.yml` for the exact
    commit. Record each run ID, `candidateId`, and the SHA-256 of its
    `candidate-manifest.json`. Download the small package artifact. The runtime
@@ -731,12 +735,13 @@ candidate with `node tools/install-capture-workbench-dependencies.mts
   ("not a successful exact-source package candidate") before anything is
   published. 0.10.0: the first candidates named `b890158` after `main` had
   moved to `b0924a8`; both were rebuilt for `b0924a8`.
-- The installed smoke's `--release` mode runs only in
-  `release-candidate.yml` (`verify-windows-install`), on a runner that has
-  never started the product. The release build has no app-data redirect, so it
-  creates the real product app-data and its library there. The real app-data
-  guard (`installed-app-data-guard.ts`) therefore has two rules: the
-  deterministic QA build must leave the real app-data untouched, and the
+- `ci.yml`'s `installer` job runs `installed-deterministic-smoke.ts --release`
+  on `main` pushes (and on `workflow_dispatch` as a branch pre-flight), in
+  addition to `release-candidate.yml` (`verify-windows-install`). On a runner
+  that has never started the product, the release build has no app-data
+  redirect, so it creates the real product app-data and its library there. The
+  real app-data guard (`installed-app-data-guard.ts`) therefore has two rules:
+  the deterministic QA build must leave the real app-data untouched, and the
   release build may create the directory and its library folder, but nothing
   that existed may be removed and the library index must stay as it was. A
   release candidate built from a commit before this rule (0.10.0's `b0924a8`)

@@ -243,6 +243,34 @@ test('desktop CI binds its staged contract resources to generated contracts', as
     'utf8',
   );
   assert.match(ci, /capture-workbench-desktop:contract-consistency/u);
+  assert.match(ci, /^\s{2}workflow_dispatch:\s*$/mu);
+
+  const checksJob = ci.slice(ci.indexOf('  checks:'), ci.indexOf('  packages:'));
+  assert.match(checksJob, /^\s{4}if:\s*github\.event_name == 'pull_request'$/mu);
+  const packagesJob = ci.slice(ci.indexOf('  packages:'), ci.indexOf('  runtime:'));
+  assert.match(packagesJob, /^\s{4}if:\s*github\.event_name == 'push'$/mu);
+  const runtimeJob = ci.slice(ci.indexOf('  runtime:'), ci.indexOf('  installer:'));
+  assert.match(runtimeJob, /^\s{4}if:\s*github\.event_name == 'push'$/mu);
+  const installerJob = ci.slice(ci.indexOf('  installer:'), ci.indexOf('  desktop:'));
+  assert.match(
+    installerJob,
+    /^\s{4}if:\s*github\.event_name == 'push' \|\| github\.event_name == 'workflow_dispatch'$/mu,
+  );
+  assert.match(installerJob, /uses:\s*\.\/\.github\/actions\/ensure-webview2/u);
+  assert.match(
+    installerJob,
+    /node apps\/capture-workbench-desktop\/scripts\/installed-deterministic-smoke\.ts --release/u,
+  );
+  assert.ok(
+    installerJob.indexOf('capture-workbench-desktop:build-nsis') <
+      installerJob.indexOf('./.github/actions/ensure-webview2'),
+  );
+  assert.ok(
+    installerJob.indexOf('./.github/actions/ensure-webview2') <
+      installerJob.indexOf('installed-deterministic-smoke.ts --release'),
+  );
+  const desktopJob = ci.slice(ci.indexOf('  desktop:'));
+  assert.match(desktopJob, /^\s{4}if:\s*github\.event_name == 'push'$/mu);
 });
 
 test('ordinary CI keeps real OCR local while release promotion stays deterministic', async () => {
@@ -597,19 +625,30 @@ test('release candidate workflow is dispatch-only, exact-commit, and immutable',
     ).length,
     5,
   );
+  const ensureWebView2Action = await readFile(
+    join(workspaceRoot, '.github', 'actions', 'ensure-webview2', 'action.yml'),
+    'utf8',
+  );
   const windowsInstallJob = workflow.slice(
     workflow.indexOf('  verify-windows-install:'),
   );
   assert.match(windowsInstallJob, /Ensure WebView2 Evergreen Runtime/u);
-  assert.match(windowsInstallJob, /F3017226-FE2A-4295-8BDF-00C3A9A7E4C5/u);
   assert.match(
     windowsInstallJob,
+    /uses:\s*\.\/\.github\/actions\/ensure-webview2/u,
+  );
+  assert.match(ensureWebView2Action, /F3017226-FE2A-4295-8BDF-00C3A9A7E4C5/u);
+  assert.match(
+    ensureWebView2Action,
     /https:\/\/go\.microsoft\.com\/fwlink\/p\/\?LinkId=2124703/u,
   );
-  assert.match(windowsInstallJob, /MicrosoftEdgeWebview2Setup\.exe/u);
-  assert.match(windowsInstallJob, /ArgumentList '\/silent', '\/install'/u);
+  assert.match(ensureWebView2Action, /MicrosoftEdgeWebview2Setup\.exe/u);
   assert.match(
-    windowsInstallJob,
+    ensureWebView2Action,
+    /ArgumentList '\/silent', '\/install'/u,
+  );
+  assert.match(
+    ensureWebView2Action,
     /WebView2 Evergreen Runtime is not installed after prerequisite setup/u,
   );
   assert.ok(
