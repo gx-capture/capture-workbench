@@ -138,7 +138,7 @@ const childEnvironmentAllowlist = CHILD_ENVIRONMENT_ALLOWLIST;
 // runners. Keep this budget explicit while process cleanup remains fail-closed.
 export const installedSmokeExecutableTimeoutMs = 600_000;
 
-function baseChildEnvironment(source, isolatedTemp, ownedRoot = runRoot) {
+function baseChildEnvironment(source: NodeJS.ProcessEnv, isolatedTemp: string, ownedRoot = runRoot) {
   const environment: Record<string, string> = {};
   for (const allowedName of childEnvironmentAllowlist) {
     const sourceEntry = Object.entries(source).find(
