@@ -1146,7 +1146,11 @@ mod tests {
             })
             .expect("source");
         library
-            .update_capture(evidence_update(&created.document_id, "completed", Some(gapped)))
+            .update_capture(evidence_update(
+                &created.document_id,
+                "completed",
+                Some(gapped),
+            ))
             .expect("gapped evidence accepted");
 
         for invalid_pages in [vec![0], vec![2, 2], vec![5, 2]] {
@@ -1165,7 +1169,9 @@ mod tests {
             evidence["summary"]["normalizedCharCount"] = serde_json::json!(5 * invalid_pages.len());
             let evidence = sealed_evidence(evidence);
             assert_eq!(
-                evidence.validate().expect_err("non-ascending pages rejected"),
+                evidence
+                    .validate()
+                    .expect_err("non-ascending pages rejected"),
                 "OCR evidence pages must be in ascending order."
             );
         }
