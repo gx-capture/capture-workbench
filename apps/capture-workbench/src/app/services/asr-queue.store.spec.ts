@@ -53,6 +53,49 @@ function makeRecording(
 describe('AsrQueueStore', () => {
   beforeEach(() => setDesktopLocale('zh-TW'));
 
+  it('uses summary durations without loading completed recording details', () => {
+    const document = makeRecording({ status: 'completed', durationMs: 90_000 });
+    const { store, library, docs, streamingOperations } = setup({ initialDocs: [document] });
+    store.attach();
+    TestBed.tick();
+    expect(store.rows()[0].durationLabel).toBe('1:30');
+    expect(library.get).not.toHaveBeenCalled();
+
+    streamingOperations.set(new Map([[document.documentId, {
+      status: 'completed', durationMs: 800_000,
+    } as CaptureOperation]]));
+    docs.set([{ ...document, durationMs: 125_000, updatedAtMs: 200 }]);
+    TestBed.tick();
+    expect(store.rows()[0].durationLabel).toBe('2:05');
+    expect(library.get).not.toHaveBeenCalled();
+  });
+
+  it('keeps the live operation duration while a recording is running', () => {
+    const document = makeRecording({ status: 'processing', captureId: 'running', durationMs: 90_000 });
+    const { store, library, streamingOperations } = setup({ initialDocs: [document] });
+    streamingOperations.set(new Map([[document.documentId, {
+      captureId: 'running', status: 'extracting', durationMs: 125_000,
+    } as CaptureOperation]]));
+    expect(store.rows()[0].durationLabel).toBe('2:05');
+    expect(library.get).not.toHaveBeenCalled();
+  });
+
+  it('loads diarized recording details only for the speaker-count badge', () => {
+    const document = makeRecording({
+      status: 'completed', durationMs: 90_000, captureOptions: { identifySpeakers: true },
+    });
+    const { store, library } = setup({ initialDocs: [document] });
+    library.get.mockReturnValue(of({
+      ...document,
+      result: { speakers: [{ speakerId: 'one' }, { speakerId: 'two' }] },
+    }));
+    store.attach();
+    TestBed.tick();
+    expect(library.get).toHaveBeenCalledExactlyOnceWith(document.documentId);
+    expect(store.rows()[0].speakerCount).toBe(2);
+    expect(store.rows()[0].durationLabel).toBe('1:30');
+  });
+
   function setup(options: {
     readonly speechStatus?: RuntimeRequirement['status'];
     readonly speakersStatus?: RuntimeRequirement['status'];

@@ -14,6 +14,12 @@ import {
 describe('OCR queue presentation', () => {
   beforeEach(() => setDesktopLocale('zh-TW'));
 
+  it('shows a finished whole PDF page count from its summary', () => {
+    expect(view(doc({ status: 'completed', pageCount: 12 })).pageLabel).toBe('12');
+    expect(view(doc({ status: 'completed' })).pageLabel).toBe('—');
+    expect(view(doc({ status: 'completed', pageCount: 12, captureOptions: { pdfPageCount: 3 } })).pageLabel).toBe('3');
+  });
+
   it('maps library records onto the five user statuses', () => {
     expect(view(doc({ status: 'queued' })).userStatus).toBe('waiting');
     expect(view(doc({ status: 'queued' })).statusText).toBe('等待中');

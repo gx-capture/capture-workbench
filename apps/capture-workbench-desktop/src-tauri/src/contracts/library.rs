@@ -893,6 +893,10 @@ pub(crate) struct LibraryDocumentSummary {
     /// True when the library has stored raw OCR or transcript text.
     #[serde(default)]
     pub has_raw: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page_count: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<f64>,
 }
 
 #[derive(Clone, Debug, Serialize)]
