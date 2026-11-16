@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -210,13 +211,17 @@ def test_app_fails_closed_when_contract_route_inventory_drifts(settings_factory)
 
 def test_executable_packaging_embeds_contract_bytes_and_digest() -> None:
     root = Path(__file__).resolve().parents[2]
-    spec = (root / "pyinstaller" / "capture-runtime.spec").read_text(encoding="utf-8")
-    pyproject = (root / "pyproject.toml").read_text(encoding="utf-8")
+    pyproject = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    force_include = pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["force-include"]
 
-    assert 'contract_assets / "contract-set.json"' in spec
-    assert 'contract_assets / "contract-set.sha256"' in spec
-    assert '"src/capture_runtime/assets/contract-set.json"' in pyproject
-    assert '"src/capture_runtime/assets/contract-set.sha256"' in pyproject
+    assert (
+        force_include["src/capture_runtime/assets/contract-set.json"]
+        == "capture_runtime/assets/contract-set.json"
+    )
+    assert (
+        force_include["src/capture_runtime/assets/contract-set.sha256"]
+        == "capture_runtime/assets/contract-set.sha256"
+    )
 
 
 def test_contract_set_does_not_change_with_the_release_version() -> None:

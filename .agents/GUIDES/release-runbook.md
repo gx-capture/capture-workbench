@@ -461,6 +461,29 @@ missing ones.
   replacement; its assets stay, and the defective release's notes get a
   warning footer.
 
+## Manual runtime targets (not run by CI)
+
+No workflow runs these `capture-runtime` targets. They are kept as tools for a
+person:
+
+- `verify-speech-recognition-worker` probes the locally built CUDA speech
+  worker (`dist/workers/capture-engine-speech-recognition/`) with
+  `scripts/probe_packaged_worker.py`. CI probes only the diarization and CPU
+  speech workers. Run it after `build-speech-recognition-worker` when the CUDA
+  worker's dependencies or its PyInstaller spec change.
+- `generate-speech-recognition-preflight-catalog` and
+  `verify-speech-recognition-preflight` are the way to freeze the private
+  speech fixture again when the private recording or the speech model changes.
+  They accept only a model-source lock whose approval is `blocked` with the
+  single pending-freeze blocker (`PENDING_WHISPER_FREEZE_BLOCKER` in
+  `scripts/model_source_lock.py`) and whose `whisper` fixture has no expected
+  model, device or output hash. On the approved lock they stop with an error;
+  that is intended. Procedure: put the lock in that blocked state, run the
+  preflight twice with the private recording (`--private-whisper-fixture`),
+  compare the two evidence files (they hold hashes, provenance and segment
+  bounds, never the audio path or the transcript), then write the frozen
+  model, device and normalized output hash into the lock and approve it.
+
 ## GitHub Release assets
 
 From 0.10.0, a full release publishes 19 assets:
