@@ -5,6 +5,16 @@ import type {
   PDFPageProxy,
   RenderTask,
 } from 'pdfjs-dist';
+import {
+  catchError,
+  defer,
+  EMPTY,
+  from,
+  Observable,
+  shareReplay,
+  switchMap,
+  throwError,
+} from 'rxjs';
 
 export const MAX_PDF_DEVICE_PIXEL_RATIO = 2;
 export const MAX_PDF_CANVAS_PIXELS = 16_000_000;
@@ -14,11 +24,11 @@ export interface PdfJsApi {
   readonly getDocument: typeof import('pdfjs-dist').getDocument;
 }
 
-export type PdfJsLoader = () => Promise<PdfJsApi>;
+export type PdfJsLoader = () => Observable<PdfJsApi>;
 
 export const PDF_JS_LOADER = new InjectionToken<PdfJsLoader>('PDF_JS_LOADER', {
   providedIn: 'root',
-  factory: () => () => import('pdfjs-dist'),
+  factory: () => () => defer(() => from(import('pdfjs-dist'))),
 });
 
 export interface PdfRenderDimensions {
@@ -41,8 +51,8 @@ export interface PdfDocumentHandle {
     pageNumber: number,
     canvas: HTMLCanvasElement,
     options: PdfRenderOptions,
-  ): Promise<void>;
-  destroy(): Promise<void>;
+  ): Observable<void>;
+  destroy(): void;
 }
 
 /** Returns true when `pageNumber` is a 1-based integer within `1..pageCount`. */
@@ -134,66 +144,108 @@ function createDocumentHandle(
 ): PdfDocumentHandle {
   const activeRenders = new Map<HTMLCanvasElement, ActiveRender>();
   let destroyed = false;
-  let destroyPromise: Promise<void> | null = null;
 
   return {
     pageCount: doc.numPages,
 
-    async renderPage(
+    renderPage(
       pageNumber: number,
       canvas: HTMLCanvasElement,
       options: PdfRenderOptions,
-    ): Promise<void> {
-      if (destroyed) return;
-      if (!isPdfPageInBounds(pageNumber, doc.numPages)) {
-        throw new RangeError(
-          `PDF page ${pageNumber} is out of range (1..${doc.numPages}).`,
-        );
-      }
-
-      const previous = activeRenders.get(canvas);
-      if (previous) {
-        previous.cancelled = true;
-        previous.task?.cancel();
-      }
-
-      const current: ActiveRender = { cancelled: false, task: null };
-      activeRenders.set(canvas, current);
-
-      try {
-        const page: PDFPageProxy = await doc.getPage(pageNumber);
-        if (current.cancelled || destroyed) return;
-
-        const baseViewport = page.getViewport({ scale: 1 });
-        const dims = computePdfRenderScale({
-          pageWidth: baseViewport.width,
-          pageHeight: baseViewport.height,
-          targetCssWidth: options.cssWidth,
-          devicePixelRatio: options.devicePixelRatio,
-          maxCanvasPixels: options.maxCanvasPixels,
-        });
-
-        canvas.width = dims.pixelWidth;
-        canvas.height = dims.pixelHeight;
-
-        const viewport = page.getViewport({ scale: dims.scale });
-        const task = page.render({ canvas, viewport });
-        current.task = task;
-        await task.promise;
-      } catch (error: unknown) {
-        if (current.cancelled || destroyed || isRenderingCancelledError(error)) {
+    ): Observable<void> {
+      return new Observable<void>((subscriber) => {
+        if (destroyed) {
+          subscriber.complete();
           return;
         }
-        throw error;
-      } finally {
-        if (activeRenders.get(canvas) === current) {
-          activeRenders.delete(canvas);
+        if (!isPdfPageInBounds(pageNumber, doc.numPages)) {
+          subscriber.error(
+            new RangeError(
+              `PDF page ${pageNumber} is out of range (1..${doc.numPages}).`,
+            ),
+          );
+          return;
         }
-      }
+
+        const previous = activeRenders.get(canvas);
+        if (previous) {
+          previous.cancelled = true;
+          previous.task?.cancel();
+        }
+
+        const current: ActiveRender = { cancelled: false, task: null };
+        activeRenders.set(canvas, current);
+        let finished = false;
+
+        const cleanupActive = () => {
+          if (activeRenders.get(canvas) === current) {
+            activeRenders.delete(canvas);
+          }
+        };
+
+        const renderSub = from(doc.getPage(pageNumber))
+          .pipe(
+            switchMap((page: PDFPageProxy) => {
+              if (current.cancelled || destroyed) {
+                return EMPTY;
+              }
+
+              const baseViewport = page.getViewport({ scale: 1 });
+              const dims = computePdfRenderScale({
+                pageWidth: baseViewport.width,
+                pageHeight: baseViewport.height,
+                targetCssWidth: options.cssWidth,
+                devicePixelRatio: options.devicePixelRatio,
+                maxCanvasPixels: options.maxCanvasPixels,
+              });
+
+              canvas.width = dims.pixelWidth;
+              canvas.height = dims.pixelHeight;
+
+              const viewport = page.getViewport({ scale: dims.scale });
+              const task = page.render({ canvas, viewport });
+              current.task = task;
+              return from(task.promise);
+            }),
+            catchError((error: unknown) => {
+              if (current.cancelled || destroyed || isRenderingCancelledError(error)) {
+                return EMPTY;
+              }
+              return throwError(() => error);
+            }),
+          )
+          .subscribe({
+            next: () => {
+              finished = true;
+              cleanupActive();
+              subscriber.next();
+              subscriber.complete();
+            },
+            error: (error: unknown) => {
+              finished = true;
+              cleanupActive();
+              subscriber.error(error);
+            },
+            complete: () => {
+              finished = true;
+              cleanupActive();
+              subscriber.complete();
+            },
+          });
+
+        return () => {
+          if (!finished) {
+            current.cancelled = true;
+            current.task?.cancel();
+          }
+          renderSub.unsubscribe();
+          cleanupActive();
+        };
+      });
     },
 
-    destroy(): Promise<void> {
-      if (destroyPromise) return destroyPromise;
+    destroy(): void {
+      if (destroyed) return;
       destroyed = true;
       for (const active of activeRenders.values()) {
         active.cancelled = true;
@@ -201,8 +253,7 @@ function createDocumentHandle(
       }
       activeRenders.clear();
       // Destroying the loading task also destroys the document and its worker.
-      destroyPromise = loadingTask.destroy().catch(() => undefined);
-      return destroyPromise;
+      void loadingTask.destroy().catch(() => undefined);
     },
   };
 }
@@ -214,35 +265,61 @@ function createDocumentHandle(
 @Injectable({ providedIn: 'root' })
 export class PdfPageRenderer {
   private readonly loadPdfJs = inject(PDF_JS_LOADER);
-  private pdfjsPromise: Promise<PdfJsApi> | null = null;
+  private pdfjs$: Observable<PdfJsApi> | null = null;
 
-  async open(bytes: ArrayBuffer): Promise<PdfDocumentHandle> {
-    const pdfjs = await this.ensurePdfJs();
-    pdfjs.GlobalWorkerOptions.workerSrc = pdfjsAssetUrl(
-      'assets/pdfjs/pdf.worker.min.mjs',
+  open(bytes: ArrayBuffer): Observable<PdfDocumentHandle> {
+    return this.ensurePdfJs().pipe(
+      switchMap(
+        (pdfjs) =>
+          new Observable<PdfDocumentHandle>((subscriber) => {
+            pdfjs.GlobalWorkerOptions.workerSrc = pdfjsAssetUrl(
+              'assets/pdfjs/pdf.worker.min.mjs',
+            );
+
+            const data = new Uint8Array(bytes.slice(0));
+            const loadingTask = pdfjs.getDocument({
+              data,
+              useWasm: false,
+              wasmUrl: pdfjsAssetUrl('assets/pdfjs/wasm/'),
+              cMapUrl: pdfjsAssetUrl('assets/pdfjs/cmaps/'),
+              cMapPacked: true,
+              standardFontDataUrl: pdfjsAssetUrl('assets/pdfjs/standard_fonts/'),
+            });
+
+            let settled = false;
+            const loadSub = from(loadingTask.promise).subscribe({
+              next: (doc) => {
+                settled = true;
+                subscriber.next(createDocumentHandle(doc, loadingTask));
+                subscriber.complete();
+              },
+              error: (error: unknown) => {
+                settled = true;
+                subscriber.error(error);
+              },
+            });
+
+            return () => {
+              loadSub.unsubscribe();
+              if (!settled) {
+                void loadingTask.destroy().catch(() => undefined);
+              }
+            };
+          }),
+      ),
     );
-
-    const data = new Uint8Array(bytes.slice(0));
-    const loadingTask = pdfjs.getDocument({
-      data,
-      useWasm: false,
-      wasmUrl: pdfjsAssetUrl('assets/pdfjs/wasm/'),
-      cMapUrl: pdfjsAssetUrl('assets/pdfjs/cmaps/'),
-      cMapPacked: true,
-      standardFontDataUrl: pdfjsAssetUrl('assets/pdfjs/standard_fonts/'),
-    });
-
-    const doc = await loadingTask.promise;
-    return createDocumentHandle(doc, loadingTask);
   }
 
-  private ensurePdfJs(): Promise<PdfJsApi> {
-    if (!this.pdfjsPromise) {
-      this.pdfjsPromise = this.loadPdfJs().catch((error: unknown) => {
-        this.pdfjsPromise = null;
-        throw error;
-      });
+  private ensurePdfJs(): Observable<PdfJsApi> {
+    if (!this.pdfjs$) {
+      this.pdfjs$ = this.loadPdfJs().pipe(
+        catchError((error: unknown) => {
+          this.pdfjs$ = null;
+          return throwError(() => error);
+        }),
+        shareReplay({ bufferSize: 1, refCount: false }),
+      );
     }
-    return this.pdfjsPromise;
+    return this.pdfjs$;
   }
 }

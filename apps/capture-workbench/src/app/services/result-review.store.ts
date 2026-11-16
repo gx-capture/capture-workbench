@@ -195,9 +195,10 @@ export class ResultReviewStore {
   private readonly activeSeekState = signal<ResultSeekRequest | null>(null);
 
   private sourceSubscription: Subscription | null = null;
+  private pdfOpenSubscription: Subscription | null = null;
+  private pdfRenderSubscription: Subscription | null = null;
   private loadingSourceForId: string | null = null;
   private seekSeq = 0;
-  private pdfRenderSeq = 0;
   private destroyed = false;
 
   readonly imageUrl = computed<string | null>(() => {
@@ -265,11 +266,11 @@ export class ResultReviewStore {
       if (this.loadingSourceForId !== null && this.loadingSourceForId !== currentId) {
         this.cancelInFlightSource();
       }
+      this.cancelPdfWork();
       this.destroyPdfHandle();
       this.pdfStateSignal.set('idle');
       this.pdfPageFailedState.set(false);
       this.renderedPdfPageState.set(null);
-      this.pdfRenderSeq += 1;
       this.selectedPageNumber.set(null);
       this.sourceErrorState.set(null);
       this.mediaCanPlay.set(false);
@@ -284,6 +285,7 @@ export class ResultReviewStore {
     this.destroyRef.onDestroy(() => {
       this.destroyed = true;
       this.cancelInFlightSource();
+      this.cancelPdfWork();
       this.revokeCurrentSource();
       this.destroyPdfHandle();
     });
@@ -338,7 +340,7 @@ export class ResultReviewStore {
         this.sourceSubscription = null;
         if (this.documentId() !== requestedId || this.destroyed) return;
         if (isPdf) {
-          void this.openPdfBytes(requestedId, bytes);
+          this.openPdfBytes(requestedId, bytes);
           return;
         }
         this.revokeCurrentSource();
@@ -366,6 +368,9 @@ export class ResultReviewStore {
     if (!handle || !page || !requestedId || !this.isPdf()) return;
 
     const pageNumber = page.page;
+    this.pdfRenderSubscription?.unsubscribe();
+    this.pdfRenderSubscription = null;
+
     if (pageNumber < 1 || pageNumber > handle.pageCount) {
       this.pdfPageFailedState.set(true);
       this.renderedPdfPageState.set(null);
@@ -373,38 +378,41 @@ export class ResultReviewStore {
     }
 
     this.pdfPageFailedState.set(false);
-    const seq = ++this.pdfRenderSeq;
     const dpr =
       typeof globalThis.devicePixelRatio === 'number'
         ? globalThis.devicePixelRatio
         : 1;
 
-    void handle
+    this.pdfRenderSubscription = handle
       .renderPage(pageNumber, canvas, { cssWidth, devicePixelRatio: dpr })
-      .then(() => {
-        if (
-          this.destroyed ||
-          this.pdfRenderSeq !== seq ||
-          this.documentId() !== requestedId ||
-          this.pdfHandleState() !== handle ||
-          this.currentPage()?.page !== pageNumber
-        ) {
-          return;
-        }
-        this.renderedPdfPageState.set(pageNumber);
-      })
-      .catch(() => {
-        if (
-          this.destroyed ||
-          this.pdfRenderSeq !== seq ||
-          this.documentId() !== requestedId ||
-          this.pdfHandleState() !== handle ||
-          this.currentPage()?.page !== pageNumber
-        ) {
-          return;
-        }
-        this.pdfPageFailedState.set(true);
-        this.renderedPdfPageState.set(null);
+      .subscribe({
+        next: () => {
+          if (
+            this.destroyed ||
+            this.documentId() !== requestedId ||
+            this.pdfHandleState() !== handle ||
+            this.currentPage()?.page !== pageNumber
+          ) {
+            return;
+          }
+          this.renderedPdfPageState.set(pageNumber);
+        },
+        error: () => {
+          this.pdfRenderSubscription = null;
+          if (
+            this.destroyed ||
+            this.documentId() !== requestedId ||
+            this.pdfHandleState() !== handle ||
+            this.currentPage()?.page !== pageNumber
+          ) {
+            return;
+          }
+          this.pdfPageFailedState.set(true);
+          this.renderedPdfPageState.set(null);
+        },
+        complete: () => {
+          this.pdfRenderSubscription = null;
+        },
       });
   }
 
@@ -430,28 +438,40 @@ export class ResultReviewStore {
     }
   }
 
-  private async openPdfBytes(requestedId: string, bytes: ArrayBuffer): Promise<void> {
-    try {
-      const handle = await this.pdfRenderer.open(bytes);
-      if (this.documentId() !== requestedId || this.destroyed) {
-        void handle.destroy();
-        return;
-      }
-      this.destroyPdfHandle();
-      this.pdfHandleState.set(handle);
-      this.pdfStateSignal.set('ready');
-    } catch {
-      if (this.documentId() !== requestedId || this.destroyed) return;
-      this.pdfStateSignal.set('failed');
-    }
+  private openPdfBytes(requestedId: string, bytes: ArrayBuffer): void {
+    this.pdfOpenSubscription?.unsubscribe();
+    this.pdfOpenSubscription = this.pdfRenderer.open(bytes).subscribe({
+      next: (handle) => {
+        this.pdfOpenSubscription = null;
+        if (this.documentId() !== requestedId || this.destroyed) {
+          handle.destroy();
+          return;
+        }
+        this.destroyPdfHandle();
+        this.pdfHandleState.set(handle);
+        this.pdfStateSignal.set('ready');
+      },
+      error: () => {
+        this.pdfOpenSubscription = null;
+        if (this.documentId() !== requestedId || this.destroyed) return;
+        this.pdfStateSignal.set('failed');
+      },
+    });
   }
 
   private destroyPdfHandle(): void {
     const handle = this.pdfHandleState();
     if (handle) {
       this.pdfHandleState.set(null);
-      void handle.destroy();
+      handle.destroy();
     }
+  }
+
+  private cancelPdfWork(): void {
+    this.pdfOpenSubscription?.unsubscribe();
+    this.pdfOpenSubscription = null;
+    this.pdfRenderSubscription?.unsubscribe();
+    this.pdfRenderSubscription = null;
   }
 
   private cancelInFlightSource(): void {

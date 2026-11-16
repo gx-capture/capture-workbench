@@ -2,7 +2,7 @@ import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { ActivatedRoute, convertToParamMap } from '@angular/router';
 import type { RawCapture } from '@gx-capture/capture-workbench-ui';
-import { BehaviorSubject, of, throwError } from 'rxjs';
+import { BehaviorSubject, of, Subject, throwError } from 'rxjs';
 import type { DesktopLibraryDetail } from '../contracts';
 import { setDesktopLocale } from '../i18n/desktop-messages';
 import { DesktopLibraryService } from './desktop-library.service';
@@ -53,11 +53,11 @@ describe('ResultReviewStore', () => {
     };
     const defaultHandle: PdfDocumentHandle = {
       pageCount: 2,
-      renderPage: vi.fn().mockResolvedValue(undefined),
-      destroy: vi.fn().mockResolvedValue(undefined),
+      renderPage: vi.fn(() => of(undefined)),
+      destroy: vi.fn(),
     };
     const pdfRenderer = {
-      open: options.pdfOpen ?? vi.fn().mockResolvedValue(defaultHandle),
+      open: options.pdfOpen ?? vi.fn(() => of(defaultHandle)),
     };
 
     TestBed.configureTestingModule({
@@ -189,25 +189,20 @@ describe('ResultReviewStore', () => {
     }
   });
 
-  it('opens a PDF through PdfPageRenderer without creating a Blob URL and tracks pdfState', async () => {
+  it('opens a PDF through PdfPageRenderer without creating a Blob URL and tracks pdfState', () => {
     const raw = {
       sourceText: 'pdf text',
       segments: [
         { segmentId: 's1', order: 0, locator: { kind: 'page', page: 1 }, text: 'pdf text' },
       ],
     } as unknown as RawCapture;
-    let resolveOpen!: (handle: PdfDocumentHandle) => void;
+    const open$ = new Subject<PdfDocumentHandle>();
     const handle: PdfDocumentHandle = {
       pageCount: 2,
-      renderPage: vi.fn().mockResolvedValue(undefined),
-      destroy: vi.fn().mockResolvedValue(undefined),
+      renderPage: vi.fn(() => of(undefined)),
+      destroy: vi.fn(),
     };
-    const pdfOpen = vi.fn(
-      () =>
-        new Promise<PdfDocumentHandle>((resolve) => {
-          resolveOpen = resolve;
-        }),
-    );
+    const pdfOpen = vi.fn(() => open$.asObservable());
     const sourceBytes = vi.fn(() => of(new ArrayBuffer(16)));
     const createObjectURL = vi.fn();
     const originalCreate = Object.getOwnPropertyDescriptor(URL, 'createObjectURL');
@@ -230,9 +225,8 @@ describe('ResultReviewStore', () => {
       expect(store.imageUrl()).toBeNull();
       expect(store.pdfState()).toBe('loading');
 
-      resolveOpen(handle);
-      await Promise.resolve();
-      await Promise.resolve();
+      open$.next(handle);
+      open$.complete();
 
       expect(store.pdfState()).toBe('ready');
       expect(store.pdfError()).toBeNull();
@@ -242,28 +236,26 @@ describe('ResultReviewStore', () => {
     }
   });
 
-  it('sets pdfState to failed and exposes pdfError when opening a PDF fails', async () => {
+  it('sets pdfState to failed and exposes pdfError when opening a PDF fails', () => {
     const raw = {
       sourceText: 'pdf text',
       segments: [
         { segmentId: 's1', order: 0, locator: { kind: 'page', page: 1 }, text: 'pdf text' },
       ],
     } as unknown as RawCapture;
-    const pdfOpen = vi.fn().mockRejectedValue(new Error('corrupt pdf'));
+    const pdfOpen = vi.fn(() => throwError(() => new Error('corrupt pdf')));
     const { store } = setup({
       get: vi.fn(() => of(makeDetail({ mediaType: 'application/pdf', raw }))),
       pdfOpen,
     });
 
     store.loadSource();
-    await Promise.resolve();
-    await Promise.resolve();
 
     expect(store.pdfState()).toBe('failed');
     expect(store.pdfError()).toBe('無法顯示這份 PDF 的頁面影像，仍可查看辨識文字。');
   });
 
-  it('renders the source page number and marks out-of-range pages failed without hiding text', async () => {
+  it('renders the source page number and marks out-of-range pages failed without hiding text', () => {
     const raw = {
       sourceText: 'p2\n\np5',
       segments: [
@@ -271,25 +263,21 @@ describe('ResultReviewStore', () => {
         { segmentId: 's2', order: 0, locator: { kind: 'page', page: 5 }, text: '第五頁' },
       ],
     } as unknown as RawCapture;
-    const renderPage = vi.fn().mockResolvedValue(undefined);
+    const renderPage = vi.fn(() => of(undefined));
     const handle: PdfDocumentHandle = {
       pageCount: 3,
       renderPage,
-      destroy: vi.fn().mockResolvedValue(undefined),
+      destroy: vi.fn(),
     };
     const { store } = setup({
       get: vi.fn(() => of(makeDetail({ mediaType: 'application/pdf', raw }))),
-      pdfOpen: vi.fn().mockResolvedValue(handle),
+      pdfOpen: vi.fn(() => of(handle)),
     });
 
     store.loadSource();
-    await Promise.resolve();
-    await Promise.resolve();
 
     const canvas = document.createElement('canvas');
     store.renderCurrentPdfPage(canvas, 600);
-    await Promise.resolve();
-    await Promise.resolve();
 
     expect(renderPage).toHaveBeenCalledWith(2, canvas, {
       cssWidth: 600,
@@ -308,27 +296,25 @@ describe('ResultReviewStore', () => {
     expect(store.pdfState()).toBe('ready');
   });
 
-  it('destroys the PDF handle when switching documents or destroying the store', async () => {
+  it('destroys the PDF handle when switching documents or destroying the store', () => {
     const raw = {
       sourceText: 'pdf text',
       segments: [
         { segmentId: 's1', order: 0, locator: { kind: 'page', page: 1 }, text: 'pdf text' },
       ],
     } as unknown as RawCapture;
-    const destroyHandle = vi.fn().mockResolvedValue(undefined);
+    const destroyHandle = vi.fn();
     const handle: PdfDocumentHandle = {
       pageCount: 1,
-      renderPage: vi.fn().mockResolvedValue(undefined),
+      renderPage: vi.fn(() => of(undefined)),
       destroy: destroyHandle,
     };
     const { store, paramMap$ } = setup({
       get: vi.fn(() => of(makeDetail({ mediaType: 'application/pdf', raw }))),
-      pdfOpen: vi.fn().mockResolvedValue(handle),
+      pdfOpen: vi.fn(() => of(handle)),
     });
 
     store.loadSource();
-    await Promise.resolve();
-    await Promise.resolve();
 
     paramMap$.next(convertToParamMap({ id: 'b'.repeat(32) }));
     TestBed.tick();
@@ -337,27 +323,25 @@ describe('ResultReviewStore', () => {
     TestBed.resetTestingModule();
   });
 
-  it('destroys the PDF handle when the store is destroyed', async () => {
+  it('destroys the PDF handle when the store is destroyed', () => {
     const raw = {
       sourceText: 'pdf text',
       segments: [
         { segmentId: 's1', order: 0, locator: { kind: 'page', page: 1 }, text: 'pdf text' },
       ],
     } as unknown as RawCapture;
-    const destroyHandle = vi.fn().mockResolvedValue(undefined);
+    const destroyHandle = vi.fn();
     const handle: PdfDocumentHandle = {
       pageCount: 1,
-      renderPage: vi.fn().mockResolvedValue(undefined),
+      renderPage: vi.fn(() => of(undefined)),
       destroy: destroyHandle,
     };
     const { store } = setup({
       get: vi.fn(() => of(makeDetail({ mediaType: 'application/pdf', raw }))),
-      pdfOpen: vi.fn().mockResolvedValue(handle),
+      pdfOpen: vi.fn(() => of(handle)),
     });
 
     store.loadSource();
-    await Promise.resolve();
-    await Promise.resolve();
 
     TestBed.resetTestingModule();
     expect(destroyHandle).toHaveBeenCalledTimes(1);

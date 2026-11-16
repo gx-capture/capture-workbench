@@ -1,5 +1,6 @@
 import { TestBed } from '@angular/core/testing';
 import type { PDFDocumentLoadingTask } from 'pdfjs-dist';
+import { firstValueFrom, lastValueFrom, of, throwError } from 'rxjs';
 import {
   computePdfRenderScale,
   isPdfPageInBounds,
@@ -82,7 +83,10 @@ describe('isPdfPageInBounds', () => {
 });
 
 describe('PdfPageRenderer', () => {
-  function setupFakePdfJs() {
+  function setupFakePdfJs(options: {
+    readonly loader?: ReturnType<typeof vi.fn>;
+    readonly docPromise?: Promise<unknown>;
+  } = {}) {
     const workerOptions = { workerSrc: '' };
     const loadingTaskDestroy = vi.fn().mockResolvedValue(undefined);
     const renderMock = vi.fn();
@@ -100,7 +104,7 @@ describe('PdfPageRenderer', () => {
       getPage: getPageMock,
     };
     const fakeLoadingTask = {
-      promise: Promise.resolve(fakeDoc),
+      promise: options.docPromise ?? Promise.resolve(fakeDoc),
       destroy: loadingTaskDestroy,
     } as unknown as PDFDocumentLoadingTask;
     const getDocumentMock = vi.fn((_params: Record<string, unknown>) => fakeLoadingTask);
@@ -110,16 +114,20 @@ describe('PdfPageRenderer', () => {
       getDocument: getDocumentMock as unknown as PdfJsApi['getDocument'],
     };
 
+    const loader = options.loader ?? vi.fn(() => of(fakeApi));
+
     TestBed.configureTestingModule({
       providers: [
         PdfPageRenderer,
-        { provide: PDF_JS_LOADER, useValue: () => Promise.resolve(fakeApi) },
+        { provide: PDF_JS_LOADER, useValue: loader },
       ],
     });
 
     const renderer = TestBed.inject(PdfPageRenderer);
     return {
       renderer,
+      fakeApi,
+      loader,
       workerOptions,
       getDocumentMock,
       getPageMock,
@@ -133,7 +141,7 @@ describe('PdfPageRenderer', () => {
     const { renderer, workerOptions, getDocumentMock } = setupFakePdfJs();
     const source = new Uint8Array([1, 2, 3, 4]).buffer;
 
-    const handle = await renderer.open(source);
+    const handle = await firstValueFrom(renderer.open(source));
 
     expect(handle.pageCount).toBe(2);
     expect(workerOptions.workerSrc).toContain('/assets/pdfjs/pdf.worker.min.mjs');
@@ -153,6 +161,34 @@ describe('PdfPageRenderer', () => {
     expect([...passedData]).toEqual([1, 2, 3, 4]);
   });
 
+  it('loads pdf.js once and retries after a failed load', async () => {
+    const loaded: { api?: PdfJsApi } = {};
+    const loader = vi
+      .fn()
+      .mockImplementationOnce(() => throwError(() => new Error('load failed')))
+      .mockImplementation(() => of(loaded.api));
+    const ctx = setupFakePdfJs({ loader });
+    loaded.api = ctx.fakeApi;
+
+    await expect(firstValueFrom(ctx.renderer.open(new ArrayBuffer(4)))).rejects.toThrow(
+      'load failed',
+    );
+    await firstValueFrom(ctx.renderer.open(new ArrayBuffer(4)));
+    await firstValueFrom(ctx.renderer.open(new ArrayBuffer(4)));
+
+    expect(loader).toHaveBeenCalledTimes(2);
+  });
+
+  it('destroys the loading task if unsubscribed before open resolves', () => {
+    const pendingDoc = new Promise<unknown>(() => undefined);
+    const { renderer, loadingTaskDestroy } = setupFakePdfJs({ docPromise: pendingDoc });
+
+    const sub = renderer.open(new ArrayBuffer(8)).subscribe();
+    sub.unsubscribe();
+
+    expect(loadingTaskDestroy).toHaveBeenCalledTimes(1);
+  });
+
   it('renders a page with the computed viewport onto the canvas', async () => {
     const { renderer, getPageMock, renderMock } = setupFakePdfJs();
     renderMock.mockReturnValue({
@@ -160,10 +196,12 @@ describe('PdfPageRenderer', () => {
       cancel: vi.fn(),
     });
 
-    const handle = await renderer.open(new ArrayBuffer(8));
+    const handle = await firstValueFrom(renderer.open(new ArrayBuffer(8)));
     const canvas = document.createElement('canvas');
 
-    await handle.renderPage(2, canvas, { cssWidth: 400, devicePixelRatio: 2 });
+    await lastValueFrom(
+      handle.renderPage(2, canvas, { cssWidth: 400, devicePixelRatio: 2 }),
+    );
 
     expect(getPageMock).toHaveBeenCalledWith(2);
     expect(renderMock).toHaveBeenCalledWith({
@@ -174,7 +212,7 @@ describe('PdfPageRenderer', () => {
     expect(canvas.height).toBe(1200);
   });
 
-  it('cancels an in-flight render on the same canvas and swallows its cancellation', async () => {
+  it('cancels an in-flight render on the same canvas and completes without error', async () => {
     const { renderer, renderMock } = setupFakePdfJs();
     let rejectFirst!: (reason?: unknown) => void;
     const cancelFirst = vi.fn(() => {
@@ -190,38 +228,78 @@ describe('PdfPageRenderer', () => {
       .mockReturnValueOnce({ promise: firstPromise, cancel: cancelFirst })
       .mockReturnValueOnce({ promise: Promise.resolve(undefined), cancel: vi.fn() });
 
-    const handle = await renderer.open(new ArrayBuffer(8));
+    const handle = await firstValueFrom(renderer.open(new ArrayBuffer(8)));
     const canvas = document.createElement('canvas');
 
-    const firstRender = handle.renderPage(1, canvas, { cssWidth: 400, devicePixelRatio: 1 });
+    let firstCompleted = false;
+    let firstErrored = false;
+    handle.renderPage(1, canvas, { cssWidth: 400, devicePixelRatio: 1 }).subscribe({
+      error: () => {
+        firstErrored = true;
+      },
+      complete: () => {
+        firstCompleted = true;
+      },
+    });
     await Promise.resolve();
-    const secondRender = handle.renderPage(2, canvas, { cssWidth: 400, devicePixelRatio: 1 });
 
-    await expect(firstRender).resolves.toBeUndefined();
-    await expect(secondRender).resolves.toBeUndefined();
+    await lastValueFrom(
+      handle.renderPage(2, canvas, { cssWidth: 400, devicePixelRatio: 1 }),
+    );
+
     expect(cancelFirst).toHaveBeenCalledTimes(1);
+    expect(firstErrored).toBe(false);
+    expect(firstCompleted).toBe(true);
   });
 
-  it('rejects out-of-range page numbers with a clear error', async () => {
+  it('cancels the render task when unsubscribed mid-render', async () => {
+    const { renderer, renderMock } = setupFakePdfJs();
+    const cancelMock = vi.fn();
+    renderMock.mockReturnValue({
+      promise: new Promise<void>(() => undefined),
+      cancel: cancelMock,
+    });
+
+    const handle = await firstValueFrom(renderer.open(new ArrayBuffer(8)));
+    const canvas = document.createElement('canvas');
+
+    const sub = handle.renderPage(1, canvas, { cssWidth: 400 }).subscribe();
+    await Promise.resolve();
+    sub.unsubscribe();
+
+    expect(cancelMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('errors on out-of-range page numbers with a clear RangeError', async () => {
     const { renderer } = setupFakePdfJs();
-    const handle = await renderer.open(new ArrayBuffer(8));
+    const handle = await firstValueFrom(renderer.open(new ArrayBuffer(8)));
     const canvas = document.createElement('canvas');
 
     await expect(
-      handle.renderPage(0, canvas, { cssWidth: 400 }),
+      lastValueFrom(handle.renderPage(0, canvas, { cssWidth: 400 })),
     ).rejects.toThrow(/out of range/u);
     await expect(
-      handle.renderPage(3, canvas, { cssWidth: 400 }),
+      lastValueFrom(handle.renderPage(3, canvas, { cssWidth: 400 })),
     ).rejects.toThrow(/out of range/u);
   });
 
-  it('destroys the loading task once even when destroy() is called twice', async () => {
-    const { renderer, loadingTaskDestroy } = setupFakePdfJs();
-    const handle = await renderer.open(new ArrayBuffer(8));
+  it('destroys the loading task once even when destroy() is called twice and skips later renders', async () => {
+    const { renderer, loadingTaskDestroy, getPageMock } = setupFakePdfJs();
+    const handle = await firstValueFrom(renderer.open(new ArrayBuffer(8)));
 
-    await handle.destroy();
-    await handle.destroy();
+    handle.destroy();
+    handle.destroy();
 
     expect(loadingTaskDestroy).toHaveBeenCalledTimes(1);
+
+    const canvas = document.createElement('canvas');
+    let completed = false;
+    handle.renderPage(1, canvas, { cssWidth: 400 }).subscribe({
+      complete: () => {
+        completed = true;
+      },
+    });
+    expect(completed).toBe(true);
+    expect(getPageMock).not.toHaveBeenCalled();
   });
 });
