@@ -5,6 +5,143 @@
   <h2 class="text-lg font-semibold">{{ m().settingsDiagnosticsTitle }}</h2>
 
   @let runtime = store.runtimeView();
+  @if (store.documentId(); as docId) {
+    <section
+      hlmCard
+      class="flex flex-col gap-4 p-6"
+      aria-labelledby="diagnostics-document-title"
+      data-testid="diagnostics-document"
+      [attr.data-document-id]="docId"
+    >
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <h3 id="diagnostics-document-title" class="text-base font-semibold text-foreground">
+          {{ m().diagnosticsDocumentTitle }}
+        </h3>
+        <a
+          hlmBtn
+          variant="outline"
+          size="sm"
+          [routerLink]="['/history', docId, 'details']"
+          data-testid="diagnostics-back-to-result"
+        >
+          {{ m().diagnosticsBackToResult }}
+        </a>
+      </div>
+
+      @if (store.documentLoading()) {
+        <p class="text-sm text-muted-foreground" data-testid="diagnostics-document-loading">
+          {{ m().resultLoading }}
+        </p>
+      } @else if (store.notFound()) {
+        <p class="text-sm text-muted-foreground" data-testid="diagnostics-document-not-found">
+          {{ m().resultNotFound }}
+        </p>
+      } @else if (store.documentError(); as docError) {
+        <p role="alert" class="text-sm text-destructive" data-testid="diagnostics-document-error">
+          {{ docError }}
+        </p>
+      } @else if (store.document(); as doc) {
+        <dl class="grid grid-cols-[auto_1fr] gap-x-8 gap-y-2 text-sm">
+          <dt class="font-medium text-muted-foreground">{{ m().resultDetailFileName }}</dt>
+          <dd data-testid="diagnostics-document-filename">{{ doc.fileName }}</dd>
+        </dl>
+
+        @if (doc.extraction; as ext) {
+          <div class="flex flex-col gap-2">
+            <h4 class="text-sm font-semibold text-foreground">
+              {{ m().diagnosticsExtractionProvenance }}
+            </h4>
+            <dl
+              class="grid grid-cols-[auto_1fr] gap-x-8 gap-y-1.5 text-sm"
+              data-testid="diagnostics-extraction-provenance"
+              [attr.data-engine]="ext.engine"
+              [attr.data-model]="ext.model"
+              [attr.data-device]="ext.device"
+              [attr.data-digest]="ext.digest"
+            >
+              <dt class="font-medium text-muted-foreground">{{ m().diagnosticsProvenanceEngine }}</dt>
+              <dd>{{ ext.engine }}</dd>
+              <dt class="font-medium text-muted-foreground">{{ m().diagnosticsProvenanceModel }}</dt>
+              <dd>{{ ext.model }}</dd>
+              @if (ext.device; as device) {
+                <dt class="font-medium text-muted-foreground">{{ m().diagnosticsProvenanceDevice }}</dt>
+                <dd>{{ device }}</dd>
+              }
+              <dt class="font-medium text-muted-foreground">{{ m().diagnosticsProvenanceDigest }}</dt>
+              <dd class="select-all break-all font-mono text-xs">{{ ext.digest }}</dd>
+            </dl>
+          </div>
+        }
+
+        @if (doc.structuring; as str) {
+          <div class="flex flex-col gap-2">
+            <h4 class="text-sm font-semibold text-foreground">
+              {{ m().diagnosticsStructuringProvenance }}
+            </h4>
+            <dl
+              class="grid grid-cols-[auto_1fr] gap-x-8 gap-y-1.5 text-sm"
+              data-testid="diagnostics-structuring-provenance"
+              [attr.data-engine]="str.engine"
+              [attr.data-model]="str.model"
+              [attr.data-digest]="str.digest"
+            >
+              <dt class="font-medium text-muted-foreground">{{ m().diagnosticsProvenanceEngine }}</dt>
+              <dd>{{ str.engine }}</dd>
+              <dt class="font-medium text-muted-foreground">{{ m().diagnosticsProvenanceModel }}</dt>
+              <dd>{{ str.model }}</dd>
+              <dt class="font-medium text-muted-foreground">{{ m().diagnosticsProvenanceDigest }}</dt>
+              <dd class="select-all break-all font-mono text-xs">{{ str.digest }}</dd>
+            </dl>
+          </div>
+        }
+
+        @if (doc.evidence; as evidence) {
+          <div class="flex flex-col gap-2">
+            <h4 class="text-sm font-semibold text-foreground">
+              {{ m().diagnosticsEvidenceTitle }}
+            </h4>
+            <dl
+              class="grid grid-cols-[auto_1fr] gap-x-8 gap-y-1.5 text-sm"
+              data-testid="diagnostics-evidence"
+            >
+              <dt class="font-medium text-muted-foreground">{{ m().resultDetailStatus }}</dt>
+              <dd data-testid="diagnostics-evidence-status">{{ evidence.status }}</dd>
+              <dt class="font-medium text-muted-foreground">{{ m().ocrColPages }}</dt>
+              <dd data-testid="diagnostics-evidence-pages">{{ evidence.pageCount }}</dd>
+              <dt class="font-medium text-muted-foreground">{{ m().diagnosticsProvenanceDigest }}</dt>
+              <dd
+                class="select-all break-all font-mono text-xs"
+                data-testid="diagnostics-evidence-digest"
+              >
+                {{ evidence.digest }}
+              </dd>
+            </dl>
+          </div>
+        }
+
+        <div class="flex flex-col items-start gap-2">
+          <button
+            hlmBtn
+            variant="outline"
+            size="sm"
+            type="button"
+            data-testid="diagnostics-export-json"
+            [disabled]="!doc.canExportJson || store.exporting()"
+            [attr.aria-busy]="store.exporting()"
+            (click)="store.exportJson()"
+          >
+            {{ store.exporting() ? m().exportInProgress : m().exportJson }}
+          </button>
+          @if (store.exportError(); as exportError) {
+            <p role="alert" class="text-sm text-destructive" data-testid="diagnostics-export-error">
+              {{ exportError }}
+            </p>
+          }
+        </div>
+      }
+    </section>
+  }
+
   <section
     hlmCard
     class="flex flex-col gap-3 p-6"
@@ -154,141 +291,4 @@
       </div>
     }
   </section>
-
-  @if (store.documentId(); as docId) {
-    <section
-      hlmCard
-      class="flex flex-col gap-4 p-6"
-      aria-labelledby="diagnostics-document-title"
-      data-testid="diagnostics-document"
-      [attr.data-document-id]="docId"
-    >
-      <div class="flex flex-wrap items-center justify-between gap-2">
-        <h3 id="diagnostics-document-title" class="text-base font-semibold text-foreground">
-          {{ m().diagnosticsDocumentTitle }}
-        </h3>
-        <a
-          hlmBtn
-          variant="outline"
-          size="sm"
-          [routerLink]="['/history', docId, 'details']"
-          data-testid="diagnostics-back-to-result"
-        >
-          {{ m().diagnosticsBackToResult }}
-        </a>
-      </div>
-
-      @if (store.documentLoading()) {
-        <p class="text-sm text-muted-foreground" data-testid="diagnostics-document-loading">
-          {{ m().resultLoading }}
-        </p>
-      } @else if (store.notFound()) {
-        <p class="text-sm text-muted-foreground" data-testid="diagnostics-document-not-found">
-          {{ m().resultNotFound }}
-        </p>
-      } @else if (store.documentError(); as docError) {
-        <p role="alert" class="text-sm text-destructive" data-testid="diagnostics-document-error">
-          {{ docError }}
-        </p>
-      } @else if (store.document(); as doc) {
-        <dl class="grid grid-cols-[auto_1fr] gap-x-8 gap-y-2 text-sm">
-          <dt class="font-medium text-muted-foreground">{{ m().resultDetailFileName }}</dt>
-          <dd data-testid="diagnostics-document-filename">{{ doc.fileName }}</dd>
-        </dl>
-
-        @if (doc.extraction; as ext) {
-          <div class="flex flex-col gap-2">
-            <h4 class="text-sm font-semibold text-foreground">
-              {{ m().diagnosticsExtractionProvenance }}
-            </h4>
-            <dl
-              class="grid grid-cols-[auto_1fr] gap-x-8 gap-y-1.5 text-sm"
-              data-testid="diagnostics-extraction-provenance"
-              [attr.data-engine]="ext.engine"
-              [attr.data-model]="ext.model"
-              [attr.data-device]="ext.device"
-              [attr.data-digest]="ext.digest"
-            >
-              <dt class="font-medium text-muted-foreground">{{ m().diagnosticsProvenanceEngine }}</dt>
-              <dd>{{ ext.engine }}</dd>
-              <dt class="font-medium text-muted-foreground">{{ m().diagnosticsProvenanceModel }}</dt>
-              <dd>{{ ext.model }}</dd>
-              @if (ext.device; as device) {
-                <dt class="font-medium text-muted-foreground">{{ m().diagnosticsProvenanceDevice }}</dt>
-                <dd>{{ device }}</dd>
-              }
-              <dt class="font-medium text-muted-foreground">{{ m().diagnosticsProvenanceDigest }}</dt>
-              <dd class="select-all break-all font-mono text-xs">{{ ext.digest }}</dd>
-            </dl>
-          </div>
-        }
-
-        @if (doc.structuring; as str) {
-          <div class="flex flex-col gap-2">
-            <h4 class="text-sm font-semibold text-foreground">
-              {{ m().diagnosticsStructuringProvenance }}
-            </h4>
-            <dl
-              class="grid grid-cols-[auto_1fr] gap-x-8 gap-y-1.5 text-sm"
-              data-testid="diagnostics-structuring-provenance"
-              [attr.data-engine]="str.engine"
-              [attr.data-model]="str.model"
-              [attr.data-digest]="str.digest"
-            >
-              <dt class="font-medium text-muted-foreground">{{ m().diagnosticsProvenanceEngine }}</dt>
-              <dd>{{ str.engine }}</dd>
-              <dt class="font-medium text-muted-foreground">{{ m().diagnosticsProvenanceModel }}</dt>
-              <dd>{{ str.model }}</dd>
-              <dt class="font-medium text-muted-foreground">{{ m().diagnosticsProvenanceDigest }}</dt>
-              <dd class="select-all break-all font-mono text-xs">{{ str.digest }}</dd>
-            </dl>
-          </div>
-        }
-
-        @if (doc.evidence; as evidence) {
-          <div class="flex flex-col gap-2">
-            <h4 class="text-sm font-semibold text-foreground">
-              {{ m().diagnosticsEvidenceTitle }}
-            </h4>
-            <dl
-              class="grid grid-cols-[auto_1fr] gap-x-8 gap-y-1.5 text-sm"
-              data-testid="diagnostics-evidence"
-            >
-              <dt class="font-medium text-muted-foreground">{{ m().resultDetailStatus }}</dt>
-              <dd data-testid="diagnostics-evidence-status">{{ evidence.status }}</dd>
-              <dt class="font-medium text-muted-foreground">{{ m().ocrColPages }}</dt>
-              <dd data-testid="diagnostics-evidence-pages">{{ evidence.pageCount }}</dd>
-              <dt class="font-medium text-muted-foreground">{{ m().diagnosticsProvenanceDigest }}</dt>
-              <dd
-                class="select-all break-all font-mono text-xs"
-                data-testid="diagnostics-evidence-digest"
-              >
-                {{ evidence.digest }}
-              </dd>
-            </dl>
-          </div>
-        }
-
-        <div class="flex flex-col items-start gap-2">
-          <button
-            hlmBtn
-            variant="outline"
-            size="sm"
-            type="button"
-            data-testid="diagnostics-export-json"
-            [disabled]="!doc.canExportJson || store.exporting()"
-            [attr.aria-busy]="store.exporting()"
-            (click)="store.exportJson()"
-          >
-            {{ store.exporting() ? m().exportInProgress : m().exportJson }}
-          </button>
-          @if (store.exportError(); as exportError) {
-            <p role="alert" class="text-sm text-destructive" data-testid="diagnostics-export-error">
-              {{ exportError }}
-            </p>
-          }
-        </div>
-      }
-    </section>
-  }
 </section>
