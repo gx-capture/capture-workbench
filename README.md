@@ -239,6 +239,16 @@ corepack pnpm nx run capture-workbench-desktop:package-qa-test
 corepack pnpm nx run capture-workbench-e2e:e2e
 ```
 
+### Localhost preview
+
+To calibrate screens or review UI states in an ordinary browser without the Desktop App, start the preview server:
+
+```powershell
+corepack pnpm nx run capture-workbench-e2e:preview
+```
+
+Open `http://localhost:4300/__preview` to pick a scenario. This proxies the dev server on port 4200 and injects the simulated desktop backend (no runtime, no engines, and no files leave the page). Append `?scenario=<name>&speed=<multiplier>` to switch scenarios or speed up simulated installations (both are remembered in cookies). To preview a dev server running from another checkout, start `capture-workbench:serve` there and run `node apps/capture-workbench-e2e/preview-server.ts 4300 <upstream>` separately.
+
 Use `pnpm nx` targets for discovery, build, lint, test, packaging, and smoke
 work. Product smokes and release checks should use their explicit Nx target;
 test fixtures are not release evidence.

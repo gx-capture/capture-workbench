@@ -11,6 +11,8 @@ const workspaceRoot = fileURLToPath(new URL('../..', import.meta.url));
 // sees what the packaged app's policy blocks.
 const desktopCspPort = 4311;
 const desktopCspURL = `http://127.0.0.1:${desktopCspPort}`;
+const previewPort = 4312;
+const previewURL = `http://127.0.0.1:${previewPort}`;
 
 /**
  * Read environment variables from file.
@@ -40,6 +42,13 @@ export default defineConfig({
           reuseExistingServer: false,
           timeout: 30_000,
         },
+        {
+          command: `node apps/capture-workbench-e2e/preview-server.ts ${previewPort}`,
+          cwd: workspaceRoot,
+          url: `${previewURL}/__preview`,
+          reuseExistingServer: false,
+          timeout: 30_000,
+        },
       ],
   /* Shared settings for all the projects below. See https://playwright.dev/docs/api/class-testoptions. */
   use: {
@@ -50,6 +59,7 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
+      testIgnore: /preview\.spec\.ts$/u,
       use: { ...devices['Desktop Chrome'] },
     },
     ...(process.env['BASE_URL']
@@ -57,7 +67,13 @@ export default defineConfig({
       : [
           {
             name: 'chromium-desktop-csp',
+            testIgnore: /preview\.spec\.ts$/u,
             use: { ...devices['Desktop Chrome'], baseURL: desktopCspURL },
+          },
+          {
+            name: 'chromium-preview',
+            testMatch: /preview\.spec\.ts$/u,
+            use: { ...devices['Desktop Chrome'], baseURL: previewURL },
           },
         ]),
   ],
