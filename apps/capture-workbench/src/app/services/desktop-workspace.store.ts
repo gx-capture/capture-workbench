@@ -11,7 +11,6 @@ import {
 } from '@angular/core';
 import { rxResource, takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { Router } from '@angular/router';
-import { finalize } from 'rxjs';
 import type {
   CaptureDocument,
   CaptureRequirementId,
@@ -20,12 +19,12 @@ import type {
   RuntimeInstallation,
 } from '@gx-capture/capture-workbench-ui';
 import type {
-  DesktopComputeStatus,
   DesktopLibraryDetail,
   DesktopLibrarySummary,
 } from '../contracts';
 import { AsrQueueStore } from './asr-queue.store';
 import { CaptureQueueStore } from './capture-queue.store';
+import { ComputeSettingsStore } from './compute-settings.store';
 import { DesktopLibraryService, type DesktopSourceSelectionBatch } from './desktop-library.service';
 import { DesktopWorkspaceFormattingService } from './desktop-workspace-formatting.service';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
@@ -53,6 +52,7 @@ export class DesktopWorkspaceStore {
   private readonly library = inject(DesktopLibraryService);
   private readonly formatting = inject(DesktopWorkspaceFormattingService);
   private readonly captureLifecycle = inject(DesktopWorkspaceCaptureService);
+  private readonly compute = inject(ComputeSettingsStore);
   private readonly destroyRef = inject(DestroyRef);
   private readonly injector = inject(Injector);
   private readonly router = inject(Router, { optional: true });
@@ -70,7 +70,6 @@ export class DesktopWorkspaceStore {
   readonly modelInstallationPhase = this.features.modelInstallationPhase;
   readonly selectedModelOptionId = this.features.selectedModelOptionId;
   readonly busyIds = this.captureLifecycle.busyIds;
-  readonly ocrCompute = this.runtime.ocrCompute;
   readonly runtimeStarted = this.runtime.started;
   readonly requestedRequirements = this.features.requestedRequirements;
   /** Tell speakers apart in audio added from now on. */
@@ -124,19 +123,6 @@ export class DesktopWorkspaceStore {
 
   /** Installing one feature does not block capturing with another (plan §2, ASR journey). */
   readonly canCapture = computed(() => this.state() === 'ready');
-  /** The GPU setting for speech recognition, offered only when a CUDA driver is present. */
-  readonly speechGpu = computed<DesktopComputeStatus | null>(() => {
-    const status = this.computeResource.hasValue()
-      ? this.computeResource.value()
-      : undefined;
-    return status?.cudaAvailable ? status : null;
-  });
-  readonly savingCompute = signal(false);
-  /** Changing it relaunches the runtime, which would stop a capture or installation. */
-  readonly canChangeCompute = computed(
-    () =>
-      !this.savingCompute() && !this.installing() && this.busyIds().size === 0,
-  );
   readonly ocrReady = this.features.ocrReady;
   readonly asrReady = this.features.asrReady;
   readonly speakersReady = this.features.speakersReady;
@@ -149,12 +135,6 @@ export class DesktopWorkspaceStore {
   readonly activeModelOption = this.features.activeModelOption;
 
   private dropListenerStarted = false;
-
-  private readonly computeResource = rxResource<DesktopComputeStatus, undefined>(
-    {
-      stream: ({ abortSignal }) => this.runtime.getComputeStatus(abortSignal),
-    },
-  );
 
   private readonly documentsResource = rxResource<
     readonly DesktopLibrarySummary[],
@@ -221,6 +201,13 @@ export class DesktopWorkspaceStore {
     }
   });
 
+  private readonly computeErrorEffect = effect(() => {
+    const computeError = this.compute.error();
+    if (computeError) {
+      this.message.set(computeError);
+    }
+  });
+
   /** Starts runtime readiness, requirement, model, and document resources. */
   initialize(): void {
     if (!this.dropListenerStarted) {
@@ -234,27 +221,9 @@ export class DesktopWorkspaceStore {
         });
     }
     this.runtime.reload();
-    this.computeResource.reload();
+    this.compute.reload();
     this.features.initialize();
     this.documentsResource.reload();
-  }
-
-  /** Lets speech recognition use the GPU or not, then waits for the relaunched runtime. */
-  setPreferGpu(preferGpu: boolean): void {
-    if (!this.canChangeCompute() || this.speechGpu()?.preferGpu === preferGpu) {
-      return;
-    }
-    this.savingCompute.set(true);
-    this.runtime
-      .setPreferGpu(preferGpu)
-      .pipe(finalize(() => this.savingCompute.set(false)))
-      .subscribe({
-        next: () => this.initialize(),
-        error: (error: unknown) => {
-          this.computeResource.reload();
-          this.message.set(errorMessage(error));
-        },
-      });
   }
 
   /** Reloads the document list without changing the current selection. */

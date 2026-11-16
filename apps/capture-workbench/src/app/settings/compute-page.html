@@ -1,0 +1,86 @@
+<section
+  class="flex max-w-4xl flex-col gap-6"
+  data-testid="page-settings-compute"
+>
+  <h2 class="text-lg font-semibold">{{ m().settingsComputeTitle }}</h2>
+
+  <section
+    hlmCard
+    class="flex flex-col gap-2 p-6"
+    aria-labelledby="compute-ocr-title"
+    data-testid="compute-ocr-section"
+  >
+    <h3 id="compute-ocr-title" class="text-base font-semibold text-foreground">
+      {{ m().computeOcrTitle }}
+    </h3>
+    @if (compute.ocrCompute(); as ocr) {
+      <gx-capture-runtime-compute-status
+        [preflight]="ocr"
+        [gpuLabel]="m().gpuAcceleration"
+        [cpuNotice]="m().cpuNotice"
+      />
+    } @else {
+      <p class="text-sm text-muted-foreground" data-testid="compute-ocr-pending">
+        {{ m().computeOcrPending }}
+      </p>
+    }
+  </section>
+
+  <section
+    hlmCard
+    class="flex flex-col gap-3 p-6"
+    aria-labelledby="compute-asr-title"
+    data-testid="compute-asr-section"
+  >
+    <h3 id="compute-asr-title" class="text-base font-semibold text-foreground">
+      {{ m().computeAsrTitle }}
+    </h3>
+    @if (compute.speechGpu(); as gpu) {
+      <p class="text-sm text-muted-foreground" data-testid="compute-asr-detected">
+        {{ m().computeAsrCudaDetected }}
+      </p>
+      <label
+        for="compute-prefer-gpu"
+        class="flex cursor-pointer items-center gap-2.5 text-sm text-foreground"
+      >
+        <input
+          id="compute-prefer-gpu"
+          type="checkbox"
+          class="size-4 accent-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+          data-testid="compute-prefer-gpu"
+          [checked]="gpu.preferGpu"
+          [disabled]="!compute.canChangeCompute()"
+          (change)="onPreferGpuChange($event)"
+        />
+        <span>{{ m().useGpuForSpeech }}</span>
+      </label>
+      @if (compute.savingCompute()) {
+        <p
+          role="status"
+          aria-live="polite"
+          class="text-xs text-muted-foreground"
+          data-testid="compute-saving"
+        >
+          {{ m().computeSaving }}
+        </p>
+      } @else if (!compute.canChangeCompute()) {
+        <p class="text-xs text-muted-foreground" data-testid="compute-busy-hint">
+          {{ m().computeBusyHint }}
+        </p>
+      }
+    } @else if (compute.speechStatus() !== null) {
+      <p class="text-sm text-muted-foreground" data-testid="compute-asr-detected">
+        {{ m().computeAsrCpuOnly }}
+      </p>
+    } @else {
+      <p class="text-sm text-muted-foreground" data-testid="compute-asr-pending">
+        {{ m().computeAsrPending }}
+      </p>
+    }
+    @if (compute.error(); as error) {
+      <p role="alert" class="text-sm text-destructive" data-testid="compute-error">
+        {{ error }}
+      </p>
+    }
+  </section>
+</section>
