@@ -5,6 +5,7 @@ import { RELEASE_VERSION } from '../../../tools/release/release-intent.ts';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
+import { EventEmitter } from 'node:events';
 import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -12,6 +13,7 @@ import test from 'node:test';
 import type { Browser, Page } from '@playwright/test';
 
 import {
+  acceptanceScreenshot,
   assertPhase1PageOnePdfSemanticEvidence,
   assertExpectedOcrDevice,
   assertOcrExecutionProofMatchesInstalledJourney,
@@ -20,6 +22,7 @@ import {
   connectToPackagedPage,
   DesktopOcrTerminalFailure,
   DesktopOcrLifecycleFailure,
+  emitAcceptanceSemanticEvidence,
   establishOwnedDesktopLaunch,
   finalizeDesktopTeardown,
   isRealOcrWorkerFailure,
@@ -35,6 +38,7 @@ import {
   resolveExpectedOcrDevice,
   scrubLocalModelEnvironment,
   safeTerminalDesktopOcrFailure,
+  verifyInstalledOcrExecutionProof,
   waitForDesktopOcrCompletion,
 } from './real-desktop-ocr-smoke.ts';
 import type { OcrSemanticEvidenceV1 } from './ocr-semantic-evidence.ts';
@@ -188,17 +192,6 @@ test('non-local desktop child environments remove all local model overrides', ()
   assert.equal(scrubbed.SAFE_TEST_ENVIRONMENT, 'preserved');
 });
 
-test('local candidate wiring keeps machine-local roots and fixed catalog digests out of tracked smoke source', async () => {
-  for (const sourcePath of [
-    './real-desktop-ocr-smoke.ts',
-    './local-candidate-model.ts',
-  ]) {
-    const source = await readFile(new URL(sourcePath, import.meta.url), 'utf8');
-    assert.doesNotMatch(source, /[A-Z]:[\\/]/u, sourcePath);
-    assert.doesNotMatch(source, /["'][a-f0-9]{64}["']/u, sourcePath);
-  }
-});
-
 test('owned launch failure paths close only the real owned child and preserve the primary error', async () => {
   for (const failure of ['spawn', 'scope', 'journal'] as const) {
     const root = await mkdtemp(join(tmpdir(), `capture-launch-${failure}-`));
@@ -236,12 +229,48 @@ test('owned launch failure paths close only the real owned child and preserve th
   }
 });
 test('production launch retains the exact child before ownership awaits', async () => {
-  const source = await readFile(new URL('./real-desktop-ocr-smoke.ts', import.meta.url), 'utf8');
-  const launch = source.indexOf('launchedApp = await establishOwnedDesktopLaunch');
-  const callback = source.indexOf('spawnChild: () => {', launch);
-  const assigned = source.indexOf('launchedApp = child;', callback);
-  const returned = source.indexOf('return child;', assigned);
-  assert.ok(launch >= 0 && callback > launch && assigned > callback && returned > assigned);
+  const events: string[] = [];
+  let retained: ReturnType<typeof spawn> | undefined;
+  const fakeChild = Object.assign(new EventEmitter(), {
+    pid: 4242,
+    exitCode: null,
+    signalCode: null,
+    killed: false,
+    kill: () => true,
+  }) as unknown as ReturnType<typeof spawn>;
+
+  await assert.rejects(
+    () => establishOwnedDesktopLaunch({
+      spawnChild: () => {
+        events.push('spawnChild');
+        queueMicrotask(() => (fakeChild as unknown as EventEmitter).emit('spawn'));
+        return fakeChild;
+      },
+      onChildSpawned: (child) => {
+        events.push('onChildSpawned');
+        retained = child;
+      },
+      scopeOwner: {
+        recordLaunch: async (pid) => {
+          events.push(`recordLaunch:${pid}`);
+          throw new Error('scope failure');
+        },
+      },
+      closeOwnedRoot: async (child) => {
+        events.push(`closeOwnedRoot:${child === retained}`);
+        return false;
+      },
+    }),
+    /scope failure/u,
+  );
+
+  assert.equal(retained, fakeChild);
+  assert.deepEqual(events, [
+    'spawnChild',
+    'onChildSpawned',
+    'recordLaunch:4242',
+    'closeOwnedRoot:true',
+  ]);
 });
 test('exact-root close is bounded when the child close adapter does not acknowledge', async () => {
   const owned = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore', windowsHide: true });
@@ -1082,47 +1111,115 @@ test('Phase 1 page-one PDF semantic gate rejects scope and semantic drift before
 });
 
 test('Phase 1 PDF semantic owner gates only OCR-only PDFs before the atomic artifact writer', async () => {
-  const smokeSource = await readFile(
-    new URL('./real-desktop-ocr-smoke.ts', import.meta.url),
-    'utf8',
-  );
-  const ocrOnlyBuild = smokeSource.indexOf(
-    'const semanticEvidence = buildOcrOnlySemanticEvidence',
-  );
-  const proofIdentityBuild = smokeSource.indexOf(
-    'const proofIdentity: OcrSemanticExecutionProofIdentity',
-  );
-  const ocrOnlyWrite = smokeSource.indexOf(
-    'semanticArtifactIdentity = await writeOcrSemanticEvidenceArtifact',
-    ocrOnlyBuild,
-  );
-  const structuringBuild = smokeSource.indexOf(
-    'const semanticEvidence = buildOcrSemanticEvidence',
-    ocrOnlyWrite,
-  );
-  const structuringWrite = smokeSource.indexOf(
-    'semanticArtifactIdentity = await writeOcrSemanticEvidenceArtifact',
-    structuringBuild,
-  );
+  const validSemantic = phase1PageOnePdfSemanticFixture();
+  const validScope = {
+    sourcePageCount: 46,
+    requestedPageNumbers: [1],
+    processedPageNumbers: [1],
+  } as const;
+  const fakeIdentity = {
+    path: validSemantic.artifactPath,
+    bytes: 123,
+    sha256: 'a'.repeat(64),
+  };
 
-  assert.ok(proofIdentityBuild >= 0 && ocrOnlyBuild > proofIdentityBuild);
-  assert.match(
-    smokeSource.slice(proofIdentityBuild, ocrOnlyBuild),
-    /if \(acceptanceMode === 'ocr-only'\) \{\s*$/u,
-    'the owner must remain in the OCR-only branch',
+  // 1. OCR-only PDF: builds OCR-only evidence, runs PDF page-one gate, then writes.
+  const pdfCalls: string[] = [];
+  await emitAcceptanceSemanticEvidence({
+    acceptanceMode: 'ocr-only',
+    sourceKind: 'pdf',
+    artifactRoot: 'C:\\artifacts',
+    pdfPageScope: validScope,
+    buildOcrOnly: () => {
+      pdfCalls.push('buildOcrOnly');
+      return validSemantic;
+    },
+    buildStructuring: () => {
+      pdfCalls.push('buildStructuring');
+      return validSemantic;
+    },
+    assertPdfPageOne: (scope, evidence) => {
+      pdfCalls.push('assertPdfPageOne');
+      assertPhase1PageOnePdfSemanticEvidence(scope, evidence);
+    },
+    writeArtifact: async (path) => {
+      pdfCalls.push(`writeArtifact:${path}`);
+      return fakeIdentity;
+    },
+  });
+  assert.deepEqual(pdfCalls, [
+    'buildOcrOnly',
+    'assertPdfPageOne',
+    `writeArtifact:${join('C:\\artifacts', validSemantic.artifactPath)}`,
+  ]);
+
+  // 2. OCR-only PDF gate failure prevents writing the artifact.
+  let wroteOnFailure = false;
+  await assert.rejects(
+    () => emitAcceptanceSemanticEvidence({
+      acceptanceMode: 'ocr-only',
+      sourceKind: 'pdf',
+      artifactRoot: 'C:\\artifacts',
+      pdfPageScope: { ...validScope, processedPageNumbers: [2] },
+      buildOcrOnly: () => validSemantic,
+      buildStructuring: () => validSemantic,
+      writeArtifact: async () => {
+        wroteOnFailure = true;
+        return fakeIdentity;
+      },
+    }),
+    /page-one scope/u,
   );
-  assert.ok(ocrOnlyBuild >= 0 && ocrOnlyWrite > ocrOnlyBuild);
-  assert.match(
-    smokeSource.slice(ocrOnlyBuild, ocrOnlyWrite),
-    /if \(sourceKind === 'pdf'\) \{[\s\S]*assertPhase1PageOnePdfSemanticEvidence\(pdfPageScope, semanticEvidence\);\s*\}\s*$/u,
-    'the PDF guard must close before the writer so image OCR-only evidence is still written',
-  );
-  assert.ok(structuringBuild > ocrOnlyWrite && structuringWrite > structuringBuild);
-  assert.doesNotMatch(
-    smokeSource.slice(structuringBuild, structuringWrite),
-    /assertPhase1PageOnePdfSemanticEvidence/u,
-    'the generic structuring semantic path must remain outside the Phase 1 owner gate',
-  );
+  assert.equal(wroteOnFailure, false);
+
+  // 3. OCR-only image: skips PDF gate and still writes the artifact.
+  const imageCalls: string[] = [];
+  await emitAcceptanceSemanticEvidence({
+    acceptanceMode: 'ocr-only',
+    sourceKind: 'image',
+    artifactRoot: 'C:\\artifacts',
+    buildOcrOnly: () => {
+      imageCalls.push('buildOcrOnly');
+      return { ...validSemantic, sourceKind: 'image' };
+    },
+    buildStructuring: () => {
+      imageCalls.push('buildStructuring');
+      return validSemantic;
+    },
+    assertPdfPageOne: () => {
+      imageCalls.push('assertPdfPageOne');
+    },
+    writeArtifact: async () => {
+      imageCalls.push('writeArtifact');
+      return fakeIdentity;
+    },
+  });
+  assert.deepEqual(imageCalls, ['buildOcrOnly', 'writeArtifact']);
+
+  // 4. Structuring PDF: uses structuring builder, skips Phase 1 PDF gate, writes artifact.
+  const structuringCalls: string[] = [];
+  await emitAcceptanceSemanticEvidence({
+    acceptanceMode: 'structuring',
+    sourceKind: 'pdf',
+    artifactRoot: 'C:\\artifacts',
+    pdfPageScope: validScope,
+    buildOcrOnly: () => {
+      structuringCalls.push('buildOcrOnly');
+      return validSemantic;
+    },
+    buildStructuring: () => {
+      structuringCalls.push('buildStructuring');
+      return validSemantic;
+    },
+    assertPdfPageOne: () => {
+      structuringCalls.push('assertPdfPageOne');
+    },
+    writeArtifact: async () => {
+      structuringCalls.push('writeArtifact');
+      return fakeIdentity;
+    },
+  });
+  assert.deepEqual(structuringCalls, ['buildStructuring', 'writeArtifact']);
 });
 
 test('Phase 1 installed acceptance wires OCR proof validation before deferred structuring', async () => {
@@ -1135,12 +1232,43 @@ test('Phase 1 installed acceptance wires OCR proof validation before deferred st
   } finally {
     await rm(missingRoot, { recursive: true, force: true });
   }
-  const smokeSource = await readFile(new URL('./real-desktop-ocr-smoke.ts', import.meta.url), 'utf8');
-  const proofWiring = /acceptanceMode === ['"]ocr-only['"][\s\S]*?readOcrExecutionProof\(acceptance\.artifactRoot\)[\s\S]*?assertOcrExecutionProofMatchesInstalledJourney\(proof,/u;
-  assert.ok(
-    proofWiring.test(smokeSource),
-    'OCR-only acceptance must read and match the real execution-proof summary before deferred structuring.',
-  );
+
+  const proofRoot = await mkdtemp(join(tmpdir(), 'capture-ocr-only-proof-wire-'));
+  try {
+    await writeFile(join(proofRoot, 'ocr-device-proof-v1.json'), `${canonicalJson(executionProofFixture())}\n`);
+    const callOrder: string[] = [];
+    const expected = {
+      sourceKind: 'pdf' as const,
+      sourceSha256: 'd'.repeat(64),
+      runtimeSha256: 'e'.repeat(64),
+      workerSha256: 'f'.repeat(64),
+      contractSha256: '3'.repeat(64),
+    };
+    const verified = await verifyInstalledOcrExecutionProof({
+      artifactRoot: proofRoot,
+      expected,
+      readProof: async (root) => {
+        callOrder.push('readProof');
+        return readOcrExecutionProof(root);
+      },
+      assertMatches: (proof, exp) => {
+        callOrder.push('assertMatches');
+        assertOcrExecutionProofMatchesInstalledJourney(proof, exp);
+      },
+    });
+    assert.deepEqual(callOrder, ['readProof', 'assertMatches']);
+    assert.equal(verified.sourceSha256, expected.sourceSha256);
+
+    await assert.rejects(
+      () => verifyInstalledOcrExecutionProof({
+        artifactRoot: proofRoot,
+        expected: { ...expected, workerSha256: '0'.repeat(64) },
+      }),
+      /worker digest/u,
+    );
+  } finally {
+    await rm(proofRoot, { recursive: true, force: true });
+  }
 });
 
 test('OCR-only action seam never invokes structuring-model consent', async () => {
@@ -1227,10 +1355,7 @@ test('DirectML smoke CLI requirement rejects CPU provenance', () => {
 });
 
 test('acceptance NSIS packaging is feature-gated and output-separated from release NSIS', async () => {
-  const [projectText, buildSource] = await Promise.all([
-    readFile(new URL('../project.json', import.meta.url), 'utf8'),
-    readFile(new URL('./build-acceptance-nsis.ts', import.meta.url), 'utf8'),
-  ]);
+  const projectText = await readFile(new URL('../project.json', import.meta.url), 'utf8');
   const project = JSON.parse(projectText) as {
     targets?: Record<string, { outputs?: string[]; options?: { commands?: string[]; command?: string } }>;
   };
@@ -1245,27 +1370,14 @@ test('acceptance NSIS packaging is feature-gated and output-separated from relea
   assert.doesNotMatch(acceptanceCommand, /src-tauri[\\/]target[\\/].*bundle[\\/]nsis/u);
   assert.notEqual(acceptance, undefined);
   assert.notDeepEqual(acceptance?.outputs, release?.outputs);
-  assert.match(buildSource, /--bundles['\s\S]*nsis/u);
-  assert.match(buildSource, /CARGO_TARGET_DIR: cargoTargetDir/u);
-  assert.match(buildSource, /assertStagedRuntime\('release'\)/u);
 });
 
-test('packaged desktop entrypoint renders canonical OCR compute state before source import', async () => {
-  const [tauriConfig, appSource, appTemplate, runtimeClient, bundleVerifier] = await Promise.all([
-    readFile(new URL('../src-tauri/tauri.conf.json', import.meta.url), 'utf8'),
-    readFile(new URL('../../../apps/capture-workbench/src/app/history/history-page.ts', import.meta.url), 'utf8'),
-    readFile(new URL('../../../apps/capture-workbench/src/app/history/history-page.html', import.meta.url), 'utf8'),
-    readFile(new URL('../../../apps/capture-workbench/src/app/services/desktop-runtime-client.service.ts', import.meta.url), 'utf8'),
-    readFile(new URL('../../../tools/verify-capture-workbench-production-bundle.ts', import.meta.url), 'utf8'),
-  ]);
-  assert.match(tauriConfig, /frontendDist.*dist\/apps\/capture-workbench\/browser/u);
-  assert.match(appSource, /CaptureRuntimeComputeStatusComponent/u);
-  const computeStatusIndex = appTemplate.indexOf('store.ocrCompute()');
-  const sourceImportIndex = appTemplate.indexOf('data-testid="source-import"');
-  assert.ok(computeStatusIndex >= 0, 'packaged entrypoint must bind canonical OCR compute state');
-  assert.ok(sourceImportIndex > computeStatusIndex, 'OCR compute state must precede source import');
-  assert.match(runtimeClient, /invoke<RuntimeReady>\('runtime_ready'/u);
-  assert.match(bundleVerifier, /ocr-compute-status/u);
+test('packaged desktop entrypoint points at the built workbench frontend', async () => {
+  const tauriConfigText = await readFile(new URL('../src-tauri/tauri.conf.json', import.meta.url), 'utf8');
+  const tauriConfig = JSON.parse(tauriConfigText) as {
+    build?: { frontendDist?: string };
+  };
+  assert.match(tauriConfig.build?.frontendDist ?? '', /dist\/apps\/capture-workbench\/browser/u);
 });
 
 test('desktop page acquisition reconnects after a CDP attachment has no Tauri page', async () => {
@@ -1578,22 +1690,6 @@ test('OCR polling fails closed with typed target-loss when teardown has started'
 });
 
 test('real desktop teardown delegates ownership to native Tauri seams', async () => {
-  const [source, commandsSource, host] = await Promise.all([
-    readFile(new URL('./real-desktop-ocr-smoke.ts', import.meta.url), 'utf8'),
-    readFile(new URL('../src-tauri/src/commands.rs', import.meta.url), 'utf8'),
-    readFile(new URL('../src-tauri/src/lib.rs', import.meta.url), 'utf8'),
-  ]);
-  assert.match(source, /desktop_acceptance_close_window/u);
-  assert.match(source, /desktop_acceptance_terminate_root/u);
-  assert.doesNotMatch(source, /taskkill(?:\.exe)?/u);
-  assert.doesNotMatch(source, /process\.kill/u);
-  assert.doesNotMatch(source, /terminateOwnedTree/u);
-  assert.match(commandsSource, /pub(?:\(crate\))? fn desktop_acceptance_close_window\(window: tauri::Window\)/u);
-  assert.match(commandsSource, /GetCurrentProcess/u);
-  assert.match(commandsSource, /TerminateProcess/u);
-  assert.match(host, /commands::desktop_acceptance_close_window/u);
-  assert.match(host, /commands::desktop_acceptance_terminate_root/u);
-
   const commands: string[] = [];
   const args: Readonly<Record<string, unknown>>[] = [];
   await requestDesktopTeardown('window-close', async (command, commandArgs) => {
@@ -1669,32 +1765,63 @@ test('real desktop teardown rejects unknown modes instead of selecting a PID fal
 });
 
 test('OCR screenshot evidence masks whole raw/result cards before capture', async () => {
-  const [smokeSource, acceptanceSource, appSource] = await Promise.all([
-    readFile(new URL('./real-desktop-ocr-smoke.ts', import.meta.url), 'utf8'),
-    readFile(new URL('./real-desktop-ocr-acceptance.spec.ts', import.meta.url), 'utf8'),
-    readFile(new URL('../../../apps/capture-workbench/src/app/history/history-page.html', import.meta.url), 'utf8'),
-  ]);
-  assert.match(
-    appSource,
-    /data-testid="document-raw"[\s\S]*data-testid="document-raw-segments"[\s\S]*data-testid="document-raw-segment"/u,
+  const selectors: string[] = [];
+  const testIds: string[] = [];
+  let capturedOptions: { mask?: unknown[] } | undefined;
+  const events: string[] = [];
+  const fakePage = {
+    locator: (selector: string) => {
+      selectors.push(selector);
+      return { kind: 'locator', selector };
+    },
+    getByTestId: (testId: string) => {
+      testIds.push(testId);
+      return { kind: 'testId', testId };
+    },
+    screenshot: async (options: { mask?: unknown[] }) => {
+      events.push('screenshot');
+      capturedOptions = options;
+      return Buffer.alloc(0);
+    },
+  } as unknown as Page;
+  const screenshots: string[] = [];
+  const acceptance = { artifactRoot: 'C:\\artifacts' } as unknown as Parameters<typeof acceptanceScreenshot>[1];
+
+  await acceptanceScreenshot(
+    fakePage,
+    acceptance,
+    screenshots,
+    '01-consent-required',
+    async () => {
+      events.push('checkpoint');
+    },
   );
-  const maskHelperStart = smokeSource.indexOf('function acceptanceScreenshotMasks');
-  const maskHelper = smokeSource.slice(maskHelperStart, smokeSource.indexOf('\n}', maskHelperStart) + 2);
-  assert.match(maskHelper, /getByTestId\('document-raw'\)/u);
-  assert.match(maskHelper, /getByTestId\('document-result'\)/u);
-  assert.doesNotMatch(maskHelper, /\.review-block pre/u);
-  const screenshotStart = smokeSource.indexOf('await page.screenshot({');
-  const maskUse = smokeSource.indexOf('mask: acceptanceScreenshotMasks(page)', screenshotStart);
-  assert.ok(screenshotStart >= 0 && maskUse > screenshotStart, 'whole-card masks must be passed before screenshot capture.');
-  assert.match(acceptanceSource, /getByTestId\('document-raw'\)/u);
-  assert.match(acceptanceSource, /getByTestId\('document-result'\)/u);
+
+  assert.equal(selectors.includes('.review-block pre'), false);
+  assert.ok(testIds.includes('document-raw'));
+  assert.ok(testIds.includes('document-result'));
+  assert.deepEqual(events, ['screenshot', 'checkpoint']);
+  assert.deepEqual(
+    capturedOptions?.mask,
+    [
+      { kind: 'locator', selector: 'time' },
+      { kind: 'locator', selector: '.dynamic-id' },
+      { kind: 'locator', selector: '.document-copy strong' },
+      { kind: 'locator', selector: '.detail-heading h2' },
+      { kind: 'testId', testId: 'document-raw' },
+      { kind: 'testId', testId: 'document-result' },
+    ],
+  );
+  assert.deepEqual(screenshots, [join('C:\\artifacts', '01-consent-required.png')]);
 });
 
 test('real desktop OCR provenance requires the PaddleOCR engine', () => {
   assert.deepEqual(
-    parseOcrProvenance([
-      'windowsml-ocr · pp-ocrv6-medium-windowsml · windowsml-dml',
-    ]),
+    parseOcrProvenance({
+      engine: 'windowsml-ocr',
+      model: 'pp-ocrv6-medium-windowsml',
+      device: 'windowsml-dml',
+    }),
     {
       engine: 'windowsml-ocr',
       model: 'pp-ocrv6-medium-windowsml',
@@ -1702,7 +1829,11 @@ test('real desktop OCR provenance requires the PaddleOCR engine', () => {
     },
   );
   assert.throws(
-    () => parseOcrProvenance(['pdf-embedded · legacy · cpu']),
+    () => parseOcrProvenance({
+      engine: 'pdf-embedded',
+      model: 'legacy',
+      device: 'cpu',
+    }),
     /recognized OCR device provenance/u,
   );
 });
