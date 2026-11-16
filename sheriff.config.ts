@@ -25,6 +25,7 @@ export const config: SheriffConfig = {
     'apps/capture-workbench/src/app/asr': ['shell:feature'],
     'apps/capture-workbench/src/app/ocr': ['shell:feature'],
     'apps/capture-workbench/src/app/history': ['shell:feature'],
+    'apps/capture-workbench/src/app/result': ['shell:feature'],
     'apps/capture-workbench/src/app/settings': ['shell:feature'],
     'apps/capture-workbench/src/app/engine-card': ['shell:feature'],
     'apps/capture-workbench/src/app/services': ['shell:service'],

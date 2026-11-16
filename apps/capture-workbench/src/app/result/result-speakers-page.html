@@ -1,0 +1,53 @@
+@if (store.detail()) {
+  @if (!store.hasResult()) {
+    <div
+      hlmCard
+      class="flex flex-col gap-2 p-6"
+      data-testid="result-no-result"
+    >
+      <p class="text-sm font-semibold" data-testid="result-pending-status">
+        {{ store.statusText() }}
+      </p>
+      <p class="text-sm text-muted-foreground">
+        {{ m().resultNoResultYet }}
+      </p>
+    </div>
+  } @else if (store.speakers().length === 0) {
+    <p
+      class="text-sm text-muted-foreground"
+      data-testid="result-speakers-empty"
+    >
+      {{ m().resultNoSpeakers }}
+    </p>
+  } @else {
+    <div class="flex flex-col gap-3" data-testid="result-speakers-list">
+      @for (speaker of store.speakers(); track speaker.speakerId) {
+        <div
+          hlmCard
+          class="flex flex-wrap items-center justify-between gap-4 p-4"
+          data-testid="result-speaker-row"
+          [attr.data-speaker-id]="speaker.speakerId"
+        >
+          <span class="font-medium" data-testid="result-speaker-name">
+            {{ speaker.displayName }}
+          </span>
+          @if (speaker.sampleUrl; as sampleUrl) {
+            <audio
+              controls
+              preload="none"
+              [src]="sampleUrl"
+              data-testid="result-speaker-sample"
+            ></audio>
+          } @else {
+            <span
+              class="text-sm text-muted-foreground"
+              data-testid="result-speaker-no-sample"
+            >
+              {{ store.playbackUnavailableMessage() ?? m().noSample }}
+            </span>
+          }
+        </div>
+      }
+    </div>
+  }
+}

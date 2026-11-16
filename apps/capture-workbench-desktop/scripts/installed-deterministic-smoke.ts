@@ -767,18 +767,13 @@ export function runInstalledDeterministicSmoke(
                   }),
                   concatMap(() => trackSmokeStep(state.timeline, 'page found', () => installedPage(state.browser, state.appProcess))),
                   concatMap((page) =>
-                    expectedSource === 'release'
-                      ? of({
-                          productTitle: 'Capture Workbench',
-                          model: 'setup-pending',
-                          captures: [],
-                        })
-                      : exerciseInstalledUi(
-                          page,
-                          state.appProcess.pid,
-                          temporaryDirectory,
-                          { timeline: state.timeline, cards: state.cards },
-                        ),
+                    exerciseInstalledPageForSource(
+                      expectedSource,
+                      page,
+                      state.appProcess.pid,
+                      temporaryDirectory,
+                      { timeline: state.timeline, cards: state.cards },
+                    ),
                   ),
                   tap(
                     (exerciseResult) => (state.exerciseResult = exerciseResult),
@@ -950,20 +945,12 @@ export function runInstalledDeterministicSmoke(
           ).pipe(
             concatMap(() =>
               attempt(
-                state.privateProcessRootsRegistered
-                  ? processCleanup
-                      .stopAndProveResidualProcessRoots([installDirectory])
-                      .pipe(
-                        concatMap(() =>
-                          processCleanup.stopAndProveOwnedProcessRoots([
-                            temporaryDirectory,
-                          ]),
-                        ),
-                      )
-                  : processCleanup.stopAndProveResidualProcessRoots([
-                      installDirectory,
-                      temporaryDirectory,
-                    ]),
+                stopPostUninstallProcessRoots(
+                  processCleanup,
+                  state.privateProcessRootsRegistered,
+                  installDirectory,
+                  temporaryDirectory,
+                ),
                 () => (state.cleanup.ownedProcessesStopped = true),
               ),
             ),
@@ -1076,6 +1063,48 @@ export function acquireExclusiveSmokeLock(root, candidate) {
 
 export function releaseExclusiveSmokeLock(lock) {
   return releaseLock(lock);
+}
+
+export function exerciseInstalledPageForSource(
+  expectedSource: string,
+  page: Parameters<typeof exerciseInstalledUi>[0],
+  appPid: number | undefined,
+  fixtureDirectory: string,
+  diagnostics: { timeline: SmokeStepEvent[]; cards: SmokeCardDiagnostic[] },
+  runDeterministicExercise = exerciseInstalledUi,
+) {
+  return expectedSource === 'release'
+    ? of({
+        productTitle: 'Capture Workbench',
+        model: 'setup-pending',
+        captures: [],
+      })
+    : runDeterministicExercise(page, appPid, fixtureDirectory, diagnostics);
+}
+
+export function stopPostUninstallProcessRoots(
+  processCleanup: Pick<
+    ReturnType<typeof createInstalledProcessCleanup>,
+    'stopAndProveResidualProcessRoots' | 'stopAndProveOwnedProcessRoots'
+  >,
+  privateProcessRootsRegistered: boolean,
+  ownedInstallDirectory: string,
+  ownedTemporaryDirectory: string,
+) {
+  return privateProcessRootsRegistered
+    ? processCleanup
+        .stopAndProveResidualProcessRoots([ownedInstallDirectory])
+        .pipe(
+          concatMap(() =>
+            processCleanup.stopAndProveOwnedProcessRoots([
+              ownedTemporaryDirectory,
+            ]),
+          ),
+        )
+    : processCleanup.stopAndProveResidualProcessRoots([
+        ownedInstallDirectory,
+        ownedTemporaryDirectory,
+      ]);
 }
 
 export function installedAppExerciseError(error, diagnostics?: string) {

@@ -13,10 +13,26 @@ import { RELEASE_VERSION } from '../../../tools/release/release-intent.ts';
 // then deletes the documents it created and proves the app, the runtime
 // sidecar, the CDP port, and temporary app data are gone.
 //
-// Inputs: CAPTURE_REAL_DESKTOP_OCR_INPUT (image) or CAPTURE_REAL_DESKTOP_OCR_PDF,
-// and CAPTURE_REAL_DESKTOP_OCR_EXPECTATIONS or `<input>.expected.json` beside
-// the input. With E2E_ACCEPTANCE_RUN_ID set (acceptance) it stops at the
-// durable OCR checkpoint and writes privacy-safe evidence only.
+// Inputs (one per line):
+//   CAPTURE_REAL_DESKTOP_OCR_INPUT: required image source path unless CAPTURE_REAL_DESKTOP_OCR_PDF is set.
+//   CAPTURE_REAL_DESKTOP_OCR_PDF: required PDF source path unless CAPTURE_REAL_DESKTOP_OCR_INPUT is set.
+//   CAPTURE_REAL_DESKTOP_OCR_EXPECTATIONS: optional expectations JSON path (defaults to `<input>.expected.json` beside the input).
+//   CAPTURE_REAL_DESKTOP_APP_DATA: required in non-acceptance mode; host-owned app-data directory under %APPDATA%.
+//   APPDATA: required in non-acceptance mode to verify CAPTURE_REAL_DESKTOP_APP_DATA.
+//   CAPTURE_REAL_DESKTOP_EXECUTABLE: optional path to capture-workbench-desktop.exe (defaults to the release target binary).
+//   CAPTURE_REAL_DESKTOP_EXPECTED_OCR_DEVICE: optional expected OCR device (`windowsml-dml` or `cpu`; also `--expected-ocr-device`).
+//   CAPTURE_REAL_DESKTOP_TEARDOWN: optional teardown mode (`window-close` default, or `terminate-process`).
+//   E2E_ACCEPTANCE_RUN_ID: optional; when set, enables installed OCR-only acceptance mode with privacy-safe evidence.
+//   E2E_ACCEPTANCE_EVENT_ROOT: required in acceptance mode; directory for acceptance checkpoint journal events.
+//   E2E_ARTIFACT_ROOT: optional diagnostic log root (required in acceptance mode via createAcceptanceRun).
+//   E2E_ACCEPTANCE_SCOPE_PATH: optional in acceptance mode; path to the acceptance scope ownership file.
+//   E2E_ACCEPTANCE_DIAGNOSTICS: optional; `1` enables stage and OCR lifecycle diagnostic logs.
+//   E2E_ACCEPTANCE_KEEP_APP_DATA: optional; `1` retains acceptance app-data directories after teardown.
+//   CAPTURE_RUNTIME_CANDIDATE_ROOT: required in acceptance mode; path to the staged runtime candidate directory.
+//   CAPTURE_RUNTIME_CANDIDATE_ID: required in acceptance mode; 64-char lowercase SHA-256 of the runtime candidate.
+//   CAPTURE_PDF_OCR_E2E_LOCAL_MODEL_OPT_IN: required in acceptance mode; must be `1`.
+//   CAPTURE_PDF_OCR_E2E_LOCAL_MODEL_ROOT: required in acceptance mode; path to the local OCR model directory.
+//   CAPTURE_REAL_DESKTOP_INSTALLER_PROVENANCE: required in acceptance mode; path to acceptance installer provenance JSON.
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
@@ -1082,37 +1098,36 @@ export async function main(options: {
   launchedApp = await establishOwnedDesktopLaunch({
     scopeOwner: localScopeOwner,
     checkpointJournal,
-    spawnChild: () => {
-      const child = spawn(desktopExecutable, [], {
-        cwd: resolve(desktopExecutable, '..'),
-        env: {
-          ...scrubLocalModelEnvironment(process.env),
-          WEBVIEW2_USER_DATA_FOLDER: webViewData,
-          ...(acceptance ? {
-            APPDATA: resolve(acceptance.artifactRoot, 'app-data'),
-            LOCALAPPDATA: resolve(acceptance.artifactRoot, 'local-app-data'),
-            CAPTURE_REAL_DESKTOP_APP_DATA: appData,
-            CAPTURE_ACCEPTANCE_APP_DATA_ROOT: appData,
-            CAPTURE_PDF_OCR_E2E_LOCAL_MODEL_OPT_IN: '1',
-            CAPTURE_PDF_OCR_E2E_LOCAL_MODEL_ROOT: localModelRoot,
-            CAPTURE_SMOKE_WORKER_MIRROR_OPT_IN: '1',
-            CAPTURE_SMOKE_WORKER_MIRROR_URL: workerMirror?.baseUrl ?? '',
-            CAPTURE_OCR_EXECUTION_EVIDENCE_OPT_IN: '1',
-            CAPTURE_OCR_EXECUTION_EVIDENCE_ROOT: acceptance.artifactRoot,
-            CAPTURE_OCR_EXECUTION_RUNTIME_SHA256: expectedRuntimeSha256,
-          } : {}),
-          ...(acceptance && sourceKind === 'pdf'
-            ? { CAPTURE_ACCEPTANCE_PDF_PAGE_SCOPE: 'page-1' }
-            : {}),
-          WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:
-            `--remote-debugging-address=127.0.0.1 --remote-debugging-port=${cdpPort} --remote-allow-origins=*`,
-        },
-        stdio: 'ignore',
-        windowsHide: true,
-      });
+    onChildSpawned: (child) => {
       launchedApp = child;
-      return child;
     },
+    spawnChild: () => spawn(desktopExecutable, [], {
+      cwd: resolve(desktopExecutable, '..'),
+      env: {
+        ...scrubLocalModelEnvironment(process.env),
+        WEBVIEW2_USER_DATA_FOLDER: webViewData,
+        ...(acceptance ? {
+          APPDATA: resolve(acceptance.artifactRoot, 'app-data'),
+          LOCALAPPDATA: resolve(acceptance.artifactRoot, 'local-app-data'),
+          CAPTURE_REAL_DESKTOP_APP_DATA: appData,
+          CAPTURE_ACCEPTANCE_APP_DATA_ROOT: appData,
+          CAPTURE_PDF_OCR_E2E_LOCAL_MODEL_OPT_IN: '1',
+          CAPTURE_PDF_OCR_E2E_LOCAL_MODEL_ROOT: localModelRoot,
+          CAPTURE_SMOKE_WORKER_MIRROR_OPT_IN: '1',
+          CAPTURE_SMOKE_WORKER_MIRROR_URL: workerMirror?.baseUrl ?? '',
+          CAPTURE_OCR_EXECUTION_EVIDENCE_OPT_IN: '1',
+          CAPTURE_OCR_EXECUTION_EVIDENCE_ROOT: acceptance.artifactRoot,
+          CAPTURE_OCR_EXECUTION_RUNTIME_SHA256: expectedRuntimeSha256,
+        } : {}),
+        ...(acceptance && sourceKind === 'pdf'
+          ? { CAPTURE_ACCEPTANCE_PDF_PAGE_SCOPE: 'page-1' }
+          : {}),
+        WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:
+          `--remote-debugging-address=127.0.0.1 --remote-debugging-port=${cdpPort} --remote-allow-origins=*`,
+      },
+      stdio: 'ignore',
+      windowsHide: true,
+    }),
   });
   if (!launchedApp) throw new Error('Packaged app launch did not produce a process.');
   const app = launchedApp;
@@ -1564,7 +1579,7 @@ export async function main(options: {
       : await readStructuredProvenance(page, provenance);
     const ocr = acceptanceMode === 'ocr-only'
       ? readDurableOcrProvenance(durableLibraryDetail ?? {})
-      : parseOcrProvenance(provenance);
+      : await readOcrProvenance(page);
     assertExpectedOcrDevice(ocr.device, expectedOcrDevice);
     if (acceptance) {
       if (sourceKind !== 'image' && sourceKind !== 'pdf') {
@@ -1573,15 +1588,17 @@ export async function main(options: {
       if (durableLibraryDetail === undefined || localInstalledRuntime === undefined || authenticatedOcrPreflight === undefined) {
         throw new Error('Installed OCR semantic evidence identity was unavailable after the durable journey.');
       }
-      const proof = await readOcrExecutionProof(acceptance.artifactRoot);
-      ocrExecutionProof = proof;
-      assertOcrExecutionProofMatchesInstalledJourney(proof, {
-        sourceKind,
-        sourceSha256,
-        runtimeSha256: localInstalledRuntime.runtimeSha256,
-        workerSha256: authenticatedOcrPreflight.workerSha256,
-        contractSha256: authenticatedOcrPreflight.contractSha256,
+      const proof = await verifyInstalledOcrExecutionProof({
+        artifactRoot: acceptance.artifactRoot,
+        expected: {
+          sourceKind,
+          sourceSha256,
+          runtimeSha256: localInstalledRuntime.runtimeSha256,
+          workerSha256: authenticatedOcrPreflight.workerSha256,
+          contractSha256: authenticatedOcrPreflight.contractSha256,
+        },
       });
+      ocrExecutionProof = proof;
       acceptanceEvidence = {
         ...acceptanceEvidence,
         ocrExecutionProof: proof,
@@ -1597,8 +1614,12 @@ export async function main(options: {
         requestedPageScope: proof.requestedPageScope === null ? null : [...proof.requestedPageScope],
         device: authenticatedOcrPreflight.mode === 'gpu-dml' ? 'windowsml-dml' : 'cpu',
       };
-      if (acceptanceMode === 'ocr-only') {
-        const semanticEvidence = buildOcrOnlySemanticEvidence(durableLibraryDetail, {
+      semanticArtifactIdentity = await emitAcceptanceSemanticEvidence({
+        acceptanceMode,
+        sourceKind,
+        artifactRoot: acceptance.artifactRoot,
+        pdfPageScope,
+        buildOcrOnly: () => buildOcrOnlySemanticEvidence(durableLibraryDetail, {
           runId: acceptance.runId,
           fixtureName: sourceFixtureName,
           sourceKind,
@@ -1612,17 +1633,8 @@ export async function main(options: {
           ocrDevice: ocr.device,
           anchors: ocrExpectation.rawTextIncludes,
           executionProof: proofIdentity,
-        });
-        if (sourceKind === 'pdf') {
-          assert.ok(pdfPageScope, 'Phase 1 PDF semantic gate requires durable page-scope evidence.');
-          assertPhase1PageOnePdfSemanticEvidence(pdfPageScope, semanticEvidence);
-        }
-        semanticArtifactIdentity = await writeOcrSemanticEvidenceArtifact(
-          join(acceptance.artifactRoot, semanticEvidence.artifactPath),
-          semanticEvidence,
-        );
-      } else {
-        const semanticEvidence = buildOcrSemanticEvidence(durableLibraryDetail, {
+        }),
+        buildStructuring: () => buildOcrSemanticEvidence(durableLibraryDetail, {
           runId: acceptance.runId,
           fixtureName: sourceFixtureName,
           sourceKind,
@@ -1636,12 +1648,8 @@ export async function main(options: {
           ocrDevice: ocr.device,
           anchors: ocrExpectation.rawTextIncludes,
           executionProof: proofIdentity,
-        });
-        semanticArtifactIdentity = await writeOcrSemanticEvidenceArtifact(
-          join(acceptance.artifactRoot, semanticEvidence.artifactPath),
-          semanticEvidence,
-        );
-      }
+        }),
+      });
     }
     await checkpointJournal?.complete('ocr_semantic', 'ocr-result');
     if (acceptanceMode === 'ocr-only') {
@@ -1951,6 +1959,7 @@ export async function main(options: {
 }
 export interface OwnedDesktopLaunchOptions {
   readonly spawnChild: () => ReturnType<typeof spawn>;
+  readonly onChildSpawned?: (child: ReturnType<typeof spawn>) => void;
   readonly scopeOwner?: Pick<CaptureAcceptanceScopeOwner, 'recordLaunch'>;
   readonly checkpointJournal?: Pick<AcceptanceCheckpointWriter, 'begin' | 'complete' | 'failActive'>;
   readonly closeOwnedRoot?: (child: ReturnType<typeof spawn>) => Promise<boolean>;
@@ -1962,6 +1971,7 @@ export async function establishOwnedDesktopLaunch(
   try {
     await options.checkpointJournal?.begin('launch', 'desktop-process');
     child = options.spawnChild();
+    options.onChildSpawned?.(child);
     await waitForChildSpawn(child);
     if (!Number.isSafeInteger(child.pid) || Number(child.pid) <= 0) throw new Error('Packaged app spawn did not expose a positive PID.');
     await options.scopeOwner?.recordLaunch(child.pid);
@@ -2043,14 +2053,31 @@ export async function closeOwnedDesktopRoot(
   });
 }
 
-async function acceptanceScreenshot(
+export const DESKTOP_OCR_ACCEPTANCE_CHECKPOINTS = [
+  '01-consent-required',
+  '01-core-install-started',
+  '01-core-install-retry',
+  '01-runtime-ready',
+  '02-document-processing',
+  '03-ocr-checkpoint',
+  '03-successful-result',
+  '04-review-complete',
+] as const;
+
+export type DesktopOcrAcceptanceCheckpointName =
+  (typeof DESKTOP_OCR_ACCEPTANCE_CHECKPOINTS)[number];
+
+export async function acceptanceScreenshot(
   page: Page,
   acceptance: AcceptanceRun | undefined,
   screenshots: string[],
-  name: string,
+  name: DesktopOcrAcceptanceCheckpointName,
   checkpoint?: (page: Page, name: string) => Promise<void>,
 ): Promise<void> {
   if (!acceptance) return;
+  if (!DESKTOP_OCR_ACCEPTANCE_CHECKPOINTS.includes(name)) {
+    throw new Error(`Unknown acceptance screenshot checkpoint: ${name}`);
+  }
   const file = join(acceptance.artifactRoot, `${name}.png`);
   await page.screenshot({
     path: file,
@@ -2397,17 +2424,33 @@ export function assertDurableOcrCheckpoint(
   assert.match(String(provenanceRecord.workerSha256 ?? ''), /^[a-f0-9]{64}$/u);
 }
 
-export function parseOcrProvenance(
-  provenance: readonly string[],
-): {
+async function readOcrProvenance(page: Page): Promise<{
+  engine: 'windowsml-ocr';
+  model: string;
+  device: OcrDevice;
+}> {
+  const element = page.getByTestId('document-extraction-provenance');
+  await element.waitFor({ state: 'visible', timeout: 30_000 });
+  const [engine, model, device] = await Promise.all([
+    element.getAttribute('data-engine'),
+    element.getAttribute('data-model'),
+    element.getAttribute('data-device'),
+  ]);
+  return parseOcrProvenance({ engine, model, device });
+}
+
+export function parseOcrProvenance(attributes: {
+  readonly engine: string | null | undefined;
+  readonly model: string | null | undefined;
+  readonly device: string | null | undefined;
+}): {
   engine: 'windowsml-ocr';
   model: string;
   device: OcrDevice;
 } {
-  const value = provenance.find(
-    (entry) => entry.startsWith('windowsml-ocr · '),
-  ) ?? '';
-  const [engine = '', model = '', device = ''] = value.split(' · ').map((entry) => entry.trim());
+  const engine = attributes.engine?.trim() ?? '';
+  const model = attributes.model?.trim() ?? '';
+  const device = attributes.device?.trim() ?? '';
   if (
     engine !== 'windowsml-ocr' ||
     !model ||
@@ -2418,12 +2461,55 @@ export function parseOcrProvenance(
   return { engine, model, device };
 }
 
-interface InstalledJourneyOcrProofExpectation {
+export interface InstalledJourneyOcrProofExpectation {
   readonly sourceKind: 'image' | 'pdf';
   readonly sourceSha256: string;
   readonly runtimeSha256: string;
   readonly workerSha256: string;
   readonly contractSha256: string;
+}
+
+export async function verifyInstalledOcrExecutionProof(options: {
+  readonly artifactRoot: string;
+  readonly expected: InstalledJourneyOcrProofExpectation;
+  readonly readProof?: typeof readOcrExecutionProof;
+  readonly assertMatches?: typeof assertOcrExecutionProofMatchesInstalledJourney;
+}): Promise<AcceptanceOcrExecutionProofSummary> {
+  const proof = await (options.readProof ?? readOcrExecutionProof)(options.artifactRoot);
+  (options.assertMatches ?? assertOcrExecutionProofMatchesInstalledJourney)(proof, options.expected);
+  return proof;
+}
+
+export async function emitAcceptanceSemanticEvidence(options: {
+  readonly acceptanceMode: DesktopOcrAcceptanceMode;
+  readonly sourceKind: 'image' | 'pdf';
+  readonly artifactRoot: string;
+  readonly pdfPageScope?: PdfPageScopeEvidence;
+  readonly buildOcrOnly: () => OcrSemanticEvidenceV1;
+  readonly buildStructuring: () => OcrSemanticEvidenceV1;
+  readonly assertPdfPageOne?: typeof assertPhase1PageOnePdfSemanticEvidence;
+  readonly writeArtifact?: typeof writeOcrSemanticEvidenceArtifact;
+}): Promise<OcrSemanticArtifactIdentity> {
+  const writeArtifact = options.writeArtifact ?? writeOcrSemanticEvidenceArtifact;
+  if (options.acceptanceMode === 'ocr-only') {
+    const semanticEvidence = options.buildOcrOnly();
+    if (options.sourceKind === 'pdf') {
+      assert.ok(options.pdfPageScope, 'Phase 1 PDF semantic gate requires durable page-scope evidence.');
+      (options.assertPdfPageOne ?? assertPhase1PageOnePdfSemanticEvidence)(
+        options.pdfPageScope,
+        semanticEvidence,
+      );
+    }
+    return writeArtifact(
+      join(options.artifactRoot, semanticEvidence.artifactPath),
+      semanticEvidence,
+    );
+  }
+  const semanticEvidence = options.buildStructuring();
+  return writeArtifact(
+    join(options.artifactRoot, semanticEvidence.artifactPath),
+    semanticEvidence,
+  );
 }
 
 export function assertOcrExecutionProofMatchesInstalledJourney(

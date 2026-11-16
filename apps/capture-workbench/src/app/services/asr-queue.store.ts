@@ -344,8 +344,7 @@ export class AsrQueueStore {
   }
 
   view(documentId: string): void {
-    this.workspace.select(documentId);
-    void this.router?.navigateByUrl('/history');
+    void this.router?.navigateByUrl(`/history/${documentId}`);
   }
 
   exportTxt(documentId: string): void {

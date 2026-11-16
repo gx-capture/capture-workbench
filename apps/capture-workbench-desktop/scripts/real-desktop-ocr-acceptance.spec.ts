@@ -2,12 +2,11 @@
 // real-desktop-ocr-smoke.ts. The small tests at the top pin which screenshot
 // checkpoints have pixel baselines; the last test runs the journey itself and
 // compares each checkpoint with the approved screenshots.
-import { readFile } from 'node:fs/promises';
 import { extname } from 'node:path';
 
 import { expect, test } from '@playwright/test';
 
-import { main } from './real-desktop-ocr-smoke.ts';
+import { DESKTOP_OCR_ACCEPTANCE_CHECKPOINTS, main } from './real-desktop-ocr-smoke.ts';
 
 const OCR_ONLY_MAIN_CHECKPOINT_NAMES: readonly string[] = [
   '01-consent-required',
@@ -27,23 +26,6 @@ const OCR_ONLY_SKIPPED_CHECKPOINT_NAMES: readonly string[] = [
 ];
 
 const STRUCTURING_ONLY_CHECKPOINT_NAME = '03-successful-result';
-
-const ACCEPTANCE_SCREENSHOT_CALL_PATTERN =
-  /acceptanceScreenshot\(\s*page\s*,\s*acceptance\s*,\s*acceptanceScreenshots\s*,\s*'([^']+)'\s*,/gu;
-
-async function readAcceptanceScreenshotNames(): Promise<readonly string[]> {
-  const smokeSource = await readFile(
-    new URL('./real-desktop-ocr-smoke.ts', import.meta.url),
-    'utf8',
-  );
-  const calls = [...smokeSource.matchAll(ACCEPTANCE_SCREENSHOT_CALL_PATTERN)];
-  const allAcceptanceScreenshotExpressions = smokeSource.match(/acceptanceScreenshot\(/gu) ?? [];
-
-  expect(allAcceptanceScreenshotExpressions).toHaveLength(calls.length + 1);
-  expect(calls).toHaveLength(8);
-
-  return calls.map((call) => call[1]);
-}
 
 export function screenshotName(
   name: string,
@@ -117,14 +99,20 @@ test('OCR-only routing enumerates every main checkpoint and its visual policy', 
     .toEqual(OCR_ONLY_MAIN_CHECKPOINT_NAMES);
 });
 
-test('OCR-only checkpoint inventory is bound to the smoke journey source', async () => {
-  const acceptanceScreenshotNames = await readAcceptanceScreenshotNames();
-
-  expect(new Set(acceptanceScreenshotNames).size).toBe(acceptanceScreenshotNames.length);
-  expect(acceptanceScreenshotNames.filter((name) => name === STRUCTURING_ONLY_CHECKPOINT_NAME))
-    .toEqual([STRUCTURING_ONLY_CHECKPOINT_NAME]);
-  expect(acceptanceScreenshotNames.filter((name) => name !== STRUCTURING_ONLY_CHECKPOINT_NAME))
-    .toEqual(OCR_ONLY_MAIN_CHECKPOINT_NAMES);
+test('OCR-only checkpoint inventory is bound to the smoke journey source', () => {
+  expect(new Set(DESKTOP_OCR_ACCEPTANCE_CHECKPOINTS).size).toBe(
+    DESKTOP_OCR_ACCEPTANCE_CHECKPOINTS.length,
+  );
+  expect(
+    DESKTOP_OCR_ACCEPTANCE_CHECKPOINTS.filter(
+      (name) => name === STRUCTURING_ONLY_CHECKPOINT_NAME,
+    ),
+  ).toEqual([STRUCTURING_ONLY_CHECKPOINT_NAME]);
+  expect(
+    DESKTOP_OCR_ACCEPTANCE_CHECKPOINTS.filter(
+      (name) => name !== STRUCTURING_ONLY_CHECKPOINT_NAME,
+    ),
+  ).toEqual(OCR_ONLY_MAIN_CHECKPOINT_NAMES);
 });
 
 test('structuring PDF successful-result routing remains unchanged', () => {

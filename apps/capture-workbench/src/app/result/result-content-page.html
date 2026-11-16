@@ -1,0 +1,203 @@
+@if (store.detail(); as detail) {
+  @if (!store.hasResult()) {
+    <div
+      hlmCard
+      class="flex flex-col gap-2 p-6"
+      data-testid="result-no-result"
+    >
+      <p class="text-sm font-semibold" data-testid="result-pending-status">
+        {{ store.statusText() }}
+      </p>
+      <p class="text-sm text-muted-foreground">
+        {{ m().resultNoResultYet }}
+      </p>
+      @if (store.noResultReason(); as reason) {
+        <p class="text-sm text-muted-foreground">{{ reason }}</p>
+      }
+    </div>
+  } @else if (store.kind() === 'ocr') {
+    <div
+      class="grid grid-cols-1 gap-6 lg:grid-cols-2"
+      data-testid="result-ocr-content"
+    >
+      <section
+        hlmCard
+        class="flex min-h-64 items-center justify-center p-4"
+        data-testid="result-source-pane"
+      >
+        @if (store.pdfPreviewNote(); as note) {
+          <p
+            class="text-center text-sm text-muted-foreground"
+            data-testid="result-pdf-note"
+          >
+            {{ note }}
+          </p>
+        } @else if (store.imageUrl(); as url) {
+          <img
+            [src]="url"
+            [alt]="detail.fileName"
+            class="max-h-[70vh] w-full rounded object-contain"
+            data-testid="result-source-image"
+          />
+        } @else if (store.sourceError(); as error) {
+          <p
+            role="alert"
+            class="text-sm text-destructive"
+            data-testid="result-source-error"
+          >
+            {{ error }}
+          </p>
+        }
+      </section>
+
+      <section class="flex flex-col gap-3" data-testid="result-text-pane">
+        @if (store.totalPages() > 0) {
+          <div
+            class="flex items-center justify-between gap-2"
+            data-testid="result-page-controls"
+          >
+            <button
+              hlmBtn
+              variant="outline"
+              size="sm"
+              type="button"
+              data-testid="result-page-prev"
+              [attr.aria-label]="m().resultPreviousPage"
+              [disabled]="!store.canPrevious()"
+              (click)="store.previousPage()"
+            >
+              ◀
+            </button>
+            <span
+              class="text-sm font-medium tabular-nums"
+              data-testid="result-page-indicator"
+            >
+              {{ m().resultPageLabel(store.currentPage()?.page ?? 0, store.totalPages()) }}
+            </span>
+            <button
+              hlmBtn
+              variant="outline"
+              size="sm"
+              type="button"
+              data-testid="result-page-next"
+              [attr.aria-label]="m().resultNextPage"
+              [disabled]="!store.canNext()"
+              (click)="store.nextPage()"
+            >
+              ▶
+            </button>
+          </div>
+        }
+
+        @if (store.currentPage(); as page) {
+          <div
+            class="whitespace-pre-wrap select-text rounded-lg border border-border bg-card p-4 text-sm leading-relaxed"
+            data-testid="result-page-text"
+          >{{ page.text }}</div>
+        } @else {
+          <p
+            class="text-sm text-muted-foreground"
+            data-testid="result-page-empty"
+          >
+            {{ m().resultOcrEmpty }}
+          </p>
+        }
+      </section>
+    </div>
+  } @else {
+    <div class="flex flex-col gap-4" data-testid="result-asr-content">
+      <div
+        class="sticky top-0 z-10 border-b border-border bg-background pb-4"
+        data-testid="result-player-bar"
+      >
+        @if (store.playbackUnavailableMessage(); as message) {
+          <p
+            class="text-sm text-muted-foreground"
+            data-testid="result-playback-unavailable"
+          >
+            {{ message }}
+          </p>
+        } @else if (store.recordingUrl(); as url) {
+          @if (store.isVideo()) {
+            <video
+              #mediaPlayer
+              controls
+              class="max-h-64 w-full rounded-lg"
+              [src]="url"
+              (canplay)="store.onMediaCanPlay()"
+              data-testid="result-player"
+            ></video>
+          } @else {
+            <audio
+              #mediaPlayer
+              controls
+              class="w-full"
+              [src]="url"
+              (canplay)="store.onMediaCanPlay()"
+              data-testid="result-player"
+            ></audio>
+          }
+        } @else if (store.sourceError(); as error) {
+          <p
+            role="alert"
+            class="text-sm text-destructive"
+            data-testid="result-source-error"
+          >
+            {{ error }}
+          </p>
+        }
+      </div>
+
+      <div class="overflow-x-auto rounded-lg border border-border">
+        <table hlmTable data-testid="result-transcript-table">
+          <thead hlmTHead>
+            <tr hlmTr>
+              <th hlmTh class="w-24">{{ m().resultColTime }}</th>
+              <th hlmTh class="w-36">{{ m().resultColSpeaker }}</th>
+              <th hlmTh>{{ m().resultColText }}</th>
+            </tr>
+          </thead>
+          <tbody hlmTBody>
+            @for (line of store.lines(); track line.segmentId) {
+              <tr
+                hlmTr
+                data-testid="result-transcript-row"
+                [attr.data-segment-id]="line.segmentId"
+              >
+                <td hlmTd class="align-top whitespace-nowrap">
+                  <button
+                    hlmBtn
+                    variant="ghost"
+                    size="sm"
+                    type="button"
+                    class="tabular-nums"
+                    data-testid="result-line-time"
+                    [disabled]="store.playbackUnavailable()"
+                    [attr.aria-label]="m().playFrom(line.timeLabel)"
+                    (click)="store.requestSeek(line.startMs)"
+                  >
+                    {{ line.timeLabel }}
+                  </button>
+                </td>
+                <td
+                  hlmTd
+                  class="align-top text-muted-foreground"
+                  data-testid="result-line-speaker"
+                >
+                  {{ line.speaker ?? '—' }}
+                </td>
+                <td
+                  hlmTd
+                  class="whitespace-pre-wrap select-text align-top"
+                  data-testid="result-line-text"
+                >
+                  {{ line.text }}
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    </div>
+  }
+}

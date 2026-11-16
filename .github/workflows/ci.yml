@@ -40,6 +40,7 @@ on:
   push:
     branches: [main]
     paths: *code-paths
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -47,18 +48,21 @@ permissions:
 # A newer push to a pull request cancels its older run. Branch pushes get one
 # group per commit: a ref-wide group would let a newer push replace a pending
 # older run, and every main commit a release candidate names needs its own
-# successful push run.
+# successful push run. The event name is part of the group, so a manual
+# `workflow_dispatch` run of the same commit never queues with, or replaces,
+# the push run.
 concurrency:
-  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('{0}-{1}', github.ref, github.sha) }}
+  group: ci-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('{0}-{1}-{2}', github.event_name, github.ref, github.sha) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Only main runs the full verification: the four jobs after `checks`, which
-# also build the packages, engine workers, installer, and desktop product and
-# run the reference flow. They are independent and run in parallel; a release
-# candidate requires the whole run to succeed on main
-# (tools/verify-main-ci.ts). A docs-only commit on main gets no run, so
-# dispatch candidates at the latest commit that changed code. Pull requests
-# run only `checks`.
+# also build the packages, engine workers, installer (including the release-mode
+# installed smoke), and desktop product and run the reference flow. They are
+# independent and run in parallel; a release candidate requires the whole push
+# run to succeed on main (tools/verify-main-ci.ts). A docs-only commit on main
+# gets no run, so dispatch candidates at the latest commit that changed code.
+# Pull requests run only `checks`, and `workflow_dispatch` runs only `installer`
+# as a branch pre-flight.
 jobs:
   # Pull requests: lint, type checks, and unit tests of the projects a change
   # affects, without builds, packaging, engine workers, the installer, the
@@ -284,10 +288,10 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
-  # Production core runtime, the desktop contract check against it, and the
-  # core-only NSIS installer.
+  # Production core runtime, the desktop contract check against it, the
+  # core-only NSIS installer, and the release-mode installed smoke.
   installer:
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     timeout-minutes: 60
     steps:
@@ -329,6 +333,13 @@ jobs:
           pnpm nx run capture-workbench-desktop:contract-consistency
           pnpm nx run capture-runtime:verify-core-boundary
           pnpm nx run capture-workbench-desktop:build-nsis
+
+      - name: Ensure WebView2 Evergreen Runtime
+        uses: ./.github/actions/ensure-webview2
+
+      - name: Run release-mode installed smoke
+        shell: pwsh
+        run: node apps/capture-workbench-desktop/scripts/installed-deterministic-smoke.ts --release
 
       - name: Upload core packaging diagnostics
         if: always()

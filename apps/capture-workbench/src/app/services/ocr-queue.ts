@@ -105,9 +105,16 @@ export function ocrStatusText(status: OcrUserStatus): string {
   }
 }
 
-/** `.txt` in page order. Pages are separated by a blank line. */
-export function renderRawOcrText(raw: RawCapture | null | undefined): string {
-  if (!raw) return '';
+export interface OcrPageText {
+  readonly page: number;
+  readonly text: string;
+}
+
+/** Groups raw OCR segments by page (including empty processed pages), ordered by page then segment order. */
+export function groupRawOcrPages(
+  raw: RawCapture | null | undefined,
+): readonly OcrPageText[] {
+  if (!raw) return [];
   const pages = new Map<number, { readonly order: number; readonly text: string }[]>();
   for (const segment of raw.segments) {
     if (segment.locator.kind !== 'page') continue;
@@ -116,14 +123,28 @@ export function renderRawOcrText(raw: RawCapture | null | undefined): string {
     group.push({ order: segment.order, text: segment.text });
     pages.set(segment.locator.page, group);
   }
-  if (pages.size === 0) return raw.sourceText;
+  for (const page of raw.ocrPageScope?.processedPageNumbers ?? []) {
+    if (!pages.has(page)) {
+      pages.set(page, []);
+    }
+  }
   return [...pages.entries()]
     .sort((left, right) => left[0] - right[0])
-    .map(([, segments]) => segments
-      .sort((left, right) => left.order - right.order)
-      .map((segment) => segment.text)
-      .join('\n'))
-    .join('\n\n');
+    .map(([page, segments]) => ({
+      page,
+      text: [...segments]
+        .sort((left, right) => left.order - right.order)
+        .map((segment) => segment.text)
+        .join('\n'),
+    }));
+}
+
+/** `.txt` in page order. Pages are separated by a blank line. */
+export function renderRawOcrText(raw: RawCapture | null | undefined): string {
+  if (!raw) return '';
+  const nonEmpty = groupRawOcrPages(raw).filter((page) => page.text !== '');
+  if (nonEmpty.length === 0) return raw.sourceText;
+  return nonEmpty.map((page) => page.text).join('\n\n');
 }
 
 export function describeOcrDocument(input: {
@@ -214,7 +235,7 @@ function progressText(job: DesktopCaptureOperation | undefined): string {
   const pages = typeof job.pagesDone === 'number' && typeof job.pagesTotal === 'number'
     ? desktopMessages().ocrPageProgress(job.pagesDone, job.pagesTotal)
     : null;
-  return [stageLabel(job.stage ?? job.status), percent === null ? null : `${percent}%`, pages]
+  return [stageLabel(job.status), percent === null ? null : `${percent}%`, pages]
     .filter((part): part is string => part !== null && part !== '')
     .join(' ');
 }

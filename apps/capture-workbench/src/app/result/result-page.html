@@ -1,0 +1,84 @@
+<section
+  class="flex h-full flex-col gap-6 px-8 py-7"
+  data-testid="page-result"
+>
+  <header class="flex items-center gap-4 border-b border-border pb-4">
+    <a
+      hlmBtn
+      variant="outline"
+      size="sm"
+      [routerLink]="store.backRoute()"
+      data-testid="result-back"
+    >
+      {{ m().resultBack }}
+    </a>
+    <h1
+      class="min-w-0 truncate text-xl font-semibold tracking-tight"
+      data-testid="result-title"
+    >
+      {{ store.detail()?.fileName ?? m().resultTitle }}
+    </h1>
+  </header>
+
+  @if (store.loading()) {
+    <p class="text-sm text-muted-foreground" data-testid="result-loading">
+      {{ m().resultLoading }}
+    </p>
+  } @else if (store.loadError(); as error) {
+    <p
+      role="alert"
+      class="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive"
+      data-testid="result-error"
+    >
+      {{ error }}
+    </p>
+  } @else if (store.detail()) {
+    <div class="flex min-h-0 flex-1 flex-col gap-6 md:flex-row">
+      <nav
+        class="flex w-full shrink-0 flex-row gap-1 md:w-44 md:flex-col"
+        data-testid="result-subnav"
+        [attr.aria-label]="m().resultNavigation"
+      >
+        <a
+          hlmBtn
+          variant="ghost"
+          class="justify-start md:w-full"
+          routerLink="content"
+          routerLinkActive="bg-sidebar-accent font-semibold text-sidebar-accent-foreground"
+          ariaCurrentWhenActive="page"
+          data-testid="result-nav-content"
+        >
+          {{ m().resultTabContent }}
+        </a>
+        @if (store.kind() === 'asr') {
+          <a
+            hlmBtn
+            variant="ghost"
+            class="justify-start md:w-full"
+            routerLink="speakers"
+            routerLinkActive="bg-sidebar-accent font-semibold text-sidebar-accent-foreground"
+            ariaCurrentWhenActive="page"
+            data-testid="result-nav-speakers"
+          >
+            {{ m().resultTabSpeakers }}
+          </a>
+        }
+        <a
+          hlmBtn
+          variant="ghost"
+          class="justify-start md:w-full"
+          routerLink="details"
+          routerLinkActive="bg-sidebar-accent font-semibold text-sidebar-accent-foreground"
+          ariaCurrentWhenActive="page"
+          data-testid="result-nav-details"
+        >
+          {{ m().resultTabDetails }}
+        </a>
+      </nav>
+
+      <div class="min-w-0 flex-1 overflow-auto">
+        <router-outlet />
+      </div>
+    </div>
+  }
+</section>

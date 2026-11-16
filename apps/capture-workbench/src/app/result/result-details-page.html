@@ -1,0 +1,36 @@
+@if (store.details(); as details) {
+  <div hlmCard class="p-6">
+    <dl
+      class="grid grid-cols-[auto_1fr] gap-x-8 gap-y-3 text-sm"
+      data-testid="result-details-list"
+    >
+      <dt class="font-medium text-muted-foreground">{{ m().resultDetailFileName }}</dt>
+      <dd data-testid="result-detail-filename">{{ details.fileName }}</dd>
+
+      <dt class="font-medium text-muted-foreground">{{ m().resultDetailMediaType }}</dt>
+      <dd data-testid="result-detail-type">{{ details.mediaType }}</dd>
+
+      <dt class="font-medium text-muted-foreground">{{ m().resultDetailSize }}</dt>
+      <dd data-testid="result-detail-size">{{ details.sizeLabel }}</dd>
+
+      <dt class="font-medium text-muted-foreground">{{ m().resultDetailStatus }}</dt>
+      <dd data-testid="result-detail-status">{{ details.statusLabel }}</dd>
+
+      @if (details.pageCount !== null) {
+        <dt class="font-medium text-muted-foreground">{{ m().ocrColPages }}</dt>
+        <dd data-testid="result-detail-pages">{{ details.pageCount }}</dd>
+      }
+
+      @if (details.durationLabel !== null) {
+        <dt class="font-medium text-muted-foreground">{{ m().asrColDuration }}</dt>
+        <dd data-testid="result-detail-duration">{{ details.durationLabel }}</dd>
+      }
+
+      <dt class="font-medium text-muted-foreground">{{ m().resultDetailCreatedAt }}</dt>
+      <dd data-testid="result-detail-created">{{ details.createdAtLabel }}</dd>
+
+      <dt class="font-medium text-muted-foreground">{{ m().resultDetailUpdatedAt }}</dt>
+      <dd data-testid="result-detail-updated">{{ details.updatedAtLabel }}</dd>
+    </dl>
+  </div>
+}

@@ -291,15 +291,52 @@ describe('CaptureRuntimeClient', () => {
     expect(CAPTURE_CONTRACT_SET_SHA256).toBe(digest);
     expect(packageManifest.contractSetSha256).toBe(digest);
   });
-  it('publishes only v2 client paths and hides generated codec exports', () => {
-    const source = readFileSync(
-      resolve(import.meta.dirname, 'client.ts'),
-      'utf8',
+  it('requests only v2 runtime paths and hides generated codec exports', async () => {
+    const requestedPaths: string[] = [];
+    const innerTransport = new InMemoryRuntimeTransport(
+      withDiscovery([
+        {
+          path: '/v2/runtime/requirements',
+          handle: () => Response.json({ items: [] }),
+        },
+        {
+          path: '/v2/runtime/installations',
+          handle: () => Response.json({ items: [] }),
+        },
+        {
+          path: '/v2/runtime/model-options',
+          handle: () => Response.json({ catalogSha256: 'a'.repeat(64), items: [] }),
+        },
+      ]),
     );
-    const retiredSurface = `/v${1}/`;
-    expect(source).not.toContain(retiredSurface);
-    expect(source).not.toMatch(/Capture(?:Job|Failure)V[12]/u);
+    const client = new CaptureRuntimeClient({
+      baseUrl: 43123,
+      transport: {
+        request: (request) => {
+          requestedPaths.push(request.path);
+          return innerTransport.request(request);
+        },
+      },
+      maxRetries: 0,
+    });
+
+    await client.getRequirements();
+    await client.listInstallations();
+    await client.getModelOptions();
+    await client.getStreamingCapabilities();
+
+    expect(requestedPaths.length).toBeGreaterThan(0);
+    for (const path of requestedPaths) {
+      expect(path).not.toContain(`/v${1}/`);
+      expect(path).toMatch(/^\/(?:v2|meta\/v2)\//u);
+    }
+    const apiPaths = requestedPaths.filter((path) => !path.startsWith('/meta/'));
+    expect(apiPaths.every((path) => path.startsWith('/v2/'))).toBe(true);
     expect(Object.keys(publicSdk)).not.toContain('decodeJson');
+    expect(Object.keys(publicSdk)).not.toContain('CaptureJobV1');
+    expect(Object.keys(publicSdk)).not.toContain('CaptureJobV2');
+    expect(Object.keys(publicSdk)).not.toContain('CaptureFailureV1');
+    expect(Object.keys(publicSdk)).not.toContain('CaptureFailureV2');
   });
 
   it('publishes the canonical value-level OCR projection parser', () => {
@@ -1080,7 +1117,7 @@ data: ${JSON.stringify(event)}
       displayName: 'Speech recognition',
       status: 'installable',
       requiredFor: ['audio'],
-      installStrategy: 'runtime-artifact',
+      installStrategy: 'runtime-catalog',
       downloadBytes: 1024,
     };
     let body: Record<string, unknown> = requirement;

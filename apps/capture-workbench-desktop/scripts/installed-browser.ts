@@ -443,6 +443,12 @@ function captureFixture(page, fixture, appPid, fixtureDirectory, diagnostics) {
   );
 }
 
+export function assertInstalledModelChip(model: unknown): string {
+  const text = String(model ?? '');
+  assert.match(text, /qwen(?:3\.5:|\s+3\.5\s+)0\.8b/iu);
+  return text;
+}
+
 export function exerciseInstalledUi(page, appPid, fixtureDirectory, diagnostics = {
   timeline: [] as SmokeStepEvent[], cards: [] as SmokeCardDiagnostic[],
 }) {
@@ -469,10 +475,7 @@ export function exerciseInstalledUi(page, appPid, fixtureDirectory, diagnostics 
             ),
         );
       return defer(() => from(page.locator('.model-chip').textContent())).pipe(
-        map((model) => {
-          assert.match(String(model ?? ''), /qwen(?:3\.5:|\s+3\.5\s+)0\.8b/iu);
-          return model;
-        }),
+        map((model) => assertInstalledModelChip(model)),
       );
     }),
     concatMap((model) =>

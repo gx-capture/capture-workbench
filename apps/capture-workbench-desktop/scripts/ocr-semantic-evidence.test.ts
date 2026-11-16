@@ -325,18 +325,6 @@ test('manifest rejects a semantic artifact replacement after its atomic writer i
   );
 });
 
-test('installed smoke binds semantic evidence from one durable library_get snapshot', async () => {
-  const smoke = await readFile(new URL('./real-desktop-ocr-smoke.ts', import.meta.url), 'utf8');
-  assert.match(smoke, /readDurableLibraryDetail\(page, importedDocumentId\)/u);
-  assert.match(smoke, /buildOcrSemanticEvidence\(durableLibraryDetail/u);
-  assert.match(smoke, /buildOcrOnlySemanticEvidence\(durableLibraryDetail/u);
-  assert.match(smoke, /writeOcrSemanticEvidenceArtifact\(/u);
-  assert.match(smoke, /join\(acceptance\.artifactRoot, semanticEvidence\.artifactPath\)/u);
-  assert.match(smoke, /semanticArtifactIdentity\.path/u);
-  assert.doesNotMatch(smoke, /writeOcrOnlySemanticEvidenceArtifact/u);
-  assert.doesNotMatch(smoke, /runtime\.getOcr|runtime\.getRaw|runtime\.getResult/u);
-});
-
 function expectedIdentity(includeProof = true) {
   const identity = {
     runId: 'run-2026-08-29',
