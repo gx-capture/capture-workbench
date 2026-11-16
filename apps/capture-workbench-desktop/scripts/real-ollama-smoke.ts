@@ -7,37 +7,24 @@ import { pathToFileURL } from 'node:url';
 
 import { assertStagedRuntime } from './assert-staged-runtime.ts';
 import { appRoot, stagedExecutable } from './stage-runtime.ts';
+import {
+  isTerminalCaptureStatus,
+  startV2Capture,
+  validateWorkerMirrorUrl,
+  type CaptureOperation,
+} from './v2-capture-flow.ts';
 
 const workspaceRoot = resolve(appRoot, '..', '..');
 const outputDirectory = join(workspaceRoot, 'tmp', 'capture-workbench-desktop', 'real-ollama-smoke');
 const maxWaitMs = 10 * 60_000;
 const maxInstallationWaitMs = 75 * 60_000;
-const ingestionChunkBytes = 1024 * 1024;
 const coreRequirementIds = [
   'windowsml-ocr',
   'ollama-runtime',
 ] as const;
-const terminalCaptureStatuses = new Set(['completed', 'failed', 'cancelled']);
 const expectedStructuringEngine = 'ollama';
 const expectedStructuringModel = 'capture-workbench-qwen3.5-0.8b-structure-v1';
 const sha256DigestPattern = /^sha256:[a-f0-9]{64}$/u;
-
-interface CaptureFailure {
-  readonly code?: string;
-  readonly message?: string;
-  readonly stage?: string | null;
-}
-
-interface CaptureOperation {
-  readonly captureId: string;
-  readonly status: string;
-  readonly error?: CaptureFailure | null;
-}
-
-interface IngestionResponse {
-  readonly ingestionId: string;
-  readonly status: string;
-}
 
 interface RuntimeRequirement {
   readonly requirementId: string;
@@ -77,94 +64,6 @@ export interface RealOllamaSmokeEvidence {
   readonly schemaVersion: unknown;
   readonly structuringEngine: StructuringProvenance;
   readonly workerMirrorUsed: boolean;
-}
-
-export function validateWorkerMirrorUrl(rawUrl: string | undefined): string | undefined {
-  if (rawUrl === undefined) return undefined;
-  const trimmed = rawUrl.trim();
-  if (trimmed === '') return undefined;
-  const prefix = 'http://127.0.0.1:';
-  if (!trimmed.startsWith(prefix)) {
-    throw new Error('CAPTURE_REAL_SMOKE_WORKER_MIRROR_URL must use http://127.0.0.1:<port>.');
-  }
-  const portText = trimmed.slice(prefix.length);
-  if (!/^\d+$/u.test(portText)) {
-    throw new Error(
-      'CAPTURE_REAL_SMOKE_WORKER_MIRROR_URL must specify a numeric port without path, query, or credentials.',
-    );
-  }
-  const port = Number(portText);
-  if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
-    throw new Error('CAPTURE_REAL_SMOKE_WORKER_MIRROR_URL port must be between 1 and 65535.');
-  }
-  return `${prefix}${port}`;
-}
-
-export function isTerminalCaptureStatus(status: string): boolean {
-  return terminalCaptureStatuses.has(status);
-}
-
-export function buildOpenIngestionRequest(input: {
-  readonly clientRequestId: string;
-  readonly fileName: string;
-  readonly totalBytes: number;
-  readonly sourceSha256: string;
-}): {
-  readonly protocolVersion: '2';
-  readonly kind: 'pdf';
-  readonly mode: 'file';
-  readonly clientRequestId: string;
-  readonly fileName: string;
-  readonly mediaType: 'application/pdf';
-  readonly totalBytes: number;
-  readonly sourceSha256: string;
-} {
-  return {
-    protocolVersion: '2',
-    kind: 'pdf',
-    mode: 'file',
-    clientRequestId: input.clientRequestId,
-    fileName: input.fileName,
-    mediaType: 'application/pdf',
-    totalBytes: input.totalBytes,
-    sourceSha256: input.sourceSha256,
-  };
-}
-
-export function buildFinalizeIngestionRequest(input: {
-  readonly totalBytes: number;
-  readonly sha256: string;
-}): {
-  readonly protocolVersion: '2';
-  readonly totalBytes: number;
-  readonly sha256: string;
-} {
-  return {
-    protocolVersion: '2',
-    totalBytes: input.totalBytes,
-    sha256: input.sha256,
-  };
-}
-
-export function buildStartCaptureRequest(input: {
-  readonly clientRequestId: string;
-  readonly ingestionId: string;
-}): {
-  readonly protocolVersion: '2';
-  readonly clientRequestId: string;
-  readonly ingestionId: string;
-  readonly structuringMode: 'runtime';
-  readonly targetLanguage: 'zh-TW';
-  readonly startPolicy: 'eager';
-} {
-  return {
-    protocolVersion: '2',
-    clientRequestId: input.clientRequestId,
-    ingestionId: input.ingestionId,
-    structuringMode: 'runtime',
-    targetLanguage: 'zh-TW',
-    startPolicy: 'eager',
-  };
 }
 
 export function extractOllamaStructuringProvenance(payload: unknown): ExtractedOllamaResult {
@@ -250,55 +149,11 @@ async function main(): Promise<void> {
     await prepareCoreRequirements(runtimePort, origin, token);
     await prepareSelectedModel(runtimePort, origin, token);
 
-    const ingestionKey = randomUUID();
-    const ingestion = await request<IngestionResponse>(runtimePort, origin, token, '/v2/ingestions', {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-idempotency-key': ingestionKey,
-      },
-      body: JSON.stringify(buildOpenIngestionRequest({
-        clientRequestId: ingestionKey,
-        fileName: basename(sourcePath),
-        totalBytes: sourceBytes.length,
-        sourceSha256: sourceSha,
-      })),
-    });
-
-    for (let index = 0, offset = 0; offset < sourceBytes.length; index += 1, offset += ingestionChunkBytes) {
-      const chunk = sourceBytes.subarray(offset, Math.min(sourceBytes.length, offset + ingestionChunkBytes));
-      await request<void>(runtimePort, origin, token, `/v2/ingestions/${ingestion.ingestionId}/chunks/${index}`, {
-        method: 'PUT',
-        headers: {
-          'content-type': 'application/octet-stream',
-          'content-range': `bytes ${offset}-${offset + chunk.length - 1}/${sourceBytes.length}`,
-          digest: `sha-256=${createHash('sha256').update(chunk).digest('hex')}`,
-          'x-idempotency-key': randomUUID(),
-        },
-        body: new Uint8Array(chunk),
-      });
-    }
-
-    await request<IngestionResponse>(runtimePort, origin, token, `/v2/ingestions/${ingestion.ingestionId}/finalize`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(buildFinalizeIngestionRequest({
-        totalBytes: sourceBytes.length,
-        sha256: sourceSha,
-      })),
-    });
-
-    const captureKey = randomUUID();
-    const created = await request<CaptureOperation>(runtimePort, origin, token, '/v2/captures', {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-idempotency-key': captureKey,
-      },
-      body: JSON.stringify(buildStartCaptureRequest({
-        clientRequestId: captureKey,
-        ingestionId: ingestion.ingestionId,
-      })),
+    const created = await startV2Capture({
+      request: (path, init) => request(runtimePort, origin, token, path, init),
+      fileName: basename(sourcePath),
+      sourceBytes,
+      sourceSha256: sourceSha,
     });
     captureId = created.captureId;
 

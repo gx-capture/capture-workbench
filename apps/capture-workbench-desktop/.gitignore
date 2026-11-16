@@ -4,3 +4,4 @@ src-tauri/binaries/*.exe
 src-tauri/resources/capture-runtime-manifest.json
 src-tauri/resources/.runtime-stage.json
 scripts/fixtures/deterministic-runtime/target/
+src-tauri/resources/capture-document-v2.schema.json

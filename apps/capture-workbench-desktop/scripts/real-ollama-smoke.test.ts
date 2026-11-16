@@ -2,14 +2,16 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  buildRealOllamaSmokeEvidence,
+  extractOllamaStructuringProvenance,
+} from './real-ollama-smoke.ts';
+import {
   buildFinalizeIngestionRequest,
   buildOpenIngestionRequest,
-  buildRealOllamaSmokeEvidence,
   buildStartCaptureRequest,
-  extractOllamaStructuringProvenance,
   isTerminalCaptureStatus,
   validateWorkerMirrorUrl,
-} from './real-ollama-smoke.ts';
+} from './v2-capture-flow.ts';
 
 const validDigest = `sha256:${'a'.repeat(64)}`;
 const validSourceSha256 = 'b'.repeat(64);
