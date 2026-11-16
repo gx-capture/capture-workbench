@@ -1138,10 +1138,10 @@ export async function nativeClickWebViewElement(
     height: window.innerHeight,
   }));
   // Playwright reports CSS viewport coordinates, while the Win32 helper below
-  // receives the packaged window's native client rectangle.  The acceptance
-  // lane intentionally emulates a 1440x900 CSS viewport on a 1280px client
-  // at 150% Windows scaling, so devicePixelRatio is not the native mapping.
-  // Pass normalized coordinates and map them after GetClientRect instead.
+  // receives the packaged window's native client rectangle. Pass normalized
+  // coordinates and map them after GetClientRect, so Windows scaling does not
+  // matter. This is exact only while the layout viewport is the window's real
+  // size: a caller that emulates a viewport must emulate that size.
   const { xRatio, yRatio } = normalizedNativeClickPoint(box, viewport);
   const systemRoot = process.env.SystemRoot || 'C:\\Windows';
   const script = `

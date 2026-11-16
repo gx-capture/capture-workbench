@@ -31,6 +31,7 @@ import {
   isRealOcrWorkerFailure,
   isOwnedSmokeDocumentName,
   parseOcrProvenance,
+  pinViewportToWindow,
   readAndAssertVisibleOcrPages,
   readDurableOcrProvenance,
   readOcrComputeModeFromSettings,
@@ -2448,3 +2449,22 @@ test('runtime error and diagnostics helpers inspect runtime-status and engine ro
   assert.equal(await runtimeSetupDiagnostics(brokenPage), 'diagnostics-unavailable');
 });
 
+test('the viewport is pinned to the size the native window really has', async () => {
+  const applied: Array<{ width: number; height: number }> = [];
+  const page = {
+    evaluate: async () => ({ width: 1280, height: 860 }),
+    setViewportSize: async (size: { width: number; height: number }) => {
+      applied.push(size);
+    },
+  } as unknown as Page;
+  assert.deepEqual(await pinViewportToWindow(page), { width: 1280, height: 860 });
+  assert.deepEqual(applied, [{ width: 1280, height: 860 }]);
+
+  const unusable = {
+    evaluate: async () => ({ width: 0, height: 860 }),
+    setViewportSize: async () => {
+      throw new Error('must not emulate an invalid viewport');
+    },
+  } as unknown as Page;
+  await assert.rejects(pinViewportToWindow(unusable), /invalid viewport size/u);
+});

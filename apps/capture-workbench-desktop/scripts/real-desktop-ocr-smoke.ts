@@ -1129,7 +1129,7 @@ export async function main(options: {
     page = attached.page;
     observeOcrPageLifecycle(page, browser, app);
     await page.waitForLoadState('domcontentloaded');
-    await page.setViewportSize({ width: 1440, height: 900 });
+    const viewport = await pinViewportToWindow(page);
     await injectAcceptancePrivacyStyle(page, Boolean(acceptance));
     page.on('console', (message) => {
       if (message.type() === 'error') consoleErrors.push(message.text());
@@ -1139,7 +1139,7 @@ export async function main(options: {
       videoPath = join(acceptance.artifactRoot, 'capture-workbench-golden-journey.webm');
       await page.screencast.start({
         path: videoPath,
-        size: { width: 1440, height: 900 },
+        size: viewport,
       });
       videoStarted = true;
     }
@@ -2691,6 +2691,26 @@ interface OcrFirstRunSetupOptions {
 interface OcrComputeSettingsObservation {
   readonly visible: boolean;
   readonly mode: 'gpu-dml' | 'cpu-fallback' | null;
+}
+
+/**
+ * Fixes the layout viewport at the size the native window really has.
+ * Emulating another size moves the layout but not the window, and a native
+ * click mapped from page coordinates then lands beside its target (measured:
+ * 1440x900 on the 1280x860 window put the click on the page-number field
+ * instead of the file button). Emulating the real size keeps the mapping exact
+ * and still gives screenshots at device scale 1 on every display.
+ */
+export async function pinViewportToWindow(page: Page): Promise<{ readonly width: number; readonly height: number }> {
+  const size = await page.evaluate(() => ({
+    width: Math.round(window.innerWidth),
+    height: Math.round(window.innerHeight),
+  }));
+  if (!Number.isSafeInteger(size.width) || size.width < 1 || !Number.isSafeInteger(size.height) || size.height < 1) {
+    throw new Error('Packaged desktop window reported an invalid viewport size.');
+  }
+  await page.setViewportSize(size);
+  return size;
 }
 
 export async function invokeTauriCommand(

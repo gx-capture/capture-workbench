@@ -67,6 +67,7 @@ import {
   invokeTauriCommand,
   isLoopbackPortOpen,
   parseAuthenticatedOcrPreflight,
+  pinViewportToWindow,
   queryPackagedUiState,
   readAndAssertVisibleOcrPages,
   readDurableLibraryDetail,
@@ -402,7 +403,7 @@ export async function runPracticalInstalledOcr(args: PracticalRunArguments): Pro
     );
     await attach(await connectToPackagedPage(port, { initialBrowser, timeoutMs: 30_000 }));
     await activePage().waitForLoadState('domcontentloaded');
-    await activePage().setViewportSize({ width: 1440, height: 900 });
+    await pinViewportToWindow(activePage());
 
     await runOcrFirstRunSetup(activePage(), {
       readyTimeoutMs: 3 * 60_000,
