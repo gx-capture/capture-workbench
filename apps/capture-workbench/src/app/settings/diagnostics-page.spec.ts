@@ -43,8 +43,10 @@ describe('DiagnosticsPage', () => {
       document: signal<DiagnosticsDocumentView | null>(options.document ?? null),
       exporting: signal(false),
       exportError: signal<string | null>(null),
+      copyStatus: signal<string | null>(null),
       reconnect: vi.fn(),
       exportJson: vi.fn(),
+      copyDigest: vi.fn(),
     };
 
     const features = {
@@ -98,7 +100,7 @@ describe('DiagnosticsPage', () => {
   }
 
   it('renders runtime and model sections without a document section when no document param is present', () => {
-    const { el } = setup();
+    const { store, el } = setup();
 
     expect(el.querySelector('h2')?.textContent?.trim()).toBe('診斷');
     expect(el.querySelector('[data-testid="diagnostics-runtime-status"]')?.textContent?.trim()).toBe('已就緒');
@@ -108,6 +110,9 @@ describe('DiagnosticsPage', () => {
     expect(el.querySelector('[data-testid="diagnostics-contract-digest"]')?.textContent?.trim()).toBe('a'.repeat(64));
     expect(el.querySelectorAll('[data-testid="diagnostics-model-option"]')).toHaveLength(1);
     expect(el.querySelector('[data-testid="diagnostics-document"]')).toBeNull();
+
+    (el.querySelector('[data-testid="diagnostics-copy-contract-digest"]') as HTMLButtonElement).click();
+    expect(store.copyDigest).toHaveBeenCalledWith('a'.repeat(64));
   });
 
   it('shows error message and reconnect action when runtime is in error state', () => {

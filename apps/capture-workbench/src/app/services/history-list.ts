@@ -12,7 +12,19 @@ export interface HistoryRow {
   readonly statusText: string;
   readonly extent: string;
   readonly updatedAtMs: number;
+  readonly updatedAt: string;
   readonly canDelete: boolean;
+}
+
+/** Formats an epoch timestamp as `YYYY/MM/DD HH:mm` in the user's local time zone. */
+export function formatHistoryDate(milliseconds: number): string {
+  const date = new Date(milliseconds);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  return `${year}/${month}/${day} ${hours}:${minutes}`;
 }
 
 export interface HistoryFilters {
@@ -34,6 +46,7 @@ export function historyRow(document: DesktopLibrarySummary, busy: boolean, job?:
     statusText: described.statusText,
     extent: 'durationLabel' in described ? described.durationLabel : described.pageLabel,
     updatedAtMs: document.updatedAtMs,
+    updatedAt: formatHistoryDate(document.updatedAtMs),
     canDelete: !busy && !active && !document.captureId,
   };
 }

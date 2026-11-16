@@ -1,6 +1,6 @@
 import type { DesktopLibrarySummary } from '../contracts';
 import { setDesktopLocale } from '../i18n/desktop-messages';
-import { filterHistoryRows, historyRow } from './history-list';
+import { filterHistoryRows, formatHistoryDate, historyRow } from './history-list';
 import { describeAsrDocument } from './asr-queue';
 import { describeOcrDocument } from './ocr-queue';
 
@@ -76,5 +76,12 @@ describe('history list', () => {
     expect(historyRow(document(), true).canDelete).toBe(false);
     expect(historyRow(document(), false, undefined, true).canDelete).toBe(false);
     expect(historyRow(document({ captureId: 'capture' }), false).canDelete).toBe(false);
+  });
+  it('formats updatedAt as YYYY/MM/DD HH:mm in local 24-hour time regardless of locale', () => {
+    const timestamp = new Date(2026, 10, 16, 14, 5).getTime();
+    expect(formatHistoryDate(timestamp)).toBe('2026/11/16 14:05');
+    expect(historyRow(document({ updatedAtMs: timestamp }), false).updatedAt).toBe('2026/11/16 14:05');
+    setDesktopLocale('en');
+    expect(historyRow(document({ updatedAtMs: timestamp }), false).updatedAt).toBe('2026/11/16 14:05');
   });
 });

@@ -16,123 +16,203 @@
       }
     </div>
   } @else if (store.kind() === 'ocr') {
-    <div
-      class="grid grid-cols-1 gap-6 lg:grid-cols-2"
-      data-testid="result-ocr-content"
-    >
-      <section
-        #sourcePane
-        hlmCard
-        class="flex min-h-64 items-center justify-center p-4"
-        data-testid="result-source-pane"
-      >
-        @if (store.isPdf()) {
-          @if (store.pdfState() === 'loading') {
-            <p
-              class="text-center text-sm text-muted-foreground"
-              data-testid="result-pdf-loading"
-            >
-              {{ m().resultLoading }}
-            </p>
-          } @else if (store.pdfError(); as error) {
-            <p
-              role="alert"
-              class="text-center text-sm text-destructive"
-              data-testid="result-pdf-error"
-            >
-              {{ error }}
-            </p>
-          }
-          <canvas
-            #pdfCanvas
-            data-testid="result-source-pdf-canvas"
-            [attr.data-rendered-page]="store.renderedPdfPage()"
-            class="max-h-[70vh] w-full rounded object-contain"
-            [class.hidden]="store.pdfState() !== 'ready'"
-          ></canvas>
-        } @else if (store.imageUrl(); as url) {
-          <img
-            [src]="url"
-            [alt]="detail.fileName"
-            class="max-h-[70vh] w-full rounded object-contain"
-            data-testid="result-source-image"
-          />
-        } @else if (store.sourceError(); as error) {
-          <p
-            role="alert"
-            class="text-sm text-destructive"
-            data-testid="result-source-error"
-          >
-            {{ error }}
-          </p>
-        }
-      </section>
-
-      <section class="flex flex-col gap-3" data-testid="result-text-pane">
-        @if (store.totalPages() > 0) {
-          <div
-            class="flex items-center justify-between gap-2"
-            data-testid="result-page-controls"
-          >
-            <button
-              hlmBtn
-              variant="outline"
-              size="sm"
-              type="button"
-              data-testid="result-page-prev"
-              [attr.aria-label]="m().resultPreviousPage"
-              [disabled]="!store.canPrevious()"
-              (click)="store.previousPage()"
-            >
-              ◀
-            </button>
-            <span
-              class="text-sm font-medium tabular-nums"
-              data-testid="result-page-indicator"
-            >
-              {{
-                store.pagesContiguousFromOne()
-                  ? m().resultPageLabel(store.currentPage()?.page ?? 0, store.totalPages())
-                  : m().resultSelectedPageLabel(store.currentPage()?.page ?? 0, store.currentPagePosition(), store.totalPages())
-              }}
-            </span>
-            <button
-              hlmBtn
-              variant="outline"
-              size="sm"
-              type="button"
-              data-testid="result-page-next"
-              [attr.aria-label]="m().resultNextPage"
-              [disabled]="!store.canNext()"
-              (click)="store.nextPage()"
-            >
-              ▶
-            </button>
+    <div class="flex flex-col gap-4" data-testid="result-ocr-content">
+      @if (store.totalPages() > 0 || store.currentPage()?.edited) {
+        <div
+          class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card px-4 py-2.5"
+          data-testid="result-page-controls"
+        >
+          <div class="flex items-center gap-2">
+            @if (store.totalPages() > 0) {
+              <button
+                hlmBtn
+                variant="outline"
+                size="sm"
+                type="button"
+                data-testid="result-page-prev"
+                [attr.aria-label]="m().resultPreviousPage"
+                [disabled]="!store.canPrevious()"
+                (click)="store.previousPage()"
+              >
+                <svg
+                  aria-hidden="true"
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  class="size-4"
+                >
+                  <path d="m15 18-6-6 6-6"></path>
+                </svg>
+              </button>
+              <span
+                class="px-2 text-sm font-medium tabular-nums"
+                data-testid="result-page-indicator"
+              >
+                {{
+                  store.pagesContiguousFromOne()
+                    ? m().resultPageLabel(store.currentPage()?.page ?? 0, store.totalPages())
+                    : m().resultSelectedPageLabel(store.currentPage()?.page ?? 0, store.currentPagePosition(), store.totalPages())
+                }}
+              </span>
+              <button
+                hlmBtn
+                variant="outline"
+                size="sm"
+                type="button"
+                data-testid="result-page-next"
+                [attr.aria-label]="m().resultNextPage"
+                [disabled]="!store.canNext()"
+                (click)="store.nextPage()"
+              >
+                <svg
+                  aria-hidden="true"
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  class="size-4"
+                >
+                  <path d="m9 18 6-6-6-6"></path>
+                </svg>
+              </button>
+            }
+            @if (store.currentPage()?.edited) {
+              <span
+                class="inline-flex items-center rounded-full bg-secondary px-2.5 py-0.5 text-xs font-semibold text-secondary-foreground"
+                data-testid="result-page-edited"
+              >
+                {{ m().resultEdited }}
+              </span>
+            }
           </div>
-        }
-
-        @if (store.currentPage(); as page) {
-          <textarea
-            class="min-h-64 w-full rounded-lg border border-border bg-card p-4 text-sm leading-relaxed"
-            data-testid="result-page-text"
-            [attr.aria-label]="m().resultEditText"
-            [value]="page.text"
-            (input)="store.editPage(page.page, $any($event.target).value)"
-          ></textarea>
-          @if (page.edited) {
-            <span class="text-xs" data-testid="result-page-edited">{{ m().resultEdited }}</span>
-            <button hlmBtn variant="outline" size="sm" type="button" data-testid="result-page-restore"
-              (click)="store.restorePage(page.page)">{{ m().resultRestore }}</button>
+          @if (store.currentPage(); as page) {
+            @if (page.edited) {
+              <button
+                hlmBtn
+                variant="outline"
+                size="sm"
+                type="button"
+                data-testid="result-page-restore"
+                (click)="store.restorePage(page.page)"
+              >
+                {{ m().resultRestore }}
+              </button>
+            }
           }
-        } @else {
-          <p
-            class="text-sm text-muted-foreground"
-            data-testid="result-page-empty"
-          >
-            {{ m().resultOcrEmpty }}
-          </p>
-        }
-      </section>
+        </div>
+      }
+
+      <div class="grid grid-cols-1 gap-6 lg:grid-cols-2 lg:items-stretch">
+        <section
+          #sourcePane
+          hlmCard
+          class="flex h-full min-h-96 items-center justify-center p-4"
+          data-testid="result-source-pane"
+        >
+          @if (store.isPdf()) {
+            @if (store.pdfState() === 'loading') {
+              <p
+                class="text-center text-sm text-muted-foreground"
+                data-testid="result-pdf-loading"
+              >
+                {{ m().resultLoading }}
+              </p>
+            } @else if (store.pdfError(); as error) {
+              <div
+                role="status"
+                class="flex flex-col items-center gap-2 text-center text-sm text-muted-foreground"
+                data-testid="result-pdf-error"
+              >
+                <svg
+                  aria-hidden="true"
+                  width="24"
+                  height="24"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.6"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  class="size-6 shrink-0"
+                >
+                  <rect x="3" y="3" width="18" height="18" rx="2"></rect>
+                  <circle cx="9" cy="9" r="2"></circle>
+                  <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"></path>
+                </svg>
+                <p>{{ error }}</p>
+              </div>
+            }
+            <canvas
+              #pdfCanvas
+              role="img"
+              data-testid="result-source-pdf-canvas"
+              [attr.aria-label]="m().resultPdfPageCanvasLabel(store.renderedPdfPage() ?? store.currentPage()?.page ?? 1)"
+              [attr.data-rendered-page]="store.renderedPdfPage()"
+              class="max-h-[70vh] w-full rounded object-contain"
+              [class.hidden]="store.pdfState() !== 'ready'"
+            ></canvas>
+          } @else if (store.imageUrl(); as url) {
+            <img
+              [src]="url"
+              [alt]="detail.fileName"
+              class="max-h-[70vh] w-full rounded object-contain"
+              data-testid="result-source-image"
+            />
+          } @else if (store.sourceError(); as error) {
+            <div
+              role="status"
+              class="flex flex-col items-center gap-2 text-center text-sm text-muted-foreground"
+              data-testid="result-source-error"
+            >
+              <svg
+                aria-hidden="true"
+                width="24"
+                height="24"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.6"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                class="size-6 shrink-0"
+              >
+                <rect x="3" y="3" width="18" height="18" rx="2"></rect>
+                <circle cx="9" cy="9" r="2"></circle>
+                <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"></path>
+              </svg>
+              <p>{{ error }}</p>
+            </div>
+          }
+        </section>
+
+        <section class="flex h-full flex-col gap-3" data-testid="result-text-pane">
+          @if (store.currentPage(); as page) {
+            <textarea
+              class="min-h-96 h-full w-full flex-1 rounded-xl border border-border bg-card p-4 text-sm leading-relaxed"
+              data-testid="result-page-text"
+              [attr.aria-label]="m().resultEditText"
+              [value]="page.text"
+              (input)="store.editPage(page.page, $any($event.target).value)"
+            ></textarea>
+          } @else {
+            <p
+              class="text-sm text-muted-foreground"
+              data-testid="result-page-empty"
+            >
+              {{ m().resultOcrEmpty }}
+            </p>
+          }
+        </section>
+      </div>
     </div>
   } @else {
     <div class="flex flex-col gap-4" data-testid="result-asr-content">
@@ -178,29 +258,30 @@
         }
       </div>
 
-      <div class="overflow-x-auto rounded-lg border border-border">
-        <table hlmTable data-testid="result-transcript-table">
+      <div class="overflow-x-auto rounded-xl border border-border bg-card px-3 py-1">
+        <table hlmTable data-testid="result-transcript-table" class="w-full text-sm">
           <thead hlmTHead>
-            <tr hlmTr>
-              <th hlmTh class="w-24">{{ m().resultColTime }}</th>
-              <th hlmTh class="w-36">{{ m().resultColSpeaker }}</th>
-              <th hlmTh>{{ m().resultColText }}</th>
+            <tr hlmTr class="border-b border-border">
+              <th hlmTh class="text-muted-foreground w-24 py-2 px-3 text-left font-semibold">{{ m().resultColTime }}</th>
+              <th hlmTh class="text-muted-foreground w-36 py-2 px-3 text-left font-semibold">{{ m().resultColSpeaker }}</th>
+              <th hlmTh class="text-muted-foreground py-2 px-3 text-left font-semibold">{{ m().resultColText }}</th>
             </tr>
           </thead>
           <tbody hlmTBody>
             @for (line of store.lines(); track line.segmentId) {
               <tr
                 hlmTr
+                class="group border-b border-border last:border-b-0"
                 data-testid="result-transcript-row"
                 [attr.data-segment-id]="line.segmentId"
               >
-                <td hlmTd class="align-top whitespace-nowrap">
+                <td hlmTd class="px-3 py-4 align-baseline whitespace-nowrap">
                   <button
                     hlmBtn
                     variant="ghost"
                     size="sm"
                     type="button"
-                    class="tabular-nums"
+                    class="h-auto px-1.5 py-0.5 font-normal text-muted-foreground hover:text-foreground tabular-nums"
                     data-testid="result-line-time"
                     [disabled]="store.playbackUnavailable()"
                     [attr.aria-label]="m().playFrom(line.timeLabel)"
@@ -211,34 +292,95 @@
                 </td>
                 <td
                   hlmTd
-                  class="align-top text-muted-foreground"
+                  class="px-3 py-4 align-baseline text-muted-foreground"
                   data-testid="result-line-speaker"
                 >
                   {{ line.speaker ?? '—' }}
                 </td>
                 <td
                   hlmTd
-                  class="whitespace-pre-wrap select-text align-top"
+                  class="px-3 py-4 whitespace-pre-wrap select-text align-baseline"
                 >
-                  <textarea #lineInput
-                    class="w-full rounded border border-border bg-card p-2"
-                    data-testid="result-line-input"
-                    [hidden]="editingLine() !== line.segmentId"
-                    [attr.aria-label]="m().resultEditText"
-                    [value]="editingLine() === line.segmentId ? lineDraft() : line.text"
-                    (input)="lineDraft.set($any($event.target).value)"
-                    (keydown.enter)="commitLineOnEnter($event, line.segmentId)"
-                    (keydown.escape)="editingLine.set(null)"
-                    (blur)="commitLine(line.segmentId)"></textarea>
-                  @if (editingLine() !== line.segmentId) {
-                    <span data-testid="result-line-text" (dblclick)="beginLine(line.segmentId, line.text, lineInput)">{{ line.text }}</span>
-                    <button hlmBtn variant="ghost" size="sm" type="button" data-testid="result-line-edit"
-                      (click)="beginLine(line.segmentId, line.text, lineInput)">{{ m().resultEditText }}</button>
-                  }
-                  @if (line.edited) {
-                    <span class="text-xs" data-testid="result-line-edited">{{ m().resultEdited }}</span>
-                    <button hlmBtn variant="ghost" size="sm" type="button" data-testid="result-line-restore"
-                      (click)="store.restoreLine(line.segmentId)">{{ m().resultRestore }}</button>
+                  @if (editingLine() === line.segmentId) {
+                    <textarea
+                      #lineInput
+                      class="w-full rounded-md border border-border bg-card p-2 text-sm"
+                      data-testid="result-line-input"
+                      [attr.aria-label]="m().resultEditText"
+                      [value]="lineDraft()"
+                      (input)="lineDraft.set($any($event.target).value)"
+                      (keydown.enter)="commitLineOnEnter($event, line.segmentId)"
+                      (keydown.escape)="editingLine.set(null)"
+                      (blur)="commitLine(line.segmentId)"
+                    ></textarea>
+                  } @else {
+                    <div class="inline-flex flex-wrap items-baseline gap-1.5">
+                      <span
+                        data-testid="result-line-text"
+                        (dblclick)="beginLine(line.segmentId, line.text)"
+                      >{{ line.text }}</span>
+                      @if (line.edited) {
+                        <span
+                          class="inline-flex items-center rounded-full bg-secondary px-2 py-0.5 text-xs font-semibold text-secondary-foreground"
+                          data-testid="result-line-edited"
+                        >{{ m().resultEdited }}</span>
+                      }
+                      <button
+                        hlmBtn
+                        variant="ghost"
+                        size="icon-sm"
+                        type="button"
+                        class="text-muted-foreground hover:text-foreground transition-opacity motion-reduce:transition-none [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 [@media(hover:hover)]:group-focus-within:opacity-100"
+                        data-testid="result-line-edit"
+                        [attr.aria-label]="m().resultEditText"
+                        [title]="m().resultEditText"
+                        (click)="beginLine(line.segmentId, line.text)"
+                      >
+                        <svg
+                          aria-hidden="true"
+                          width="14"
+                          height="14"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="1.8"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          class="size-3.5"
+                        >
+                          <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"></path>
+                        </svg>
+                      </button>
+                      @if (line.edited) {
+                        <button
+                          hlmBtn
+                          variant="ghost"
+                          size="icon-sm"
+                          type="button"
+                          class="text-muted-foreground hover:text-foreground transition-opacity motion-reduce:transition-none [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 [@media(hover:hover)]:group-focus-within:opacity-100"
+                          data-testid="result-line-restore"
+                          [attr.aria-label]="m().resultRestore"
+                          [title]="m().resultRestore"
+                          (click)="store.restoreLine(line.segmentId)"
+                        >
+                          <svg
+                            aria-hidden="true"
+                            width="14"
+                            height="14"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.8"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            class="size-3.5"
+                          >
+                            <path d="M3 7v6h6"></path>
+                            <path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"></path>
+                          </svg>
+                        </button>
+                      }
+                    </div>
                   }
                 </td>
               </tr>

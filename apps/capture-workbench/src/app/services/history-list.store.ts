@@ -6,7 +6,6 @@ import { finalize } from 'rxjs';
 import { desktopMessages } from '../i18n/desktop-messages';
 import { DesktopLibraryService } from './desktop-library.service';
 import { DesktopWorkspaceCaptureService } from './desktop-workspace-capture.service';
-import { DesktopWorkspaceFormattingService } from './desktop-workspace-formatting.service';
 import { DesktopWorkspaceStore } from './desktop-workspace.store';
 import { filterHistoryRows, historyRow, type HistoryFilters, type HistoryRow } from './history-list';
 
@@ -16,7 +15,6 @@ export class HistoryListStore {
   private readonly capture = inject(DesktopWorkspaceCaptureService);
   private readonly library = inject(DesktopLibraryService);
   private readonly router = inject(Router);
-  private readonly formatting = inject(DesktopWorkspaceFormattingService);
   private readonly document = inject(DOCUMENT);
   private readonly destroyRef = inject(DestroyRef);
   private transientGeneration = 0;
@@ -37,7 +35,7 @@ export class HistoryListStore {
   )));
   readonly rows = computed(() => filterHistoryRows(this.allRows(), {
     type: this.typeFilter(), status: this.statusFilter(), search: this.search(),
-  }).map((row) => ({ ...row, updatedAt: this.formatting.formatDate(row.updatedAtMs) })));
+  }));
 
   open(documentId: string): void {
     this.error.set('');

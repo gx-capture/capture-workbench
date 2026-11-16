@@ -184,8 +184,8 @@
         aria-valuemax="100"
       >
         <span
-          class="block h-full rounded-full bg-primary transition-[width]"
-          [style.width.%]="live.percent"
+          class="block h-full w-full origin-left rounded-full bg-primary transition-transform motion-reduce:transition-none"
+          [style.transform]="'scaleX(' + live.percent / 100 + ')'"
         ></span>
       </div>
 

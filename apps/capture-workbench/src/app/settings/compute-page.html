@@ -1,8 +1,8 @@
 <section
-  class="flex max-w-4xl flex-col gap-6"
+  class="flex flex-col gap-6"
   data-testid="page-settings-compute"
 >
-  <h2 class="text-lg font-semibold">{{ m().settingsComputeTitle }}</h2>
+  <h2 class="break-words text-lg font-semibold">{{ m().settingsComputeTitle }}</h2>
 
   <section
     hlmCard
@@ -14,11 +14,19 @@
       {{ m().computeOcrTitle }}
     </h3>
     @if (compute.ocrCompute(); as ocr) {
-      <gx-capture-runtime-compute-status
-        [preflight]="ocr"
-        [gpuLabel]="m().gpuAcceleration"
-        [cpuNotice]="m().cpuNotice"
-      />
+      <div class="flex flex-col gap-1 text-sm text-muted-foreground">
+        @if (ocr.mode === 'gpu-dml') {
+          <p data-testid="compute-ocr-gpu-detected">{{ m().computeOcrGpuDetected }}</p>
+        }
+        <gx-capture-runtime-compute-status
+          [preflight]="ocr"
+          [gpuLabel]="m().gpuAcceleration"
+          [cpuNotice]="m().cpuNotice"
+        />
+        @if (ocr.mode === 'cpu-fallback' && !(ocr.userNoticeRequired && ocr.noticeCode === 'ocr_cpu_fallback')) {
+          <p data-testid="compute-ocr-detected">{{ m().computeOcrCpu }}</p>
+        }
+      </div>
     } @else {
       <p class="text-sm text-muted-foreground" data-testid="compute-ocr-pending">
         {{ m().computeOcrPending }}

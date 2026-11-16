@@ -17,11 +17,25 @@ export class ResultExportStore {
   readonly disabled = computed(() => this.busy() || !this.review.hasResult());
   readonly formats = computed(() => {
     const m = desktopMessages();
-    const text = { format: 'text' as const, label: m.exportPlainText };
-    const markdown = { format: 'markdown' as const, label: m.exportMarkdown };
-    return this.review.kind() === 'ocr' ? [text, markdown] : [text,
-      { format: 'srt' as const, label: m.exportSrt },
-      { format: 'vtt' as const, label: m.exportVtt }, markdown];
+    const isOcr = this.review.kind() === 'ocr';
+    const text = {
+      format: 'text' as const,
+      label: m.exportPlainText,
+      description: isOcr ? m.exportPlainTextDesc : m.exportRecordingPlainTextDesc,
+    };
+    const markdown = {
+      format: 'markdown' as const,
+      label: m.exportMarkdown,
+      description: m.exportMarkdownDesc,
+    };
+    return isOcr
+      ? [text, markdown]
+      : [
+          text,
+          { format: 'srt' as const, label: m.exportSrt, description: m.exportSrtDesc },
+          { format: 'vtt' as const, label: m.exportVtt, description: m.exportVttDesc },
+          markdown,
+        ];
   });
 
   private readonly documentChange = effect(() => {
