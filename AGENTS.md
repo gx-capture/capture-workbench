@@ -20,6 +20,7 @@
 
 - Tests, doubles and fixtures must not copy the current release version or generated artifact hashes. Import `RELEASE_VERSION` / the generated constant (or read its recorded asset), or use an obviously synthetic value for a self-consistent fake. Arbitrary older versions used as scenario data are allowed.
 - `pnpm run pinned-values:check` rejects new findings against `tools/quality/pinned-values-baseline.json`. CI uses `--ci` to also reject vanished baseline entries; run `pnpm run pinned-values:update` after fixing them. Finding identities omit the value so releases do not invalidate the baseline.
+- Scenario data may use any other version ("a mismatched version", "an older baseline"). Choose one below the current release or clearly synthetic: a literal that equals a later release fails the gate in that release's preparation.
 
 # Speech development tests
 

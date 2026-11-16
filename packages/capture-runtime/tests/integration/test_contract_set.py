@@ -8,7 +8,6 @@ from pathlib import Path
 import pytest
 
 from capture_runtime.constants import RUNTIME_VERSION
-from capture_runtime.release import CAPTURE_DOCUMENT_SCHEMA_RELEASE_SHA256
 from capture_runtime.contract_set import (
     CONTRACT_ASSET_PATH,
     CONTRACT_ASSET_SHA256_PATH,
@@ -19,6 +18,7 @@ from capture_runtime.contract_set import (
     load_contract_set,
     validate_route_inventory,
 )
+from capture_runtime.release import CAPTURE_DOCUMENT_SCHEMA_RELEASE_SHA256
 from tests.conftest import TOKEN
 
 
@@ -225,7 +225,6 @@ def test_executable_packaging_embeds_contract_bytes_and_digest() -> None:
 
 def test_contract_set_does_not_change_with_the_release_version() -> None:
     from capture_runtime.constants import RUNTIME_VERSION
-from capture_runtime.release import CAPTURE_DOCUMENT_SCHEMA_RELEASE_SHA256
     from capture_runtime.contracts import RuntimeReady
 
     bundle = load_contract_set().bundle_bytes
