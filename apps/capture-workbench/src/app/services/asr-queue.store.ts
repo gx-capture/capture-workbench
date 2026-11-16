@@ -436,7 +436,7 @@ export class AsrQueueStore {
   ): void {
     for (const document of recordings) {
       // Details are needed only for the speaker-count badge, never for duration.
-      if (document.status !== 'completed' || document.captureOptions?.identifySpeakers !== true) continue;
+      if (document.status !== 'completed' || document.captureOptions?.identifySpeakers === false) continue;
       if (this.loadingDetails.has(document.documentId)) continue;
       if (this.loadedUpdatedAt.get(document.documentId) === document.updatedAtMs) {
         continue;

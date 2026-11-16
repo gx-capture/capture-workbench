@@ -110,6 +110,135 @@ mod tests {
     }
 
     #[test]
+    fn status_only_capture_update_keeps_extent_until_raw_is_absent() {
+        let directory = tempfile::tempdir().unwrap();
+        let library = LibraryStore::open(directory.path()).unwrap();
+        let id = recovery_source(&library).document_id;
+        let mut update = completed_update(&id, "recognized");
+        update.raw = Some(serde_json::json!({"ocrPageScope": {"sourcePageCount": 9}}));
+        library.update_capture(update).unwrap();
+        let status_only = || {
+            let mut update = completed_update(&id, "unused");
+            update.raw = None;
+            update.result = None;
+            update
+        };
+        assert_eq!(
+            library.update_capture(status_only()).unwrap().page_count,
+            Some(9)
+        );
+        let saved: serde_json::Value =
+            serde_json::from_slice(&fs::read(library.root.join(INDEX_FILE_NAME)).unwrap()).unwrap();
+        assert_eq!(saved["documents"][0]["extent"]["pageCount"], 9);
+        fs::remove_file(library.root.join("items").join(&id).join(RAW_FILE_NAME)).unwrap();
+        let summary = library.update_capture(status_only()).unwrap();
+        assert!(!summary.has_raw);
+        assert_eq!(summary.page_count, None);
+        let saved: serde_json::Value =
+            serde_json::from_slice(&fs::read(library.root.join(INDEX_FILE_NAME)).unwrap()).unwrap();
+        assert!(saved["documents"][0].get("extent").is_none());
+    }
+
+    #[test]
+    fn pdf_summary_falls_back_to_selected_prefix_for_an_empty_extent() {
+        let directory = tempfile::tempdir().unwrap();
+        let library = LibraryStore::open(directory.path()).unwrap();
+        let id = recovery_source(&library).document_id;
+        let mut update = completed_update(&id, "recognized");
+        update.raw = Some(serde_json::json!({"segments": []}));
+        update.capture_options = Some(LibraryCaptureOptions {
+            pdf_page_count: Some(3),
+            ..Default::default()
+        });
+        assert_eq!(library.update_capture(update).unwrap().page_count, Some(3));
+        let summary = library
+            .list(LibraryListRequest {
+                query: None,
+                status: None,
+            })
+            .unwrap();
+        assert_eq!(summary[0].page_count, Some(3));
+        let detail = library
+            .get(LibraryDocumentRequest { document_id: id })
+            .unwrap();
+        assert_eq!(detail.summary.page_count, Some(3));
+        let saved: serde_json::Value =
+            serde_json::from_slice(&fs::read(library.root.join(INDEX_FILE_NAME)).unwrap()).unwrap();
+        assert_eq!(saved["documents"][0]["extent"], serde_json::json!({}));
+    }
+
+    #[test]
+    fn failed_legacy_get_suppresses_list_backfill_until_raw_is_replaced() {
+        let directory = tempfile::tempdir().unwrap();
+        let library = LibraryStore::open(directory.path()).unwrap();
+        let id = recovery_source(&library).document_id;
+        let raw_path = library.root.join("items").join(&id).join(RAW_FILE_NAME);
+        fs::write(&raw_path, b"invalid json").unwrap();
+        assert_eq!(
+            library
+                .get(LibraryDocumentRequest {
+                    document_id: id.clone()
+                })
+                .unwrap_err(),
+            "Capture library raw result cannot be read."
+        );
+        let repaired = serde_json::json!({"ocrPageScope": {"sourcePageCount": 7}});
+        fs::write(&raw_path, serde_json::to_vec(&repaired).unwrap()).unwrap();
+        let list = || {
+            library
+                .list(LibraryListRequest {
+                    query: None,
+                    status: None,
+                })
+                .unwrap()
+        };
+        assert_eq!(list()[0].page_count, None);
+        let mut update = completed_update(&id, "unused");
+        update.raw = None;
+        update.result = None;
+        library.update_capture(update).unwrap();
+        // Status-only writes do not retry a failed raw read or persist a fake extent.
+        assert_eq!(list()[0].page_count, None);
+        let saved: serde_json::Value =
+            serde_json::from_slice(&fs::read(library.root.join(INDEX_FILE_NAME)).unwrap()).unwrap();
+        assert!(saved["documents"][0].get("extent").is_none());
+        let mut update = completed_update(&id, "recognized");
+        update.raw = Some(repaired);
+        assert_eq!(library.update_capture(update).unwrap().page_count, Some(7));
+        assert_eq!(list()[0].page_count, Some(7));
+    }
+
+    #[test]
+    fn extent_merge_preserves_a_concurrent_capture_and_does_not_restore_deleted_documents() {
+        let directory = tempfile::tempdir().unwrap();
+        let library = LibraryStore::open(directory.path()).unwrap();
+        let id = recovery_source(&library).document_id;
+        let snapshot = library.lock_index().unwrap().documents[0].clone();
+        let stale_extent = super::extent::DocumentExtent::derive(
+            &serde_json::json!({"ocrPageScope": {"sourcePageCount": 3}}),
+            "application/pdf",
+        );
+        let mut update = completed_update(&id, "new raw");
+        update.raw = Some(serde_json::json!({"ocrPageScope": {"sourcePageCount": 12}}));
+        library.update_capture(update).unwrap();
+        {
+            let mut index = library.lock_index().unwrap();
+            let merged = index
+                .merge_extent(&snapshot, Some(stale_extent.clone()))
+                .unwrap();
+            assert_eq!(merged.extent.unwrap().page_count, Some(12));
+            let merged = index.merge_extent(&snapshot, None).unwrap();
+            assert_eq!(merged.extent.unwrap().page_count, Some(12));
+        }
+        library
+            .delete(LibraryDocumentRequest { document_id: id })
+            .unwrap();
+        let mut index = library.lock_index().unwrap();
+        assert!(index.merge_extent(&snapshot, Some(stale_extent)).is_none());
+        assert!(index.documents.is_empty());
+    }
+
+    #[test]
     fn capture_extent_replaces_and_rolls_back_with_raw() {
         let directory = tempfile::tempdir().unwrap();
         let library = LibraryStore::open(directory.path()).unwrap();

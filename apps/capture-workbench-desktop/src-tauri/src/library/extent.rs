@@ -135,4 +135,59 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn fractional_and_negative_numbers_are_filtered_by_extent_kind() {
+        let raw = json!({"segments": [
+            {"locator": {"kind": "time", "endMs": -900.5}},
+            {"locator": {"kind": "time", "endMs": 12.75}},
+            {"locator": {"kind": "time", "endMs": 4.5}}
+        ]});
+        assert_eq!(
+            DocumentExtent::derive(&raw, "audio/wav").duration_ms,
+            Some(12.75)
+        );
+        for invalid_count in [json!(-3), json!(2.5)] {
+            let raw = json!({
+                "ocrPageScope": {
+                    "sourcePageCount": invalid_count,
+                    "processedPageNumbers": [-1, 1.5, 2]
+                },
+                "segments": [
+                    {"text": "negative", "locator": {"kind": "page", "page": -2}},
+                    {"text": "fractional", "locator": {"kind": "page", "page": 1.5}},
+                    {"text": "valid", "locator": {"kind": "page", "page": 3}}
+                ]
+            });
+            assert_eq!(
+                DocumentExtent::derive(&raw, "application/pdf").page_count,
+                Some(2)
+            );
+        }
+    }
+
+    #[test]
+    fn missing_segments_retains_source_count_or_media_defaults() {
+        let raw = json!({});
+        assert_eq!(
+            DocumentExtent::derive(&raw, "application/pdf"),
+            DocumentExtent::default()
+        );
+        assert_eq!(
+            DocumentExtent::derive(&raw, "audio/wav"),
+            DocumentExtent::default()
+        );
+        assert_eq!(
+            DocumentExtent::derive(&raw, "image/png").page_count,
+            Some(1)
+        );
+        assert_eq!(
+            DocumentExtent::derive(
+                &json!({"ocrPageScope": {"sourcePageCount": 7}}),
+                "application/pdf"
+            )
+            .page_count,
+            Some(7)
+        );
+    }
 }

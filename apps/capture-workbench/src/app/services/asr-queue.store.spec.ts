@@ -54,7 +54,9 @@ describe('AsrQueueStore', () => {
   beforeEach(() => setDesktopLocale('zh-TW'));
 
   it('uses summary durations without loading completed recording details', () => {
-    const document = makeRecording({ status: 'completed', durationMs: 90_000 });
+    const document = makeRecording({
+      status: 'completed', durationMs: 90_000, captureOptions: { identifySpeakers: false },
+    });
     const { store, library, docs, streamingOperations } = setup({ initialDocs: [document] });
     store.attach();
     TestBed.tick();
@@ -80,9 +82,21 @@ describe('AsrQueueStore', () => {
     expect(library.get).not.toHaveBeenCalled();
   });
 
-  it('loads diarized recording details only for the speaker-count badge', () => {
+  it('shows an unknown duration without fetching details when speaker identification is false', () => {
     const document = makeRecording({
-      status: 'completed', durationMs: 90_000, captureOptions: { identifySpeakers: true },
+      status: 'completed', captureOptions: { identifySpeakers: false },
+    });
+    const { store, library } = setup({ initialDocs: [document] });
+    store.attach();
+    TestBed.tick();
+    expect(store.rows()[0].durationLabel).toBe('—');
+    expect(library.get).not.toHaveBeenCalled();
+  });
+
+  it.each([true, undefined, null] as const)('loads speaker counts when identifySpeakers is %s', (identifySpeakers) => {
+    const document = makeRecording({
+      status: 'completed', durationMs: 90_000,
+      ...(identifySpeakers === undefined ? {} : { captureOptions: { identifySpeakers } }),
     });
     const { store, library } = setup({ initialDocs: [document] });
     library.get.mockReturnValue(of({

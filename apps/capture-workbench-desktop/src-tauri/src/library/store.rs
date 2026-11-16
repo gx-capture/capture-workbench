@@ -57,6 +57,26 @@ pub(crate) struct LibraryIndex {
     pub(super) orphan_cleanup_disabled: bool,
 }
 
+impl LibraryIndex {
+    /// Merge an unlocked read without replacing a newer capture's extent or
+    /// resurrecting a deleted document. No disk access or derivation occurs here.
+    pub(super) fn merge_extent(
+        &mut self,
+        snapshot: &StoredDocument,
+        extent: Option<DocumentExtent>,
+    ) -> Option<StoredDocument> {
+        let document = self
+            .documents
+            .iter_mut()
+            .find(|document| document.document_id == snapshot.document_id)?;
+        if document.extent.is_none() {
+            document.extent = extent;
+            document.extent_attempted = true;
+        }
+        Some(document.clone())
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct StoredDocument {
@@ -620,9 +640,9 @@ impl LibraryStore {
     ) -> Result<Vec<LibraryDocumentSummary>, String> {
         let query = request.query.unwrap_or_default().trim().to_lowercase();
         let status = request.status.unwrap_or_default().trim().to_lowercase();
-        let mut index = self.lock_index()?;
+        let documents = self.lock_index()?.documents.clone();
         let mut summaries = Vec::new();
-        for document in index.documents.iter_mut().filter(|document| {
+        for document in documents.into_iter().filter(|document| {
             (query.is_empty() || document.file_name.to_lowercase().contains(&query))
                 && (status.is_empty() || document.status == status)
         }) {
@@ -631,12 +651,17 @@ impl LibraryStore {
                 .join(RAW_FILE_NAME);
             let has_raw = raw_path.is_file();
             if has_raw && document.extent.is_none() && !document.extent_attempted {
-                document.extent_attempted = true;
-                if let Ok(Some(raw)) = read_json_optional(&raw_path) {
-                    document.extent = Some(DocumentExtent::derive(&raw, &document.media_type));
+                let extent = read_json_optional(&raw_path)
+                    .ok()
+                    .flatten()
+                    .map(|raw| DocumentExtent::derive(&raw, &document.media_type));
+                let current = self.lock_index()?.merge_extent(&document, extent);
+                if let Some(current) = current {
+                    summaries.push(current.summary(has_raw));
                 }
+            } else {
+                summaries.push(document.summary(has_raw));
             }
-            summaries.push(document.summary(has_raw));
         }
         Ok(summaries)
     }
@@ -648,7 +673,7 @@ impl LibraryStore {
         validate_document_id(&request.document_id)?;
         // Keep raw and edits from the same committed generation while reading.
         let directory = self.document_directory(&request.document_id)?;
-        let (summary, ocr_evidence, raw, edits, edits_unreadable) = {
+        let (mut document, raw, edits, edits_unreadable) = {
             let mut index = self.lock_index()?;
             let document = index
                 .documents
@@ -658,32 +683,29 @@ impl LibraryStore {
             document.extent_attempted = true;
             let raw = read_json_optional(&directory.join(RAW_FILE_NAME))
                 .map_err(|_| "Capture library raw result cannot be read.".to_string())?;
-            if document.extent.is_none() {
-                if let Some(raw) = &raw {
-                    document.extent = Some(DocumentExtent::derive(raw, &document.media_type));
-                }
-            }
             let (edits, edits_unreadable) = match read_edits(&directory.join(EDITS_FILE_NAME)) {
                 Ok(edits) => (edits.filter(|edits| !edits.is_empty()), false),
                 Err(()) => (None, true),
             };
-            (
-                document.summary(raw.is_some()),
-                document.ocr_evidence.clone(),
-                raw,
-                edits,
-                edits_unreadable,
-            )
+            (document.clone(), raw, edits, edits_unreadable)
         };
+        if document.extent.is_none() {
+            if let Some(raw) = &raw {
+                document.extent = Some(DocumentExtent::derive(raw, &document.media_type));
+                let _ = self
+                    .lock_index()?
+                    .merge_extent(&document, document.extent.clone());
+            }
+        }
         // The structured result is not part of the raw-and-edits generation,
         // so it is read after the index lock is released.
         Ok(LibraryDocumentDetail {
-            summary,
+            summary: document.summary(raw.is_some()),
             raw,
             edits,
             edits_unreadable,
             result: read_json_optional(&directory.join(RESULT_FILE_NAME))?,
-            ocr_evidence,
+            ocr_evidence: document.ocr_evidence,
         })
     }
 
