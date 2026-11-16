@@ -286,7 +286,7 @@
                         aria-valuemax="100"
                       >
                         <span
-                          class="bg-primary block h-full w-full origin-left rounded-full transition-transform duration-150"
+                          class="bg-primary block h-full w-full origin-left rounded-full transition-transform duration-150 motion-reduce:transition-none"
                           [style.transform]="'scaleX(' + (row.progressPercent ?? 0) / 100 + ')'"
                         ></span>
                       </div>
