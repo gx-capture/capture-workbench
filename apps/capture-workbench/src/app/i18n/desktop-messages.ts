@@ -288,6 +288,7 @@ export interface DesktopMessages {
   readonly computeAsrTitle: string;
   readonly computeOcrPending: string;
   readonly computeOcrCpu: string;
+  readonly computeOcrGpuDetected: string;
   readonly computeAsrPending: string;
   readonly computeAsrCudaDetected: string;
   readonly computeAsrCpuOnly: string;
@@ -648,6 +649,7 @@ const ZH_TW: DesktopMessages = {
   computeAsrTitle: '語音轉文字',
   computeOcrPending: '尚未偵測到文字辨識運算裝置。',
   computeOcrCpu: 'CPU',
+  computeOcrGpuDetected: '偵測到可用的 GPU（DirectML）',
   computeAsrPending: '正在偵測語音運算裝置…',
   computeAsrCudaDetected: '偵測到 CUDA GPU',
   computeAsrCpuOnly: 'CPU（未偵測到可用的 CUDA 驅動程式）',
@@ -1013,6 +1015,7 @@ const EN: DesktopMessages = {
   computeAsrTitle: 'Speech to text',
   computeOcrPending: 'Text recognition compute device has not been detected yet.',
   computeOcrCpu: 'CPU',
+  computeOcrGpuDetected: 'A compatible GPU was detected (DirectML)',
   computeAsrPending: 'Detecting speech compute device…',
   computeAsrCudaDetected: 'CUDA GPU detected',
   computeAsrCpuOnly: 'CPU (no CUDA driver detected)',
