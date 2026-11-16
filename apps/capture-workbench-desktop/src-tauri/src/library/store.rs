@@ -15,7 +15,6 @@ use std::{
 
 use crate::random_id::random_id;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use crate::contracts::{
     LibraryCaptureOptions, LibraryCaptureUpdate, LibraryDocumentDetail, LibraryDocumentRequest,
@@ -1123,7 +1122,7 @@ mod tests {
         assert_eq!(payload.file_name, "old.json");
         assert_eq!(payload.media_type, "application/json");
         assert_eq!(
-            serde_json::from_str::<Value>(&payload.content).unwrap(),
+            serde_json::from_str::<serde_json::Value>(&payload.content).unwrap(),
             result
         );
     }
