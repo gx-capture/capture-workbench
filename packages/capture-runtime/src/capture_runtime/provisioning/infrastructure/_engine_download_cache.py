@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Protocol
 from uuid import uuid4
 
-from capture_runtime.file_lock import lock_descriptor
+from capture_runtime.file_lock import lock_descriptor, replace_with_retry
 
 CACHE_DIR_ENV = "CAPTURE_ENGINE_CACHE_DIR"
 # An entry an install still links to costs no space and is kept. One that no
@@ -201,7 +201,7 @@ class VerifiedDownloadCache:
                             writer.write(chunk)
                         writer.flush()
                         os.fsync(writer.fileno())
-                os.replace(temporary, entry)
+                replace_with_retry(temporary, entry)
             self._evict_idle(keep=entry)
         except OSError:
             pass

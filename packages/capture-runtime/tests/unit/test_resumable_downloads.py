@@ -603,3 +603,229 @@ def test_a_finished_part_is_not_downloaded_again(tmp_path: Path) -> None:
 
     assert requested[started:] == [(f"{NAME}.002", "bytes=30-")]
     assert destination.read_bytes() == whole
+
+
+@pytest.mark.parametrize("failures", [1, 100])
+def test_progress_write_failure_does_not_fail_verified_download(tmp_path, monkeypatch, failures):
+    payload = b"verified bytes" * 10
+    destination = tmp_path / "download.zip"
+    original = download_module._atomic_write
+    writes = []
+    successful = []
+
+    def write(path, data):
+        writes.append(data)
+        if len(writes) <= failures:
+            raise PermissionError("progress unavailable")
+        original(path, data)
+        successful.append(json.loads(data))
+
+    monkeypatch.setattr(download_module, "_atomic_write", write)
+    monkeypatch.setattr(download_module, "_CHECKPOINT_BYTES", 1)
+    downloader = _artifact_downloader(
+        lambda request: httpx.Response(200, stream=_Chunks(payload, 10))
+    )
+    _run(downloader, _artifact(payload), destination)
+    assert destination.read_bytes() == payload
+    assert len(writes) > 1
+    if failures == 1:
+        assert successful[0]["parts"][0]["segments"][0]["received"] == 20
+
+
+def test_stale_progress_redownloads_unrecorded_bytes(tmp_path, monkeypatch):
+    payload = b"abcdefghijklmnopqrst"
+    destination = tmp_path / "download.zip"
+    original = download_module._atomic_write
+    writes = []
+    ranges = []
+
+    def write(path, data):
+        writes.append(data)
+        if len(writes) > 1:
+            raise PermissionError("stale progress")
+        original(path, data)
+
+    monkeypatch.setattr(download_module, "_atomic_write", write)
+    monkeypatch.setattr(download_module, "_CHECKPOINT_BYTES", 1)
+
+    class Interrupted(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield payload[:5]
+            yield payload[5:10]
+            raise httpx.ReadError("interrupted")
+
+    _downloader = _artifact_downloader(lambda request: httpx.Response(200, stream=Interrupted()))
+    with pytest.raises(httpx.ReadError):
+        _run(_downloader, _artifact(payload), destination)
+    partial, sidecar = _partial(destination)
+    assert partial.read_bytes() == payload[:10]
+    assert json.loads(sidecar.read_bytes())["parts"][0]["segments"][0]["received"] == 5
+    # Corrupt the unrecorded tail: resume must overwrite it rather than trust it.
+    partial.write_bytes(payload[:5] + b"WRONG")
+    monkeypatch.setattr(download_module, "_atomic_write", original)
+
+    def handler(request):
+        ranges.append(request.headers.get("range"))
+        return httpx.Response(206, headers={"content-range": "bytes 5-19/20"}, content=payload[5:])
+
+    _run(_artifact_downloader(handler), _artifact(payload), destination)
+    assert ranges == ["bytes=5-"]
+    assert destination.read_bytes() == payload
+
+
+@pytest.mark.parametrize("persistent", [False, True])
+def test_finished_partial_replacement_retries(tmp_path, monkeypatch, persistent):
+    from capture_runtime import file_lock
+    from capture_runtime.provisioning.application.installation_service import (
+        installation_failure_code,
+    )
+
+    payload = b"verified"
+    destination = tmp_path / "download.zip"
+    original = file_lock.os.replace
+    calls = []
+    error = PermissionError(5, "sharing violation")
+    error.winerror = 32
+
+    def replace(source, target):
+        if target == destination:
+            calls.append(target)
+            if persistent or len(calls) == 1:
+                raise error
+        original(source, target)
+
+    monkeypatch.setattr(file_lock.sys, "platform", "win32")
+    monkeypatch.setattr(file_lock.os, "replace", replace)
+    downloader = _artifact_downloader(lambda request: httpx.Response(200, content=payload))
+    if persistent:
+        with pytest.raises(PermissionError) as caught:
+            _run(downloader, _artifact(payload), destination)
+        assert caught.value is error
+        assert installation_failure_code(caught.value) == "installation_filesystem"
+        assert len(calls) == 8
+    else:
+        _run(downloader, _artifact(payload), destination)
+        assert destination.read_bytes() == payload
+        assert len(calls) == 2
+
+
+def test_stale_ranged_progress_overwrites_unrecorded_preallocated_bytes(tmp_path, monkeypatch):
+    payload = bytes(range(200))
+    descriptor = _artifact(payload)
+    destination = tmp_path / "download.zip"
+    original = download_module._atomic_write
+    retained = []
+    ranges = []
+    arrived = [0]
+    interrupt = True
+
+    def write(path, data):
+        if retained:
+            raise PermissionError("progress locked")
+        original(path, data)
+        parsed = json.loads(data)
+        if any(segment["received"] for segment in parsed["parts"][0]["segments"]):
+            retained.append(parsed)
+
+    def handler(request):
+        byte_range = request.headers["range"]
+        ranges.append(byte_range)
+        start_text, end_text = byte_range.removeprefix("bytes=").split("-")
+        start, end = int(start_text), int(end_text)
+        headers = {"content-range": f"bytes {start}-{end}/{len(payload)}"}
+        if interrupt and end - start + 1 > 40:
+            return httpx.Response(
+                206, headers=headers, stream=_Barrier(payload[start : start + 40], arrived, 2)
+            )
+        return httpx.Response(206, headers=headers, content=payload[start : end + 1])
+
+    monkeypatch.setattr(download_module, "_atomic_write", write)
+    downloader = _artifact_downloader(handler, parallel_min_bytes=1, parallel_segments=2)
+    with pytest.raises(httpx.ReadError):
+        _run(downloader, descriptor, destination)
+    partial, sidecar = _partial(destination)
+    assert partial.stat().st_size == len(payload)
+    recorded = json.loads(sidecar.read_bytes())["parts"][0]["segments"]
+    assert sum(segment["received"] for segment in recorded) < 80
+    with partial.open("r+b") as writer:
+        for segment in recorded:
+            start = segment["start"] + segment["received"]
+            writer.seek(start)
+            writer.write(b"?" * (segment["end"] - start + 1))
+    expected = [
+        f"bytes={segment['start'] + segment['received']}-{segment['end']}" for segment in recorded
+    ]
+    interrupt = False
+    resumed = len(ranges)
+    monkeypatch.setattr(download_module, "_atomic_write", original)
+    _run(downloader, descriptor, destination)
+    assert sorted(ranges[resumed:]) == sorted(expected)
+    assert destination.read_bytes() == payload
+
+
+def test_progress_atomic_write_removes_temporary_on_failure(tmp_path, monkeypatch):
+    path = tmp_path / "progress.json"
+    path.write_bytes(b"old")
+
+    def replace(source, target):
+        raise OSError("persistent failure")
+
+    monkeypatch.setattr(download_module, "replace_with_retry", replace)
+    with pytest.raises(OSError, match="persistent failure"):
+        download_module._atomic_write(path, b"new")
+    assert path.read_bytes() == b"old"
+    assert list(tmp_path.iterdir()) == [path]
+
+
+@pytest.mark.parametrize("removal_fails", [False, True])
+def test_rewind_invalidates_stale_progress_or_fails_before_rewriting(
+    tmp_path, monkeypatch, removal_fails
+):
+    payload = b"abcdefghijklmnopqrst"
+    destination = tmp_path / "download.zip"
+    descriptor = _artifact(payload)
+    first = _artifact_downloader(
+        lambda request: httpx.Response(200, stream=_Interrupt(payload[:5]))
+    )
+    with pytest.raises(httpx.ReadError):
+        _run(first, descriptor, destination)
+    partial, sidecar = _partial(destination)
+    old_progress = sidecar.read_bytes()
+    original_write = download_module._atomic_write
+    original_unlink = Path.unlink
+
+    def write(path, data):
+        raise OSError("progress write failed")
+
+    def unlink(path, *args, **kwargs):
+        if path == sidecar and removal_fails:
+            raise PermissionError("progress removal failed")
+        original_unlink(path, *args, **kwargs)
+
+    def ignore_range(request):
+        assert request.headers["range"] == "bytes=5-"
+        return httpx.Response(200, stream=_Interrupt(payload[:3]))
+
+    monkeypatch.setattr(download_module, "_atomic_write", write)
+    monkeypatch.setattr(Path, "unlink", unlink)
+    downloader = _artifact_downloader(ignore_range)
+    if removal_fails:
+        with pytest.raises(PermissionError, match="progress removal failed"):
+            _run(downloader, descriptor, destination)
+        assert sidecar.read_bytes() == old_progress
+        assert partial.read_bytes() == payload[:5]
+    else:
+        with pytest.raises(httpx.ReadError):
+            _run(downloader, descriptor, destination)
+        assert not sidecar.exists()
+        assert partial.read_bytes() == payload[:3]
+        monkeypatch.setattr(download_module, "_atomic_write", original_write)
+        requests = []
+
+        def restart(request):
+            requests.append(request.headers.get("range"))
+            return httpx.Response(200, content=payload)
+
+        _run(_artifact_downloader(restart), descriptor, destination)
+        assert requests == [None]
+        assert destination.read_bytes() == payload

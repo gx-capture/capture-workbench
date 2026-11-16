@@ -16,6 +16,7 @@ from uuid import uuid4
 
 import httpx
 
+from capture_runtime.file_lock import replace_with_retry
 from capture_runtime.provisioning.infrastructure.engine_catalog import (
     EngineArtifactDescriptor,
     EngineArtifactPart,
@@ -51,6 +52,29 @@ async def _file_operation[**P, T](
         with suppress(asyncio.CancelledError, Exception):
             task.result()
         raise
+
+
+async def _commit_operation[**P, T](
+    operation: Callable[P, T], *args: P.args, **kwargs: P.kwargs
+) -> T:
+    """Drain a commit and ignore late cancellation only if it succeeded."""
+
+    task = asyncio.create_task(asyncio.to_thread(operation, *args, **kwargs))
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError as cancellation:
+        while not task.done():
+            with suppress(asyncio.CancelledError, Exception):
+                await asyncio.shield(task)
+        try:
+            result = task.result()
+        except (asyncio.CancelledError, Exception):
+            raise cancellation from None
+        current = asyncio.current_task()
+        if current is not None:
+            while current.cancelling():
+                current.uncancel()
+        return result
 
 
 def _facade_download_chunk_bytes() -> int:
@@ -316,6 +340,8 @@ class _Plan:
         self.total_bytes = total_bytes
         self.preallocated = preallocated
         self.parts = parts
+        self._save_lock = asyncio.Lock()
+        self._progress_stale = False
 
     @classmethod
     def open(
@@ -413,7 +439,7 @@ class _Plan:
             )
         ]
 
-    def begin_ranges(self, count: int) -> None:
+    async def begin_ranges(self, count: int) -> None:
         self.preallocated = True
         self.parts = [
             _PartState(
@@ -426,9 +452,9 @@ class _Plan:
             )
         ]
         _allocate(self.part_path, self.total_bytes)
-        self.save()
+        await self.save()
 
-    def begin_parts(self, parts: tuple[EngineArtifactPart, ...]) -> None:
+    async def begin_parts(self, parts: tuple[EngineArtifactPart, ...]) -> None:
         """Lay the published parts out in one preallocated archive; each decides ranges later."""
 
         offset = 0
@@ -439,30 +465,43 @@ class _Plan:
         self.parts = slots
         self.preallocated = True
         _allocate(self.part_path, self.total_bytes)
-        self.save()
+        await self.save()
 
-    def rewind(self, part: _PartState) -> None:
+    async def rewind(self, part: _PartState) -> None:
         """Forget a region the server will not continue; its next write starts over."""
 
         for segment in part.segments:
             segment.received = segment.saved = 0
-        self.save()
+        await self.save()
+        if self._progress_stale:
+            # The old offsets now overstate the bytes we are about to rewrite.
+            # Unlike an ordinary checkpoint failure, this must fail closed.
+            await _file_operation(self.sidecar_path.unlink, missing_ok=True)
 
-    def save(self) -> None:
-        payload = {
-            "bytes": self.total_bytes,
-            "parts": [part.to_json() for part in self.parts],
-            "preallocated": self.preallocated,
-            "sha256": self.sha256,
-            "version": _SIDECAR_VERSION,
-        }
-        _atomic_write(
-            self.sidecar_path,
-            json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("ascii"),
-        )
+    async def save(self) -> None:
+        async with self._save_lock:
+            # Snapshot under the lock so a delayed writer cannot publish older progress.
+            payload = {
+                "bytes": self.total_bytes,
+                "parts": [part.to_json() for part in self.parts],
+                "preallocated": self.preallocated,
+                "sha256": self.sha256,
+                "version": _SIDECAR_VERSION,
+            }
+            self._progress_stale = True
+            try:
+                await _file_operation(
+                    _atomic_write,
+                    self.sidecar_path,
+                    json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("ascii"),
+                )
+            except OSError:
+                self._progress_stale = True
+            else:
+                self._progress_stale = False
 
     def commit(self) -> None:
-        os.replace(self.part_path, self.destination)
+        replace_with_retry(self.part_path, self.destination)
         _discard(self.sidecar_path)
 
     def discard(self) -> None:
@@ -592,7 +631,7 @@ def _atomic_write(path: Path, data: bytes) -> None:
             handle.write(data)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(temporary, path)
+        replace_with_retry(temporary, path)
     except BaseException:
         _discard(temporary)
         raise
@@ -606,15 +645,15 @@ def _allocate(path: Path, size: int) -> None:
         os.fsync(handle.fileno())
 
 
-def _checkpoint(writer: BinaryIO, plan: _Plan, segment: _Segment) -> None:
+async def _checkpoint(writer: BinaryIO, plan: _Plan, segment: _Segment) -> None:
     """Make the segment's new bytes durable, then record them in the sidecar."""
 
-    if segment.saved == segment.received:
+    if segment.saved == segment.received and not plan._progress_stale:
         return
     writer.flush()
     os.fsync(writer.fileno())
     segment.saved = segment.received
-    plan.save()
+    await plan.save()
 
 
 @contextmanager
@@ -713,7 +752,7 @@ async def _receive(
                 segment.received += len(chunk)
                 _report(part, progress)
                 if segment.received - segment.saved >= _CHECKPOINT_BYTES:
-                    _checkpoint(writer, plan, segment)
+                    await _checkpoint(writer, plan, segment)
                 if cancel_event.is_set():
                     raise asyncio.CancelledError
         except _CorruptDownload:
@@ -721,9 +760,9 @@ async def _receive(
         except BaseException:
             # Cancellation and transport errors keep what arrived for the next attempt.
             with suppress(OSError):
-                _checkpoint(writer, plan, segment)
+                await _checkpoint(writer, plan, segment)
             raise
-        _checkpoint(writer, plan, segment)
+        await _checkpoint(writer, plan, segment)
 
 
 async def _fill_open_ended(
@@ -751,7 +790,7 @@ async def _fill_open_ended(
                     response.raise_for_status()
                 # The server did not continue at the first missing byte. A 200
                 # body is the whole region; otherwise ask again without Range.
-                plan.rewind(part)
+                await plan.rewind(part)
                 if digest is not None:
                     digest = _new_digest()
                 if response.status_code != 200:
@@ -963,7 +1002,14 @@ class HttpArtifactDownloader:
                     descriptor.sha256,
                     _ARTIFACT,
                 )
+            await plan.save()
+            if cancel_event.is_set():
+                raise asyncio.CancelledError
             await _file_operation(plan.commit)
+        except asyncio.CancelledError:
+            if plan.part_path.exists():
+                await plan.save()
+            raise
         except _CorruptDownload:
             plan.discard()
             raise
@@ -994,7 +1040,7 @@ class HttpArtifactDownloader:
         # fetched as concurrent byte ranges when the server supports them.
         if not plan.is_ranged() and not plan.is_stream():
             if await self._uses_ranges(client, url, descriptor.bytes):
-                plan.begin_ranges(self._parallel_segments)
+                await plan.begin_ranges(self._parallel_segments)
             else:
                 plan.begin_stream()
         if plan.is_ranged():
@@ -1035,7 +1081,7 @@ class HttpArtifactDownloader:
         """Write each published part into its place in the whole archive and verify it."""
 
         if not plan.parts:
-            plan.begin_parts(descriptor.parts)
+            await plan.begin_parts(descriptor.parts)
         for part, published in zip(plan.parts, descriptor.parts, strict=True):
             if part.complete:
                 continue
@@ -1046,7 +1092,7 @@ class HttpArtifactDownloader:
                 else:
                     part.ranged = False
                     part.segments = [_Segment(0, published.bytes - 1, 0)]
-                plan.save()
+                await plan.save()
             # Both fills skip bytes already recorded, so a part received before
             # an interruption goes straight to verification.
             if part.ranged:
@@ -1070,7 +1116,7 @@ class HttpArtifactDownloader:
                 )
             await _verify_part(plan, part)
             part.complete = True
-            plan.save()
+            await plan.save()
 
 
 def _discard(path: Path) -> None:
@@ -1354,7 +1400,14 @@ class HttpModelFileDownloader:
                         progress=progress,
                         wording=_DIRECT_MODEL,
                     )
+            await plan.save()
+            if cancel_event.is_set():
+                raise asyncio.CancelledError
             await _file_operation(plan.commit)
+        except asyncio.CancelledError:
+            if plan.part_path.exists():
+                await plan.save()
+            raise
         except _CorruptDownload:
             plan.discard()
             raise

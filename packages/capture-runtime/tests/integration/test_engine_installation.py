@@ -3134,3 +3134,179 @@ def test_an_uninstalled_cpu_candidate_keeps_todays_installable_detail(tmp_path: 
     assert listed.status.value == "installable"
     assert listed.detail == _INSTALLABLE_DETAIL
     assert listed.artifact is None
+
+
+@pytest.mark.parametrize("upgrade", [False, True])
+@pytest.mark.parametrize("phase", ["activation", "cleanup", "failing_activation"])
+def test_cancel_during_activation_or_cleanup_matches_disk_state(
+    tmp_path, monkeypatch, upgrade, phase
+):
+    from capture_runtime.provisioning.application.installation_service import InstallationService
+    from capture_runtime.provisioning.infrastructure.installation_repository import (
+        InstallationRepository,
+    )
+
+    async def scenario():
+        catalog, sources = _catalog(tmp_path)
+        manager = EngineInstallationManager(
+            tmp_path / "engines",
+            catalog,
+            worker_client=FakeWorkerClient(),
+            downloader=CopyDownloader(sources),
+            model_downloader=CopyModelDownloader(sources),
+        )
+        root = tmp_path / "engines" / "windowsml-ocr"
+        if upgrade:
+            await manager.install(
+                "windowsml-ocr", cancel_event=asyncio.Event(), report_progress=lambda value: None
+            )
+            # Force a reinstall of the same version to exercise the directory swap.
+            monkeypatch.setattr(manager, "active_engine", lambda requirement_id: None)
+        prior_state = (root / "active.json").read_bytes() if upgrade else None
+        started = asyncio.Event()
+        release = threading.Event()
+        loop = asyncio.get_running_loop()
+        original_write = engine_installation_module._atomic_write_json
+        original_cleanup = engine_installation_module._cleanup_install_attempt
+        previous = []
+
+        def pause():
+            loop.call_soon_threadsafe(started.set)
+            assert release.wait(5)
+
+        def write_state(path, payload):
+            if phase != "cleanup":
+                pause()
+            if phase == "failing_activation":
+                raise ValueError("state write failed")
+            original_write(path, payload)
+
+        def cleanup(**kwargs):
+            previous.append(kwargs["activated"])
+            if phase == "cleanup":
+                pause()
+            original_cleanup(**kwargs)
+
+        monkeypatch.setattr(engine_installation_module, "_atomic_write_json", write_state)
+        monkeypatch.setattr(engine_installation_module, "_cleanup_install_attempt", cleanup)
+        repository = InstallationRepository(
+            tmp_path / "jobs", clock=SystemClock(), retention_hours=24
+        )
+        repository.initialize()
+        service = InstallationService(repository, installer=manager, clock=SystemClock())
+        job = service.create(
+            idempotency_key="late-cancel",
+            request_fingerprint="late-cancel",
+            requirement_id="windowsml-ocr",
+        )
+        try:
+            await asyncio.wait_for(started.wait(), 5)
+            cancellation = asyncio.create_task(service.cancel(job.installation_id))
+            await asyncio.sleep(0)
+            assert not cancellation.done()
+            release.set()
+            result = await asyncio.wait_for(cancellation, 5)
+            state_path = root / "active.json"
+            version = root / "versions" / "engine-1"
+            if phase == "failing_activation":
+                assert result.status.value == "cancelled"
+                assert previous == [False]
+                if upgrade:
+                    assert state_path.read_bytes() == prior_state
+                    assert (
+                        version / "worker" / "capture-engine-test.exe"
+                    ).read_bytes() == b"worker-engine-1"
+                else:
+                    assert not state_path.exists()
+                    assert not version.exists()
+            else:
+                assert result.status.value == "completed"
+                assert previous == [True]
+                state = json.loads(state_path.read_text())
+                assert (root / state["entryPoint"]).is_file()
+                assert version.is_dir()
+                assert result.progress == 1
+        finally:
+            release.set()
+            await asyncio.wait_for(service.shutdown(), 5)
+        assert not service._tasks
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("unit", ["engine", "model"])
+@pytest.mark.parametrize("action", ["cancel", "shutdown"])
+def test_late_cancel_or_shutdown_finishes_active_unit(tmp_path, monkeypatch, unit, action):
+    from capture_runtime.provisioning.application.installation_service import InstallationService
+    from capture_runtime.provisioning.infrastructure import _engine_model_units as models
+    from capture_runtime.provisioning.infrastructure.installation_repository import (
+        InstallationRepository,
+    )
+
+    async def scenario():
+        if unit == "engine":
+            catalog, sources = _catalog(tmp_path)
+            requirement_id = "windowsml-ocr"
+        else:
+            catalog, sources = _model_unit_catalog(tmp_path)
+            requirement_id = "vertical-japanese-reader"
+        manager = EngineInstallationManager(
+            tmp_path / "engines",
+            catalog,
+            worker_client=FakeWorkerClient(),
+            downloader=CopyDownloader(sources),
+            model_downloader=CopyModelDownloader(sources),
+        )
+        started = asyncio.Event()
+        release = threading.Event()
+        loop = asyncio.get_running_loop()
+
+        def pause():
+            loop.call_soon_threadsafe(started.set)
+            assert release.wait(5)
+
+        if unit == "model":
+            original_replace = models.replace_with_retry
+
+            def replace(source, target):
+                if target.name == models.STATE_FILE_NAME:
+                    pause()
+                original_replace(source, target)
+
+            monkeypatch.setattr(models, "replace_with_retry", replace)
+        else:
+            original_write = engine_installation_module._atomic_write_json
+
+            def write(path, payload):
+                pause()
+                original_write(path, payload)
+
+            monkeypatch.setattr(engine_installation_module, "_atomic_write_json", write)
+        repository = InstallationRepository(
+            tmp_path / "jobs", clock=SystemClock(), retention_hours=24
+        )
+        repository.initialize()
+        service = InstallationService(repository, installer=manager, clock=SystemClock())
+        job = service.create(
+            idempotency_key="late", request_fingerprint="late", requirement_id=requirement_id
+        )
+        try:
+            await asyncio.wait_for(started.wait(), 5)
+            operation = (
+                service.cancel(job.installation_id) if action == "cancel" else service.shutdown()
+            )
+            pending = asyncio.create_task(operation)
+            await asyncio.sleep(0)
+            assert not pending.done()
+            release.set()
+            result = await asyncio.wait_for(pending, 5)
+            assert service.get(job.installation_id).status.value == "completed"
+            if action == "cancel":
+                assert result.status.value == "completed"
+            assert manager.is_installed(requirement_id)
+        finally:
+            release.set()
+            await asyncio.wait_for(service.shutdown(), 5)
+        assert not service._tasks
+
+    asyncio.run(scenario())
