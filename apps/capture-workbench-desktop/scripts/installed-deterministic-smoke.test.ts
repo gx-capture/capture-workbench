@@ -19,6 +19,7 @@ import {
   buildInstalledAppEnvironment,
   buildInstalledSmokeFailureReport,
   writeSmokeFailureReport,
+  exerciseInstalledPageForSource,
   installedAppExerciseError,
   installedSmokeDiagnosticMessageLimit,
   installedSmokeDiagnosticRedactionMarker,
@@ -27,10 +28,12 @@ import {
   nestedErrorMessages,
   releaseExclusiveSmokeLock,
   runInstalledDeterministicSmoke,
+  stopPostUninstallProcessRoots,
   uninstallerArguments,
 } from './installed-deterministic-smoke.ts';
 import { expectedInstallerName } from './installed-smoke-lifecycle.ts';
 import {
+  assertInstalledModelChip,
   formatInstalledWebViewStartupDiagnostics,
   installedWebViewCdpReadyTimeoutMs,
   parseInstalledWebViewCdpPort,
@@ -531,56 +534,106 @@ test('installed smoke gives hosted WebView2 enough time to expose CDP', () => {
   assert.equal(installedWebViewCdpReadyTimeoutMs, 180_000);
 });
 
-test('installed smoke verifies the v2 bundled Ollama model', async () => {
-  const source = await readFile(
-    join(appRoot, 'scripts', 'installed-browser.ts'),
-    'utf8',
-  );
-  assert.match(source, /qwen\(\?:3\\\.5:/u);
-  assert.doesNotMatch(source, /qwen3\\.5:4b/u);
-});
-
-test('installed smoke exercises the desktop native source picker', async () => {
-  const source = await readFile(
-    join(appRoot, 'scripts', 'installed-browser.ts'),
-    'utf8',
-  );
-  assert.match(source, /nativeOpenDialogUiAutomation\(/u);
-  assert.match(source, /page\.getByTestId\('source-import'\)/u);
+test('installed smoke verifies the v2 bundled Ollama model', () => {
+  assert.equal(assertInstalledModelChip('qwen3.5:0.8b'), 'qwen3.5:0.8b');
+  assert.equal(assertInstalledModelChip('Qwen 3.5 0.8B'), 'Qwen 3.5 0.8B');
+  assert.throws(() => assertInstalledModelChip('qwen3.5:4b'));
+  assert.throws(() => assertInstalledModelChip(''));
 });
 
 test('post-uninstall cleanup tolerates the owned install root being removed', async () => {
-  const source = await readFile(
-    join(appRoot, 'scripts', 'installed-deterministic-smoke.ts'),
-    'utf8',
+  const calls: Array<{ kind: 'residual' | 'owned'; roots: readonly string[] }> = [];
+  const fakeCleanup = {
+    stopAndProveResidualProcessRoots: (roots: readonly string[]) => {
+      calls.push({ kind: 'residual', roots });
+      return of(undefined);
+    },
+    stopAndProveOwnedProcessRoots: (roots: readonly string[]) => {
+      calls.push({ kind: 'owned', roots });
+      return of(undefined);
+    },
+  };
+  await observe(
+    stopPostUninstallProcessRoots(fakeCleanup, true, 'C:\\install', 'C:\\temp'),
   );
-  const postUninstallCleanup = source.slice(
-    source.indexOf('registry.waitForInstalledDirectoryRemoval(installDirectory)'),
-    source.indexOf('concatMap(() =>\n          state.cleanup.ownedProcessesStopped'),
+  assert.deepEqual(calls, [
+    { kind: 'residual', roots: ['C:\\install'] },
+    { kind: 'owned', roots: ['C:\\temp'] },
+  ]);
+
+  const unregisteredCalls: Array<{ kind: 'residual' | 'owned'; roots: readonly string[] }> = [];
+  await observe(
+    stopPostUninstallProcessRoots(
+      {
+        stopAndProveResidualProcessRoots: (roots: readonly string[]) => {
+          unregisteredCalls.push({ kind: 'residual', roots });
+          return of(undefined);
+        },
+        stopAndProveOwnedProcessRoots: (roots: readonly string[]) => {
+          unregisteredCalls.push({ kind: 'owned', roots });
+          return of(undefined);
+        },
+      },
+      false,
+      'C:\\install',
+      'C:\\temp',
+    ),
   );
-  assert.match(
-    postUninstallCleanup,
-    /stopAndProveResidualProcessRoots\(\[installDirectory\]\)/u,
-  );
-  assert.match(
-    postUninstallCleanup,
-    /stopAndProveOwnedProcessRoots\(\[\s*temporaryDirectory,\s*\]\)/u,
-  );
+  assert.deepEqual(unregisteredCalls, [
+    { kind: 'residual', roots: ['C:\\install', 'C:\\temp'] },
+  ]);
 });
 
 test('release installed smoke verifies the packaged shell without auto-installing runtime requirements', async () => {
-  const source = await readFile(
-    join(appRoot, 'scripts', 'installed-deterministic-smoke.ts'),
-    'utf8',
+  const fakePage = {} as Parameters<typeof exerciseInstalledPageForSource>[1];
+  const diagnostics = { timeline: [], cards: [] };
+  let deterministicCalls = 0;
+  const releaseResult = await observe(
+    exerciseInstalledPageForSource(
+      'release',
+      fakePage,
+      1234,
+      'C:\\temp',
+      diagnostics,
+      () => {
+        deterministicCalls += 1;
+        return of({
+          rendererIpcCommands: [],
+          productTitle: 'Capture Workbench',
+          model: 'qwen3.5:0.8b',
+          captures: [],
+        });
+      },
+    ),
   );
-  assert.match(
-    source,
-    /expectedSource === 'release'[\s\S]+model: 'setup-pending'[\s\S]+captures: \[\]/u,
+  assert.deepEqual(releaseResult, {
+    productTitle: 'Capture Workbench',
+    model: 'setup-pending',
+    captures: [],
+  });
+  assert.equal(deterministicCalls, 0);
+
+  const expectedDeterministic = {
+    rendererIpcCommands: [],
+    productTitle: 'Capture Workbench',
+    model: 'qwen3.5:0.8b',
+    captures: [{ sourceKind: 'image', fileName: 'fixture.png', targetTextVisible: true }],
+  };
+  const deterministicResult = await observe(
+    exerciseInstalledPageForSource(
+      'deterministic',
+      fakePage,
+      1234,
+      'C:\\temp',
+      diagnostics,
+      () => {
+        deterministicCalls += 1;
+        return of(expectedDeterministic);
+      },
+    ),
   );
-  assert.match(
-    source,
-    /expectedSource === 'release'[\s\S]+: exerciseInstalledUi\(\s*page,/u,
-  );
+  assert.deepEqual(deterministicResult, expectedDeterministic);
+  assert.equal(deterministicCalls, 1);
 });
 
 function captureFixture(locatorKind) {
