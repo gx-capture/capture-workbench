@@ -283,9 +283,7 @@ export function isPdfMediaType(mediaType: string): boolean {
 
 /** Identifies non-terminal one-shot capture jobs. */
 export function isActiveJob(job: DesktopCaptureOperation): boolean {
-  return job.status === 'queued'
-    || job.status === 'running'
-    || job.status === 'created'
+  return job.status === 'created'
     || job.status === 'waiting_input'
     || job.status === 'extracting'
     || job.status === 'awaiting_structuring'
@@ -295,11 +293,6 @@ export function isActiveJob(job: DesktopCaptureOperation): boolean {
 /** A one-shot OCR result is ready for host persistence before optional structuring. */
 export function isOcrCheckpoint(job: DesktopCaptureOperation): boolean {
   return job.status === 'awaiting_structuring';
-}
-
-/** Returns the v2 stage while preserving the legacy desktop bridge field. */
-export function captureJobStage(job: DesktopCaptureOperation): string {
-  return job.stage ?? job.status;
 }
 
 /** Identifies non-terminal streaming operations. */

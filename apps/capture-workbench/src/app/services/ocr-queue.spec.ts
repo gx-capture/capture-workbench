@@ -53,12 +53,18 @@ describe('OCR queue presentation', () => {
   it('shows page progress only as the processing step', () => {
     const described = view(doc({ status: 'processing', captureId: 'capture-1' }), {
       job: {
-        status: 'running',
-        stage: 'extracting',
+        protocolVersion: '2',
+        captureId: 'capture-1',
+        ingestionId: 'ingestion-1',
+        status: 'extracting',
         progress: 0.75,
         pagesDone: 9,
         pagesTotal: 12,
-      } as DesktopCaptureOperation,
+        partialRevision: 0,
+        lastEventSequence: 0,
+        createdAt: '2026-11-10T00:00:00Z',
+        updatedAt: '2026-11-10T00:00:00Z',
+      },
     });
 
     expect(described.userStatus).toBe('processing');
@@ -136,12 +142,18 @@ describe('OCR queue presentation', () => {
 
     const runningDoc = view(doc({ status: 'processing', captureId: 'capture-1' }), {
       job: {
-        status: 'running',
-        stage: 'extracting',
+        protocolVersion: '2',
+        captureId: 'capture-1',
+        ingestionId: 'ingestion-1',
+        status: 'extracting',
         progress: 0.75,
         pagesDone: 9,
         pagesTotal: 12,
-      } as DesktopCaptureOperation,
+        partialRevision: 0,
+        lastEventSequence: 0,
+        createdAt: '2026-11-10T00:00:00Z',
+        updatedAt: '2026-11-10T00:00:00Z',
+      },
     });
     expect(runningDoc.chipVariant).toBe('running');
     expect(runningDoc.progressPercent).toBe(75);

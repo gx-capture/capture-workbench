@@ -235,7 +235,7 @@ function progressText(job: DesktopCaptureOperation | undefined): string {
   const pages = typeof job.pagesDone === 'number' && typeof job.pagesTotal === 'number'
     ? desktopMessages().ocrPageProgress(job.pagesDone, job.pagesTotal)
     : null;
-  return [stageLabel(job.stage ?? job.status), percent === null ? null : `${percent}%`, pages]
+  return [stageLabel(job.status), percent === null ? null : `${percent}%`, pages]
     .filter((part): part is string => part !== null && part !== '')
     .join(' ');
 }
