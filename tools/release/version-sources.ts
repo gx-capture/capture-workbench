@@ -945,10 +945,6 @@ function addProjectionEntries(entries: InventoryEntry[], root: string): void {
       'document.schema.python-raw-json',
       'packages/capture-runtime-client-python/src/capture_runtime_client/private/schemas/raw-capture.schema.json',
     ],
-    [
-      'document.schema.desktop-json',
-      'apps/capture-workbench-desktop/src-tauri/resources/capture-document-v2.schema.json',
-    ],
   ] as const) {
     const documentSchema = json(root, sourcePath);
     addExpectedNestedJson(
