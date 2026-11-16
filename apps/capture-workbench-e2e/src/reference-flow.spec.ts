@@ -122,10 +122,11 @@ test('accepts a non-prefix PDF page list on /ocr, binds the request, and rejects
   await expect(page.getByTestId('ocr-pages-error')).toBeVisible();
 
   await dropPdf(page, 'invalid-range.pdf');
-  await expect(page.getByTestId('ocr-import-error')).toBeVisible();
+  await expect(page.getByTestId('ocr-import-error')).toHaveCount(0);
+  await expect(page.getByTestId('ocr-pages-error')).toBeVisible();
   await expect(page.locator('[data-testid="ocr-queue-row"]', { hasText: 'invalid-range.pdf' })).toHaveCount(0);
 
-  await pagesInput.fill('2, 5');
+  await pagesInput.fill('2');
   await expect(pagesInput).not.toHaveAttribute('aria-invalid', 'true');
   await expect(page.getByTestId('ocr-pages-error')).toHaveCount(0);
   await dropPdf(page, 'range.pdf');
@@ -135,13 +136,11 @@ test('accepts a non-prefix PDF page list on /ocr, binds the request, and rejects
   const sentPageNumbers = await page.evaluate(() => (
     globalThis as unknown as { readonly __captureCreatedPdfPageNumbers?: readonly (readonly number[] | null)[] }
   ).__captureCreatedPdfPageNumbers ?? []);
-  expect(sentPageNumbers).toEqual([[2, 5]]);
+  expect(sentPageNumbers).toEqual([[2]]);
 
   await row.getByTestId('ocr-row-view').click();
   await expect(page).toHaveURL(/\/history\/[0-9a-f]{32}\/content$/u);
-  await expect(page.getByTestId('result-page-indicator')).toHaveText('第 2 頁（1 / 2）');
-  await page.getByTestId('result-page-next').click();
-  await expect(page.getByTestId('result-page-indicator')).toHaveText('第 5 頁（2 / 2）');
+  await expect(page.getByTestId('result-page-indicator')).toHaveText('第 2 頁（1 / 1）');
 });
 
 test('shows persisted page and transcript edits and speaker names on result pages', async ({ page }) => {

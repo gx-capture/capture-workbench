@@ -154,6 +154,10 @@ export class CaptureQueueStore {
    */
   importSelections(batch: DesktopSourceSelectionBatch): void {
     const pageList = this.parsedPageList();
+    if (pageList === 'invalid') {
+      this.library.discardSelections(batch.selections).subscribe({ error: () => undefined });
+      return;
+    }
     const rejected = [...batch.rejected];
     const errors: string[] = [];
     const refusedSelections: DesktopSourceSelection[] = [];
@@ -165,11 +169,6 @@ export class CaptureQueueStore {
         continue;
       }
       const pdf = selection.mediaType === 'application/pdf';
-      if (pdf && pageList === 'invalid') {
-        errors.push(desktopMessages().ocrPageSelectionInvalid);
-        refusedSelections.push(selection);
-        continue;
-      }
       accepted.push({
         selection,
         ...(pdf && Array.isArray(pageList) ? { options: { pdfPageNumbers: pageList } } : {}),

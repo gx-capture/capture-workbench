@@ -160,7 +160,7 @@ describe('CaptureQueueStore', () => {
     );
   });
 
-  it('imports a valid image and refuses an unsupported file and an invalid page count', async () => {
+  it('refuses the whole batch without touching importError while the page field is invalid', async () => {
     const harness = configure({ ocrReady: false });
     harness.store.attach();
     TestBed.tick();
@@ -175,14 +175,26 @@ describe('CaptureQueueStore', () => {
     ] });
     TestBed.tick();
 
+    expect(harness.store.importError()).toBe('');
+    expect(harness.library.importSelection).not.toHaveBeenCalled();
+    expect(harness.library.discardSelections).toHaveBeenCalledWith([
+      selection('notes.txt'), selection('range.pdf'), selection('scan.png'),
+    ]);
+    expect(harness.rows()).toEqual([]);
+
+    harness.store.pageListText.set('2, 5');
+    expect(harness.store.pageListInvalid()).toBe(false);
+    expect(harness.store.pageListError()).toBe('');
+    harness.store.importSelections({ rejected: [], selections: [
+      selection('notes.txt'),
+      selection('scan.png'),
+    ] });
+    TestBed.tick();
+
     expect(harness.store.importError()).toContain('(1)');
     expect(harness.store.importError()).not.toContain('notes.txt');
-    expect(harness.store.importError()).toContain(desktopMessages().ocrPageSelectionInvalid);
     expect(harness.library.importSelection).toHaveBeenCalledTimes(1);
     expect(harness.library.importSelection).toHaveBeenCalledWith(selection('scan.png'), undefined);
-    expect(harness.library.discardSelections).toHaveBeenCalledWith([
-      selection('notes.txt'), selection('range.pdf'),
-    ]);
     expect(harness.rows().map((row) => row.fileName)).toEqual(['scan.png']);
   });
 
