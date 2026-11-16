@@ -33,6 +33,8 @@ export class EngineCard {
   readonly requirement = input.required<RuntimeRequirement>();
   readonly installation = input<RuntimeInstallation | null>(null);
   readonly installing = input(false);
+  /** The start request for this unit is in flight: progress shows with the click. */
+  readonly starting = input(false);
   readonly optional = input(false);
 
   readonly install = output<CaptureRequirementId>();
@@ -55,6 +57,13 @@ export class EngineCard {
     const status = this.installation()?.status;
     return status === 'queued' || status === 'running';
   });
+  /** The installation whose progress is shown; none yet while the start request is in flight. */
+  protected readonly runningInstallation = computed(() =>
+    this.isRunning() ? this.installation() : null,
+  );
+  protected readonly showsProgress = computed(
+    () => this.isRunning() || this.starting(),
+  );
   protected readonly isFailed = computed(() => {
     const status = this.installation()?.status;
     return (

@@ -91,6 +91,7 @@ describe('AsrPage', () => {
 
     const features = {
       installing: signal(false),
+      startingRequirementId: signal<CaptureRequirementId | null>(null),
       installationFor: vi.fn((requirementId: CaptureRequirementId): RuntimeInstallation | null =>
         options.installation?.requirementId === requirementId ? options.installation : null),
       installUnit: vi.fn(),
@@ -118,6 +119,30 @@ describe('AsrPage', () => {
     queue.importError.set('');
     fixture.detectChanges();
     expect(el.querySelector('[data-testid="asr-import-error"]')).toBeNull();
+  });
+
+  it('shows the unit as preparing from the click, before the runtime has answered', () => {
+    const { fixture, features } = setup({ speechReady: false });
+    const el = fixture.nativeElement as HTMLElement;
+    const card = el.querySelector(
+      '[data-testid="engine-card"][data-requirement-id="speech-recognition"]',
+    ) as HTMLElement;
+    expect(card.querySelector('[data-testid="engine-card-progress"]')).toBeNull();
+
+    features.startingRequirementId.set('speech-recognition');
+    fixture.detectChanges();
+
+    expect(
+      card.querySelector('[data-testid="engine-card-progress"] [data-testid="install-progress-label"]')
+        ?.textContent?.trim(),
+    ).toBe(desktopMessages().installProgressPreparing);
+    // Nothing to start again and nothing to cancel until an installation exists.
+    expect(card.querySelector('[data-testid="engine-card-install"]')).toBeNull();
+    expect(card.querySelector('[data-testid="engine-card-cancel"]')).toBeNull();
+    const other = el.querySelector(
+      '[data-testid="engine-card"][data-requirement-id="speaker-diarization"]',
+    ) as HTMLElement;
+    expect(other.querySelector('[data-testid="engine-card-progress"]')).toBeNull();
   });
 
   it('shows the install panel and disabled empty-queue button when speech recognition is missing', () => {
