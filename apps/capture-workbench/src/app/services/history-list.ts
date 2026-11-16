@@ -1,6 +1,6 @@
 import type { DesktopLibrarySummary } from '../contracts';
 import { describeAsrDocument } from './asr-queue';
-import { describeOcrDocument, ocrStatusText, type OcrUserStatus } from './ocr-queue';
+import { describeOcrDocument, type OcrUserStatus } from './ocr-queue';
 import type { DesktopCaptureOperation } from './desktop-runtime-client.service';
 import { isAudioMediaType } from './desktop-workspace.selectors';
 
@@ -31,7 +31,7 @@ export function historyRow(document: DesktopLibrarySummary, busy: boolean, job?:
     fileName: document.fileName,
     kind,
     userStatus: described.userStatus,
-    statusText: ocrStatusText(described.userStatus),
+    statusText: described.statusText,
     extent: 'durationLabel' in described ? described.durationLabel : described.pageLabel,
     updatedAtMs: document.updatedAtMs,
     canDelete: !busy && !active && !document.captureId,

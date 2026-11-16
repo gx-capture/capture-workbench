@@ -1,6 +1,8 @@
 import type { DesktopLibrarySummary } from '../contracts';
 import { setDesktopLocale } from '../i18n/desktop-messages';
 import { filterHistoryRows, historyRow } from './history-list';
+import { describeAsrDocument } from './asr-queue';
+import { describeOcrDocument } from './ocr-queue';
 
 const document = (overrides: Partial<DesktopLibrarySummary> = {}): DesktopLibrarySummary => ({
   documentId: 'a', fileName: 'Report.pdf', mediaType: 'application/pdf', byteLength: 1,
@@ -23,11 +25,40 @@ describe('history list', () => {
     expect(historyRow(document({ status: 'awaiting_confirmation', hasRaw: true }), false).userStatus).toBe('done');
     expect(historyRow(document({ mediaType: 'audio/mpeg', status: 'awaiting_confirmation', hasRaw: true }), false).userStatus).toBe('needs-attention');
   });
+  it.each(['application/pdf', 'audio/mpeg'])('preserves queue status text and recovery rules for %s', (mediaType) => {
+    const queueView = (item: DesktopLibrarySummary) => mediaType === 'audio/mpeg'
+      ? describeAsrDocument({ document: item, busy: false, speechReady: true, installPercent: null })
+      : describeOcrDocument({ document: item, busy: false, ocrReady: true, installPercent: null });
+    const cases: readonly [Partial<DesktopLibrarySummary>, string][] = [
+      [{ status: 'processing' }, 'needs-attention'],
+      [{ status: 'persisting' }, 'needs-attention'],
+      [{ status: 'persisting', captureId: 'capture' }, 'processing'],
+      [{ status: 'recovery_required' }, 'needs-attention'],
+      [{ status: 'recovery_required', recoveryCode: 'capture_recovery_required' }, 'needs-attention'],
+      [{ status: 'awaiting_confirmation', hasRaw: false }, 'needs-attention'],
+    ];
+    for (const [overrides, expected] of cases) {
+      const item = document({ mediaType, ...overrides });
+      const row = historyRow(item, false);
+      expect(row.userStatus).toBe(expected);
+      expect(row.statusText).toBe(queueView(item).statusText);
+    }
+  });
+  it.each(['processing', 'done', 'needs-attention', 'cancelled'] as const)('filters the %s user status', (status) => {
+    const rows = [
+      historyRow(document({ documentId: 'processing' }), true),
+      historyRow(document({ documentId: 'done' }), false),
+      historyRow(document({ documentId: 'needs-attention', status: 'failed' }), false),
+      historyRow(document({ documentId: 'cancelled', status: 'canceled' }), false),
+    ];
+    expect(filterHistoryRows(rows, { type: 'all', status, search: '' }).map((row) => row.documentId)).toEqual([status]);
+  });
   it('formats pages, images, duration and unknown extent using queue rules', () => {
     expect(historyRow(document(), false).extent).toBe('3');
     expect(historyRow(document({ mediaType: 'image/png' }), false).extent).toBe('1');
     expect(historyRow(document({ mediaType: 'audio/mpeg', durationMs: 65_000 }), false).extent).toBe('1:05');
     expect(historyRow(document({ pageCount: undefined }), false).extent).toBe('—');
+    expect(historyRow(document({ mediaType: 'audio/mpeg' }), false).extent).toBe('—');
   });
   it('filters each field and orders newest first without mutating the input', () => {
     const rows = [historyRow(document(), false), historyRow(document({ documentId: 'b', fileName: 'Meeting.mp3', mediaType: 'audio/mpeg', status: 'queued', updatedAtMs: 3 }), false)];

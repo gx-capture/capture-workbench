@@ -16,6 +16,7 @@ describe('HistoryListPage', () => {
       pendingDelete, dialogState: computed(() => pendingDelete() ? 'open' : 'closed'),
       error: signal(''), deleting: signal(false), open: vi.fn(), askDelete: vi.fn(),
       onDialogState: vi.fn(), confirmDelete: vi.fn(), cancelDelete: vi.fn(),
+      onDialogClosed: vi.fn(), clearTransientState: vi.fn(),
     };
     TestBed.configureTestingModule({ imports: [HistoryListPage], providers: [
       provideRouter([]), { provide: HistoryListStore, useValue: store },
@@ -55,5 +56,46 @@ describe('HistoryListPage', () => {
     element.querySelector<HTMLButtonElement>('[data-testid="history-row-delete"]')?.click();
     expect(store.open).toHaveBeenCalledWith('a');
     expect(store.askDelete).toHaveBeenCalledWith(row);
+  });
+  it('disables forbidden row deletion and all row deletion while a request is in flight', () => {
+    const { fixture, element, store } = setup();
+    const row = { documentId: 'a', fileName: 'fixture.pdf', kind: 'ocr', userStatus: 'done', statusText: '完成', extent: '1', updatedAtMs: 1, updatedAt: 'Jan 1', canDelete: false } as const;
+    store.rows.set([row]);
+    fixture.detectChanges();
+    const button = () => element.querySelector<HTMLButtonElement>('[data-testid="history-row-delete"]');
+    expect(button()?.disabled).toBe(true);
+    store.rows.set([{ ...row, canDelete: true }]);
+    fixture.detectChanges();
+    expect(button()?.disabled).toBe(false);
+    store.deleting.set(true);
+    fixture.detectChanges();
+    expect(button()?.disabled).toBe(true);
+  });
+  it('shows errors as alerts and clears transient state on destruction', () => {
+    const { fixture, element, store } = setup();
+    store.error.set('無法刪除文件');
+    fixture.detectChanges();
+    expect(element.querySelector('[role="alert"]')?.textContent).toContain('無法刪除文件');
+    fixture.destroy();
+    expect(store.clearTransientState).toHaveBeenCalledOnce();
+  });
+  it('renders the named confirmation and binds both buttons', async () => {
+    const { fixture, store } = setup();
+    store.pendingDelete.set({ documentId: 'a', fileName: 'fixture.pdf', kind: 'ocr', userStatus: 'done', statusText: '完成', extent: '1', updatedAtMs: 1, canDelete: true });
+    fixture.detectChanges();
+    await fixture.whenStable();
+    const dialog = document.querySelector<HTMLElement>('[data-testid="history-delete-dialog"]');
+    expect(dialog?.textContent).toContain('fixture.pdf');
+    const cancel = dialog?.querySelector<HTMLButtonElement>('[data-testid="history-delete-cancel"]');
+    const confirm = dialog?.querySelector<HTMLButtonElement>('[data-testid="history-delete-confirm"]');
+    expect(cancel).not.toBeNull();
+    expect(confirm).not.toBeNull();
+    cancel?.click(); confirm?.click();
+    expect(store.cancelDelete).toHaveBeenCalledOnce();
+    expect(store.confirmDelete).toHaveBeenCalledOnce();
+    store.deleting.set(true);
+    fixture.detectChanges();
+    expect(cancel?.disabled).toBe(true);
+    expect(confirm?.disabled).toBe(true);
   });
 });

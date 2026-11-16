@@ -15,7 +15,7 @@ test('navigates the Traditional Chinese shell to each page from the left navigat
   await expect(page).toHaveURL(/\/ocr$/u);
   const nav = page.getByRole('navigation', { name: '主要功能' });
   await expect(nav.locator('ul').getByRole('link')).toHaveText(['文件轉文字', '錄音轉逐字稿', '紀錄', '設定']);
-  await expect(nav.getByTestId('runtime-status')).toHaveText('已就緒');
+  await expect(nav.getByTestId('runtime-status')).toHaveAccessibleName('已就緒 診斷');
   await expect(nav.getByTestId('runtime-status')).toHaveAttribute('data-state', 'ready');
 
   const pages = [
@@ -78,13 +78,21 @@ test('filters history, returns from result sub-pages and confirms deletion', asy
   await expect(page.getByTestId('history-delete-dialog')).toContainText('history.pdf');
   await page.getByTestId('history-delete-cancel').click();
   await expect(document).toBeVisible();
-  await expect(page.getByTestId('history-search')).toBeFocused();
+  await expect(document.getByTestId('history-row-delete')).toBeFocused();
   await document.getByTestId('history-row-delete').click();
   await page.getByTestId('history-delete-confirm').click();
   await expect(document).toHaveCount(0);
   await expect(page.getByTestId('history-search')).toBeFocused();
   await page.getByTestId('history-search').fill('');
   await expect(rows).toHaveCount(1);
+  await recording.getByTestId('history-row-view').click();
+  await expect(page).toHaveURL(/\/content\?from=history$/u);
+  await page.getByTestId('result-nav-export').click();
+  await expect(page).toHaveURL(/\/export\?from=history$/u);
+  await page.getByTestId('result-nav-speakers').click();
+  await expect(page).toHaveURL(/\/speakers\?from=history$/u);
+  await page.getByTestId('result-back').click();
+  await expect(page).toHaveURL(/\/history$/u);
   await recording.getByTestId('history-row-delete').click();
   await page.getByTestId('history-delete-confirm').click();
   await expect(rows).toHaveCount(0);
@@ -160,6 +168,8 @@ test('drops a PDF without OCR, installs it, and exports the raw text', async ({ 
   await expect(page.getByTestId('result-page-text')).toHaveValue('第二頁');
   await page.getByTestId('result-nav-details').click();
   await expect(page.getByTestId('result-detail-filename')).toHaveText('charge.pdf');
+  await page.getByTestId('result-back').click();
+  await expect(page).toHaveURL(/\/ocr$/u);
 });
 
 test('shows persisted page and transcript edits and speaker names on result pages', async ({ page }) => {

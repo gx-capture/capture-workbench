@@ -292,13 +292,16 @@ describe('App shell and recognition pages', () => {
 
     expect(status().dataset['state']).toBe('starting');
     expect(status().getAttribute('href')).toBe('/workspace');
-    expect(status().getAttribute('aria-label')).toBe('診斷');
+    expect(status().getAttribute('aria-label')).toBeNull();
+    expect(status().querySelector('.sr-only')?.textContent).toBe('診斷');
+    expect(status().querySelector('[aria-live="polite"]')?.textContent).toContain('尚未就緒');
     expect(status().textContent).toContain('尚未就緒');
 
     store.state.set('ready');
     fixture.detectChanges();
     expect(status().dataset['state']).toBe('ready');
     expect(status().textContent).toContain('已就緒');
+    expect(status().querySelector('[aria-live="polite"]')?.textContent).toContain('已就緒');
   });
 });
 

@@ -75,4 +75,91 @@ describe('HistoryListStore', () => {
     expect(store.deleting()).toBe(false);
     expect(workspace.refreshDocuments).not.toHaveBeenCalled();
   });
+  it.each(['removed', 'captureId'] as const)('rechecks a document that is %s while confirmation is open', (change) => {
+    const { store, workspace, library } = setup();
+    const row = store.rows()[0];
+    if (!row) throw new Error('missing row');
+    store.askDelete(row);
+    workspace.allDocuments.update((documents) => change === 'removed'
+      ? documents.filter((document) => document.documentId !== row.documentId)
+      : documents.map((document) => document.documentId === row.documentId ? { ...document, captureId: 'capture' } : document));
+    store.confirmDelete();
+    expect(library.delete).not.toHaveBeenCalled();
+    expect(store.pendingDelete()).toBeNull();
+  });
+  it('rejects a non-deletable row and clears an earlier error on the next ask or open', () => {
+    const { store, busyIds } = setup();
+    const row = store.rows()[0];
+    if (!row) throw new Error('missing row');
+    busyIds.set(new Set([row.documentId]));
+    store.error.set('previous failure');
+    store.askDelete(row);
+    expect(store.pendingDelete()).toBeNull();
+    expect(store.error()).toBe('');
+    busyIds.set(new Set());
+    store.error.set('previous failure');
+    store.askDelete(row);
+    expect(store.pendingDelete()).toEqual(row);
+    expect(store.error()).toBe('');
+    store.cancelDelete();
+    store.error.set('previous failure');
+    store.open(row.documentId);
+    expect(store.error()).toBe('');
+  });
+  it('clears transient state while retaining filters and ignores a late failure after leaving', () => {
+    const { store, library } = setup();
+    const response = new Subject<undefined>();
+    library.delete.mockReturnValue(response);
+    const row = store.rows()[0];
+    if (!row) throw new Error('missing row');
+    store.typeFilter.set('asr'); store.statusFilter.set('waiting'); store.search.set('meeting');
+    store.askDelete(row);
+    store.confirmDelete();
+    store.error.set('old error');
+    store.clearTransientState();
+    response.error(new Error('late host error'));
+    expect(store.pendingDelete()).toBeNull();
+    expect(store.error()).toBe('');
+    expect(store.typeFilter()).toBe('asr');
+    expect(store.statusFilter()).toBe('waiting');
+    expect(store.search()).toBe('meeting');
+  });
+  it('restores focus only when closed, to the surviving row or search after success', () => {
+    const { store, library } = setup();
+    const row = store.rows()[0];
+    if (!row) throw new Error('missing row');
+    const container = document.createElement('div');
+    container.innerHTML = '<input data-testid="history-search"><div data-testid="history-row" data-document-id="b"><button data-testid="history-row-delete">Delete</button></div>';
+    document.body.append(container);
+    const search = container.querySelector('input');
+    const button = container.querySelector('button');
+    try {
+      store.askDelete(row);
+      search?.focus();
+      store.cancelDelete();
+      expect(document.activeElement).toBe(search);
+      store.onDialogClosed();
+      expect(document.activeElement).toBe(button);
+      const response = new Subject<undefined>();
+      library.delete.mockReturnValueOnce(response);
+      store.askDelete(row);
+      store.confirmDelete();
+      search?.focus();
+      response.error(new Error('host error'));
+      store.onDialogClosed();
+      expect(document.activeElement).toBe(button);
+      store.askDelete(row);
+      store.confirmDelete();
+      store.onDialogClosed();
+      expect(document.activeElement).toBe(search);
+      store.askDelete(row);
+      store.cancelDelete();
+      store.clearTransientState();
+      container.remove();
+      store.onDialogClosed();
+      expect(document.activeElement).not.toBe(button);
+    } finally {
+      container.remove();
+    }
+  });
 });

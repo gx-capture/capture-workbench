@@ -2,7 +2,7 @@ import { DOCUMENT } from '@angular/common';
 import { computed, DestroyRef, inject, Injectable, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { Router } from '@angular/router';
-import { finalize, timer } from 'rxjs';
+import { finalize } from 'rxjs';
 import { desktopMessages } from '../i18n/desktop-messages';
 import { DesktopLibraryService } from './desktop-library.service';
 import { DesktopWorkspaceCaptureService } from './desktop-workspace-capture.service';
@@ -19,6 +19,8 @@ export class HistoryListStore {
   private readonly formatting = inject(DesktopWorkspaceFormattingService);
   private readonly document = inject(DOCUMENT);
   private readonly destroyRef = inject(DestroyRef);
+  private transientGeneration = 0;
+  private focusAfterClose: { readonly documentId: string | null } | null = null;
   readonly typeFilter = signal<HistoryFilters['type']>('all');
   readonly statusFilter = signal<HistoryFilters['status']>('all');
   readonly search = signal('');
@@ -38,23 +40,43 @@ export class HistoryListStore {
   }).map((row) => ({ ...row, updatedAt: this.formatting.formatDate(row.updatedAtMs) })));
 
   open(documentId: string): void {
+    this.error.set('');
     void this.router.navigate(['/history', documentId], { queryParams: { from: 'history' } });
   }
 
   askDelete(row: HistoryRow): void {
-    if (this.deleting() || !this.canDelete(row.documentId)) return;
     this.error.set('');
+    if (this.deleting() || !this.canDelete(row.documentId)) return;
+    this.focusAfterClose = { documentId: row.documentId };
     this.pendingDelete.set(row);
   }
 
   cancelDelete(): void {
     if (this.deleting()) return;
     this.pendingDelete.set(null);
-    this.restoreFocus();
   }
 
   onDialogState(state: 'open' | 'closed'): void {
     if (state === 'closed') this.cancelDelete();
+  }
+
+  clearTransientState(): void {
+    this.transientGeneration += 1;
+    this.error.set('');
+    this.pendingDelete.set(null);
+    this.focusAfterClose = null;
+  }
+
+  onDialogClosed(): void {
+    const target = this.focusAfterClose;
+    this.focusAfterClose = null;
+    if (!target) return;
+    const row = [...this.document.querySelectorAll<HTMLElement>('[data-testid="history-row"]')]
+      .find((element) => element.dataset['documentId'] === target.documentId);
+    const button = row?.querySelector<HTMLButtonElement>('[data-testid="history-row-delete"]');
+    const focus = button?.isConnected && !button.disabled ? button
+      : this.document.querySelector<HTMLElement>('[data-testid="history-search"]');
+    if (focus?.isConnected) focus.focus();
   }
 
   confirmDelete(): void {
@@ -65,19 +87,21 @@ export class HistoryListStore {
       return;
     }
     this.deleting.set(true);
+    const generation = this.transientGeneration;
     this.library.delete(pending.documentId).pipe(
       takeUntilDestroyed(this.destroyRef),
       finalize(() => this.deleting.set(false)),
     ).subscribe({
       next: () => {
         this.workspace.refreshDocuments();
+        if (generation !== this.transientGeneration) return;
+        this.focusAfterClose = { documentId: null };
         this.pendingDelete.set(null);
-        this.restoreFocus();
       },
       error: () => {
+        if (generation !== this.transientGeneration) return;
         this.error.set(desktopMessages().historyDeleteFailed);
         this.pendingDelete.set(null);
-        this.restoreFocus();
       },
     });
   }
@@ -87,11 +111,5 @@ export class HistoryListStore {
     return document !== undefined && !document.captureId
       && !this.capture.busyIds().has(documentId)
       && !this.capture.hasActiveCapture(documentId);
-  }
-
-  private restoreFocus(): void {
-    timer(0).pipe(takeUntilDestroyed(this.destroyRef)).subscribe(() => {
-      this.document.querySelector<HTMLElement>('[data-testid="history-search"]')?.focus();
-    });
   }
 }

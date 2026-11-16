@@ -47,7 +47,8 @@
       }
     </div>
   }
-  <brn-alert-dialog [state]="store.dialogState()" (stateChanged)="store.onDialogState($event)">
+  <brn-alert-dialog [state]="store.dialogState()" [disableClose]="store.deleting()" [restoreFocus]="false"
+    (stateChanged)="store.onDialogState($event)" (closed)="store.onDialogClosed()">
     <brn-alert-dialog-overlay class="bg-foreground/40" />
     <ng-template brnAlertDialogContent>
       @if (store.pendingDelete(); as pending) {
