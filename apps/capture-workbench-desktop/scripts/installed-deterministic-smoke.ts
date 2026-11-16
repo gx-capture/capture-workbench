@@ -57,7 +57,6 @@ import {
   installerArguments,
   uninstallerArguments,
 } from './contracts/installed.ts';
-import { assertCaptureDocumentForFixture } from './installed-document-assertions.ts';
 import {
   collectInstalledWebViewStartupDiagnostics,
   connectToInstalledWebView,
@@ -83,8 +82,6 @@ export {
   installerArguments,
   uninstallerArguments,
 };
-
-export { assertCaptureDocumentForFixture };
 
 import {
   buildInstalledSmokeFailureReport,
@@ -1021,7 +1018,6 @@ export function runInstalledDeterministicSmoke(
             installedApplication: {
               fileName: installedExecutableName,
               productTitle: state.exerciseResult.productTitle,
-              model: state.exerciseResult.model,
             },
             captures: state.exerciseResult.captures,
             rendererIpcCommands: state.exerciseResult.rendererIpcCommands,
@@ -1073,7 +1069,6 @@ export function exerciseInstalledPageForSource(
   return expectedSource === 'release'
     ? of({
         productTitle: 'Capture Workbench',
-        model: 'setup-pending',
         captures: [],
       })
     : runDeterministicExercise(page, appPid, fixtureDirectory, diagnostics);

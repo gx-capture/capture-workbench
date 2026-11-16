@@ -153,6 +153,33 @@ export function assertInstalledSmokeEvidence(report) {
       'Installed smoke evidence requires an explicit deterministic disclaimer.',
     );
   }
+  if (
+    report.installedApplication !== undefined &&
+    (typeof report.installedApplication !== 'object' ||
+      report.installedApplication === null ||
+      'model' in report.installedApplication)
+  ) {
+    throw new Error(
+      'Installed smoke evidence must not carry a deprecated installedApplication.model field.',
+    );
+  }
+  if (report.captures !== undefined) {
+    if (!Array.isArray(report.captures)) {
+      throw new Error('Installed smoke evidence captures must be an array.');
+    }
+    for (const capture of report.captures) {
+      if (
+        typeof capture !== 'object' ||
+        capture === null ||
+        'targetTextVisible' in capture ||
+        (capture as { recognizedTextVisible?: unknown }).recognizedTextVisible !== true
+      ) {
+        throw new Error(
+          'Installed smoke evidence captures must report recognizedTextVisible: true without targetTextVisible.',
+        );
+      }
+    }
+  }
   const serialized = JSON.stringify(report);
   if (/[A-Za-z]:[\\/]/u.test(serialized)) {
     throw new Error(

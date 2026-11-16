@@ -456,15 +456,13 @@ test('re-attaches to an in-progress installation returned by runtime_list_instal
 test('renders the desktop queue and history filter through the authenticated runtime client', async ({ page }) => {
   await openDesktop(page, []);
 
-  await expect(page.getByText('已就緒', { exact: true })).toBeVisible();
-  await expect(page.getByText('history.pdf')).toBeVisible();
-  await expect(page.getByText('Qwen 3.5 0.8B')).toBeVisible();
-  await expect(page.getByRole('combobox', { name: '處理狀態' })).toBeVisible();
-  await expect(page.getByRole('button', { name: '選擇檔案' })).toBeEnabled();
-  await page.getByLabel('搜尋文件').fill('not-a-file');
-  await expect(page.getByText('history.pdf')).toHaveCount(0);
-  await page.getByLabel('搜尋文件').fill('history');
-  await expect(page.getByText('history.pdf')).toBeVisible();
+  await expect(page.getByTestId('page-ocr')).toBeVisible();
+  await expect(page.getByTestId('runtime-status')).toHaveAttribute('data-state', 'ready');
+  await expect(page.getByTestId('runtime-status')).toHaveAccessibleName('已就緒 診斷');
+  await expect(
+    page.getByTestId('ocr-queue-row').filter({ hasText: 'history.pdf' }),
+  ).toBeVisible();
+  await expect(page.getByTestId('ocr-choose-files')).toBeEnabled();
 
   const commands = await page.evaluate(() => {
     const target = globalThis as unknown as {
@@ -477,12 +475,31 @@ test('renders the desktop queue and history filter through the authenticated run
   expect(commands).toContain('runtime_list_installations');
   expect(commands).not.toContain('backend_config');
   expect(commands).toContain('library_list');
+
+  await page.getByRole('navigation', { name: '主要功能' }).getByRole('link', { name: '紀錄' }).click();
+  await expect(page).toHaveURL(/\/history$/u);
+  await expect(page.getByTestId('history-status-filter')).toBeVisible();
+  await expect(page.getByText('history.pdf')).toBeVisible();
+  await page.getByTestId('history-search').fill('not-a-file');
+  await expect(page.getByText('history.pdf')).toHaveCount(0);
+  await page.getByTestId('history-search').fill('history');
+  await expect(page.getByText('history.pdf')).toBeVisible();
+
+  await page.getByTestId('runtime-status').click();
+  await expect(page).toHaveURL(/\/settings\/diagnostics$/u);
+  await expect(page.getByTestId('diagnostics-active-model')).toContainText('Qwen 3.5 0.8B');
 });
 
 test('does not run a deterministic provider in an unconfigured browser', async ({ page }) => {
-  await page.goto('/workspace');
+  await page.goto('/');
 
-  await expect(page.getByRole('heading', { name: '文件擷取工作台' })).toBeVisible();
+  await expect(page.getByTestId('page-ocr')).toBeVisible();
+  await expect(page.getByTestId('runtime-status')).toHaveAttribute('data-state', 'error');
+  await expect(page.getByText(/deterministic/i)).toHaveCount(0);
+
+  await page.getByTestId('runtime-status').click();
+  await expect(page).toHaveURL(/\/settings\/diagnostics$/u);
+  await expect(page.getByTestId('page-settings-diagnostics')).toBeVisible();
   await expect(page.getByRole('alert')).toContainText('Windows 桌面 App');
   await expect(page.getByText(/deterministic/i)).toHaveCount(0);
 });
@@ -570,7 +587,7 @@ interface OpenDesktopOptions {
 async function openDesktop(
   page: Page,
   requirements: readonly Record<string, unknown>[],
-  path = '/workspace',
+  path = '/ocr',
   options: OpenDesktopOptions = {},
 ): Promise<void> {
   const pdfBase64 = (

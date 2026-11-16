@@ -1,201 +1,193 @@
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
 
-import { CAPTURE_BLOCK_TYPES } from './constants/installed.ts';
+export interface InstalledCaptureFixtureExpectation {
+  readonly sourceKind: 'pdf' | 'image' | 'audio';
+  readonly fileName: string;
+  readonly mimeType: string;
+  readonly sha256?: string;
+  readonly bytes?: number;
+  readonly locatorKind: 'page' | 'time';
+  readonly expectedSegments: number;
+  readonly expectedTexts: readonly string[];
+}
 
-const captureBlockTypes = CAPTURE_BLOCK_TYPES;
+type ExpectedVisibleCaptureResult =
+  | { readonly kind: 'page'; readonly text: string }
+  | { readonly kind: 'time'; readonly lines: readonly string[] };
 
-export function assertCaptureDocumentForFixture(document, fixture) {
-  assertRecord(document, 'CaptureDocument');
+interface RawPageSegment {
+  readonly order: number;
+  readonly text: string;
+  readonly locator: { readonly kind: 'page'; readonly page: number };
+}
+
+interface RawTimeSegment {
+  readonly order: number;
+  readonly text: string;
+  readonly locator: { readonly kind: 'time'; readonly startMs: number; readonly endMs: number };
+}
+
+export function assertRawCaptureForFixture(
+  raw: unknown,
+  fixture: InstalledCaptureFixtureExpectation,
+): void {
+  const capture = assertRecord(raw, 'Raw capture');
   assertExactKeys(
-    document,
+    capture,
     [
-      'blocks',
-      'completedAt',
       'createdAt',
+      'diagnosticOnly',
       'extractionEngine',
-      'rawSegments',
       'schemaVersion',
+      'segments',
       'source',
       'sourceText',
-      'structuringEngine',
-      'targetText',
       'warnings',
     ],
-    'CaptureDocument',
+    'Raw capture',
   );
-  assert.equal(document.schemaVersion, '2');
+  assert.equal(capture['schemaVersion'], '2');
+  assert.equal(capture['diagnosticOnly'], true);
 
-  assertRecord(document.source, 'CaptureDocument.source');
-  assertExactKeys(
-    document.source,
-    ['bytes', 'fileName', 'mediaType', 'sha256'],
-    'CaptureDocument.source',
-  );
-  assert.equal(document.source.fileName, fixture.fileName);
-  assert.equal(document.source.mediaType, fixture.mimeType);
-  assert.equal(document.source.bytes, fixture.bytes ?? fixture.buffer.length);
-  assert.equal(
-    document.source.sha256,
-    fixture.sha256 ?? createHash('sha256').update(fixture.buffer).digest('hex'),
-  );
-  assert.match(document.source.sha256, /^[0-9a-f]{64}$/u);
+  const source = assertRecord(capture['source'], 'Raw capture source');
+  assertExactKeys(source, ['bytes', 'fileName', 'mediaType', 'sha256'], 'Raw capture source');
+  assert.equal(source['fileName'], fixture.fileName);
+  assert.equal(source['mediaType'], fixture.mimeType);
+  assert.match(String(source['sha256']), /^[0-9a-f]{64}$/u);
+  if (fixture.sha256 !== undefined) assert.equal(source['sha256'], fixture.sha256);
+  const bytes = source['bytes'];
+  assert.equal(typeof bytes === 'number' && Number.isSafeInteger(bytes) && bytes > 0, true);
+  if (fixture.bytes !== undefined) assert.equal(bytes, fixture.bytes);
 
-  assertEngine(document.extractionEngine, 'CaptureDocument.extractionEngine');
   assertEngine(
-    document.structuringEngine,
-    'CaptureDocument.structuringEngine',
-  );
-  assert.ok(Array.isArray(document.warnings));
-  assert.ok(
-    document.warnings.every(
-      (warning) => typeof warning === 'string' && warning.length <= 500,
-    ),
+    capture['extractionEngine'],
+    fixture.sourceKind === 'audio' ? 'speech-recognition' : 'windowsml-ocr',
+    'Extraction engine',
   );
 
-  assert.ok(Array.isArray(document.rawSegments));
-  assert.equal(document.rawSegments.length, fixture.expectedSegments);
-  const segmentIds = new Set();
-  document.rawSegments.forEach((segment, index) => {
-    assertRecord(segment, `rawSegments[${index}]`);
-    assertExactKeys(
-      segment,
-      ['locator', 'order', 'segmentId', 'text'],
-      `rawSegments[${index}]`,
-    );
-    assertNonEmptyString(segment.segmentId, `rawSegments[${index}].segmentId`);
-    assert.equal(segmentIds.has(segment.segmentId), false);
-    segmentIds.add(segment.segmentId);
-    assert.equal(segment.order, index);
-    assert.equal(segment.text, fixture.expectedTexts[index]);
-    assertLocator(
-      segment.locator,
-      fixture,
-      index,
-      `rawSegments[${index}].locator`,
-    );
-  });
-  assert.equal(
-    document.sourceText,
-    document.rawSegments.map((segment) => segment.text).join('\n'),
-  );
-  assertNonEmptyString(document.sourceText, 'CaptureDocument.sourceText');
-
-  assert.ok(Array.isArray(document.blocks));
-  assert.equal(document.blocks.length, fixture.expectedSegments);
-  const blockIds = new Set();
-  document.blocks.forEach((block, index) => {
-    const segment = document.rawSegments[index];
-    assertRecord(block, `blocks[${index}]`);
-    assertExactKeys(
-      block,
-      [
-        'blockId',
-        'locator',
-        'order',
-        'sourceSegmentId',
-        'sourceText',
-        'targetText',
-        'type',
-      ],
-      `blocks[${index}]`,
-    );
-    assertNonEmptyString(block.blockId, `blocks[${index}].blockId`);
-    assert.equal(blockIds.has(block.blockId), false);
-    blockIds.add(block.blockId);
-    assert.equal(block.order, index);
-    assert.equal(block.sourceSegmentId, segment.segmentId);
-    assert.equal(captureBlockTypes.has(block.type), true);
-    assert.equal(
-      block.type,
-      fixture.locatorKind === 'time' ? 'transcript' : 'paragraph',
-    );
-    assert.deepEqual(block.locator, segment.locator);
-    assert.equal(block.sourceText, segment.text);
-    assertNonEmptyString(block.targetText, `blocks[${index}].targetText`);
-  });
-  assert.equal(
-    document.targetText,
-    document.blocks.map((block) => block.targetText).join('\n'),
-  );
-  assertNonEmptyString(document.targetText, 'CaptureDocument.targetText');
-
-  const createdAt = assertDateTime(
-    document.createdAt,
-    'CaptureDocument.createdAt',
-  );
-  const completedAt = assertDateTime(
-    document.completedAt,
-    'CaptureDocument.completedAt',
-  );
-  assert.ok(completedAt >= createdAt, 'completedAt must not precede createdAt');
-}
-
-function assertRecord(value, label) {
-  assert.ok(
-    value !== null && typeof value === 'object' && !Array.isArray(value),
-    `${label} must be an object`,
-  );
-}
-
-function assertExactKeys(value, keys, label) {
-  assert.deepEqual(
-    Object.keys(value).sort(),
-    [...keys].sort(),
-    `${label} keys`,
-  );
-}
-
-function assertNonEmptyString(value, label) {
-  assert.equal(typeof value, 'string', `${label} must be a string`);
-  assert.ok(value.length > 0, `${label} must not be empty`);
-}
-
-function assertEngine(engine, label) {
-  assertRecord(engine, label);
-  const keys = Object.keys(engine);
-  assert.ok(
-    keys.every((key) => ['device', 'digest', 'engine', 'model'].includes(key)),
-  );
-  assert.ok(['digest', 'engine', 'model'].every((key) => keys.includes(key)));
-  assertNonEmptyString(engine.engine, `${label}.engine`);
-  assertNonEmptyString(engine.model, `${label}.model`);
-  assert.match(engine.digest, /^sha256:[0-9a-f]{64}$/u);
-  if (engine.device !== undefined && engine.device !== null) {
-    assertNonEmptyString(engine.device, `${label}.device`);
+  const warnings = capture['warnings'];
+  assert.equal(Array.isArray(warnings), true, 'Raw capture warnings must be an array.');
+  for (const warning of warnings as unknown[]) {
+    assertNonEmptyString(warning, 'Raw capture warning', 500);
   }
+
+  const segments = capture['segments'];
+  assert.equal(Array.isArray(segments), true, 'Raw capture segments must be an array.');
+  assert.equal((segments as unknown[]).length, fixture.expectedTexts.length);
+  assert.equal((segments as unknown[]).length, fixture.expectedSegments);
+
+  const segmentIds = new Set<string>();
+  const segmentTexts: string[] = [];
+  (segments as unknown[]).forEach((segment, index) => {
+    const entry = assertRecord(segment, 'Raw segment');
+    assertExactKeys(entry, ['locator', 'order', 'segmentId', 'text'], 'Raw segment');
+    const segmentId = assertNonEmptyString(entry['segmentId'], 'Raw segment id', 100);
+    assert.equal(segmentIds.has(segmentId), false, `Duplicate raw segment id: ${segmentId}`);
+    segmentIds.add(segmentId);
+    assert.equal(entry['order'], index);
+    assertLocator(entry['locator'], fixture.locatorKind, 'Raw segment locator');
+    const text = assertNonEmptyString(entry['text'], 'Raw segment text', 100_000);
+    assert.equal(text, fixture.expectedTexts[index]);
+    segmentTexts.push(text);
+  });
+
+  const sourceText = assertNonEmptyString(capture['sourceText'], 'Raw capture sourceText', 500_000);
+  assert.equal(sourceText, segmentTexts.join('\n'));
+  assertDateTime(capture['createdAt'], 'Raw capture createdAt');
 }
 
-function assertLocator(locator, fixture, index, label) {
-  assertRecord(locator, label);
-  assert.equal(locator.kind, fixture.locatorKind);
+export function expectedVisibleResultForRaw(
+  raw: unknown,
+  fixture: Pick<InstalledCaptureFixtureExpectation, 'locatorKind'>,
+): ExpectedVisibleCaptureResult {
+  const capture = assertRecord(raw, 'Raw capture');
+  const rawSegments = capture['segments'];
+  assert.equal(Array.isArray(rawSegments), true, 'Raw capture segments must be an array.');
+
   if (fixture.locatorKind === 'page') {
-    assert.ok(
-      Object.keys(locator).every((key) =>
-        ['boundingBox', 'kind', 'page'].includes(key),
-      ),
-      `${label} has unexpected keys`,
-    );
-    assert.equal(locator.page, index + 1);
-    if (locator.boundingBox !== undefined && locator.boundingBox !== null) {
-      assert.equal(locator.boundingBox.length, 4);
-      assert.ok(locator.boundingBox.every(Number.isFinite));
-    }
+    const pageSegments = (rawSegments as RawPageSegment[])
+      .filter((segment) => segment.locator.kind === 'page')
+      .slice()
+      .sort((left, right) => left.order - right.order);
+    assert.ok(pageSegments.length > 0, 'Raw capture had no page segments.');
+    const firstPage = Math.min(...pageSegments.map((segment) => segment.locator.page));
+    const text = pageSegments
+      .filter((segment) => segment.locator.page === firstPage)
+      .map((segment) => segment.text)
+      .join('\n')
+      .trim();
+    assert.ok(text.length > 0, 'Expected visible OCR page text was empty.');
+    return { kind: 'page', text };
+  }
+
+  const timeSegments = (rawSegments as RawTimeSegment[])
+    .filter((segment) => segment.locator.kind === 'time')
+    .slice()
+    .sort((left, right) => left.order - right.order);
+  const lines = timeSegments.map((segment) => segment.text.trim());
+  assert.ok(
+    lines.length > 0 && lines.every((line) => line.length > 0),
+    'Expected visible transcript lines were empty.',
+  );
+  return { kind: 'time', lines };
+}
+
+function assertRecord(value: unknown, label: string): Record<string, unknown> {
+  assert.equal(
+    typeof value === 'object' && value !== null && !Array.isArray(value),
+    true,
+    `${label} must be an object.`,
+  );
+  return value as Record<string, unknown>;
+}
+
+function assertExactKeys(
+  value: Record<string, unknown>,
+  expectedKeys: readonly string[],
+  label: string,
+): void {
+  const actual = Object.keys(value).sort();
+  assert.deepEqual(actual, [...expectedKeys].sort(), `${label} keys mismatch.`);
+}
+
+function assertNonEmptyString(value: unknown, label: string, maxLength: number): string {
+  assert.equal(typeof value, 'string', `${label} must be a string.`);
+  const text = value as string;
+  assert.equal(text.trim().length > 0, true, `${label} must be non-empty.`);
+  assert.equal(text.length <= maxLength, true, `${label} exceeds maximum length ${maxLength}.`);
+  return text;
+}
+
+function assertEngine(value: unknown, expectedEngine: string, label: string): void {
+  const engine = assertRecord(value, label);
+  assertExactKeys(engine, ['device', 'digest', 'engine', 'model'], label);
+  assert.equal(engine['engine'], expectedEngine);
+  assertNonEmptyString(engine['model'], `${label} model`, 200);
+  assert.match(String(engine['digest']), /^sha256:[0-9a-f]{64}$/u);
+  assertNonEmptyString(engine['device'], `${label} device`, 100);
+}
+
+function assertLocator(
+  value: unknown,
+  expectedKind: 'page' | 'time',
+  label: string,
+): void {
+  const locator = assertRecord(value, label);
+  assert.equal(locator['kind'], expectedKind);
+  if (expectedKind === 'page') {
+    assertExactKeys(locator, ['kind', 'page'], label);
+    const page = locator['page'];
+    assert.equal(typeof page === 'number' && Number.isSafeInteger(page) && page >= 1, true);
     return;
   }
   assertExactKeys(locator, ['endMs', 'kind', 'startMs'], label);
-  assert.equal(locator.startMs, index * 1000);
-  assert.equal(locator.endMs, (index + 1) * 1000);
-  assert.ok(locator.startMs >= 0 && locator.endMs > locator.startMs);
+  const startMs = locator['startMs'];
+  const endMs = locator['endMs'];
+  assert.equal(typeof startMs === 'number' && Number.isSafeInteger(startMs) && startMs >= 0, true);
+  assert.equal(typeof endMs === 'number' && Number.isSafeInteger(endMs) && endMs > (startMs as number), true);
 }
 
-function assertDateTime(value, label) {
-  assertNonEmptyString(value, label);
-  assert.match(
-    value,
-    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/u,
-  );
-  const timestamp = Date.parse(value);
-  assert.ok(Number.isFinite(timestamp), `${label} must be a valid date-time`);
-  return timestamp;
+function assertDateTime(value: unknown, label: string): void {
+  const text = assertNonEmptyString(value, label, 100);
+  assert.equal(Number.isNaN(Date.parse(text)), false, `${label} must be a valid ISO timestamp.`);
 }
