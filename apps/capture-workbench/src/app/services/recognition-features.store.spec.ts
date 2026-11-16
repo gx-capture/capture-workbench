@@ -4,7 +4,7 @@ import type {
   RuntimeInstallation,
   RuntimeRequirement,
 } from '@gx-capture/capture-workbench-ui';
-import { of, Subject } from 'rxjs';
+import { of, Subject, throwError } from 'rxjs';
 import { setDesktopLocale } from '../i18n/desktop-messages';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
 import { DesktopWorkspaceInstallationService } from './desktop-workspace-installation.service';
@@ -89,9 +89,40 @@ describe('RecognitionFeaturesStore removeUnit', () => {
     expect(unitStatus(store)).toBe('ready');
     expect(store.ocrReady()).toBe(true);
   });
+
+  it('returns an empty list without throwing when model options fail to load', () => {
+    const { store } = createHarness({
+      getModelOptions: vi.fn(() => throwError(() => new Error('model options failed'))),
+    });
+
+    expect(store.modelOptionsResource.status()).toBe('error');
+    expect(() => store.modelOptions()).not.toThrow();
+    expect(store.modelOptions()).toEqual([]);
+    expect(store.activeModelOption()).toBeNull();
+    expect(store.modelSelectionRequired()).toBe(false);
+  });
+
+  it('returns an empty list without throwing when requirements fail to load', () => {
+    const { store } = createHarness({
+      getRequirements: vi.fn(() => throwError(() => new Error('requirements failed'))),
+    });
+
+    expect(store.requirementsResource.status()).toBe('error');
+    expect(() => store.requirements()).not.toThrow();
+    expect(store.requirements()).toEqual([]);
+    expect(store.engines()).toEqual([]);
+    expect(store.firstRunInstallableUnits()).toEqual([]);
+    expect(store.ocrReady()).toBe(false);
+    expect(store.asrReady()).toBe(false);
+  });
 });
 
-function createHarness() {
+function createHarness(
+  runtimeOverrides: Partial<{
+    getRequirements: ReturnType<typeof vi.fn>;
+    getModelOptions: ReturnType<typeof vi.fn>;
+  }> = {},
+) {
   const listed = signal<readonly RuntimeRequirement[]>([
     requirement('windowsml-ocr', 'ready', 144_000_000),
   ]);
@@ -106,6 +137,7 @@ function createHarness() {
     getInstallation: vi.fn(),
     cancelInstallation: vi.fn(() => of(runningInstallation('cancelled'))),
     reload: vi.fn(),
+    ...runtimeOverrides,
   };
   TestBed.configureTestingModule({
     providers: [

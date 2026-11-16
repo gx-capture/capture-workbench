@@ -33,7 +33,6 @@ import {
 import { INSTALLED_FIXTURES } from './constants/installed.ts';
 import {
   isPackagedWorkbenchUrl,
-  showHistoryWorkspace,
 } from './packaged-workbench-page.ts';
 import {
   nativeClickWebViewElement,
@@ -295,7 +294,7 @@ export function installedPage(browser: Browser, appProcess: ChildProcess): Obser
       .find((candidate) => isPackagedWorkbenchUrl(candidate.url()));
     if (page)
       return defer(() => from(page.waitForLoadState('domcontentloaded'))).pipe(
-        concatMap(() => showHistoryWorkspace(page)),
+        concatMap(() => waitForShell(page)),
         map(() => page),
       );
     if (Date.now() >= deadline)
@@ -338,16 +337,68 @@ function connectAttempt(endpoint, appProcess, deadline, lastError, auditRenderer
   );
 }
 
+function waitForShell(page: Page) {
+  return forkJoin([
+    defer(() => from(page.getByTestId('nav-ocr').waitFor({ state: 'visible', timeout: 30_000 }))),
+    defer(() => from(page.getByTestId('page-ocr').waitFor({ state: 'visible', timeout: 30_000 }))),
+  ]);
+}
+
+function checkIfVisibleAndUnchecked(checkbox: Locator) {
+  return defer(() => from(checkbox.isVisible())).pipe(
+    switchMap((visible) => (visible ? defer(() => from(checkbox.isChecked())) : of(true))),
+    switchMap((checked) => (checked ? of(undefined) : defer(() => from(checkbox.check())))),
+  );
+}
+
+function ensureQueuePageReady(page: Page, isAudio: boolean) {
+  const pageTestId = isAudio ? 'page-asr' : 'page-ocr';
+  const navTestId = isAudio ? 'nav-asr' : 'nav-ocr';
+  const chooseTestId = isAudio ? 'asr-choose-files' : 'ocr-choose-files';
+  return defer(() => from(page.getByTestId(pageTestId).isVisible())).pipe(
+    switchMap((visible) =>
+      visible ? of(undefined) : defer(() => from(page.getByTestId(navTestId).click())),
+    ),
+    concatMap(() =>
+      defer(() => from(page.getByTestId(pageTestId).waitFor({ state: 'visible', timeout: 15_000 }))),
+    ),
+    concatMap(() =>
+      waitUntil(
+        () =>
+          forkJoin({
+            installPanelCount: isAudio
+              ? defer(() => from(page.getByTestId('asr-install-panel').count()))
+              : of(0),
+            chooseVisible: defer(() => from(page.getByTestId(chooseTestId).isVisible())),
+            chooseEnabled: defer(() => from(page.getByTestId(chooseTestId).isEnabled())),
+          }).pipe(
+            map(
+              ({ installPanelCount, chooseVisible, chooseEnabled }) =>
+                installPanelCount === 0 && chooseVisible && chooseEnabled,
+            ),
+          ),
+        isAudio ? 45_000 : 15_000,
+        `Installed ${isAudio ? 'ASR' : 'OCR'} page did not become ready.`,
+      ),
+    ),
+  );
+}
+
 function captureFixture(page, fixture, appPid, fixtureDirectory, diagnostics) {
+  const isAudio = fixture.sourceKind === 'audio';
+  const rowTestId = isAudio ? 'asr-queue-row' : 'ocr-queue-row';
+  const statusTestId = isAudio ? 'asr-row-status' : 'ocr-row-status';
+  const viewTestId = isAudio ? 'asr-row-view' : 'ocr-row-view';
   const filePath = join(fixtureDirectory, fixture.fileName);
-  const importButton = page.getByTestId('source-import');
-  let diagnosticCard = page.locator('.document-card[data-document-id=""]');
+  const chooseFiles = page.getByTestId(isAudio ? 'asr-choose-files' : 'ocr-choose-files');
+  let diagnosticRow = page.locator(`[data-testid="${rowTestId}"][data-document-id=""]`);
   let beforeIds: string[] = [];
   let documentId: string;
   let requestLogOffset = 0;
-  const documentIds = (cards) => cards.evaluateAll((elements) =>
+  const documentIds = (rows: Locator) => rows.evaluateAll((elements) =>
     elements.map((element) => element.getAttribute('data-document-id')).filter(Boolean));
-  return defer(() => fixture.buffer ? from(writeFile(filePath, fixture.buffer)) : of(undefined)).pipe(
+  return ensureQueuePageReady(page, isAudio).pipe(
+    concatMap(() => (fixture.buffer ? defer(() => from(writeFile(filePath, fixture.buffer))) : of(undefined))),
     concatMap(() => fixture.bytes
       ? defer(() => from(readLargeRecordingRequests(join(fixtureDirectory, 'deterministic-requests.jsonl')))).pipe(
         tap((entries) => {
@@ -355,14 +406,14 @@ function captureFixture(page, fixture, appPid, fixtureDirectory, diagnostics) {
         }),
       )
       : of(undefined)),
-    concatMap(() => defer(() => from(documentIds(page.locator('.document-card')))).pipe(
+    concatMap(() => defer(() => from(documentIds(page.getByTestId(rowTestId)))).pipe(
       tap((ids: string[]) => { beforeIds = ids; }),
     )),
     concatMap(() =>
       trackSmokeStep(diagnostics.timeline, 'source picker', () => defer(() =>
         from(
           nativeOpenDialogUiAutomation(filePath, appPid, () =>
-            nativeClickWebViewElement(importButton, appPid),
+            nativeClickWebViewElement(chooseFiles, appPid),
           ),
         ),
       ).pipe(
@@ -385,86 +436,126 @@ function captureFixture(page, fixture, appPid, fixtureDirectory, diagnostics) {
     concatMap(() =>
       trackSmokeStep(diagnostics.timeline, 'card visible', () => waitUntil(
         () => defer(() => from(documentIds(
-          page.locator('.document-card').filter({ hasText: fixture.fileName }),
+          page.getByTestId(rowTestId).filter({ hasText: fixture.fileName }),
         ))).pipe(switchMap((ids: string[]) => {
           const id = newDocumentId(beforeIds, ids);
           if (!id) return of(false);
-          if (!/^[a-zA-Z0-9_-]+$/u.test(id)) throw new Error('Invalid document card identifier.');
+          if (!/^[a-zA-Z0-9_-]+$/u.test(id)) throw new Error('Invalid document row identifier.');
           documentId = id;
           if (fixture.bytes) forbidRecordingSourceBytes(page, id);
-          diagnosticCard = page.locator(`.document-card[data-document-id="${id}"]`);
-          return defer(() => from(diagnosticCard.isVisible()));
+          diagnosticRow = page.locator(`[data-testid="${rowTestId}"][data-document-id="${id}"]`);
+          return defer(() => from(diagnosticRow.isVisible()));
         })),
         15_000,
-        `Installed ${fixture.sourceKind} import did not create a new document card.`,
-      )).pipe(map(() => diagnosticCard)),
+        `Installed ${fixture.sourceKind} import did not create a new queue row.`,
+      )).pipe(map(() => diagnosticRow)),
     ),
-    concatMap((card) =>
-      trackSmokeStep(diagnostics.timeline, 'completion wait', () => waitUntil(
+    concatMap((row) => {
+      const visibleStatus = isAudio
+        ? row.getByTestId('asr-row-status').getByTestId('asr-row-chip')
+        : row.getByTestId('ocr-row-status');
+      return trackSmokeStep(diagnostics.timeline, 'completion wait', () => waitUntil(
         () =>
-          defer(() => from(card.locator('.status').textContent({ timeout: 1_000 }))).pipe(
-            map((status) => status === '已完成'),
+          forkJoin({
+            userStatus: defer(() => from(row.getAttribute('data-user-status', { timeout: 1_000 }))),
+            visibleText: defer(() => from(visibleStatus.textContent({ timeout: 1_000 }))),
+          }).pipe(
+            map(
+              ({ userStatus, visibleText }) =>
+                userStatus === 'done' && String(visibleText ?? '').trim() === '完成',
+            ),
           ),
         fixture.completionTimeoutMs ?? 45_000,
         `Installed ${fixture.sourceKind} capture did not complete.`,
       )).pipe(
-        catchError((error) => incompleteCaptureError(page, card, error, fixture, diagnostics)),
-        map(() => card),
-      ),
-    ),
-    concatMap((card) => defer(() => from((card as Locator).click())).pipe(map(() => card))),
-    concatMap(() => {
-      const result = page.locator('.review-block.result pre');
-      return defer(() =>
-        from(result.waitFor({ state: 'visible', timeout: 15_000 })),
-      ).pipe(
-        concatMap(() => defer(() => from(result.textContent()))),
-        concatMap((text) => defer(() => from(assertInstalledCapture(page, documentId, fixture, text))).pipe(
-          concatMap(() => fixture.bytes
-            ? defer(() => from(readLargeRecordingRequests(join(fixtureDirectory, 'deterministic-requests.jsonl')))).pipe(
-              tap((entries) => assertLargeRecordingRequests(entries.slice(requestLogOffset), fixture.bytes)),
-            )
-            : of(undefined)),
-          map(() => ({
-            sourceKind: fixture.sourceKind,
-            fileName: fixture.fileName,
-            targetTextVisible: true,
-          })),
-        )),
+        concatMap(() => defer(() => from(visibleStatus.textContent({ timeout: 1_000 })))),
+        tap((visibleText) => {
+          assert.equal(String(visibleText ?? '').trim(), '完成');
+        }),
+        catchError((error) => incompleteCaptureError(page, row, statusTestId, error, fixture, diagnostics)),
+        map(() => row),
       );
     }),
+    concatMap((row) =>
+      fixture.bytes
+        ? defer(() => from(row.getByTestId('asr-row-playback-note').waitFor({ state: 'visible', timeout: 5_000 }))).pipe(
+          concatMap(() => defer(() => from(row.getByTestId('asr-row-playback-note').textContent()))),
+          tap((note) => {
+            assert.ok(String(note ?? '').trim(), 'Large recording row playback note was empty.');
+          }),
+          map(() => row),
+        )
+        : of(row),
+    ),
+    concatMap((row) => defer(() => from(row.getByTestId(viewTestId).click()))),
+    concatMap(() =>
+      waitUntil(
+        () => of(page.url().endsWith(`/history/${documentId}/content`)),
+        15_000,
+        `Installed ${fixture.sourceKind} result view did not navigate to /history/${documentId}/content.`,
+      ),
+    ),
+    concatMap(() =>
+      defer(() => from(page.getByTestId('page-result').waitFor({ state: 'visible', timeout: 15_000 }))),
+    ),
+    concatMap(() => {
+      if (!isAudio) {
+        const resultTextArea = page.getByTestId('result-page-text');
+        return defer(() =>
+          from(resultTextArea.waitFor({ state: 'visible', timeout: 15_000 })),
+        ).pipe(
+          concatMap(() => defer(() => from(resultTextArea.inputValue()))),
+        );
+      }
+      const resultLines = page.getByTestId('result-line-text');
+      return defer(() =>
+        from(resultLines.first().waitFor({ state: 'visible', timeout: 15_000 })),
+      ).pipe(
+        concatMap(() => defer(() => from(resultLines.allTextContents()))),
+      );
+    }),
+    concatMap((visibleResult) =>
+      defer(() => from(assertInstalledCapture(page, documentId, fixture, visibleResult))).pipe(
+        concatMap(() => fixture.bytes
+          ? defer(() => from(readLargeRecordingRequests(join(fixtureDirectory, 'deterministic-requests.jsonl')))).pipe(
+            tap((entries) => assertLargeRecordingRequests(entries.slice(requestLogOffset), fixture.bytes)),
+          )
+          : of(undefined)),
+        concatMap(() => defer(() => from(page.getByTestId('result-back').click()))),
+        concatMap(() =>
+          defer(() =>
+            from(
+              page
+                .getByTestId(isAudio ? 'page-asr' : 'page-ocr')
+                .waitFor({ state: 'visible', timeout: 15_000 }),
+            ),
+          ),
+        ),
+        map(() => ({
+          sourceKind: fixture.sourceKind,
+          fileName: fixture.fileName,
+          recognizedTextVisible: true,
+        })),
+      ),
+    ),
     catchError((error) => defer(() => from(cancelRendererBoundary(page))).pipe(
       catchError(() => of(undefined)),
       switchMap(() => throwError(() => error)),
     )),
     catchError((error) => diagnostics.cards.some((card) => card.fileName === fixture.fileName)
       ? throwError(() => error)
-      : incompleteCaptureError(page, diagnosticCard, error, fixture, diagnostics)),
+      : incompleteCaptureError(page, diagnosticRow, statusTestId, error, fixture, diagnostics)),
   );
-}
-
-export function assertInstalledModelChip(model: unknown): string {
-  const text = String(model ?? '');
-  assert.match(text, /qwen(?:3\.5:|\s+3\.5\s+)0\.8b/iu);
-  return text;
 }
 
 export function exerciseInstalledUi(page, appPid, fixtureDirectory, diagnostics = {
   timeline: [] as SmokeStepEvent[], cards: [] as SmokeCardDiagnostic[],
 }) {
-  return defer(() =>
-    from(
-      page
-        .getByRole('heading', { name: '文件擷取工作台' })
-        .waitFor({ state: 'visible', timeout: 30_000 }),
-    ),
-  ).pipe(
+  return waitForShell(page).pipe(
     concatMap(() => defer(() => from(beginRendererBoundary(page)))),
     concatMap(() => prepareFirstRun(page)),
     concatMap(() =>
-      defer(() =>
-        from(page.getByRole('button', { name: '選擇檔案' }).isEnabled()),
-      ),
+      defer(() => from(page.getByTestId('ocr-choose-files').isEnabled())),
     ),
     switchMap((enabled) => {
       if (!enabled)
@@ -474,11 +565,9 @@ export function exerciseInstalledUi(page, appPid, fixtureDirectory, diagnostics 
               'Installed desktop workbench did not finish first-run requirements.',
             ),
         );
-      return defer(() => from(page.locator('.model-chip').textContent())).pipe(
-        map((model) => assertInstalledModelChip(model)),
-      );
+      return of(undefined);
     }),
-    concatMap((model) =>
+    concatMap(() =>
       defer(() => from(generateLargeRecording(join(fixtureDirectory, 'installed-large-recording.wav')))).pipe(
         map((largeFixture) => [...fixtures, largeFixture]),
         switchMap((allFixtures) => from(allFixtures)),
@@ -491,7 +580,6 @@ export function exerciseInstalledUi(page, appPid, fixtureDirectory, diagnostics 
             map((rendererIpcCommands) => ({
               rendererIpcCommands,
               productTitle: 'Capture Workbench',
-              model,
               captures,
             })),
           ),
@@ -501,46 +589,116 @@ export function exerciseInstalledUi(page, appPid, fixtureDirectory, diagnostics 
   );
 }
 
-function prepareFirstRun(page) {
-  const intake = page.getByRole('button', { name: '選擇檔案' });
-  const install = page.getByRole('button', { name: '同意並安裝' });
+function prepareFirstRun(page: Page) {
+  const runtimeStatus = page.getByTestId('runtime-status');
+  const firstRunCard = page.getByTestId('first-run-card');
+  const chooseFiles = page.getByTestId('ocr-choose-files');
+  const installProgress = page.getByTestId('ocr-install-progress');
+  const installButton = page.getByTestId('first-run-install');
+  const requiredUnits = ['windowsml-ocr', 'speech-recognition'] as const;
+  const terminalErrorStatuses = new Set([
+    'failed',
+    'cancelled',
+    'unavailable',
+    'manual_action_required',
+  ]);
   return waitUntil(
     () =>
       forkJoin({
-        enabled: defer(() => from(intake.isEnabled())),
-        installVisible: defer(() => from(install.isVisible())),
-      }).pipe(map(({ enabled, installVisible }) => enabled || installVisible)),
+        runtimeState: defer(() => from(runtimeStatus.getAttribute('data-state'))),
+        cardVisible: defer(() => from(firstRunCard.isVisible())),
+        chooseVisible: defer(() => from(chooseFiles.isVisible())),
+        chooseEnabled: defer(() => from(chooseFiles.isEnabled())),
+        progressVisible: defer(() => from(installProgress.isVisible())),
+      }).pipe(
+        map(
+          ({ runtimeState, cardVisible, chooseVisible, chooseEnabled, progressVisible }) =>
+            runtimeState === 'ready' &&
+            (cardVisible || (chooseVisible && chooseEnabled && !progressVisible)),
+        ),
+      ),
     75_000,
     'Installed desktop workbench did not reach its ready or first-run setup state.',
   ).pipe(
-    concatMap(() => defer(() => from(intake.isEnabled()))),
-    switchMap((enabled) => {
-      if (enabled) return of(undefined);
-      return defer(() => from(install.click())).pipe(
+    concatMap(() => defer(() => from(firstRunCard.isVisible()))),
+    switchMap((cardVisible) => {
+      if (!cardVisible) return of(undefined);
+      return checkIfVisibleAndUnchecked(page.getByTestId('first-run-checkbox-ocr')).pipe(
+        concatMap(() => checkIfVisibleAndUnchecked(page.getByTestId('first-run-checkbox-asr'))),
         concatMap(() =>
           waitUntil(
-            () => defer(() => from(intake.isEnabled())),
-            45_000,
-            'Installed desktop workbench did not complete first-run requirements.',
+            () => defer(() => from(installButton.isEnabled())),
+            5_000,
+            'First-run install button remained disabled after selecting OCR and ASR.',
           ),
         ),
+        concatMap(() => defer(() => from(installButton.click()))),
       );
     }),
+    concatMap(() => defer(() => from(page.getByTestId('nav-settings').click()))),
+    concatMap(() =>
+      defer(() =>
+        from(page.getByTestId('page-settings-engines').waitFor({ state: 'visible', timeout: 15_000 })),
+      ),
+    ),
+    concatMap(() =>
+      waitUntil(
+        () =>
+          forkJoin(
+            requiredUnits.map((unitId) =>
+              defer(() =>
+                from(
+                  page
+                    .locator(`[data-testid="engine-row"][data-requirement-id="${unitId}"]`)
+                    .getAttribute('data-status'),
+                ),
+              ).pipe(map((status) => ({ unitId, status }))),
+            ),
+          ).pipe(
+            switchMap((entries) => {
+              const failure = entries.find(
+                ({ status }) => status !== null && terminalErrorStatuses.has(status),
+              );
+              if (failure) {
+                return throwError(
+                  () =>
+                    new Error(
+                      `Required recognition unit ${failure.unitId} installation ended with status ${failure.status}.`,
+                    ),
+                );
+              }
+              return of(entries.every(({ status }) => status === 'ready'));
+            }),
+          ),
+        45_000,
+        'Installed desktop workbench did not complete first-run requirements.',
+      ),
+    ),
+    concatMap(() => defer(() => from(page.getByTestId('nav-ocr').click()))),
+    concatMap(() =>
+      defer(() => from(page.getByTestId('page-ocr').waitFor({ state: 'visible', timeout: 15_000 }))),
+    ),
   );
 }
 
-// A stuck capture is only diagnosable from what the card and the detail pane
-// show (status and the runtime error code), so the failure carries both.
-function incompleteCaptureError(page, card, error, fixture, diagnostics) {
-  return defer(() => from(card.click({ timeout: 1_000 }).catch(() => undefined))).pipe(
-    concatMap(() => forkJoin({
-      status: defer(() => from(card.locator('.status').textContent({ timeout: 1_000 }).catch(() => null))),
-      detailErrors: defer(() => from(page.locator('.detail-error').allTextContents().catch(() => []))),
-    })),
+// A stuck capture is only diagnosable from what the row and any page alert show,
+// so the failure carries both.
+function incompleteCaptureError(
+  page: Page,
+  row: Locator,
+  statusTestId: string,
+  error: unknown,
+  fixture: { readonly fileName: string },
+  diagnostics: { cards: SmokeCardDiagnostic[] },
+) {
+  return forkJoin({
+    status: defer(() => from(row.getByTestId(statusTestId).textContent({ timeout: 1_000 }).catch(() => null))),
+    detailErrors: defer(() => from(page.locator('[role="alert"]').allTextContents().catch(() => []))),
+  }).pipe(
     concatMap(({ status, detailErrors }: { status: string | null; detailErrors: string[] }) => {
       diagnostics.cards.push({ fileName: fixture.fileName, status, detailErrors });
       return throwError(() => new Error(
-        `${errorMessage(error)} Last status: ${status ?? 'unavailable'}; detail errors: ${
+        `${errorMessage(error)} Last status: ${status ?? 'unavailable'}; alerts: ${
           detailErrors.length > 0 ? detailErrors.join(' | ') : 'none'
         }.`, { cause: error },
       ));

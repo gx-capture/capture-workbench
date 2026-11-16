@@ -27,6 +27,7 @@ import {
   dynamicWebViewCdpPort,
   installedPage,
 } from './installed-browser.ts';
+import { showHistoryWorkspace } from './packaged-workbench-page.ts';
 import {
   createTrackedProcessTreeTerminator,
 } from './installed-process-cleanup.ts';
@@ -3922,6 +3923,8 @@ async function run(): Promise<void> {
     browser = connected.browser;
     cdpPort = connected.port;
     page = await firstValueFrom(installedPage(browser, app));
+    // This smoke still reads the old workspace; the installed page now opens on the shell.
+    await firstValueFrom(showHistoryWorkspace(page));
     const useBackendReuseReadiness = shouldUseBackendReuseReadiness(reuseRunData, audioOnly);
     if (useBackendReuseReadiness) {
       // A reused production app-data root is intentionally already provisioned.

@@ -2,7 +2,11 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { chromium, type Browser, type Page, type Request, type Response } from '@playwright/test';
 import { isPackagedWorkbenchUrl } from './packaged-workbench-page.ts';
-import { assertCaptureDocumentForFixture } from './installed-document-assertions.ts';
+import {
+  assertRawCaptureForFixture,
+  expectedVisibleResultForRaw,
+  type InstalledCaptureFixtureExpectation,
+} from './installed-document-assertions.ts';
 
 interface RendererBoundaryGlobal {
   __TAURI_INTERNALS__: { invoke: (command: string, args?: unknown) => Promise<unknown> };
@@ -372,15 +376,40 @@ export async function connectRendererBoundary(
   }
 }
 
-export async function assertInstalledCapture(page: Page, documentId: string, fixture, text: unknown): Promise<void> {
+export async function assertInstalledCapture(
+  page: Page,
+  documentId: string,
+  fixture: InstalledCaptureFixtureExpectation,
+  visibleResult: unknown,
+): Promise<void> {
   const detail = await page.evaluate((id) => {
-    return (globalThis as unknown as { __TAURI_INTERNALS__: { invoke: (command: string, args: unknown) => Promise<{ result: unknown }> } }).__TAURI_INTERNALS__.invoke('library_get', { request: { documentId: id } });
+    return (globalThis as unknown as {
+      __TAURI_INTERNALS__: {
+        invoke: (command: string, args: unknown) => Promise<{ raw: unknown }>;
+      };
+    }).__TAURI_INTERNALS__.invoke('library_get', { request: { documentId: id } });
   }, documentId);
-  assertCaptureDocumentForFixture(detail.result, fixture);
-  assert.equal(String(text ?? '').trim(), String((detail.result as { targetText: string }).targetText).trim());
-  if (fixture.bytes) {
-    await page.getByTestId('large-recording-playback-note').waitFor({ state: 'visible', timeout: 5_000 });
-    assert.ok((await page.getByTestId('large-recording-playback-note').textContent())?.trim());
+  assertRawCaptureForFixture(detail.raw, fixture);
+  const expected = expectedVisibleResultForRaw(detail.raw, fixture);
+  if (expected.kind === 'page') {
+    const visibleText = typeof visibleResult === 'string' ? visibleResult.trim() : '';
+    assert.ok(visibleText.length > 0, 'Installed result preview was empty.');
+    assert.equal(visibleText, expected.text);
+  } else {
+    const visibleLines = Array.isArray(visibleResult)
+      ? visibleResult.map((line) => String(line ?? '').trim())
+      : typeof visibleResult === 'string' && visibleResult.trim().length > 0
+        ? visibleResult.trim().split(/\r?\n/u).map((line) => line.trim())
+        : [];
+    assert.ok(
+      visibleLines.length > 0 && visibleLines.every((line) => line.length > 0),
+      'Installed result preview was empty.',
+    );
+    assert.deepEqual(visibleLines, expected.lines);
   }
-  assert.ok(String(text ?? '').trim(), 'Installed result preview was empty.');
+  if (fixture.bytes) {
+    const playbackNote = page.getByTestId('result-playback-unavailable');
+    await playbackNote.waitFor({ state: 'visible', timeout: 5_000 });
+    assert.ok((await playbackNote.textContent())?.trim());
+  }
 }

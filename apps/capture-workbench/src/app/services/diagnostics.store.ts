@@ -48,7 +48,8 @@ export class DiagnosticsStore {
     buildDiagnosticsRuntimeView({
       state: this.workspace.state(),
       workspaceMessage: this.workspace.message(),
-      runtimeStatus: this.runtime.status(),
+      // Reading a failed resource throws, and a failed runtime is when this page is needed.
+      runtimeStatus: this.runtime.readiness.hasValue() ? this.runtime.status() : null,
       ocrCompute: this.runtime.ocrCompute(),
       messages: desktopMessages(),
     }),

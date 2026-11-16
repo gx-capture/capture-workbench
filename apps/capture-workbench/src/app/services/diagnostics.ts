@@ -49,7 +49,8 @@ export interface DiagnosticsDocumentView {
 export function buildDiagnosticsRuntimeView(input: {
   readonly state: 'starting' | 'ready' | 'error';
   readonly workspaceMessage: string;
-  readonly runtimeStatus: DesktopRuntimeStatus;
+  /** Null while the readiness check has failed: there is no status to show then. */
+  readonly runtimeStatus: DesktopRuntimeStatus | null;
   readonly ocrCompute: OcrComputePreflight | null;
   readonly messages: DesktopMessages;
 }): DiagnosticsRuntimeView {
@@ -66,14 +67,14 @@ export function buildDiagnosticsRuntimeView(input: {
     statusLabel,
     errorMessage:
       state === 'error'
-        ? nonEmpty(workspaceMessage) ?? nonEmpty(runtimeStatus.detail)
+        ? nonEmpty(workspaceMessage) ?? nonEmpty(runtimeStatus?.detail)
         : null,
     runtimeVersion: nonEmpty(
-      runtimeStatus.runtimeVersion ?? ocrCompute?.runtimeVersion,
+      runtimeStatus?.runtimeVersion ?? ocrCompute?.runtimeVersion,
     ),
-    apiVersion: nonEmpty(runtimeStatus.apiVersion ?? ocrCompute?.apiVersion),
+    apiVersion: nonEmpty(runtimeStatus?.apiVersion ?? ocrCompute?.apiVersion),
     contractSetVersion: nonEmpty(
-      runtimeStatus.contractSetVersion ?? ocrCompute?.contractSetVersion,
+      runtimeStatus?.contractSetVersion ?? ocrCompute?.contractSetVersion,
     ),
     contractSha256: nonEmpty(ocrCompute?.contractSha256),
   };

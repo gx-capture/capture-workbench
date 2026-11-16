@@ -11,7 +11,6 @@ import { of } from 'rxjs';
 import {
   assertInstalledSmokeEvidence,
   assertInstallationCleanupAllowed,
-  assertCaptureDocumentForFixture,
   assertRegistryOwnership,
   assertStrictDescendant,
   assertTaskkillResult,
@@ -31,9 +30,13 @@ import {
   stopPostUninstallProcessRoots,
   uninstallerArguments,
 } from './installed-deterministic-smoke.ts';
+import {
+  assertRawCaptureForFixture,
+  expectedVisibleResultForRaw,
+} from './installed-document-assertions.ts';
+import { assertInstalledCapture } from './installed-renderer-boundary.ts';
 import { expectedInstallerName } from './installed-smoke-lifecycle.ts';
 import {
-  assertInstalledModelChip,
   formatInstalledWebViewStartupDiagnostics,
   installedWebViewCdpReadyTimeoutMs,
   parseInstalledWebViewCdpPort,
@@ -442,51 +445,121 @@ test('exclusive smoke lock rejects concurrent product mutation and is reusable a
   await observe(releaseExclusiveSmokeLock(second));
 });
 
-test('installed document assertion enforces source, digest, ordering, and locator provenance', () => {
+test('installed raw assertion enforces source, engine, ordering, locator provenance, and visible composition', async () => {
   const pageFixture = captureFixture('page');
-  const pageDocument = captureDocument(pageFixture);
+  const pageRaw = rawCapture(pageFixture);
   assert.doesNotThrow(() =>
-    assertCaptureDocumentForFixture(pageDocument, pageFixture),
+    assertRawCaptureForFixture(pageRaw, pageFixture),
+  );
+  assert.deepEqual(expectedVisibleResultForRaw(pageRaw, pageFixture), {
+    kind: 'page',
+    text: 'fixture words',
+  });
+
+  const multiPageFixture = {
+    ...pageFixture,
+    fileName: 'fixture.pdf',
+    mimeType: 'application/pdf',
+    sourceKind: 'pdf' as const,
+    expectedSegments: 2,
+    expectedTexts: ['Page one', 'Page two'],
+  };
+  const multiPageRaw = {
+    ...rawCapture(multiPageFixture),
+    segments: [
+      {
+        segmentId: 'segment-1',
+        order: 0,
+        locator: { kind: 'page', page: 1 },
+        text: 'Page one',
+      },
+      {
+        segmentId: 'segment-2',
+        order: 1,
+        locator: { kind: 'page', page: 2 },
+        text: 'Page two',
+      },
+    ],
+    sourceText: 'Page one\nPage two',
+  };
+  assert.doesNotThrow(() =>
+    assertRawCaptureForFixture(multiPageRaw, multiPageFixture),
+  );
+  assert.deepEqual(expectedVisibleResultForRaw(multiPageRaw, multiPageFixture), {
+    kind: 'page',
+    text: 'Page one',
+  });
+
+  assert.throws(
+    () =>
+      assertRawCaptureForFixture(
+        {
+          ...pageRaw,
+          source: { ...pageRaw.source, sha256: '0'.repeat(64) },
+        },
+        pageFixture,
+      ),
+    /Expected values to be strictly equal/u,
+  );
+  assert.throws(
+    () =>
+      assertRawCaptureForFixture(
+        {
+          ...pageRaw,
+          extractionEngine: { ...pageRaw.extractionEngine, engine: 'speech-recognition' },
+        },
+        pageFixture,
+      ),
+    /Expected values to be strictly equal/u,
   );
 
   assert.throws(
     () =>
-      assertCaptureDocumentForFixture(
+      assertRawCaptureForFixture(
         {
-          ...pageDocument,
-          source: { ...pageDocument.source, sha256: '0'.repeat(64) },
+          ...multiPageRaw,
+          segments: [
+            {
+              ...multiPageRaw.segments[0],
+              locator: { kind: 'page', page: 7 },
+            },
+            multiPageRaw.segments[1],
+          ],
         },
-        pageFixture,
+        multiPageFixture,
       ),
     /Expected values to be strictly equal/u,
   );
+
   assert.throws(
     () =>
-      assertCaptureDocumentForFixture(
+      assertRawCaptureForFixture(
         {
-          ...pageDocument,
-          blocks: [
-            { ...pageDocument.blocks[0], sourceSegmentId: 'wrong-segment' },
-          ],
+          ...pageRaw,
+          createdAt: '2000',
         },
         pageFixture,
       ),
-    /Expected values to be strictly equal/u,
+    /did not match the regular expression/u,
   );
 
   const timeFixture = captureFixture('time');
-  const timeDocument = captureDocument(timeFixture);
+  const timeRaw = rawCapture(timeFixture);
   assert.doesNotThrow(() =>
-    assertCaptureDocumentForFixture(timeDocument, timeFixture),
+    assertRawCaptureForFixture(timeRaw, timeFixture),
   );
+  assert.deepEqual(expectedVisibleResultForRaw(timeRaw, timeFixture), {
+    kind: 'time',
+    lines: ['fixture words'],
+  });
   assert.throws(
     () =>
-      assertCaptureDocumentForFixture(
+      assertRawCaptureForFixture(
         {
-          ...timeDocument,
-          rawSegments: [
+          ...timeRaw,
+          segments: [
             {
-              ...timeDocument.rawSegments[0],
+              ...timeRaw.segments[0],
               locator: { kind: 'time', startMs: 1000, endMs: 1000 },
             },
           ],
@@ -494,6 +567,55 @@ test('installed document assertion enforces source, digest, ordering, and locato
         timeFixture,
       ),
     /Expected values to be strictly equal/u,
+  );
+  assert.throws(
+    () =>
+      assertRawCaptureForFixture(
+        {
+          ...timeRaw,
+          segments: [
+            {
+              ...timeRaw.segments[0],
+              locator: { kind: 'time', startMs: 5000, endMs: 6000 },
+            },
+          ],
+        },
+        timeFixture,
+      ),
+    /Expected values to be strictly equal/u,
+  );
+
+  let playbackWaitCalls = 0;
+  const largeFixture = {
+    ...timeFixture,
+    bytes: timeFixture.buffer.length,
+    sha256: createHash('sha256').update(timeFixture.buffer).digest('hex'),
+  };
+  const fakePage = {
+    evaluate: async () => ({ raw: rawCapture(largeFixture) }),
+    getByTestId: (testId: string) => {
+      assert.equal(testId, 'result-playback-unavailable');
+      return {
+        waitFor: async () => { playbackWaitCalls += 1; },
+        textContent: async () => '檔案過大，無法在介面內播放',
+      };
+    },
+  } as unknown as Parameters<typeof assertInstalledCapture>[0];
+  await assertInstalledCapture(fakePage, 'doc-1', largeFixture, ['fixture words']);
+  assert.equal(playbackWaitCalls, 1);
+
+  await assert.rejects(
+    () => assertInstalledCapture(fakePage, 'doc-1', timeFixture, []),
+    /preview was empty/u,
+  );
+  await assert.rejects(
+    () => assertInstalledCapture(
+      { evaluate: async () => ({ raw: pageRaw }) } as unknown as Parameters<typeof assertInstalledCapture>[0],
+      'doc-1',
+      pageFixture,
+      '   ',
+    ),
+    /preview was empty/u,
   );
 });
 
@@ -504,6 +626,13 @@ test('installed evidence is permanently deterministic, redacted, and path-free',
     realEnginesExercised: false,
     disclaimer:
       'Deterministic verification only; it does not satisfy release gates.',
+    installedApplication: {
+      fileName: 'Capture Workbench Setup.exe',
+      productTitle: 'Capture Workbench',
+    },
+    captures: [
+      { sourceKind: 'pdf', fileName: 'installed-fixture.pdf', recognizedTextVisible: true },
+    ],
   };
   assert.doesNotThrow(() => assertInstalledSmokeEvidence(valid));
   assert.throws(
@@ -515,6 +644,22 @@ test('installed evidence is permanently deterministic, redacted, and path-free',
     () =>
       assertInstalledSmokeEvidence({ ...valid, realEnginesExercised: true }),
     /non-releaseable/u,
+  );
+  assert.throws(
+    () =>
+      assertInstalledSmokeEvidence({
+        ...valid,
+        installedApplication: { ...valid.installedApplication, model: 'qwen3.5:0.8b' },
+      }),
+    /deprecated installedApplication\.model/u,
+  );
+  assert.throws(
+    () =>
+      assertInstalledSmokeEvidence({
+        ...valid,
+        captures: [{ sourceKind: 'pdf', fileName: 'a.pdf', targetTextVisible: true }],
+      }),
+    /recognizedTextVisible/u,
   );
   assert.throws(
     () =>
@@ -557,13 +702,6 @@ test('installed smoke gives model-enabled hosted runners enough time to unpack t
 
 test('installed smoke gives hosted WebView2 enough time to expose CDP', () => {
   assert.equal(installedWebViewCdpReadyTimeoutMs, 180_000);
-});
-
-test('installed smoke verifies the v2 bundled Ollama model', () => {
-  assert.equal(assertInstalledModelChip('qwen3.5:0.8b'), 'qwen3.5:0.8b');
-  assert.equal(assertInstalledModelChip('Qwen 3.5 0.8B'), 'Qwen 3.5 0.8B');
-  assert.throws(() => assertInstalledModelChip('qwen3.5:4b'));
-  assert.throws(() => assertInstalledModelChip(''));
 });
 
 test('post-uninstall cleanup tolerates the owned install root being removed', async () => {
@@ -625,7 +763,6 @@ test('release installed smoke verifies the packaged shell without auto-installin
         return of({
           rendererIpcCommands: [],
           productTitle: 'Capture Workbench',
-          model: 'qwen3.5:0.8b',
           captures: [],
         });
       },
@@ -633,7 +770,6 @@ test('release installed smoke verifies the packaged shell without auto-installin
   );
   assert.deepEqual(releaseResult, {
     productTitle: 'Capture Workbench',
-    model: 'setup-pending',
     captures: [],
   });
   assert.equal(deterministicCalls, 0);
@@ -641,8 +777,7 @@ test('release installed smoke verifies the packaged shell without auto-installin
   const expectedDeterministic = {
     rendererIpcCommands: [],
     productTitle: 'Capture Workbench',
-    model: 'qwen3.5:0.8b',
-    captures: [{ sourceKind: 'image', fileName: 'fixture.png', targetTextVisible: true }],
+    captures: [{ sourceKind: 'image', fileName: 'fixture.png', recognizedTextVisible: true }],
   };
   const deterministicResult = await observe(
     exerciseInstalledPageForSource(
@@ -661,8 +796,8 @@ test('release installed smoke verifies the packaged shell without auto-installin
   assert.equal(deterministicCalls, 1);
 });
 
-function captureFixture(locatorKind) {
-  const sourceKind = locatorKind === 'time' ? 'audio' : 'image';
+function captureFixture(locatorKind: 'page' | 'time') {
+  const sourceKind: 'audio' | 'image' = locatorKind === 'time' ? 'audio' : 'image';
   const fileName = locatorKind === 'time' ? 'fixture.wav' : 'fixture.png';
   const mimeType = locatorKind === 'time' ? 'audio/wav' : 'image/png';
   const expectedTexts = ['fixture words'];
@@ -677,12 +812,12 @@ function captureFixture(locatorKind) {
   };
 }
 
-function captureDocument(fixture) {
+function rawCapture(fixture) {
   const locator =
     fixture.locatorKind === 'time'
       ? { kind: 'time', startMs: 0, endMs: 1000 }
       : { kind: 'page', page: 1 };
-  const rawSegments = [
+  const segments = [
     {
       segmentId: 'segment-1',
       order: 0,
@@ -690,40 +825,27 @@ function captureDocument(fixture) {
       text: fixture.expectedTexts[0],
     },
   ];
-  const blocks = [
-    {
-      blockId: 'block-1',
-      order: 0,
-      sourceSegmentId: 'segment-1',
-      type: fixture.locatorKind === 'time' ? 'transcript' : 'paragraph',
-      locator,
-      sourceText: fixture.expectedTexts[0],
-      targetText: `[zh-Hant] ${fixture.expectedTexts[0]}`,
-    },
-  ];
-  const engine = {
-    engine: 'deterministic-engine',
-    model: 'deterministic-model',
-    digest: `sha256:${'a'.repeat(64)}`,
-    device: 'fake',
-  };
   return {
     schemaVersion: '2',
+    diagnosticOnly: true,
     source: {
       sha256: createHash('sha256').update(fixture.buffer).digest('hex'),
       fileName: fixture.fileName,
       mediaType: fixture.mimeType,
       bytes: fixture.buffer.length,
     },
-    rawSegments,
-    blocks,
+    segments,
     sourceText: fixture.expectedTexts.join('\n'),
-    targetText: blocks.map((block) => block.targetText).join('\n'),
-    extractionEngine: engine,
-    structuringEngine: { ...engine, engine: 'deterministic-structurer' },
+    extractionEngine: {
+      engine: fixture.sourceKind === 'audio' ? 'speech-recognition' : 'windowsml-ocr',
+      model: fixture.sourceKind === 'audio'
+        ? 'deterministic-speech-recognition-v1'
+        : 'deterministic-windowsml-v1',
+      digest: `sha256:${'a'.repeat(64)}`,
+      device: 'fake',
+    },
     warnings: [],
-    createdAt: '2026-07-22T00:00:00Z',
-    completedAt: '2026-07-22T00:00:01Z',
+    createdAt: '2000-01-01T00:00:00Z',
   };
 }
 
