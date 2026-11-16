@@ -55,16 +55,23 @@ pub(super) fn render(
             if matches!(format, LibraryExportFormat::Markdown) {
                 let mut sections = vec![format!("# {heading}")];
                 sections.extend(pages.iter().map(|(page, text)| {
-                    format!(
-                        "## {}\n\n{text}",
-                        label.replace("{page}", &page.to_string())
-                    )
+                    let title = format!("## {}", label.replace("{page}", &page.to_string()));
+                    if text.trim().is_empty() {
+                        title
+                    } else {
+                        format!("{title}\n\n{text}")
+                    }
                 }));
                 sections.join("\n\n")
+            } else if pages.is_empty() {
+                // A result without page locators still has its recognized text.
+                text_of(raw, "sourceText").unwrap_or("").to_owned()
             } else {
+                // A page without text adds no blank block to the plain text.
                 pages
                     .into_iter()
                     .map(|(_, text)| text)
+                    .filter(|text| !text.trim().is_empty())
                     .collect::<Vec<_>>()
                     .join("\n\n")
             }
@@ -139,7 +146,9 @@ fn timestamp(ms: u64, separator: &str) -> String {
 }
 
 fn cue_text(text: &str) -> String {
-    text.lines()
+    // A lone carriage return is a line break to subtitle parsers too.
+    text.replace('\r', "\n")
+        .lines()
         .filter(|line| !line.trim().is_empty())
         .collect::<Vec<_>>()
         .join("\n")
@@ -162,6 +171,7 @@ fn render_recording(
     // resultSpeakersList prefers even an explicitly empty structured speaker list.
     let speakers = result
         .and_then(|value| value.get("speakers"))
+        .filter(|speakers| !speakers.is_null())
         .or_else(|| raw.get("speakers"))
         .and_then(Value::as_array);
     let mut output = Vec::new();
@@ -219,7 +229,8 @@ fn render_recording(
                 else {
                     continue;
                 };
-                if end <= start {
+                // A cue without text would end at its own blank line.
+                if end <= start || cue_text(text).is_empty() {
                     continue;
                 }
                 cue += 1;
@@ -387,14 +398,14 @@ mod tests {
     fn ocr_formats_apply_only_existing_page_edits() {
         assert_eq!(
             rendered(&ocr(), LibraryExportFormat::Text, false).content,
-            "corrected page\n\nlast\n\n"
+            "corrected page\n\nlast"
         );
         let payload = rendered(&ocr(), LibraryExportFormat::Markdown, false);
         assert_eq!(payload.file_name, "sample.md");
         assert_eq!(payload.media_type, "text/markdown;charset=utf-8");
         assert_eq!(
             payload.content,
-            "# sample.wav\n\n## Page 1\n\ncorrected page\n\n## Page 2\n\nlast\n\n## Page 3\n\n"
+            "# sample.wav\n\n## Page 1\n\ncorrected page\n\n## Page 2\n\nlast\n\n## Page 3"
         );
         assert_eq!(pages(&ocr(), None)[0].1, "first\nsecond");
         for format in [LibraryExportFormat::Srt, LibraryExportFormat::Vtt] {
@@ -523,6 +534,7 @@ mod tests {
         let raw = json!({"segments":[
             {"segmentId":"x", "speaker":"s", "text":"one\n \n--> <two>&", "locator":{"kind":"time", "startMs":1, "endMs":1001}},
             {"text":"no end", "locator":{"kind":"time", "startMs":0}},
+            {"text":" \r\n ", "locator":{"kind":"time", "startMs":5, "endMs":9}},
             {"text":"backward", "locator":{"kind":"time", "startMs":3, "endMs":2}},
             {"text":"empty range", "locator":{"kind":"time", "startMs":2, "endMs":2}},
             {"text":"negative", "locator":{"kind":"time", "startMs":-1, "endMs":2}},
@@ -545,6 +557,26 @@ mod tests {
         assert!(vtt.contains("<v A&lt;B&amp;>one\n→ &lt;two&gt;&amp;"));
         assert_eq!(vtt.matches("-->").count(), 1);
         assert!(!vtt.contains("no end"));
+        let unlocated = json!({"sourceText":"whole text", "segments":[]});
+        assert_eq!(
+            rendered(&unlocated, LibraryExportFormat::Text, false).content,
+            "whole text"
+        );
+        let null_speakers = json!({"speakers": null});
+        assert_eq!(
+            render(
+                "x",
+                "audio/wav",
+                Some(&transcript()),
+                Some(&null_speakers),
+                None,
+                &LibraryExportFormat::Text,
+                None
+            )
+            .unwrap()
+            .content,
+            "Recognized: original\nRecognized: next"
+        );
     }
 
     #[test]
