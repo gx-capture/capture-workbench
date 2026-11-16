@@ -2,11 +2,13 @@
 // real-desktop-ocr-smoke.ts. The small tests at the top pin which screenshot
 // checkpoints have pixel baselines; the last test runs the journey itself and
 // compares each checkpoint with the approved screenshots.
-import { extname } from 'node:path';
-
 import { expect, test } from '@playwright/test';
 
-import { DESKTOP_OCR_ACCEPTANCE_CHECKPOINTS, main } from './real-desktop-ocr-smoke.ts';
+import {
+  acceptanceScreenshotMasks,
+  DESKTOP_OCR_ACCEPTANCE_CHECKPOINTS,
+  main,
+} from './real-desktop-ocr-smoke.ts';
 
 const OCR_ONLY_MAIN_CHECKPOINT_NAMES: readonly string[] = [
   '01-consent-required',
@@ -25,28 +27,21 @@ const OCR_ONLY_SKIPPED_CHECKPOINT_NAMES: readonly string[] = [
   '03-ocr-checkpoint',
 ];
 
-const STRUCTURING_ONLY_CHECKPOINT_NAME = '03-successful-result';
-
 export function screenshotName(
   name: string,
   installedOcrOnly = Boolean(process.env.E2E_ACCEPTANCE_RUN_ID?.trim()),
 ): string {
-  const sourcePath = process.env.CAPTURE_REAL_DESKTOP_OCR_PDF?.trim()
-    || process.env.CAPTURE_REAL_DESKTOP_OCR_INPUT?.trim()
-    || '';
   if (installedOcrOnly && (name === '01-runtime-ready' || name === '04-review-complete')) {
     return `${name}-ocr-only`;
   }
-  return name === '03-successful-result' && extname(sourcePath).toLowerCase() === '.pdf'
-    ? `${name}-pdf`
-    : name;
+  return name;
 }
 
 test('installed OCR-only routing uses the dedicated runtime-ready golden', () => {
   expect(screenshotName('01-runtime-ready', true)).toBe('01-runtime-ready-ocr-only');
 });
 
-test('non-acceptance structuring routing retains the shared runtime-ready golden', () => {
+test('non-acceptance routing retains the shared runtime-ready golden', () => {
   expect(screenshotName('01-runtime-ready', false)).toBe('01-runtime-ready');
 });
 
@@ -54,7 +49,7 @@ test('installed OCR-only routing uses the dedicated review-complete golden', () 
   expect(screenshotName('04-review-complete', true)).toBe('04-review-complete-ocr-only');
 });
 
-test('non-acceptance structuring routing retains the shared review-complete golden', () => {
+test('non-acceptance routing retains the shared review-complete golden', () => {
   expect(screenshotName('04-review-complete', false)).toBe('04-review-complete');
 });
 
@@ -103,30 +98,7 @@ test('OCR-only checkpoint inventory is bound to the smoke journey source', () =>
   expect(new Set(DESKTOP_OCR_ACCEPTANCE_CHECKPOINTS).size).toBe(
     DESKTOP_OCR_ACCEPTANCE_CHECKPOINTS.length,
   );
-  expect(
-    DESKTOP_OCR_ACCEPTANCE_CHECKPOINTS.filter(
-      (name) => name === STRUCTURING_ONLY_CHECKPOINT_NAME,
-    ),
-  ).toEqual([STRUCTURING_ONLY_CHECKPOINT_NAME]);
-  expect(
-    DESKTOP_OCR_ACCEPTANCE_CHECKPOINTS.filter(
-      (name) => name !== STRUCTURING_ONLY_CHECKPOINT_NAME,
-    ),
-  ).toEqual(OCR_ONLY_MAIN_CHECKPOINT_NAMES);
-});
-
-test('structuring PDF successful-result routing remains unchanged', () => {
-  const previousPdf = process.env.CAPTURE_REAL_DESKTOP_OCR_PDF;
-  process.env.CAPTURE_REAL_DESKTOP_OCR_PDF = 'approved-fixture.pdf';
-  try {
-    expect(screenshotName('03-successful-result', false)).toBe('03-successful-result-pdf');
-  } finally {
-    if (previousPdf === undefined) {
-      delete process.env.CAPTURE_REAL_DESKTOP_OCR_PDF;
-    } else {
-      process.env.CAPTURE_REAL_DESKTOP_OCR_PDF = previousPdf;
-    }
-  }
+  expect([...DESKTOP_OCR_ACCEPTANCE_CHECKPOINTS]).toEqual(OCR_ONLY_MAIN_CHECKPOINT_NAMES);
 });
 
 test('real Capture Workbench WebView2 golden journey matches approved screenshots', async () => {
@@ -152,17 +124,7 @@ test('real Capture Workbench WebView2 golden journey matches approved screenshot
       await expect(page).toHaveScreenshot(`${screenshotName(name)}.png`, {
         animations: 'disabled',
         fullPage: false,
-        mask: [
-          page.locator('time'),
-          page.locator('.dynamic-id'),
-          page.locator('.document-copy strong'),
-          page.locator('.detail-heading h2'),
-          page.locator('.detail-heading p:last-child'),
-          // Mask complete privacy-sensitive cards; dynamic OCR segment text
-          // may overflow the child nodes that previously carried masks.
-          page.getByTestId('document-raw'),
-          page.getByTestId('document-result'),
-        ],
+        mask: acceptanceScreenshotMasks(page),
       });
     },
   });

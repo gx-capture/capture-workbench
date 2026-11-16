@@ -11,7 +11,6 @@ import test from 'node:test';
 
 import {
   buildOcrOnlySemanticEvidence,
-  buildOcrSemanticEvidence,
   countAnchors,
   OcrSemanticEvidenceValidationError,
   OCR_SEMANTIC_EVIDENCE_ARTIFACT,
@@ -25,65 +24,12 @@ const RUNTIME_SHA = 'b'.repeat(64);
 const CONTRACT_SHA = 'c'.repeat(64);
 const WORKER_SHA = 'f'.repeat(64);
 
-test('projects the durable library detail into privacy-safe JPEG semantic evidence', () => {
-  const output = buildOcrSemanticEvidence(completedDetail(), expectedIdentity(),);
-
-  assert.deepEqual(output, {
-    schemaVersion: 1,
-    artifactPath: OCR_SEMANTIC_EVIDENCE_ARTIFACT,
-    runId: 'run-2026-08-29',
-    fixtureName: 'ocr_test_image.jpeg',
-    sourceKind: 'image',
-    sourceSha256: SOURCE_SHA,
-    captureId: 'capture-1',
-    status: 'completed',
-    ocrDevice: 'windowsml-dml',
-    pageCount: 1,
-    pages: [{
-      page: 1,
-      status: 'recognized',
-      normalizedCharCount: 11,
-      boxCount: 1,
-      confidence: 0.875,
-      confidenceSummary: {
-        scoreState: 'numeric',
-        numericCount: 1,
-        min: 0.875,
-        max: 0.875,
-        mean: 0.875,
-      },
-    }],
-    provenance: {
-      runtimeVersion: RELEASE_VERSION,
-      contractSha256: CONTRACT_SHA,
-      engine: 'windowsml-ocr',
-      model: 'pp-ocrv6-medium-windowsml',
-      modelDigest: `sha256:${'d'.repeat(64)}`,
-      device: 'NVIDIA GeForce RTX 4060 Laptop GPU',
-      profileId: 'profile-1',
-      profileSpecSha256: 'e'.repeat(64),
-      workerSha256: WORKER_SHA,
-    },
-    rawNonEmpty: true,
-    rawSegmentCount: 1,
-    rawNonEmptySegmentCount: 1,
-    resultNonEmpty: true,
-    resultBlockCount: 1,
-    resultNonEmptyBlockCount: 1,
-    criticalAnchors: { expectedCount: 1, matchedCount: 1 },
-    evidenceDigest: expectSha256OfDurableEvidence(),
-  });
-
-  const serialized = JSON.stringify(output);
-  assert.doesNotMatch(serialized, /snow man|box-secret|polygon|C:\\private|Bearer|token/u);
-});
-
 test('uses durable raw text for anchors and never substitutes summary counts', () => {
-  const detail = completedDetail();
+  const detail = ocrOnlyDetail();
   assert.ok(detail.raw);
   detail.raw.sourceText = 'unrelated text';
   assert.throws(
-    () => buildOcrSemanticEvidence(detail, expectedIdentity()),
+    () => buildOcrOnlySemanticEvidence(detail, expectedIdentity()),
     /critical OCR anchor/u,
   );
 });
@@ -136,6 +82,9 @@ test('projects the durable awaiting OCR checkpoint without inventing a structure
     criticalAnchors: { expectedCount: 1, matchedCount: 1 },
     evidenceDigest: expectSha256OfDurableEvidence(),
   });
+
+  const serialized = JSON.stringify(output);
+  assert.doesNotMatch(serialized, /snow man|box-secret|polygon|C:\\private|Bearer|token/u);
 });
 
 test('OCR-only semantic evidence fails closed for durable and execution-proof drift', () => {
@@ -169,19 +118,19 @@ test('reports the actual ordered partial anchor count while still failing incomp
 
 test('fails closed when durable evidence or identity is missing or tampered', () => {
   const cases: Array<[string, () => unknown, RegExp]> = [
-    ['missing evidence', () => buildOcrSemanticEvidence({ ...completedDetail(), ocrEvidence: undefined }, expectedIdentity()), /durable OCR evidence/u],
-    ['source mismatch', () => buildOcrSemanticEvidence(completedDetail(), { ...expectedIdentity(), sourceSha256: 'b'.repeat(64) }), /sourceSha256 mismatch/u],
-    ['contract mismatch', () => buildOcrSemanticEvidence(completedDetail(), { ...expectedIdentity(), contractSha256: 'b'.repeat(64) }), /contract(?:Set)?Sha256 mismatch/u],
-    ['worker mismatch', () => buildOcrSemanticEvidence(completedDetail(), { ...expectedIdentity(), workerSha256: 'b'.repeat(64) }), /workerSha256 mismatch/u],
-    ['capture mismatch', () => buildOcrSemanticEvidence(completedDetail(), { ...expectedIdentity(), captureId: 'different-capture' }), /captureId mismatch/u],
-    ['digest mismatch', () => buildOcrSemanticEvidence({ ...completedDetail(), ocrEvidence: { ...completedDetail().ocrEvidence, digest: '0'.repeat(64) } }, expectedIdentity()), /digest mismatch/u],
-    ['anchor miss', () => buildOcrSemanticEvidence(completedDetail(), { ...expectedIdentity(), anchors: ['missing anchor'] }), /critical OCR anchor/u],
+    ['missing evidence', () => buildOcrOnlySemanticEvidence({ ...ocrOnlyDetail(), ocrEvidence: undefined }, expectedIdentity()), /durable OCR evidence/u],
+    ['source mismatch', () => buildOcrOnlySemanticEvidence(ocrOnlyDetail(), { ...expectedIdentity(), sourceSha256: 'b'.repeat(64) }), /sourceSha256 mismatch/u],
+    ['contract mismatch', () => buildOcrOnlySemanticEvidence(ocrOnlyDetail(), { ...expectedIdentity(), contractSha256: 'b'.repeat(64) }), /contract(?:Set)?Sha256 mismatch/u],
+    ['worker mismatch', () => buildOcrOnlySemanticEvidence(ocrOnlyDetail(), { ...expectedIdentity(), workerSha256: 'b'.repeat(64) }), /workerSha256 mismatch/u],
+    ['capture mismatch', () => buildOcrOnlySemanticEvidence(ocrOnlyDetail(), { ...expectedIdentity(), captureId: 'different-capture' }), /captureId mismatch/u],
+    ['digest mismatch', () => buildOcrOnlySemanticEvidence({ ...ocrOnlyDetail(), ocrEvidence: { ...ocrOnlyDetail().ocrEvidence, digest: '0'.repeat(64) } }, expectedIdentity()), /digest mismatch/u],
+    ['anchor miss', () => buildOcrOnlySemanticEvidence(ocrOnlyDetail(), { ...expectedIdentity(), anchors: ['missing anchor'] }), /critical OCR anchor/u],
   ];
   for (const [name, action, message] of cases) assert.throws(action, message, name);
 });
 
 test('binds completed durable model and profile provenance to the execution proof', () => {
-  const detail = completedDetail();
+  const detail = ocrOnlyDetail();
   const evidence = detail.ocrEvidence;
   const provenance = evidence.provenance as Record<string, unknown>;
   provenance.modelDigest = `sha256:${'1'.repeat(64)}`;
@@ -189,13 +138,13 @@ test('binds completed durable model and profile provenance to the execution proo
   evidence.digest = sha256(canonicalJson(withoutKey(evidence, 'digest')));
 
   assert.throws(
-    () => buildOcrSemanticEvidence(detail, expectedIdentity()),
+    () => buildOcrOnlySemanticEvidence(detail, expectedIdentity()),
     /modelDigest does not match execution proof/u,
   );
 });
 
 test('requires real JPEG semantics instead of a green result with empty OCR metrics', () => {
-  const detail = completedDetail();
+  const detail = ocrOnlyDetail();
   const evidence = detail.ocrEvidence as {
     pages: Array<Record<string, unknown>>;
     summary: Record<string, unknown>;
@@ -222,33 +171,15 @@ test('requires real JPEG semantics instead of a green result with empty OCR metr
   };
   evidence.digest = sha256(canonicalJson(withoutKey(evidence, 'digest')));
   assert.throws(
-    () => buildOcrSemanticEvidence(detail, expectedIdentity()),
+    () => buildOcrOnlySemanticEvidence(detail, expectedIdentity()),
     /recognized page|characters, boxes, and numeric confidence/u,
   );
-});
-
-test('accepts a failed multi-page PDF evidence record without inventing OCR success', () => {
-  const failed = failedPdfDetail();
-  const output = buildOcrSemanticEvidence(failed, {
-    ...expectedIdentity(false),
-    fixtureName: 'legal-scan.pdf',
-    sourceKind: 'pdf',
-    anchors: [],
-  });
-
-  assert.deepEqual(output.pages.map((page) => [page.page, page.status]), [[1, 'empty'], [2, 'failed']]);
-  assert.equal(output.status, 'failed');
-  assert.deepEqual(output.criticalAnchors, { expectedCount: 0, matchedCount: 0 });
-  assert.deepEqual(output.failure, {
-    code: 'ocr_worker_failed',
-    message: 'OCR failure: ocr_worker_failed.',
-  });
 });
 
 test('writes semantic evidence atomically and returns manifest-ready bytes and SHA', async () => {
   const root = await mkdtemp(join(tmpdir(), 'ocr-semantic-evidence-'));
   const path = join(root, OCR_SEMANTIC_EVIDENCE_ARTIFACT);
-  const evidence = buildOcrSemanticEvidence(completedDetail(), expectedIdentity());
+  const evidence = buildOcrOnlySemanticEvidence(ocrOnlyDetail(), expectedIdentity());
   const identity = await writeOcrSemanticEvidenceArtifact(path, evidence);
   const bytes = await readFile(path);
 
@@ -296,7 +227,7 @@ test('writes semantic evidence atomically and returns manifest-ready bytes and S
 test('manifest rejects a semantic artifact replacement after its atomic writer identity', async () => {
   const root = await mkdtemp(join(tmpdir(), 'ocr-semantic-evidence-replacement-'));
   const path = join(root, OCR_SEMANTIC_EVIDENCE_ARTIFACT);
-  const evidence = buildOcrSemanticEvidence(completedDetail(), expectedIdentity());
+  const evidence = buildOcrOnlySemanticEvidence(ocrOnlyDetail(), expectedIdentity());
   const identity = await writeOcrSemanticEvidenceArtifact(path, evidence);
   await writeFile(path, JSON.stringify({ ...evidence, runId: 'replacement' }, null, 2) + '\n');
 
@@ -325,21 +256,7 @@ test('manifest rejects a semantic artifact replacement after its atomic writer i
   );
 });
 
-function expectedIdentity(includeProof: false): {
-  runId: string;
-  fixtureName: string;
-  sourceKind: 'image';
-  sourceSha256: string;
-  runtimeVersion: string;
-  runtimeSha256: string;
-  contractSha256: string;
-  workerSha256: string;
-  ocrEngine: string;
-  ocrModel: string;
-  ocrDevice: 'windowsml-dml';
-  anchors: string[];
-};
-function expectedIdentity(includeProof?: true): {
+function expectedIdentity(): {
   runId: string;
   fixtureName: string;
   sourceKind: 'image';
@@ -363,8 +280,7 @@ function expectedIdentity(includeProof?: true): {
     requestedPageScope: null;
     device: 'windowsml-dml';
   };
-};
-function expectedIdentity(includeProof = true) {
+} {
   const identity = {
     runId: 'run-2026-08-29',
     fixtureName: 'ocr_test_image.jpeg',
@@ -379,7 +295,7 @@ function expectedIdentity(includeProof = true) {
     ocrDevice: 'windowsml-dml' as const,
     anchors: ['snow man'],
   };
-  return includeProof ? {
+  return {
     ...identity,
     executionProof: {
       sourceSha256: SOURCE_SHA,
@@ -392,7 +308,7 @@ function expectedIdentity(includeProof = true) {
       requestedPageScope: null,
       device: 'windowsml-dml' as const,
     },
-  } : identity;
+  };
 }
 
 interface TestDetail {
@@ -476,59 +392,6 @@ function completedDetail(): TestDetail {
       targetText: 'structured output',
       blocks: [{ sourceText: 'Snow man raw OCR', targetText: 'structured output' }],
     },
-  };
-}
-
-function failedPdfDetail(): TestDetail {
-  const base = completedDetail().ocrEvidence;
-  const unavailable = {
-    status: 'unavailable',
-    runtimeVersion: RELEASE_VERSION,
-    contractSha256: CONTRACT_SHA,
-    engine: null,
-    model: null,
-    modelDigest: null,
-    device: null,
-    profileId: 'profile-1',
-    profileSpecSha256: 'e'.repeat(64),
-    workerSha256: WORKER_SHA,
-  };
-  const page = (number: number, status: 'empty' | 'failed') => ({
-    page: number,
-    status,
-    raster: { width: 1200, height: 800 },
-    normalizedCharCount: 0,
-    boxCount: 0,
-    confidence: null,
-    confidenceSummary: {
-      scoreState: 'none',
-      numericCount: 0,
-      min: null,
-      max: null,
-      mean: null,
-    },
-    ...(status === 'failed' ? { failure: { code: 'ocr_worker_failed', message: 'OCR failure: ocr_worker_failed.' } } : {}),
-  });
-  const baseWithoutDigest = { ...base };
-  delete baseWithoutDigest.digest;
-  const evidenceWithoutDigest = {
-    ...baseWithoutDigest,
-    captureId: 'capture-pdf-failed',
-    sourceSha256: SOURCE_SHA,
-    status: 'failed',
-    pageCount: 2,
-    pages: [page(1, 'empty'), page(2, 'failed')],
-    provenance: unavailable,
-    summary: {
-      normalizedCharCount: 0,
-      boxCount: 0,
-      confidenceSummary: { scoreState: 'none', numericCount: 0, min: null, max: null, mean: null },
-    },
-    failure: { code: 'ocr_worker_failed', message: 'OCR failure: ocr_worker_failed.' },
-  };
-  return {
-    status: 'failed',
-    ocrEvidence: { ...evidenceWithoutDigest, digest: sha256(canonicalJson(evidenceWithoutDigest)) },
   };
 }
 

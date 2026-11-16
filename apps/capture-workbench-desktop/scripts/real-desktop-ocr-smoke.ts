@@ -2,16 +2,15 @@
 import { RELEASE_VERSION } from '../../../tools/release/release-intent.ts';
 // Real OCR journey on the packaged Capture Workbench desktop app: the path a
 // user takes with a scanned image or PDF. It launches the app with fresh app
-// data, connects over CDP, and walks the UI:
+// data, connects over CDP, and walks the routed UI:
 //
-//   01 consent to the core runtime install (with a retry) -> runtime ready
-//   02 import the source file -> document processing
-//   03 OCR finishes: the text must contain the expectation's anchors
-//      (diagnostic runs also structure the result: 03-successful-result)
-//   04 review complete
+//   01 first-run setup for text recognition only (with a retry) -> runtime ready
+//   02 verify OCR compute mode on Settings › Compute -> import source file on /ocr -> processing
+//   03 OCR checkpoint: result pages contain the expectation's anchors and match durable segments,
+//      and Settings › Diagnostics exposes matching extraction provenance
+//   04 delete verified document on /history -> review complete
 //
-// then deletes the documents it created and proves the app, the runtime
-// sidecar, the CDP port, and temporary app data are gone.
+// then proves the app, the runtime sidecar, the CDP port, and temporary app data are gone.
 //
 // Inputs (one per line):
 //   CAPTURE_REAL_DESKTOP_OCR_INPUT: required image source path unless CAPTURE_REAL_DESKTOP_OCR_PDF is set.
@@ -43,7 +42,6 @@ import { basename, dirname, extname, join, relative, resolve, sep } from 'node:p
 import { pathToFileURL } from 'node:url';
 
 import { chromium, type Browser, type Locator, type Page } from '@playwright/test';
-import { firstValueFrom } from 'rxjs';
 
 // eslint-disable-next-line @nx/enforce-module-boundaries -- acceptance artifacts are a workspace-level test contract.
 import {
@@ -58,29 +56,27 @@ import {
   type AcceptanceRun,
 } from '../../../tools/acceptance-contract.ts';
 import { assertStagedRuntime } from './assert-staged-runtime.ts';
-import {
-  isPackagedWorkbenchUrl,
-  SHOW_HISTORY_WORKSPACE_EXPRESSION,
-  showHistoryWorkspace,
-} from './packaged-workbench-page.ts';
+import { isPackagedWorkbenchUrl } from './packaged-workbench-page.ts';
 import {
   nativeClickWebViewElement,
   nativeOpenDialogUiAutomation,
 } from './installed-browser.ts';
+import {
+  assertVisibleOcrPageText,
+  expectedVisibleOcrPagesForRaw,
+  type ExpectedVisibleOcrPage,
+} from './installed-document-assertions.ts';
 import { assertRedactedEvidence } from './package-qa.ts';
 import {
   assertDurableOcrSegmentsEqual,
-  assertRealOcrResult,
+  assertRealOcrOnlyResult,
   loadRealOcrExpectation,
-  normalizeOcrText,
   type RealOcrLocator,
-  type RealOcrUiBlock,
   type RealOcrUiResult,
   type RealOcrUiSegment,
 } from './real-ocr-result-assertions.ts';
 import {
   buildOcrOnlySemanticEvidence,
-  buildOcrSemanticEvidence,
   writeOcrSemanticEvidenceArtifact,
   type OcrSemanticArtifactIdentity,
   type OcrSemanticEvidenceV1,
@@ -260,13 +256,12 @@ export interface DesktopOcrPollingLiveness {
 }
 
 export interface DesktopOcrPollingRecoveryOptions {
-  readonly fileName: string;
   readonly documentId: string;
-  /** Return at the durable OCR checkpoint instead of waiting for structuring. */
-  readonly stopAtOcrCheckpoint?: boolean;
+  readonly durableCompletion: 'ocr-checkpoint' | 'ocr-checkpoint-or-completed';
   readonly observeLiveness: () => Promise<DesktopOcrPollingLiveness>;
   readonly reattach: () => Promise<{ readonly browser: Browser; readonly page: Page }>;
-  readonly exactDocumentCard: (page: Page, fileName: string) => Locator;
+  readonly exactOcrQueueRow: (page: Page, documentId: string) => Locator;
+  readonly readDurableDetail?: (page: Page, documentId: string) => Promise<DurableLibraryDetailRecord>;
   readonly onReattached?: (attached: { readonly browser: Browser; readonly page: Page }) => Promise<void> | void;
   readonly recordDiagnostic?: (
     event: OcrLifecycleDiagnosticEvent,
@@ -342,20 +337,8 @@ export async function requestDesktopTeardown(
 
 type OcrDevice = 'windowsml-dml' | 'cpu';
 type SourceKind = 'pdf' | 'image' | 'audio' | 'unknown';
-export type DesktopOcrAcceptanceMode = 'ocr-only' | 'structuring';
+type DesktopOcrAcceptanceMode = 'ocr-only';
 type CdpBrowser = Awaited<ReturnType<typeof chromium.connectOverCDP>>;
-
-/**
- * Keeps the Phase 1 acceptance action distinct from the later product
- * structuring path.  The callback is the action seam, so tests can prove that
- * OCR-only acceptance does not even attempt model consent.
- */
-export async function maybeInstallStructuringModel(
-  mode: DesktopOcrAcceptanceMode,
-  install: () => Promise<void>,
-): Promise<void> {
-  if (mode !== 'ocr-only') await install();
-}
 
 export interface PackagedPageAcquisitionOptions {
   readonly initialBrowser?: CdpBrowser;
@@ -366,20 +349,18 @@ export interface PackagedPageAcquisitionOptions {
 
 interface RealDesktopSmokeEvidence {
   readonly evidenceKind: 'real-standalone-tauri-ui-ocr';
-  readonly acceptanceMode?: 'ocr-only' | 'structuring';
-  readonly releaseGateSatisfied: boolean;
+  readonly acceptanceMode: DesktopOcrAcceptanceMode;
+  readonly releaseGateSatisfied: false;
   readonly realEnginesExercised: true;
   readonly sourceKind: SourceKind;
   readonly rawOcrVisible: true;
   readonly ocrResultVerified: true;
-  readonly ocrProjectionVerified?: true;
+  readonly ocrProjectionVerified: true;
   readonly rawOcrSegmentCount: number;
-  readonly structuredBlockCount: number;
+  readonly structuredBlockCount: 0;
   readonly expectedAnchorCount: number;
   readonly matchedAnchorCount: number;
   readonly ocrDevice: OcrDevice;
-  readonly structuringEngine?: 'ollama';
-  readonly model?: string;
   readonly documentDeletedAfterVerification: true;
   readonly sourceSha256?: string;
   readonly ocrExecutionProof?: AcceptanceOcrExecutionProofSummary;
@@ -850,38 +831,37 @@ function isDescendantOrSelf(parent: string, child: string): boolean {
   return childRelative === '' || (!childRelative.startsWith(`..${sep}`) && childRelative !== '..' && !childRelative.includes(`..${sep}`));
 }
 
-export function assertRealDesktopSmokeEvidence(value: unknown): asserts value is RealDesktopSmokeEvidence {
-  const report = value as Partial<RealDesktopSmokeEvidence> | undefined;
+export function assertRealDesktopSmokeEvidence(
+  value: unknown,
+  options: { readonly acceptance: boolean },
+): asserts value is RealDesktopSmokeEvidence {
+  const report = value as Partial<RealDesktopSmokeEvidence> & {
+    readonly structuringEngine?: unknown;
+    readonly model?: unknown;
+  } | undefined;
   assert.equal(report?.evidenceKind, 'real-standalone-tauri-ui-ocr');
-  assert.ok(report?.acceptanceMode === undefined || report.acceptanceMode === 'ocr-only' || report.acceptanceMode === 'structuring');
-  if (report?.acceptanceMode === 'ocr-only') {
-    // An OCR checkpoint is a completed extraction journey, not a structuring
-    // or release success.  Keep those terminal claims explicitly separate.
-    assert.equal(report.releaseGateSatisfied, false);
-    assert.equal(report.ocrProjectionVerified, true);
-    assert.equal(report.structuredBlockCount, 0);
-    assert.equal(report.structuringEngine, undefined);
-    assert.equal(report.model, undefined);
-    assert.ok(report.ocrExecutionProof);
+  // An OCR checkpoint is a completed extraction journey, not a structuring
+  // or release success.  Keep those terminal claims explicitly separate.
+  assert.equal(report?.acceptanceMode, 'ocr-only');
+  assert.equal(report?.releaseGateSatisfied, false);
+  assert.equal(report?.ocrProjectionVerified, true);
+  assert.equal(report?.structuredBlockCount, 0);
+  assert.equal(report?.structuringEngine, undefined);
+  assert.equal(report?.model, undefined);
+  if (options.acceptance) {
+    assert.ok(report?.ocrExecutionProof);
     assert.equal(report.ocrExecutionProof.dmlNodeCount >= 1, true);
   } else {
-    assert.equal(report?.releaseGateSatisfied, true);
+    assert.equal(report?.ocrExecutionProof, undefined);
   }
   assert.equal(report?.realEnginesExercised, true);
   assert.ok(report?.sourceKind === 'pdf' || report?.sourceKind === 'image' || report?.sourceKind === 'audio' || report?.sourceKind === 'unknown');
   assert.equal(report?.rawOcrVisible, true);
   assert.equal(report?.ocrResultVerified, true);
   assert.ok(Number.isInteger(report?.rawOcrSegmentCount) && Number(report?.rawOcrSegmentCount) > 0);
-  if (report?.acceptanceMode !== 'ocr-only') {
-    assert.equal(report?.structuredBlockCount, report?.rawOcrSegmentCount);
-  }
   assert.ok(Number.isInteger(report?.expectedAnchorCount) && Number(report?.expectedAnchorCount) > 0);
   assert.equal(report?.matchedAnchorCount, report?.expectedAnchorCount);
   assert.ok(report?.ocrDevice === 'windowsml-dml' || report?.ocrDevice === 'cpu');
-  if (report?.acceptanceMode !== 'ocr-only') {
-    assert.equal(report?.structuringEngine, 'ollama');
-    assert.match(report?.model ?? '', /^capture-workbench-qwen3\.5-(?:0\.8b|2b|4b)-structure-v1$/u);
-  }
   assert.equal(report?.documentDeletedAfterVerification, true);
   if (report?.sourceSha256 !== undefined) {
     assert.match(report.sourceSha256, /^[a-f0-9]{64}$/u);
@@ -898,10 +878,6 @@ export async function main(options: {
   const acceptance: AcceptanceRun | undefined = process.env.E2E_ACCEPTANCE_RUN_ID
     ? createAcceptanceRun(process.env, 'capture-workbench', workspaceRoot)
     : undefined;
-  // Installed Phase 1 acceptance stops at the durable OCR checkpoint. The
-  // ordinary diagnostic smoke continues through the existing structuring
-  // journey so later product capability remains exercised when requested.
-  const acceptanceMode: DesktopOcrAcceptanceMode = acceptance ? 'ocr-only' : 'structuring';
   const acceptanceScreenshots: string[] = [];
   const acceptanceErrors: string[] = [];
   const consoleErrors: string[] = [];
@@ -1153,20 +1129,8 @@ export async function main(options: {
     page = attached.page;
     observeOcrPageLifecycle(page, browser, app);
     await page.waitForLoadState('domcontentloaded');
-    await page.setViewportSize({ width: 1440, height: 900 });
-    if (acceptance) {
-      await page.addStyleTag({
-        content: `
-          .review-block pre,
-          .provenance dd,
-          [data-testid="document-result-block-source"],
-          [data-testid="document-result-block-target"] {
-            color: transparent !important;
-            text-shadow: none !important;
-          }
-        `,
-      });
-    }
+    const viewport = await pinViewportToWindow(page);
+    await injectAcceptancePrivacyStyle(page, Boolean(acceptance));
     page.on('console', (message) => {
       if (message.type() === 'error') consoleErrors.push(message.text());
     });
@@ -1175,116 +1139,35 @@ export async function main(options: {
       videoPath = join(acceptance.artifactRoot, 'capture-workbench-golden-journey.webm');
       await page.screencast.start({
         path: videoPath,
-        size: { width: 1440, height: 900 },
+        size: viewport,
       });
       videoStarted = true;
     }
     await checkpointJournal?.complete('cdp', 'initial-attach');
 
     await checkpointJournal?.begin('runtime', 'runtime-ready');
-    const setup = page.getByTestId('runtime-setup');
-    const intake = page.getByTestId('source-import');
-    const initialState = await waitUntil<'ready' | 'setup'>(
-      async () => {
-        const runtimeError = await visibleRuntimeError(page);
-        if (runtimeError) throw new Error(runtimeError);
-        if (await intake.isEnabled()) return 'ready';
-        if (await setup.isVisible()) return 'setup';
-        return undefined;
+    await runOcrFirstRunSetup(page, {
+      readyTimeoutMs: realDesktopRuntimeReadyTimeoutMs,
+      installTimeoutMs: realDesktopDependencyInstallTimeoutMs,
+      onConsentRequired: async (consentPage) => {
+        await acceptanceScreenshot(consentPage, acceptance, acceptanceScreenshots, '01-consent-required', options.checkpoint);
       },
-      realDesktopRuntimeReadyTimeoutMs,
-      'Capture Workbench did not reach ready or needs-setup UI state.',
-    );
-    if (initialState === 'setup') {
-      await acceptanceScreenshot(page, acceptance, acceptanceScreenshots, '01-consent-required', options.checkpoint);
-      const install = setup.getByTestId('runtime-install');
-      if (await install.isVisible()) {
-        if (!(await install.isEnabled())) {
-          throw new Error(`Capture Workbench core runtime consent button was unexpectedly disabled. ${await runtimeSetupDiagnostics(page)}`);
-        }
-        await install.click();
+      onInstallStarted: () => {
         observeOwnedSidecar();
         workerDownloadRequired = true;
-        let coreInstallCompleted = false;
-        await acceptanceScreenshot(page, acceptance, acceptanceScreenshots, '01-core-install-started', options.checkpoint);
-        let filesystemRetryCount = 0;
-        await waitUntil(
-          async () => {
-            const runtimeError = await visibleRuntimeError(page);
-            if (runtimeError) throw new Error(runtimeError);
-            const progress = page.getByTestId('runtime-install-progress');
-            if (await progress.isVisible()) {
-              const status = await progress.getAttribute('data-status');
-              if (status === 'failed' || status === 'cancelled' || status === 'manual_action_required') {
-                const detail = await progress.getByTestId('runtime-install-error').textContent().catch(() => undefined);
-                if (status === 'failed' && detail?.trim().startsWith('installation_filesystem:') && filesystemRetryCount < 1) {
-                  filesystemRetryCount += 1;
-                  await waitUntil(
-                    () => install.isEnabled().then((enabled) => enabled || undefined),
-                    10_000,
-                    'Capture Workbench did not re-enable core runtime consent after a filesystem failure.',
-                  );
-                  await install.click();
-                  observeOwnedSidecar();
-                  await acceptanceScreenshot(page, acceptance, acceptanceScreenshots, '01-core-install-retry', options.checkpoint);
-                  return undefined;
-                }
-                throw new Error(`Capture Workbench core runtime installation ended ${status}: ${detail?.trim() || (await progress.textContent())?.trim() || 'no detail was rendered.'}`);
-              }
-              if (status === 'completed') {
-                coreInstallCompleted = true;
-                return true;
-              }
-            }
-            if (filesystemRetryCount === 0 && acceptanceMode === 'structuring') {
-              const modelSelection = page.getByTestId('model-selection');
-              const modelOption = modelSelection.locator('[data-testid="model-option"]').first();
-              if (await modelSelection.isVisible() && await modelOption.isEnabled()) return true;
-            }
-            const runtimeState = await page.getByTestId('workbench-root').getAttribute('data-runtime-state').catch(() => undefined);
-            const installVisible = await install.isVisible();
-            if (coreInstallCompleted || (!installVisible && runtimeState === 'ready')) return true;
-            if (runtimeState === 'error') {
-              throw new Error(`Capture Workbench core runtime installation entered an error state. ${await runtimeSetupDiagnostics(page)}`);
-            }
-            if (filesystemRetryCount > 0) return undefined;
-            return undefined;
-          },
-          realDesktopDependencyInstallTimeoutMs,
-          `Capture Workbench core runtime installation did not reach model selection. ${await runtimeSetupDiagnostics(page)}`,
-        );
-      }
-      const modelSelection = setup.getByTestId('model-selection');
-      await maybeInstallStructuringModel(acceptanceMode, async () => {
-        if (!(await modelSelection.isVisible())) return;
-        const option = modelSelection.locator('[data-testid="model-option"]').first();
-        if (!(await option.count())) {
-          throw new Error('Capture Workbench did not expose a selectable structuring model option.');
-        }
-        await option.check();
-        if (!(await option.isChecked())) {
-          throw new Error('Capture Workbench did not retain the selected structuring model option.');
-        }
-        const modelInstall = modelSelection.getByTestId('model-install');
-        await waitUntil(
-          () => modelInstall.isEnabled().then((enabled) => enabled || undefined),
-          10_000,
-          'Capture Workbench structuring model consent remained disabled after selecting an option.',
-        );
-        await modelInstall.click();
-        observeOwnedSidecar();
-        await waitUntil(
-          () => waitForPackagedRuntimeReadySignal(cdpPort).then((ready) => ready || undefined),
-          realDesktopDependencyInstallTimeoutMs,
-          'Capture Workbench model installation did not publish a ready signal.',
-        );
-      });
-    }
+      },
+      onInstallProgress: async (enginesPage) => {
+        await acceptanceScreenshot(enginesPage, acceptance, acceptanceScreenshots, '01-core-install-started', options.checkpoint);
+      },
+      onInstallRetry: async (enginesPage) => {
+        await acceptanceScreenshot(enginesPage, acceptance, acceptanceScreenshots, '01-core-install-retry', options.checkpoint);
+      },
+    });
     try {
       await waitUntil(
-        () => waitForPackagedRuntimeReadySignal(cdpPort).then((ready) => ready || undefined),
+        () => waitForPackagedRuntimeReadySignal(cdpPort, page).then((ready) => ready || undefined),
         realDesktopRuntimeReadyTimeoutMs,
-        'Standalone desktop runtime did not publish a ready signal after the visible consent/install flow.',
+        'Standalone desktop runtime did not publish a ready signal after first-run setup.',
       );
       const reattached = await reattachToPackagedPage(cdpPort);
       observeOwnedSidecar();
@@ -1297,19 +1180,7 @@ export async function main(options: {
         if (message.type() === 'error') consoleErrors.push(message.text());
       });
       page.on('pageerror', (error) => pageErrors.push(error.message));
-      if (acceptance) {
-        await page.addStyleTag({
-          content: `
-            .review-block pre,
-            .provenance dd,
-            [data-testid="document-result-block-source"],
-            [data-testid="document-result-block-target"] {
-              color: transparent !important;
-              text-shadow: none !important;
-            }
-          `,
-        });
-      }
+      await injectAcceptancePrivacyStyle(page, Boolean(acceptance));
     } catch (error) {
       const state = await queryPackagedUiState(cdpPort).then((value) => value?.runtimeState).catch(() => undefined);
       throw new Error(
@@ -1319,6 +1190,8 @@ export async function main(options: {
       );
     }
     await checkpointJournal?.complete('runtime', 'runtime-ready');
+    const computeObservation = await readOcrComputeModeFromSettings(page);
+    uiGpuBeforeImport = computeObservation.visible && computeObservation.mode === 'gpu-dml';
     if (acceptance) {
       await checkpointJournal?.begin('ocr_compute', 'compute-preflight');
       if (expectedOcrDevice !== 'windowsml-dml') {
@@ -1332,9 +1205,8 @@ export async function main(options: {
       if (authenticatedOcrPreflight.mode !== 'gpu-dml') {
         throw new Error('Authenticated Capture Runtime OCR preflight did not select GPU-DML.');
       }
-      const uiState = await queryPackagedUiState(cdpPort);
-      uiGpuBeforeImport = uiState?.ocrComputeMode === 'gpu-dml' && uiState.ocrComputeVisible;
-      if (!uiGpuBeforeImport || !uiState?.sourceImportEnabled) {
+      const readyUiState = await queryPackagedUiState(cdpPort);
+      if (!uiGpuBeforeImport || !readyUiState?.sourceImportEnabled) {
         throw new Error('Capture Workbench UI did not expose GPU OCR readiness before import.');
       }
       const workerArchiveSha256 = workerMirror?.identity.archiveSha256;
@@ -1372,6 +1244,8 @@ export async function main(options: {
     await acceptanceResponsiveLayout(page, acceptance);
     acceptanceStage('after-responsive-layout');
     await deleteCompletedOwnedSmokeDocuments(page);
+    const intake = page.getByTestId('ocr-choose-files');
+    await intake.waitFor({ state: 'visible', timeout: 15_000 });
     acceptanceStage('before-native-picker');
     await nativeOpenDialogUiAutomation(
       pickerSourcePath,
@@ -1394,42 +1268,14 @@ export async function main(options: {
       if (message.type() === 'error') consoleErrors.push(message.text());
     });
     page.on('pageerror', (error) => pageErrors.push(error.message));
-    if (acceptance) {
-      await page.addStyleTag({
-        content: `
-          .review-block pre,
-          .provenance dd,
-          [data-testid="document-result-block-source"],
-          [data-testid="document-result-block-target"] {
-            color: transparent !important;
-            text-shadow: none !important;
-          }
-        `,
-      });
-    }
+    await injectAcceptancePrivacyStyle(page, Boolean(acceptance));
     acceptanceStage('after-picker-page-reattach');
-    const libraryProbe = await waitUntil(async () => {
-      const probe = await page.evaluate(async (expectedName) => {
-        const internals = (globalThis as typeof globalThis & {
-          __TAURI_INTERNALS__?: {
-            invoke?: (name: string, args?: Record<string, unknown>) => Promise<unknown>;
-          };
-        }).__TAURI_INTERNALS__;
-        if (typeof internals?.invoke !== 'function') throw new Error('Packaged Tauri command bridge is unavailable after native picker.');
-        const result = await internals.invoke('library_list', { request: { query: '', status: '' } });
-        const records = Array.isArray(result) ? result : [];
-        return {
-          count: records.length,
-          exact: records.some((record) => record && typeof record === 'object' && !Array.isArray(record)
-            && (record as { fileName?: unknown }).fileName === expectedName),
-        };
-      }, sourceName);
-      return probe.exact ? probe : undefined;
-    }, 30_000, 'Native picker closed without an exact library import acknowledgement.');
-    acceptanceStage(`after-picker-library-${libraryProbe.exact ? 'exact' : 'missing'}-count-${libraryProbe.count}`);
-    const card = exactDocumentCard(page, sourceName);
+    const libraryProbe = await waitForImportedDocumentId(page, sourceName, 30_000);
+    importedDocumentId = libraryProbe.documentId;
+    acceptanceStage(`after-picker-library-exact-count-${libraryProbe.count}`);
+    const queueRow = exactOcrQueueRow(page, importedDocumentId);
     acceptanceStage('before-document-card-wait');
-    await card.waitFor({ state: 'visible', timeout: 60_000 });
+    await queueRow.waitFor({ state: 'visible', timeout: 60_000 });
     acceptanceStage('after-document-card-wait');
     // Let the native picker close and the first durable processing state render
     // before asking WebView2 for a screenshot.
@@ -1437,19 +1283,14 @@ export async function main(options: {
     await acceptanceScreenshot(page, acceptance, acceptanceScreenshots, '02-document-processing', options.checkpoint);
 
     assert.equal(
-      await card.count(),
+      await queueRow.count(),
       1,
-      'Standalone desktop smoke filename must identify exactly one document.',
+      'Standalone desktop smoke document row must identify exactly one document.',
     );
-    importedDocumentId = await card.getAttribute('data-document-id') ?? undefined;
-    if (!importedDocumentId) {
-      throw new Error('Standalone desktop smoke document omitted its document identity.');
-    }
     await checkpointJournal?.begin('ocr_semantic', 'ocr-result');
-    const completed = await waitForDesktopOcrCompletion(page, card, 10 * 60_000, {
-      fileName: sourceName,
+    const completed = await waitForDesktopOcrCompletion(page, queueRow, 10 * 60_000, {
       documentId: importedDocumentId,
-      stopAtOcrCheckpoint: acceptanceMode === 'ocr-only',
+      durableCompletion: acceptance ? 'ocr-checkpoint' : 'ocr-checkpoint-or-completed',
       observeLiveness: async () => ({
         appAlive: app.exitCode === null && app.signalCode === null && app.pid !== undefined && isProcessAlive(app.pid),
         runtimeAlive: runtimeSidecarPid !== undefined && isProcessAlive(runtimeSidecarPid),
@@ -1468,91 +1309,56 @@ export async function main(options: {
           if (message.type() === 'error') consoleErrors.push(message.text());
         });
         page.on('pageerror', (error) => pageErrors.push(error.message));
-        if (acceptance) {
-          await page.addStyleTag({
-            content: `
-              .review-block pre,
-              .provenance dd,
-              [data-testid="document-result-block-source"],
-              [data-testid="document-result-block-target"] {
-                color: transparent !important;
-                text-shadow: none !important;
-              }
-            `,
-          });
-        }
+        await injectAcceptancePrivacyStyle(page, Boolean(acceptance));
         return attached;
       },
-      exactDocumentCard,
+      exactOcrQueueRow,
       recordDiagnostic: recordOcrLifecycleDiagnostic,
     });
     page = completed.page;
-    await completed.card.click();
+    await completed.row.getByTestId('ocr-row-view').click();
 
-    const raw = page.locator('.review-block').filter({ hasText: '辨識文字' }).locator('pre');
-    const result = page.locator('.review-block.result pre');
-    await raw.waitFor({ state: 'visible', timeout: 30_000 });
-    if (acceptanceMode !== 'ocr-only') {
-      await result.waitFor({ state: 'visible', timeout: 30_000 });
-    } else if (await result.isVisible().catch(() => false)) {
-      throw new Error('OCR-only acceptance reached a structured result before the OCR checkpoint.');
-    }
-    const [rawText, resultText, provenance] = await Promise.all([
-      raw.textContent(),
-      acceptanceMode === 'ocr-only' ? Promise.resolve(null) : result.textContent(),
-      acceptanceMode === 'ocr-only' ? Promise.resolve([]) : page.locator('.provenance dd').allTextContents(),
-    ]);
-    if (!rawText?.trim()) {
-      throw new Error('Standalone desktop UI did not display OCR raw text.');
-    }
-    if (acceptanceMode !== 'ocr-only' && !resultText?.trim()) {
-      throw new Error('Standalone desktop UI did not display structured result text.');
-    }
-    const uiResult: RealOcrUiResult = {
-      rawText,
-      rawSegments: await collectVisibleOcrSegments(page),
-      structuredText: resultText ?? '',
-      structuredBlocks: acceptanceMode === 'ocr-only' ? [] : await collectVisibleStructuredBlocks(page),
-    };
     // Capture Runtime has already been deleted by the time this checkpoint
     // runs. Read one durable library snapshot and derive every semantic claim
-    // from it, rather than asking the runtime or inferring from the UI.
-    const durableLibraryDetail = sourceKind === 'pdf' || acceptance
-      ? await readDurableLibraryDetail(page, importedDocumentId)
-      : undefined;
-    const pdfPageScope = sourceKind === 'pdf' && durableLibraryDetail !== undefined
+    // from it alongside the visible per-page result controls.
+    const durableLibraryDetail = await readDurableLibraryDetail(page, importedDocumentId);
+    const expectedPages = expectedVisibleOcrPagesForRaw(durableLibraryDetail.raw);
+    const visibleOcr = await readAndAssertVisibleOcrPages(page, expectedPages);
+    const rawSegments = extractDurableOcrSegments(durableLibraryDetail);
+    const uiResult: RealOcrUiResult = {
+      rawText: visibleOcr.rawText,
+      rawSegments,
+    };
+    const pdfPageScope = sourceKind === 'pdf'
       ? readPdfPageScope(durableLibraryDetail)
       : undefined;
     if (sourceKind === 'pdf') {
       if (pdfPageScope === undefined) {
         throw new Error('Packaged PDF raw capture omitted page-scope evidence.');
       }
+      if (acceptance) {
+        assert.deepEqual(
+          pdfPageScope.processedPageNumbers,
+          [1],
+          'Packaged PDF acceptance run must process only page one.',
+        );
+      }
       const visibleRawPages = uiResult.rawSegments
         .map((segment) => segment.locator.kind === 'page' ? segment.locator.page : undefined)
         .filter((pageNumber): pageNumber is number => pageNumber !== undefined);
       assert.deepEqual(
         [...new Set(visibleRawPages)].sort((left, right) => left - right),
-        [1],
-        'Packaged PDF UI OCR must expose only page one segments.',
+        pdfPageScope.processedPageNumbers,
+        'Packaged PDF durable OCR segments must match processed page scope.',
       );
-      if (acceptanceMode !== 'ocr-only') {
-        const visibleStructuredPages = uiResult.structuredBlocks
-          .map((block) => block.locator.kind === 'page' ? block.locator.page : undefined)
-          .filter((pageNumber): pageNumber is number => pageNumber !== undefined);
-        assert.deepEqual(
-          [...new Set(visibleStructuredPages)].sort((left, right) => left - right),
-          [1],
-          'Packaged PDF structured UI must expose only page one blocks.',
-        );
-      }
+      assert.deepEqual(
+        expectedPages.map((entry) => entry.page),
+        pdfPageScope.processedPageNumbers,
+        'Packaged PDF visible UI pages must match processed page scope.',
+      );
     }
-    const ocrVerification = acceptanceMode === 'ocr-only'
-      ? assertRealOcrOnlyResult(uiResult, ocrExpectation, sourceFixtureName)
-      : assertRealOcrResult(uiResult, ocrExpectation, sourceFixtureName);
+    const ocrVerification = assertRealOcrOnlyResult(uiResult, ocrExpectation, sourceFixtureName);
     if (acceptance) {
-      if (durableLibraryDetail === undefined) {
-        throw new Error('Installed acceptance did not read a durable library detail for semantic OCR evidence.');
-      }
       importedSourceSha256 = readImportedSourceSha256(durableLibraryDetail);
       assert.equal(
         importedSourceSha256,
@@ -1563,29 +1369,24 @@ export async function main(options: {
         ...acceptanceEvidence,
         importedSourceSha256,
       };
-      if (acceptanceMode === 'ocr-only') {
-        if (sourceKind !== 'pdf' && sourceKind !== 'image') {
-          throw new Error('Installed OCR semantic evidence requires an image or PDF fixture.');
-        }
-        assertDurableOcrCheckpoint(durableLibraryDetail, {
-          sourceKind,
-          sourceSha256,
-          rawSegments: uiResult.rawSegments,
-        });
+      if (sourceKind !== 'pdf' && sourceKind !== 'image') {
+        throw new Error('Installed OCR semantic evidence requires an image or PDF fixture.');
       }
+      assertDurableOcrCheckpoint(durableLibraryDetail, {
+        sourceKind,
+        sourceSha256,
+        rawSegments: uiResult.rawSegments,
+      });
     }
-    const structured = acceptanceMode === 'ocr-only'
-      ? undefined
-      : await readStructuredProvenance(page, provenance);
-    const ocr = acceptanceMode === 'ocr-only'
-      ? readDurableOcrProvenance(durableLibraryDetail ?? {})
-      : await readOcrProvenance(page);
+    await acceptanceScreenshot(page, acceptance, acceptanceScreenshots, '03-ocr-checkpoint', options.checkpoint);
+
+    const ocr = await assertDiagnosticsMatchesDurableOcr(page, durableLibraryDetail, importedDocumentId);
     assertExpectedOcrDevice(ocr.device, expectedOcrDevice);
     if (acceptance) {
       if (sourceKind !== 'image' && sourceKind !== 'pdf') {
         throw new Error('Installed OCR semantic evidence requires an image or PDF fixture.');
       }
-      if (durableLibraryDetail === undefined || localInstalledRuntime === undefined || authenticatedOcrPreflight === undefined) {
+      if (localInstalledRuntime === undefined || authenticatedOcrPreflight === undefined) {
         throw new Error('Installed OCR semantic evidence identity was unavailable after the durable journey.');
       }
       const proof = await verifyInstalledOcrExecutionProof({
@@ -1615,7 +1416,6 @@ export async function main(options: {
         device: authenticatedOcrPreflight.mode === 'gpu-dml' ? 'windowsml-dml' : 'cpu',
       };
       semanticArtifactIdentity = await emitAcceptanceSemanticEvidence({
-        acceptanceMode,
         sourceKind,
         artifactRoot: acceptance.artifactRoot,
         pdfPageScope,
@@ -1634,94 +1434,46 @@ export async function main(options: {
           anchors: ocrExpectation.rawTextIncludes,
           executionProof: proofIdentity,
         }),
-        buildStructuring: () => buildOcrSemanticEvidence(durableLibraryDetail, {
-          runId: acceptance.runId,
-          fixtureName: sourceFixtureName,
-          sourceKind,
-          sourceSha256,
-          runtimeVersion: localInstalledRuntime.runtimeVersion,
-          runtimeSha256: localInstalledRuntime.runtimeSha256,
-          contractSha256: authenticatedOcrPreflight.contractSha256,
-          workerSha256: authenticatedOcrPreflight.workerSha256,
-          ocrEngine: ocr.engine,
-          ocrModel: ocr.model,
-          ocrDevice: ocr.device,
-          anchors: ocrExpectation.rawTextIncludes,
-          executionProof: proofIdentity,
-        }),
       });
     }
     await checkpointJournal?.complete('ocr_semantic', 'ocr-result');
-    if (acceptanceMode === 'ocr-only') {
-      await acceptanceScreenshot(page, acceptance, acceptanceScreenshots, '03-ocr-checkpoint', options.checkpoint);
-    } else {
-      if (!structured ||
-        structured.engine !== 'ollama' ||
-        !/^capture-workbench-qwen3\.5-(?:0\.8b|2b|4b)-structure-v1$/u.test(structured.model) ||
-        !structured.visibleText.includes(structured.model)
-      ) {
-        throw new Error('Standalone desktop UI did not display isolated Ollama provenance.');
-      }
-      await acceptanceScreenshot(page, acceptance, acceptanceScreenshots, '03-successful-result', options.checkpoint);
-    }
 
     if (!(await deleteCompletedDocument(
       page,
       sourceName,
       importedDocumentId,
-      acceptanceMode === 'ocr-only' ? ['awaiting_confirmation'] : ['completed'],
+      ['done'],
     ))) {
       throw new Error('Standalone desktop smoke document was not deleted after verification.');
     }
-    if (acceptanceMode === 'ocr-only' && !ocrExecutionProof) {
+    if (acceptance && !ocrExecutionProof) {
       throw new Error('OCR-only acceptance completed without an authenticated execution proof.');
     }
 
-    const report: RealDesktopSmokeEvidence = acceptanceMode === 'ocr-only'
-      ? {
-          evidenceKind: 'real-standalone-tauri-ui-ocr',
-          acceptanceMode: 'ocr-only',
-          releaseGateSatisfied: false,
-          realEnginesExercised: true,
-          sourceKind,
-          rawOcrVisible: true,
-          ocrResultVerified: true,
-          ocrProjectionVerified: true,
-          rawOcrSegmentCount: ocrVerification.rawSegmentCount,
-          structuredBlockCount: 0,
-          expectedAnchorCount: ocrVerification.expectedAnchorCount,
-          matchedAnchorCount: ocrVerification.matchedAnchorCount,
-          ocrDevice: ocr.device,
-          documentDeletedAfterVerification: true,
-          sourceSha256,
-          ocrExecutionProof,
-        }
-      : {
-          evidenceKind: 'real-standalone-tauri-ui-ocr',
-          acceptanceMode: 'structuring',
-          releaseGateSatisfied: true,
-          realEnginesExercised: true,
-          sourceKind,
-          rawOcrVisible: true,
-          ocrResultVerified: true,
-          rawOcrSegmentCount: ocrVerification.rawSegmentCount,
-          structuredBlockCount: ocrVerification.structuredBlockCount,
-          expectedAnchorCount: ocrVerification.expectedAnchorCount,
-          matchedAnchorCount: ocrVerification.matchedAnchorCount,
-          ocrDevice: ocr.device,
-          structuringEngine: 'ollama',
-          model: structured?.model ?? '',
-          documentDeletedAfterVerification: true,
-          sourceSha256,
-        };
-    assertRealDesktopSmokeEvidence(report);
+    const report: RealDesktopSmokeEvidence = {
+      evidenceKind: 'real-standalone-tauri-ui-ocr',
+      acceptanceMode: 'ocr-only',
+      releaseGateSatisfied: false,
+      realEnginesExercised: true,
+      sourceKind,
+      rawOcrVisible: true,
+      ocrResultVerified: true,
+      ocrProjectionVerified: true,
+      rawOcrSegmentCount: ocrVerification.rawSegmentCount,
+      structuredBlockCount: 0,
+      expectedAnchorCount: ocrVerification.expectedAnchorCount,
+      matchedAnchorCount: ocrVerification.matchedAnchorCount,
+      ocrDevice: ocr.device,
+      documentDeletedAfterVerification: true,
+      sourceSha256,
+      ...(ocrExecutionProof === undefined ? {} : { ocrExecutionProof }),
+    };
+    assertRealDesktopSmokeEvidence(report, { acceptance: acceptance !== undefined });
     acceptanceEvidence = {
-      ...(acceptanceMode === 'ocr-only' ? {
-        acceptanceMode: 'ocr-only',
-        ocrProofSucceeded: true,
-        structuringSucceeded: false,
-        releaseGateSatisfied: false,
-      } : {}),
+      acceptanceMode: 'ocr-only',
+      ocrProofSucceeded: true,
+      structuringSucceeded: false,
+      releaseGateSatisfied: false,
       ...acceptanceEvidence,
       sourceSha256,
       expectedAnchorCount: ocrVerification.expectedAnchorCount,
@@ -1730,10 +1482,6 @@ export async function main(options: {
         ocrEngine: ocr.engine,
         ocrModel: ocr.model,
         ocrDevice: ocr.device,
-        ...(structured === undefined ? {} : {
-          structuringEngine: structured.engine,
-          structuringModel: structured.model,
-        }),
       },
       ...(pdfPageScope === undefined ? {} : { pdfPageScope }),
     };
@@ -1772,7 +1520,12 @@ export async function main(options: {
     throw error;
   } finally {
     if (page) {
-      await deleteCompletedDocument(page, sourceName, importedDocumentId).catch((error: unknown) => {
+      await deleteCompletedDocument(
+        page,
+        sourceName,
+        importedDocumentId,
+        ['done', 'needs-attention', 'cancelled'],
+      ).catch((error: unknown) => {
         void error;
         process.stderr.write('Standalone desktop smoke cleanup warning.\n');
       });
@@ -2060,12 +1813,30 @@ export const DESKTOP_OCR_ACCEPTANCE_CHECKPOINTS = [
   '01-runtime-ready',
   '02-document-processing',
   '03-ocr-checkpoint',
-  '03-successful-result',
   '04-review-complete',
 ] as const;
 
 export type DesktopOcrAcceptanceCheckpointName =
   (typeof DESKTOP_OCR_ACCEPTANCE_CHECKPOINTS)[number];
+
+async function injectAcceptancePrivacyStyle(page: Page, enabled: boolean): Promise<void> {
+  if (!enabled) return;
+  await page.addStyleTag({
+    content: `
+      [data-testid="result-source-pane"] > * {
+        visibility: hidden !important;
+        opacity: 0 !important;
+      }
+      [data-testid="result-page-text"],
+      [data-testid="diagnostics-document-filename"],
+      [data-testid="result-detail-filename"] {
+        color: transparent !important;
+        text-shadow: none !important;
+        caret-color: transparent !important;
+      }
+    `,
+  });
+}
 
 export async function acceptanceScreenshot(
   page: Page,
@@ -2110,96 +1881,19 @@ async function acceptanceResponsiveLayout(
   );
 }
 
-function acceptanceScreenshotMasks(page: Page) {
+export function acceptanceScreenshotMasks(page: Page) {
   return [
     page.locator('time'),
     page.locator('.dynamic-id'),
-    page.locator('.document-copy strong'),
-    page.locator('.detail-heading h2'),
-    // Mask the privacy-sensitive cards as whole containers.  OCR segments
-    // can wrap/overflow their child nodes, so child-only masks are not safe.
-    page.getByTestId('document-raw'),
-    page.getByTestId('document-result'),
+    page.getByTestId('result-title'),
+    page.getByTestId('result-detail-filename'),
+    page.getByTestId('diagnostics-document-filename'),
+    page.locator('[data-testid="ocr-queue-row"] td:first-child'),
+    page.locator('[data-testid="history-row"] td:nth-child(2)'),
+    // Mask privacy-sensitive result panes as whole containers.
+    page.getByTestId('result-source-pane'),
+    page.getByTestId('result-text-pane'),
   ];
-}
-
-/**
- * Verify only the public raw OCR projection for the deferred Phase 1 seam.
- * A missing structured result is expected here; manufacturing one would turn
- * an OCR checkpoint into false structuring evidence.
- */
-function assertRealOcrOnlyResult(
-  view: RealOcrUiResult,
-  expectation: Awaited<ReturnType<typeof loadRealOcrExpectation>>,
-  inputFileName: string,
-): {
-  readonly rawSegmentCount: number;
-  readonly structuredBlockCount: 0;
-  readonly expectedAnchorCount: number;
-  readonly matchedAnchorCount: number;
-} {
-  assert.ok(view.rawText.trim(), 'visible OCR raw text must not be empty.');
-  assert.ok(view.rawSegments.length > 0, 'visible OCR result must contain at least one segment.');
-  const segmentIds = new Set<string>();
-  for (const [index, segment] of view.rawSegments.entries()) {
-    assert.ok(segment.segmentId.trim(), `visible OCR segments[${index}] segmentId must not be empty.`);
-    assert.equal(segmentIds.has(segment.segmentId), false, `visible OCR segments[${index}] segmentId must be unique.`);
-    segmentIds.add(segment.segmentId);
-    assert.equal(segment.order, index, `visible OCR segments[${index}] order.`);
-    assert.ok(segment.text.trim(), `visible OCR segments[${index}] text must not be empty.`);
-    assertRealOcrOnlyLocator(segment.locator, `visible OCR segments[${index}] locator`);
-  }
-  assert.equal(
-    view.rawText,
-    view.rawSegments.map((segment) => segment.text).join('\n'),
-    'visible OCR text must be the exact segment projection.',
-  );
-  const normalizedRawText = normalizeOcrText(view.rawText);
-  let anchorCursor = 0;
-  for (const anchor of expectation.rawTextIncludes) {
-    const anchorPosition = normalizedRawText.indexOf(anchor, anchorCursor);
-    assert.ok(
-      anchorPosition >= 0,
-      `OCR result for ${inputFileName} did not contain the expected text anchor: ${anchor}.`,
-    );
-    anchorCursor = anchorPosition + anchor.length;
-  }
-  assert.equal(view.structuredBlocks.length, 0, 'OCR-only acceptance must not expose structured blocks.');
-  assert.equal(view.structuredText, '', 'OCR-only acceptance must not expose structured result text.');
-  return {
-    rawSegmentCount: view.rawSegments.length,
-    structuredBlockCount: 0,
-    expectedAnchorCount: expectation.rawTextIncludes.length,
-    matchedAnchorCount: expectation.rawTextIncludes.length,
-  };
-}
-
-function assertRealOcrOnlyLocator(value: RealOcrLocator, label: string): void {
-  if (value.kind === 'page') {
-    assert.ok(Number.isInteger(value.page) && value.page >= 1, `${label}.page must be a positive integer.`);
-    return;
-  }
-  assert.ok(Number.isFinite(value.startMs) && value.startMs >= 0, `${label}.startMs must be non-negative.`);
-  assert.ok(Number.isFinite(value.endMs) && value.endMs > value.startMs, `${label}.endMs must be after startMs.`);
-}
-
-async function readStructuredProvenance(
-  page: Page,
-  provenance: readonly string[],
-): Promise<{ engine: string; model: string; visibleText: string }> {
-  const element = page.getByTestId('document-structuring-provenance');
-  await element.waitFor({ state: 'visible', timeout: 30_000 });
-  const [engine, model, visibleText] = await Promise.all([
-    element.getAttribute('data-engine'),
-    element.getAttribute('data-model'),
-    element.textContent(),
-  ]);
-  const fallback = provenance.find((entry) => entry.trim().startsWith('ollama')) ?? '';
-  return {
-    engine: engine?.trim() || fallback.split(' · ')[0]?.trim() || '',
-    model: model?.trim() || fallback.split(' · ')[1]?.trim() || '',
-    visibleText: visibleText?.trim() || fallback.trim(),
-  };
 }
 
 export interface DurableLibraryDetailRecord {
@@ -2300,6 +1994,7 @@ export function readDurableOcrProvenance(detail: DurableLibraryDetailRecord): {
   readonly engine: 'windowsml-ocr';
   readonly model: string;
   readonly device: OcrDevice;
+  readonly digest: string;
 } {
   const raw = detail.raw;
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
@@ -2313,12 +2008,15 @@ export function readDurableOcrProvenance(detail: DurableLibraryDetailRecord): {
     readonly engine?: unknown;
     readonly model?: unknown;
     readonly device?: unknown;
+    readonly digest?: unknown;
   };
   if (
     record.engine !== 'windowsml-ocr'
     || typeof record.model !== 'string'
     || !record.model.trim()
     || (record.device !== 'windowsml-dml' && record.device !== 'cpu')
+    || typeof record.digest !== 'string'
+    || !record.digest.trim()
   ) {
     throw new Error('Packaged OCR checkpoint exposed unrecognized OCR provenance.');
   }
@@ -2326,6 +2024,7 @@ export function readDurableOcrProvenance(detail: DurableLibraryDetailRecord): {
     engine: 'windowsml-ocr',
     model: record.model,
     device: record.device,
+    digest: record.digest.trim(),
   };
 }
 
@@ -2424,19 +2123,78 @@ export function assertDurableOcrCheckpoint(
   assert.match(String(provenanceRecord.workerSha256 ?? ''), /^[a-f0-9]{64}$/u);
 }
 
-async function readOcrProvenance(page: Page): Promise<{
+export async function readOcrProvenance(
+  page: Page,
+  documentId?: string,
+): Promise<{
   engine: 'windowsml-ocr';
   model: string;
   device: OcrDevice;
+  digest: string;
+  evidenceDigest?: string;
 }> {
-  const element = page.getByTestId('document-extraction-provenance');
+  await page.getByTestId('result-nav-details').click();
+  const diagnosticsLink = page.getByTestId('result-detail-diagnostics');
+  await diagnosticsLink.waitFor({ state: 'visible', timeout: 30_000 });
+  await diagnosticsLink.click();
+  await page.getByTestId('page-settings-diagnostics').waitFor({ state: 'visible', timeout: 30_000 });
+  if (documentId !== undefined) {
+    const diagnosticsDocument = page.getByTestId('diagnostics-document');
+    await diagnosticsDocument.waitFor({ state: 'visible', timeout: 30_000 });
+    assert.equal(
+      await diagnosticsDocument.getAttribute('data-document-id'),
+      documentId,
+      'Diagnostics page did not display the verified document.',
+    );
+  }
+  const element = page.getByTestId('diagnostics-extraction-provenance');
   await element.waitFor({ state: 'visible', timeout: 30_000 });
-  const [engine, model, device] = await Promise.all([
+  const evidenceDigestElement = page.getByTestId('diagnostics-evidence-digest');
+  const [engine, model, device, digest, evidenceDigestVisible] = await Promise.all([
     element.getAttribute('data-engine'),
     element.getAttribute('data-model'),
     element.getAttribute('data-device'),
+    element.getAttribute('data-digest'),
+    evidenceDigestElement.isVisible().catch(() => false),
   ]);
-  return parseOcrProvenance({ engine, model, device });
+  const evidenceDigest = evidenceDigestVisible
+    ? (await evidenceDigestElement.textContent().catch(() => undefined))?.trim() || undefined
+    : undefined;
+  return {
+    ...parseOcrProvenance({ engine, model, device }),
+    digest: digest?.trim() ?? '',
+    ...(evidenceDigest === undefined ? {} : { evidenceDigest }),
+  };
+}
+
+export async function assertDiagnosticsMatchesDurableOcr(
+  page: Page,
+  detail: DurableLibraryDetailRecord,
+  documentId: string,
+): Promise<{
+  readonly engine: 'windowsml-ocr';
+  readonly model: string;
+  readonly device: OcrDevice;
+  readonly digest: string;
+}> {
+  const durable = readDurableOcrProvenance(detail);
+  const ui = await readOcrProvenance(page, documentId);
+  assert.equal(ui.engine, durable.engine, 'Diagnostics OCR engine must match durable provenance.');
+  assert.equal(ui.model, durable.model, 'Diagnostics OCR model must match durable provenance.');
+  assert.equal(ui.device, durable.device, 'Diagnostics OCR device must match durable provenance.');
+  assert.equal(ui.digest, durable.digest, 'Diagnostics OCR digest must match durable extraction digest.');
+  const evidence = detail.ocrEvidence;
+  if (evidence !== null && typeof evidence === 'object' && !Array.isArray(evidence)) {
+    const expectedEvidenceDigest = (evidence as { readonly digest?: unknown }).digest;
+    if (typeof expectedEvidenceDigest === 'string' && expectedEvidenceDigest.trim()) {
+      assert.equal(
+        ui.evidenceDigest,
+        expectedEvidenceDigest.trim(),
+        'Diagnostics OCR evidence digest must match durable OcrEvidence digest.',
+      );
+    }
+  }
+  return durable;
 }
 
 export function parseOcrProvenance(attributes: {
@@ -2481,31 +2239,22 @@ export async function verifyInstalledOcrExecutionProof(options: {
 }
 
 export async function emitAcceptanceSemanticEvidence(options: {
-  readonly acceptanceMode: DesktopOcrAcceptanceMode;
   readonly sourceKind: 'image' | 'pdf';
   readonly artifactRoot: string;
   readonly pdfPageScope?: PdfPageScopeEvidence;
   readonly buildOcrOnly: () => OcrSemanticEvidenceV1;
-  readonly buildStructuring: () => OcrSemanticEvidenceV1;
   readonly assertPdfPageOne?: typeof assertPhase1PageOnePdfSemanticEvidence;
   readonly writeArtifact?: typeof writeOcrSemanticEvidenceArtifact;
 }): Promise<OcrSemanticArtifactIdentity> {
   const writeArtifact = options.writeArtifact ?? writeOcrSemanticEvidenceArtifact;
-  if (options.acceptanceMode === 'ocr-only') {
-    const semanticEvidence = options.buildOcrOnly();
-    if (options.sourceKind === 'pdf') {
-      assert.ok(options.pdfPageScope, 'Phase 1 PDF semantic gate requires durable page-scope evidence.');
-      (options.assertPdfPageOne ?? assertPhase1PageOnePdfSemanticEvidence)(
-        options.pdfPageScope,
-        semanticEvidence,
-      );
-    }
-    return writeArtifact(
-      join(options.artifactRoot, semanticEvidence.artifactPath),
+  const semanticEvidence = options.buildOcrOnly();
+  if (options.sourceKind === 'pdf') {
+    assert.ok(options.pdfPageScope, 'Phase 1 PDF semantic gate requires durable page-scope evidence.');
+    (options.assertPdfPageOne ?? assertPhase1PageOnePdfSemanticEvidence)(
+      options.pdfPageScope,
       semanticEvidence,
     );
   }
-  const semanticEvidence = options.buildStructuring();
   return writeArtifact(
     join(options.artifactRoot, semanticEvidence.artifactPath),
     semanticEvidence,
@@ -2613,55 +2362,102 @@ export function isOwnedSmokeDocumentName(value: string): boolean {
   return ownedSmokeDocumentPattern.test(value);
 }
 
-async function deleteCompletedOwnedSmokeDocuments(page: Page): Promise<void> {
-  const names = await page.locator('.document-copy strong').allTextContents();
-  for (const name of names.filter(isOwnedSmokeDocumentName)) {
-    await deleteCompletedDocument(page, name);
+async function navigateToHistoryPage(page: Page): Promise<void> {
+  if (!(await page.getByTestId('page-history').isVisible().catch(() => false))) {
+    await page.getByTestId('nav-history').click();
+    await page.getByTestId('page-history').waitFor({ state: 'visible', timeout: 30_000 });
   }
+  await waitUntil(
+    async () => (
+      (await page.getByTestId('history-table').isVisible().catch(() => false))
+      || (await page.getByTestId('history-empty').isVisible().catch(() => false))
+    ) || undefined,
+    15_000,
+    'History page did not finish loading documents.',
+  );
 }
 
-export function exactDocumentCard(page: Page, fileName: string) {
-  const exactName = page.getByText(fileName, { exact: true });
-  return page.locator('button.document-card').filter({ has: exactName });
+async function navigateToOcrPage(page: Page): Promise<void> {
+  if (!(await page.getByTestId('page-ocr').isVisible().catch(() => false))) {
+    await page.getByTestId('nav-ocr').click();
+    await page.getByTestId('page-ocr').waitFor({ state: 'visible', timeout: 30_000 });
+  }
+  const chooseFiles = page.getByTestId('ocr-choose-files');
+  await chooseFiles.waitFor({ state: 'visible', timeout: 15_000 });
+}
+
+async function deleteCompletedOwnedSmokeDocuments(page: Page): Promise<void> {
+  await navigateToHistoryPage(page);
+  const owned = await page.getByTestId('history-row').evaluateAll((elements) => elements.map((element) => ({
+    documentId: element.getAttribute('data-document-id') ?? undefined,
+    fileName: element.querySelector('td:nth-child(2) a')?.textContent?.trim() ?? '',
+  })));
+  for (const entry of owned) {
+    if (isOwnedSmokeDocumentName(entry.fileName)) {
+      await deleteCompletedDocument(page, entry.fileName, entry.documentId);
+    }
+  }
+  await navigateToOcrPage(page);
+}
+
+export function exactOcrQueueRow(page: Page, documentId: string): Locator {
+  return page.locator(`[data-testid="ocr-queue-row"][data-document-id="${documentId}"]`);
 }
 
 export async function waitForDesktopOcrCompletion(
   page: Page,
-  card: ReturnType<Page['locator']>,
+  row: Locator,
   timeoutMs: number,
   recovery: DesktopOcrPollingRecoveryOptions,
-): Promise<{ readonly page: Page; readonly card: Locator }> {
+): Promise<{ readonly page: Page; readonly row: Locator }> {
   let currentPage = page;
-  let currentCard = card;
+  let currentRow = row;
   let reattachAttempted = false;
   const deadline = Date.now() + timeoutMs;
+  const readDetail = recovery.readDurableDetail ?? readDurableLibraryDetail;
 
   while (Date.now() < deadline) {
     try {
       const probeBudget = Math.min(5_000, Math.max(1, deadline - Date.now()));
-      const status = await withTimeout(
-        currentCard.getAttribute('data-status'),
+      const userStatus = await withTimeout(
+        currentRow.getAttribute('data-user-status'),
         probeBudget,
         'Standalone desktop OCR status probe timed out.',
       );
-      if (recovery.stopAtOcrCheckpoint === true && status === 'awaiting_confirmation') {
-        await currentCard.click();
-        const stage = await currentPage.locator('.stage-line').getAttribute('data-stage');
-        if (stage !== 'awaiting_structuring') {
-          throw new Error('Standalone desktop OCR checkpoint did not expose awaiting_structuring runtime stage.');
+      if (userStatus === 'done') {
+        const detail = await readDetail(currentPage, recovery.documentId);
+        // persistOcrCheckpoint$ / persistTerminalData$ clear captureId as the
+        // final durable commit step.
+        if (detail.captureId === undefined || detail.captureId === null) {
+          const isOcrCheckpoint =
+            detail.status === 'awaiting_confirmation'
+            && detail.stage === 'awaiting_structuring';
+          const hasRaw =
+            detail.raw !== undefined
+            && detail.raw !== null
+            && typeof detail.raw === 'object'
+            && !Array.isArray(detail.raw);
+          if (recovery.durableCompletion === 'ocr-checkpoint') {
+            if (isOcrCheckpoint) return { page: currentPage, row: currentRow };
+            throw new Error('Standalone desktop OCR checkpoint did not expose awaiting_confirmation / awaiting_structuring durable state.');
+          }
+          const isCompletedWithRaw = detail.status === 'completed' && hasRaw;
+          if ((isOcrCheckpoint && hasRaw) || isCompletedWithRaw) {
+            return { page: currentPage, row: currentRow };
+          }
+          throw new Error('Standalone desktop OCR did not reach an OCR checkpoint or completed state with durable raw capture.');
         }
-        return { page: currentPage, card: currentCard };
-      }
-      if (status === 'completed') return { page: currentPage, card: currentCard };
-      if (status !== null && terminalDesktopDocumentStatuses.has(status)) {
-        // Select the terminal card once so the detail pane exposes the durable
-        // error code. Never include its free-form message in acceptance output.
-        await currentCard.click();
-        const detail = currentPage.locator('.detail-pane');
-        const errorCode = (await detail.locator('.detail-error strong').first().textContent().catch((detailError: unknown) => {
+      } else if (userStatus === 'needs-attention' || userStatus === 'cancelled') {
+        const detail = await readDetail(currentPage, recovery.documentId).catch((detailError: unknown) => {
           if (isTauriBridgeClosedError(detailError)) throw detailError;
-          return null;
-        }))?.trim() ?? null;
+          return undefined;
+        });
+        const status = typeof detail?.status === 'string' && detail.status.trim()
+          ? detail.status.trim()
+          : userStatus;
+        const errorCode = typeof detail?.errorCode === 'string' && detail.errorCode.trim()
+          ? detail.errorCode.trim()
+          : null;
         throw new DesktopOcrTerminalFailure({ status, errorCode });
       }
     } catch (error) {
@@ -2694,24 +2490,24 @@ export async function waitForDesktopOcrCompletion(
       let attached: { readonly browser: Browser; readonly page: Page };
       try {
         attached = await recovery.reattach();
-        const nextCard = recovery.exactDocumentCard(attached.page, recovery.fileName);
-        await nextCard.waitFor({
+        const nextRow = recovery.exactOcrQueueRow(attached.page, recovery.documentId);
+        await nextRow.waitFor({
           state: 'visible',
           timeout: Math.min(15_000, Math.max(1, deadline - Date.now())),
         });
         const count = await withTimeout(
-          nextCard.count(),
+          nextRow.count(),
           Math.min(5_000, Math.max(1, deadline - Date.now())),
-          'Reattached desktop OCR document card probe timed out.',
+          'Reattached desktop OCR queue row probe timed out.',
         );
-        if (count !== 1) throw new Error('Reattached desktop OCR document card was not unique.');
-        const nextDocumentId = await nextCard.getAttribute('data-document-id');
+        if (count !== 1) throw new Error('Reattached desktop OCR queue row was not unique.');
+        const nextDocumentId = await nextRow.getAttribute('data-document-id');
         if (nextDocumentId !== recovery.documentId) {
           throw new Error('Reattached desktop OCR document identity changed.');
         }
         await recovery.onReattached?.(attached);
         currentPage = attached.page;
-        currentCard = nextCard;
+        currentRow = nextRow;
         continue;
       } catch {
         throw new DesktopOcrLifecycleFailure('target-loss', liveness);
@@ -2723,44 +2519,68 @@ export async function waitForDesktopOcrCompletion(
   throw new Error('Standalone desktop OCR did not reach completion.');
 }
 
-async function deleteCompletedDocument(
+export async function deleteCompletedDocument(
   page: Page,
   fileName: string,
   documentId?: string,
-  allowedStatuses: readonly string[] = ['completed'],
+  allowedUserStatuses: readonly string[] = ['done'],
 ): Promise<boolean> {
-  const card = exactDocumentCard(page, fileName);
-  if ((await card.count()) === 0) return false;
+  await navigateToHistoryPage(page);
+  const exactFileLink = page.locator('td:nth-child(2) a').getByText(fileName, { exact: true });
+  const row = documentId !== undefined
+    ? page.locator(`[data-testid="history-row"][data-document-id="${documentId}"]`)
+    : page.getByTestId('history-row').filter({ has: exactFileLink });
+  if ((await row.count()) === 0) return false;
   assert.equal(
-    await card.count(),
+    await row.count(),
     1,
-    'Standalone desktop cleanup filename must identify exactly one document.',
+    'Standalone desktop cleanup must identify exactly one document.',
   );
+  const observedDocumentId = (await row.getAttribute('data-document-id'))?.trim() || undefined;
   if (documentId !== undefined) {
     assert.equal(
-      await card.getAttribute('data-document-id'),
+      observedDocumentId,
       documentId,
       'Standalone desktop cleanup must verify the exact selected document identity.',
     );
   }
-  const status = await card.locator('.status').getAttribute('data-status');
-  if (!allowedStatuses.includes(status ?? '')) return false;
-  await card.click();
-  const detailPane = page.locator('.detail-pane');
-  const selectedFileName = await detailPane.locator('.detail-heading h2').textContent();
+  const targetDocumentId = documentId ?? observedDocumentId;
+  if (!targetDocumentId) {
+    throw new Error('Standalone desktop cleanup could not determine the target document identity.');
+  }
+  const selectedFileName = await row.locator('td:nth-child(2) a').textContent();
   assert.equal(
     selectedFileName?.trim(),
     fileName,
     'Standalone desktop cleanup must verify the exact selected filename.',
   );
+  const status = await row.getAttribute('data-user-status');
+  if (!allowedUserStatuses.includes(status ?? '')) return false;
+  const deleteButton = row.getByTestId('history-row-delete');
   await waitUntil(
-    () => detailPane.locator('button.danger').last().isEnabled().then((enabled) => enabled || undefined),
+    () => deleteButton.isEnabled().then((enabled) => enabled || undefined),
     30_000,
     'Standalone desktop smoke cleanup delete action remained disabled.',
   );
-  await detailPane.getByRole('button', { name: '刪除', exact: true }).click();
-  await page.getByTestId('document-delete-confirm').click();
-  await card.waitFor({ state: 'hidden', timeout: 30_000 });
+  await deleteButton.click();
+  await page.getByTestId('history-delete-dialog').waitFor({ state: 'visible', timeout: 15_000 });
+  await page.getByTestId('history-delete-confirm').click();
+  await row.waitFor({ state: 'hidden', timeout: 30_000 });
+  await waitUntil(
+    async () => {
+      const result = await invokeTauriCommand(page, 'library_list', { request: { query: '', status: '' } });
+      const records = Array.isArray(result) ? result : [];
+      const stillPresent = records.some((record) => (
+        record !== null
+        && typeof record === 'object'
+        && !Array.isArray(record)
+        && (record as { readonly documentId?: unknown }).documentId === targetDocumentId
+      ));
+      return !stillPresent || undefined;
+    },
+    15_000,
+    'Standalone desktop cleanup did not remove the document from library_list.',
+  );
   return true;
 }
 
@@ -2853,8 +2673,44 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: s
 export interface PackagedUiState {
   readonly runtimeState: string | null;
   readonly sourceImportEnabled: boolean;
-  readonly ocrComputeMode: 'gpu-dml' | 'cpu-fallback' | null;
-  readonly ocrComputeVisible: boolean;
+  readonly firstRunOcrVisible: boolean;
+  readonly ocrInstallProgressVisible: boolean;
+}
+
+interface OcrFirstRunSetupOptions {
+  readonly readyTimeoutMs?: number;
+  readonly firstRunCardTimeoutMs?: number;
+  readonly installTimeoutMs?: number;
+  readonly failIfAlreadyReady?: boolean;
+  readonly onConsentRequired?: (page: Page) => Promise<void>;
+  readonly onInstallStarted?: () => void;
+  readonly onInstallProgress?: (page: Page) => Promise<void>;
+  readonly onInstallRetry?: (page: Page) => Promise<void>;
+}
+
+interface OcrComputeSettingsObservation {
+  readonly visible: boolean;
+  readonly mode: 'gpu-dml' | 'cpu-fallback' | null;
+}
+
+/**
+ * Fixes the layout viewport at the size the native window really has.
+ * Emulating another size moves the layout but not the window, and a native
+ * click mapped from page coordinates then lands beside its target (measured:
+ * 1440x900 on the 1280x860 window put the click on the page-number field
+ * instead of the file button). Emulating the real size keeps the mapping exact
+ * and still gives screenshots at device scale 1 on every display.
+ */
+export async function pinViewportToWindow(page: Page): Promise<{ readonly width: number; readonly height: number }> {
+  const size = await page.evaluate(() => ({
+    width: Math.round(window.innerWidth),
+    height: Math.round(window.innerHeight),
+  }));
+  if (!Number.isSafeInteger(size.width) || size.width < 1 || !Number.isSafeInteger(size.height) || size.height < 1) {
+    throw new Error('Packaged desktop window reported an invalid viewport size.');
+  }
+  await page.setViewportSize(size);
+  return size;
 }
 
 export async function invokeTauriCommand(
@@ -2922,26 +2778,14 @@ export async function queryPackagedUiState(cdpPort: number): Promise<PackagedUiS
         method: 'Runtime.evaluate',
         params: {
           returnByValue: true,
-          expression: `${SHOW_HISTORY_WORKSPACE_EXPRESSION}
-          JSON.stringify({
-            runtimeState: document.querySelector('[data-testid="workbench-root"]')?.getAttribute('data-runtime-state') ?? null,
+          expression: `JSON.stringify({
+            runtimeState: document.querySelector('[data-testid="runtime-status"]')?.getAttribute('data-state') ?? null,
             sourceImportEnabled: (() => {
-              const element = document.querySelector('[data-testid="source-import"]');
+              const element = document.querySelector('[data-testid="ocr-choose-files"]');
               return element instanceof HTMLButtonElement && !element.disabled;
             })(),
-            ocrComputeMode: (() => {
-              const element = document.querySelector('[data-testid="ocr-compute-status"], [data-testid="ocr-compute-notice"]');
-              const mode = element?.getAttribute('data-mode');
-              return mode === 'gpu-dml' || mode === 'cpu-fallback' ? mode : null;
-            })(),
-            ocrComputeVisible: (() => {
-              const element = document.querySelector('[data-testid="ocr-compute-status"], [data-testid="ocr-compute-notice"]');
-              if (!(element instanceof HTMLElement)) return false;
-              const style = getComputedStyle(element);
-              return style.display !== 'none'
-                && style.visibility !== 'hidden'
-                && element.getClientRects().length > 0;
-            })(),
+            firstRunOcrVisible: Boolean(document.querySelector('[data-testid="first-run-checkbox-ocr"]')),
+            ocrInstallProgressVisible: Boolean(document.querySelector('[data-testid="ocr-install-progress"]')),
           })`,
         },
       }));
@@ -2951,41 +2795,101 @@ export async function queryPackagedUiState(cdpPort: number): Promise<PackagedUiS
     const parsed = JSON.parse(value) as {
       runtimeState?: unknown;
       sourceImportEnabled?: unknown;
-      ocrComputeMode?: unknown;
-      ocrComputeVisible?: unknown;
+      firstRunOcrVisible?: unknown;
+      ocrInstallProgressVisible?: unknown;
     };
     return {
       runtimeState: typeof parsed.runtimeState === 'string' ? parsed.runtimeState : null,
       sourceImportEnabled: parsed.sourceImportEnabled === true,
-      ocrComputeMode: parsed.ocrComputeMode === 'gpu-dml' || parsed.ocrComputeMode === 'cpu-fallback'
-        ? parsed.ocrComputeMode
-        : null,
-      ocrComputeVisible: parsed.ocrComputeVisible === true,
+      firstRunOcrVisible: parsed.firstRunOcrVisible === true,
+      ocrInstallProgressVisible: parsed.ocrInstallProgressVisible === true,
     };
   } finally {
     socket.close();
   }
 }
 
-export async function waitForPackagedRuntimeReadySignal(cdpPort: number): Promise<boolean> {
+export async function readWindowsMlOcrRequirementStatus(page: Page): Promise<string | null> {
+  const response = await invokeTauriCommand(page, 'runtime_requirements', {});
+  if (response === null || typeof response !== 'object' || Array.isArray(response)) {
+    return null;
+  }
+  const items = (response as { readonly items?: unknown }).items;
+  if (!Array.isArray(items)) return null;
+  const ocrItem = items.find((item): item is { readonly requirementId?: unknown; readonly status?: unknown } => (
+    item !== null
+    && typeof item === 'object'
+    && !Array.isArray(item)
+    && (item as { readonly requirementId?: unknown }).requirementId === 'windowsml-ocr'
+  ));
+  return typeof ocrItem?.status === 'string' ? ocrItem.status : null;
+}
+
+interface RuntimeInstallationSummary {
+  readonly status: string;
+  readonly errorCode: string | null;
+}
+
+async function readLatestWindowsMlOcrInstallation(
+  page: Page,
+): Promise<RuntimeInstallationSummary | undefined> {
+  const response = await invokeTauriCommand(page, 'runtime_list_installations', {});
+  if (response === null || typeof response !== 'object' || Array.isArray(response)) {
+    return undefined;
+  }
+  const items = (response as { readonly items?: unknown }).items;
+  if (!Array.isArray(items)) return undefined;
+  const latest = items.find((item): item is {
+    readonly requirementId?: unknown;
+    readonly status?: unknown;
+    readonly error?: unknown;
+  } => (
+    item !== null
+    && typeof item === 'object'
+    && !Array.isArray(item)
+    && (item as { readonly requirementId?: unknown }).requirementId === 'windowsml-ocr'
+  ));
+  if (!latest || typeof latest.status !== 'string') return undefined;
+  const errorObject = latest.error !== null && typeof latest.error === 'object' && !Array.isArray(latest.error)
+    ? latest.error as { readonly code?: unknown }
+    : undefined;
+  const errorCode = typeof errorObject?.code === 'string' && errorObject.code.trim()
+    ? errorObject.code.trim()
+    : null;
+  return {
+    status: latest.status,
+    errorCode,
+  };
+}
+
+export async function waitForPackagedRuntimeReadySignal(
+  cdpPort: number,
+  page: Page,
+): Promise<boolean> {
   try {
     const state = await queryPackagedUiState(cdpPort);
-    return state?.runtimeState === 'ready'
-      && state.sourceImportEnabled
-      && state.ocrComputeVisible
-      && state.ocrComputeMode !== null;
+    if (
+      state?.runtimeState !== 'ready'
+      || !state.sourceImportEnabled
+      || state.firstRunOcrVisible
+      || state.ocrInstallProgressVisible
+    ) {
+      return false;
+    }
+    const requirementStatus = await readWindowsMlOcrRequirementStatus(page);
+    return requirementStatus === 'ready';
   } catch {
     return false;
   }
 }
 
-/** Attaches to the packaged app's page and opens the history workspace the smokes drive. */
+/** Attaches to the packaged app's shell without changing the active route. */
 export async function connectToPackagedPage(
   cdpPort: number,
   options: PackagedPageAcquisitionOptions = {},
 ): Promise<{ browser: CdpBrowser; page: Page }> {
   const attached = await acquirePackagedPage(cdpPort, options);
-  await firstValueFrom(showHistoryWorkspace(attached.page));
+  await attached.page.getByTestId('app-shell').waitFor({ state: 'attached', timeout: 30_000 });
   return attached;
 }
 
@@ -3069,81 +2973,377 @@ async function waitForOwnedTreeGone(
   }
 }
 
-export async function collectVisibleOcrSegments(page: Page): Promise<readonly RealOcrUiSegment[]> {
-  return page.getByTestId('document-raw-segment').evaluateAll((elements) => elements.map((element) => {
-    const locatorKind = element.getAttribute('data-locator-kind');
-    if (locatorKind !== 'page' && locatorKind !== 'time') {
-      throw new Error('Visible OCR segment did not expose a supported locator kind.');
-    }
-    const locator: RealOcrLocator = locatorKind === 'page'
-      ? { kind: locatorKind, page: Number(element.getAttribute('data-page')) }
-      : {
-        kind: locatorKind,
-        startMs: Number(element.getAttribute('data-start-ms')),
-        endMs: Number(element.getAttribute('data-end-ms')),
-      };
-    return {
-      segmentId: element.getAttribute('data-segment-id') ?? '',
-      order: Number(element.getAttribute('data-order')),
-      locator,
-      text: element.querySelector('span')?.textContent?.trim() ?? '',
-    };
-  }));
+const terminalEngineStatuses = new Set(['failed', 'cancelled', 'manual_action_required']);
+const activeOrFailedInstallationStatuses = new Set(['queued', 'running', 'failed', 'cancelled']);
+
+async function ensureCheckboxState(checkbox: Locator, checked: boolean, label: string): Promise<void> {
+  if ((await checkbox.count()) === 0 || !(await checkbox.isVisible().catch(() => false))) return;
+  if (checked) {
+    if (!(await checkbox.isChecked())) await checkbox.check();
+    assert.equal(await checkbox.isChecked(), true, `${label} must be checked before installation.`);
+  } else {
+    if (await checkbox.isChecked()) await checkbox.uncheck();
+    assert.equal(await checkbox.isChecked(), false, `${label} must remain unchecked before installation.`);
+  }
 }
 
-async function collectVisibleStructuredBlocks(page: Page): Promise<readonly RealOcrUiBlock[]> {
-  return page.getByTestId('document-result-block').evaluateAll((elements) => elements.map((element) => {
-    const locatorKind = element.getAttribute('data-locator-kind');
-    if (locatorKind !== 'page' && locatorKind !== 'time') {
-      throw new Error('Visible structured block did not expose a supported locator kind.');
+async function waitForWindowsMlOcrInstallOnEnginesPage(
+  page: Page,
+  installTimeoutMs: number,
+  options: Pick<OcrFirstRunSetupOptions, 'onInstallStarted' | 'onInstallProgress' | 'onInstallRetry'>,
+): Promise<void> {
+  if (!(await page.getByTestId('page-settings-engines').isVisible().catch(() => false))) {
+    await page.getByTestId('nav-settings').click();
+    await page.getByTestId('page-settings-engines').waitFor({ state: 'visible', timeout: 30_000 });
+  }
+  const ocrRow = page.locator('[data-testid="engine-row"][data-requirement-id="windowsml-ocr"]');
+  await ocrRow.waitFor({ state: 'visible', timeout: 30_000 });
+  await options.onInstallProgress?.(page);
+  let filesystemRetryCount = 0;
+  await waitUntil(
+    async () => {
+      const runtimeError = await visibleRuntimeError(page);
+      if (runtimeError) throw new Error(runtimeError);
+      const status = await ocrRow.getAttribute('data-status');
+      if (status === 'ready') return true;
+      if (status !== null && terminalEngineStatuses.has(status)) {
+        const installation = await readLatestWindowsMlOcrInstallation(page).catch(() => undefined);
+        const errorCode = installation?.errorCode && safeDesktopDocumentErrorCodePattern.test(installation.errorCode)
+          ? installation.errorCode
+          : 'unknown';
+        if (status === 'failed' && errorCode === 'installation_filesystem' && filesystemRetryCount < 1) {
+          filesystemRetryCount += 1;
+          const retry = ocrRow.getByTestId('engine-row-retry');
+          await waitUntil(
+            () => retry.isEnabled().then((enabled) => enabled || undefined),
+            10_000,
+            'Capture Workbench did not enable text recognition retry after a filesystem failure.',
+          );
+          await retry.click();
+          options.onInstallStarted?.();
+          await options.onInstallRetry?.(page);
+          return undefined;
+        }
+        const errorDetails = page.locator('[data-testid="engine-row-details"][data-requirement-id="windowsml-ocr"]');
+        if (!(await errorDetails.isVisible().catch(() => false))) {
+          await ocrRow.getByTestId('engine-row-toggle').click().catch(() => undefined);
+        }
+        const detail = await errorDetails.getByTestId('engine-row-error').textContent().catch(() => undefined);
+        throw new Error(
+          `Capture Workbench text recognition installation ended status=${status}; errorCode=${errorCode}: ` +
+          `${detail?.trim() || (await ocrRow.textContent())?.trim() || 'no detail was rendered.'}`,
+        );
+      }
+      return undefined;
+    },
+    installTimeoutMs,
+    `Capture Workbench text recognition installation did not finish. ${await runtimeSetupDiagnostics(page)}`,
+  );
+  await navigateToOcrPage(page);
+}
+
+export async function runOcrFirstRunSetup(
+  page: Page,
+  options: OcrFirstRunSetupOptions = {},
+): Promise<{ readonly installRequired: boolean }> {
+  const readyTimeoutMs = options.readyTimeoutMs ?? realDesktopRuntimeReadyTimeoutMs;
+  const firstRunCardTimeoutMs = options.firstRunCardTimeoutMs ?? 60_000;
+  const installTimeoutMs = options.installTimeoutMs ?? realDesktopDependencyInstallTimeoutMs;
+  await navigateToOcrPage(page);
+  await waitUntil(
+    async () => {
+      const runtimeError = await visibleRuntimeError(page);
+      if (runtimeError) throw new Error(runtimeError);
+      const state = await page.getByTestId('runtime-status').getAttribute('data-state').catch(() => null);
+      return state === 'ready' || undefined;
+    },
+    readyTimeoutMs,
+    `Capture Workbench runtime did not reach ready state. ${await runtimeSetupDiagnostics(page)}`,
+  );
+
+  const requirementStatus = await waitUntil(
+    async () => {
+      const runtimeError = await visibleRuntimeError(page);
+      if (runtimeError) throw new Error(runtimeError);
+      const status = await readWindowsMlOcrRequirementStatus(page);
+      return status ?? undefined;
+    },
+    readyTimeoutMs,
+    `Capture Workbench did not publish runtime requirements for windowsml-ocr. ${await runtimeSetupDiagnostics(page)}`,
+  );
+  if (requirementStatus === 'ready') {
+    if (options.failIfAlreadyReady) {
+      throw new Error('Fresh first-run desktop installation unexpectedly started already ready without prompting.');
     }
-    const locator: RealOcrLocator = locatorKind === 'page'
-      ? { kind: locatorKind, page: Number(element.getAttribute('data-page')) }
-      : {
-        kind: locatorKind,
-        startMs: Number(element.getAttribute('data-start-ms')),
-        endMs: Number(element.getAttribute('data-end-ms')),
-      };
-    return {
-      blockId: element.getAttribute('data-block-id') ?? '',
-      order: Number(element.getAttribute('data-order')),
-      sourceSegmentId: element.getAttribute('data-source-segment-id') ?? '',
-      locator,
-      sourceText: element.querySelector('[data-testid="document-result-block-source"]')?.textContent?.trim() ?? '',
-      targetText: element.querySelector('[data-testid="document-result-block-target"]')?.textContent?.trim() ?? '',
+    return { installRequired: false };
+  }
+
+  const latestInstallation = await readLatestWindowsMlOcrInstallation(page).catch(() => undefined);
+  if (latestInstallation && activeOrFailedInstallationStatuses.has(latestInstallation.status)) {
+    await waitForWindowsMlOcrInstallOnEnginesPage(page, installTimeoutMs, options);
+    return { installRequired: true };
+  }
+
+  const ocrCheckbox = page.getByTestId('first-run-checkbox-ocr');
+  const firstRunCheckboxVisible = await waitUntil(
+    async () => {
+      const runtimeError = await visibleRuntimeError(page);
+      if (runtimeError) throw new Error(runtimeError);
+      return (await ocrCheckbox.isVisible().catch(() => false)) || undefined;
+    },
+    firstRunCardTimeoutMs,
+    'First-run text recognition checkbox check elapsed.',
+  ).catch(() => false);
+
+  if (firstRunCheckboxVisible) {
+    await options.onConsentRequired?.(page);
+    await ensureCheckboxState(ocrCheckbox, true, 'first-run text recognition checkbox');
+    await ensureCheckboxState(page.getByTestId('first-run-checkbox-asr'), false, 'first-run speech recognition checkbox');
+    await ensureCheckboxState(page.getByTestId('first-run-checkbox-speakers'), false, 'first-run speaker diarization checkbox');
+    const installButton = page.getByTestId('first-run-install');
+    await waitUntil(
+      () => installButton.isEnabled().then((enabled) => enabled || undefined),
+      10_000,
+      `Capture Workbench first-run install button remained disabled. ${await runtimeSetupDiagnostics(page)}`,
+    );
+    await installButton.click();
+    options.onInstallStarted?.();
+    await waitForWindowsMlOcrInstallOnEnginesPage(page, installTimeoutMs, options);
+    return { installRequired: true };
+  }
+
+  if (options.failIfAlreadyReady) {
+    throw new Error(`Fresh first-run desktop installation did not present the text recognition card (requirement status=${requirementStatus}).`);
+  }
+
+  await page.getByTestId('nav-settings').click();
+  await page.getByTestId('page-settings-engines').waitFor({ state: 'visible', timeout: 15_000 });
+  const ocrRow = page.locator('[data-testid="engine-row"][data-requirement-id="windowsml-ocr"]');
+  await ocrRow.waitFor({ state: 'visible', timeout: 15_000 });
+  const status = await ocrRow.getAttribute('data-status');
+  if (status === 'ready') {
+    await navigateToOcrPage(page);
+    return { installRequired: false };
+  }
+  if (status === 'installable') {
+    const rowInstall = ocrRow.getByTestId('engine-row-install');
+    await waitUntil(
+      () => rowInstall.isEnabled().then((enabled) => enabled || undefined),
+      10_000,
+      'Capture Workbench engines page OCR install button remained disabled.',
+    );
+    await rowInstall.click();
+    options.onInstallStarted?.();
+  }
+  await waitForWindowsMlOcrInstallOnEnginesPage(page, installTimeoutMs, options);
+  return { installRequired: true };
+}
+
+export async function readOcrComputeModeFromSettings(page: Page): Promise<OcrComputeSettingsObservation> {
+  await page.getByTestId('nav-settings').click();
+  const computeNav = page.getByTestId('settings-nav-compute');
+  await computeNav.waitFor({ state: 'visible', timeout: 15_000 });
+  await computeNav.click();
+  await page.getByTestId('page-settings-compute').waitFor({ state: 'visible', timeout: 15_000 });
+  const section = page.getByTestId('compute-ocr-section');
+  await section.waitFor({ state: 'visible', timeout: 15_000 });
+  const observation = await waitUntil<OcrComputeSettingsObservation>(
+    async () => {
+      const statusOrNotice = section.locator('[data-testid="ocr-compute-status"], [data-testid="ocr-compute-notice"]').first();
+      if (await statusOrNotice.isVisible().catch(() => false)) {
+        const mode = await statusOrNotice.getAttribute('data-mode');
+        return {
+          visible: true,
+          mode: mode === 'gpu-dml' || mode === 'cpu-fallback' ? mode : null,
+        };
+      }
+      const cpuDetected = section.getByTestId('compute-ocr-detected');
+      if (await cpuDetected.isVisible().catch(() => false)) {
+        return { visible: true, mode: 'cpu-fallback' };
+      }
+      return undefined;
+    },
+    15_000,
+    'Capture Workbench Settings › Compute did not publish an OCR compute status.',
+  );
+  await navigateToOcrPage(page);
+  return observation;
+}
+
+export async function waitForImportedDocumentId(
+  page: Page,
+  expectedName: string,
+  timeoutMs = 30_000,
+): Promise<{ readonly count: number; readonly documentId: string }> {
+  return waitUntil(
+    async () => {
+      const result = await invokeTauriCommand(page, 'library_list', { request: { query: '', status: '' } });
+      const records = Array.isArray(result) ? result : [];
+      const matches = records.filter((record): record is { readonly fileName?: unknown; readonly documentId?: unknown } => (
+        record !== null
+        && typeof record === 'object'
+        && !Array.isArray(record)
+        && (record as { readonly fileName?: unknown }).fileName === expectedName
+      ));
+      if (matches.length === 0) return undefined;
+      if (matches.length !== 1) {
+        throw new Error('Standalone desktop smoke filename must identify exactly one document.');
+      }
+      const documentId = matches[0].documentId;
+      if (typeof documentId !== 'string' || !documentId.trim()) {
+        throw new Error('Standalone desktop smoke document omitted its document identity.');
+      }
+      return { count: records.length, documentId };
+    },
+    timeoutMs,
+    'Native picker closed without an exact library import acknowledgement.',
+  );
+}
+
+export function extractDurableOcrSegments(detail: DurableLibraryDetailRecord): readonly RealOcrUiSegment[] {
+  const raw = detail.raw;
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error('Packaged OCR checkpoint omitted durable raw capture.');
+  }
+  const segments = (raw as { readonly segments?: unknown }).segments;
+  if (!Array.isArray(segments) || segments.length === 0) {
+    throw new Error('Packaged OCR checkpoint omitted durable raw segments.');
+  }
+  return segments.map((entry, index) => {
+    if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) {
+      throw new Error(`Durable OCR segments[${index}] must be an object.`);
+    }
+    const record = entry as {
+      readonly segmentId?: unknown;
+      readonly order?: unknown;
+      readonly locator?: unknown;
+      readonly text?: unknown;
     };
-  }));
+    const locatorRecord = record.locator;
+    if (locatorRecord === null || typeof locatorRecord !== 'object' || Array.isArray(locatorRecord)) {
+      throw new Error(`Durable OCR segments[${index}] omitted locator.`);
+    }
+    const locatorKind = (locatorRecord as { readonly kind?: unknown }).kind;
+    let locator: RealOcrLocator;
+    if (locatorKind === 'page') {
+      locator = { kind: 'page', page: Number((locatorRecord as { readonly page?: unknown }).page) };
+    } else if (locatorKind === 'time') {
+      locator = {
+        kind: 'time',
+        startMs: Number((locatorRecord as { readonly startMs?: unknown }).startMs),
+        endMs: Number((locatorRecord as { readonly endMs?: unknown }).endMs),
+      };
+    } else {
+      throw new Error(`Durable OCR segments[${index}] did not expose a supported locator kind.`);
+    }
+    return {
+      segmentId: typeof record.segmentId === 'string' ? record.segmentId : '',
+      order: Number(record.order),
+      locator,
+      text: typeof record.text === 'string' ? record.text : '',
+    };
+  });
+}
+
+export async function readAndAssertVisibleOcrPages(
+  page: Page,
+  expectedPages: readonly ExpectedVisibleOcrPage[],
+  timeoutMs = 30_000,
+): Promise<{ readonly rawText: string; readonly pageTexts: readonly string[] }> {
+  await page.getByTestId('page-result').waitFor({ state: 'visible', timeout: timeoutMs });
+  await page.getByTestId('result-ocr-content').waitFor({ state: 'visible', timeout: timeoutMs });
+  const textarea = page.getByTestId('result-page-text');
+  await textarea.waitFor({ state: 'visible', timeout: timeoutMs });
+
+  const pageTexts: string[] = [];
+  for (const [index, expectedPage] of expectedPages.entries()) {
+    await textarea.waitFor({ state: 'visible', timeout: timeoutMs });
+    const accepted = assertVisibleOcrPageText(await textarea.inputValue(), expectedPage.text, { trim: false });
+    pageTexts.push(accepted);
+
+    if (index + 1 < expectedPages.length) {
+      const nextButton = page.getByTestId('result-page-next');
+      await nextButton.waitFor({ state: 'visible', timeout: 10_000 });
+      assert.equal(await nextButton.isEnabled(), true, 'Result next-page control must be enabled before advancing.');
+      const indicator = page.getByTestId('result-page-indicator');
+      const previousIndicator = (await indicator.textContent()) ?? '';
+      await nextButton.click();
+      await waitUntil(
+        async () => {
+          const current = (await indicator.textContent()) ?? '';
+          return current !== previousIndicator || undefined;
+        },
+        10_000,
+        'Result page indicator did not advance after clicking the next-page control.',
+      );
+    }
+  }
+
+  if (expectedPages.length === 1) {
+    const nextButton = page.getByTestId('result-page-next');
+    if ((await nextButton.count()) > 0 && (await nextButton.isVisible().catch(() => false))) {
+      assert.equal(await nextButton.isEnabled(), false, 'Single-page OCR result must not leave next-page enabled.');
+    }
+  }
+
+  assert.ok(
+    pageTexts.some((text) => text.trim().length > 0),
+    'Standalone desktop UI did not display non-empty OCR page text.',
+  );
+  return {
+    rawText: pageTexts.filter((text) => text.trim().length > 0).join('\n'),
+    pageTexts,
+  };
 }
 
 export async function visibleRuntimeError(page: Page): Promise<string | undefined> {
-  const error = page.getByTestId('runtime-error');
-  if (!await error.isVisible().catch(() => false)) return undefined;
-  const message = await error.getByTestId('runtime-error-message').textContent().catch(() => undefined);
-  return `Capture Workbench runtime entered an error state: ${message?.trim() || 'no detail was rendered.'}`;
+  try {
+    const diagnosticsError = page.getByTestId('diagnostics-runtime-error');
+    if (await diagnosticsError.isVisible().catch(() => false)) {
+      const message = await diagnosticsError.textContent().catch(() => undefined);
+      return `Capture Workbench runtime entered an error state: ${message?.trim() || 'no detail was rendered.'}`;
+    }
+    const statusState = await page.getByTestId('runtime-status').getAttribute('data-state').catch(() => undefined);
+    if (statusState !== 'error') return undefined;
+    await page.getByTestId('runtime-status').click().catch(() => undefined);
+    await diagnosticsError.waitFor({ state: 'visible', timeout: 3_000 }).catch(() => undefined);
+    const message = await diagnosticsError.textContent().catch(() => undefined);
+    return `Capture Workbench runtime entered an error state: ${message?.trim() || 'no detail was rendered.'}`;
+  } catch {
+    return undefined;
+  }
 }
 
 export async function runtimeSetupDiagnostics(page: Page): Promise<string> {
-  const setup = page.getByTestId('runtime-setup');
-  if (!await setup.isVisible().catch(() => false)) return 'setup-visible=false';
-  const message = await setup.locator('.setup-status').textContent().catch(() => undefined);
-  const install = setup.getByTestId('runtime-install');
-  const requirements = await setup.getByTestId('runtime-requirement').evaluateAll((elements) => elements.map((element) => ({
-    id: element.getAttribute('data-requirement-id'),
-    status: element.getAttribute('data-status'),
-    text: element.textContent?.trim(),
-  }))).catch(() => []);
-  const modelSelectionVisible = await setup.getByTestId('model-selection').isVisible().catch(() => false);
-  const modelInstall = setup.getByTestId('model-install');
-  return JSON.stringify({
-    setupVisible: true,
-    message: message?.trim(),
-    coreInstallVisible: await install.isVisible().catch(() => false),
-    coreInstallEnabled: await install.isEnabled().catch(() => false),
-    requirements,
-    modelSelectionVisible,
-    modelInstallVisible: await modelInstall.isVisible().catch(() => false),
-    modelInstallEnabled: await modelInstall.isEnabled().catch(() => false),
-  });
+  try {
+    const runtimeState = await page.getByTestId('runtime-status').getAttribute('data-state').catch(() => undefined);
+    const firstRunCardVisible = await page.getByTestId('first-run-card').isVisible().catch(() => false);
+    const firstRunOcrCheckboxVisible = await page.getByTestId('first-run-checkbox-ocr').isVisible().catch(() => false);
+    const installProgressVisible = await page.getByTestId('ocr-install-progress').isVisible().catch(() => false);
+    const engineRows = await page.getByTestId('engine-row').evaluateAll((elements) => elements.map((element) => ({
+      id: element.getAttribute('data-requirement-id'),
+      status: element.getAttribute('data-status'),
+      text: element.textContent?.trim(),
+    }))).catch(() => []);
+    const runtimeError = await page.getByTestId('diagnostics-runtime-error').textContent().catch(() => undefined);
+    let url = 'unknown';
+    try {
+      url = page.url();
+    } catch {
+      url = 'unknown';
+    }
+    return JSON.stringify({
+      url,
+      runtimeState: runtimeState ?? 'unknown',
+      firstRunCardVisible,
+      firstRunOcrCheckboxVisible,
+      installProgressVisible,
+      engineRows,
+      runtimeError: runtimeError?.trim(),
+    });
+  } catch {
+    return 'diagnostics-unavailable';
+  }
 }
 
 function resolveSourceKind(sourcePath: string): SourceKind {

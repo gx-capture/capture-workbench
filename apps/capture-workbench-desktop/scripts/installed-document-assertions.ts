@@ -18,12 +18,6 @@ type ExpectedVisibleCaptureResult =
   | { readonly kind: 'page'; readonly text: string }
   | { readonly kind: 'time'; readonly lines: readonly string[] };
 
-interface RawPageSegment {
-  readonly order: number;
-  readonly text: string;
-  readonly locator: { readonly kind: 'page'; readonly page: number };
-}
-
 interface RawTimeSegment {
   readonly order: number;
   readonly text: string;
@@ -102,6 +96,79 @@ export function assertRawCaptureForFixture(
   assertDateTime(capture['createdAt'], 'Raw capture createdAt');
 }
 
+export interface ExpectedVisibleOcrPage {
+  readonly page: number;
+  readonly text: string;
+}
+
+/** Composes raw OCR page text the way the result review page composes it. */
+export function expectedVisibleOcrPagesForRaw(
+  raw: unknown,
+): readonly ExpectedVisibleOcrPage[] {
+  const capture = assertRecord(raw, 'Raw capture');
+  const rawSegments = capture['segments'];
+  assert.equal(Array.isArray(rawSegments), true, 'Raw capture segments must be an array.');
+
+  const pages = new Map<number, { readonly order: number; readonly text: string }[]>();
+  for (const rawSegment of rawSegments as readonly unknown[]) {
+    const segment = assertRecord(rawSegment, 'Raw segment');
+    const locator = assertRecord(segment['locator'], 'Raw segment locator');
+    if (locator['kind'] !== 'page') continue;
+    const text = typeof segment['text'] === 'string' ? segment['text'] : '';
+    if (text.trim() === '') continue;
+    const page = Number(locator['page']);
+    assert.ok(Number.isInteger(page) && page >= 1, 'Raw segment page must be a positive integer.');
+    const order = Number(segment['order']);
+    const group = pages.get(page) ?? [];
+    group.push({ order, text });
+    pages.set(page, group);
+  }
+  const scope = capture['ocrPageScope'];
+  if (scope !== null && typeof scope === 'object' && !Array.isArray(scope)) {
+    const processed = (scope as { readonly processedPageNumbers?: unknown }).processedPageNumbers;
+    if (Array.isArray(processed)) {
+      for (const page of processed) {
+        if (Number.isInteger(page) && Number(page) >= 1 && !pages.has(Number(page))) {
+          pages.set(Number(page), []);
+        }
+      }
+    }
+  }
+  const grouped = [...pages.entries()]
+    .sort((left, right) => left[0] - right[0])
+    .map(([page, segments]) => ({
+      page,
+      text: [...segments]
+        .sort((left, right) => left.order - right.order)
+        .map((segment) => segment.text)
+        .join('\n'),
+    }));
+  assert.ok(grouped.length > 0, 'Raw capture had no page segments.');
+  return grouped;
+}
+
+export function assertVisibleOcrPageText(
+  visibleResult: unknown,
+  expectedText: string,
+  options: { readonly trim?: boolean } = {},
+): string {
+  const shouldTrim = options.trim ?? true;
+  const normalizedVisible = typeof visibleResult === 'string'
+    ? visibleResult.replace(/\r\n/gu, '\n')
+    : '';
+  const visibleText = shouldTrim ? normalizedVisible.trim() : normalizedVisible;
+  const expectedNormalized = shouldTrim
+    ? expectedText.trim()
+    : expectedText.replace(/\r\n/gu, '\n');
+  if (expectedText.trim().length > 0) {
+    assert.ok(visibleText.trim().length > 0, 'Installed result preview was empty.');
+  } else {
+    assert.ok(typeof visibleResult === 'string', 'Installed result preview was missing.');
+  }
+  assert.equal(visibleText, expectedNormalized);
+  return visibleText;
+}
+
 export function expectedVisibleResultForRaw(
   raw: unknown,
   fixture: Pick<InstalledCaptureFixtureExpectation, 'locatorKind'>,
@@ -111,17 +178,8 @@ export function expectedVisibleResultForRaw(
   assert.equal(Array.isArray(rawSegments), true, 'Raw capture segments must be an array.');
 
   if (fixture.locatorKind === 'page') {
-    const pageSegments = (rawSegments as RawPageSegment[])
-      .filter((segment) => segment.locator.kind === 'page')
-      .slice()
-      .sort((left, right) => left.order - right.order);
-    assert.ok(pageSegments.length > 0, 'Raw capture had no page segments.');
-    const firstPage = Math.min(...pageSegments.map((segment) => segment.locator.page));
-    const text = pageSegments
-      .filter((segment) => segment.locator.page === firstPage)
-      .map((segment) => segment.text)
-      .join('\n')
-      .trim();
+    const pages = expectedVisibleOcrPagesForRaw(raw);
+    const text = pages[0].text.trim();
     assert.ok(text.length > 0, 'Expected visible OCR page text was empty.');
     return { kind: 'page', text };
   }

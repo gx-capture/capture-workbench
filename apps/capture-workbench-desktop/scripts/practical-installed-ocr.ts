@@ -30,6 +30,7 @@ import { firstValueFrom, from } from 'rxjs';
 
 import { REGISTRY_VIEWS } from './constants/installed.ts';
 import { installerArguments, uninstallerArguments } from './contracts/installed.ts';
+import { expectedVisibleOcrPagesForRaw } from './installed-document-assertions.ts';
 import { createTrackedProcessTreeTerminator } from './installed-process-cleanup.ts';
 import { createInstalledRegistry } from './installed-registry.ts';
 import { createInstalledSmokeLifecycle } from './installed-smoke-lifecycle.ts';
@@ -57,24 +58,27 @@ import {
   type ProcessImageRecord,
 } from './practical-installed.ts';
 import {
+  assertDiagnosticsMatchesDurableOcr,
   assertDurableOcrCheckpoint,
   closePackagedBrowser,
-  collectVisibleOcrSegments,
   connectToPackagedPage,
-  exactDocumentCard,
+  exactOcrQueueRow,
+  extractDurableOcrSegments,
   invokeTauriCommand,
   isLoopbackPortOpen,
   parseAuthenticatedOcrPreflight,
+  pinViewportToWindow,
   queryPackagedUiState,
-  reattachToPackagedPage,
+  readAndAssertVisibleOcrPages,
   readDurableLibraryDetail,
-  readDurableOcrProvenance,
   readImportedSourceSha256,
+  readOcrComputeModeFromSettings,
+  reattachToPackagedPage,
   requestDesktopTeardown,
   reservePort,
-  runtimeSetupDiagnostics,
-  visibleRuntimeError,
+  runOcrFirstRunSetup,
   waitForDesktopOcrCompletion,
+  waitForImportedDocumentId,
   waitForPackagedRuntimeReadySignal,
   waitUntil,
 } from './real-desktop-ocr-smoke.ts';
@@ -399,43 +403,26 @@ export async function runPracticalInstalledOcr(args: PracticalRunArguments): Pro
     );
     await attach(await connectToPackagedPage(port, { initialBrowser, timeoutMs: 30_000 }));
     await activePage().waitForLoadState('domcontentloaded');
-    await activePage().setViewportSize({ width: 1440, height: 900 });
+    await pinViewportToWindow(activePage());
 
-    const setup = activePage().getByTestId('runtime-setup');
-    const initialState = await waitUntil<'ready' | 'setup'>(async () => {
-      const runtimeError = await visibleRuntimeError(activePage());
-      if (runtimeError) throw new Error(runtimeError);
-      if (await activePage().getByTestId('source-import').isEnabled()) return 'ready';
-      if (await setup.isVisible()) return 'setup';
-      return undefined;
-    }, 3 * 60_000, 'Practical installed app did not reach ready or setup state.');
-    if (initialState === 'ready') {
-      throw new Error('A fresh practical installation unexpectedly reused an installed runtime.');
-    }
-    const install = setup.getByTestId('runtime-install');
-    await install.waitFor({ state: 'visible', timeout: 30_000 });
-    await activePage().screenshot({ path: join(privateRoot, '01-first-run-setup.png') });
-    await install.click();
-    await waitUntil(async () => {
-      const runtimeError = await visibleRuntimeError(activePage());
-      if (runtimeError) throw new Error(runtimeError);
-      const progress = activePage().getByTestId('runtime-install-progress');
-      if (await progress.isVisible().catch(() => false)) {
-        const status = await progress.getAttribute('data-status');
-        if (status === 'failed' || status === 'cancelled' || status === 'manual_action_required') {
-          throw new Error(`First-run runtime setup ended as ${status}. ${await runtimeSetupDiagnostics(activePage())}`);
-        }
-      }
-      const runtimeState = await activePage().getByTestId('workbench-root').getAttribute('data-runtime-state').catch(() => undefined);
-      if (runtimeState === 'error') {
-        throw new Error(`First-run runtime setup entered an error state. ${await runtimeSetupDiagnostics(activePage())}`);
-      }
-      return (await waitForPackagedRuntimeReadySignal(port)) || undefined;
-    }, runtimeSetupTimeoutMs, 'First-run runtime setup did not reach readiness.');
+    await runOcrFirstRunSetup(activePage(), {
+      readyTimeoutMs: 3 * 60_000,
+      installTimeoutMs: runtimeSetupTimeoutMs,
+      failIfAlreadyReady: true,
+      onConsentRequired: async (consentPage) => {
+        await consentPage.screenshot({ path: join(privateRoot, '01-first-run-setup.png') });
+      },
+    });
+    await waitUntil(
+      () => waitForPackagedRuntimeReadySignal(port, activePage()).then((ready) => ready || undefined),
+      runtimeSetupTimeoutMs,
+      'First-run runtime setup did not reach readiness.',
+    );
     await attach(await reattachToPackagedPage(port));
     const preflight = parseAuthenticatedOcrPreflight(await invokeTauriCommand(activePage(), 'runtime_ready', {}));
+    const computeObservation = await readOcrComputeModeFromSettings(activePage());
     const uiState = await queryPackagedUiState(port);
-    if (!uiState?.sourceImportEnabled || uiState.ocrComputeMode !== preflight.mode || !uiState.ocrComputeVisible) {
+    if (!uiState?.sourceImportEnabled || !computeObservation.visible || computeObservation.mode !== preflight.mode) {
       throw new Error('The installed UI did not expose the authenticated OCR compute state before import.');
     }
     const runtimeReadyMs = Date.now() - runtimeStarted;
@@ -448,18 +435,18 @@ export async function runPracticalInstalledOcr(args: PracticalRunArguments): Pro
     await copyFile(args.input, pickerSource);
     const ocrStarted = Date.now();
     const appPid = app.pid ?? 0;
+    const intake = activePage().getByTestId('ocr-choose-files');
+    await intake.waitFor({ state: 'visible', timeout: 15_000 });
     await nativeOpenDialogUiAutomation(pickerSource, appPid, () =>
-      nativeClickWebViewElement(activePage().getByTestId('source-import'), appPid),
+      nativeClickWebViewElement(intake, appPid),
     );
     await attach(await reattachToPackagedPage(port));
-    const card = exactDocumentCard(activePage(), sourceName);
-    await card.waitFor({ state: 'visible', timeout: 60_000 });
-    const documentId = await card.getAttribute('data-document-id');
-    if (!documentId) throw new Error('Imported practical document omitted its identity.');
-    const completed = await waitForDesktopOcrCompletion(activePage(), card, ocrTimeoutMs, {
-      fileName: sourceName,
+    const { documentId } = await waitForImportedDocumentId(activePage(), sourceName, 30_000);
+    const queueRow = exactOcrQueueRow(activePage(), documentId);
+    await queueRow.waitFor({ state: 'visible', timeout: 60_000 });
+    const completed = await waitForDesktopOcrCompletion(activePage(), queueRow, ocrTimeoutMs, {
       documentId,
-      stopAtOcrCheckpoint: true,
+      durableCompletion: 'ocr-checkpoint',
       observeLiveness: async () => ({
         appAlive: app?.exitCode === null && app?.signalCode === null,
         runtimeAlive: (await sampler.sample()).some(
@@ -471,24 +458,24 @@ export async function runPracticalInstalledOcr(args: PracticalRunArguments): Pro
         appSignal: app?.signalCode ?? null,
       }),
       reattach: async () => attach(await reattachToPackagedPage(port)),
-      exactDocumentCard,
+      exactOcrQueueRow,
     });
     page = completed.page;
-    await completed.card.click();
-    const raw = page.locator('.review-block').filter({ hasText: '辨識文字' }).locator('pre');
-    await raw.waitFor({ state: 'visible', timeout: 30_000 });
-    const rawText = (await raw.textContent()) ?? '';
-    const segments = await collectVisibleOcrSegments(page);
+    await completed.row.getByTestId('ocr-row-view').click();
+    const detail = await readDurableLibraryDetail(page, documentId);
+    const expectedPages = expectedVisibleOcrPagesForRaw(detail.raw);
+    const visibleOcr = await readAndAssertVisibleOcrPages(page, expectedPages);
+    const rawText = visibleOcr.rawText;
+    const segments = extractDurableOcrSegments(detail);
     const ocrMs = Date.now() - ocrStarted;
     await page.screenshot({ path: join(privateRoot, '03-ocr-result.png'), fullPage: true });
     // Raw OCR text and unmasked screenshots stay private for the human
     // usability review; evidence records only counts and identities.
     await writeFile(join(privateRoot, 'ocr-raw-text.txt'), rawText, { encoding: 'utf8', flag: 'wx' });
 
-    const detail = await readDurableLibraryDetail(page, documentId);
     const importedSourceSha256 = readImportedSourceSha256(detail);
     assertDurableOcrCheckpoint(detail, { sourceKind, sourceSha256: args.inputSha256, rawSegments: segments });
-    const durable = readDurableOcrProvenance(detail);
+    const durable = await assertDiagnosticsMatchesDurableOcr(page, detail, documentId);
     if ((durable.device === 'windowsml-dml') !== (preflight.mode === 'gpu-dml')) {
       throw new Error('Durable OCR device differs from the authenticated compute preflight.');
     }
@@ -514,7 +501,9 @@ export async function runPracticalInstalledOcr(args: PracticalRunArguments): Pro
         computeMode: preflight.mode,
       },
       ocr: {
-        ...durable,
+        engine: durable.engine,
+        model: durable.model,
+        device: durable.device,
         segmentCount: segments.length,
         characterCount: segments.reduce((total, segment) => total + segment.text.length, 0),
       },
