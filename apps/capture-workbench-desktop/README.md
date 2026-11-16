@@ -115,10 +115,14 @@ evidence (`tmp/capture-workbench-desktop/real-ollama-smoke/real-ollama-smoke.jso
 ## Opt-in staged-runtime three-media diagnostic
 
 This preliminary diagnostic starts a staged runtime, then installs
-`windowsml-ocr` and `speech-recognition` in host-controlled order and exercises a
-real scanned PDF, image, and audio file through host structuring. It requires a
-complete approved catalog for an unused successor version; immutable v0.3.8
-fails closed before staging because both dependencies are unavailable.
+`windowsml-ocr` and `speech-recognition` (forcing `cuda`) in host-controlled
+order and exercises a real scanned PDF, image, and audio file over the v2
+ingestion and capture flow (`POST /v2/ingestions`, chunked
+`PUT /v2/ingestions/{id}/chunks/{i}`, `POST /v2/ingestions/{id}/finalize`,
+`POST /v2/captures`, and `POST /v2/captures/{id}/structure/commit`) through
+host structuring. It requires a complete approved catalog for an unused
+successor version; immutable v0.3.8 fails closed before staging because both
+dependencies are unavailable.
 
 ```powershell
 $env:CAPTURE_REAL_MEDIA_PDF = 'C:\path\to\scanned.pdf'
@@ -128,11 +132,16 @@ $env:CAPTURE_REAL_MEDIA_APP_DATA = 'C:\prepared\Capture Workbench app-data'
 corepack pnpm nx run capture-workbench-desktop:smoke-real-media
 ```
 
-The diagnostic strips ambient provider/model overrides, verifies DirectML OCR
-and lock-selected TEA-ASR provenance, proves UUID-scoped capture deletion, and
-checks its owned runtime process is gone. Its report always records
-`releaseGateSatisfied=false` and `consumerE2e=false`: it is not the
-Tauri/WebView preflight below and is not candidate release evidence input.
+For a build that is not published yet, set
+`CAPTURE_REAL_MEDIA_WORKER_MIRROR_URL` to a loopback mirror
+(`http://127.0.0.1:<port>`) to opt into the local worker mirror
+(`CAPTURE_SMOKE_WORKER_MIRROR_OPT_IN=1` and `CAPTURE_ENGINE_CACHE_DIR=off`).
+The diagnostic forwards `LOCALAPPDATA`, `TEMP`, and `USERNAME` to the runtime,
+strips ambient provider/model overrides, verifies DirectML OCR and lock-selected
+TEA-ASR provenance, proves UUID-scoped capture deletion, and checks its owned
+runtime process is gone. Its report (`tmp/capture-workbench-desktop/real-media-smoke/real-media-smoke.json`)
+always records `releaseGateSatisfied=false` and `consumerE2e=false`: it is not
+the Tauri/WebView preflight below and is not candidate release evidence input.
 
 ## Opt-in real model-enabled Tauri/WebView preflight
 

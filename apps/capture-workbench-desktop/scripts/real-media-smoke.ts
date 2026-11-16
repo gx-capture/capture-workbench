@@ -9,6 +9,12 @@ import { assertStagedRuntime } from './assert-staged-runtime.ts';
 import { catalogDeliveries } from './practical-installed.ts';
 import { appRoot, stagedExecutable } from './stage-runtime.ts';
 import { pathToFileURL } from 'node:url';
+import {
+  isTerminalCaptureStatus,
+  startV2Capture,
+  validateWorkerMirrorUrl,
+  type CaptureOperation,
+} from './v2-capture-flow.ts';
 
 const workspaceRoot = resolve(appRoot, '..', '..');
 const outputDirectory = join(
@@ -20,7 +26,7 @@ const outputDirectory = join(
 const evidencePath = join(outputDirectory, 'real-media-smoke.json');
 const maxInstallationWaitMs = 90 * 60_000;
 const maxCaptureWaitMs = 20 * 60_000;
-const ownedRuntimeObserverTimeoutMs = 45_000;
+export const ownedRuntimeObserverTimeoutMs = 45_000;
 export const dependencyOrder = ['windowsml-ocr', 'speech-recognition'] as const;
 
 const canonicalSourceLockPath = join(
@@ -53,13 +59,6 @@ interface RuntimeInstallation {
   readonly error?: { readonly message?: string } | null;
 }
 
-interface CaptureJob {
-  readonly captureId: string;
-  readonly status: string;
-  readonly stage: string;
-  readonly error?: { readonly message?: string } | null;
-}
-
 interface RawCapture {
   readonly source: Record<string, unknown>;
   readonly sourceText: string;
@@ -78,12 +77,52 @@ interface RawCapture {
   };
 }
 
-interface CaptureResult {
-  readonly extractionEngine: RawCapture['extractionEngine'];
-  readonly structuringEngine: {
+interface ExtractedHostCaptureResult {
+  readonly schemaVersion: '2';
+  readonly extractionEngine: {
     readonly engine: string;
-    readonly model: string;
+  };
+  readonly structuringEngine: {
+    readonly engine: 'host';
     readonly digest: string;
+  };
+}
+
+const sha256DigestPattern = /^sha256:[a-f0-9]{64}$/u;
+
+export function isAwaitingStructuringOrTerminal(status: string): boolean {
+  return status === 'awaiting_structuring' || isTerminalCaptureStatus(status);
+}
+
+export function extractHostCaptureResult(
+  payload: unknown,
+  expectedExtractionEngine: string,
+): ExtractedHostCaptureResult {
+  const envelope = asObject(payload);
+  const document = asObject(envelope?.['result']);
+  const extraction = asObject(document?.['extractionEngine']);
+  const structuring = asObject(document?.['structuringEngine']);
+  if (
+    !document ||
+    document['schemaVersion'] !== '2' ||
+    !extraction ||
+    extraction['engine'] !== expectedExtractionEngine ||
+    !structuring ||
+    structuring['engine'] !== 'host' ||
+    typeof structuring['digest'] !== 'string' ||
+    !sha256DigestPattern.test(structuring['digest'])
+  ) {
+    throw new Error('Real media capture result does not contain valid v2 host structuring provenance.');
+  }
+  return {
+    schemaVersion: '2',
+    extractionEngine: {
+      engine: expectedExtractionEngine,
+    },
+    structuringEngine: {
+      engine: 'host',
+      digest: structuring['digest'],
+    },
   };
 }
 
@@ -380,6 +419,10 @@ async function main(): Promise<void> {
   const imagePath = requiredPath('CAPTURE_REAL_MEDIA_IMAGE');
   const audioPath = requiredPath('CAPTURE_REAL_MEDIA_AUDIO');
   const appData = requiredPath('CAPTURE_REAL_MEDIA_APP_DATA');
+  const workerMirrorUrl = validateWorkerMirrorUrl(
+    process.env['CAPTURE_REAL_MEDIA_WORKER_MIRROR_URL'],
+    'CAPTURE_REAL_MEDIA_WORKER_MIRROR_URL',
+  );
   await requireRegularFile(pdfPath, 'CAPTURE_REAL_MEDIA_PDF');
   await requireRegularFile(imagePath, 'CAPTURE_REAL_MEDIA_IMAGE');
   await requireRegularFile(audioPath, 'CAPTURE_REAL_MEDIA_AUDIO');
@@ -405,7 +448,14 @@ async function main(): Promise<void> {
       cwd: resolve(stagedExecutable, '..'),
       windowsHide: true,
       stdio: 'ignore',
-      env: runtimeEnvironment(appData, runtimePort, token, expectedProvenance),
+      env: runtimeEnvironment(
+        appData,
+        runtimePort,
+        token,
+        expectedProvenance,
+        process.env,
+        workerMirrorUrl,
+      ),
     },
   );
   const captureIds: string[] = [];
@@ -510,22 +560,15 @@ async function captureAndVerify(
   fileName: string,
   captureIds: string[],
   expectedProvenance: ExpectedProvenance,
-): Promise<{ readonly raw: RawCapture; readonly result: CaptureResult }> {
-  const form = new FormData();
-  form.set('sourceKind', sourceKind);
-  form.set('structuringMode', 'host');
-  form.set('targetLanguage', 'zh-TW');
-  form.set(
-    'file',
-    new Blob([bytes], {
-      type: fixtureMediaType(sourceKind, fileName),
-    }),
+): Promise<{ readonly raw: RawCapture; readonly result: ExtractedHostCaptureResult }> {
+  const created = await startV2Capture({
+    request: (path, init) => request(port, token, path, init),
     fileName,
-  );
-  const created = await request<CaptureJob>(port, token, '/v2/captures', {
-    method: 'POST',
-    headers: { 'x-idempotency-key': randomUUID() },
-    body: form,
+    kind: sourceKind,
+    mediaType: fixtureMediaType(sourceKind, fileName),
+    sourceBytes: bytes,
+    structuringMode: 'host',
+    targetLanguage: 'zh-TW',
   });
   captureIds.push(created.captureId);
   const awaiting = await waitForAwaitingStructuring(
@@ -533,12 +576,9 @@ async function captureAndVerify(
     token,
     created.captureId,
   );
-  if (
-    awaiting.status !== 'running' ||
-    awaiting.stage !== 'awaiting_structuring'
-  ) {
+  if (awaiting.status !== 'awaiting_structuring') {
     throw new Error(
-      `Real ${sourceKind} extraction ended as ${awaiting.status}/${awaiting.stage}.`,
+      `Real ${sourceKind} extraction ended as ${awaiting.status}: ${awaiting.error?.message ?? awaiting.error?.code ?? 'no detail'}.`,
     );
   }
   const raw = await request<RawCapture>(
@@ -564,12 +604,12 @@ async function captureAndVerify(
     }
     assert.ok(raw.segments.some((segment) => segment.locator.kind === 'time'));
   }
-  assert.match(raw.extractionEngine.digest, /^sha256:[a-f0-9]{64}$/u);
+  assert.match(raw.extractionEngine.digest, sha256DigestPattern);
   const candidate = hostCandidate(raw);
-  const committed = await request<CaptureJob>(
+  const committed = await request<CaptureOperation>(
     port,
     token,
-    `/v2/captures/${created.captureId}/structure`,
+    `/v2/captures/${created.captureId}/structure/commit`,
     {
       method: 'POST',
       headers: {
@@ -582,17 +622,18 @@ async function captureAndVerify(
   const completed = await waitForTerminal(port, token, committed.captureId);
   if (completed.status !== 'completed') {
     throw new Error(
-      `Real ${sourceKind} capture ended as ${completed.status}: ${completed.error?.message ?? 'no detail'}.`,
+      `Real ${sourceKind} capture ended as ${completed.status}: ${completed.error?.message ?? completed.error?.code ?? 'no detail'}.`,
     );
   }
-  const result = await request<CaptureResult>(
+  const resultPayload = await request<unknown>(
     port,
     token,
     `/v2/captures/${created.captureId}/result`,
   );
-  assert.equal(result.extractionEngine.engine, raw.extractionEngine.engine);
-  assert.equal(result.structuringEngine.engine, 'host');
-  assert.match(result.structuringEngine.digest, /^sha256:[a-f0-9]{64}$/u);
+  const result = extractHostCaptureResult(
+    resultPayload,
+    raw.extractionEngine.engine,
+  );
   return { raw, result };
 }
 
@@ -680,6 +721,7 @@ export function runtimeEnvironment(
   token: string,
   expectedProvenance: ExpectedProvenance,
   inherited: NodeJS.ProcessEnv = process.env,
+  workerMirrorUrl?: string,
 ): NodeJS.ProcessEnv {
   const sanitized = Object.fromEntries(
     Object.entries(inherited).filter(([name]) => {
@@ -687,8 +729,23 @@ export function runtimeEnvironment(
       return !upper.startsWith('CAPTURE_') && !upper.startsWith('OLLAMA_');
     }),
   );
+  const requiredWindowsVars: NodeJS.ProcessEnv = {};
+  for (const name of [
+    'LOCALAPPDATA',
+    'TEMP',
+    'TMP',
+    'USERNAME',
+    'USERPROFILE',
+  ] as const) {
+    const entry = Object.entries(inherited).find(
+      ([key, value]) =>
+        key.toUpperCase() === name && typeof value === 'string' && value.length > 0,
+    );
+    if (entry) requiredWindowsVars[name] = entry[1];
+  }
   return {
     ...sanitized,
+    ...requiredWindowsVars,
     CAPTURE_HOST: '127.0.0.1',
     CAPTURE_PORT: String(port),
     CAPTURE_API_TOKEN: token,
@@ -704,6 +761,13 @@ export function runtimeEnvironment(
     // The lock's speech fixture is TEA-ASR 1.1, which only the cuda content
     // carries. Without this a machine with no NVIDIA driver installs cpu.
     CAPTURE_SPEECH_RECOGNITION_VARIANT: 'cuda',
+    ...(workerMirrorUrl
+      ? {
+          CAPTURE_SMOKE_WORKER_MIRROR_OPT_IN: '1',
+          CAPTURE_SMOKE_WORKER_MIRROR_URL: workerMirrorUrl,
+          CAPTURE_ENGINE_CACHE_DIR: 'off',
+        }
+      : {}),
   };
 }
 
@@ -758,19 +822,15 @@ async function waitForAwaitingStructuring(
   port: number,
   token: string,
   captureId: string,
-): Promise<CaptureJob> {
+): Promise<CaptureOperation> {
   const deadline = Date.now() + maxCaptureWaitMs;
   while (Date.now() < deadline) {
-    const current = await request<CaptureJob>(
+    const current = await request<CaptureOperation>(
       port,
       token,
       `/v2/captures/${captureId}`,
     );
-    if (
-      current.stage === 'awaiting_structuring' ||
-      !['queued', 'running'].includes(current.status)
-    )
-      return current;
+    if (isAwaitingStructuringOrTerminal(current.status)) return current;
     await delay(1_000);
   }
   throw new Error('Capture did not reach host structuring before the timeout.');
@@ -780,15 +840,15 @@ async function waitForTerminal(
   port: number,
   token: string,
   captureId: string,
-): Promise<CaptureJob> {
+): Promise<CaptureOperation> {
   const deadline = Date.now() + maxCaptureWaitMs;
   while (Date.now() < deadline) {
-    const current = await request<CaptureJob>(
+    const current = await request<CaptureOperation>(
       port,
       token,
       `/v2/captures/${captureId}`,
     );
-    if (!['queued', 'running'].includes(current.status)) return current;
+    if (isTerminalCaptureStatus(current.status)) return current;
     await delay(500);
   }
   throw new Error('Capture did not reach a terminal state before the timeout.');
@@ -965,7 +1025,8 @@ function runOwnedRuntimeObserver(script: string): OwnedRuntimeEvidence {
     },
   );
   if (result.error || result.status !== 0 || !result.stdout.trim()) {
-    const code = result.error?.code ?? 'none';
+    const code =
+      (result.error as NodeJS.ErrnoException | undefined)?.code ?? 'none';
     const status = Number.isInteger(result.status) ? String(result.status) : 'none';
     throw new Error(
       `Owned Capture Runtime process observer failed (code=${code}; status=${status}).`,

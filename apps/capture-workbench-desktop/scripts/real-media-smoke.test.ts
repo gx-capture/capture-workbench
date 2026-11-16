@@ -9,8 +9,11 @@ import {
   assertRealMediaRequirementsAvailable,
   dependencyOrder,
   expectedProvenanceFromSourceLock,
+  extractHostCaptureResult,
+  isAwaitingStructuringOrTerminal,
   observeKnownRuntimeProcesses,
   observeOwnedRuntimeTree,
+  ownedRuntimeObserverTimeoutMs,
   parseOwnedRuntimeEvidence,
   runtimeEnvironment,
 } from './real-media-smoke.ts';
@@ -222,6 +225,98 @@ test('real-media runtime environment removes ambient provider and model override
   assert.equal(environment.CAPTURE_WHISPER_PREFER_GPU, 'true');
   // An ambient cpu cannot reach the runtime: the smoke installs cuda on any machine.
   assert.equal(environment.CAPTURE_SPEECH_RECOGNITION_VARIANT, 'cuda');
+  assert.equal(environment.CAPTURE_SMOKE_WORKER_MIRROR_OPT_IN, undefined);
+  assert.equal(environment.CAPTURE_SMOKE_WORKER_MIRROR_URL, undefined);
+  assert.equal(environment.CAPTURE_ENGINE_CACHE_DIR, undefined);
+});
+
+test('real-media runtime environment forwards Windows cache/user variables and optional worker mirror', () => {
+  const environment = runtimeEnvironment(
+    'C:\\owned-app-data',
+    43123,
+    't'.repeat(64),
+    {
+      ocrModel: 'pp-ocrv6-medium-windowsml',
+      whisperModel: 'tea-asr-1.1',
+      whisperDevice: 'cuda',
+      whisperPreferGpu: true,
+    },
+    {
+      LocalAppData: 'C:\\Users\\tester\\AppData\\Local',
+      Temp: 'C:\\Users\\tester\\AppData\\Local\\Temp',
+      USERNAME: 'tester',
+      USERPROFILE: 'C:\\Users\\tester',
+    },
+    'http://127.0.0.1:44123',
+  );
+
+  assert.equal(environment.LOCALAPPDATA, 'C:\\Users\\tester\\AppData\\Local');
+  assert.equal(environment.TEMP, 'C:\\Users\\tester\\AppData\\Local\\Temp');
+  assert.equal(environment.USERNAME, 'tester');
+  assert.equal(environment.USERPROFILE, 'C:\\Users\\tester');
+  assert.equal(environment.CAPTURE_SMOKE_WORKER_MIRROR_OPT_IN, '1');
+  assert.equal(environment.CAPTURE_SMOKE_WORKER_MIRROR_URL, 'http://127.0.0.1:44123');
+  assert.equal(environment.CAPTURE_ENGINE_CACHE_DIR, 'off');
+});
+
+test('isAwaitingStructuringOrTerminal recognizes v2 awaiting_structuring and terminal states', () => {
+  for (const ready of ['awaiting_structuring', 'completed', 'failed', 'cancelled']) {
+    assert.equal(isAwaitingStructuringOrTerminal(ready), true, `expected ${ready} to stop polling`);
+  }
+  for (const active of ['created', 'waiting_input', 'extracting', 'structuring']) {
+    assert.equal(isAwaitingStructuringOrTerminal(active), false, `expected ${active} to keep polling`);
+  }
+});
+
+test('extractHostCaptureResult reads nested v2 result and rejects invalid payloads', () => {
+  const validDigest = `sha256:${'1'.repeat(64)}`;
+  assert.deepEqual(
+    extractHostCaptureResult(
+      {
+        operation: { captureId: 'cap-1', status: 'completed' },
+        raw: { schemaVersion: '2' },
+        result: {
+          schemaVersion: '2',
+          extractionEngine: { engine: 'windowsml-ocr' },
+          structuringEngine: { engine: 'host', digest: validDigest },
+        },
+      },
+      'windowsml-ocr',
+    ),
+    {
+      schemaVersion: '2',
+      extractionEngine: { engine: 'windowsml-ocr' },
+      structuringEngine: { engine: 'host', digest: validDigest },
+    },
+  );
+
+  assert.throws(
+    () =>
+      extractHostCaptureResult(
+        {
+          schemaVersion: '2',
+          extractionEngine: { engine: 'windowsml-ocr' },
+          structuringEngine: { engine: 'host', digest: validDigest },
+        },
+        'windowsml-ocr',
+      ),
+    /v2 host structuring provenance/u,
+  );
+
+  assert.throws(
+    () =>
+      extractHostCaptureResult(
+        {
+          result: {
+            schemaVersion: '2',
+            extractionEngine: { engine: 'windowsml-ocr' },
+            structuringEngine: { engine: 'ollama', digest: validDigest },
+          },
+        },
+        'windowsml-ocr',
+      ),
+    /v2 host structuring provenance/u,
+  );
 });
 
 test('source-lock Whisper role is the production worker model provenance', () => {
@@ -276,13 +371,8 @@ test(
   },
 );
 
-test('owned runtime observer leaves enough budget for hosted Windows process probes', async () => {
-  const source = await readFile(
-    new URL('./real-media-smoke.ts', import.meta.url),
-    'utf8',
-  );
-  assert.match(source, /ownedRuntimeObserverTimeoutMs = 45_000/u);
-  assert.match(source, /timeout: ownedRuntimeObserverTimeoutMs/u);
+test('owned runtime observer leaves enough budget for hosted Windows process probes', () => {
+  assert.ok(ownedRuntimeObserverTimeoutMs >= 45_000);
 });
 
 test('real-media diagnostic cannot claim release or consumer E2E acceptance', () => {
