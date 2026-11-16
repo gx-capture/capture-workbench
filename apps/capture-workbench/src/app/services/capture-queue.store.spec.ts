@@ -381,7 +381,7 @@ function requirement(status: RuntimeRequirement['status']): RuntimeRequirement {
     status,
     kind: 'runtime',
     requiredFor: ['capture'],
-    installStrategy: 'automatic',
+    installStrategy: 'runtime-catalog',
     detail: null,
     downloadBytes: 144_000_000,
   };
@@ -406,8 +406,7 @@ function runningJob(): DesktopCaptureOperation {
     protocolVersion: '2',
     captureId: 'capture-1',
     ingestionId: 'ingestion-1',
-    status: 'running',
-    stage: 'extracting',
+    status: 'extracting',
     progress: 0.75,
     pagesDone: 9,
     pagesTotal: 12,
@@ -415,7 +414,7 @@ function runningJob(): DesktopCaptureOperation {
     lastEventSequence: 0,
     createdAt: '2026-11-10T00:00:00Z',
     updatedAt: '2026-11-10T00:00:00Z',
-  } as DesktopCaptureOperation;
+  };
 }
 
 function settle(): Promise<void> {
