@@ -79,6 +79,10 @@ export interface DesktopComputeStatus {
 export interface DesktopRuntimeStatus {
   readonly status: 'starting' | 'ready' | 'failed' | 'stopped';
   readonly detail: string;
+  readonly runtimeVersion?: string;
+  readonly apiVersion?: string;
+  readonly contractSetVersion?: string;
+  readonly captureDocumentSchemaVersion?: string;
   readonly ocrCompute?: OcrComputePreflight | null;
   /**
    * Acceptance-only PDF scope advertised by the packaged harness. An omitted

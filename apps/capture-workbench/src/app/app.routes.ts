@@ -9,6 +9,7 @@ import { ResultExportPage } from './result/result-export-page';
 import { ResultPage } from './result/result-page';
 import { ResultSpeakersPage } from './result/result-speakers-page';
 import { ComputePage } from './settings/compute-page';
+import { DiagnosticsPage } from './settings/diagnostics-page';
 import { EnginesPage } from './settings/engines-page';
 import { GeneralPage } from './settings/general-page';
 import { SettingsPage } from './settings/settings-page';
@@ -42,6 +43,7 @@ export const appRoutes: Routes = [
       { path: 'engines', component: EnginesPage },
       { path: 'compute', component: ComputePage },
       { path: 'general', component: GeneralPage },
+      { path: 'diagnostics', component: DiagnosticsPage },
     ],
   },
   { path: '**', redirectTo: 'ocr' },

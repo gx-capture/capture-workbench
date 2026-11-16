@@ -48,6 +48,11 @@ describe('App shell and recognition pages', () => {
       '/history',
       '/settings',
     ]);
+    expect(
+      fixture.nativeElement
+        .querySelector('[data-testid="runtime-status"]')
+        ?.getAttribute('href'),
+    ).toBe('/settings/diagnostics');
   });
 
   it('opens document to text by default and marks its link as the current page', async () => {
@@ -291,7 +296,7 @@ describe('App shell and recognition pages', () => {
       ) as HTMLElement;
 
     expect(status().dataset['state']).toBe('starting');
-    expect(status().getAttribute('href')).toBe('/workspace');
+    expect(status().getAttribute('href')).toBe('/settings/diagnostics');
     expect(status().getAttribute('aria-label')).toBeNull();
     expect(status().querySelector('.sr-only')?.textContent).toBe('診斷');
     expect(status().querySelector('[aria-live="polite"]')?.textContent).toContain('尚未就緒');
