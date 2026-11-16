@@ -67,8 +67,9 @@ export class DesktopRuntimeClientService {
     return isOcrComputePreflight(compute) ? compute : null;
   });
   /**
-   * A page scope is opt-in and must be an ordered prefix. Missing or malformed
-   * status data fails safe to the runtime's canonical all-page behavior.
+   * A page scope is opt-in and must be a strictly ascending list of page numbers.
+   * Missing or malformed status data fails safe to the runtime's canonical
+   * all-page behavior.
    */
   readonly pdfPageNumbers = computed<readonly number[] | undefined>(() => {
     const status = this.readiness.hasValue() ? this.readiness.value() : undefined;
@@ -317,9 +318,23 @@ function isOcrComputePreflight(
   return mode === 'gpu-dml' || mode === 'cpu-fallback';
 }
 
+const MAX_PDF_PAGE_SELECTION = 500;
+const MAX_PDF_PAGE_NUMBER = 4_294_967_295;
+
 function isPdfPageNumbers(value: unknown): value is readonly number[] {
-  return Array.isArray(value)
-    && value.length >= 1
-    && value.every((page) => Number.isSafeInteger(page) && page >= 1)
-    && value.every((page, index) => page === index + 1);
+  if (!Array.isArray(value) || value.length < 1 || value.length > MAX_PDF_PAGE_SELECTION) {
+    return false;
+  }
+  let previous = 0;
+  for (const page of value) {
+    if (
+      !Number.isSafeInteger(page)
+      || page <= previous
+      || page > MAX_PDF_PAGE_NUMBER
+    ) {
+      return false;
+    }
+    previous = page;
+  }
+  return true;
 }

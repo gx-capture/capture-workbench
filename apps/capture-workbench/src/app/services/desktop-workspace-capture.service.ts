@@ -79,6 +79,8 @@ interface ActiveCapture {
   ocrCompute?: OcrComputePreflight | null;
   /** Source identity received from the runtime operation, never from OCR output. */
   sourceSha256?: string;
+  /** PDF page selection the capture was started with, or undefined for all pages / non-PDFs. */
+  pdfPageNumbers?: readonly number[];
   readonly cancelWake: Subject<void>;
 }
 
@@ -280,6 +282,7 @@ export class DesktopWorkspaceCaptureService {
   ): Observable<void> {
     return defer(() => {
       if (!this.runtime.ready() || this.activeCaptures.has(documentId)) return EMPTY;
+      const pdfPageNumbers = this.pdfPageNumbersFor(documentId, host, mediaType);
       const active: ActiveCapture = {
         clientRequestId: crypto.randomUUID(),
         streaming: this.isAudioDocument(documentId, host, mediaType),
@@ -289,10 +292,10 @@ export class DesktopWorkspaceCaptureService {
         cancelSent: false,
         cancelWake: new Subject<void>(),
         ocrCompute: this.runtime.ocrCompute(),
+        pdfPageNumbers,
       };
       this.activeCaptures.set(documentId, active);
       this.markBusy(documentId, true);
-      const pdfPageNumbers = this.pdfPageNumbersFor(documentId, host, mediaType);
 
       const work$ = this.library.updateCapture({
         documentId,
@@ -496,6 +499,7 @@ export class DesktopWorkspaceCaptureService {
         terminalErrorMessage: terminalCommitted ? document.errorMessage : undefined,
         cancelWake: new Subject<void>(),
         ocrCompute: this.runtime.ocrCompute(),
+        pdfPageNumbers: this.pdfPageNumbersFor(document.documentId, host, document.mediaType),
       };
       this.activeCaptures.set(document.documentId, active);
       this.markBusy(document.documentId, true);
@@ -707,6 +711,7 @@ export class DesktopWorkspaceCaptureService {
             return buildOcrEvidence({
               projection,
               expected: this.expectedOcrIdentity(job, active, projection.status),
+              requestedPages: active.pdfPageNumbers ?? null,
             }).pipe(map((ocrEvidence) => ({ raw, ocrEvidence })));
           }),
         );
@@ -750,6 +755,7 @@ export class DesktopWorkspaceCaptureService {
         switchMap((projection) => buildOcrEvidence({
           projection,
           expected: this.expectedOcrIdentity(job, active),
+          requestedPages: active.pdfPageNumbers ?? null,
         })),
         switchMap((evidence) => this.persistTerminalData$(
           documentId,

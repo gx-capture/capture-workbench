@@ -144,10 +144,15 @@ describe('DesktopRuntimeClientService', () => {
     });
   });
 
-  it('accepts only an ordered PDF page scope advertised by the native acceptance seam', () => {
+  it.each([
+    ['plain prefix', [1]],
+    ['multi-page prefix', [1, 2, 3]],
+    ['ascending list with gaps', [3, 7, 8, 20]],
+    ['u32 max page', [4_294_967_295]],
+  ])('accepts a valid %s PDF page scope advertised by the native acceptance seam', (_label, pageNumbers) => {
     const commands = {
       invoke: vi.fn((command: string) => command === 'desktop_runtime_status'
-        ? of({ status: 'ready', detail: 'Runtime ready', pdfPageNumbers: [1] })
+        ? of({ status: 'ready', detail: 'Runtime ready', pdfPageNumbers: pageNumbers })
         : command === 'runtime_ready'
           ? of(readyPayload)
         : of({ items: [] })),
@@ -162,13 +167,22 @@ describe('DesktopRuntimeClientService', () => {
     const service = TestBed.inject(DesktopRuntimeClientService);
     TestBed.tick();
 
-    expect(service.pdfPageNumbers()).toEqual([1]);
+    expect(service.pdfPageNumbers()).toEqual(pageNumbers);
   });
 
-  it('fails malformed native PDF page scope data safe to the all-page default', () => {
+  it.each([
+    ['descending list', [5, 2]],
+    ['duplicate page', [2, 2]],
+    ['zero page', [0]],
+    ['page above u32 max', [4_294_967_296]],
+    ['fractional page', [1.5]],
+    ['NaN page', [Number.NaN]],
+    ['empty list', []],
+    ['list longer than 500 pages', Array.from({ length: 501 }, (_, index) => index + 1)],
+  ])('fails malformed native PDF page scope (%s) safe to the all-page default', (_label, pageNumbers) => {
     const commands = {
       invoke: vi.fn((command: string) => command === 'desktop_runtime_status'
-        ? of({ status: 'ready', detail: 'Runtime ready', pdfPageNumbers: [2] })
+        ? of({ status: 'ready', detail: 'Runtime ready', pdfPageNumbers: pageNumbers })
         : command === 'runtime_ready'
           ? of(readyPayload)
         : of({ items: [] })),
