@@ -73,13 +73,15 @@ describe('ResultPage', () => {
     expect(el.querySelector('[data-testid="result-edit-error"]')?.getAttribute('role')).toBe('alert');
   });
 
-  it('shows 內容 and 詳細資訊 without 說話者 for an OCR document', () => {
+  it('shows 內容, 匯出 and 詳細資訊 without 說話者 for an OCR document', () => {
     const { el } = setup({ kind: 'ocr', fileName: 'contract.pdf' });
 
     expect(el.querySelector('[data-testid="result-title"]')?.textContent?.trim()).toBe('contract.pdf');
     expect(el.querySelector('[data-testid="result-back"]')?.getAttribute('href')).toBe('/ocr');
     expect(el.querySelector('[data-testid="result-nav-content"]')?.textContent?.trim()).toBe('內容');
     expect(el.querySelector('[data-testid="result-nav-speakers"]')).toBeNull();
+    expect([...el.querySelectorAll('[data-testid="result-subnav"] a')].map((link) => link.textContent?.trim()))
+      .toEqual(['內容', '匯出', '詳細資訊']);
     expect(el.querySelector('[data-testid="result-nav-details"]')?.textContent?.trim()).toBe('詳細資訊');
   });
 
@@ -90,6 +92,8 @@ describe('ResultPage', () => {
     expect(el.querySelector('[data-testid="result-back"]')?.getAttribute('href')).toBe('/asr');
     expect(el.querySelector('[data-testid="result-nav-content"]')?.textContent?.trim()).toBe('內容');
     expect(el.querySelector('[data-testid="result-nav-speakers"]')?.textContent?.trim()).toBe('說話者');
+    expect([...el.querySelectorAll('[data-testid="result-subnav"] a')].map((link) => link.textContent?.trim()))
+      .toEqual(['內容', '說話者', '匯出', '詳細資訊']);
     expect(el.querySelector('[data-testid="result-nav-details"]')?.textContent?.trim()).toBe('詳細資訊');
   });
 });

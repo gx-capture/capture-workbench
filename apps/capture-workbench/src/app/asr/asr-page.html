@@ -130,16 +130,17 @@
         }
       </div>
 
-      @if (queue.importError(); as importError) {
-        <p
-          class="text-sm whitespace-pre-line text-destructive"
-          data-testid="asr-import-error"
-          role="alert"
-        >
-          {{ importError }}
-        </p>
-      }
     </section>
+  }
+
+  @if (queue.importError(); as importError) {
+    <p
+      class="text-sm whitespace-pre-line text-destructive"
+      data-testid="asr-import-error"
+      role="alert"
+    >
+      {{ importError }}
+    </p>
   }
 
   @if (queue.liveCapture(); as live) {
@@ -412,7 +413,8 @@
                         size="sm"
                         type="button"
                         data-testid="asr-row-export"
-                        [disabled]="!row.canExport"
+                        [disabled]="!row.canExport || queue.exportBusyIds().has(row.documentId)"
+                        [attr.aria-busy]="queue.exportBusyIds().has(row.documentId)"
                         [attr.aria-label]="m().asrExportNamed(row.fileName)"
                         (click)="queue.exportTxt(row.documentId)"
                       >

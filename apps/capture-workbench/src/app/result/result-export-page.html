@@ -1,0 +1,13 @@
+<section class="flex flex-col items-start gap-4">
+  <h2 class="text-lg font-semibold">{{ m().resultTabExport }}</h2>
+  @for (item of store.formats(); track item.format) {
+    <button hlmBtn variant="outline" type="button"
+      [attr.data-testid]="'result-export-' + item.format"
+      [disabled]="store.disabled()" [attr.aria-busy]="store.busy()"
+      (click)="store.download(item.format)">{{ item.label }}</button>
+  }
+  <button hlmBtn type="button" data-testid="result-export-copy"
+    [disabled]="store.disabled()" [attr.aria-busy]="store.busy()"
+    (click)="store.copy()">{{ m().exportCopy }}</button>
+  <p role="status" aria-live="polite" data-testid="result-export-status">{{ store.status() }}</p>
+</section>

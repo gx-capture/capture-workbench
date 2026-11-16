@@ -9,7 +9,6 @@ import {
   ocrChipVariant,
   parsePdfPageCount,
   pdfPagePrefix,
-  renderRawOcrText,
 } from './ocr-queue';
 
 describe('OCR queue presentation', () => {
@@ -74,22 +73,6 @@ describe('OCR queue presentation', () => {
     expect(described.progressText).not.toContain('處理中');
   });
 
-  it('renders raw OCR text in page order, with a blank line between pages', () => {
-    const raw = {
-      sourceText: 'fallback',
-      segments: [
-        { order: 1, locator: { kind: 'page', page: 1 }, text: '第一頁乙' },
-        { order: 0, locator: { kind: 'page', page: 2 }, text: '第二頁' },
-        { order: 0, locator: { kind: 'page', page: 1 }, text: '第一頁甲' },
-        { order: 2, locator: { kind: 'page', page: 1 }, text: '   ' },
-        { order: 0, locator: { kind: 'time', startMs: 0, endMs: 1 }, text: '忽略' },
-      ],
-    } as unknown as RawCapture;
-
-    expect(renderRawOcrText(raw)).toBe('第一頁甲\n第一頁乙\n\n第二頁');
-    expect(renderRawOcrText({ ...raw, segments: [] } as RawCapture)).toBe('fallback');
-  });
-
   it('groups raw OCR pages by page and segment order, skipping blanks and keeping empty processed pages', () => {
     const raw = {
       sourceText: 'fallback',
@@ -111,7 +94,6 @@ describe('OCR queue presentation', () => {
       { page: 2, text: '' },
       { page: 3, text: '第三頁甲\n第三頁乙' },
     ]);
-    expect(renderRawOcrText(raw)).toBe('第一頁\n\n第三頁甲\n第三頁乙');
     expect(groupRawOcrPages(null)).toEqual([]);
   });
 

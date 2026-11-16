@@ -9,7 +9,7 @@ import {
 } from '@angular/core';
 import { rxResource, toSignal } from '@angular/core/rxjs-interop';
 import { ActivatedRoute } from '@angular/router';
-import { map, timer, type Subscription } from 'rxjs';
+import { defer, map, Observable, of, Subject, throwError, timer, type Subscription } from 'rxjs';
 import type { DesktopLibraryDetail, DesktopLibraryEdits } from '../contracts';
 import { desktopMessages } from '../i18n/desktop-messages';
 import { DesktopLibraryService } from './desktop-library.service';
@@ -198,6 +198,28 @@ export class ResultReviewStore {
     }
   }
 
+  /** Flush through the existing serialized writer, including edits made during a save. */
+  saveBeforeExport(): Observable<void> {
+    return defer(() => {
+      const session = this.session;
+      if (!session || session.id !== this.documentId()) return throwError(() => new Error('save unavailable'));
+      if (!session.inFlight && sameResultEdits(session.working, session.saved)) return of(undefined);
+      return new Observable<void>((subscriber) => {
+        const subscription = this.saveSettled.subscribe(({ savedSession, success }) => {
+          if (savedSession !== session) return;
+          if (!success) subscriber.error(new Error('save failed'));
+          else { subscriber.next(undefined); subscriber.complete(); }
+        });
+        session.timer?.unsubscribe();
+        session.timer = null;
+        this.saveEdits(session);
+        return subscription;
+      });
+    });
+  }
+
+  private readonly saveSettled = new Subject<{ savedSession: EditSession; success: boolean }>();
+
   private changeEdit(command: ResultEditCommand): void {
     const session = this.session;
     const detail = this.detail();
@@ -229,7 +251,16 @@ export class ResultReviewStore {
   }
 
   private saveEdits(session: EditSession): void {
-    if (session.inFlight || sameResultEdits(session.working, session.saved)) return;
+    if (session.inFlight) return;
+    const visible = () => this.session === session && !this.destroyed && this.documentId() === session.id;
+    if (sameResultEdits(session.working, session.saved)) {
+      if (visible() && this.saveState() === 'failed') {
+        this.saveState.set('idle');
+        this.saveError.set(null);
+      }
+      this.saveSettled.next({ savedSession: session, success: true });
+      return;
+    }
     if (this.activeSave) {
       this.queuedSaves.add(session);
       if (this.session === session && !this.destroyed) this.saveState.set('pending');
@@ -238,20 +269,24 @@ export class ResultReviewStore {
     const snapshot = session.working;
     this.activeSave = session;
     session.inFlight = true;
-    const visible = () => this.session === session && !this.destroyed && this.documentId() === session.id;
     if (visible()) { this.saveState.set('saving'); this.saveError.set(null); }
     this.library.saveEdits(session.id, snapshot).subscribe({
       next: () => { session.saved = snapshot; },
       error: () => {
+        const clean = sameResultEdits(session.working, session.saved);
         if (visible()) {
-          this.saveState.set('failed');
-          this.saveError.set(desktopMessages().resultSaveFailed);
+          this.saveState.set(clean ? 'idle' : 'failed');
+          this.saveError.set(clean ? null : desktopMessages().resultSaveFailed);
         }
+        this.saveSettled.next({ savedSession: session, success: clean });
         this.finishSave(session, !sameResultEdits(snapshot, session.working));
       },
       complete: () => {
         if (visible() && sameResultEdits(session.working, session.saved)) this.saveState.set('saved');
         this.finishSave(session, true);
+        if (!session.inFlight && sameResultEdits(session.working, session.saved)) {
+          this.saveSettled.next({ savedSession: session, success: true });
+        }
       },
     });
   }
