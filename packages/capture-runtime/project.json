@@ -151,7 +151,7 @@
         "{workspaceRoot}/tmp/capture-runtime/pdf-ocr-e2e/local-package/evidence.json"
       ],
       "options": {
-        "command": "node packages/capture-runtime/tests/e2e/local-package/pdf-ocr.e2e.ts"
+        "command": "node --import ./tools/test-temp-root.ts packages/capture-runtime/tests/e2e/local-package/pdf-ocr.e2e.ts"
       }
     },
     "e2e-online-package-pdf-ocr": {
@@ -164,7 +164,7 @@
         "{workspaceRoot}/tmp/capture-runtime/pdf-ocr-e2e/online-package/evidence.json"
       ],
       "options": {
-        "command": "node packages/capture-runtime/tests/e2e/online-package/pdf-ocr.e2e.ts"
+        "command": "node --import ./tools/test-temp-root.ts packages/capture-runtime/tests/e2e/online-package/pdf-ocr.e2e.ts"
       }
     },
     "build": {

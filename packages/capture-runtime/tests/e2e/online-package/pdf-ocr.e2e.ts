@@ -1,5 +1,3 @@
-// eslint-disable-next-line @nx/enforce-module-boundaries -- shared test temp-root guard.
-import '../../../../../tools/test-temp-root.ts';
 // Real PDF OCR against the published GitHub release: downloads the runtime
 // pinned by CAPTURE_PDF_OCR_E2E_ONLINE_RUNTIME_VERSION and _SHA256 and lets it
 // download the OCR engine itself, as an end user's install does. See
