@@ -858,6 +858,8 @@ pub(crate) struct LibraryDocumentRequest {
 pub(crate) struct LibraryExportRequest {
     pub document_id: String,
     pub format: LibraryExportFormat,
+    #[serde(default)]
+    pub page_label: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -865,6 +867,9 @@ pub(crate) struct LibraryExportRequest {
 pub(crate) enum LibraryExportFormat {
     Json,
     Text,
+    Markdown,
+    Srt,
+    Vtt,
 }
 
 #[derive(Clone, Debug, Serialize)]
