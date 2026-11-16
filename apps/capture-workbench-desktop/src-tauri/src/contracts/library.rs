@@ -2,11 +2,303 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
+pub(crate) const MAX_EDITS_BYTES: usize = 16 * 1024 * 1024;
+const MAX_EDIT_ENTRIES: usize = 100_000;
+const MAX_PAGE_TEXT_BYTES: usize = 1024 * 1024;
+const MAX_LINE_TEXT_BYTES: usize = 64 * 1024;
+const MAX_EDIT_KEY_CHARS: usize = 200;
+const MAX_SPEAKER_NAME_CHARS: usize = 100;
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct LibraryEditMaps {
+    pub ocr_pages: std::collections::BTreeMap<String, String>,
+    pub transcript_lines: std::collections::BTreeMap<String, String>,
+    pub speaker_names: std::collections::BTreeMap<String, String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct LibraryEdits {
+    pub schema_version: u8,
+    pub ocr_pages: std::collections::BTreeMap<String, String>,
+    pub transcript_lines: std::collections::BTreeMap<String, String>,
+    pub speaker_names: std::collections::BTreeMap<String, String>,
+    pub updated_at_ms: u64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct LibrarySaveEditsRequest {
+    pub document_id: String,
+    pub edits: LibraryEditMaps,
+}
+
+impl LibraryEdits {
+    pub(crate) fn new(maps: LibraryEditMaps, updated_at_ms: u64) -> Self {
+        Self {
+            schema_version: 1,
+            ocr_pages: maps.ocr_pages,
+            transcript_lines: maps.transcript_lines,
+            speaker_names: maps.speaker_names,
+            updated_at_ms,
+        }
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.ocr_pages.is_empty()
+            && self.transcript_lines.is_empty()
+            && self.speaker_names.is_empty()
+    }
+
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        if self.schema_version != 1 {
+            return Err("edits schemaVersion is invalid.".into());
+        }
+        for (field, map) in [
+            ("ocrPages", &self.ocr_pages),
+            ("transcriptLines", &self.transcript_lines),
+            ("speakerNames", &self.speaker_names),
+        ] {
+            let invalid = || format!("edits {field} is out of bounds.");
+            if map.len() > MAX_EDIT_ENTRIES {
+                return Err(invalid());
+            }
+            for (key, text) in map {
+                if field == "ocrPages" {
+                    if key.starts_with('0')
+                        || !key.bytes().all(|byte| byte.is_ascii_digit())
+                        || !key
+                            .parse::<u32>()
+                            .is_ok_and(|page| (1..=100_000).contains(&page))
+                        || text.len() > MAX_PAGE_TEXT_BYTES
+                    {
+                        return Err(invalid());
+                    }
+                } else {
+                    if key.is_empty()
+                        || key.chars().count() > MAX_EDIT_KEY_CHARS
+                        || key.chars().any(char::is_control)
+                    {
+                        return Err(invalid());
+                    }
+                    if field == "transcriptLines" {
+                        if text.len() > MAX_LINE_TEXT_BYTES {
+                            return Err(invalid());
+                        }
+                    } else if text.trim().is_empty()
+                        || text.trim().chars().count() > MAX_SPEAKER_NAME_CHARS
+                        || text.chars().any(char::is_control)
+                    {
+                        return Err(invalid());
+                    }
+                }
+            }
+        }
+        // Reject a grossly oversized payload from its lengths alone, before
+        // serializing it; the exact check below still decides near the limit,
+        // where JSON escaping can add to the raw lengths.
+        let content_bytes = [&self.ocr_pages, &self.transcript_lines, &self.speaker_names]
+            .into_iter()
+            .flat_map(|map| map.iter())
+            .fold(0_usize, |sum, (key, text)| {
+                sum.saturating_add(key.len()).saturating_add(text.len())
+            });
+        if content_bytes > MAX_EDITS_BYTES
+            || serde_json::to_vec(self)
+                .map_err(|_| "edits could not be encoded.")?
+                .len()
+                > MAX_EDITS_BYTES
+        {
+            return Err("edits serialized file is out of bounds.".into());
+        }
+        Ok(())
+    }
+}
+
 const MAX_OCR_EVIDENCE_PAGES: usize = 500;
 const MAX_OCR_EVIDENCE_STRING: usize = 512;
 const MAX_OCR_EVIDENCE_MESSAGE: usize = 500;
 const MAX_OCR_EVIDENCE_BYTES: usize = 4 * 1024 * 1024;
 const MAX_OCR_EVIDENCE_COUNT: u64 = 8_000_000;
+
+#[cfg(test)]
+mod edits_tests {
+    use super::*;
+
+    fn edits(field: &str, key: &str, text: String) -> LibraryEdits {
+        let mut value = LibraryEdits::new(LibraryEditMaps::default(), 1);
+        match field {
+            "ocrPages" => &mut value.ocr_pages,
+            "transcriptLines" => &mut value.transcript_lines,
+            _ => &mut value.speaker_names,
+        }
+        .insert(key.into(), text);
+        value
+    }
+
+    #[test]
+    fn page_keys_and_utf8_text_bounds() {
+        for key in ["1", "100000"] {
+            assert!(edits("ocrPages", key, "é".repeat(MAX_PAGE_TEXT_BYTES / 2))
+                .validate()
+                .is_ok());
+        }
+        for key in [
+            "",
+            "0",
+            "01",
+            "+1",
+            "-1",
+            "1.0",
+            " 1",
+            "١",
+            "100001",
+            "999999999999999",
+        ] {
+            assert!(edits("ocrPages", key, "private".into())
+                .validate()
+                .unwrap_err()
+                .contains("ocrPages"));
+        }
+        assert!(edits("ocrPages", "1", "x".repeat(MAX_PAGE_TEXT_BYTES + 1))
+            .validate()
+            .is_err());
+        assert!(edits("ocrPages", "1", String::new()).validate().is_ok());
+    }
+
+    #[test]
+    fn transcript_and_speaker_keys_count_characters_and_reject_controls() {
+        for field in ["transcriptLines", "speakerNames"] {
+            for key in ["段".repeat(1), "段".repeat(MAX_EDIT_KEY_CHARS)] {
+                assert!(edits(field, &key, "name".into()).validate().is_ok());
+            }
+            for key in [
+                String::new(),
+                "x".repeat(MAX_EDIT_KEY_CHARS + 1),
+                "key\n".into(),
+                "\u{7f}".into(),
+            ] {
+                let error = edits(field, &key, "private".into()).validate().unwrap_err();
+                assert!(error.contains(field));
+                assert!(!error.contains("private"));
+            }
+        }
+    }
+
+    #[test]
+    fn line_bytes_and_trimmed_speaker_character_bounds() {
+        assert!(
+            edits("transcriptLines", "s", "é".repeat(MAX_LINE_TEXT_BYTES / 2))
+                .validate()
+                .is_ok()
+        );
+        assert!(
+            edits("transcriptLines", "s", "x".repeat(MAX_LINE_TEXT_BYTES + 1))
+                .validate()
+                .is_err()
+        );
+        assert!(edits("transcriptLines", "s", String::new())
+            .validate()
+            .is_ok());
+        for name in [
+            " 人 ".into(),
+            format!(" {} ", "人".repeat(MAX_SPEAKER_NAME_CHARS)),
+        ] {
+            assert!(edits("speakerNames", "s", name).validate().is_ok());
+        }
+        for name in [
+            String::new(),
+            "  ".into(),
+            "人".repeat(MAX_SPEAKER_NAME_CHARS + 1),
+            "a\nb".into(),
+            "\tname".into(),
+        ] {
+            assert!(edits("speakerNames", "s", name)
+                .validate()
+                .unwrap_err()
+                .contains("speakerNames"));
+        }
+    }
+
+    #[test]
+    fn map_entry_and_serialized_file_limits() {
+        for field in ["ocrPages", "transcriptLines", "speakerNames"] {
+            let mut value = LibraryEdits::new(LibraryEditMaps::default(), 1);
+            let map = (1..=MAX_EDIT_ENTRIES)
+                .map(|i| (i.to_string(), "x".into()))
+                .collect();
+            match field {
+                "ocrPages" => value.ocr_pages = map,
+                "transcriptLines" => value.transcript_lines = map,
+                _ => value.speaker_names = map,
+            }
+            assert!(value.validate().is_ok());
+            match field {
+                "ocrPages" => &mut value.ocr_pages,
+                "transcriptLines" => &mut value.transcript_lines,
+                _ => &mut value.speaker_names,
+            }
+            .insert("extra".into(), "x".into());
+            assert!(value.validate().unwrap_err().contains(field));
+        }
+        let mut value = LibraryEdits::new(LibraryEditMaps::default(), 1);
+        // Escaped newlines make the serialized file larger than the text byte sum.
+        value.ocr_pages = (1..=8)
+            .map(|i| (i.to_string(), "\n".repeat(MAX_PAGE_TEXT_BYTES)))
+            .collect();
+        assert!(value.validate().unwrap_err().contains("serialized file"));
+        value.ocr_pages.remove("8");
+        assert!(value.validate().is_ok());
+        value.ocr_pages = (1..=16)
+            .map(|i| (i.to_string(), "x".repeat(MAX_PAGE_TEXT_BYTES)))
+            .collect();
+        let excess = serde_json::to_vec(&value).unwrap().len() - MAX_EDITS_BYTES;
+        value
+            .ocr_pages
+            .get_mut("16")
+            .unwrap()
+            .truncate(MAX_PAGE_TEXT_BYTES - excess);
+        assert_eq!(serde_json::to_vec(&value).unwrap().len(), MAX_EDITS_BYTES);
+        assert!(value.validate().is_ok());
+        value.ocr_pages.get_mut("16").unwrap().push('x');
+        assert!(value.validate().unwrap_err().contains("serialized file"));
+    }
+
+    #[test]
+    fn schema_required_maps_and_unknown_fields() {
+        let value = LibraryEdits::new(LibraryEditMaps::default(), 1);
+        let mut encoded = serde_json::to_value(&value).unwrap();
+        encoded["schemaVersion"] = 2.into();
+        assert!(serde_json::from_value::<LibraryEdits>(encoded)
+            .unwrap()
+            .validate()
+            .is_err());
+        for field in ["ocrPages", "transcriptLines", "speakerNames"] {
+            let mut encoded = serde_json::to_value(&value).unwrap();
+            encoded.as_object_mut().unwrap().remove(field);
+            assert!(serde_json::from_value::<LibraryEdits>(encoded).is_err());
+        }
+        let mut encoded = serde_json::to_value(&value).unwrap();
+        encoded["extra"] = true.into();
+        assert!(serde_json::from_value::<LibraryEdits>(encoded).is_err());
+        for extra in [
+            serde_json::json!({"extra": 1}),
+            serde_json::json!({"updatedAtMs": 1}),
+            serde_json::json!({"schemaVersion": 1}),
+        ] {
+            let mut maps = serde_json::to_value(LibraryEditMaps::default()).unwrap();
+            maps.as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            assert!(serde_json::from_value::<LibrarySaveEditsRequest>(
+                serde_json::json!({"documentId": "a".repeat(32), "edits": maps})
+            )
+            .is_err());
+        }
+        assert!(serde_json::from_value::<LibrarySaveEditsRequest>(serde_json::json!({"documentId": "a".repeat(32), "edits": LibraryEditMaps::default(), "extra": 1})).is_err());
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -152,17 +444,25 @@ impl OcrEvidenceV1 {
         if self.digest == "0".repeat(64) {
             return Err("OCR evidence digest is empty.".into());
         }
+        if self.digest != self.content_digest()? {
+            return Err("OCR evidence digest does not match its content.".into());
+        }
+        Ok(())
+    }
+
+    /// SHA-256 of the canonical JSON of the evidence without its `digest`
+    /// field: the value `digest` must hold.
+    pub(crate) fn content_digest(&self) -> Result<String, String> {
         let mut payload = serde_json::to_value(self)
             .map_err(|error| format!("OCR evidence cannot be encoded: {error}"))?;
         payload
             .as_object_mut()
             .and_then(|object| object.remove("digest"))
             .ok_or_else(|| "OCR evidence digest is missing.".to_string())?;
-        let actual_digest = format!("{:x}", Sha256::digest(canonical_json(&payload).as_bytes()));
-        if self.digest != actual_digest {
-            return Err("OCR evidence digest does not match its content.".into());
-        }
-        Ok(())
+        Ok(format!(
+            "{:x}",
+            Sha256::digest(canonical_json(&payload).as_bytes())
+        ))
     }
 }
 
@@ -596,6 +896,10 @@ pub(crate) struct LibraryDocumentDetail {
     #[serde(flatten)]
     pub summary: LibraryDocumentSummary,
     pub raw: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub edits: Option<LibraryEdits>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub edits_unreadable: bool,
     pub result: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ocr_evidence: Option<OcrEvidenceV1>,

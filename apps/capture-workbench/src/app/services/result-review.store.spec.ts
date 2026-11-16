@@ -94,6 +94,30 @@ describe('ResultReviewStore', () => {
     expect(store.failed()).toBe(false);
   });
 
+  it('exposes persisted page edits and the unreadable flag without saving', () => {
+    const raw = { sourceText: 'recognized', segments: [
+      { segmentId: 'p3', order: 0, locator: { kind: 'page', page: 3 }, text: 'recognized' },
+    ] } as unknown as RawCapture;
+    const { store } = setup({ get: vi.fn(() => of(makeDetail({ raw,
+      editsUnreadable: true,
+      edits: { schemaVersion: 1, updatedAtMs: 42, ocrPages: { '3': 'edited' }, transcriptLines: {}, speakerNames: {} },
+    }))) });
+    expect(store.pages()).toEqual([{ page: 3, text: 'edited', recognizedText: 'recognized', edited: true }]);
+    expect(store.editsUnreadable()).toBe(true);
+  });
+
+  it('uses persisted transcript and speaker edits for both ASR views', () => {
+    const raw = { sourceText: 'recognized', speakers: [{ speakerId: 'sp1', displayName: 'Recognized name' }], segments: [
+      { segmentId: 's1', order: 0, locator: { kind: 'time', startMs: 0, endMs: 1000 }, speaker: 'sp1', text: 'recognized' },
+    ] } as unknown as RawCapture;
+    const { store } = setup({ get: vi.fn(() => of(makeDetail({ raw, mediaType: 'audio/mpeg',
+      edits: { schemaVersion: 1, updatedAtMs: 42, ocrPages: {}, transcriptLines: { s1: 'edited' }, speakerNames: { sp1: 'Edited name' } },
+    }))) });
+    expect(store.lines()[0]).toMatchObject({ text: 'edited', recognizedText: 'recognized', edited: true, speaker: 'Edited name' });
+    expect(store.speakers()[0].displayName).toBe('Edited name');
+    expect(store.editsUnreadable()).toBe(false);
+  });
+
   it('marks notFound when the library reports an unknown document', () => {
     const get = vi.fn(() =>
       throwError(() => new Error(`Unknown document: ${DOC_ID}`)),
@@ -396,6 +420,8 @@ describe('ResultReviewStore', () => {
           timeLabel: '0:01',
           speaker: '王律師',
           text: '你好',
+          recognizedText: '你好',
+          edited: false,
         },
       ]);
 

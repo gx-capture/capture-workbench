@@ -45,9 +45,19 @@ export interface DesktopLibrarySummary {
 }
 
 export interface DesktopLibraryDetail extends DesktopLibrarySummary {
+  readonly edits?: DesktopLibraryEdits;
+  readonly editsUnreadable?: boolean;
   readonly raw?: RawCapture;
   readonly result?: CaptureDocument;
   readonly ocrEvidence?: OcrEvidenceV1;
+}
+
+export interface DesktopLibraryEdits {
+  readonly schemaVersion: 1;
+  readonly ocrPages: Readonly<Record<string, string>>;
+  readonly transcriptLines: Readonly<Record<string, string>>;
+  readonly speakerNames: Readonly<Record<string, string>>;
+  readonly updatedAtMs: number;
 }
 
 export interface DesktopLibraryExport {

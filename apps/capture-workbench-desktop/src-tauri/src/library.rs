@@ -21,6 +21,7 @@ const IMPORT_FREE_SPACE_MARGIN: u64 = 512 * 1024 * 1024;
 pub(crate) const NOT_ENOUGH_DISK_SPACE: &str = "Not enough free disk space to import this file.";
 const SOURCE_FILE_NAME: &str = "source.bin";
 const RAW_FILE_NAME: &str = "raw.json";
+const EDITS_FILE_NAME: &str = "edits.json";
 const RESULT_FILE_NAME: &str = "result.json";
 
 pub(crate) fn max_source_bytes(media_type: &str) -> u64 {
@@ -98,6 +99,323 @@ mod tests {
     use super::*;
     use std::fs::OpenOptions;
     use std::io::{Seek, SeekFrom, Write};
+
+    fn page_edit(text: &str) -> crate::contracts::LibraryEditMaps {
+        crate::contracts::LibraryEditMaps {
+            ocr_pages: [("3".into(), text.into())].into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn edits_round_trip_restore_and_failed_replace_preserve_recognition_and_index() {
+        let directory = tempfile::tempdir().unwrap();
+        let library = LibraryStore::open(directory.path()).unwrap();
+        let id = recovery_source(&library).document_id;
+        assert!(library
+            .save_edits(&id, page_edit("edit"))
+            .unwrap_err()
+            .contains("raw"));
+        assert!(library
+            .save_edits(&"f".repeat(32), page_edit("edit"))
+            .is_err());
+        library
+            .update_capture(completed_update(&id, "recognized"))
+            .unwrap();
+        let item = library.root.join("items").join(&id);
+        let index_before = fs::read(library.root.join(INDEX_FILE_NAME)).unwrap();
+        fs::write(item.join("edits.tmp"), b"crashed write").unwrap();
+        let mut maps = page_edit("edited");
+        maps.transcript_lines
+            .insert("segment".into(), "line edit".into());
+        maps.speaker_names.insert("speaker".into(), " Name ".into());
+        let saved = library.save_edits(&id, maps).unwrap();
+        assert_eq!(saved.speaker_names["speaker"], "Name");
+        assert!(saved.updated_at_ms > 0);
+        assert!(!item.join("edits.tmp").exists());
+        assert_eq!(
+            fs::read(library.root.join(INDEX_FILE_NAME)).unwrap(),
+            index_before
+        );
+        let request = || LibraryDocumentRequest {
+            document_id: id.clone(),
+        };
+        assert_eq!(library.get(request()).unwrap().edits, Some(saved.clone()));
+        let previous = fs::read(item.join(EDITS_FILE_NAME)).unwrap();
+        let mut invalid = page_edit("private edit text");
+        invalid
+            .ocr_pages
+            .insert("01".into(), "private edit text".into());
+        assert_eq!(
+            library.save_edits(&id, invalid).unwrap_err(),
+            "edits ocrPages is out of bounds."
+        );
+        assert_eq!(fs::read(item.join(EDITS_FILE_NAME)).unwrap(), previous);
+        {
+            let _guard = TransactionFailureGuard::at("atomic-rename");
+            assert_eq!(
+                library.save_edits(&id, page_edit("new")).unwrap_err(),
+                "edits could not be saved."
+            );
+        }
+        assert_eq!(fs::read(item.join(EDITS_FILE_NAME)).unwrap(), previous);
+        assert_eq!(
+            library.get(request()).unwrap().raw.unwrap()["sourceText"],
+            "recognized"
+        );
+        library
+            .save_edits(&id, page_edit("next save overwrites leftover"))
+            .unwrap();
+        assert!(!item.join("edits.tmp").exists());
+        assert!(library
+            .save_edits(&id, Default::default())
+            .unwrap()
+            .is_empty());
+        assert!(!item.join(EDITS_FILE_NAME).exists());
+        assert!(library.get(request()).unwrap().edits.is_none());
+    }
+
+    #[test]
+    fn unreadable_edits_leave_document_readable_and_file_untouched() {
+        let directory = tempfile::tempdir().unwrap();
+        let library = LibraryStore::open(directory.path()).unwrap();
+        let id = recovery_source(&library).document_id;
+        library
+            .update_capture(completed_update(&id, "recognized"))
+            .unwrap();
+        let path = library.root.join("items").join(&id).join(EDITS_FILE_NAME);
+        for bytes in [
+            b"{broken".to_vec(),
+            serde_json::to_vec(&crate::contracts::LibraryEdits::new(
+                crate::contracts::LibraryEditMaps {
+                    ocr_pages: [("01".into(), "private".into())].into(),
+                    ..Default::default()
+                },
+                1,
+            ))
+            .unwrap(),
+            vec![b' '; crate::contracts::MAX_EDITS_BYTES + 1],
+        ] {
+            fs::write(&path, &bytes).unwrap();
+            let detail = library
+                .get(LibraryDocumentRequest {
+                    document_id: id.clone(),
+                })
+                .unwrap();
+            assert!(detail.edits_unreadable);
+            assert!(detail.edits.is_none());
+            assert_eq!(detail.raw.unwrap()["sourceText"], "recognized");
+            assert_eq!(fs::read(&path).unwrap(), bytes);
+        }
+
+        // An unreadable file does not leave the document uneditable: the next
+        // save replaces it, and saving empty edits removes it.
+        let saved = library
+            .save_edits(
+                &id,
+                crate::contracts::LibraryEditMaps {
+                    ocr_pages: [("1".into(), "edited".into())].into(),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let detail = library
+            .get(LibraryDocumentRequest {
+                document_id: id.clone(),
+            })
+            .unwrap();
+        assert!(!detail.edits_unreadable);
+        assert_eq!(detail.edits, Some(saved));
+        fs::write(&path, b"{broken").unwrap();
+        library
+            .save_edits(&id, crate::contracts::LibraryEditMaps::default())
+            .unwrap();
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn edits_survive_backup_index_restore_and_are_deleted_with_item() {
+        let directory = tempfile::tempdir().unwrap();
+        let library = LibraryStore::open(directory.path()).unwrap();
+        let id = recovery_source(&library).document_id;
+        library
+            .update_capture(completed_update(&id, "recognized"))
+            .unwrap();
+        let edits = library.save_edits(&id, page_edit("edited")).unwrap();
+        fs::copy(
+            library.root.join(INDEX_FILE_NAME),
+            library.root.join(INDEX_BACKUP_FILE_NAME),
+        )
+        .unwrap();
+        fs::write(library.root.join(INDEX_FILE_NAME), b"broken").unwrap();
+        drop(library);
+        let reopened = LibraryStore::open(directory.path()).unwrap();
+        assert_eq!(
+            reopened
+                .get(LibraryDocumentRequest {
+                    document_id: id.clone()
+                })
+                .unwrap()
+                .edits,
+            Some(edits)
+        );
+        reopened
+            .delete(LibraryDocumentRequest {
+                document_id: id.clone(),
+            })
+            .unwrap();
+        assert!(!reopened.root.join("items").join(id).exists());
+    }
+
+    #[test]
+    fn repeated_raw_preserves_edits_even_when_json_formatting_differs() {
+        let directory = tempfile::tempdir().unwrap();
+        let library = LibraryStore::open(directory.path()).unwrap();
+        let id = recovery_source(&library).document_id;
+        let raw =
+            serde_json::json!({ "sourceText": "recognized", "metadata": { "language": "zh" } });
+        let update = || LibraryCaptureUpdate {
+            raw: Some(raw.clone()),
+            ..completed_update(&id, "recognized")
+        };
+        library.update_capture(update()).unwrap();
+        let saved = library.save_edits(&id, page_edit("edited")).unwrap();
+        let item = library.root.join("items").join(&id);
+        let edits_before = fs::read(item.join(EDITS_FILE_NAME)).unwrap();
+        for reformat_raw in [false, true] {
+            if reformat_raw {
+                fs::write(
+                    item.join(RAW_FILE_NAME),
+                    br#"{ "sourceText":"recognized", "metadata": {"language":"zh"} }"#,
+                )
+                .unwrap();
+            }
+            library.update_capture(update()).unwrap();
+            assert_eq!(fs::read(item.join(EDITS_FILE_NAME)).unwrap(), edits_before);
+            assert_eq!(
+                library
+                    .get(LibraryDocumentRequest {
+                        document_id: id.clone()
+                    })
+                    .unwrap()
+                    .edits,
+                Some(saved.clone())
+            );
+        }
+    }
+
+    #[test]
+    fn replacing_unreadable_raw_clears_edits() {
+        let directory = tempfile::tempdir().unwrap();
+        let library = LibraryStore::open(directory.path()).unwrap();
+        let id = recovery_source(&library).document_id;
+        library
+            .update_capture(completed_update(&id, "recognized"))
+            .unwrap();
+        library.save_edits(&id, page_edit("edited")).unwrap();
+        let item = library.root.join("items").join(&id);
+        fs::write(item.join(RAW_FILE_NAME), b"{broken").unwrap();
+        library
+            .update_capture(completed_update(&id, "recognized"))
+            .unwrap();
+        assert!(!item.join(EDITS_FILE_NAME).exists());
+        assert!(library
+            .get(LibraryDocumentRequest { document_id: id })
+            .unwrap()
+            .edits
+            .is_none());
+    }
+
+    #[test]
+    fn saving_edits_requires_a_raw_file_without_parsing_it() {
+        let directory = tempfile::tempdir().unwrap();
+        let library = LibraryStore::open(directory.path()).unwrap();
+        let id = recovery_source(&library).document_id;
+        let item = library.root.join("items").join(&id);
+        let raw_path = item.join(RAW_FILE_NAME);
+        assert_eq!(
+            library.save_edits(&id, page_edit("edited")).unwrap_err(),
+            "edits require a raw result."
+        );
+        fs::create_dir(&raw_path).unwrap();
+        assert_eq!(
+            library.save_edits(&id, page_edit("edited")).unwrap_err(),
+            "edits require a raw result."
+        );
+        fs::remove_dir(&raw_path).unwrap();
+        fs::write(&raw_path, b"{broken").unwrap();
+        let saved = library.save_edits(&id, page_edit("edited")).unwrap();
+        let stored: crate::contracts::LibraryEdits =
+            serde_json::from_slice(&fs::read(item.join(EDITS_FILE_NAME)).unwrap()).unwrap();
+        assert_eq!(stored, saved);
+        assert_eq!(fs::read(raw_path).unwrap(), b"{broken");
+    }
+
+    #[test]
+    fn rerun_edits_tombstone_rolls_back_or_forward_with_raw() {
+        for fault in [
+            "rename-1-target",
+            "progress-journal-0",
+            "progress-journal-0,rollback*",
+            "progress-journal-3",
+            "cleanup-journal*",
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let library = LibraryStore::open(directory.path()).unwrap();
+            let id = recovery_source(&library).document_id;
+            library
+                .update_capture(completed_update(&id, "old"))
+                .unwrap();
+            library.save_edits(&id, page_edit("old edit")).unwrap();
+            let guard = TransactionFailureGuard::at(fault);
+            let _ = library.update_capture(completed_update(&id, "new"));
+            // Every mutation, including edits, must refuse a journal whose cleanup still fails.
+            if fault == "cleanup-journal*" {
+                assert!(library.save_edits(&id, page_edit("blocked")).is_err());
+            }
+            drop(guard);
+            drop(library);
+            let reopened = LibraryStore::open(directory.path()).unwrap();
+            let detail = reopened
+                .get(LibraryDocumentRequest {
+                    document_id: id.clone(),
+                })
+                .unwrap();
+            if detail.raw.unwrap()["sourceText"] == "new" {
+                assert!(detail.edits.is_none());
+            } else {
+                assert_eq!(detail.edits.unwrap().ocr_pages["3"], "old edit");
+            }
+            // Saving recovers any pending transaction before touching edits.
+            reopened.save_edits(&id, page_edit("current edit")).unwrap();
+        }
+    }
+
+    #[test]
+    fn saving_edits_recovers_an_unfinished_rerun_before_writing() {
+        let directory = tempfile::tempdir().unwrap();
+        let library = LibraryStore::open(directory.path()).unwrap();
+        let id = recovery_source(&library).document_id;
+        library
+            .update_capture(completed_update(&id, "old"))
+            .unwrap();
+        library.save_edits(&id, page_edit("old edit")).unwrap();
+        let guard = TransactionFailureGuard::at("progress-journal-1,rollback*");
+        assert!(library
+            .update_capture(completed_update(&id, "new"))
+            .is_err());
+        assert!(library.save_edits(&id, page_edit("blocked")).is_err());
+        drop(guard);
+        library
+            .save_edits(&id, page_edit("after recovery"))
+            .unwrap();
+        let detail = library
+            .get(LibraryDocumentRequest { document_id: id })
+            .unwrap();
+        assert_eq!(detail.raw.unwrap()["sourceText"], "old");
+        assert_eq!(detail.edits.unwrap().ocr_pages["3"], "after recovery");
+        assert!(!library.root.join(TRANSACTION_FILE_NAME).exists());
+    }
 
     #[test]
     fn recording_import_and_playback_have_separate_limits() {
@@ -231,8 +549,20 @@ mod tests {
         }
     }
 
+    /// Builds evidence from JSON and seals it with the digest the host itself
+    /// computes. A fixture therefore never carries a hand-computed digest, and
+    /// any of its fields can change without recomputing one. The frozen,
+    /// cross-language sample is `test-fixtures/ocr-evidence-v1-golden.json`.
+    fn sealed_evidence(mut value: serde_json::Value) -> OcrEvidenceV1 {
+        value["digest"] = serde_json::json!("0".repeat(64));
+        let mut evidence: OcrEvidenceV1 =
+            serde_json::from_value(value).expect("evidence fixture json");
+        evidence.digest = evidence.content_digest().expect("evidence fixture digest");
+        evidence
+    }
+
     fn completed_evidence() -> OcrEvidenceV1 {
-        serde_json::from_value(serde_json::json!({
+        sealed_evidence(serde_json::json!({
             "schemaVersion": 1,
             "captureId": "capture-1",
             "sourceSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -266,23 +596,21 @@ mod tests {
             },
             "provenance": {
                 "status": "resolved",
-                "runtimeVersion": "0.4.2",
+                "runtimeVersion": env!("CARGO_PKG_VERSION"),
                 "contractSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
                 "engine": "windowsml-ocr",
-                "model": "ppocrv6-traditional-multilingual",
+                "model": "pp-ocrv6-medium-windowsml",
                 "modelDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
                 "device": "GPU",
                 "profileId": "profile-1",
                 "profileSpecSha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
                 "workerSha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
-            },
-            "digest": "55f71236198d8c2534bf75d17da1f5107777f3b2f5a66c23a3b66b6b4b7e0788"
+            }
         }))
-        .expect("valid completed evidence")
     }
 
     fn failed_zero_page_evidence() -> OcrEvidenceV1 {
-        serde_json::from_value(serde_json::json!({
+        sealed_evidence(serde_json::json!({
             "schemaVersion": 1,
             "captureId": "capture-failed",
             "sourceSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
@@ -302,16 +630,14 @@ mod tests {
             },
             "provenance": {
                 "status": "unavailable",
-                "runtimeVersion": "0.4.2",
+                "runtimeVersion": env!("CARGO_PKG_VERSION"),
                 "contractSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
                 "profileId": "profile-1",
                 "profileSpecSha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
                 "workerSha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
             },
-            "failure": { "code": "ocr_worker_failed", "message": "OCR failure: ocr_worker_failed." },
-            "digest": "5443b6d42b54d46fc546f68e9ed7c6d43f5c67a7f58b19a80f971fbd0ca04c4c"
+            "failure": { "code": "ocr_worker_failed", "message": "OCR failure: ocr_worker_failed." }
         }))
-        .expect("valid failed evidence")
     }
 
     fn evidence_update(
@@ -636,9 +962,7 @@ mod tests {
         let mut second: serde_json::Value =
             serde_json::to_value(completed_evidence()).expect("evidence json");
         second["captureId"] = serde_json::json!("capture-2");
-        second["digest"] =
-            serde_json::json!("80a8f793a98add8b12b3cbcd3e2779f93713deb1a450cb2be2650520ec6c4f73");
-        let second: OcrEvidenceV1 = serde_json::from_value(second).expect("second evidence");
+        let second = sealed_evidence(second);
         let error = library
             .update_capture(evidence_update(
                 &created.document_id,
@@ -675,10 +999,31 @@ mod tests {
         });
         value["summary"]["boxCount"] = serde_json::json!(1);
         value["summary"]["confidenceSummary"] = value["pages"][0]["confidenceSummary"].clone();
-        value["digest"] =
-            serde_json::json!("4c476296785088a64fd2086bf6045b7018f33b5cabb456b77b8ac3989310dea9");
-        let evidence: OcrEvidenceV1 = serde_json::from_value(value).expect("numeric evidence");
+        let evidence = sealed_evidence(value);
         evidence.validate().expect("numeric evidence is valid");
+    }
+
+    #[test]
+    fn evidence_changed_after_its_digest_was_recorded_is_rejected() {
+        // The frozen sample carries a digest recorded by the TypeScript builder,
+        // so this does not depend on the host's own digest function.
+        let mut recorded: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../test-fixtures/ocr-evidence-v1-golden.json"
+        ))
+        .expect("TS builder golden evidence");
+        recorded["captureId"] = serde_json::json!("capture-changed");
+        let recorded: OcrEvidenceV1 = serde_json::from_value(recorded).expect("changed evidence");
+        assert_eq!(
+            recorded.validate().expect_err("changed evidence"),
+            "OCR evidence digest does not match its content."
+        );
+
+        let mut sealed = completed_evidence();
+        sealed.capture_id = "capture-changed".into();
+        assert_eq!(
+            sealed.validate().expect_err("changed sealed evidence"),
+            "OCR evidence digest does not match its content."
+        );
     }
 
     #[test]

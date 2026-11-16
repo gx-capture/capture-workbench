@@ -44,6 +44,7 @@ a = Analysis(
         "transformers",
         "httptools",
         "huggingface_hub",
+        "numpy",
         "onnxruntime",
         "paddle",
         "paddleocr",

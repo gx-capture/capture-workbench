@@ -1074,7 +1074,10 @@ def test_vertical_reader_that_cannot_be_loaded_fails_the_page_with_a_runtime_err
 
 
 def test_altered_vertical_reader_files_fail_the_page(tmp_path: Path) -> None:
-    pytest.importorskip("numpy", reason="The vertical reader requires the WindowsML extras.")
+    # Loading the reader needs the whole WindowsML extra (onnxruntime, PyYAML),
+    # which the ordinary test environment does not install: see issue #383.
+    pytest.importorskip("onnxruntime", reason="The vertical reader requires the WindowsML extra.")
+    pytest.importorskip("yaml", reason="The vertical reader requires the WindowsML extra.")
     adapter, png, _texts, _created = _vertical_page_adapter(tmp_path, None)
     (tmp_path / "windowsml" / "vertical").mkdir()
 
