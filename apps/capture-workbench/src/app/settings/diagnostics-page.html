@@ -3,7 +3,7 @@
   data-testid="page-settings-diagnostics"
 >
   <div class="flex flex-wrap items-center justify-between gap-2">
-    <h2 class="text-lg font-semibold">{{ m().settingsDiagnosticsTitle }}</h2>
+    <h2 class="min-w-0 break-words text-lg font-semibold">{{ m().settingsDiagnosticsTitle }}</h2>
     <p
       role="status"
       aria-live="polite"
@@ -80,7 +80,7 @@
               <dt class="font-medium text-muted-foreground">{{ m().diagnosticsProvenanceDigest }}</dt>
               <dd class="min-w-0">
                 <div class="flex items-start justify-between gap-3">
-                  <span class="select-all break-all font-mono text-xs">{{ ext.digest }}</span>
+                  <span class="select-all break-all font-mono text-xs tabular-nums">{{ ext.digest }}</span>
                   <button
                     hlmBtn
                     variant="outline"
@@ -117,7 +117,7 @@
               <dt class="font-medium text-muted-foreground">{{ m().diagnosticsProvenanceDigest }}</dt>
               <dd class="min-w-0">
                 <div class="flex items-start justify-between gap-3">
-                  <span class="select-all break-all font-mono text-xs">{{ str.digest }}</span>
+                  <span class="select-all break-all font-mono text-xs tabular-nums">{{ str.digest }}</span>
                   <button
                     hlmBtn
                     variant="outline"
@@ -147,12 +147,12 @@
               <dt class="font-medium text-muted-foreground">{{ m().resultDetailStatus }}</dt>
               <dd data-testid="diagnostics-evidence-status">{{ evidence.status }}</dd>
               <dt class="font-medium text-muted-foreground">{{ m().ocrColPages }}</dt>
-              <dd data-testid="diagnostics-evidence-pages">{{ evidence.pageCount }}</dd>
+              <dd class="tabular-nums" data-testid="diagnostics-evidence-pages">{{ evidence.pageCount }}</dd>
               <dt class="font-medium text-muted-foreground">{{ m().diagnosticsProvenanceDigest }}</dt>
               <dd class="min-w-0">
                 <div class="flex items-start justify-between gap-3">
                   <span
-                    class="select-all break-all font-mono text-xs"
+                    class="select-all break-all font-mono text-xs tabular-nums"
                     data-testid="diagnostics-evidence-digest"
                   >
                     {{ evidence.digest }}
@@ -212,22 +212,22 @@
 
       @if (runtime.runtimeVersion; as runtimeVersion) {
         <dt class="font-medium text-muted-foreground">{{ m().diagnosticsRuntimeVersion }}</dt>
-        <dd data-testid="diagnostics-runtime-version">{{ runtimeVersion }}</dd>
+        <dd class="tabular-nums" data-testid="diagnostics-runtime-version">{{ runtimeVersion }}</dd>
       }
       @if (runtime.apiVersion; as apiVersion) {
         <dt class="font-medium text-muted-foreground">{{ m().diagnosticsApiVersion }}</dt>
-        <dd data-testid="diagnostics-api-version">{{ apiVersion }}</dd>
+        <dd class="tabular-nums" data-testid="diagnostics-api-version">{{ apiVersion }}</dd>
       }
       @if (runtime.contractSetVersion; as contractSetVersion) {
         <dt class="font-medium text-muted-foreground">{{ m().diagnosticsContractSetVersion }}</dt>
-        <dd data-testid="diagnostics-contract-set-version">{{ contractSetVersion }}</dd>
+        <dd class="tabular-nums" data-testid="diagnostics-contract-set-version">{{ contractSetVersion }}</dd>
       }
       @if (runtime.contractSha256; as contractSha256) {
         <dt class="font-medium text-muted-foreground">{{ m().diagnosticsContractDigest }}</dt>
         <dd class="min-w-0">
           <div class="flex items-start justify-between gap-3">
             <span
-              class="select-all break-all font-mono text-xs"
+              class="select-all break-all font-mono text-xs tabular-nums"
               data-testid="diagnostics-contract-digest"
             >
               {{ contractSha256 }}

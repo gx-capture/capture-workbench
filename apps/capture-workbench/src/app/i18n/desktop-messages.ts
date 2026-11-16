@@ -265,6 +265,7 @@ export interface DesktopMessages {
   readonly resultNotFound: string;
   readonly resultNoResultYet: string;
   readonly resultPdfPreviewFailed: string;
+  readonly resultPdfPageCanvasLabel: (page: number) => string;
   readonly resultOcrEmpty: string;
   readonly resultPageLabel: (page: number, total: number) => string;
   readonly resultSelectedPageLabel: (page: number, position: number, total: number) => string;
@@ -626,6 +627,7 @@ const ZH_TW: DesktopMessages = {
   resultNotFound: '找不到這份文件。',
   resultNoResultYet: '目前還沒有可檢視的結果。',
   resultPdfPreviewFailed: '無法顯示這份 PDF 的頁面影像，仍可查看辨識文字。',
+  resultPdfPageCanvasLabel: (page) => `第 ${page} 頁的頁面影像`,
   resultOcrEmpty: '沒有辨識到文字。',
   resultPageLabel: (page, total) => `${page} / ${total}`,
   resultSelectedPageLabel: (page, position, total) => `第 ${page} 頁（${position} / ${total}）`,
@@ -992,6 +994,7 @@ const EN: DesktopMessages = {
   resultNotFound: 'Document not found.',
   resultNoResultYet: 'No result is available to review yet.',
   resultPdfPreviewFailed: 'Unable to display this PDF page image. The recognized text is still available.',
+  resultPdfPageCanvasLabel: (page) => `Image of page ${page}`,
   resultOcrEmpty: 'No recognized text.',
   resultPageLabel: (page, total) => `${page} / ${total}`,
   resultSelectedPageLabel: (page, position, total) => `Page ${page} (${position} of ${total})`,

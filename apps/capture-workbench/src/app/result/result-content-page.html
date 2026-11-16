@@ -34,7 +34,20 @@
                 [disabled]="!store.canPrevious()"
                 (click)="store.previousPage()"
               >
-                ◀
+                <svg
+                  aria-hidden="true"
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  class="size-4"
+                >
+                  <path d="m15 18-6-6 6-6"></path>
+                </svg>
               </button>
               <span
                 class="px-2 text-sm font-medium tabular-nums"
@@ -56,7 +69,20 @@
                 [disabled]="!store.canNext()"
                 (click)="store.nextPage()"
               >
-                ▶
+                <svg
+                  aria-hidden="true"
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  class="size-4"
+                >
+                  <path d="m9 18 6-6-6-6"></path>
+                </svg>
               </button>
             }
             @if (store.currentPage()?.edited) {
@@ -127,7 +153,9 @@
             }
             <canvas
               #pdfCanvas
+              role="img"
               data-testid="result-source-pdf-canvas"
+              [attr.aria-label]="m().resultPdfPageCanvasLabel(store.renderedPdfPage() ?? store.currentPage()?.page ?? 1)"
               [attr.data-rendered-page]="store.renderedPdfPage()"
               class="max-h-[70vh] w-full rounded object-contain"
               [class.hidden]="store.pdfState() !== 'ready'"

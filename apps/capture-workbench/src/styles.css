@@ -54,6 +54,7 @@
 html {
   color-scheme: light;
   background: var(--background);
+  overflow-x: clip;
   font-family: 'Microsoft JhengHei UI', 'Microsoft JhengHei', ui-sans-serif, system-ui, sans-serif;
 }
 
@@ -67,7 +68,18 @@ body {
   min-width: 20rem;
   min-height: 100vh;
   margin: 0;
+  overflow-x: clip;
   background: var(--background);
+}
+
+::selection {
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+
+input,
+textarea {
+  caret-color: var(--primary);
 }
 
 button,
