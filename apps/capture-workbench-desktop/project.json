@@ -354,7 +354,7 @@
       "executor": "nx:run-commands",
       "dependsOn": ["typecheck-scripts"],
       "metadata": {
-        "description": "Fail-closed real Windows WebView2 golden journey: consent, supplied document OCR, semantic result verification, Ollama structuring, review, and cleanup."
+        "description": "Fail-closed real Windows WebView2 golden journey: first-run OCR setup, supplied document OCR, semantic result verification, diagnostics provenance, cleanup, and process/CDP proof."
       },
       "outputs": [
         "{workspaceRoot}/output/playwright/capture-workbench"
