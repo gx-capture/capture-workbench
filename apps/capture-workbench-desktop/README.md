@@ -141,17 +141,20 @@ strips ambient provider/model overrides, verifies DirectML OCR and lock-selected
 TEA-ASR provenance, proves UUID-scoped capture deletion, and checks its owned
 runtime process is gone. Its report (`tmp/capture-workbench-desktop/real-media-smoke/real-media-smoke.json`)
 always records `releaseGateSatisfied=false` and `consumerE2e=false`: it is not
-the Tauri/WebView preflight below and is not candidate release evidence input.
+the Tauri host preflight below and is not candidate release evidence input.
 
-## Opt-in real model-enabled Tauri/WebView preflight
+## Opt-in real model-enabled Tauri host preflight
 
 `smoke-real-media-model` is the local production three-media preflight. It launches
-the packaged Tauri WebView with fresh app-data, performs consented catalog
-installation, imports a private cert-prep PDF, the project-owned image, and a
-private cert-prep audio fixture through the UI, and verifies raw/result,
-provenance, DirectML OCR, lock-selected TEA-ASR segments, UUID-scoped deletion,
-and owned process cleanup. The preflight selects `qwen3.5-0.8b-v1` through the
-runtime model-options API; the release installer contains no Qwen model bytes.
+the packaged Tauri desktop application with fresh app-data, drives consented
+catalog engine and `qwen3.5-0.8b-v1` model installation through the host Tauri
+commands, imports a private cert-prep PDF, the project-owned image, and a
+private cert-prep audio fixture via the feature-gated `model_smoke_import_fixture`
+command, opens the product OCR/ASR routes so the application queue stores start
+captures automatically, and verifies persisted recognized/structured records,
+provenance, DirectML OCR, lock-selected TEA-ASR segments, Ollama structuring blocks,
+UUID-scoped deletion, and owned process cleanup via host commands. The release
+installer contains no Qwen model bytes.
 The report is redacted by construction and records
 `releaseGateSatisfied=false`, `localProductionPreflight=true`, and
 `consumerE2e=false`; it is not exact-candidate release evidence.

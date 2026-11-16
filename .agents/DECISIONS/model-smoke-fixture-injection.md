@@ -15,6 +15,8 @@ product bundles.
 The selected design compiles one command only under `model-smoke-app-data`.
 The launcher predeclares fixed opaque keys and native-only paths under its
 owned run root. The command resolves a key, validates root ownership and file
-policy, then calls the existing native import implementation. The normal UI
-retry path starts real runtime processing. Evidence must explicitly identify
+policy, then calls the existing native import implementation. Reloading `/ocr`
+(for documents) or routing to `/asr` (for recordings) causes the product queue
+stores to start real runtime processing automatically, while verification reads
+persisted host records via Tauri commands. Evidence must explicitly identify
 this as a deterministic picker bypass, not native-picker coverage.

@@ -299,7 +299,7 @@
       "cache": false,
       "executor": "nx:run-commands",
       "metadata": {
-        "description": "Opt-in local Windows production preflight using a feature-gated deterministic picker bypass for prepared PDF/image/audio fixtures; private inputs are never uploaded and this is not native-picker or candidate-release evidence."
+        "description": "Opt-in local Windows host-command production preflight using a feature-gated deterministic picker bypass for prepared PDF/image/audio fixtures; private inputs are never uploaded and this is not native-picker or candidate-release evidence."
       },
       "outputs": [
         "{workspaceRoot}/tmp/capture-workbench-desktop/real-media-model/real-media-model.json"

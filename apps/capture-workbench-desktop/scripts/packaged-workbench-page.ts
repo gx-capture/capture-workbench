@@ -2,7 +2,7 @@
 // The app opens on its OCR page; the document workspace (source import,
 // document cards, detail) that the smokes drive lives on /workspace.
 import type { Page } from '@playwright/test';
-import { concatMap, defer, from, of, type Observable } from 'rxjs';
+import { concatMap, defer, from, map, of, type Observable } from 'rxjs';
 
 const PACKAGED_ORIGIN = 'http://tauri.localhost';
 const HISTORY_PATH = '/workspace';
@@ -22,6 +22,27 @@ export const SHOW_HISTORY_WORKSPACE_EXPRESSION = `if (location.pathname !== '${H
   history.pushState(null, '', '${HISTORY_PATH}');
   dispatchEvent(new Event('popstate'));
 }`;
+
+/** Navigates the packaged app to a route path via browser history without reading DOM elements. */
+export function navigatePackagedRoute(page: Page, targetPath: string): Observable<void> {
+  if (!targetPath.startsWith('/')) {
+    throw new Error(`Packaged route path must start with '/': ${targetPath}`);
+  }
+  return defer(() => {
+    const currentUrl = page.url();
+    if (URL.canParse(currentUrl) && new URL(currentUrl).pathname === targetPath) {
+      return of(undefined);
+    }
+    return from(
+      page.evaluate((routePath) => {
+        if (location.pathname !== routePath) {
+          history.pushState(null, '', routePath);
+          dispatchEvent(new Event('popstate'));
+        }
+      }, targetPath),
+    ).pipe(map(() => undefined));
+  });
+}
 
 /** Opens the legacy workspace directly by updating the browser history. */
 export function showHistoryWorkspace(page: Page): Observable<void> {

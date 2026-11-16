@@ -22,8 +22,8 @@ const coreRequirementIds = [
   'windowsml-ocr',
   'ollama-runtime',
 ] as const;
-const expectedStructuringEngine = 'ollama';
-const expectedStructuringModel = 'capture-workbench-qwen3.5-0.8b-structure-v1';
+export const expectedStructuringEngine = 'ollama';
+export const expectedStructuringModel = 'capture-workbench-qwen3.5-0.8b-structure-v1';
 const sha256DigestPattern = /^sha256:[a-f0-9]{64}$/u;
 
 interface RuntimeRequirement {

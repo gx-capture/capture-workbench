@@ -36,12 +36,12 @@ persistence, and cleanup boundaries.
 - After registry validation, the command calls the existing
   `LibraryStore::import_source`, which repeats size, signature, extension, and
   copy validation.
-- The smoke reloads the WebView, selects the queued document, and clicks the
-  existing retry action to run the normal renderer capture workflow. Audio is
-  retried only after Whisper consent completes. Because keyed injection does
-  not execute the renderer's picker callback that reveals optional Whisper,
-  the smoke records consent through the existing authenticated Tauri/runtime
-  installation command before using the same UI retry path.
+- After keyed fixture injection, the smoke reloads `/ocr` for documents or
+  navigates to `/asr` for recordings so the application's queue stores start the
+  queued item through the normal desktop capture workflow. Before starting audio,
+  the smoke installs `speech-recognition` through the authenticated
+  `runtime_start_installation` Tauri command; all verification and deletion
+  checks read and mutate host state exclusively through Tauri commands.
 
 ## Failure modes
 

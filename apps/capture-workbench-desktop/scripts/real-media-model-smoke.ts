@@ -27,7 +27,11 @@ import {
   dynamicWebViewCdpPort,
   installedPage,
 } from './installed-browser.ts';
-import { showHistoryWorkspace } from './packaged-workbench-page.ts';
+import { navigatePackagedRoute } from './packaged-workbench-page.ts';
+import {
+  expectedStructuringEngine,
+  expectedStructuringModel,
+} from './real-ollama-smoke.ts';
 import {
   createTrackedProcessTreeTerminator,
 } from './installed-process-cleanup.ts';
@@ -95,26 +99,13 @@ export const REAL_MODEL_RESULT_TIMEOUT_MS = 60 * 60_000;
 export const NATIVE_SOURCE_DIALOG_CLASSES = ['#32770'] as const;
 export const NATIVE_SOURCE_BROKER_DIALOG_CLASSES = ['CabinetWClass', 'ApplicationFrameWindow'] as const;
 
-const SAFE_UI_STATE_TEST_IDS = [
-  'runtime-setup',
-  'runtime-requirement',
-  'runtime-install',
-  'model-selection',
-  'model-install',
-  'model-install-progress',
-  'source-import',
-  'document-card',
-  'document-detail',
-  'document-raw',
-  'document-result',
-  'document-provenance',
-  'document-extraction-provenance',
-  'document-retry',
-  'document-delete',
-] as const;
-const SAFE_UI_STATE_STATUSES = new Set([
+const SAFE_BACKEND_STATUSES = new Set([
   'active',
+  'activating',
+  'awaiting_confirmation',
   'blocked',
+  'canceled',
+  'cancelled',
   'completed',
   'downloading',
   'extracting',
@@ -122,14 +113,29 @@ const SAFE_UI_STATE_STATUSES = new Set([
   'idle',
   'installable',
   'installing',
+  'not-installed',
+  'persisting',
+  'preparing',
+  'probing',
+  'processing',
   'queued',
   'ready',
+  'recovery_required',
+  'running',
+  'starting',
+  'stopped',
+  'structuring',
   'unavailable',
+  'verifying',
 ]);
-const SAFE_UI_STATE_REQUIREMENTS = new Set(['windowsml-ocr', 'speech-recognition', 'ollama-runtime']);
-const SAFE_UI_STATE_SOURCE_KINDS = new Set(['pdf', 'image', 'audio']);
-const SAFE_UI_STATE_ENGINES = new Set(['windowsml-ocr', 'speech-recognition']);
-const SAFE_UI_STATE_DEVICES = new Set(['windowsml-dml', 'cpu']);
+const SAFE_BACKEND_REQUIREMENTS = new Set([
+  'windowsml-ocr',
+  'speech-recognition',
+  'ollama-runtime',
+  'capture-ollama-model',
+]);
+const SAFE_INSTALLABLE_REQUIREMENTS = new Set(['windowsml-ocr', 'ollama-runtime', 'speech-recognition']);
+const SAFE_MODEL_OPTION_IDS = new Set(['qwen3.5-0.8b-v1', 'qwen3.5-4b-v1']);
 const SAFE_TERMINAL_DOCUMENT_STATUSES = new Set(['failed', 'canceled']);
 const SAFE_TERMINAL_DOCUMENT_STAGES = new Set([
   'queued',
@@ -198,7 +204,7 @@ const SAFE_INSTALLATION_STAGES = new Set([
   'manual_action_required',
 ]);
 const SAFE_TERMINAL_INSTALLATION_FAILURE = new RegExp(
-  `^Desktop runtime installation terminated\\. requirement=speech-recognition; status=(?:failed|cancelled|manual_action_required); stage=(?:queued|running|preparing|downloading|verifying|installing|probing|activating|failed|cancelled|manual_action_required|unknown); errorCode=[a-z][a-z0-9_-]{1,63}; progressBand=(?:early|download|late|unknown)(?:; workerStage=worker-process-[a-z0-9-]+(?:>worker-process-[a-z0-9-]+)*)?(?:; failureReason=(?:direct-model-retries-exhausted|direct-model-http-nonretryable|direct-model-content-length|direct-model-byte-count|direct-model-checksum|direct-model-redirect|runtime-install-unexpected))?\\.$`,
+  `^Desktop runtime installation terminated\\. requirement=(?:windowsml-ocr|ollama-runtime|speech-recognition); status=(?:failed|cancelled|manual_action_required); stage=(?:queued|running|preparing|downloading|verifying|installing|probing|activating|failed|cancelled|manual_action_required|unknown); errorCode=[a-z][a-z0-9_-]{1,63}; progressBand=(?:early|download|late|unknown)(?:; workerStage=worker-process-[a-z0-9-]+(?:>worker-process-[a-z0-9-]+)*)?(?:; failureReason=(?:direct-model-retries-exhausted|direct-model-http-nonretryable|direct-model-content-length|direct-model-byte-count|direct-model-checksum|direct-model-redirect|runtime-install-unexpected))?\\.$`,
   'u',
 );
 const SAFE_TERMINAL_MODEL_INSTALLATION_FAILURE = /^Desktop model installation terminated\. status=(?:failed|cancelled|manual_action_required); errorCode=[a-z][a-z0-9_-]{1,63}; progressBand=(?:early|download|late|unknown)\.$/u;
@@ -330,6 +336,10 @@ interface MediaSummary {
   readonly model: string;
   readonly device: string;
   readonly engineDigest: string;
+  readonly structuringEngine: string;
+  readonly structuringModel: string;
+  readonly structuringDigest: string;
+  readonly structuredBlockCount: number;
   readonly segmentCount: number;
   readonly pageLocators?: number;
   readonly timeLocators?: number;
@@ -337,7 +347,7 @@ interface MediaSummary {
 }
 
 export interface RealMediaModelEvidence {
-  readonly evidenceKind: 'real-model-enabled-tauri-ui-smoke';
+  readonly evidenceKind: 'real-model-enabled-tauri-host-smoke';
   readonly sourceImportMode: typeof REAL_MODEL_SOURCE_IMPORT_MODE;
   readonly nativePickerExercised: false;
   readonly releaseGateSatisfied: false;
@@ -351,8 +361,8 @@ export interface RealMediaModelEvidence {
   readonly modelDependencyOrder: readonly RequirementId[];
   readonly modelDependencyOrderScope: typeof REAL_MODEL_DEPENDENCY_ORDER_SCOPE;
   readonly media: readonly [MediaSummary, MediaSummary, MediaSummary];
-  readonly rawVisible: true;
-  readonly resultVisible: true;
+  readonly rawPersisted: true;
+  readonly resultPersisted: true;
   readonly consentedInstallation: true;
   readonly capturesDeletedAfterVerification: true;
   readonly ownedProcessCleanupVerified: true;
@@ -2598,34 +2608,80 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: s
   }
 }
 
-function allowedStringList(value: unknown, allowed: ReadonlySet<string>): readonly string[] {
-  if (!Array.isArray(value)) return [];
-  return [...new Set(value.filter((item): item is string => typeof item === 'string' && allowed.has(item)))].slice(0, 8);
+export type TauriInvoke = (
+  command: string,
+  args: Readonly<Record<string, unknown>>,
+) => Promise<unknown>;
+
+function progressBandOf(
+  progress: unknown,
+  middleLabel: 'middle' | 'download' = 'download',
+): 'early' | 'middle' | 'download' | 'late' | 'unknown' {
+  if (typeof progress !== 'number' || !Number.isFinite(progress) || progress < 0) {
+    return 'unknown';
+  }
+  const bounded = Math.min(1, progress);
+  if (bounded < 0.35) return 'early';
+  if (bounded < 0.85) return middleLabel;
+  return 'late';
 }
 
-export function safeUiStateSnapshot(records: readonly unknown[]): string {
-  const allowedTestIds = new Set<string>(SAFE_UI_STATE_TEST_IDS);
-  const safeRecords = records.slice(0, SAFE_UI_STATE_TEST_IDS.length * 2).flatMap((value) => {
-    if (value === null || typeof value !== 'object' || Array.isArray(value)) return [];
-    const candidate = value as Record<string, unknown>;
-    if (typeof candidate.testId !== 'string' || !allowedTestIds.has(candidate.testId)) return [];
-    const count = Number.isSafeInteger(candidate.count) && Number(candidate.count) >= 0
-      ? Math.min(Number(candidate.count), 32)
-      : 0;
-    const record: Record<string, unknown> = { testId: candidate.testId, count };
-    const statuses = allowedStringList(candidate.statuses, SAFE_UI_STATE_STATUSES);
-    const requirementIds = allowedStringList(candidate.requirementIds, SAFE_UI_STATE_REQUIREMENTS);
-    const sourceKinds = allowedStringList(candidate.sourceKinds, SAFE_UI_STATE_SOURCE_KINDS);
-    const engines = allowedStringList(candidate.engines, SAFE_UI_STATE_ENGINES);
-    const devices = allowedStringList(candidate.devices, SAFE_UI_STATE_DEVICES);
-    if (statuses.length) record.statuses = statuses;
-    if (requirementIds.length) record.requirementIds = requirementIds;
-    if (sourceKinds.length) record.sourceKinds = sourceKinds;
-    if (engines.length) record.engines = engines;
-    if (devices.length) record.devices = devices;
-    return [record];
-  });
-  return JSON.stringify(safeRecords);
+function allowlistedErrorCode(code: unknown, fallback = 'none'): string {
+  return typeof code === 'string' && /^[a-z][a-z0-9_-]{1,63}$/u.test(code) ? code : fallback;
+}
+
+function safeAllowlistedStatus(value: unknown): string {
+  return typeof value === 'string' && SAFE_BACKEND_STATUSES.has(value) ? value : 'unknown';
+}
+
+export function safeBackendStateSnapshot(state: unknown): string {
+  if (state === null || typeof state !== 'object' || Array.isArray(state)) {
+    return JSON.stringify({});
+  }
+  const candidate = state as Record<string, unknown>;
+  const safe: Record<string, unknown> = {};
+  if (typeof candidate.runtimeStatus === 'string') {
+    safe.runtimeStatus = safeAllowlistedStatus(candidate.runtimeStatus);
+  }
+  if (Array.isArray(candidate.requirements)) {
+    safe.requirements = candidate.requirements.slice(0, 16).flatMap((item) => {
+      if (item === null || typeof item !== 'object' || Array.isArray(item)) return [];
+      const row = item as Record<string, unknown>;
+      if (typeof row.requirementId !== 'string' || !SAFE_BACKEND_REQUIREMENTS.has(row.requirementId)) {
+        return [];
+      }
+      return [{ requirementId: row.requirementId, status: safeAllowlistedStatus(row.status) }];
+    });
+  }
+  if (Array.isArray(candidate.modelOptions)) {
+    safe.modelOptions = candidate.modelOptions.slice(0, 16).flatMap((item) => {
+      if (item === null || typeof item !== 'object' || Array.isArray(item)) return [];
+      const option = item as Record<string, unknown>;
+      if (typeof option.optionId !== 'string' || !SAFE_MODEL_OPTION_IDS.has(option.optionId)) {
+        return [];
+      }
+      return [{ optionId: option.optionId, status: safeAllowlistedStatus(option.status) }];
+    });
+  }
+  if (
+    candidate.modelInstallation !== null
+    && typeof candidate.modelInstallation === 'object'
+    && !Array.isArray(candidate.modelInstallation)
+  ) {
+    const install = candidate.modelInstallation as Record<string, unknown>;
+    const installError = install.error !== null && typeof install.error === 'object' && !Array.isArray(install.error)
+      ? install.error as Record<string, unknown>
+      : undefined;
+    safe.modelInstallation = {
+      optionId: typeof install.optionId === 'string' && SAFE_MODEL_OPTION_IDS.has(install.optionId)
+        ? install.optionId
+        : 'unknown',
+      status: safeAllowlistedStatus(install.status),
+      progressBand: progressBandOf(install.progress, 'download'),
+      errorCode: allowlistedErrorCode(installError?.code),
+    };
+  }
+  return JSON.stringify(safe);
 }
 
 function smokeFailureKind(error: unknown): string {
@@ -2648,7 +2704,7 @@ function smokeFailureKind(error: unknown): string {
 export function safeSmokeFailureMessage(
   error: unknown,
   workerMirrorRequests: number,
-  uiStateRecords: readonly unknown[],
+  backendState: unknown,
   backendCaptureState?: string,
 ): string {
   const raw = error instanceof Error ? error.message : String(error);
@@ -2668,63 +2724,41 @@ export function safeSmokeFailureMessage(
     ? `; terminal=${error.message}`
     : '';
   const backend = backendCaptureState ? ` Backend capture state: ${backendCaptureState}.` : '';
-  return `Real model smoke failed. failure=${failureKind}; error-sha256=${errorDigest}${diagnostics}${terminal}. Candidate worker mirror requests: ${requestCount}. UI state: ${safeUiStateSnapshot(uiStateRecords)}${backend}`;
+  return `Real model smoke failed. failure=${failureKind}; error-sha256=${errorDigest}${diagnostics}${terminal}. Candidate worker mirror requests: ${requestCount}. Backend state: ${safeBackendStateSnapshot(backendState)}${backend}`;
 }
 
-async function collectSafeBackendCaptureState(
-  page: Page,
+export async function collectSafeBackendCaptureState(
+  invoke: TauriInvoke,
   documentId: string | undefined,
 ): Promise<string | undefined> {
   if (!documentId) return undefined;
   try {
-    const library = await invokeTauriCommand(page, 'library_list', {
+    const library = await invoke('library_list', {
       request: { query: '', status: '' },
     });
     if (!Array.isArray(library)) return undefined;
-    const document = library.find((item) => (
-      item !== null
-      && typeof item === 'object'
-      && !Array.isArray(item)
-      && (item as Record<string, unknown>).documentId === documentId
-    ));
-    if (document === undefined || document === null || typeof document !== 'object' || Array.isArray(document)) {
-      return undefined;
-    }
-    const summary = document as Record<string, unknown>;
-    const captureId = typeof summary.captureId === 'string' ? summary.captureId : undefined;
+    const document = findLibraryDocument(library, documentId);
+    if (!document) return undefined;
+    const captureId = typeof document.captureId === 'string' ? document.captureId : undefined;
     if (!captureId) {
-      const status = typeof summary.status === 'string' && SAFE_UI_STATE_STATUSES.has(summary.status)
-        ? summary.status
+      const status = safeAllowlistedStatus(document.status);
+      const stage = typeof document.stage === 'string' && SAFE_TERMINAL_DOCUMENT_STAGES.has(document.stage)
+        ? document.stage
         : 'unknown';
-      const stage = typeof summary.stage === 'string' && SAFE_TERMINAL_DOCUMENT_STAGES.has(summary.stage)
-        ? summary.stage
-        : 'unknown';
-      return JSON.stringify({ status, stage, progressBand: 'unknown', errorCode: 'not-started' });
+      const errorCode = allowlistedErrorCode(document.errorCode, 'not-started');
+      return JSON.stringify({ status, stage, progressBand: 'unknown', errorCode });
     }
-    const capture = await invokeTauriCommand(page, 'runtime_get_capture', { input: { id: captureId } });
+    const capture = await invoke('runtime_get_capture', { input: { id: captureId } });
     if (capture === null || typeof capture !== 'object' || Array.isArray(capture)) return undefined;
     const job = capture as Record<string, unknown>;
-    const status = typeof job.status === 'string' && SAFE_UI_STATE_STATUSES.has(job.status)
-      ? job.status
-      : 'unknown';
+    const status = safeAllowlistedStatus(job.status);
     const stage = typeof job.stage === 'string' && SAFE_TERMINAL_DOCUMENT_STAGES.has(job.stage)
       ? job.stage
       : 'unknown';
-    const progress = typeof job.progress === 'number' && Number.isFinite(job.progress)
-      ? Math.max(0, Math.min(1, job.progress))
-      : undefined;
-    const progressBand = progress === undefined
-      ? 'unknown'
-      : progress < 0.35
-        ? 'early'
-        : progress < 0.85
-          ? 'middle'
-          : 'late';
+    const progressBand = progressBandOf(job.progress, 'middle');
     const error = job.error;
     const errorCode = error !== null && typeof error === 'object' && !Array.isArray(error)
-      && typeof (error as Record<string, unknown>).code === 'string'
-      && /^[a-z][a-z0-9_-]{1,63}$/u.test((error as Record<string, unknown>).code as string)
-      ? (error as Record<string, unknown>).code as string
+      ? allowlistedErrorCode((error as Record<string, unknown>).code)
       : 'none';
     return JSON.stringify({ status, stage, progressBand, errorCode });
   } catch {
@@ -2732,22 +2766,36 @@ async function collectSafeBackendCaptureState(
   }
 }
 
-async function collectSafeUiState(page: Page): Promise<readonly unknown[]> {
-  return page.evaluate((testIds) => testIds.map((testId) => {
-    const nodes = Array.from(document.querySelectorAll(`[data-testid="${testId}"]`)).slice(0, 32);
-    const attributeValues = (attribute: string) => nodes
-      .map((node) => node.getAttribute(attribute))
-      .filter((value): value is string => value !== null);
-    return {
-      testId,
-      count: nodes.length,
-      statuses: attributeValues('data-status'),
-      requirementIds: attributeValues('data-requirement-id'),
-      sourceKinds: attributeValues('data-source-kind'),
-      engines: attributeValues('data-engine'),
-      devices: attributeValues('data-device'),
-    };
-  }), SAFE_UI_STATE_TEST_IDS);
+export async function collectSafeBackendState(
+  invoke: TauriInvoke,
+  activeModelInstallationId?: string,
+): Promise<Record<string, unknown>> {
+  const [runtimeStatus, requirements, modelOptions, modelInstallation] = await Promise.all([
+    invoke('desktop_runtime_status', {})
+      .then((value) => (value !== null && typeof value === 'object' && !Array.isArray(value)
+        ? (value as Record<string, unknown>).status
+        : undefined))
+      .catch(() => undefined),
+    invoke('runtime_requirements', {})
+      .then((value) => (value !== null && typeof value === 'object' && !Array.isArray(value)
+        ? (value as Record<string, unknown>).items
+        : undefined))
+      .catch(() => undefined),
+    invoke('runtime_model_options', {})
+      .then((value) => (value !== null && typeof value === 'object' && !Array.isArray(value)
+        ? (value as Record<string, unknown>).items
+        : undefined))
+      .catch(() => undefined),
+    activeModelInstallationId
+      ? invoke('runtime_get_model_installation', { input: { id: activeModelInstallationId } }).catch(() => undefined)
+      : Promise.resolve(undefined),
+  ]);
+  return {
+    ...(runtimeStatus !== undefined ? { runtimeStatus } : {}),
+    ...(requirements !== undefined ? { requirements } : {}),
+    ...(modelOptions !== undefined ? { modelOptions } : {}),
+    ...(modelInstallation !== undefined ? { modelInstallation } : {}),
+  };
 }
 
 export async function nativeOpenDialogUiAutomation(
@@ -2871,9 +2919,21 @@ export async function nativeOpenDialogUiAutomation(
   await removeScript();
 }
 
-interface InjectedFixtureDocument {
-  readonly documentId: string;
-  readonly startedAt: number;
+function findLibraryDocument(
+  documents: readonly unknown[],
+  documentId: string,
+): Record<string, unknown> | undefined {
+  for (const item of documents) {
+    if (
+      item !== null
+      && typeof item === 'object'
+      && !Array.isArray(item)
+      && (item as Record<string, unknown>).documentId === documentId
+    ) {
+      return item as Record<string, unknown>;
+    }
+  }
+  return undefined;
 }
 
 async function invokeTauriCommand(
@@ -2905,7 +2965,7 @@ export function modelSmokeInjectedDocumentId(value: unknown): string {
 
 export async function importModelSmokeFixtureDocument(
   fixtureKey: MediaKind,
-  invoke: (command: string, args: Readonly<Record<string, unknown>>) => Promise<unknown>,
+  invoke: TauriInvoke,
 ): Promise<string> {
   const result = await invoke('model_smoke_import_fixture', {
     request: { fixtureKey },
@@ -2913,35 +2973,28 @@ export async function importModelSmokeFixtureDocument(
   return modelSmokeInjectedDocumentId(result);
 }
 
-async function injectModelSmokeFixture(
-  page: Page,
-  fixtureKey: MediaKind,
-  options: { readonly waitForCaptureReady?: boolean } = {},
-): Promise<InjectedFixtureDocument> {
-  const startedAt = Date.now();
-  const documentId = await importModelSmokeFixtureDocument(
-    fixtureKey,
-    (command, args) => invokeTauriCommand(page, command, args),
+async function waitForImportedDocumentInLibrary(
+  documentId: string,
+  invoke: TauriInvoke,
+): Promise<void> {
+  await waitUntil(
+    async () => {
+      const value = await invoke('library_list', {
+        request: { query: '', status: '' },
+      }).catch(() => undefined);
+      if (!Array.isArray(value)) return false;
+      return findLibraryDocument(value, documentId) !== undefined;
+    },
+    30_000,
+    'Imported smoke document did not persist in the desktop library.',
   );
-  await waitForImportedDocumentInLibrary(page, documentId);
-  await page.reload({ waitUntil: 'domcontentloaded' });
-  if (options.waitForCaptureReady !== false) await waitForCaptureReady(page);
-  try {
-    await waitForDocumentById(page, documentId);
-  } catch {
-    await page.reload({ waitUntil: 'domcontentloaded' });
-    if (options.waitForCaptureReady !== false) await waitForCaptureReady(page);
-    await waitForDocumentById(page, documentId);
-  }
-  return { documentId, startedAt };
 }
 
-async function installConsentedRequirementThroughTauri(
-  page: Page,
-  requirementId: RequirementId,
-  options: { readonly waitForVisibleRequirement?: boolean } = {},
+async function installRequirementThroughTauri(
+  requirementId: SetupRequirementId,
+  invoke: TauriInvoke,
 ): Promise<void> {
-  const start = asObject(await invokeTauriCommand(page, 'runtime_start_installation', {
+  const start = asObject(await invoke('runtime_start_installation', {
     input: {
       clientRequestId: randomUUID(),
       requirementId,
@@ -2952,7 +3005,7 @@ async function installConsentedRequirementThroughTauri(
     throw new Error('Runtime installation ID is invalid.');
   }
   await waitUntil(async () => {
-    const installation = asObject(await invokeTauriCommand(page, 'runtime_get_installation', {
+    const installation = asObject(await invoke('runtime_get_installation', {
       input: { id: installationId },
     }), 'Runtime installation');
     const status = requiredString(installation.status, 'Runtime installation status');
@@ -2974,12 +3027,7 @@ async function installConsentedRequirementThroughTauri(
       throw new Error(failure ?? 'Consented runtime installation did not complete.');
     }
     return false;
-  }, REAL_MODEL_INSTALL_TIMEOUT_MS, 'Consented runtime installation timed out.');
-  await page.reload({ waitUntil: 'domcontentloaded' });
-  if (options.waitForVisibleRequirement !== false) {
-    await waitForCaptureReady(page);
-    await waitForRuntimeRequirementsReady(page, [requirementId]);
-  }
+  }, REAL_MODEL_INSTALL_TIMEOUT_MS, `Consented runtime installation timed out: ${requirementId}.`);
 }
 
 export function safeTerminalInstallationFailure(
@@ -2990,20 +3038,12 @@ export function safeTerminalInstallationFailure(
   progress: number | null,
   errorMessage: string | null = null,
 ): string | undefined {
-  if (requirementId !== 'speech-recognition' || status === null || !SAFE_INSTALLATION_STATUSES.has(status)) {
+  if (!SAFE_INSTALLABLE_REQUIREMENTS.has(requirementId) || status === null || !SAFE_INSTALLATION_STATUSES.has(status)) {
     return undefined;
   }
   const safeStage = stage !== null && SAFE_INSTALLATION_STAGES.has(stage) ? stage : 'unknown';
-  const safeErrorCode = errorCode !== null && /^[a-z][a-z0-9_-]{1,63}$/u.test(errorCode)
-    ? errorCode
-    : 'unknown';
-  const progressBand = progress === null || !Number.isFinite(progress) || progress < 0
-    ? 'unknown'
-    : progress < 0.35
-      ? 'early'
-      : progress < 0.85
-        ? 'download'
-        : 'late';
+  const safeErrorCode = allowlistedErrorCode(errorCode, 'unknown');
+  const progressBand = progressBandOf(progress, 'download');
   const workerStage = errorMessage?.match(/\bat (?:stage|stages) (worker-process-[a-z0-9-]+(?:>worker-process-[a-z0-9-]+)*)\b/u)?.[1];
   const failureReason = errorMessage?.includes('direct model download exhausted bounded retries')
     ? 'direct-model-retries-exhausted'
@@ -3018,23 +3058,7 @@ export function safeTerminalInstallationFailure(
             : errorMessage?.includes('redirect')
               ? 'direct-model-redirect'
               : 'runtime-install-unexpected';
-  return `Desktop runtime installation terminated. requirement=speech-recognition; status=${status}; stage=${safeStage}; errorCode=${safeErrorCode}; progressBand=${progressBand}${workerStage ? `; workerStage=${workerStage}` : ''}; failureReason=${failureReason}.`;
-}
-
-async function requirementStatus(page: Page, requirementId: SetupRequirementId): Promise<string> {
-  const row = page.locator(`[data-testid="runtime-requirement"][data-requirement-id="${requirementId}"]`);
-  if (await row.count() !== 1) return '';
-  return (await row.getAttribute('data-status').catch(() => null))
-    || (await row.locator('[data-testid="runtime-requirement-status"]').getAttribute('data-status').catch(() => null))
-    || (await row.textContent().catch(() => null))
-    || '';
-}
-
-export function requirementCompletedAfterConsent(
-  status: string,
-  wasVisibleBeforeConsent: boolean,
-): boolean {
-  return /ready/iu.test(status) || (wasVisibleBeforeConsent && status === '');
+  return `Desktop runtime installation terminated. requirement=${requirementId}; status=${status}; stage=${safeStage}; errorCode=${safeErrorCode}; progressBand=${progressBand}${workerStage ? `; workerStage=${workerStage}` : ''}; failureReason=${failureReason}.`;
 }
 
 export function runtimeRequirementsReady(value: unknown, requiredIds: readonly SetupRequirementId[]): boolean {
@@ -3072,26 +3096,16 @@ export function safeTerminalModelInstallationFailure(
   progress: number | null,
 ): string | undefined {
   if (status === null || !SAFE_INSTALLATION_STATUSES.has(status)) return undefined;
-  const safeErrorCode = errorCode !== null && /^[a-z][a-z0-9_-]{1,63}$/u.test(errorCode)
-    ? errorCode
-    : 'unknown';
-  const progressBand = progress === null || !Number.isFinite(progress) || progress < 0
-    ? 'unknown'
-    : progress < 0.35
-      ? 'early'
-      : progress < 0.85
-        ? 'download'
-        : 'late';
-  return `Desktop model installation terminated. status=${status}; errorCode=${safeErrorCode}; progressBand=${progressBand}.`;
+  return `Desktop model installation terminated. status=${status}; errorCode=${allowlistedErrorCode(errorCode, 'unknown')}; progressBand=${progressBandOf(progress, 'download')}.`;
 }
 
 async function waitForRuntimeRequirementsReady(
-  page: Page,
   requiredIds: readonly SetupRequirementId[],
+  invoke: TauriInvoke,
 ): Promise<void> {
   await waitUntil(
     async () => runtimeRequirementsReady(
-      await invokeTauriCommand(page, 'runtime_requirements', {}),
+      await invoke('runtime_requirements', {}).catch(() => undefined),
       requiredIds,
     ),
     REAL_MODEL_RUNTIME_READY_TIMEOUT_MS,
@@ -3099,20 +3113,31 @@ async function waitForRuntimeRequirementsReady(
   );
 }
 
-async function waitForDesktopRuntimeReady(page: Page): Promise<void> {
+async function waitForRuntimeRequirementsLoaded(invoke: TauriInvoke): Promise<void> {
+  await waitUntil(
+    async () => {
+      const value = await invoke('runtime_requirements', {}).catch(() => undefined);
+      return value !== null && typeof value === 'object' && !Array.isArray(value) && Array.isArray((value as JsonObject).items);
+    },
+    REAL_MODEL_RUNTIME_READY_TIMEOUT_MS,
+    'Runtime requirements bridge did not become ready.',
+  );
+}
+
+async function waitForDesktopRuntimeReady(invoke: TauriInvoke): Promise<void> {
   await waitUntil(
     async () => desktopRuntimeReady(
-      await invokeTauriCommand(page, 'desktop_runtime_status', {}).catch(() => undefined),
+      await invoke('desktop_runtime_status', {}).catch(() => undefined),
     ),
     REAL_MODEL_RUNTIME_READY_TIMEOUT_MS,
     'Desktop runtime did not become ready.',
   );
 }
 
-async function waitForRuntimeModelOptionActive(page: Page, optionId: string): Promise<void> {
+async function waitForRuntimeModelOptionActive(optionId: string, invoke: TauriInvoke): Promise<void> {
   await waitUntil(
     async () => runtimeModelOptionActive(
-      await invokeTauriCommand(page, 'runtime_model_options', {}),
+      await invoke('runtime_model_options', {}).catch(() => undefined),
       optionId,
     ),
     REAL_MODEL_RUNTIME_READY_TIMEOUT_MS,
@@ -3120,184 +3145,125 @@ async function waitForRuntimeModelOptionActive(page: Page, optionId: string): Pr
   );
 }
 
-async function installConsentedRequirements(
-  page: Page,
+export async function installConsentedRequirementsThroughTauri(
   requiredIds: readonly SetupRequirementId[],
   completionOrder: RequirementId[],
+  invoke: TauriInvoke,
 ): Promise<void> {
   if (requiredIds.length === 0) return;
-  const setup = page.getByTestId('runtime-setup');
-  await setup.waitFor({ state: 'visible', timeout: REAL_MODEL_RUNTIME_READY_TIMEOUT_MS });
-  const install = page.getByTestId('runtime-install');
-  const wasVisibleBeforeConsent = new Map<SetupRequirementId, boolean>();
+  const listed = asObject(await invoke('runtime_requirements', {}), 'Runtime requirements');
+  const items = Array.isArray(listed.items) ? listed.items : [];
   for (const requirementId of requiredIds) {
-    wasVisibleBeforeConsent.set(
-      requirementId,
-      (await page.locator(`[data-testid="runtime-requirement"][data-requirement-id="${requirementId}"]`).count()) === 1,
-    );
-  }
-  const alreadyReady = await Promise.all(requiredIds.map(async (requirementId) => {
-    const status = await requirementStatus(page, requirementId);
-    return /ready/iu.test(status)
-      || (!wasVisibleBeforeConsent.get(requirementId) && status === '');
-  }));
-  if (!alreadyReady.every(Boolean)) {
-    await waitUntil(
-      async () => (await install.isVisible().catch(() => false)) || false,
-      REAL_MODEL_RUNTIME_READY_TIMEOUT_MS,
-      'Desktop runtime setup did not expose the consented install action.',
-    );
-    await install.click();
-  }
-  const consentedAt = Date.now();
-  const completedAt = new Map<SetupRequirementId, number>();
-  requiredIds.forEach((requirementId, index) => {
-    if (alreadyReady[index]) completedAt.set(requirementId, consentedAt);
-  });
-  await waitUntil(
-    async () => {
-      const backendReady = runtimeRequirementsReady(
-        await invokeTauriCommand(page, 'runtime_requirements', {}),
-        requiredIds,
-      );
-      if (backendReady) {
-        const completedAtTimestamp = Date.now();
-        requiredIds.forEach((requirementId) => {
-          if (!completedAt.has(requirementId)) completedAt.set(requirementId, completedAtTimestamp);
-        });
-        return true;
-      }
-      for (const requirementId of requiredIds) {
-        const status = await requirementStatus(page, requirementId);
-        if (requirementCompletedAfterConsent(status, wasVisibleBeforeConsent.get(requirementId) === true)
-          && !completedAt.has(requirementId)) {
-          completedAt.set(requirementId, Date.now());
-        }
-      }
-      return completedAt.size === requiredIds.length || false;
-    },
-    REAL_MODEL_INSTALL_TIMEOUT_MS,
-    `Consented model installation did not complete: ${requiredIds.join(', ')}.`,
-  );
-  for (const requirementId of requiredIds) {
+    const existing = items.find((item) => (
+      item !== null
+      && typeof item === 'object'
+      && !Array.isArray(item)
+      && (item as Record<string, unknown>).requirementId === requirementId
+    )) as Record<string, unknown> | undefined;
+    if (existing?.status !== 'ready') {
+      await installRequirementThroughTauri(requirementId, invoke);
+    }
     if (requirementId !== 'ollama-runtime' && requirementId !== 'capture-ollama-model' && !completionOrder.includes(requirementId)) {
       completionOrder.push(requirementId);
     }
   }
-  await page.reload({ waitUntil: 'domcontentloaded' });
-  await waitForRuntimeRequirementsReady(page, requiredIds);
+  await waitForRuntimeRequirementsReady(requiredIds, invoke);
 }
 
-async function waitForCaptureReady(page: Page): Promise<void> {
-  const importButton = page.getByTestId('source-import');
-  await waitUntil(
-    async () => (await importButton.isEnabled().catch(() => false)) || false,
-    REAL_MODEL_RUNTIME_READY_TIMEOUT_MS,
-    'Desktop capture UI did not become ready after consented installation.',
-  );
-}
-
-async function waitForDocumentById(
-  page: Page,
-  documentId: string,
-): Promise<{ id: string; card: ReturnType<Page['locator']> }> {
-  if (!/^[a-f0-9]{32}$/u.test(documentId)) {
-    throw new Error('Desktop smoke document ID is invalid.');
+export async function installModelThroughTauri(
+  optionId: 'qwen3.5-0.8b-v1',
+  invoke: TauriInvoke,
+  onInstallationStarted?: (installationId: string) => void,
+): Promise<void> {
+  const options = asObject(await invoke('runtime_model_options', {}), 'Runtime model options');
+  if (runtimeModelOptionActive(options, optionId)) {
+    await waitForRuntimeRequirementsReady(['capture-ollama-model'], invoke);
+    return;
   }
-  const card = page.locator(`[data-testid="document-card"][data-document-id="${documentId}"]`);
-  await card.waitFor({ state: 'visible', timeout: 30_000 });
-  if (await card.count() !== 1) {
-    throw new Error('Desktop smoke document ID did not resolve to one card.');
+  let startValue: unknown;
+  try {
+    startValue = await invoke('runtime_start_model_installation', {
+      input: {
+        clientRequestId: randomUUID(),
+        optionId,
+      },
+    });
+  } catch {
+    throw new Error('Desktop model installation did not start.');
   }
-  return { id: documentId, card };
-}
+  const start = asObject(startValue, 'Runtime model installation');
+  const installationId = requiredString(start.installationId, 'Runtime model installation ID');
+  if (!/^[A-Za-z0-9_-]{1,128}$/u.test(installationId)) {
+    throw new Error('The model install action did not expose a valid installation identity.');
+  }
+  if (requiredString(start.optionId, 'Runtime model installation option ID') !== optionId) {
+    throw new Error('The model install action started a different allowlisted option.');
+  }
+  onInstallationStarted?.(installationId);
 
-async function waitForImportedDocumentInLibrary(page: Page, documentId: string): Promise<void> {
   await waitUntil(
     async () => {
-      const value = await invokeTauriCommand(page, 'library_list', {
+      const installation = asObject(await invoke('runtime_get_model_installation', {
+        input: { id: installationId },
+      }), 'Runtime model installation');
+      if (requiredString(installation.installationId, 'Runtime model installation ID') !== installationId
+        || requiredString(installation.optionId, 'Runtime model installation option ID') !== optionId) {
+        throw new Error('Runtime model installation identity changed while polling.');
+      }
+      const status = requiredString(installation.status, 'Runtime model installation status');
+      if (status === 'completed') return true;
+      if (status === 'queued' || status === 'running') return false;
+      const installationError = installation.error !== null
+        && typeof installation.error === 'object'
+        && !Array.isArray(installation.error)
+        ? installation.error as JsonObject
+        : undefined;
+      const failure = safeTerminalModelInstallationFailure(
+        status,
+        typeof installationError?.code === 'string' ? installationError.code : null,
+        typeof installation.progress === 'number' ? installation.progress : null,
+      );
+      throw new Error(failure ?? 'Runtime model installation did not complete.');
+    },
+    REAL_MODEL_INSTALL_TIMEOUT_MS,
+    'The selected qwen3.5 0.8B model installation timed out.',
+  );
+  await waitForRuntimeModelOptionActive(optionId, invoke);
+  await waitForRuntimeRequirementsReady(['capture-ollama-model'], invoke);
+}
+
+function validCaptureId(value: unknown): string | undefined {
+  return typeof value === 'string' && /^[a-f0-9-]{36}$/u.test(value) ? value : undefined;
+}
+
+export async function waitForCaptureAccepted(
+  documentId: string,
+  invoke: TauriInvoke,
+  timeoutMs = REAL_MODEL_CAPTURE_START_TIMEOUT_MS,
+): Promise<string | undefined> {
+  let observedCaptureId: string | undefined;
+  await waitUntil(
+    async () => {
+      const documents = await invoke('library_list', {
         request: { query: '', status: '' },
       }).catch(() => undefined);
-      if (!Array.isArray(value)) return false;
-      return value.some((item) => (
-        item !== null
-        && typeof item === 'object'
-        && !Array.isArray(item)
-        && (item as Record<string, unknown>).documentId === documentId
-      )) || false;
+      if (!Array.isArray(documents)) return false;
+      const record = findLibraryDocument(documents, documentId);
+      if (!record) return false;
+      observedCaptureId ??= validCaptureId(record.captureId);
+      const status = typeof record.status === 'string' ? record.status : '';
+      return observedCaptureId !== undefined
+        || status === 'processing'
+        || status === 'persisting'
+        || status === 'awaiting_confirmation'
+        || status === 'completed'
+        || status === 'recovery_required'
+        || SAFE_TERMINAL_DOCUMENT_STATUSES.has(status);
     },
-    30_000,
-    'Imported smoke document did not persist in the desktop library.',
+    timeoutMs,
+    'Desktop capture start was not accepted.',
   );
-}
-
-export interface StartInjectedCaptureDeps {
-  readonly waitForDocument: (documentId: string) => Promise<{ clickCard: () => Promise<void> }>;
-  readonly waitForDetailVisible: (documentId: string) => Promise<void>;
-  readonly waitForRetryVisible: (documentId: string) => Promise<void>;
-  readonly countRetry: (documentId: string) => Promise<number>;
-  readonly waitForCaptureReady: () => Promise<void>;
-  readonly clickRetry: (documentId: string) => Promise<void>;
-  readonly waitForCaptureAccepted: (documentId: string) => Promise<void>;
-}
-
-export async function startInjectedCapture(
-  page: Page,
-  documentId: string,
-  deps?: Partial<StartInjectedCaptureDeps>,
-): Promise<void> {
-  const detailLocator = () => page.locator(`[data-testid="document-detail"][data-document-id="${documentId}"]`);
-  const retryLocator = () => detailLocator().locator(`[data-testid="document-retry"][data-document-id="${documentId}"]`);
-  const actions: StartInjectedCaptureDeps = {
-    waitForDocument: async (id) => {
-      const document = await waitForDocumentById(page, id);
-      return { clickCard: () => document.card.click() };
-    },
-    waitForDetailVisible: async () => {
-      await detailLocator().waitFor({ state: 'visible', timeout: 30_000 });
-    },
-    waitForRetryVisible: async () => {
-      await retryLocator().waitFor({ state: 'visible', timeout: 30_000 });
-    },
-    countRetry: async () => retryLocator().count(),
-    waitForCaptureReady: async () => waitForCaptureReady(page),
-    clickRetry: async () => retryLocator().click(),
-    waitForCaptureAccepted: async (id) => {
-      await waitUntil(
-        async () => {
-          const documents = await invokeTauriCommand(page, 'library_list', {
-            request: { query: '', status: '' },
-          }).catch(() => undefined);
-          if (!Array.isArray(documents)) return false;
-          const current = documents.find((item) => (
-            item !== null
-            && typeof item === 'object'
-            && !Array.isArray(item)
-            && (item as Record<string, unknown>).documentId === id
-          ));
-          if (current === undefined || current === null || typeof current !== 'object' || Array.isArray(current)) {
-            return false;
-          }
-          const record = current as Record<string, unknown>;
-          return record.status === 'processing'
-            || (typeof record.captureId === 'string' && record.captureId.length > 0);
-        },
-        REAL_MODEL_CAPTURE_START_TIMEOUT_MS,
-        'Desktop capture start was not accepted.',
-      );
-    },
-    ...deps,
-  };
-  const document = await actions.waitForDocument(documentId);
-  await document.clickCard();
-  await actions.waitForDetailVisible(documentId);
-  await actions.waitForRetryVisible(documentId);
-  if (await actions.countRetry(documentId) !== 1) {
-    throw new Error('Injected document did not expose the exact UI processing action.');
-  }
-  await actions.waitForCaptureReady();
-  await actions.clickRetry(documentId);
-  await actions.waitForCaptureAccepted(documentId);
+  return observedCaptureId;
 }
 
 export function safeTerminalDocumentFailure(
@@ -3327,113 +3293,54 @@ export function safeTerminalDocumentFailure(
   return `Desktop capture terminated. status=${status}; stage=${safeStage}; errorCode=${safeErrorCode}${safeMediaKind}${detail}.`;
 }
 
-async function throwIfTerminalDocumentFailure(
-  document: { readonly card: ReturnType<Page['locator']> },
-  detail: ReturnType<Page['locator']>,
+function throwIfTerminalRecordFailure(
+  record: JsonObject,
   mediaKind: MediaKind | null = null,
-): Promise<void> {
-  const status = await document.card.getAttribute('data-status');
-  if (status === null || !SAFE_TERMINAL_DOCUMENT_STATUSES.has(status)) return;
-  const stage = await detail.locator('[data-stage]').first().getAttribute('data-stage').catch(() => null);
-  const errorCode = (await detail.locator('[role="alert"] strong').first().textContent().catch(() => null))?.trim() ?? null;
-  const errorMessage = (await detail.locator('[role="alert"] p').first().textContent().catch(() => null))?.trim() ?? null;
-  const failure = safeTerminalDocumentFailure(status, stage, errorCode, errorMessage, mediaKind);
+): void {
+  const status = typeof record.status === 'string' ? record.status : null;
+  if (status === 'recovery_required') {
+    throw new Error(`Desktop capture requires recovery. mediaKind=${mediaKind ?? 'unknown'}.`);
+  }
+  const failure = safeTerminalDocumentFailure(
+    status,
+    typeof record.stage === 'string' ? record.stage : null,
+    typeof record.errorCode === 'string' ? record.errorCode : null,
+    typeof record.errorMessage === 'string' ? record.errorMessage : null,
+    mediaKind,
+  );
   if (failure !== undefined) throw new Error(failure);
 }
 
-function parseJsonFromVisibleRaw(value: string): JsonObject | undefined {
-  try {
-    const parsed: unknown = JSON.parse(value);
-    return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as JsonObject : undefined;
-  } catch {
-    return undefined;
+function partialSegmentText(partial: JsonObject): string {
+  if (typeof partial.sourceText === 'string' && partial.sourceText.trim().length > 0) {
+    return partial.sourceText.trim();
   }
+  if (!Array.isArray(partial.segments)) return '';
+  return partial.segments
+    .map((segment) => (segment !== null && typeof segment === 'object' && !Array.isArray(segment)
+      && typeof (segment as JsonObject).text === 'string'
+      ? ((segment as JsonObject).text as string).trim()
+      : ''))
+    .filter(Boolean)
+    .join('\n');
 }
 
-async function assertVisibleCapture(
-  page: Page,
+function assertExtractionProvenance(
+  raw: JsonObject,
+  result: JsonObject,
   input: MediaInput,
   expected: ExpectedProvenance,
-  documentId: string,
-  importedAt = Date.now(),
-): Promise<MediaSummary> {
-  const document = await waitForDocumentById(page, documentId);
-  await document.card.click();
-  const detail = page.locator(`[data-testid="document-detail"][data-document-id="${document.id}"]`);
-  await detail.waitFor({ state: 'visible', timeout: 30_000 });
-  const rawSection = detail.getByTestId('document-raw');
-  const resultSection = detail.getByTestId('document-result');
-  const provenanceSection = detail.getByTestId('document-provenance');
-  const rawTimeout = input.kind === 'audio' ? REAL_MODEL_AUDIO_CAPTURE_TIMEOUT_MS : REAL_MODEL_CAPTURE_TIMEOUT_MS;
-  if (input.kind === 'audio') {
-    const oracle = await loadProgressiveAudioOracle();
-    if (!oracle) throw new Error('The progressive audio oracle is required for the production Tauri audio gate.');
-    let observed: ProgressiveAudioObservedOutput | undefined;
-    let activeCaptureId: string | undefined;
-    await waitUntil(
-      async () => {
-        await throwIfTerminalDocumentFailure(document, detail, input.kind);
-        activeCaptureId ??= await libraryCaptureId(page, document.id);
-        const partial = detail.getByTestId('streaming-partial');
-        if (await partial.count() !== 1 || !await partial.isVisible().catch(() => false)) return false;
-        const coveredUntilMs = Number(await partial.getAttribute('data-covered-until-ms'));
-        const revision = Number(await partial.getAttribute('data-partial-revision'));
-        const text = (await partial.locator('pre').textContent())?.trim() || '';
-        const satisfied = audioCheckpointSatisfied(input.sampleSeconds, coveredUntilMs, revision, text);
-        if (satisfied && oracle && activeCaptureId) {
-          const value = await invokeTauriCommand(page, 'runtime_get_streaming_partial', {
-            input: { id: activeCaptureId },
-          }).catch(() => undefined);
-          const candidate = parseProgressiveAudioObservedOutput(value);
-          if (candidate) observed = candidate;
-        }
-        return satisfied;
-      },
-      REAL_MODEL_AUDIO_CAPTURE_TIMEOUT_MS,
-      'Desktop v2 audio partial did not expose non-empty text by its progressive checkpoint.',
-    );
-    if (!observed) throw new Error('The progressive audio oracle could not observe the Tauri partial.');
-    assertProgressiveAudioSampleMatchesOracle(oracle, observed);
-    await waitUntil(
-      async () => {
-        await throwIfTerminalDocumentFailure(document, detail, input.kind);
-        return (await document.card.getAttribute('data-status')) === 'completed' || false;
-      },
-      REAL_MODEL_AUDIO_CAPTURE_TIMEOUT_MS,
-      `Desktop ${input.fileName} capture did not complete.`,
-    );
-  }
-  await waitUntil(
-    async () => {
-      await throwIfTerminalDocumentFailure(document, detail, input.kind);
-      if (await rawSection.count() !== 1) return false;
-      return ((await rawSection.textContent())?.trim() || '') || false;
-    },
-    rawTimeout,
-    `${input.kind} UI raw extraction did not become visible within its bounded timeout.`,
+): { readonly engine: string; readonly model: string; readonly device: string; readonly digest: string } {
+  const extraction = asObject(
+    result.extractionEngine ?? raw.extractionEngine,
+    `${input.kind} extraction provenance`,
   );
-  const extractionDurationMs = Date.now() - importedAt;
-  const resultTimeout = REAL_MODEL_RESULT_TIMEOUT_MS;
-  await waitUntil(
-    async () => {
-      await throwIfTerminalDocumentFailure(document, detail, input.kind);
-      return (await resultSection.isVisible().catch(() => false))
-        && (await provenanceSection.isVisible().catch(() => false));
-    },
-    resultTimeout,
-    `${input.kind} UI result and provenance did not become visible within its bounded timeout.`,
-  );
-  const rawText = (await rawSection.textContent())?.trim() || '';
-  const resultText = (await resultSection.textContent())?.trim() || '';
-  if (!rawText || !resultText) throw new Error(`${input.kind} UI raw/result data was empty.`);
-  const extractionProvenance = detail.getByTestId('document-extraction-provenance');
-  await extractionProvenance.waitFor({ state: 'visible', timeout: resultTimeout });
   const expectedEngine = input.kind === 'audio' ? expected.whisperEngine : expected.ocrEngine;
   const expectedModel = input.kind === 'audio' ? expected.whisperModel : expected.ocrModel;
   const expectedDevice = input.kind === 'audio' ? expected.whisperDevice : expected.ocrDevice;
-  const actualDevice = await extractionProvenance.getAttribute('data-device');
-  assert.equal(await extractionProvenance.getAttribute('data-engine'), expectedEngine);
-  assert.equal(await extractionProvenance.getAttribute('data-model'), expectedModel);
+  const actualDevice = typeof extraction.device === 'string' ? extraction.device : null;
+  assert.equal(extraction.engine, expectedEngine);
+  assert.equal(extraction.model, expectedModel);
   if (input.kind === 'audio' && expected.whisperPreferGpu && input.exactWhisperOutput !== false) {
     assertAudioDeviceMatchesSourceLock(actualDevice, expectedDevice);
   } else if (input.kind === 'audio' && expected.whisperPreferGpu) {
@@ -3441,114 +3348,242 @@ async function assertVisibleCapture(
   } else {
     assert.equal(actualDevice, expectedDevice);
   }
-  const extractionDigest = await extractionProvenance.getAttribute('data-digest');
-  if (!extractionDigest || !/^sha256:[a-f0-9]{64}$/u.test(extractionDigest)) {
-    throw new Error(`${input.kind} UI extraction provenance omitted a bounded engine digest.`);
+  const extractionDigest = requiredString(extraction.digest, `${input.kind} extraction digest`);
+  assert.match(extractionDigest, /^sha256:[a-f0-9]{64}$/u);
+  return {
+    engine: expectedEngine,
+    model: expectedModel,
+    device: actualDevice || expectedDevice,
+    digest: extractionDigest,
+  };
+}
+
+function assertStructuringResult(
+  rawSegments: readonly unknown[],
+  result: JsonObject,
+  input: MediaInput,
+): {
+  readonly structuringEngine: string;
+  readonly structuringModel: string;
+  readonly structuringDigest: string;
+  readonly structuredBlockCount: number;
+} {
+  const structuring = asObject(result.structuringEngine, `${input.kind} structuring provenance`);
+  assert.equal(structuring.engine, expectedStructuringEngine);
+  assert.equal(structuring.model, expectedStructuringModel);
+  const structuringDigest = requiredString(structuring.digest, `${input.kind} structuring digest`);
+  assert.match(structuringDigest, /^sha256:[a-f0-9]{64}$/u);
+  if (!Array.isArray(result.blocks) || result.blocks.length < 1) {
+    throw new Error(`${input.kind} structured result did not contain any blocks.`);
   }
-  if (input.kind !== 'audio') {
-    const sourceText = ((await rawSection.locator('pre').textContent()) || '').trim();
-    if (!sourceText) throw new Error(`${input.kind} UI raw source text was empty.`);
+  const rawSegmentIds = new Set<string>();
+  for (const segment of rawSegments) {
+    const segmentObject = asObject(segment, `${input.kind} raw segment`);
+    rawSegmentIds.add(requiredString(segmentObject.segmentId, `${input.kind} raw segmentId`));
+  }
+  for (const block of result.blocks) {
+    const blockObject = asObject(block, `${input.kind} structured block`);
+    const sourceSegmentId = requiredString(blockObject.sourceSegmentId, `${input.kind} block sourceSegmentId`);
+    if (!rawSegmentIds.has(sourceSegmentId)) {
+      throw new Error(`${input.kind} structured block referenced unknown raw segment.`);
+    }
+  }
+  return {
+    structuringEngine: expectedStructuringEngine,
+    structuringModel: expectedStructuringModel,
+    structuringDigest,
+    structuredBlockCount: result.blocks.length,
+  };
+}
+
+function assertAudioRawSegments(
+  segments: readonly unknown[],
+  expected: ExpectedProvenance,
+  exactOutput: boolean,
+): number {
+  let previousOrder = -1;
+  let previousStart = -1;
+  const transcript: string[] = [];
+  for (const segment of segments) {
+    const object = asObject(segment, 'Audio segment');
+    const locator = asObject(object.locator, 'Audio segment locator');
+    const order = typeof object.order === 'number' ? object.order : Number.NaN;
+    const startMs = typeof locator.startMs === 'number' ? locator.startMs : Number.NaN;
+    const endMs = typeof locator.endMs === 'number' ? locator.endMs : Number.NaN;
+    if (typeof object.text !== 'string' || object.text.trim() === ''
+      || !Number.isSafeInteger(order) || !Number.isSafeInteger(startMs) || !Number.isSafeInteger(endMs)
+      || order !== previousOrder + 1 || startMs < previousStart || endMs <= startMs) {
+      throw new Error('Audio raw segments were not contiguous and monotonic.');
+    }
+    transcript.push(object.text);
+    previousOrder = order;
+    previousStart = startMs;
+  }
+  if (exactOutput && (segments.length < expected.whisperSegmentMinimum || segments.length > expected.whisperSegmentMaximum)) {
+    throw new Error('Audio raw segment count drifted from the lock-selected fixture bounds.');
+  }
+  if (exactOutput && normalizedTranscriptDigest(transcript) !== expected.whisperNormalizedOutputSha256) {
+    throw new Error('Audio raw normalized result did not match the lock-selected Whisper digest.');
+  }
+  return segments.length;
+}
+
+export async function assertCaptureRecord(
+  input: MediaInput,
+  expected: ExpectedProvenance,
+  documentId: string,
+  invoke: TauriInvoke,
+  options: {
+    readonly importedAt?: number;
+    readonly initialCaptureId?: string;
+    readonly oracle?: ProgressiveAudioOracleEvidence;
+  } = {},
+): Promise<MediaSummary> {
+  const importedAt = options.importedAt ?? Date.now();
+  const rawTimeout = input.kind === 'audio' ? REAL_MODEL_AUDIO_CAPTURE_TIMEOUT_MS : REAL_MODEL_CAPTURE_TIMEOUT_MS;
+  let lastCaptureId = options.initialCaptureId;
+
+  if (input.kind === 'audio') {
+    const oracle = options.oracle;
+    if (!oracle) throw new Error('The progressive audio oracle is required for the production Tauri audio gate.');
+    let observed: ProgressiveAudioObservedOutput | undefined;
+    await waitUntil(
+      async () => {
+        const detail = asObject(await invoke('library_get', {
+          request: { documentId },
+        }), 'Library document detail');
+        throwIfTerminalRecordFailure(detail, input.kind);
+        lastCaptureId = validCaptureId(detail.captureId) ?? lastCaptureId;
+        if (lastCaptureId) {
+          const partialValue = await invoke('runtime_get_streaming_partial', {
+            input: { id: lastCaptureId },
+          }).catch(() => undefined);
+          if (partialValue !== null && typeof partialValue === 'object' && !Array.isArray(partialValue)) {
+            const partialRecord = partialValue as JsonObject;
+            const coveredUntilMs = Number(partialRecord.coveredUntilMs);
+            const revision = Number(partialRecord.revision);
+            const partialText = partialSegmentText(partialRecord);
+            if (audioCheckpointSatisfied(input.sampleSeconds, coveredUntilMs, revision, partialText)) {
+              const candidate = parseProgressiveAudioObservedOutput(partialValue);
+              if (candidate) {
+                observed = candidate;
+                return true;
+              }
+            }
+          }
+        }
+        if (!detail.captureId && (detail.status === 'completed' || detail.status === 'awaiting_confirmation')) {
+          throw new Error('The progressive audio oracle could not observe the Tauri partial.');
+        }
+        return false;
+      },
+      REAL_MODEL_AUDIO_CAPTURE_TIMEOUT_MS,
+      'Desktop v2 audio partial did not expose non-empty text by its progressive checkpoint.',
+    );
+    if (!observed) throw new Error('The progressive audio oracle could not observe the Tauri partial.');
+    assertProgressiveAudioSampleMatchesOracle(oracle, observed);
+  }
+
+  await waitUntil(
+    async () => {
+      const detail = asObject(await invoke('library_get', {
+        request: { documentId },
+      }), 'Library document detail');
+      throwIfTerminalRecordFailure(detail, input.kind);
+      lastCaptureId = validCaptureId(detail.captureId) ?? lastCaptureId;
+      if (detail.raw !== null && typeof detail.raw === 'object' && !Array.isArray(detail.raw)) {
+        return true;
+      }
+      if (!detail.captureId && (detail.status === 'completed' || detail.status === 'awaiting_confirmation')) {
+        throw new Error(`${input.kind} reached terminal status ${String(detail.status)} without persisting raw extraction.`);
+      }
+      return false;
+    },
+    rawTimeout,
+    `${input.kind} raw extraction was not persisted within its bounded timeout.`,
+  );
+  const extractionDurationMs = Date.now() - importedAt;
+
+  const terminalDetail = await waitUntil(
+    async () => {
+      const detail = asObject(await invoke('library_get', {
+        request: { documentId },
+      }), 'Library document detail');
+      throwIfTerminalRecordFailure(detail, input.kind);
+      lastCaptureId = validCaptureId(detail.captureId) ?? lastCaptureId;
+      const terminal = !detail.captureId && (detail.status === 'completed' || detail.status === 'awaiting_confirmation');
+      if (!terminal) return false;
+      if (detail.result === null || typeof detail.result !== 'object' || Array.isArray(detail.result)) {
+        throw new Error(`${input.kind} reached terminal status ${String(detail.status)} without a structured result.`);
+      }
+      return detail;
+    },
+    REAL_MODEL_RESULT_TIMEOUT_MS,
+    `${input.kind} structured result did not persist within its bounded timeout.`,
+  );
+
+  const raw = asObject(terminalDetail.raw, `${input.kind} raw capture`);
+  const result = asObject(terminalDetail.result, `${input.kind} structured capture`);
+  if (!Array.isArray(raw.segments) || raw.segments.length === 0) {
+    throw new Error(`${input.kind} raw segments were empty.`);
+  }
+  const provenance = assertExtractionProvenance(raw, result, input, expected);
+  const structuring = assertStructuringResult(raw.segments, result, input);
+
+  if (input.kind === 'pdf' || input.kind === 'image') {
+    const sourceText = (typeof raw.sourceText === 'string' ? raw.sourceText : '').trim();
+    if (!sourceText) throw new Error(`${input.kind} raw source text was empty.`);
     if (input.expectedOcrText && !sourceText.includes(input.expectedOcrText)) {
-      throw new Error(`${input.kind} UI raw text did not contain the lock-selected OCR fixture text.`);
+      throw new Error(`${input.kind} raw text did not contain the lock-selected OCR fixture text.`);
     }
     if (input.expectedOcrTextSha256 && normalizedOcrTextDigest(sourceText) !== input.expectedOcrTextSha256) {
-      throw new Error(`${input.kind} UI raw source text did not match the private OCR output oracle.`);
+      throw new Error(`${input.kind} raw source text did not match the private OCR output oracle.`);
     }
-  }
-  if (input.kind === 'pdf' || input.kind === 'image') {
-    const pageLocators = await detail.locator('[data-locator-kind="page"]').count();
-    if (pageLocators < 1) throw new Error(`${input.kind} UI raw data did not expose page locators.`);
-    await deleteDocumentThroughUi(page, document.id);
+    const pageLocators = raw.segments.filter((segment) => {
+      const seg = asObject(segment, `${input.kind} raw segment`);
+      const locator = asObject(seg.locator, `${input.kind} segment locator`);
+      return locator.kind === 'page';
+    }).length;
+    if (pageLocators < 1) throw new Error(`${input.kind} raw data did not expose page locators.`);
+    await deleteLibraryDocument(documentId, invoke, { captureId: lastCaptureId, streaming: false });
     return {
       sourceKind: input.kind,
       sourceSha256: input.sha256,
-      extractionEngine: expected.ocrEngine,
-      model: expected.ocrModel,
-      device: expected.ocrDevice,
-      engineDigest: extractionDigest,
+      extractionEngine: provenance.engine,
+      model: provenance.model,
+      device: provenance.device,
+      engineDigest: provenance.digest,
+      structuringEngine: structuring.structuringEngine,
+      structuringModel: structuring.structuringModel,
+      structuringDigest: structuring.structuringDigest,
+      structuredBlockCount: structuring.structuredBlockCount,
       segmentCount: pageLocators,
       pageLocators,
       durationMs: extractionDurationMs,
     };
   }
-  const segmentCount = await assertAudioRawSegments(
-    rawText,
-    rawSection,
+
+  const segmentCount = assertAudioRawSegments(
+    raw.segments,
     expected,
     input.exactWhisperOutput !== false,
   );
-  await deleteDocumentThroughUi(page, document.id);
+  await deleteLibraryDocument(documentId, invoke, { captureId: lastCaptureId, streaming: true });
   return {
     sourceKind: input.kind,
     sourceSha256: input.sha256,
-    extractionEngine: expected.whisperEngine,
-    model: expected.whisperModel,
-    device: actualDevice || expected.whisperDevice,
-    engineDigest: extractionDigest,
+    extractionEngine: provenance.engine,
+    model: provenance.model,
+    device: provenance.device,
+    engineDigest: provenance.digest,
+    structuringEngine: structuring.structuringEngine,
+    structuringModel: structuring.structuringModel,
+    structuringDigest: structuring.structuringDigest,
+    structuredBlockCount: structuring.structuredBlockCount,
     segmentCount,
     timeLocators: segmentCount,
     durationMs: extractionDurationMs,
   };
-}
-
-async function assertAudioRawSegments(
-  rawText: string,
-  rawSection: ReturnType<Page['locator']>,
-  expected: ExpectedProvenance,
-  exactOutput: boolean,
-): Promise<number> {
-  const parsed = parseJsonFromVisibleRaw(rawText);
-  const segments = parsed?.segments;
-  if (Array.isArray(segments)) {
-    let previousOrder = -1;
-    let previousStart = -1;
-    const transcript: string[] = [];
-    for (const segment of segments) {
-      const object = asObject(segment, 'Audio segment');
-      const locator = asObject(object.locator, 'Audio segment locator');
-      const order = typeof object.order === 'number' ? object.order : Number.NaN;
-      const startMs = typeof locator.startMs === 'number' ? locator.startMs : Number.NaN;
-      const endMs = typeof locator.endMs === 'number' ? locator.endMs : Number.NaN;
-      if (typeof object.text !== 'string' || object.text.trim() === ''
-        || !Number.isSafeInteger(order) || !Number.isSafeInteger(startMs) || !Number.isSafeInteger(endMs)
-        || order !== previousOrder + 1 || startMs < previousStart || endMs <= startMs) {
-        throw new Error('Audio UI raw segments were not contiguous and monotonic.');
-      }
-      transcript.push(object.text);
-      previousOrder = order;
-      previousStart = startMs;
-    }
-    if (exactOutput && (segments.length < expected.whisperSegmentMinimum || segments.length > expected.whisperSegmentMaximum)) {
-      throw new Error('Audio UI raw segment count drifted from the lock-selected fixture bounds.');
-    }
-    if (exactOutput && normalizedTranscriptDigest(transcript) !== expected.whisperNormalizedOutputSha256) {
-      throw new Error('Audio UI raw normalized result did not match the lock-selected Whisper digest.');
-    }
-    return segments.length;
-  }
-  const rows = rawSection.locator('[data-locator-kind="time"]');
-  const locators = await rows.evaluateAll((nodes) => nodes.map((node) => ({
-    order: Number(node.getAttribute('data-order')),
-    startMs: Number(node.getAttribute('data-start-ms')),
-    endMs: Number(node.getAttribute('data-end-ms')),
-    text: node.textContent || '',
-  })));
-  if (exactOutput && (locators.length < expected.whisperSegmentMinimum || locators.length > expected.whisperSegmentMaximum)) {
-    throw new Error('Audio UI raw segment count drifted from the lock-selected fixture bounds.');
-  }
-  let previousEnd = -1;
-  locators.forEach((locator, index) => {
-    if (!locator.text.trim() || !Number.isSafeInteger(locator.order) || locator.order !== index
-      || !Number.isSafeInteger(locator.startMs) || !Number.isSafeInteger(locator.endMs)
-      || locator.startMs < previousEnd || locator.endMs <= locator.startMs) {
-      throw new Error('Audio UI raw locators were not contiguous and monotonic.');
-    }
-    previousEnd = locator.endMs;
-  });
-  if (exactOutput && normalizedTranscriptDigest(locators.map((locator) => locator.text)) !== expected.whisperNormalizedOutputSha256) {
-    throw new Error('Audio UI raw normalized result did not match the lock-selected Whisper digest.');
-  }
-  return locators.length;
 }
 
 export function normalizedTranscriptDigest(transcript: readonly string[]): string {
@@ -3556,25 +3591,8 @@ export function normalizedTranscriptDigest(transcript: readonly string[]): strin
     .map((value) => value.replace(/\s+/gu, ' ').trim())
     .filter(Boolean)
     .join(' ');
-  if (!normalized) throw new Error('Audio UI raw transcript was empty.');
+  if (!normalized) throw new Error('Audio raw transcript was empty.');
   return sha256(Buffer.from(normalized, 'utf8'));
-}
-
-async function libraryCaptureId(page: Page, documentId: string): Promise<string | undefined> {
-  const documents = await invokeTauriCommand(page, 'library_list', {
-    request: { query: '', status: '' },
-  }).catch(() => undefined);
-  if (!Array.isArray(documents)) return undefined;
-  const document = documents.find((item) => (
-    item !== null
-      && typeof item === 'object'
-      && !Array.isArray(item)
-      && (item as Record<string, unknown>).documentId === documentId
-  ));
-  const captureId = document !== undefined && typeof document === 'object' && document !== null
-    ? (document as Record<string, unknown>).captureId
-    : undefined;
-  return typeof captureId === 'string' && /^[a-f0-9-]{36}$/u.test(captureId) ? captureId : undefined;
 }
 
 async function loadProgressiveAudioOracle(): Promise<ProgressiveAudioOracleEvidence | undefined> {
@@ -3643,104 +3661,50 @@ function parseProgressiveAudioObservedOutput(value: unknown): ProgressiveAudioOb
   };
 }
 
-async function installSelectedModel(page: Page): Promise<void> {
-  const optionId = 'qwen3.5-0.8b-v1';
-  await page.getByTestId('model-selection').waitFor({
-    state: 'visible',
-    timeout: REAL_MODEL_RUNTIME_READY_TIMEOUT_MS,
-  });
-  const option = page.locator(
-    `[data-testid="model-option"][data-model-option-id="${optionId}"]`,
-  );
-  await option.check();
-  if (!await option.isChecked()) {
-    throw new Error('The selected structuring model was not retained by the setup UI.');
-  }
-  const install = page.getByTestId('model-install');
-  await waitUntil(
-    async () => install.isEnabled().catch(() => false),
-    30_000,
-    'The selected structuring model did not enable its install action.',
-  );
-  await install.click();
-
-  const progress = page.getByTestId('model-install-progress');
-  try {
-    await progress.waitFor({ state: 'visible', timeout: 30_000 });
-  } catch {
-    throw new Error('Desktop model installation did not start.');
-  }
-  const installationId = await progress.getAttribute('data-installation-id');
-  const startedOptionId = await progress.getAttribute('data-option-id');
-  if (installationId === null || !/^[A-Za-z0-9_-]{1,128}$/u.test(installationId)) {
-    throw new Error('The model install action did not expose a valid installation identity.');
-  }
-  if (startedOptionId !== optionId) {
-    throw new Error('The model install action started a different allowlisted option.');
-  }
-
-  await waitUntil(
-    async () => {
-      const installation = asObject(await invokeTauriCommand(page, 'runtime_get_model_installation', {
-        input: { id: installationId },
-      }), 'Runtime model installation');
-      if (requiredString(installation.installationId, 'Runtime model installation ID') !== installationId
-        || requiredString(installation.optionId, 'Runtime model installation option ID') !== optionId) {
-        throw new Error('Runtime model installation identity changed while polling.');
-      }
-      const status = requiredString(installation.status, 'Runtime model installation status');
-      if (status === 'completed') return true;
-      if (status === 'queued' || status === 'running') return false;
-      const installationError = installation.error !== null
-        && typeof installation.error === 'object'
-        && !Array.isArray(installation.error)
-        ? installation.error as JsonObject
-        : undefined;
-      const failure = safeTerminalModelInstallationFailure(
-        status,
-        typeof installationError?.code === 'string' ? installationError.code : null,
-        typeof installation.progress === 'number' ? installation.progress : null,
-      );
-      throw new Error(failure ?? 'Runtime model installation did not complete.');
-    },
-    REAL_MODEL_INSTALL_TIMEOUT_MS,
-    'The selected qwen3.5 0.8B model installation timed out.',
-  );
-  await waitUntil(
-    async () => runtimeModelOptionActive(
-      await invokeTauriCommand(page, 'runtime_model_options', {}),
-      optionId,
-    ),
-    REAL_MODEL_RUNTIME_READY_TIMEOUT_MS,
-    'The completed qwen3.5 0.8B installation did not become active.',
-  );
-  await waitForRuntimeRequirementsReady(page, ['capture-ollama-model']);
-  await page.reload({ waitUntil: 'domcontentloaded' });
-}
-
 export function normalizedOcrTextDigest(sourceText: string): string {
   const normalized = sourceText.replace(/\s+/gu, ' ').trim();
   if (!normalized) throw new Error('OCR source text was empty.');
   return sha256(Buffer.from(normalized, 'utf8'));
 }
 
-async function deleteDocumentThroughUi(page: Page, documentId: string): Promise<void> {
-  const detail = page.locator(`[data-testid="document-detail"][data-document-id="${documentId}"]`);
-  const deleteButton = page.locator(`[data-testid="document-delete"][data-document-id="${documentId}"]`);
-  if ((await deleteButton.count()) !== 1) throw new Error('Desktop UI delete control was not scoped to the exact smoke UUID.');
-  page.once('dialog', (dialog) => dialog.accept());
-  await deleteButton.click();
-  await waitUntil(
-    async () => (await page.locator(`[data-testid="document-card"][data-document-id="${documentId}"]`).count()) === 0 || false,
-    30_000,
-    'Desktop UI did not delete the exact smoke UUID.',
-  );
-  if (await detail.count()) throw new Error('Desktop UI retained the deleted smoke document detail.');
+export async function deleteLibraryDocument(
+  documentId: string,
+  invoke: TauriInvoke,
+  options: { readonly captureId?: string; readonly streaming?: boolean } = {},
+): Promise<void> {
+  await invoke('library_delete', { request: { documentId } });
+  const documents = await invoke('library_list', { request: { query: '', status: '' } });
+  if (!Array.isArray(documents) || findLibraryDocument(documents, documentId) !== undefined) {
+    throw new Error('Desktop library still listed the deleted smoke document.');
+  }
+  let getSucceeded = false;
+  try {
+    await invoke('library_get', { request: { documentId } });
+    getSucceeded = true;
+  } catch {
+    getSucceeded = false;
+  }
+  if (getSucceeded) {
+    throw new Error('Desktop library still returned the deleted smoke document.');
+  }
+  if (options.captureId) {
+    const command = options.streaming ? 'runtime_get_streaming_capture' : 'runtime_get_capture';
+    let captureStillPresent = false;
+    try {
+      const value = await invoke(command, { input: { id: options.captureId } });
+      captureStillPresent = value !== null && value !== undefined;
+    } catch {
+      captureStillPresent = false;
+    }
+    if (captureStillPresent) {
+      throw new Error('Capture Runtime retained the smoke capture after library deletion.');
+    }
+  }
 }
 
 export function assertRealMediaModelEvidence(value: unknown): asserts value is RealMediaModelEvidence {
   const report = asObject(value, 'Real model smoke report');
-  assert.equal(report.evidenceKind, 'real-model-enabled-tauri-ui-smoke');
+  assert.equal(report.evidenceKind, 'real-model-enabled-tauri-host-smoke');
   assert.equal(report.sourceImportMode, REAL_MODEL_SOURCE_IMPORT_MODE);
   assert.equal(report.nativePickerExercised, false);
   assert.equal(report.releaseGateSatisfied, false);
@@ -3751,8 +3715,8 @@ export function assertRealMediaModelEvidence(value: unknown): asserts value is R
   assert.equal(report.selectedModelOptionId, 'qwen3.5-0.8b-v1');
   assert.deepEqual(report.modelDependencyOrder, [...REAL_MODEL_REQUIREMENT_ORDER]);
   assert.equal(report.modelDependencyOrderScope, REAL_MODEL_DEPENDENCY_ORDER_SCOPE);
-  assert.equal(report.rawVisible, true);
-  assert.equal(report.resultVisible, true);
+  assert.equal(report.rawPersisted, true);
+  assert.equal(report.resultPersisted, true);
   assert.equal(report.consentedInstallation, true);
   assert.equal(report.capturesDeletedAfterVerification, true);
   assert.equal(report.ownedProcessCleanupVerified, true);
@@ -3769,6 +3733,10 @@ export function assertRealMediaModelEvidence(value: unknown): asserts value is R
     const media = asObject(item, 'Media summary');
     assert.match(String(media.sourceSha256), /^[a-f0-9]{64}$/u);
     assert.match(String(media.engineDigest), /^sha256:[a-f0-9]{64}$/u);
+    assert.equal(media.structuringEngine, expectedStructuringEngine);
+    assert.equal(media.structuringModel, expectedStructuringModel);
+    assert.match(String(media.structuringDigest), /^sha256:[a-f0-9]{64}$/u);
+    assert.ok(Number.isSafeInteger(media.structuredBlockCount) && Number(media.structuredBlockCount) >= 1);
     assert.ok(Number.isSafeInteger(media.segmentCount) && Number(media.segmentCount) > 0);
     const durationLimit = media.sourceKind === 'audio'
       ? REAL_MODEL_AUDIO_CAPTURE_TIMEOUT_MS
@@ -3909,6 +3877,7 @@ async function run(): Promise<void> {
   let workerMirrorReleased = false;
   let workerMirror: CandidateWorkerMirror | undefined;
   let activeDocumentId: string | undefined;
+  let activeModelInstallationId: string | undefined;
   let runFailed = false;
   try {
     workerMirror = await startCandidateWorkerMirror(expected);
@@ -3923,110 +3892,107 @@ async function run(): Promise<void> {
     browser = connected.browser;
     cdpPort = connected.port;
     page = await firstValueFrom(installedPage(browser, app));
-    // This smoke still reads the old workspace; the installed page now opens on the shell.
-    await firstValueFrom(showHistoryWorkspace(page));
+    const currentPage = page;
+    const invoke: TauriInvoke = (command, args) => invokeTauriCommand(currentPage, command, args);
+    await waitForDesktopRuntimeReady(invoke);
+    await waitForRuntimeRequirementsLoaded(invoke);
     const useBackendReuseReadiness = shouldUseBackendReuseReadiness(reuseRunData, audioOnly);
     if (useBackendReuseReadiness) {
-      // A reused production app-data root is intentionally already provisioned.
-      // The setup card is rendered only for needs-setup, so readiness must be
-      // observed through the backend rather than through a UI that should be absent.
-      await waitForDesktopRuntimeReady(page);
-      await waitForRuntimeRequirementsReady(page, [
+      await waitForRuntimeRequirementsReady([
         'windowsml-ocr',
         'ollama-runtime',
         'capture-ollama-model',
         'speech-recognition',
-      ]);
-      await waitForRuntimeModelOptionActive(page, expected.selectedModelOptionId);
-    } else {
-      await waitUntil(async () => {
-        const setup = page.getByTestId('runtime-setup');
-        return (await setup.count()) === 1 || false;
-      }, REAL_MODEL_RUNTIME_READY_TIMEOUT_MS, 'Desktop runtime setup UI did not load.');
+      ], invoke);
+      await waitForRuntimeModelOptionActive(expected.selectedModelOptionId, invoke);
     }
     if (installationOnly) {
-      await installConsentedRequirementThroughTauri(page, 'speech-recognition', {
-        waitForVisibleRequirement: false,
-      });
-      installationOrder.push('speech-recognition');
+      await installConsentedRequirementsThroughTauri(['speech-recognition'], installationOrder, invoke);
     } else {
       if (!audioOnly) {
         assert(inputs && pdf && image);
         if (!useBackendReuseReadiness) {
-          await installConsentedRequirements(page, ['windowsml-ocr', 'ollama-runtime'], installationOrder);
-          await installSelectedModel(page);
+          await installConsentedRequirementsThroughTauri(
+            ['windowsml-ocr', 'ollama-runtime'],
+            installationOrder,
+            invoke,
+          );
+          await installModelThroughTauri(expected.selectedModelOptionId, invoke, (installationId) => {
+            activeModelInstallationId = installationId;
+          });
+          activeModelInstallationId = undefined;
         }
-        await waitForCaptureReady(page);
         for (const input of [pdf, image] as const) {
-          const injected = await injectModelSmokeFixture(page, input.kind);
-          await startInjectedCapture(page, injected.documentId);
-          summaries.push(await assertVisibleCapture(
-            page,
-            input,
-            expected,
-            injected.documentId,
-            injected.startedAt,
-          ));
+          const startedAt = Date.now();
+          const documentId = await importModelSmokeFixtureDocument(input.kind, invoke);
+          activeDocumentId = documentId;
+          await waitForImportedDocumentInLibrary(documentId, invoke);
+          await currentPage.reload({ waitUntil: 'load' });
+          await waitForDesktopRuntimeReady(invoke);
+          await waitForRuntimeRequirementsLoaded(invoke);
+          const initialCaptureId = await waitForCaptureAccepted(documentId, invoke);
+          summaries.push(await assertCaptureRecord(input, expected, documentId, invoke, {
+            importedAt: startedAt,
+            initialCaptureId,
+          }));
+          activeDocumentId = undefined;
         }
-      } else {
-        // Audio-only skips OCR capture, but the packaged Workbench keeps the
-        // source-import surface locked until its OCR runtime prerequisite is
-        // installed. Install that prerequisite without exercising its engine.
-        if (!useBackendReuseReadiness) {
-          await installConsentedRequirements(page, ['windowsml-ocr', 'ollama-runtime'], installationOrder);
-          await installSelectedModel(page);
-        }
-      }
-      const injectedAudio = await injectModelSmokeFixture(
-        page,
-        audio.kind,
-        { waitForCaptureReady: !audioOnly },
-      );
-      activeDocumentId = injectedAudio.documentId;
-      // The keyed import bypasses only the native picker, so it cannot exercise
-      // the renderer callback that reveals the optional Whisper setup row. Keep
-      // consent on the existing authenticated Tauri/runtime installation path.
-      if (!useBackendReuseReadiness) {
-        await installConsentedRequirementThroughTauri(page, 'speech-recognition', {
-          waitForVisibleRequirement: !audioOnly,
+      } else if (!useBackendReuseReadiness) {
+        await installConsentedRequirementsThroughTauri(['ollama-runtime'], installationOrder, invoke);
+        await installModelThroughTauri(expected.selectedModelOptionId, invoke, (installationId) => {
+          activeModelInstallationId = installationId;
         });
+        activeModelInstallationId = undefined;
+      }
+
+      if (!useBackendReuseReadiness) {
+        await installConsentedRequirementsThroughTauri(['speech-recognition'], installationOrder, invoke);
+      } else {
+        installationOrder.push('speech-recognition');
       }
       if (audioOnly) {
-        // Audio-only bypasses the optional setup row, but the first runtime
-        // requirements read also warms the installed engine verification
-        // cache before capture starts. Without this bounded readiness wait,
-        // the first capture performs the multi-gigabyte cold verification
-        // while remaining indistinguishable from a stuck extraction.
-        await waitForRuntimeRequirementsReady(page, ['speech-recognition']);
+        await waitForRuntimeRequirementsReady(['speech-recognition'], invoke);
       }
-      installationOrder.push('speech-recognition');
       if (!audioOnly && (installationOrder.indexOf('windowsml-ocr') < 0
         || installationOrder.indexOf('speech-recognition') < 0
         || installationOrder.indexOf('windowsml-ocr') > installationOrder.indexOf('speech-recognition'))) {
         throw new Error('Consented model installation did not complete OCR before Whisper.');
       }
-      await startInjectedCapture(page, injectedAudio.documentId);
-      summaries.push(await assertVisibleCapture(
-        page,
-        audio,
-        expected,
-        injectedAudio.documentId,
-        injectedAudio.startedAt,
-      ));
+
+      const audioStartedAt = Date.now();
+      const audioDocumentId = await importModelSmokeFixtureDocument(audio.kind, invoke);
+      activeDocumentId = audioDocumentId;
+      await waitForImportedDocumentInLibrary(audioDocumentId, invoke);
+      await currentPage.reload({ waitUntil: 'load' });
+      await waitForDesktopRuntimeReady(invoke);
+      await waitForRuntimeRequirementsLoaded(invoke);
+      await firstValueFrom(navigatePackagedRoute(currentPage, '/asr'));
+      const initialAudioCaptureId = await waitForCaptureAccepted(audioDocumentId, invoke);
+      const oracle = await loadProgressiveAudioOracle();
+      summaries.push(await assertCaptureRecord(audio, expected, audioDocumentId, invoke, {
+        importedAt: audioStartedAt,
+        initialCaptureId: initialAudioCaptureId,
+        oracle,
+      }));
+      activeDocumentId = undefined;
     }
     cleanupVerified = true;
   } catch (error) {
     runFailed = true;
-    const backendCaptureState = page
-      ? await collectSafeBackendCaptureState(page, activeDocumentId).catch(() => undefined)
+    const errorPage = page;
+    const invokeForDiagnostics: TauriInvoke | undefined = errorPage
+      ? (command, args) => invokeTauriCommand(errorPage, command, args)
       : undefined;
-    const uiStateRecords = page
-      ? await collectSafeUiState(page).catch(() => [])
-      : [];
+    const backendCaptureState = invokeForDiagnostics
+      ? await collectSafeBackendCaptureState(invokeForDiagnostics, activeDocumentId).catch(() => undefined)
+      : undefined;
+    const backendState = invokeForDiagnostics
+      ? await collectSafeBackendState(invokeForDiagnostics, activeModelInstallationId).catch(() => ({}))
+      : {};
     throw new Error(safeSmokeFailureMessage(
       error,
       workerMirror?.requests() ?? 0,
-      uiStateRecords,
+      backendState,
       backendCaptureState,
     ));
   } finally {
@@ -4084,7 +4050,7 @@ async function run(): Promise<void> {
     return;
   }
   const report: RealMediaModelEvidence = {
-    evidenceKind: 'real-model-enabled-tauri-ui-smoke',
+    evidenceKind: 'real-model-enabled-tauri-host-smoke',
     sourceImportMode: REAL_MODEL_SOURCE_IMPORT_MODE,
     nativePickerExercised: false,
     releaseGateSatisfied: false,
@@ -4098,8 +4064,8 @@ async function run(): Promise<void> {
     modelDependencyOrder: [...installationOrder] as [RequirementId, RequirementId],
     modelDependencyOrderScope: REAL_MODEL_DEPENDENCY_ORDER_SCOPE,
     media: summaries as [MediaSummary, MediaSummary, MediaSummary],
-    rawVisible: true,
-    resultVisible: true,
+    rawPersisted: true,
+    resultPersisted: true,
     consentedInstallation: true,
     capturesDeletedAfterVerification: true,
     ownedProcessCleanupVerified: true,
@@ -4111,7 +4077,7 @@ async function run(): Promise<void> {
   assertRealMediaModelEvidence(report);
   await mkdir(smokeRoot, { recursive: true });
   await writeFile(evidencePath, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
-  process.stdout.write(`Real model-enabled Tauri UI smoke report: ${relative(workspaceRoot, evidencePath)}\n`);
+  process.stdout.write(`Real model-enabled Tauri host smoke report: ${relative(workspaceRoot, evidencePath)}\n`);
 }
 
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {

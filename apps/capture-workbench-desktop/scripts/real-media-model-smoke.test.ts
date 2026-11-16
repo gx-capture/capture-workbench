@@ -9,6 +9,7 @@ import test from 'node:test';
 
 import {
   assertAudioDeviceMatchesSourceLock,
+  assertCaptureRecord,
   audioCheckpointSatisfied,
   assertCudaPathRetainedForAppLaunch,
   assertNoAmbientModelOverrides,
@@ -16,9 +17,14 @@ import {
   assertRealMediaModelEvidence,
   buildModelSmokeLaunchEnvironment,
   canonicalJson,
+  collectSafeBackendCaptureState,
+  collectSafeBackendState,
   cpuSpeechModelFiles,
+  deleteLibraryDocument,
   desktopRuntimeReady,
   generatedCatalogCandidates,
+  installConsentedRequirementsThroughTauri,
+  installModelThroughTauri,
   mediaTypeFor,
   nativeDialogUiAutomationDefinitions,
   nativeDialogUiAutomationScript,
@@ -33,9 +39,9 @@ import {
   normalizedNativeClickPoint,
   normalizedOcrTextDigest,
   normalizedTranscriptDigest,
-  requirementCompletedAfterConsent,
   runtimeModelOptionActive,
   runtimeRequirementsReady,
+  safeBackendStateSnapshot,
   safeInputName,
   safeSmokeFailureMessage,
   safeTerminalDocumentFailure,
@@ -44,11 +50,16 @@ import {
   safeUiAutomationDiagnostics,
   sha256,
   shouldUseBackendReuseReadiness,
-  startInjectedCapture,
+  type TauriInvoke,
   validateSourceLockAndCatalog,
+  waitForCaptureAccepted,
   whisperCpuFallbackAllowedForSourceLock,
   windowsPowerShellExecutable,
 } from './real-media-model-smoke.ts';
+import {
+  expectedStructuringEngine,
+  expectedStructuringModel,
+} from './real-ollama-smoke.ts';
 import {
   assertProgressiveAudioOracleEvidence,
   assertProgressiveAudioSampleMatchesOracle,
@@ -117,7 +128,7 @@ test('backend reuse readiness waits for the Tauri sidecar before querying requir
 
 function validEvidence() {
   return {
-    evidenceKind: 'real-model-enabled-tauri-ui-smoke',
+    evidenceKind: 'real-model-enabled-tauri-host-smoke',
     sourceImportMode: REAL_MODEL_SOURCE_IMPORT_MODE,
     nativePickerExercised: false,
     releaseGateSatisfied: false,
@@ -138,6 +149,10 @@ function validEvidence() {
         model: 'pp-ocrv6-medium-windowsml',
         device: 'windowsml-dml',
         engineDigest: `sha256:${digest}`,
+        structuringEngine: expectedStructuringEngine,
+        structuringModel: expectedStructuringModel,
+        structuringDigest: `sha256:${digest}`,
+        structuredBlockCount: 1,
         segmentCount: 1,
         pageLocators: 1,
         durationMs: 100,
@@ -149,6 +164,10 @@ function validEvidence() {
         model: 'pp-ocrv6-medium-windowsml',
         device: 'windowsml-dml',
         engineDigest: `sha256:${digest}`,
+        structuringEngine: expectedStructuringEngine,
+        structuringModel: expectedStructuringModel,
+        structuringDigest: `sha256:${digest}`,
+        structuredBlockCount: 1,
         segmentCount: 1,
         pageLocators: 1,
         durationMs: 100,
@@ -160,13 +179,17 @@ function validEvidence() {
         model: 'lock-selected-whisper',
         device: 'windowsml-dml',
         engineDigest: `sha256:${digest}`,
+        structuringEngine: expectedStructuringEngine,
+        structuringModel: expectedStructuringModel,
+        structuringDigest: `sha256:${digest}`,
+        structuredBlockCount: 2,
         segmentCount: 2,
         timeLocators: 2,
         durationMs: 100,
       },
     ],
-    rawVisible: true,
-    resultVisible: true,
+    rawPersisted: true,
+    resultPersisted: true,
     consentedInstallation: true,
     capturesDeletedAfterVerification: true,
     ownedProcessCleanupVerified: true,
@@ -183,10 +206,18 @@ test('real model evidence is release-gated, provenance-bound, and private', () =
   assert.doesNotMatch(serialized, /(?:sourceText|expectedText|transcript|token|secret)/iu);
 });
 
-test('real model evidence rejects CPU OCR and path leakage', () => {
+test('real model evidence rejects CPU OCR, missing structuring metadata, and path leakage', () => {
   const cpuOcr = structuredClone(validEvidence()) as { media: Array<Record<string, unknown>> };
   cpuOcr.media[0].device = 'cpu';
   assert.throws(() => assertRealMediaModelEvidence(cpuOcr));
+
+  const zeroBlocks = structuredClone(validEvidence()) as { media: Array<Record<string, unknown>> };
+  zeroBlocks.media[1].structuredBlockCount = 0;
+  assert.throws(() => assertRealMediaModelEvidence(zeroBlocks));
+
+  const wrongStructuringModel = structuredClone(validEvidence()) as { media: Array<Record<string, unknown>> };
+  wrongStructuringModel.media[2].structuringModel = 'other-model';
+  assert.throws(() => assertRealMediaModelEvidence(wrongStructuringModel));
 
   const leakedPath = structuredClone(validEvidence()) as { media: Array<Record<string, unknown>> };
   leakedPath.media[2].sourcePath = 'C:\\private\\audio.wav';
@@ -377,80 +408,26 @@ test('model smoke fixture injection returns only a bounded document ID', () => {
   );
 });
 
-test('model smoke waits for the exact retry action after selecting an injected document', async () => {
-  const calls: string[] = [];
-  const fakePage = {} as Parameters<typeof startInjectedCapture>[0];
-  await startInjectedCapture(fakePage, 'a'.repeat(32), {
-    waitForDocument: async (id) => {
-      calls.push(`waitForDocument:${id}`);
-      return {
-        clickCard: async () => {
-          calls.push('card.click');
-        },
-      };
-    },
-    waitForDetailVisible: async () => {
-      calls.push('detail.waitFor');
-    },
-    waitForRetryVisible: async () => {
-      calls.push('retry.waitFor');
-    },
-    countRetry: async () => {
-      calls.push('retry.count');
-      return 1;
-    },
-    waitForCaptureReady: async () => {
-      calls.push('waitForCaptureReady');
-    },
-    clickRetry: async () => {
-      calls.push('retry.click');
-    },
-    waitForCaptureAccepted: async (id) => {
-      calls.push(`waitForCaptureAccepted:${id}`);
-    },
-  });
-  assert.deepEqual(calls, [
-    `waitForDocument:${'a'.repeat(32)}`,
-    'card.click',
-    'detail.waitFor',
-    'retry.waitFor',
-    'retry.count',
-    'waitForCaptureReady',
-    'retry.click',
-    `waitForCaptureAccepted:${'a'.repeat(32)}`,
-  ]);
+test('model smoke waits for backend capture acceptance via library_list', async () => {
+  const documentId = 'a'.repeat(32);
+  const captureId = '11111111-1111-1111-1111-111111111111';
+  let polls = 0;
+  const invoke: TauriInvoke = async (command) => {
+    assert.equal(command, 'library_list');
+    polls += 1;
+    if (polls === 1) {
+      return [{ documentId, status: 'queued' }];
+    }
+    return [{ documentId, status: 'processing', captureId }];
+  };
+  const acceptedCaptureId = await waitForCaptureAccepted(documentId, invoke, 2_000);
+  assert.equal(acceptedCaptureId, captureId);
+  assert.equal(polls, 2);
 
-  const rejectedCalls: string[] = [];
   await assert.rejects(
-    startInjectedCapture(fakePage, 'b'.repeat(32), {
-      waitForDocument: async () => ({
-        clickCard: async () => {
-          rejectedCalls.push('card.click');
-        },
-      }),
-      waitForDetailVisible: async () => {
-        rejectedCalls.push('detail.waitFor');
-      },
-      waitForRetryVisible: async () => {
-        rejectedCalls.push('retry.waitFor');
-      },
-      countRetry: async () => {
-        rejectedCalls.push('retry.count');
-        return 0;
-      },
-      waitForCaptureReady: async () => {
-        rejectedCalls.push('waitForCaptureReady');
-      },
-      clickRetry: async () => {
-        rejectedCalls.push('retry.click');
-      },
-      waitForCaptureAccepted: async () => {
-        rejectedCalls.push('waitForCaptureAccepted');
-      },
-    }),
-    /exact UI processing action/u,
+    waitForCaptureAccepted('b'.repeat(32), async () => [{ documentId: 'b'.repeat(32), status: 'queued' }], 300),
+    /capture start was not accepted/u,
   );
-  assert.deepEqual(rejectedCalls, ['card.click', 'detail.waitFor', 'retry.waitFor', 'retry.count']);
 });
 
 test('private OCR oracle hashes normalized source text without exposing its contents', () => {
@@ -459,13 +436,6 @@ test('private OCR oracle hashes normalized source text without exposing its cont
   assert.equal(first, second);
   assert.match(first, /^[a-f0-9]{64}$/u);
   assert.throws(() => normalizedOcrTextDigest('  '), /source text was empty/u);
-});
-
-test('setup accepts a ready requirement row disappearing after consent', () => {
-  assert.equal(requirementCompletedAfterConsent('ready', true), true);
-  assert.equal(requirementCompletedAfterConsent('', true), true);
-  assert.equal(requirementCompletedAfterConsent('', false), false);
-  assert.equal(requirementCompletedAfterConsent('installable', true), false);
 });
 
 test('runtime readiness requires backend-reported ready states', () => {
@@ -511,12 +481,12 @@ test('terminal model installation failure is bounded and content-free', () => {
     failure,
     'Desktop model installation terminated. status=failed; errorCode=installation_failed; progressBand=early.',
   );
-  const message = safeSmokeFailureMessage(new Error(failure ?? ''), 0, []);
+  const message = safeSmokeFailureMessage(new Error(failure ?? ''), 0, {});
   assert.match(message, /failure=terminal-model-installation/u);
   assert.doesNotMatch(message, /PRIVATE|C:\\/u);
   assert.equal(safeTerminalModelInstallationFailure('running', null, 0.1), undefined);
   assert.match(
-    safeSmokeFailureMessage(new Error('Desktop model installation did not start.'), 0, []),
+    safeSmokeFailureMessage(new Error('Desktop model installation did not start.'), 0, {}),
     /failure=model-installation-start/u,
   );
 });
@@ -555,37 +525,64 @@ test('native dialog diagnostics reject values and private paths', () => {
   assert.equal(safeUiAutomationDiagnostics('PowerShell error containing private data'), 'none');
 });
 
-test('smoke failure output excludes OCR, audio, and document-name content', () => {
+test('smoke failure output excludes OCR, audio, and document-name content', async () => {
   const privateOcr = 'PRIVATE_CERT_OCR_SENTINEL';
   const privateAudio = 'PRIVATE_AUDIO_TRANSCRIPT_SENTINEL';
   const privateDocumentName = 'private-certificate-name.pdf';
   const message = safeSmokeFailureMessage(
     new Error(`${privateOcr} ${privateAudio}`),
     2,
-    [
-      {
-        testId: 'document-raw',
-        count: 1,
-        statuses: ['completed'],
-        rawText: privateOcr,
-        documentNames: [privateDocumentName],
+    {
+      runtimeStatus: 'ready',
+      requirements: [
+        { requirementId: 'windowsml-ocr', status: 'ready', detail: privateOcr },
+        { requirementId: 'private-requirement', status: 'ready' },
+      ],
+      modelOptions: [
+        { optionId: 'qwen3.5-0.8b-v1', status: 'active' },
+      ],
+      modelInstallation: {
+        optionId: 'qwen3.5-0.8b-v1',
+        status: 'running',
+        progress: 0.5,
+        error: { code: 'none', message: privateAudio },
       },
-      {
-        testId: 'document-extraction-provenance',
-        count: 1,
-        engines: ['windowsml-ocr', privateOcr],
-        devices: ['windowsml-dml'],
-        transcript: privateAudio,
-      },
-    ],
+      rawText: privateOcr,
+      transcript: privateAudio,
+      documentNames: [privateDocumentName],
+    },
     '{"status":"failed","stage":"failed","progressBand":"unknown","errorCode":"capture_failed"}',
   );
-  assert.doesNotMatch(message, new RegExp(`${privateOcr}|${privateAudio}|${privateDocumentName}`, 'u'));
+  assert.doesNotMatch(message, new RegExp(`${privateOcr}|${privateAudio}|${privateDocumentName}|private-requirement`, 'u'));
   assert.match(message, /failure=unexpected/u);
   assert.match(message, /windowsml-ocr/u);
-  assert.match(message, /windowsml-dml/u);
-  assert.match(message, /document-raw/u);
+  assert.match(message, /qwen3\.5-0\.8b-v1/u);
+  assert.match(message, /Backend state: /u);
   assert.match(message, /Backend capture state: \{"status":"failed","stage":"failed","progressBand":"unknown","errorCode":"capture_failed"\}/u);
+
+  const collectedState = await collectSafeBackendState(async (command) => {
+    if (command === 'desktop_runtime_status') return { status: 'ready', detail: privateOcr };
+    if (command === 'runtime_requirements') return { items: [{ requirementId: 'windowsml-ocr', status: 'ready' }] };
+    if (command === 'runtime_model_options') return { items: [{ optionId: 'qwen3.5-0.8b-v1', status: 'active' }] };
+    if (command === 'runtime_get_model_installation') {
+      return { optionId: 'qwen3.5-0.8b-v1', status: 'failed', progress: 0.2, error: { code: 'install_failed', message: privateAudio } };
+    }
+    return undefined;
+  }, 'model-install-1');
+  const snapshot = safeBackendStateSnapshot(collectedState);
+  assert.doesNotMatch(snapshot, new RegExp(`${privateOcr}|${privateAudio}`, 'u'));
+  assert.match(snapshot, /"install_failed"/u);
+
+  const captureState = await collectSafeBackendCaptureState(async (command) => {
+    if (command === 'library_list') {
+      return [{ documentId: 'c'.repeat(32), status: 'failed', stage: 'structuring', errorCode: 'structuring_failed', errorMessage: privateOcr }];
+    }
+    return undefined;
+  }, 'c'.repeat(32));
+  assert.equal(
+    captureState,
+    '{"status":"failed","stage":"structuring","progressBand":"unknown","errorCode":"structuring_failed"}',
+  );
 });
 
 test('terminal document failure is immediate, allowlisted, and content-free', () => {
@@ -598,7 +595,7 @@ test('terminal document failure is immediate, allowlisted, and content-free', ()
     terminalFailure,
     'Desktop capture terminated. status=failed; stage=failed; errorCode=structuring_invalid_output.',
   );
-  const thrownMessage = safeSmokeFailureMessage(new Error(terminalFailure), 0, []);
+  const thrownMessage = safeSmokeFailureMessage(new Error(terminalFailure), 0, {});
   assert.match(thrownMessage, /failure=terminal-document/u);
   assert.match(
     thrownMessage,
@@ -661,7 +658,7 @@ test('terminal document failure is immediate, allowlisted, and content-free', ()
   assert.doesNotMatch(redacted ?? '', new RegExp(privateValue, 'u'));
 });
 
-test('terminal Whisper installation failure is bounded and content-free', () => {
+test('terminal installation failure is bounded and content-free', () => {
   const failure = safeTerminalInstallationFailure(
     'speech-recognition',
     'failed',
@@ -674,10 +671,14 @@ test('terminal Whisper installation failure is bounded and content-free', () => 
     failure,
     'Desktop runtime installation terminated. requirement=speech-recognition; status=failed; stage=probing; errorCode=worker_failed; progressBand=late; workerStage=worker-process-response-error-bootloader; failureReason=runtime-install-unexpected.',
   );
-  const message = safeSmokeFailureMessage(new Error(failure), 0, []);
+  const message = safeSmokeFailureMessage(new Error(failure), 0, {});
   assert.match(message, /failure=terminal-installation/u);
   assert.doesNotMatch(message, /PRIVATE|C:\\|worker failed/u);
-  assert.equal(safeTerminalInstallationFailure('windowsml-ocr', 'failed', 'probing', 'x', 0.9), undefined);
+  assert.equal(
+    safeTerminalInstallationFailure('windowsml-ocr', 'failed', 'probing', 'worker_failed', 0.9),
+    'Desktop runtime installation terminated. requirement=windowsml-ocr; status=failed; stage=probing; errorCode=worker_failed; progressBand=late; failureReason=runtime-install-unexpected.',
+  );
+  assert.equal(safeTerminalInstallationFailure('private-requirement', 'failed', 'probing', 'x', 0.9), undefined);
   assert.equal(
     safeTerminalInstallationFailure(
       'speech-recognition',
@@ -1272,5 +1273,353 @@ test('cpu speech model files follow the rule the catalog generator applies', asy
   assert.deepEqual(
     cpuSpeechModelFiles(sample.speechFiles).map((item) => item.path),
     sample.cpuPaths,
+  );
+});
+
+function sampleExpectedProvenance(): Parameters<typeof assertCaptureRecord>[1] {
+  return {
+    sourceLockSha256: digest,
+    catalogSha256: digest,
+    selectedModelOptionId: 'qwen3.5-0.8b-v1',
+    ocrText: 'sample ocr line',
+    ocrImageSha256: digest,
+    ocrImageBytes: 100,
+    ocrPdfSha256: digest,
+    ocrPdfBytes: 200,
+    ocrEngine: 'windowsml-ocr',
+    ocrModel: 'pp-ocrv6-medium-windowsml',
+    ocrDevice: 'windowsml-dml',
+    whisperEngine: 'speech-recognition',
+    whisperModel: 'tea-asr-1.1',
+    whisperDevice: 'cuda',
+    whisperPreferGpu: true,
+    whisperNormalizedOutputSha256: normalizedTranscriptDigest(['audio first sentence', 'audio second sentence']),
+    whisperSegmentMinimum: 2,
+    whisperSegmentMaximum: 3,
+    whisperFixtureSha256: digest,
+    whisperFixtureBytes: 1000,
+    workerArchives: [],
+  };
+}
+
+test('host smoke installs requirements and selected model purely via Tauri commands', async () => {
+  const readySet = new Set<string>(['ollama-runtime']);
+  let modelActive = false;
+  const order: Array<'windowsml-ocr' | 'speech-recognition'> = [];
+  const startedIds: string[] = [];
+
+  const invoke: TauriInvoke = async (command, args) => {
+    const input = args.input as Record<string, unknown> | undefined;
+    if (command === 'runtime_requirements') {
+      return {
+        items: ['windowsml-ocr', 'ollama-runtime', 'capture-ollama-model', 'speech-recognition'].map((id) => ({
+          requirementId: id,
+          status: readySet.has(id) ? 'ready' : 'installable',
+        })),
+      };
+    }
+    if (command === 'runtime_start_installation') {
+      const requirementId = String(input?.requirementId);
+      assert.notEqual(requirementId, 'ollama-runtime');
+      readySet.add(requirementId);
+      return { installationId: `inst-${requirementId}` };
+    }
+    if (command === 'runtime_get_installation') {
+      return { installationId: input?.id, status: 'completed' };
+    }
+    if (command === 'runtime_model_options') {
+      return {
+        items: [{ optionId: 'qwen3.5-0.8b-v1', status: modelActive ? 'active' : 'not-installed' }],
+      };
+    }
+    if (command === 'runtime_start_model_installation') {
+      assert.equal(input?.optionId, 'qwen3.5-0.8b-v1');
+      modelActive = true;
+      readySet.add('capture-ollama-model');
+      return { installationId: 'model-inst-1', optionId: 'qwen3.5-0.8b-v1' };
+    }
+    if (command === 'runtime_get_model_installation') {
+      return { installationId: 'model-inst-1', optionId: 'qwen3.5-0.8b-v1', status: 'completed' };
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  await installConsentedRequirementsThroughTauri(['windowsml-ocr', 'ollama-runtime'], order, invoke);
+  await installModelThroughTauri('qwen3.5-0.8b-v1', invoke, (id) => startedIds.push(id));
+  await installConsentedRequirementsThroughTauri(['speech-recognition'], order, invoke);
+  assert.deepEqual(order, ['windowsml-ocr', 'speech-recognition']);
+  assert.deepEqual(startedIds, ['model-inst-1']);
+
+  await assert.rejects(
+    installModelThroughTauri('qwen3.5-0.8b-v1', async (command) => {
+      if (command === 'runtime_model_options') return { items: [{ optionId: 'qwen3.5-0.8b-v1', status: 'not-installed' }] };
+      throw new Error('start rejected');
+    }),
+    /^Error: Desktop model installation did not start\.$/u,
+  );
+});
+
+test('host smoke verifies document recognized text, structuring blocks, and cleanup via commands', async () => {
+  const documentId = 'a'.repeat(32);
+  const captureId = '11111111-1111-1111-1111-111111111111';
+  const expected = sampleExpectedProvenance();
+  let deleted = false;
+  const invoke: TauriInvoke = async (command, args) => {
+    const request = args.request as Record<string, unknown> | undefined;
+    const input = args.input as Record<string, unknown> | undefined;
+    if (command === 'library_get') {
+      if (deleted) throw new Error('not found');
+      return {
+        documentId,
+        status: 'completed',
+        raw: {
+          sourceText: 'sample ocr line\nsecond line',
+          extractionEngine: {
+            engine: 'windowsml-ocr',
+            model: 'pp-ocrv6-medium-windowsml',
+            device: 'windowsml-dml',
+            digest: `sha256:${digest}`,
+          },
+          segments: [
+            { segmentId: 'seg-1', order: 0, locator: { kind: 'page', page: 1 }, text: 'sample ocr line' },
+          ],
+        },
+        result: {
+          extractionEngine: {
+            engine: 'windowsml-ocr',
+            model: 'pp-ocrv6-medium-windowsml',
+            device: 'windowsml-dml',
+            digest: `sha256:${digest}`,
+          },
+          structuringEngine: {
+            engine: expectedStructuringEngine,
+            model: expectedStructuringModel,
+            digest: `sha256:${digest}`,
+          },
+          blocks: [
+            { blockId: 'blk-1', order: 0, type: 'paragraph', sourceSegmentId: 'seg-1', sourceText: 'sample ocr line', targetText: 'structured line' },
+          ],
+        },
+      };
+    }
+    if (command === 'library_delete') {
+      assert.equal(request?.documentId, documentId);
+      deleted = true;
+      return null;
+    }
+    if (command === 'library_list') {
+      return deleted ? [] : [{ documentId, status: 'completed' }];
+    }
+    if (command === 'runtime_get_capture') {
+      assert.equal(input?.id, captureId);
+      throw new Error('HTTP 404');
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  const summary = await assertCaptureRecord(
+    {
+      kind: 'pdf',
+      fileName: 'fixture.pdf',
+      mediaType: 'application/pdf',
+      path: 'fixture.pdf',
+      bytes: new Uint8Array([1]),
+      sha256: digest,
+      expectedOcrText: 'sample ocr line',
+    },
+    expected,
+    documentId,
+    invoke,
+    { importedAt: Date.now() - 50, initialCaptureId: captureId },
+  );
+  assert.equal(summary.structuringEngine, expectedStructuringEngine);
+  assert.equal(summary.structuringModel, expectedStructuringModel);
+  assert.equal(summary.structuredBlockCount, 1);
+  assert.equal(summary.pageLocators, 1);
+  assert.equal(deleted, true);
+});
+
+test('host smoke fails closed when a terminal record has no structured result or invalid blocks', async () => {
+  const documentId = 'b'.repeat(32);
+  const expected = sampleExpectedProvenance();
+  const baseInput = {
+    kind: 'pdf' as const,
+    fileName: 'fixture.pdf',
+    mediaType: 'application/pdf',
+    path: 'fixture.pdf',
+    bytes: new Uint8Array([1]),
+    sha256: digest,
+    expectedOcrText: 'sample ocr line',
+  };
+  const baseRaw = {
+    sourceText: 'sample ocr line',
+    extractionEngine: {
+      engine: 'windowsml-ocr',
+      model: 'pp-ocrv6-medium-windowsml',
+      device: 'windowsml-dml',
+      digest: `sha256:${digest}`,
+    },
+    segments: [{ segmentId: 'seg-1', order: 0, locator: { kind: 'page', page: 1 }, text: 'sample ocr line' }],
+  };
+
+  await assert.rejects(
+    assertCaptureRecord(baseInput, expected, documentId, async (command) => {
+      assert.equal(command, 'library_get');
+      return { documentId, status: 'awaiting_confirmation', raw: baseRaw };
+    }),
+    /terminal status awaiting_confirmation without a structured result/u,
+  );
+
+  await assert.rejects(
+    assertCaptureRecord(baseInput, expected, documentId, async () => ({
+      documentId,
+      status: 'completed',
+      raw: baseRaw,
+      result: {
+        structuringEngine: {
+          engine: expectedStructuringEngine,
+          model: expectedStructuringModel,
+          digest: `sha256:${digest}`,
+        },
+        blocks: [{ blockId: 'blk-1', sourceSegmentId: 'missing-segment' }],
+      },
+    })),
+    /referenced unknown raw segment/u,
+  );
+
+  await assert.rejects(
+    assertCaptureRecord(baseInput, expected, documentId, async () => ({
+      documentId,
+      status: 'failed',
+      stage: 'structuring',
+      errorCode: 'structuring_failed',
+    })),
+    /status=failed; stage=structuring; errorCode=structuring_failed; mediaKind=pdf\./u,
+  );
+});
+
+test('host smoke verifies recording partials, segments, structuring, and streaming cleanup', async () => {
+  const documentId = 'c'.repeat(32);
+  const captureId = '22222222-2222-2222-2222-222222222222';
+  const expected = sampleExpectedProvenance();
+  const segments = [
+    { segmentId: 'seg-0', order: 0, locator: { kind: 'time', startMs: 0, endMs: 2_000 }, text: 'audio first sentence' },
+    { segmentId: 'seg-1', order: 1, locator: { kind: 'time', startMs: 2_000, endMs: 5_000 }, text: 'audio second sentence' },
+  ];
+  const oracle = deriveProgressiveAudioOracleEvidence({
+    sourceSha256: digest,
+    sourceBytes: 1_000,
+    coveredUntilMs: PROGRESSIVE_AUDIO_SAMPLE_INTERVAL_MS,
+    partialRevision: 2,
+    segments: segments.map((seg) => ({
+      order: seg.order,
+      startMs: seg.locator.startMs,
+      endMs: seg.locator.endMs,
+      text: seg.text,
+    })),
+    extraction: {
+      engine: 'speech-recognition',
+      model: 'tea-asr-1.1',
+      device: 'cuda',
+      digest: `sha256:${digest}`,
+    },
+  });
+  let deleted = false;
+  let polls = 0;
+
+  const invoke: TauriInvoke = async (command, args) => {
+    const input = args.input as Record<string, unknown> | undefined;
+    if (command === 'library_get') {
+      if (deleted) throw new Error('not found');
+      polls += 1;
+      if (polls === 1) {
+        return { documentId, status: 'processing', captureId };
+      }
+      return {
+        documentId,
+        status: 'completed',
+        raw: {
+          sourceText: 'audio first sentence\naudio second sentence',
+          extractionEngine: {
+            engine: 'speech-recognition',
+            model: 'tea-asr-1.1',
+            device: 'cuda',
+            digest: `sha256:${digest}`,
+          },
+          segments,
+        },
+        result: {
+          extractionEngine: {
+            engine: 'speech-recognition',
+            model: 'tea-asr-1.1',
+            device: 'cuda',
+            digest: `sha256:${digest}`,
+          },
+          structuringEngine: {
+            engine: expectedStructuringEngine,
+            model: expectedStructuringModel,
+            digest: `sha256:${digest}`,
+          },
+          blocks: [
+            { blockId: 'blk-0', sourceSegmentId: 'seg-0' },
+            { blockId: 'blk-1', sourceSegmentId: 'seg-1' },
+          ],
+        },
+      };
+    }
+    if (command === 'runtime_get_streaming_partial') {
+      assert.equal(input?.id, captureId);
+      return {
+        captureId,
+        source: { sha256: digest, bytes: 1_000 },
+        coveredUntilMs: PROGRESSIVE_AUDIO_SAMPLE_INTERVAL_MS,
+        revision: 2,
+        sourceText: 'audio first sentence\naudio second sentence',
+        segments,
+        extractionEngine: oracle.extraction,
+      };
+    }
+    if (command === 'library_delete') {
+      deleted = true;
+      return null;
+    }
+    if (command === 'library_list') {
+      return deleted ? [] : [{ documentId, status: 'completed' }];
+    }
+    if (command === 'runtime_get_streaming_capture') {
+      assert.equal(input?.id, captureId);
+      throw new Error('HTTP 404');
+    }
+    throw new Error(`Unexpected command: ${command}`);
+  };
+
+  const summary = await assertCaptureRecord(
+    {
+      kind: 'audio',
+      fileName: 'fixture.mp3',
+      mediaType: 'audio/mpeg',
+      path: 'fixture.mp3',
+      bytes: new Uint8Array([1]),
+      sha256: digest,
+    },
+    expected,
+    documentId,
+    invoke,
+    { importedAt: Date.now() - 50, initialCaptureId: captureId, oracle },
+  );
+  assert.equal(summary.extractionEngine, 'speech-recognition');
+  assert.equal(summary.device, 'cuda');
+  assert.equal(summary.timeLocators, 2);
+  assert.equal(summary.structuredBlockCount, 2);
+  assert.equal(deleted, true);
+
+  await assert.rejects(
+    deleteLibraryDocument(documentId, async (command) => {
+      if (command === 'library_delete') return null;
+      if (command === 'library_list') return [];
+      if (command === 'library_get') throw new Error('not found');
+      return { captureId, status: 'completed' };
+    }, { captureId, streaming: true }),
+    /retained the smoke capture/u,
   );
 });
