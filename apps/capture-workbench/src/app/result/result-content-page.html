@@ -21,17 +21,35 @@
       data-testid="result-ocr-content"
     >
       <section
+        #sourcePane
         hlmCard
         class="flex min-h-64 items-center justify-center p-4"
         data-testid="result-source-pane"
       >
-        @if (store.pdfPreviewNote(); as note) {
-          <p
-            class="text-center text-sm text-muted-foreground"
-            data-testid="result-pdf-note"
-          >
-            {{ note }}
-          </p>
+        @if (store.isPdf()) {
+          @if (store.pdfState() === 'loading') {
+            <p
+              class="text-center text-sm text-muted-foreground"
+              data-testid="result-pdf-loading"
+            >
+              {{ m().resultLoading }}
+            </p>
+          } @else if (store.pdfError(); as error) {
+            <p
+              role="alert"
+              class="text-center text-sm text-destructive"
+              data-testid="result-pdf-error"
+            >
+              {{ error }}
+            </p>
+          }
+          <canvas
+            #pdfCanvas
+            data-testid="result-source-pdf-canvas"
+            [attr.data-rendered-page]="store.renderedPdfPage()"
+            class="max-h-[70vh] w-full rounded object-contain"
+            [class.hidden]="store.pdfState() !== 'ready'"
+          ></canvas>
         } @else if (store.imageUrl(); as url) {
           <img
             [src]="url"

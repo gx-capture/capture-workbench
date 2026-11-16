@@ -5,7 +5,10 @@ import { setDesktopLocale } from '../i18n/desktop-messages';
 import type { TranscriptLine } from '../services/desktop-workspace.selectors';
 import type { OcrPageText } from '../services/ocr-queue';
 import type { ResultSeekRequest } from '../services/result-review';
-import { ResultReviewStore } from '../services/result-review.store';
+import {
+  type PdfPreviewState,
+  ResultReviewStore,
+} from '../services/result-review.store';
 import { ResultContentPage } from './result-content-page';
 
 describe('ResultContentPage', () => {
@@ -26,7 +29,11 @@ describe('ResultContentPage', () => {
       statusText: signal('完成'),
       noResultReason: signal<string | null>(null),
       kind: signal<'ocr' | 'asr'>('ocr'),
-      pdfPreviewNote: signal<string | null>('PDF 頁面影像將在之後的版本提供'),
+      isPdf: signal(true),
+      pdfState: signal<PdfPreviewState>('ready'),
+      pdfError: signal<string | null>(null),
+      renderedPdfPage: signal<number | null>(1),
+      renderCurrentPdfPage: vi.fn(),
       imageUrl: signal<string | null>(null),
       sourceError: signal<string | null>(null),
       totalPages: signal(2),
@@ -57,12 +64,14 @@ describe('ResultContentPage', () => {
     return { fixture, store, el: fixture.nativeElement as HTMLElement };
   }
 
-  it('renders OCR page text, PDF note, and page controls with disabled previous on page 1', () => {
+  it('renders PDF canvas, data-rendered-page, OCR page text, and page controls', () => {
     const { el, store } = setup();
 
-    expect(el.querySelector('[data-testid="result-pdf-note"]')?.textContent?.trim()).toBe(
-      'PDF 頁面影像將在之後的版本提供',
-    );
+    const canvas = el.querySelector('[data-testid="result-source-pdf-canvas"]') as HTMLCanvasElement;
+    expect(canvas).not.toBeNull();
+    expect(canvas.getAttribute('data-rendered-page')).toBe('1');
+    expect(canvas.classList.contains('hidden')).toBe(false);
+    expect(store.renderCurrentPdfPage).toHaveBeenCalledWith(canvas, expect.any(Number));
     expect(el.querySelector('[data-testid="result-page-text"]')?.textContent).toBe('第一頁文字');
     expect(el.querySelector('[data-testid="result-page-indicator"]')?.textContent?.trim()).toBe('1 / 2');
 
@@ -73,6 +82,30 @@ describe('ResultContentPage', () => {
 
     next.click();
     expect(store.nextPage).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows loading text while pdfState is loading and error text when failed', () => {
+    const pdfState = signal<PdfPreviewState>('loading');
+    const pdfError = signal<string | null>(null);
+    const renderedPdfPage = signal<number | null>(null);
+    const { fixture, el } = setup({ pdfState, pdfError, renderedPdfPage });
+
+    expect(el.querySelector('[data-testid="result-pdf-loading"]')?.textContent?.trim()).toBe(
+      '正在載入結果…',
+    );
+    const canvas = el.querySelector('[data-testid="result-source-pdf-canvas"]') as HTMLCanvasElement;
+    expect(canvas.classList.contains('hidden')).toBe(true);
+    expect(canvas.getAttribute('data-rendered-page')).toBeNull();
+
+    pdfState.set('failed');
+    pdfError.set('無法顯示這份 PDF 的頁面影像，仍可查看辨識文字。');
+    fixture.detectChanges();
+
+    expect(el.querySelector('[data-testid="result-pdf-loading"]')).toBeNull();
+    expect(el.querySelector('[data-testid="result-pdf-error"]')?.textContent?.trim()).toBe(
+      '無法顯示這份 PDF 的頁面影像，仍可查看辨識文字。',
+    );
+    expect(el.querySelector('[data-testid="result-page-text"]')?.textContent).toBe('第一頁文字');
   });
 
   it('renders ASR player and transcript rows and requests seek on time click', () => {
@@ -87,7 +120,8 @@ describe('ResultContentPage', () => {
         status: 'completed',
       }),
       kind: signal('asr'),
-      pdfPreviewNote: signal(null),
+      isPdf: signal(false),
+      pdfState: signal<PdfPreviewState>('idle'),
       recordingUrl: signal('blob:audio-1'),
       lines: signal<readonly TranscriptLine[]>([
         { segmentId: 'seg-1', startMs: 12_000, timeLabel: '0:12', speaker: '王律師', text: '請說明經過。' },

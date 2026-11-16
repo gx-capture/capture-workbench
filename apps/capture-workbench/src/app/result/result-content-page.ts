@@ -4,6 +4,7 @@ import {
   type ElementRef,
   effect,
   inject,
+  untracked,
   viewChild,
 } from '@angular/core';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
@@ -22,12 +23,26 @@ export class ResultContentPage {
   protected readonly store = inject(ResultReviewStore);
   protected readonly m = desktopMessages;
   private readonly mediaPlayer = viewChild<ElementRef<HTMLMediaElement>>('mediaPlayer');
+  private readonly pdfCanvas = viewChild<ElementRef<HTMLCanvasElement>>('pdfCanvas');
+  private readonly sourcePane = viewChild<ElementRef<HTMLElement>>('sourcePane');
 
   constructor() {
     effect(() => {
       if (this.store.hasResult()) {
         this.store.loadSource();
       }
+    });
+
+    effect(() => {
+      if (!this.store.isPdf()) return;
+      const page = this.store.currentPage();
+      const state = this.store.pdfState();
+      const canvas = this.pdfCanvas()?.nativeElement;
+      const container = this.sourcePane()?.nativeElement;
+      if (!page || !canvas || !container || state !== 'ready') return;
+      untracked(() => {
+        this.store.renderCurrentPdfPage(canvas, container.clientWidth);
+      });
     });
 
     effect(() => {
