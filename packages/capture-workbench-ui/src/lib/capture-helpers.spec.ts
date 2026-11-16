@@ -1,4 +1,4 @@
-import { RUNTIME_VERSION } from '@gx-capture/capture-runtime-client';
+import { CAPTURE_DOCUMENT_SCHEMA_SHA256, RUNTIME_VERSION } from '@gx-capture/capture-runtime-client';
 import type {
   CaptureDocument,
   RawCapture,
@@ -186,10 +186,10 @@ describe('capture helpers', () => {
   it('exports a deeply immutable canonical document schema', () => {
     expect(CAPTURE_DOCUMENT_CONTRACT.schemaVersion).toBe('2');
     expect(CAPTURE_DOCUMENT_CONTRACT.schemaSha256).toBe(
-      '5452631ce9d8eea48851a819530d94920a39f41350d5575df0f8f97f82171774',
+      CAPTURE_DOCUMENT_SCHEMA_SHA256,
     );
     expect(CAPTURE_DOCUMENT_SCHEMA_HASH).toBe(
-      '5452631ce9d8eea48851a819530d94920a39f41350d5575df0f8f97f82171774',
+      CAPTURE_DOCUMENT_SCHEMA_SHA256,
     );
     expect(Object.isFrozen(CAPTURE_DOCUMENT_SCHEMA)).toBe(true);
     expect(

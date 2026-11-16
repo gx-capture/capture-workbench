@@ -18,6 +18,7 @@ from capture_runtime.contract_set import (
     load_contract_set,
     validate_route_inventory,
 )
+from capture_runtime.release import CAPTURE_DOCUMENT_SCHEMA_RELEASE_SHA256
 from tests.conftest import TOKEN
 
 
@@ -81,9 +82,7 @@ def test_runtime_owned_schema_source_has_one_release_contract_identity() -> None
         schema for schema in contract_set.bundle["schemas"] if schema["name"] == "CaptureDocument"
     )
     assert contract_set.bundle["contractSetVersion"] == CONTRACT_SET_VERSION
-    assert document["schemaSha256"] == (
-        "5452631ce9d8eea48851a819530d94920a39f41350d5575df0f8f97f82171774"
-    )
+    assert document["schemaSha256"] == CAPTURE_DOCUMENT_SCHEMA_RELEASE_SHA256
 
 
 def test_contract_set_index_bundle_loading_rejects_digest_drift() -> None:

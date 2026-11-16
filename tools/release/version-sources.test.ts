@@ -1,4 +1,5 @@
 import '../test-temp-root.ts';
+import { readFileSync } from 'node:fs';
 import { RELEASE_VERSION } from './release-intent.ts';
 import assert from 'node:assert/strict';
 import {
@@ -175,7 +176,7 @@ test('typed release inventory reports every D2.1 identity without mutation', () 
     requiredEntry(
       inventory,
       id,
-      '91ff5ff5cef6d68774cf036878843503f171044bf8c4a9f6a62e7fb418ce2380',
+      readFileSync(join(workspaceRoot, 'packages/capture-runtime/src/capture_runtime/assets/contract-set.sha256'), 'utf8').trim(),
     );
   }
   for (const channel of [
