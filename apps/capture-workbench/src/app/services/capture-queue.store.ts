@@ -19,7 +19,7 @@ import {
   describeOcrDocument,
   inImportOrder,
   isOcrMediaType,
-  parsePdfPageCount,
+  parsePdfPageList,
 } from './ocr-queue';
 
 @Injectable({ providedIn: 'root' })
@@ -38,8 +38,13 @@ export class CaptureQueueStore {
   private readonly pendingStart = new Set<string>();
   private readonly reattached = new Set<string>();
 
-  /** The page-count field. A drop and the file button both read it. */
-  readonly pageCountText = signal('');
+  /** The page selection field. A drop and the file button both read it. */
+  readonly pageListText = signal('');
+  readonly parsedPageList = computed(() => parsePdfPageList(this.pageListText()));
+  readonly pageListInvalid = computed(() => this.parsedPageList() === 'invalid');
+  readonly pageListError = computed(() =>
+    this.pageListInvalid() ? desktopMessages().ocrPageSelectionInvalid : '',
+  );
   readonly importError = signal('');
 
   private readonly host: DesktopWorkspaceCaptureHost = {
@@ -148,7 +153,11 @@ export class CaptureQueueStore {
    * The host reads the file and checks its size.
    */
   importSelections(batch: DesktopSourceSelectionBatch): void {
-    const pageCount = parsePdfPageCount(this.pageCountText());
+    const pageList = this.parsedPageList();
+    if (pageList === 'invalid') {
+      this.library.discardSelections(batch.selections).subscribe({ error: () => undefined });
+      return;
+    }
     const rejected = [...batch.rejected];
     const errors: string[] = [];
     const refusedSelections: DesktopSourceSelection[] = [];
@@ -160,14 +169,9 @@ export class CaptureQueueStore {
         continue;
       }
       const pdf = selection.mediaType === 'application/pdf';
-      if (pdf && pageCount === 'invalid') {
-        errors.push(desktopMessages().ocrPageCountInvalid);
-        refusedSelections.push(selection);
-        continue;
-      }
       accepted.push({
         selection,
-        ...(pdf && typeof pageCount === 'number' ? { options: { pdfPageCount: pageCount } } : {}),
+        ...(pdf && Array.isArray(pageList) ? { options: { pdfPageNumbers: pageList } } : {}),
       });
     }
     errors.unshift(...selectionRejectionMessages({ selections: [], rejected }));

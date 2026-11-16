@@ -90,7 +90,11 @@
               class="text-sm font-medium tabular-nums"
               data-testid="result-page-indicator"
             >
-              {{ m().resultPageLabel(store.currentPage()?.page ?? 0, store.totalPages()) }}
+              {{
+                store.pagesContiguousFromOne()
+                  ? m().resultPageLabel(store.currentPage()?.page ?? 0, store.totalPages())
+                  : m().resultSelectedPageLabel(store.currentPage()?.page ?? 0, store.currentPagePosition(), store.totalPages())
+              }}
             </span>
             <button
               hlmBtn

@@ -143,9 +143,9 @@ export class OcrPage {
     this.queue.chooseFiles();
   }
 
-  protected onPageCount(event: Event): void {
+  protected onPagesInput(event: Event): void {
     const input = event.target;
-    if (input instanceof HTMLInputElement) this.queue.pageCountText.set(input.value);
+    if (input instanceof HTMLInputElement) this.queue.pageListText.set(input.value);
   }
 
   private findInstallable(

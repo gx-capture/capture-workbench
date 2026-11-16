@@ -184,25 +184,36 @@
         {{ ocrReady() ? m().ocrDropSupported : m().ocrDropNotInstalledHint }}
       </p>
     </div>
-    <label
-      for="ocr-pages"
-      class="flex items-center gap-2 text-sm text-secondary-foreground"
-    >
-      {{ m().ocrFirstPages }}
-      <input
-        id="ocr-pages"
-        class="border-border bg-card text-foreground focus-visible:outline-primary focus-visible:outline-2 focus-visible:outline-offset-2 h-9 w-[76px] rounded-md border px-2.5 text-center text-sm"
-        data-testid="ocr-page-count"
-        type="number"
-        min="1"
-        max="500"
-        inputmode="numeric"
-        [placeholder]="m().ocrAllPages"
-        [value]="queue.pageCountText()"
-        (input)="onPageCount($event)"
-      />
-      {{ m().ocrPagesUnit }}
-    </label>
+    <div class="flex flex-col gap-1">
+      <label
+        for="ocr-pages"
+        class="flex items-center gap-2 text-sm text-secondary-foreground"
+      >
+        {{ m().ocrPagesLabel }}
+        <input
+          id="ocr-pages"
+          class="border-border bg-card text-foreground focus-visible:outline-primary focus-visible:outline-2 focus-visible:outline-offset-2 h-9 w-[180px] rounded-md border px-2.5 text-sm"
+          data-testid="ocr-pages"
+          type="text"
+          inputmode="text"
+          [placeholder]="m().ocrPagesPlaceholder"
+          [value]="queue.pageListText()"
+          [attr.aria-invalid]="queue.pageListInvalid() ? 'true' : null"
+          [attr.aria-describedby]="queue.pageListError() ? 'ocr-pages-error' : null"
+          (input)="onPagesInput($event)"
+        />
+      </label>
+      @if (queue.pageListError(); as pageError) {
+        <p
+          id="ocr-pages-error"
+          class="text-destructive text-xs"
+          data-testid="ocr-pages-error"
+          role="alert"
+        >
+          {{ pageError }}
+        </p>
+      }
+    </div>
     <button
       hlmBtn
       variant="default"

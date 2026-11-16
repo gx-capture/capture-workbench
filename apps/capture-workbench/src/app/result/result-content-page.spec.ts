@@ -37,6 +37,8 @@ describe('ResultContentPage', () => {
       imageUrl: signal<string | null>(null),
       sourceError: signal<string | null>(null),
       totalPages: signal(2),
+      currentPagePosition: signal(1),
+      pagesContiguousFromOne: signal(true),
       currentPage: signal<OcrPageText | null>({ page: 1, text: '第一頁文字' }),
       canPrevious: signal(false),
       canNext: signal(true),
@@ -134,6 +136,26 @@ describe('ResultContentPage', () => {
 
     next.click();
     expect(store.nextPage).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows the source page and position when recognized pages are not contiguous from 1', () => {
+    const { fixture, el } = setup({
+      totalPages: signal(3),
+      currentPagePosition: signal(2),
+      pagesContiguousFromOne: signal(false),
+      currentPage: signal<OcrPageText | null>({ page: 7, text: '第七頁' }),
+      renderedPdfPage: signal<number | null>(7),
+    });
+
+    expect(el.querySelector('[data-testid="result-page-indicator"]')?.textContent?.trim()).toBe(
+      '第 7 頁（2 / 3）',
+    );
+
+    setDesktopLocale('en');
+    fixture.detectChanges();
+    expect(el.querySelector('[data-testid="result-page-indicator"]')?.textContent?.trim()).toBe(
+      'Page 7 (2 of 3)',
+    );
   });
 
   it('shows loading text while pdfState is loading and error text when failed', () => {

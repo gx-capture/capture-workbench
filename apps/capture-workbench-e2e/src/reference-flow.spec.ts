@@ -108,6 +108,41 @@ test('drops a PDF without OCR, installs it, and exports the raw text', async ({ 
   await expect(page.getByTestId('result-detail-filename')).toHaveText('charge.pdf');
 });
 
+test('accepts a non-prefix PDF page list on /ocr, binds the request, and rejects 5-1', async ({ page }) => {
+  await openDesktop(
+    page,
+    [requirement('windowsml-ocr', 'WindowsML OCR', 'ready', 144_000_000)],
+    '/ocr',
+    { ocrJourney: true, persistLibrary: true },
+  );
+
+  const pagesInput = page.getByTestId('ocr-pages');
+  await pagesInput.fill('5-1');
+  await expect(pagesInput).toHaveAttribute('aria-invalid', 'true');
+  await expect(page.getByTestId('ocr-pages-error')).toBeVisible();
+
+  await dropPdf(page, 'invalid-range.pdf');
+  await expect(page.getByTestId('ocr-import-error')).toHaveCount(0);
+  await expect(page.getByTestId('ocr-pages-error')).toBeVisible();
+  await expect(page.locator('[data-testid="ocr-queue-row"]', { hasText: 'invalid-range.pdf' })).toHaveCount(0);
+
+  await pagesInput.fill('2');
+  await expect(pagesInput).not.toHaveAttribute('aria-invalid', 'true');
+  await expect(page.getByTestId('ocr-pages-error')).toHaveCount(0);
+  await dropPdf(page, 'range.pdf');
+
+  const row = page.locator('[data-testid="ocr-queue-row"]', { hasText: 'range.pdf' });
+  await expect(row).toHaveAttribute('data-user-status', 'done', { timeout: 15_000 });
+  const sentPageNumbers = await page.evaluate(() => (
+    globalThis as unknown as { readonly __captureCreatedPdfPageNumbers?: readonly (readonly number[] | null)[] }
+  ).__captureCreatedPdfPageNumbers ?? []);
+  expect(sentPageNumbers).toEqual([[2]]);
+
+  await row.getByTestId('ocr-row-view').click();
+  await expect(page).toHaveURL(/\/history\/[0-9a-f]{32}\/content$/u);
+  await expect(page.getByTestId('result-page-indicator')).toHaveText('第 2 頁（1 / 1）');
+});
+
 test('shows persisted page and transcript edits and speaker names on result pages', async ({ page }) => {
   await openDesktop(page, [], `/history/${'a'.repeat(32)}/content`, { editedResults: true });
   await expect(page.getByTestId('result-page-text')).toHaveValue('Edited page three');
@@ -445,6 +480,7 @@ async function openDesktop(
       isTauri: boolean;
       __captureInvokedCommands: string[];
       __captureStartedRequirementIds: string[];
+      __captureCreatedPdfPageNumbers: (readonly number[] | null)[];
       __TAURI_INTERNALS__: {
         invoke: (command: string, args?: unknown) => Promise<unknown>;
         metadata: {
@@ -586,6 +622,7 @@ async function openDesktop(
       return summary;
     };
     let ocrPolls = 0;
+    let activeOcrPages: readonly number[] | null = null;
     const ocrCaptureId = 'capture-ocr-1';
     const sourceSha = 'a'.repeat(64);
     const ocrJob = (status: string): Record<string, unknown> => ({
@@ -616,63 +653,72 @@ async function openDesktop(
       profileId: 'profile-1',
       profileSpecSha256: 'e'.repeat(64),
     };
-    const ocrProjection = (): Record<string, unknown> => ({
-      apiVersion: '2.0',
-      schemaVersion: '3',
-      captureId: ocrCaptureId,
-      status: 'completed',
-      source: {
-        sha256: sourceSha,
-        fileName: 'charge.pdf',
-        mediaType: 'application/pdf',
-        bytes: 12,
-      },
-      pages: [{
-        page: 1,
-        status: 'recognized',
-        raster: { width: 1200, height: 800, scale: 1, coordinateSystem: 'pixel' },
-        text: 'OCR text',
-        boxes: [{
-          polygon: [
-            { x: 100, y: 120 },
-            { x: 220, y: 120 },
-            { x: 220, y: 160 },
-            { x: 100, y: 160 },
-          ],
-          text: 'OCR text',
+    const ocrProjection = (): Record<string, unknown> => {
+      const pageNumbers = activeOcrPages ?? [1];
+      return {
+        apiVersion: '2.0',
+        schemaVersion: '3',
+        captureId: ocrCaptureId,
+        status: 'completed',
+        source: {
+          sha256: sourceSha,
+          fileName: 'charge.pdf',
+          mediaType: 'application/pdf',
+          bytes: 12,
+        },
+        pages: pageNumbers.map((page) => ({
+          page,
+          status: 'recognized',
+          raster: { width: 1200, height: 800, scale: 1, coordinateSystem: 'pixel' },
+          text: `OCR text ${page}`,
+          boxes: [{
+            polygon: [
+              { x: 100, y: 120 },
+              { x: 220, y: 120 },
+              { x: 220, y: 160 },
+              { x: 100, y: 160 },
+            ],
+            text: `OCR text ${page}`,
+            confidence: 0.875,
+          }],
           confidence: 0.875,
-        }],
-        confidence: 0.875,
+          provenance: ocrProvenance,
+        })),
+        pageCount: pageNumbers.length,
+        runtimeVersion,
+        contractSha256: 'a'.repeat(64),
         provenance: ocrProvenance,
-      }],
-      pageCount: 1,
-      runtimeVersion,
-      contractSha256: 'a'.repeat(64),
-      provenance: ocrProvenance,
-      createdAt: '2026-07-20T00:00:00Z',
-    });
-    const ocrRaw = (): Record<string, unknown> => ({
-      schemaVersion: '2',
-      diagnosticOnly: true,
-      source: {
-        sha256: sourceSha,
-        fileName: 'charge.pdf',
-        mediaType: 'application/pdf',
-        bytes: 12,
-      },
-      segments: [
-        { segmentId: 'seg-1', order: 0, locator: { kind: 'page', page: 1 }, text: '第一頁' },
-        { segmentId: 'seg-2', order: 1, locator: { kind: 'page', page: 2 }, text: '第二頁' },
-      ],
-      sourceText: '第一頁\n第二頁',
-      extractionEngine: {
-        engine: 'windowsml-ocr',
-        model: 'pp-ocrv6-medium-windowsml',
-        digest: `sha256:${'d'.repeat(64)}`,
-        device: 'windowsml-dml',
-      },
-      createdAt: '2026-07-20T00:00:00Z',
-    });
+        createdAt: '2026-07-20T00:00:00Z',
+      };
+    };
+    const ocrRaw = (): Record<string, unknown> => {
+      const pageNumbers = activeOcrPages ?? [1, 2];
+      const pageText = (page: number) => page === 1 ? '第一頁' : page === 2 ? '第二頁' : `第 ${page} 頁`;
+      return {
+        schemaVersion: '2',
+        diagnosticOnly: true,
+        source: {
+          sha256: sourceSha,
+          fileName: 'charge.pdf',
+          mediaType: 'application/pdf',
+          bytes: 12,
+        },
+        segments: pageNumbers.map((page, index) => ({
+          segmentId: `seg-${page}`,
+          order: index,
+          locator: { kind: 'page', page },
+          text: pageText(page),
+        })),
+        sourceText: pageNumbers.map(pageText).join('\n'),
+        extractionEngine: {
+          engine: 'windowsml-ocr',
+          model: 'pp-ocrv6-medium-windowsml',
+          digest: `sha256:${'d'.repeat(64)}`,
+          device: 'windowsml-dml',
+        },
+        createdAt: '2026-07-20T00:00:00Z',
+      };
+    };
 
     for (const initial of installOptions.initialRunningInstallations ?? []) {
       const id = String(initial['installationId']);
@@ -683,6 +729,7 @@ async function openDesktop(
     target.isTauri = true;
     target.__captureInvokedCommands = [];
     target.__captureStartedRequirementIds = [];
+    target.__captureCreatedPdfPageNumbers = [];
     target.__captureDropSources = (fileName) => sendBatch(batchFor(fileName));
     target.__TAURI_INTERNALS__ = {
       metadata: {
@@ -904,6 +951,9 @@ async function openDesktop(
           const pdfPageCount = options !== null && typeof options === 'object'
             ? (options as { readonly pdfPageCount?: unknown }).pdfPageCount
             : undefined;
+          const pdfPageNumbers = options !== null && typeof options === 'object'
+            ? (options as { readonly pdfPageNumbers?: unknown }).pdfPageNumbers
+            : undefined;
           const document: StoredDoc = {
             documentId: selection.selectionToken,
             fileName,
@@ -913,7 +963,11 @@ async function openDesktop(
             updatedAtMs: Date.now(),
             status: 'queued',
             stage: 'uploading',
-            ...(typeof pdfPageCount === 'number' ? { captureOptions: { pdfPageCount } } : {}),
+            ...(typeof pdfPageCount === 'number'
+              ? { captureOptions: { pdfPageCount } }
+              : Array.isArray(pdfPageNumbers)
+                ? { captureOptions: { pdfPageNumbers } }
+                : {}),
           };
           documents = [
             document,
@@ -1045,6 +1099,9 @@ async function openDesktop(
         }
         if (installOptions.ocrJourney && command === 'runtime_create_capture') {
           ocrPolls = 0;
+          const input = (args.input ?? {}) as { readonly pdfPageNumbers?: readonly number[] };
+          activeOcrPages = Array.isArray(input.pdfPageNumbers) ? [...input.pdfPageNumbers] : null;
+          target.__captureCreatedPdfPageNumbers.push(activeOcrPages);
           return Promise.resolve(ocrJob('extracting'));
         }
         if (installOptions.ocrJourney && command === 'runtime_get_capture') {

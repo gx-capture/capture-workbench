@@ -68,9 +68,7 @@ impl LibraryEdits {
                 if field == "ocrPages" {
                     if key.starts_with('0')
                         || !key.bytes().all(|byte| byte.is_ascii_digit())
-                        || !key
-                            .parse::<u32>()
-                            .is_ok_and(|page| (1..=100_000).contains(&page))
+                        || !key.parse::<u32>().is_ok_and(|page| page >= 1)
                         || text.len() > MAX_PAGE_TEXT_BYTES
                     {
                         return Err(invalid());
@@ -139,7 +137,7 @@ mod edits_tests {
 
     #[test]
     fn page_keys_and_utf8_text_bounds() {
-        for key in ["1", "100000"] {
+        for key in ["1", "100000", "100001", "4294967295"] {
             assert!(edits("ocrPages", key, "é".repeat(MAX_PAGE_TEXT_BYTES / 2))
                 .validate()
                 .is_ok());
@@ -153,7 +151,7 @@ mod edits_tests {
             "1.0",
             " 1",
             "١",
-            "100001",
+            "4294967296",
             "999999999999999",
         ] {
             assert!(edits("ocrPages", key, "private".into())
@@ -803,6 +801,8 @@ fn format_bounded_confidence(value: f64) -> String {
 pub(crate) struct LibraryCaptureOptions {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pdf_page_count: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pdf_page_numbers: Option<Vec<u32>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spoken_language: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

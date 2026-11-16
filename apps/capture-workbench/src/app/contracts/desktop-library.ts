@@ -17,8 +17,10 @@ export type DesktopLibraryStatus =
 
 /** Choices stored with a file before a capture starts. */
 export interface DesktopCaptureOptions {
-  /** Pages `1..=K`. Omitted means the whole document, apart from any harness scope. */
+  /** Pages `1..=K` (older workspace / stored documents). Mutually exclusive with `pdfPageNumbers`. */
   readonly pdfPageCount?: number | null;
+  /** Selected 1-based source PDF pages in ascending order. Mutually exclusive with `pdfPageCount`. */
+  readonly pdfPageNumbers?: readonly number[] | null;
   /** Optional spoken language tag (`zh`, `en`, `ja`, etc.) for speech recognition. */
   readonly spokenLanguage?: string | null;
   /** Whether to label speakers when speaker-diarization is ready. */

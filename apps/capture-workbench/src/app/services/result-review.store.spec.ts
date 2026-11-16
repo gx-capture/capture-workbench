@@ -761,4 +761,41 @@ describe('ResultReviewStore', () => {
     expect(store.playbackUnavailable()).toBe(true);
     expect(store.playbackUnavailableMessage()).toBe('大型錄音暫時無法播放，仍可查看逐字稿。');
   });
+
+  it('tracks page position and whether recognized pages are contiguous from 1', () => {
+    const gappedRaw = {
+      sourceText: 'p3\np7\np8',
+      segments: [
+        { segmentId: 'p3', order: 0, locator: { kind: 'page', page: 3 }, text: 'p3' },
+        { segmentId: 'p7', order: 1, locator: { kind: 'page', page: 7 }, text: 'p7' },
+        { segmentId: 'p8', order: 2, locator: { kind: 'page', page: 8 }, text: 'p8' },
+      ],
+    } as unknown as RawCapture;
+    const { store } = setup({
+      get: vi.fn(() => of(makeDetail({ raw: gappedRaw }))),
+    });
+
+    expect(store.pagesContiguousFromOne()).toBe(false);
+    expect(store.currentPage()?.page).toBe(3);
+    expect(store.currentPagePosition()).toBe(1);
+    expect(store.totalPages()).toBe(3);
+
+    store.nextPage();
+    expect(store.currentPage()?.page).toBe(7);
+    expect(store.currentPagePosition()).toBe(2);
+
+    const contiguousRaw = {
+      sourceText: 'p1\np2',
+      segments: [
+        { segmentId: 'p1', order: 0, locator: { kind: 'page', page: 1 }, text: 'p1' },
+        { segmentId: 'p2', order: 1, locator: { kind: 'page', page: 2 }, text: 'p2' },
+      ],
+    } as unknown as RawCapture;
+    TestBed.resetTestingModule();
+    const contiguous = setup({
+      get: vi.fn(() => of(makeDetail({ raw: contiguousRaw }))),
+    });
+    expect(contiguous.store.pagesContiguousFromOne()).toBe(true);
+    expect(contiguous.store.currentPagePosition()).toBe(1);
+  });
 });

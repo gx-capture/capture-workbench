@@ -60,7 +60,6 @@ import {
   terminalStage,
 } from './desktop-workspace.selectors';
 import { desktopMessages } from '../i18n/desktop-messages';
-import { pdfPagePrefix } from './ocr-queue';
 
 interface ActiveCapture {
   clientRequestId?: string;
@@ -1014,9 +1013,14 @@ export class DesktopWorkspaceCaptureService {
     mediaType?: string,
   ): readonly number[] | undefined {
     if (!this.isPdfDocument(documentId, host, mediaType)) return undefined;
-    const count = this.captureOptionsFor(documentId, host)?.pdfPageCount;
+    const options = this.captureOptionsFor(documentId, host);
+    const pageNumbers = options?.pdfPageNumbers;
+    if (Array.isArray(pageNumbers) && pageNumbers.length > 0) {
+      return [...pageNumbers];
+    }
+    const count = options?.pdfPageCount;
     if (typeof count === 'number' && Number.isInteger(count) && count >= 1 && count <= 500) {
-      return pdfPagePrefix(count);
+      return Array.from({ length: count }, (_, index) => index + 1);
     }
     return this.runtime.pdfPageNumbers();
   }

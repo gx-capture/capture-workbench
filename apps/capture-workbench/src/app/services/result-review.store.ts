@@ -330,6 +330,12 @@ export class ResultReviewStore {
 
   readonly totalPages = computed(() => this.pages().length);
 
+  readonly currentPagePosition = computed(() => this.currentPageIndex() + 1);
+
+  readonly pagesContiguousFromOne = computed(() =>
+    this.pages().every((page, index) => page.page === index + 1),
+  );
+
   readonly canPrevious = computed(() => this.currentPageIndex() > 0);
 
   readonly canNext = computed(() => {
