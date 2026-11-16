@@ -27,17 +27,15 @@ export class ResultContentPage {
   private readonly mediaPlayer = viewChild<ElementRef<HTMLMediaElement>>('mediaPlayer');
   private readonly pdfCanvas = viewChild<ElementRef<HTMLCanvasElement>>('pdfCanvas');
   private readonly sourcePane = viewChild<ElementRef<HTMLElement>>('sourcePane');
+  private readonly lineInput = viewChild<ElementRef<HTMLTextAreaElement>>('lineInput');
 
   protected readonly editingLine = signal<string | null>(null);
   protected readonly lineDraft = signal('');
   private readonly previewPage = computed(() => this.store.currentPage()?.page);
 
-  protected beginLine(segmentId: string, text: string, input: HTMLTextAreaElement): void {
+  protected beginLine(segmentId: string, text: string): void {
     this.editingLine.set(segmentId);
     this.lineDraft.set(text);
-    input.value = text;
-    input.hidden = false;
-    input.focus();
   }
 
   /** Enter that confirms an input-method candidate is not a commit. */
@@ -78,6 +76,11 @@ export class ResultContentPage {
       if (!seek || !player) return;
       player.currentTime = seek.ms / 1000;
       void player.play()?.catch(() => undefined);
+    });
+
+    effect(() => {
+      const input = this.lineInput()?.nativeElement;
+      if (input) input.focus();
     });
   }
 }

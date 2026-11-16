@@ -85,34 +85,60 @@ describe('ResultContentPage', () => {
     expect(store.restorePage).toHaveBeenCalledWith(1);
   });
 
+  it('renders no result-line-input across multiple transcript lines until one is edited', () => {
+    const { fixture, el } = setup({
+      kind: signal('asr'),
+      isPdf: signal(false),
+      lines: signal([
+        { segmentId: 's1', startMs: 0, timeLabel: '0:00', speaker: null, text: 'first' },
+        { segmentId: 's2', startMs: 1000, timeLabel: '0:01', speaker: null, text: 'second' },
+        { segmentId: 's3', startMs: 2000, timeLabel: '0:02', speaker: null, text: 'third' },
+      ]),
+    });
+    expect(el.querySelectorAll('[data-testid="result-line-input"]')).toHaveLength(0);
+    const rows = el.querySelectorAll('[data-testid="result-transcript-row"]');
+    (rows[1].querySelector('[data-testid="result-line-edit"]') as HTMLButtonElement).click();
+    fixture.detectChanges();
+    const inputs = el.querySelectorAll('[data-testid="result-line-input"]');
+    expect(inputs).toHaveLength(1);
+    expect((inputs[0] as HTMLTextAreaElement).value).toBe('second');
+    expect(document.activeElement).toBe(inputs[0]);
+  });
+
   it('edits transcript text by double-click or button, commits on Enter or blur and cancels on Escape', () => {
     const { fixture, el, store } = setup({ kind: signal('asr'), isPdf: signal(false),
       lines: signal([{ segmentId: 's1', startMs: 0, timeLabel: '0:00', text: 'recognized', recognizedText: 'recognized', edited: true }]),
     });
+    expect(el.querySelector('[data-testid="result-line-input"]')).toBeNull();
     (el.querySelector('[data-testid="result-line-text"]') as HTMLElement).dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
     fixture.detectChanges();
     const input = el.querySelector('[data-testid="result-line-input"]') as HTMLTextAreaElement;
-    expect(input.hidden).toBe(false);
+    expect(input).not.toBeNull();
     expect(document.activeElement).toBe(input);
     input.value = 'corrected';
     input.dispatchEvent(new Event('input'));
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     fixture.detectChanges();
     expect(store.editLine).toHaveBeenCalledExactlyOnceWith('s1', 'corrected');
+    expect(el.querySelector('[data-testid="result-line-input"]')).toBeNull();
     (el.querySelector('[data-testid="result-line-edit"]') as HTMLButtonElement).click();
     fixture.detectChanges();
-    input.value = 'cancelled';
-    input.dispatchEvent(new Event('input'));
-    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-    input.dispatchEvent(new Event('blur'));
+    const cancelInput = el.querySelector('[data-testid="result-line-input"]') as HTMLTextAreaElement;
+    expect(document.activeElement).toBe(cancelInput);
+    cancelInput.value = 'cancelled';
+    cancelInput.dispatchEvent(new Event('input'));
+    cancelInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    cancelInput.dispatchEvent(new Event('blur'));
     fixture.detectChanges();
     expect(store.editLine).toHaveBeenCalledTimes(1);
-    expect(input.hidden).toBe(true);
+    expect(el.querySelector('[data-testid="result-line-input"]')).toBeNull();
     (el.querySelector('[data-testid="result-line-edit"]') as HTMLButtonElement).click();
     fixture.detectChanges();
-    input.value = 'blur correction';
-    input.dispatchEvent(new Event('input'));
-    input.dispatchEvent(new Event('blur'));
+    const blurInput = el.querySelector('[data-testid="result-line-input"]') as HTMLTextAreaElement;
+    expect(document.activeElement).toBe(blurInput);
+    blurInput.value = 'blur correction';
+    blurInput.dispatchEvent(new Event('input'));
+    blurInput.dispatchEvent(new Event('blur'));
     expect(store.editLine).toHaveBeenLastCalledWith('s1', 'blur correction');
     fixture.detectChanges();
     (el.querySelector('[data-testid="result-line-restore"]') as HTMLButtonElement).click();

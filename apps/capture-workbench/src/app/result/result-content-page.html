@@ -273,23 +273,23 @@
                   hlmTd
                   class="px-3 py-4 whitespace-pre-wrap select-text align-baseline"
                 >
-                  <textarea
-                    #lineInput
-                    class="w-full rounded-md border border-border bg-card p-2 text-sm"
-                    data-testid="result-line-input"
-                    [hidden]="editingLine() !== line.segmentId"
-                    [attr.aria-label]="m().resultEditText"
-                    [value]="editingLine() === line.segmentId ? lineDraft() : line.text"
-                    (input)="lineDraft.set($any($event.target).value)"
-                    (keydown.enter)="commitLineOnEnter($event, line.segmentId)"
-                    (keydown.escape)="editingLine.set(null)"
-                    (blur)="commitLine(line.segmentId)"
-                  ></textarea>
-                  @if (editingLine() !== line.segmentId) {
+                  @if (editingLine() === line.segmentId) {
+                    <textarea
+                      #lineInput
+                      class="w-full rounded-md border border-border bg-card p-2 text-sm"
+                      data-testid="result-line-input"
+                      [attr.aria-label]="m().resultEditText"
+                      [value]="lineDraft()"
+                      (input)="lineDraft.set($any($event.target).value)"
+                      (keydown.enter)="commitLineOnEnter($event, line.segmentId)"
+                      (keydown.escape)="editingLine.set(null)"
+                      (blur)="commitLine(line.segmentId)"
+                    ></textarea>
+                  } @else {
                     <div class="inline-flex flex-wrap items-baseline gap-1.5">
                       <span
                         data-testid="result-line-text"
-                        (dblclick)="beginLine(line.segmentId, line.text, lineInput)"
+                        (dblclick)="beginLine(line.segmentId, line.text)"
                       >{{ line.text }}</span>
                       @if (line.edited) {
                         <span
@@ -306,7 +306,7 @@
                         data-testid="result-line-edit"
                         [attr.aria-label]="m().resultEditText"
                         [title]="m().resultEditText"
-                        (click)="beginLine(line.segmentId, line.text, lineInput)"
+                        (click)="beginLine(line.segmentId, line.text)"
                       >
                         <svg
                           aria-hidden="true"
