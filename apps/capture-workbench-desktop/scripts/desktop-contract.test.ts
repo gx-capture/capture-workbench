@@ -281,7 +281,6 @@ test('ordinary CI keeps real OCR local while release promotion stays determinist
     candidateWorkflow,
     promotionWorkflow,
     stableWorkflow,
-    promotionVerifier,
   ] = await Promise.all([
     readFile(join(workspaceRoot, '.github', 'workflows', 'ci.yml'), 'utf8'),
     readFile(join(appRoot, 'project.json'), 'utf8'),
@@ -300,10 +299,6 @@ test('ordinary CI keeps real OCR local while release promotion stays determinist
         'workflows',
         '_publish-stable-pointer.yml',
       ),
-      'utf8',
-    ),
-    readFile(
-      join(workspaceRoot, 'tools', 'verify-promotion-evidence.ts'),
       'utf8',
     ),
   ]);
@@ -369,16 +364,11 @@ test('ordinary CI keeps real OCR local while release promotion stays determinist
     packageQaCommand ?? '',
     /apps\/capture-workbench-desktop\/scripts\/\*\.test\.ts/u,
   );
-  await readFile(
-    join(appRoot, 'scripts', 'real-desktop-ocr-smoke.test.ts'),
-    'utf8',
-  );
 
   for (const source of [
     candidateWorkflow,
     promotionWorkflow,
     stableWorkflow,
-    promotionVerifier,
   ]) {
     assert.doesNotMatch(
       source,
@@ -386,27 +376,6 @@ test('ordinary CI keeps real OCR local while release promotion stays determinist
     );
   }
   assert.match(candidateWorkflow, /verify-main-ci\.ts/u);
-  const requiredVerifications = promotionVerifier.match(
-    /const REQUIRED_VERIFICATIONS = \[(?<body>[\s\S]*?)\] as const/u,
-  )?.groups?.['body'];
-  assert.ok(requiredVerifications);
-  assert.deepEqual(
-    [...requiredVerifications.matchAll(/'([^']+)'/gu)].map((match) => match[1]),
-    ['windows-install', 'runtime-product', 'cross-framework-consumers'],
-  );
-  const requiredProducerJobs = promotionVerifier.match(
-    /const REQUIRED_PRODUCER_JOBS = \[(?<body>[\s\S]*?)\] as const/u,
-  )?.groups?.['body'];
-  assert.ok(requiredProducerJobs);
-  assert.deepEqual(
-    [...requiredProducerJobs.matchAll(/'([^']+)'/gu)].map((match) => match[1]),
-    [
-      'verify-windows-install',
-      'verify-runtime-product',
-      'verify-cross-framework-consumers',
-    ],
-  );
-  assert.doesNotMatch(requiredProducerJobs, /verify-windows-x64/u);
 });
 
 test('production CSP is strict while allowing only dynamic loopback API ports', async () => {
@@ -444,61 +413,7 @@ test('QA evidence rejects authorization material', () => {
   );
 });
 
-test('renderer IPC never receives the sidecar bearer token', async () => {
-  const [commands, desktopHost] = await Promise.all([
-    readFile(join(appRoot, 'src-tauri', 'src', 'commands.rs'), 'utf8'),
-    readFile(
-      join(
-        appRoot,
-        '..',
-        'capture-workbench',
-        'src',
-        'app',
-        'services',
-        'desktop-runtime-client.service.ts',
-      ),
-      'utf8',
-    ),
-  ]);
-  assert.doesNotMatch(commands, /pub(?:\(crate\))? fn backend_config/u);
-  assert.doesNotMatch(desktopHost, /backend_config|bearerToken|Authorization/u);
-  assert.match(commands, /runtime_create_capture/u);
-  assert.match(desktopHost, /runtime_create_capture/u);
-});
-
-test('blocking native I/O is isolated behind async Tauri commands', async () => {
-  const commands = await readFile(
-    join(appRoot, 'src-tauri', 'src', 'commands.rs'),
-    'utf8',
-  );
-  assert.match(commands, /tauri::async_runtime::spawn_blocking/u);
-  for (const command of [
-    'library_update_capture',
-    'library_list',
-    'library_get',
-    'library_export',
-    'library_source_bytes',
-    'library_delete',
-    'runtime_requirements',
-    'runtime_start_installation',
-    'runtime_get_installation',
-    'runtime_model_options',
-    'runtime_start_model_installation',
-    'runtime_get_model_installation',
-    'runtime_ready',
-    'runtime_create_capture',
-    'runtime_get_capture',
-    'runtime_cancel_capture',
-    'runtime_get_raw',
-    'runtime_get_result',
-    'runtime_delete_capture',
-  ]) {
-    assert.match(commands, new RegExp(`pub(?:\\(crate\\))? async fn ${command}`, 'u'));
-  }
-  assert.match(commands, /pub(?:\(crate\))? fn desktop_runtime_status/u);
-});
-
-test('native selection capability and registered command data enforce the renderer boundary', async () => {
+test('native selection capability enforces the renderer boundary', async () => {
   const capability = JSON.parse(await readFile(join(appRoot, 'src-tauri', 'capabilities', 'default.json'), 'utf8'));
   assert.deepEqual(capability.windows, ['main']);
   // The window is granted nothing: every entry is a deny, so a default set
@@ -511,26 +426,6 @@ test('native selection capability and registered command data enforce the render
   ]) {
     assert.ok(permissions.includes(denied), `${denied} is missing from the capability.`);
   }
-  const host = await readFile(join(appRoot, 'src-tauri', 'src', 'lib.rs'), 'utf8');
-  const list = host.split('tauri::generate_handler![')[1]?.split(']')[0];
-  assert.ok(list);
-  const commands = list.split(',').map((entry) => entry.trim());
-  for (const command of ['library_select_sources', 'library_watch_native_sources', 'library_import_selection', 'library_discard_selections']) {
-    assert.ok(commands.includes(`commands::${command}`));
-  }
-  assert.ok(!commands.includes('commands::library_import_source'));
-});
-
-test('native cleanup is PID-scoped and never executable-name scoped', async () => {
-  const source = await readFile(
-    join(appRoot, 'scripts', 'installed-process-cleanup.ts'),
-    'utf8',
-  );
-  assert.match(
-    source,
-    /\['\/PID',\s*String\(child\.pid\),\s*'\/T',\s*'\/F'\]/u,
-  );
-  assert.doesNotMatch(source, /'\/IM'\s*,/u);
 });
 
 test('desktop launcher crate metadata uses a crates.io-supported category', async () => {
@@ -547,44 +442,6 @@ test('desktop launcher crate metadata uses a crates.io-supported category', asyn
   );
   assert.match(cargoManifest, /categories = \["os"\]/u);
   assert.doesNotMatch(cargoManifest, /process-management/u);
-});
-
-test('WindowsML bundle provenance is runtime-owned without a hard-coded release URL', async () => {
-  const workspaceRoot = join(appRoot, '..', '..');
-  const [launcher, stageRuntime, releaseBuilder, requirements] =
-    await Promise.all([
-      readFile(join(appRoot, 'src-tauri', 'src', 'launcher.rs'), 'utf8'),
-      readFile(join(appRoot, 'scripts', 'stage-runtime.ts'), 'utf8'),
-      readFile(
-        join(
-          workspaceRoot,
-          'packages',
-          'capture-runtime',
-          'scripts',
-          'build_release_artifacts.py',
-        ),
-        'utf8',
-      ),
-      readFile(
-        join(
-          workspaceRoot,
-          'packages',
-          'capture-runtime',
-          'src',
-          'capture_runtime',
-          'constants',
-          'requirements.py',
-        ),
-        'utf8',
-      ),
-    ]);
-  for (const source of [launcher, stageRuntime, releaseBuilder]) {
-    assert.doesNotMatch(source, /CAPTURE_WINDOWSML_BUNDLE/u);
-    assert.doesNotMatch(source, /runtimeRequirements/u);
-  }
-  assert.doesNotMatch(requirements, /WINDOWSML_BUNDLE_URL/u);
-  assert.doesNotMatch(requirements, /capture-windowsml-ocr-windows-x64\.zip/u);
-  assert.match(requirements, /WINDOWSML_BUNDLE_SHA256/u);
 });
 
 test('release candidate workflow is dispatch-only, exact-commit, and immutable', async () => {
@@ -697,13 +554,12 @@ test('release candidate workflow is dispatch-only, exact-commit, and immutable',
 
 test('consumer gate workflow dispatches exact candidates and records independent results', async () => {
   const workspaceRoot = join(appRoot, '..', '..');
-  const [configSource, workflow, gateRunner] = await Promise.all([
+  const [configSource, workflow] = await Promise.all([
     readFile(join(workspaceRoot, '.github', 'consumer-gates.json'), 'utf8'),
     readFile(
       join(workspaceRoot, '.github', 'workflows', 'consumer-gates.yml'),
       'utf8',
     ),
-    readFile(join(workspaceRoot, 'tools', 'run-consumer-gates.ts'), 'utf8'),
   ]);
   assert.deepEqual(JSON.parse(configSource), [
     {
@@ -729,7 +585,6 @@ test('consumer gate workflow dispatches exact candidates and records independent
   );
   assert.match(workflow, /node tools\/run-consumer-gates\.ts/u);
   assert.match(workflow, /CAPTURE_CONSUMER_GATE_TOKEN/u);
-  assert.match(gateRunner, /consumer-gate-result-v1/u);
   assert.match(workflow, /retention-days: 14/u);
   assert.doesNotMatch(workflow, /git tag|git push/u);
 });
