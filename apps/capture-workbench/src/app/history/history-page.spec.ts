@@ -18,6 +18,7 @@ import {
   setDesktopLocale,
 } from '../i18n/desktop-messages';
 import { transcriptLines } from '../services/desktop-workspace.selectors';
+import { ComputeSettingsStore } from '../services/compute-settings.store';
 import { DesktopWorkspaceStore } from '../services/desktop-workspace.store';
 
 describe('HistoryPage', () => {
@@ -29,6 +30,10 @@ describe('HistoryPage', () => {
         {
           provide: DesktopWorkspaceStore,
           useValue: workspaceStub(),
+        },
+        {
+          provide: ComputeSettingsStore,
+          useValue: computeStub(),
         },
       ],
     }).compileComponents().then(() => {
@@ -77,6 +82,10 @@ describe('HistoryPage', () => {
             },
           }),
         },
+        {
+          provide: ComputeSettingsStore,
+          useValue: computeStub(),
+        },
       ],
     }).compileComponents().then(() => {
       const fixture = TestBed.createComponent(HistoryPage);
@@ -114,7 +123,11 @@ describe('HistoryPage', () => {
     store.installationPercent.set(33);
     await TestBed.configureTestingModule({
       imports: [HistoryPage],
-      providers: [provideNoopAnimations(), { provide: DesktopWorkspaceStore, useValue: store }],
+      providers: [
+      provideNoopAnimations(),
+      { provide: DesktopWorkspaceStore, useValue: store },
+      { provide: ComputeSettingsStore, useValue: computeStub() },
+    ],
     }).compileComponents();
     const fixture = TestBed.createComponent(HistoryPage);
     fixture.detectChanges();
@@ -145,6 +158,10 @@ describe('HistoryPage', () => {
         {
           provide: DesktopWorkspaceStore,
           useValue: store,
+        },
+        {
+          provide: ComputeSettingsStore,
+          useValue: computeStub(),
         },
       ],
     }).compileComponents();
@@ -179,6 +196,10 @@ describe('HistoryPage', () => {
           provide: DesktopWorkspaceStore,
           useValue: store,
         },
+        {
+          provide: ComputeSettingsStore,
+          useValue: computeStub(),
+        },
       ],
     }).compileComponents();
     const fixture = TestBed.createComponent(HistoryPage);
@@ -210,6 +231,10 @@ describe('HistoryPage', () => {
           provide: DesktopWorkspaceStore,
           useValue: workspaceStub(),
         },
+        {
+          provide: ComputeSettingsStore,
+          useValue: computeStub(),
+        },
       ],
     }).compileComponents();
     const fixture = TestBed.createComponent(HistoryPage);
@@ -231,15 +256,19 @@ describe('HistoryPage', () => {
   });
 
   it('renders the CPU fallback notice before import when the runtime reports no usable GPU', async () => {
-    const store = workspaceStub();
-    store.ocrCompute.set(cpuFallback());
+    const compute = computeStub();
+    compute.ocrCompute.set(cpuFallback());
     await TestBed.configureTestingModule({
       imports: [HistoryPage],
       providers: [
         provideNoopAnimations(),
         {
           provide: DesktopWorkspaceStore,
-          useValue: store,
+          useValue: workspaceStub(),
+        },
+        {
+          provide: ComputeSettingsStore,
+          useValue: compute,
         },
       ],
     }).compileComponents();
@@ -272,6 +301,10 @@ describe('HistoryPage', () => {
           provide: DesktopWorkspaceStore,
           useValue: workspaceStub(),
         },
+        {
+          provide: ComputeSettingsStore,
+          useValue: computeStub(),
+        },
       ],
     }).compileComponents();
     const fixture = TestBed.createComponent(HistoryPage);
@@ -301,8 +334,9 @@ describe('HistoryPage', () => {
 
   it('keeps import disabled and shows the typed preflight error', async () => {
     const store = workspaceStub();
+    const compute = computeStub();
     store.state.set('error');
-    store.ocrCompute.set(null);
+    compute.ocrCompute.set(null);
     store.canCapture.set(false);
     store.message.set(
       'Capture Runtime OCR compute preflight is unavailable; import is disabled.',
@@ -314,6 +348,10 @@ describe('HistoryPage', () => {
         {
           provide: DesktopWorkspaceStore,
           useValue: store,
+        },
+        {
+          provide: ComputeSettingsStore,
+          useValue: compute,
         },
       ],
     }).compileComponents();
@@ -349,7 +387,11 @@ it('lists the speakers of a transcript, plays a sample and stores a name', async
   });
   await TestBed.configureTestingModule({
     imports: [HistoryPage],
-    providers: [provideNoopAnimations(), { provide: DesktopWorkspaceStore, useValue: store }],
+    providers: [
+      provideNoopAnimations(),
+      { provide: DesktopWorkspaceStore, useValue: store },
+      { provide: ComputeSettingsStore, useValue: computeStub() },
+    ],
   }).compileComponents();
   const fixture = TestBed.createComponent(HistoryPage);
   fixture.detectChanges();
@@ -375,6 +417,22 @@ it('lists the speakers of a transcript, plays a sample and stores a name', async
   option.dispatchEvent(new Event('change'));
   expect(store.identifySpeakers()).toBe(true);
 });
+
+function computeStub() {
+  return {
+    ocrCompute: signal<OcrComputePreflight | null>(gpuCompute()),
+    speechStatus: signal<{ cudaAvailable: boolean; preferGpu: boolean } | null>({
+      cudaAvailable: false,
+      preferGpu: true,
+    }),
+    speechGpu: signal<{ cudaAvailable: boolean; preferGpu: boolean } | null>(null),
+    savingCompute: signal(false),
+    canChangeCompute: signal(true),
+    error: signal<string | null>(null),
+    setPreferGpu: vi.fn(),
+    reload: vi.fn(),
+  };
+}
 
 function workspaceStub(selected: unknown = null, modelInstallation: RuntimeModelInstallation | null = null) {
   const activeInstallation = signal<RuntimeInstallation | null>(null);
@@ -499,7 +557,11 @@ it('describes each optional speech unit with EngineCard and downloads only the o
   ]);
   await TestBed.configureTestingModule({
     imports: [HistoryPage],
-    providers: [provideNoopAnimations(), { provide: DesktopWorkspaceStore, useValue: store }],
+    providers: [
+      provideNoopAnimations(),
+      { provide: DesktopWorkspaceStore, useValue: store },
+      { provide: ComputeSettingsStore, useValue: computeStub() },
+    ],
   }).compileComponents();
   const fixture = TestBed.createComponent(HistoryPage);
   fixture.detectChanges();
@@ -533,7 +595,11 @@ it('folds the speech pack away once both units are installed', async () => {
   ]);
   await TestBed.configureTestingModule({
     imports: [HistoryPage],
-    providers: [provideNoopAnimations(), { provide: DesktopWorkspaceStore, useValue: store }],
+    providers: [
+      provideNoopAnimations(),
+      { provide: DesktopWorkspaceStore, useValue: store },
+      { provide: ComputeSettingsStore, useValue: computeStub() },
+    ],
   }).compileComponents();
   const fixture = TestBed.createComponent(HistoryPage);
   fixture.detectChanges();
@@ -559,7 +625,11 @@ it('shows a speech unit download in the EngineCard while documents stay usable',
   store.installationPercent.set(50);
   await TestBed.configureTestingModule({
     imports: [HistoryPage],
-    providers: [provideNoopAnimations(), { provide: DesktopWorkspaceStore, useValue: store }],
+    providers: [
+      provideNoopAnimations(),
+      { provide: DesktopWorkspaceStore, useValue: store },
+      { provide: ComputeSettingsStore, useValue: computeStub() },
+    ],
   }).compileComponents();
   const fixture = TestBed.createComponent(HistoryPage);
   fixture.detectChanges();
@@ -571,26 +641,30 @@ it('shows a speech unit download in the EngineCard while documents stay usable',
 });
 
 it('offers the GPU setting for speech recognition only when a CUDA driver is present', async () => {
-  const store = workspaceStub();
+  const compute = computeStub();
   await TestBed.configureTestingModule({
     imports: [HistoryPage],
-    providers: [provideNoopAnimations(), { provide: DesktopWorkspaceStore, useValue: store }],
+    providers: [
+      provideNoopAnimations(),
+      { provide: DesktopWorkspaceStore, useValue: workspaceStub() },
+      { provide: ComputeSettingsStore, useValue: compute },
+    ],
   }).compileComponents();
   const fixture = TestBed.createComponent(HistoryPage);
   fixture.detectChanges();
   const root = fixture.nativeElement as HTMLElement;
   expect(root.querySelector('[data-testid="prefer-gpu"]')).toBeNull();
 
-  store.speechGpu.set({ cudaAvailable: true, preferGpu: true });
+  compute.speechGpu.set({ cudaAvailable: true, preferGpu: true });
   fixture.detectChanges();
   const option = root.querySelector('[data-testid="prefer-gpu"]') as HTMLInputElement;
   expect(option.checked).toBe(true);
   expect(option.parentElement?.textContent).toContain('用 GPU 加速語音辨識');
   option.checked = false;
   option.dispatchEvent(new Event('change'));
-  expect(store.setPreferGpu).toHaveBeenCalledWith(false);
+  expect(compute.setPreferGpu).toHaveBeenCalledWith(false);
 
-  store.canChangeCompute.set(false);
+  compute.canChangeCompute.set(false);
   fixture.detectChanges();
   expect(option.disabled).toBe(true);
 });
@@ -745,6 +819,7 @@ describe('HistoryPage delete confirmation', () => {
       providers: [
         provideNoopAnimations(),
         { provide: DesktopWorkspaceStore, useValue: store },
+        { provide: ComputeSettingsStore, useValue: computeStub() },
       ],
     }).compileComponents();
     const fixture = TestBed.createComponent(HistoryPage);
@@ -776,6 +851,7 @@ describe('HistoryPage delete confirmation', () => {
       providers: [
         provideNoopAnimations(),
         { provide: DesktopWorkspaceStore, useValue: store },
+        { provide: ComputeSettingsStore, useValue: computeStub() },
       ],
     }).compileComponents();
     const fixture = TestBed.createComponent(HistoryPage);
@@ -817,6 +893,7 @@ describe('HistoryPage delete confirmation', () => {
       providers: [
         provideNoopAnimations(),
         { provide: DesktopWorkspaceStore, useValue: store },
+        { provide: ComputeSettingsStore, useValue: computeStub() },
       ],
     }).compileComponents();
     const fixture = TestBed.createComponent(HistoryPage);
@@ -860,6 +937,7 @@ describe('HistoryPage delete confirmation', () => {
       providers: [
         provideNoopAnimations(),
         { provide: DesktopWorkspaceStore, useValue: store },
+        { provide: ComputeSettingsStore, useValue: computeStub() },
       ],
     }).compileComponents();
     const fixture = TestBed.createComponent(HistoryPage);
@@ -891,6 +969,7 @@ describe('HistoryPage delete confirmation', () => {
       providers: [
         provideNoopAnimations(),
         { provide: DesktopWorkspaceStore, useValue: store },
+        { provide: ComputeSettingsStore, useValue: computeStub() },
       ],
     }).compileComponents();
     const fixture = TestBed.createComponent(HistoryPage);
