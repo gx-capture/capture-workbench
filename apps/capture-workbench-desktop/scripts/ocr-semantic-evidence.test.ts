@@ -325,6 +325,45 @@ test('manifest rejects a semantic artifact replacement after its atomic writer i
   );
 });
 
+function expectedIdentity(includeProof: false): {
+  runId: string;
+  fixtureName: string;
+  sourceKind: 'image';
+  sourceSha256: string;
+  runtimeVersion: string;
+  runtimeSha256: string;
+  contractSha256: string;
+  workerSha256: string;
+  ocrEngine: string;
+  ocrModel: string;
+  ocrDevice: 'windowsml-dml';
+  anchors: string[];
+};
+function expectedIdentity(includeProof?: true): {
+  runId: string;
+  fixtureName: string;
+  sourceKind: 'image';
+  sourceSha256: string;
+  runtimeVersion: string;
+  runtimeSha256: string;
+  contractSha256: string;
+  workerSha256: string;
+  ocrEngine: string;
+  ocrModel: string;
+  ocrDevice: 'windowsml-dml';
+  anchors: string[];
+  executionProof: {
+    sourceSha256: string;
+    runtimeSha256: string;
+    workerSha256: string;
+    modelSha256: string;
+    profileId: string;
+    profileSpecSha256: string;
+    contractSetSha256: string;
+    requestedPageScope: null;
+    device: 'windowsml-dml';
+  };
+};
 function expectedIdentity(includeProof = true) {
   const identity = {
     runId: 'run-2026-08-29',

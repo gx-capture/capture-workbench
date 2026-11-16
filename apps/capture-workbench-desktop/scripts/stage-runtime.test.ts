@@ -7,6 +7,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import type { Observable } from 'rxjs';
 import {
   sha256File,
   validateManifestShape,
@@ -29,9 +30,9 @@ function manifestFor(bytes, sha256, schemaSha256) {
   };
 }
 
-function observe(observable) {
-  return new Promise((resolve, reject) => {
-    let value;
+function observe<T>(observable: Observable<T>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    let value: T;
     observable.subscribe({
       next: (nextValue) => {
         value = nextValue;

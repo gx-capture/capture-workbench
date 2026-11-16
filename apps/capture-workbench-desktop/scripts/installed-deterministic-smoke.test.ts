@@ -70,7 +70,32 @@ test('installed measurement derives the exact installer name from release metada
 test('release size dispatch returns before the installed app observer lane', async () => {
   let sizeCalls = 0;
   let observerConstructions = 0;
-  const expected = { reportPath: 'installed-size.json' };
+  const expected = {
+    report: {
+      evidenceKind: 'release-installed-size',
+      releaseGateSatisfied: false,
+      platform: 'windows',
+      arch: 'x86_64',
+      bundle: 'nsis',
+      installer: {
+        fileName: 'Capture Workbench_0.0.0_x64-setup.exe',
+        bytes: 1,
+        sha256: '0'.repeat(64),
+      },
+      installedBytes: 1,
+      cleanup: {
+        uninstallerCompleted: true,
+        installDirectoryRemoved: true,
+        nativeUninstallKeyRemoved: true,
+        productRegistryKeyRetainedAfterNativeUninstall: false,
+        registryResidueRemoved: true,
+        isolatedRunDataRemoved: true,
+      },
+      disclaimer:
+        'Scoped release install-size measurement only; Tauri startup and process observation were not performed.',
+    },
+    reportPath: 'installed-size.json',
+  };
   const result = await observe(
     runInstalledDeterministicSmoke(
       { expectedSource: 'release', measureOnly: true },
