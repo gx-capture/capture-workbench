@@ -1,6 +1,7 @@
 import type { Routes } from '@angular/router';
 import { AsrPage } from './asr/asr-page';
 import { HistoryPage } from './history/history-page';
+import { HistoryListPage } from './history/history-list-page';
 import { OcrPage } from './ocr/ocr-page';
 import { ResultContentPage } from './result/result-content-page';
 import { ResultDetailsPage } from './result/result-details-page';
@@ -17,12 +18,16 @@ export const appRoutes: Routes = [
   { path: '', pathMatch: 'full', redirectTo: 'ocr' },
   { path: 'ocr', component: OcrPage },
   { path: 'asr', component: AsrPage },
-  { path: 'history', component: HistoryPage },
+  { path: 'workspace', component: HistoryPage },
+  { path: 'history', component: HistoryListPage },
   {
     path: 'history/:id',
     component: ResultPage,
     children: [
-      { path: '', pathMatch: 'full', redirectTo: 'content' },
+      { path: '', pathMatch: 'full', redirectTo: ({ queryParams }) => {
+        const from = queryParams['from'] === 'history' ? '?from=history' : '';
+        return `content${from}`;
+      } },
       { path: 'content', component: ResultContentPage },
       { path: 'speakers', component: ResultSpeakersPage },
       { path: 'export', component: ResultExportPage },

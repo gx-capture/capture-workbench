@@ -32,11 +32,11 @@
       }
     </ul>
 
-    <p
+    <a
+      routerLink="/workspace"
       class="mt-auto flex items-center gap-2 px-2.5 text-sm text-muted-foreground"
       data-testid="runtime-status"
       [attr.data-state]="store.state()"
-      aria-live="polite"
     >
       <span
         class="size-2 rounded-full"
@@ -45,8 +45,9 @@
         [class.bg-destructive]="store.state() === 'error'"
         [class.bg-muted-foreground]="store.state() === 'starting'"
       ></span>
-      {{ store.state() === 'ready' ? m().ready : m().notReady }}
-    </p>
+      <span aria-live="polite">{{ store.state() === 'ready' ? m().ready : m().notReady }}</span>
+      <span class="sr-only">{{ m().historyDiagnostics }}</span>
+    </a>
   </nav>
 
   <main class="min-w-0 flex-1 overflow-auto">

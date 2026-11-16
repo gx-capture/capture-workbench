@@ -126,7 +126,13 @@ export class ResultReviewStore {
     return d ? resultKind(d.mediaType) : 'ocr';
   });
 
-  readonly backRoute = computed(() => (this.kind() === 'asr' ? '/asr' : '/ocr'));
+  private readonly origin = this.route?.queryParamMap
+    ? toSignal(this.route.queryParamMap.pipe(map((params) => params.get('from'))), {
+        initialValue: this.route.snapshot.queryParamMap?.get('from') ?? null,
+      })
+    : signal<string | null>(null);
+  readonly backRoute = computed(() => this.origin() === 'history'
+    ? '/history' : this.kind() === 'asr' ? '/asr' : '/ocr');
 
   readonly hasResult = computed(() => this.detail()?.raw !== undefined);
 

@@ -37,6 +37,7 @@ describe('ResultReviewStore', () => {
 
   function setup(options: {
     readonly id?: string;
+    readonly from?: string;
     readonly get?: ReturnType<typeof vi.fn>;
     readonly sourceBytes?: ReturnType<typeof vi.fn>;
     readonly saveEdits?: ReturnType<typeof vi.fn>;
@@ -45,6 +46,7 @@ describe('ResultReviewStore', () => {
     const paramMap$ = new BehaviorSubject(
       convertToParamMap({ id: options.id ?? DOC_ID }),
     );
+    const queryParamMap$ = new BehaviorSubject(convertToParamMap({ from: options.from ?? '' }));
     const library = {
       get: options.get ?? vi.fn(() => of(makeDetail())),
       saveEdits: options.saveEdits ?? vi.fn((_id: string, edits: DesktopLibraryEdits) => of(edits)),
@@ -68,8 +70,9 @@ describe('ResultReviewStore', () => {
         {
           provide: ActivatedRoute,
           useValue: {
-            snapshot: { paramMap: paramMap$.value },
+            snapshot: { paramMap: paramMap$.value, queryParamMap: queryParamMap$.value },
             paramMap: paramMap$.asObservable(),
+            queryParamMap: queryParamMap$.asObservable(),
           },
         },
         { provide: DesktopLibraryService, useValue: library },
@@ -80,8 +83,15 @@ describe('ResultReviewStore', () => {
 
     const store = TestBed.inject(ResultReviewStore);
     TestBed.tick();
-    return { store, library, paramMap$, pdfRenderer, defaultHandle };
+    return { store, library, paramMap$, queryParamMap$, pdfRenderer, defaultHandle };
   }
+
+  it('returns a history origin to history and ignores unknown origins', () => {
+    const { store, queryParamMap$ } = setup({ from: 'history' });
+    expect(store.backRoute()).toBe('/history');
+    queryParamMap$.next(convertToParamMap({ from: 'unknown' }));
+    expect(store.backRoute()).toBe('/ocr');
+  });
 
   describe('editing and autosave', () => {
     const raw = { sourceText: 'recognized', segments: [

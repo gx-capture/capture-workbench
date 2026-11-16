@@ -1381,8 +1381,8 @@ test('packaged desktop entrypoint points at the built workbench frontend', async
 });
 
 test('desktop page acquisition reconnects after a CDP attachment has no Tauri page', async () => {
-  // Already on the history workspace, so attaching navigates nowhere.
-  const page = { url: () => 'http://tauri.localhost/history' } as unknown as Page;
+  // Already on the legacy workspace, so attaching navigates nowhere.
+  const page = { url: () => 'http://tauri.localhost/workspace' } as unknown as Page;
   let staleClosed = 0;
   let connectionCount = 0;
   const connections: Browser[] = [
