@@ -16,6 +16,11 @@
 - When a design or release channel is replaced, delete the old path, its config, CI and release steps, and its docs in the same change. Do not keep it "for compatibility" unless a named consumer still needs it. When a tool cannot see a real use (a CLI entry, a framework callback), add a `knip.json` entry or a vulture decorator ignore in `tools/dead-code-gate.ts`; never add new dead code to the baseline.
 - `.claude/settings.json` runs the check as a Claude Code Stop hook before a turn that changed code ends.
 
+# Pinned values
+
+- Tests, doubles and fixtures must not copy the current release version or generated artifact hashes. Import `RELEASE_VERSION` / the generated constant (or read its recorded asset), or use an obviously synthetic value for a self-consistent fake. Arbitrary older versions used as scenario data are allowed.
+- `pnpm run pinned-values:check` rejects new findings against `tools/quality/pinned-values-baseline.json`. CI uses `--ci` to also reject vanished baseline entries; run `pnpm run pinned-values:update` after fixing them. Finding identities omit the value so releases do not invalidate the baseline.
+
 # Speech development tests
 
 Speech recognition ships as two packs, the `cuda` and `cpu` contents of

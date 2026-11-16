@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import {
+  CAPTURE_DOCUMENT_SCHEMA_SHA256,
   RUNTIME_VERSION,
   CAPTURE_CONTRACT_SET_SHA256,
   type RuntimeTransport,
@@ -31,7 +32,7 @@ describe('HttpCaptureClient SDK delegation', () => {
             apiVersion: '2.0',
             captureDocumentSchemaVersion: '2',
             captureDocumentSchemaSha256:
-              '5452631ce9d8eea48851a819530d94920a39f41350d5575df0f8f97f82171774',
+              CAPTURE_DOCUMENT_SCHEMA_SHA256,
             contractSetVersion: '2',
             capabilities: {
               captureKinds: ['pdf'],

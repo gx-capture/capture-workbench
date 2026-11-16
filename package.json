@@ -13,6 +13,8 @@
     "dev:deterministic": "corepack pnpm nx run capture-workbench-desktop:dev-deterministic",
     "build": "corepack pnpm nx run-many -t build",
     "test": "corepack pnpm nx run-many -t test",
+    "pinned-values:check": "node tools/pinned-values-gate.ts",
+    "pinned-values:update": "node tools/pinned-values-gate.ts --update",
     "dead-code:check": "node tools/dead-code-gate.ts",
     "dead-code:update": "node tools/dead-code-gate.ts --update",
     "architecture:update": "node tools/architecture-graph.ts --write",

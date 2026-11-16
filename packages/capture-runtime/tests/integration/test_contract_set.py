@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from capture_runtime.constants import RUNTIME_VERSION
+from capture_runtime.release import CAPTURE_DOCUMENT_SCHEMA_RELEASE_SHA256
 from capture_runtime.contract_set import (
     CONTRACT_ASSET_PATH,
     CONTRACT_ASSET_SHA256_PATH,
@@ -81,9 +82,7 @@ def test_runtime_owned_schema_source_has_one_release_contract_identity() -> None
         schema for schema in contract_set.bundle["schemas"] if schema["name"] == "CaptureDocument"
     )
     assert contract_set.bundle["contractSetVersion"] == CONTRACT_SET_VERSION
-    assert document["schemaSha256"] == (
-        "5452631ce9d8eea48851a819530d94920a39f41350d5575df0f8f97f82171774"
-    )
+    assert document["schemaSha256"] == CAPTURE_DOCUMENT_SCHEMA_RELEASE_SHA256
 
 
 def test_contract_set_index_bundle_loading_rejects_digest_drift() -> None:
@@ -226,6 +225,7 @@ def test_executable_packaging_embeds_contract_bytes_and_digest() -> None:
 
 def test_contract_set_does_not_change_with_the_release_version() -> None:
     from capture_runtime.constants import RUNTIME_VERSION
+from capture_runtime.release import CAPTURE_DOCUMENT_SCHEMA_RELEASE_SHA256
     from capture_runtime.contracts import RuntimeReady
 
     bundle = load_contract_set().bundle_bytes
