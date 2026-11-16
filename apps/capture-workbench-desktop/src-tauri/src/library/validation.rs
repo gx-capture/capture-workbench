@@ -32,12 +32,18 @@ pub(crate) const RECORDING_MEDIA_TYPES: &[&str] = &[
     "video/mp2t",
 ];
 
-/// Validates capture options stored with a document (`pdf_page_count` and `spoken_language`).
+/// Validates capture options stored with a document (`pdf_page_count`, `pdf_page_numbers`, and `spoken_language`).
 pub(crate) fn validate_capture_options(options: &LibraryCaptureOptions) -> Result<(), String> {
+    if options.pdf_page_count.is_some() && options.pdf_page_numbers.is_some() {
+        return Err("Capture PDF page selection is invalid.".into());
+    }
     if let Some(count) = options.pdf_page_count {
         if count == 0 || count > 500 {
             return Err("Capture PDF page selection is invalid.".into());
         }
+    }
+    if let Some(page_numbers) = options.pdf_page_numbers.as_deref() {
+        crate::runtime_client::validation::validate_pdf_page_numbers(page_numbers)?;
     }
     if let Some(language) = options.spoken_language.as_deref() {
         validate_spoken_language(language)?;

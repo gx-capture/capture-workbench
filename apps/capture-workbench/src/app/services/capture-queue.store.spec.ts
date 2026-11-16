@@ -59,13 +59,13 @@ describe('CaptureQueueStore', () => {
     harness.store.attach();
     TestBed.tick();
 
-    harness.store.pageCountText.set('3');
+    harness.store.pageListText.set('1-3');
     harness.store.importSelections({ rejected: [], selections: [selection('charge.pdf')] });
     TestBed.tick();
 
     expect(harness.library.importSelection).toHaveBeenCalledWith(
       selection('charge.pdf'),
-      { pdfPageCount: 3 },
+      { pdfPageNumbers: [1, 2, 3] },
     );
     expect(harness.rows()[0]?.userStatus).toBe('waiting');
     expect(harness.rows()[0]?.needsInstall).toBe(true);
@@ -123,12 +123,51 @@ describe('CaptureQueueStore', () => {
     expect(harness.rows()[0]?.userStatus).toBe('processing');
   });
 
+  it('starts a waiting PDF with stored pdfPageNumbers or legacy pdfPageCount', async () => {
+    const harness = configure({ ocrReady: false });
+    harness.docs.push(
+      doc({
+        documentId: 'c'.repeat(32),
+        fileName: 'gapped.pdf',
+        createdAtMs: 1,
+        captureOptions: { pdfPageNumbers: [3, 7] },
+      }),
+      doc({
+        documentId: 'd'.repeat(32),
+        fileName: 'legacy.pdf',
+        createdAtMs: 2,
+        captureOptions: { pdfPageCount: 2 },
+      }),
+    );
+    harness.store.attach();
+    TestBed.tick();
+
+    harness.requirements.set([requirement('ready')]);
+    TestBed.tick();
+    await settle();
+
+    expect(harness.runtime.createCapture).toHaveBeenNthCalledWith(
+      1,
+      'c'.repeat(32),
+      expect.any(String),
+      [3, 7],
+    );
+    expect(harness.runtime.createCapture).toHaveBeenNthCalledWith(
+      2,
+      'd'.repeat(32),
+      expect.any(String),
+      [1, 2],
+    );
+  });
+
   it('imports a valid image and refuses an unsupported file and an invalid page count', async () => {
     const harness = configure({ ocrReady: false });
     harness.store.attach();
     TestBed.tick();
 
-    harness.store.pageCountText.set('0');
+    harness.store.pageListText.set('5-1');
+    expect(harness.store.pageListInvalid()).toBe(true);
+    expect(harness.store.pageListError()).toBe(desktopMessages().ocrPageSelectionInvalid);
     harness.store.importSelections({ rejected: [], selections: [
       selection('notes.txt'),
       selection('range.pdf'),
@@ -138,7 +177,7 @@ describe('CaptureQueueStore', () => {
 
     expect(harness.store.importError()).toContain('(1)');
     expect(harness.store.importError()).not.toContain('notes.txt');
-    expect(harness.store.importError()).toContain(desktopMessages().ocrPageCountInvalid);
+    expect(harness.store.importError()).toContain(desktopMessages().ocrPageSelectionInvalid);
     expect(harness.library.importSelection).toHaveBeenCalledTimes(1);
     expect(harness.library.importSelection).toHaveBeenCalledWith(selection('scan.png'), undefined);
     expect(harness.library.discardSelections).toHaveBeenCalledWith([

@@ -804,6 +804,8 @@ pub(crate) struct LibraryCaptureOptions {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pdf_page_count: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pdf_page_numbers: Option<Vec<u32>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spoken_language: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub identify_speakers: Option<bool>,

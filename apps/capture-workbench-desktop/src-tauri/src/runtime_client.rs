@@ -19,7 +19,7 @@ const STREAM_CHUNK_BYTES: usize = 1024 * 1024;
 mod sse;
 mod transport;
 mod upload_cancellation;
-mod validation;
+pub(crate) mod validation;
 
 pub(crate) use upload_cancellation::{Upload, UploadCancellations};
 

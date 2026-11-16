@@ -1230,6 +1230,65 @@ mod tests {
                 Some(sealed_pages(&[1, 2, 3])),
             ))
             .expect("exact prefix accepted for pdf_page_count");
+
+        let list_path = directory.path().join("page-list.pdf");
+        fs::write(&list_path, b"%PDF-1.7\nlist").expect("list pdf");
+        let list_doc = library
+            .import_source(LibraryImportSourceRequest {
+                source_path: list_path.to_string_lossy().into_owned(),
+                capture_options: Some(LibraryCaptureOptions {
+                    pdf_page_numbers: Some(vec![2, 5]),
+                    ..Default::default()
+                }),
+            })
+            .expect("pdf_page_numbers source");
+        assert_eq!(
+            list_doc.capture_options.as_ref().and_then(|o| o.pdf_page_numbers.as_deref()),
+            Some(&[2, 5][..])
+        );
+        assert_eq!(
+            library
+                .update_capture(evidence_update(
+                    &list_doc.document_id,
+                    "completed",
+                    Some(sealed_pages(&[1, 2])),
+                ))
+                .expect_err("non-matching evidence rejected for pdf_page_numbers"),
+            "OCR evidence pages do not match the requested pages."
+        );
+        library
+            .update_capture(evidence_update(
+                &list_doc.document_id,
+                "completed",
+                Some(sealed_pages(&[2, 5])),
+            ))
+            .expect("matching evidence accepted for pdf_page_numbers");
+
+        for invalid_options in [
+            LibraryCaptureOptions {
+                pdf_page_numbers: Some(vec![]),
+                ..Default::default()
+            },
+            LibraryCaptureOptions {
+                pdf_page_numbers: Some(vec![5, 2]),
+                ..Default::default()
+            },
+            LibraryCaptureOptions {
+                pdf_page_count: Some(2),
+                pdf_page_numbers: Some(vec![1, 2]),
+                ..Default::default()
+            },
+        ] {
+            assert_eq!(
+                library
+                    .import_source(LibraryImportSourceRequest {
+                        source_path: list_path.to_string_lossy().into_owned(),
+                        capture_options: Some(invalid_options),
+                    })
+                    .expect_err("invalid page options rejected"),
+                "Capture PDF page selection is invalid."
+            );
+        }
     }
 
     #[test]

@@ -498,9 +498,12 @@ impl LibraryStore {
                 .capture_options
                 .as_ref()
                 .or(document.capture_options.as_ref());
-            let requested_pages: Option<Vec<u32>> = effective_options
-                .and_then(|options| options.pdf_page_count)
-                .map(|count| (1..=count).collect());
+            let requested_pages: Option<Vec<u32>> = effective_options.and_then(|options| {
+                options
+                    .pdf_page_numbers
+                    .clone()
+                    .or_else(|| options.pdf_page_count.map(|count| (1..=count).collect()))
+            });
             validate_evidence_requested_pages(evidence, requested_pages.as_deref())?;
             if let Some(existing) = &document.ocr_evidence {
                 if existing != evidence {

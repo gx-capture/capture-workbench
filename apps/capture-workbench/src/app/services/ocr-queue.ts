@@ -68,10 +68,8 @@ export function inImportOrder<T extends { readonly createdAtMs: number }>(docume
   return [...documents].reverse().sort((left, right) => left.createdAtMs - right.createdAtMs);
 }
 
-/** Pages `1..=count`, the only range this host sends. */
-export function pdfPagePrefix(count: number): number[] {
-  return Array.from({ length: count }, (_, index) => index + 1);
-}
+const MAX_PDF_PAGE_SELECTION = 500;
+const MAX_PDF_PAGE_NUMBER = 4_294_967_295;
 
 export function isOcrMediaType(mediaType: string): boolean {
   return mediaType === 'application/pdf'
@@ -79,14 +77,76 @@ export function isOcrMediaType(mediaType: string): boolean {
     || mediaType === 'image/jpeg';
 }
 
-/** Blank means every page. Anything else must be a whole number from 1 to 500. */
-export function parsePdfPageCount(value: string): number | null | 'invalid' {
-  const trimmed = value.trim();
-  if (trimmed === '') return null;
-  if (!/^\d+$/u.test(trimmed)) return 'invalid';
-  const count = Number(trimmed);
-  if (count < 1 || count > 500) return 'invalid';
-  return count;
+/**
+ * Parses a PDF page selection such as `1-5, 8, 10-12`.
+ * Blank means every page (`null`); invalid syntax, `0`, reversed ranges,
+ * duplicates/overlaps, > 500 pages, or pages > 4294967295 return `'invalid'`.
+ */
+export function parsePdfPageList(value: string): readonly number[] | null | 'invalid' {
+  const normalized = normalizePageText(value);
+  if (normalized === '') return null;
+  const tokens = normalized.split(/[,，、]/u);
+  const selected = new Set<number>();
+  for (const token of tokens) {
+    if (token === '') return 'invalid';
+    const parts = token.split(/[-–—~～]/u);
+    if (parts.length === 1) {
+      const page = parsePositivePageNumber(parts[0]);
+      if (page === null || selected.has(page) || selected.size >= MAX_PDF_PAGE_SELECTION) {
+        return 'invalid';
+      }
+      selected.add(page);
+    } else if (parts.length === 2) {
+      const start = parsePositivePageNumber(parts[0]);
+      const end = parsePositivePageNumber(parts[1]);
+      if (start === null || end === null || start > end) return 'invalid';
+      const rangeLength = end - start + 1;
+      if (rangeLength > MAX_PDF_PAGE_SELECTION - selected.size) return 'invalid';
+      for (let page = start; page <= end; page += 1) {
+        if (selected.has(page)) return 'invalid';
+        selected.add(page);
+      }
+    } else {
+      return 'invalid';
+    }
+  }
+  return [...selected].sort((left, right) => left - right);
+}
+
+/** Formats an ascending list of page numbers into compact range notation (e.g. `1-5, 8`). */
+export function formatPdfPageList(pages: readonly number[]): string {
+  if (pages.length === 0) return '';
+  const sorted = [...pages].sort((left, right) => left - right);
+  const parts: string[] = [];
+  let start = sorted[0];
+  let end = sorted[0];
+  for (let index = 1; index < sorted.length; index += 1) {
+    const page = sorted[index];
+    if (page === end + 1) {
+      end = page;
+    } else {
+      parts.push(start === end ? String(start) : `${start}-${end}`);
+      start = page;
+      end = page;
+    }
+  }
+  parts.push(start === end ? String(start) : `${start}-${end}`);
+  return parts.join(', ');
+}
+
+function normalizePageText(value: string): string {
+  return value
+    .replace(/\s+/gu, '')
+    .replace(/[０-９]/gu, (digit) => String.fromCharCode(digit.charCodeAt(0) - 0xfee0));
+}
+
+function parsePositivePageNumber(token: string): number | null {
+  if (!/^\d+$/u.test(token)) return null;
+  const page = Number(token);
+  if (!Number.isSafeInteger(page) || page < 1 || page > MAX_PDF_PAGE_NUMBER) {
+    return null;
+  }
+  return page;
 }
 
 export function ocrStatusText(status: OcrUserStatus): string {
@@ -214,6 +274,10 @@ function pageLabel(
     return '1';
   }
   if (typeof job?.pagesTotal === 'number') return String(job.pagesTotal);
+  const selectedPages = document.captureOptions?.pdfPageNumbers;
+  if (Array.isArray(selectedPages) && selectedPages.length >= 1) {
+    return String(selectedPages.length);
+  }
   const chosen = document.captureOptions?.pdfPageCount;
   if (typeof chosen === 'number' && chosen >= 1) return String(chosen);
   return '—';
