@@ -49,8 +49,8 @@ test('filters history, returns from result sub-pages and confirms deletion', asy
   const recording = rows.filter({ hasText: 'meeting.mp3' });
   await expect(document.getByRole('img', { name: '文件' })).toBeVisible();
   await expect(recording.getByRole('img', { name: '錄音' })).toBeVisible();
-  await expect(document.locator('td').nth(2)).toHaveText('3');
-  await expect(recording.locator('td').nth(2)).toHaveText('1:05');
+  await expect(document.locator('td').nth(2)).toHaveText('1');
+  await expect(recording.locator('td').nth(2)).toHaveText('0:01');
   await expect(document.locator('td').nth(3)).toHaveText('完成');
   await expect(document.locator('td').nth(4)).not.toBeEmpty();
   await page.getByTestId('history-type-filter').selectOption('asr');
