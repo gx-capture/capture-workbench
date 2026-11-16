@@ -1124,24 +1124,67 @@ mod tests {
         evidence["pages"][0]["text"] = serde_json::json!("raw secret");
         assert!(serde_json::from_value::<LibraryCaptureUpdate>(update_value(evidence)).is_err());
 
-        let mut evidence = serde_json::to_value(completed_evidence()).expect("evidence json");
-        evidence["pages"][0]["page"] = serde_json::json!(2);
-        let update: LibraryCaptureUpdate =
-            serde_json::from_value(update_value(evidence)).expect("typed update");
+        let mut gapped = serde_json::to_value(completed_evidence()).expect("evidence json");
+        let first_page = gapped["pages"][0].clone();
+        let mut second_page = first_page.clone();
+        let mut gapped_first = first_page.clone();
+        gapped_first["page"] = serde_json::json!(2);
+        second_page["page"] = serde_json::json!(5);
+        gapped["pageCount"] = serde_json::json!(2);
+        gapped["pages"] = serde_json::json!([gapped_first, second_page]);
+        gapped["summary"]["normalizedCharCount"] = serde_json::json!(10);
+        let gapped = sealed_evidence(gapped);
+        gapped.validate().expect("gapped ascending pages are valid");
+
         let directory = tempfile::tempdir().expect("temporary app data");
         let library = LibraryStore::open(directory.path()).expect("library");
         let created = library
             .create_source(LibrarySourceInput {
-                file_name: "unordered.pdf".into(),
+                file_name: "gapped.pdf".into(),
                 media_type: "application/pdf".into(),
                 bytes: b"pdf bytes".to_vec(),
             })
             .expect("source");
+        library
+            .update_capture(evidence_update(&created.document_id, "completed", Some(gapped)))
+            .expect("gapped evidence accepted");
+
+        for invalid_pages in [vec![0], vec![2, 2], vec![5, 2]] {
+            let mut evidence = serde_json::to_value(completed_evidence()).expect("evidence json");
+            let template_page = evidence["pages"][0].clone();
+            let pages: Vec<_> = invalid_pages
+                .iter()
+                .map(|page| {
+                    let mut entry = template_page.clone();
+                    entry["page"] = serde_json::json!(page);
+                    entry
+                })
+                .collect();
+            evidence["pageCount"] = serde_json::json!(pages.len());
+            evidence["pages"] = serde_json::Value::Array(pages);
+            evidence["summary"]["normalizedCharCount"] = serde_json::json!(5 * invalid_pages.len());
+            let evidence = sealed_evidence(evidence);
+            assert_eq!(
+                evidence.validate().expect_err("non-ascending pages rejected"),
+                "OCR evidence pages must be in ascending order."
+            );
+        }
+
+        let mut descending = serde_json::to_value(completed_evidence()).expect("evidence json");
+        let mut p1 = descending["pages"][0].clone();
+        let mut p2 = p1.clone();
+        p1["page"] = serde_json::json!(5);
+        p2["page"] = serde_json::json!(2);
+        descending["pageCount"] = serde_json::json!(2);
+        descending["pages"] = serde_json::json!([p1, p2]);
+        descending["summary"]["normalizedCharCount"] = serde_json::json!(10);
+        let descending = sealed_evidence(descending);
         let error = library
-            .update_capture(LibraryCaptureUpdate {
-                document_id: created.document_id,
-                ..update
-            })
+            .update_capture(evidence_update(
+                &created.document_id,
+                "completed",
+                Some(descending),
+            ))
             .expect_err("unordered pages rejected");
         assert!(error.contains("OCR evidence"));
     }

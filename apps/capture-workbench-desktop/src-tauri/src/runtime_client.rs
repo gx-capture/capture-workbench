@@ -779,6 +779,29 @@ mod tests {
     }
 
     #[test]
+    fn pdf_page_numbers_accept_ascending_ranges_and_reject_invalid_lists() {
+        let max_pages: Vec<u32> = (1..=500).collect();
+        for valid in [vec![1], vec![1, 2, 3], vec![3, 7, 8, 20], max_pages] {
+            assert_eq!(validate_pdf_page_numbers(&valid), Ok(()));
+        }
+
+        let too_many_pages: Vec<u32> = (1..=501).collect();
+        for invalid in [vec![], vec![0], vec![2, 2], vec![5, 2], too_many_pages] {
+            assert_eq!(
+                validate_pdf_page_numbers(&invalid),
+                Err("Capture PDF page selection is invalid.".into())
+            );
+        }
+
+        let above_u32_limit = json!({
+            "documentId": "0123456789abcdef0123456789abcdef",
+            "clientRequestId": "page-limit-req",
+            "pdfPageNumbers": [1_u64 << 53],
+        });
+        assert!(serde_json::from_value::<RuntimeCreateCaptureInput>(above_u32_limit).is_err());
+    }
+
+    #[test]
     fn phase1_one_shot_image_and_pdf_requests_use_host_structuring() {
         let image = capture_start_body("image-request", "image-ingestion", None);
         assert_eq!(image["structuringMode"], "host");

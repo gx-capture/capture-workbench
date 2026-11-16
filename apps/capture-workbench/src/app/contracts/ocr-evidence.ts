@@ -189,7 +189,10 @@ function validateProjection(
   }
   const documentProvenance = validateProvenance(projection['provenance']);
   const pages = projection['pages'] as readonly unknown[];
-  pages.forEach((value, index) => validatePage(value, index + 1, documentProvenance));
+  let previousPage = 0;
+  for (const [index, pageValue] of pages.entries()) {
+    previousPage = validatePage(pageValue, index, previousPage, documentProvenance);
+  }
   if (projection['status'] === 'completed') {
     if (projection['failure'] !== undefined && projection['failure'] !== null) invalid('completed projection failure');
     if (pages.some((value) => record(value, 'page')['status'] === 'failed')) invalid('completed projection contains failed page');
@@ -202,46 +205,58 @@ function validateProjection(
   return projection as unknown as CaptureOcrProjection;
 }
 
-function validatePage(value: unknown, expectedPage: number, documentProvenance: OcrProvenance): void {
-  const page = record(value, `page ${expectedPage}`);
-  requireExactKeys(page, ['page', 'status', 'raster', 'provenance'], `page ${expectedPage}`, ['text', 'boxes', 'confidence', 'failure']);
-  if (page['page'] !== expectedPage) invalid(`page ${expectedPage} ordering`);
-  if (page['status'] !== 'recognized' && page['status'] !== 'empty' && page['status'] !== 'failed') invalid(`page ${expectedPage} status`);
-  const raster = record(page['raster'], `page ${expectedPage} raster`);
-  requireExactKeys(raster, ['width', 'height', 'scale', 'coordinateSystem'], `page ${expectedPage} raster`);
-  safeInteger(raster['width'], `page ${expectedPage} raster width`, 1);
-  safeInteger(raster['height'], `page ${expectedPage} raster height`, 1);
-  finitePositiveAtMost(raster['scale'], `page ${expectedPage} raster scale`, 8);
-  if (raster['coordinateSystem'] !== 'pixel') invalid(`page ${expectedPage} raster coordinateSystem`);
+function validatePage(
+  value: unknown,
+  index: number,
+  previousPage: number,
+  documentProvenance: OcrProvenance,
+): number {
+  const indexLabel = `page ${index + 1}`;
+  const page = record(value, indexLabel);
+  requireExactKeys(page, ['page', 'status', 'raster', 'provenance'], indexLabel, ['text', 'boxes', 'confidence', 'failure']);
+  const pageNumber = page['page'];
+  if (!Number.isSafeInteger(pageNumber) || (pageNumber as number) <= previousPage) {
+    invalid(`${indexLabel} ordering`);
+  }
+  const validatedPage = pageNumber as number;
+  const pageLabel = `page ${validatedPage}`;
+  if (page['status'] !== 'recognized' && page['status'] !== 'empty' && page['status'] !== 'failed') invalid(`${pageLabel} status`);
+  const raster = record(page['raster'], `${pageLabel} raster`);
+  requireExactKeys(raster, ['width', 'height', 'scale', 'coordinateSystem'], `${pageLabel} raster`);
+  safeInteger(raster['width'], `${pageLabel} raster width`, 1);
+  safeInteger(raster['height'], `${pageLabel} raster height`, 1);
+  finitePositiveAtMost(raster['scale'], `${pageLabel} raster scale`, 8);
+  if (raster['coordinateSystem'] !== 'pixel') invalid(`${pageLabel} raster coordinateSystem`);
 
   const provenance = validateProvenance(page['provenance']);
-  if (!sameProvenance(provenance, documentProvenance)) invalid(`page ${expectedPage} provenance mismatch`);
+  if (!sameProvenance(provenance, documentProvenance)) invalid(`${pageLabel} provenance mismatch`);
   const text = page['text'];
-  if (text !== undefined && typeof text !== 'string') invalid(`page ${expectedPage} text`);
-  if (typeof text === 'string' && text.length > MAX_TEXT_LENGTH) invalid(`page ${expectedPage} text length`);
+  if (text !== undefined && typeof text !== 'string') invalid(`${pageLabel} text`);
+  if (typeof text === 'string' && text.length > MAX_TEXT_LENGTH) invalid(`${pageLabel} text length`);
   const boxes = page['boxes'];
-  if (boxes !== undefined && (!Array.isArray(boxes) || boxes.length > MAX_BOXES)) invalid(`page ${expectedPage} boxes`);
-  if (Array.isArray(boxes)) boxes.forEach((box, index) => validateBox(box, raster, `page ${expectedPage} box ${index}`));
+  if (boxes !== undefined && (!Array.isArray(boxes) || boxes.length > MAX_BOXES)) invalid(`${pageLabel} boxes`);
+  if (Array.isArray(boxes)) boxes.forEach((box, boxIndex) => validateBox(box, raster, `${pageLabel} box ${boxIndex}`));
   const confidence = page['confidence'];
-  if (confidence !== undefined && confidence !== null) canonicalConfidence(confidence, `page ${expectedPage} confidence`);
-  if (page['failure'] !== undefined && page['failure'] !== null) validateFailure(page['failure'], `page ${expectedPage} failure`);
+  if (confidence !== undefined && confidence !== null) canonicalConfidence(confidence, `${pageLabel} confidence`);
+  if (page['failure'] !== undefined && page['failure'] !== null) validateFailure(page['failure'], `${pageLabel} failure`);
 
   const textValue = typeof text === 'string' ? text : '';
   const boxValues = Array.isArray(boxes) ? boxes : [];
   if (page['status'] === 'recognized') {
     if (!textValue.trim() || page['failure'] !== undefined && page['failure'] !== null || typeof confidence !== 'number') {
-      invalid(`recognized page ${expectedPage} shape`);
+      invalid(`recognized ${pageLabel} shape`);
     }
   } else if (page['status'] === 'empty') {
     if (textValue.trim() || boxValues.length > 0 || confidence !== undefined && confidence !== null || page['failure'] !== undefined && page['failure'] !== null) {
-      invalid(`empty page ${expectedPage} shape`);
+      invalid(`empty ${pageLabel} shape`);
     }
   } else if (textValue.trim() || boxValues.length > 0 || confidence !== undefined && confidence !== null || page['failure'] === undefined || page['failure'] === null) {
-    invalid(`failed page ${expectedPage} shape`);
+    invalid(`failed ${pageLabel} shape`);
   }
   if ((page['status'] === 'recognized' || page['status'] === 'empty') && provenance.status !== 'resolved') {
-    invalid(`page ${expectedPage} provenance status`);
+    invalid(`${pageLabel} provenance status`);
   }
+  return validatedPage;
 }
 
 function validateBox(value: unknown, raster: Record<string, unknown>, label: string): void {

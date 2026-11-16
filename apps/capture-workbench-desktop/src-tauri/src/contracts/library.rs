@@ -401,8 +401,10 @@ impl OcrEvidenceV1 {
         {
             return Err("OCR evidence pageCount/pages are invalid.".into());
         }
-        for (index, page) in self.pages.iter().enumerate() {
-            validate_page(page, index + 1)?;
+        let mut previous_page = 0_u64;
+        for page in &self.pages {
+            validate_page(page, previous_page)?;
+            previous_page = page.page;
         }
         if self.status == "completed" {
             if self.failure.is_some()
@@ -466,9 +468,9 @@ impl OcrEvidenceV1 {
     }
 }
 
-fn validate_page(page: &OcrEvidencePageV1, expected_page: usize) -> Result<(), String> {
-    if page.page != expected_page as u64 {
-        return Err("OCR evidence pages must be ordered 1..N.".into());
+fn validate_page(page: &OcrEvidencePageV1, previous_page: u64) -> Result<(), String> {
+    if page.page <= previous_page {
+        return Err("OCR evidence pages must be in ascending order.".into());
     }
     if page.raster.width == 0
         || page.raster.height == 0
