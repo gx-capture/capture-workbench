@@ -90,6 +90,16 @@ test('drops a PDF without OCR, installs it, and exports the raw text', async ({ 
   await expect(page.getByTestId('result-detail-filename')).toHaveText('charge.pdf');
 });
 
+test('shows persisted page and transcript edits and speaker names on result pages', async ({ page }) => {
+  await openDesktop(page, [], `/history/${'a'.repeat(32)}/content`, { editedResults: true });
+  await expect(page.getByTestId('result-page-text')).toHaveText('Edited page three');
+  await page.goto(`/history/${'b'.repeat(32)}/content`);
+  await expect(page.getByTestId('result-line-text')).toHaveText('Edited transcript line');
+  await expect(page.getByTestId('result-line-speaker')).toHaveText('Named speaker');
+  await page.getByTestId('result-nav-speakers').click();
+  await expect(page.getByTestId('result-speaker-name')).toHaveText('Named speaker');
+});
+
 test('imports an OCR selection through the native picker command', async ({ page }) => {
   await openDesktop(page, [requirement('windowsml-ocr', 'WindowsML OCR', 'installable', 144_000_000)], '/ocr');
   await page.getByTestId('first-run-dismiss').click();
@@ -339,6 +349,7 @@ test('does not run a deterministic provider in an unconfigured browser', async (
 });
 
 interface OpenDesktopOptions {
+  readonly editedResults?: boolean;
   readonly completeInstallOnPoll?: number;
   readonly holdRunningUntilCancel?: boolean;
   readonly initialRunningInstallations?: readonly Record<string, unknown>[];
@@ -421,11 +432,27 @@ async function openDesktop(
     });
     let documents: StoredDoc[] = [historyDocument()];
     const rawByDocument = new Map<string, unknown>();
+    const editsByDocument = new Map<string, Record<string, unknown>>();
+    if (installOptions.editedResults) {
+      rawByDocument.set(historyId, { sourceText: 'recognized page', segments: [
+        { segmentId: 'page-3', order: 0, locator: { kind: 'page', page: 3 }, text: 'recognized page' },
+      ] });
+      editsByDocument.set(historyId, { schemaVersion: 1, updatedAtMs: 1,
+        ocrPages: { '3': 'Edited page three' }, transcriptLines: {}, speakerNames: { sp1: 'Named speaker' } });
+      const recordingId = 'b'.repeat(32);
+      documents.push({ ...historyDocument(), documentId: recordingId, fileName: 'meeting.mp3', mediaType: 'audio/mpeg' });
+      rawByDocument.set(recordingId, { sourceText: 'recognized line', speakers: [{ speakerId: 'sp1', displayName: 'Recognized speaker' }], segments: [
+        { segmentId: 'line-1', order: 0, locator: { kind: 'time', startMs: 0, endMs: 1000 }, speaker: 'sp1', text: 'recognized line' },
+      ] });
+      editsByDocument.set(recordingId, { schemaVersion: 1, updatedAtMs: 1,
+        ocrPages: {}, transcriptLines: { 'line-1': 'Edited transcript line' }, speakerNames: { sp1: 'Named speaker' } });
+    }
     const rememberLibrary = (): void => {
       if (!installOptions.persistLibrary) return;
       sessionStorage.setItem(libraryKey, JSON.stringify({
         documents,
         raw: [...rawByDocument.entries()],
+        edits: [...editsByDocument.entries()],
       }));
     };
     if (installOptions.persistLibrary) {
@@ -435,6 +462,7 @@ async function openDesktop(
           const parsed = JSON.parse(stored) as {
             documents?: StoredDoc[];
             raw?: readonly (readonly [string, unknown])[];
+            edits?: readonly (readonly [string, Record<string, unknown>])[];
           };
           if (Array.isArray(parsed.documents) && parsed.documents.length > 0) {
             documents = parsed.documents;
@@ -444,10 +472,12 @@ async function openDesktop(
               rawByDocument.set(entry[0], entry[1]);
             }
           }
+          for (const [id, edits] of parsed.edits ?? []) editsByDocument.set(id, edits);
         }
       } catch {
         documents = [historyDocument()];
         rawByDocument.clear();
+        editsByDocument.clear();
       }
       if (!documents.some((item) => item.documentId === historyId)) {
         documents = [historyDocument(), ...documents];
@@ -790,7 +820,29 @@ async function openDesktop(
           return Promise.resolve({
             ...listedSummary(current),
             ...(rawByDocument.has(documentId) ? { raw: rawByDocument.get(documentId) } : {}),
+            ...(editsByDocument.has(documentId) ? { edits: editsByDocument.get(documentId) } : {}),
           });
+        }
+        if (command === 'library_save_edits') {
+          const documentId = String(args.request?.['documentId'] ?? '');
+          if (!documents.some((item) => item.documentId === documentId)) return Promise.reject(new Error('Unknown document'));
+          if (!rawByDocument.has(documentId)) return Promise.reject(new Error('edits require a raw result.'));
+          const maps = args.request?.['edits'] as {
+            ocrPages: Record<string, string>; transcriptLines: Record<string, string>; speakerNames: Record<string, string>;
+          };
+          const edits = { ...maps, schemaVersion: 1, updatedAtMs: Date.now() };
+          if ([maps.ocrPages, maps.transcriptLines, maps.speakerNames].every((map) => Object.keys(map).length === 0)) editsByDocument.delete(documentId);
+          else editsByDocument.set(documentId, edits);
+          rememberLibrary();
+          return Promise.resolve(edits);
+        }
+        if (command === 'library_delete') {
+          const documentId = String(args.request?.['documentId'] ?? '');
+          documents = documents.filter((item) => item.documentId !== documentId);
+          rawByDocument.delete(documentId);
+          editsByDocument.delete(documentId);
+          rememberLibrary();
+          return Promise.resolve(null);
         }
         if (command === 'library_source_bytes') {
           const documentId = String(args.request?.['documentId'] ?? '');
@@ -819,6 +871,7 @@ async function openDesktop(
           const current = documents.find((item) => item.documentId === documentId);
           if (!current) return Promise.reject(new Error(`Unknown document: ${documentId}`));
           if (update['raw'] !== undefined && update['raw'] !== null) {
+            if (rawByDocument.has(documentId)) editsByDocument.delete(documentId);
             rawByDocument.set(documentId, update['raw']);
             current.hasRaw = true;
           }

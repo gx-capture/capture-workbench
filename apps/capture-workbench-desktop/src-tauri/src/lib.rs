@@ -38,6 +38,7 @@ macro_rules! desktop_invoke_handler {
             commands::library_update_capture,
             commands::library_list,
             commands::library_get,
+            commands::library_save_edits,
             commands::library_export,
             commands::library_source_bytes,
             commands::library_delete,

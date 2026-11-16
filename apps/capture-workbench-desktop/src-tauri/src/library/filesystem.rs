@@ -8,7 +8,8 @@ pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let temporary = path.with_extension("tmp");
     fs::write(&temporary, bytes)
         .map_err(|error| format!("Capture library cannot be written: {error}"))?;
-    fs::rename(temporary, path)
+    super::inject_transaction_failure("atomic-rename")
+        .and_then(|()| fs::rename(temporary, path))
         .map_err(|error| format!("Capture library cannot finalize data: {error}"))
 }
 

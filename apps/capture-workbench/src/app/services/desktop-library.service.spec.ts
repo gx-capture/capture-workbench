@@ -17,6 +17,22 @@ const summary: DesktopLibrarySummary = {
 };
 
 describe('DesktopLibraryService native source import', () => {
+  it('sends only edit maps and returns the host timestamp', () => {
+    const edits = { schemaVersion: 1 as const, ocrPages: { '3': 'edited' },
+      transcriptLines: {}, speakerNames: { speaker: 'Name' }, updatedAtMs: 42 };
+    const commands = { invoke: vi.fn(() => of(edits)) };
+    TestBed.configureTestingModule({ providers: [DesktopLibraryService,
+      { provide: DesktopTauriCommandService, useValue: commands }] });
+    const service = TestBed.inject(DesktopLibraryService);
+    const received = vi.fn();
+    service.saveEdits(summary.documentId, edits).subscribe(received);
+    expect(commands.invoke).toHaveBeenCalledWith('library_save_edits', {
+      request: { documentId: summary.documentId, edits: {
+        ocrPages: edits.ocrPages, transcriptLines: {}, speakerNames: edits.speakerNames,
+      } },
+    });
+    expect(received).toHaveBeenCalledWith(edits);
+  });
   it('groups rejection reasons with counts in both languages', () => {
     const previous = desktopLocale();
     try {
