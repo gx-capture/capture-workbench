@@ -124,6 +124,11 @@ export function resultSpeakersList(detail: DesktopLibraryDetail): readonly Captu
   return detail.result?.speakers ?? detail.raw?.speakers ?? [];
 }
 
+/** The label shown for a speaker nobody has named: the same value an unnamed field holds. */
+function recognizedSpeakerName(speaker: CaptureSpeaker): string {
+  return speaker.displayName?.trim() || speaker.speakerId;
+}
+
 /** Builds read-only speaker view models with media fragment sample URLs when playable. */
 export function buildResultSpeakers(
   speakers: readonly CaptureSpeaker[],
@@ -133,7 +138,7 @@ export function buildResultSpeakers(
   return speakers.map((speaker) => ({
     speakerId: speaker.speakerId,
     displayName: ownEdit(edits?.speakerNames, speaker.speakerId)?.trim()
-      ?? (speaker.displayName?.trim() || speaker.speakerId),
+      ?? recognizedSpeakerName(speaker),
     sampleUrl:
       recordingUrl && speaker.sample
         ? `${recordingUrl}#t=${speaker.sample.startMs / 1000},${speaker.sample.endMs / 1000}`
@@ -195,15 +200,15 @@ export function applyResultEdit(
   const { field, key } = command;
   const raw = detail.raw;
   if (!raw) return { edits, error: null };
+  const speaker = field === 'speakerNames'
+    ? resultSpeakersList(detail).find((candidate) => candidate.speakerId === key)
+    : undefined;
   const recognized = field === 'ocrPages'
     ? resultPages(raw).find((page) => page.page === key)?.text
     : field === 'transcriptLines'
       ? resultLines(raw, []).find((line) => line.segmentId === key)?.text
-      : resultSpeakersList(detail).find((speaker) => speaker.speakerId === key)?.displayName;
-  const exists = field === 'speakerNames'
-    ? resultSpeakersList(detail).some((speaker) => speaker.speakerId === key)
-    : recognized !== undefined;
-  if (!exists) return { edits, error: null };
+      : speaker && recognizedSpeakerName(speaker);
+  if (recognized === undefined) return { edits, error: null };
   let text = command.text;
   if (field !== 'speakerNames' && text === recognized) text = null;
   if (field === 'speakerNames' && text !== null) {

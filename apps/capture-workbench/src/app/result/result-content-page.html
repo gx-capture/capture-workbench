@@ -223,7 +223,7 @@
                     [attr.aria-label]="m().resultEditText"
                     [value]="editingLine() === line.segmentId ? lineDraft() : line.text"
                     (input)="lineDraft.set($any($event.target).value)"
-                    (keydown.enter)="$event.isComposing || $event.preventDefault(); $event.isComposing || commitLine(line.segmentId)"
+                    (keydown.enter)="commitLineOnEnter($event, line.segmentId)"
                     (keydown.escape)="editingLine.set(null)"
                     (blur)="commitLine(line.segmentId)"></textarea>
                   @if (editingLine() !== line.segmentId) {

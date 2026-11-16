@@ -186,13 +186,17 @@ describe('ResultReviewStore', () => {
       expect(store.saveState()).toBe('idle');
     });
 
-    it('keeps unsaved corrections when detail emits again for the same document', () => {
+    it('keeps unsaved corrections when detail emits again for the same document', async () => {
       const details = new Subject<DesktopLibraryDetail>();
       const { store } = setup({ get: vi.fn(() => details) });
       details.next(makeDetail({ raw }));
+      // The resource publishes a streamed value after a microtask.
+      await vi.advanceTimersByTimeAsync(0);
       TestBed.tick();
       store.editPage(1, 'local');
       details.next(makeDetail({ raw, updatedAtMs: 99 }));
+      // The resource publishes a streamed value after a microtask.
+      await vi.advanceTimersByTimeAsync(0);
       TestBed.tick();
       expect(store.currentPage()?.text).toBe('local');
     });
@@ -234,13 +238,17 @@ describe('ResultReviewStore', () => {
       expect(library.saveEdits).toHaveBeenLastCalledWith(DOC_ID, expect.objectContaining({ transcriptLines: {}, speakerNames: {} }));
     });
 
-    it('takes refreshed edits when the working copy is clean', () => {
+    it('takes refreshed edits when the working copy is clean', async () => {
       const details = new Subject<DesktopLibraryDetail>();
       const { store, library } = setup({ get: vi.fn(() => details) });
       details.next(makeDetail({ raw }));
+      // The resource publishes a streamed value after a microtask.
+      await vi.advanceTimersByTimeAsync(0);
       TestBed.tick();
       details.next(makeDetail({ raw, edits: { schemaVersion: 1, updatedAtMs: 10,
         ocrPages: { '1': 'refreshed' }, transcriptLines: {}, speakerNames: {} } }));
+      // The resource publishes a streamed value after a microtask.
+      await vi.advanceTimersByTimeAsync(0);
       TestBed.tick();
       expect(store.currentPage()?.text).toBe('refreshed');
       expect(library.saveEdits).not.toHaveBeenCalled();

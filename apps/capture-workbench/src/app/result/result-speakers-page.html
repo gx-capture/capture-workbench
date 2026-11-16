@@ -36,7 +36,7 @@
             data-testid="result-speaker-input"
             [attr.aria-label]="m().speakerName"
             [value]="speaker.displayName"
-            (keydown.enter)="$event.isComposing || store.nameSpeaker(speaker.speakerId, nameInput.value)"
+            (keydown.enter)="nameOnEnter($event, speaker.speakerId, nameInput.value)"
             (blur)="store.nameSpeaker(speaker.speakerId, nameInput.value)" />
           @if (speaker.sampleUrl; as sampleUrl) {
             <audio

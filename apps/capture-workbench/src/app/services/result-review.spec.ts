@@ -97,6 +97,13 @@ describe('result editing rules', () => {
     }
   });
 
+  it('does not store the label an unnamed speaker field already shows', () => {
+    const speakers = [{ speakerId: 'sp1' }];
+    const unlabelled = { ...detail, raw: { ...rawCapture(), speakers } };
+    expect(buildResultSpeakers(speakers, null, empty)[0].displayName).toBe('sp1');
+    expect(applyResultEdit(unlabelled, empty, { field: 'speakerNames', key: 'sp1', text: 'sp1' }).edits.speakerNames).toEqual({});
+  });
+
   it('checks UTF-8 bytes at page and line boundaries and never includes input in errors', () => {
     for (const command of [
       { field: 'ocrPages' as const, key: 1, text: 'a'.repeat(1024 * 1024) },

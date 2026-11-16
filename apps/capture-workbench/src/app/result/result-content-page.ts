@@ -40,6 +40,13 @@ export class ResultContentPage {
     input.focus();
   }
 
+  /** Enter that confirms an input-method candidate is not a commit. */
+  protected commitLineOnEnter(event: Event, segmentId: string): void {
+    if ((event as KeyboardEvent).isComposing) return;
+    event.preventDefault();
+    this.commitLine(segmentId);
+  }
+
   protected commitLine(segmentId: string): void {
     if (this.editingLine() !== segmentId) return;
     this.store.editLine(segmentId, this.lineDraft());
