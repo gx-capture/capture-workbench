@@ -232,6 +232,18 @@ export interface DesktopMessages {
   readonly resultTabContent: string;
   readonly resultTabSpeakers: string;
   readonly resultTabDetails: string;
+  readonly resultTabExport: string;
+  readonly exportPlainText: string;
+  readonly exportMarkdown: string;
+  readonly exportSrt: string;
+  readonly exportVtt: string;
+  readonly exportCopy: string;
+  readonly exportCopied: string;
+  readonly exportDownloaded: string;
+  readonly exportInProgress: string;
+  readonly exportFailed: string;
+  readonly exportCopyFailed: string;
+  readonly exportPageLabel: string;
   readonly resultLoading: string;
   readonly resultNotFound: string;
   readonly resultNoResultYet: string;
@@ -523,6 +535,18 @@ const ZH_TW: DesktopMessages = {
   resultBack: '返回',
   resultTitle: '檢視結果',
   resultNavigation: '結果檢視導覽',
+  resultTabExport: '匯出',
+  exportPlainText: '純文字 (.txt)',
+  exportMarkdown: 'Markdown (.md)',
+  exportSrt: '字幕 SRT (.srt)',
+  exportVtt: '字幕 WebVTT (.vtt)',
+  exportCopy: '複製全部',
+  exportCopied: '已複製',
+  exportDownloaded: '已匯出',
+  exportInProgress: '匯出中…',
+  exportFailed: '匯出失敗，請重試。',
+  exportCopyFailed: '複製失敗，請重試。',
+  exportPageLabel: '第 {page} 頁',
   resultTabContent: '內容',
   resultTabSpeakers: '說話者',
   resultTabDetails: '詳細資訊',
@@ -822,6 +846,18 @@ const EN: DesktopMessages = {
   resultBack: 'Back',
   resultTitle: 'Result',
   resultNavigation: 'Result sections',
+  resultTabExport: 'Export',
+  exportPlainText: 'Plain text (.txt)',
+  exportMarkdown: 'Markdown (.md)',
+  exportSrt: 'Subtitles SRT (.srt)',
+  exportVtt: 'Subtitles WebVTT (.vtt)',
+  exportCopy: 'Copy all',
+  exportCopied: 'Copied',
+  exportDownloaded: 'Exported',
+  exportInProgress: 'Exporting…',
+  exportFailed: 'Export failed. Please try again.',
+  exportCopyFailed: 'Copy failed. Please try again.',
+  exportPageLabel: 'Page {page}',
   resultTabContent: 'Content',
   resultTabSpeakers: 'Speakers',
   resultTabDetails: 'Details',

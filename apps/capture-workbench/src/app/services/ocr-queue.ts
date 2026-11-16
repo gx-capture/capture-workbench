@@ -139,14 +139,6 @@ export function groupRawOcrPages(
     }));
 }
 
-/** `.txt` in page order. Pages are separated by a blank line. */
-export function renderRawOcrText(raw: RawCapture | null | undefined): string {
-  if (!raw) return '';
-  const nonEmpty = groupRawOcrPages(raw).filter((page) => page.text !== '');
-  if (nonEmpty.length === 0) return raw.sourceText;
-  return nonEmpty.map((page) => page.text).join('\n\n');
-}
-
 export function describeOcrDocument(input: {
   readonly document: DesktopLibrarySummary;
   readonly job?: DesktopCaptureOperation;

@@ -2,19 +2,57 @@ import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import type { RuntimeInstallation, RuntimeRequirement } from '@gx-capture/capture-workbench-ui';
 import { of, Subject } from 'rxjs';
-import type { DesktopCaptureOptions, DesktopLibrarySummary } from '../contracts';
+import type { DesktopCaptureOptions, DesktopLibraryExport, DesktopLibrarySummary } from '../contracts';
 import { desktopMessages, setDesktopLocale } from '../i18n/desktop-messages';
 import { CaptureQueueStore } from './capture-queue.store';
 import { DesktopLibraryService, type DesktopSourceSelection } from './desktop-library.service';
 import type { DesktopCaptureOperation } from './desktop-runtime-client.service';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
 import { DesktopWorkspaceCaptureService } from './desktop-workspace-capture.service';
+import { DesktopWorkspaceFormattingService } from './desktop-workspace-formatting.service';
 import { isFeatureReady, type RecognitionFeature } from './desktop-workspace.selectors';
 import { DesktopWorkspaceStore } from './desktop-workspace.store';
 import { RecognitionFeaturesStore } from './recognition-features.store';
 
 describe('CaptureQueueStore', () => {
   beforeEach(() => setDesktopLocale('zh-TW'));
+
+  it('ignores repeated exports and clears a visible export error when the next request starts', () => {
+    const { store, docs, library } = configure({ ocrReady: false });
+    docs.push(doc({ status: 'completed', hasRaw: true }));
+    store.attach();
+    TestBed.tick();
+    const download = vi.spyOn(TestBed.inject(DesktopWorkspaceFormattingService), 'downloadText').mockImplementation(() => undefined);
+    const first = new Subject<DesktopLibraryExport>();
+    const second = new Subject<DesktopLibraryExport>();
+    library.export.mockReturnValueOnce(first).mockReturnValueOnce(second);
+    store.exportTxt(docs[0].documentId);
+    store.exportTxt(docs[0].documentId);
+    expect(library.export).toHaveBeenCalledTimes(1);
+    expect(store.exportBusyIds().has(docs[0].documentId)).toBe(true);
+    first.error(new Error('private OCR text'));
+    expect(store.importError()).toBe(desktopMessages().exportFailed);
+    expect(store.exportBusyIds().size).toBe(0);
+    store.exportTxt(docs[0].documentId);
+    expect(store.importError()).toBe('');
+    expect(library.export).toHaveBeenCalledTimes(2);
+    second.next({ fileName: 'host.txt', content: 'saved text', mediaType: 'text/plain' });
+    second.complete();
+    expect(download).toHaveBeenCalledWith('host.txt', 'saved text', 'text/plain');
+    expect(store.importError()).toBe('');
+  });
+
+  it('exports OCR through the host with page headings and the host filename', () => {
+    const { store, docs, library } = configure({ ocrReady: false });
+    docs.push(doc({ status: 'completed', hasRaw: true }));
+    store.attach();
+    TestBed.tick();
+    const download = vi.spyOn(TestBed.inject(DesktopWorkspaceFormattingService), 'downloadText').mockImplementation(() => undefined);
+    store.exportTxt(docs[0].documentId);
+    expect(library.export).toHaveBeenCalledWith(docs[0].documentId, 'text', '第 {page} 頁');
+    expect(download).toHaveBeenCalledWith('host.txt', 'host text', 'text/plain');
+    expect(library.get).not.toHaveBeenCalled();
+  });
 
   it('keeps an imported file waiting while OCR is missing, then starts it when install finishes', async () => {
     const harness = configure({ ocrReady: false });
@@ -297,6 +335,7 @@ function configure(options: { readonly ocrReady: boolean; readonly job?: Desktop
   };
   const library = {
     list: vi.fn(() => of([...docs])),
+    export: vi.fn(() => of({ fileName: 'host.txt', content: 'host text', mediaType: 'text/plain' })),
     discardSelections: vi.fn(() => of(undefined)),
     importSelection: vi.fn((input: DesktopSourceSelection, captureOptions?: DesktopCaptureOptions) => {
       const fileName = input.fileName;

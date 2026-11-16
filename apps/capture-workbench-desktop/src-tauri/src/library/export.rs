@@ -221,11 +221,12 @@ fn render_recording(
                 .unwrap_or(id)
         });
         let named = || name.map_or_else(|| text.to_owned(), |name| format!("{name}: {text}"));
+        // HH:MM:SS of the line's start, for the formats a person reads.
+        let time = timestamp(locator["startMs"].as_u64().unwrap_or(0), ".");
+        let time = &time[..time.len() - 4];
         match format {
-            LibraryExportFormat::Text => output.push(named()),
+            LibraryExportFormat::Text => output.push(format!("[{time}] {}", named())),
             LibraryExportFormat::Markdown => {
-                let time = timestamp(locator["startMs"].as_u64().unwrap_or(0), ".");
-                let time = &time[..time.len() - 4];
                 // A name must not close the bold span or start a new block.
                 let prefix = name.map_or_else(
                     || format!("**[{time}]**"),
@@ -439,7 +440,10 @@ mod tests {
         let text = rendered(&raw, LibraryExportFormat::Text, true);
         assert_eq!(text.file_name, "sample.txt");
         assert_eq!(text.media_type, "text/plain;charset=utf-8");
-        assert_eq!(text.content, "Alice: corrected line\nAlice: next");
+        assert_eq!(
+            text.content,
+            "[00:00:01] Alice: corrected line\n[01:00:00] Alice: next"
+        );
         assert_eq!(
             rendered(&raw, LibraryExportFormat::Markdown, true).content,
             "# sample.wav\n\n**[00:00:01] Alice:** corrected line\n\n**[01:00:00] Alice:** next"
@@ -464,7 +468,7 @@ mod tests {
             )
             .unwrap()
             .content,
-            "Recognized: original\nRecognized: next"
+            "[00:00:01] Recognized: original\n[01:00:00] Recognized: next"
         );
         let structured = json!({"speakers":[{"speakerId":"s", "displayName":"Structured name"}]});
         assert_eq!(
@@ -479,7 +483,7 @@ mod tests {
             )
             .unwrap()
             .content,
-            "Structured name: original\nStructured name: next"
+            "[00:00:01] Structured name: original\n[01:00:00] Structured name: next"
         );
     }
 
@@ -487,7 +491,7 @@ mod tests {
     fn transcripts_without_speakers_have_no_name_prefix() {
         let raw = json!({"segments":[{"segmentId":"z", "text":"hello", "locator":{"kind":"time", "startMs":0, "endMs":1000}}]});
         for (format, expected) in [
-            (LibraryExportFormat::Text, "hello"),
+            (LibraryExportFormat::Text, "[00:00:00] hello"),
             (
                 LibraryExportFormat::Markdown,
                 "# sample.wav\n\n**[00:00:00]** hello",
@@ -591,7 +595,7 @@ mod tests {
             )
             .unwrap()
             .content,
-            "Recognized: original\nRecognized: next"
+            "[00:00:01] Recognized: original\n[01:00:00] Recognized: next"
         );
     }
 
