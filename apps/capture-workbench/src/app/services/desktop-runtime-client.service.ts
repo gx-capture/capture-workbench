@@ -300,6 +300,7 @@ export class DesktopRuntimeClientService {
           ...status,
           runtimeVersion: ready.runtimeVersion,
           apiVersion: ready.apiVersion,
+          contractSetVersion: ready.contractSetVersion,
           captureDocumentSchemaVersion: ready.captureDocumentSchemaVersion,
           ocrCompute: isOcrComputePreflight(compute) ? compute : null,
         };

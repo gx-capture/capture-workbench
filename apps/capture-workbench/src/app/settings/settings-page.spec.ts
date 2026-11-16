@@ -26,6 +26,7 @@ describe('SettingsPage', () => {
               { path: 'engines', component: DummyChildPage },
               { path: 'compute', component: DummyChildPage },
               { path: 'general', component: DummyChildPage },
+              { path: 'diagnostics', component: DummyChildPage },
             ],
           },
         ]),
@@ -36,7 +37,7 @@ describe('SettingsPage', () => {
     return { harness, el: harness.routeNativeElement as HTMLElement };
   }
 
-  it('renders the 設定 heading, labelled sub-navigation, and three links', async () => {
+  it('renders the 設定 heading, labelled sub-navigation, and four links', async () => {
     const { el } = await setup();
 
     expect(el.querySelector('h1')?.textContent?.trim()).toBe('設定');
@@ -47,11 +48,13 @@ describe('SettingsPage', () => {
       '辨識功能',
       '運算裝置',
       '一般',
+      '診斷',
     ]);
     expect(links.map((link) => link.getAttribute('data-testid'))).toEqual([
       'settings-nav-engines',
       'settings-nav-compute',
       'settings-nav-general',
+      'settings-nav-diagnostics',
     ]);
   });
 
@@ -87,6 +90,6 @@ describe('SettingsPage', () => {
       [...el.querySelectorAll('[data-testid="settings-subnav"] a')].map((link) =>
         link.textContent?.trim(),
       ),
-    ).toEqual(['Recognition features', 'Compute', 'General']);
+    ).toEqual(['Recognition features', 'Compute', 'General', 'Diagnostics']);
   });
 });

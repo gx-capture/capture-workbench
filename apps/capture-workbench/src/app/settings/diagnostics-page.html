@@ -1,0 +1,294 @@
+<section
+  class="flex max-w-4xl flex-col gap-6"
+  data-testid="page-settings-diagnostics"
+>
+  <h2 class="text-lg font-semibold">{{ m().settingsDiagnosticsTitle }}</h2>
+
+  @let runtime = store.runtimeView();
+  <section
+    hlmCard
+    class="flex flex-col gap-3 p-6"
+    aria-labelledby="diagnostics-runtime-title"
+    data-testid="diagnostics-runtime"
+  >
+    <h3 id="diagnostics-runtime-title" class="text-base font-semibold text-foreground">
+      {{ m().diagnosticsRuntimeTitle }}
+    </h3>
+    <dl class="grid grid-cols-[auto_1fr] gap-x-8 gap-y-2 text-sm">
+      <dt class="font-medium text-muted-foreground">{{ m().resultDetailStatus }}</dt>
+      <dd data-testid="diagnostics-runtime-status">{{ runtime.statusLabel }}</dd>
+
+      @if (runtime.runtimeVersion; as runtimeVersion) {
+        <dt class="font-medium text-muted-foreground">{{ m().diagnosticsRuntimeVersion }}</dt>
+        <dd data-testid="diagnostics-runtime-version">{{ runtimeVersion }}</dd>
+      }
+      @if (runtime.apiVersion; as apiVersion) {
+        <dt class="font-medium text-muted-foreground">{{ m().diagnosticsApiVersion }}</dt>
+        <dd data-testid="diagnostics-api-version">{{ apiVersion }}</dd>
+      }
+      @if (runtime.contractSetVersion; as contractSetVersion) {
+        <dt class="font-medium text-muted-foreground">{{ m().diagnosticsContractSetVersion }}</dt>
+        <dd data-testid="diagnostics-contract-set-version">{{ contractSetVersion }}</dd>
+      }
+      @if (runtime.contractSha256; as contractSha256) {
+        <dt class="font-medium text-muted-foreground">{{ m().diagnosticsContractDigest }}</dt>
+        <dd
+          class="select-all break-all font-mono text-xs"
+          data-testid="diagnostics-contract-digest"
+        >
+          {{ contractSha256 }}
+        </dd>
+      }
+    </dl>
+
+    @if (runtime.state === 'error') {
+      @if (runtime.errorMessage; as errorMessage) {
+        <p
+          role="alert"
+          class="text-sm text-destructive"
+          data-testid="diagnostics-runtime-error"
+        >
+          {{ errorMessage }}
+        </p>
+      }
+      <div>
+        <button
+          hlmBtn
+          variant="outline"
+          size="sm"
+          type="button"
+          data-testid="diagnostics-reconnect"
+          (click)="store.reconnect()"
+        >
+          {{ m().reconnect }}
+        </button>
+      </div>
+    }
+  </section>
+
+  <section
+    hlmCard
+    class="flex flex-col gap-3 p-6"
+    aria-labelledby="diagnostics-model-title"
+    data-testid="diagnostics-model"
+  >
+    <h3 id="diagnostics-model-title" class="text-base font-semibold text-foreground">
+      {{ m().diagnosticsModelTitle }}
+    </h3>
+    <p class="text-sm text-muted-foreground">{{ m().diagnosticsModelPurpose }}</p>
+    <dl class="grid grid-cols-[auto_1fr] gap-x-8 gap-y-2 text-sm">
+      <dt class="font-medium text-muted-foreground">{{ m().model }}</dt>
+      <dd data-testid="diagnostics-active-model">
+        {{ features.activeModelOption()?.displayName ?? m().noModel }}
+      </dd>
+    </dl>
+
+    @if (features.modelOptions().length > 0) {
+      <fieldset
+        class="flex flex-col gap-2"
+        data-testid="diagnostics-model-select"
+      >
+        <legend class="text-sm font-medium text-foreground">{{ m().model }}</legend>
+        @for (option of features.modelOptions(); track option.optionId) {
+          <label class="flex cursor-pointer items-start gap-2.5 text-sm text-foreground">
+            <input
+              type="radio"
+              name="diagnostics-model-option"
+              class="mt-1 size-4 accent-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+              data-testid="diagnostics-model-option"
+              [attr.data-model-option-id]="option.optionId"
+              [attr.data-status]="option.status"
+              [value]="option.optionId"
+              [checked]="features.selectedModelOptionId() === option.optionId"
+              [disabled]="features.installing()"
+              (change)="features.selectModelOption(option.optionId)"
+            />
+            <span class="flex flex-col">
+              <strong class="font-medium">{{ option.displayName }}</strong>
+              <small class="text-xs text-muted-foreground">{{ option.modelReference }}</small>
+            </span>
+          </label>
+        }
+      </fieldset>
+
+      <div class="flex flex-col items-start gap-1">
+        <button
+          hlmBtn
+          variant="outline"
+          size="sm"
+          type="button"
+          data-testid="diagnostics-model-install"
+          [disabled]="features.installing() || !features.selectedModelOptionId()"
+          (click)="features.installSelectedModel()"
+        >
+          {{ features.installing() ? m().downloadingModel : m().agreeAndDownloadModel }}
+        </button>
+        <small class="text-xs text-muted-foreground">{{ m().modelSeparate }}</small>
+      </div>
+    }
+
+    @if (features.activeModelInstallation(); as installation) {
+      <div
+        class="flex flex-col gap-1.5"
+        data-testid="diagnostics-model-progress"
+        [attr.data-installation-id]="installation.installationId"
+        [attr.data-option-id]="installation.optionId"
+        [attr.data-status]="installation.status"
+        aria-live="polite"
+      >
+        <div class="flex items-center justify-between text-xs">
+          <strong>{{ features.modelInstallationPhase() }}</strong>
+          <span>{{ features.modelInstallationPercent() }}%</span>
+        </div>
+        <progress
+          class="h-1.5 w-full overflow-hidden rounded-full"
+          max="100"
+          [value]="features.modelInstallationPercent()"
+          [attr.aria-label]="m().modelProgress"
+        >
+          {{ features.modelInstallationPercent() }}%
+        </progress>
+        <small class="text-xs text-muted-foreground">
+          {{ m().downloading(installation.optionId) }}
+        </small>
+      </div>
+    }
+  </section>
+
+  @if (store.documentId(); as docId) {
+    <section
+      hlmCard
+      class="flex flex-col gap-4 p-6"
+      aria-labelledby="diagnostics-document-title"
+      data-testid="diagnostics-document"
+      [attr.data-document-id]="docId"
+    >
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <h3 id="diagnostics-document-title" class="text-base font-semibold text-foreground">
+          {{ m().diagnosticsDocumentTitle }}
+        </h3>
+        <a
+          hlmBtn
+          variant="outline"
+          size="sm"
+          [routerLink]="['/history', docId, 'details']"
+          data-testid="diagnostics-back-to-result"
+        >
+          {{ m().diagnosticsBackToResult }}
+        </a>
+      </div>
+
+      @if (store.documentLoading()) {
+        <p class="text-sm text-muted-foreground" data-testid="diagnostics-document-loading">
+          {{ m().resultLoading }}
+        </p>
+      } @else if (store.notFound()) {
+        <p class="text-sm text-muted-foreground" data-testid="diagnostics-document-not-found">
+          {{ m().resultNotFound }}
+        </p>
+      } @else if (store.documentError(); as docError) {
+        <p role="alert" class="text-sm text-destructive" data-testid="diagnostics-document-error">
+          {{ docError }}
+        </p>
+      } @else if (store.document(); as doc) {
+        <dl class="grid grid-cols-[auto_1fr] gap-x-8 gap-y-2 text-sm">
+          <dt class="font-medium text-muted-foreground">{{ m().resultDetailFileName }}</dt>
+          <dd data-testid="diagnostics-document-filename">{{ doc.fileName }}</dd>
+        </dl>
+
+        @if (doc.extraction; as ext) {
+          <div class="flex flex-col gap-2">
+            <h4 class="text-sm font-semibold text-foreground">
+              {{ m().diagnosticsExtractionProvenance }}
+            </h4>
+            <dl
+              class="grid grid-cols-[auto_1fr] gap-x-8 gap-y-1.5 text-sm"
+              data-testid="diagnostics-extraction-provenance"
+              [attr.data-engine]="ext.engine"
+              [attr.data-model]="ext.model"
+              [attr.data-device]="ext.device"
+              [attr.data-digest]="ext.digest"
+            >
+              <dt class="font-medium text-muted-foreground">{{ m().diagnosticsProvenanceEngine }}</dt>
+              <dd>{{ ext.engine }}</dd>
+              <dt class="font-medium text-muted-foreground">{{ m().diagnosticsProvenanceModel }}</dt>
+              <dd>{{ ext.model }}</dd>
+              @if (ext.device; as device) {
+                <dt class="font-medium text-muted-foreground">{{ m().diagnosticsProvenanceDevice }}</dt>
+                <dd>{{ device }}</dd>
+              }
+              <dt class="font-medium text-muted-foreground">{{ m().diagnosticsProvenanceDigest }}</dt>
+              <dd class="select-all break-all font-mono text-xs">{{ ext.digest }}</dd>
+            </dl>
+          </div>
+        }
+
+        @if (doc.structuring; as str) {
+          <div class="flex flex-col gap-2">
+            <h4 class="text-sm font-semibold text-foreground">
+              {{ m().diagnosticsStructuringProvenance }}
+            </h4>
+            <dl
+              class="grid grid-cols-[auto_1fr] gap-x-8 gap-y-1.5 text-sm"
+              data-testid="diagnostics-structuring-provenance"
+              [attr.data-engine]="str.engine"
+              [attr.data-model]="str.model"
+              [attr.data-digest]="str.digest"
+            >
+              <dt class="font-medium text-muted-foreground">{{ m().diagnosticsProvenanceEngine }}</dt>
+              <dd>{{ str.engine }}</dd>
+              <dt class="font-medium text-muted-foreground">{{ m().diagnosticsProvenanceModel }}</dt>
+              <dd>{{ str.model }}</dd>
+              <dt class="font-medium text-muted-foreground">{{ m().diagnosticsProvenanceDigest }}</dt>
+              <dd class="select-all break-all font-mono text-xs">{{ str.digest }}</dd>
+            </dl>
+          </div>
+        }
+
+        @if (doc.evidence; as evidence) {
+          <div class="flex flex-col gap-2">
+            <h4 class="text-sm font-semibold text-foreground">
+              {{ m().diagnosticsEvidenceTitle }}
+            </h4>
+            <dl
+              class="grid grid-cols-[auto_1fr] gap-x-8 gap-y-1.5 text-sm"
+              data-testid="diagnostics-evidence"
+            >
+              <dt class="font-medium text-muted-foreground">{{ m().resultDetailStatus }}</dt>
+              <dd data-testid="diagnostics-evidence-status">{{ evidence.status }}</dd>
+              <dt class="font-medium text-muted-foreground">{{ m().ocrColPages }}</dt>
+              <dd data-testid="diagnostics-evidence-pages">{{ evidence.pageCount }}</dd>
+              <dt class="font-medium text-muted-foreground">{{ m().diagnosticsProvenanceDigest }}</dt>
+              <dd
+                class="select-all break-all font-mono text-xs"
+                data-testid="diagnostics-evidence-digest"
+              >
+                {{ evidence.digest }}
+              </dd>
+            </dl>
+          </div>
+        }
+
+        <div class="flex flex-col items-start gap-2">
+          <button
+            hlmBtn
+            variant="outline"
+            size="sm"
+            type="button"
+            data-testid="diagnostics-export-json"
+            [disabled]="!doc.canExportJson || store.exporting()"
+            [attr.aria-busy]="store.exporting()"
+            (click)="store.exportJson()"
+          >
+            {{ store.exporting() ? m().exportInProgress : m().exportJson }}
+          </button>
+          @if (store.exportError(); as exportError) {
+            <p role="alert" class="text-sm text-destructive" data-testid="diagnostics-export-error">
+              {{ exportError }}
+            </p>
+          }
+        </div>
+      }
+    </section>
+  }
+</section>

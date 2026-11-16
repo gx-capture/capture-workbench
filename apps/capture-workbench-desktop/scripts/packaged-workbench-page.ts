@@ -14,20 +14,26 @@ export function isPackagedWorkbenchUrl(url: string): boolean {
 
 /**
  * The same navigation as {@link showHistoryWorkspace}, for a CDP
- * `Runtime.evaluate` expression: clicks the status link unless the page is
- * already there. The workspace renders after the expression returns, so
- * callers poll.
+ * `Runtime.evaluate` expression: pushes `/workspace` to history and dispatches
+ * `popstate` unless the page is already there. The workspace renders after the
+ * expression returns, so callers poll.
  */
 export const SHOW_HISTORY_WORKSPACE_EXPRESSION = `if (location.pathname !== '${HISTORY_PATH}') {
-  document.querySelector('[data-testid="runtime-status"]')?.click();
+  history.pushState(null, '', '${HISTORY_PATH}');
+  dispatchEvent(new Event('popstate'));
 }`;
 
-/** Opens the legacy workspace through the runtime status link. */
+/** Opens the legacy workspace directly by updating the browser history. */
 export function showHistoryWorkspace(page: Page): Observable<void> {
   return defer(() =>
     new URL(page.url()).pathname === HISTORY_PATH
       ? of(undefined)
-      : from(page.getByTestId('runtime-status').click()).pipe(
+      : from(
+          page.evaluate((path) => {
+            history.pushState(null, '', path);
+            dispatchEvent(new Event('popstate'));
+          }, HISTORY_PATH),
+        ).pipe(
           concatMap(() =>
             from(
               page.getByTestId('workbench-root').waitFor({ state: 'attached' }),

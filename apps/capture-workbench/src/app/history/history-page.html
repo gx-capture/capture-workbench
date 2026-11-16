@@ -341,9 +341,14 @@
               </li>
             }
           </ol>
+          @let prov = provenance(item);
           <dl class="provenance" data-testid="document-provenance">
-            <div data-testid="document-extraction-provenance" [attr.data-engine]="item.result.extractionEngine.engine" [attr.data-model]="item.result.extractionEngine.model" [attr.data-device]="item.result.extractionEngine.device" [attr.data-digest]="item.result.extractionEngine.digest"><dt>{{ m().stepRecognition }}</dt><dd>{{ item.result.extractionEngine.model }}</dd></div>
-            <div data-testid="document-structuring-provenance" [attr.data-engine]="item.result.structuringEngine.engine" [attr.data-model]="item.result.structuringEngine.model" [attr.data-digest]="item.result.structuringEngine.digest"><dt>{{ m().stepStructuring }}</dt><dd>{{ item.result.structuringEngine.model }}</dd></div>
+            @if (prov.extraction; as ext) {
+              <div data-testid="document-extraction-provenance" [attr.data-engine]="ext.engine" [attr.data-model]="ext.model" [attr.data-device]="ext.device" [attr.data-digest]="ext.digest"><dt>{{ m().stepRecognition }}</dt><dd>{{ ext.model }}</dd></div>
+            }
+            @if (prov.structuring; as str) {
+              <div data-testid="document-structuring-provenance" [attr.data-engine]="str.engine" [attr.data-model]="str.model" [attr.data-digest]="str.digest"><dt>{{ m().stepStructuring }}</dt><dd>{{ str.model }}</dd></div>
+            }
           </dl>
         </section>
       }

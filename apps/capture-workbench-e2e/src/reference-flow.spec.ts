@@ -37,8 +37,8 @@ test('navigates the Traditional Chinese shell to each page from the left navigat
   await expect(page).toHaveURL(/\/history$/u);
   await expect(page.getByText('history.pdf')).toBeVisible();
   await page.getByTestId('runtime-status').click();
-  await expect(page).toHaveURL(/\/workspace$/u);
-  await expect(page.getByTestId('workbench-root')).toBeVisible();
+  await expect(page).toHaveURL(/\/settings\/diagnostics$/u);
+  await expect(page.getByTestId('diagnostics-runtime')).toBeVisible();
 });
 
 test('filters history, returns from result sub-pages and confirms deletion', async ({ page }) => {
@@ -492,7 +492,7 @@ test('navigates settings sub-pages, toggles speech GPU preference, and switches 
 
   await expect(page).toHaveURL(/\/settings\/engines$/u);
   const subnav = page.getByRole('navigation', { name: '設定導覽' });
-  await expect(subnav.getByRole('link')).toHaveText(['辨識功能', '運算裝置', '一般']);
+  await expect(subnav.getByRole('link')).toHaveText(['辨識功能', '運算裝置', '一般', '診斷']);
   await expect(subnav.getByTestId('settings-nav-engines')).toHaveAttribute('aria-current', 'page');
 
   await subnav.getByTestId('settings-nav-compute').click();
@@ -516,6 +516,43 @@ test('navigates settings sub-pages, toggles speech GPU preference, and switches 
 
   await page.locator('[data-testid="general-language-option"][data-locale="zh-TW"]').click();
   await expect(shellNav.getByTestId('nav-settings')).toHaveText('設定');
+});
+
+test('opens diagnostics from the status dot and from result details with provenance and JSON export', async ({ page }) => {
+  const docId = 'a'.repeat(32);
+  await openDesktop(page, [], '/ocr', { editedResults: true });
+
+  await page.getByTestId('runtime-status').click();
+  await expect(page).toHaveURL(/\/settings\/diagnostics$/u);
+  await expect(page.getByTestId('diagnostics-runtime-status')).toHaveText('已就緒');
+  await expect(page.getByTestId('diagnostics-runtime-version')).toHaveText(RELEASE_VERSION);
+  await expect(page.getByTestId('diagnostics-api-version')).toHaveText('2.0');
+  await expect(page.getByTestId('diagnostics-document')).toHaveCount(0);
+
+  const modelOptions = page.getByTestId('diagnostics-model-option');
+  await expect(modelOptions).toHaveCount(3);
+  await expect(modelOptions.nth(0)).toHaveAttribute('data-model-option-id', 'qwen3.5-0.8b-v1');
+
+  await page.goto(`/history/${docId}/details`);
+  await page.getByTestId('result-detail-diagnostics').click();
+  await expect(page).toHaveURL(new RegExp(`/settings/diagnostics\\?document=${docId}$`, 'u'));
+
+  const docSection = page.getByTestId('diagnostics-document');
+  await expect(docSection).toBeVisible();
+  await expect(docSection).toHaveAttribute('data-document-id', docId);
+  const ext = page.getByTestId('diagnostics-extraction-provenance');
+  await expect(ext).toHaveAttribute('data-engine', 'windowsml-ocr');
+  await expect(ext).toHaveAttribute('data-model', 'pp-ocrv6-medium-windowsml');
+  await expect(ext).toHaveAttribute('data-device', 'windowsml-dml');
+  await expect(ext).toHaveAttribute('data-digest', `sha256:${'d'.repeat(64)}`);
+
+  const jsonDownloadPromise = page.waitForEvent('download');
+  await page.getByTestId('diagnostics-export-json').click();
+  const jsonDownload = await jsonDownloadPromise;
+  expect(jsonDownload.suggestedFilename()).toBe('history.json');
+  const jsonPath = await jsonDownload.path();
+  if (!jsonPath) throw new Error('download path missing');
+  expect(await readFile(jsonPath, 'utf8')).toContain('recognized page');
 });
 
 interface OpenDesktopOptions {
@@ -610,9 +647,18 @@ async function openDesktop(
     const rawByDocument = new Map<string, unknown>();
     const editsByDocument = new Map<string, Record<string, unknown>>();
     if (installOptions.editedResults) {
-      rawByDocument.set(historyId, { sourceText: 'recognized page', segments: [
-        { segmentId: 'page-3', order: 0, locator: { kind: 'page', page: 3 }, text: 'recognized page' },
-      ] });
+      rawByDocument.set(historyId, {
+        sourceText: 'recognized page',
+        segments: [
+          { segmentId: 'page-3', order: 0, locator: { kind: 'page', page: 3 }, text: 'recognized page' },
+        ],
+        extractionEngine: {
+          engine: 'windowsml-ocr',
+          model: 'pp-ocrv6-medium-windowsml',
+          digest: `sha256:${'d'.repeat(64)}`,
+          device: 'windowsml-dml',
+        },
+      });
       editsByDocument.set(historyId, { schemaVersion: 1, updatedAtMs: 1,
         ocrPages: { '3': 'Edited page three' }, transcriptLines: {}, speakerNames: { sp1: 'Named speaker' } });
       const recordingId = 'b'.repeat(32);

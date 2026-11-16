@@ -1,5 +1,6 @@
 import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
+import { provideRouter } from '@angular/router';
 import { setDesktopLocale } from '../i18n/desktop-messages';
 import type { ResultDetailsView } from '../services/result-review';
 import { ResultReviewStore } from '../services/result-review.store';
@@ -8,7 +9,8 @@ import { ResultDetailsPage } from './result-details-page';
 describe('ResultDetailsPage', () => {
   beforeEach(() => setDesktopLocale('zh-TW'));
 
-  it('renders the document details list', () => {
+  it('renders the document details list and diagnostics link', () => {
+    const docId = 'a'.repeat(32);
     const details: ResultDetailsView = {
       fileName: 'contract.pdf',
       mediaType: 'application/pdf',
@@ -23,9 +25,13 @@ describe('ResultDetailsPage', () => {
     TestBed.configureTestingModule({
       imports: [ResultDetailsPage],
       providers: [
+        provideRouter([]),
         {
           provide: ResultReviewStore,
-          useValue: { details: signal(details) },
+          useValue: {
+            details: signal(details),
+            detail: signal({ documentId: docId }),
+          },
         },
       ],
     });
@@ -40,5 +46,9 @@ describe('ResultDetailsPage', () => {
     expect(el.querySelector('[data-testid="result-detail-status"]')?.textContent?.trim()).toBe('完成');
     expect(el.querySelector('[data-testid="result-detail-pages"]')?.textContent?.trim()).toBe('4');
     expect(el.querySelector('[data-testid="result-detail-duration"]')).toBeNull();
+
+    const diagnosticsLink = el.querySelector('[data-testid="result-detail-diagnostics"]') as HTMLAnchorElement;
+    expect(diagnosticsLink?.textContent?.trim()).toBe('診斷資訊');
+    expect(diagnosticsLink?.getAttribute('href')).toBe(`/settings/diagnostics?document=${docId}`);
   });
 });

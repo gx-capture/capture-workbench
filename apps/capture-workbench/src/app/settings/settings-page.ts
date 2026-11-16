@@ -35,6 +35,11 @@ export class SettingsPage {
         testId: 'settings-nav-general',
         label: messages.settingsGeneralTitle,
       },
+      {
+        route: 'diagnostics',
+        testId: 'settings-nav-diagnostics',
+        label: messages.settingsDiagnosticsTitle,
+      },
     ];
   });
 }

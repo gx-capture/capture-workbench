@@ -48,6 +48,11 @@ describe('App shell and recognition pages', () => {
       '/history',
       '/settings',
     ]);
+    expect(
+      fixture.nativeElement
+        .querySelector('[data-testid="runtime-status"]')
+        ?.getAttribute('href'),
+    ).toBe('/settings/diagnostics');
   });
 
   it('opens document to text by default and marks its link as the current page', async () => {

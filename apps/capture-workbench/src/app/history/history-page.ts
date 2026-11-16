@@ -22,6 +22,7 @@ import {
 import { BrnAlertDialogImports } from '@spartan-ng/brain/alert-dialog';
 import { BrnDialogClose } from '@spartan-ng/brain/dialog';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
+import type { DesktopLibraryDetail } from '../contracts';
 import {
   DESKTOP_LOCALES,
   desktopLanguageName,
@@ -31,6 +32,7 @@ import {
   type DesktopLocale,
 } from '../i18n/desktop-messages';
 import { ComputeSettingsStore } from '../services/compute-settings.store';
+import { buildDocumentProvenance } from '../services/diagnostics';
 import {
   formatApproximateBytes,
   formatRecordingTime,
@@ -137,6 +139,10 @@ export class HistoryPage {
 
   protected partialFor(documentId: string) {
     return this.store.partialFor?.(documentId) ?? null;
+  }
+
+  protected provenance(item: DesktopLibraryDetail) {
+    return buildDocumentProvenance(item);
   }
 
   protected askDelete(item: {

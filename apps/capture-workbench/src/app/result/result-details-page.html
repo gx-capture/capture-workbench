@@ -33,4 +33,19 @@
       <dd data-testid="result-detail-updated">{{ details.updatedAtLabel }}</dd>
     </dl>
   </div>
+
+  @if (store.detail()?.documentId; as documentId) {
+    <div class="mt-4">
+      <a
+        hlmBtn
+        variant="outline"
+        size="sm"
+        routerLink="/settings/diagnostics"
+        [queryParams]="{ document: documentId }"
+        data-testid="result-detail-diagnostics"
+      >
+        {{ m().resultDetailDiagnostics }}
+      </a>
+    </div>
+  }
 }

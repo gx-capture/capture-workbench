@@ -282,6 +282,27 @@ export interface DesktopMessages {
   readonly computeAsrCpuOnly: string;
   readonly computeSaving: string;
   readonly computeBusyHint: string;
+  readonly settingsDiagnosticsTitle: string;
+  readonly diagnosticsRuntimeTitle: string;
+  readonly diagnosticsRuntimeError: string;
+  readonly diagnosticsRuntimeVersion: string;
+  readonly diagnosticsApiVersion: string;
+  readonly diagnosticsContractSetVersion: string;
+  readonly diagnosticsContractDigest: string;
+  readonly diagnosticsModelTitle: string;
+  readonly diagnosticsModelPurpose: string;
+  readonly diagnosticsDocumentTitle: string;
+  readonly diagnosticsDocumentLoadError: string;
+  readonly diagnosticsExtractionProvenance: string;
+  readonly diagnosticsStructuringProvenance: string;
+  readonly diagnosticsProvenanceEngine: string;
+  readonly diagnosticsProvenanceModel: string;
+  readonly diagnosticsProvenanceDevice: string;
+  readonly diagnosticsProvenanceDigest: string;
+  readonly diagnosticsEvidenceTitle: string;
+  readonly diagnosticsExportFailed: string;
+  readonly diagnosticsBackToResult: string;
+  readonly resultDetailDiagnostics: string;
 }
 
 const ZH_TW: DesktopMessages = {
@@ -608,6 +629,27 @@ const ZH_TW: DesktopMessages = {
   computeAsrCpuOnly: 'CPU（未偵測到可用的 CUDA 驅動程式）',
   computeSaving: '正在儲存並重新啟動運算服務…',
   computeBusyHint: '安裝或辨識進行中，暫時無法變更此設定。',
+  settingsDiagnosticsTitle: '診斷',
+  diagnosticsRuntimeTitle: '執行環境',
+  diagnosticsRuntimeError: '發生錯誤',
+  diagnosticsRuntimeVersion: 'Runtime 版本',
+  diagnosticsApiVersion: 'API 版本',
+  diagnosticsContractSetVersion: '合約集版本',
+  diagnosticsContractDigest: '合約雜湊',
+  diagnosticsModelTitle: 'Ollama 模型',
+  diagnosticsModelPurpose: '用於結構化辨識結果；目前主要功能尚未直接使用此設定。',
+  diagnosticsDocumentTitle: '文件',
+  diagnosticsDocumentLoadError: '無法載入文件診斷資訊。',
+  diagnosticsExtractionProvenance: '辨識出處',
+  diagnosticsStructuringProvenance: '結構化出處',
+  diagnosticsProvenanceEngine: '引擎',
+  diagnosticsProvenanceModel: '模型',
+  diagnosticsProvenanceDevice: '裝置',
+  diagnosticsProvenanceDigest: '雜湊',
+  diagnosticsEvidenceTitle: 'OCR 證據摘要',
+  diagnosticsExportFailed: '匯出 JSON 失敗，請重試。',
+  diagnosticsBackToResult: '返回詳細資訊',
+  resultDetailDiagnostics: '診斷資訊',
 };
 
 const EN: DesktopMessages = {
@@ -939,6 +981,27 @@ const EN: DesktopMessages = {
   computeAsrCpuOnly: 'CPU (no CUDA driver detected)',
   computeSaving: 'Saving and restarting the compute service…',
   computeBusyHint: 'Cannot change this while an installation or recognition is running.',
+  settingsDiagnosticsTitle: 'Diagnostics',
+  diagnosticsRuntimeTitle: 'Runtime',
+  diagnosticsRuntimeError: 'Error',
+  diagnosticsRuntimeVersion: 'Runtime version',
+  diagnosticsApiVersion: 'API version',
+  diagnosticsContractSetVersion: 'Contract set version',
+  diagnosticsContractDigest: 'Contract digest',
+  diagnosticsModelTitle: 'Ollama model',
+  diagnosticsModelPurpose: 'Used for structuring recognized results; main views do not use it directly yet.',
+  diagnosticsDocumentTitle: 'Document',
+  diagnosticsDocumentLoadError: 'Unable to load document diagnostics.',
+  diagnosticsExtractionProvenance: 'Extraction provenance',
+  diagnosticsStructuringProvenance: 'Structuring provenance',
+  diagnosticsProvenanceEngine: 'Engine',
+  diagnosticsProvenanceModel: 'Model',
+  diagnosticsProvenanceDevice: 'Device',
+  diagnosticsProvenanceDigest: 'Digest',
+  diagnosticsEvidenceTitle: 'OCR evidence summary',
+  diagnosticsExportFailed: 'Failed to export JSON. Please try again.',
+  diagnosticsBackToResult: 'Back to details',
+  resultDetailDiagnostics: 'Diagnostics',
 };
 
 export const DESKTOP_MESSAGES: Readonly<Record<DesktopLocale, DesktopMessages>> =

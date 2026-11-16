@@ -17,14 +17,14 @@ test('packaged page lookup accepts every route of the packaged app and nothing e
   assert.equal(isPackagedWorkbenchUrl('not a url'), false);
 });
 
-test('history workspace opens through the status link and waits for the workspace', async () => {
+test('history workspace navigates via pushState + popstate and waits for the workspace', async () => {
   const steps: string[] = [];
   await firstValueFrom(
     showHistoryWorkspace(fakePage('http://tauri.localhost/ocr', steps)),
   );
 
   assert.deepEqual(steps, [
-    'click runtime-status',
+    'evaluate /workspace',
     'wait workbench-root attached',
   ]);
 });
@@ -38,33 +38,39 @@ test('history workspace is left alone when it is already shown', async () => {
   assert.deepEqual(steps, []);
 });
 
-test('CDP probe expression clicks the status link only away from the legacy workspace', () => {
-  const clicks: string[] = [];
+test('CDP probe expression pushes /workspace and dispatches popstate only away from the legacy workspace', () => {
+  const pushed: string[] = [];
+  const events: string[] = [];
   const run = (pathname: string) =>
-    new Function('location', 'document', SHOW_HISTORY_WORKSPACE_EXPRESSION)(
+    new Function(
+      'location',
+      'history',
+      'dispatchEvent',
+      SHOW_HISTORY_WORKSPACE_EXPRESSION,
+    )(
       { pathname },
-      {
-        querySelector: (selector: string) => ({
-          click: () => clicks.push(selector),
-        }),
-      },
+      { pushState: (_s: unknown, _t: string, url: string) => pushed.push(url) },
+      (event: Event) => events.push(event.type),
     );
 
   run('/workspace');
-  assert.deepEqual(clicks, []);
+  assert.deepEqual(pushed, []);
+  assert.deepEqual(events, []);
   run('/ocr');
-  assert.deepEqual(clicks, ['[data-testid="runtime-status"]']);
+  assert.deepEqual(pushed, ['/workspace']);
+  assert.deepEqual(events, ['popstate']);
   run('/history');
-  assert.deepEqual(clicks, ['[data-testid="runtime-status"]', '[data-testid="runtime-status"]']);
+  assert.deepEqual(pushed, ['/workspace', '/workspace']);
+  assert.deepEqual(events, ['popstate', 'popstate']);
 });
 
 function fakePage(url: string, steps: string[]): Page {
   return {
     url: () => url,
+    evaluate: async (_fn: unknown, path: string) => {
+      steps.push(`evaluate ${path}`);
+    },
     getByTestId: (testId: string) => ({
-      click: async () => {
-        steps.push(`click ${testId}`);
-      },
       waitFor: async (options: { state: string }) => {
         steps.push(`wait ${testId} ${options.state}`);
       },
