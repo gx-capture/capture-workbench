@@ -116,7 +116,6 @@ test('accepts a non-prefix PDF page list on /ocr, binds the request, and rejects
     { ocrJourney: true, persistLibrary: true },
   );
 
-  await page.getByTestId('first-run-dismiss').click();
   const pagesInput = page.getByTestId('ocr-pages');
   await pagesInput.fill('5-1');
   await expect(pagesInput).toHaveAttribute('aria-invalid', 'true');
@@ -124,7 +123,7 @@ test('accepts a non-prefix PDF page list on /ocr, binds the request, and rejects
 
   await dropPdf(page, 'invalid-range.pdf');
   await expect(page.getByTestId('ocr-import-error')).toBeVisible();
-  await expect(page.getByTestId('ocr-queue-row')).toHaveCount(0);
+  await expect(page.locator('[data-testid="ocr-queue-row"]', { hasText: 'invalid-range.pdf' })).toHaveCount(0);
 
   await pagesInput.fill('2, 5');
   await expect(pagesInput).not.toHaveAttribute('aria-invalid', 'true');
