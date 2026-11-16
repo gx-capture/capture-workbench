@@ -91,7 +91,7 @@ export function assertRawCaptureForFixture(
     assert.equal(segmentIds.has(segmentId), false, `Duplicate raw segment id: ${segmentId}`);
     segmentIds.add(segmentId);
     assert.equal(entry['order'], index);
-    assertLocator(entry['locator'], fixture.locatorKind, 'Raw segment locator');
+    assertLocator(entry['locator'], fixture.locatorKind, index, 'Raw segment locator');
     const text = assertNonEmptyString(entry['text'], 'Raw segment text', 100_000);
     assert.equal(text, fixture.expectedTexts[index]);
     segmentTexts.push(text);
@@ -176,24 +176,26 @@ function assertEngine(value: unknown, expectedEngine: string, label: string): vo
 function assertLocator(
   value: unknown,
   expectedKind: 'page' | 'time',
+  index: number,
   label: string,
 ): void {
   const locator = assertRecord(value, label);
   assert.equal(locator['kind'], expectedKind);
   if (expectedKind === 'page') {
     assertExactKeys(locator, ['kind', 'page'], label);
-    const page = locator['page'];
-    assert.equal(typeof page === 'number' && Number.isSafeInteger(page) && page >= 1, true);
+    assert.equal(locator['page'], index + 1);
     return;
   }
   assertExactKeys(locator, ['endMs', 'kind', 'startMs'], label);
-  const startMs = locator['startMs'];
-  const endMs = locator['endMs'];
-  assert.equal(typeof startMs === 'number' && Number.isSafeInteger(startMs) && startMs >= 0, true);
-  assert.equal(typeof endMs === 'number' && Number.isSafeInteger(endMs) && endMs > (startMs as number), true);
+  assert.equal(locator['startMs'], index * 1000);
+  assert.equal(locator['endMs'], (index + 1) * 1000);
 }
 
 function assertDateTime(value: unknown, label: string): void {
   const text = assertNonEmptyString(value, label, 100);
+  assert.match(
+    text,
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/u,
+  );
   assert.equal(Number.isNaN(Date.parse(text)), false, `${label} must be a valid ISO timestamp.`);
 }

@@ -513,6 +513,36 @@ test('installed raw assertion enforces source, engine, ordering, locator provena
     /Expected values to be strictly equal/u,
   );
 
+  assert.throws(
+    () =>
+      assertRawCaptureForFixture(
+        {
+          ...multiPageRaw,
+          segments: [
+            {
+              ...multiPageRaw.segments[0],
+              locator: { kind: 'page', page: 7 },
+            },
+            multiPageRaw.segments[1],
+          ],
+        },
+        multiPageFixture,
+      ),
+    /Expected values to be strictly equal/u,
+  );
+
+  assert.throws(
+    () =>
+      assertRawCaptureForFixture(
+        {
+          ...pageRaw,
+          createdAt: '2000',
+        },
+        pageFixture,
+      ),
+    /did not match regular expression/u,
+  );
+
   const timeFixture = captureFixture('time');
   const timeRaw = rawCapture(timeFixture);
   assert.doesNotThrow(() =>
@@ -531,6 +561,22 @@ test('installed raw assertion enforces source, engine, ordering, locator provena
             {
               ...timeRaw.segments[0],
               locator: { kind: 'time', startMs: 1000, endMs: 1000 },
+            },
+          ],
+        },
+        timeFixture,
+      ),
+    /Expected values to be strictly equal/u,
+  );
+  assert.throws(
+    () =>
+      assertRawCaptureForFixture(
+        {
+          ...timeRaw,
+          segments: [
+            {
+              ...timeRaw.segments[0],
+              locator: { kind: 'time', startMs: 5000, endMs: 6000 },
             },
           ],
         },

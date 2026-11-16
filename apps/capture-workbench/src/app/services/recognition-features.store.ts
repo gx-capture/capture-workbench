@@ -119,7 +119,9 @@ export class RecognitionFeaturesStore {
   });
 
   readonly requirements = computed(() => {
-    const listed = this.requirementsResource.value();
+    const listed = this.requirementsResource.hasValue()
+      ? this.requirementsResource.value()
+      : [];
     const removed = this.uninstalled();
     if (removed.size === 0) return listed;
     return listed.map((item) => {
@@ -129,9 +131,11 @@ export class RecognitionFeaturesStore {
     });
   });
 
-  get modelOptions() {
-    return this.modelOptionsResource.value;
-  }
+  readonly modelOptions = computed<readonly RuntimeModelOption[]>(() =>
+    this.modelOptionsResource.hasValue()
+      ? this.modelOptionsResource.value()
+      : [],
+  );
 
   readonly ocrReady = computed(() => isFeatureReady(this.requirements(), 'ocr'));
   readonly asrReady = computed(() => isFeatureReady(this.requirements(), 'asr'));
@@ -176,7 +180,9 @@ export class RecognitionFeaturesStore {
   private readonly releaseUninstalledOverlay = effect(() => {
     const removed = this.uninstalled();
     if (removed.size === 0) return;
-    const listed = this.requirementsResource.value();
+    const listed = this.requirementsResource.hasValue()
+      ? this.requirementsResource.value()
+      : [];
     if (listed.length === 0) return;
     const stale = [...removed.keys()].filter((requirementId) => {
       const listedUnit = listed.find(

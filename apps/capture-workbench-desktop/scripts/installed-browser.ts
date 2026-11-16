@@ -450,19 +450,32 @@ function captureFixture(page, fixture, appPid, fixtureDirectory, diagnostics) {
         `Installed ${fixture.sourceKind} import did not create a new queue row.`,
       )).pipe(map(() => diagnosticRow)),
     ),
-    concatMap((row) =>
-      trackSmokeStep(diagnostics.timeline, 'completion wait', () => waitUntil(
+    concatMap((row) => {
+      const visibleStatus = isAudio
+        ? row.getByTestId('asr-row-status').getByTestId('asr-row-chip')
+        : row.getByTestId('ocr-row-status');
+      return trackSmokeStep(diagnostics.timeline, 'completion wait', () => waitUntil(
         () =>
-          defer(() => from(row.getAttribute('data-user-status', { timeout: 1_000 }))).pipe(
-            map((status) => status === 'done'),
+          forkJoin({
+            userStatus: defer(() => from(row.getAttribute('data-user-status', { timeout: 1_000 }))),
+            visibleText: defer(() => from(visibleStatus.textContent({ timeout: 1_000 }))),
+          }).pipe(
+            map(
+              ({ userStatus, visibleText }) =>
+                userStatus === 'done' && visibleText?.trim() === '完成',
+            ),
           ),
         fixture.completionTimeoutMs ?? 45_000,
         `Installed ${fixture.sourceKind} capture did not complete.`,
       )).pipe(
+        concatMap(() => defer(() => from(visibleStatus.textContent({ timeout: 1_000 })))),
+        tap((visibleText) => {
+          assert.equal(visibleText?.trim(), '完成');
+        }),
         catchError((error) => incompleteCaptureError(page, row, statusTestId, error, fixture, diagnostics)),
         map(() => row),
-      ),
-    ),
+      );
+    }),
     concatMap((row) =>
       fixture.bytes
         ? defer(() => from(row.getByTestId('asr-row-playback-note').waitFor({ state: 'visible', timeout: 5_000 }))).pipe(
@@ -581,8 +594,14 @@ function prepareFirstRun(page: Page) {
   const firstRunCard = page.getByTestId('first-run-card');
   const chooseFiles = page.getByTestId('ocr-choose-files');
   const installProgress = page.getByTestId('ocr-install-progress');
-  const installError = page.getByTestId('ocr-install-error');
   const installButton = page.getByTestId('first-run-install');
+  const requiredUnits = ['windowsml-ocr', 'speech-recognition'] as const;
+  const terminalErrorStatuses = new Set([
+    'failed',
+    'cancelled',
+    'unavailable',
+    'manual_action_required',
+  ]);
   return waitUntil(
     () =>
       forkJoin({
@@ -616,40 +635,48 @@ function prepareFirstRun(page: Page) {
         concatMap(() => defer(() => from(installButton.click()))),
       );
     }),
+    concatMap(() => defer(() => from(page.getByTestId('nav-settings').click()))),
+    concatMap(() =>
+      defer(() =>
+        from(page.getByTestId('page-settings-engines').waitFor({ state: 'visible', timeout: 15_000 })),
+      ),
+    ),
     concatMap(() =>
       waitUntil(
         () =>
-          forkJoin({
-            runtimeState: defer(() => from(runtimeStatus.getAttribute('data-state'))),
-            chooseVisible: defer(() => from(chooseFiles.isVisible())),
-            chooseEnabled: defer(() => from(chooseFiles.isEnabled())),
-            progressVisible: defer(() => from(installProgress.isVisible())),
-            errorVisible: defer(() => from(installError.isVisible())),
-          }).pipe(
-            switchMap(({ runtimeState, chooseVisible, chooseEnabled, progressVisible, errorVisible }) => {
-              if (errorVisible) {
-                return defer(() => from(installError.textContent())).pipe(
-                  switchMap((message) =>
-                    throwError(
-                      () =>
-                        new Error(
-                          `First-run installation failed: ${message?.trim() || 'unknown error'}.`,
-                        ),
+          forkJoin(
+            requiredUnits.map((unitId) =>
+              defer(() =>
+                from(
+                  page
+                    .locator(`[data-testid="engine-row"][data-requirement-id="${unitId}"]`)
+                    .getAttribute('data-status'),
+                ),
+              ).pipe(map((status) => ({ unitId, status }))),
+            ),
+          ).pipe(
+            switchMap((entries) => {
+              const failure = entries.find(
+                ({ status }) => status !== null && terminalErrorStatuses.has(status),
+              );
+              if (failure) {
+                return throwError(
+                  () =>
+                    new Error(
+                      `Required recognition unit ${failure.unitId} installation ended with status ${failure.status}.`,
                     ),
-                  ),
                 );
               }
-              return of(
-                runtimeState === 'ready' &&
-                  chooseVisible &&
-                  chooseEnabled &&
-                  !progressVisible,
-              );
+              return of(entries.every(({ status }) => status === 'ready'));
             }),
           ),
         45_000,
         'Installed desktop workbench did not complete first-run requirements.',
       ),
+    ),
+    concatMap(() => defer(() => from(page.getByTestId('nav-ocr').click()))),
+    concatMap(() =>
+      defer(() => from(page.getByTestId('page-ocr').waitFor({ state: 'visible', timeout: 15_000 }))),
     ),
   );
 }
