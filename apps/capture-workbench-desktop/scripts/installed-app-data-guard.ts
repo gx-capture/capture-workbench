@@ -52,9 +52,14 @@ function sameIndex(before: AppDataSnapshot['index'], after: AppDataSnapshot['ind
   return before?.mtimeNs === after?.mtimeNs && before?.bytes === after?.bytes;
 }
 
+// Starting Windows PowerShell on a busy hosted runner can take well over ten
+// seconds; the same budget as the smoke's other process probes.
+const KNOWN_FOLDER_PROBE_TIMEOUT_MS = 45_000;
+
 // Resolve via Windows' known-folder API through .NET, never an APPDATA override.
 // This helper is invoked by the opt-in smoke only. No directory contents are read.
 export function realProductAppDataDirectory(): string {
+  let reason = 'invalid-result';
   try {
     if (process.platform !== 'win32') throw new Error();
     const systemRoot = process.env.SystemRoot ?? process.env.SYSTEMROOT;
@@ -63,12 +68,17 @@ export function realProductAppDataDirectory(): string {
       join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
       ['-NoProfile', '-NonInteractive', '-Command',
         '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; [Environment]::GetFolderPath([Environment+SpecialFolder]::ApplicationData)'],
-      { encoding: 'utf8', windowsHide: true, timeout: 10_000, stdio: ['ignore', 'pipe', 'ignore'] },
+      { encoding: 'utf8', windowsHide: true, timeout: KNOWN_FOLDER_PROBE_TIMEOUT_MS, stdio: ['ignore', 'pipe', 'ignore'] },
     ).trim();
     if (!isAbsolute(roaming) || /[\r\n\0]/u.test(roaming)) throw new Error();
     return join(roaming, 'io.github.gx-capture.capture-workbench');
-  } catch {
-    throw new Error('Cannot resolve real Roaming AppData through the Windows known folder; refusing installed smoke.');
+  } catch (error) {
+    // Only a category, never a path or the probe's output.
+    const code = (error as NodeJS.ErrnoException | undefined)?.code;
+    if (code === 'ETIMEDOUT') reason = 'probe-timeout';
+    else if (typeof code === 'string') reason = `probe-${code.toLowerCase()}`;
+    else if (typeof (error as { status?: unknown } | undefined)?.status === 'number') reason = 'probe-exit';
+    throw new Error(`Cannot resolve real Roaming AppData through the Windows known folder (${reason}); refusing installed smoke.`);
   }
 }
 

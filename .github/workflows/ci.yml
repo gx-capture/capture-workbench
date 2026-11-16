@@ -128,6 +128,9 @@ jobs:
         shell: pwsh
         run: node tools/dead-code-gate.ts --ci
 
+      - name: Pinned values ratchet
+        run: pnpm run pinned-values:check -- --ci
+
       # docs/architecture/*.md are generated from the Nx graph, the grimp
       # import graph, and the Sheriff modules; fix with architecture:update.
       - name: Architecture diagrams

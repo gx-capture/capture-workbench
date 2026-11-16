@@ -2,7 +2,10 @@ import { TestBed } from '@angular/core/testing';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
-  RUNTIME_VERSION, CAPTURE_CONTRACT_SET_SHA256 } from '@gx-capture/capture-runtime-client';
+  CAPTURE_DOCUMENT_SCHEMA_SHA256,
+  RUNTIME_VERSION,
+  CAPTURE_CONTRACT_SET_SHA256,
+} from '@gx-capture/capture-runtime-client';
 import {
   CAPTURE_CLIENT,
   type CaptureClient,
@@ -515,7 +518,7 @@ function discoveryResponse(path: string): Response | undefined {
       runtimeVersion: RUNTIME_VERSION,
       captureDocumentSchemaVersion: '2',
       captureDocumentSchemaSha256:
-        '5452631ce9d8eea48851a819530d94920a39f41350d5575df0f8f97f82171774',
+        CAPTURE_DOCUMENT_SCHEMA_SHA256,
       capabilities: {
         captureKinds: ['pdf'],
         structuringModes: ['host'],
