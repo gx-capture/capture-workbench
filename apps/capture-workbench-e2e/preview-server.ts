@@ -183,6 +183,7 @@ function buildInjectedScript(
   speed: number,
   runtimeVersion: string,
   pdfFixtureBase64: string,
+  freshStart: boolean,
 ): string {
   const fnSource = installFakeDesktop.toString();
   if (/<\/script|<!--/iu.test(fnSource)) {
@@ -190,7 +191,13 @@ function buildInjectedScript(
   }
   const config = previewScenarioConfig(scenarioName, speed, runtimeVersion, pdfFixtureBase64);
   const configJson = JSON.stringify(config).replace(/</g, '\\u003c');
-  return `<script>(${fnSource})(${configJson});</script>`;
+  // Choosing a scenario by its link is a fresh machine: what the application
+  // and the simulated library remembered in this origin's storage goes. A
+  // reload without the query keeps it, like the application restarted.
+  const reset = freshStart
+    ? 'try{localStorage.clear();sessionStorage.clear();}catch{}'
+    : '';
+  return `<script>${reset}(${fnSource})(${configJson});</script>`;
 }
 
 function injectIntoHtml(html: string, scriptTag: string): string {
@@ -210,6 +217,9 @@ function buildUpstreamHeaders(
   for (const [key, value] of Object.entries(incoming)) {
     const lower = key.toLowerCase();
     if (lower === 'host' || lower === 'accept-encoding') continue;
+    // The injected document depends on the scenario, so the upstream must
+    // answer with the full page, never with "not modified".
+    if (lower === 'if-none-match' || lower === 'if-modified-since') continue;
     if (value !== undefined) {
       headers[key] = value;
     }
@@ -322,17 +332,28 @@ const server = createServer((request, response) => {
           speed,
           runtimeVersion,
           pdfFixtureBase64,
+          hasScenarioQuery,
         );
         const modifiedHtml = injectIntoHtml(html, scriptTag);
 
         const outHeaders: OutgoingHttpHeaders = {};
         for (const [key, value] of Object.entries(upstreamRes.headers)) {
-          if (key.toLowerCase() === 'content-security-policy') continue;
+          const lower = key.toLowerCase();
+          if (lower === 'content-security-policy') continue;
+          // The body changes with the scenario: no validator, no stored copy,
+          // and one fixed length instead of the upstream's framing.
+          if (
+            lower === 'etag'
+            || lower === 'last-modified'
+            || lower === 'cache-control'
+            || lower === 'transfer-encoding'
+          ) continue;
           if (value !== undefined) {
             outHeaders[key] = value;
           }
         }
         outHeaders['content-length'] = String(Buffer.byteLength(modifiedHtml, 'utf8'));
+        outHeaders['cache-control'] = 'no-store';
 
         const setCookies: string[] = [];
         if (hasScenarioQuery) {
