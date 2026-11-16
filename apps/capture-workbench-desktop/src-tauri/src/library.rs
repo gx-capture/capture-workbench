@@ -70,6 +70,7 @@ fn inject_transaction_failure(_point: &str) -> io::Result<()> {
     Ok(())
 }
 
+mod export;
 mod filesystem;
 mod store;
 mod transaction;
@@ -1326,6 +1327,7 @@ mod tests {
             .export(crate::contracts::LibraryExportRequest {
                 document_id: created.document_id.clone(),
                 format: crate::contracts::LibraryExportFormat::Text,
+                page_label: None,
             })
             .expect("export while pending");
         drop(guard);
