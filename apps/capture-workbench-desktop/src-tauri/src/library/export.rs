@@ -7,11 +7,23 @@ pub(super) fn page_label(label: Option<&str>) -> Result<&str, String> {
     let label = label.unwrap_or("Page {page}");
     if label.chars().count() > 40
         || label.matches("{page}").count() != 1
-        || label.chars().any(char::is_control)
+        || label.chars().any(breaks_line)
     {
         return Err("Capture export pageLabel is invalid.".into());
     }
     Ok(label)
+}
+
+/// Control characters and the Unicode line and paragraph separators: each can
+/// end a heading, a label or a cue line.
+fn breaks_line(c: char) -> bool {
+    c.is_control() || matches!(c, '\u{2028}' | '\u{2029}')
+}
+
+fn single_line(text: &str) -> String {
+    text.chars()
+        .map(|c| if breaks_line(c) { ' ' } else { c })
+        .collect()
 }
 
 /// Render recognized content, never the optional model's rewritten text.
@@ -37,17 +49,7 @@ pub(super) fn render(
         LibraryExportFormat::Json => return Err("JSON export requires a stored result.".into()),
     };
     let content = if let Some(raw) = raw {
-        // Unicode line/paragraph separators must not break the heading either.
-        let heading: String = file_name
-            .chars()
-            .map(|c| {
-                if c.is_control() || matches!(c, '\u{2028}' | '\u{2029}') {
-                    ' '
-                } else {
-                    c
-                }
-            })
-            .collect();
+        let heading = single_line(file_name);
         if recording {
             render_recording(raw, result, edits, format, &heading)
         } else {
@@ -62,6 +64,13 @@ pub(super) fn render(
                         format!("{title}\n\n{text}")
                     }
                 }));
+                if pages.is_empty() {
+                    sections.extend(
+                        text_of(raw, "sourceText")
+                            .filter(|text| !text.trim().is_empty())
+                            .map(str::to_owned),
+                    );
+                }
                 sections.join("\n\n")
             } else if pages.is_empty() {
                 // A result without page locators still has its recognized text.
@@ -217,9 +226,13 @@ fn render_recording(
             LibraryExportFormat::Markdown => {
                 let time = timestamp(locator["startMs"].as_u64().unwrap_or(0), ".");
                 let time = &time[..time.len() - 4];
+                // A name must not close the bold span or start a new block.
                 let prefix = name.map_or_else(
                     || format!("**[{time}]**"),
-                    |name| format!("**[{time}] {name}:**"),
+                    |name| {
+                        let name = single_line(name).replace('\\', "\\\\").replace('*', "\\*");
+                        format!("**[{time}] {name}:**")
+                    },
                 );
                 output.push(format!("{prefix} {text}"));
             }
@@ -241,13 +254,11 @@ fn render_recording(
                     name.map_or(text.clone(), |name| {
                         let name: String = name
                             .chars()
-                            .filter(|c| {
-                                *c != '>'
-                                    && !c.is_control()
-                                    && !matches!(c, '\u{2028}' | '\u{2029}')
-                            })
+                            .filter(|c| *c != '>' && !breaks_line(*c))
                             .collect();
-                        format!("<v {}>{text}", vtt_escape(&name))
+                        // "--" before the closing ">" would read as a cue arrow.
+                        let gap = if name.ends_with('-') { " " } else { "" };
+                        format!("<v {}{gap}>{text}", vtt_escape(&name))
                     })
                 } else {
                     cue_text(&named())
@@ -505,6 +516,7 @@ mod tests {
             "{page}{page}",
             "\n{page}",
             "\u{0085}{page}",
+            "\u{2028}{page}",
             &format!("{}{{page}}", "a".repeat(35)),
         ] {
             assert!(page_label(Some(invalid)).is_err());
@@ -562,6 +574,10 @@ mod tests {
             rendered(&unlocated, LibraryExportFormat::Text, false).content,
             "whole text"
         );
+        assert_eq!(
+            rendered(&unlocated, LibraryExportFormat::Markdown, false).content,
+            "# sample.wav\n\nwhole text"
+        );
         let null_speakers = json!({"speakers": null});
         assert_eq!(
             render(
@@ -577,6 +593,32 @@ mod tests {
             .content,
             "Recognized: original\nRecognized: next"
         );
+    }
+
+    #[test]
+    fn speaker_names_cannot_change_the_structure_of_a_file() {
+        let raw = json!({"speakers":[{"speakerId":"s", "displayName":"A*\u{2028}B --"}], "segments":[
+            {"segmentId":"a", "speaker":"s", "text":"one", "locator":{"kind":"time", "startMs":0, "endMs":1000}},
+            {"segmentId":"b", "speaker":"s", "text":"skipped", "locator":{"kind":"time", "startMs":5, "endMs":5}},
+            {"segmentId":"c", "speaker":"s", "text":"two", "locator":{"kind":"time", "startMs":2000, "endMs":3000}}
+        ]});
+        let content = |format| {
+            render("x", "audio/wav", Some(&raw), None, None, &format, None)
+                .unwrap()
+                .content
+        };
+        assert_eq!(
+            content(LibraryExportFormat::Markdown),
+            "# x\n\n**[00:00:00] A\\* B --:** one\n\n**[00:00:00] A\\* B --:** skipped\n\n**[00:00:02] A\\* B --:** two"
+        );
+        let vtt = content(LibraryExportFormat::Vtt);
+        assert_eq!(vtt.matches("-->").count(), 2);
+        assert!(vtt.contains("<v A*B -- >one"));
+        // Cue numbers stay consecutive after a skipped line.
+        let srt = content(LibraryExportFormat::Srt);
+        assert!(srt.starts_with("1\n00:00:00,000 --> 00:00:01,000\n"));
+        assert!(srt.contains("\n\n2\n00:00:02,000 --> 00:00:03,000\n"));
+        assert_eq!(srt.matches("-->").count(), 2);
     }
 
     #[test]
