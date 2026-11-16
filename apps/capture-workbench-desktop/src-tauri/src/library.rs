@@ -244,6 +244,90 @@ mod tests {
     }
 
     #[test]
+    fn repeated_raw_preserves_edits_even_when_json_formatting_differs() {
+        let directory = tempfile::tempdir().unwrap();
+        let library = LibraryStore::open(directory.path()).unwrap();
+        let id = recovery_source(&library).document_id;
+        let raw =
+            serde_json::json!({ "sourceText": "recognized", "metadata": { "language": "zh" } });
+        let update = || LibraryCaptureUpdate {
+            raw: Some(raw.clone()),
+            ..completed_update(&id, "recognized")
+        };
+        library.update_capture(update()).unwrap();
+        let saved = library.save_edits(&id, page_edit("edited")).unwrap();
+        let item = library.root.join("items").join(&id);
+        let edits_before = fs::read(item.join(EDITS_FILE_NAME)).unwrap();
+        for reformat_raw in [false, true] {
+            if reformat_raw {
+                fs::write(
+                    item.join(RAW_FILE_NAME),
+                    br#"{ "sourceText":"recognized", "metadata": {"language":"zh"} }"#,
+                )
+                .unwrap();
+            }
+            library.update_capture(update()).unwrap();
+            assert_eq!(fs::read(item.join(EDITS_FILE_NAME)).unwrap(), edits_before);
+            assert_eq!(
+                library
+                    .get(LibraryDocumentRequest {
+                        document_id: id.clone()
+                    })
+                    .unwrap()
+                    .edits,
+                Some(saved.clone())
+            );
+        }
+    }
+
+    #[test]
+    fn replacing_unreadable_raw_clears_edits() {
+        let directory = tempfile::tempdir().unwrap();
+        let library = LibraryStore::open(directory.path()).unwrap();
+        let id = recovery_source(&library).document_id;
+        library
+            .update_capture(completed_update(&id, "recognized"))
+            .unwrap();
+        library.save_edits(&id, page_edit("edited")).unwrap();
+        let item = library.root.join("items").join(&id);
+        fs::write(item.join(RAW_FILE_NAME), b"{broken").unwrap();
+        library
+            .update_capture(completed_update(&id, "recognized"))
+            .unwrap();
+        assert!(!item.join(EDITS_FILE_NAME).exists());
+        assert!(library
+            .get(LibraryDocumentRequest { document_id: id })
+            .unwrap()
+            .edits
+            .is_none());
+    }
+
+    #[test]
+    fn saving_edits_requires_a_raw_file_without_parsing_it() {
+        let directory = tempfile::tempdir().unwrap();
+        let library = LibraryStore::open(directory.path()).unwrap();
+        let id = recovery_source(&library).document_id;
+        let item = library.root.join("items").join(&id);
+        let raw_path = item.join(RAW_FILE_NAME);
+        assert_eq!(
+            library.save_edits(&id, page_edit("edited")).unwrap_err(),
+            "edits require a raw result."
+        );
+        fs::create_dir(&raw_path).unwrap();
+        assert_eq!(
+            library.save_edits(&id, page_edit("edited")).unwrap_err(),
+            "edits require a raw result."
+        );
+        fs::remove_dir(&raw_path).unwrap();
+        fs::write(&raw_path, b"{broken").unwrap();
+        let saved = library.save_edits(&id, page_edit("edited")).unwrap();
+        let stored: crate::contracts::LibraryEdits =
+            serde_json::from_slice(&fs::read(item.join(EDITS_FILE_NAME)).unwrap()).unwrap();
+        assert_eq!(stored, saved);
+        assert_eq!(fs::read(raw_path).unwrap(), b"{broken");
+    }
+
+    #[test]
     fn rerun_edits_tombstone_rolls_back_or_forward_with_raw() {
         for fault in [
             "rename-1-target",

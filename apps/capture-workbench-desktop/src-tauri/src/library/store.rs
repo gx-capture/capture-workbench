@@ -499,9 +499,14 @@ impl LibraryStore {
         let mut prepared = Vec::new();
         // An empty replacement is a tombstone carried by the same journal as raw.
         // Rollback restores old edits; roll-forward can never expose them with new raw.
-        let reset_edits = update.raw.is_some()
-            && directory.join(RAW_FILE_NAME).is_file()
-            && directory.join(EDITS_FILE_NAME).exists();
+        let reset_edits = update.raw.as_ref().is_some_and(|raw| {
+            directory.join(EDITS_FILE_NAME).exists()
+                && match read_json_optional(&directory.join(RAW_FILE_NAME)) {
+                    Ok(Some(stored)) => &stored != raw,
+                    Ok(None) => false,
+                    Err(_) => true,
+                }
+        });
         if reset_edits {
             prepared.push(prepare_transaction_entry(
                 &self.root,
@@ -646,7 +651,7 @@ impl LibraryStore {
             return Err("Capture library document was not found.".into());
         }
         let directory = self.document_directory(document_id)?;
-        if read_json_optional(&directory.join(RAW_FILE_NAME))?.is_none() {
+        if !directory.join(RAW_FILE_NAME).is_file() {
             return Err("edits require a raw result.".into());
         }
         let mut edits = LibraryEdits::new(maps, now_ms()?);
