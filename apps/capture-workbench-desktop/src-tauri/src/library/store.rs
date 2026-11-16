@@ -23,6 +23,7 @@ use crate::contracts::{
     MAX_EDITS_BYTES,
 };
 
+use super::extent::DocumentExtent;
 use super::transaction::{
     pending_transaction_rolls_forward, prepare_transaction_entry, LibraryTransaction,
     TransactionStage,
@@ -84,6 +85,26 @@ pub(crate) struct LibraryIndex {
     pub(super) orphan_cleanup_disabled: bool,
 }
 
+impl LibraryIndex {
+    /// Merge an unlocked read without replacing a newer capture's extent or
+    /// resurrecting a deleted document. No disk access or derivation occurs here.
+    pub(super) fn merge_extent(
+        &mut self,
+        snapshot: &StoredDocument,
+        extent: Option<DocumentExtent>,
+    ) -> Option<StoredDocument> {
+        let document = self
+            .documents
+            .iter_mut()
+            .find(|document| document.document_id == snapshot.document_id)?;
+        if document.extent.is_none() {
+            document.extent = extent;
+            document.extent_attempted = true;
+        }
+        Some(document.clone())
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct StoredDocument {
@@ -107,6 +128,11 @@ pub(crate) struct StoredDocument {
     /// Absent on indexes written before a file could wait with options.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) capture_options: Option<LibraryCaptureOptions>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) extent: Option<DocumentExtent>,
+    /// A failed legacy read is remembered only for this process, never serialized.
+    #[serde(skip)]
+    extent_attempted: bool,
 }
 
 impl StoredDocument {
@@ -127,6 +153,20 @@ impl StoredDocument {
             recovery_message: self.recovery_message.clone(),
             capture_options: self.capture_options.clone(),
             has_raw,
+            page_count: self.extent.as_ref().and_then(|extent| {
+                extent.page_count.or_else(|| {
+                    // Result details use the selected PDF prefix when raw has no pages.
+                    if self.media_type == "application/pdf" {
+                        self.capture_options
+                            .as_ref()
+                            .and_then(|options| options.pdf_page_count)
+                            .map(u64::from)
+                    } else {
+                        None
+                    }
+                })
+            }),
+            duration_ms: self.extent.as_ref().and_then(|extent| extent.duration_ms),
         }
     }
 }
@@ -273,6 +313,8 @@ impl LibraryStore {
             recovery_message: None,
             ocr_evidence: None,
             capture_options,
+            extent: None,
+            extent_attempted: false,
         };
         let summary = document.summary(false);
         index.documents.insert(0, document);
@@ -528,6 +570,12 @@ impl LibraryStore {
         }
         document.updated_at_ms = now_ms()?;
         let has_raw = update.raw.is_some() || directory.join(RAW_FILE_NAME).is_file();
+        if let Some(raw) = &update.raw {
+            document.extent = Some(DocumentExtent::derive(raw, &document.media_type));
+            document.extent_attempted = false;
+        } else if !has_raw {
+            document.extent = None;
+        }
         let summary = document.summary(has_raw);
 
         let transaction_id = random_id()?;
@@ -634,11 +682,22 @@ impl LibraryStore {
             (query.is_empty() || document.file_name.to_lowercase().contains(&query))
                 && (status.is_empty() || document.status == status)
         }) {
-            let has_raw = self
+            let raw_path = self
                 .document_directory(&document.document_id)?
-                .join(RAW_FILE_NAME)
-                .is_file();
-            summaries.push(document.summary(has_raw));
+                .join(RAW_FILE_NAME);
+            let has_raw = raw_path.is_file();
+            if has_raw && document.extent.is_none() && !document.extent_attempted {
+                let extent = read_json_optional(&raw_path)
+                    .ok()
+                    .flatten()
+                    .map(|raw| DocumentExtent::derive(&raw, &document.media_type));
+                let current = self.lock_index()?.merge_extent(&document, extent);
+                if let Some(current) = current {
+                    summaries.push(current.summary(has_raw));
+                }
+            } else {
+                summaries.push(document.summary(has_raw));
+            }
         }
         Ok(summaries)
     }
@@ -650,35 +709,39 @@ impl LibraryStore {
         validate_document_id(&request.document_id)?;
         // Keep raw and edits from the same committed generation while reading.
         let directory = self.document_directory(&request.document_id)?;
-        let (summary, ocr_evidence, raw, edits, edits_unreadable) = {
-            let index = self.lock_index()?;
+        let (mut document, raw, edits, edits_unreadable) = {
+            let mut index = self.lock_index()?;
             let document = index
                 .documents
-                .iter()
+                .iter_mut()
                 .find(|document| document.document_id == request.document_id)
                 .ok_or_else(|| "Capture library document was not found.".to_string())?;
-            let raw = read_json_optional(&directory.join(RAW_FILE_NAME))?;
+            document.extent_attempted = true;
+            let raw = read_json_optional(&directory.join(RAW_FILE_NAME))
+                .map_err(|_| "Capture library raw result cannot be read.".to_string())?;
             let (edits, edits_unreadable) = match read_edits(&directory.join(EDITS_FILE_NAME)) {
                 Ok(edits) => (edits.filter(|edits| !edits.is_empty()), false),
                 Err(()) => (None, true),
             };
-            (
-                document.summary(raw.is_some()),
-                document.ocr_evidence.clone(),
-                raw,
-                edits,
-                edits_unreadable,
-            )
+            (document.clone(), raw, edits, edits_unreadable)
         };
+        if document.extent.is_none() {
+            if let Some(raw) = &raw {
+                document.extent = Some(DocumentExtent::derive(raw, &document.media_type));
+                let _ = self
+                    .lock_index()?
+                    .merge_extent(&document, document.extent.clone());
+            }
+        }
         // The structured result is not part of the raw-and-edits generation,
         // so it is read after the index lock is released.
         Ok(LibraryDocumentDetail {
-            summary,
+            summary: document.summary(raw.is_some()),
             raw,
             edits,
             edits_unreadable,
             result: read_json_optional(&directory.join(RESULT_FILE_NAME))?,
-            ocr_evidence,
+            ocr_evidence: document.ocr_evidence,
         })
     }
 
@@ -871,18 +934,32 @@ impl LibraryStore {
     }
 
     fn recover_index(&self, index: &mut LibraryIndex) -> Result<(), String> {
+        let attempted: std::collections::BTreeSet<String> = index
+            .documents
+            .iter()
+            .filter(|document| document.extent_attempted && document.extent.is_none())
+            .map(|document| document.document_id.clone())
+            .collect();
+        let remember_attempts = |mut recovered: LibraryIndex| {
+            for document in &mut recovered.documents {
+                if attempted.contains(&document.document_id) {
+                    document.extent_attempted = true;
+                }
+            }
+            recovered
+        };
         let recovery = recover_library_transaction(&self.root);
         if recovery.is_err() && pending_transaction_rolls_forward(&self.root) == Some(true) {
             // Durable replacements remain authoritative even if cleanup must retry.
             if let Ok((recovered, _)) = Self::read_index(&self.root) {
-                *index = recovered;
+                *index = remember_attempts(recovered);
             }
         }
         let recovered =
             recovery.and_then(|()| Self::read_index(&self.root).map(|(index, _)| index));
         match recovered {
             Ok(recovered) => {
-                *index = recovered;
+                *index = remember_attempts(recovered);
                 Ok(())
             }
             Err(_) => {

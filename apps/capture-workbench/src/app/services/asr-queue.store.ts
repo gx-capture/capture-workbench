@@ -65,7 +65,6 @@ export class AsrQueueStore {
   readonly importError = signal('');
 
   private readonly details = signal<ReadonlyMap<string, DesktopLibraryDetail>>(new Map());
-  private readonly knownDurations = signal<ReadonlyMap<string, number>>(new Map());
   private readonly loadedUpdatedAt = new Map<string, number>();
   private readonly loadingDetails = new Set<string>();
   private readonly startingIds = new Set<string>();
@@ -125,7 +124,6 @@ export class AsrQueueStore {
     const ops = this.capture.streamingOperations();
     const busyIds = this.capture.busyIds();
     const details = this.details();
-    const durations = this.knownDurations();
     const speechReady = this.speechReady();
     const installPercent = this.speechInstallPercent();
     return this.documents().map((document) =>
@@ -133,7 +131,6 @@ export class AsrQueueStore {
         document,
         detail: details.get(document.documentId),
         operation: ops.get(document.documentId),
-        knownDurationMs: durations.get(document.documentId),
         busy: busyIds.has(document.documentId),
         speechReady,
         installPercent,
@@ -205,7 +202,6 @@ export class AsrQueueStore {
         const recordings = this.documents();
         const busyIds = this.capture.busyIds();
         const speechReady = this.speechReady();
-        this.captureDurations(recordings);
         this.loadCompletedDetails(recordings);
         this.reattachRunning(recordings);
         if (speechReady) {
@@ -435,30 +431,12 @@ export class AsrQueueStore {
     });
   }
 
-  private captureDurations(recordings: readonly DesktopLibrarySummary[]): void {
-    const ops = this.capture.streamingOperations();
-    for (const document of recordings) {
-      const durationMs = ops.get(document.documentId)?.durationMs;
-      if (
-        typeof durationMs === 'number'
-        && Number.isFinite(durationMs)
-        && durationMs > 0
-        && this.knownDurations().get(document.documentId) !== durationMs
-      ) {
-        this.knownDurations.update((current) => {
-          const next = new Map(current);
-          next.set(document.documentId, durationMs);
-          return next;
-        });
-      }
-    }
-  }
-
   private loadCompletedDetails(
     recordings: readonly DesktopLibrarySummary[],
   ): void {
     for (const document of recordings) {
-      if (document.status !== 'completed') continue;
+      // Details are needed only for the speaker-count badge, never for duration.
+      if (document.status !== 'completed' || document.captureOptions?.identifySpeakers === false) continue;
       if (this.loadingDetails.has(document.documentId)) continue;
       if (this.loadedUpdatedAt.get(document.documentId) === document.updatedAtMs) {
         continue;

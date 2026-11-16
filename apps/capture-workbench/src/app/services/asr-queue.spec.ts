@@ -124,6 +124,7 @@ describe('ASR queue selectors', () => {
     const doneView = describeAsrDocument({
       document: makeRecording({
         status: 'completed',
+        durationMs: 3160_000,
         byteLength: MAX_PLAYBACK_BYTES + 1,
       }),
       detail,

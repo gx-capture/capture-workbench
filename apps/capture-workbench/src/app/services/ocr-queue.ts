@@ -216,6 +216,7 @@ function pageLabel(
   if (typeof job?.pagesTotal === 'number') return String(job.pagesTotal);
   const chosen = document.captureOptions?.pdfPageCount;
   if (typeof chosen === 'number' && chosen >= 1) return String(chosen);
+  if (typeof document.pageCount === 'number') return String(document.pageCount);
   return '—';
 }
 

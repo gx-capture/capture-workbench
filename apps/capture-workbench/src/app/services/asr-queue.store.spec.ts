@@ -53,6 +53,63 @@ function makeRecording(
 describe('AsrQueueStore', () => {
   beforeEach(() => setDesktopLocale('zh-TW'));
 
+  it('uses summary durations without loading completed recording details', () => {
+    const document = makeRecording({
+      status: 'completed', durationMs: 90_000, captureOptions: { identifySpeakers: false },
+    });
+    const { store, library, docs, streamingOperations } = setup({ initialDocs: [document] });
+    store.attach();
+    TestBed.tick();
+    expect(store.rows()[0].durationLabel).toBe('1:30');
+    expect(library.get).not.toHaveBeenCalled();
+
+    streamingOperations.set(new Map([[document.documentId, {
+      status: 'completed', durationMs: 800_000,
+    } as CaptureOperation]]));
+    docs.set([{ ...document, durationMs: 125_000, updatedAtMs: 200 }]);
+    TestBed.tick();
+    expect(store.rows()[0].durationLabel).toBe('2:05');
+    expect(library.get).not.toHaveBeenCalled();
+  });
+
+  it('keeps the live operation duration while a recording is running', () => {
+    const document = makeRecording({ status: 'processing', captureId: 'running', durationMs: 90_000 });
+    const { store, library, streamingOperations } = setup({ initialDocs: [document] });
+    streamingOperations.set(new Map([[document.documentId, {
+      captureId: 'running', status: 'extracting', durationMs: 125_000,
+    } as CaptureOperation]]));
+    expect(store.rows()[0].durationLabel).toBe('2:05');
+    expect(library.get).not.toHaveBeenCalled();
+  });
+
+  it('shows an unknown duration without fetching details when speaker identification is false', () => {
+    const document = makeRecording({
+      status: 'completed', captureOptions: { identifySpeakers: false },
+    });
+    const { store, library } = setup({ initialDocs: [document] });
+    store.attach();
+    TestBed.tick();
+    expect(store.rows()[0].durationLabel).toBe('—');
+    expect(library.get).not.toHaveBeenCalled();
+  });
+
+  it.each([true, undefined, null] as const)('loads speaker counts when identifySpeakers is %s', (identifySpeakers) => {
+    const document = makeRecording({
+      status: 'completed', durationMs: 90_000,
+      ...(identifySpeakers === undefined ? {} : { captureOptions: { identifySpeakers } }),
+    });
+    const { store, library } = setup({ initialDocs: [document] });
+    library.get.mockReturnValue(of({
+      ...document,
+      result: { speakers: [{ speakerId: 'one' }, { speakerId: 'two' }] },
+    }));
+    store.attach();
+    TestBed.tick();
+    expect(library.get).toHaveBeenCalledExactlyOnceWith(document.documentId);
+    expect(store.rows()[0].speakerCount).toBe(2);
+    expect(store.rows()[0].durationLabel).toBe('1:30');
+  });
+
   function setup(options: {
     readonly speechStatus?: RuntimeRequirement['status'];
     readonly speakersStatus?: RuntimeRequirement['status'];

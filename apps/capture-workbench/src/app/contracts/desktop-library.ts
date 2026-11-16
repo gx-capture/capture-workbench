@@ -42,6 +42,8 @@ export interface DesktopLibrarySummary {
   readonly captureOptions?: DesktopCaptureOptions | null;
   /** True when the library has stored raw OCR or transcript text. */
   readonly hasRaw?: boolean;
+  readonly pageCount?: number;
+  readonly durationMs?: number;
 }
 
 export interface DesktopLibraryDetail extends DesktopLibrarySummary {
