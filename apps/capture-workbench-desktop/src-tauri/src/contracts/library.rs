@@ -152,17 +152,25 @@ impl OcrEvidenceV1 {
         if self.digest == "0".repeat(64) {
             return Err("OCR evidence digest is empty.".into());
         }
+        if self.digest != self.content_digest()? {
+            return Err("OCR evidence digest does not match its content.".into());
+        }
+        Ok(())
+    }
+
+    /// SHA-256 of the canonical JSON of the evidence without its `digest`
+    /// field: the value `digest` must hold.
+    pub(crate) fn content_digest(&self) -> Result<String, String> {
         let mut payload = serde_json::to_value(self)
             .map_err(|error| format!("OCR evidence cannot be encoded: {error}"))?;
         payload
             .as_object_mut()
             .and_then(|object| object.remove("digest"))
             .ok_or_else(|| "OCR evidence digest is missing.".to_string())?;
-        let actual_digest = format!("{:x}", Sha256::digest(canonical_json(&payload).as_bytes()));
-        if self.digest != actual_digest {
-            return Err("OCR evidence digest does not match its content.".into());
-        }
-        Ok(())
+        Ok(format!(
+            "{:x}",
+            Sha256::digest(canonical_json(&payload).as_bytes())
+        ))
     }
 }
 

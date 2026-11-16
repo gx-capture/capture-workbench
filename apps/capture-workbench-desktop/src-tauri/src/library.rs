@@ -231,8 +231,20 @@ mod tests {
         }
     }
 
+    /// Builds evidence from JSON and seals it with the digest the host itself
+    /// computes. A fixture therefore never carries a hand-computed digest, and
+    /// any of its fields can change without recomputing one. The frozen,
+    /// cross-language sample is `test-fixtures/ocr-evidence-v1-golden.json`.
+    fn sealed_evidence(mut value: serde_json::Value) -> OcrEvidenceV1 {
+        value["digest"] = serde_json::json!("0".repeat(64));
+        let mut evidence: OcrEvidenceV1 =
+            serde_json::from_value(value).expect("evidence fixture json");
+        evidence.digest = evidence.content_digest().expect("evidence fixture digest");
+        evidence
+    }
+
     fn completed_evidence() -> OcrEvidenceV1 {
-        serde_json::from_value(serde_json::json!({
+        sealed_evidence(serde_json::json!({
             "schemaVersion": 1,
             "captureId": "capture-1",
             "sourceSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -266,23 +278,21 @@ mod tests {
             },
             "provenance": {
                 "status": "resolved",
-                "runtimeVersion": "0.4.2",
+                "runtimeVersion": env!("CARGO_PKG_VERSION"),
                 "contractSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
                 "engine": "windowsml-ocr",
-                "model": "ppocrv6-traditional-multilingual",
+                "model": "pp-ocrv6-medium-windowsml",
                 "modelDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
                 "device": "GPU",
                 "profileId": "profile-1",
                 "profileSpecSha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
                 "workerSha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
-            },
-            "digest": "55f71236198d8c2534bf75d17da1f5107777f3b2f5a66c23a3b66b6b4b7e0788"
+            }
         }))
-        .expect("valid completed evidence")
     }
 
     fn failed_zero_page_evidence() -> OcrEvidenceV1 {
-        serde_json::from_value(serde_json::json!({
+        sealed_evidence(serde_json::json!({
             "schemaVersion": 1,
             "captureId": "capture-failed",
             "sourceSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
@@ -302,16 +312,14 @@ mod tests {
             },
             "provenance": {
                 "status": "unavailable",
-                "runtimeVersion": "0.4.2",
+                "runtimeVersion": env!("CARGO_PKG_VERSION"),
                 "contractSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
                 "profileId": "profile-1",
                 "profileSpecSha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
                 "workerSha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
             },
-            "failure": { "code": "ocr_worker_failed", "message": "OCR failure: ocr_worker_failed." },
-            "digest": "5443b6d42b54d46fc546f68e9ed7c6d43f5c67a7f58b19a80f971fbd0ca04c4c"
+            "failure": { "code": "ocr_worker_failed", "message": "OCR failure: ocr_worker_failed." }
         }))
-        .expect("valid failed evidence")
     }
 
     fn evidence_update(
@@ -636,9 +644,7 @@ mod tests {
         let mut second: serde_json::Value =
             serde_json::to_value(completed_evidence()).expect("evidence json");
         second["captureId"] = serde_json::json!("capture-2");
-        second["digest"] =
-            serde_json::json!("80a8f793a98add8b12b3cbcd3e2779f93713deb1a450cb2be2650520ec6c4f73");
-        let second: OcrEvidenceV1 = serde_json::from_value(second).expect("second evidence");
+        let second = sealed_evidence(second);
         let error = library
             .update_capture(evidence_update(
                 &created.document_id,
@@ -675,10 +681,31 @@ mod tests {
         });
         value["summary"]["boxCount"] = serde_json::json!(1);
         value["summary"]["confidenceSummary"] = value["pages"][0]["confidenceSummary"].clone();
-        value["digest"] =
-            serde_json::json!("4c476296785088a64fd2086bf6045b7018f33b5cabb456b77b8ac3989310dea9");
-        let evidence: OcrEvidenceV1 = serde_json::from_value(value).expect("numeric evidence");
+        let evidence = sealed_evidence(value);
         evidence.validate().expect("numeric evidence is valid");
+    }
+
+    #[test]
+    fn evidence_changed_after_its_digest_was_recorded_is_rejected() {
+        // The frozen sample carries a digest recorded by the TypeScript builder,
+        // so this does not depend on the host's own digest function.
+        let mut recorded: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../test-fixtures/ocr-evidence-v1-golden.json"
+        ))
+        .expect("TS builder golden evidence");
+        recorded["captureId"] = serde_json::json!("capture-changed");
+        let recorded: OcrEvidenceV1 = serde_json::from_value(recorded).expect("changed evidence");
+        assert_eq!(
+            recorded.validate().expect_err("changed evidence"),
+            "OCR evidence digest does not match its content."
+        );
+
+        let mut sealed = completed_evidence();
+        sealed.capture_id = "capture-changed".into();
+        assert_eq!(
+            sealed.validate().expect_err("changed sealed evidence"),
+            "OCR evidence digest does not match its content."
+        );
     }
 
     #[test]
