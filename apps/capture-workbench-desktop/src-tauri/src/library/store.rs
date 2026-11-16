@@ -614,25 +614,36 @@ impl LibraryStore {
     ) -> Result<LibraryDocumentDetail, String> {
         validate_document_id(&request.document_id)?;
         // Keep raw and edits from the same committed generation while reading.
-        let index = self.lock_index()?;
-        let document = index
-            .documents
-            .iter()
-            .find(|document| document.document_id == request.document_id)
-            .ok_or_else(|| "Capture library document was not found.".to_string())?;
-        let directory = self.document_directory(&document.document_id)?;
-        let raw = read_json_optional(&directory.join(RAW_FILE_NAME))?;
-        let (edits, edits_unreadable) = match read_edits(&directory.join(EDITS_FILE_NAME)) {
-            Ok(edits) => (edits.filter(|edits| !edits.is_empty()), false),
-            Err(()) => (None, true),
+        let directory = self.document_directory(&request.document_id)?;
+        let (summary, ocr_evidence, raw, edits, edits_unreadable) = {
+            let index = self.lock_index()?;
+            let document = index
+                .documents
+                .iter()
+                .find(|document| document.document_id == request.document_id)
+                .ok_or_else(|| "Capture library document was not found.".to_string())?;
+            let raw = read_json_optional(&directory.join(RAW_FILE_NAME))?;
+            let (edits, edits_unreadable) = match read_edits(&directory.join(EDITS_FILE_NAME)) {
+                Ok(edits) => (edits.filter(|edits| !edits.is_empty()), false),
+                Err(()) => (None, true),
+            };
+            (
+                document.summary(raw.is_some()),
+                document.ocr_evidence.clone(),
+                raw,
+                edits,
+                edits_unreadable,
+            )
         };
+        // The structured result is not part of the raw-and-edits generation,
+        // so it is read after the index lock is released.
         Ok(LibraryDocumentDetail {
-            summary: document.summary(raw.is_some()),
+            summary,
             raw,
             edits,
             edits_unreadable,
             result: read_json_optional(&directory.join(RESULT_FILE_NAME))?,
-            ocr_evidence: document.ocr_evidence.clone(),
+            ocr_evidence,
         })
     }
 

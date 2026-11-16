@@ -207,6 +207,30 @@ mod tests {
             assert_eq!(detail.raw.unwrap()["sourceText"], "recognized");
             assert_eq!(fs::read(&path).unwrap(), bytes);
         }
+
+        // An unreadable file does not leave the document uneditable: the next
+        // save replaces it, and saving empty edits removes it.
+        let saved = library
+            .save_edits(
+                &id,
+                crate::contracts::LibraryEditMaps {
+                    ocr_pages: [("1".into(), "edited".into())].into(),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let detail = library
+            .get(LibraryDocumentRequest {
+                document_id: id.clone(),
+            })
+            .unwrap();
+        assert!(!detail.edits_unreadable);
+        assert_eq!(detail.edits, Some(saved));
+        fs::write(&path, b"{broken").unwrap();
+        library
+            .save_edits(&id, crate::contracts::LibraryEditMaps::default())
+            .unwrap();
+        assert!(!path.exists());
     }
 
     #[test]

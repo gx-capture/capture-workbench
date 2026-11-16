@@ -95,10 +95,20 @@ impl LibraryEdits {
                 }
             }
         }
-        if serde_json::to_vec(self)
-            .map_err(|_| "edits could not be encoded.")?
-            .len()
-            > MAX_EDITS_BYTES
+        // Reject a grossly oversized payload from its lengths alone, before
+        // serializing it; the exact check below still decides near the limit,
+        // where JSON escaping can add to the raw lengths.
+        let content_bytes = [&self.ocr_pages, &self.transcript_lines, &self.speaker_names]
+            .into_iter()
+            .flat_map(|map| map.iter())
+            .fold(0_usize, |sum, (key, text)| {
+                sum.saturating_add(key.len()).saturating_add(text.len())
+            });
+        if content_bytes > MAX_EDITS_BYTES
+            || serde_json::to_vec(self)
+                .map_err(|_| "edits could not be encoded.")?
+                .len()
+                > MAX_EDITS_BYTES
         {
             return Err("edits serialized file is out of bounds.".into());
         }
