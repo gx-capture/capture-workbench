@@ -1,3 +1,4 @@
+import { RELEASE_VERSION } from '../../../tools/release/release-intent.ts';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import http from 'node:http';
@@ -9,14 +10,14 @@ import { createIngestion, validateReady, verifyHostStructuring, verifyRuntimeCap
 
 function readyResponse() {
   return { status: 200, body: {
-    ready: true, service: 'capture-runtime', apiVersion: '2.0', runtimeVersion: '0.9.0',
+    ready: true, service: 'capture-runtime', apiVersion: '2.0', runtimeVersion: RELEASE_VERSION,
     captureDocumentSchemaVersion: '2', contractSetVersion: '2', message: null,
     capabilities: {
       captureKinds: ['pdf', 'image', 'audio'], structuringModes: ['runtime', 'host'],
       supportsCancellation: true, supportsRawDiagnostics: true, maxUploadBytes: DETERMINISTIC_MAX_UPLOAD_BYTES,
     },
     ocrCompute: {
-      apiVersion: '2.0', schemaVersion: '1', service: 'capture-runtime', runtimeVersion: '0.9.0',
+      apiVersion: '2.0', schemaVersion: '1', service: 'capture-runtime', runtimeVersion: RELEASE_VERSION,
       contractSetVersion: '2', contractSha256: 'a'.repeat(64), workerSha256: 'b'.repeat(64),
       mode: 'cpu-fallback', adapterClass: 'unknown', reasonCode: 'no_compatible_gpu',
       userNoticeRequired: true, noticeCode: 'ocr_cpu_fallback',

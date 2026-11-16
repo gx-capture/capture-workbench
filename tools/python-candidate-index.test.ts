@@ -1,8 +1,10 @@
+import './test-temp-root.ts';
 import { RELEASE_VERSION } from './release/release-intent.ts';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { promisify } from 'node:util';
@@ -139,8 +141,7 @@ async function writeCandidateManifest(root: string, wheel: Buffer, source: Buffe
 }
 
 test('builds and verifies a relative PEP 503 Python candidate index', async () => {
-  const root = join(import.meta.dirname, '.tmp-python-candidate-index');
-  await rm(root, { recursive: true, force: true });
+  const root = await mkdtemp(join(tmpdir(), 'python-candidate-index-'));
   const packageCandidate = join(root, 'package-candidate');
   const runtimeCandidate = join(root, 'runtime-candidate');
   const output = join(root, 'index');
@@ -177,8 +178,7 @@ test('builds and verifies a relative PEP 503 Python candidate index', async () =
 });
 
 test('rejects changed distribution bytes, direct URLs, duplicate links, and extra files', async () => {
-  const root = join(import.meta.dirname, '.tmp-python-candidate-index-rejections');
-  await rm(root, { recursive: true, force: true });
+  const root = await mkdtemp(join(tmpdir(), 'python-candidate-index-rejections-'));
   const packageCandidate = join(root, 'package-candidate');
   const runtimeCandidate = join(root, 'runtime-candidate');
   const output = join(root, 'index');
@@ -280,8 +280,7 @@ test('rejects changed distribution bytes, direct URLs, duplicate links, and extr
 });
 
 test('runs pip and Poetry HTTP installation smoke in isolated temporary environments', { skip: process.env.PYTHON_INDEX_UNIT_ONLY === '1' }, async () => {
-  const root = join(import.meta.dirname, '.tmp-python-candidate-index-http');
-  await rm(root, { recursive: true, force: true });
+  const root = await mkdtemp(join(tmpdir(), 'python-candidate-index-http-'));
   try {
     const fixture = await makeGeneratedWheelCandidate(join(root, 'fixture-one'));
     const repeatFixture = await makeGeneratedWheelCandidate(join(root, 'fixture-two'));

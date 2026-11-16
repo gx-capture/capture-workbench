@@ -6,6 +6,16 @@
 // --input, and waits for the durable OCR result. Raw text and unmasked
 // screenshots stay private for human review; the evidence records only counts
 // and identities. Teardown always runs and removes only run-owned state.
+//
+// Arguments (one per line):
+//   --provenance <installer-provenance.json>: required path to the practical installer provenance JSON.
+//   --input <file>: required path to the JPEG, PNG, or PDF file to import and OCR.
+//   --input-sha256 <sha256>: required 64-char lowercase SHA-256 hex digest of the `--input` file.
+//   --runtime-release <directory>: required in rehearsal mode (forbidden in published mode); path to the verified runtime release directory used to mirror the unpublished OCR worker.
+//
+// Environment variables (one per line):
+//   SystemRoot / SYSTEMROOT: optional Windows directory used to locate powershell.exe, reg.exe, and taskkill.exe (defaults to `C:\Windows`).
+//   COMSPEC, NUMBER_OF_PROCESSORS, OS, PATH, PATHEXT, PROCESSOR_ARCHITECTURE, PROCESSOR_IDENTIFIER, PROCESSOR_LEVEL, PROCESSOR_REVISION, PROGRAMDATA, SYSTEMDRIVE, SYSTEMROOT, USERPROFILE, WINDIR: allowlisted Windows system variables forwarded to the isolated installer and app child environment; all other inherited variables are stripped.
 import { execFile, spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';

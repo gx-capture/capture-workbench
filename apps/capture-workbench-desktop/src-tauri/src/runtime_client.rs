@@ -1288,12 +1288,10 @@ mod tests {
                     if boundary == step {
                         server_registry.request("cancel-boundary").expect("cancel");
                     }
+                    let capture_body = capture_operation_json("capture-cancel", "ingestion-cancel");
                     let (status, body) = match step {
                         "open" => ("201 Created", r#"{"ingestionId":"ingestion-cancel"}"#),
-                        "capture" => (
-                            "201 Created",
-                            r#"{"captureId":"capture-cancel","status":"queued"}"#,
-                        ),
+                        "capture" => ("201 Created", capture_body.as_str()),
                         "chunk" if boundary == "failure" => ("422 Unprocessable Entity", "{}"),
                         _ => ("200 OK", "{}"),
                     };
@@ -1438,12 +1436,13 @@ mod tests {
             drop(stream);
             let (mut stream, _) = listener.accept().expect("accept capture");
             let req = read_http_request(&mut stream);
+            let capture_body = capture_operation_json("capture-stream-1", "ingestion-stream-1");
             let capture_key = handle_idempotent_post(
                 &mut stream,
                 &req,
                 "/v2/captures",
                 "201 Created",
-                r#"{"captureId":"capture-stream-1","status":"queued"}"#,
+                &capture_body,
             );
 
             (ingestion_key, capture_key)
@@ -1454,7 +1453,7 @@ mod tests {
         let (ingestion_key, capture_key) = server.join().expect("server thread");
 
         assert_eq!(result["captureId"], "capture-stream-1");
-        assert_eq!(result["status"], "queued");
+        assert_eq!(result["status"], "created");
         assert_eq!(ingestion_key, "test-client-req-ingestion");
         assert_eq!(capture_key, "test-client-req");
     }
@@ -1574,6 +1573,24 @@ mod tests {
         assert!(error.contains("HTTP 500"));
         server.join().expect("server thread");
     }
+    fn capture_operation_json(capture_id: &str, ingestion_id: &str) -> String {
+        json!({
+            "protocolVersion": "2",
+            "captureId": capture_id,
+            "ingestionId": ingestion_id,
+            "kind": "audio",
+            "status": "created",
+            "progress": 0.0,
+            "partialRevision": 0,
+            "lastEventSequence": 0,
+            "source": null,
+            "error": null,
+            "createdAt": "2026-01-01T00:00:00Z",
+            "updatedAt": "2026-01-01T00:00:00Z",
+        })
+        .to_string()
+    }
+
     // Each script entry consumes exactly one connection; dropping it is required
     // because the native transport reads to EOF before issuing the next request.
     fn replay_scenario(stage: usize, failures: usize, status: Option<u16>, succeeds: bool) {
@@ -1630,9 +1647,11 @@ mod tests {
                             .expect("failure");
                         }
                     } else {
+                        let capture_body =
+                            capture_operation_json("replay-capture", "replay-ingestion");
                         let body = match index {
                             0 => r#"{"ingestionId":"replay-ingestion"}"#,
-                            4 => r#"{"captureId":"replay-capture"}"#,
+                            4 => capture_body.as_str(),
                             _ => "{}",
                         };
                         write!(

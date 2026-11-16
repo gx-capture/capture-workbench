@@ -157,7 +157,6 @@
     "python-candidate-index-test": {
       "cache": false,
       "executor": "nx:run-commands",
-      "dependsOn": ["python-candidate-index-http-integration"],
       "options": {
         "env": {
           "PYTHON_INDEX_UNIT_ONLY": "1"
@@ -192,6 +191,9 @@
     "python-candidate-index-http-integration": {
       "cache": false,
       "executor": "nx:run-commands",
+      "metadata": {
+        "description": "Manual HTTP installation smoke for the generated PEP 503 Python candidate index; requires python with venv/pip and poetry on PATH (not installed in CI). Run locally when changing python-candidate-index or Python wheel packaging."
+      },
       "options": {
         "command": "node --test --test-name-pattern \"runs pip and Poetry HTTP installation smoke in isolated temporary environments\" tools/python-candidate-index.test.ts"
       }

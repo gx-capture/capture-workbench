@@ -1,3 +1,14 @@
+// Manual Windows-only E2E journey for the packaged <capture-workbench> Web
+// Component against the packaged Windows `capture-runtime` executable.
+// Excluded from ordinary CI; run locally (`pnpm nx run
+// capture-workbench-e2e:runtime-web-component-e2e`) when verifying the
+// packaged Web Component + Windows runtime PDF OCR flow end-to-end.
+//
+// Requirements and inputs (one per line):
+//   Packaged Windows runtime executable and OCR worker archive (`capture-runtime:build-release-artifacts`).
+//   Packed @capture-workbench/ui and @capture-workbench/runtime-client tarballs (`capture-angular:pack`).
+//   uv with pypdfium2 available for PDF inspection/rendering.
+//   CAPTURE_PHASE15_E2E_PDF: optional PDF path (defaults to `../cert-prep/pdfs/【1】2025年07月N1 真题.pdf`).
 import { RELEASE_VERSION } from './release/release-intent.ts';
 import { randomUUID } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
@@ -66,13 +77,6 @@ const defaultPdfPath = join(
   'cert-prep',
   'pdfs',
   '【1】2025年07月N1 真题.pdf',
-);
-const embeddedTextPdfPath = join(
-  repoRoot,
-  '..',
-  'cert-prep',
-  'pdfs',
-  '\\u30101\\u30112024\\u5e7412\\u6708\\u65e5\\u8a9eN1\\u771f\\u984c-\\u7248\\u672c1.pdf',
 );
 const packageManifest = JSON.parse(
   readFileSync(
