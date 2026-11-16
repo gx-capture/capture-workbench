@@ -114,6 +114,7 @@ describe('ResultContentPage', () => {
     input.dispatchEvent(new Event('input'));
     input.dispatchEvent(new Event('blur'));
     expect(store.editLine).toHaveBeenLastCalledWith('s1', 'blur correction');
+    fixture.detectChanges();
     (el.querySelector('[data-testid="result-line-restore"]') as HTMLButtonElement).click();
     expect(store.restoreLine).toHaveBeenCalledWith('s1');
   });

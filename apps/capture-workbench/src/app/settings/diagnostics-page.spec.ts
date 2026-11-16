@@ -100,7 +100,7 @@ describe('DiagnosticsPage', () => {
   }
 
   it('renders runtime and model sections without a document section when no document param is present', () => {
-    const { el } = setup();
+    const { store, el } = setup();
 
     expect(el.querySelector('h2')?.textContent?.trim()).toBe('診斷');
     expect(el.querySelector('[data-testid="diagnostics-runtime-status"]')?.textContent?.trim()).toBe('已就緒');
