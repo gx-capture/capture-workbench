@@ -144,10 +144,9 @@ def test_synthetic_transform_rejects_nonfinite_angles(angle: float) -> None:
 
 
 def test_synthetic_degradation_is_reproducible_and_does_not_mutate_input() -> None:
-    # Scan rasterization is opt-in with the OCR extras; geometry/provenance tests
-    # above and below remain dependency-free in the regular unit environment.
-    np = pytest.importorskip("numpy", reason="synthetic raster probe requires OCR extras")
-    pytest.importorskip("cv2", reason="synthetic raster probe requires OCR extras")
+    # numpy and OpenCV come from the dev dependency group; the geometry and
+    # provenance tests above and below do not need them.
+    import numpy as np
 
     module = synthetic_module()
     image = np.full((80, 100, 3), 255, dtype=np.uint8)

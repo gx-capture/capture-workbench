@@ -359,7 +359,8 @@ def test_a_pattern_must_repeat_many_times_to_stop_a_generation():
 
 
 def test_quiet_point_and_short_tail_padding(tmp_path, monkeypatch):
-    np = pytest.importorskip("numpy")
+    import numpy as np
+
     audio = np.ones(speech.SAMPLE_RATE * 3, dtype=np.float32)
     audio[16000:17600] = 0
     assert speech._quiet_point(audio, 0, len(audio)) == 16000
@@ -442,7 +443,6 @@ def test_dtype_selection(monkeypatch, bf16, expected):
 
 
 def test_decoder_reads_pcm_and_enforces_duration_and_cancellation(tmp_path):
-    pytest.importorskip("numpy")
     source = tmp_path / "audio.wav"
     samples = array("h", [-32768, 0, 32767] * 16000)
     with wave.open(str(source), "wb") as output:

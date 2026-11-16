@@ -182,7 +182,8 @@ LAYOUT = json.loads(FIXTURE.read_text(encoding="utf-8"))
 
 @pytest.mark.parametrize("case", LAYOUT["cases"], ids=[case["id"] for case in LAYOUT["cases"]])
 def test_line_order_equals_upstream_for_recorded_detections(case: dict) -> None:
-    np = pytest.importorskip("numpy", reason="The vertical reader requires the WindowsML extras.")
+    import numpy as np
+
     from capture_runtime.ocr.infrastructure.ocr_vertical_reader import _ordered_layout
 
     detections = [
@@ -515,7 +516,8 @@ def test_reader_reports_a_layout_failure_as_such(monkeypatch: pytest.MonkeyPatch
 
 
 def test_lines_are_built_from_detections_when_the_layout_groups_none() -> None:
-    np = pytest.importorskip("numpy", reason="The vertical reader requires the WindowsML extras.")
+    import numpy as np
+
     from capture_runtime.ocr.infrastructure.ocr_vertical_reader import _ordered_layout
 
     # One box of a class the layout does not turn into a line, and one empty box.

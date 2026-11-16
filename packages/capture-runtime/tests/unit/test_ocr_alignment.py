@@ -4,6 +4,8 @@ import weakref
 from dataclasses import FrozenInstanceError
 from types import SimpleNamespace
 
+import cv2
+import numpy as np
 import pytest
 
 from capture_runtime.ocr.infrastructure.ocr_alignment import (
@@ -12,9 +14,6 @@ from capture_runtime.ocr.infrastructure.ocr_alignment import (
     UnsupportedAlignmentPipeline,
 )
 from tests.support.ocr_alignment import alignment_available
-
-cv2 = pytest.importorskip("cv2", reason="Pixel alignment tests require WindowsML OpenCV extras.")
-np = pytest.importorskip("numpy", reason="Pixel alignment tests require WindowsML NumPy extras.")
 
 
 class Cropper:
