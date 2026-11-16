@@ -68,9 +68,7 @@ impl LibraryEdits {
                 if field == "ocrPages" {
                     if key.starts_with('0')
                         || !key.bytes().all(|byte| byte.is_ascii_digit())
-                        || !key
-                            .parse::<u32>()
-                            .is_ok_and(|page| page >= 1)
+                        || !key.parse::<u32>().is_ok_and(|page| page >= 1)
                         || text.len() > MAX_PAGE_TEXT_BYTES
                     {
                         return Err(invalid());
