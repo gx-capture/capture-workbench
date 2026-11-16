@@ -14,13 +14,13 @@ test('navigates the Traditional Chinese shell to each page from the left navigat
 
   await expect(page).toHaveURL(/\/ocr$/u);
   const nav = page.getByRole('navigation', { name: '主要功能' });
-  await expect(nav.getByRole('link')).toHaveText(['文件轉文字', '錄音轉逐字稿', '紀錄', '設定']);
+  await expect(nav.locator('ul').getByRole('link')).toHaveText(['文件轉文字', '錄音轉逐字稿', '紀錄', '設定']);
   await expect(nav.getByTestId('runtime-status')).toHaveText('已就緒');
   await expect(nav.getByTestId('runtime-status')).toHaveAttribute('data-state', 'ready');
 
   const pages = [
     { link: '錄音轉逐字稿', path: /\/asr$/u, heading: '錄音轉逐字稿' },
-    { link: '紀錄', path: /\/history$/u, heading: '文件擷取工作台' },
+    { link: '紀錄', path: /\/history$/u, heading: '紀錄' },
     { link: '設定', path: /\/settings\/engines$/u, heading: '設定' },
     { link: '文件轉文字', path: /\/ocr$/u, heading: '文件轉文字' },
   ];
@@ -36,6 +36,60 @@ test('navigates the Traditional Chinese shell to each page from the left navigat
   await nav.getByRole('link', { name: '紀錄' }).click();
   await expect(page).toHaveURL(/\/history$/u);
   await expect(page.getByText('history.pdf')).toBeVisible();
+  await page.getByTestId('runtime-status').click();
+  await expect(page).toHaveURL(/\/workspace$/u);
+  await expect(page.getByTestId('workbench-root')).toBeVisible();
+});
+
+test('filters history, returns from result sub-pages and confirms deletion', async ({ page }) => {
+  await openDesktop(page, [], '/history', { editedResults: true, persistLibrary: true });
+  const rows = page.getByTestId('history-row');
+  await expect(rows).toHaveCount(2);
+  const document = rows.filter({ hasText: 'history.pdf' });
+  const recording = rows.filter({ hasText: 'meeting.mp3' });
+  await expect(document.getByRole('img', { name: '文件' })).toBeVisible();
+  await expect(recording.getByRole('img', { name: '錄音' })).toBeVisible();
+  await expect(document.locator('td').nth(2)).toHaveText('3');
+  await expect(recording.locator('td').nth(2)).toHaveText('1:05');
+  await expect(document.locator('td').nth(3)).toHaveText('完成');
+  await expect(document.locator('td').nth(4)).not.toBeEmpty();
+  await page.getByTestId('history-type-filter').selectOption('asr');
+  await expect(rows).toHaveCount(1);
+  await expect(recording).toBeVisible();
+  await page.getByTestId('history-type-filter').selectOption('all');
+  await page.getByTestId('history-status-filter').selectOption('waiting');
+  await expect(page.getByTestId('history-empty')).toContainText('沒有符合篩選條件');
+  await page.getByTestId('history-status-filter').selectOption('done');
+  await expect(rows).toHaveCount(2);
+  await page.getByTestId('history-search').fill('HISTORY');
+  await expect(rows).toHaveCount(1);
+  await document.getByTestId('history-row-view').click();
+  await expect(page).toHaveURL(/\/content\?from=history$/u);
+  await page.getByTestId('result-back').click();
+  await expect(page).toHaveURL(/\/history$/u);
+  await expect(page.getByTestId('history-search')).toHaveValue('HISTORY');
+  await document.getByRole('link', { name: 'history.pdf', exact: true }).click();
+  await page.getByTestId('result-nav-details').click();
+  await expect(page).toHaveURL(/\/details\?from=history$/u);
+  await page.reload();
+  await page.getByTestId('result-back').click();
+  await expect(page).toHaveURL(/\/history$/u);
+  await document.getByTestId('history-row-delete').click();
+  await expect(page.getByTestId('history-delete-dialog')).toContainText('history.pdf');
+  await page.getByTestId('history-delete-cancel').click();
+  await expect(document).toBeVisible();
+  await expect(page.getByTestId('history-search')).toBeFocused();
+  await document.getByTestId('history-row-delete').click();
+  await page.getByTestId('history-delete-confirm').click();
+  await expect(document).toHaveCount(0);
+  await expect(page.getByTestId('history-search')).toBeFocused();
+  await page.getByTestId('history-search').fill('');
+  await expect(rows).toHaveCount(1);
+  await recording.getByTestId('history-row-delete').click();
+  await page.getByTestId('history-delete-confirm').click();
+  await expect(rows).toHaveCount(0);
+  await expect(page.getByTestId('history-empty').getByRole('link', { name: '文件轉文字' })).toBeVisible();
+  await expect(page.getByTestId('history-empty').getByRole('link', { name: '錄音轉逐字稿' })).toBeVisible();
 });
 
 test('loads a nested result route directly, with its scripts and styles', async ({ page }) => {
@@ -44,7 +98,7 @@ test('loads a nested result route directly, with its scripts and styles', async 
   await openDesktop(page, [], `/history/${'a'.repeat(32)}/details`);
 
   const nav = page.getByRole('navigation', { name: '主要功能' });
-  await expect(nav.getByRole('link')).toHaveText(['文件轉文字', '錄音轉逐字稿', '紀錄', '設定']);
+  await expect(nav.locator('ul').getByRole('link')).toHaveText(['文件轉文字', '錄音轉逐字稿', '紀錄', '設定']);
   await expect(page.getByTestId('page-result')).toBeVisible();
   await expect(page.getByTestId('page-result')).toHaveCSS('display', 'flex');
 });
@@ -381,7 +435,7 @@ test('renders the desktop queue and history filter through the authenticated run
 });
 
 test('does not run a deterministic provider in an unconfigured browser', async ({ page }) => {
-  await page.goto('/history');
+  await page.goto('/workspace');
 
   await expect(page.getByRole('heading', { name: '文件擷取工作台' })).toBeVisible();
   await expect(page.getByRole('alert')).toContainText('Windows 桌面 App');
@@ -402,7 +456,7 @@ interface OpenDesktopOptions {
 async function openDesktop(
   page: Page,
   requirements: readonly Record<string, unknown>[],
-  path = '/history',
+  path = '/workspace',
   options: OpenDesktopOptions = {},
 ): Promise<void> {
   const pdfBase64 = (
@@ -471,6 +525,7 @@ async function openDesktop(
       updatedAtMs: 1,
       status: 'completed',
       stage: 'completed',
+      pageCount: 3,
     });
     let documents: StoredDoc[] = [historyDocument()];
     const rawByDocument = new Map<string, unknown>();
@@ -482,7 +537,7 @@ async function openDesktop(
       editsByDocument.set(historyId, { schemaVersion: 1, updatedAtMs: 1,
         ocrPages: { '3': 'Edited page three' }, transcriptLines: {}, speakerNames: { sp1: 'Named speaker' } });
       const recordingId = 'b'.repeat(32);
-      documents.push({ ...historyDocument(), documentId: recordingId, fileName: 'meeting.mp3', mediaType: 'audio/mpeg' });
+      documents.push({ ...historyDocument(), documentId: recordingId, fileName: 'meeting.mp3', mediaType: 'audio/mpeg', pageCount: undefined, durationMs: 65_000 });
       rawByDocument.set(recordingId, { sourceText: 'recognized line', speakers: [{ speakerId: 'sp1', displayName: 'Recognized speaker' }], segments: [
         { segmentId: 'line-1', order: 0, locator: { kind: 'time', startMs: 0, endMs: 1000 }, speaker: 'sp1', text: 'recognized line' },
       ] });

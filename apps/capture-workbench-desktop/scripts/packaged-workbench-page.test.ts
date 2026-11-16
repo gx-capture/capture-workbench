@@ -17,14 +17,14 @@ test('packaged page lookup accepts every route of the packaged app and nothing e
   assert.equal(isPackagedWorkbenchUrl('not a url'), false);
 });
 
-test('history workspace opens from the left navigation and waits for the workspace', async () => {
+test('history workspace opens through the status link and waits for the workspace', async () => {
   const steps: string[] = [];
   await firstValueFrom(
     showHistoryWorkspace(fakePage('http://tauri.localhost/ocr', steps)),
   );
 
   assert.deepEqual(steps, [
-    'click nav-history',
+    'click runtime-status',
     'wait workbench-root attached',
   ]);
 });
@@ -32,13 +32,13 @@ test('history workspace opens from the left navigation and waits for the workspa
 test('history workspace is left alone when it is already shown', async () => {
   const steps: string[] = [];
   await firstValueFrom(
-    showHistoryWorkspace(fakePage('http://tauri.localhost/history', steps)),
+    showHistoryWorkspace(fakePage('http://tauri.localhost/workspace', steps)),
   );
 
   assert.deepEqual(steps, []);
 });
 
-test('CDP probe expression clicks the history link only away from the history page', () => {
+test('CDP probe expression clicks the status link only away from the legacy workspace', () => {
   const clicks: string[] = [];
   const run = (pathname: string) =>
     new Function('location', 'document', SHOW_HISTORY_WORKSPACE_EXPRESSION)(
@@ -50,10 +50,12 @@ test('CDP probe expression clicks the history link only away from the history pa
       },
     );
 
-  run('/history');
+  run('/workspace');
   assert.deepEqual(clicks, []);
   run('/ocr');
-  assert.deepEqual(clicks, ['[data-testid="nav-history"]']);
+  assert.deepEqual(clicks, ['[data-testid="runtime-status"]']);
+  run('/history');
+  assert.deepEqual(clicks, ['[data-testid="runtime-status"]', '[data-testid="runtime-status"]']);
 });
 
 function fakePage(url: string, steps: string[]): Page {

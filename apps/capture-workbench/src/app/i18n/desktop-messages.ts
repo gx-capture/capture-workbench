@@ -12,6 +12,15 @@ export type ShellRoute = 'ocr' | 'asr' | 'history' | 'settings';
 
 /** Every piece of text the desktop app shows. */
 export interface DesktopMessages {
+  readonly historyType: string;
+  readonly historyDocument: string;
+  readonly historyRecording: string;
+  readonly historyExtent: string;
+  readonly historyUpdated: string;
+  readonly historyNoMatches: string;
+  readonly historyDeleteFailed: string;
+  readonly historyDeleteNamed: (name: string) => string;
+  readonly historyDiagnostics: string;
   readonly sourceRejections: Readonly<Record<'unsupported' | 'empty' | 'tooLarge' | 'notRegularFile' | 'notLocal' | 'unreadable' | 'limitReached', (count: number) => string>>;
   readonly languageName: string;
   readonly language: string;
@@ -275,6 +284,15 @@ const ZH_TW: DesktopMessages = {
     limitReached: (count) => `已達選取數量上限 (${count})`,
   },
   languageName: '中文',
+  historyType: '類型',
+  historyDocument: '文件',
+  historyRecording: '錄音',
+  historyExtent: '長度/頁數',
+  historyUpdated: '更新時間',
+  historyNoMatches: '沒有符合篩選條件的紀錄。',
+  historyDeleteFailed: '無法刪除文件，請稍後再試。',
+  historyDeleteNamed: (name) => `刪除 ${name}`,
+  historyDiagnostics: '診斷',
   language: '語言',
   navigation: 'Capture Workbench 導覽',
   workspaceNavigation: '工作區導覽',
@@ -581,6 +599,15 @@ const EN: DesktopMessages = {
     limitReached: (count) => `Selection limit reached (${count})`,
   },
   languageName: 'English',
+  historyType: 'Type',
+  historyDocument: 'Document',
+  historyRecording: 'Recording',
+  historyExtent: 'Length / pages',
+  historyUpdated: 'Updated',
+  historyNoMatches: 'No records match the filters.',
+  historyDeleteFailed: 'Could not delete the document. Please try again later.',
+  historyDeleteNamed: (name) => `Delete ${name}`,
+  historyDiagnostics: 'Diagnostics',
   language: 'Language',
   navigation: 'Capture Workbench navigation',
   workspaceNavigation: 'Workspace',

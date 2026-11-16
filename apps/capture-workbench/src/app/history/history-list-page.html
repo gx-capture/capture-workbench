@@ -1,0 +1,65 @@
+<section class="mx-auto flex max-w-[1100px] flex-col gap-6 px-8 py-10">
+  <h1 class="text-xl font-bold">{{ m().nav.history }}</h1>
+  <div class="flex flex-wrap items-end gap-4">
+    <label class="flex flex-col gap-2 text-sm">{{ m().historyType }}
+      <select class="rounded-md border border-border bg-card p-2" data-testid="history-type-filter" [value]="store.typeFilter()" (change)="store.typeFilter.set($any($event.target).value)">
+        <option value="all">{{ m().all }}</option><option value="ocr">{{ m().historyDocument }}</option><option value="asr">{{ m().historyRecording }}</option>
+      </select>
+    </label>
+    <label class="flex flex-col gap-2 text-sm">{{ m().statusFilter }}
+      <select class="rounded-md border border-border bg-card p-2" data-testid="history-status-filter" [value]="store.statusFilter()" (change)="store.statusFilter.set($any($event.target).value)">
+        <option value="all">{{ m().all }}</option>
+        <option value="waiting">{{ m().ocrStatusWaiting }}</option><option value="processing">{{ m().ocrStatusProcessing }}</option><option value="done">{{ m().ocrStatusDone }}</option><option value="needs-attention">{{ m().ocrStatusNeedsAttention }}</option><option value="cancelled">{{ m().ocrStatusCancelled }}</option>
+      </select>
+    </label>
+    <label class="flex flex-col gap-2 text-sm">{{ m().searchDocuments }}
+      <input class="rounded-md border border-border bg-card p-2" type="search" data-testid="history-search" [value]="store.search()" (input)="store.search.set($any($event.target).value)" />
+    </label>
+  </div>
+  @if (store.error()) { <p role="alert" class="text-sm text-destructive">{{ store.error() }}</p> }
+  @if (store.rows().length > 0) {
+    <div class="overflow-x-auto rounded-xl border border-border bg-card px-3 py-1">
+      <table hlmTable data-testid="history-table" class="w-full text-sm">
+        <caption class="sr-only">{{ m().nav.history }}</caption>
+        <thead hlmTHead><tr hlmTr>
+          <th hlmTh scope="col">{{ m().historyType }}</th><th hlmTh scope="col">{{ m().ocrColFile }}</th><th hlmTh scope="col">{{ m().historyExtent }}</th><th hlmTh scope="col">{{ m().ocrColStatus }}</th><th hlmTh scope="col">{{ m().historyUpdated }}</th><th hlmTh scope="col">{{ m().ocrColAction }}</th>
+        </tr></thead>
+        <tbody hlmTBody>
+          @for (row of store.rows(); track row.documentId) {
+            <tr hlmTr data-testid="history-row" [attr.data-document-id]="row.documentId" [attr.data-user-status]="row.userStatus">
+              <td hlmTd><span role="img" [attr.aria-label]="row.kind === 'ocr' ? m().historyDocument : m().historyRecording">{{ row.kind === 'ocr' ? '▤' : '♫' }}</span></td>
+              <td hlmTd><a class="underline" [routerLink]="['/history', row.documentId]" [queryParams]="{ from: 'history' }">{{ row.fileName }}</a></td>
+              <td hlmTd class="tabular-nums">{{ row.extent }}</td><td hlmTd>{{ row.statusText }}</td><td hlmTd>{{ row.updatedAt }}</td>
+              <td hlmTd class="whitespace-nowrap">
+                <button hlmBtn variant="outline" size="sm" type="button" data-testid="history-row-view" [attr.aria-label]="m().ocrViewNamed(row.fileName)" (click)="store.open(row.documentId)">{{ m().ocrView }}</button>
+                <button hlmBtn variant="ghost" size="sm" type="button" data-testid="history-row-delete" [attr.aria-label]="m().historyDeleteNamed(row.fileName)" [disabled]="!row.canDelete || store.deleting()" (click)="store.askDelete(row)">{{ m().delete }}</button>
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  } @else {
+    <div data-testid="history-empty" class="text-sm text-muted-foreground">
+      @if (store.hasDocuments()) { <p>{{ m().historyNoMatches }}</p> } @else {
+        <p>{{ m().noDocuments }}</p>
+        <a hlmBtn variant="link" routerLink="/ocr">{{ m().nav.ocr }}</a><a hlmBtn variant="link" routerLink="/asr">{{ m().nav.asr }}</a>
+      }
+    </div>
+  }
+  <brn-alert-dialog [state]="store.dialogState()" (stateChanged)="store.onDialogState($event)">
+    <brn-alert-dialog-overlay class="bg-foreground/40" />
+    <ng-template brnAlertDialogContent>
+      @if (store.pendingDelete(); as pending) {
+        <div class="bg-popover text-popover-foreground w-[min(28rem,calc(100vw-2rem))] rounded-xl p-6 shadow-lg" data-testid="history-delete-dialog">
+          <h2 brnAlertDialogTitle class="text-lg font-semibold">{{ m().confirmDelete }}</h2>
+          <p brnAlertDialogDescription class="mt-2 text-sm text-muted-foreground">{{ pending.fileName }}</p>
+          <div class="mt-6 flex justify-end gap-2">
+            <button hlmBtn variant="outline" type="button" data-testid="history-delete-cancel" [disabled]="store.deleting()" (click)="store.cancelDelete()">{{ m().confirmDeleteCancel }}</button>
+            <button hlmBtn variant="destructive" type="button" data-testid="history-delete-confirm" [disabled]="store.deleting()" (click)="store.confirmDelete()">{{ m().delete }}</button>
+          </div>
+        </div>
+      }
+    </ng-template>
+  </brn-alert-dialog>
+</section>

@@ -13,6 +13,7 @@ import type {
 import { App } from './app';
 import { appRoutes } from './app.routes';
 import { HistoryPage } from './history/history-page';
+import { HistoryListPage } from './history/history-list-page';
 import { setDesktopLocale } from './i18n/desktop-messages';
 import {
   isFeatureReady,
@@ -33,7 +34,7 @@ describe('App shell and recognition pages', () => {
 
     expect(store.initialize).toHaveBeenCalledTimes(1);
     const links = [
-      ...fixture.nativeElement.querySelectorAll('[data-testid="shell-nav"] a'),
+      ...fixture.nativeElement.querySelectorAll('[data-testid="shell-nav"] ul a'),
     ] as HTMLAnchorElement[];
     expect(links.map((link) => link.textContent?.trim())).toEqual([
       '文件轉文字',
@@ -270,8 +271,11 @@ describe('App shell and recognition pages', () => {
     );
   });
 
-  it('keeps the existing workspace on the history route and sends unknown paths home', async () => {
+  it('keeps the existing workspace on its diagnostic route and sends unknown paths home', async () => {
     expect(appRoutes.find((route) => route.path === 'history')?.component).toBe(
+      HistoryListPage,
+    );
+    expect(appRoutes.find((route) => route.path === 'workspace')?.component).toBe(
       HistoryPage,
     );
     await renderShell('/no-such-page');
@@ -287,6 +291,8 @@ describe('App shell and recognition pages', () => {
       ) as HTMLElement;
 
     expect(status().dataset['state']).toBe('starting');
+    expect(status().getAttribute('href')).toBe('/workspace');
+    expect(status().getAttribute('aria-label')).toBe('診斷');
     expect(status().textContent).toContain('尚未就緒');
 
     store.state.set('ready');
