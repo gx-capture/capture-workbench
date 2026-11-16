@@ -103,7 +103,7 @@ describe('OcrPage queue', () => {
     expect(doneExport.disabled).toBe(false);
     expect(emptyExport.disabled).toBe(true);
     expect(row(page, 'done.pdf').querySelector('[data-testid="ocr-row-view"]')?.getAttribute('href'))
-      .toBe('/history');
+      .toBe(`/history/${'c'.repeat(32)}`);
   });
 
   it('shows the install percentage on a waiting row and hides the install button', async () => {

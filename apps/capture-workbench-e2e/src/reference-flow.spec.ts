@@ -65,6 +65,14 @@ test('drops a PDF without OCR, installs it, and exports the raw text', async ({ 
   const saved = await download.path();
   if (!saved) throw new Error('download path missing');
   expect(await readFile(saved, 'utf8')).toBe('第一頁\n\n第二頁');
+
+  await row.getByTestId('ocr-row-view').click();
+  await expect(page).toHaveURL(/\/history\/[0-9a-f]{32}\/content$/u);
+  await expect(page.getByTestId('result-page-text')).toContainText('第一頁');
+  await page.getByTestId('result-page-next').click();
+  await expect(page.getByTestId('result-page-text')).toContainText('第二頁');
+  await page.getByTestId('result-nav-details').click();
+  await expect(page.getByTestId('result-detail-filename')).toHaveText('charge.pdf');
 });
 
 test('imports an OCR selection through the native picker command', async ({ page }) => {
@@ -738,6 +746,19 @@ async function openDesktop(
             ...listedSummary(current),
             ...(rawByDocument.has(documentId) ? { raw: rawByDocument.get(documentId) } : {}),
           });
+        }
+        if (command === 'library_source_bytes') {
+          const documentId = String(args.request?.['documentId'] ?? '');
+          const current = documents.find((item) => item.documentId === documentId);
+          if (!current) return Promise.reject(new Error(`Unknown document: ${documentId}`));
+          return Promise.resolve(
+            new Uint8Array([
+              137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0,
+              0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0, 31, 21, 196, 137, 0, 0, 0, 10,
+              73, 68, 65, 84, 120, 156, 99, 0, 1, 0, 0, 5, 0, 1, 13, 10, 45, 180,
+              0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+            ]).buffer,
+          );
         }
         if (command === 'library_update_capture') {
           const update = args.update ?? {};
