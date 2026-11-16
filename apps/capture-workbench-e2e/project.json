@@ -8,6 +8,7 @@
   "targets": {
     "e2e": {
       "executor": "nx:run-commands",
+      "dependsOn": [{ "projects": ["capture-workbench"], "target": "build" }],
       "parallelism": true,
       "inputs": [
         "default",

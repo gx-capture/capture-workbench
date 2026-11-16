@@ -38,6 +38,17 @@ test('navigates the Traditional Chinese shell to each page from the left navigat
   await expect(page.getByText('history.pdf')).toBeVisible();
 });
 
+test('loads a nested result route directly, with its scripts and styles', async ({ page }) => {
+  // A window reload on a nested route requests the shell at that path. Under
+  // the desktop CSP this only works while `<base href="/">` is honoured.
+  await openDesktop(page, [], `/history/${'a'.repeat(32)}/details`);
+
+  const nav = page.getByRole('navigation', { name: '主要功能' });
+  await expect(nav.getByRole('link')).toHaveText(['文件轉文字', '錄音轉逐字稿', '紀錄', '設定']);
+  await expect(page.getByTestId('page-result')).toBeVisible();
+  await expect(page.getByTestId('page-result')).toHaveCSS('display', 'flex');
+});
+
 test('drops a PDF without OCR, installs it, and exports the raw text', async ({ page }) => {
   await openDesktop(
     page,
