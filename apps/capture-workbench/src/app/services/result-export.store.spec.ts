@@ -2,13 +2,14 @@ import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { ActivatedRoute, convertToParamMap } from '@angular/router';
 import type { RawCapture } from '@gx-capture/capture-workbench-ui';
-import { of, Subject, throwError } from 'rxjs';
+import { BehaviorSubject, of, Subject, throwError } from 'rxjs';
 import type { DesktopLibraryEdits, DesktopLibraryExport } from '../contracts';
 import { desktopMessages, setDesktopLocale } from '../i18n/desktop-messages';
 import { DesktopLibraryService } from './desktop-library.service';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
 import { DesktopWorkspaceFormattingService } from './desktop-workspace-formatting.service';
 import { PdfPageRenderer } from './pdf-page-renderer.service';
+import { LibraryExportService } from './library-export.service';
 import { ResultExportStore } from './result-export.store';
 import { ResultReviewStore } from './result-review.store';
 
@@ -19,7 +20,7 @@ describe('ResultExportStore', () => {
   function setup(mediaType = 'application/pdf') {
     const payload = { fileName: 'host-name.txt', content: 'host text', mediaType: 'text/plain' };
     const library = {
-      get: vi.fn(() => of({ documentId: 'doc', fileName: 'input.pdf', mediaType,
+      get: vi.fn((documentId: string) => of({ documentId, fileName: 'input.pdf', mediaType,
         status: 'completed', byteLength: 8, createdAtMs: 1, updatedAtMs: 1,
         raw: { sourceText: 'recognized', segments: [
           { segmentId: 'p1', order: 0, locator: { kind: 'page', page: 1 }, text: 'recognized' },
@@ -30,9 +31,9 @@ describe('ResultExportStore', () => {
     const formatting = { downloadText: vi.fn() };
     const clipboard = { writeText: vi.fn(() => Promise.resolve()) };
     vi.stubGlobal('navigator', { clipboard });
-    const params = convertToParamMap({ id: 'doc' });
+    const paramMap$ = new BehaviorSubject(convertToParamMap({ id: 'doc' }));
     TestBed.configureTestingModule({ providers: [ResultReviewStore, ResultExportStore,
-      { provide: ActivatedRoute, useValue: { snapshot: { paramMap: params }, paramMap: of(params) } },
+      { provide: ActivatedRoute, useValue: { snapshot: { paramMap: paramMap$.value }, paramMap: paramMap$.asObservable() } },
       { provide: DesktopLibraryService, useValue: library },
       { provide: DesktopRuntimeClientService, useValue: { started: signal(true) } },
       { provide: DesktopWorkspaceFormattingService, useValue: formatting },
@@ -41,7 +42,7 @@ describe('ResultExportStore', () => {
     const store = TestBed.inject(ResultExportStore);
     const review = TestBed.inject(ResultReviewStore);
     TestBed.tick();
-    return { store, review, library, formatting, clipboard, payload };
+    return { store, review, library, formatting, clipboard, payload, paramMap$ };
   }
 
   it.each([
@@ -71,6 +72,7 @@ describe('ResultExportStore', () => {
     store.copy();
     store.download('text');
     expect(store.busy()).toBe(true);
+    expect(store.status()).toBe(desktopMessages().exportInProgress);
     expect(library.saveEdits).toHaveBeenCalledTimes(1);
     expect(library.export).not.toHaveBeenCalled();
     expect(library.saveEdits.mock.calls[0][1].ocrPages).toEqual({ '1': 'corrected' });
@@ -78,6 +80,133 @@ describe('ResultExportStore', () => {
     saved.complete();
     expect(library.export).toHaveBeenCalledTimes(1);
     expect(store.busy()).toBe(false);
+  });
+
+  it.each([false, true])('cancels the old document export on route change (copy: %s)', async (copy) => {
+    const { store, review, library, formatting, clipboard, payload, paramMap$ } = setup();
+    const response = new Subject<DesktopLibraryExport>();
+    library.export.mockReturnValue(response);
+    if (copy) store.copy();
+    else store.download('text');
+    expect(store.status()).toBe(desktopMessages().exportInProgress);
+    expect(TestBed.inject(LibraryExportService).busyIds().has('doc')).toBe(true);
+    paramMap$.next(convertToParamMap({ id: 'other' }));
+    TestBed.tick();
+    await vi.advanceTimersByTimeAsync(0);
+    TestBed.tick();
+    expect(review.documentId()).toBe('other');
+    expect(store.status()).toBeNull();
+    expect(TestBed.inject(LibraryExportService).busyIds().size).toBe(0);
+    response.next(payload);
+    response.complete();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(formatting.downloadText).not.toHaveBeenCalled();
+    expect(clipboard.writeText).not.toHaveBeenCalled();
+    expect(store.status()).toBeNull();
+  });
+
+  it('clears a completed outcome when the document changes', () => {
+    const { store, paramMap$ } = setup();
+    store.download('text');
+    expect(store.status()).toBe(desktopMessages().exportDownloaded);
+    paramMap$.next(convertToParamMap({ id: 'other' }));
+    TestBed.tick();
+    expect(store.status()).toBeNull();
+  });
+
+  it('cancels an export waiting for a save when the document changes', async () => {
+    const { store, review, library, formatting, clipboard, paramMap$ } = setup();
+    const saved = new Subject<DesktopLibraryEdits>();
+    library.saveEdits.mockReturnValueOnce(saved);
+    review.editPage(1, 'correction');
+    store.copy();
+    paramMap$.next(convertToParamMap({ id: 'other' }));
+    TestBed.tick();
+    await vi.advanceTimersByTimeAsync(0);
+    TestBed.tick();
+    expect(TestBed.inject(LibraryExportService).busyIds().size).toBe(0);
+    saved.next(library.saveEdits.mock.calls[0][1]);
+    saved.complete();
+    expect(library.export).not.toHaveBeenCalled();
+    expect(formatting.downloadText).not.toHaveBeenCalled();
+    expect(clipboard.writeText).not.toHaveBeenCalled();
+    expect(store.status()).toBeNull();
+  });
+
+  it.each(['zh-TW', 'en'] as const)('shows progress during a host request in %s', (locale) => {
+    const { store, library, payload } = setup();
+    setDesktopLocale(locale);
+    const response = new Subject<DesktopLibraryExport>();
+    library.export.mockReturnValue(response);
+    store.download('text');
+    expect(store.status()).toBe(desktopMessages().exportInProgress);
+    response.next(payload);
+    response.complete();
+    expect(store.status()).toBe(desktopMessages().exportDownloaded);
+  });
+
+  it('waits for its own save queued behind the previous document save', async () => {
+    const { store, review, library, paramMap$ } = setup();
+    const first = new Subject<DesktopLibraryEdits>();
+    const second = new Subject<DesktopLibraryEdits>();
+    library.saveEdits.mockReturnValueOnce(first).mockReturnValueOnce(second);
+    review.editPage(1, 'first document correction');
+    vi.advanceTimersByTime(600);
+    paramMap$.next(convertToParamMap({ id: 'other' }));
+    TestBed.tick();
+    await vi.advanceTimersByTimeAsync(0);
+    TestBed.tick();
+    review.editPage(1, 'second document correction');
+    store.download('text');
+    expect(library.saveEdits).toHaveBeenCalledTimes(1);
+    expect(library.export).not.toHaveBeenCalled();
+    first.next(library.saveEdits.mock.calls[0][1]);
+    first.complete();
+    expect(library.saveEdits).toHaveBeenCalledTimes(2);
+    expect(library.saveEdits).toHaveBeenLastCalledWith('other', expect.objectContaining({ ocrPages: { '1': 'second document correction' } }));
+    expect(library.export).not.toHaveBeenCalled();
+    second.next(library.saveEdits.mock.calls[1][1]);
+    second.complete();
+    expect(library.export).toHaveBeenCalledWith('other', 'text', '第 {page} 頁');
+  });
+
+  it('saves edits typed after the export press before calling the host export', () => {
+    const { store, review, library } = setup();
+    const first = new Subject<DesktopLibraryEdits>();
+    const second = new Subject<DesktopLibraryEdits>();
+    library.saveEdits.mockReturnValueOnce(first).mockReturnValueOnce(second);
+    review.editPage(1, 'initial correction');
+    store.download('text');
+    review.editPage(1, 'newer correction');
+    expect(store.status()).toBe(desktopMessages().exportInProgress);
+    first.next(library.saveEdits.mock.calls[0][1]);
+    first.complete();
+    expect(library.export).not.toHaveBeenCalled();
+    expect(library.saveEdits.mock.calls[1][1].ocrPages).toEqual({ '1': 'newer correction' });
+    second.next(library.saveEdits.mock.calls[1][1]);
+    second.complete();
+    expect(library.export).toHaveBeenCalledTimes(1);
+  });
+
+  it('exports the corrected persisted text after a failed save, retry, and second press', () => {
+    const { store, review, library, formatting, payload } = setup();
+    let persistedText = 'recognized';
+    library.saveEdits.mockReturnValueOnce(throwError(() => new Error('save failed')))
+      .mockImplementation((_id: string, edits: DesktopLibraryEdits) => {
+        persistedText = edits.ocrPages['1'] ?? 'recognized';
+        return of(edits);
+      });
+    library.export.mockImplementation(() => of({ ...payload, content: persistedText }));
+    review.editPage(1, 'corrected');
+    store.download('text');
+    expect(library.export).not.toHaveBeenCalled();
+    expect(store.status()).toBe(desktopMessages().resultSaveFailed);
+    review.retrySave();
+    expect(review.saveState()).toBe('saved');
+    expect(review.saveError()).toBeNull();
+    store.download('text');
+    expect(formatting.downloadText).toHaveBeenCalledWith(payload.fileName, 'corrected', payload.mediaType);
+    expect(store.status()).toBe(desktopMessages().exportDownloaded);
   });
 
   it('waits for an active autosave and the newer working copy in serial order', () => {
@@ -103,6 +232,22 @@ describe('ResultExportStore', () => {
     store.download('text');
     expect(library.export).not.toHaveBeenCalled();
     expect(store.status()).toBe(desktopMessages().resultSaveFailed);
+    expect(store.busy()).toBe(false);
+  });
+
+  it('reports the export failure when a failing save has no remaining unsaved corrections', () => {
+    const { store, review, library } = setup();
+    const saved = new Subject<DesktopLibraryEdits>();
+    library.saveEdits.mockReturnValueOnce(saved);
+    library.export.mockReturnValue(throwError(() => new Error('host export failed')));
+    review.editPage(1, 'temporary correction');
+    store.download('text');
+    review.restorePage(1);
+    saved.error(new Error('save failed'));
+    expect(review.saveState()).toBe('idle');
+    expect(review.saveError()).toBeNull();
+    expect(library.export).toHaveBeenCalledTimes(1);
+    expect(store.status()).toBe(desktopMessages().exportFailed);
     expect(store.busy()).toBe(false);
   });
 

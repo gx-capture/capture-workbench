@@ -120,8 +120,10 @@ export class CaptureQueueStore {
   }
 
   exportTxt(documentId: string): void {
+    if (this.exportBusyIds().has(documentId)) return;
     const document = this.sharedDocuments().find((item) => item.documentId === documentId);
     if (!document?.hasRaw) return;
+    this.importError.set('');
     this.exports.run(documentId, 'text')
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({

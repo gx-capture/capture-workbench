@@ -252,7 +252,12 @@ export class ResultReviewStore {
 
   private saveEdits(session: EditSession): void {
     if (session.inFlight) return;
+    const visible = () => this.session === session && !this.destroyed && this.documentId() === session.id;
     if (sameResultEdits(session.working, session.saved)) {
+      if (visible() && this.saveState() === 'failed') {
+        this.saveState.set('idle');
+        this.saveError.set(null);
+      }
       this.saveSettled.next({ savedSession: session, success: true });
       return;
     }
@@ -264,16 +269,16 @@ export class ResultReviewStore {
     const snapshot = session.working;
     this.activeSave = session;
     session.inFlight = true;
-    const visible = () => this.session === session && !this.destroyed && this.documentId() === session.id;
     if (visible()) { this.saveState.set('saving'); this.saveError.set(null); }
     this.library.saveEdits(session.id, snapshot).subscribe({
       next: () => { session.saved = snapshot; },
       error: () => {
+        const clean = sameResultEdits(session.working, session.saved);
         if (visible()) {
-          this.saveState.set('failed');
-          this.saveError.set(desktopMessages().resultSaveFailed);
+          this.saveState.set(clean ? 'idle' : 'failed');
+          this.saveError.set(clean ? null : desktopMessages().resultSaveFailed);
         }
-        this.saveSettled.next({ savedSession: session, success: false });
+        this.saveSettled.next({ savedSession: session, success: clean });
         this.finishSave(session, !sameResultEdits(snapshot, session.working));
       },
       complete: () => {

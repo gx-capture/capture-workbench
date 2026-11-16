@@ -9,8 +9,8 @@ import type {
   RuntimeRequirement,
 } from '@gx-capture/capture-workbench-ui';
 import { finalize, of, Subject, throwError, type Observable } from 'rxjs';
-import type { DesktopLibrarySummary } from '../contracts';
-import { setDesktopLocale } from '../i18n/desktop-messages';
+import type { DesktopLibraryExport, DesktopLibrarySummary } from '../contracts';
+import { desktopMessages, setDesktopLocale } from '../i18n/desktop-messages';
 import { AsrQueueStore } from './asr-queue.store';
 import { DesktopLibraryService, type DesktopSourceSelection } from './desktop-library.service';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
@@ -164,6 +164,28 @@ describe('AsrQueueStore', () => {
       router,
     };
   }
+
+  it.each(['ready', 'installable'] as const)('reports export failures and clears them on the next press with speech %s', (speechStatus) => {
+    const { store, library, workspace, formatting } = setup({ speechStatus });
+    const first = new Subject<DesktopLibraryExport>();
+    const second = new Subject<DesktopLibraryExport>();
+    library.export.mockReturnValueOnce(first).mockReturnValueOnce(second);
+    store.exportTxt('recording');
+    store.exportTxt('recording');
+    expect(library.export).toHaveBeenCalledTimes(1);
+    expect(store.exportBusyIds().has('recording')).toBe(true);
+    first.error(new Error('private transcript'));
+    expect(store.importError()).toBe(desktopMessages().exportFailed);
+    expect(workspace.message()).toBe('');
+    expect(store.exportBusyIds().has('recording')).toBe(false);
+    store.exportTxt('recording');
+    expect(store.importError()).toBe('');
+    expect(library.export).toHaveBeenCalledTimes(2);
+    second.next({ fileName: 'host.txt', content: 'saved text', mediaType: 'text/plain' });
+    second.complete();
+    expect(formatting.downloadText).toHaveBeenCalledWith('host.txt', 'saved text', 'text/plain');
+    expect(store.importError()).toBe('');
+  });
 
   it('uses recordings picker kind and snapshots spokenLanguage & identifySpeakers on import', () => {
     const { store, library } = setup({ speakersStatus: 'ready' });

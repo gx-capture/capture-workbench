@@ -1,7 +1,7 @@
 import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { of } from 'rxjs';
-import { setDesktopLocale } from '../i18n/desktop-messages';
+import { desktopMessages, setDesktopLocale } from '../i18n/desktop-messages';
 import { DesktopLibraryService } from '../services/desktop-library.service';
 import { DesktopWorkspaceFormattingService } from '../services/desktop-workspace-formatting.service';
 import { LibraryExportService } from '../services/library-export.service';
@@ -33,10 +33,14 @@ describe('ResultExportPage', () => {
     (el.querySelector('[data-testid="result-export-copy"]') as HTMLButtonElement).click();
     expect(copy).toHaveBeenCalledOnce();
     TestBed.inject(LibraryExportService).busyIds.set(new Set(['doc']));
-    store.status.set('已複製');
+    store.status.set(desktopMessages().exportInProgress);
     fixture.detectChanges();
     expect([...el.querySelectorAll('button')].every((button) => button.disabled)).toBe(true);
-    expect(el.querySelector('[data-testid="result-export-status"]')?.textContent).toContain('已複製');
+    expect(el.querySelector('[data-testid="result-export-status"]')?.textContent).toContain(desktopMessages().exportInProgress);
     expect(el.querySelector('[data-testid="result-export-status"]')?.getAttribute('role')).toBe('status');
+    TestBed.inject(LibraryExportService).busyIds.set(new Set());
+    store.status.set(desktopMessages().exportCopied);
+    fixture.detectChanges();
+    expect(el.querySelector('[data-testid="result-export-status"]')?.textContent).toContain(desktopMessages().exportCopied);
   });
 });

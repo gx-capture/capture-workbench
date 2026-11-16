@@ -240,6 +240,7 @@ export interface DesktopMessages {
   readonly exportCopy: string;
   readonly exportCopied: string;
   readonly exportDownloaded: string;
+  readonly exportInProgress: string;
   readonly exportFailed: string;
   readonly exportCopyFailed: string;
   readonly exportPageLabel: string;
@@ -542,6 +543,7 @@ const ZH_TW: DesktopMessages = {
   exportCopy: '複製全部',
   exportCopied: '已複製',
   exportDownloaded: '已匯出',
+  exportInProgress: '匯出中…',
   exportFailed: '匯出失敗，請重試。',
   exportCopyFailed: '複製失敗，請重試。',
   exportPageLabel: '第 {page} 頁',
@@ -852,6 +854,7 @@ const EN: DesktopMessages = {
   exportCopy: 'Copy all',
   exportCopied: 'Copied',
   exportDownloaded: 'Exported',
+  exportInProgress: 'Exporting…',
   exportFailed: 'Export failed. Please try again.',
   exportCopyFailed: 'Copy failed. Please try again.',
   exportPageLabel: 'Page {page}',

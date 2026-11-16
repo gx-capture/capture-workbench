@@ -349,10 +349,12 @@ export class AsrQueueStore {
   }
 
   exportTxt(documentId: string): void {
+    if (this.exportBusyIds().has(documentId)) return;
+    this.importError.set('');
     this.exports.run(documentId, 'text')
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
-        error: () => this.workspace.message?.set(desktopMessages().exportFailed),
+        error: () => this.importError.set(desktopMessages().exportFailed),
       });
   }
 

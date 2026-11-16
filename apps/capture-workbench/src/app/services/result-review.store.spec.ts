@@ -155,6 +155,37 @@ describe('ResultReviewStore', () => {
       expect(store.saveError()).toBeNull();
     });
 
+    it('treats a failed save as clean when the recognized text was restored during the request', () => {
+      const first = new Subject<DesktopLibraryEdits>();
+      const saveEdits = vi.fn(() => first);
+      const { store } = setup({ get: load(), saveEdits });
+      store.editPage(1, 'temporary correction');
+      vi.advanceTimersByTime(600);
+      store.restorePage(1);
+      const saved = vi.fn();
+      const failed = vi.fn();
+      store.saveBeforeExport().subscribe({ next: saved, error: failed });
+      first.error(new Error('save failed'));
+      expect(store.saveState()).toBe('idle');
+      expect(store.saveError()).toBeNull();
+      expect(saved).toHaveBeenCalledOnce();
+      expect(failed).not.toHaveBeenCalled();
+      store.retrySave();
+      expect(saveEdits).toHaveBeenCalledTimes(1);
+      expect(store.saveState()).toBe('idle');
+      expect(store.saveError()).toBeNull();
+    });
+
+    it('clears an obsolete save failure on retry when there is nothing unsaved', () => {
+      const { store, library } = setup({ get: load() });
+      store.saveState.set('failed');
+      store.saveError.set('Earlier save failed');
+      store.retrySave();
+      expect(store.saveState()).toBe('idle');
+      expect(store.saveError()).toBeNull();
+      expect(library.saveEdits).not.toHaveBeenCalled();
+    });
+
     it('never saves unchanged, ignored or reverted input, even on destroy', () => {
       const { store, library } = setup({ get: load() });
       store.editPage(1, 'recognized');

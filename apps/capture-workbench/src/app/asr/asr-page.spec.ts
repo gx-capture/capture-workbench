@@ -5,7 +5,7 @@ import type {
   RuntimeInstallation,
   RuntimeRequirement,
 } from '@gx-capture/capture-workbench-ui';
-import { setDesktopLocale } from '../i18n/desktop-messages';
+import { desktopMessages, setDesktopLocale } from '../i18n/desktop-messages';
 import type {
   AsrLiveCaptureView,
   AsrQueueView,
@@ -109,6 +109,16 @@ describe('AsrPage', () => {
     fixture.detectChanges();
     return { fixture, queue, features };
   }
+
+  it.each([true, false])('renders and clears the export error with speechReady=%s', (speechReady) => {
+    const { fixture, queue } = setup({ speechReady, importError: desktopMessages().exportFailed });
+    const el = fixture.nativeElement as HTMLElement;
+    expect(el.querySelector('[data-testid="asr-import-error"]')?.textContent).toContain(desktopMessages().exportFailed);
+    expect(el.querySelector('[data-testid="asr-import-error"]')?.getAttribute('role')).toBe('alert');
+    queue.importError.set('');
+    fixture.detectChanges();
+    expect(el.querySelector('[data-testid="asr-import-error"]')).toBeNull();
+  });
 
   it('shows the install panel and disabled empty-queue button when speech recognition is missing', () => {
     const { fixture, queue, features } = setup({

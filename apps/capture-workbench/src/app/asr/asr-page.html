@@ -130,16 +130,17 @@
         }
       </div>
 
-      @if (queue.importError(); as importError) {
-        <p
-          class="text-sm whitespace-pre-line text-destructive"
-          data-testid="asr-import-error"
-          role="alert"
-        >
-          {{ importError }}
-        </p>
-      }
     </section>
+  }
+
+  @if (queue.importError(); as importError) {
+    <p
+      class="text-sm whitespace-pre-line text-destructive"
+      data-testid="asr-import-error"
+      role="alert"
+    >
+      {{ importError }}
+    </p>
   }
 
   @if (queue.liveCapture(); as live) {
