@@ -476,6 +476,16 @@ function toSemanticProvenance(value: Record<string, unknown>): OcrSemanticProven
   };
 }
 
+function toSemanticFailure(value: unknown): OcrSemanticFailureV1 {
+  const failure = record(value, 'failure');
+  return {
+    code: failure.code as string,
+    message: failure.message as string,
+    ...(failure.stage === undefined ? {} : { stage: failure.stage as string }),
+    ...(failure.retryable === undefined ? {} : { retryable: failure.retryable as boolean }),
+  };
+}
+
 function readRawSummary(value: unknown, expectedSourceSha256: string): {
   readonly present: boolean;
   readonly sourceText: string;
