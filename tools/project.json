@@ -103,7 +103,7 @@
       "executor": "nx:run-commands",
       "inputs": ["default", "^default", "toolingCorpus"],
       "options": {
-        "command": "node --test tools/verify-release-candidate.test.ts tools/assemble-release-candidate.test.ts"
+        "command": "node --test tools/verify-release-candidate.test.ts tools/assemble-release-candidate.test.ts tools/verify-main-ci.test.ts"
       }
     },
     "contract-impact-test": {

@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 
 const futureSkewMs = 5 * 60 * 1000;
 
-interface WorkflowRun {
+export interface MainCiWorkflowRun {
   readonly workflow_id?: unknown;
   readonly path?: unknown;
   readonly event?: unknown;
@@ -15,6 +15,38 @@ interface WorkflowRun {
   readonly id?: unknown;
   readonly created_at?: unknown;
   readonly updated_at?: unknown;
+}
+
+interface MainCiWorkflow {
+  readonly id?: unknown;
+  readonly path?: unknown;
+  readonly state?: unknown;
+}
+
+export interface MainCiClient {
+  getWorkflow(repository: string, workflowPath: string): MainCiWorkflow;
+  listPushRuns(
+    repository: string,
+    workflowId: number,
+    branch: string,
+    commitSha: string,
+  ): readonly MainCiWorkflowRun[];
+}
+
+interface VerifyMainCiOptions {
+  readonly repository: string;
+  readonly commitSha: string;
+  readonly workflowPath: string;
+  readonly branch: string;
+  readonly now?: number;
+}
+
+interface VerifiedMainCiResult {
+  readonly branch: string;
+  readonly commitSha: string;
+  readonly runId: unknown;
+  readonly workflowId: number;
+  readonly workflowPath: string;
 }
 
 function canonicalJson(value: unknown): string {
@@ -41,6 +73,20 @@ function ghJson(endpoint: string): unknown {
   return JSON.parse(result.stdout);
 }
 
+const defaultMainCiClient: MainCiClient = {
+  getWorkflow(repository, workflowPath) {
+    return ghJson(
+      `repos/${repository}/actions/workflows/${encodeURIComponent(workflowPath)}`,
+    ) as MainCiWorkflow;
+  },
+  listPushRuns(repository, workflowId, branch, commitSha) {
+    const runs = ghJson(
+      `repos/${repository}/actions/workflows/${workflowId}/runs?branch=${encodeURIComponent(branch)}&event=push&status=success&head_sha=${commitSha}&per_page=100`,
+    ) as { readonly workflow_runs?: readonly MainCiWorkflowRun[] };
+    return runs.workflow_runs ?? [];
+  },
+};
+
 function parseArguments(args: readonly string[]): Map<string, string> {
   const values = new Map<string, string>();
   for (let index = 0; index < args.length; index += 2) {
@@ -55,12 +101,11 @@ function parseArguments(args: readonly string[]): Map<string, string> {
   return values;
 }
 
-function main(): void {
-  const values = parseArguments(process.argv.slice(2));
-  const repository = required(values, '--repository');
-  const commitSha = required(values, '--commit');
-  const workflowPath = required(values, '--workflow-path');
-  const branch = required(values, '--branch');
+export function verifyMainCi(
+  options: VerifyMainCiOptions,
+  client: MainCiClient = defaultMainCiClient,
+): VerifiedMainCiResult {
+  const { repository, commitSha, workflowPath, branch } = options;
   if (!/^[a-f0-9]{40}$/u.test(commitSha)) {
     throw new Error('Main CI commit must be a full lowercase Git SHA.');
   }
@@ -68,21 +113,23 @@ function main(): void {
     throw new Error('Release CI verification is restricted to the main branch.');
   }
 
-  const workflow = ghJson(
-    `repos/${repository}/actions/workflows/${encodeURIComponent(workflowPath)}`,
-  ) as { readonly id?: unknown; readonly path?: unknown; readonly state?: unknown };
+  const workflow = client.getWorkflow(repository, workflowPath);
   if (
     workflow.path !== workflowPath ||
     workflow.state !== 'active' ||
+    typeof workflow.id !== 'number' ||
     !Number.isSafeInteger(workflow.id)
   ) {
     throw new Error('Trusted main CI workflow identity is invalid.');
   }
-  const runs = ghJson(
-    `repos/${repository}/actions/workflows/${workflow.id}/runs?branch=${encodeURIComponent(branch)}&event=push&status=success&head_sha=${commitSha}&per_page=100`,
-  ) as { readonly workflow_runs?: readonly WorkflowRun[] };
-  const now = Date.now();
-  const qualifying = (runs.workflow_runs ?? []).filter((run) => {
+  const workflowRuns = client.listPushRuns(
+    repository,
+    workflow.id,
+    branch,
+    commitSha,
+  );
+  const now = options.now ?? Date.now();
+  const qualifying = workflowRuns.filter((run) => {
     const created = typeof run.created_at === 'string' ? Date.parse(run.created_at) : Number.NaN;
     const updated = typeof run.updated_at === 'string' ? Date.parse(run.updated_at) : Number.NaN;
     return (
@@ -107,15 +154,24 @@ function main(): void {
     );
   }
   const [run] = qualifying;
-  process.stdout.write(
-    canonicalJson({
-      branch,
-      commitSha,
-      runId: run?.id,
-      workflowId: workflow.id,
-      workflowPath,
-    }),
-  );
+  return {
+    branch,
+    commitSha,
+    runId: run?.id,
+    workflowId: workflow.id,
+    workflowPath,
+  };
+}
+
+function main(): void {
+  const values = parseArguments(process.argv.slice(2));
+  const result = verifyMainCi({
+    repository: required(values, '--repository'),
+    commitSha: required(values, '--commit'),
+    workflowPath: required(values, '--workflow-path'),
+    branch: required(values, '--branch'),
+  });
+  process.stdout.write(canonicalJson(result));
 }
 
 if (
