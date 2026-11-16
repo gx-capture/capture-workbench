@@ -296,7 +296,7 @@ describe('App shell and recognition pages', () => {
       ) as HTMLElement;
 
     expect(status().dataset['state']).toBe('starting');
-    expect(status().getAttribute('href')).toBe('/workspace');
+    expect(status().getAttribute('href')).toBe('/settings/diagnostics');
     expect(status().getAttribute('aria-label')).toBeNull();
     expect(status().querySelector('.sr-only')?.textContent).toBe('診斷');
     expect(status().querySelector('[aria-live="polite"]')?.textContent).toContain('尚未就緒');

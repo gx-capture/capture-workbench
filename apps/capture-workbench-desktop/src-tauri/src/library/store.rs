@@ -852,9 +852,16 @@ impl LibraryStore {
         let directory = self.document_directory(&request.document_id)?;
         if matches!(request.format, LibraryExportFormat::Json) {
             let document = self.find_document(&request.document_id)?;
-            let result = read_json_optional(&directory.join(RESULT_FILE_NAME))
+            // Diagnostics export: the structured result, or the recognized
+            // result of a document that was never structured.
+            let result = match read_json_optional(&directory.join(RESULT_FILE_NAME))
                 .map_err(|_| "Capture library result cannot be read.".to_string())?
-                .ok_or_else(|| "Capture library result is not available.".to_string())?;
+            {
+                Some(result) => result,
+                None => read_json_optional(&directory.join(RAW_FILE_NAME))
+                    .map_err(|_| "Capture library raw result cannot be read.".to_string())?
+                    .ok_or_else(|| "Capture library result is not available.".to_string())?,
+            };
             return Ok(LibraryExportPayload {
                 file_name: format!("{}.json", stem(&document.file_name)),
                 media_type: "application/json".into(),
@@ -1198,6 +1205,19 @@ mod tests {
         assert_eq!(library.export(request()).unwrap().content, "recognized");
         fs::write(item.join(EDITS_FILE_NAME), b"{broken").unwrap();
         assert_eq!(library.export(request()).unwrap().content, "recognized");
+        // Without a structured result, the JSON export is the recognized result.
+        let json = library
+            .export(LibraryExportRequest {
+                document_id: document.document_id.clone(),
+                format: LibraryExportFormat::Json,
+                page_label: None,
+            })
+            .unwrap();
+        assert_eq!(json.file_name, "page.json");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&json.content).unwrap(),
+            raw
+        );
         assert_eq!(
             read_json_optional(&item.join(RAW_FILE_NAME)).unwrap(),
             Some(raw)

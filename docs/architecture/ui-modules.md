@@ -40,6 +40,7 @@ flowchart LR
   n_apps_capture_workbench_src_app_engine_card --> n_apps_capture_workbench_src_app_ui_button_src
   n_apps_capture_workbench_src_app_engine_card --> n_apps_capture_workbench_src_app_ui_card_src
   n_apps_capture_workbench_src_app_engine_card --> n_packages_capture_workbench_ui_src
+  n_apps_capture_workbench_src_app_history --> n_apps_capture_workbench_src_app_contracts
   n_apps_capture_workbench_src_app_history --> n_apps_capture_workbench_src_app_engine_card
   n_apps_capture_workbench_src_app_history --> n_apps_capture_workbench_src_app_i18n
   n_apps_capture_workbench_src_app_history --> n_apps_capture_workbench_src_app_services
