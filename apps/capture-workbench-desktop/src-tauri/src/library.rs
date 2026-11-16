@@ -1124,26 +1124,112 @@ mod tests {
         evidence["pages"][0]["text"] = serde_json::json!("raw secret");
         assert!(serde_json::from_value::<LibraryCaptureUpdate>(update_value(evidence)).is_err());
 
-        let mut evidence = serde_json::to_value(completed_evidence()).expect("evidence json");
-        evidence["pages"][0]["page"] = serde_json::json!(2);
-        let update: LibraryCaptureUpdate =
-            serde_json::from_value(update_value(evidence)).expect("typed update");
+        let sealed_pages = |page_numbers: &[u64]| -> OcrEvidenceV1 {
+            let mut evidence = serde_json::to_value(completed_evidence()).expect("evidence json");
+            let template_page = evidence["pages"][0].clone();
+            let pages: Vec<_> = page_numbers
+                .iter()
+                .map(|page| {
+                    let mut entry = template_page.clone();
+                    entry["page"] = serde_json::json!(page);
+                    entry
+                })
+                .collect();
+            evidence["pageCount"] = serde_json::json!(pages.len());
+            evidence["pages"] = serde_json::Value::Array(pages);
+            evidence["summary"]["normalizedCharCount"] =
+                serde_json::json!(5 * page_numbers.len() as u64);
+            sealed_evidence(evidence)
+        };
+
+        let gapped = sealed_pages(&[2, 5]);
+        gapped.validate().expect("gapped ascending pages are valid");
+        sealed_pages(&[u64::from(u32::MAX)])
+            .validate()
+            .expect("u32 max page is valid");
+
+        for invalid_pages in [
+            vec![0],
+            vec![u64::from(u32::MAX) + 1],
+            vec![2, 2],
+            vec![5, 2],
+        ] {
+            let evidence = sealed_pages(&invalid_pages);
+            assert_eq!(
+                evidence
+                    .validate()
+                    .expect_err("non-ascending or out-of-range pages rejected"),
+                "OCR evidence pages must be in ascending order."
+            );
+        }
+
         let directory = tempfile::tempdir().expect("temporary app data");
         let library = LibraryStore::open(directory.path()).expect("library");
-        let created = library
+
+        let unordered_doc = library
             .create_source(LibrarySourceInput {
                 file_name: "unordered.pdf".into(),
                 media_type: "application/pdf".into(),
                 bytes: b"pdf bytes".to_vec(),
             })
             .expect("source");
-        let error = library
-            .update_capture(LibraryCaptureUpdate {
-                document_id: created.document_id,
-                ..update
+        assert_eq!(
+            library
+                .update_capture(evidence_update(
+                    &unordered_doc.document_id,
+                    "completed",
+                    Some(sealed_pages(&[5, 2])),
+                ))
+                .expect_err("unordered pages rejected"),
+            "OCR evidence pages must be in ascending order."
+        );
+
+        let no_options_doc = library
+            .create_source(LibrarySourceInput {
+                file_name: "gapped-without-options.pdf".into(),
+                media_type: "application/pdf".into(),
+                bytes: b"pdf bytes".to_vec(),
             })
-            .expect_err("unordered pages rejected");
-        assert!(error.contains("OCR evidence"));
+            .expect("source");
+        assert_eq!(
+            library
+                .update_capture(evidence_update(
+                    &no_options_doc.document_id,
+                    "completed",
+                    Some(gapped),
+                ))
+                .expect_err("gapped pages without options rejected"),
+            "OCR evidence pages do not match the requested pages."
+        );
+
+        let scoped_path = directory.path().join("scoped.pdf");
+        fs::write(&scoped_path, b"%PDF-1.7\nscoped").expect("scoped pdf");
+        let scoped_doc = library
+            .import_source(LibraryImportSourceRequest {
+                source_path: scoped_path.to_string_lossy().into_owned(),
+                capture_options: Some(LibraryCaptureOptions {
+                    pdf_page_count: Some(3),
+                    ..Default::default()
+                }),
+            })
+            .expect("scoped source");
+        assert_eq!(
+            library
+                .update_capture(evidence_update(
+                    &scoped_doc.document_id,
+                    "completed",
+                    Some(sealed_pages(&[1, 2])),
+                ))
+                .expect_err("prefix shorter than pdf_page_count rejected"),
+            "OCR evidence pages do not match the requested pages."
+        );
+        library
+            .update_capture(evidence_update(
+                &scoped_doc.document_id,
+                "completed",
+                Some(sealed_pages(&[1, 2, 3])),
+            ))
+            .expect("exact prefix accepted for pdf_page_count");
     }
 
     #[test]

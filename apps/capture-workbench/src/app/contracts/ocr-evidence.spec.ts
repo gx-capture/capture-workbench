@@ -90,10 +90,56 @@ describe('buildOcrEvidence', () => {
     })).rejects.toThrow(/Invalid OCR evidence/u);
   });
 
-  it('requires pages to be exactly ordered 1..N', async () => {
-    const outOfOrder = projectionWithPage({ page: 2 });
-    await expect(buildOcrEvidence({ projection: outOfOrder, expected: expectedIdentity() }))
-      .rejects.toThrow(/ordering/u);
+  it('requires pages to be strictly ascending within 1..u32::MAX and bound to requestedPages', async () => {
+    const gapped = projectionWithPages({ page: 2 }, { page: 5 });
+    const gappedEvidence = await buildOcrEvidence({
+      projection: gapped,
+      expected: expectedIdentity(),
+      requestedPages: [2, 5],
+    });
+    expect(gappedEvidence.pageCount).toBe(2);
+    expect(gappedEvidence.pages.map((page) => page.page)).toEqual([2, 5]);
+
+    const prefix = projectionWithPages({ page: 1 }, { page: 2 });
+    const prefixEvidence = await buildOcrEvidence({
+      projection: prefix,
+      expected: expectedIdentity(),
+      requestedPages: null,
+    });
+    expect(prefixEvidence.pages.map((page) => page.page)).toEqual([1, 2]);
+
+    const maxPageEvidence = await buildOcrEvidence({
+      projection: projectionWithPage({ page: 4_294_967_295 }),
+      expected: expectedIdentity(),
+      requestedPages: [4_294_967_295],
+    });
+    expect(maxPageEvidence.pages[0].page).toBe(4_294_967_295);
+
+    for (const invalidCandidate of [
+      projectionWithPage({ page: 0 }),
+      projectionWithPage({ page: 4_294_967_296 }),
+      projectionWithPage({ page: 1.5 }),
+      projectionWithPage({ page: Number.NaN }),
+      projectionWithPages({ page: 2 }, { page: 2 }),
+      projectionWithPages({ page: 5 }, { page: 2 }),
+    ]) {
+      await expect(buildOcrEvidence({
+        projection: invalidCandidate,
+        expected: expectedIdentity(),
+      })).rejects.toThrow(/ordering/u);
+    }
+
+    await expect(buildOcrEvidence({
+      projection: projectionWithPages({ page: 2 }, { page: 5 }),
+      expected: expectedIdentity(),
+      requestedPages: [1, 2],
+    })).rejects.toThrow(/requested pages/u);
+
+    await expect(buildOcrEvidence({
+      projection: projectionWithPages({ page: 2 }, { page: 5 }),
+      expected: expectedIdentity(),
+      requestedPages: null,
+    })).rejects.toThrow(/requested pages/u);
 
     const countMismatch = { ...projection(), pageCount: 2 };
     await expect(buildOcrEvidence({ projection: countMismatch, expected: expectedIdentity() }))
@@ -484,8 +530,8 @@ function projectionWithPages(
     ...base,
     pageCount: 2,
     pages: [
-      { ...base.pages[0], ...firstOverrides, page: 1 },
-      { ...base.pages[0], ...secondOverrides, page: 2 },
+      { ...base.pages[0], page: 1, ...firstOverrides },
+      { ...base.pages[0], page: 2, ...secondOverrides },
     ],
   };
 }

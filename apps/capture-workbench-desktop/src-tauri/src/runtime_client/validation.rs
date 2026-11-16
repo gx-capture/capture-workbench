@@ -52,15 +52,18 @@ pub(super) fn validate_structuring_mode(value: &str) -> Result<(), String> {
     }
 }
 
+const MAX_PDF_PAGE_SELECTION: usize = 500;
+
 pub(super) fn validate_pdf_page_numbers(value: &[u32]) -> Result<(), String> {
-    if value.is_empty()
-        || value.len() > 500
-        || !value
-            .iter()
-            .enumerate()
-            .all(|(index, page)| *page == (index + 1) as u32)
-    {
+    if value.is_empty() || value.len() > MAX_PDF_PAGE_SELECTION {
         return Err("Capture PDF page selection is invalid.".into());
+    }
+    let mut previous = 0_u32;
+    for &page in value {
+        if page <= previous {
+            return Err("Capture PDF page selection is invalid.".into());
+        }
+        previous = page;
     }
     Ok(())
 }
