@@ -462,7 +462,7 @@ function captureFixture(page, fixture, appPid, fixtureDirectory, diagnostics) {
           }).pipe(
             map(
               ({ userStatus, visibleText }) =>
-                userStatus === 'done' && visibleText?.trim() === '完成',
+                userStatus === 'done' && String(visibleText ?? '').trim() === '完成',
             ),
           ),
         fixture.completionTimeoutMs ?? 45_000,
@@ -470,7 +470,7 @@ function captureFixture(page, fixture, appPid, fixtureDirectory, diagnostics) {
       )).pipe(
         concatMap(() => defer(() => from(visibleStatus.textContent({ timeout: 1_000 })))),
         tap((visibleText) => {
-          assert.equal(visibleText?.trim(), '完成');
+          assert.equal(String(visibleText ?? '').trim(), '完成');
         }),
         catchError((error) => incompleteCaptureError(page, row, statusTestId, error, fixture, diagnostics)),
         map(() => row),

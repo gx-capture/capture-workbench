@@ -540,7 +540,7 @@ test('installed raw assertion enforces source, engine, ordering, locator provena
         },
         pageFixture,
       ),
-    /did not match regular expression/u,
+    /did not match the regular expression/u,
   );
 
   const timeFixture = captureFixture('time');
