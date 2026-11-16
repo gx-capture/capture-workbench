@@ -1,4 +1,7 @@
-import { spawnSync } from 'node:child_process';
+import {
+  spawnSync,
+  type SpawnSyncOptionsWithStringEncoding,
+} from 'node:child_process';
 import { existsSync, lstatSync, readdirSync, realpathSync } from 'node:fs';
 import net from 'node:net';
 import { resolve } from 'node:path';
@@ -41,6 +44,18 @@ const defaultOwnedProcessExecutableNames = [
   'cmd.exe',
 ];
 type OwnedProcessSnapshot = { readonly pid: number };
+type SpawnSyncProcessResult = {
+  readonly error?: Error & { readonly code?: string };
+  readonly signal: string | null;
+  readonly status: number | null;
+  readonly stderr: string;
+  readonly stdout: string;
+};
+type SpawnSyncProcess = (
+  command: string,
+  args: readonly string[],
+  options: SpawnSyncOptionsWithStringEncoding,
+) => SpawnSyncProcessResult;
 
 function diagnosticToken(value, fallback = 'none') {
   const candidate = value === undefined || value === null ? fallback : String(value);
@@ -63,6 +78,16 @@ export function createTrackedProcessTreeTerminator({
   baseChildEnvironment,
   windowsSystemExecutable,
   spawnSyncProcess = spawnSync,
+}: {
+  smokeRoot: string;
+  workspaceRoot: string;
+  baseChildEnvironment: (
+    source: NodeJS.ProcessEnv,
+    isolatedTemp: string,
+    ownedRoot?: string,
+  ) => Record<string, string>;
+  windowsSystemExecutable: (...segments: string[]) => string;
+  spawnSyncProcess?: SpawnSyncProcess;
 }) {
   return function terminateTrackedProcessTree(child, label) {
     if (child.exitCode !== null || child.signalCode !== null) {
@@ -108,6 +133,16 @@ export function createInstalledProcessCleanup({
   baseChildEnvironment,
   windowsSystemExecutable,
   spawnSyncProcess = spawnSync,
+}: {
+  smokeRoot: string;
+  workspaceRoot: string;
+  baseChildEnvironment: (
+    source: NodeJS.ProcessEnv,
+    isolatedTemp: string,
+    ownedRoot?: string,
+  ) => Record<string, string>;
+  windowsSystemExecutable: (...segments: string[]) => string;
+  spawnSyncProcess?: SpawnSyncProcess;
 }) {
   const privateProcessRoots = new Set();
   const ownedProcessExecutableNames = new Set(defaultOwnedProcessExecutableNames);

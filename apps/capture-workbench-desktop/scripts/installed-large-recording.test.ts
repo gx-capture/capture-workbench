@@ -1,4 +1,3 @@
-import '../../../tools/test-temp-root.ts';
 import { generateLargeRecording } from './installed-large-recording-fixture.ts';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';

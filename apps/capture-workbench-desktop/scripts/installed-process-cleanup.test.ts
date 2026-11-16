@@ -75,7 +75,23 @@ function timeoutResult() {
   };
 }
 
-function cleanupHarness({ observerResults, taskkillResult, register = true }) {
+type MockSpawnSyncResult = {
+  readonly error?: Error & { readonly code?: string };
+  readonly signal: string | null;
+  readonly status: number | null;
+  readonly stderr: string;
+  readonly stdout: string;
+};
+
+function cleanupHarness({
+  observerResults,
+  taskkillResult,
+  register = true,
+}: {
+  observerResults: MockSpawnSyncResult[];
+  taskkillResult?: MockSpawnSyncResult;
+  register?: boolean;
+}) {
   const fixtureRoot = mkdtempSync(
     join(tmpdir(), 'capture-installed-process-unit-'),
   );

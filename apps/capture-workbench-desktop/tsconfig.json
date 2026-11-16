@@ -15,26 +15,11 @@
   },
   "include": [
     "playwright.acceptance.config.ts",
-    "scripts/acceptance-real.ts",
-    "scripts/acceptance-orchestration.test.ts",
-    "scripts/build-practical-installer.ts",
-    "scripts/practical-installed.ts",
-    "scripts/practical-installed.test.ts",
-    "scripts/practical-installed-ocr.ts",
-    "scripts/real-desktop-ocr-acceptance.spec.ts",
-    "scripts/real-desktop-ocr-smoke.ts",
-    "scripts/real-media-smoke.ts",
-    "scripts/real-media-smoke.test.ts",
-    "scripts/real-ocr-result-assertions.ts",
-    "scripts/real-ocr-result-assertions.test.ts",
-    "scripts/real-ollama-smoke.ts",
-    "scripts/real-ollama-smoke.test.ts",
-    "scripts/v2-capture-flow.ts",
-    "scripts/v2-capture-flow.test.ts",
+    "scripts/**/*.ts",
     "../../tools/acceptance-contract.ts",
     "../../tools/acceptance-checkpoint-journal.test.ts",
     "../../tools/three-project-acceptance.ts",
     "../../tools/three-project-acceptance.test.ts"
   ],
-  "exclude": ["node_modules", "tmp", "src-tauri/target"]
+  "exclude": ["node_modules", "tmp", "src-tauri/target", "scripts/fixtures/**/target/**"]
 }

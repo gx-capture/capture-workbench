@@ -205,7 +205,16 @@ test('startup CDP recording precedes debugger resume and survives adoption by Pl
     }
     close() { this.closed = true; }
   }
-  globalThis.fetch = (async () => ({ json: async () => [{ type: 'page', webSocketDebuggerUrl: 'ws://127.0.0.1/fake' }] })) as typeof fetch;
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify([
+        { type: 'page', webSocketDebuggerUrl: 'ws://127.0.0.1/fake' },
+      ]),
+      {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      },
+    );
   globalThis.WebSocket = class extends FakeSocket {
     constructor() { super(); Object.assign(holder, { socket: this }); }
   } as unknown as typeof WebSocket;

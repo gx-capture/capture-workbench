@@ -198,7 +198,9 @@ async function createFixture(): Promise<{
 function ownerFor(
   scopePath: string,
   snapshots: readonly AcceptanceScopeSnapshot[],
-  overrides: ConstructorParameters<typeof CaptureAcceptanceScopeOwner>[0] = {},
+  overrides: Partial<
+    ConstructorParameters<typeof CaptureAcceptanceScopeOwner>[0]
+  > = {},
 ): CaptureAcceptanceScopeOwner {
   let index = 0;
   return new CaptureAcceptanceScopeOwner({
