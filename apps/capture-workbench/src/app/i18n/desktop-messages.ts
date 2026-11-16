@@ -224,7 +224,7 @@ export interface DesktopMessages {
   readonly resultLoading: string;
   readonly resultNotFound: string;
   readonly resultNoResultYet: string;
-  readonly resultPdfPreviewPending: string;
+  readonly resultPdfPreviewFailed: string;
   readonly resultOcrEmpty: string;
   readonly resultPageLabel: (page: number, total: number) => string;
   readonly resultPreviousPage: string;
@@ -507,7 +507,7 @@ const ZH_TW: DesktopMessages = {
   resultLoading: '正在載入結果…',
   resultNotFound: '找不到這份文件。',
   resultNoResultYet: '目前還沒有可檢視的結果。',
-  resultPdfPreviewPending: 'PDF 頁面影像將在之後的版本提供',
+  resultPdfPreviewFailed: '無法顯示這份 PDF 的頁面影像，仍可查看辨識文字。',
   resultOcrEmpty: '沒有辨識到文字。',
   resultPageLabel: (page, total) => `${page} / ${total}`,
   resultPreviousPage: '上一頁',
@@ -795,7 +795,7 @@ const EN: DesktopMessages = {
   resultLoading: 'Loading result…',
   resultNotFound: 'Document not found.',
   resultNoResultYet: 'No result is available to review yet.',
-  resultPdfPreviewPending: 'PDF page images will be available in a future update',
+  resultPdfPreviewFailed: 'Unable to display this PDF page image. The recognized text is still available.',
   resultOcrEmpty: 'No recognized text.',
   resultPageLabel: (page, total) => `${page} / ${total}`,
   resultPreviousPage: 'Previous page',

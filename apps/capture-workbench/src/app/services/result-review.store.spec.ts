@@ -7,6 +7,10 @@ import type { DesktopLibraryDetail } from '../contracts';
 import { setDesktopLocale } from '../i18n/desktop-messages';
 import { DesktopLibraryService } from './desktop-library.service';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
+import {
+  PdfPageRenderer,
+  type PdfDocumentHandle,
+} from './pdf-page-renderer.service';
 import { MAX_PLAYBACK_BYTES } from './recording-playback';
 import { ResultReviewStore } from './result-review.store';
 
@@ -35,6 +39,7 @@ describe('ResultReviewStore', () => {
     readonly id?: string;
     readonly get?: ReturnType<typeof vi.fn>;
     readonly sourceBytes?: ReturnType<typeof vi.fn>;
+    readonly pdfOpen?: ReturnType<typeof vi.fn>;
   } = {}) {
     const paramMap$ = new BehaviorSubject(
       convertToParamMap({ id: options.id ?? DOC_ID }),
@@ -45,6 +50,14 @@ describe('ResultReviewStore', () => {
     };
     const runtime = {
       started: signal(true),
+    };
+    const defaultHandle: PdfDocumentHandle = {
+      pageCount: 2,
+      renderPage: vi.fn().mockResolvedValue(undefined),
+      destroy: vi.fn().mockResolvedValue(undefined),
+    };
+    const pdfRenderer = {
+      open: options.pdfOpen ?? vi.fn().mockResolvedValue(defaultHandle),
     };
 
     TestBed.configureTestingModule({
@@ -59,12 +72,13 @@ describe('ResultReviewStore', () => {
         },
         { provide: DesktopLibraryService, useValue: library },
         { provide: DesktopRuntimeClientService, useValue: runtime },
+        { provide: PdfPageRenderer, useValue: pdfRenderer },
       ],
     });
 
     const store = TestBed.inject(ResultReviewStore);
     TestBed.tick();
-    return { store, library, paramMap$ };
+    return { store, library, paramMap$, pdfRenderer, defaultHandle };
   }
 
   it('loads document detail by route id', () => {
@@ -175,23 +189,178 @@ describe('ResultReviewStore', () => {
     }
   });
 
-  it('exposes the PDF preview note and never requests source bytes for PDFs', () => {
+  it('opens a PDF through PdfPageRenderer without creating a Blob URL and tracks pdfState', async () => {
     const raw = {
       sourceText: 'pdf text',
       segments: [
         { segmentId: 's1', order: 0, locator: { kind: 'page', page: 1 }, text: 'pdf text' },
       ],
     } as unknown as RawCapture;
-    const sourceBytes = vi.fn();
+    let resolveOpen!: (handle: PdfDocumentHandle) => void;
+    const handle: PdfDocumentHandle = {
+      pageCount: 2,
+      renderPage: vi.fn().mockResolvedValue(undefined),
+      destroy: vi.fn().mockResolvedValue(undefined),
+    };
+    const pdfOpen = vi.fn(
+      () =>
+        new Promise<PdfDocumentHandle>((resolve) => {
+          resolveOpen = resolve;
+        }),
+    );
+    const sourceBytes = vi.fn(() => of(new ArrayBuffer(16)));
+    const createObjectURL = vi.fn();
+    const originalCreate = Object.getOwnPropertyDescriptor(URL, 'createObjectURL');
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectURL });
+
+    try {
+      const { store } = setup({
+        get: vi.fn(() => of(makeDetail({ mediaType: 'application/pdf', raw }))),
+        sourceBytes,
+        pdfOpen,
+      });
+
+      expect(store.pdfState()).toBe('idle');
+      store.loadSource();
+      store.loadSource();
+
+      expect(sourceBytes).toHaveBeenCalledTimes(1);
+      expect(pdfOpen).toHaveBeenCalledTimes(1);
+      expect(createObjectURL).not.toHaveBeenCalled();
+      expect(store.imageUrl()).toBeNull();
+      expect(store.pdfState()).toBe('loading');
+
+      resolveOpen(handle);
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(store.pdfState()).toBe('ready');
+      expect(store.pdfError()).toBeNull();
+    } finally {
+      if (originalCreate) Object.defineProperty(URL, 'createObjectURL', originalCreate);
+      else Reflect.deleteProperty(URL, 'createObjectURL');
+    }
+  });
+
+  it('sets pdfState to failed and exposes pdfError when opening a PDF fails', async () => {
+    const raw = {
+      sourceText: 'pdf text',
+      segments: [
+        { segmentId: 's1', order: 0, locator: { kind: 'page', page: 1 }, text: 'pdf text' },
+      ],
+    } as unknown as RawCapture;
+    const pdfOpen = vi.fn().mockRejectedValue(new Error('corrupt pdf'));
     const { store } = setup({
       get: vi.fn(() => of(makeDetail({ mediaType: 'application/pdf', raw }))),
-      sourceBytes,
+      pdfOpen,
     });
 
     store.loadSource();
-    expect(store.pdfPreviewNote()).toBe('PDF 頁面影像將在之後的版本提供');
-    expect(store.imageUrl()).toBeNull();
-    expect(sourceBytes).not.toHaveBeenCalled();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(store.pdfState()).toBe('failed');
+    expect(store.pdfError()).toBe('無法顯示這份 PDF 的頁面影像，仍可查看辨識文字。');
+  });
+
+  it('renders the source page number and marks out-of-range pages failed without hiding text', async () => {
+    const raw = {
+      sourceText: 'p2\n\np5',
+      segments: [
+        { segmentId: 's1', order: 0, locator: { kind: 'page', page: 2 }, text: '第二頁' },
+        { segmentId: 's2', order: 0, locator: { kind: 'page', page: 5 }, text: '第五頁' },
+      ],
+    } as unknown as RawCapture;
+    const renderPage = vi.fn().mockResolvedValue(undefined);
+    const handle: PdfDocumentHandle = {
+      pageCount: 3,
+      renderPage,
+      destroy: vi.fn().mockResolvedValue(undefined),
+    };
+    const { store } = setup({
+      get: vi.fn(() => of(makeDetail({ mediaType: 'application/pdf', raw }))),
+      pdfOpen: vi.fn().mockResolvedValue(handle),
+    });
+
+    store.loadSource();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const canvas = document.createElement('canvas');
+    store.renderCurrentPdfPage(canvas, 600);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(renderPage).toHaveBeenCalledWith(2, canvas, {
+      cssWidth: 600,
+      devicePixelRatio: expect.any(Number),
+    });
+    expect(store.renderedPdfPage()).toBe(2);
+    expect(store.pdfState()).toBe('ready');
+
+    store.nextPage();
+    store.renderCurrentPdfPage(canvas, 600);
+    expect(store.pdfState()).toBe('failed');
+    expect(store.renderedPdfPage()).toBeNull();
+    expect(store.currentPage()?.text).toBe('第五頁');
+
+    store.previousPage();
+    expect(store.pdfState()).toBe('ready');
+  });
+
+  it('destroys the PDF handle when switching documents or destroying the store', async () => {
+    const raw = {
+      sourceText: 'pdf text',
+      segments: [
+        { segmentId: 's1', order: 0, locator: { kind: 'page', page: 1 }, text: 'pdf text' },
+      ],
+    } as unknown as RawCapture;
+    const destroyHandle = vi.fn().mockResolvedValue(undefined);
+    const handle: PdfDocumentHandle = {
+      pageCount: 1,
+      renderPage: vi.fn().mockResolvedValue(undefined),
+      destroy: destroyHandle,
+    };
+    const { store, paramMap$ } = setup({
+      get: vi.fn(() => of(makeDetail({ mediaType: 'application/pdf', raw }))),
+      pdfOpen: vi.fn().mockResolvedValue(handle),
+    });
+
+    store.loadSource();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    paramMap$.next(convertToParamMap({ id: 'b'.repeat(32) }));
+    TestBed.tick();
+    expect(destroyHandle).toHaveBeenCalledTimes(1);
+
+    TestBed.resetTestingModule();
+  });
+
+  it('destroys the PDF handle when the store is destroyed', async () => {
+    const raw = {
+      sourceText: 'pdf text',
+      segments: [
+        { segmentId: 's1', order: 0, locator: { kind: 'page', page: 1 }, text: 'pdf text' },
+      ],
+    } as unknown as RawCapture;
+    const destroyHandle = vi.fn().mockResolvedValue(undefined);
+    const handle: PdfDocumentHandle = {
+      pageCount: 1,
+      renderPage: vi.fn().mockResolvedValue(undefined),
+      destroy: destroyHandle,
+    };
+    const { store } = setup({
+      get: vi.fn(() => of(makeDetail({ mediaType: 'application/pdf', raw }))),
+      pdfOpen: vi.fn().mockResolvedValue(handle),
+    });
+
+    store.loadSource();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    TestBed.resetTestingModule();
+    expect(destroyHandle).toHaveBeenCalledTimes(1);
   });
 
   it('builds ASR transcript lines with speaker names and speaker sample URLs', () => {

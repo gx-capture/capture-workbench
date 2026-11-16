@@ -22,6 +22,10 @@ import {
   type TranscriptLine,
 } from './desktop-workspace.selectors';
 import { groupRawOcrPages, type OcrPageText } from './ocr-queue';
+import {
+  PdfPageRenderer,
+  type PdfDocumentHandle,
+} from './pdf-page-renderer.service';
 import { playbackUnavailable as isPlaybackOverLimit } from './recording-playback';
 import {
   buildResultDetails,
@@ -36,9 +40,11 @@ import {
   type ResultSpeakerView,
 } from './result-review';
 
+export type PdfPreviewState = 'idle' | 'loading' | 'ready' | 'failed';
+
 /**
  * Page-scoped state for `/history/:id` (provided by `ResultPage`, destroyed on leave).
- * Owns document loading, OCR page stepping, lazy Blob URL lifecycle, and seek state.
+ * Owns document loading, OCR page stepping, lazy Blob URL / PDF handle lifecycle, and seek state.
  */
 @Injectable()
 export class ResultReviewStore {
@@ -46,6 +52,7 @@ export class ResultReviewStore {
   private readonly library = inject(DesktopLibraryService);
   private readonly runtime = inject(DesktopRuntimeClientService, { optional: true });
   private readonly formatting = inject(DesktopWorkspaceFormattingService);
+  private readonly pdfRenderer = inject(PdfPageRenderer);
   private readonly destroyRef = inject(DestroyRef);
 
   private readonly routeId = this.route
@@ -159,9 +166,22 @@ export class ResultReviewStore {
     return d !== null && this.kind() === 'ocr' && isPdfMediaType(d.mediaType);
   });
 
-  readonly pdfPreviewNote = computed<string | null>(() =>
-    this.isPdf() ? desktopMessages().resultPdfPreviewPending : null,
+  // --- PDF preview state ---
+
+  private readonly pdfStateSignal = signal<PdfPreviewState>('idle');
+  private readonly pdfHandleState = signal<PdfDocumentHandle | null>(null);
+  private readonly pdfPageFailedState = signal(false);
+  private readonly renderedPdfPageState = signal<number | null>(null);
+
+  readonly pdfState = computed<PdfPreviewState>(() =>
+    this.pdfPageFailedState() ? 'failed' : this.pdfStateSignal(),
   );
+
+  readonly pdfError = computed<string | null>(() =>
+    this.pdfState() === 'failed' ? desktopMessages().resultPdfPreviewFailed : null,
+  );
+
+  readonly renderedPdfPage = this.renderedPdfPageState.asReadonly();
 
   // --- Source Blob URL & media seek state ---
 
@@ -177,6 +197,8 @@ export class ResultReviewStore {
   private sourceSubscription: Subscription | null = null;
   private loadingSourceForId: string | null = null;
   private seekSeq = 0;
+  private pdfRenderSeq = 0;
+  private destroyed = false;
 
   readonly imageUrl = computed<string | null>(() => {
     const d = this.detail();
@@ -243,6 +265,11 @@ export class ResultReviewStore {
       if (this.loadingSourceForId !== null && this.loadingSourceForId !== currentId) {
         this.cancelInFlightSource();
       }
+      this.destroyPdfHandle();
+      this.pdfStateSignal.set('idle');
+      this.pdfPageFailedState.set(false);
+      this.renderedPdfPageState.set(null);
+      this.pdfRenderSeq += 1;
       this.selectedPageNumber.set(null);
       this.sourceErrorState.set(null);
       this.mediaCanPlay.set(false);
@@ -255,13 +282,16 @@ export class ResultReviewStore {
     // Reference effect so Angular keeps it alive for the store's lifetime.
     void this.resetOnDocumentChange;
     this.destroyRef.onDestroy(() => {
+      this.destroyed = true;
       this.cancelInFlightSource();
       this.revokeCurrentSource();
+      this.destroyPdfHandle();
     });
   }
 
   selectPage(page: number): void {
     if (this.pages().some((candidate) => candidate.page === page)) {
+      this.pdfPageFailedState.set(false);
       this.selectedPageNumber.set(page);
     }
   }
@@ -269,6 +299,7 @@ export class ResultReviewStore {
   previousPage(): void {
     const index = this.currentPageIndex();
     if (index > 0) {
+      this.pdfPageFailedState.set(false);
       this.selectedPageNumber.set(this.pages()[index - 1].page);
     }
   }
@@ -277,6 +308,7 @@ export class ResultReviewStore {
     const index = this.currentPageIndex();
     const list = this.pages();
     if (index >= 0 && index < list.length - 1) {
+      this.pdfPageFailedState.set(false);
       this.selectedPageNumber.set(list[index + 1].page);
     }
   }
@@ -285,13 +317,17 @@ export class ResultReviewStore {
   loadSource(): void {
     const d = this.detail();
     if (!d || !this.hasResult()) return;
-    if (this.kind() === 'ocr' && this.isPdf()) return;
+    const isPdf = this.isPdf();
+    if (isPdf && this.pdfStateSignal() !== 'idle') return;
     if (this.kind() === 'asr' && this.playbackUnavailable()) return;
-    if (this.blobUrlState()?.documentId === d.documentId) return;
+    if (!isPdf && this.blobUrlState()?.documentId === d.documentId) return;
     if (this.loadingSourceForId === d.documentId) return;
 
     this.cancelInFlightSource();
     this.sourceErrorState.set(null);
+    if (isPdf) {
+      this.pdfStateSignal.set('loading');
+    }
     this.loadingSourceForId = d.documentId;
     const requestedId = d.documentId;
     const mediaType = d.mediaType;
@@ -300,7 +336,11 @@ export class ResultReviewStore {
       next: (bytes) => {
         this.loadingSourceForId = null;
         this.sourceSubscription = null;
-        if (this.documentId() !== requestedId) return;
+        if (this.documentId() !== requestedId || this.destroyed) return;
+        if (isPdf) {
+          void this.openPdfBytes(requestedId, bytes);
+          return;
+        }
         this.revokeCurrentSource();
         const url = URL.createObjectURL(new Blob([bytes], { type: mediaType }));
         this.blobUrlState.set({ documentId: requestedId, url });
@@ -308,10 +348,64 @@ export class ResultReviewStore {
       error: (error: unknown) => {
         this.loadingSourceForId = null;
         this.sourceSubscription = null;
-        if (this.documentId() !== requestedId) return;
+        if (this.documentId() !== requestedId || this.destroyed) return;
+        if (isPdf) {
+          this.pdfStateSignal.set('failed');
+          return;
+        }
         this.sourceErrorState.set(errorMessage(error));
       },
     });
+  }
+
+  /** Renders the active OCR page's source page number onto `canvas`. */
+  renderCurrentPdfPage(canvas: HTMLCanvasElement, cssWidth: number): void {
+    const handle = this.pdfHandleState();
+    const page = this.currentPage();
+    const requestedId = this.documentId();
+    if (!handle || !page || !requestedId || !this.isPdf()) return;
+
+    const pageNumber = page.page;
+    if (pageNumber < 1 || pageNumber > handle.pageCount) {
+      this.pdfPageFailedState.set(true);
+      this.renderedPdfPageState.set(null);
+      return;
+    }
+
+    this.pdfPageFailedState.set(false);
+    const seq = ++this.pdfRenderSeq;
+    const dpr =
+      typeof globalThis.devicePixelRatio === 'number'
+        ? globalThis.devicePixelRatio
+        : 1;
+
+    void handle
+      .renderPage(pageNumber, canvas, { cssWidth, devicePixelRatio: dpr })
+      .then(() => {
+        if (
+          this.destroyed ||
+          this.pdfRenderSeq !== seq ||
+          this.documentId() !== requestedId ||
+          this.pdfHandleState() !== handle ||
+          this.currentPage()?.page !== pageNumber
+        ) {
+          return;
+        }
+        this.renderedPdfPageState.set(pageNumber);
+      })
+      .catch(() => {
+        if (
+          this.destroyed ||
+          this.pdfRenderSeq !== seq ||
+          this.documentId() !== requestedId ||
+          this.pdfHandleState() !== handle ||
+          this.currentPage()?.page !== pageNumber
+        ) {
+          return;
+        }
+        this.pdfPageFailedState.set(true);
+        this.renderedPdfPageState.set(null);
+      });
   }
 
   /** Requests seeking the media player to `ms`, deferring until `canplay` if needed. */
@@ -333,6 +427,30 @@ export class ResultReviewStore {
     if (pending !== null) {
       this.pendingSeekMsState.set(null);
       this.activeSeekState.set({ ms: pending, seq: ++this.seekSeq });
+    }
+  }
+
+  private async openPdfBytes(requestedId: string, bytes: ArrayBuffer): Promise<void> {
+    try {
+      const handle = await this.pdfRenderer.open(bytes);
+      if (this.documentId() !== requestedId || this.destroyed) {
+        void handle.destroy();
+        return;
+      }
+      this.destroyPdfHandle();
+      this.pdfHandleState.set(handle);
+      this.pdfStateSignal.set('ready');
+    } catch {
+      if (this.documentId() !== requestedId || this.destroyed) return;
+      this.pdfStateSignal.set('failed');
+    }
+  }
+
+  private destroyPdfHandle(): void {
+    const handle = this.pdfHandleState();
+    if (handle) {
+      this.pdfHandleState.set(null);
+      void handle.destroy();
     }
   }
 

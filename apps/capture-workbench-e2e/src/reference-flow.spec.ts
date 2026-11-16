@@ -68,8 +68,12 @@ test('drops a PDF without OCR, installs it, and exports the raw text', async ({ 
 
   await row.getByTestId('ocr-row-view').click();
   await expect(page).toHaveURL(/\/history\/[0-9a-f]{32}\/content$/u);
+  const pdfCanvas = page.getByTestId('result-source-pdf-canvas');
+  await expect(pdfCanvas).toHaveAttribute('data-rendered-page', '1');
+  expect(await pdfCanvas.evaluate((el: HTMLCanvasElement) => el.width)).toBeGreaterThan(0);
   await expect(page.getByTestId('result-page-text')).toContainText('第一頁');
   await page.getByTestId('result-page-next').click();
+  await expect(pdfCanvas).toHaveAttribute('data-rendered-page', '2');
   await expect(page.getByTestId('result-page-text')).toContainText('第二頁');
   await page.getByTestId('result-nav-details').click();
   await expect(page.getByTestId('result-detail-filename')).toHaveText('charge.pdf');
@@ -339,7 +343,10 @@ async function openDesktop(
   path = '/history',
   options: OpenDesktopOptions = {},
 ): Promise<void> {
-  await page.addInitScript(({ runtimeRequirements, runtimeVersion, installOptions }) => {
+  const pdfBase64 = (
+    await readFile(new URL('./fixtures/two-pages.pdf', import.meta.url))
+  ).toString('base64');
+  await page.addInitScript(({ runtimeRequirements, runtimeVersion, installOptions, pdfFixtureBase64 }) => {
     interface TauriTestGlobal {
       isTauri: boolean;
       __captureInvokedCommands: string[];
@@ -751,6 +758,14 @@ async function openDesktop(
           const documentId = String(args.request?.['documentId'] ?? '');
           const current = documents.find((item) => item.documentId === documentId);
           if (!current) return Promise.reject(new Error(`Unknown document: ${documentId}`));
+          if (current.mediaType === 'application/pdf') {
+            const binary = atob(pdfFixtureBase64);
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i += 1) {
+              bytes[i] = binary.charCodeAt(i);
+            }
+            return Promise.resolve(bytes.buffer);
+          }
           return Promise.resolve(
             new Uint8Array([
               137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0,
@@ -802,6 +817,7 @@ async function openDesktop(
     runtimeRequirements: requirements,
     runtimeVersion: RELEASE_VERSION,
     installOptions: options,
+    pdfFixtureBase64: pdfBase64,
   });
   await page.goto(path);
 }
