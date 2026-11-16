@@ -1243,7 +1243,10 @@ mod tests {
             })
             .expect("pdf_page_numbers source");
         assert_eq!(
-            list_doc.capture_options.as_ref().and_then(|o| o.pdf_page_numbers.as_deref()),
+            list_doc
+                .capture_options
+                .as_ref()
+                .and_then(|o| o.pdf_page_numbers.as_deref()),
             Some(&[2, 5][..])
         );
         assert_eq!(

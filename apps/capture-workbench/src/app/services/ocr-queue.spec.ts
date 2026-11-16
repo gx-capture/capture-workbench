@@ -103,9 +103,11 @@ describe('OCR queue presentation', () => {
     expect(parsePdfPageList('3')).toEqual([3]);
     expect(parsePdfPageList('1-5, 8, 10-12')).toEqual([1, 2, 3, 4, 5, 8, 10, 11, 12]);
     expect(parsePdfPageList('8, 1-5')).toEqual([1, 2, 3, 4, 5, 8]);
-    expect(parsePdfPageList(' １ – ３ ， ８ 、 １０ ～ １２ — １３ ~ １４ ')).toEqual([
+    expect(parsePdfPageList(' １ – ３ ， ８ 、 １０ ～ １２ ， １３ — １４ ')).toEqual([
       1, 2, 3, 8, 10, 11, 12, 13, 14,
     ]);
+    expect(parsePdfPageList('2~4')).toEqual([2, 3, 4]);
+    expect(parsePdfPageList('10～12—14')).toBe('invalid');
     expect(parsePdfPageList('4294967295')).toEqual([4_294_967_295]);
     expect(parsePdfPageList('1-500')).toHaveLength(500);
 

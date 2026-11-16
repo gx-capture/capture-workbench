@@ -791,6 +791,7 @@ describe('ResultReviewStore', () => {
         { segmentId: 'p2', order: 1, locator: { kind: 'page', page: 2 }, text: 'p2' },
       ],
     } as unknown as RawCapture;
+    TestBed.resetTestingModule();
     const contiguous = setup({
       get: vi.fn(() => of(makeDetail({ raw: contiguousRaw }))),
     });
