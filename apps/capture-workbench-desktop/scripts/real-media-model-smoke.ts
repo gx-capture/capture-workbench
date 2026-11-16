@@ -2902,16 +2902,26 @@ export function modelSmokeInjectedDocumentId(value: unknown): string {
   return documentId;
 }
 
+export async function importModelSmokeFixtureDocument(
+  fixtureKey: MediaKind,
+  invoke: (command: string, args: Readonly<Record<string, unknown>>) => Promise<unknown>,
+): Promise<string> {
+  const result = await invoke('model_smoke_import_fixture', {
+    request: { fixtureKey },
+  });
+  return modelSmokeInjectedDocumentId(result);
+}
+
 async function injectModelSmokeFixture(
   page: Page,
   fixtureKey: MediaKind,
   options: { readonly waitForCaptureReady?: boolean } = {},
 ): Promise<InjectedFixtureDocument> {
   const startedAt = Date.now();
-  const result = await invokeTauriCommand(page, 'model_smoke_import_fixture', {
-    request: { fixtureKey },
-  });
-  const documentId = modelSmokeInjectedDocumentId(result);
+  const documentId = await importModelSmokeFixtureDocument(
+    fixtureKey,
+    (command, args) => invokeTauriCommand(page, command, args),
+  );
   await waitForImportedDocumentInLibrary(page, documentId);
   await page.reload({ waitUntil: 'domcontentloaded' });
   if (options.waitForCaptureReady !== false) await waitForCaptureReady(page);

@@ -597,3 +597,44 @@ fn uninstall_requirement_returns_installable_and_rejects_an_unknown_id() {
         "Runtime requirement was not found."
     );
 }
+
+#[test]
+fn model_options_match_catalog_profile_ids_and_active_scenario() {
+    let state = fixture();
+    let options = get(&state, "/v2/runtime/model-options", 200);
+    let items = options["items"].as_array().unwrap();
+    let summary: Vec<(&str, &str, &str, &str)> = items
+        .iter()
+        .map(|item| {
+            (
+                item["optionId"].as_str().unwrap(),
+                item["modelReference"].as_str().unwrap(),
+                item["profileId"].as_str().unwrap(),
+                item["status"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        summary,
+        vec![
+            (
+                "qwen3.5-0.8b-v1",
+                "qwen3.5:0.8b",
+                "capture-workbench-qwen3.5-0.8b-structure-v1",
+                "active",
+            ),
+            (
+                "qwen3.5-2b-v1",
+                "qwen3.5:2b",
+                "capture-workbench-qwen3.5-2b-structure-v1",
+                "not-installed",
+            ),
+            (
+                "qwen3.5-4b-v1",
+                "qwen3.5:4b",
+                "capture-workbench-qwen3.5-4b-structure-v1",
+                "not-installed",
+            ),
+        ]
+    );
+}

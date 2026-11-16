@@ -926,13 +926,14 @@ fn valid_model_option_id(value: &str) -> bool {
 }
 
 fn model_option(option_id: &str, display_name: &str, model_reference: &str, status: &str) -> Value {
+    let base_id = option_id.strip_suffix("-v1").unwrap_or(option_id);
     json!({
         "optionId": option_id,
         "displayName": display_name,
         "modelReference": model_reference,
         "expectedDigest": null,
         "expectedBytes": null,
-        "profileId": format!("capture-workbench-{option_id}-structure-v1"),
+        "profileId": format!("capture-workbench-{base_id}-structure-v1"),
         "profileSpecSha256": "b".repeat(64),
         "status": status,
     })
