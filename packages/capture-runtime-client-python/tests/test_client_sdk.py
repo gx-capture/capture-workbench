@@ -897,7 +897,7 @@ def test_shared_perspective_corpus_has_python_parity_with_rectangle_nan_and_boun
         CaptureOcrProjection.model_validate(out_of_bounds)
 
 
-def test_shared_referenced_invalid_corpus_has_python_parity_with_typescript_and_java() -> None:
+def test_shared_referenced_invalid_corpus_has_python_parity_with_typescript() -> None:
     corpus = _shared_referenced_invalid_corpus()
     assert len(corpus) == 12
     for invalid in corpus:
@@ -911,7 +911,7 @@ def test_shared_referenced_invalid_corpus_has_python_parity_with_typescript_and_
             CaptureOcrProjection.model_validate(base)
 
 
-def test_shared_page_selection_keeps_source_page_numbers_like_typescript_and_java() -> None:
+def test_shared_page_selection_keeps_source_page_numbers_like_typescript() -> None:
     fixture = _shared_page_selection()
     transport = _transport(
         {
@@ -1184,12 +1184,38 @@ def test_public_python_sdk_is_v2_only_and_hides_generated_wire_module() -> None:
     generated_suffixes = ("V" + "1", "V" + "2")
     assert not any(name.endswith(generated_suffixes) for name in sdk.__all__)
     assert "generated_models" not in sdk.__dict__
-    source_root = Path(__file__).parents[1] / "src" / "capture_runtime_client"
-    for path in source_root.glob("*.py"):
-        if path.name in {"contracts.py", "__init__.py"}:
-            continue
-        assert "/v" + "1/" not in path.read_text(encoding="utf-8")
     assert all(not name.endswith(generated_suffixes) for name in contracts.__all__)
+
+    requested_paths: list[str] = []
+    inner = _transport(
+        {
+            ("GET", "/v2/captures/cap/ocr"): lambda request: httpx.Response(
+                200, json=_shared_perspective_payload(), request=request
+            ),
+            ("GET", "/v2/runtime/installations"): lambda request: httpx.Response(
+                200, json={"items": []}, request=request
+            ),
+        }
+    )
+
+    class _RecordingTransport:
+        def request(self, method: str, path: str, **kwargs: object) -> httpx.Response:
+            requested_paths.append(path)
+            return inner.request(method, path, **kwargs)
+
+        def stream(self, method: str, path: str, **kwargs: object) -> object:
+            requested_paths.append(path)
+            return inner.stream(method, path, **kwargs)
+
+    client = CaptureRuntimeClient(transport=_RecordingTransport())
+    client.handshake()
+    client.discover()
+    client.get_ocr("cap")
+    client.list_installations()
+
+    assert requested_paths
+    assert all(path.startswith(("/v2/", "/meta/v2/")) for path in requested_paths)
+    assert not any("/v" + "1/" in path for path in requested_paths)
 
 
 def test_retry_policy_retries_idempotent_requests_only() -> None:

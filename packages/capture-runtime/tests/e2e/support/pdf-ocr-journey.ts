@@ -1,3 +1,5 @@
+// eslint-disable-next-line @nx/enforce-module-boundaries -- shared test temp-root guard.
+import '../../../../../tools/test-temp-root.ts';
 // Real PDF OCR through the Capture Runtime HTTP API, with no UI: start the
 // runtime executable from a release directory, install the OCR worker, upload
 // CAPTURE_PDF_OCR_E2E_PDF, wait for extraction, and check the page count

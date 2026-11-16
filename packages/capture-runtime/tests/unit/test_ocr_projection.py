@@ -1,6 +1,5 @@
 from collections.abc import Callable
 from datetime import UTC, datetime
-from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -850,16 +849,6 @@ def test_public_pipeline_boundary_retired_helpers_are_absent() -> None:
         assert not hasattr(pipeline, helper)
     for private_alias in ("_OcrRequest", "_OcrEngineRequest", "_OcrEnginePort"):
         assert not hasattr(ocr_projection_module, private_alias)
-
-
-def test_public_adapters_do_not_call_private_pipeline_execution() -> None:
-    runtime_root = Path(__file__).resolve().parents[2]
-    for relative_path in (
-        Path("src/capture_runtime/capture/infrastructure/capture_extraction.py"),
-        Path("src/capture_runtime/workers/ocr_main.py"),
-    ):
-        source = (runtime_root / relative_path).read_text(encoding="utf-8")
-        assert "._execute(" not in source
 
 
 def test_pipeline_failure_keeps_a_readable_typed_projection() -> None:

@@ -627,7 +627,7 @@
         "{projectRoot}/dist/catalog/preflight-capture-engine-catalog.json"
       ],
       "metadata": {
-        "description": "Generates a complete source-lock-bound catalog only for the blocked private speech recognition preflight lock."
+        "description": "Manual: generates a complete source-lock-bound catalog only for the blocked private speech recognition preflight lock; it stops on the approved lock. See the release runbook, Manual runtime targets."
       },
       "options": {
         "cwd": "packages/capture-runtime",
@@ -644,7 +644,7 @@
         "{projectRoot}/dist/candidate/speech-recognition-preflight-evidence.json"
       ],
       "metadata": {
-        "description": "Runs one privacy-safe private speech recognition preflight; output never includes audio paths or text."
+        "description": "Manual: runs one privacy-safe private speech recognition preflight while the fixture is not frozen; output never includes audio paths or text. See the release runbook, Manual runtime targets."
       },
       "options": {
         "cwd": "packages/capture-runtime",
@@ -799,6 +799,9 @@
       "inputs": [
         "production"
       ],
+      "metadata": {
+        "description": "Manual: probes the locally built CUDA speech worker. No workflow runs it; CI probes the diarization and CPU speech workers. See the release runbook, Manual runtime targets."
+      },
       "options": {
         "cwd": "packages/capture-runtime",
         "command": "uv run --python 3.13 python scripts/probe_packaged_worker.py dist/workers/capture-engine-speech-recognition/capture-engine-speech-recognition.exe speech-recognition"

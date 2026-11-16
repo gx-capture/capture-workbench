@@ -444,10 +444,20 @@ def _reader_with(detections: list[dict[str, object]], recognizer: object) -> obj
     return reader
 
 
+class _FakeRaster:
+    def __init__(self, height: int, width: int, channels: int = 3) -> None:
+        self.shape = (height, width, channels)
+
+    def __getitem__(self, slices: tuple[slice, slice, slice]) -> _FakeRaster:
+        y_slice, x_slice, _ = slices
+        y_start, y_stop, _ = y_slice.indices(self.shape[0])
+        x_start, x_stop, _ = x_slice.indices(self.shape[1])
+        return _FakeRaster(max(0, y_stop - y_start), max(0, x_stop - x_start), self.shape[2])
+
+
 def test_reader_returns_ordered_lines_clipped_to_the_raster(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    np = pytest.importorskip("numpy", reason="The vertical reader requires the WindowsML extras.")
     import xml.etree.ElementTree as ET
 
     import capture_runtime.ocr.infrastructure.ocr_vertical_reader as module
@@ -478,7 +488,7 @@ def test_reader_returns_ordered_lines_clipped_to_the_raster(
     monkeypatch.setattr(module, "_ordered_layout", layout)
     reader = _reader_with([{"box": (0, 0, 1, 1)}], Echo())
 
-    lines = reader.read_array(np.zeros((200, 100, 3), dtype=np.uint8))  # type: ignore[attr-defined]
+    lines = reader.read_array(_FakeRaster(200, 100))
 
     assert [line.polygon for line in lines] == [
         ((70.0, 10.0), (100.0, 10.0), (100.0, 160.0), (70.0, 160.0)),
@@ -491,7 +501,6 @@ def test_reader_returns_ordered_lines_clipped_to_the_raster(
 
 
 def test_reader_reports_a_layout_failure_as_such(monkeypatch: pytest.MonkeyPatch) -> None:
-    np = pytest.importorskip("numpy", reason="The vertical reader requires the WindowsML extras.")
     import capture_runtime.ocr.infrastructure.ocr_vertical_reader as module
     from capture_runtime.ocr.infrastructure.ocr_vertical_routing import VerticalLayoutError
 
@@ -502,7 +511,7 @@ def test_reader_reports_a_layout_failure_as_such(monkeypatch: pytest.MonkeyPatch
     reader = _reader_with([], object())
 
     with pytest.raises(VerticalLayoutError, match="ZeroDivisionError"):
-        reader.read_array(np.zeros((10, 10, 3), dtype=np.uint8))  # type: ignore[attr-defined]
+        reader.read_array(_FakeRaster(10, 10))
 
 
 def test_lines_are_built_from_detections_when_the_layout_groups_none() -> None:
