@@ -1138,7 +1138,7 @@ def test_uninstall_requirement_deletes_its_installation_and_checks_the_reply() -
         "displayName": "Speech recognition",
         "status": "installable",
         "requiredFor": ["audio"],
-        "installStrategy": "runtime-artifact",
+        "installStrategy": "runtime-catalog",
         "downloadBytes": 1024,
     }
     replies: list[httpx.Response] = [

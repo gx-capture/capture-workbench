@@ -213,7 +213,7 @@ function requirement(
     status,
     kind: 'runtime',
     requiredFor: ['capture'],
-    installStrategy: 'automatic',
+    installStrategy: 'runtime-catalog',
     detail: null,
     downloadBytes,
   };

@@ -298,7 +298,7 @@ test('renders the desktop queue and history filter through the authenticated run
 
   await expect(page.getByText('已就緒', { exact: true })).toBeVisible();
   await expect(page.getByText('history.pdf')).toBeVisible();
-  await expect(page.getByText('Ollama · qwen3.5:0.8b')).toBeVisible();
+  await expect(page.getByText('Qwen 3.5 0.8B')).toBeVisible();
   await expect(page.getByRole('combobox', { name: '處理狀態' })).toBeVisible();
   await expect(page.getByRole('button', { name: '選擇檔案' })).toBeEnabled();
   await page.getByLabel('搜尋文件').fill('not-a-file');
@@ -449,16 +449,16 @@ async function openDesktop(
     let ocrPolls = 0;
     const ocrCaptureId = 'capture-ocr-1';
     const sourceSha = 'a'.repeat(64);
-    const ocrJob = (status: string, stage: string): Record<string, unknown> => ({
+    const ocrJob = (status: string): Record<string, unknown> => ({
       protocolVersion: '2',
       ingestionId: 'ingestion-ocr-1',
       captureId: ocrCaptureId,
       partialRevision: 0,
       lastEventSequence: 0,
       createdAt: '2026-07-20T00:00:00Z',
+      updatedAt: '2026-07-20T00:00:00Z',
       status,
-      stage,
-      progress: status === 'running' ? 0.75 : 1,
+      progress: status === 'extracting' ? 0.75 : 1,
       pagesDone: 9,
       pagesTotal: 12,
       source: {
@@ -471,7 +471,7 @@ async function openDesktop(
     const ocrProvenance = {
       status: 'resolved',
       engine: 'windowsml-ocr',
-      model: 'ppocrv6-traditional-multilingual',
+      model: 'pp-ocrv6-medium-windowsml',
       modelDigest: `sha256:${'d'.repeat(64)}`,
       device: 'RTX4060',
       profileId: 'profile-1',
@@ -523,10 +523,15 @@ async function openDesktop(
       },
       segments: [
         { segmentId: 'seg-1', order: 0, locator: { kind: 'page', page: 1 }, text: '第一頁' },
-        { segmentId: 'seg-2', order: 0, locator: { kind: 'page', page: 2 }, text: '第二頁' },
+        { segmentId: 'seg-2', order: 1, locator: { kind: 'page', page: 2 }, text: '第二頁' },
       ],
       sourceText: '第一頁\n第二頁',
-      extractionEngine: 'windowsml-ocr',
+      extractionEngine: {
+        engine: 'windowsml-ocr',
+        model: 'pp-ocrv6-medium-windowsml',
+        digest: `sha256:${'d'.repeat(64)}`,
+        device: 'windowsml-dml',
+      },
       createdAt: '2026-07-20T00:00:00Z',
     });
 
@@ -681,7 +686,7 @@ async function openDesktop(
                 status: 'installable',
                 kind: 'runtime',
                 requiredFor: ['capture'],
-                installStrategy: 'automatic',
+                installStrategy: 'runtime-catalog',
                 detail: null,
               });
             }, 1500);
@@ -690,16 +695,38 @@ async function openDesktop(
         if (command === 'runtime_model_options') {
           return Promise.resolve({
             catalogSha256: 'a'.repeat(64),
-            items: [{
-              optionId: 'qwen3.5-0.8b-v1',
-              displayName: 'Ollama · qwen3.5:0.8b',
-              modelReference: 'qwen3.5:0.8b',
-              expectedDigest: null,
-              expectedBytes: null,
-              profileId: 'capture-workbench-qwen3.5-0.8b-structure-v1',
-              profileSpecSha256: 'b'.repeat(64),
-              status: 'active',
-            }],
+            items: [
+              {
+                optionId: 'qwen3.5-0.8b-v1',
+                displayName: 'Qwen 3.5 0.8B',
+                modelReference: 'qwen3.5:0.8b',
+                expectedDigest: null,
+                expectedBytes: null,
+                profileId: 'capture-workbench-qwen3.5-0.8b-structure-v1',
+                profileSpecSha256: 'b'.repeat(64),
+                status: 'active',
+              },
+              {
+                optionId: 'qwen3.5-2b-v1',
+                displayName: 'Qwen 3.5 2B',
+                modelReference: 'qwen3.5:2b',
+                expectedDigest: null,
+                expectedBytes: null,
+                profileId: 'capture-workbench-qwen3.5-2b-structure-v1',
+                profileSpecSha256: 'c'.repeat(64),
+                status: 'not-installed',
+              },
+              {
+                optionId: 'qwen3.5-4b-v1',
+                displayName: 'Qwen 3.5 4B',
+                modelReference: 'qwen3.5:4b',
+                expectedDigest: null,
+                expectedBytes: null,
+                profileId: 'capture-workbench-qwen3.5-4b-structure-v1',
+                profileSpecSha256: 'd'.repeat(64),
+                status: 'not-installed',
+              },
+            ],
           });
         }
         if (command === 'library_list') {
@@ -794,12 +821,12 @@ async function openDesktop(
         }
         if (installOptions.ocrJourney && command === 'runtime_create_capture') {
           ocrPolls = 0;
-          return Promise.resolve(ocrJob('running', 'extracting'));
+          return Promise.resolve(ocrJob('extracting'));
         }
         if (installOptions.ocrJourney && command === 'runtime_get_capture') {
           ocrPolls += 1;
-          if (ocrPolls <= 4) return Promise.resolve(ocrJob('running', 'extracting'));
-          return Promise.resolve(ocrJob('awaiting_structuring', 'awaiting_structuring'));
+          if (ocrPolls <= 4) return Promise.resolve(ocrJob('extracting'));
+          return Promise.resolve(ocrJob('awaiting_structuring'));
         }
         if (installOptions.ocrJourney && command === 'runtime_get_raw') {
           return Promise.resolve(ocrRaw());
@@ -842,7 +869,7 @@ function requirement(
     status,
     kind: 'runtime',
     requiredFor: ['capture'],
-    installStrategy: 'automatic',
+    installStrategy: 'runtime-catalog',
     detail: '需要使用者同意後才能安裝。',
     ...(downloadBytes !== undefined ? { downloadBytes } : {}),
   };

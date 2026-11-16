@@ -268,7 +268,7 @@ describe('DesktopRuntimeClientService', () => {
         ? of({ status: 'ready', detail: 'Runtime ready' })
         : command === 'runtime_ready'
           ? of(readyPayload)
-          : of({ captureId: 'capture-1', status: 'running' })),
+          : of({ captureId: 'capture-1', status: 'extracting' })),
     };
     TestBed.configureTestingModule({
       providers: [
@@ -380,7 +380,7 @@ describe('DesktopRuntimeClientService', () => {
       status: 'installable',
       kind: 'runtime',
       requiredFor: ['capture'],
-      installStrategy: 'automatic',
+      installStrategy: 'runtime-catalog',
       downloadBytes: 144_000_000,
     };
     const commands = {
