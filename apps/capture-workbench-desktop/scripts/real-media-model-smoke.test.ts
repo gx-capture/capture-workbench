@@ -149,12 +149,9 @@ function validEvidence() {
         model: 'pp-ocrv6-medium-windowsml',
         device: 'windowsml-dml',
         engineDigest: `sha256:${digest}`,
-        structuringEngine: expectedStructuringEngine,
-        structuringModel: expectedStructuringModel,
-        structuringDigest: `sha256:${digest}`,
-        structuredBlockCount: 1,
         segmentCount: 1,
         pageLocators: 1,
+        ocrEvidencePersisted: true,
         durationMs: 100,
       },
       {
@@ -164,12 +161,9 @@ function validEvidence() {
         model: 'pp-ocrv6-medium-windowsml',
         device: 'windowsml-dml',
         engineDigest: `sha256:${digest}`,
-        structuringEngine: expectedStructuringEngine,
-        structuringModel: expectedStructuringModel,
-        structuringDigest: `sha256:${digest}`,
-        structuredBlockCount: 1,
         segmentCount: 1,
         pageLocators: 1,
+        ocrEvidencePersisted: true,
         durationMs: 100,
       },
       {
@@ -189,7 +183,7 @@ function validEvidence() {
       },
     ],
     rawPersisted: true,
-    resultPersisted: true,
+    recordingResultPersisted: true,
     consentedInstallation: true,
     capturesDeletedAfterVerification: true,
     ownedProcessCleanupVerified: true,
@@ -206,18 +200,62 @@ test('real model evidence is release-gated, provenance-bound, and private', () =
   assert.doesNotMatch(serialized, /(?:sourceText|expectedText|transcript|token|secret)/iu);
 });
 
-test('real model evidence rejects CPU OCR, missing structuring metadata, and path leakage', () => {
+test('real model evidence enforces document OCR checkpoint fields and recording structuring fields', () => {
   const cpuOcr = structuredClone(validEvidence()) as { media: Array<Record<string, unknown>> };
   cpuOcr.media[0].device = 'cpu';
   assert.throws(() => assertRealMediaModelEvidence(cpuOcr));
 
+  for (const [field, value] of [
+    ['structuringEngine', expectedStructuringEngine],
+    ['structuringModel', expectedStructuringModel],
+    ['structuringDigest', `sha256:${digest}`],
+    ['structuredBlockCount', 1],
+  ] as const) {
+    const docWithStructuring = structuredClone(validEvidence()) as { media: Array<Record<string, unknown>> };
+    docWithStructuring.media[0][field] = value;
+    assert.throws(() => assertRealMediaModelEvidence(docWithStructuring), new RegExp(field, 'u'));
+
+    const imageWithStructuring = structuredClone(validEvidence()) as { media: Array<Record<string, unknown>> };
+    imageWithStructuring.media[1][field] = value;
+    assert.throws(() => assertRealMediaModelEvidence(imageWithStructuring), new RegExp(field, 'u'));
+  }
+
+  for (const docIndex of [0, 1] as const) {
+    const missingOcrEvidence = structuredClone(validEvidence()) as { media: Array<Record<string, unknown>> };
+    delete missingOcrEvidence.media[docIndex].ocrEvidencePersisted;
+    assert.throws(() => assertRealMediaModelEvidence(missingOcrEvidence));
+
+    const falseOcrEvidence = structuredClone(validEvidence()) as { media: Array<Record<string, unknown>> };
+    falseOcrEvidence.media[docIndex].ocrEvidencePersisted = false;
+    assert.throws(() => assertRealMediaModelEvidence(falseOcrEvidence));
+  }
+
+  for (const field of [
+    'structuringEngine',
+    'structuringModel',
+    'structuringDigest',
+    'structuredBlockCount',
+  ] as const) {
+    const missingRecordingField = structuredClone(validEvidence()) as { media: Array<Record<string, unknown>> };
+    delete missingRecordingField.media[2][field];
+    assert.throws(() => assertRealMediaModelEvidence(missingRecordingField));
+  }
+
   const zeroBlocks = structuredClone(validEvidence()) as { media: Array<Record<string, unknown>> };
-  zeroBlocks.media[1].structuredBlockCount = 0;
+  zeroBlocks.media[2].structuredBlockCount = 0;
   assert.throws(() => assertRealMediaModelEvidence(zeroBlocks));
 
   const wrongStructuringModel = structuredClone(validEvidence()) as { media: Array<Record<string, unknown>> };
   wrongStructuringModel.media[2].structuringModel = 'other-model';
   assert.throws(() => assertRealMediaModelEvidence(wrongStructuringModel));
+
+  const legacyReportFlag = structuredClone(validEvidence()) as Record<string, unknown>;
+  legacyReportFlag.resultPersisted = true;
+  assert.throws(() => assertRealMediaModelEvidence(legacyReportFlag));
+
+  const missingRecordingFlag = structuredClone(validEvidence()) as Record<string, unknown>;
+  delete missingRecordingFlag.recordingResultPersisted;
+  assert.throws(() => assertRealMediaModelEvidence(missingRecordingFlag));
 
   const leakedPath = structuredClone(validEvidence()) as { media: Array<Record<string, unknown>> };
   leakedPath.media[2].sourcePath = 'C:\\private\\audio.wav';
@@ -1359,20 +1397,20 @@ test('host smoke installs requirements and selected model purely via Tauri comma
   );
 });
 
-test('host smoke verifies document recognized text, structuring blocks, and cleanup via commands', async () => {
-  const documentId = 'a'.repeat(32);
-  const captureId = '11111111-1111-1111-1111-111111111111';
+test('host smoke verifies document OCR checkpoint, ocrEvidence, and cleanup via commands', async () => {
   const expected = sampleExpectedProvenance();
-  let deleted = false;
-  const invoke: TauriInvoke = async (command, args) => {
-    const request = args.request as Record<string, unknown> | undefined;
-    const input = args.input as Record<string, unknown> | undefined;
-    if (command === 'library_get') {
-      if (deleted) throw new Error('not found');
-      return {
-        documentId,
-        status: 'completed',
-        raw: {
+  for (const kind of ['pdf', 'image'] as const) {
+    const documentId = kind === 'pdf' ? 'a'.repeat(32) : 'd'.repeat(32);
+    const captureId = '11111111-1111-1111-1111-111111111111';
+    let deleted = false;
+    let gets = 0;
+    const invoke: TauriInvoke = async (command, args) => {
+      const request = args.request as Record<string, unknown> | undefined;
+      const input = args.input as Record<string, unknown> | undefined;
+      if (command === 'library_get') {
+        if (deleted) throw new Error('not found');
+        gets += 1;
+        const raw = {
           sourceText: 'sample ocr line\nsecond line',
           extractionEngine: {
             engine: 'windowsml-ocr',
@@ -1383,63 +1421,82 @@ test('host smoke verifies document recognized text, structuring blocks, and clea
           segments: [
             { segmentId: 'seg-1', order: 0, locator: { kind: 'page', page: 1 }, text: 'sample ocr line' },
           ],
-        },
-        result: {
-          extractionEngine: {
-            engine: 'windowsml-ocr',
-            model: 'pp-ocrv6-medium-windowsml',
-            device: 'windowsml-dml',
-            digest: `sha256:${digest}`,
-          },
-          structuringEngine: {
-            engine: expectedStructuringEngine,
-            model: expectedStructuringModel,
-            digest: `sha256:${digest}`,
-          },
-          blocks: [
-            { blockId: 'blk-1', order: 0, type: 'paragraph', sourceSegmentId: 'seg-1', sourceText: 'sample ocr line', targetText: 'structured line' },
-          ],
-        },
-      };
-    }
-    if (command === 'library_delete') {
-      assert.equal(request?.documentId, documentId);
-      deleted = true;
-      return null;
-    }
-    if (command === 'library_list') {
-      return deleted ? [] : [{ documentId, status: 'completed' }];
-    }
-    if (command === 'runtime_get_capture') {
-      assert.equal(input?.id, captureId);
-      throw new Error('HTTP 404');
-    }
-    throw new Error(`Unexpected command: ${command}`);
-  };
+        };
+        const ocrEvidence = {
+          schemaVersion: 1,
+          captureId,
+          sourceSha256: digest,
+          status: 'completed',
+          pageCount: 1,
+          pages: [],
+          summary: { normalizedCharCount: 14, boxCount: 1, confidenceSummary: { scoreState: 'none', numericCount: 0, min: null, max: null, mean: null } },
+          provenance: { status: 'resolved' },
+          digest,
+        };
+        // First poll observes persistOcrCheckpoint$'s pre-cleanup write before captureId is cleared.
+        if (gets === 1) {
+          return {
+            documentId,
+            captureId,
+            status: 'completed',
+            stage: 'awaiting_structuring',
+            raw,
+            ocrEvidence,
+          };
+        }
+        return {
+          documentId,
+          status: 'awaiting_confirmation',
+          stage: 'awaiting_structuring',
+          raw,
+          ocrEvidence,
+        };
+      }
+      if (command === 'library_delete') {
+        assert.equal(request?.documentId, documentId);
+        deleted = true;
+        return null;
+      }
+      if (command === 'library_list') {
+        return deleted ? [] : [{ documentId, status: 'awaiting_confirmation' }];
+      }
+      if (command === 'runtime_get_capture') {
+        assert.equal(input?.id, captureId);
+        throw new Error('HTTP 404');
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    };
 
-  const summary = await assertCaptureRecord(
-    {
-      kind: 'pdf',
-      fileName: 'fixture.pdf',
-      mediaType: 'application/pdf',
-      path: 'fixture.pdf',
-      bytes: new Uint8Array([1]),
-      sha256: digest,
-      expectedOcrText: 'sample ocr line',
-    },
-    expected,
-    documentId,
-    invoke,
-    { importedAt: Date.now() - 50, initialCaptureId: captureId },
-  );
-  assert.equal(summary.structuringEngine, expectedStructuringEngine);
-  assert.equal(summary.structuringModel, expectedStructuringModel);
-  assert.equal(summary.structuredBlockCount, 1);
-  assert.equal(summary.pageLocators, 1);
-  assert.equal(deleted, true);
+    const summary = await assertCaptureRecord(
+      {
+        kind,
+        fileName: kind === 'pdf' ? 'fixture.pdf' : 'fixture.png',
+        mediaType: kind === 'pdf' ? 'application/pdf' : 'image/png',
+        path: kind === 'pdf' ? 'fixture.pdf' : 'fixture.png',
+        bytes: new Uint8Array([1]),
+        sha256: digest,
+        expectedOcrText: 'sample ocr line',
+      },
+      expected,
+      documentId,
+      invoke,
+      { importedAt: Date.now() - 50, initialCaptureId: captureId },
+    );
+    if (summary.sourceKind === 'audio') {
+      throw new Error('Expected a document summary.');
+    }
+    assert.equal(summary.sourceKind, kind);
+    assert.equal(summary.ocrEvidencePersisted, true);
+    assert.equal(summary.pageLocators, 1);
+    assert.equal('structuringEngine' in summary, false);
+    assert.equal('structuringModel' in summary, false);
+    assert.equal('structuringDigest' in summary, false);
+    assert.equal('structuredBlockCount' in summary, false);
+    assert.equal(deleted, true);
+  }
 });
 
-test('host smoke fails closed when a terminal record has no structured result or invalid blocks', async () => {
+test('host smoke fails closed on document structured results, missing raw or ocrEvidence, or wrong checkpoint state', async () => {
   const documentId = 'b'.repeat(32);
   const expected = sampleExpectedProvenance();
   const baseInput = {
@@ -1461,40 +1518,107 @@ test('host smoke fails closed when a terminal record has no structured result or
     },
     segments: [{ segmentId: 'seg-1', order: 0, locator: { kind: 'page', page: 1 }, text: 'sample ocr line' }],
   };
+  const baseOcrEvidence = {
+    schemaVersion: 1,
+    captureId: '11111111-1111-1111-1111-111111111111',
+    sourceSha256: digest,
+    status: 'completed',
+    digest,
+  };
 
   await assert.rejects(
     assertCaptureRecord(baseInput, expected, documentId, async (command) => {
       assert.equal(command, 'library_get');
-      return { documentId, status: 'awaiting_confirmation', raw: baseRaw };
+      return {
+        documentId,
+        status: 'completed',
+        stage: 'completed',
+        raw: baseRaw,
+        result: {
+          structuringEngine: {
+            engine: expectedStructuringEngine,
+            model: expectedStructuringModel,
+            digest: `sha256:${digest}`,
+          },
+          blocks: [{ blockId: 'blk-1', sourceSegmentId: 'seg-1' }],
+        },
+      };
     }),
-    /terminal status awaiting_confirmation without a structured result/u,
+    /documents are now structured and this check must be extended/u,
+  );
+
+  await assert.rejects(
+    assertCaptureRecord(baseInput, expected, documentId, async () => ({
+      documentId,
+      status: 'awaiting_confirmation',
+      stage: 'awaiting_structuring',
+      ocrEvidence: baseOcrEvidence,
+    })),
+    /without persisting raw extraction/u,
+  );
+
+  await assert.rejects(
+    assertCaptureRecord(baseInput, expected, documentId, async () => ({
+      documentId,
+      status: 'awaiting_confirmation',
+      stage: 'awaiting_structuring',
+      raw: baseRaw,
+    })),
+    /without persisting ocrEvidence/u,
+  );
+
+  await assert.rejects(
+    assertCaptureRecord(baseInput, expected, documentId, async () => ({
+      documentId,
+      status: 'awaiting_confirmation',
+      stage: 'awaiting_structuring',
+      raw: baseRaw,
+      ocrEvidence: { ...baseOcrEvidence, status: 'failed' },
+    })),
+    /completed/u,
+  );
+
+  await assert.rejects(
+    assertCaptureRecord(baseInput, expected, documentId, async () => ({
+      documentId,
+      status: 'awaiting_confirmation',
+      stage: 'awaiting_structuring',
+      raw: baseRaw,
+      ocrEvidence: { ...baseOcrEvidence, digest: `sha256:${digest}` },
+    })),
+    /digest/u,
   );
 
   await assert.rejects(
     assertCaptureRecord(baseInput, expected, documentId, async () => ({
       documentId,
       status: 'completed',
+      stage: 'awaiting_structuring',
       raw: baseRaw,
-      result: {
-        structuringEngine: {
-          engine: expectedStructuringEngine,
-          model: expectedStructuringModel,
-          digest: `sha256:${digest}`,
-        },
-        blocks: [{ blockId: 'blk-1', sourceSegmentId: 'missing-segment' }],
-      },
+      ocrEvidence: baseOcrEvidence,
     })),
-    /referenced unknown raw segment/u,
+    /unexpected terminal state status=completed stage=awaiting_structuring/u,
+  );
+
+  await assert.rejects(
+    assertCaptureRecord(baseInput, expected, documentId, async () => ({
+      documentId,
+      status: 'awaiting_confirmation',
+      stage: 'completed',
+      raw: baseRaw,
+      ocrEvidence: baseOcrEvidence,
+    })),
+    /unexpected terminal state status=awaiting_confirmation stage=completed/u,
   );
 
   await assert.rejects(
     assertCaptureRecord(baseInput, expected, documentId, async () => ({
       documentId,
       status: 'failed',
-      stage: 'structuring',
-      errorCode: 'structuring_failed',
+      stage: 'extracting',
+      errorCode: 'extraction_failed',
     })),
-    /status=failed; stage=structuring; errorCode=structuring_failed; mediaKind=pdf\./u,
+    /status=failed; stage=extracting; errorCode=extraction_failed; mediaKind=pdf\./u,
   );
 });
 
@@ -1607,11 +1731,72 @@ test('host smoke verifies recording partials, segments, structuring, and streami
     invoke,
     { importedAt: Date.now() - 50, initialCaptureId: captureId, oracle },
   );
+  if (summary.sourceKind !== 'audio') {
+    throw new Error('Expected a recording summary.');
+  }
   assert.equal(summary.extractionEngine, 'speech-recognition');
   assert.equal(summary.device, 'cuda');
   assert.equal(summary.timeLocators, 2);
   assert.equal(summary.structuredBlockCount, 2);
   assert.equal(deleted, true);
+
+  await assert.rejects(
+    assertCaptureRecord(
+      {
+        kind: 'audio',
+        fileName: 'fixture.mp3',
+        mediaType: 'audio/mpeg',
+        path: 'fixture.mp3',
+        bytes: new Uint8Array([1]),
+        sha256: digest,
+      },
+      expected,
+      documentId,
+      async (command) => {
+        if (command === 'runtime_get_streaming_partial') {
+          return {
+            captureId,
+            source: { sha256: digest, bytes: 1_000 },
+            coveredUntilMs: PROGRESSIVE_AUDIO_SAMPLE_INTERVAL_MS,
+            revision: 2,
+            sourceText: 'audio first sentence\naudio second sentence',
+            segments,
+            extractionEngine: oracle.extraction,
+          };
+        }
+        return {
+          documentId,
+          status: 'completed',
+          raw: {
+            sourceText: 'audio first sentence\naudio second sentence',
+            extractionEngine: {
+              engine: 'speech-recognition',
+              model: 'tea-asr-1.1',
+              device: 'cuda',
+              digest: `sha256:${digest}`,
+            },
+            segments,
+          },
+          result: {
+            extractionEngine: {
+              engine: 'speech-recognition',
+              model: 'tea-asr-1.1',
+              device: 'cuda',
+              digest: `sha256:${digest}`,
+            },
+            structuringEngine: {
+              engine: expectedStructuringEngine,
+              model: expectedStructuringModel,
+              digest: `sha256:${digest}`,
+            },
+            blocks: [{ blockId: 'blk-0', sourceSegmentId: 'missing-segment' }],
+          },
+        };
+      },
+      { importedAt: Date.now() - 50, initialCaptureId: captureId, oracle },
+    ),
+    /referenced unknown raw segment/u,
+  );
 
   await assert.rejects(
     deleteLibraryDocument(documentId, async (command) => {

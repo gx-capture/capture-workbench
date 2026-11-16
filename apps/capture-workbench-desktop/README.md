@@ -151,10 +151,13 @@ catalog engine and `qwen3.5-0.8b-v1` model installation through the host Tauri
 commands, imports a private cert-prep PDF, the project-owned image, and a
 private cert-prep audio fixture via the feature-gated `model_smoke_import_fixture`
 command, opens the product OCR/ASR routes so the application queue stores start
-captures automatically, and verifies persisted recognized/structured records,
-provenance, DirectML OCR, lock-selected TEA-ASR segments, Ollama structuring blocks,
-UUID-scoped deletion, and owned process cleanup via host commands. The release
-installer contains no Qwen model bytes.
+captures automatically, and verifies documents to the persisted OCR checkpoint
+(`awaiting_confirmation` / `awaiting_structuring` with `raw`, DirectML OCR
+provenance, `ocrEvidence`, and no structured `result`) and the recording to its
+persisted structured result (`completed` with lock-selected TEA-ASR segments and
+Ollama structuring blocks), plus UUID-scoped deletion and owned process cleanup
+via host commands. Real-model document structuring stays verified at the runtime
+API by `smoke-real-ollama`. The release installer contains no Qwen model bytes.
 The report is redacted by construction and records
 `releaseGateSatisfied=false`, `localProductionPreflight=true`, and
 `consumerE2e=false`; it is not exact-candidate release evidence.

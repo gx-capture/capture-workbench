@@ -329,22 +329,32 @@ interface WorkerArchive {
   readonly parts: readonly EngineCatalogWorkerPart[];
 }
 
-interface MediaSummary {
-  readonly sourceKind: MediaKind;
+interface BaseMediaSummary {
   readonly sourceSha256: string;
   readonly extractionEngine: string;
   readonly model: string;
   readonly device: string;
   readonly engineDigest: string;
+  readonly segmentCount: number;
+  readonly durationMs: number;
+}
+
+interface DocumentMediaSummary extends BaseMediaSummary {
+  readonly sourceKind: 'pdf' | 'image';
+  readonly pageLocators: number;
+  readonly ocrEvidencePersisted: true;
+}
+
+interface RecordingMediaSummary extends BaseMediaSummary {
+  readonly sourceKind: 'audio';
   readonly structuringEngine: string;
   readonly structuringModel: string;
   readonly structuringDigest: string;
   readonly structuredBlockCount: number;
-  readonly segmentCount: number;
-  readonly pageLocators?: number;
-  readonly timeLocators?: number;
-  readonly durationMs: number;
+  readonly timeLocators: number;
 }
+
+type MediaSummary = DocumentMediaSummary | RecordingMediaSummary;
 
 export interface RealMediaModelEvidence {
   readonly evidenceKind: 'real-model-enabled-tauri-host-smoke';
@@ -362,7 +372,7 @@ export interface RealMediaModelEvidence {
   readonly modelDependencyOrderScope: typeof REAL_MODEL_DEPENDENCY_ORDER_SCOPE;
   readonly media: readonly [MediaSummary, MediaSummary, MediaSummary];
   readonly rawPersisted: true;
-  readonly resultPersisted: true;
+  readonly recordingResultPersisted: true;
   readonly consentedInstallation: true;
   readonly capturesDeletedAfterVerification: true;
   readonly ownedProcessCleanupVerified: true;
@@ -3326,13 +3336,12 @@ function partialSegmentText(partial: JsonObject): string {
 }
 
 function assertExtractionProvenance(
-  raw: JsonObject,
-  result: JsonObject,
+  extractionEngine: unknown,
   input: MediaInput,
   expected: ExpectedProvenance,
 ): { readonly engine: string; readonly model: string; readonly device: string; readonly digest: string } {
   const extraction = asObject(
-    result.extractionEngine ?? raw.extractionEngine,
+    extractionEngine,
     `${input.kind} extraction provenance`,
   );
   const expectedEngine = input.kind === 'audio' ? expected.whisperEngine : expected.ocrEngine;
@@ -3440,6 +3449,7 @@ export async function assertCaptureRecord(
   } = {},
 ): Promise<MediaSummary> {
   const importedAt = options.importedAt ?? Date.now();
+  const isDocument = input.kind === 'pdf' || input.kind === 'image';
   const rawTimeout = input.kind === 'audio' ? REAL_MODEL_AUDIO_CAPTURE_TIMEOUT_MS : REAL_MODEL_CAPTURE_TIMEOUT_MS;
   let lastCaptureId = options.initialCaptureId;
 
@@ -3491,6 +3501,9 @@ export async function assertCaptureRecord(
       }), 'Library document detail');
       throwIfTerminalRecordFailure(detail, input.kind);
       lastCaptureId = validCaptureId(detail.captureId) ?? lastCaptureId;
+      if (isDocument && detail.result !== undefined && detail.result !== null) {
+        throw new Error(`${input.kind} record carries a structured result; documents are now structured and this check must be extended.`);
+      }
       if (detail.raw !== null && typeof detail.raw === 'object' && !Array.isArray(detail.raw)) {
         return true;
       }
@@ -3511,26 +3524,54 @@ export async function assertCaptureRecord(
       }), 'Library document detail');
       throwIfTerminalRecordFailure(detail, input.kind);
       lastCaptureId = validCaptureId(detail.captureId) ?? lastCaptureId;
+      if (isDocument && detail.result !== undefined && detail.result !== null) {
+        throw new Error(`${input.kind} record carries a structured result; documents are now structured and this check must be extended.`);
+      }
       const terminal = !detail.captureId && (detail.status === 'completed' || detail.status === 'awaiting_confirmation');
       if (!terminal) return false;
+      if (isDocument) {
+        if (detail.status !== 'awaiting_confirmation' || detail.stage !== 'awaiting_structuring') {
+          throw new Error(
+            `${input.kind} reached unexpected terminal state status=${String(detail.status)} stage=${String(detail.stage)}; expected awaiting_confirmation/awaiting_structuring.`,
+          );
+        }
+        if (detail.raw === null || typeof detail.raw !== 'object' || Array.isArray(detail.raw)) {
+          throw new Error(`${input.kind} reached terminal status ${String(detail.status)} without persisting raw extraction.`);
+        }
+        if (detail.ocrEvidence === null || typeof detail.ocrEvidence !== 'object' || Array.isArray(detail.ocrEvidence)) {
+          throw new Error(`${input.kind} reached OCR checkpoint without persisting ocrEvidence.`);
+        }
+        return detail;
+      }
+      if (detail.status !== 'completed') {
+        throw new Error(`${input.kind} reached unexpected terminal status ${String(detail.status)}; expected completed.`);
+      }
       if (detail.result === null || typeof detail.result !== 'object' || Array.isArray(detail.result)) {
         throw new Error(`${input.kind} reached terminal status ${String(detail.status)} without a structured result.`);
       }
       return detail;
     },
-    REAL_MODEL_RESULT_TIMEOUT_MS,
-    `${input.kind} structured result did not persist within its bounded timeout.`,
+    isDocument ? REAL_MODEL_CAPTURE_TIMEOUT_MS : REAL_MODEL_RESULT_TIMEOUT_MS,
+    isDocument
+      ? `${input.kind} OCR checkpoint did not persist within its bounded timeout.`
+      : `${input.kind} structured result did not persist within its bounded timeout.`,
   );
 
   const raw = asObject(terminalDetail.raw, `${input.kind} raw capture`);
-  const result = asObject(terminalDetail.result, `${input.kind} structured capture`);
   if (!Array.isArray(raw.segments) || raw.segments.length === 0) {
     throw new Error(`${input.kind} raw segments were empty.`);
   }
-  const provenance = assertExtractionProvenance(raw, result, input, expected);
-  const structuring = assertStructuringResult(raw.segments, result, input);
 
   if (input.kind === 'pdf' || input.kind === 'image') {
+    const provenance = assertExtractionProvenance(raw.extractionEngine, input, expected);
+    const ocrEvidence = asObject(terminalDetail.ocrEvidence, `${input.kind} ocrEvidence`);
+    assert.equal(ocrEvidence.status, 'completed', `${input.kind} ocrEvidence status must be completed.`);
+    const ocrEvidenceDigest = requiredString(ocrEvidence.digest, `${input.kind} ocrEvidence digest`);
+    assert.match(
+      ocrEvidenceDigest,
+      /^[a-f0-9]{64}$/u,
+      `${input.kind} ocrEvidence digest must be 64 lowercase hex characters.`,
+    );
     const sourceText = (typeof raw.sourceText === 'string' ? raw.sourceText : '').trim();
     if (!sourceText) throw new Error(`${input.kind} raw source text was empty.`);
     if (input.expectedOcrText && !sourceText.includes(input.expectedOcrText)) {
@@ -3553,16 +3594,16 @@ export async function assertCaptureRecord(
       model: provenance.model,
       device: provenance.device,
       engineDigest: provenance.digest,
-      structuringEngine: structuring.structuringEngine,
-      structuringModel: structuring.structuringModel,
-      structuringDigest: structuring.structuringDigest,
-      structuredBlockCount: structuring.structuredBlockCount,
       segmentCount: pageLocators,
       pageLocators,
+      ocrEvidencePersisted: true,
       durationMs: extractionDurationMs,
     };
   }
 
+  const result = asObject(terminalDetail.result, `${input.kind} structured capture`);
+  const provenance = assertExtractionProvenance(result.extractionEngine ?? raw.extractionEngine, input, expected);
+  const structuring = assertStructuringResult(raw.segments, result, input);
   const segmentCount = assertAudioRawSegments(
     raw.segments,
     expected,
@@ -3702,6 +3743,13 @@ export async function deleteLibraryDocument(
   }
 }
 
+const STRUCTURING_SUMMARY_FIELDS = [
+  'structuringEngine',
+  'structuringModel',
+  'structuringDigest',
+  'structuredBlockCount',
+] as const;
+
 export function assertRealMediaModelEvidence(value: unknown): asserts value is RealMediaModelEvidence {
   const report = asObject(value, 'Real model smoke report');
   assert.equal(report.evidenceKind, 'real-model-enabled-tauri-host-smoke');
@@ -3716,7 +3764,8 @@ export function assertRealMediaModelEvidence(value: unknown): asserts value is R
   assert.deepEqual(report.modelDependencyOrder, [...REAL_MODEL_REQUIREMENT_ORDER]);
   assert.equal(report.modelDependencyOrderScope, REAL_MODEL_DEPENDENCY_ORDER_SCOPE);
   assert.equal(report.rawPersisted, true);
-  assert.equal(report.resultPersisted, true);
+  assert.equal(report.recordingResultPersisted, true);
+  assert.equal(Object.prototype.hasOwnProperty.call(report, 'resultPersisted'), false);
   assert.equal(report.consentedInstallation, true);
   assert.equal(report.capturesDeletedAfterVerification, true);
   assert.equal(report.ownedProcessCleanupVerified, true);
@@ -3733,10 +3782,6 @@ export function assertRealMediaModelEvidence(value: unknown): asserts value is R
     const media = asObject(item, 'Media summary');
     assert.match(String(media.sourceSha256), /^[a-f0-9]{64}$/u);
     assert.match(String(media.engineDigest), /^sha256:[a-f0-9]{64}$/u);
-    assert.equal(media.structuringEngine, expectedStructuringEngine);
-    assert.equal(media.structuringModel, expectedStructuringModel);
-    assert.match(String(media.structuringDigest), /^sha256:[a-f0-9]{64}$/u);
-    assert.ok(Number.isSafeInteger(media.structuredBlockCount) && Number(media.structuredBlockCount) >= 1);
     assert.ok(Number.isSafeInteger(media.segmentCount) && Number(media.segmentCount) > 0);
     const durationLimit = media.sourceKind === 'audio'
       ? REAL_MODEL_AUDIO_CAPTURE_TIMEOUT_MS
@@ -3750,9 +3795,26 @@ export function assertRealMediaModelEvidence(value: unknown): asserts value is R
       assert.equal(media.model, 'pp-ocrv6-medium-windowsml');
       assert.equal(media.device, 'windowsml-dml');
       assert.ok(Number.isSafeInteger(media.pageLocators) && Number(media.pageLocators) > 0);
+      assert.equal(media.ocrEvidencePersisted, true);
+      for (const field of STRUCTURING_SUMMARY_FIELDS) {
+        assert.equal(
+          Object.prototype.hasOwnProperty.call(media, field),
+          false,
+          `${String(media.sourceKind)} summary must not include ${field}.`,
+        );
+      }
     } else {
       assert.equal(media.extractionEngine, 'speech-recognition');
       assert.ok(Number.isSafeInteger(media.timeLocators) && Number(media.timeLocators) > 0);
+      assert.equal(media.structuringEngine, expectedStructuringEngine);
+      assert.equal(media.structuringModel, expectedStructuringModel);
+      assert.match(String(media.structuringDigest), /^sha256:[a-f0-9]{64}$/u);
+      assert.ok(Number.isSafeInteger(media.structuredBlockCount) && Number(media.structuredBlockCount) >= 1);
+      assert.equal(
+        Object.prototype.hasOwnProperty.call(media, 'ocrEvidencePersisted'),
+        false,
+        'audio summary must not include ocrEvidencePersisted.',
+      );
     }
   }
   const serialized = JSON.stringify(value);
@@ -4065,7 +4127,7 @@ async function run(): Promise<void> {
     modelDependencyOrderScope: REAL_MODEL_DEPENDENCY_ORDER_SCOPE,
     media: summaries as [MediaSummary, MediaSummary, MediaSummary],
     rawPersisted: true,
-    resultPersisted: true,
+    recordingResultPersisted: true,
     consentedInstallation: true,
     capturesDeletedAfterVerification: true,
     ownedProcessCleanupVerified: true,

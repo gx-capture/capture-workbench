@@ -42,6 +42,11 @@ persistence, and cleanup boundaries.
   the smoke installs `speech-recognition` through the authenticated
   `runtime_start_installation` Tauri command; all verification and deletion
   checks read and mutate host state exclusively through Tauri commands.
+  Documents are verified to the OCR checkpoint (`awaiting_confirmation` /
+  `awaiting_structuring` with `raw` and `ocrEvidence`, failing if a structured
+  `result` is present), the recording is verified to its structured result
+  (`completed` with `raw` and Ollama `result`), and document structuring with
+  the real model is verified by `smoke-real-ollama`.
 
 ## Failure modes
 

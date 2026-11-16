@@ -18,5 +18,8 @@ owned run root. The command resolves a key, validates root ownership and file
 policy, then calls the existing native import implementation. Reloading `/ocr`
 (for documents) or routing to `/asr` (for recordings) causes the product queue
 stores to start real runtime processing automatically, while verification reads
-persisted host records via Tauri commands. Evidence must explicitly identify
-this as a deterministic picker bypass, not native-picker coverage.
+persisted host records via Tauri commands: documents are verified to the OCR
+checkpoint (recognized result and `ocrEvidence`, failing if a structured result
+is present), the recording is verified to its structured result, and real-model
+document structuring remains `smoke-real-ollama`'s. Evidence must explicitly
+identify this as a deterministic picker bypass, not native-picker coverage.

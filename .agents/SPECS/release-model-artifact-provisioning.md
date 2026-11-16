@@ -165,8 +165,11 @@ lock, performs checksum-pinned online model installation/probes, requires OCR
 `windowsml-ocr` / `pp-ocrv6-medium-windowsml` / `windowsml-dml`, requires the
 lock-selected speech recognition provenance, compares normalized output exactly
 with each fixture expectation, and runs the Tauri host three-media smoke
-(`capture-workbench-desktop:smoke-real-media-model`). It writes
-only redacted local evidence and does not upload a receipt or model bytes.
+(`capture-workbench-desktop:smoke-real-media-model`), where documents are
+verified to the OCR checkpoint, the recording is verified to its structured
+result, and document structuring with the real model is `smoke-real-ollama`'s.
+It writes only redacted local evidence and does not upload a receipt or model
+bytes.
 
 The release candidate workflow (`release-candidate.yml`) validates and
 classifies the lock, verifies exact-head main CI,
