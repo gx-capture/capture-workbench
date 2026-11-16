@@ -174,7 +174,7 @@ function validEvidence() {
     candidateMirrorUsed: true,
     candidateMirrorReleased: true,
     isolatedAppDataUsed: true,
-  } as const;
+  };
 }
 
 test('real model evidence is release-gated, provenance-bound, and private', () => {

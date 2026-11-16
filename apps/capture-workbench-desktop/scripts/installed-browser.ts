@@ -63,8 +63,8 @@ const startupDiagnosticKeys = [
   'devToolsActivePortFile',
 ] as const;
 
-export function reserveLoopbackPort() {
-  return new Observable((subscriber) => {
+export function reserveLoopbackPort(): Observable<number> {
+  return new Observable<number>((subscriber) => {
     const server = net.createServer();
     server.unref();
     const onError = (error) => subscriber.error(error);

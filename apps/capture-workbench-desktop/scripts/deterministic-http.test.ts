@@ -1,4 +1,3 @@
-import { RELEASE_VERSION } from '../../../tools/release/release-intent.ts';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import http from 'node:http';
@@ -8,16 +7,19 @@ import { firstValueFrom } from 'rxjs';
 import { DETERMINISTIC_FIXTURES, DETERMINISTIC_MAX_UPLOAD_BYTES } from './constants/deterministic.ts';
 import { createIngestion, validateReady, verifyHostStructuring, verifyRuntimeCapture } from './deterministic-http.ts';
 
+// validateReady only requires the two versions to agree, so any value works.
+const SYNTHETIC_RUNTIME_VERSION = '0.0.0-test';
+
 function readyResponse() {
   return { status: 200, body: {
-    ready: true, service: 'capture-runtime', apiVersion: '2.0', runtimeVersion: RELEASE_VERSION,
+    ready: true, service: 'capture-runtime', apiVersion: '2.0', runtimeVersion: SYNTHETIC_RUNTIME_VERSION,
     captureDocumentSchemaVersion: '2', contractSetVersion: '2', message: null,
     capabilities: {
       captureKinds: ['pdf', 'image', 'audio'], structuringModes: ['runtime', 'host'],
       supportsCancellation: true, supportsRawDiagnostics: true, maxUploadBytes: DETERMINISTIC_MAX_UPLOAD_BYTES,
     },
     ocrCompute: {
-      apiVersion: '2.0', schemaVersion: '1', service: 'capture-runtime', runtimeVersion: RELEASE_VERSION,
+      apiVersion: '2.0', schemaVersion: '1', service: 'capture-runtime', runtimeVersion: SYNTHETIC_RUNTIME_VERSION,
       contractSetVersion: '2', contractSha256: 'a'.repeat(64), workerSha256: 'b'.repeat(64),
       mode: 'cpu-fallback', adapterClass: 'unknown', reasonCode: 'no_compatible_gpu',
       userNoticeRequired: true, noticeCode: 'ocr_cpu_fallback',

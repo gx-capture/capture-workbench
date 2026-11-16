@@ -15,6 +15,7 @@ import {
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+import type { Observable } from 'rxjs';
 import {
   catchError,
   concatMap,
@@ -137,8 +138,8 @@ const childEnvironmentAllowlist = CHILD_ENVIRONMENT_ALLOWLIST;
 // runners. Keep this budget explicit while process cleanup remains fail-closed.
 export const installedSmokeExecutableTimeoutMs = 600_000;
 
-function baseChildEnvironment(source, isolatedTemp, ownedRoot = runRoot) {
-  const environment = {};
+function baseChildEnvironment(source: NodeJS.ProcessEnv, isolatedTemp: string, ownedRoot = runRoot) {
+  const environment: Record<string, string> = {};
   for (const allowedName of childEnvironmentAllowlist) {
     const sourceEntry = Object.entries(source).find(
       ([name, value]) =>
@@ -264,7 +265,7 @@ function releaseLock(lock) {
   );
 }
 
-function directoryBytes(directory) {
+function directoryBytes(directory: string): Observable<number> {
   return defer(() => from(readdir(directory, { withFileTypes: true }))).pipe(
     switchMap((entries) => from(entries)),
     concatMap((entry) => {
@@ -315,9 +316,7 @@ function runInstalledSizeMeasurement() {
   const lifecycle = createInstalledSmokeLifecycle({
     workspaceRoot,
     smokeRoot,
-    runRoot,
     nsisDirectory,
-    childEnvironmentAllowlist,
     terminateTrackedProcessTree,
   });
 
@@ -560,10 +559,8 @@ export function runInstalledDeterministicSmoke(
   const lifecycle = createInstalledSmokeLifecycle({
     workspaceRoot,
     smokeRoot,
-    runRoot,
     nsisDirectory: qa ? deterministicQaNsis : nsisDirectory,
     productName: smokeProductName,
-    childEnvironmentAllowlist,
     terminateTrackedProcessTree: processCleanup.terminateTrackedProcessTree,
   });
 
