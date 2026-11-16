@@ -215,6 +215,30 @@ export interface DesktopMessages {
   readonly asrExport: string;
   readonly asrExportNamed: (name: string) => string;
   readonly asrInstallNamed: (name: string) => string;
+  readonly resultBack: string;
+  readonly resultTitle: string;
+  readonly resultNavigation: string;
+  readonly resultTabContent: string;
+  readonly resultTabSpeakers: string;
+  readonly resultTabDetails: string;
+  readonly resultLoading: string;
+  readonly resultNotFound: string;
+  readonly resultNoResultYet: string;
+  readonly resultPdfPreviewPending: string;
+  readonly resultOcrEmpty: string;
+  readonly resultPageLabel: (page: number, total: number) => string;
+  readonly resultPreviousPage: string;
+  readonly resultNextPage: string;
+  readonly resultColTime: string;
+  readonly resultColSpeaker: string;
+  readonly resultColText: string;
+  readonly resultNoSpeakers: string;
+  readonly resultDetailFileName: string;
+  readonly resultDetailMediaType: string;
+  readonly resultDetailSize: string;
+  readonly resultDetailStatus: string;
+  readonly resultDetailCreatedAt: string;
+  readonly resultDetailUpdatedAt: string;
 }
 
 const ZH_TW: DesktopMessages = {
@@ -474,6 +498,30 @@ const ZH_TW: DesktopMessages = {
   asrExport: '匯出',
   asrExportNamed: (name) => `匯出 ${name} 的逐字稿`,
   asrInstallNamed: (name) => `安裝語音辨識以處理 ${name}`,
+  resultBack: '返回',
+  resultTitle: '檢視結果',
+  resultNavigation: '結果檢視導覽',
+  resultTabContent: '內容',
+  resultTabSpeakers: '說話者',
+  resultTabDetails: '詳細資訊',
+  resultLoading: '正在載入結果…',
+  resultNotFound: '找不到這份文件。',
+  resultNoResultYet: '目前還沒有可檢視的結果。',
+  resultPdfPreviewPending: 'PDF 頁面影像將在之後的版本提供',
+  resultOcrEmpty: '沒有辨識到文字。',
+  resultPageLabel: (page, total) => `${page} / ${total}`,
+  resultPreviousPage: '上一頁',
+  resultNextPage: '下一頁',
+  resultColTime: '時間',
+  resultColSpeaker: '說話者',
+  resultColText: '文字',
+  resultNoSpeakers: '這段錄音沒有標記說話者。',
+  resultDetailFileName: '檔名',
+  resultDetailMediaType: '類型',
+  resultDetailSize: '大小',
+  resultDetailStatus: '狀態',
+  resultDetailCreatedAt: '建立時間',
+  resultDetailUpdatedAt: '更新時間',
 };
 
 const EN: DesktopMessages = {
@@ -738,6 +786,30 @@ const EN: DesktopMessages = {
   asrExport: 'Export',
   asrExportNamed: (name) => `Export transcript for ${name}`,
   asrInstallNamed: (name) => `Install speech recognition for ${name}`,
+  resultBack: 'Back',
+  resultTitle: 'Result',
+  resultNavigation: 'Result sections',
+  resultTabContent: 'Content',
+  resultTabSpeakers: 'Speakers',
+  resultTabDetails: 'Details',
+  resultLoading: 'Loading result…',
+  resultNotFound: 'Document not found.',
+  resultNoResultYet: 'No result is available to review yet.',
+  resultPdfPreviewPending: 'PDF page images will be available in a future update',
+  resultOcrEmpty: 'No recognized text.',
+  resultPageLabel: (page, total) => `${page} / ${total}`,
+  resultPreviousPage: 'Previous page',
+  resultNextPage: 'Next page',
+  resultColTime: 'Time',
+  resultColSpeaker: 'Speaker',
+  resultColText: 'Text',
+  resultNoSpeakers: 'No speakers were identified in this recording.',
+  resultDetailFileName: 'File name',
+  resultDetailMediaType: 'Type',
+  resultDetailSize: 'Size',
+  resultDetailStatus: 'Status',
+  resultDetailCreatedAt: 'Created',
+  resultDetailUpdatedAt: 'Updated',
 };
 
 export const DESKTOP_MESSAGES: Readonly<Record<DesktopLocale, DesktopMessages>> =
