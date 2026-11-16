@@ -17,6 +17,24 @@ const summary: DesktopLibrarySummary = {
 };
 
 describe('DesktopLibraryService native source import', () => {
+  it('sends export format and page label to the host', () => {
+    const { commands, service } = configure();
+    service.export(summary.documentId, 'markdown', 'Page {page}').subscribe();
+    expect(commands.invoke).toHaveBeenCalledWith('library_export', {
+      request: { documentId: summary.documentId, format: 'markdown', pageLabel: 'Page {page}' },
+    });
+  });
+  it('supplies the localized text heading for existing callers and omits it for subtitles', () => {
+    const { commands, service } = configure();
+    service.export(summary.documentId, 'text').subscribe();
+    expect(commands.invoke).toHaveBeenLastCalledWith('library_export', {
+      request: { documentId: summary.documentId, format: 'text', pageLabel: DESKTOP_MESSAGES[desktopLocale()].exportPageLabel },
+    });
+    service.export(summary.documentId, 'srt').subscribe();
+    expect(commands.invoke).toHaveBeenLastCalledWith('library_export', {
+      request: { documentId: summary.documentId, format: 'srt' },
+    });
+  });
   it('sends only edit maps and returns the host timestamp', () => {
     const edits = { schemaVersion: 1 as const, ocrPages: { '3': 'edited' },
       transcriptLines: {}, speakerNames: { speaker: 'Name' }, updatedAtMs: 42 };

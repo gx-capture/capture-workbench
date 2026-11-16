@@ -75,7 +75,7 @@ test('drops a PDF without OCR, installs it, and exports the raw text', async ({ 
   expect(download.suggestedFilename()).toBe('charge.txt');
   const saved = await download.path();
   if (!saved) throw new Error('download path missing');
-  expect(await readFile(saved, 'utf8')).toBe('第一頁\n\n第二頁');
+  expect(await readFile(saved, 'utf8')).toBe('第 1 頁\n\n第一頁\n\n第 2 頁\n\n第二頁');
 
   await row.getByTestId('ocr-row-view').click();
   await expect(page).toHaveURL(/\/history\/[0-9a-f]{32}\/content$/u);
@@ -84,6 +84,15 @@ test('drops a PDF without OCR, installs it, and exports the raw text', async ({ 
   expect(await pdfCanvas.evaluate((el: HTMLCanvasElement) => el.width)).toBeGreaterThan(0);
   await expect(page.getByTestId('result-page-text')).toHaveValue('第一頁');
   await page.getByTestId('result-page-text').fill('Corrected first page');
+  await page.getByTestId('result-nav-export').click();
+  const correctedDownloadPromise = page.waitForEvent('download');
+  await page.getByTestId('result-export-text').click();
+  const correctedDownload = await correctedDownloadPromise;
+  expect(correctedDownload.suggestedFilename()).toBe('charge.txt');
+  const correctedPath = await correctedDownload.path();
+  if (!correctedPath) throw new Error('download path missing');
+  expect(await readFile(correctedPath, 'utf8')).toContain('Corrected first page');
+  await page.getByTestId('result-nav-content').click();
   await expect(page.getByTestId('result-save-status')).toHaveText('已儲存');
   await page.reload();
   await expect(page.getByTestId('result-page-text')).toHaveValue('Corrected first page');
@@ -121,7 +130,14 @@ test('shows persisted page and transcript edits and speaker names on result page
   await expect(page.getByTestId('result-line-speaker')).toHaveText('Alice');
   await page.getByTestId('result-line-time').click();
   await expect(page.getByTestId('result-player')).toBeVisible();
-
+  await page.getByTestId('result-nav-export').click();
+  const subtitleDownloadPromise = page.waitForEvent('download');
+  await page.getByTestId('result-export-srt').click();
+  const subtitleDownload = await subtitleDownloadPromise;
+  expect(subtitleDownload.suggestedFilename()).toBe('meeting.srt');
+  const subtitlePath = await subtitleDownload.path();
+  if (!subtitlePath) throw new Error('download path missing');
+  expect(await readFile(subtitlePath, 'utf8')).toContain('00:00:00,000 --> 00:00:01,000');
 });
 
 test('imports an OCR selection through the native picker command', async ({ page }) => {
@@ -846,6 +862,57 @@ async function openDesktop(
             ...(rawByDocument.has(documentId) ? { raw: rawByDocument.get(documentId) } : {}),
             ...(editsByDocument.has(documentId) ? { edits: editsByDocument.get(documentId) } : {}),
           });
+        }
+        if (command === 'library_export') {
+          const documentId = String(args.request?.['documentId'] ?? '');
+          const format = String(args.request?.['format'] ?? '');
+          const pageLabel = String(args.request?.['pageLabel'] ?? '');
+          const current = documents.find((item) => item.documentId === documentId);
+          const raw = rawByDocument.get(documentId) as {
+            sourceText: string;
+            segments: readonly { segmentId: string; order: number; text: string; speaker?: string;
+              locator: { kind: string; page?: number; startMs?: number; endMs?: number } }[];
+          } | undefined;
+          if (!current || !raw || !['text', 'markdown', 'srt', 'vtt', 'json'].includes(format)) {
+            return Promise.reject(new Error('Export unavailable'));
+          }
+          const recording = /^(audio|video)\//u.test(current.mediaType);
+          if (!recording && (format === 'srt' || format === 'vtt')) return Promise.reject(new Error('Recording required'));
+          if ((format === 'text' || format === 'markdown') &&
+            (pageLabel.length > 40 || pageLabel.split('{page}').length !== 2)) {
+            return Promise.reject(new Error('Invalid page label'));
+          }
+          const edits = editsByDocument.get(documentId) as {
+            ocrPages: Record<string, string>; transcriptLines: Record<string, string>; speakerNames: Record<string, string>;
+          } | undefined;
+          const segments = [...raw.segments].sort((a, b) => a.order - b.order);
+          const time = (ms: number): string => {
+            const value = Math.max(0, Math.floor(ms));
+            return `${String(Math.floor(value / 3600000)).padStart(2, '0')}:${String(Math.floor(value / 60000) % 60).padStart(2, '0')}:${String(Math.floor(value / 1000) % 60).padStart(2, '0')}${format === 'srt' ? ',' : '.'}${String(value % 1000).padStart(3, '0')}`;
+          };
+          let content: string;
+          if (format === 'json') content = JSON.stringify(raw);
+          else if (format === 'srt' || format === 'vtt') {
+            content = (format === 'vtt' ? 'WEBVTT\n\n' : '') + segments.map((segment, index) =>
+              `${index + 1}\n${time(segment.locator.startMs ?? 0)} --> ${time(segment.locator.endMs ?? 0)}\n${edits?.transcriptLines[segment.segmentId] ?? segment.text}\n`,
+            ).join('\n');
+          } else if (recording) {
+            content = segments.map((segment) => {
+              const name = segment.speaker ? edits?.speakerNames[segment.speaker] ?? segment.speaker : '';
+              return `${name ? `${name}: ` : ''}${edits?.transcriptLines[segment.segmentId] ?? segment.text}`;
+            }).join('\n');
+          } else {
+            const pages = [...new Set(segments.filter((segment) => segment.locator.kind === 'page').map((segment) => segment.locator.page ?? 1))].sort((a, b) => a - b);
+            content = pages.map((number) => {
+              const text = edits?.ocrPages[String(number)] ?? segments.filter((segment) => segment.locator.page === number).map((segment) => segment.text).join('\n');
+              return `${format === 'markdown' ? '## ' : ''}${pageLabel.replace('{page}', String(number))}\n\n${text}`;
+            }).join('\n\n') || raw.sourceText;
+          }
+          const extensions: Readonly<Record<string, string>> = { text: 'txt', markdown: 'md', srt: 'srt', vtt: 'vtt', json: 'json' };
+          const mediaTypes: Readonly<Record<string, string>> = { text: 'text/plain', markdown: 'text/markdown', srt: 'application/x-subrip', vtt: 'text/vtt', json: 'application/json' };
+          const extension = extensions[format];
+          const mediaType = mediaTypes[format];
+          return Promise.resolve({ fileName: `${current.fileName.replace(/\.[^.]+$/u, '')}.${extension}`, mediaType, content });
         }
         if (command === 'library_save_edits') {
           const documentId = String(args.request?.['documentId'] ?? '');

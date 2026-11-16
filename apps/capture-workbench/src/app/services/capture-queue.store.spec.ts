@@ -9,12 +9,25 @@ import { DesktopLibraryService, type DesktopSourceSelection } from './desktop-li
 import type { DesktopCaptureOperation } from './desktop-runtime-client.service';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
 import { DesktopWorkspaceCaptureService } from './desktop-workspace-capture.service';
+import { DesktopWorkspaceFormattingService } from './desktop-workspace-formatting.service';
 import { isFeatureReady, type RecognitionFeature } from './desktop-workspace.selectors';
 import { DesktopWorkspaceStore } from './desktop-workspace.store';
 import { RecognitionFeaturesStore } from './recognition-features.store';
 
 describe('CaptureQueueStore', () => {
   beforeEach(() => setDesktopLocale('zh-TW'));
+
+  it('exports OCR through the host with page headings and the host filename', () => {
+    const { store, docs, library } = configure({ ocrReady: false });
+    docs.push(doc({ status: 'completed', hasRaw: true }));
+    store.attach();
+    TestBed.tick();
+    const download = vi.spyOn(TestBed.inject(DesktopWorkspaceFormattingService), 'downloadText').mockImplementation(() => undefined);
+    store.exportTxt(docs[0].documentId);
+    expect(library.export).toHaveBeenCalledWith(docs[0].documentId, 'text', '第 {page} 頁');
+    expect(download).toHaveBeenCalledWith('host.txt', 'host text', 'text/plain');
+    expect(library.get).not.toHaveBeenCalled();
+  });
 
   it('keeps an imported file waiting while OCR is missing, then starts it when install finishes', async () => {
     const harness = configure({ ocrReady: false });
@@ -297,6 +310,7 @@ function configure(options: { readonly ocrReady: boolean; readonly job?: Desktop
   };
   const library = {
     list: vi.fn(() => of([...docs])),
+    export: vi.fn(() => of({ fileName: 'host.txt', content: 'host text', mediaType: 'text/plain' })),
     discardSelections: vi.fn(() => of(undefined)),
     importSelection: vi.fn((input: DesktopSourceSelection, captureOptions?: DesktopCaptureOptions) => {
       const fileName = input.fileName;

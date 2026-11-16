@@ -14,6 +14,7 @@ import type {
   OcrEvidenceV1,
 } from '../contracts';
 import { DesktopTauriCommandService } from './desktop-tauri-command.service';
+import { desktopMessages } from '../i18n/desktop-messages';
 
 export interface DesktopSourceSelection {
   readonly selectionToken: string;
@@ -108,9 +109,11 @@ export class DesktopLibraryService {
     });
   }
 
-  export(documentId: string, format: 'json' | 'text'): Observable<DesktopLibraryExport> {
+  export(documentId: string, format: 'json' | 'text' | 'markdown' | 'srt' | 'vtt', pageLabel?: string): Observable<DesktopLibraryExport> {
+    const heading = format === 'text' || format === 'markdown'
+      ? pageLabel ?? desktopMessages().exportPageLabel : undefined;
     return this.commands.invoke<DesktopLibraryExport>('library_export', {
-      request: { documentId, format },
+      request: { documentId, format, ...(heading === undefined ? {} : { pageLabel: heading }) },
     });
   }
 

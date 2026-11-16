@@ -412,7 +412,8 @@
                         size="sm"
                         type="button"
                         data-testid="asr-row-export"
-                        [disabled]="!row.canExport"
+                        [disabled]="!row.canExport || queue.exportBusyIds().has(row.documentId)"
+                        [attr.aria-busy]="queue.exportBusyIds().has(row.documentId)"
                         [attr.aria-label]="m().asrExportNamed(row.fileName)"
                         (click)="queue.exportTxt(row.documentId)"
                       >

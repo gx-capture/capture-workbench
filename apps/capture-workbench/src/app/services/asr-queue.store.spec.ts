@@ -362,7 +362,7 @@ describe('AsrQueueStore', () => {
     expect(router.navigateByUrl).toHaveBeenCalledWith(`/history/${doneDoc.documentId}`);
 
     store.exportTxt(doneDoc.documentId);
-    expect(library.export).toHaveBeenCalledWith(doneDoc.documentId, 'text');
+    expect(library.export).toHaveBeenCalledWith(doneDoc.documentId, 'text', '第 {page} 頁');
     expect(formatting.downloadText).toHaveBeenCalledWith('meeting.txt', 'transcript', 'text/plain');
   });
 

@@ -7,7 +7,7 @@ import { desktopMessages } from '../i18n/desktop-messages';
 import { DesktopLibraryService, type DesktopSourceSelection, type DesktopSourceSelectionBatch } from './desktop-library.service';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
 import { DesktopWorkspaceCaptureService, type DesktopWorkspaceCaptureHost } from './desktop-workspace-capture.service';
-import { DesktopWorkspaceFormattingService } from './desktop-workspace-formatting.service';
+import { LibraryExportService } from './library-export.service';
 import { DesktopWorkspaceStore } from './desktop-workspace.store';
 import {
   errorMessage,
@@ -20,7 +20,6 @@ import {
   inImportOrder,
   isOcrMediaType,
   parsePdfPageCount,
-  renderRawOcrText,
 } from './ocr-queue';
 
 @Injectable({ providedIn: 'root' })
@@ -31,7 +30,8 @@ export class CaptureQueueStore {
   private readonly runtime = inject(DesktopRuntimeClientService);
   private readonly features = inject(RecognitionFeaturesStore);
   private readonly workspace = inject(DesktopWorkspaceStore);
-  private readonly formatting = inject(DesktopWorkspaceFormattingService);
+  private readonly exports = inject(LibraryExportService);
+  readonly exportBusyIds = this.exports.busyIds;
   private readonly destroyRef = inject(DestroyRef);
 
   private readonly attached = signal(false);
@@ -122,16 +122,10 @@ export class CaptureQueueStore {
   exportTxt(documentId: string): void {
     const document = this.sharedDocuments().find((item) => item.documentId === documentId);
     if (!document?.hasRaw) return;
-    this.library.get(documentId)
+    this.exports.run(documentId, 'text')
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
-        next: (detail) => {
-          const text = renderRawOcrText(detail.raw);
-          if (text === '') return;
-          const stem = document.fileName.replace(/\.[^.]+$/u, '');
-          this.formatting.downloadText(`${stem}.txt`, text, 'text/plain;charset=utf-8');
-        },
-        error: (error: unknown) => this.importError.set(errorMessage(error)),
+        error: () => this.importError.set(desktopMessages().exportFailed),
       });
   }
 

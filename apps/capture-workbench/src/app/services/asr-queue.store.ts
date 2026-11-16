@@ -31,7 +31,7 @@ import {
 } from './desktop-library.service';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
 import { DesktopWorkspaceCaptureService } from './desktop-workspace-capture.service';
-import { DesktopWorkspaceFormattingService } from './desktop-workspace-formatting.service';
+import { LibraryExportService } from './library-export.service';
 import {
   errorMessage,
   formatApproximateBytes,
@@ -52,7 +52,8 @@ export class AsrQueueStore {
   private readonly runtime = inject(DesktopRuntimeClientService);
   private readonly capture = inject(DesktopWorkspaceCaptureService);
   private readonly features = inject(RecognitionFeaturesStore);
-  private readonly formatting = inject(DesktopWorkspaceFormattingService);
+  private readonly exports = inject(LibraryExportService);
+  readonly exportBusyIds = this.exports.busyIds;
   private readonly destroyRef = inject(DestroyRef);
   private readonly injector = inject(Injector);
   private readonly router = inject(Router, { optional: true });
@@ -348,19 +349,10 @@ export class AsrQueueStore {
   }
 
   exportTxt(documentId: string): void {
-    this.library
-      .export(documentId, 'text')
+    this.exports.run(documentId, 'text')
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
-        next: (exported) => {
-          this.formatting.downloadText(
-            exported.fileName,
-            exported.content,
-            exported.mediaType,
-          );
-        },
-        error: (error: unknown) =>
-          this.workspace.message?.set(errorMessage(error)),
+        error: () => this.workspace.message?.set(desktopMessages().exportFailed),
       });
   }
 

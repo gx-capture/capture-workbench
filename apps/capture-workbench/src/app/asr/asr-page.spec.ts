@@ -86,6 +86,7 @@ describe('AsrPage', () => {
       restart: vi.fn(),
       view: vi.fn(),
       exportTxt: vi.fn(),
+      exportBusyIds: signal(new Set<string>()),
     };
 
     const features = {
