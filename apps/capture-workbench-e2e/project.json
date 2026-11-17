@@ -78,6 +78,20 @@
         "command": "node apps/capture-workbench-e2e/real-backend-server.ts 4300"
       }
     },
+    "smoke-real-engines": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "metadata": {
+        "description": "Manual opt-in Layer 1 real-engine smoke on localhost (real-engines.spec.ts) driving the Workbench UI against capture-workbench-dev-host and the staged product runtime with real OCR, TEA-ASR 1.1 mini + diarization, and Ollama structuring; excluded from ordinary CI."
+      },
+      "dependsOn": [
+        { "projects": ["capture-workbench-desktop"], "target": "build-dev-host" },
+        { "projects": ["capture-workbench-desktop"], "target": "stage-product-runtime" }
+      ],
+      "options": {
+        "command": "corepack pnpm exec playwright test --config apps/capture-workbench-e2e/playwright.real-engines.config.ts"
+      }
+    },
     "runtime-web-component-e2e": {
       "executor": "nx:run-commands",
       "metadata": {

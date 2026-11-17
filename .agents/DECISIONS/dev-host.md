@@ -136,11 +136,25 @@ generated from that list. Each of those names returns `UnknownCommand`.
    `chromium-real-backend` Playwright project (`capture-workbench-e2e:e2e-real-backend`)
    that exercises the Workbench against `capture-workbench-dev-host` and the
    staged deterministic fixture runtime in CI.
-3. **Real engines on localhost**: a local smoke against the dev host with a
-   published runtime (first run with real downloads, PDF and image OCR, a
-   recording with structuring, editing, export, data still there after a
-   restart of the host). The Desktop App checks this replaces leave the desktop
-   smokes and the acceptance list; the release runbook records the split.
+3. **Real engines on localhost** (Part A built): `apps/capture-workbench-e2e/real-backend-server.ts`
+   accepts `--app-data <abs-dir>` (preserved across exits) and
+   `--runtime-manifest` / `--runtime-executable`, and
+   `pnpm nx run capture-workbench-e2e:smoke-real-engines`
+   (`playwright.real-engines.config.ts`, `src/real-engines.spec.ts`) drives the
+   five-stage localhost journey (first-run install with cancel/retry and reload
+   re-attach, PDF & image OCR, speech transcription + diarization + Ollama
+   structuring, edit/export/restore, and host/runtime restart persistence).
+   Because `CHILD_ENVIRONMENT_ALLOWLIST` in
+   `apps/capture-workbench-desktop/src-tauri/src/constants/launch.rs` and
+   `LaunchPolicy::environment()` in `launch_policy.rs` strip
+   `CAPTURE_ENGINE_CACHE_DIR`, `CAPTURE_SPEECH_RECOGNITION_MODEL`, and
+   `CAPTURE_SPEECH_RECOGNITION_VARIANT` (and only honor
+   `CAPTURE_WHISPER_ALLOW_CPU_FALLBACK=false` when
+   `CAPTURE_SMOKE_WORKER_MIRROR_OPT_IN=1`), forwarding those variables without
+   local workarounds awaits the Rust allowlist follow-up before a full
+   `tea-asr-1.1-mini` / custom engine-cache run succeeds end to end. Part B
+   moves the Desktop App checks this replaces out of the desktop smokes and
+   acceptance list and records the split in the release runbook.
 
 ## Rejected
 

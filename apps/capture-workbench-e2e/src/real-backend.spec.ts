@@ -2,16 +2,22 @@
 // proxied with the headless capture-workbench-dev-host and deterministic fixture
 // runtime. Exercises proxy security rules, token hygiene, and the host-backed
 // OCR library journey.
-import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdirSync, rmSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { request as httpRequest } from 'node:http';
-import { connect as netConnect, createServer as createNetServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, test } from '@playwright/test';
+import {
+  canConnect,
+  launcherReadyLine,
+  reserveFreePort,
+  stopSpawnedChild,
+  waitForLauncherReady,
+} from './real-backend-launcher.ts';
 
 const workspaceRoot = resolve(import.meta.dirname, '..', '..', '..');
 const fixturePdfPath = fileURLToPath(new URL('./fixtures/two-pages.pdf', import.meta.url));
@@ -78,111 +84,8 @@ function corsHeaderNames(
   );
 }
 
-function reserveFreePort(): Promise<number> {
-  return new Promise((resolvePort, rejectPort) => {
-    const srv = createNetServer();
-    srv.once('error', rejectPort);
-    srv.listen(0, '127.0.0.1', () => {
-      const addr = srv.address();
-      const port = typeof addr === 'object' && addr ? addr.port : 0;
-      srv.close((error) => {
-        if (error) rejectPort(error);
-        else resolvePort(port);
-      });
-    });
-  });
-}
-
-function waitForLauncherReady(
-  child: ChildProcess,
-  getStdout: () => string,
-  getStderr: () => string,
-): Promise<string> {
-  return new Promise((resolveReady, rejectReady) => {
-    const deadline = Date.now() + 20_000;
-    const poll = setInterval(() => {
-      const out = getStdout();
-      const newline = out.indexOf('\n');
-      if (newline >= 0) {
-        clearInterval(poll);
-        resolveReady(out.slice(0, newline));
-        return;
-      }
-      if (child.exitCode !== null || child.signalCode !== null) {
-        clearInterval(poll);
-        rejectReady(
-          new Error(`Launcher exited early (${String(child.exitCode)}): ${getStderr()}`),
-        );
-        return;
-      }
-      if (Date.now() >= deadline) {
-        clearInterval(poll);
-        rejectReady(new Error(`Launcher ready line timed out: ${getStderr()}`));
-      }
-    }, 50);
-  });
-}
-
 /** The dev host's bearer token is 64 hexadecimal characters. */
 const tokenShaped = /[0-9a-f]{64}/iu;
-
-function launcherReadyLine(port: number): RegExp {
-  return new RegExp(
-    `^Real-backend preview: http://127\\.0\\.0\\.1:${port}/__preview `
-      + `\\(upstream http://localhost:4200, dev-host 127\\.0\\.0\\.1:(\\d+)\\)$`,
-    'u',
-  );
-}
-
-function canConnect(port: number): Promise<boolean> {
-  return new Promise((resolveResult) => {
-    const socket = netConnect({ host: '127.0.0.1', port });
-    socket.setTimeout(1_000);
-    socket.once('connect', () => {
-      socket.destroy();
-      resolveResult(true);
-    });
-    const refused = (): void => {
-      socket.destroy();
-      resolveResult(false);
-    };
-    socket.once('error', refused);
-    socket.once('timeout', refused);
-  });
-}
-
-function stopSpawnedChild(child: ChildProcess): Promise<void> {
-  if (child.exitCode !== null || child.signalCode !== null) {
-    return Promise.resolve();
-  }
-  return new Promise((resolveExit) => {
-    const timer = setTimeout(() => {
-      if (process.platform === 'win32' && child.pid !== undefined) {
-        spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], {
-          stdio: 'ignore',
-          windowsHide: true,
-          timeout: 5_000,
-        });
-      } else {
-        child.kill('SIGKILL');
-      }
-      resolveExit();
-    }, 5_000);
-    child.once('exit', () => {
-      clearTimeout(timer);
-      resolveExit();
-    });
-    if (process.platform === 'win32' && child.pid !== undefined) {
-      spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], {
-        stdio: 'ignore',
-        windowsHide: true,
-        timeout: 5_000,
-      });
-    } else {
-      child.kill('SIGINT');
-    }
-  });
-}
 
 function expectedDeterministicPdfText(pdfBytes: Buffer): string {
   const marker = Buffer.from('CAPTURE_TEXT:', 'utf8');
