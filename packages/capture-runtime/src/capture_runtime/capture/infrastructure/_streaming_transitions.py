@@ -99,6 +99,10 @@ def _mark_structuring(operation: CaptureOperationV2, *, now: datetime) -> Captur
     return transition_operation(operation, StreamingCaptureStatus.STRUCTURING, now=now)
 
 
+def _release_structuring(operation: CaptureOperationV2, *, now: datetime) -> CaptureOperationV2:
+    return transition_operation(operation, StreamingCaptureStatus.AWAITING_STRUCTURING, now=now)
+
+
 def _complete_capture(operation: CaptureOperationV2, *, now: datetime) -> CaptureOperationV2:
     return transition_operation(operation, StreamingCaptureStatus.COMPLETED, now=now)
 
@@ -127,4 +131,5 @@ __all__ = [
     "_mark_awaiting_structuring",
     "_mark_ingestion_ready",
     "_mark_structuring",
+    "_release_structuring",
 ]

@@ -456,6 +456,34 @@ def test_completion_event_retains_exact_domain_time_and_replays_once(tmp_path: P
         repository.mark_structuring(operation.capture_id)
 
 
+def test_release_structuring_returns_a_structuring_capture_to_awaiting(tmp_path: Path) -> None:
+    clock = MutableClock()
+    repository = StreamingRepository(
+        tmp_path / "streaming", clock=clock, retention_hours=4, policy=_DEFAULT_POLICY
+    )
+    repository.initialize()
+    ingestion_id = _ready_ingestion(repository, b"release", client_request_id="open-release")
+    capture_id = _start(repository, ingestion_id, "capture-release")
+    repository.mark_awaiting_structuring(capture_id)
+
+    structuring = repository.mark_structuring(capture_id)
+    assert structuring.status is StreamingCaptureStatus.STRUCTURING
+    assert structuring.progress == pytest.approx(0.95)
+
+    released = repository.release_structuring(capture_id)
+    assert released.status is StreamingCaptureStatus.AWAITING_STRUCTURING
+    assert released.progress == pytest.approx(0.9)
+    assert repository.release_structuring(capture_id) == released
+
+    restarted = StreamingRepository(
+        tmp_path / "streaming", clock=clock, retention_hours=4, policy=_DEFAULT_POLICY
+    )
+    restarted.initialize()
+    recovered = restarted.get_capture(capture_id)
+    assert recovered.status is StreamingCaptureStatus.AWAITING_STRUCTURING
+    assert recovered.progress == pytest.approx(0.9)
+
+
 def test_open_ingestion_rejects_oversized_source_before_creating_records(
     tmp_path: Path,
 ) -> None:

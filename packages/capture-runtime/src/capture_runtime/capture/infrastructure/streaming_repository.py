@@ -37,6 +37,7 @@ from capture_runtime.capture.infrastructure._streaming_transitions import (
     _mark_awaiting_structuring,
     _mark_ingestion_ready,
     _mark_structuring,
+    _release_structuring,
     operation_domain,
 )
 from capture_runtime.capture.infrastructure.source_sniffing import (
@@ -656,6 +657,17 @@ class StreamingRepository:
                 return record.operation
             now = self._clock.now()
             record.operation = _mark_structuring(record.operation, now=now)
+            self._persist_capture(record)
+            return record.operation
+
+    def release_structuring(self, capture_id: str) -> CaptureOperationV2:
+        with self._lock:
+            record = self._get_capture(capture_id)
+            domain = operation_domain(record.operation).release_structuring()
+            if domain.status is record.operation.status:
+                return record.operation
+            now = self._clock.now()
+            record.operation = _release_structuring(record.operation, now=now)
             self._persist_capture(record)
             return record.operation
 

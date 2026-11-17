@@ -61,4 +61,5 @@ sequenceDiagram
 
 - 改合約型別後執行 `capture-runtime:generate-contracts`，在同一個 PR 提交 runtime 與兩種 SDK 的產生檔。
 - 改變合約集雜湊就是合約變更：要發新版，兩個消費端也要升級並跑 consumer gate（見 [release runbook](../../.agents/GUIDES/release-runbook.md)）。
+- 操作的問題代碼清單屬於合約集：增減任一操作的問題代碼都會改變合約集雜湊，該次發布需經消費端關卡。
 - 新的錯誤種類先登記到問題代碼，再在 HTTP 層使用。
