@@ -59,7 +59,9 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
-      testIgnore: /(?:preview|real-backend)\.spec\.ts$/u,
+      // real-backend and real-engines have their own configs (a dev host; real
+      // engines and private inputs) and must not run with the simulated backend.
+      testIgnore: /(?:preview|real-backend|real-engines)\.spec\.ts$/u,
       use: { ...devices['Desktop Chrome'] },
     },
     ...(process.env['BASE_URL']
@@ -67,7 +69,7 @@ export default defineConfig({
       : [
           {
             name: 'chromium-desktop-csp',
-            testIgnore: /(?:preview|real-backend)\.spec\.ts$/u,
+            testIgnore: /(?:preview|real-backend|real-engines)\.spec\.ts$/u,
             use: { ...devices['Desktop Chrome'], baseURL: desktopCspURL },
           },
           {
