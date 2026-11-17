@@ -22,6 +22,7 @@ import {
 
 const SCENARIO_COOKIE = 'capture-preview-scenario';
 const SPEED_COOKIE = 'capture-preview-speed';
+const START_DELAY_COOKIE = 'capture-preview-start-delay';
 
 const workspaceRoot = resolve(import.meta.dirname, '..', '..');
 const versionJsonPath = join(workspaceRoot, 'release', 'version.json');
@@ -86,6 +87,13 @@ function parseValidSpeed(raw: string | undefined): number | undefined {
   if (raw === undefined || raw.trim() === '') return undefined;
   const parsed = Number(raw);
   if (!Number.isFinite(parsed) || parsed < 0.1 || parsed > 1000) return undefined;
+  return parsed;
+}
+
+function parseValidStartDelay(raw: string | undefined): number | undefined {
+  if (raw === undefined || raw.trim() === '') return undefined;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 30_000) return undefined;
   return parsed;
 }
 
@@ -170,6 +178,7 @@ function renderPreviewIndexHtml(): string {
   <body>
     <h1>Capture Workbench 本機預覽</h1>
     <p class="notice">此預覽使用模擬的桌面後端，不會啟動真實引擎，也不會存取或上傳任何本機檔案。</p>
+    <p class="notice">查詢參數：<code>?speed=4</code> 可調整模擬安裝階段倍速（0.1–1000）；<code>?startDelay=1500</code> 可覆寫開始安裝的回應延遲毫秒數（0–30000，預設 500）。</p>
     <ul>
       ${items}
     </ul>
@@ -184,12 +193,19 @@ function buildInjectedScript(
   runtimeVersion: string,
   pdfFixtureBase64: string,
   freshStart: boolean,
+  startDelayMs?: number,
 ): string {
   const fnSource = installFakeDesktop.toString();
   if (/<\/script|<!--/iu.test(fnSource)) {
     throw new Error('installFakeDesktop source must not contain </script or <!--.');
   }
-  const config = previewScenarioConfig(scenarioName, speed, runtimeVersion, pdfFixtureBase64);
+  const config = previewScenarioConfig(
+    scenarioName,
+    speed,
+    runtimeVersion,
+    pdfFixtureBase64,
+    startDelayMs,
+  );
   const configJson = JSON.stringify(config).replace(/</g, '\\u003c');
   // Choosing a scenario by its link is a fresh machine: what the application
   // and the simulated library remembered in this origin's storage goes. A
@@ -262,6 +278,7 @@ const server = createServer((request, response) => {
   const cookies = parseCookies(request.headers['cookie']);
   const hasScenarioQuery = requestUrl.searchParams.has('scenario');
   const hasSpeedQuery = requestUrl.searchParams.has('speed');
+  const hasStartDelayQuery = requestUrl.searchParams.has('startDelay');
 
   let scenario = DEFAULT_PREVIEW_SCENARIO;
   if (hasScenarioQuery) {
@@ -301,6 +318,23 @@ const server = createServer((request, response) => {
     }
   }
 
+  let startDelayMs: number | undefined;
+  if (hasStartDelayQuery) {
+    const parsed = parseValidStartDelay(requestUrl.searchParams.get('startDelay') ?? '');
+    if (parsed === undefined) {
+      response
+        .writeHead(400, { 'content-type': 'text/plain; charset=utf-8' })
+        .end('Invalid startDelay parameter: expected a finite number between 0 and 30000.\n');
+      return;
+    }
+    startDelayMs = parsed;
+  } else {
+    const cookieStartDelay = parseValidStartDelay(cookies.get(START_DELAY_COOKIE));
+    if (cookieStartDelay !== undefined) {
+      startDelayMs = cookieStartDelay;
+    }
+  }
+
   const upstreamPath = `${requestUrl.pathname}${requestUrl.search}`;
   const upstreamReq = httpRequest(
     {
@@ -333,6 +367,7 @@ const server = createServer((request, response) => {
           runtimeVersion,
           pdfFixtureBase64,
           hasScenarioQuery,
+          startDelayMs,
         );
         const modifiedHtml = injectIntoHtml(html, scriptTag);
 
@@ -363,6 +398,9 @@ const server = createServer((request, response) => {
         }
         if (hasSpeedQuery) {
           setCookies.push(`${SPEED_COOKIE}=${String(speed)}; Path=/; SameSite=Lax`);
+        }
+        if (hasStartDelayQuery && startDelayMs !== undefined) {
+          setCookies.push(`${START_DELAY_COOKIE}=${String(startDelayMs)}; Path=/; SameSite=Lax`);
         }
         if (setCookies.length > 0) {
           const existing = outHeaders['set-cookie'];

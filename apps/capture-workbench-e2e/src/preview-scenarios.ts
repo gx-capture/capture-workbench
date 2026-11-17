@@ -14,6 +14,7 @@ export interface PreviewScenario {
 export const DEFAULT_PREVIEW_SCENARIO = 'ready';
 
 const DEFAULT_INSTALL_TIMELINE = {
+  startResponseMs: 500,
   preparingMs: 2000,
   downloadMs: 20000,
   installingMs: 6000,
@@ -70,18 +71,23 @@ export function previewScenarioConfig(
   speed: number,
   runtimeVersion: string,
   pdfFixtureBase64: string,
+  startDelayMs?: number,
 ): FakeDesktopConfig {
   const scenario = PREVIEW_SCENARIOS[name];
   if (!scenario) {
     throw new Error(`Unknown preview scenario: ${name}`);
   }
   const baseTimeline = scenario.options.installTimeline ?? DEFAULT_INSTALL_TIMELINE;
+  // startResponseMs simulates fixed IPC/runtime startup latency rather than phase
+  // duration, so it is not scaled by `speed` (an explicit startDelayMs overrides it).
+  const startResponseMs = startDelayMs ?? baseTimeline.startResponseMs ?? 0;
   return {
     runtimeRequirements: scenario.requirements,
     runtimeVersion,
     installOptions: {
       ...scenario.options,
       installTimeline: {
+        startResponseMs,
         preparingMs: Math.max(1, Math.round(baseTimeline.preparingMs / speed)),
         downloadMs: Math.max(1, Math.round(baseTimeline.downloadMs / speed)),
         installingMs: Math.max(1, Math.round(baseTimeline.installingMs / speed)),

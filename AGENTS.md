@@ -58,7 +58,7 @@ release runbook.
 
 # Screen review on localhost
 
-- Calibrate screens and discuss screen behaviour on the dev server first: `pnpm nx run capture-workbench-e2e:preview` serves the Workbench at `http://localhost:4300` with the simulated desktop backend of the browser e2e (`apps/capture-workbench-e2e/src/fake-desktop.ts`); scenarios are listed at `/__preview`. Record a run with headless Playwright against that URL.
+- Calibrate screens and discuss screen behaviour on the dev server first: `pnpm nx run capture-workbench-e2e:preview` serves the Workbench at `http://localhost:4300` with the simulated desktop backend of the browser e2e (`apps/capture-workbench-e2e/src/fake-desktop.ts`); scenarios are listed at `/__preview`, with the query parameters that change the simulated timing (`speed`, `startDelay`). Record a run with headless Playwright against that URL.
 - A new screen state that people need to look at becomes a scenario in `apps/capture-workbench-e2e/src/preview-scenarios.ts` or an option of the simulated backend, not a one-off script.
 - The Desktop App is for what only it can prove: WebView2 behaviour, native dialogs, real engines, installed acceptance.
 
