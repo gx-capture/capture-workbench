@@ -15,15 +15,22 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 default = []
 model-smoke-app-data = []
 acceptance-app-data = []
+dev-host = []
 
 [[bin]]
 name = "capture-workbench-desktop"
 path = "src/main.rs"
 
+[[bin]]
+name = "capture-workbench-dev-host"
+path = "src/bin/capture-workbench-dev-host.rs"
+required-features = ["dev-host"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+dirs = "7"
 rand = "0.8"
 sha2 = "0.10"
 capture-sidecar-launcher = { path = "../../../packages/capture-sidecar-launcher" }
@@ -37,6 +44,7 @@ tauri-plugin-single-instance = "2.5.5"
 windows-sys = { version = "0.61", features = [
   "Win32_Foundation",
   "Win32_Storage_FileSystem",
+  "Win32_System_Console",
   "Win32_System_Threading",
 ] }
 

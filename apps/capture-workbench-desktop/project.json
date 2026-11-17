@@ -104,6 +104,41 @@
         "command": "node apps/capture-workbench-desktop/scripts/cargo-deterministic-qa.ts test"
       }
     },
+    "build-dev-host": {
+      "cache": true,
+      "executor": "nx:run-commands",
+      "dependsOn": ["stage-deterministic-runtime"],
+      "outputs": [
+        "{projectRoot}/src-tauri/target/debug/capture-workbench-dev-host.exe"
+      ],
+      "options": {
+        "command": "node apps/capture-workbench-desktop/scripts/cargo-deterministic-qa.ts build --features dev-host --bin capture-workbench-dev-host"
+      }
+    },
+    "cargo-test-dev-host": {
+      "cache": true,
+      "executor": "nx:run-commands",
+      "dependsOn": ["stage-deterministic-runtime"],
+      "inputs": [
+        "default",
+        "{workspaceRoot}/test-fixtures/ocr-evidence-v1-golden.json"
+      ],
+      "options": {
+        "command": "node apps/capture-workbench-desktop/scripts/cargo-deterministic-qa.ts test --features dev-host --lib --bin capture-workbench-dev-host"
+      }
+    },
+    "cargo-check-product-refuses-dev-host": {
+      "cache": true,
+      "executor": "nx:run-commands",
+      "dependsOn": ["stage-deterministic-runtime"],
+      "inputs": [
+        "default",
+        "{workspaceRoot}/test-fixtures/ocr-evidence-v1-golden.json"
+      ],
+      "options": {
+        "command": "node apps/capture-workbench-desktop/scripts/check-product-refuses-dev-host.ts"
+      }
+    },
     "contract-consistency": {
       "cache": true,
       "executor": "nx:run-commands",

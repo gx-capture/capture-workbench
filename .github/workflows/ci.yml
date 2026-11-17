@@ -432,6 +432,8 @@ jobs:
           pnpm nx run capture-workbench-desktop:cargo-fmt-check
           pnpm nx run capture-workbench-desktop:cargo-check
           pnpm nx run capture-workbench-desktop:cargo-test
+          pnpm nx run capture-workbench-desktop:cargo-test-dev-host
+          pnpm nx run capture-workbench-desktop:cargo-check-product-refuses-dev-host
           pnpm nx run capture-workbench-desktop:package-qa-test
           pnpm nx run capture-workbench-desktop:smoke-deterministic
 
