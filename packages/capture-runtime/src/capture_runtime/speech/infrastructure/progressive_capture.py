@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from capture_runtime.clock import Clock
-from capture_runtime.config import ExtractionRuntimeConfig, sanitized_child_environment
+from capture_runtime.config import ExtractionRuntimeConfig, worker_child_environment
 from capture_runtime.constants import SPEECH_RECOGNITION_REQUIREMENT_ID
 from capture_runtime.contracts import (
     CaptureEngine,
@@ -486,7 +486,7 @@ class _SessionWorker:
     ) -> _SessionWorker:
         executable = engine.executable
         command, cwd = _session_worker_launch(executable)
-        environment = dict(sanitized_child_environment())
+        environment = dict(worker_child_environment())
         environment.update(
             {
                 "CAPTURE_SESSION_MODEL_PATH": subprocess_path(engine.model_dir),

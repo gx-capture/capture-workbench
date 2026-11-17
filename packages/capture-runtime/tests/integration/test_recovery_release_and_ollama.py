@@ -22,6 +22,7 @@ from capture_runtime.config import (
     OllamaRuntimeConfig,
     RuntimeSettings,
     sanitized_child_environment,
+    worker_child_environment,
 )
 from capture_runtime.contracts import CaptureDocument
 from capture_runtime.release import (
@@ -217,6 +218,35 @@ def test_capture_child_environment_strips_provider_overrides_and_secrets(
         "CERT_PREP_API_TOKEN",
     ):
         assert forbidden not in environment
+
+
+def test_sanitized_child_environment_omits_username_when_the_source_has_none() -> None:
+    assert sanitized_child_environment(
+        {
+            "SystemRoot": r"C:\Windows",
+            "PATH": r"C:\Windows\System32",
+        }
+    ) == {
+        "SystemRoot": r"C:\Windows",
+        "PATH": r"C:\Windows\System32",
+    }
+
+
+def test_worker_child_environment_defaults_a_missing_or_empty_user_name() -> None:
+    base = {"PATH": r"C:\Windows\System32", "HF_TOKEN": "secret"}
+
+    missing = worker_child_environment(base)
+    assert missing["PATH"] == r"C:\Windows\System32"
+    assert missing["USERNAME"] == "capture-runtime"
+    assert "HF_TOKEN" not in missing
+
+    empty = worker_child_environment({**base, "USERNAME": ""})
+    assert empty["USERNAME"] == "capture-runtime"
+    assert "HF_TOKEN" not in empty
+
+    kept = worker_child_environment({**base, "USERNAME": "capture-user"})
+    assert kept["USERNAME"] == "capture-user"
+    assert "HF_TOKEN" not in kept
 
 
 def test_runtime_settings_never_inherit_an_ambient_ollama_model_store(
