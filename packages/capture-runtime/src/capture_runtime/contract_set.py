@@ -508,7 +508,12 @@ def _operation_definitions() -> list[dict[str, Any]]:
             f"{v2}/captures/{{capture_id}}/structure",
             response_schema="CaptureStreamingResult",
             problems=_COMMON_PROBLEMS
-            + ("capture_not_found", "raw_unavailable", "invalid_capture_state"),
+            + (
+                "capture_not_found",
+                "raw_unavailable",
+                "invalid_capture_state",
+                "requirement_unavailable",
+            ),
         ),
         _operation(
             "v2.captures.structure.session.open",

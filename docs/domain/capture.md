@@ -22,7 +22,7 @@
 
 ## 聚合與不變條件
 
-`Ingestion` 以 `append` 與 `finalize` 守住分塊順序、重送一致性、大小與摘要。`CaptureOperation` 管理合法轉換、主機提交與拉取結構化前置條件及終態事件。相同狀態可冪等重入，終態不可轉回活動狀態；非同步完成與取消的重播由 repository 在鎖內處理。`CaptureCompleted` 保留完整完成時間，作為終止事件的時間來源。
+`Ingestion` 以 `append` 與 `finalize` 守住分塊順序、重送一致性、大小與摘要。`CaptureOperation` 管理合法轉換、主機提交與拉取結構化前置條件及終態事件。相同狀態可冪等重入，終態不可轉回活動狀態；非同步完成與取消的重播由 repository 在鎖內處理。唯一的回頭轉換是 `structuring` 回到 `awaiting_structuring`（`release_structuring`）：runtime 結構化供應者無法接受工作時，作業回到呼叫前的等待狀態，同一 `POST /v2/captures/{id}/structure` 可以在供應者恢復後重試，作業不會被記成失敗。`CaptureCompleted` 保留完整完成時間，作為終止事件的時間來源。
 
 當機後的復原：分塊寫在已接受的位移上，先截掉未記錄的尾端再寫入並 fsync，之後才更新 metadata，所以重送的分塊不會錯位。啟動時，`open` 的 ingestion 若來源比已接受的位移長，截回該位移；來源不見或較短則記為 `failed` 並立即到期，由既有的清理移除（仍受進行中的擷取保護）。metadata 遺失或無法讀取、也沒有擷取引用的 ingestion 目錄會被刪除。worker 的暫存檔（`capture-worker-source-`、`capture-workbench-whisper-`、`capture-progressive-window-`）在啟動時移除，但只限位於 runtime app data 內的暫存目錄；被指定到外部、可能與其他 runtime 共用的目錄不動。這些復原只在 runtime 取得 App 資料目錄的獨佔鎖（#343）之後、於啟動時進行，查詢與被拒絕的請求不會刪除任何東西。
 
