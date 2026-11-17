@@ -10,6 +10,7 @@ export interface FakeDesktopOptions {
   readonly persistLibrary?: boolean;
   /** Simulated installation phases with visible elapsed-time progress. */
   readonly installTimeline?: {
+    readonly startResponseMs?: number;
     readonly preparingMs: number;
     readonly downloadMs: number;
     readonly installingMs: number;
@@ -444,28 +445,42 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
       if (command === 'runtime_start_installation') {
         const requirementId = String(args.input?.requirementId ?? 'speech-recognition');
         target.__captureStartedRequirementIds.push(requirementId);
-        const installationId = `inst-${nextInstallSeq++}`;
-        const req = mutableRequirements.find((item) => item['requirementId'] === requirementId);
-        const downloadBytes =
-          typeof req?.['downloadBytes'] === 'number' ? (req['downloadBytes'] as number) : 2_800_000_000;
-        const record: Record<string, unknown> = {
-          installationId,
-          requirementId,
-          status: 'running',
-          progress: 0.5,
-          downloadedBytes: Math.round(downloadBytes / 2),
-          downloadBytes,
-          createdAt: '2026-11-03T00:00:00Z',
-          updatedAt: '2026-11-03T00:00:00Z',
+        const startInstallation = (): Record<string, unknown> => {
+          const installationId = `inst-${nextInstallSeq++}`;
+          const req = mutableRequirements.find((item) => item['requirementId'] === requirementId);
+          const downloadBytes =
+            typeof req?.['downloadBytes'] === 'number' ? (req['downloadBytes'] as number) : 2_800_000_000;
+          const record: Record<string, unknown> = {
+            installationId,
+            requirementId,
+            status: 'running',
+            progress: 0.5,
+            downloadedBytes: Math.round(downloadBytes / 2),
+            downloadBytes,
+            createdAt: '2026-11-03T00:00:00Z',
+            updatedAt: '2026-11-03T00:00:00Z',
+          };
+          installations.set(installationId, record);
+          pollCounts.set(installationId, 0);
+          if (installOptions.installTimeline) {
+            installStartedAtMs.set(installationId, Date.now());
+            installDownloadBytes.set(installationId, downloadBytes);
+            syncTimelineInstallation(record);
+          }
+          return { ...record };
         };
-        installations.set(installationId, record);
-        pollCounts.set(installationId, 0);
-        if (installOptions.installTimeline) {
-          installStartedAtMs.set(installationId, Date.now());
-          installDownloadBytes.set(installationId, downloadBytes);
-          syncTimelineInstallation(record);
+        const rawDelay = installOptions.installTimeline?.startResponseMs ?? 0;
+        const startResponseMs = Number.isFinite(rawDelay) && rawDelay > 0 ? rawDelay : 0;
+        if (startResponseMs === 0) {
+          return Promise.resolve(startInstallation());
         }
-        return Promise.resolve({ ...record });
+        // In the real runtime the installation exists only once the start request
+        // is answered, so create the record and start the timeline clock then.
+        return new Promise((resolve) => {
+          setTimeout(() => {
+            resolve(startInstallation());
+          }, startResponseMs);
+        });
       }
       if (command === 'runtime_get_installation') {
         const id = String(args.input?.id ?? args.input?.installationId ?? '');

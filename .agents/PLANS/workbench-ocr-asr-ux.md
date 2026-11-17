@@ -67,7 +67,7 @@ Phases 1 and 2 are in `apps/capture-workbench/src/app`:
 
 - **Size and consent:** the button label always shows the size, for example 安裝（約 2.8 GB）. Nothing downloads in the background.
 - **Before the download:** free disk space is checked first, using LAW's `diskShort` text (needs a Tauri command).
-- **While it runs:** a percentage and 取消.
+- **While it runs:** a progress bar, a label and 取消, the same in the three places an installation is watched (the first-run card on `/ocr`, the row on 設定 › 辨識功能, the engine card on `/asr`). The progress appears with the click as 正在準備安裝…, before the runtime has answered the start request; then 正在下載 N%, a figure that never goes down; when every byte has arrived the label is 下載完成，正在安裝… (not 100%, which reads as stuck). The preview tests prove this with a start answer held back (`startDelay`).
 - **After a failure:** 再試一次, which reuses the files already verified.
 - **Resume:** after a window reload the app re-attaches to the running install (`runtime_list_installations`). The runtime resumes a partly downloaded file (Q4).
 - **移除:** Settings › 辨識功能 offers removal for an installed engine ([#254](https://github.com/gx-capture/capture-workbench/issues/254)). The dialog names the engine and its size; nothing is removed until the user confirms. Documents and transcripts already saved stay on this computer.
