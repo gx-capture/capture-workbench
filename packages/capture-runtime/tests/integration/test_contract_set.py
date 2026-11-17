@@ -67,6 +67,22 @@ def test_default_contract_set_is_deterministic_and_covers_v2() -> None:
         "requirement_not_uninstallable",
         "requirement_in_use",
     } <= set(uninstall["problems"])
+    structure = next(
+        operation
+        for operation in first.bundle["operations"]
+        if operation["id"] == "v2.captures.structure"
+    )
+    assert list(structure["problems"]) == [
+        "unauthorized",
+        "invalid_host",
+        "origin_not_allowed",
+        "validation_error",
+        "capture_not_found",
+        "raw_unavailable",
+        "invalid_capture_state",
+        "requirement_unavailable",
+        "structuring_invalid_output",
+    ]
     assert any(schema["name"] == "CaptureDocument" for schema in first.bundle["schemas"])
     unauthorized = next(
         problem for problem in first.bundle["problems"] if problem["code"] == "unauthorized"

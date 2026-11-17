@@ -357,6 +357,13 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
                 "requirement_unavailable",
                 "The structuring provider is unavailable.",
             ) from error
+        except StructuringValidationError as error:
+            # Issues can quote the provider document, including source text.
+            raise ApiProblem(
+                422,
+                "structuring_invalid_output",
+                "Structuring output failed strict schema or provenance validation.",
+            ) from error
         except StreamingTransitionError as error:
             raise ApiProblem(409, "invalid_capture_state", _safe_message(str(error))) from error
         except StreamingPartialNotFoundError as error:

@@ -513,6 +513,7 @@ def _operation_definitions() -> list[dict[str, Any]]:
                 "raw_unavailable",
                 "invalid_capture_state",
                 "requirement_unavailable",
+                "structuring_invalid_output",
             ),
         ),
         _operation(
