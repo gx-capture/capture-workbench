@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import runpy
+import sys
+import types
 from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
 from threading import Event
@@ -693,7 +697,7 @@ def test_ocr_worker_does_not_emit_header_or_pages_before_dml_evidence(
                 },
             ),
             Event(),
-            None,
+            progress.append,
         )
 
     assert progress == []
@@ -758,7 +762,7 @@ def test_ocr_worker_rejects_unproven_dml_result_before_emitting_header(
                 },
             ),
             Event(),
-            None,
+            progress.append,
         )
 
     assert progress == []
@@ -1498,25 +1502,103 @@ def test_ocr_worker_rejects_out_of_order_or_duplicate_page_stream(
         )
 
 
-def test_model_worker_pyinstaller_specs_do_not_collect_public_contract_package_data() -> None:
+@dataclass(frozen=True, slots=True)
+class _RecordedPyInstallerSpec:
+    hook_calls: tuple[tuple[str, str], ...]
+    analysis_kwargs: dict[str, Any]
+
+
+def _run_pyinstaller_spec(
+    spec_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> _RecordedPyInstallerSpec:
+    hook_calls: list[tuple[str, str]] = []
+    analysis_calls: list[dict[str, Any]] = []
+
+    def _record_hook(helper_name: str) -> Callable[..., list[Any]]:
+        def _hook(target: str, *_args: object, **_kwargs: object) -> list[Any]:
+            hook_calls.append((helper_name, target))
+            return []
+
+        return _hook
+
+    pyinstaller_mod = types.ModuleType("PyInstaller")
+    utils_mod = types.ModuleType("PyInstaller.utils")
+    hooks_mod = types.ModuleType("PyInstaller.utils.hooks")
+    for helper_name in (
+        "collect_data_files",
+        "collect_dynamic_libs",
+        "collect_submodules",
+        "copy_metadata",
+    ):
+        setattr(hooks_mod, helper_name, _record_hook(helper_name))
+    utils_mod.hooks = hooks_mod
+    pyinstaller_mod.utils = utils_mod
+    monkeypatch.setitem(sys.modules, "PyInstaller", pyinstaller_mod)
+    monkeypatch.setitem(sys.modules, "PyInstaller.utils", utils_mod)
+    monkeypatch.setitem(sys.modules, "PyInstaller.utils.hooks", hooks_mod)
+
+    def _analysis(*_args: object, **kwargs: object) -> types.SimpleNamespace:
+        analysis_calls.append(dict(kwargs))
+        return types.SimpleNamespace(
+            pure=[],
+            scripts=[],
+            binaries=kwargs.get("binaries", []),
+            datas=kwargs.get("datas", []),
+        )
+
+    spec_globals: dict[str, Any] = {
+        "SPEC": str(spec_path),
+        "Analysis": _analysis,
+        "PYZ": lambda *_args, **_kwargs: types.SimpleNamespace(),
+        "EXE": lambda *_args, **_kwargs: types.SimpleNamespace(),
+        "COLLECT": lambda *_args, **_kwargs: types.SimpleNamespace(),
+    }
+    runpy.run_path(str(spec_path), init_globals=spec_globals)
+    assert len(analysis_calls) == 1
+    return _RecordedPyInstallerSpec(
+        hook_calls=tuple(hook_calls),
+        analysis_kwargs=analysis_calls[0],
+    )
+
+
+def test_model_worker_pyinstaller_specs_do_not_collect_public_contract_package_data(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     pyinstaller_root = Path(__file__).resolve().parents[2] / "pyinstaller"
+    retired_package = "capture_" + "contracts"
 
     for name in (
         "capture-engine-ocr.spec",
         "capture-engine-speech-recognition.spec",
         "capture-engine-speech-recognition-cpu.spec",
     ):
-        spec = (pyinstaller_root / name).read_text(encoding="utf-8")
-        retired_package = "capture_" + "contracts"
-        assert f'collect_data_files("{retired_package}")' not in spec
+        recorded = _run_pyinstaller_spec(pyinstaller_root / name, monkeypatch)
+        for helper_name, target in recorded.hook_calls:
+            assert retired_package not in target, f"{name} called {helper_name}({target!r})"
+        for entry in recorded.analysis_kwargs.get("hiddenimports", []):
+            assert retired_package not in str(entry), f"{name} included {entry!r} in hiddenimports"
+        for entry in recorded.analysis_kwargs.get("datas", []):
+            assert retired_package not in str(entry), f"{name} included {entry!r} in datas"
 
 
-def test_ocr_worker_pyinstaller_spec_packages_canonical_profile_asset() -> None:
+def test_ocr_worker_pyinstaller_spec_packages_canonical_profile_asset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     pyinstaller_root = Path(__file__).resolve().parents[2] / "pyinstaller"
-    spec = (pyinstaller_root / "capture-engine-ocr.spec").read_text(encoding="utf-8")
+    recorded = _run_pyinstaller_spec(
+        pyinstaller_root / "capture-engine-ocr.spec",
+        monkeypatch,
+    )
 
-    assert "ocr-profile.json" in spec
-    assert "capture_runtime/assets" in spec
+    matching_sources = [
+        Path(src)
+        for src, dest in recorded.analysis_kwargs.get("datas", [])
+        if Path(src).name == "ocr-profile.json"
+        and Path(dest).as_posix() == "capture_runtime/assets"
+    ]
+    assert len(matching_sources) == 1
+    assert matching_sources[0].is_file()
 
 
 def test_ocr_pdf_renders_one_page_at_a_time(
