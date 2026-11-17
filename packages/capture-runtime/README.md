@@ -110,10 +110,24 @@ for a capture that is awaiting structuring. When that provider is not
 configured, or it reports that it is unavailable, the route answers `503` with
 problem code `requirement_unavailable` and the fixed message "The structuring
 provider is unavailable." The capture stays `awaiting_structuring`, so the same
-request can succeed once the provider is available. Host structuring
-(`/structure/session`, batch submit, `/structure/commit`, and
-`/structure/failure`) does not call that provider and does not return this
-problem.
+request can succeed once the provider is available. When the provider's output
+fails validation, including a structuring engine that does not match the
+provider, the route answers `422` with problem code `structuring_invalid_output`
+and the fixed message "Structuring output failed strict schema or provenance
+validation." The capture returns to `awaiting_structuring`, so the caller can
+send the request again. The capture is not failed. A capture the runtime
+structures on its own has no caller to retry, and that flow still fails the
+capture with the same code. When the capture is cancelled while the provider is
+working, the capture ends `cancelled`. This route answers `409` with problem
+code `invalid_capture_state` and the fixed message "The capture was cancelled."
+Cancellation does not return the capture to `awaiting_structuring`. A request
+that ends without a cancel request, because the client went away or the runtime
+is stopping, does return it. Any other
+provider error, including a timeout, also returns the capture to
+`awaiting_structuring`; the response stays that failure's existing server
+error. Host structuring (`/structure/session`, batch submit, `/structure/commit`,
+and `/structure/failure`) does not call that provider and does not return these
+problems.
 
 ### Ingestion size limits
 

@@ -98,6 +98,9 @@ _SESSION_END_EVENTS = frozenset(
 )
 
 
+_CAPTURE_CANCELLED = "The capture was cancelled."
+
+
 class StructuringProviderUnavailableError(RuntimeUnavailableError):
     """The runtime structuring provider cannot accept this capture."""
 
@@ -250,17 +253,58 @@ class StreamingCaptureService:
         if self._structurer is None:
             raise StructuringProviderUnavailableError()
         self.repository.mark_structuring(capture_id)
+        if capture_id in self._tasks:
+            # The in-flight flow (`_process`) owns the state of the capture it
+            # runs: it fails it, or leaves it for recovery at shutdown, itself.
+            return await self._structure_marked(capture_id, raw, request.target_language)
         try:
-            candidate = await self._structurer.structure(
-                raw,
-                target_language=request.target_language,
-                cancel_event=self._cancellations.setdefault(capture_id, asyncio.Event()),
-            )
+            completed = await self._structure_marked(capture_id, raw, request.target_language)
+            if self.repository.get_capture(capture_id).status is StreamingCaptureStatus.CANCELLED:
+                raise StreamingTransitionError(_CAPTURE_CANCELLED)
+            return completed
         except RuntimeUnavailableError as error:
-            self.repository.release_structuring(capture_id)
+            if self._stop_structuring(capture_id):
+                raise StreamingTransitionError(_CAPTURE_CANCELLED) from error
             raise StructuringProviderUnavailableError() from error
+        except StructuringValidationError as error:
+            if self._stop_structuring(capture_id):
+                raise StreamingTransitionError(_CAPTURE_CANCELLED) from error
+            raise
+        except ValidationError as error:
+            if self._stop_structuring(capture_id):
+                raise StreamingTransitionError(_CAPTURE_CANCELLED) from error
+            raise StructuringValidationError(
+                "structuring output does not satisfy CaptureDocument"
+            ) from error
+        except StreamingTransitionError:
+            raise
+        except asyncio.CancelledError as error:
+            # A cancel request ends the capture. A request that is itself being
+            # cancelled (the client went away, the runtime is stopping) only
+            # gives the capture back, so it can be structured again.
+            cancelled = self._stop_structuring(capture_id)
+            task = asyncio.current_task()
+            if cancelled and not (task is not None and task.cancelling()):
+                raise StreamingTransitionError(_CAPTURE_CANCELLED) from error
+            raise
+        except Exception as error:
+            if self._stop_structuring(capture_id):
+                raise StreamingTransitionError(_CAPTURE_CANCELLED) from error
+            raise
+
+    async def _structure_marked(
+        self, capture_id: str, raw: RawCapture, target_language: str | None
+    ) -> CaptureDocument:
+        structurer = self._structurer
+        if structurer is None:
+            raise StructuringProviderUnavailableError()
+        candidate = await structurer.structure(
+            raw,
+            target_language=target_language,
+            cancel_event=self._cancellations.setdefault(capture_id, asyncio.Event()),
+        )
         document = _validate_runtime_document(candidate, raw)
-        expected_engine = self._structurer.engine_identity
+        expected_engine = structurer.engine_identity
         if expected_engine is None or document.structuring_engine != expected_engine:
             raise StructuringValidationError(
                 "structuring provider provenance is invalid", issues=[]
@@ -274,6 +318,26 @@ class StreamingCaptureService:
         self.repository.write_result(capture_id, completed)
         self.repository.complete_capture(capture_id)
         return completed
+
+    def _stop_structuring(self, capture_id: str) -> bool:
+        """End a caller-driven attempt; return True when the capture was cancelled.
+
+        The caller of the structure route can retry, so a failed attempt returns
+        the capture to awaiting_structuring. The in-flight flow has nobody to
+        retry and fails its capture itself; it does not come here. A cancel
+        request is not turned back into awaiting_structuring.
+        """
+
+        cancellation = self._cancellations.get(capture_id)
+        if cancellation is not None and cancellation.is_set():
+            self._finish_cancelled_structuring(capture_id)
+            return True
+        self.repository.release_structuring(capture_id)
+        return False
+
+    def _finish_cancelled_structuring(self, capture_id: str) -> None:
+        if self.repository.get_capture(capture_id).status is StreamingCaptureStatus.STRUCTURING:
+            self.repository.cancel_capture(capture_id)
 
     def report_host_failure(
         self,

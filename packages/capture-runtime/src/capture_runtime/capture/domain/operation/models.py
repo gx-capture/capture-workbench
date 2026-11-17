@@ -123,7 +123,7 @@ class CaptureOperation:
         return self.transition(StreamingCaptureStatus.STRUCTURING)
 
     def release_structuring(self) -> CaptureOperation:
-        """Return to awaiting when the provider did not run, so the caller can retry."""
+        """Return to awaiting so a caller-driven structure attempt can be retried."""
 
         if self.status is not StreamingCaptureStatus.STRUCTURING:
             return self
