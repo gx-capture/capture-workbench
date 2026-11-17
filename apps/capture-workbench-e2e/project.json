@@ -20,6 +20,17 @@
         "command": "corepack pnpm exec playwright test --config apps/capture-workbench-e2e/playwright.config.ts"
       }
     },
+    "preview": {
+      "executor": "nx:run-commands",
+      "continuous": true,
+      "metadata": {
+        "description": "Serves the Workbench dev server on http://localhost:4300 with the simulated desktop backend (preview-server.ts) for UI calibration and scenario review."
+      },
+      "dependsOn": [{ "projects": ["capture-workbench"], "target": "serve" }],
+      "options": {
+        "command": "node apps/capture-workbench-e2e/preview-server.ts 4300"
+      }
+    },
     "runtime-web-component-e2e": {
       "executor": "nx:run-commands",
       "metadata": {
