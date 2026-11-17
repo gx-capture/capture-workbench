@@ -2261,6 +2261,160 @@ def test_structure_route_reports_a_missing_provider_as_requirement_unavailable(
     assert client.get(f"/v2/captures/{capture_id}").json()["status"] == "completed"
 
 
+_STRUCTURING_INVALID = "Structuring output failed strict schema or provenance validation."
+_PROVIDER_LEAK = "provider-secret-output-9f3c"
+_CAPTURE_CANCELLED = "The capture was cancelled."
+
+
+def _assert_structuring_invalid(response) -> None:
+    assert response.status_code == 422, response.text
+    assert response.json() == {
+        "error": {
+            "code": "structuring_invalid_output",
+            "message": _STRUCTURING_INVALID,
+        }
+    }
+    assert _PROVIDER_LEAK not in response.text
+    assert "issues" not in response.text
+
+
+def _complete_structure_with_fake_provider(client: TestClient, capture_id: str) -> None:
+    service = client.app.state.streaming_capture_service
+    service._structurer = FakeCaptureStructuringProvider(service._clock)  # type: ignore[assignment]
+    structured = client.post(f"/v2/captures/{capture_id}/structure")
+    assert structured.status_code == 200, structured.text
+    assert structured.json()["targetText"] == "host words"
+    assert client.get(f"/v2/captures/{capture_id}").json()["status"] == "completed"
+
+
+class _InvalidOutputStructurer:
+    engine_identity = None
+
+    async def structure(self, _raw, *, target_language, cancel_event):
+        del target_language, cancel_event
+        return "{" + _PROVIDER_LEAK
+
+
+class _MismatchedProvenance(FakeCaptureStructuringProvider):
+    @property
+    def engine_identity(self) -> CaptureEngine:
+        return CaptureEngine(
+            engine="other-structurer",
+            model=_PROVIDER_LEAK,
+            digest=f"sha256:{'c' * 64}",
+            device="fake",
+        )
+
+
+def test_structure_route_releases_when_provider_output_is_invalid(client: TestClient) -> None:
+    service = client.app.state.streaming_capture_service
+    capture_id, _candidate = _seed_host_capture(client, structuring_mode=StructuringMode.RUNTIME)
+    service._structurer = _InvalidOutputStructurer()  # type: ignore[assignment]
+
+    rejected = client.post(f"/v2/captures/{capture_id}/structure")
+
+    _assert_structuring_invalid(rejected)
+    _assert_awaiting_structuring(client, capture_id)
+    _complete_structure_with_fake_provider(client, capture_id)
+
+
+def test_structure_route_releases_when_provider_provenance_does_not_match(
+    client: TestClient,
+) -> None:
+    service = client.app.state.streaming_capture_service
+    capture_id, _candidate = _seed_host_capture(client, structuring_mode=StructuringMode.RUNTIME)
+    service._structurer = _MismatchedProvenance(service._clock)  # type: ignore[assignment]
+
+    rejected = client.post(f"/v2/captures/{capture_id}/structure")
+
+    _assert_structuring_invalid(rejected)
+    _assert_awaiting_structuring(client, capture_id)
+    _complete_structure_with_fake_provider(client, capture_id)
+
+
+def test_structure_attempt_that_is_itself_cancelled_gives_the_capture_back(
+    client: TestClient,
+) -> None:
+    service = client.app.state.streaming_capture_service
+    capture_id, _candidate = _seed_host_capture(client, structuring_mode=StructuringMode.RUNTIME)
+
+    class _NeverFinishes:
+        engine_identity = None
+
+        def __init__(self) -> None:
+            self.entered = asyncio.Event()
+
+        async def structure(self, _raw, *, target_language, cancel_event):
+            del target_language, cancel_event
+            self.entered.set()
+            await asyncio.Event().wait()
+
+    async def abandon_the_request() -> None:
+        structurer = _NeverFinishes()
+        service._structurer = structurer  # type: ignore[assignment]
+        attempt = asyncio.create_task(service.structure(capture_id))
+        await asyncio.wait_for(structurer.entered.wait(), timeout=5)
+        # No cancel request: the request ends the way it does when the client
+        # goes away or the runtime stops.
+        attempt.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await attempt
+
+    asyncio.run(abandon_the_request())
+
+    _assert_awaiting_structuring(client, capture_id)
+    _complete_structure_with_fake_provider(client, capture_id)
+
+
+def test_structure_route_cancel_while_the_provider_is_working(client: TestClient) -> None:
+    service = client.app.state.streaming_capture_service
+    capture_id, _candidate = _seed_host_capture(client, structuring_mode=StructuringMode.RUNTIME)
+    entered = threading.Event()
+
+    class _WaitingStructurer:
+        engine_identity = None
+
+        async def structure(self, _raw, *, target_language, cancel_event):
+            del target_language
+            entered.set()
+            await cancel_event.wait()
+            raise asyncio.CancelledError
+
+    service._structurer = _WaitingStructurer()  # type: ignore[assignment]
+    outcome: dict[str, object] = {}
+
+    def post_structure() -> None:
+        try:
+            outcome["response"] = client.post(f"/v2/captures/{capture_id}/structure")
+        except (Exception, asyncio.CancelledError) as error:
+            outcome["error"] = error
+
+    worker = threading.Thread(target=post_structure, daemon=True)
+    worker.start()
+    try:
+        assert entered.wait(timeout=5)
+        # Through the route, as a client does: the cancel event belongs to the
+        # application's event loop and is not woken from another thread.
+        cancelled = client.post(f"/v2/captures/{capture_id}/cancel")
+        assert cancelled.status_code == 200, cancelled.text
+        assert cancelled.json()["status"] == "cancelled"
+    finally:
+        worker.join(timeout=5)
+    assert not worker.is_alive()
+    response = outcome.get("response")
+    assert response is not None, outcome.get("error")
+    assert response.status_code == 409, response.text
+    assert response.json() == {
+        "error": {
+            "code": "invalid_capture_state",
+            "message": _CAPTURE_CANCELLED,
+        }
+    }
+    operation = client.get(f"/v2/captures/{capture_id}").json()
+    assert operation["status"] == "cancelled"
+    assert operation["status"] != "structuring"
+
+
 class _ProgressReportingExtractor(_HostProofExtractor):
     async def extract(
         self, content, source, cancel_event, *, pdf_page_numbers=None, ocr_progress=None

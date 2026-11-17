@@ -60,6 +60,6 @@ sequenceDiagram
 
 重播先於語意驗證；順序檢查先於最後批次的文件組裝，錯序回傳 409。Repository 的鎖內檢查仍為寫入的權威。模型下載的鎖、任務 registry 與取消等待由生命週期服務持有。
 
-擷取 API 的 `POST /v2/captures/{id}/structure` 在 runtime 供應者未設定，或供應者回報不可用時，回答 503，問題代碼 `requirement_unavailable`，擷取留在 `awaiting_structuring`。開啟工作階段、提交批次與 commit 是主機路徑，不呼叫該供應者，也不宣告這個問題代碼。
+擷取 API 的 `POST /v2/captures/{id}/structure` 在 runtime 供應者未設定，或供應者回報不可用時，回答 503，問題代碼 `requirement_unavailable`，擷取留在 `awaiting_structuring`。供應者的結果通不過驗證，或結構化引擎與供應者身份不符時，回答 422，問題代碼 `structuring_invalid_output`，訊息固定為「Structuring output failed strict schema or provenance validation.」，擷取回到 `awaiting_structuring`，呼叫端可以再送一次，作業不會被記成失敗。runtime 自己跑的擷取沒有呼叫端可重試，仍以同一個問題代碼把擷取記成失敗。供應者工作中若擷取被取消，作業停在 `cancelled`，這條路由回答 409，問題代碼 `invalid_capture_state`，訊息固定為「The capture was cancelled.」。取消不會把作業退回 `awaiting_structuring`。其他供應者錯誤（含逾時）也把擷取退回 `awaiting_structuring`，回應維持該錯誤原本的伺服器錯誤。開啟工作階段、提交批次與 commit 是主機路徑，不呼叫該供應者，也不宣告這些問題代碼。
 
 隔離的 Ollama 程序在 PID 檔寫下程序識別碼，以及作業系統回報的原始建立時間（`processCreationTime`：Windows `GetProcessTimes` 的 FILETIME 整數，或 Linux `/proc/<pid>/stat` 的 starttime；該平台讀不到時不寫此欄）。下次啟動時：識別碼已結束就刪除檔案並繼續；識別碼仍在且建立時間相同就拒絕再啟動；建立時間不同表示該識別碼已交給別的程序，刪除過期檔案並繼續。舊檔沒有建立時間，或當時讀不到建立時間，仍拒絕。程序映像名稱與命令列不用來判斷。
