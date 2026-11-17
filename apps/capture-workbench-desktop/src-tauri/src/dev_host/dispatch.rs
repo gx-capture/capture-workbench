@@ -119,6 +119,27 @@ macro_rules! build_dispatch_table {
     };
 }
 
+macro_rules! define_feature_gated_commands {
+    (
+        acceptance_app_data: [$($acceptance:ident),* $(,)?],
+        model_smoke_app_data: [$($model_smoke:ident),* $(,)?],
+    ) => {
+        pub(super) fn is_feature_gated_command(command: &str) -> bool {
+            matches!(
+                command,
+                $(stringify!($acceptance))|* | $(stringify!($model_smoke))|*
+            )
+        }
+
+        #[cfg(test)]
+        pub(crate) const FEATURE_GATED_GROUPS: &[&[&str]] = &[
+            &[$(stringify!($acceptance)),*],
+            &[$(stringify!($model_smoke)),*],
+        ];
+    };
+}
+
+for_each_feature_gated_desktop_command!(define_feature_gated_commands);
 for_each_desktop_command!(build_dispatch_table);
 
 #[derive(Deserialize)]

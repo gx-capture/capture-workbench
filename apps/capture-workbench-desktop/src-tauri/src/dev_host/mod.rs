@@ -20,7 +20,7 @@ use server::DevHostServer;
 
 static CTRL_C_REQUESTED: AtomicBool = AtomicBool::new(false);
 #[cfg(windows)]
-static CTRL_C_WAKEUP_PORT: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0);
+static DEV_HOST_STATE: std::sync::Mutex<Option<DesktopState>> = std::sync::Mutex::new(None);
 
 struct ShutdownGuard<'a>(&'a DesktopState);
 
@@ -34,13 +34,20 @@ impl Drop for ShutdownGuard<'_> {
 struct CtrlCHandlerGuard;
 
 #[cfg(windows)]
+fn dev_host_state_slot() -> std::sync::MutexGuard<'static, Option<DesktopState>> {
+    DEV_HOST_STATE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+#[cfg(windows)]
 impl Drop for CtrlCHandlerGuard {
     fn drop(&mut self) {
         use windows_sys::Win32::System::Console::SetConsoleCtrlHandler;
-        CTRL_C_WAKEUP_PORT.store(0, Ordering::Release);
         unsafe {
             SetConsoleCtrlHandler(Some(ctrl_c_handler), 0);
         }
+        *dev_host_state_slot() = None;
     }
 }
 
@@ -51,11 +58,11 @@ unsafe extern "system" fn ctrl_c_handler(ctrl_type: u32) -> i32 {
         ctrl_type,
         CTRL_C_EVENT | CTRL_BREAK_EVENT | CTRL_CLOSE_EVENT
     ) {
-        CTRL_C_REQUESTED.store(true, Ordering::Release);
-        let port = CTRL_C_WAKEUP_PORT.load(Ordering::Acquire);
-        if port != 0 {
-            let _ = std::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, port));
+        let state = dev_host_state_slot().as_ref().cloned();
+        if let Some(state) = state {
+            state.shutdown();
         }
+        CTRL_C_REQUESTED.store(true, Ordering::Release);
         1
     } else {
         0
@@ -63,14 +70,14 @@ unsafe extern "system" fn ctrl_c_handler(ctrl_type: u32) -> i32 {
 }
 
 #[cfg(windows)]
-fn install_ctrl_c_handler(port: u16) -> Option<CtrlCHandlerGuard> {
+fn install_ctrl_c_handler(state: &DesktopState) -> Option<CtrlCHandlerGuard> {
     use windows_sys::Win32::System::Console::SetConsoleCtrlHandler;
     CTRL_C_REQUESTED.store(false, Ordering::Release);
-    CTRL_C_WAKEUP_PORT.store(port, Ordering::Release);
+    *dev_host_state_slot() = Some(state.clone());
     if unsafe { SetConsoleCtrlHandler(Some(ctrl_c_handler), 1) } != 0 {
         Some(CtrlCHandlerGuard)
     } else {
-        CTRL_C_WAKEUP_PORT.store(0, Ordering::Release);
+        *dev_host_state_slot() = None;
         None
     }
 }
@@ -97,7 +104,7 @@ pub fn run_cli() -> Result<(), String> {
     let bound_port = server.port();
 
     #[cfg(windows)]
-    let _ctrl_c = install_ctrl_c_handler(bound_port);
+    let _ctrl_c = install_ctrl_c_handler(&state);
 
     {
         use std::io::Write;

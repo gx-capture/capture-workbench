@@ -105,6 +105,56 @@ macro_rules! desktop_invoke_handler {
     };
 }
 
+/// Feature-gated Tauri commands, one group per feature. Every configuration
+/// consumes this list; `commands::` paths are expanded only under the matching
+/// `#[cfg]`.
+macro_rules! for_each_feature_gated_desktop_command {
+    ($callback:ident) => {
+        $callback! {
+            acceptance_app_data: [
+                desktop_runtime_process_probe,
+                desktop_acceptance_terminate_root,
+            ],
+            model_smoke_app_data: [
+                model_smoke_import_fixture,
+            ],
+        }
+    };
+}
+
+#[cfg(feature = "acceptance-app-data")]
+macro_rules! expand_acceptance_invoke_handler {
+    (
+        acceptance_app_data: [$($command:ident),* $(,)?],
+        model_smoke_app_data: [$($_model_smoke:ident),* $(,)?],
+    ) => {
+        desktop_invoke_handler!($(commands::$command),*)
+    };
+}
+
+#[cfg(all(not(feature = "acceptance-app-data"), feature = "model-smoke-app-data"))]
+macro_rules! expand_model_smoke_invoke_handler {
+    (
+        acceptance_app_data: [$($_acceptance:ident),* $(,)?],
+        model_smoke_app_data: [$($command:ident),* $(,)?],
+    ) => {
+        desktop_invoke_handler!($(commands::$command),*)
+    };
+}
+
+#[cfg(all(
+    not(feature = "acceptance-app-data"),
+    not(feature = "model-smoke-app-data")
+))]
+macro_rules! expand_default_invoke_handler {
+    (
+        acceptance_app_data: [$($_acceptance:ident),* $(,)?],
+        model_smoke_app_data: [$($_model_smoke:ident),* $(,)?],
+    ) => {
+        desktop_invoke_handler!()
+    };
+}
+
 #[cfg(feature = "dev-host")]
 mod dev_host;
 #[cfg(feature = "dev-host")]
@@ -208,19 +258,20 @@ pub fn run() {
         });
 
     #[cfg(feature = "acceptance-app-data")]
-    let builder = builder.invoke_handler(desktop_invoke_handler!(
-        commands::desktop_runtime_process_probe,
-        commands::desktop_acceptance_terminate_root
+    let builder = builder.invoke_handler(for_each_feature_gated_desktop_command!(
+        expand_acceptance_invoke_handler
     ));
     #[cfg(all(not(feature = "acceptance-app-data"), feature = "model-smoke-app-data"))]
-    let builder = builder.invoke_handler(desktop_invoke_handler!(
-        commands::model_smoke_import_fixture
+    let builder = builder.invoke_handler(for_each_feature_gated_desktop_command!(
+        expand_model_smoke_invoke_handler
     ));
     #[cfg(all(
         not(feature = "acceptance-app-data"),
         not(feature = "model-smoke-app-data")
     ))]
-    let builder = builder.invoke_handler(desktop_invoke_handler!());
+    let builder = builder.invoke_handler(for_each_feature_gated_desktop_command!(
+        expand_default_invoke_handler
+    ));
 
     builder
         .run(tauri::generate_context!())

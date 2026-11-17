@@ -58,11 +58,42 @@ drop, window behaviour.
   logged. The `Host` header must name the bound loopback address. No CORS
   headers: a browser never calls the dev host, the preview server does and adds
   the token there, so the token never reaches a page.
+- At most 64 connections are in flight. A further connection is closed without
+  being read. A socket whose read or write timeout cannot be set is closed.
+  The listener is non-blocking. When accept would block, the loop waits about
+  25 ms and checks shutdown again. Each accepted socket is set back to
+  blocking, and is closed if that fails. A connection reads with a short
+  timeout and keeps waiting until bytes arrive, 30 seconds have passed (for
+  the headers, and again for the body) or the host is shutting down, so a
+  client that sends nothing, or a byte now and then, holds a connection
+  neither past that limit nor past shutdown. After the response the server
+  stops sending and discards what the client still sends for at most a second
+  before it closes: closing a socket with unread input makes Windows reset the
+  connection, and the client could lose the response to a rejected request.
+  Shutdown stops the owned runtime
+  first, then waits for in-flight requests, then returns. Ctrl+C, Ctrl+Break
+  and console close stop the runtime inside the console handler, because
+  Windows may end the process a few seconds after a close handler returns. A
+  panic in a request worker stops the host with an error that does not include
+  the panic payload.
 - Arguments: `--port <n>` (0 picks a free port; the chosen port is printed as
-  one JSON line on stdout), `--app-data <absolute dir>` (required; refused when
-  it is, or is inside, the product's app-data directory), and the runtime's
-  manifest and executable paths (required; the staged runtime under
+  one JSON line on stdout), `--app-data <absolute dir>` (required), and the
+  runtime's manifest and executable paths (required; the staged runtime under
   `src-tauri/binaries` and `resources`, or a published release's files).
+- `--app-data` is refused when it is the product directory or a directory
+  inside it. On Windows the forbidden roots are `<Roaming>\<identifier>` and
+  `<Local>\<identifier>`. Roaming and Local come from the known-folder API
+  (`dirs::data_dir` and `dirs::data_local_dir`), the same folders the Tauri
+  product uses. `APPDATA` and `LOCALAPPDATA` are extra forbidden roots when
+  they are set and absolute. If either known folder cannot be resolved, or any
+  forbidden root cannot be resolved to a comparable directory, the host does
+  not start. Comparison is by directory identity: on Windows the volume serial
+  number and file index from `GetFileInformationByHandle`, and device and inode
+  elsewhere. A directory on the path whose identity cannot be read, or a
+  volume that reports no identity, also stops the host: choose another
+  `--app-data`. A product directory that does not exist yet still refuses that
+  path and its children, by the deepest existing ancestor plus the remaining
+  path components (compared without regard to case on Windows).
 
 ### It cannot reach a product build
 
@@ -70,6 +101,9 @@ drop, window behaviour.
   the dispatcher and the HTTP server exist only under that feature.
 - `src/main.rs` (the product executable) fails to compile when the feature is
   on, so no build can produce a product executable that contains the server.
+  The Nx target `cargo-check-product-refuses-dev-host` runs that check and
+  passes only when cargo fails and its output says the product must not be
+  built with `dev-host`.
 - No packaging target enables the feature and the bundle configuration does not
   list the executable.
 
@@ -77,7 +111,11 @@ drop, window behaviour.
 
 The list of commands is written once. The Tauri handler and the dispatcher are
 both generated from it, and a test fails when a command registered with Tauri
-is neither served nor explicitly listed as replaced or not served.
+is neither served nor explicitly listed as replaced or not served. The
+feature-gated acceptance and model-smoke commands are a second list in the
+same file, one group per feature, visible in every feature configuration. The
+three Tauri handler configurations and the dev host's "never served" names are
+generated from that list. Each of those names returns `UnknownCommand`.
 
 ## Slices
 

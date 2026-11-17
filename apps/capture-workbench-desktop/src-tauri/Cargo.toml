@@ -30,6 +30,7 @@ required-features = ["dev-host"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+dirs = "7"
 rand = "0.8"
 sha2 = "0.10"
 capture-sidecar-launcher = { path = "../../../packages/capture-sidecar-launcher" }

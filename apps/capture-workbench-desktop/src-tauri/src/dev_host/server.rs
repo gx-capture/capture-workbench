@@ -1,24 +1,32 @@
 use std::{
     io::{self, Read, Write},
-    net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream},
+    net::{Ipv4Addr, Shutdown, TcpListener, TcpStream},
+    panic::AssertUnwindSafe,
     path::PathBuf,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
     },
     thread::{self, JoinHandle},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use serde::Deserialize;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
-use super::dispatch::{dispatch, is_served_command, HostContext, HostError, HostResponse};
+use super::dispatch::{
+    dispatch, is_feature_gated_command, is_served_command, HostContext, HostError, HostResponse,
+};
 
-const MAX_HEADER_BYTES: usize = 64 * 1024;
+pub(super) const MAX_HEADER_BYTES: usize = 64 * 1024;
 const MAX_BODY_BYTES: usize = 1024 * 1024;
+const MAX_IN_FLIGHT_CONNECTIONS: usize = 64;
 const SOCKET_TIMEOUT: Duration = Duration::from_secs(30);
+const ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(25);
+const CLOSE_DRAIN_READ_TIMEOUT: Duration = Duration::from_millis(250);
+const CLOSE_DRAIN_DEADLINE: Duration = Duration::from_secs(1);
+const READ_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 struct ServerState {
     port: u16,
@@ -27,6 +35,19 @@ struct ServerState {
     context: Arc<HostContext>,
     shutdown_requested: AtomicBool,
     external_shutdown: Option<&'static AtomicBool>,
+    in_flight: AtomicUsize,
+    max_in_flight: usize,
+    worker_panicked: AtomicBool,
+}
+
+struct InFlightGuard<'a> {
+    counter: &'a AtomicUsize,
+}
+
+impl Drop for InFlightGuard<'_> {
+    fn drop(&mut self) {
+        self.counter.fetch_sub(1, Ordering::AcqRel);
+    }
 }
 
 impl ServerState {
@@ -53,7 +74,6 @@ impl ServerShutdownHandle {
     pub(crate) fn shutdown(&self) {
         self.state.context.state.shutdown();
         self.state.shutdown_requested.store(true, Ordering::Release);
-        let _ = TcpStream::connect(SocketAddr::from(([127, 0, 0, 1], self.state.port)));
     }
 }
 
@@ -63,6 +83,33 @@ impl DevHostServer {
         token: String,
         context: Arc<HostContext>,
         external_shutdown: Option<&'static AtomicBool>,
+    ) -> Result<Self, String> {
+        Self::bind_inner(
+            port,
+            token,
+            context,
+            external_shutdown,
+            MAX_IN_FLIGHT_CONNECTIONS,
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn bind_for_test(
+        port: u16,
+        token: String,
+        context: Arc<HostContext>,
+        external_shutdown: Option<&'static AtomicBool>,
+        max_in_flight: usize,
+    ) -> Result<Self, String> {
+        Self::bind_inner(port, token, context, external_shutdown, max_in_flight)
+    }
+
+    fn bind_inner(
+        port: u16,
+        token: String,
+        context: Arc<HostContext>,
+        external_shutdown: Option<&'static AtomicBool>,
+        max_in_flight: usize,
     ) -> Result<Self, String> {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, port))
             .map_err(|error| format!("Dev host HTTP server failed to bind loopback: {error}"))?;
@@ -77,6 +124,9 @@ impl DevHostServer {
             context,
             shutdown_requested: AtomicBool::new(false),
             external_shutdown,
+            in_flight: AtomicUsize::new(0),
+            max_in_flight,
+            worker_panicked: AtomicBool::new(false),
         });
         Ok(Self { listener, state })
     }
@@ -93,6 +143,9 @@ impl DevHostServer {
     }
 
     pub(crate) fn run(self) -> Result<(), String> {
+        self.listener.set_nonblocking(true).map_err(|error| {
+            format!("Dev host HTTP listener could not be set non-blocking: {error}")
+        })?;
         let mut workers: Vec<JoinHandle<()>> = Vec::new();
         loop {
             if self.state.is_shutting_down() {
@@ -104,9 +157,32 @@ impl DevHostServer {
                         drop(stream);
                         break;
                     }
+                    if stream.set_nonblocking(false).is_err() {
+                        drop(stream);
+                        continue;
+                    }
+                    if self.state.in_flight.load(Ordering::Acquire) >= self.state.max_in_flight {
+                        drop(stream);
+                        continue;
+                    }
+                    self.state.in_flight.fetch_add(1, Ordering::AcqRel);
                     workers.retain(|handle| !handle.is_finished());
                     let state = Arc::clone(&self.state);
-                    workers.push(thread::spawn(move || handle_connection(stream, &state)));
+                    workers.push(thread::spawn(move || {
+                        let _in_flight = InFlightGuard {
+                            counter: &state.in_flight,
+                        };
+                        let caught = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                            handle_connection(stream, &state);
+                        }));
+                        if caught.is_err() {
+                            state.worker_panicked.store(true, Ordering::Release);
+                            state.shutdown_requested.store(true, Ordering::Release);
+                        }
+                    }));
+                }
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                    thread::sleep(ACCEPT_POLL_INTERVAL);
                 }
                 Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
                 Err(error) => {
@@ -115,10 +191,16 @@ impl DevHostServer {
                 }
             }
         }
+        self.state.context.state.shutdown();
+        // A worker that is waiting for request bytes sees the shutdown within
+        // one read poll (`read_request_bytes`), so an idle or trickling client
+        // cannot hold the join.
         for worker in workers {
             let _ = worker.join();
         }
-        self.state.context.state.shutdown();
+        if self.state.worker_panicked.load(Ordering::Acquire) {
+            return Err("Dev host request handler panicked.".into());
+        }
         Ok(())
     }
 }
@@ -152,14 +234,43 @@ struct QueueSelectionRequest {
 }
 
 fn handle_connection(mut stream: TcpStream, state: &ServerState) {
-    let _ = stream.set_read_timeout(Some(SOCKET_TIMEOUT));
-    let _ = stream.set_write_timeout(Some(SOCKET_TIMEOUT));
+    if stream.set_read_timeout(Some(READ_POLL_INTERVAL)).is_err()
+        || stream.set_write_timeout(Some(SOCKET_TIMEOUT)).is_err()
+    {
+        return;
+    }
+    serve_connection(&mut stream, state);
+    close_after_response(&mut stream);
+}
 
-    let (head_buffer, header_end) = match read_request_head(&mut stream) {
+/// A rejected request can leave unread bytes in the socket, and closing a
+/// socket with unread input makes Windows reset the connection, so the client
+/// can lose the response it was just sent. Stop sending, then discard what the
+/// client still sends, for a bounded time.
+fn close_after_response(stream: &mut TcpStream) {
+    if stream.shutdown(Shutdown::Write).is_err()
+        || stream
+            .set_read_timeout(Some(CLOSE_DRAIN_READ_TIMEOUT))
+            .is_err()
+    {
+        return;
+    }
+    let deadline = Instant::now() + CLOSE_DRAIN_DEADLINE;
+    let mut discard = [0_u8; 4096];
+    while Instant::now() < deadline {
+        match stream.read(&mut discard) {
+            Ok(0) | Err(_) => break,
+            Ok(_) => {}
+        }
+    }
+}
+
+fn serve_connection(stream: &mut TcpStream, state: &ServerState) {
+    let (head_buffer, header_end) = match read_request_head(stream, state) {
         Ok(Some(head)) => head,
         Ok(None) => return,
         Err(rejection) => {
-            let _ = send_json_error(&mut stream, rejection.status, &rejection.message);
+            let _ = send_json_error(stream, rejection.status, &rejection.message);
             return;
         }
     };
@@ -167,7 +278,7 @@ fn handle_connection(mut stream: TcpStream, state: &ServerState) {
     let head_str = match std::str::from_utf8(&head_buffer[..header_end]) {
         Ok(text) => text,
         Err(_) => {
-            let _ = send_json_error(&mut stream, 400, "Malformed HTTP request.");
+            let _ = send_json_error(stream, 400, "Malformed HTTP request.");
             return;
         }
     };
@@ -175,13 +286,13 @@ fn handle_connection(mut stream: TcpStream, state: &ServerState) {
     let parsed = match parse_request_head(head_str) {
         Ok(parsed) => parsed,
         Err(rejection) => {
-            let _ = send_json_error(&mut stream, rejection.status, &rejection.message);
+            let _ = send_json_error(stream, rejection.status, &rejection.message);
             return;
         }
     };
 
     if parsed.host != Some(state.expected_host.as_str()) {
-        let _ = send_json_error(&mut stream, 403, "Forbidden.");
+        let _ = send_json_error(stream, 403, "Forbidden.");
         return;
     }
 
@@ -189,26 +300,26 @@ fn handle_connection(mut stream: TcpStream, state: &ServerState) {
         .authorization
         .and_then(|value| value.strip_prefix("Bearer "));
     if !provided_token.is_some_and(|token| constant_time_token_eq(&state.token, token)) {
-        let _ = send_json_error(&mut stream, 401, "Unauthorized.");
+        let _ = send_json_error(stream, 401, "Unauthorized.");
         return;
     }
 
     let content_length = parsed.content_length.unwrap_or(0);
     if content_length > MAX_BODY_BYTES {
-        let _ = send_json_error(&mut stream, 413, "Request body exceeds 1 MiB limit.");
+        let _ = send_json_error(stream, 413, "Request body exceeds 1 MiB limit.");
         return;
     }
 
     let already_read = &head_buffer[header_end + 4..];
-    let body = match read_exact_body(&mut stream, already_read, content_length) {
+    let body = match read_exact_body(stream, state, already_read, content_length) {
         Ok(body) => body,
         Err(rejection) => {
-            let _ = send_json_error(&mut stream, rejection.status, &rejection.message);
+            let _ = send_json_error(stream, rejection.status, &rejection.message);
             return;
         }
     };
 
-    route_request(&mut stream, state, parsed.method, parsed.target, &body);
+    route_request(stream, state, parsed.method, parsed.target, &body);
 }
 
 fn route_request(
@@ -248,11 +359,18 @@ fn route_request(
             state.context.state.shutdown();
             state.shutdown_requested.store(true, Ordering::Release);
             let _ = send_json_value(stream, 200, &json!({ "ok": true }));
-            let _ = TcpStream::connect(SocketAddr::from(([127, 0, 0, 1], state.port)));
+        }
+        #[cfg(test)]
+        ("POST", "/__dev/panic") => {
+            panic!("dev host test panic");
         }
         ("POST", path) if path.starts_with("/invoke/") => {
             let command = &path["/invoke/".len()..];
-            if command.is_empty() || command.contains('/') || !is_served_command(command) {
+            if command.is_empty()
+                || command.contains('/')
+                || is_feature_gated_command(command)
+                || !is_served_command(command)
+            {
                 let _ = send_json_error(stream, 404, "Unknown command.");
                 return;
             }
@@ -285,17 +403,52 @@ fn route_request(
     }
 }
 
-fn read_request_head(stream: &mut TcpStream) -> Result<Option<(Vec<u8>, usize)>, HttpRejection> {
+/// Reads request bytes. The socket's read timeout is one short poll; this keeps
+/// waiting until bytes arrive, the deadline passes or the host is shutting
+/// down, so a client that sends nothing, or a byte now and then, can hold a
+/// connection neither past the deadline nor past shutdown.
+fn read_request_bytes(
+    stream: &mut TcpStream,
+    state: &ServerState,
+    deadline: Instant,
+    buffer: &mut [u8],
+) -> io::Result<usize> {
+    loop {
+        if state.is_shutting_down() {
+            return Err(io::ErrorKind::ConnectionAborted.into());
+        }
+        if Instant::now() >= deadline {
+            return Err(io::ErrorKind::TimedOut.into());
+        }
+        match stream.read(buffer) {
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                ) => {}
+            other => return other,
+        }
+    }
+}
+
+fn read_request_head(
+    stream: &mut TcpStream,
+    state: &ServerState,
+) -> Result<Option<(Vec<u8>, usize)>, HttpRejection> {
     let mut buffer = Vec::new();
     let mut chunk = [0_u8; 4096];
+    let deadline = Instant::now() + SOCKET_TIMEOUT;
     loop {
         if let Some(end) = find_header_end(&buffer) {
+            if end + 4 > MAX_HEADER_BYTES {
+                return Err(HttpRejection::bad_request("Request headers are too large."));
+            }
             return Ok(Some((buffer, end)));
         }
         if buffer.len() >= MAX_HEADER_BYTES {
             return Err(HttpRejection::bad_request("Request headers are too large."));
         }
-        let read_count = match stream.read(&mut chunk) {
+        let read_count = match read_request_bytes(stream, state, deadline, &mut chunk) {
             Ok(count) => count,
             Err(_) if buffer.is_empty() => return Ok(None),
             Err(_) => return Err(HttpRejection::bad_request("Malformed HTTP request.")),
@@ -306,14 +459,7 @@ fn read_request_head(stream: &mut TcpStream) -> Result<Option<(Vec<u8>, usize)>,
             }
             return Err(HttpRejection::bad_request("Incomplete HTTP request."));
         }
-        let allowed = (MAX_HEADER_BYTES - buffer.len()).min(read_count);
-        buffer.extend_from_slice(&chunk[..allowed]);
-        if let Some(end) = find_header_end(&buffer) {
-            return Ok(Some((buffer, end)));
-        }
-        if read_count > allowed || buffer.len() >= MAX_HEADER_BYTES {
-            return Err(HttpRejection::bad_request("Request headers are too large."));
-        }
+        buffer.extend_from_slice(&chunk[..read_count]);
     }
 }
 
@@ -415,6 +561,7 @@ fn parse_request_head(head: &str) -> Result<ParsedRequestHead<'_>, HttpRejection
 
 fn read_exact_body(
     stream: &mut TcpStream,
+    state: &ServerState,
     already_read: &[u8],
     content_length: usize,
 ) -> Result<Vec<u8>, HttpRejection> {
@@ -425,11 +572,15 @@ fn read_exact_body(
         return Ok(already_read[..content_length].to_vec());
     }
     let mut body = vec![0_u8; content_length];
-    let prefix_len = already_read.len();
-    body[..prefix_len].copy_from_slice(already_read);
-    stream
-        .read_exact(&mut body[prefix_len..])
-        .map_err(|_| HttpRejection::bad_request("Incomplete HTTP request body."))?;
+    let mut filled = already_read.len();
+    body[..filled].copy_from_slice(already_read);
+    let deadline = Instant::now() + SOCKET_TIMEOUT;
+    while filled < content_length {
+        match read_request_bytes(stream, state, deadline, &mut body[filled..]) {
+            Ok(count) if count > 0 => filled += count,
+            _ => return Err(HttpRejection::bad_request("Incomplete HTTP request body.")),
+        }
+    }
     Ok(body)
 }
 
