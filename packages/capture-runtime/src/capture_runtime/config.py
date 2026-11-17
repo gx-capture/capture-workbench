@@ -55,6 +55,21 @@ def sanitized_child_environment(base: Mapping[str, str] | None = None) -> dict[s
     }
 
 
+# PyTorch asks for the user name when a worker loads a model. A host that does
+# not forward USERNAME, or forwards it empty, still has to name one. The Ollama
+# installer keeps using sanitized_child_environment and must not receive this.
+_WORKER_DEFAULT_USERNAME = "capture-runtime"
+
+
+def worker_child_environment(base: Mapping[str, str] | None = None) -> dict[str, str]:
+    """Return a sanitized worker environment that always has a user name."""
+
+    environment = sanitized_child_environment(base)
+    if not environment.get("USERNAME"):
+        environment["USERNAME"] = _WORKER_DEFAULT_USERNAME
+    return environment
+
+
 def _csv(value: str | None, default: tuple[str, ...]) -> tuple[str, ...]:
     if value is None:
         return default

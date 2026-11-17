@@ -18,6 +18,8 @@ pub(crate) const CHILD_ENVIRONMENT_ALLOWLIST: &[&str] = &[
     "SYSTEMROOT",
     "TEMP",
     "TMP",
+    // The speech worker's PyTorch asks for the user name when it loads a model.
+    "USERNAME",
     "USERPROFILE",
     "WINDIR",
 ];

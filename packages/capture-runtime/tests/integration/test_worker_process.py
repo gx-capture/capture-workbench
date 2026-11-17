@@ -1084,6 +1084,22 @@ def test_ocr_worker_accepts_complete_empty_terminal_pages_for_deep_outcome(
     asyncio.run(run())
 
 
+def test_worker_process_gives_workers_a_user_name_when_the_base_has_none() -> None:
+    owner = WorkerProcess(base_environment={"PATH": "C:\\Windows\\System32"})
+
+    async def run() -> None:
+        response = await owner.request(
+            WORKER,
+            "probe",
+            {"mode": "username"},
+            timeout_seconds=5,
+        )
+        assert response.result == {"username": "capture-runtime"}
+        assert owner.active_process_count == 0
+
+    asyncio.run(run())
+
+
 def test_deterministic_worker_success_and_secret_isolation() -> None:
     owner = WorkerProcess(
         base_environment={

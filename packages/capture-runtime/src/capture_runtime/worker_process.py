@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Literal
 
 from capture_runtime._windows_job import create_kill_on_close_job, terminate_and_close_job
-from capture_runtime.config import sanitized_child_environment
+from capture_runtime.config import worker_child_environment
 from capture_runtime.worker_contracts import (
     MAX_WORKER_INPUT_BYTES,
     MAX_WORKER_OUTPUT_BYTES,
@@ -206,7 +206,7 @@ class WorkerProcess:
         *,
         base_environment: Mapping[str, str] | None = None,
     ) -> None:
-        self._base_environment = sanitized_child_environment(base_environment)
+        self._base_environment = worker_child_environment(base_environment)
         self._active: set[asyncio.subprocess.Process] = set()
         self._windows_job_handles: dict[int, int] = {}
         self._lock = asyncio.Lock()

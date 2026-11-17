@@ -55,10 +55,7 @@ pub(crate) fn launch_runtime(
                     .into_iter()
                     .map(|(name, value)| (name.to_owned(), value))
                     .collect(),
-                CHILD_ENVIRONMENT_ALLOWLIST
-                    .iter()
-                    .map(|name| (*name).to_owned())
-                    .collect(),
+                inherited_environment_allowlist(),
             ))
         },
         observe_spawn,
@@ -76,6 +73,13 @@ pub(crate) fn launch_runtime(
     })
 }
 
+fn inherited_environment_allowlist() -> Vec<String> {
+    CHILD_ENVIRONMENT_ALLOWLIST
+        .iter()
+        .map(|name| (*name).to_owned())
+        .collect()
+}
+
 fn prepare_isolated_directories(policy: &LaunchPolicy) -> Result<(), String> {
     for path in [
         policy.runtime_data_dir(),
@@ -87,4 +91,16 @@ fn prepare_isolated_directories(policy: &LaunchPolicy) -> Result<(), String> {
         })?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::inherited_environment_allowlist;
+
+    #[test]
+    fn forwarded_runtime_environment_includes_username() {
+        assert!(inherited_environment_allowlist()
+            .iter()
+            .any(|name| name == "USERNAME"));
+    }
 }

@@ -50,6 +50,11 @@ elif mode == "protocol-mismatch":
     payload = response(request_id, {"value": "wrong"})
     payload["protocolVersion"] = "999"
     print(json.dumps(payload), flush=True)
+elif mode == "username":
+    print(
+        json.dumps(response(request_id, {"username": os.environ.get("USERNAME")})),
+        flush=True,
+    )
 elif mode == "security":
     serialized_request = request_line.decode("utf-8", errors="replace")
     print(
