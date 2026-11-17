@@ -1,0 +1,24 @@
+<div class="flex min-w-44 flex-col gap-1.5">
+  <span
+    class="text-xs font-medium tabular-nums text-foreground"
+    data-testid="install-progress-label"
+  >
+    {{ label() }}
+  </span>
+  <div
+    class="h-2 w-full overflow-hidden rounded-full bg-muted"
+    role="progressbar"
+    aria-valuemin="0"
+    aria-valuemax="100"
+    data-testid="install-progress-bar"
+    [attr.data-phase]="progress().phase"
+    [attr.aria-label]="label()"
+    [attr.aria-valuenow]="determinate() ? progress().percent : null"
+  >
+    <span
+      class="block h-full w-full origin-left rounded-full bg-primary transition-transform motion-reduce:transition-none motion-reduce:animate-none"
+      [class.animate-pulse]="!determinate()"
+      [style.transform]="'scaleX(' + fill() + ')'"
+    ></span>
+  </div>
+</div>

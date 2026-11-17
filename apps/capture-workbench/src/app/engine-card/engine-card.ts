@@ -14,10 +14,8 @@ import {
 import { HlmButtonImports } from '@spartan-ng/helm/button';
 import { HlmCardImports } from '@spartan-ng/helm/card';
 import { desktopLocale, desktopMessages } from '../i18n/desktop-messages';
-import {
-  formatApproximateBytes,
-  installationPercent,
-} from '../services/desktop-workspace.selectors';
+import { formatApproximateBytes } from '../services/desktop-workspace.selectors';
+import { InstallProgress } from './install-progress';
 
 /**
  * Displays one recognition engine unit: its model guide facts from
@@ -28,13 +26,15 @@ import {
 @Component({
   selector: 'app-engine-card',
   templateUrl: './engine-card.html',
-  imports: [HlmButtonImports, HlmCardImports],
+  imports: [HlmButtonImports, HlmCardImports, InstallProgress],
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class EngineCard {
   readonly requirement = input.required<RuntimeRequirement>();
   readonly installation = input<RuntimeInstallation | null>(null);
   readonly installing = input(false);
+  /** The start request for this unit is in flight: progress shows with the click. */
+  readonly starting = input(false);
   readonly optional = input(false);
 
   readonly install = output<CaptureRequirementId>();
@@ -57,6 +57,13 @@ export class EngineCard {
     const status = this.installation()?.status;
     return status === 'queued' || status === 'running';
   });
+  /** The installation whose progress is shown; none yet while the start request is in flight. */
+  protected readonly runningInstallation = computed(() =>
+    this.isRunning() ? this.installation() : null,
+  );
+  protected readonly showsProgress = computed(
+    () => this.isRunning() || this.starting(),
+  );
   protected readonly isFailed = computed(() => {
     const status = this.installation()?.status;
     return (
@@ -64,7 +71,4 @@ export class EngineCard {
       this.requirement().status !== 'ready'
     );
   });
-  protected readonly percent = computed(() =>
-    installationPercent(this.installation()),
-  );
 }
