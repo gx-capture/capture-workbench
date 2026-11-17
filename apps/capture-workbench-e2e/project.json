@@ -33,6 +33,26 @@
         "command": "corepack pnpm exec playwright test --config apps/capture-workbench-e2e/playwright.config.ts"
       }
     },
+    "e2e-real-backend": {
+      "executor": "nx:run-commands",
+      "metadata": {
+        "description": "Runs the real-backend Playwright E2E journey (real-backend.spec.ts) against the Workbench dev server and capture-workbench-dev-host with the deterministic fixture runtime."
+      },
+      "dependsOn": [
+        { "projects": ["capture-workbench"], "target": "build" },
+        { "projects": ["capture-workbench-desktop"], "target": "build-dev-host" }
+      ],
+      "parallelism": true,
+      "inputs": [
+        "default",
+        "^default",
+        "{workspaceRoot}/tools/release/release-intent.ts",
+        "{workspaceRoot}/release/version.json"
+      ],
+      "options": {
+        "command": "corepack pnpm exec playwright test --config apps/capture-workbench-e2e/playwright.real-backend.config.ts"
+      }
+    },
     "preview": {
       "executor": "nx:run-commands",
       "continuous": true,
@@ -42,6 +62,20 @@
       "dependsOn": [{ "projects": ["capture-workbench"], "target": "serve" }],
       "options": {
         "command": "node apps/capture-workbench-e2e/preview-server.ts 4300"
+      }
+    },
+    "preview-real-backend": {
+      "executor": "nx:run-commands",
+      "continuous": true,
+      "metadata": {
+        "description": "Serves the Workbench dev server on http://127.0.0.1:4300 with capture-workbench-dev-host and the deterministic fixture runtime (real-backend-server.ts) for interactive Layer 1 verification."
+      },
+      "dependsOn": [
+        { "projects": ["capture-workbench"], "target": "serve" },
+        { "projects": ["capture-workbench-desktop"], "target": "build-dev-host" }
+      ],
+      "options": {
+        "command": "node apps/capture-workbench-e2e/real-backend-server.ts 4300"
       }
     },
     "runtime-web-component-e2e": {

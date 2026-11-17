@@ -107,6 +107,9 @@ pub(crate) fn read_token_from_env() -> Result<String, String> {
     let token = std::env::var(TOKEN_ENV_VAR)
         .map_err(|_| format!("{TOKEN_ENV_VAR} is required and must be valid UTF-8."))?;
     validate_token(&token)?;
+    // The token does not stay in the environment, so no process the host
+    // starts later inherits it. This runs before any thread exists.
+    std::env::remove_var(TOKEN_ENV_VAR);
     Ok(token)
 }
 

@@ -55,7 +55,8 @@ drop, window behaviour.
 - The server binds `127.0.0.1` only. Every request needs
   `Authorization: Bearer <token>`; the token comes from the environment
   (`CAPTURE_DEV_HOST_TOKEN`, required, at least 32 characters) and is never
-  logged. The `Host` header must name the bound loopback address. No CORS
+  logged. The host removes it from its own environment once it has read it, so
+  no process it starts inherits it. The `Host` header must name the bound loopback address. No CORS
   headers: a browser never calls the dev host, the preview server does and adds
   the token there, so the token never reaches a page.
 - At most 64 connections are in flight. A further connection is closed without
@@ -117,15 +118,24 @@ same file, one group per feature, visible in every feature configuration. The
 three Tauri handler configurations and the dev host's "never served" names are
 generated from that list. Each of those names returns `UnknownCommand`.
 
+## Preview real-backend mode (launcher, bridge, proxy)
+
+`apps/capture-workbench-e2e/real-backend-server.ts` owns one `capture-workbench-dev-host` child process for a preview or Playwright run:
+
+- **Launcher lifecycle**: creates an isolated app-data directory under the temp root, generates an ephemeral `>=32`-character bearer token in memory, starts `capture-workbench-dev-host` with `--port 0`, `--app-data`, and the staged deterministic fixture runtime paths (`CAPTURE_DEV_HOST_TOKEN` in env, `--quiet` suppressed to its single `{"port":N}` stdout line), serves the upstream dev/preview server in real-backend mode, and shuts down via `POST /__dev/shutdown`, child wait/tree-kill fallback, and app-data directory removal.
+- **Injected bridge**: HTML responses inject a `window.__TAURI_INTERNALS__` + `window.isTauri` bridge implementing `invoke`, `transformCallback`, `unregisterCallback`, `convertFileSrc`, and `metadata` (`{ currentWindow: { label: 'main' } }`). Commands go to same-origin `POST /__host/invoke/<command>` (returning JSON or `ArrayBuffer` for `application/octet-stream`, rejecting with error text on 400 or clear error on 404); `library_watch_native_sources` sends a `{ id }` channel object and delivers no events; `/__preview` shows a short active-host status page (port only, never the token) and ignores scenario cookies.
+- **Proxy boundary**: listening on `127.0.0.1` only, the proxy forwards only `POST /__host/invoke/<command>` -> `/invoke/<command>` and `POST /__host/selection` -> `/__dev/selection`, injecting `Authorization: Bearer <token>` and `Host: 127.0.0.1:<dev-host-port>` server-side while stripping any `Access-Control-Allow-*` response headers. It rejects any request that fails `Host` (`127.0.0.1:<port>` or `localhost:<port>`), optional `Origin` (exact launcher origin), optional `Sec-Fetch-Site` (`same-origin` or `none`), `POST`, `Content-Type: application/json`, `X-Capture-Preview: 1`, or the `1 MiB` body cap with plain `400`/`403` without detail or CORS headers.
+
 ## Slices
 
-1. **Rust** (this record ships with it): the shared command functions, the
+1. **Rust**: the shared command functions, the
    dispatcher, the dev host executable, its tests against a fake runtime, Nx
    targets to build and test it, CI running those tests.
-2. **Preview and e2e**: the preview server's real-backend mode and bridge; an
-   e2e project that runs the Workbench against the dev host and the
-   deterministic fixture runtime, in CI. This is the first time CI exercises the
-   renderer together with the host's real library and capture logic.
+2. **Preview and e2e**: `apps/capture-workbench-e2e/real-backend-server.ts`
+   with its `__TAURI_INTERNALS__` bridge and strict host proxy, paired with the
+   `chromium-real-backend` Playwright project (`capture-workbench-e2e:e2e-real-backend`)
+   that exercises the Workbench against `capture-workbench-dev-host` and the
+   staged deterministic fixture runtime in CI.
 3. **Real engines on localhost**: a local smoke against the dev host with a
    published runtime (first run with real downloads, PDF and image OCR, a
    recording with structuring, editing, export, data still there after a

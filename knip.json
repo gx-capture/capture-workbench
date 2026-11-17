@@ -6,6 +6,7 @@
     "apps/*/playwright*.config.ts",
     "apps/capture-workbench-e2e/desktop-csp-server.ts",
     "apps/capture-workbench-e2e/preview-server.ts",
+    "apps/capture-workbench-e2e/real-backend-server.ts",
     "apps/capture-workbench-desktop/scripts/progressive-audio-oracle.ts",
     "packages/capture-runtime/scripts/*.mjs",
     "packages/capture-runtime/tests/e2e/**/*.e2e.ts",
