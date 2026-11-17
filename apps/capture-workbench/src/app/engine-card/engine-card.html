@@ -35,6 +35,8 @@
         >
           {{ m().cancelInstall }}
         </button>
+      } @else if (starting()) {
+        <!-- The runtime has not answered yet: there is nothing to cancel or to start again. -->
       } @else if (isFailed()) {
         <button
           hlmBtn
@@ -98,27 +100,17 @@
       <p class="text-muted-foreground text-xs">{{ requirement().detail }}</p>
     }
 
-    @if (isRunning()) {
+    @if (showsProgress()) {
       <div
         class="flex flex-col gap-1.5"
         data-testid="engine-card-progress"
         aria-live="polite"
       >
-        <div class="flex items-center justify-between text-xs font-medium">
-          <span>{{ m().downloadingProgress(percent()) }}</span>
-          <span>{{ percent() }}%</span>
-        </div>
-        <progress
-          class="h-2 w-full overflow-hidden rounded-full"
-          max="100"
-          [value]="percent()"
-        >
-          {{ percent() }}%
-        </progress>
+        <app-install-progress [installation]="runningInstallation()" />
       </div>
     }
 
-    @if (isFailed() && installation()?.error; as error) {
+    @if (!starting() && isFailed() && installation()?.error; as error) {
       <p
         class="text-destructive text-xs"
         role="alert"

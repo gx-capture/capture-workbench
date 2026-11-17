@@ -4,6 +4,7 @@ import {
   Subject,
   catchError,
   concatMap,
+  defer,
   expand,
   filter,
   finalize,
@@ -34,6 +35,8 @@ import { desktopMessages } from '../i18n/desktop-messages';
 export class DesktopWorkspaceInstallationService {
   readonly installing = signal(false);
   readonly activeInstallation = signal<RuntimeInstallation | null>(null);
+  /** The unit whose start request is in flight: the runtime has not answered with an installation yet. */
+  readonly startingRequirementId = signal<CaptureRequirementId | null>(null);
   readonly installationsByRequirement = signal<
     ReadonlyMap<CaptureRequirementId, RuntimeInstallation>
   >(new Map());
@@ -71,6 +74,7 @@ export class DesktopWorkspaceInstallationService {
       takeWhile((installation) => installation.status !== 'cancelled', true),
       takeUntil(this.cancelled$),
       finalize(() => {
+        this.startingRequirementId.set(null);
         this.installing.set(false);
       }),
     );
@@ -159,12 +163,18 @@ export class DesktopWorkspaceInstallationService {
         ),
       ));
     }
-    return this.runtime.startInstallation({
-      clientRequestId: crypto.randomUUID(),
-      requirementId: requirement.requirementId,
-      consent: true,
+    return defer(() => {
+      this.startingRequirementId.set(requirement.requirementId);
+      return this.runtime.startInstallation({
+        clientRequestId: crypto.randomUUID(),
+        requirementId: requirement.requirementId,
+        consent: true,
+      });
     }).pipe(
-      tap((installation) => this.recordInstallation(installation)),
+      tap((installation) => {
+        this.startingRequirementId.set(null);
+        this.recordInstallation(installation);
+      }),
       switchMap((installation) =>
         this.pollInstallation$(installation, requirement.displayName)),
     );

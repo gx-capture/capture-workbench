@@ -133,6 +133,8 @@ export interface DesktopMessages {
   readonly installWithSize: (size?: string | null) => string;
   readonly installSelectedWithSize: (size?: string | null) => string;
   readonly downloadingProgress: (percent: number) => string;
+  readonly installProgressPreparing: string;
+  readonly installProgressInstalling: string;
   readonly cancelInstall: string;
   readonly retryInstall: string;
   readonly removeEngine: string;
@@ -215,6 +217,8 @@ export interface DesktopMessages {
   readonly asrSpeakersOptionalTitle: string;
   readonly asrInstallSpeakers: (size: string | null) => string;
   readonly asrInstallingSpeakers: (percent: number) => string;
+  readonly asrPreparingSpeakers: string;
+  readonly asrFinishingSpeakers: string;
   readonly asrHeardOf: (heard: string, total: string) => string;
   readonly asrLiveProgressLabel: (fileName: string) => string;
   readonly asrLivePartialNote: string;
@@ -472,6 +476,8 @@ const ZH_TW: DesktopMessages = {
   installWithSize: (size) => (size ? `安裝（${size}）` : '安裝'),
   installSelectedWithSize: (size) => (size ? `安裝所選（${size}）` : '安裝所選'),
   downloadingProgress: (percent) => `正在下載 ${percent}%`,
+  installProgressPreparing: '正在準備安裝…',
+  installProgressInstalling: '下載完成，正在安裝…',
   cancelInstall: '取消',
   retryInstall: '再試一次',
   removeEngine: '移除',
@@ -577,6 +583,8 @@ const ZH_TW: DesktopMessages = {
   asrSpeakersOptionalTitle: '說話者辨識（選用）',
   asrInstallSpeakers: (size) => `安裝說話者辨識${size ? `（${size}）` : ''}`,
   asrInstallingSpeakers: (percent) => `正在安裝說話者辨識 ${percent}%`,
+  asrPreparingSpeakers: '正在準備安裝說話者辨識…',
+  asrFinishingSpeakers: '說話者辨識下載完成，正在安裝…',
   asrHeardOf: (heard, total) => `已聽到 ${heard}／${total}`,
   asrLiveProgressLabel: (fileName) => `${fileName} 的進度`,
   asrLivePartialNote: '灰色的是即時結果，整段完成後會再校正。',
@@ -835,6 +843,8 @@ const EN: DesktopMessages = {
   installSelectedWithSize: (size) =>
     size ? `Install selected (${size})` : 'Install selected',
   downloadingProgress: (percent) => `Downloading ${percent}%`,
+  installProgressPreparing: 'Preparing installation…',
+  installProgressInstalling: 'Download complete, installing…',
   cancelInstall: 'Cancel',
   retryInstall: 'Try again',
   removeEngine: 'Remove',
@@ -943,6 +953,8 @@ const EN: DesktopMessages = {
   asrSpeakersOptionalTitle: 'Speaker identification (optional)',
   asrInstallSpeakers: (size) => `Install speaker identification${size ? ` (${size})` : ''}`,
   asrInstallingSpeakers: (percent) => `Installing speaker identification ${percent}%`,
+  asrPreparingSpeakers: 'Preparing speaker identification…',
+  asrFinishingSpeakers: 'Speaker identification downloaded, installing…',
   asrHeardOf: (heard, total) => `Heard ${heard} / ${total}`,
   asrLiveProgressLabel: (fileName) => `Progress for ${fileName}`,
   asrLivePartialNote: 'Gray lines are live previews and will be refined once finished.',

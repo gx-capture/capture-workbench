@@ -22,6 +22,7 @@
           [requirement]="unit"
           [installation]="features.installationFor(unit.requirementId)"
           [installing]="features.installing()"
+          [starting]="features.startingRequirementId() === unit.requirementId"
           (install)="features.installUnit($event)"
           (cancelInstall)="features.cancelInstallation($event)"
           (retry)="features.retryInstallation($event)"

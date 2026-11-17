@@ -128,9 +128,9 @@ export function loadReleaseIntent(root = workspaceRoot): ReleaseIntent {
   const content = readFileSync(resolve(root, 'release/version.json'), 'utf8');
   rejectDuplicateJsonKeys(content, 'release/version.json');
   const intent = JSON.parse(content) as Record<string, unknown>;
-  const releaseVersion = stringValue(intent.releaseVersion);
-  const runtimeApiVersion = stringValue(intent.runtimeApiVersion);
-  const documentSchemaVersion = stringValue(intent.documentSchemaVersion);
+  const releaseVersion = stringValue(intent['releaseVersion']);
+  const runtimeApiVersion = stringValue(intent['runtimeApiVersion']);
+  const documentSchemaVersion = stringValue(intent['documentSchemaVersion']);
   if (!releaseVersion || !RELEASE_VERSION_PATTERN.test(releaseVersion)) {
     throw new Error('release/version.json has an invalid releaseVersion.');
   }

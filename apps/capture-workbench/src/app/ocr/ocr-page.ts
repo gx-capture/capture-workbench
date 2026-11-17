@@ -13,12 +13,10 @@ import { RouterLink } from '@angular/router';
 import { HlmButtonImports } from '@spartan-ng/helm/button';
 import { HlmCardImports } from '@spartan-ng/helm/card';
 import { HlmTableImports } from '@spartan-ng/helm/table';
+import { InstallProgress } from '../engine-card/install-progress';
 import { desktopMessages } from '../i18n/desktop-messages';
 import { CaptureQueueStore } from '../services/capture-queue.store';
-import {
-  formatApproximateBytes,
-  installationPercent,
-} from '../services/desktop-workspace.selectors';
+import { formatApproximateBytes } from '../services/desktop-workspace.selectors';
 import {
   ocrChipClasses,
   ocrChipVariant,
@@ -29,7 +27,13 @@ import { RecognitionFeaturesStore } from '../services/recognition-features.store
 @Component({
   selector: 'app-ocr-page',
   templateUrl: './ocr-page.html',
-  imports: [HlmButtonImports, HlmCardImports, HlmTableImports, RouterLink],
+  imports: [
+    HlmButtonImports,
+    HlmCardImports,
+    HlmTableImports,
+    InstallProgress,
+    RouterLink,
+  ],
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class OcrPage {
@@ -89,8 +93,11 @@ export class OcrPage {
       : null;
   });
 
-  protected readonly activePercent = computed(() =>
-    installationPercent(this.activeRunningInstallation()),
+  /** Shown from the click on: the start request takes a moment to answer. */
+  protected readonly installProgressShown = computed(
+    () =>
+      this.activeRunningInstallation() !== null ||
+      this.features.startingRequirementId() !== null,
   );
 
   protected readonly ocrReady = computed(() =>

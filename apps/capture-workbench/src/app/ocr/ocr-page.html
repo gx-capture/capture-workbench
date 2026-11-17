@@ -119,39 +119,32 @@
     </section>
   }
 
-  @if (activeRunningInstallation(); as running) {
+  @if (installProgressShown()) {
     <div
       hlmCard
       size="sm"
       data-testid="ocr-install-progress"
-      [attr.data-installation-id]="running.installationId"
-      [attr.data-requirement-id]="running.requirementId"
+      [attr.data-installation-id]="activeRunningInstallation()?.installationId"
+      [attr.data-requirement-id]="activeRunningInstallation()?.requirementId ?? features.startingRequirementId()"
       aria-live="polite"
     >
       <div hlmCardContent class="flex items-center justify-between gap-4">
-        <div class="flex flex-1 flex-col gap-1.5">
-          <div class="flex items-center justify-between text-xs font-medium">
-            <span>{{ m().downloadingProgress(activePercent()) }}</span>
-            <span>{{ activePercent() }}%</span>
-          </div>
-          <progress
-            class="h-2 w-full overflow-hidden rounded-full"
-            max="100"
-            [value]="activePercent()"
+        <app-install-progress
+          class="flex-1"
+          [installation]="activeRunningInstallation()"
+        />
+        @if (activeRunningInstallation(); as running) {
+          <button
+            hlmBtn
+            variant="outline"
+            size="sm"
+            type="button"
+            data-testid="ocr-install-cancel"
+            (click)="features.cancelInstallation(running.installationId)"
           >
-            {{ activePercent() }}%
-          </progress>
-        </div>
-        <button
-          hlmBtn
-          variant="outline"
-          size="sm"
-          type="button"
-          data-testid="ocr-install-cancel"
-          (click)="features.cancelInstallation(running.installationId)"
-        >
-          {{ m().cancelInstall }}
-        </button>
+            {{ m().cancelInstall }}
+          </button>
+        }
       </div>
     </div>
   }
@@ -306,7 +299,7 @@
                         <span class="text-muted-foreground text-xs">{{ m().ocrNeedsEngine(queue.ocrSizeLabel()) }}</span>
                       }
                       @if (row.needsInstall && row.installPercent !== null) {
-                        <span class="text-muted-foreground text-xs" data-testid="ocr-row-install-progress">{{ row.installPercent }}%</span>
+                        <span class="text-muted-foreground text-xs" data-testid="ocr-row-install-progress">{{ queue.ocrInstallLabel() }}</span>
                       }
                     </div>
                   } @else {

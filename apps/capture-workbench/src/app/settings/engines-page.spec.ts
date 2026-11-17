@@ -159,6 +159,7 @@ async function renderEngines(
         useValue: {
           engines: computed(() => selectRecognitionEngines(requirements())),
           installing: signal(false),
+          startingRequirementId: signal(null),
           installationFor: (requirementId: CaptureRequirementId) =>
             options.installation?.requirementId === requirementId
               ? options.installation

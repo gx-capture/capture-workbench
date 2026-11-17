@@ -41,6 +41,7 @@ import {
   isFeatureReady,
 } from './desktop-workspace.selectors';
 import { DesktopWorkspaceStore } from './desktop-workspace.store';
+import { installationProgress } from './installation-progress';
 import { RecognitionFeaturesStore } from './recognition-features.store';
 import { selectionRejectionMessages } from './source-selection-messages';
 
@@ -90,11 +91,16 @@ export class AsrQueueStore {
     const installation = this.features.installationFor('speaker-diarization');
     const installing = installation?.status === 'queued' || installation?.status === 'running';
     const messages = desktopMessages();
+    const progress = installationProgress(installation);
     return {
       installing,
-      label: installing
-        ? messages.asrInstallingSpeakers(installationPercent(installation))
-        : messages.asrInstallSpeakers(formatApproximateBytes(unit.downloadBytes)),
+      label: !installing
+        ? messages.asrInstallSpeakers(formatApproximateBytes(unit.downloadBytes))
+        : progress.phase === 'preparing'
+          ? messages.asrPreparingSpeakers
+          : progress.phase === 'installing'
+            ? messages.asrFinishingSpeakers
+            : messages.asrInstallingSpeakers(progress.percent),
     };
   });
 

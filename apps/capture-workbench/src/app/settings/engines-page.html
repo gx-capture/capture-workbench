@@ -49,21 +49,8 @@
                       {{ m().removingEngine }}
                     </span>
                   } @else if (isRunning(unit)) {
-                    <div
-                      class="flex min-w-36 flex-col gap-1"
-                      data-testid="engine-row-progress"
-                      aria-live="polite"
-                    >
-                      <span class="text-xs">
-                        {{ m().downloadingProgress(percentFor(unit)) }}
-                      </span>
-                      <progress
-                        class="h-1.5 w-full overflow-hidden rounded-full"
-                        max="100"
-                        [value]="percentFor(unit)"
-                      >
-                        {{ percentFor(unit) }}%
-                      </progress>
+                    <div data-testid="engine-row-progress" aria-live="polite">
+                      <app-install-progress [installation]="runningInstallation(unit)" />
                     </div>
                   } @else {
                     <span>{{ statusLabel(unit) }}</span>
@@ -86,14 +73,14 @@
                 </td>
                 <td hlmTd class="text-right">
                   <div class="flex flex-col items-end gap-1">
-                    @if (isRunning(unit)) {
+                    @if (runningInstallation(unit); as running) {
                       <button
                         hlmBtn
                         variant="outline"
                         size="sm"
                         type="button"
                         data-testid="engine-row-cancel"
-                        (click)="features.cancelInstallation(installationFor(unit)!.installationId)"
+                        (click)="features.cancelInstallation(running.installationId)"
                       >
                         {{ m().cancelInstall }}
                       </button>

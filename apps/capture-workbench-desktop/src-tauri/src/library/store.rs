@@ -1401,19 +1401,40 @@ mod tests {
         let root = directory.path().join("library");
         fs::create_dir_all(&root).expect("library root");
         let items = root.join("items");
-        // A junction needs no privilege on Windows; skip where no link can be made.
+        // A junction needs no privilege on Windows; fail if link setup fails.
         #[cfg(windows)]
-        let linked = std::process::Command::new("cmd")
-            .args(["/C", "mklink", "/J"])
-            .arg(&items)
-            .arg(other.path())
-            .output()
-            .is_ok_and(|output| output.status.success());
-        #[cfg(not(windows))]
-        let linked = std::os::unix::fs::symlink(other.path(), &items).is_ok();
-        if !linked {
-            return;
+        {
+            let output = std::process::Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(&items)
+                .arg(other.path())
+                .output()
+                .expect("run mklink /J to link items directory");
+            assert!(
+                output.status.success(),
+                "mklink /J failed ({}): {}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
+        #[cfg(not(windows))]
+        std::os::unix::fs::symlink(other.path(), &items).unwrap_or_else(|error| {
+            panic!("symlink items directory failed: {error}");
+        });
+        assert!(
+            fs::symlink_metadata(&items)
+                .expect("items link metadata")
+                .file_type()
+                .is_symlink(),
+            "items must be a symlink or junction"
+        );
+        assert!(
+            items
+                .join("33333333333333333333333333333333")
+                .join(SOURCE_FILE_NAME)
+                .is_file(),
+            "other library's source file must be reachable through linked items"
+        );
         let index = LibraryIndex {
             version: INDEX_VERSION,
             documents: Vec::new(),
