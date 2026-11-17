@@ -3,6 +3,7 @@ mod compute;
 mod config;
 mod constants;
 mod contracts;
+mod host_api;
 mod launch_policy;
 mod launcher;
 mod library;
@@ -24,54 +25,90 @@ use tauri::Manager;
 pub use config::{BackendConfig, DesktopRuntimeStatus};
 pub use state::DesktopState;
 
-macro_rules! desktop_invoke_handler {
-    ($($extra:path),* $(,)?) => {
+macro_rules! for_each_desktop_command {
+    ($callback:ident, [$($extra:path),* $(,)?]) => {
+        $callback! {
+            extra: [$($extra),*],
+            served: [
+                desktop_runtime_status,
+                desktop_compute_status,
+                desktop_set_prefer_gpu,
+                runtime_ready,
+                library_import_selection,
+                library_discard_selections,
+                library_update_capture,
+                library_list,
+                library_get,
+                library_save_edits,
+                library_export,
+                library_source_bytes,
+                library_delete,
+                runtime_requirements,
+                runtime_start_installation,
+                runtime_list_installations,
+                runtime_get_installation,
+                runtime_cancel_installation,
+                runtime_uninstall_requirement,
+                runtime_model_options,
+                runtime_start_model_installation,
+                runtime_get_model_installation,
+                runtime_cancel_upload,
+                runtime_create_capture,
+                runtime_start_streaming_capture,
+                runtime_get_capture,
+                runtime_get_streaming_capture,
+                runtime_get_streaming_events,
+                runtime_get_streaming_partial,
+                runtime_get_streaming_result,
+                runtime_structure_streaming_capture,
+                runtime_cancel_capture,
+                runtime_cancel_streaming_capture,
+                runtime_get_raw,
+                runtime_get_ocr,
+                runtime_get_result,
+                runtime_delete_capture,
+                runtime_delete_streaming_capture,
+            ],
+            replaced: [
+                library_select_sources,
+                library_watch_native_sources,
+            ],
+            not_served: [
+                desktop_acceptance_close_window,
+            ],
+        }
+    };
+    ($callback:ident) => {
+        for_each_desktop_command! { $callback, [] }
+    };
+}
+
+macro_rules! build_tauri_handler {
+    (
+        extra: [$($extra:path),*],
+        served: [$($served:ident),* $(,)?],
+        replaced: [$($replaced:ident),* $(,)?],
+        not_served: [$($not_served:ident),* $(,)?],
+    ) => {
         tauri::generate_handler![
-            commands::desktop_runtime_status,
-            commands::desktop_compute_status,
-            commands::desktop_set_prefer_gpu,
-            commands::runtime_ready,
-            commands::library_select_sources,
-            commands::library_watch_native_sources,
-            commands::library_import_selection,
-            commands::library_discard_selections,
-            commands::library_update_capture,
-            commands::library_list,
-            commands::library_get,
-            commands::library_save_edits,
-            commands::library_export,
-            commands::library_source_bytes,
-            commands::library_delete,
-            commands::runtime_requirements,
-            commands::runtime_start_installation,
-            commands::runtime_list_installations,
-            commands::runtime_get_installation,
-            commands::runtime_cancel_installation,
-            commands::runtime_uninstall_requirement,
-            commands::runtime_model_options,
-            commands::runtime_start_model_installation,
-            commands::runtime_get_model_installation,
-            commands::runtime_cancel_upload,
-            commands::runtime_create_capture,
-            commands::runtime_start_streaming_capture,
-            commands::runtime_get_capture,
-            commands::runtime_get_streaming_capture,
-            commands::runtime_get_streaming_events,
-            commands::runtime_get_streaming_partial,
-            commands::runtime_get_streaming_result,
-            commands::runtime_structure_streaming_capture,
-            commands::runtime_cancel_capture,
-            commands::runtime_cancel_streaming_capture,
-            commands::runtime_get_raw,
-            commands::runtime_get_ocr,
-            commands::runtime_get_result,
-            commands::runtime_delete_capture,
-            commands::runtime_delete_streaming_capture,
-            commands::desktop_acceptance_close_window
+            $(commands::$served,)*
+            $(commands::$replaced,)*
+            $(commands::$not_served),*
             $(, $extra)*
         ]
     };
 }
+
+macro_rules! desktop_invoke_handler {
+    ($($extra:path),* $(,)?) => {
+        for_each_desktop_command!(build_tauri_handler, [$($extra),*])
+    };
+}
+
+#[cfg(feature = "dev-host")]
+mod dev_host;
+#[cfg(feature = "dev-host")]
+pub use dev_host::run_cli;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
