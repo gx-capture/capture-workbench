@@ -110,6 +110,16 @@ handles engine units and delegates structuring requirements through the
 `StructuringRequirementInstaller` port to `OllamaRequirementInstaller`.
 Structuring uses that same adapter for model-option installations.
 
+`POST /v2/captures/{capture_id}/structure` runs the runtime structuring provider
+for a capture that is awaiting structuring. When that provider is not
+configured, or it reports that it is unavailable, the route answers `503` with
+problem code `requirement_unavailable` and the fixed message "The structuring
+provider is unavailable." The capture stays `awaiting_structuring`, so the same
+request can succeed once the provider is available. Host structuring
+(`/structure/session`, batch submit, `/structure/commit`, and
+`/structure/failure`) does not call that provider and does not return this
+problem.
+
 ### Ingestion size limits
 
 Source ingestion (`POST /v2/ingestions`) enforces byte limits per declared source kind: recordings (`audio`) may reach the configured `CAPTURE_MAX_UPLOAD_BYTES` (default 50 MiB), while document sources (`pdf` and `image`) are capped at `min(CAPTURE_MAX_UPLOAD_BYTES, 50 MiB)`. A source declared `audio` and larger than 50 MiB must start with a recording signature: the chunk that shows otherwise is rejected with `chunk_rejected` and is not stored. Readiness (`GET /v2/health/ready`) reports the configured `CAPTURE_MAX_UPLOAD_BYTES` in `capabilities.maxUploadBytes`.

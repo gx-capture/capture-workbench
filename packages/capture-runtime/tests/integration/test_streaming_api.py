@@ -52,6 +52,10 @@ from capture_runtime.ocr.infrastructure.ocr_execution_proof import (
     InMemoryOcrExecutionEvidenceSink,
 )
 from capture_runtime.ocr.infrastructure.ocr_projection import OcrPageInput, OcrPipeline
+from capture_runtime.structuring.infrastructure.ollama import RuntimeUnavailableError
+from capture_runtime.structuring.infrastructure.structuring_provider import (
+    FakeCaptureStructuringProvider,
+)
 from capture_runtime.worker_client import InstalledEngine
 from capture_runtime.worker_contracts import WorkerResponse
 from tests.conftest import TOKEN
@@ -262,7 +266,11 @@ def _open(client: TestClient) -> tuple[str, str]:
     return response.json()["ingestionId"], hashlib.sha256(source).hexdigest()
 
 
-def _seed_host_capture(client: TestClient) -> tuple[str, dict[str, object]]:
+def _seed_host_capture(
+    client: TestClient,
+    *,
+    structuring_mode: StructuringMode = StructuringMode.HOST,
+) -> tuple[str, dict[str, object]]:
     repository = client.app.state.streaming_repository
     source = b"host-stream"
     source_sha256 = hashlib.sha256(source).hexdigest()
@@ -293,7 +301,7 @@ def _seed_host_capture(client: TestClient) -> tuple[str, dict[str, object]]:
         StartCaptureV2(
             client_request_id=f"host-capture-{uuid4()}",
             ingestion_id=ingestion.ingestion_id,
-            structuring_mode=StructuringMode.HOST,
+            structuring_mode=structuring_mode,
         )
     )
     assert operation.source is not None
@@ -2194,6 +2202,80 @@ def test_v2_host_commit_invalid_candidate_fails_the_capture(client: TestClient) 
     assert operation["status"] == "failed"
     assert operation["error"]["code"] == "structuring_invalid_output"
     assert client.get(f"/v2/captures/{capture_id}/partial").status_code == 409
+
+
+_PROVIDER_UNAVAILABLE = "The structuring provider is unavailable."
+_PROVIDER_SECRET = "super-secret-token"
+
+
+class _UnavailableStructurer:
+    engine_identity = None
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def structure(self, _raw, *, target_language, cancel_event):
+        del target_language, cancel_event
+        self.calls += 1
+        raise RuntimeUnavailableError(
+            f"provider {_PROVIDER_SECRET} at http://127.0.0.1:11434/private"
+        )
+
+
+def _assert_requirement_unavailable(response) -> None:
+    assert response.status_code == 503, response.text
+    assert response.json() == {
+        "error": {
+            "code": "requirement_unavailable",
+            "message": _PROVIDER_UNAVAILABLE,
+        }
+    }
+    assert _PROVIDER_SECRET not in response.text
+    assert "11434" not in response.text
+
+
+def _assert_awaiting_structuring(client: TestClient, capture_id: str) -> None:
+    operation = client.get(f"/v2/captures/{capture_id}").json()
+    assert operation["status"] == "awaiting_structuring"
+    assert operation["status"] != "structuring"
+    assert not operation.get("error")
+
+
+def test_structure_route_retries_after_the_provider_is_unavailable(client: TestClient) -> None:
+    service = client.app.state.streaming_capture_service
+    capture_id, _candidate = _seed_host_capture(client, structuring_mode=StructuringMode.RUNTIME)
+    unavailable = _UnavailableStructurer()
+    service._structurer = unavailable  # type: ignore[assignment]
+
+    rejected = client.post(f"/v2/captures/{capture_id}/structure")
+
+    _assert_requirement_unavailable(rejected)
+    assert unavailable.calls == 1
+    _assert_awaiting_structuring(client, capture_id)
+
+    service._structurer = FakeCaptureStructuringProvider(service._clock)  # type: ignore[assignment]
+    structured = client.post(f"/v2/captures/{capture_id}/structure")
+    assert structured.status_code == 200, structured.text
+    assert structured.json()["targetText"] == "host words"
+    assert client.get(f"/v2/captures/{capture_id}").json()["status"] == "completed"
+
+
+def test_structure_route_reports_a_missing_provider_as_requirement_unavailable(
+    client: TestClient,
+) -> None:
+    service = client.app.state.streaming_capture_service
+    capture_id, _candidate = _seed_host_capture(client, structuring_mode=StructuringMode.RUNTIME)
+    service._structurer = None
+
+    rejected = client.post(f"/v2/captures/{capture_id}/structure")
+
+    _assert_requirement_unavailable(rejected)
+    _assert_awaiting_structuring(client, capture_id)
+
+    service._structurer = FakeCaptureStructuringProvider(service._clock)  # type: ignore[assignment]
+    structured = client.post(f"/v2/captures/{capture_id}/structure")
+    assert structured.status_code == 200, structured.text
+    assert client.get(f"/v2/captures/{capture_id}").json()["status"] == "completed"
 
 
 class _ProgressReportingExtractor(_HostProofExtractor):

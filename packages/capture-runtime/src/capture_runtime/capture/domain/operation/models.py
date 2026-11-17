@@ -122,6 +122,13 @@ class CaptureOperation:
             raise CaptureTransitionError("capture is not awaiting structuring")
         return self.transition(StreamingCaptureStatus.STRUCTURING)
 
+    def release_structuring(self) -> CaptureOperation:
+        """Return to awaiting when the provider did not run, so the caller can retry."""
+
+        if self.status is not StreamingCaptureStatus.STRUCTURING:
+            return self
+        return self.transition(StreamingCaptureStatus.AWAITING_STRUCTURING)
+
     def transition(self, status: StreamingCaptureStatus) -> CaptureOperation:
         """Advance the existing lifecycle; a terminal state never changes."""
         if status is self.status:
@@ -142,7 +149,10 @@ class CaptureOperation:
                 StreamingCaptureStatus.STRUCTURING,
                 StreamingCaptureStatus.COMPLETED,
             },
-            StreamingCaptureStatus.STRUCTURING: {StreamingCaptureStatus.COMPLETED},
+            StreamingCaptureStatus.STRUCTURING: {
+                StreamingCaptureStatus.AWAITING_STRUCTURING,
+                StreamingCaptureStatus.COMPLETED,
+            },
         }
         if status != self.status and status not in allowed.get(self.status, set()) | {
             StreamingCaptureStatus.FAILED,

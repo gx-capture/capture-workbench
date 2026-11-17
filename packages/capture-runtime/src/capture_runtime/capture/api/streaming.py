@@ -12,6 +12,9 @@ from typing import Annotated
 from fastapi import APIRouter, Header, Path, Request, Response, status
 from fastapi.responses import StreamingResponse
 
+from capture_runtime.capture.application.streaming_capture_service import (
+    StructuringProviderUnavailableError,
+)
 from capture_runtime.capture.domain.size_policy import (
     SOURCE_SIZE_EXCEEDED_MESSAGE,
     IngestionSourceSizeExceededError,
@@ -348,6 +351,12 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
     async def structure_capture(capture_id: str) -> CaptureDocument:
         try:
             return await service.structure(capture_id)
+        except StructuringProviderUnavailableError as error:
+            raise ApiProblem(
+                503,
+                "requirement_unavailable",
+                "The structuring provider is unavailable.",
+            ) from error
         except StreamingTransitionError as error:
             raise ApiProblem(409, "invalid_capture_state", _safe_message(str(error))) from error
         except StreamingPartialNotFoundError as error:

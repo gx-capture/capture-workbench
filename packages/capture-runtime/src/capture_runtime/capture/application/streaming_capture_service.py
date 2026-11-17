@@ -97,6 +97,13 @@ _SESSION_END_EVENTS = frozenset(
 )
 
 
+class StructuringProviderUnavailableError(RuntimeUnavailableError):
+    """The runtime structuring provider cannot accept this capture."""
+
+    def __init__(self) -> None:
+        super().__init__("The structuring provider is unavailable.")
+
+
 class StreamingCaptureService:
     def __init__(
         self,
@@ -236,13 +243,17 @@ class StreamingCaptureService:
             raise StreamingTransitionError("host structuring requires a host-owned candidate")
         raw = self.repository.read_raw(capture_id)
         if self._structurer is None:
-            raise StreamingTransitionError("runtime structuring provider is unavailable")
+            raise StructuringProviderUnavailableError()
         self.repository.mark_structuring(capture_id)
-        candidate = await self._structurer.structure(
-            raw,
-            target_language=request.target_language,
-            cancel_event=self._cancellations.setdefault(capture_id, asyncio.Event()),
-        )
+        try:
+            candidate = await self._structurer.structure(
+                raw,
+                target_language=request.target_language,
+                cancel_event=self._cancellations.setdefault(capture_id, asyncio.Event()),
+            )
+        except RuntimeUnavailableError as error:
+            self.repository.release_structuring(capture_id)
+            raise StructuringProviderUnavailableError() from error
         document = _validate_runtime_document(candidate, raw)
         expected_engine = self._structurer.engine_identity
         if expected_engine is None or document.structuring_engine != expected_engine:
@@ -912,7 +923,11 @@ def _failure_fingerprint(code: str, message: str) -> str:
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
-__all__ = ["StreamingCaptureService", "StreamingTransitionError"]
+__all__ = [
+    "StreamingCaptureService",
+    "StreamingTransitionError",
+    "StructuringProviderUnavailableError",
+]
 
 
 def _validate_runtime_document(candidate: object, raw: RawCapture) -> CaptureDocument:
