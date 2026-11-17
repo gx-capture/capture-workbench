@@ -2,10 +2,10 @@
 // owns a headless `capture-workbench-dev-host` child process for one run, and
 // injects a Tauri IPC bridge that forwards host commands over same-origin HTTP.
 //
-// Use: node apps/capture-workbench-e2e/real-backend-server.ts <port> [upstream]
+// Use: node apps/capture-workbench-e2e/real-backend-server.ts <port> [upstream] [--app-data <abs-dir>] [--runtime-manifest <path> --runtime-executable <path>]
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync } from 'node:fs';
 import {
   createServer,
   request as httpRequest,
@@ -30,36 +30,147 @@ const CUSTOM_PREVIEW_HEADER = 'x-capture-preview';
 
 const workspaceRoot = resolve(import.meta.dirname, '..', '..');
 
-function resolvePaths(): {
+interface RealBackendServerCliArgs {
+  readonly port: number;
+  readonly upstreamUrl: URL;
+  readonly appDataDir?: string;
+  readonly runtimeManifestPath?: string;
+  readonly runtimeExecutablePath?: string;
+}
+
+const USAGE =
+  'Use: real-backend-server.ts <port> [upstream] [--app-data <abs-dir>] [--runtime-manifest <path> --runtime-executable <path>]';
+
+function readFlagValue(
+  argv: readonly string[],
+  index: number,
+  flagName: string,
+  inlineValue: string | undefined,
+): { readonly value: string; readonly nextIndex: number } {
+  const raw = inlineValue !== undefined ? inlineValue : argv[index + 1];
+  if (!raw || raw.startsWith('--')) {
+    throw new Error(`Missing value for ${flagName}.\n${USAGE}`);
+  }
+  return {
+    value: raw,
+    nextIndex: inlineValue !== undefined ? index : index + 1,
+  };
+}
+
+function parseRealBackendArgs(argv: readonly string[]): RealBackendServerCliArgs {
+  const positionals: string[] = [argv[0] ?? 'node', argv[1] ?? 'real-backend-server.ts'];
+  let appDataDir: string | undefined;
+  let runtimeManifestPath: string | undefined;
+  let runtimeExecutablePath: string | undefined;
+
+  for (let i = 2; i < argv.length; i += 1) {
+    const token = argv[i] ?? '';
+    if (!token.startsWith('--')) {
+      positionals.push(token);
+      continue;
+    }
+    const equalsAt = token.indexOf('=');
+    const flagName = equalsAt >= 0 ? token.slice(0, equalsAt) : token;
+    const inlineValue = equalsAt >= 0 ? token.slice(equalsAt + 1) : undefined;
+
+    if (flagName === '--app-data') {
+      if (appDataDir !== undefined) {
+        throw new Error(`Duplicate --app-data option.\n${USAGE}`);
+      }
+      const parsed = readFlagValue(argv, i, flagName, inlineValue);
+      appDataDir = parsed.value;
+      i = parsed.nextIndex;
+    } else if (flagName === '--runtime-manifest') {
+      if (runtimeManifestPath !== undefined) {
+        throw new Error(`Duplicate --runtime-manifest option.\n${USAGE}`);
+      }
+      const parsed = readFlagValue(argv, i, flagName, inlineValue);
+      runtimeManifestPath = parsed.value;
+      i = parsed.nextIndex;
+    } else if (flagName === '--runtime-executable') {
+      if (runtimeExecutablePath !== undefined) {
+        throw new Error(`Duplicate --runtime-executable option.\n${USAGE}`);
+      }
+      const parsed = readFlagValue(argv, i, flagName, inlineValue);
+      runtimeExecutablePath = parsed.value;
+      i = parsed.nextIndex;
+    } else {
+      throw new Error(`Unknown option: ${flagName}\n${USAGE}`);
+    }
+  }
+
+  const { port, upstreamUrl } = parseServerArgs(positionals, USAGE);
+  if ((runtimeManifestPath === undefined) !== (runtimeExecutablePath === undefined)) {
+    throw new Error(
+      `--runtime-manifest and --runtime-executable must be provided together.\n${USAGE}`,
+    );
+  }
+  if (appDataDir !== undefined && !isAbsolute(appDataDir)) {
+    throw new Error(`--app-data must be an absolute directory path: ${appDataDir}`);
+  }
+
+  return {
+    port,
+    upstreamUrl,
+    ...(appDataDir !== undefined ? { appDataDir } : {}),
+    ...(runtimeManifestPath !== undefined
+      ? { runtimeManifestPath: resolve(process.cwd(), runtimeManifestPath) }
+      : {}),
+    ...(runtimeExecutablePath !== undefined
+      ? { runtimeExecutablePath: resolve(process.cwd(), runtimeExecutablePath) }
+      : {}),
+  };
+}
+
+function resolvePaths(options: {
+  readonly runtimeManifestPath?: string;
+  readonly runtimeExecutablePath?: string;
+}): {
   readonly devHostExecutable: string;
-  readonly stagedExecutable: string;
-  readonly stagedManifest: string;
+  readonly runtimeExecutable: string;
+  readonly runtimeManifest: string;
 } {
   const desktopRoot = join(workspaceRoot, 'apps', 'capture-workbench-desktop');
-  const stagedRoot = join(
-    desktopRoot,
-    'src-tauri',
-    'target',
-    'deterministic-qa',
-    'staged',
-  );
-  const stagedExecutable = join(
-    stagedRoot,
-    'binaries',
-    'capture-runtime-x86_64-pc-windows-msvc.exe',
-  );
-  const stagedManifest = join(
-    stagedRoot,
-    'resources',
-    'capture-runtime-manifest.json',
-  );
-  const missingStaged = [stagedExecutable, stagedManifest].filter(
-    (path) => !existsSync(path),
-  );
-  if (missingStaged.length > 0) {
-    throw new Error(
-      `Missing staged deterministic runtime (${missingStaged.join(', ')}). Run: pnpm nx run capture-workbench-desktop:stage-deterministic-runtime`,
+  let runtimeExecutable: string;
+  let runtimeManifest: string;
+
+  if (options.runtimeManifestPath && options.runtimeExecutablePath) {
+    runtimeExecutable = options.runtimeExecutablePath;
+    runtimeManifest = options.runtimeManifestPath;
+    const invalidRuntime = [runtimeExecutable, runtimeManifest].filter(
+      (path) => !existsSync(path) || !statSync(path).isFile(),
     );
+    if (invalidRuntime.length > 0) {
+      throw new Error(
+        `Missing or non-file runtime path(s): ${invalidRuntime.join(', ')}`,
+      );
+    }
+  } else {
+    const stagedRoot = join(
+      desktopRoot,
+      'src-tauri',
+      'target',
+      'deterministic-qa',
+      'staged',
+    );
+    runtimeExecutable = join(
+      stagedRoot,
+      'binaries',
+      'capture-runtime-x86_64-pc-windows-msvc.exe',
+    );
+    runtimeManifest = join(
+      stagedRoot,
+      'resources',
+      'capture-runtime-manifest.json',
+    );
+    const missingStaged = [runtimeExecutable, runtimeManifest].filter(
+      (path) => !existsSync(path),
+    );
+    if (missingStaged.length > 0) {
+      throw new Error(
+        `Missing staged deterministic runtime (${missingStaged.join(', ')}). Run: pnpm nx run capture-workbench-desktop:stage-deterministic-runtime`,
+      );
+    }
   }
 
   const cargoTargetEnv = process.env['CARGO_TARGET_DIR']?.trim();
@@ -79,7 +190,7 @@ function resolvePaths(): {
     );
   }
 
-  return { devHostExecutable, stagedExecutable, stagedManifest };
+  return { devHostExecutable, runtimeExecutable, runtimeManifest };
 }
 
 function redactToken(text: string, token: string): string {
@@ -91,8 +202,8 @@ function redactToken(text: string, token: string): string {
 function startDevHost(
   paths: {
     readonly devHostExecutable: string;
-    readonly stagedExecutable: string;
-    readonly stagedManifest: string;
+    readonly runtimeExecutable: string;
+    readonly runtimeManifest: string;
   },
   appDataDir: string,
   token: string,
@@ -109,9 +220,9 @@ function startDevHost(
         '--app-data',
         appDataDir,
         '--runtime-manifest',
-        paths.stagedManifest,
+        paths.runtimeManifest,
         '--runtime-executable',
-        paths.stagedExecutable,
+        paths.runtimeExecutable,
       ],
       {
         cwd: workspaceRoot,
@@ -661,12 +772,22 @@ function handleHostProxy(
 }
 
 async function main(): Promise<void> {
-  const { port, upstreamUrl } = parseServerArgs(
-    process.argv,
-    'Use: real-backend-server.ts <port> [upstream]',
-  );
-  const paths = resolvePaths();
-  const appDataDir = mkdtempSync(join(tmpdir(), 'capture-dev-host-'));
+  const cliArgs = parseRealBackendArgs(process.argv);
+  const { port, upstreamUrl } = cliArgs;
+  const paths = resolvePaths({
+    ...(cliArgs.runtimeManifestPath !== undefined
+      ? { runtimeManifestPath: cliArgs.runtimeManifestPath }
+      : {}),
+    ...(cliArgs.runtimeExecutablePath !== undefined
+      ? { runtimeExecutablePath: cliArgs.runtimeExecutablePath }
+      : {}),
+  });
+  const ownsAppDataDir = cliArgs.appDataDir === undefined;
+  const appDataDir =
+    cliArgs.appDataDir ?? mkdtempSync(join(tmpdir(), 'capture-dev-host-'));
+  if (!ownsAppDataDir) {
+    mkdirSync(appDataDir, { recursive: true });
+  }
   const token = randomBytes(32).toString('hex');
   const bridgeScriptTag = buildBridgeScriptTag();
 
@@ -678,7 +799,9 @@ async function main(): Promise<void> {
     if (devHostChild) {
       killProcessTree(devHostChild);
     }
-    removeAppDataDir(appDataDir);
+    if (ownsAppDataDir) {
+      removeAppDataDir(appDataDir);
+    }
   };
 
   process.once('exit', cleanupSync);
@@ -770,7 +893,9 @@ async function main(): Promise<void> {
             await waitForChildExit(devHostChild, 2_000);
           }
         }
-        removeAppDataDir(appDataDir);
+        if (ownsAppDataDir) {
+          removeAppDataDir(appDataDir);
+        }
         if (exitCode !== undefined) {
           process.exit(exitCode);
         }
