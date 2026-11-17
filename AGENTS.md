@@ -56,11 +56,12 @@ release runbook.
 - `.github/workflows/architecture-diff.yml` (`tools/architecture-diff.ts`) rewrites the section between `<!-- architecture:start -->` and `<!-- architecture:end -->` in each pull request description: the touched nodes, their direct dependencies and the edges the PR adds or removes. The graph levels are configured in `architecture-graph.config.json`.
 - The Stop hook also runs `node tools/architecture-graph.ts --hook`: the diagram check and the exception gate, plus the runtime contracts when runtime Python changed.
 
-# Screen review on localhost
+# Verification in two layers
 
+- Layer 1 is the dev server, frontend and backend: whatever can be verified there is verified there first. Layer 2 is the Desktop App, only for what layer 1 cannot prove: WebView2 behaviour, native dialogs and drag and drop of native paths, the installer, process cleanup on exit, pixel baselines. Before planning or asking for a Desktop App run, list what the run must prove and move every item layer 1 can prove to layer 1. A Desktop App run needs a build, opens windows on the user's machine and takes long; a dev-server run is headless, cheap and repeatable.
 - Calibrate screens and discuss screen behaviour on the dev server first: `pnpm nx run capture-workbench-e2e:preview` serves the Workbench at `http://localhost:4300` with the simulated desktop backend of the browser e2e (`apps/capture-workbench-e2e/src/fake-desktop.ts`); scenarios are listed at `/__preview`, with the query parameters that change the simulated timing (`speed`, `startDelay`). Record a run with headless Playwright against that URL.
 - A new screen state that people need to look at becomes a scenario in `apps/capture-workbench-e2e/src/preview-scenarios.ts` or an option of the simulated backend, not a one-off script.
-- The Desktop App is for what only it can prove: WebView2 behaviour, native dialogs, real engines, installed acceptance.
+- Real engines do not by themselves need the Desktop App. The backend is verified at the runtime API (`apps/capture-workbench-desktop/scripts/real-media-smoke.ts`: installation, OCR and transcription; `real-ollama-smoke.ts`: structuring with the real model). The Workbench renderer against the real backend on the dev server does not exist yet: the host's logic lives in the Tauri process. [#418](https://github.com/gx-capture/capture-workbench/issues/418) tracks it and lists which Desktop App checks move to layer 1 when it does.
 
 # Release and CI guidance
 
