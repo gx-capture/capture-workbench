@@ -41,8 +41,9 @@
  *   - CAPTURE_REAL_ENGINES_MODEL_OPTION_ID: e.g. `qwen3.5-0.8b-v1`, `qwen3.5-2b-v1`, `qwen3.5-4b-v1`
  *   Optional overrides:
  *   - CAPTURE_REAL_ENGINES_REUSE_INSTALLED=1: the app-data directory already holds the
- *     recognition features from an earlier run; stage 1 only checks they are ready.
- *     A run with this set does not prove installation, cancel, retry or re-attachment.
+ *     recognition features from an earlier run; stage 1 only checks they are ready
+ *     and can still pass. Evidence `proven` records whether this run proved
+ *     installation, cancel-and-retry, and model installation.
  *   - CAPTURE_REAL_ENGINES_RUNTIME_MANIFEST & CAPTURE_REAL_ENGINES_RUNTIME_EXECUTABLE (both or neither; default is staged product runtime)
  *   - CAPTURE_SMOKE_WORKER_MIRROR_OPT_IN / CAPTURE_SMOKE_WORKER_MIRROR_URL
  *
@@ -67,7 +68,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, rmSync, statSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, resolve } from 'node:path';
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Locator, type Page } from '@playwright/test';
 import {
   canConnect,
   startRealBackendLauncher,
@@ -103,6 +104,7 @@ const ASR_STAGE_TIMEOUT_MS = 35 * 60_000; // measured by the first real run
 const MODEL_INSTALL_TIMEOUT_MS = 25 * 60_000; // measured by the first real run
 const EDIT_EXPORT_STAGE_TIMEOUT_MS = 3 * 60_000; // measured by the first real run
 const RESTART_STAGE_TIMEOUT_MS = 5 * 60_000; // measured by the first real run
+const CANCEL_CLICK_TIMEOUT_MS = 10_000;
 // The application itself waits three minutes (DESKTOP_RUNTIME_READY_TIMEOUT_MS):
 // with the features installed, readiness includes probing their workers.
 const RUNTIME_READY_TIMEOUT_MS = 200_000;
@@ -206,6 +208,13 @@ interface StageRecord {
   readonly durationMs: number;
 }
 
+/** What this run actually did. A passed stage does not by itself prove these. */
+interface SmokeProven {
+  installation: boolean;
+  cancelAndRetry: boolean;
+  modelInstallation: boolean;
+}
+
 interface ProvenanceSummary {
   readonly engine: string;
   readonly model: string;
@@ -221,6 +230,8 @@ interface SmokeEvidence {
   /** Page loads that needed a reload before the Workbench was ready (issue #425). */
   startupReloads: number;
   readonly stages: StageRecord[];
+  /** Set from what this run did. A passed stage does not by itself prove installation. */
+  readonly proven: SmokeProven;
   provenance: {
     pdf?: {
       readonly extraction: ProvenanceSummary;
@@ -259,6 +270,10 @@ function readEnvFirst(names: readonly string[]): string | undefined {
 
 function isRegularFile(filePath: string): boolean {
   return existsSync(filePath) && statSync(filePath).isFile();
+}
+
+function sha256(value: string): string {
+  return createHash('sha256').update(value, 'utf8').digest('hex');
 }
 
 function normalizeText(value: string): string {
@@ -594,6 +609,20 @@ async function waitForRuntimeReady(page: Page): Promise<void> {
   }
 }
 
+/**
+ * Clicks Cancel. The installation can finish first and remove the button;
+ * that is not a failure and does not prove cancel-and-retry.
+ */
+async function clickCancelOrGone(button: Locator): Promise<boolean> {
+  try {
+    await button.click({ timeout: CANCEL_CLICK_TIMEOUT_MS });
+    return true;
+  } catch (error) {
+    if ((await button.count()) === 0 || !(await button.isVisible())) return false;
+    throw error;
+  }
+}
+
 function assertOrderedAnchors(
   actualText: string,
   anchors: readonly string[],
@@ -763,8 +792,23 @@ test('runs full real-engine capture, editing, export, and restart journey on loc
 
   const exportTempDir = join(config.tempDir, `exports-${randomBytes(4).toString('hex')}`);
   mkdirSync(exportTempDir, { recursive: true });
+  const removeExportDir = (): void => {
+    rmSync(exportTempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  };
+  process.once('exit', () => {
+    try {
+      removeExportDir();
+    } catch {
+      // Best effort: the process is already exiting.
+    }
+  });
 
   const stages: StageRecord[] = [];
+  const proven: SmokeProven = {
+    installation: false,
+    cancelAndRetry: false,
+    modelInstallation: false,
+  };
   const evidence: SmokeEvidence = {
     evidenceKind: 'real-engines-localhost-v1',
     startedAt: new Date().toISOString(),
@@ -772,6 +816,7 @@ test('runs full real-engine capture, editing, export, and restart journey on loc
     passed: false,
     startupReloads: 0,
     stages,
+    proven,
     provenance: {},
   };
 
@@ -819,15 +864,14 @@ test('runs full real-engine capture, editing, export, and restart journey on loc
       await expect(page.getByTestId('first-run-checkbox-ocr')).toBeChecked();
       await page.getByTestId('first-run-install').click();
 
-      let cancelAndRetryVerified = false;
       let reloadReattachVerified = false;
 
       const ocrProgress = page.getByTestId('ocr-install-progress');
       await expect(ocrProgress).toBeVisible({ timeout: 60_000 });
       const ocrCancel = page.getByTestId('ocr-install-cancel');
-      if (await ocrCancel.isVisible()) {
-        await ocrCancel.click();
-      }
+      const ocrCancelClicked = (await ocrCancel.isVisible())
+        ? await clickCancelOrGone(ocrCancel)
+        : false;
 
       await nav.getByRole('link', { name: '設定' }).click();
       await expect(page).toHaveURL(/\/settings\/engines$/u);
@@ -844,8 +888,8 @@ test('runs full real-engine capture, editing, export, and restart journey on loc
         })
         .toMatch(/^(?:ready|cancelled|failed|installable)$/u);
       if (await ocrRow.getByTestId('engine-row-retry').isVisible()) {
+        if (ocrCancelClicked) proven.cancelAndRetry = true;
         await ocrRow.getByTestId('engine-row-retry').click();
-        cancelAndRetryVerified = true;
       } else if (await ocrRow.getByTestId('engine-row-install').isVisible()) {
         await ocrRow.getByTestId('engine-row-install').click();
       }
@@ -864,22 +908,24 @@ test('runs full real-engine capture, editing, export, and restart journey on loc
         const statusBefore = await row.getAttribute('data-status');
         if (statusBefore === 'ready') continue;
 
-        if (!cancelAndRetryVerified && (await row.getByTestId('engine-row-install').isVisible())) {
+        if (!proven.cancelAndRetry && (await row.getByTestId('engine-row-install').isVisible())) {
           await row.getByTestId('engine-row-install').click();
           const cancelButton = row.getByTestId('engine-row-cancel');
           await expect(cancelButton).toBeVisible({ timeout: 60_000 });
-          await cancelButton.click();
-          const retryButton = row.getByTestId('engine-row-retry');
-          await expect(retryButton).toBeVisible({ timeout: 60_000 });
-          await retryButton.click();
-          cancelAndRetryVerified = true;
+          const cancelClicked = await clickCancelOrGone(cancelButton);
+          if (cancelClicked) {
+            const retryButton = row.getByTestId('engine-row-retry');
+            await expect(retryButton).toBeVisible({ timeout: 60_000 });
+            proven.cancelAndRetry = true;
+            await retryButton.click();
+          }
         } else if (await row.getByTestId('engine-row-install').isVisible()) {
           await row.getByTestId('engine-row-install').click();
         } else if (await row.getByTestId('engine-row-retry').isVisible()) {
           await row.getByTestId('engine-row-retry').click();
         }
 
-        if (!reloadReattachVerified) {
+        if (!reloadReattachVerified && (await row.getAttribute('data-status')) !== 'ready') {
           await expect(row.getByTestId('engine-row-progress')).toBeVisible({ timeout: 60_000 });
           await page.reload();
           await waitForRuntimeReady(page);
@@ -902,7 +948,7 @@ test('runs full real-engine capture, editing, export, and restart journey on loc
       }
 
       assert.equal(
-        cancelAndRetryVerified,
+        proven.cancelAndRetry,
         true,
         'Stage 1 must observe install cancel and retry on a real unit.',
       );
@@ -917,6 +963,7 @@ test('runs full real-engine capture, editing, export, and restart journey on loc
           page.locator(`[data-testid="engine-row"][data-requirement-id="${requirementId}"]`),
         ).toHaveAttribute('data-status', 'ready');
       }
+      proven.installation = true;
     });
 
     // -------------------------------------------------------------------------
@@ -1084,32 +1131,42 @@ test('runs full real-engine capture, editing, export, and restart journey on loc
       await modelOption.click();
 
       const installModelBtn = page.getByTestId('diagnostics-model-install');
+      let modelInstallClicked = false;
       if (process.env['CAPTURE_REAL_ENGINES_REUSE_INSTALLED'] === '1') {
         // The model can be there from an earlier run; the button is then disabled.
         if (await installModelBtn.isEnabled()) {
           await installModelBtn.click();
+          modelInstallClicked = true;
         }
       } else {
         await expect(installModelBtn).toBeEnabled();
         await installModelBtn.click();
+        modelInstallClicked = true;
       }
 
       const activeModelEl = page.getByTestId('diagnostics-active-model');
       await expect(activeModelEl).toHaveText(expectedModelDisplayName, {
         timeout: MODEL_INSTALL_TIMEOUT_MS,
       });
-      // The progress block stays on the page after the installation: it must
-      // have reached a finished state, not be gone.
-      const modelProgress = page.getByTestId('diagnostics-model-progress');
-      await expect
-        .poll(
-          async () =>
-            (await modelProgress.count()) === 0
-              ? 'absent'
-              : await modelProgress.getAttribute('data-status'),
-          { timeout: MODEL_INSTALL_TIMEOUT_MS, intervals: [500] },
-        )
-        .toMatch(/^(?:absent|succeeded|completed|ready|installed)$/u);
+      if (modelInstallClicked) {
+        // diagnostics-model-progress stays mounted. Its data-status is the
+        // runtime installation status, `completed` on success.
+        const modelProgress = page.getByTestId('diagnostics-model-progress');
+        await expect
+          .poll(
+            async () => {
+              if ((await modelProgress.count()) === 0) return 'absent';
+              return (await modelProgress.getAttribute('data-status')) ?? 'missing';
+            },
+            {
+              timeout: MODEL_INSTALL_TIMEOUT_MS,
+              intervals: [500],
+              message: 'diagnostics-model-progress did not reach completed.',
+            },
+          )
+          .toBe('completed');
+        proven.modelInstallation = true;
+      }
       activeModelLabel = expectedModelDisplayName;
 
       await page.goto(`${launcher.baseUrl}/settings/compute`);
@@ -1230,9 +1287,12 @@ test('runs full real-engine capture, editing, export, and restart journey on loc
 
         await page.reload();
         await waitForRuntimeReady(page);
-        await expect(pageTextArea).toHaveValue(`${originalPdfPage1Text}\n${ocrEditMarker}`, {
-          timeout: 15_000,
-        });
+        await expect
+          .poll(async () => sha256(await pageTextArea.inputValue()), {
+            timeout: 15_000,
+            message: 'result-page-text must match the edited page after reload.',
+          })
+          .toBe(sha256(`${originalPdfPage1Text}\n${ocrEditMarker}`));
         await expect(page.getByTestId('result-page-edited')).toBeVisible();
 
         await page.getByTestId('result-nav-export').click();
@@ -1254,7 +1314,12 @@ test('runs full real-engine capture, editing, export, and restart journey on loc
         await page.getByTestId('result-nav-content').click();
         await page.getByTestId('result-page-restore').click();
         await expect(page.getByTestId('result-page-edited')).toHaveCount(0, { timeout: 15_000 });
-        await expect(pageTextArea).toHaveValue(originalPdfPage1Text, { timeout: 15_000 });
+        await expect
+          .poll(async () => sha256(await pageTextArea.inputValue()), {
+            timeout: 15_000,
+            message: 'result-page-text must match the restored page.',
+          })
+          .toBe(sha256(originalPdfPage1Text));
         await expect
           .poll(async () => {
             const detail = await invokeHost<DesktopLibraryDetailRecord>(page, 'library_get', {
@@ -1291,9 +1356,16 @@ test('runs full real-engine capture, editing, export, and restart journey on loc
 
         await page.reload();
         await waitForRuntimeReady(page);
-        await expect(firstRow.getByTestId('result-line-text')).toContainText(asrEditMarker, {
-          timeout: 15_000,
-        });
+        await expect
+          .poll(
+            async () =>
+              (await firstRow.getByTestId('result-line-text').innerText()).includes(asrEditMarker),
+            {
+              timeout: 15_000,
+              message: 'result-line-text must contain the edited marker after reload.',
+            },
+          )
+          .toBe(true);
         await expect(firstRow.getByTestId('result-line-edited')).toBeVisible();
 
         await page.getByTestId('result-nav-export').click();
@@ -1321,14 +1393,13 @@ test('runs full real-engine capture, editing, export, and restart journey on loc
       const previousPort = launcher.port;
       const previousDevHostPort = launcher.devHostPort;
       await launcher.stop();
-      activeLauncher = undefined;
-
       await expect
         .poll(() => canConnect(previousDevHostPort), { timeout: 15_000, intervals: [250] })
         .toBe(false);
       await expect
         .poll(() => canConnect(previousPort), { timeout: 15_000, intervals: [250] })
         .toBe(false);
+      activeLauncher = undefined;
 
       launcher = await startHostWithConfig();
 
@@ -1359,9 +1430,12 @@ test('runs full real-engine capture, editing, export, and restart journey on loc
       // Restored PDF edit stays restored across restart
       await page.goto(`${launcher.baseUrl}/history/${pdfDocId}/content`);
       await waitForRuntimeReady(page);
-      await expect(page.getByTestId('result-page-text')).toHaveValue(originalPdfPage1Text, {
-        timeout: 15_000,
-      });
+      await expect
+        .poll(async () => sha256(await page.getByTestId('result-page-text').inputValue()), {
+          timeout: 15_000,
+          message: 'result-page-text must match the restored page after restart.',
+        })
+        .toBe(sha256(originalPdfPage1Text));
       await expect(page.getByTestId('result-page-edited')).toHaveCount(0);
 
       // Un-restored ASR edit stays saved across restart
@@ -1370,10 +1444,18 @@ test('runs full real-engine capture, editing, export, and restart journey on loc
       const firstRowAfterRestart = page.locator(
         `[data-testid="result-transcript-row"][data-segment-id="${firstAsrSegmentId}"]`,
       );
-      await expect(firstRowAfterRestart.getByTestId('result-line-text')).toContainText(
-        asrEditMarker,
-        { timeout: 15_000 },
-      );
+      await expect
+        .poll(
+          async () =>
+            (
+              await firstRowAfterRestart.getByTestId('result-line-text').innerText()
+            ).includes(asrEditMarker),
+          {
+            timeout: 15_000,
+            message: 'result-line-text must contain the edited marker after restart.',
+          },
+        )
+        .toBe(true);
       await expect(firstRowAfterRestart.getByTestId('result-line-edited')).toBeVisible();
 
       evidence.restart = {
@@ -1385,27 +1467,33 @@ test('runs full real-engine capture, editing, export, and restart journey on loc
 
     evidence.passed = true;
   } finally {
-    if (activeLauncher) {
-      const devHostPortToClose = activeLauncher.devHostPort;
-      const proxyPortToClose = activeLauncher.port;
-      await activeLauncher.stop();
-      activeLauncher = undefined;
-      await expect
-        .poll(() => canConnect(devHostPortToClose), { timeout: 15_000, intervals: [250] })
-        .toBe(false);
-      await expect
-        .poll(() => canConnect(proxyPortToClose), { timeout: 15_000, intervals: [250] })
-        .toBe(false);
+    // The export directory is removed in its own finally, before the port
+    // checks. Those checks still run when removal throws, and the launcher
+    // handle stays until both ports are confirmed closed.
+    try {
+      await Promise.resolve().finally(removeExportDir);
+    } finally {
+      if (activeLauncher) {
+        const devHostPortToClose = activeLauncher.devHostPort;
+        const proxyPortToClose = activeLauncher.port;
+        await activeLauncher.stop();
+        await expect
+          .poll(() => canConnect(devHostPortToClose), { timeout: 15_000, intervals: [250] })
+          .toBe(false);
+        await expect
+          .poll(() => canConnect(proxyPortToClose), { timeout: 15_000, intervals: [250] })
+          .toBe(false);
+        activeLauncher = undefined;
+      }
+      evidence.finishedAt = new Date().toISOString();
+      evidence.startupReloads = startupReloads;
+      const serialized = `${JSON.stringify(evidence, null, 2)}\n`;
+      assert.doesNotMatch(
+        serialized,
+        /[A-Za-z]:[\\/]/u,
+        'Evidence JSON must not contain local file system paths.',
+      );
+      await writeFile(evidencePath, serialized, 'utf8');
     }
-    rmSync(exportTempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
-    evidence.finishedAt = new Date().toISOString();
-    evidence.startupReloads = startupReloads;
-    const serialized = `${JSON.stringify(evidence, null, 2)}\n`;
-    assert.doesNotMatch(
-      serialized,
-      /[A-Za-z]:[\\/]/u,
-      'Evidence JSON must not contain local file system paths.',
-    );
-    await writeFile(evidencePath, serialized, 'utf8');
   }
 });

@@ -106,7 +106,9 @@ function parseRealBackendArgs(argv: readonly string[]): RealBackendServerCliArgs
     );
   }
   if (appDataDir !== undefined && !isAbsolute(appDataDir)) {
-    throw new Error(`--app-data must be an absolute directory path: ${appDataDir}`);
+    throw new Error(
+      '--app-data was rejected: the value must be an absolute directory path.',
+    );
   }
 
   return {
@@ -396,6 +398,25 @@ function waitForChildExit(child: ChildProcess, timeoutMs: number): Promise<void>
     };
     child.once('exit', onExit);
   });
+}
+
+function fsErrorCode(error: unknown): string {
+  if (typeof error === 'object' && error !== null && 'code' in error) {
+    const code = error.code;
+    if (typeof code === 'string' && code.length > 0) return code;
+  }
+  return 'unknown';
+}
+
+/** Creates a caller-supplied app-data directory. Failures omit the path. */
+function ensureCallerAppDataDir(appDataDir: string): void {
+  try {
+    mkdirSync(appDataDir, { recursive: true });
+  } catch (error) {
+    throw new Error(
+      `--app-data was rejected: the directory could not be created (${fsErrorCode(error)}).`,
+    );
+  }
 }
 
 function removeAppDataDir(appDataDir: string): void {
@@ -786,7 +807,7 @@ async function main(): Promise<void> {
   const appDataDir =
     cliArgs.appDataDir ?? mkdtempSync(join(tmpdir(), 'capture-dev-host-'));
   if (!ownsAppDataDir) {
-    mkdirSync(appDataDir, { recursive: true });
+    ensureCallerAppDataDir(appDataDir);
   }
   const token = randomBytes(32).toString('hex');
   const bridgeScriptTag = buildBridgeScriptTag();

@@ -80,36 +80,58 @@ export function canConnect(port: number): Promise<boolean> {
   });
 }
 
+function isSpawnedChildAlive(child: ChildProcess): boolean {
+  return child.exitCode === null && child.signalCode === null;
+}
+
+/** Kills the launcher and the processes it started. A late or failed kill does not throw. */
+function killSpawnedProcessTree(child: ChildProcess): void {
+  if (!isSpawnedChildAlive(child)) return;
+  try {
+    if (process.platform === 'win32' && child.pid !== undefined) {
+      spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], {
+        stdio: 'ignore',
+        windowsHide: true,
+        timeout: 5_000,
+      });
+      return;
+    }
+    child.kill('SIGKILL');
+  } catch {
+    // Already exited, or the kill command itself failed.
+  }
+}
+
 export function stopSpawnedChild(child: ChildProcess): Promise<void> {
-  if (child.exitCode !== null || child.signalCode !== null) {
+  if (!isSpawnedChildAlive(child)) {
     return Promise.resolve();
   }
   return new Promise((resolveExit) => {
-    const forceStop = (): void => {
-      if (process.platform === 'win32' && child.pid !== undefined) {
-        spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], {
-          stdio: 'ignore',
-          windowsHide: true,
-          timeout: 5_000,
-        });
-      } else {
-        child.kill('SIGKILL');
-      }
+    let settled = false;
+    const timers: { grace?: ReturnType<typeof setTimeout> } = {};
+    const finish = (): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timers.grace);
+      resolveExit();
     };
-    const timer = setTimeout(() => {
-      forceStop();
-      resolveExit();
+    // After this grace period, a process that is still alive is killed
+    // before stop() resolves.
+    timers.grace = setTimeout(() => {
+      if (isSpawnedChildAlive(child)) killSpawnedProcessTree(child);
+      finish();
     }, 5_000);
-    child.once('exit', () => {
-      clearTimeout(timer);
-      resolveExit();
-    });
+    child.once('exit', finish);
     if (process.platform === 'win32') {
       // Terminates Node, capture-workbench-dev-host, and any child workers in
       // the tree together.
-      forceStop();
+      killSpawnedProcessTree(child);
     } else {
-      child.kill('SIGINT');
+      try {
+        child.kill('SIGINT');
+      } catch {
+        if (!isSpawnedChildAlive(child)) finish();
+      }
     }
   });
 }
