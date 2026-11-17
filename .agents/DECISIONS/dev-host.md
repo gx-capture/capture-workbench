@@ -55,7 +55,8 @@ drop, window behaviour.
 - The server binds `127.0.0.1` only. Every request needs
   `Authorization: Bearer <token>`; the token comes from the environment
   (`CAPTURE_DEV_HOST_TOKEN`, required, at least 32 characters) and is never
-  logged. The `Host` header must name the bound loopback address. No CORS
+  logged. The host removes it from its own environment once it has read it, so
+  no process it starts inherits it. The `Host` header must name the bound loopback address. No CORS
   headers: a browser never calls the dev host, the preview server does and adds
   the token there, so the token never reaches a page.
 - At most 64 connections are in flight. A further connection is closed without

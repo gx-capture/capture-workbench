@@ -7,7 +7,7 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, rmSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { request as httpRequest } from 'node:http';
-import { createServer as createNetServer } from 'node:net';
+import { connect as netConnect, createServer as createNetServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -120,6 +120,34 @@ function waitForLauncherReady(
         rejectReady(new Error(`Launcher ready line timed out: ${getStderr()}`));
       }
     }, 50);
+  });
+}
+
+/** The dev host's bearer token is 64 hexadecimal characters. */
+const tokenShaped = /[0-9a-f]{64}/iu;
+
+function launcherReadyLine(port: number): RegExp {
+  return new RegExp(
+    `^Real-backend preview: http://127\\.0\\.0\\.1:${port}/__preview `
+      + `\\(upstream http://localhost:4200, dev-host 127\\.0\\.0\\.1:(\\d+)\\)$`,
+    'u',
+  );
+}
+
+function canConnect(port: number): Promise<boolean> {
+  return new Promise((resolveResult) => {
+    const socket = netConnect({ host: '127.0.0.1', port });
+    socket.setTimeout(1_000);
+    socket.once('connect', () => {
+      socket.destroy();
+      resolveResult(true);
+    });
+    const refused = (): void => {
+      socket.destroy();
+      resolveResult(false);
+    };
+    socket.once('error', refused);
+    socket.once('timeout', refused);
   });
 }
 
@@ -386,12 +414,13 @@ test('launcher prints only its ready line and keeps tokens out of stdout/stderr'
 
   try {
     const readyLine = await waitForLauncherReady(child, () => stdout, () => stderr);
-    expect(readyLine).toContain(`http://127.0.0.1:${port}/__preview`);
+    expect(readyLine.trimEnd()).toMatch(launcherReadyLine(port));
 
     const childOrigin = `http://127.0.0.1:${port}`;
     const pageHtml = await sendRawHostRequest(childOrigin, { method: 'GET', path: '/ocr' });
     expect(pageHtml.status).toBe(200);
     expect(pageHtml.bodyText).not.toContain('Bearer');
+    expect(pageHtml.bodyText).not.toMatch(tokenShaped);
 
     const statusRes = await sendRawHostRequest(childOrigin, {
       method: 'POST',
@@ -411,6 +440,7 @@ test('launcher prints only its ready line and keeps tokens out of stdout/stderr'
     const lines = stdout.trimEnd().split(/\r?\n/u);
     expect(lines).toHaveLength(1);
     expect(stdout).not.toContain('Bearer');
+    expect(stdout).not.toMatch(tokenShaped);
     expect(stderr).toBe('');
   } finally {
     await stopSpawnedChild(child);
@@ -419,6 +449,62 @@ test('launcher prints only its ready line and keeps tokens out of stdout/stderr'
       force: true,
       maxRetries: 5,
       retryDelay: 100,
+    });
+  }
+});
+
+test('the dev host stops when the launcher is killed without a chance to clean up', async () => {
+  const port = await reserveFreePort();
+  const childTempRoot = join(
+    process.env['CAPTURE_REAL_BACKEND_TEMP_ROOT'] ?? tmpdir(),
+    `launcher-kill-${port}`,
+  );
+  mkdirSync(childTempRoot, { recursive: true });
+
+  const child = spawn(
+    process.execPath,
+    ['apps/capture-workbench-e2e/real-backend-server.ts', String(port), upstreamUrl],
+    {
+      cwd: workspaceRoot,
+      env: {
+        ...process.env,
+        TEMP: childTempRoot,
+        TMP: childTempRoot,
+        TMPDIR: childTempRoot,
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
+    },
+  );
+  let stdout = '';
+  let stderr = '';
+  child.stdout?.on('data', (chunk: Buffer) => {
+    stdout += chunk.toString('utf8');
+  });
+  child.stderr?.on('data', (chunk: Buffer) => {
+    stderr += chunk.toString('utf8');
+  });
+
+  try {
+    const readyLine = await waitForLauncherReady(child, () => stdout, () => stderr);
+    const devHostPort = Number(launcherReadyLine(port).exec(readyLine.trimEnd())?.[1]);
+    expect(Number.isInteger(devHostPort) && devHostPort > 0).toBe(true);
+    expect(await canConnect(devHostPort)).toBe(true);
+
+    // Ends the launcher alone, the way Task Manager does: no handler runs and
+    // no other process is told.
+    child.kill('SIGKILL');
+
+    await expect
+      .poll(() => canConnect(devHostPort), { timeout: 15_000, intervals: [250] })
+      .toBe(false);
+  } finally {
+    await stopSpawnedChild(child);
+    rmSync(childTempRoot, {
+      recursive: true,
+      force: true,
+      maxRetries: 10,
+      retryDelay: 200,
     });
   }
 });

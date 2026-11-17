@@ -96,8 +96,11 @@ function startDevHost(
   },
   appDataDir: string,
   token: string,
+  onSpawned: (child: ChildProcess) => void,
 ): Promise<{ readonly child: ChildProcess; readonly port: number }> {
   return new Promise((resolveReady, rejectReady) => {
+    // Not detached: on Windows Node keeps its children in a job that ends
+    // them when this process ends, also when it is killed.
     const child = spawn(
       paths.devHostExecutable,
       [
@@ -117,6 +120,7 @@ function startDevHost(
         windowsHide: true,
       },
     );
+    onSpawned(child);
 
     let settled = false;
     let stdoutBuffer = '';
@@ -679,13 +683,30 @@ async function main(): Promise<void> {
 
   process.once('exit', cleanupSync);
 
+  // The dev host takes several seconds to report its port. A signal in that
+  // time stops it too: the child is known from the moment it is spawned.
+  const startupSignals = ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGBREAK'] as const;
+  const stopDuringStartup = (): void => {
+    cleanupSync();
+    process.exit(1);
+  };
+  for (const signal of startupSignals) {
+    process.on(signal, stopDuringStartup);
+  }
+
   try {
-    const started = await startDevHost(paths, appDataDir, token);
+    const started = await startDevHost(paths, appDataDir, token, (child) => {
+      devHostChild = child;
+    });
     devHostChild = started.child;
     devHostPort = started.port;
   } catch (error) {
     cleanupSync();
     throw error;
+  } finally {
+    for (const signal of startupSignals) {
+      process.off(signal, stopDuringStartup);
+    }
   }
 
   const statusHtml = renderRealBackendStatusHtml(devHostPort);
