@@ -6,6 +6,19 @@
   "tags": ["scope:capture", "type:e2e"],
   "implicitDependencies": ["capture-workbench"],
   "targets": {
+    "typecheck": {
+      "cache": true,
+      "executor": "nx:run-commands",
+      "inputs": [
+        "default",
+        "^default",
+        "{projectRoot}/tsconfig.json",
+        "{workspaceRoot}/tools/release/release-intent.ts"
+      ],
+      "options": {
+        "command": "corepack pnpm exec tsc -p apps/capture-workbench-e2e/tsconfig.json --noEmit"
+      }
+    },
     "e2e": {
       "executor": "nx:run-commands",
       "dependsOn": [{ "projects": ["capture-workbench"], "target": "build" }],
