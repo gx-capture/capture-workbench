@@ -119,7 +119,7 @@ test('loads a nested result route directly, with its scripts and styles', async 
 test('drops a PDF without OCR, installs it, and exports the raw text', async ({ page }) => {
   await openDesktop(
     page,
-    [requirement('windowsml-ocr', 'WindowsML OCR', 'installable', 144_000_000)],
+    [requirement('windowsml-ocr', 'WindowsML OCR', 'installable', 296_000_000)],
     '/ocr',
     { completeInstallOnPoll: 2, ocrJourney: true, persistLibrary: true },
   );
@@ -129,7 +129,7 @@ test('drops a PDF without OCR, installs it, and exports the raw text', async ({ 
 
   const row = page.locator('[data-testid="ocr-queue-row"]', { hasText: 'charge.pdf' });
   await expect(row).toHaveAttribute('data-user-status', 'waiting');
-  await expect(row.getByTestId('ocr-row-status')).toContainText('需要文字辨識（約 144 MB）');
+  await expect(row.getByTestId('ocr-row-status')).toContainText('需要文字辨識（約 296 MB）');
   await row.getByTestId('ocr-row-install').click();
 
   await expect(row.getByTestId('ocr-row-progress')).toContainText('第 9/12 頁', { timeout: 15_000 });
@@ -180,7 +180,7 @@ test('drops a PDF without OCR, installs it, and exports the raw text', async ({ 
 test('accepts a non-prefix PDF page list on /ocr, binds the request, and rejects 5-1', async ({ page }) => {
   await openDesktop(
     page,
-    [requirement('windowsml-ocr', 'WindowsML OCR', 'ready', 144_000_000)],
+    [requirement('windowsml-ocr', 'WindowsML OCR', 'ready', 296_000_000)],
     '/ocr',
     { ocrJourney: true, persistLibrary: true },
   );
@@ -245,7 +245,7 @@ test('shows persisted page and transcript edits and speaker names on result page
 });
 
 test('imports an OCR selection through the native picker command', async ({ page }) => {
-  await openDesktop(page, [requirement('windowsml-ocr', 'WindowsML OCR', 'installable', 144_000_000)], '/ocr');
+  await openDesktop(page, [requirement('windowsml-ocr', 'WindowsML OCR', 'installable', 296_000_000)], '/ocr');
   await page.getByTestId('first-run-dismiss').click();
   await page.getByTestId('ocr-dropzone').getByRole('button').click();
   await expect(page.getByTestId('ocr-queue-row').filter({ hasText: 'charge.pdf' })).toHaveAttribute('data-user-status', 'waiting');
@@ -258,7 +258,7 @@ test('imports an OCR selection through the native picker command', async ({ page
 test('keeps a waiting OCR file after the window reloads', async ({ page }) => {
   await openDesktop(
     page,
-    [requirement('windowsml-ocr', 'WindowsML OCR', 'installable', 144_000_000)],
+    [requirement('windowsml-ocr', 'WindowsML OCR', 'installable', 296_000_000)],
     '/ocr',
     { persistLibrary: true },
   );
@@ -281,9 +281,9 @@ test('shows the first-run recognition card on /ocr and remembers dismissing it a
   await openDesktop(
     page,
     [
-      requirement('windowsml-ocr', 'WindowsML OCR', 'installable', 144_000_000),
-      requirement('speech-recognition', '本機語音轉文字', 'installable', 2_800_000_000),
-      requirement('speaker-diarization', '說話者辨識', 'installable', 300_000_000),
+      requirement('windowsml-ocr', 'WindowsML OCR', 'installable', 296_000_000),
+      requirement('speech-recognition', '本機語音轉文字', 'installable', 10_500_000_000),
+      requirement('speaker-diarization', '說話者辨識', 'installable', 714_000_000),
     ],
     '/ocr',
   );
@@ -291,10 +291,10 @@ test('shows the first-run recognition card on /ocr and remembers dismissing it a
   const card = page.getByTestId('first-run-card');
   await expect(card).toBeVisible();
   await expect(card.getByRole('heading', { name: '要安裝哪些辨識功能？' })).toBeVisible();
-  await expect(card.getByTestId('first-run-size-ocr')).toHaveText('約 144 MB');
-  await expect(card.getByTestId('first-run-size-asr')).toHaveText('約 2.8 GB');
-  await expect(card.getByTestId('first-run-size-speakers')).toHaveText('約 300 MB');
-  await expect(card.getByTestId('first-run-install')).toHaveText('安裝所選（約 144 MB）');
+  await expect(card.getByTestId('first-run-size-ocr')).toHaveText('約 296 MB');
+  await expect(card.getByTestId('first-run-size-asr')).toHaveText('約 10.5 GB');
+  await expect(card.getByTestId('first-run-size-speakers')).toHaveText('約 714 MB');
+  await expect(card.getByTestId('first-run-install')).toHaveText('安裝所選（約 296 MB）');
 
   await card.getByTestId('first-run-dismiss').click();
   await expect(card).toHaveCount(0);
@@ -308,9 +308,9 @@ test('lets an ASR-only user install speech recognition on /asr without ever requ
   await openDesktop(
     page,
     [
-      requirement('windowsml-ocr', 'WindowsML OCR', 'installable', 144_000_000),
-      requirement('speech-recognition', '本機語音轉文字', 'installable', 2_800_000_000),
-      requirement('speaker-diarization', '說話者辨識', 'installable', 300_000_000),
+      requirement('windowsml-ocr', 'WindowsML OCR', 'installable', 296_000_000),
+      requirement('speech-recognition', '本機語音轉文字', 'installable', 10_500_000_000),
+      requirement('speaker-diarization', '說話者辨識', 'installable', 714_000_000),
     ],
     '/asr',
     { completeInstallOnPoll: 2 },
@@ -323,7 +323,7 @@ test('lets an ASR-only user install speech recognition on /asr without ever requ
   await expect(panel.getByText('WindowsML OCR')).toHaveCount(0);
 
   const speechCard = panel.locator('[data-testid="engine-card"][data-requirement-id="speech-recognition"]');
-  await expect(speechCard.getByTestId('engine-card-install')).toHaveText('安裝（約 2.8 GB）');
+  await expect(speechCard.getByTestId('engine-card-install')).toHaveText('安裝（約 10.5 GB）');
   await speechCard.getByTestId('engine-card-install').click();
 
   await expect(panel).toHaveCount(0);
@@ -342,9 +342,9 @@ test('shows the size, then progress, cancel and retry on /settings/engines', asy
   await openDesktop(
     page,
     [
-      requirement('windowsml-ocr', 'WindowsML OCR', 'ready', 144_000_000),
-      requirement('speech-recognition', '本機語音轉文字', 'installable', 2_800_000_000),
-      requirement('speaker-diarization', '說話者辨識', 'installable', 300_000_000),
+      requirement('windowsml-ocr', 'WindowsML OCR', 'ready', 296_000_000),
+      requirement('speech-recognition', '本機語音轉文字', 'installable', 10_500_000_000),
+      requirement('speaker-diarization', '說話者辨識', 'installable', 714_000_000),
     ],
     '/settings/engines',
     { holdRunningUntilCancel: true },
@@ -364,7 +364,7 @@ test('shows the size, then progress, cancel and retry on /settings/engines', asy
     table.locator('[data-testid="engine-row-details"][data-requirement-id="speech-recognition"]'),
   ).toContainText('TEA-ASR 1.1');
 
-  await expect(speechRow.getByTestId('engine-row-install')).toHaveText('安裝（約 2.8 GB）');
+  await expect(speechRow.getByTestId('engine-row-install')).toHaveText('安裝（約 10.5 GB）');
   await speechRow.getByTestId('engine-row-install').click();
 
   await expect(speechRow.getByTestId('engine-row-progress')).toContainText('正在下載 50%');
@@ -390,8 +390,8 @@ test('removes an installed engine after confirming its size and shows it on the 
   await openDesktop(
     page,
     [
-      requirement('windowsml-ocr', 'WindowsML OCR', 'ready', 144_000_000),
-      requirement('speech-recognition', '本機語音轉文字', 'installable', 2_800_000_000),
+      requirement('windowsml-ocr', 'WindowsML OCR', 'ready', 296_000_000),
+      requirement('speech-recognition', '本機語音轉文字', 'installable', 10_500_000_000),
     ],
     '/settings/engines',
   );
@@ -401,7 +401,7 @@ test('removes an installed engine after confirming its size and shows it on the 
   await ocrRow.getByTestId('engine-row-remove').click();
 
   const dialog = page.getByRole('alertdialog');
-  await expect(dialog).toContainText('約 144 MB');
+  await expect(dialog).toContainText('約 296 MB');
   await expect(dialog).toContainText('已經做好的文件和逐字稿會留在這台電腦');
   await dialog.getByTestId('engine-remove-cancel').click();
   await expect(dialog).toHaveCount(0);
@@ -434,8 +434,8 @@ test('re-attaches to an in-progress installation returned by runtime_list_instal
   await openDesktop(
     page,
     [
-      requirement('windowsml-ocr', 'WindowsML OCR', 'installable', 144_000_000),
-      requirement('speech-recognition', '本機語音轉文字', 'installable', 2_800_000_000),
+      requirement('windowsml-ocr', 'WindowsML OCR', 'installable', 296_000_000),
+      requirement('speech-recognition', '本機語音轉文字', 'installable', 10_500_000_000),
     ],
     '/settings/engines',
     {
@@ -445,8 +445,8 @@ test('re-attaches to an in-progress installation returned by runtime_list_instal
           requirementId: 'speech-recognition',
           status: 'running',
           progress: 0.5,
-          downloadedBytes: 1_400_000_000,
-          downloadBytes: 2_800_000_000,
+          downloadedBytes: 5_250_000_000,
+          downloadBytes: 10_500_000_000,
           createdAt: '2026-11-03T00:00:00Z',
           updatedAt: '2026-11-03T00:00:00Z',
         },

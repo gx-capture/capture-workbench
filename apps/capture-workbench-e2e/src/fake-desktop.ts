@@ -78,7 +78,7 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
     const id = String(record['installationId'] ?? '');
     const startedAt = installStartedAtMs.get(id) ?? Date.now();
     const elapsed = Math.max(0, Date.now() - startedAt);
-    const totalBytes = installDownloadBytes.get(id) ?? 2_800_000_000;
+    const totalBytes = installDownloadBytes.get(id) ?? 10_500_000_000;
     if (elapsed < timeline.preparingMs) {
       record['status'] = 'running';
       record['progress'] = 0.05;
@@ -351,7 +351,7 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
           ? (initial['downloadBytes'] as number)
           : typeof req?.['downloadBytes'] === 'number'
             ? (req['downloadBytes'] as number)
-            : 2_800_000_000;
+            : 10_500_000_000;
       installDownloadBytes.set(id, targetBytes);
       syncTimelineInstallation(record);
     }
@@ -449,7 +449,7 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
           const installationId = `inst-${nextInstallSeq++}`;
           const req = mutableRequirements.find((item) => item['requirementId'] === requirementId);
           const downloadBytes =
-            typeof req?.['downloadBytes'] === 'number' ? (req['downloadBytes'] as number) : 2_800_000_000;
+            typeof req?.['downloadBytes'] === 'number' ? (req['downloadBytes'] as number) : 10_500_000_000;
           const record: Record<string, unknown> = {
             installationId,
             requirementId,

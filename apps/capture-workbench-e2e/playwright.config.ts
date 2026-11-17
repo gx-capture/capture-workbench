@@ -59,7 +59,7 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
-      testIgnore: /preview\.spec\.ts$/u,
+      testIgnore: /(?:preview|real-backend)\.spec\.ts$/u,
       use: { ...devices['Desktop Chrome'] },
     },
     ...(process.env['BASE_URL']
@@ -67,7 +67,7 @@ export default defineConfig({
       : [
           {
             name: 'chromium-desktop-csp',
-            testIgnore: /preview\.spec\.ts$/u,
+            testIgnore: /(?:preview|real-backend)\.spec\.ts$/u,
             use: { ...devices['Desktop Chrome'], baseURL: desktopCspURL },
           },
           {
