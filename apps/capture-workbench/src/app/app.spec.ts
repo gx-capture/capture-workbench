@@ -203,7 +203,11 @@ describe('App shell and recognition pages', () => {
     const headers = [
       ...page.querySelectorAll('[data-testid="engines-table"] thead th'),
     ].map((th) => th.textContent?.trim());
-    expect(headers).toEqual(['功能', '狀態', '大小', '用途', '動作']);
+    expect(headers).toEqual(['功能', '狀態', '大小', '動作']);
+    // The purpose is a second line under the feature name, not a column of its own.
+    expect(
+      ocrRow.querySelector('[data-testid="engine-row-purpose"]')?.textContent?.trim(),
+    ).toBe('讀出掃描檔與照片的文字');
 
     const speechRow = () =>
       page.querySelector(
