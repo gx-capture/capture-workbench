@@ -351,8 +351,10 @@ test('shows the size, then progress, cancel and retry on /settings/engines', asy
   );
 
   const table = page.getByTestId('engines-table');
-  await expect(table.locator('thead th')).toHaveText(['功能', '狀態', '大小', '用途', '動作']);
+  await expect(table.locator('thead th')).toHaveText(['功能', '狀態', '大小', '動作']);
   const ocrRow = table.locator('[data-testid="engine-row"][data-requirement-id="windowsml-ocr"]');
+  // The purpose is a second line under the feature name, not a column of its own.
+  await expect(ocrRow.getByTestId('engine-row-purpose')).toHaveText('讀出掃描檔與照片的文字');
   await expect(ocrRow.getByTestId('engine-row-remove')).toHaveText('移除');
 
   const speechRow = table.locator('[data-testid="engine-row"][data-requirement-id="speech-recognition"]');

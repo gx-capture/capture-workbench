@@ -15,7 +15,6 @@
               <th hlmTh>{{ m().engineColFeature }}</th>
               <th hlmTh>{{ m().engineColStatus }}</th>
               <th hlmTh>{{ m().engineColSize }}</th>
-              <th hlmTh>{{ m().engineColPurpose }}</th>
               <th hlmTh class="text-right">{{ m().engineColAction }}</th>
             </tr>
           </thead>
@@ -27,21 +26,29 @@
                 [attr.data-requirement-id]="unit.requirementId"
                 [attr.data-status]="rowStatus(unit)"
               >
-                <td hlmTd class="font-medium">
-                  <button
-                    type="button"
-                    class="inline-flex items-center gap-2 text-left font-medium hover:underline"
-                    data-testid="engine-row-toggle"
-                    [attr.aria-expanded]="isExpanded(unit.requirementId)"
-                    (click)="toggleExpand(unit.requirementId)"
-                  >
-                    <span aria-hidden="true" class="text-muted-foreground text-xs">
-                      {{ isExpanded(unit.requirementId) ? '▾' : '▸' }}
-                    </span>
-                    <span>
-                      {{ m().engineName[unit.requirementId] ?? unit.displayName }}
-                    </span>
-                  </button>
+                <td hlmTd class="min-w-40 font-medium">
+                  <div class="flex flex-col gap-0.5">
+                    <button
+                      type="button"
+                      class="inline-flex items-center gap-2 self-start text-left font-medium hover:underline"
+                      data-testid="engine-row-toggle"
+                      [attr.aria-expanded]="isExpanded(unit.requirementId)"
+                      (click)="toggleExpand(unit.requirementId)"
+                    >
+                      <span aria-hidden="true" class="text-muted-foreground text-xs">
+                        {{ isExpanded(unit.requirementId) ? '▾' : '▸' }}
+                      </span>
+                      <span>
+                        {{ m().engineName[unit.requirementId] ?? unit.displayName }}
+                      </span>
+                    </button>
+                    <p
+                      class="text-muted-foreground pl-4 text-xs font-normal text-balance whitespace-normal"
+                      data-testid="engine-row-purpose"
+                    >
+                      {{ m().enginePurpose[unit.requirementId] ?? guides()[unit.requirementId]?.summary ?? '' }}
+                    </p>
+                  </div>
                 </td>
                 <td hlmTd data-testid="engine-row-status">
                   @if (removing(unit)) {
@@ -67,9 +74,6 @@
                 </td>
                 <td hlmTd data-testid="engine-row-size">
                   {{ sizeLabel(unit) ?? '—' }}
-                </td>
-                <td hlmTd class="whitespace-normal">
-                  {{ m().enginePurpose[unit.requirementId] ?? guides()[unit.requirementId]?.summary ?? '' }}
                 </td>
                 <td hlmTd class="text-right">
                   <div class="flex flex-col items-end gap-1">
@@ -148,7 +152,7 @@
                   data-testid="engine-row-details"
                   [attr.data-requirement-id]="unit.requirementId"
                 >
-                  <td hlmTd colspan="5" class="bg-muted/30 whitespace-normal p-4">
+                  <td hlmTd colspan="4" class="bg-muted/30 whitespace-normal p-4">
                     @if (guides()[unit.requirementId]; as guide) {
                       <dl class="grid grid-cols-[5rem_1fr] gap-x-3 gap-y-1.5 text-xs leading-relaxed">
                         <dt class="text-muted-foreground font-medium">{{ m().model }}</dt>

@@ -181,3 +181,60 @@ test('answers 400 for an unknown scenario, an invalid speed, or an invalid start
   expect((await page.request.get('/?startDelay=-1')).status()).toBe(400);
   expect((await page.request.get('/?startDelay=abc')).status()).toBe(400);
 });
+
+async function assertPurposeFitsTwoLines(page: Page): Promise<void> {
+  await expect
+    .poll(async () =>
+      page.getByTestId('engine-row-purpose').evaluateAll((elements) =>
+        elements.length === 3 &&
+        elements.every((el) => {
+          const style = getComputedStyle(el);
+          const rect = el.getBoundingClientRect();
+          const parsedLineHeight = Number.parseFloat(style.lineHeight);
+          const fontSize = Number.parseFloat(style.fontSize);
+          const lineHeight = Number.isFinite(parsedLineHeight)
+            ? parsedLineHeight
+            : fontSize * 1.5;
+          return rect.height > 0 && rect.height <= lineHeight * 2 + 4;
+        }),
+      ),
+    )
+    .toBe(true);
+}
+
+async function assertDesktopEnginesLayout(page: Page): Promise<void> {
+  await page.setViewportSize({ width: 1280, height: 860 });
+  await assertPurposeFitsTwoLines(page);
+
+  await expect
+    .poll(async () =>
+      page.getByTestId('engine-row-purpose').evaluateAll((elements) =>
+        elements.length === 3 &&
+        elements.every((el) => el.getBoundingClientRect().width >= 150),
+      ),
+    )
+    .toBe(true);
+
+  await expect
+    .poll(async () =>
+      page.evaluate(
+        () =>
+          document.documentElement.scrollWidth <=
+          document.documentElement.clientWidth,
+      ),
+    )
+    .toBe(true);
+}
+
+test('keeps engine purpose readable without horizontal overflow on /settings/engines', async ({ page }) => {
+  for (const scenario of ['first-run', 'ready'] as const) {
+    await page.goto(`/?scenario=${scenario}`);
+    await page.goto('/settings/engines');
+    await expect(page.getByTestId('engine-row')).toHaveCount(3);
+
+    await assertDesktopEnginesLayout(page);
+
+    await page.setViewportSize({ width: 1024, height: 768 });
+    await assertPurposeFitsTwoLines(page);
+  }
+});

@@ -163,7 +163,6 @@ export interface DesktopMessages {
   readonly engineColFeature: string;
   readonly engineColStatus: string;
   readonly engineColSize: string;
-  readonly engineColPurpose: string;
   readonly engineColAction: string;
   readonly engineName: Readonly<Record<string, string | undefined>>;
   readonly enginePurpose: Readonly<Record<string, string | undefined>>;
@@ -509,7 +508,6 @@ const ZH_TW: DesktopMessages = {
   engineColFeature: '功能',
   engineColStatus: '狀態',
   engineColSize: '大小',
-  engineColPurpose: '用途',
   engineColAction: '動作',
   engineName: {
     'windowsml-ocr': '文字辨識',
@@ -878,7 +876,6 @@ const EN: DesktopMessages = {
   engineColFeature: 'Feature',
   engineColStatus: 'Status',
   engineColSize: 'Size',
-  engineColPurpose: 'Purpose',
   engineColAction: 'Action',
   engineName: {
     'windowsml-ocr': 'Text recognition',
