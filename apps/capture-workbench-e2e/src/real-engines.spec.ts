@@ -957,8 +957,16 @@ test('runs full real-engine capture, editing, export, and restart journey on loc
 
       const pageTexts: string[] = [originalPdfPage1Text];
       const nextPageBtn = page.getByTestId('result-page-next');
+      // Wait for each page to render before asking whether there is a next one:
+      // the button is disabled only once the last page is shown, and a click on
+      // a button that has just been disabled would wait for the whole stage.
+      let shownPage = 1;
       while ((await nextPageBtn.count()) > 0 && (await nextPageBtn.isEnabled())) {
         await nextPageBtn.click();
+        shownPage += 1;
+        await expect(pdfCanvas).toHaveAttribute('data-rendered-page', String(shownPage), {
+          timeout: 30_000,
+        });
         pageTexts.push(await pageTextArea.inputValue());
       }
       assertOrderedAnchors(pageTexts.join('\n'), config.pdfExpectation.rawTextIncludes, 'PDF OCR');
