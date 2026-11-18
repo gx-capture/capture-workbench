@@ -144,6 +144,9 @@ jobs:
         shell: pwsh
         run: node tools/architecture-exceptions-gate.ts --ci
 
+      - name: Check retired names
+        run: node tools/retired-names-gate.ts --ci
+
   # Published packages: TypeScript and Python clients, the sidecar
   # launcher crate, and the Angular Web Component package.
   packages:

@@ -12,6 +12,11 @@
             "type": "command",
             "command": "node \"$CLAUDE_PROJECT_DIR/tools/architecture-graph.ts\" --hook",
             "timeout": 120
+          },
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/tools/retired-names-gate.ts\" --hook",
+            "timeout": 120
           }
         ]
       }
