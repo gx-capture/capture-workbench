@@ -330,4 +330,4 @@ class InstallationService:
         return _to_contract(domain_job)
 
 
-__all__ = ["CaptureGate", "InstallationService", "RequirementInUseError"]
+__all__ = ["CaptureGate", "InstallationService", "RequirementInUseError", "RuntimeInstaller"]

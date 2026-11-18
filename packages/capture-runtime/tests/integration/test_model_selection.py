@@ -12,15 +12,15 @@ from capture_runtime.structuring.infrastructure.model_catalog import (
     ActiveModelSelectionStore,
     catalog_sha256,
 )
-from capture_runtime.structuring.infrastructure.ollama import FakeRuntimeInstaller
 from tests.conftest import TOKEN, idempotency_headers
+from tests.support.fake_requirement_installer import FakeRequirementInstaller
 
 
 def test_model_options_are_allowlisted_and_do_not_start_a_model_store(
     settings_factory,
 ) -> None:
     settings = settings_factory(CAPTURE_STRUCTURING_PROVIDER="ollama")
-    installer = FakeRuntimeInstaller()
+    installer = FakeRequirementInstaller()
     with TestClient(
         create_app(settings, installer=installer),
         base_url=f"http://127.0.0.1:{settings.port}",
@@ -47,7 +47,7 @@ def test_model_options_report_selection_from_isolated_ollama_app_data(settings_f
         observed_bytes=123,
     )
     with TestClient(
-        create_app(settings, installer=FakeRuntimeInstaller()),
+        create_app(settings, installer=FakeRequirementInstaller()),
         base_url=f"http://127.0.0.1:{settings.port}",
         headers={"Authorization": f"Bearer {TOKEN}"},
     ) as client:
@@ -60,7 +60,7 @@ def test_model_options_report_selection_from_isolated_ollama_app_data(settings_f
 
 def test_model_installation_accepts_only_option_id_and_is_idempotent(settings_factory) -> None:
     settings = settings_factory(CAPTURE_STRUCTURING_PROVIDER="ollama")
-    installer = FakeRuntimeInstaller()
+    installer = FakeRequirementInstaller()
     with TestClient(
         create_app(settings, installer=installer),
         base_url=f"http://127.0.0.1:{settings.port}",
@@ -133,7 +133,7 @@ def test_active_model_selection_rejects_invalid_observed_digest_or_size(tmp_path
 def test_host_runtime_cannot_expose_model_selection(settings_factory) -> None:
     settings = settings_factory(CAPTURE_STRUCTURING_PROVIDER="host")
     with TestClient(
-        create_app(settings, installer=FakeRuntimeInstaller()),
+        create_app(settings, installer=FakeRequirementInstaller()),
         base_url=f"http://127.0.0.1:{settings.port}",
         headers={"Authorization": f"Bearer {TOKEN}"},
     ) as client:

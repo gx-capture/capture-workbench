@@ -37,6 +37,7 @@ from capture_runtime.provisioning.infrastructure.installation_repository import 
 )
 from capture_runtime.routes.common import ApiProblem, error_response
 from capture_runtime.routes.meta import register_contract_routes
+from capture_runtime.structuring.api.model_routes import register_model_routes
 from capture_runtime.structuring.infrastructure.model_installation_repository import (
     ModelInstallationRepository,
 )
@@ -339,6 +340,7 @@ def create_app(
     app.include_router(streaming_router)
     runtime_router = APIRouter(prefix="/v2", dependencies=[Depends(authenticate)])
     register_runtime_routes(runtime_router, runtime_dependencies)
+    register_model_routes(runtime_router, runtime_dependencies)
     app.include_router(runtime_router)
     contract_router = APIRouter(prefix="/meta/v2", dependencies=[Depends(authenticate)])
     register_contract_routes(contract_router, runtime_contract_set)

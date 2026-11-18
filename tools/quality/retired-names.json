@@ -503,6 +503,18 @@
     "allowed": []
   },
   {
+    "name": "FakeRuntimeInstaller",
+    "match": "word",
+    "replacement": "FakeRequirementInstaller",
+    "allowed": []
+  },
+  {
+    "name": "structuring.infrastructure.ollama.fake_installer",
+    "match": "substring",
+    "replacement": "tests.support.fake_requirement_installer",
+    "allowed": []
+  },
+  {
     "name": "dotnet-process",
     "match": "substring",
     "replacement": "cim-process (the owned-process observer reads a Win32_Process snapshot)",
