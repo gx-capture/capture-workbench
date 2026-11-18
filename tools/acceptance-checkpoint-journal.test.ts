@@ -21,7 +21,7 @@ async function terminal(root: string, changes: Record<string, unknown> = {}) { c
 test('complete ordered journal derives pass without caller coverage fields', async () => {
   const root = await temp(); await complete(root); const journal = await readAcceptanceCheckpointJournal(request(root));
   assert.equal(journal.status, 'valid-complete'); assert.equal(hasMandatoryCheckpointCoverage(journal.state), true);
-  const result = await terminal(root); assert.equal(result.terminal.phase1Verdict, 'pass'); assert.equal(result.terminal.primaryAcceptanceFailure, null); assert.equal(result.terminal.artifactCount, 1);
+  const result = await terminal(root); assert.equal(result.terminal.verdict, 'pass'); assert.equal(result.terminal.primaryAcceptanceFailure, null); assert.equal(result.terminal.artifactCount, 1);
   const published = await readFile(join(root, 'public', 'acceptance-terminal-v1.json'));
   assert.deepEqual(JSON.parse(published.toString()), result.terminal);
   assert.equal(published.toString(), `${JSON.stringify(result.terminal)}\n`);

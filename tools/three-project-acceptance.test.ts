@@ -79,8 +79,13 @@ test('three-project acceptance plan is fixed and sequential', () => {
     plan.map((item) => item.project),
     ['capture-workbench', 'cert-prep', 'law-prep'],
   );
-  assert.ok(
-    plan.every((item) => item.target.endsWith(':acceptance-real-recorded')),
+  assert.deepEqual(
+    plan.map((item) => item.target),
+    [
+      'capture-workbench-desktop:diagnostic-desktop-ocr-recorded',
+      'cert-prep-desktop:acceptance-real-recorded',
+      'law-prep-web-e2e:acceptance-real-recorded',
+    ],
   );
   assert.ok(
     plan.every((item) =>
@@ -91,7 +96,14 @@ test('three-project acceptance plan is fixed and sequential', () => {
 
 test('normal plan never enables recording', () => {
   const plan = buildAcceptancePlan('C:\\software-dev', 'run-2', false);
-  assert.ok(plan.every((item) => item.target.endsWith(':acceptance-real')));
+  assert.deepEqual(
+    plan.map((item) => item.target),
+    [
+      'capture-workbench-desktop:diagnostic-desktop-ocr',
+      'cert-prep-desktop:acceptance-real',
+      'law-prep-web-e2e:acceptance-real',
+    ],
+  );
   assert.ok(plan.every((item) => item.environment.E2E_RECORD_VIDEO === '0'));
 });
 
@@ -151,7 +163,7 @@ test('capture-only plan is typed, validates nine caller bindings, and scrubs inh
   assert.equal(plan.cwd, 'C:\\software-dev\\capture-workbench');
   assert.equal(
     plan.target,
-    'apps/capture-workbench-desktop/scripts/acceptance-real.ts',
+    'apps/capture-workbench-desktop/scripts/diagnostic-desktop-ocr.ts',
   );
   assert.deepEqual(
     Object.fromEntries(
@@ -252,7 +264,7 @@ test('capture-only child request is direct Node with no Nx or build command', ()
   const plan: CaptureWorkbenchAcceptancePlan = {
     project: 'capture-workbench',
     cwd: 'C:\\software-dev\\capture-workbench',
-    target: 'apps/capture-workbench-desktop/scripts/acceptance-real.ts',
+    target: 'apps/capture-workbench-desktop/scripts/diagnostic-desktop-ocr.ts',
     artifactRoot: 'C:\\software-dev\\capture-workbench\\output\\capture-run-1',
     scopePath:
       'C:\\software-dev\\capture-workbench\\output\\capture-run-1\\scope.json',
@@ -273,7 +285,7 @@ test('capture-only child request is direct Node with no Nx or build command', ()
   assert.equal(request.options.windowsHide, false);
   assert.equal(request.options.env, plan.environment);
   assert.deepEqual(request.args, [
-    'C:\\software-dev\\capture-workbench\\apps\\capture-workbench-desktop\\scripts\\acceptance-real.ts',
+    'C:\\software-dev\\capture-workbench\\apps\\capture-workbench-desktop\\scripts\\diagnostic-desktop-ocr.ts',
   ]);
   assert.equal(request.args.includes('nx'), false);
   assert.equal(request.args.includes('build'), false);
@@ -311,7 +323,7 @@ test('child manifest validation binds declared artifacts to on-disk bytes', asyn
   const item = {
     project: 'capture-workbench' as const,
     cwd: artifactRoot,
-    target: 'capture-workbench-desktop:acceptance-real',
+    target: 'capture-workbench-desktop:diagnostic-desktop-ocr',
     artifactRoot,
     scopePath: join(artifactRoot, 'scope.json'),
     environment: {},
@@ -470,13 +482,17 @@ async function sequenceFixture(): Promise<{
   screenshot: Buffer;
 }> {
   const root = await mkdtemp(join(tmpdir(), 'three-project-sequence-'));
-  const projects = ['capture-workbench', 'cert-prep', 'law-prep'] as const;
-  const plan = projects.map((project) => {
+  const projects = [
+    ['capture-workbench', 'capture-workbench:diagnostic-desktop-ocr'],
+    ['cert-prep', 'cert-prep:acceptance-real'],
+    ['law-prep', 'law-prep:acceptance-real'],
+  ] as const;
+  const plan = projects.map(([project, target]) => {
     const artifactRoot = join(root, project);
     return {
       project,
       cwd: root,
-      target: `${project}:acceptance-real`,
+      target,
       artifactRoot,
       scopePath: join(root, `${project}-scope.json`),
       environment: { E2E_ACCEPTANCE_RUN_ID: 'run-1' },
@@ -803,7 +819,7 @@ test('privacy-invalid child manifests expose only stable identity and sanitized 
   const item: AcceptanceProjectPlan = {
     project: 'capture-workbench',
     cwd: root,
-    target: 'capture-workbench-desktop:acceptance-real',
+    target: 'capture-workbench-desktop:diagnostic-desktop-ocr',
     artifactRoot: join(root, 'capture-workbench'),
     scopePath: join(root, 'scope.json'),
     environment: { E2E_ACCEPTANCE_RUN_ID: 'run-privacy' },

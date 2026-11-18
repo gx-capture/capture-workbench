@@ -191,7 +191,7 @@ test('buildRealOllamaSmokeEvidence builds the redacted evidence object with work
     }),
     {
       evidenceKind: 'real-isolated-ollama-smoke',
-      releaseGateSatisfied: true,
+      releaseGateSatisfied: false,
       sourceKind: 'pdf',
       schemaVersion: '2',
       structuringEngine: provenance,

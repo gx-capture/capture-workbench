@@ -14,8 +14,8 @@ The desktop host starts one verified `capture-runtime` sidecar on a random loopb
 
 ## Acceptance targets
 
-- `capture-workbench-desktop:acceptance-real` runs real OCR against a locally
-  built installed runtime; it is a diagnostic, not release evidence.
+- `capture-workbench-desktop:diagnostic-desktop-ocr` runs real OCR against the
+  non-installed `build-acceptance` binary; it is a diagnostic, not release evidence.
 - `capture-workbench-desktop:build-practical-installer` and
   `acceptance-practical-installed` build a side-by-side production installer
   (only the identifier, product name, and binary name differ) and run the
@@ -39,7 +39,7 @@ diagnostic-only test lane and never proves real engines or Ollama.
 corepack pnpm nx run capture-workbench-desktop:cargo-fmt-check
 corepack pnpm nx run capture-workbench-desktop:cargo-check
 corepack pnpm nx run capture-workbench-desktop:cargo-test
-corepack pnpm nx run capture-workbench-desktop:package-qa-test
+corepack pnpm nx run capture-workbench-desktop:test-scripts
 ```
 
 `cargo-check` and `cargo-test` first run `stage-deterministic-runtime` and point
@@ -69,7 +69,7 @@ The fake executable, manifest, schema and provenance are staged only under
 `src-tauri/target/deterministic-qa/staged`; product resources are untouched.
 Its separate Cargo output is `src-tauri/target/deterministic-qa`, with installers
 in `x86_64-pc-windows-msvc/release/bundle/nsis` below that directory.
-`package-qa` and the installed deterministic smoke consume this QA installer.
+`hash-qa-installer` and the installed QA fixture smoke consume this QA installer.
 The smokes drive the classic file dialog with window messages (`WM_SETTEXT` on
 the file-name field, then `WM_COMMAND`/`IDOK`), without keyboard input or focus,
 so that step also runs in a background session. A brokered (Explorer-hosted)
@@ -168,9 +168,9 @@ To also check progressive audio, first record a reference with
 (`CAPTURE_PROGRESSIVE_AUDIO_ORACLE_SOURCE` and `_OUTPUT`), then pass the output
 file as `CAPTURE_REAL_ENGINES_AUDIO_EXPECTATIONS` (or `CAPTURE_REAL_MEDIA_MODEL_AUDIO_ORACLE`).
 
-## Installed deterministic smoke
+## Installed QA fixture smoke
 
-The installed deterministic smoke is intentionally opt-in because it performs a
+The installed QA fixture smoke (`smoke-installed-deterministic`) is intentionally opt-in because it performs a
 silent, current-user NSIS install and uninstall:
 
 ```powershell
@@ -206,8 +206,8 @@ contents are read, copied or logged. Failures are saved as timestamped
 `installed-smoke-failure-*.json` files alongside the smoke evidence.
 
 The resulting `tmp/capture-workbench-desktop/installed-smoke/installed-smoke.json`
-is explicitly marked deterministic and diagnostic only. It does not certify
-real WindowsML, TEA-ASR, Ollama, or licensed-fixture behavior.
+is fixture evidence for this QA install and is diagnostic only. It does not certify
+real OCR, speech recognition, structuring, or licensed-fixture behavior.
 
 ## Loopback ownership boundary
 

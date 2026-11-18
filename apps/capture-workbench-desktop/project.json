@@ -229,7 +229,7 @@
         "command": "node apps/capture-workbench-desktop/scripts/build-acceptance-nsis.ts"
       }
     },
-    "package-qa-test": {
+    "test-scripts": {
       "cache": true,
       "executor": "nx:run-commands",
       "inputs": [
@@ -242,13 +242,13 @@
         "command": "node --import ./tools/test-temp-root.ts --test apps/capture-workbench-desktop/scripts/*.test.ts tools/acceptance-contract.test.ts tools/worker-stage-policy.test.ts tools/three-project-acceptance.test.ts tools/three-project-cleanup-verifier.test.ts tools/check-async-boundary.test.ts tools/finalize-packed-package.test.ts tools/local-release-consumer-smoke.test.ts tools/node24-corepack.test.ts tools/record-candidate-verification.test.ts tools/acceptance-checkpoint-journal.test.ts tools/check-fake-runtime-routes.test.ts"
       }
     },
-    "package-qa": {
+    "hash-qa-installer": {
       "cache": false,
       "executor": "nx:run-commands",
       "dependsOn": ["build-nsis-deterministic"],
-      "outputs": ["{workspaceRoot}/tmp/capture-workbench-desktop/package-qa"],
+      "outputs": ["{workspaceRoot}/tmp/capture-workbench-desktop/hash-qa-installer"],
       "options": {
-        "command": "node apps/capture-workbench-desktop/scripts/package-qa.ts"
+        "command": "node apps/capture-workbench-desktop/scripts/hash-qa-installer.ts"
       }
     },
     "build-acceptance": {
@@ -338,7 +338,7 @@
       "cache": false,
       "executor": "nx:run-commands",
       "metadata": {
-        "description": "Opt-in Windows standalone-app OCR release gate that requires DirectML provenance. Requires an explicitly prepared host app-data directory and a user-provided scanned PDF."
+        "description": "Opt-in local standalone-app OCR smoke that requires DirectML provenance (not a release gate). Requires an explicitly prepared host app-data directory and a user-provided scanned PDF."
       },
       "outputs": [
         "{workspaceRoot}/tmp/capture-workbench-desktop/real-desktop-ocr-smoke/real-desktop-ocr-smoke.json"
@@ -352,12 +352,12 @@
         "parallel": false
       }
     },
-    "acceptance-real": {
+    "diagnostic-desktop-ocr": {
       "cache": false,
       "executor": "nx:run-commands",
       "dependsOn": ["typecheck-scripts"],
       "metadata": {
-        "description": "Fail-closed real Windows WebView2 golden journey: first-run OCR setup, supplied document OCR, semantic result verification, diagnostics provenance, cleanup, and process/CDP proof."
+        "description": "Diagnostic only, not a release gate. Fail-closed Windows WebView2 OCR journey on the non-installed build-acceptance binary: first-run OCR setup, supplied document OCR, semantic result verification, diagnostics provenance, cleanup, and process/CDP proof."
       },
       "outputs": [
         "{workspaceRoot}/output/playwright/capture-workbench"
@@ -366,17 +366,17 @@
         "commands": [
           "corepack pnpm nx run capture-workbench-desktop:stage-product-runtime",
           "corepack pnpm nx run capture-workbench-desktop:build-acceptance",
-          "node apps/capture-workbench-desktop/scripts/acceptance-real.ts"
+          "node apps/capture-workbench-desktop/scripts/diagnostic-desktop-ocr.ts"
         ],
         "parallel": false
       }
     },
-    "acceptance-real-recorded": {
+    "diagnostic-desktop-ocr-recorded": {
       "cache": false,
       "executor": "nx:run-commands",
       "dependsOn": ["typecheck-scripts"],
       "metadata": {
-        "description": "Recorded fail-closed real Windows WebView2 golden journey with WebM, screenshots, hashes, and cleanup manifest."
+        "description": "Diagnostic only, not a release gate. Recorded fail-closed Windows WebView2 OCR journey on the non-installed build-acceptance binary, with WebM, screenshots, hashes, and cleanup manifest."
       },
       "outputs": [
         "{workspaceRoot}/output/playwright/capture-workbench"
@@ -385,7 +385,7 @@
         "commands": [
           "corepack pnpm nx run capture-workbench-desktop:stage-product-runtime",
           "corepack pnpm nx run capture-workbench-desktop:build-acceptance",
-          "node apps/capture-workbench-desktop/scripts/acceptance-real.ts --recorded"
+          "node apps/capture-workbench-desktop/scripts/diagnostic-desktop-ocr.ts --recorded"
         ],
         "parallel": false
       }
@@ -416,7 +416,7 @@
       "cache": false,
       "executor": "nx:run-commands",
       "metadata": {
-        "description": "Sequentially runs the real acceptance target in Capture Workbench, Cert Prep, and gx.law-prep and verifies each child manifest."
+        "description": "Sequentially runs Capture Workbench diagnostic desktop OCR, then the Cert Prep and LAW acceptance targets, and verifies each child manifest."
       },
       "outputs": ["{workspaceRoot}/output/playwright/three-projects"],
       "options": {
@@ -427,7 +427,7 @@
       "cache": false,
       "executor": "nx:run-commands",
       "metadata": {
-        "description": "Recorded sequential real acceptance runner for all three products."
+        "description": "Recorded sequential runner for Capture Workbench diagnostic desktop OCR and the Cert Prep and LAW acceptance targets."
       },
       "outputs": ["{workspaceRoot}/output/playwright/three-projects"],
       "options": {
@@ -445,7 +445,7 @@
         "{workspaceRoot}/tmp/capture-workbench-desktop/installed-smoke/installed-smoke.json"
       ],
       "options": {
-        "command": "node apps/capture-workbench-desktop/scripts/installed-deterministic-smoke.ts"
+        "command": "node apps/capture-workbench-desktop/scripts/installed-nsis-smoke.ts"
       }
     },
     "measure-installed-core-size": {
@@ -461,7 +461,7 @@
         "commands": [
           "corepack pnpm nx run capture-workbench-desktop:stage-core-runtime",
           "corepack pnpm nx run capture-workbench-desktop:build-nsis",
-          "node apps/capture-workbench-desktop/scripts/installed-deterministic-smoke.ts --measure-release-size"
+          "node apps/capture-workbench-desktop/scripts/installed-nsis-smoke.ts --measure-release-size"
         ],
         "parallel": false
       }

@@ -79,9 +79,9 @@ identity. The open work is [#247](https://github.com/gx-capture/capture-workbenc
    package.json and pnpm-lock.yaml and extends
    tools/release/version-sources.ts plus its existing
    capture-tools:release-version-test regression test. It enumerates runtime,
-   document/projection schema, TS/Python/Java clients, Rust launcher/crate,
-   Workbench packages/assets, manifests/locks/catalogs, and npm, PyPI, Maven,
-   crates.io, and GitHub channels. A missing target such as
+   document/projection schema, TS/Python clients, Rust launcher/crate,
+   Workbench packages/assets, manifests/locks/catalogs, and npm, PyPI,
+   crates.io, and GitHub releases. There is no Java SDK. A missing target such as
    capture-runtime:version-check is discovery-and-stop, not a new target.
 
    The compute real-proof owner is

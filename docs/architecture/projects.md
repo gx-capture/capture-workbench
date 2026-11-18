@@ -6,7 +6,6 @@ Each node is an Nx project, labelled with its `type:*` tag. An arrow `a --> b` m
 ```mermaid
 flowchart LR
   n__capture_workbench_source["@capture-workbench/source"]
-  n_capture_angular["capture-angular<br/>type:ui"]
   n_capture_runtime["capture-runtime<br/>type:backend"]
   n_capture_runtime_client["capture-runtime-client<br/>type:sdk"]
   n_capture_runtime_client_python["capture-runtime-client-python<br/>type:sdk"]
@@ -15,12 +14,13 @@ flowchart LR
   n_capture_workbench["capture-workbench<br/>type:app"]
   n_capture_workbench_desktop["capture-workbench-desktop<br/>type:desktop"]
   n_capture_workbench_e2e["capture-workbench-e2e<br/>type:e2e"]
-  n_capture_angular --> n_capture_runtime_client
+  n_capture_workbench_ui["capture-workbench-ui<br/>type:ui"]
   n_capture_runtime --> n_capture_tools
-  n_capture_workbench --> n_capture_angular
   n_capture_workbench --> n_capture_runtime_client
+  n_capture_workbench --> n_capture_workbench_ui
   n_capture_workbench_desktop --> n_capture_tools
   n_capture_workbench_desktop --> n_capture_workbench
   n_capture_workbench_e2e --> n_capture_tools
   n_capture_workbench_e2e --> n_capture_workbench
+  n_capture_workbench_ui --> n_capture_runtime_client
 ```

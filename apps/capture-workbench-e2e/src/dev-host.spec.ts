@@ -1,4 +1,4 @@
-// Real-backend preview (real-backend-server.ts): the Workbench dev server
+// Dev-host preview (dev-host-preview-server.ts): the Workbench dev server
 // proxied with the headless capture-workbench-dev-host and deterministic fixture
 // runtime. Exercises proxy security rules, token hygiene, and the host-backed
 // OCR library journey.
@@ -17,7 +17,7 @@ import {
   reserveFreePort,
   stopSpawnedChild,
   waitForLauncherReady,
-} from './real-backend-launcher.ts';
+} from './dev-host-launcher.ts';
 
 const workspaceRoot = resolve(import.meta.dirname, '..', '..', '..');
 const fixturePdfPath = fileURLToPath(new URL('./fixtures/two-pages.pdf', import.meta.url));
@@ -227,7 +227,7 @@ test('refuses unauthorized proxy requests, omits CORS and tokens, and bridges er
   const previewRes = await page.request.get('/__preview');
   expect(previewRes.status()).toBe(200);
   const previewHtml = await previewRes.text();
-  expect(previewHtml).toContain('真實後端');
+  expect(previewHtml).toContain('確定性測試 runtime');
   expect(previewHtml).not.toContain('Bearer');
 
   const homeRes = await page.request.get('/ocr');
@@ -283,17 +283,17 @@ test('refuses unauthorized proxy requests, omits CORS and tokens, and bridges er
 
 test('launcher prints only its ready line and keeps tokens out of stdout/stderr', async () => {
   const port = await reserveFreePort();
-  // Under the run's private temp root (playwright.real-backend.config.ts), which
+  // Under the run's private temp root (playwright.dev-host.config.ts), which
   // is removed when the run ends.
   const childTempRoot = join(
-    process.env['CAPTURE_REAL_BACKEND_TEMP_ROOT'] ?? tmpdir(),
+    process.env['CAPTURE_DEV_HOST_TEMP_ROOT'] ?? tmpdir(),
     `launcher-check-${port}`,
   );
   mkdirSync(childTempRoot, { recursive: true });
 
   const child = spawn(
     process.execPath,
-    ['apps/capture-workbench-e2e/real-backend-server.ts', String(port), upstreamUrl],
+    ['apps/capture-workbench-e2e/dev-host-preview-server.ts', String(port), upstreamUrl],
     {
       cwd: workspaceRoot,
       env: {
@@ -359,14 +359,14 @@ test('launcher prints only its ready line and keeps tokens out of stdout/stderr'
 test('the dev host stops when the launcher is killed without a chance to clean up', async () => {
   const port = await reserveFreePort();
   const childTempRoot = join(
-    process.env['CAPTURE_REAL_BACKEND_TEMP_ROOT'] ?? tmpdir(),
+    process.env['CAPTURE_DEV_HOST_TEMP_ROOT'] ?? tmpdir(),
     `launcher-kill-${port}`,
   );
   mkdirSync(childTempRoot, { recursive: true });
 
   const child = spawn(
     process.execPath,
-    ['apps/capture-workbench-e2e/real-backend-server.ts', String(port), upstreamUrl],
+    ['apps/capture-workbench-e2e/dev-host-preview-server.ts', String(port), upstreamUrl],
     {
       cwd: workspaceRoot,
       env: {

@@ -202,7 +202,7 @@
       "cache": false,
       "executor": "nx:run-commands",
       "metadata": {
-        "description": "Runs the real j16 package/runtime candidate through pip and Poetry HTTP installation smoke using PYTHON_INDEX_* environment inputs."
+        "description": "Verifies a real assembled package/runtime candidate pair through the PEP 503 index with pip and Poetry"
       },
       "options": {
         "command": "node tools/python-candidate-index.ts --mode verify --http-smoke"

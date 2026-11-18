@@ -41,7 +41,7 @@ const ORACLE_MAX_SOURCE_BYTES = 2 * 1024 * 1024 * 1024;
 // Keep the frozen worker extraction tree short. Windows can reject a valid
 // catalog archive before the worker probe when the owned app-data root is
 // deeply nested under the workspace.
-const runRoot = resolve(workspaceRoot, '..', '.cwpa');
+const runRoot = resolve(workspaceRoot, '..', '.cw-audio-oracle');
 // Generate the process-local credential at launch. It is never written to an
 // artifact or included in diagnostics.
 const token = randomUUID().replaceAll('-', '');

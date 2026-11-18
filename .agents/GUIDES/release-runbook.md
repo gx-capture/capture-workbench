@@ -552,7 +552,7 @@ Candidate checksums stay inside the candidate artifact and are not release asset
 
 1. Merge the release source to `main` and wait for **push** CI on that commit
    (`ci.yml`), whose `installer` job includes the release-mode installed smoke
-   (`installed-deterministic-smoke.ts --release`). To pre-flight a branch before
+   (`installed-nsis-smoke.ts --release`). To pre-flight a branch before
    merging, dispatch `ci.yml` (`workflow_dispatch`), which runs only
    `installer`. Release candidates verify the `push` run on `main` with
    `tools/verify-main-ci.ts` (never a `workflow_dispatch` run). `ci.yml` skips
@@ -713,7 +713,7 @@ candidate with `node tools/install-capture-workbench-dependencies.mts
   them. Set `CAPTURE_ENGINE_CACHE_DIR=off` to time or debug a cold download.
 - A minor version bump also needs `CAPTURE_RUNTIME_MINOR` in
   `packages/capture-workbench-ui/src/lib/constants/runtime.ts`; the version sync
-  and its check do not own it, and `capture-angular:test` is what fails.
+  and its check do not own it, and `capture-workbench-ui:test` is what fails.
 - Lock refresh after a version bump: `cargo update -p <crate> --offline`
   changes only the first-party version lines. Once a project's version
   changes, uv re-resolves its whole lock (an implicit `uv run` does too) and
@@ -758,7 +758,7 @@ candidate with `node tools/install-capture-workbench-dependencies.mts
   ("not a successful exact-source package candidate") before anything is
   published. 0.10.0: the first candidates named `b890158` after `main` had
   moved to `b0924a8`; both were rebuilt for `b0924a8`.
-- `ci.yml`'s `installer` job runs `installed-deterministic-smoke.ts --release`
+- `ci.yml`'s `installer` job runs `installed-nsis-smoke.ts --release`
   on `main` pushes (and on `workflow_dispatch` as a branch pre-flight), in
   addition to `release-candidate.yml` (`verify-windows-install`). On a runner
   that has never started the product, the release build has no app-data

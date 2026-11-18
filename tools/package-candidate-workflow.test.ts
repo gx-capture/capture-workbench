@@ -90,7 +90,7 @@ test('package candidate workflow is independent from the desktop product lane', 
       candidateWorkflow.indexOf('capture-runtime-client-python:build'),
     'uv and Python must be installed before the Python package builds run.',
   );
-  assert.match(candidateWorkflow, /capture-angular:clean-consumer-smoke/u);
+  assert.match(candidateWorkflow, /capture-workbench-ui:clean-consumer-smoke/u);
   assert.match(candidateWorkflow, /pnpm exec playwright install chromium/u);
   assert.equal(
     [

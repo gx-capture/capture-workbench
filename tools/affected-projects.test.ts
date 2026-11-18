@@ -53,7 +53,7 @@ test('a runtime contract fixture affects the clients and the launcher', () => {
   assertIncludes(projects, [
     'capture-runtime-client',
     'capture-runtime-client-python',
-    'capture-angular',
+    'capture-workbench-ui',
     'capture-sidecar-launcher',
   ]);
 });

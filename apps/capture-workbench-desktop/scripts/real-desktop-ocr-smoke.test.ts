@@ -15,7 +15,7 @@ import type { Browser, Page } from '@playwright/test';
 import {
   acceptanceScreenshot,
   assertDiagnosticsMatchesDurableOcr,
-  assertPhase1PageOnePdfSemanticEvidence,
+  assertPdfPageOneSemanticEvidence,
   assertExpectedOcrDevice,
   assertOcrExecutionProofMatchesInstalledJourney,
   assertRealDesktopSmokeEvidence,
@@ -1022,7 +1022,7 @@ test('Phase 1 PDF semantic gate keeps multi-page sources page-one scoped and acc
       const semanticEvidence = phase1PageOnePdfSemanticFixture();
       const page = semanticEvidence.pages[0];
       assert.ok(page);
-      assert.doesNotThrow(() => assertPhase1PageOnePdfSemanticEvidence(
+      assert.doesNotThrow(() => assertPdfPageOneSemanticEvidence(
         {
           sourcePageCount,
           requestedPageNumbers: [1],
@@ -1057,7 +1057,7 @@ test('Phase 1 page-one PDF semantic gate rejects scope and semantic drift before
 
   const cases: ReadonlyArray<{
     readonly name: string;
-    readonly scope?: Parameters<typeof assertPhase1PageOnePdfSemanticEvidence>[0];
+    readonly scope?: Parameters<typeof assertPdfPageOneSemanticEvidence>[0];
     readonly semantic?: OcrSemanticEvidenceV1;
     readonly error: RegExp;
   }> = [
@@ -1118,7 +1118,7 @@ test('Phase 1 page-one PDF semantic gate rejects scope and semantic drift before
 
   for (const item of cases) {
     assert.throws(
-      () => assertPhase1PageOnePdfSemanticEvidence(
+      () => assertPdfPageOneSemanticEvidence(
         item.scope ?? validScope,
         item.semantic ?? validSemantic,
       ),
@@ -1153,7 +1153,7 @@ test('Phase 1 PDF semantic owner gates PDFs before the atomic artifact writer', 
     },
     assertPdfPageOne: (scope, evidence) => {
       pdfCalls.push('assertPdfPageOne');
-      assertPhase1PageOnePdfSemanticEvidence(scope, evidence);
+      assertPdfPageOneSemanticEvidence(scope, evidence);
     },
     writeArtifact: async (path) => {
       pdfCalls.push(`writeArtifact:${path}`);

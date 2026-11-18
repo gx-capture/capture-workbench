@@ -26,10 +26,10 @@ import {
   installerArguments,
   nestedErrorMessages,
   releaseExclusiveSmokeLock,
-  runInstalledDeterministicSmoke,
+  runInstalledNsisSmoke,
   stopPostUninstallProcessRoots,
   uninstallerArguments,
-} from './installed-deterministic-smoke.ts';
+} from './installed-nsis-smoke.ts';
 import {
   assertRawCaptureForFixture,
   expectedVisibleResultForRaw,
@@ -100,7 +100,7 @@ test('release size dispatch returns before the installed app observer lane', asy
     reportPath: 'installed-size.json',
   };
   const result = await observe(
-    runInstalledDeterministicSmoke(
+    runInstalledNsisSmoke(
       { expectedSource: 'release', measureOnly: true },
       {
         runSizeMeasurement: () => {
@@ -332,11 +332,11 @@ test('installed smoke diagnostics recursively expose the nested cleanup cause', 
         'One or more installed-smoke process roots could not be cleaned safely.',
       ),
     ],
-    'Installed deterministic Tauri smoke failed or could not clean up safely.',
+    'Installed NSIS smoke failed or could not clean up safely.',
   );
 
   assert.deepEqual(nestedErrorMessages(rootFailure), [
-    'Installed deterministic Tauri smoke failed or could not clean up safely.',
+    'Installed NSIS smoke failed or could not clean up safely.',
     'One or more installed-smoke process roots could not be cleaned safely.',
     'Owned installed app/runtime processes remained after tree cleanup.',
   ]);
@@ -398,7 +398,7 @@ test('installed smoke diagnostics redact nested paths and secrets while retainin
       ),
       new Error('bounded-safe-detail-'.repeat(80)),
     ],
-    'Installed deterministic Tauri smoke failed or could not clean up safely.',
+    'Installed NSIS smoke failed or could not clean up safely.',
   );
 
   const messages = nestedErrorMessages(rootFailure);
@@ -693,7 +693,7 @@ test('Nx target depends on the deterministic NSIS build and writes only non-rele
   assert.deepEqual(target.outputs, [
     '{workspaceRoot}/tmp/capture-workbench-desktop/installed-smoke/installed-smoke.json',
   ]);
-  assert.match(target.options.command, /installed-deterministic-smoke\.ts/u);
+  assert.match(target.options.command, /installed-nsis-smoke\.ts/u);
 });
 
 test('installed smoke gives model-enabled hosted runners enough time to unpack the payload', () => {
@@ -941,3 +941,4 @@ test('isolation failure reports include only real app-data metadata and the fail
   assert.ok(report.errors.some((message) => message.includes('Real product app-data changed')));
   assert.doesNotMatch(JSON.stringify(report), /[A-Za-z]:[\\/]/u);
 });
+

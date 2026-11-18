@@ -9,7 +9,7 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import test from 'node:test';
 import { runCaptureWorkbenchAcceptanceOrchestration } from './acceptance-orchestration.ts';
-import { waitForChildClose } from './acceptance-real.ts';
+import { waitForChildClose } from './diagnostic-desktop-ocr.ts';
 import { finalizeDesktopTeardown } from './real-desktop-ocr-smoke.ts';
 const project = 'capture-workbench' as const, runId = 'run-1';
 const journalModule = pathToFileURL(resolve('tools/acceptance-checkpoint-journal.ts')).href, contractModule = pathToFileURL(resolve('tools/acceptance-contract.ts')).href;
@@ -40,7 +40,7 @@ await writeAcceptanceManifest(root, {
 if (mode === 'missing') process.exitCode = 1;
 `;
 
-function plan(artifactRoot: string) { return { project, cwd: process.cwd(), target: 'capture-workbench-desktop:acceptance-real', artifactRoot, scopePath: join(artifactRoot, 'scope.json'), environment: process.env } as const; }
+function plan(artifactRoot: string) { return { project, cwd: process.cwd(), target: 'capture-workbench-desktop:diagnostic-desktop-ocr', artifactRoot, scopePath: join(artifactRoot, 'scope.json'), environment: process.env } as const; }
 
 function runChild(root: string, mode = 'ok'): Promise<{ status: number; error: boolean }> {
   return new Promise((resolveChild) => {
@@ -71,12 +71,12 @@ async function orchestrate(root: string, mode = 'ok', requiredScope = false) {
 test('child error marks the result but close owns settlement', async () => await withRoot(async (root) => { const child = new EventEmitter() as unknown as ChildProcess; let settled = false; const result = waitForChildClose(child).then((value) => { settled = true; return value; }); child.emit('error', new Error('spawn failed')); await new Promise<void>((resolve) => setImmediate(resolve)); await writeFile(join(root, 'late-sentinel.json'), 'late evidence', 'utf8'); assert.equal(settled, false); child.emit('close', null); assert.deepEqual(await result, { status: 1, error: true }); }));
 
 test('closed production child writes journal, manifest, and physical OCR proof before parent pass', async () => {
-  await withRoot(async (root) => { const result = await orchestrate(root); assert.equal(result.terminal.phase1Verdict, 'pass'); assert.equal(result.terminal.sourceManifestSha256?.length, 64); assert.equal(result.journal.status, 'valid-complete'); });
+  await withRoot(async (root) => { const result = await orchestrate(root); assert.equal(result.terminal.verdict, 'pass'); assert.equal(result.terminal.sourceManifestSha256?.length, 64); assert.equal(result.journal.status, 'valid-complete'); });
 });
 
 test('child evidence failures and nonzero child exit fail closed', async () => {
   for (const mode of ['missing', 'malformed', 'mismatch', 'none']) {
-    await withRoot(async (root) => { assert.equal((await orchestrate(root, mode)).terminal.phase1Verdict, 'fail', mode); });
+    await withRoot(async (root) => { assert.equal((await orchestrate(root, mode)).terminal.verdict, 'fail', mode); });
   }
 });
 
@@ -86,5 +86,5 @@ test('direct run has not-applicable outer scope; required failed scope blocks it
 });
 
 test('production teardown cleanup failure remains terminal failure', async () => {
-  await withRoot(async (root) => { const result = await orchestrate(root, 'cleanup-live'); const manifest = JSON.parse(await readFile(join(root, 'acceptance-manifest.json'), 'utf8')); assert.equal(manifest.status, 'completed'); assert.equal(manifest.cleanup.app, false); assert.deepEqual(result.terminal.primaryAcceptanceFailure, { code: 'cleanup_failed', stage: null, checkpointId: null }); assert.equal(result.terminal.phase1Verdict, 'fail'); });
+  await withRoot(async (root) => { const result = await orchestrate(root, 'cleanup-live'); const manifest = JSON.parse(await readFile(join(root, 'acceptance-manifest.json'), 'utf8')); assert.equal(manifest.status, 'completed'); assert.equal(manifest.cleanup.app, false); assert.deepEqual(result.terminal.primaryAcceptanceFailure, { code: 'cleanup_failed', stage: null, checkpointId: null }); assert.equal(result.terminal.verdict, 'fail'); });
 });

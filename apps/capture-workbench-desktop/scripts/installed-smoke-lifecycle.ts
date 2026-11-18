@@ -89,7 +89,7 @@ export function createInstalledSmokeLifecycle({
     );
   }
 
-  function findDeterministicInstaller(expectedVersion) {
+  function findExpectedInstaller(expectedVersion) {
     const expectedName = expectedVersion
       ? expectedInstallerName(expectedVersion, productName)
       : undefined;
@@ -138,7 +138,7 @@ export function createInstalledSmokeLifecycle({
                   return throwError(
                     () =>
                       new Error(
-                        'Deterministic NSIS installer must be a regular file.',
+                        'NSIS installer must be a regular file.',
                       ),
                   );
                 }
@@ -149,7 +149,7 @@ export function createInstalledSmokeLifecycle({
                   return throwError(
                     () =>
                       new Error(
-                        'Deterministic NSIS installer escaped its artifact directory.',
+                        'NSIS installer escaped its artifact directory.',
                       ),
                   );
                 }
@@ -250,7 +250,7 @@ export function createInstalledSmokeLifecycle({
   return {
     prepareSmokeDirectories,
     safeRemoveTree,
-    findDeterministicInstaller,
+    findExpectedInstaller,
     assertOwnedRegularFile,
     runCheckedExecutable,
   };

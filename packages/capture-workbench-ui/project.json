@@ -1,5 +1,5 @@
 {
-  "name": "capture-angular",
+  "name": "capture-workbench-ui",
   "$schema": "../../node_modules/nx/schemas/project-schema.json",
   "sourceRoot": "packages/capture-workbench-ui/src",
   "prefix": "lib",
@@ -52,7 +52,7 @@
       "executor": "nx:run-commands",
       "dependsOn": ["pack"],
       "options": {
-        "command": "node tools/clean-angular-consumer-smoke.ts"
+        "command": "node tools/web-component-consumer-smoke.ts"
       }
     },
     "nx-release-publish": {

@@ -33,10 +33,10 @@
         "command": "corepack pnpm exec playwright test --config apps/capture-workbench-e2e/playwright.config.ts"
       }
     },
-    "e2e-real-backend": {
+    "e2e-dev-host": {
       "executor": "nx:run-commands",
       "metadata": {
-        "description": "Runs the real-backend Playwright E2E journey (real-backend.spec.ts) against the Workbench dev server and capture-workbench-dev-host with the deterministic fixture runtime."
+        "description": "Runs the dev-host Playwright E2E journey (dev-host.spec.ts) against the Workbench dev server and capture-workbench-dev-host with the deterministic fixture runtime."
       },
       "dependsOn": [
         { "projects": ["capture-workbench"], "target": "build" },
@@ -50,7 +50,7 @@
         "{workspaceRoot}/release/version.json"
       ],
       "options": {
-        "command": "corepack pnpm exec playwright test --config apps/capture-workbench-e2e/playwright.real-backend.config.ts"
+        "command": "corepack pnpm exec playwright test --config apps/capture-workbench-e2e/playwright.dev-host.config.ts"
       }
     },
     "preview": {
@@ -64,18 +64,18 @@
         "command": "node apps/capture-workbench-e2e/preview-server.ts 4300"
       }
     },
-    "preview-real-backend": {
+    "preview-dev-host": {
       "executor": "nx:run-commands",
       "continuous": true,
       "metadata": {
-        "description": "Serves the Workbench dev server on http://127.0.0.1:4300 with capture-workbench-dev-host and the deterministic fixture runtime (real-backend-server.ts) for interactive Layer 1 verification."
+        "description": "Serves the Workbench dev server on http://127.0.0.1:4300 with capture-workbench-dev-host and the deterministic fixture runtime (dev-host-preview-server.ts) for interactive Layer 1 verification."
       },
       "dependsOn": [
         { "projects": ["capture-workbench"], "target": "serve" },
         { "projects": ["capture-workbench-desktop"], "target": "build-dev-host" }
       ],
       "options": {
-        "command": "node apps/capture-workbench-e2e/real-backend-server.ts 4300"
+        "command": "node apps/capture-workbench-e2e/dev-host-preview-server.ts 4300"
       }
     },
     "smoke-real-engines": {
@@ -95,7 +95,7 @@
     "runtime-web-component-e2e": {
       "executor": "nx:run-commands",
       "metadata": {
-        "description": "Manual Windows-only E2E journey for the packaged <capture-workbench> Web Component against the packaged Windows runtime; excluded from ordinary CI. Requires the packaged Windows runtime executable, uv with pypdfium2, and a scanned PDF from ../cert-prep/pdfs (or CAPTURE_PHASE15_E2E_PDF). Run locally when verifying the packaged Web Component PDF OCR flow."
+        "description": "Manual Windows-only E2E journey for the packaged <capture-workbench> Web Component against the packaged Windows runtime; excluded from ordinary CI. Requires the packaged Windows runtime executable, uv with pypdfium2, and a scanned PDF from ../cert-prep/pdfs (or CAPTURE_WEB_COMPONENT_E2E_PDF). Run locally when verifying the packaged Web Component PDF OCR flow."
       },
       "inputs": [
         "default",
@@ -105,7 +105,7 @@
       "dependsOn": [
         {
           "target": "pack",
-          "projects": ["capture-angular"]
+          "projects": ["capture-workbench-ui"]
         },
         {
           "target": "build-release-artifacts",

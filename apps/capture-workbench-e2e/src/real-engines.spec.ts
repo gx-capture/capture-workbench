@@ -71,9 +71,9 @@ import { isAbsolute, join, resolve } from 'node:path';
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import {
   canConnect,
-  startRealBackendLauncher,
-  type StartedRealBackendLauncher,
-} from './real-backend-launcher.ts';
+  startDevHostLauncher,
+  type StartedDevHostLauncher,
+} from './dev-host-launcher.ts';
 
 const workspaceRoot = resolve(import.meta.dirname, '..', '..', '..');
 const upstreamUrl = 'http://localhost:4200';
@@ -820,10 +820,10 @@ test('runs full real-engine capture, editing, export, and restart journey on loc
     provenance: {},
   };
 
-  let activeLauncher: StartedRealBackendLauncher | undefined;
+  let activeLauncher: StartedDevHostLauncher | undefined;
 
-  const startHostWithConfig = async (): Promise<StartedRealBackendLauncher> => {
-    const started = await startRealBackendLauncher({
+  const startHostWithConfig = async (): Promise<StartedDevHostLauncher> => {
+    const started = await startDevHostLauncher({
       upstreamUrl,
       appDataDir: config.appDataDir,
       runtimeManifestPath: config.runtimeManifestPath,

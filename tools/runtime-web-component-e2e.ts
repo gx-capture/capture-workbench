@@ -6,9 +6,9 @@
 //
 // Requirements and inputs (one per line):
 //   Packaged Windows runtime executable and OCR worker archive (`capture-runtime:build-release-artifacts`).
-//   Packed @capture-workbench/ui and @capture-workbench/runtime-client tarballs (`capture-angular:pack`).
+//   Packed @capture-workbench/ui and @capture-workbench/runtime-client tarballs (`capture-workbench-ui:pack`).
 //   uv with pypdfium2 available for PDF inspection/rendering.
-//   CAPTURE_PHASE15_E2E_PDF: optional PDF path (defaults to `../cert-prep/pdfs/【1】2025年07月N1 真题.pdf`).
+//   CAPTURE_WEB_COMPONENT_E2E_PDF: optional PDF path (defaults to `../cert-prep/pdfs/【1】2025年07月N1 真题.pdf`).
 import { RELEASE_VERSION } from './release/release-intent.ts';
 import { randomUUID } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
@@ -102,7 +102,7 @@ const runtimeClientArchive = join(
   'packs',
   `${archiveName(runtimeClientManifest.name)}-${runtimeClientManifest.version}.tgz`,
 );
-const fixtureBase = resolve(repoRoot, '..', '.cw-phase15');
+const fixtureBase = resolve(repoRoot, '..', '.cw-wc-e2e');
 const corepackCli = resolveNode24Corepack();
 
 function archiveName(packageName: string): string {
@@ -189,7 +189,7 @@ function stopRuntimeProcessTree(
 
 function configuredPdfPath(): string {
   const source = resolve(
-    process.env['CAPTURE_PHASE15_E2E_PDF']?.trim() ||
+    process.env['CAPTURE_WEB_COMPONENT_E2E_PDF']?.trim() ||
       (readdirSync(join(repoRoot, '..', 'cert-prep', 'pdfs')).find(
         (name) =>
           name.includes('2024') &&
@@ -214,11 +214,11 @@ function configuredPdfPath(): string {
   );
   if (!existsSync(source)) {
     throw new Error(
-      `A real OCR PDF is required. Set CAPTURE_PHASE15_E2E_PDF to an existing PDF; default was ${source}.`,
+      `A real OCR PDF is required. Set CAPTURE_WEB_COMPONENT_E2E_PDF to an existing PDF; default was ${source}.`,
     );
   }
   if (!source.toLowerCase().endsWith('.pdf')) {
-    throw new Error('CAPTURE_PHASE15_E2E_PDF must identify a PDF.');
+    throw new Error('CAPTURE_WEB_COMPONENT_E2E_PDF must identify a PDF.');
   }
   return source;
 }
@@ -416,7 +416,7 @@ async function startRuntime(
   port: number;
   stderr: () => string;
 }> {
-  const token = `capture-runtime-phase-1-5-${randomUUID()}-${randomUUID()}`;
+  const token = `capture-runtime-wc-e2e-${randomUUID()}-${randomUUID()}`;
   const child = spawn(runtimeExecutable, ['serve', '--port', String(port)], {
     cwd: dirname(runtimeExecutable),
     env: {
@@ -614,7 +614,7 @@ async function startPreview(
 async function main(): Promise<void> {
   if (!existsSync(packageArchive) || !existsSync(runtimeClientArchive)) {
     throw new Error(
-      'Packed Capture Workbench and Runtime Client archives are required. Run capture-angular:pack and capture-runtime-client:build first.',
+      'Packed Capture Workbench and Runtime Client archives are required. Run capture-workbench-ui:pack and capture-runtime-client:build first.',
     );
   }
   if (!corepackCli) {
@@ -631,7 +631,7 @@ async function main(): Promise<void> {
   const sourceBytes = readFileSync(sourcePath);
   if (sourceBytes.length === 0 || sourceBytes.length > 50 * 1024 * 1024) {
     throw new Error(
-      'CAPTURE_PHASE15_E2E_PDF must contain 1 through 52428800 bytes.',
+      'CAPTURE_WEB_COMPONENT_E2E_PDF must contain 1 through 52428800 bytes.',
     );
   }
   const sourceName = basename(sourcePath);
@@ -657,7 +657,7 @@ async function main(): Promise<void> {
       'package.json',
       `${JSON.stringify(
         {
-          name: 'capture-workbench-phase-1-5-consumer',
+          name: 'capture-workbench-wc-e2e-consumer',
           version: '0.0.0',
           private: true,
           ...readPackageManagerPolicy(repoRoot),
@@ -1076,7 +1076,7 @@ window.__captureE2eReady = true;
       );
     }
     const visualCheckPath =
-      process.env['CAPTURE_PHASE15_E2E_SCREENSHOT']?.trim();
+      process.env['CAPTURE_WEB_COMPONENT_E2E_SCREENSHOT']?.trim();
     if (visualCheckPath) {
       const resolvedVisualCheckPath = resolve(visualCheckPath);
       mkdirSync(dirname(resolvedVisualCheckPath), { recursive: true });
