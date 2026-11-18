@@ -390,13 +390,13 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
       if (command === 'desktop_runtime_status') {
         return Promise.resolve({ status: 'ready', detail: 'Capture Runtime 已準備完成。' });
       }
-      if (command === 'desktop_compute_status') {
+      if (command === 'desktop_speech_gpu_status') {
         return Promise.resolve({
           cudaAvailable: Boolean(installOptions.cudaAvailable),
           preferGpu,
         });
       }
-      if (command === 'desktop_set_prefer_gpu') {
+      if (command === 'desktop_set_speech_prefer_gpu') {
         const payload = rawArgs as { readonly preferGpu?: boolean } | undefined;
         preferGpu = Boolean(payload?.preferGpu);
         return Promise.resolve({

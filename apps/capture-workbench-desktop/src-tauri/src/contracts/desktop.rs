@@ -105,7 +105,7 @@ impl DesktopRuntimeStatus {
 }
 
 fn acceptance_pdf_page_numbers() -> Option<Vec<u32>> {
-    #[cfg(feature = "acceptance-app-data")]
+    #[cfg(feature = "acceptance-harness")]
     {
         return acceptance_pdf_page_numbers_for_scope(
             std::env::var("CAPTURE_ACCEPTANCE_PDF_PAGE_SCOPE")
@@ -114,20 +114,20 @@ fn acceptance_pdf_page_numbers() -> Option<Vec<u32>> {
         );
     }
 
-    #[cfg(not(feature = "acceptance-app-data"))]
+    #[cfg(not(feature = "acceptance-harness"))]
     {
         None
     }
 }
 
-#[cfg(any(feature = "acceptance-app-data", test))]
+#[cfg(any(feature = "acceptance-harness", test))]
 fn acceptance_pdf_page_numbers_for_scope(scope: Option<&str>) -> Option<Vec<u32>> {
     (scope == Some("page-1")).then_some(vec![1])
 }
 
 #[cfg(test)]
 mod tests {
-    #[cfg(not(feature = "acceptance-app-data"))]
+    #[cfg(not(feature = "acceptance-harness"))]
     use super::BackendConfig;
     use super::{acceptance_pdf_page_numbers_for_scope, DesktopRuntimeStatus};
 
@@ -154,7 +154,7 @@ mod tests {
             .contains_key("pdfPageNumbers"));
     }
 
-    #[cfg(not(feature = "acceptance-app-data"))]
+    #[cfg(not(feature = "acceptance-harness"))]
     #[test]
     fn production_ready_status_omits_the_acceptance_only_scope() {
         let serialized = serde_json::to_value(DesktopRuntimeStatus::ready(&BackendConfig {

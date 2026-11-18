@@ -287,7 +287,7 @@ fn malformed_requests_unknown_commands_bad_args_and_oversized_bodies() {
 
     let (status, _, _) = invoke_json(
         server.port(),
-        "desktop_set_prefer_gpu",
+        "desktop_set_speech_prefer_gpu",
         &json!({ "preferGpu": "yes" }),
     );
     assert_eq!(status, 400);

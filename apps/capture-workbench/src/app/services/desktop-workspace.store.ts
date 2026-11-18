@@ -20,7 +20,7 @@ import type {
 } from '../contracts';
 import { AsrQueueStore } from './asr-queue.store';
 import { CaptureQueueStore } from './capture-queue.store';
-import { ComputeSettingsStore } from './compute-settings.store';
+import { SpeechGpuSettingsStore } from './speech-gpu-settings.store';
 import { DesktopLibraryService, type DesktopSourceSelectionBatch } from './desktop-library.service';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
 import {
@@ -39,7 +39,7 @@ export class DesktopWorkspaceStore {
   private readonly runtime = inject(DesktopRuntimeClientService);
   private readonly library = inject(DesktopLibraryService);
   private readonly captureLifecycle = inject(DesktopWorkspaceCaptureService);
-  private readonly compute = inject(ComputeSettingsStore);
+  private readonly compute = inject(SpeechGpuSettingsStore);
   private readonly destroyRef = inject(DestroyRef);
   private readonly injector = inject(Injector);
   private readonly router = inject(Router, { optional: true });

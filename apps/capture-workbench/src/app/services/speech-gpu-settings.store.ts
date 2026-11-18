@@ -1,7 +1,7 @@
 import { computed, Injectable, inject, signal } from '@angular/core';
 import { rxResource } from '@angular/core/rxjs-interop';
 import { finalize } from 'rxjs';
-import type { DesktopComputeStatus } from '../contracts';
+import type { DesktopSpeechGpuStatus } from '../contracts';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
 import { DesktopWorkspaceCaptureService } from './desktop-workspace-capture.service';
 import { errorMessage } from './desktop-workspace.selectors';
@@ -9,7 +9,7 @@ import { RecognitionFeaturesStore } from './recognition-features.store';
 
 @Injectable({ providedIn: 'root' })
 /** Compute device status for OCR and speech GPU preference. */
-export class ComputeSettingsStore {
+export class SpeechGpuSettingsStore {
   private readonly runtime = inject(DesktopRuntimeClientService);
   private readonly features = inject(RecognitionFeaturesStore);
   private readonly captureLifecycle = inject(DesktopWorkspaceCaptureService);
@@ -18,18 +18,18 @@ export class ComputeSettingsStore {
   readonly savingCompute = signal(false);
   readonly error = signal<string | null>(null);
 
-  private readonly computeResource = rxResource<DesktopComputeStatus, undefined>(
+  private readonly computeResource = rxResource<DesktopSpeechGpuStatus, undefined>(
     {
       stream: ({ abortSignal }) => this.runtime.getComputeStatus(abortSignal),
     },
   );
 
-  readonly speechStatus = computed<DesktopComputeStatus | null>(() =>
+  readonly speechStatus = computed<DesktopSpeechGpuStatus | null>(() =>
     this.computeResource.hasValue() ? this.computeResource.value() : null,
   );
 
   /** The GPU setting for speech recognition, offered only when a CUDA driver is present. */
-  readonly speechGpu = computed<DesktopComputeStatus | null>(() => {
+  readonly speechGpu = computed<DesktopSpeechGpuStatus | null>(() => {
     const status = this.speechStatus();
     return status?.cudaAvailable ? status : null;
   });

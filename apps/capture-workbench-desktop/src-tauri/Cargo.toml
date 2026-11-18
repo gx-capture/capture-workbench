@@ -13,7 +13,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [features]
 default = []
-acceptance-app-data = []
+acceptance-harness = []
 dev-host = []
 
 [[bin]]

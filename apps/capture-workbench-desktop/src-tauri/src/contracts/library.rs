@@ -876,7 +876,7 @@ pub(crate) enum LibraryExportFormat {
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct LibraryDocumentSummary {
+pub(crate) struct DesktopLibrarySummary {
     pub document_id: String,
     pub file_name: String,
     pub media_type: String,
@@ -903,9 +903,9 @@ pub(crate) struct LibraryDocumentSummary {
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct LibraryDocumentDetail {
+pub(crate) struct DesktopLibraryDetail {
     #[serde(flatten)]
-    pub summary: LibraryDocumentSummary,
+    pub summary: DesktopLibrarySummary,
     pub raw: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub edits: Option<LibraryEdits>,

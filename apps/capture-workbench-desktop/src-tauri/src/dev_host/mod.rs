@@ -13,7 +13,7 @@ use std::{
     },
 };
 
-use crate::{library::LibraryStore, resources::RuntimeAssets, state::DesktopState};
+use crate::{library::LibraryStore, resources::RuntimeExecutablePaths, state::DesktopState};
 
 use dispatch::HostContext;
 use server::DevHostServer;
@@ -93,7 +93,7 @@ pub fn run_cli() -> Result<(), String> {
     let state = DesktopState::new(data_dir);
     let _shutdown_guard = ShutdownGuard(&state);
 
-    let assets = RuntimeAssets {
+    let assets = RuntimeExecutablePaths {
         manifest_path: config.runtime_manifest,
         executable_path: config.runtime_executable,
     };

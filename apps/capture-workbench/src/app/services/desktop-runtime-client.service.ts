@@ -32,7 +32,7 @@ import {
   throwError,
   timer,
 } from 'rxjs';
-import type { DesktopComputeStatus, DesktopRuntimeStatus } from '../contracts';
+import type { DesktopSpeechGpuStatus, DesktopRuntimeStatus } from '../contracts';
 import { DesktopTauriCommandService } from './desktop-tauri-command.service';
 import { desktopMessages } from '../i18n/desktop-messages';
 
@@ -253,13 +253,13 @@ export class DesktopRuntimeClientService {
     this.readiness.reload();
   }
 
-  getComputeStatus(signal?: AbortSignal): Observable<DesktopComputeStatus> {
-    return this.commands.invoke<DesktopComputeStatus>('desktop_compute_status', {}, signal);
+  getComputeStatus(signal?: AbortSignal): Observable<DesktopSpeechGpuStatus> {
+    return this.commands.invoke<DesktopSpeechGpuStatus>('desktop_speech_gpu_status', {}, signal);
   }
 
   /** Saves whether speech recognition may use the GPU; the desktop relaunches the runtime. */
-  setPreferGpu(preferGpu: boolean, signal?: AbortSignal): Observable<DesktopComputeStatus> {
-    return this.commands.invoke<DesktopComputeStatus>('desktop_set_prefer_gpu', { preferGpu }, signal);
+  setPreferGpu(preferGpu: boolean, signal?: AbortSignal): Observable<DesktopSpeechGpuStatus> {
+    return this.commands.invoke<DesktopSpeechGpuStatus>('desktop_set_speech_prefer_gpu', { preferGpu }, signal);
   }
 
   private status$(signal: AbortSignal): Observable<DesktopRuntimeStatus> {

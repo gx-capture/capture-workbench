@@ -1,5 +1,4 @@
 mod commands;
-mod compute;
 mod config;
 mod constants;
 mod contracts;
@@ -11,11 +10,12 @@ mod random_id;
 mod resources;
 mod runtime_client;
 mod source_selection;
+mod speech_gpu;
 mod state;
 
 use std::{fs, path::PathBuf, sync::Arc};
 
-#[cfg(feature = "acceptance-app-data")]
+#[cfg(feature = "acceptance-harness")]
 use std::path::Path;
 
 use tauri::Manager;
@@ -29,8 +29,8 @@ macro_rules! for_each_desktop_command {
             extra: [$($extra),*],
             served: [
                 desktop_runtime_status,
-                desktop_compute_status,
-                desktop_set_prefer_gpu,
+                desktop_speech_gpu_status,
+                desktop_set_speech_prefer_gpu,
                 runtime_ready,
                 library_import_selection,
                 library_discard_selections,
@@ -109,27 +109,27 @@ macro_rules! desktop_invoke_handler {
 macro_rules! for_each_feature_gated_desktop_command {
     ($callback:ident) => {
         $callback! {
-            acceptance_app_data: [
-                desktop_runtime_process_probe,
+            acceptance_harness: [
+                desktop_acceptance_runtime_process_probe,
                 desktop_acceptance_terminate_root,
             ],
         }
     };
 }
 
-#[cfg(feature = "acceptance-app-data")]
+#[cfg(feature = "acceptance-harness")]
 macro_rules! expand_acceptance_invoke_handler {
     (
-        acceptance_app_data: [$($command:ident),* $(,)?],
+        acceptance_harness: [$($command:ident),* $(,)?],
     ) => {
         desktop_invoke_handler!($(commands::$command),*)
     };
 }
 
-#[cfg(not(feature = "acceptance-app-data"))]
+#[cfg(not(feature = "acceptance-harness"))]
 macro_rules! expand_default_invoke_handler {
     (
-        acceptance_app_data: [$($_acceptance:ident),* $(,)?],
+        acceptance_harness: [$($_acceptance:ident),* $(,)?],
     ) => {
         desktop_invoke_handler!()
     };
@@ -145,7 +145,7 @@ pub fn run() {
     let builder = tauri::Builder::default();
     // Register first, before any other plugin or runtime/library setup. Isolated
     // QA features can share the product identifier, so they skip this lock.
-    #[cfg(all(windows, not(feature = "acceptance-app-data")))]
+    #[cfg(all(windows, not(feature = "acceptance-harness")))]
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _, _| {
         if let Some(window) = app.get_webview_window("main") {
             let _ = window.unminimize();
@@ -195,7 +195,7 @@ pub fn run() {
             app.manage(Arc::new(source_selection::SourceSelections::default()));
             app.manage(Arc::new(runtime_client::UploadCancellations::default()));
             app.manage(state.clone());
-            match resources::resolve_runtime_assets(app) {
+            match resources::resolve_runtime_executable_paths(app) {
                 Ok(assets) => {
                     // Kept to relaunch the runtime when a setting it reads changes.
                     app.manage(assets.clone());
@@ -226,11 +226,11 @@ pub fn run() {
             }
         });
 
-    #[cfg(feature = "acceptance-app-data")]
+    #[cfg(feature = "acceptance-harness")]
     let builder = builder.invoke_handler(for_each_feature_gated_desktop_command!(
         expand_acceptance_invoke_handler
     ));
-    #[cfg(not(feature = "acceptance-app-data"))]
+    #[cfg(not(feature = "acceptance-harness"))]
     let builder = builder.invoke_handler(for_each_feature_gated_desktop_command!(
         expand_default_invoke_handler
     ));
@@ -240,14 +240,14 @@ pub fn run() {
         .expect("failed to run Capture Workbench desktop application");
 }
 
-#[cfg(not(feature = "acceptance-app-data"))]
+#[cfg(not(feature = "acceptance-harness"))]
 fn app_data_dir(app: &tauri::App) -> Result<PathBuf, String> {
     app.path()
         .app_data_dir()
         .map_err(|error| format!("Capture Workbench app data path is unavailable: {error}"))
 }
 
-#[cfg(feature = "acceptance-app-data")]
+#[cfg(feature = "acceptance-harness")]
 fn app_data_dir(_app: &tauri::App) -> Result<PathBuf, String> {
     let configured = std::env::var_os("CAPTURE_ACCEPTANCE_APP_DATA_ROOT").ok_or_else(|| {
         "Capture Workbench acceptance app data root is not configured.".to_string()
@@ -255,11 +255,11 @@ fn app_data_dir(_app: &tauri::App) -> Result<PathBuf, String> {
     let artifact_root = std::env::var_os("E2E_ARTIFACT_ROOT").ok_or_else(|| {
         "Capture Workbench acceptance artifact root is not configured.".to_string()
     })?;
-    validate_acceptance_app_data_dir(Path::new(&configured), Path::new(&artifact_root))
+    validate_acceptance_harness_data_dir(Path::new(&configured), Path::new(&artifact_root))
 }
 
-#[cfg(feature = "acceptance-app-data")]
-fn validate_acceptance_app_data_dir(
+#[cfg(feature = "acceptance-harness")]
+fn validate_acceptance_harness_data_dir(
     configured: &Path,
     artifact_root: &Path,
 ) -> Result<PathBuf, String> {

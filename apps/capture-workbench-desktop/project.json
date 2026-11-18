@@ -53,7 +53,7 @@
         "command": "node apps/capture-workbench-desktop/scripts/build-deterministic-qa.ts"
       },
       "metadata": {
-        "description": "QA ONLY: separately named installer with fake runtime/data, acceptance-app-data, isolated resources and Cargo output."
+        "description": "QA ONLY: separately named installer with fake runtime/data, acceptance-harness, isolated resources and Cargo output."
       }
     },
     "cargo-fmt": {
@@ -220,7 +220,7 @@
       "cache": false,
       "executor": "nx:run-commands",
       "metadata": {
-        "description": "Builds a separately named acceptance-only NSIS bundle with the compile-time acceptance-app-data feature; never use as the release NSIS artifact."
+        "description": "Builds a separately named acceptance-only NSIS bundle with the compile-time acceptance-harness feature; never use as the release NSIS artifact."
       },
       "outputs": [
         "{workspaceRoot}/output/acceptance-nsis"
@@ -258,7 +258,7 @@
         "{projectRoot}/src-tauri/target/x86_64-pc-windows-msvc/release/capture-workbench-desktop.exe"
       ],
       "options": {
-        "command": "corepack pnpm exec tauri build --target x86_64-pc-windows-msvc --no-bundle --ci --features acceptance-app-data --config apps/capture-workbench-desktop/src-tauri/tauri.conf.json"
+        "command": "corepack pnpm exec tauri build --target x86_64-pc-windows-msvc --no-bundle --ci --features acceptance-harness --config apps/capture-workbench-desktop/src-tauri/tauri.conf.json"
       }
     },
     "typecheck-scripts": {

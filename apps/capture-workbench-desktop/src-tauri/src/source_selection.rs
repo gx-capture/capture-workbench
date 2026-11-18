@@ -80,7 +80,7 @@ impl SourceSelections {
         owner: &str,
         request: LibraryImportSelectionRequest,
         library: &crate::library::LibraryStore,
-    ) -> Result<LibraryDocumentSummary, String> {
+    ) -> Result<DesktopLibrarySummary, String> {
         // A rejected options request must leave the owner's selection usable.
         if let Some(options) = &request.capture_options {
             crate::library::validation::validate_capture_options(options)?;
