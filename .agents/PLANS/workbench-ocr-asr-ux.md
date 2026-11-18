@@ -137,7 +137,7 @@ Phases 1 and 2 are in `apps/capture-workbench/src/app`:
 | Item | Decision |
 | --- | --- |
 | Runtime status and native drops | **Done**: `RuntimeStatusStore` owns shared readiness, messages and reload; `App` owns native drop routing. `RecognitionFeaturesStore` owns requirements and installs, `LibraryStore` owns the shared library cache and item operations, and `OcrQueueStore` and `AsrQueueStore` own their page queues. The desktop adapters (`desktop-capture`, `desktop-installation`, `desktop-library`, `desktop-runtime-client`) stay. |
-| `desktop-workspace.selectors.ts` | **Keep**. Feature gates use a feature→requirement map: `ocr: [windowsml-ocr]`, `asr: [speech-recognition]`, `asr.speakers: [speaker-diarization]` (phase 2). |
+| Selectors (`services/`) | **Done**: pure functions live beside their users: `recognition-requirements.ts` (feature gates use a feature→requirement map: `ocr: [windowsml-ocr]`, `asr: [speech-recognition]`, `asr.speakers: [speaker-diarization]`), `installation-progress.ts`, `capture-media-types.ts`, `recording-transcript.ts`, `capture-operation-status.ts`, `desktop-errors.ts`, and `formatApproximateBytes` in `desktop-formatting.service.ts`. |
 | `EngineCard` (`engine-card/`) | One unit: guide, size, action, progress; used by the ASR panel and the settings table (phase 2, replacing `SpeechPack`). |
 | `CAPTURE_UNIT_GUIDES` (`capture-workbench-ui`) | **Keep** as the source of the descriptive text. Download sizes come from the runtime's `downloadBytes`, in the desktop app and the Web Component. |
 | `CaptureRuntimeComputeStatusComponent` | **Keep**, moved to 設定 › 運算裝置. |

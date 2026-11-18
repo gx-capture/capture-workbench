@@ -4,7 +4,7 @@ import { finalize } from 'rxjs';
 import type { DesktopSpeechGpuStatus } from '../contracts';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
 import { DesktopCaptureService } from './desktop-capture.service';
-import { errorMessage } from './desktop-workspace.selectors';
+import { errorMessage } from './desktop-errors';
 import { RecognitionFeaturesStore } from './recognition-features.store';
 
 @Injectable({ providedIn: 'root' })

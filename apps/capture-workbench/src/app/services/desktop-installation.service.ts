@@ -27,7 +27,7 @@ import type {
   RuntimeRequirement,
 } from '@gx-capture/capture-workbench-ui';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
-import { errorMessage } from './desktop-workspace.selectors';
+import { errorMessage } from './desktop-errors';
 import { desktopMessages } from '../i18n/desktop-messages';
 
 @Injectable({ providedIn: 'root' })

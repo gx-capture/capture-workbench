@@ -18,10 +18,8 @@ import { HlmCardImports } from '@spartan-ng/helm/card';
 import { HlmTableImports } from '@spartan-ng/helm/table';
 import { InstallProgress } from '../engine-card/install-progress';
 import { desktopLocale, desktopMessages } from '../i18n/desktop-messages';
-import {
-  captureNeedsRequirement,
-  formatApproximateBytes,
-} from '../services/desktop-workspace.selectors';
+import { captureNeedsRequirement } from '../services/recognition-requirements';
+import { formatApproximateBytes } from '../services/desktop-formatting.service';
 import { LibraryStore } from '../services/library.store';
 import { RecognitionFeaturesStore } from '../services/recognition-features.store';
 

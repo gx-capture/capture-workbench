@@ -9,14 +9,12 @@ import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
 import { DesktopCaptureService, type DesktopCaptureHost } from './desktop-capture.service';
 import { LibraryExportService } from './library-export.service';
 import { LibraryStore } from './library.store';
-import {
-  errorMessage,
-  formatApproximateBytes,
-  installationPercent,
-} from './desktop-workspace.selectors';
+import { errorMessage } from './desktop-errors';
+import { formatApproximateBytes } from './desktop-formatting.service';
 import {
   installationProgress,
   installationProgressLabel,
+  installationPercent,
 } from './installation-progress';
 import { RecognitionFeaturesStore } from './recognition-features.store';
 import {

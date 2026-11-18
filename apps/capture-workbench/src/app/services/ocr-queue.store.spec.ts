@@ -12,7 +12,7 @@ import type { DesktopCaptureOperation } from './desktop-runtime-client.service';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
 import { DesktopCaptureService } from './desktop-capture.service';
 import { DesktopFormattingService } from './desktop-formatting.service';
-import { isFeatureReady, type RecognitionFeature } from './desktop-workspace.selectors';
+import { isFeatureReady, type RecognitionFeature } from './recognition-requirements';
 import { LibraryStore } from './library.store';
 import { HistoryListStore } from './history-list.store';
 import { RecognitionFeaturesStore } from './recognition-features.store';

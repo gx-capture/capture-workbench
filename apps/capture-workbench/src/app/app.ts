@@ -14,7 +14,7 @@ import { AsrQueueStore } from './services/asr-queue.store';
 import { DesktopCaptureService, type DesktopCaptureHost } from './services/desktop-capture.service';
 import { DesktopLibraryService, type DesktopSourceSelectionBatch } from './services/desktop-library.service';
 import { DesktopRuntimeClientService } from './services/desktop-runtime-client.service';
-import { errorMessage } from './services/desktop-workspace.selectors';
+import { errorMessage } from './services/desktop-errors';
 import { LibraryStore } from './services/library.store';
 import { OcrQueueStore } from './services/ocr-queue.store';
 import { RecognitionFeaturesStore } from './services/recognition-features.store';

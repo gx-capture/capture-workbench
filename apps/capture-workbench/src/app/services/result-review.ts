@@ -2,13 +2,8 @@ import type { RawCapture } from '@gx-capture/capture-workbench-ui';
 import type { DesktopLibraryDetail, DesktopLibraryEdits } from '../contracts';
 import { desktopMessages } from '../i18n/desktop-messages';
 import { detailDurationMs } from './asr-queue';
-import {
-  formatRecordingTime,
-  isRecordingMediaType,
-  isPdfMediaType,
-  transcriptLines,
-  type TranscriptLine,
-} from './desktop-workspace.selectors';
+import { formatRecordingTime, transcriptLines, type TranscriptLine } from './recording-transcript';
+import { isRecordingMediaType, isPdfMediaType } from './capture-media-types';
 import { groupRawOcrPages, type OcrPageText } from './ocr-queue';
 
 type CaptureSpeaker = NonNullable<RawCapture['speakers']>[number];

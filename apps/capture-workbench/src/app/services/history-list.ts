@@ -3,7 +3,7 @@ import { describeAsrDocument } from './asr-queue';
 import type { CaptureUserStatus } from './capture-user-status';
 import { describeOcrDocument } from './ocr-queue';
 import type { DesktopCaptureOperation } from './desktop-runtime-client.service';
-import { isRecordingMediaType } from './desktop-workspace.selectors';
+import { isRecordingMediaType } from './capture-media-types';
 
 export interface HistoryRow {
   readonly documentId: string;

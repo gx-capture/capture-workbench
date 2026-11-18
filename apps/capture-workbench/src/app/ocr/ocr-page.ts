@@ -20,7 +20,7 @@ import {
   captureStatusChipVariant,
   type CaptureUserStatus,
 } from '../services/capture-user-status';
-import { formatApproximateBytes } from '../services/desktop-workspace.selectors';
+import { formatApproximateBytes } from '../services/desktop-formatting.service';
 import { OcrQueueStore } from '../services/ocr-queue.store';
 import { RecognitionFeaturesStore } from '../services/recognition-features.store';
 

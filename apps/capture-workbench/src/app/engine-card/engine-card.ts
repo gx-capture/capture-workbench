@@ -14,7 +14,7 @@ import {
 import { HlmButtonImports } from '@spartan-ng/helm/button';
 import { HlmCardImports } from '@spartan-ng/helm/card';
 import { desktopLocale, desktopMessages } from '../i18n/desktop-messages';
-import { formatApproximateBytes } from '../services/desktop-workspace.selectors';
+import { formatApproximateBytes } from '../services/desktop-formatting.service';
 import { InstallProgress } from './install-progress';
 
 /**

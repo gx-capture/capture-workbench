@@ -47,18 +47,16 @@ import {
 } from './desktop-runtime-client.service';
 import {
   committedTerminalStatus,
-  errorMessage,
   hasCommittedTerminalData,
   isActiveOneShotOperation,
   isActiveStreaming,
-  isRecordingMediaType,
-  isFeatureReady,
   isOcrCheckpoint,
-  isPdfMediaType,
-  selectFeatureMissing,
   terminalLibraryStatus,
   terminalStage,
-} from './desktop-workspace.selectors';
+} from './capture-operation-status';
+import { errorMessage } from './desktop-errors';
+import { isRecordingMediaType, isPdfMediaType } from './capture-media-types';
+import { isFeatureReady, selectFeatureMissing } from './recognition-requirements';
 import { desktopMessages } from '../i18n/desktop-messages';
 
 interface ActiveCapture {

@@ -5,11 +5,9 @@ import type {
 import type { DesktopLibraryDetail, DesktopLibrarySummary } from '../contracts';
 import { desktopMessages } from '../i18n/desktop-messages';
 import type { CaptureUserStatus } from './capture-user-status';
-import {
-  formatRecordingTime,
-  isActiveStreaming,
-  isRecordingMediaType,
-} from './desktop-workspace.selectors';
+import { formatRecordingTime } from './recording-transcript';
+import { isActiveStreaming } from './capture-operation-status';
+import { isRecordingMediaType } from './capture-media-types';
 import { playbackUnavailable } from './recording-playback';
 import { inImportOrder } from './ocr-queue';
 

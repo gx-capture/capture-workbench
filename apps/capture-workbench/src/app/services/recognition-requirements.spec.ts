@@ -1,19 +1,17 @@
+// Verifies requirement selection and removal guards for recognition features.
 import type { RuntimeRequirement } from '@gx-capture/capture-workbench-ui';
 import type { DesktopLibrarySummary } from '../contracts';
 import { setDesktopLocale } from '../i18n/desktop-messages';
 import {
   captureNeedsRequirement,
   FEATURE_REQUIREMENTS,
-  formatApproximateBytes,
-  installationPercent,
   isFeatureReady,
   selectFeatureMissing,
   selectInstallableRequirements,
   selectRecognitionRequirements,
   selectRequestedMissing,
   selectSpeechPack,
-  uninstallFailureMessage,
-} from './desktop-workspace.selectors';
+} from './recognition-requirements';
 
 function requirement(
   requirementId: RuntimeRequirement['requirementId'],
@@ -134,49 +132,5 @@ describe('captureNeedsRequirement', () => {
         document('awaiting_confirmation', 'application/pdf'),
       ]),
     ).toBe(false);
-  });
-});
-
-describe('uninstallFailureMessage', () => {
-  beforeEach(() => setDesktopLocale('zh-TW'));
-
-  it('maps the desktop bridge HTTP status and redacts anything else', () => {
-    const rejected = (status: number) =>
-      new Error(`Capture Runtime request was rejected with HTTP ${status}.`);
-    expect(uninstallFailureMessage(rejected(409))).toBe(
-      '安裝或辨識還在進行，請稍後再移除',
-    );
-    expect(uninstallFailureMessage(rejected(422))).toBe('這項功能無法從這裡移除');
-    expect(uninstallFailureMessage(rejected(404))).toBe('找不到這項功能');
-    expect(uninstallFailureMessage(new Error('Bearer secret-token failed'))).toBe(
-      'Bearer [redacted] failed',
-    );
-  });
-});
-
-describe('formatApproximateBytes', () => {
-  afterEach(() => setDesktopLocale('zh-TW'));
-
-  it('follows the app language and returns null when the size is unknown', () => {
-    setDesktopLocale('zh-TW');
-    expect(formatApproximateBytes(2_800_000_000)).toBe('約 2.8 GB');
-    setDesktopLocale('en');
-    expect(formatApproximateBytes(144_000_000)).toBe('~144 MB');
-    expect(formatApproximateBytes(null)).toBeNull();
-  });
-});
-
-describe('installationPercent', () => {
-  it('computes percentage from downloadedBytes / downloadBytes and falls back to progress', () => {
-    expect(
-      installationPercent({
-        progress: 0.1,
-        downloadedBytes: 1_400_000_000,
-        downloadBytes: 2_800_000_000,
-      }),
-    ).toBe(50);
-    expect(installationPercent({ progress: 1 / 3 })).toBe(33);
-    expect(installationPercent({ progress: 1.2 })).toBe(100);
-    expect(installationPercent(null)).toBe(0);
   });
 });

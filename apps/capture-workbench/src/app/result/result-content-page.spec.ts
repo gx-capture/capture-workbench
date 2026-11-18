@@ -2,7 +2,7 @@ import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import type { DesktopLibraryDetail } from '../contracts';
 import { setDesktopLocale } from '../i18n/desktop-messages';
-import type { TranscriptLine } from '../services/desktop-workspace.selectors';
+import type { TranscriptLine } from '../services/recording-transcript';
 import type { OcrPageText } from '../services/ocr-queue';
 import type { ResultSeekRequest } from '../services/result-review';
 import {

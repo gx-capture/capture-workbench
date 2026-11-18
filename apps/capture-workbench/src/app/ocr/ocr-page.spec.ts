@@ -8,7 +8,7 @@ import { OcrQueueStore } from '../services/ocr-queue.store';
 import { DesktopLibraryService } from '../services/desktop-library.service';
 import { DesktopRuntimeClientService } from '../services/desktop-runtime-client.service';
 import { DesktopCaptureService } from '../services/desktop-capture.service';
-import { isFeatureReady, type RecognitionFeature } from '../services/desktop-workspace.selectors';
+import { isFeatureReady, type RecognitionFeature } from '../services/recognition-requirements';
 import { LibraryStore } from '../services/library.store';
 import { RecognitionFeaturesStore } from '../services/recognition-features.store';
 import type { DesktopLibrarySummary } from '../contracts';

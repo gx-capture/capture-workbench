@@ -18,12 +18,7 @@ import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
 import { DesktopInstallationService } from './desktop-installation.service';
 import {
   activeModelOption as selectActiveModelOption,
-  errorMessage,
-  installationPercent,
-  uninstallFailureMessage,
   isFeatureReady,
-  modelInstallationPercent,
-  modelInstallationPhase,
   modelSelectionRequired as selectModelSelectionRequired,
   type RecognitionFeature,
   selectFeatureMissing,
@@ -31,7 +26,9 @@ import {
   selectRecognitionRequirements,
   selectRequestedMissing,
   selectSpeechPack,
-} from './desktop-workspace.selectors';
+} from './recognition-requirements';
+import { errorMessage, uninstallFailureMessage } from './desktop-errors';
+import { installationPercent, modelInstallationPercent, modelInstallationPhase } from './installation-progress';
 import { desktopMessages } from '../i18n/desktop-messages';
 
 export const FIRST_RUN_DISMISSED_STORAGE_KEY =
