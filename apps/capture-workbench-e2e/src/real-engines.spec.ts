@@ -1,5 +1,5 @@
 /**
- * Real-engines localhost E2E smoke (Issue #418, Slice 3 Part A).
+ * Real-engines localhost E2E smoke (Issue #418, Slice 3).
  *
  * Drives the real Workbench UI (`capture-workbench:serve`) against the real
  * headless host (`capture-workbench-dev-host`) and the staged product (or
@@ -8,7 +8,9 @@
  *   1. First-run installation via UI (`/ocr` first-run card & `/settings/engines`),
  *      covering cancel + retry and reload re-attachment without duplicate installs.
  *   2. PDF and image OCR to `/history/:id/content`, verifying normalized text
- *      anchors, rendered source, `library_get` provenance, and `/settings/diagnostics`.
+ *      anchors, rendered source, `library_get` provenance (and exact OCR device
+ *      when `CAPTURE_REAL_ENGINES_EXPECTED_OCR_DEVICE` is set), and
+ *      `/settings/diagnostics`.
  *   3. Structuring model selection on `/settings/diagnostics`, audio transcription
  *      with speaker diarization and structuring on `/asr`, verifying the speech
  *      provenance of the installed pack (`tea-asr-1.1` on `cuda` with the NVIDIA
@@ -17,15 +19,25 @@
  *   4. Viewing, editing with a synthetic marker, reload persistence, exporting to
  *      disk, and restoring edits.
  *   5. Stopping the launcher (host + runtime + workers) and restarting on the same
- *      `--app-data` directory, verifying features, model, documents, restored
- *      state, and active edits persist without re-installing.
+ *      `--app-data` directory, verifying features, model, all three documents,
+ *      restored PDF state, and active ASR edit persist without re-installing.
+ *   6. Deleting the image document and the recording from `/history`
+ *      (`history-row-delete` -> `history-delete-dialog` /
+ *      `history-delete-confirm`), verifying UI removal, absence from
+ *      `library_list`, and `Capture library document was not found.` from
+ *      `library_get`.
+ *   7. Stopping and restarting the launcher once more on the same `--app-data`
+ *      directory, verifying the PDF document still opens and both deleted
+ *      document IDs remain absent from `library_list` and `library_get`.
  *
  * Explicit per-stage timeout placeholders (to be measured by the first real run):
- *   - 01-install-engines:      45 minutes (cold real downloads; much faster with cache)
- *   - 02-ocr-pdf-and-image:    10 minutes
- *   - 03-asr-and-structuring:  35 minutes (includes Ollama structuring model pull + ASR + structuring)
- *   - 04-edit-restore-export:   3 minutes
- *   - 05-restart-persistence:   5 minutes
+ *   - 01-install-engines:         45 minutes (cold real downloads; much faster with cache)
+ *   - 02-ocr-pdf-and-image:       10 minutes
+ *   - 03-asr-and-structuring:     35 minutes (includes Ollama structuring model pull + ASR + structuring)
+ *   - 04-edit-restore-and-export:  3 minutes
+ *   - 05-restart-persistence:      5 minutes
+ *   - 06-delete-documents:         2 minutes
+ *   - 07-restart-after-deletion:   5 minutes
  *
  * Environment variables (missing/invalid entries are reported together upfront):
  *   Required media & expectations:
@@ -39,13 +51,22 @@
  *   - CAPTURE_REAL_ENGINES_APP_DATA (or CAPTURE_REAL_MEDIA_APP_DATA): empty/dedicated absolute directory outside %APPDATA%/%LOCALAPPDATA%
  *   - CAPTURE_REAL_ENGINES_TEMP_DIR: explicit temp directory for host/runtime/exports
  *   - CAPTURE_REAL_ENGINES_MODEL_OPTION_ID: e.g. `qwen3.5-0.8b-v1`, `qwen3.5-2b-v1`, `qwen3.5-4b-v1`
- *   Optional overrides:
+ *   Optional overrides & checks:
+ *   - CAPTURE_REAL_ENGINES_EXPECTED_OCR_DEVICE: `windowsml-dml` or `cpu`; when set,
+ *     both PDF and image extraction provenance and diagnostics must match exactly.
  *   - CAPTURE_REAL_ENGINES_REUSE_INSTALLED=1: the app-data directory already holds the
  *     recognition features from an earlier run; stage 1 only checks they are ready
- *     and can still pass. Evidence `proven` records whether this run proved
- *     installation, cancel-and-retry, and model installation.
+ *     and can still pass.
  *   - CAPTURE_REAL_ENGINES_RUNTIME_MANIFEST & CAPTURE_REAL_ENGINES_RUNTIME_EXECUTABLE (both or neither; default is staged product runtime)
  *   - CAPTURE_SMOKE_WORKER_MIRROR_OPT_IN / CAPTURE_SMOKE_WORKER_MIRROR_URL
+ *
+ * Evidence `proven` records what this run actually proved (a passed stage alone
+ * does not prove optional or reused capabilities):
+ *   - `installation`: true when stage 1 installed the recognition units from scratch
+ *   - `cancelAndRetry`: true when stage 1 cancelled and retried a real unit install
+ *   - `modelInstallation`: true when stage 3 installed the Ollama structuring model
+ *   - `ocrDevice`: true when `CAPTURE_REAL_ENGINES_EXPECTED_OCR_DEVICE` was set and matched
+ *   - `deletion`: true when both UI deletions and the post-restart absence check passed
  *
  * The runtime runs as the product runs it. The host starts it with the product's
  * launch policy (`launch_policy.rs`, `constants/launch.rs`), which clears the
@@ -103,8 +124,10 @@ const OCR_STAGE_TIMEOUT_MS = 10 * 60_000; // measured by the first real run
 const ASR_STAGE_TIMEOUT_MS = 35 * 60_000; // measured by the first real run
 const MODEL_INSTALL_TIMEOUT_MS = 25 * 60_000; // measured by the first real run
 const EDIT_EXPORT_STAGE_TIMEOUT_MS = 3 * 60_000; // measured by the first real run
+const DELETE_STAGE_TIMEOUT_MS = 2 * 60_000;
 const RESTART_STAGE_TIMEOUT_MS = 5 * 60_000; // measured by the first real run
 const CANCEL_CLICK_TIMEOUT_MS = 10_000;
+const ACTION_TIMEOUT_MS = 15_000;
 // The application itself waits three minutes (DESKTOP_RUNTIME_READY_TIMEOUT_MS):
 // with the features installed, readiness includes probing their workers.
 const RUNTIME_READY_TIMEOUT_MS = 200_000;
@@ -114,6 +137,8 @@ const ALL_RECOGNITION_UNITS = [
   'speech-recognition',
   'speaker-diarization',
 ] as const;
+
+type ExpectedOcrDevice = 'windowsml-dml' | 'cpu';
 
 const SHA256_DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/u;
 
@@ -152,6 +177,7 @@ interface SmokeConfig {
   readonly imageExpectation: RealTextExpectation;
   readonly audioPath: string;
   readonly audioExpectation: AudioExpectation;
+  readonly expectedOcrDevice?: ExpectedOcrDevice;
   readonly appDataDir: string;
   readonly tempDir: string;
   readonly modelOptionId: string;
@@ -213,6 +239,8 @@ interface SmokeProven {
   installation: boolean;
   cancelAndRetry: boolean;
   modelInstallation: boolean;
+  ocrDevice: boolean;
+  deletion: boolean;
 }
 
 interface ProvenanceSummary {
@@ -257,6 +285,11 @@ interface SmokeEvidence {
     readonly oldPortsClosed: boolean;
     readonly persistedDocumentCount: number;
     readonly featuresReadyWithoutReinstall: boolean;
+  };
+  restartAfterDeletion?: {
+    readonly oldPortsClosed: boolean;
+    readonly remainingDocumentCount: number;
+    readonly deletedIdsAbsent: boolean;
   };
 }
 
@@ -412,6 +445,18 @@ async function resolveSmokeConfig(): Promise<SmokeConfig> {
     );
   }
 
+  const expectedOcrDeviceRaw = readEnvFirst(['CAPTURE_REAL_ENGINES_EXPECTED_OCR_DEVICE']);
+  let expectedOcrDevice: ExpectedOcrDevice | undefined;
+  if (expectedOcrDeviceRaw !== undefined) {
+    if (expectedOcrDeviceRaw === 'windowsml-dml' || expectedOcrDeviceRaw === 'cpu') {
+      expectedOcrDevice = expectedOcrDeviceRaw;
+    } else {
+      missingOrInvalid.push(
+        'CAPTURE_REAL_ENGINES_EXPECTED_OCR_DEVICE must be "windowsml-dml" or "cpu"',
+      );
+    }
+  }
+
   const appDataDir = readEnvFirst([
     'CAPTURE_REAL_ENGINES_APP_DATA',
     'CAPTURE_REAL_MEDIA_APP_DATA',
@@ -499,6 +544,7 @@ async function resolveSmokeConfig(): Promise<SmokeConfig> {
     imageExpectation,
     audioPath: audioPath!,
     audioExpectation,
+    ...(expectedOcrDevice !== undefined ? { expectedOcrDevice } : {}),
     appDataDir: appDataDir!,
     tempDir: tempDir!,
     modelOptionId: modelOptionId!,
@@ -682,6 +728,29 @@ function toProvenanceSummary(provenance: EngineProvenance): ProvenanceSummary {
   };
 }
 
+function assertOcrExtractionProvenance(
+  detail: DesktopLibraryDetailRecord,
+  label: string,
+  expectedOcrDevice?: ExpectedOcrDevice,
+): ProvenanceSummary {
+  const extraction = detail.raw?.extractionEngine;
+  assert.ok(extraction, `${label} record must include extractionEngine provenance.`);
+  assert.equal(extraction.engine, 'windowsml-ocr');
+  assert.ok(
+    extraction.device === 'windowsml-dml' || extraction.device === 'cpu',
+    `Unexpected OCR device: ${String(extraction.device)}`,
+  );
+  if (expectedOcrDevice !== undefined) {
+    assert.equal(
+      extraction.device,
+      expectedOcrDevice,
+      `${label} OCR device must be ${expectedOcrDevice}, got ${String(extraction.device)}.`,
+    );
+  }
+  assert.match(extraction.digest, SHA256_DIGEST_PATTERN);
+  return toProvenanceSummary(extraction);
+}
+
 async function queueFileAndAwaitCompletion(
   page: Page,
   options: {
@@ -705,7 +774,7 @@ async function queueFileAndAwaitCompletion(
   expect(queueRes.status()).toBe(200);
   expect(await queueRes.json()).toEqual({ queued: 1 });
 
-  await page.getByTestId(options.chooseButtonTestId).click();
+  await page.getByTestId(options.chooseButtonTestId).click({ timeout: ACTION_TIMEOUT_MS });
 
   let newDocId: string | undefined;
   await expect
@@ -752,6 +821,66 @@ async function queueFileAndAwaitCompletion(
   return newDocId;
 }
 
+async function assertDocumentAbsentFromHost(
+  page: Page,
+  documentId: string,
+  label: string,
+): Promise<void> {
+  const list = await invokeHost<readonly DesktopLibrarySummaryRecord[]>(page, 'library_list', {
+    request: { query: '', status: '' },
+  });
+  assert.ok(
+    !list.some((item) => item.documentId === documentId),
+    `library_list must not contain deleted ${label} document.`,
+  );
+  let rejectionMessage: string | undefined;
+  try {
+    await invokeHost(page, 'library_get', { request: { documentId } });
+  } catch (error) {
+    rejectionMessage = error instanceof Error ? error.message : String(error);
+  }
+  assert.ok(
+    rejectionMessage !== undefined
+      && rejectionMessage.includes('Capture library document was not found.'),
+    `library_get must fail with "Capture library document was not found." for deleted ${label} document, got: ${String(rejectionMessage)}`,
+  );
+}
+
+async function deleteDocumentFromHistoryList(
+  page: Page,
+  baseUrl: string,
+  documentId: string,
+  label: string,
+): Promise<void> {
+  await page.goto(`${baseUrl}/history`);
+  await waitForRuntimeReady(page);
+
+  const row = page.locator(
+    `[data-testid="history-row"][data-document-id="${documentId}"]`,
+  );
+  await expect(row).toBeVisible({ timeout: 15_000 });
+  const beforeDetail = await invokeHost<DesktopLibraryDetailRecord>(page, 'library_get', {
+    request: { documentId },
+  });
+  assert.equal(
+    beforeDetail.documentId,
+    documentId,
+    `library_get must succeed for ${label} document before deletion.`,
+  );
+
+  const deleteBtn = row.getByTestId('history-row-delete');
+  await expect(deleteBtn).toBeEnabled({ timeout: 15_000 });
+  await deleteBtn.click({ timeout: ACTION_TIMEOUT_MS });
+
+  const dialog = page.getByTestId('history-delete-dialog');
+  await expect(dialog).toBeVisible({ timeout: 15_000 });
+  await page.getByTestId('history-delete-confirm').click({ timeout: ACTION_TIMEOUT_MS });
+
+  await expect(dialog).toHaveCount(0, { timeout: 15_000 });
+  await expect(row).toHaveCount(0, { timeout: 15_000 });
+  await assertDocumentAbsentFromHost(page, documentId, label);
+}
+
 async function verifyDiagnosticsProvenance(
   page: Page,
   documentId: string,
@@ -769,6 +898,7 @@ async function verifyDiagnosticsProvenance(
   await expect(extractionEl).toHaveAttribute('data-digest', expectedExtraction.digest);
   if (expectedExtraction.device) {
     await expect(extractionEl).toHaveAttribute('data-device', expectedExtraction.device);
+    await expect(extractionEl).toContainText(expectedExtraction.device);
   }
 
   if (expectedStructuring) {
@@ -808,6 +938,8 @@ test('runs full real-engine capture, editing, export, and restart journey on loc
     installation: false,
     cancelAndRetry: false,
     modelInstallation: false,
+    ocrDevice: false,
+    deletion: false,
   };
   const evidence: SmokeEvidence = {
     evidenceKind: 'real-engines-localhost-v1',
@@ -1022,18 +1154,14 @@ test('runs full real-engine capture, editing, export, and restart journey on loc
         request: { documentId: pdfDocId },
       });
       assertDocumentCheckpoint(pdfDetail, 'PDF');
-      const pdfExtraction = pdfDetail.raw?.extractionEngine;
-      assert.ok(pdfExtraction, 'PDF record must include extractionEngine provenance.');
-      assert.equal(pdfExtraction.engine, 'windowsml-ocr');
-      assert.ok(
-        pdfExtraction.device === 'windowsml-dml' || pdfExtraction.device === 'cpu',
-        `Unexpected OCR device: ${String(pdfExtraction.device)}`,
+      const pdfExtractionSummary = assertOcrExtractionProvenance(
+        pdfDetail,
+        'PDF',
+        config.expectedOcrDevice,
       );
-      assert.match(pdfExtraction.digest, SHA256_DIGEST_PATTERN);
       const pdfSegments = pdfDetail.raw?.segments ?? [];
       assert.ok(pdfSegments.length > 0, 'PDF record must contain raw segments.');
 
-      const pdfExtractionSummary = toProvenanceSummary(pdfExtraction);
       await verifyDiagnosticsProvenance(page, pdfDocId, pdfExtractionSummary);
 
       evidence.provenance = {
@@ -1061,7 +1189,7 @@ test('runs full real-engine capture, editing, export, and restart journey on loc
       const imageRow = page.locator(
         `[data-testid="ocr-queue-row"][data-document-id="${imageDocId}"]`,
       );
-      await imageRow.getByTestId('ocr-row-view').click();
+      await imageRow.getByTestId('ocr-row-view').click({ timeout: ACTION_TIMEOUT_MS });
       await expect(page).toHaveURL(new RegExp(`/history/${imageDocId}/content$`));
 
       const sourceImage = page.getByTestId('result-source-image');
@@ -1083,18 +1211,14 @@ test('runs full real-engine capture, editing, export, and restart journey on loc
         request: { documentId: imageDocId },
       });
       assertDocumentCheckpoint(imageDetail, 'Image');
-      const imageExtraction = imageDetail.raw?.extractionEngine;
-      assert.ok(imageExtraction, 'Image record must include extractionEngine provenance.');
-      assert.equal(imageExtraction.engine, 'windowsml-ocr');
-      assert.ok(
-        imageExtraction.device === 'windowsml-dml' || imageExtraction.device === 'cpu',
-        `Unexpected OCR device: ${String(imageExtraction.device)}`,
+      const imageExtractionSummary = assertOcrExtractionProvenance(
+        imageDetail,
+        'Image',
+        config.expectedOcrDevice,
       );
-      assert.match(imageExtraction.digest, SHA256_DIGEST_PATTERN);
       const imageSegments = imageDetail.raw?.segments ?? [];
       assert.ok(imageSegments.length > 0, 'Image record must contain raw segments.');
 
-      const imageExtractionSummary = toProvenanceSummary(imageExtraction);
       await verifyDiagnosticsProvenance(page, imageDocId, imageExtractionSummary);
 
       evidence.provenance = {
@@ -1106,6 +1230,10 @@ test('runs full real-engine capture, editing, export, and restart journey on loc
           blockCount: imageDetail.result?.blocks?.length ?? 0,
         },
       };
+
+      if (config.expectedOcrDevice !== undefined) {
+        proven.ocrDevice = true;
+      }
     });
 
     // -------------------------------------------------------------------------
@@ -1295,11 +1423,11 @@ test('runs full real-engine capture, editing, export, and restart journey on loc
           .toBe(sha256(`${originalPdfPage1Text}\n${ocrEditMarker}`));
         await expect(page.getByTestId('result-page-edited')).toBeVisible();
 
-        await page.getByTestId('result-nav-export').click();
+        await page.getByTestId('result-nav-export').click({ timeout: ACTION_TIMEOUT_MS });
         await expect(page).toHaveURL(new RegExp(`/history/${pdfDocId}/export$`));
         const [ocrDownload] = await Promise.all([
           page.waitForEvent('download', { timeout: 30_000 }),
-          page.getByTestId('result-export-text').click(),
+          page.getByTestId('result-export-text').click({ timeout: ACTION_TIMEOUT_MS }),
         ]);
         const ocrExportPath = join(exportTempDir, 'ocr-edited.txt');
         await ocrDownload.saveAs(ocrExportPath);
@@ -1311,8 +1439,8 @@ test('runs full real-engine capture, editing, export, and restart journey on loc
           'Exported OCR text file must reflect the edited marker.',
         );
 
-        await page.getByTestId('result-nav-content').click();
-        await page.getByTestId('result-page-restore').click();
+        await page.getByTestId('result-nav-content').click({ timeout: ACTION_TIMEOUT_MS });
+        await page.getByTestId('result-page-restore').click({ timeout: ACTION_TIMEOUT_MS });
         await expect(page.getByTestId('result-page-edited')).toHaveCount(0, { timeout: 15_000 });
         await expect
           .poll(async () => sha256(await pageTextArea.inputValue()), {
@@ -1338,7 +1466,7 @@ test('runs full real-engine capture, editing, export, and restart journey on loc
         );
         await expect(firstRow).toBeVisible({ timeout: 15_000 });
         await firstRow.hover();
-        await firstRow.getByTestId('result-line-edit').click();
+        await firstRow.getByTestId('result-line-edit').click({ timeout: ACTION_TIMEOUT_MS });
 
         const lineInput = firstRow.getByTestId('result-line-input');
         await lineInput.fill(`${originalAsrLine0Text} ${asrEditMarker}`);
@@ -1368,11 +1496,11 @@ test('runs full real-engine capture, editing, export, and restart journey on loc
           .toBe(true);
         await expect(firstRow.getByTestId('result-line-edited')).toBeVisible();
 
-        await page.getByTestId('result-nav-export').click();
+        await page.getByTestId('result-nav-export').click({ timeout: ACTION_TIMEOUT_MS });
         await expect(page).toHaveURL(new RegExp(`/history/${audioDocId}/export$`));
         const [asrDownload] = await Promise.all([
           page.waitForEvent('download', { timeout: 30_000 }),
-          page.getByTestId('result-export-srt').click(),
+          page.getByTestId('result-export-srt').click({ timeout: ACTION_TIMEOUT_MS }),
         ]);
         const asrExportPath = join(exportTempDir, 'asr-edited.srt');
         await asrDownload.saveAs(asrExportPath);
@@ -1462,6 +1590,85 @@ test('runs full real-engine capture, editing, export, and restart journey on loc
         oldPortsClosed: true,
         persistedDocumentCount: 3,
         featuresReadyWithoutReinstall: true,
+      };
+    });
+
+    // -------------------------------------------------------------------------
+    // Stage 6: Delete image and recording from /history
+    // -------------------------------------------------------------------------
+    await runStage(stages, '06-delete-documents', DELETE_STAGE_TIMEOUT_MS, async () => {
+      await deleteDocumentFromHistoryList(page, launcher.baseUrl, imageDocId, 'image');
+      await deleteDocumentFromHistoryList(page, launcher.baseUrl, audioDocId, 'recording');
+    });
+
+    // -------------------------------------------------------------------------
+    // Stage 7: Stop and restart launcher once more after deletion
+    // -------------------------------------------------------------------------
+    await runStage(stages, '07-restart-after-deletion', RESTART_STAGE_TIMEOUT_MS, async () => {
+      const previousPort = launcher.port;
+      const previousDevHostPort = launcher.devHostPort;
+      await launcher.stop();
+      await expect
+        .poll(() => canConnect(previousDevHostPort), { timeout: 15_000, intervals: [250] })
+        .toBe(false);
+      await expect
+        .poll(() => canConnect(previousPort), { timeout: 15_000, intervals: [250] })
+        .toBe(false);
+      activeLauncher = undefined;
+
+      launcher = await startHostWithConfig();
+
+      await page.goto(`${launcher.baseUrl}/history`);
+      await waitForRuntimeReady(page);
+      const pdfRow = page.locator(
+        `[data-testid="history-row"][data-document-id="${pdfDocId}"]`,
+      );
+      await expect(pdfRow).toBeVisible({ timeout: 15_000 });
+      await expect(pdfRow).toHaveAttribute('data-user-status', 'done');
+
+      for (const [deletedId, label] of [
+        [imageDocId, 'image'],
+        [audioDocId, 'recording'],
+      ] as const) {
+        const deletedRow = page.locator(
+          `[data-testid="history-row"][data-document-id="${deletedId}"]`,
+        );
+        await expect(deletedRow).toHaveCount(0);
+        await assertDocumentAbsentFromHost(page, deletedId, `${label} (after restart)`);
+      }
+
+      const remainingList = await invokeHost<readonly DesktopLibrarySummaryRecord[]>(
+        page,
+        'library_list',
+        { request: { query: '', status: '' } },
+      );
+      // The app data may be reused across runs, so only this run's documents count.
+      const runDocumentIds: readonly string[] = [pdfDocId, imageDocId, audioDocId];
+      const remainingRunIds = remainingList
+        .map((item) => item.documentId)
+        .filter((documentId) => runDocumentIds.includes(documentId));
+      assert.deepEqual(
+        remainingRunIds,
+        [pdfDocId],
+        'Of this run\'s documents only the PDF must remain after deletion.',
+      );
+
+      // Kept PDF document still opens with its restored state
+      await page.goto(`${launcher.baseUrl}/history/${pdfDocId}/content`);
+      await waitForRuntimeReady(page);
+      await expect
+        .poll(async () => sha256(await page.getByTestId('result-page-text').inputValue()), {
+          timeout: 15_000,
+          message: 'result-page-text must match the restored page after post-deletion restart.',
+        })
+        .toBe(sha256(originalPdfPage1Text));
+      await expect(page.getByTestId('result-page-edited')).toHaveCount(0);
+
+      proven.deletion = true;
+      evidence.restartAfterDeletion = {
+        oldPortsClosed: true,
+        remainingDocumentCount: remainingRunIds.length,
+        deletedIdsAbsent: true,
       };
     });
 
