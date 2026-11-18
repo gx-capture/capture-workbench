@@ -1,6 +1,6 @@
 /** Retired names in tracked text and paths are a line-number-free ratchet. */
 import { lstatSync, readFileSync } from 'node:fs';
-import { matchesGlob, resolve } from 'node:path';
+import { posix, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   changedPaths,
@@ -92,7 +92,7 @@ export function collectRetiredNames(
       if (entry.match !== 'substring-ignore-case' && !file.includes(entry.name) && !source.includes(entry.name)) {
         continue;
       }
-      if (entry.allowed.some(({ glob }) => matchesGlob(file, glob))) continue;
+      if (entry.allowed.some(({ glob }) => posix.matchesGlob(file, glob))) continue;
       const key = JSON.stringify([entry.name, file]);
       for (const input of [file, source]) {
         while (regex.test(input)) keys.push(key);
