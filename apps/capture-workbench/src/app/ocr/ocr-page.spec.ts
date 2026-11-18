@@ -7,7 +7,7 @@ import { setDesktopLocale } from '../i18n/desktop-messages';
 import { OcrQueueStore } from '../services/ocr-queue.store';
 import { DesktopLibraryService } from '../services/desktop-library.service';
 import { DesktopRuntimeClientService } from '../services/desktop-runtime-client.service';
-import { DesktopWorkspaceCaptureService } from '../services/desktop-workspace-capture.service';
+import { DesktopCaptureService } from '../services/desktop-capture.service';
 import { isFeatureReady, type RecognitionFeature } from '../services/desktop-workspace.selectors';
 import { DesktopWorkspaceStore } from '../services/desktop-workspace.store';
 import { RecognitionFeaturesStore } from '../services/recognition-features.store';
@@ -74,7 +74,7 @@ describe('OcrPage queue', () => {
           provide: DesktopWorkspaceStore,
           useValue: { allDocuments: signal(documents), refreshDocuments: vi.fn() },
         },
-        DesktopWorkspaceCaptureService,
+        DesktopCaptureService,
         OcrQueueStore,
       ],
     });
@@ -158,7 +158,7 @@ describe('OcrPage queue', () => {
             refreshDocuments: vi.fn(),
           },
         },
-        DesktopWorkspaceCaptureService,
+        DesktopCaptureService,
         OcrQueueStore,
       ],
     });
@@ -221,7 +221,7 @@ describe('OcrPage queue', () => {
             refreshDocuments: vi.fn(),
           },
         },
-        DesktopWorkspaceCaptureService,
+        DesktopCaptureService,
         OcrQueueStore,
       ],
     });
@@ -284,7 +284,7 @@ describe('OcrPage queue', () => {
           provide: DesktopWorkspaceStore,
           useValue: { allDocuments: signal(documents), refreshDocuments: vi.fn() },
         },
-        DesktopWorkspaceCaptureService,
+        DesktopCaptureService,
         OcrQueueStore,
       ],
     });

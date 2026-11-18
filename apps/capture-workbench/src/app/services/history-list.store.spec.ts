@@ -5,7 +5,7 @@ import { of, Subject } from 'rxjs';
 import type { DesktopLibrarySummary } from '../contracts';
 import { desktopMessages, setDesktopLocale } from '../i18n/desktop-messages';
 import { DesktopLibraryService } from './desktop-library.service';
-import { DesktopWorkspaceCaptureService } from './desktop-workspace-capture.service';
+import { DesktopCaptureService } from './desktop-capture.service';
 import { DesktopWorkspaceStore } from './desktop-workspace.store';
 import { HistoryListStore } from './history-list.store';
 
@@ -23,7 +23,7 @@ describe('HistoryListStore', () => {
     TestBed.configureTestingModule({ providers: [
       { provide: DesktopWorkspaceStore, useValue: workspace },
       { provide: DesktopLibraryService, useValue: library },
-      { provide: DesktopWorkspaceCaptureService, useValue: { busyIds, oneShotOperations: signal(new Map()), recordingOperations: signal(new Map()), hasActiveCapture: () => false } },
+      { provide: DesktopCaptureService, useValue: { busyIds, oneShotOperations: signal(new Map()), recordingOperations: signal(new Map()), hasActiveCapture: () => false } },
       { provide: Router, useValue: router },
     ] });
     return { store: TestBed.inject(HistoryListStore), workspace, library, router, busyIds };

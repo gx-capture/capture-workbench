@@ -14,8 +14,8 @@ import { desktopMessages, setDesktopLocale } from '../i18n/desktop-messages';
 import { AsrQueueStore } from './asr-queue.store';
 import { DesktopLibraryService, type DesktopSourceSelection } from './desktop-library.service';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
-import { DesktopWorkspaceCaptureService } from './desktop-workspace-capture.service';
-import { DesktopWorkspaceFormattingService } from './desktop-workspace-formatting.service';
+import { DesktopCaptureService } from './desktop-capture.service';
+import { DesktopFormattingService } from './desktop-formatting.service';
 import { DesktopWorkspaceStore } from './desktop-workspace.store';
 import { RecognitionFeaturesStore } from './recognition-features.store';
 
@@ -196,10 +196,10 @@ describe('AsrQueueStore', () => {
         { provide: DesktopLibraryService, useValue: library },
         { provide: DesktopRuntimeClientService, useValue: runtime },
         options.realCapture
-          ? DesktopWorkspaceCaptureService
-          : { provide: DesktopWorkspaceCaptureService, useValue: capture },
+          ? DesktopCaptureService
+          : { provide: DesktopCaptureService, useValue: capture },
         { provide: RecognitionFeaturesStore, useValue: features },
-        { provide: DesktopWorkspaceFormattingService, useValue: formatting },
+        { provide: DesktopFormattingService, useValue: formatting },
         { provide: Router, useValue: router },
       ],
     });

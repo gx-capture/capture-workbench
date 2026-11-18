@@ -136,12 +136,12 @@ Phases 1 and 2 are in `apps/capture-workbench/src/app`:
 
 | Item | Decision |
 | --- | --- |
-| `DesktopWorkspaceStore` | **Split**: `RecognitionFeaturesStore` (requirements, installs, per-feature readiness) is split out (phase 2); `OcrQueueStore` and `AsrQueueStore` (each page's queue: import, cancel, retry, partials) and `LibraryStore` (list, detail, delete, export, edits). Keep the facade services (`desktop-workspace-capture`, `-installation`, `desktop-library`, `desktop-runtime-client`). |
+| `DesktopWorkspaceStore` | **Split**: `RecognitionFeaturesStore` (requirements, installs, per-feature readiness) is split out (phase 2); `OcrQueueStore` and `AsrQueueStore` (each page's queue: import, cancel, retry, partials) and `LibraryStore` (list, detail, delete, export, edits). Keep the facade services (`desktop-capture`, `desktop-installation`, `desktop-library`, `desktop-runtime-client`). |
 | `desktop-workspace.selectors.ts` | **Keep**. Feature gates use a feature→requirement map: `ocr: [windowsml-ocr]`, `asr: [speech-recognition]`, `asr.speakers: [speaker-diarization]` (phase 2). |
 | `EngineCard` (`engine-card/`) | One unit: guide, size, action, progress; used by the ASR panel and the settings table (phase 2, replacing `SpeechPack`). |
 | `CAPTURE_UNIT_GUIDES` (`capture-workbench-ui`) | **Keep** as the source of the descriptive text. Download sizes come from the runtime's `downloadBytes`, in the desktop app and the Web Component. |
 | `CaptureRuntimeComputeStatusComponent` | **Keep**, moved to 設定 › 運算裝置. |
-| `capture-reconciliation`, `capture-runtime-installation` (in `capture-workbench-ui`, not used by the desktop app) | **Leave** to the Web Component. The desktop app keeps its own `desktop-workspace-installation` and `-capture` services, extended with re-attach and the waiting queue. |
+| `capture-reconciliation`, `capture-runtime-installation` (in `capture-workbench-ui`, not used by the desktop app) | **Leave** to the Web Component. The desktop app keeps its own `desktop-installation` and `-capture` services, extended with re-attach and the waiting queue. |
 | `history/history-page.*` (the single-screen workspace, with its stylesheet) | Removed. OCR, ASR, history and settings are the routed pages. There is no `/workspace` route. |
 | `ocr-evidence.ts`, provenance markup, JSON export, acceptance commands | **Move** to the 診斷 page or behind an acceptance build flag. Do not delete them, because acceptance still uses them. |
 | Angular Material | Removed. The app uses Tailwind tokens and Spartan helm components (button, card, table, tabs, dialog, progress, badge) in `apps/capture-workbench/src/app/ui`. Recorded in `.agents/DECISIONS/tailwind-spartan-ui.md` and `.agents/DECISIONS/standalone-desktop-product.md`. |

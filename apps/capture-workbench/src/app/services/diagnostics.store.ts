@@ -6,7 +6,7 @@ import type { DesktopLibraryDetail } from '../contracts';
 import { desktopMessages } from '../i18n/desktop-messages';
 import { DesktopLibraryService } from './desktop-library.service';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
-import { DesktopWorkspaceFormattingService } from './desktop-workspace-formatting.service';
+import { DesktopFormattingService } from './desktop-formatting.service';
 import { DesktopWorkspaceStore } from './desktop-workspace.store';
 import {
   buildDiagnosticsDocumentView,
@@ -19,7 +19,7 @@ import { isNotFoundError } from './result-review';
 export class DiagnosticsStore {
   private readonly route = inject(ActivatedRoute);
   private readonly library = inject(DesktopLibraryService);
-  private readonly formatting = inject(DesktopWorkspaceFormattingService);
+  private readonly formatting = inject(DesktopFormattingService);
   private readonly runtime = inject(DesktopRuntimeClientService);
   private readonly workspace = inject(DesktopWorkspaceStore);
   private readonly destroyRef = inject(DestroyRef);

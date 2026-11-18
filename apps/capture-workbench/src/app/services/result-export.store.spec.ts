@@ -7,7 +7,7 @@ import type { DesktopLibraryEdits, DesktopLibraryExport } from '../contracts';
 import { desktopMessages, setDesktopLocale } from '../i18n/desktop-messages';
 import { DesktopLibraryService } from './desktop-library.service';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
-import { DesktopWorkspaceFormattingService } from './desktop-workspace-formatting.service';
+import { DesktopFormattingService } from './desktop-formatting.service';
 import { PdfPageRenderer } from './pdf-page-renderer.service';
 import { LibraryExportService } from './library-export.service';
 import { ResultExportStore } from './result-export.store';
@@ -36,7 +36,7 @@ describe('ResultExportStore', () => {
       { provide: ActivatedRoute, useValue: { snapshot: { paramMap: paramMap$.value }, paramMap: paramMap$.asObservable() } },
       { provide: DesktopLibraryService, useValue: library },
       { provide: DesktopRuntimeClientService, useValue: { started: signal(true) } },
-      { provide: DesktopWorkspaceFormattingService, useValue: formatting },
+      { provide: DesktopFormattingService, useValue: formatting },
       { provide: PdfPageRenderer, useValue: {} },
     ] });
     const store = TestBed.inject(ResultExportStore);

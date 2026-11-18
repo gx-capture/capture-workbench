@@ -7,7 +7,7 @@ import type {
 import { of, Subject, throwError } from 'rxjs';
 import { setDesktopLocale } from '../i18n/desktop-messages';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
-import { DesktopWorkspaceInstallationService } from './desktop-workspace-installation.service';
+import { DesktopInstallationService } from './desktop-installation.service';
 import { RecognitionFeaturesStore } from './recognition-features.store';
 
 describe('RecognitionFeaturesStore removeRequirement', () => {
@@ -146,7 +146,7 @@ function createHarness(
     ],
   });
   const store = TestBed.inject(RecognitionFeaturesStore);
-  const installation = TestBed.inject(DesktopWorkspaceInstallationService);
+  const installation = TestBed.inject(DesktopInstallationService);
   TestBed.tick();
   return { store, runtime, pending, listed, installation };
 }

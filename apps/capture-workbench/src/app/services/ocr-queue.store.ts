@@ -6,7 +6,7 @@ import { selectionRejectionMessages } from './source-selection-messages';
 import { desktopMessages } from '../i18n/desktop-messages';
 import { DesktopLibraryService, type DesktopSourceSelection, type DesktopSourceSelectionBatch } from './desktop-library.service';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
-import { DesktopWorkspaceCaptureService, type DesktopWorkspaceCaptureHost } from './desktop-workspace-capture.service';
+import { DesktopCaptureService, type DesktopCaptureHost } from './desktop-capture.service';
 import { LibraryExportService } from './library-export.service';
 import { DesktopWorkspaceStore } from './desktop-workspace.store';
 import {
@@ -30,7 +30,7 @@ import {
 /** Import, waiting queue, start, cancel, retry and progress for the OCR page. */
 export class OcrQueueStore {
   private readonly library = inject(DesktopLibraryService);
-  private readonly capture = inject(DesktopWorkspaceCaptureService);
+  private readonly capture = inject(DesktopCaptureService);
   private readonly runtime = inject(DesktopRuntimeClientService);
   private readonly features = inject(RecognitionFeaturesStore);
   private readonly workspace = inject(DesktopWorkspaceStore);
@@ -51,7 +51,7 @@ export class OcrQueueStore {
   );
   readonly importError = signal('');
 
-  private readonly host: DesktopWorkspaceCaptureHost = {
+  private readonly host: DesktopCaptureHost = {
     selectedId: signal<string | null>(null),
     requestedRequirements: this.features.requestedRequirements,
     requirements: () => this.features.requirements(),

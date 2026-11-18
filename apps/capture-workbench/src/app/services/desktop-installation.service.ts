@@ -32,7 +32,7 @@ import { desktopMessages } from '../i18n/desktop-messages';
 
 @Injectable({ providedIn: 'root' })
 /** Coordinates runtime and model installation workflows for the workspace facade. */
-export class DesktopWorkspaceInstallationService {
+export class DesktopInstallationService {
   readonly installing = signal(false);
   readonly activeInstallation = signal<RuntimeInstallation | null>(null);
   /** The requirement whose start request is in flight: the runtime has not answered with an installation yet. */

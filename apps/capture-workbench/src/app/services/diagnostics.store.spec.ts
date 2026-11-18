@@ -6,7 +6,7 @@ import type { DesktopLibraryDetail, DesktopRuntimeStatus } from '../contracts';
 import { setDesktopLocale } from '../i18n/desktop-messages';
 import { DesktopLibraryService } from './desktop-library.service';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
-import { DesktopWorkspaceFormattingService } from './desktop-workspace-formatting.service';
+import { DesktopFormattingService } from './desktop-formatting.service';
 import { DesktopWorkspaceStore } from './desktop-workspace.store';
 import { DiagnosticsStore } from './diagnostics.store';
 
@@ -200,7 +200,7 @@ function setupStore(
     providers: [
       { provide: ActivatedRoute, useValue: { queryParamMap: queryParamMap$.asObservable() } },
       { provide: DesktopLibraryService, useValue: library },
-      { provide: DesktopWorkspaceFormattingService, useValue: formatting },
+      { provide: DesktopFormattingService, useValue: formatting },
       { provide: DesktopRuntimeClientService, useValue: runtime },
       { provide: DesktopWorkspaceStore, useValue: workspace },
       DiagnosticsStore,

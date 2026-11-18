@@ -10,7 +10,7 @@ import { desktopLocale } from '../i18n/desktop-messages';
  * side effects. The store remains the public facade used by the template.
  */
 @Injectable({ providedIn: 'root' })
-export class DesktopWorkspaceFormattingService {
+export class DesktopFormattingService {
   /** Formats byte counts using the workspace's decimal units. */
   formatBytes(bytes: number): string {
     return bytes < 1_000_000
