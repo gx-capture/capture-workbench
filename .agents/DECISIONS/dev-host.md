@@ -141,9 +141,16 @@ generated from that list. Each of those names returns `UnknownCommand`.
    `--runtime-manifest` / `--runtime-executable`, and
    `pnpm nx run capture-workbench-e2e:smoke-real-engines`
    (`playwright.real-engines.config.ts`, `src/real-engines.spec.ts`) drives the
-   five-stage localhost journey (first-run install with cancel/retry and reload
-   re-attach, PDF & image OCR, speech transcription + diarization + Ollama
-   structuring, edit/export/restore, and host/runtime restart persistence).
+   seven-stage localhost journey (first-run install with cancel/retry and reload
+   re-attach; PDF & image OCR with optional `CAPTURE_REAL_ENGINES_EXPECTED_OCR_DEVICE`
+   device check; speech transcription + diarization + Ollama structuring;
+   optional `CAPTURE_REAL_ENGINES_PROGRESSIVE_AUDIO` progressive partial
+   transcript verification at the 300,000 ms checkpoint without speaker
+   identification against `progressive-audio-oracle-v1`, plus final transcript
+   and provenance; edit/export/restore; UI document deletion of the image and
+   first recording from `/history` verified against `library_list` and
+   `library_get`; and host/runtime restart persistence confirming kept documents
+   and restored state survive while deleted IDs stay absent).
    Because `CHILD_ENVIRONMENT_ALLOWLIST` in
    `apps/capture-workbench-desktop/src-tauri/src/constants/launch.rs` and
    `LaunchPolicy::environment()` in `launch_policy.rs` strip

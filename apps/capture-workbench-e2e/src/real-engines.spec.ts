@@ -1,5 +1,5 @@
 /**
- * Real-engines localhost E2E smoke (Issue #418, Slice 3 Part A).
+ * Real-engines localhost E2E smoke (Issue #418, Slice 3).
  *
  * Drives the real Workbench UI (`capture-workbench:serve`) against the real
  * headless host (`capture-workbench-dev-host`) and the staged product (or
@@ -8,24 +8,40 @@
  *   1. First-run installation via UI (`/ocr` first-run card & `/settings/engines`),
  *      covering cancel + retry and reload re-attachment without duplicate installs.
  *   2. PDF and image OCR to `/history/:id/content`, verifying normalized text
- *      anchors, rendered source, `library_get` provenance, and `/settings/diagnostics`.
+ *      anchors, rendered source, `library_get` provenance (and exact OCR device
+ *      when `CAPTURE_REAL_ENGINES_EXPECTED_OCR_DEVICE` is set), and
+ *      `/settings/diagnostics`.
  *   3. Structuring model selection on `/settings/diagnostics`, audio transcription
  *      with speaker diarization and structuring on `/asr`, verifying the speech
  *      provenance of the installed pack (`tea-asr-1.1` on `cuda` with the NVIDIA
  *      driver, `tea-asr-1.1-mini` on `cpu` without) + Ollama structuring
  *      provenance with sha256 digests.
- *   4. Viewing, editing with a synthetic marker, reload persistence, exporting to
+ *   4. Optional progressive partial transcript verification (when
+ *      `CAPTURE_REAL_ENGINES_PROGRESSIVE_AUDIO` is set): audio transcription on
+ *      `/asr` with speaker identification off, checking the live partial on the
+ *      page and via `runtime_get_streaming_partial` at the 5-minute checkpoint
+ *      (300,000 ms) while the capture is still running against a
+ *      `progressive-audio-oracle-v1` oracle, then final transcript, provenance,
+ *      and `/settings/diagnostics`. Skipped with one log line when unset.
+ *   5. Viewing, editing with a synthetic marker, reload persistence, exporting to
  *      disk, and restoring edits.
- *   5. Stopping the launcher (host + runtime + workers) and restarting on the same
- *      `--app-data` directory, verifying features, model, documents, restored
- *      state, and active edits persist without re-installing.
+ *   6. Deleting the image document and the first recording from `/history`
+ *      (`history-row-delete` -> `history-delete-dialog` /
+ *      `history-delete-confirm`), verifying UI removal, absence from
+ *      `library_list`, and rejection of `library_get`.
+ *   7. Stopping the launcher (host + runtime + workers) and restarting on the same
+ *      `--app-data` directory, verifying features, model, PDF (and optional
+ *      progressive audio) documents, and restored state persist without
+ *      re-installing, and the two deleted document IDs remain absent.
  *
  * Explicit per-stage timeout placeholders (to be measured by the first real run):
- *   - 01-install-engines:      45 minutes (cold real downloads; much faster with cache)
- *   - 02-ocr-pdf-and-image:    10 minutes
- *   - 03-asr-and-structuring:  35 minutes (includes Ollama structuring model pull + ASR + structuring)
- *   - 04-edit-restore-export:   3 minutes
- *   - 05-restart-persistence:   5 minutes
+ *   - 01-install-engines:         45 minutes (cold real downloads; much faster with cache)
+ *   - 02-ocr-pdf-and-image:       10 minutes
+ *   - 03-asr-and-structuring:     35 minutes (includes Ollama structuring model pull + ASR + structuring)
+ *   - 04-progressive-asr-partial: 60 minutes (optional; >5 min recording on cpu/cuda + structuring)
+ *   - 05-edit-restore-and-export:  3 minutes
+ *   - 06-delete-documents:         2 minutes
+ *   - 07-restart-persistence:      5 minutes
  *
  * Environment variables (missing/invalid entries are reported together upfront):
  *   Required media & expectations:
@@ -39,13 +55,27 @@
  *   - CAPTURE_REAL_ENGINES_APP_DATA (or CAPTURE_REAL_MEDIA_APP_DATA): empty/dedicated absolute directory outside %APPDATA%/%LOCALAPPDATA%
  *   - CAPTURE_REAL_ENGINES_TEMP_DIR: explicit temp directory for host/runtime/exports
  *   - CAPTURE_REAL_ENGINES_MODEL_OPTION_ID: e.g. `qwen3.5-0.8b-v1`, `qwen3.5-2b-v1`, `qwen3.5-4b-v1`
- *   Optional overrides:
+ *   Optional overrides & checks:
+ *   - CAPTURE_REAL_ENGINES_EXPECTED_OCR_DEVICE: `windowsml-dml` or `cpu`; when set,
+ *     both PDF and image extraction provenance and diagnostics must match exactly.
+ *   - CAPTURE_REAL_ENGINES_PROGRESSIVE_AUDIO: second recording longer than 5 minutes
+ *     to verify progressive partial transcripts with speaker identification off.
+ *   - CAPTURE_REAL_ENGINES_PROGRESSIVE_AUDIO_EXPECTATIONS: optional override when
+ *     progressive audio is set (defaults to `<audio>.expected.json`, must be `progressive-audio-oracle-v1`).
  *   - CAPTURE_REAL_ENGINES_REUSE_INSTALLED=1: the app-data directory already holds the
  *     recognition features from an earlier run; stage 1 only checks they are ready
- *     and can still pass. Evidence `proven` records whether this run proved
- *     installation, cancel-and-retry, and model installation.
+ *     and can still pass.
  *   - CAPTURE_REAL_ENGINES_RUNTIME_MANIFEST & CAPTURE_REAL_ENGINES_RUNTIME_EXECUTABLE (both or neither; default is staged product runtime)
  *   - CAPTURE_SMOKE_WORKER_MIRROR_OPT_IN / CAPTURE_SMOKE_WORKER_MIRROR_URL
+ *
+ * Evidence `proven` records what this run actually proved (a passed stage alone
+ * does not prove optional or reused capabilities):
+ *   - `installation`: true when stage 1 installed the recognition units from scratch
+ *   - `cancelAndRetry`: true when stage 1 cancelled and retried a real unit install
+ *   - `modelInstallation`: true when stage 3 installed the Ollama structuring model
+ *   - `ocrDevice`: true when `CAPTURE_REAL_ENGINES_EXPECTED_OCR_DEVICE` was set and matched
+ *   - `progressivePartial`: true when `CAPTURE_REAL_ENGINES_PROGRESSIVE_AUDIO` ran and passed
+ *   - `deletion`: true when both UI deletions and the post-restart absence check passed
  *
  * The runtime runs as the product runs it. The host starts it with the product's
  * launch policy (`launch_policy.rs`, `constants/launch.rs`), which clears the
@@ -101,10 +131,17 @@ const INSTALL_STAGE_TIMEOUT_MS = 45 * 60_000; // measured by the first real run
 const INSTALL_UNIT_TIMEOUT_MS = 20 * 60_000; // measured by the first real run
 const OCR_STAGE_TIMEOUT_MS = 10 * 60_000; // measured by the first real run
 const ASR_STAGE_TIMEOUT_MS = 35 * 60_000; // measured by the first real run
+const PROGRESSIVE_ASR_STAGE_TIMEOUT_MS = 60 * 60_000; // generous finite bound for >5 min audio on cpu/cuda + structuring
 const MODEL_INSTALL_TIMEOUT_MS = 25 * 60_000; // measured by the first real run
 const EDIT_EXPORT_STAGE_TIMEOUT_MS = 3 * 60_000; // measured by the first real run
+const DELETE_STAGE_TIMEOUT_MS = 2 * 60_000;
 const RESTART_STAGE_TIMEOUT_MS = 5 * 60_000; // measured by the first real run
 const CANCEL_CLICK_TIMEOUT_MS = 10_000;
+const ACTION_TIMEOUT_MS = 15_000;
+// The speech worker emits its first progressive checkpoint once decoded audio
+// reaches five minutes (matching PROGRESSIVE_AUDIO_SAMPLE_INTERVAL_MS in
+// progressive-audio-evidence.ts).
+const PROGRESSIVE_AUDIO_CHECKPOINT_MS = 5 * 60_000;
 // The application itself waits three minutes (DESKTOP_RUNTIME_READY_TIMEOUT_MS):
 // with the features installed, readiness includes probing their workers.
 const RUNTIME_READY_TIMEOUT_MS = 200_000;
@@ -115,6 +152,9 @@ const ALL_RECOGNITION_UNITS = [
   'speaker-diarization',
 ] as const;
 
+type ExpectedOcrDevice = 'windowsml-dml' | 'cpu';
+
+const HEX_SHA256_PATTERN = /^[a-f0-9]{64}$/u;
 const SHA256_DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/u;
 
 /** What the installed speech pack records: the runtime picks the pack by the NVIDIA driver. */
@@ -143,6 +183,26 @@ interface ProgressiveAudioOracle {
   };
 }
 
+interface ProgressiveAudioCheckpointOracle extends ProgressiveAudioOracle {
+  readonly oracle: 'non-tauri-production-worker';
+  readonly sampleIntervalMs: typeof PROGRESSIVE_AUDIO_CHECKPOINT_MS;
+  readonly input: {
+    readonly sha256: string;
+    readonly bytes: number;
+  };
+  readonly firstCheckpoint: {
+    readonly coveredUntilMs: number;
+    readonly partialRevision: number;
+    readonly segmentCount: number;
+  };
+  readonly extraction: {
+    readonly engine: string;
+    readonly model: string;
+    readonly device: 'cuda' | 'cpu';
+    readonly digest: string;
+  };
+}
+
 type AudioExpectation = RealTextExpectation | ProgressiveAudioOracle;
 
 interface SmokeConfig {
@@ -152,6 +212,9 @@ interface SmokeConfig {
   readonly imageExpectation: RealTextExpectation;
   readonly audioPath: string;
   readonly audioExpectation: AudioExpectation;
+  readonly expectedOcrDevice?: ExpectedOcrDevice;
+  readonly progressiveAudioPath?: string;
+  readonly progressiveAudioOracle?: ProgressiveAudioCheckpointOracle;
   readonly appDataDir: string;
   readonly tempDir: string;
   readonly modelOptionId: string;
@@ -170,14 +233,32 @@ interface EngineProvenance {
 interface RawSegmentRecord {
   readonly segmentId: string;
   readonly order: number;
-  readonly locator: { readonly kind: string };
+  readonly locator: {
+    readonly kind: string;
+    readonly startMs?: number;
+    readonly endMs?: number;
+  };
   readonly text: string;
   readonly speaker?: string | null;
+}
+
+interface PartialCaptureRecord {
+  readonly captureId: string;
+  readonly source: {
+    readonly sha256: string;
+    readonly bytes: number;
+  };
+  readonly revision: number;
+  readonly coveredUntilMs: number;
+  readonly segments?: readonly RawSegmentRecord[];
+  readonly sourceText?: string;
+  readonly extractionEngine?: EngineProvenance | null;
 }
 
 interface DesktopLibrarySummaryRecord {
   readonly documentId: string;
   readonly status: string;
+  readonly captureId?: string;
   readonly errorCode?: string;
   readonly errorMessage?: string;
   readonly pageCount?: number;
@@ -213,6 +294,9 @@ interface SmokeProven {
   installation: boolean;
   cancelAndRetry: boolean;
   modelInstallation: boolean;
+  ocrDevice: boolean;
+  progressivePartial: boolean;
+  deletion: boolean;
 }
 
 interface ProvenanceSummary {
@@ -252,6 +336,17 @@ interface SmokeEvidence {
       readonly speakerCount: number;
       readonly blockCount: number;
     };
+    progressiveAudio?: {
+      readonly extraction: ProvenanceSummary;
+      readonly structuring: ProvenanceSummary;
+      readonly checkpoint: {
+        readonly coveredUntilMs: number;
+        readonly partialRevision: number;
+        readonly segmentCount: number;
+      };
+      readonly segmentCount: number;
+      readonly blockCount: number;
+    };
   };
   restart?: {
     readonly oldPortsClosed: boolean;
@@ -285,16 +380,20 @@ function normalizeText(value: string): string {
     .replace(/\s+/gu, ' ');
 }
 
+function asJsonRecord(value: unknown, errorMessage: string): Record<string, unknown> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(errorMessage);
+  }
+  return value as Record<string, unknown>;
+}
+
 async function loadTextExpectation(
   filePath: string,
   label: string,
 ): Promise<RealTextExpectation> {
   const rawJson = await readFile(filePath, 'utf8');
   const parsed: unknown = JSON.parse(rawJson);
-  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error(`${label} expectation file must be a JSON object.`);
-  }
-  const record = parsed as Record<string, unknown>;
+  const record = asJsonRecord(parsed, `${label} expectation file must be a JSON object.`);
   if (record['schemaVersion'] !== 1 || !Array.isArray(record['rawTextIncludes'])) {
     throw new Error(`${label} expectation file must have schemaVersion 1 and rawTextIncludes.`);
   }
@@ -310,41 +409,127 @@ async function loadTextExpectation(
   return { schemaVersion: 1, rawTextIncludes: normalized };
 }
 
+function parseProgressiveOracleRecord(
+  record: Record<string, unknown>,
+  label: string,
+): ProgressiveAudioOracle {
+  const expectedOutput = asJsonRecord(
+    record['expectedOutput'],
+    `${label} oracle file has an invalid progressive-audio-oracle-v1 structure.`,
+  );
+  const extraction = asJsonRecord(
+    record['extraction'],
+    `${label} oracle file has an invalid progressive-audio-oracle-v1 structure.`,
+  );
+  if (
+    typeof expectedOutput['normalizedSha256'] !== 'string'
+    || typeof expectedOutput['segmentCount'] !== 'number'
+    || typeof extraction['engine'] !== 'string'
+    || typeof extraction['model'] !== 'string'
+    || typeof extraction['device'] !== 'string'
+  ) {
+    throw new Error(`${label} oracle file has an invalid progressive-audio-oracle-v1 structure.`);
+  }
+  return {
+    evidenceKind: 'progressive-audio-oracle-v1',
+    expectedOutput: {
+      normalizedSha256: expectedOutput['normalizedSha256'],
+      segmentCount: expectedOutput['segmentCount'],
+    },
+    extraction: {
+      engine: extraction['engine'],
+      model: extraction['model'],
+      device: extraction['device'],
+    },
+  };
+}
+
 async function loadAudioExpectation(filePath: string): Promise<AudioExpectation> {
   const rawJson = await readFile(filePath, 'utf8');
   const parsed: unknown = JSON.parse(rawJson);
-  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error('Audio expectation file must be a JSON object.');
-  }
-  const record = parsed as Record<string, unknown>;
+  const record = asJsonRecord(parsed, 'Audio expectation file must be a JSON object.');
   if (record['evidenceKind'] === 'progressive-audio-oracle-v1') {
-    const expectedOutput = record['expectedOutput'] as Record<string, unknown> | undefined;
-    const extraction = record['extraction'] as Record<string, unknown> | undefined;
-    if (
-      !expectedOutput
-      || typeof expectedOutput['normalizedSha256'] !== 'string'
-      || typeof expectedOutput['segmentCount'] !== 'number'
-      || !extraction
-      || typeof extraction['engine'] !== 'string'
-      || typeof extraction['model'] !== 'string'
-      || typeof extraction['device'] !== 'string'
-    ) {
-      throw new Error('Audio oracle file has an invalid progressive-audio-oracle-v1 structure.');
-    }
-    return {
-      evidenceKind: 'progressive-audio-oracle-v1',
-      expectedOutput: {
-        normalizedSha256: expectedOutput['normalizedSha256'],
-        segmentCount: expectedOutput['segmentCount'],
-      },
-      extraction: {
-        engine: extraction['engine'],
-        model: extraction['model'],
-        device: extraction['device'],
-      },
-    };
+    return parseProgressiveOracleRecord(record, 'Audio');
   }
   return loadTextExpectation(filePath, 'Audio');
+}
+
+async function loadProgressiveAudioOracle(
+  filePath: string,
+): Promise<ProgressiveAudioCheckpointOracle> {
+  const rawJson = await readFile(filePath, 'utf8');
+  const parsed: unknown = JSON.parse(rawJson);
+  const record = asJsonRecord(
+    parsed,
+    'Progressive audio expectation file must be a JSON object.',
+  );
+  if (record['evidenceKind'] !== 'progressive-audio-oracle-v1') {
+    throw new Error(
+      'Progressive audio expectation file must have evidenceKind "progressive-audio-oracle-v1".',
+    );
+  }
+  const base = parseProgressiveOracleRecord(record, 'Progressive audio');
+  const input = asJsonRecord(
+    record['input'],
+    'Progressive audio oracle file must include input metadata.',
+  );
+  const firstCheckpoint = asJsonRecord(
+    record['firstCheckpoint'],
+    'Progressive audio oracle file must include firstCheckpoint.',
+  );
+  const extraction = asJsonRecord(
+    record['extraction'],
+    'Progressive audio oracle file must include extraction provenance.',
+  );
+  const device = extraction['device'];
+  const digest = extraction['digest'];
+  if (
+    record['oracle'] !== 'non-tauri-production-worker'
+    || record['sampleIntervalMs'] !== PROGRESSIVE_AUDIO_CHECKPOINT_MS
+    || typeof input['sha256'] !== 'string'
+    || !HEX_SHA256_PATTERN.test(input['sha256'])
+    || typeof input['bytes'] !== 'number'
+    || !Number.isSafeInteger(input['bytes'])
+    || input['bytes'] <= 0
+    || typeof firstCheckpoint['coveredUntilMs'] !== 'number'
+    || !Number.isSafeInteger(firstCheckpoint['coveredUntilMs'])
+    || firstCheckpoint['coveredUntilMs'] < PROGRESSIVE_AUDIO_CHECKPOINT_MS
+    || typeof firstCheckpoint['partialRevision'] !== 'number'
+    || !Number.isSafeInteger(firstCheckpoint['partialRevision'])
+    || firstCheckpoint['partialRevision'] <= 0
+    || typeof firstCheckpoint['segmentCount'] !== 'number'
+    || !Number.isSafeInteger(firstCheckpoint['segmentCount'])
+    || firstCheckpoint['segmentCount'] <= 0
+    || !HEX_SHA256_PATTERN.test(base.expectedOutput.normalizedSha256)
+    || base.expectedOutput.segmentCount !== firstCheckpoint['segmentCount']
+    || (device !== 'cuda' && device !== 'cpu')
+    || typeof digest !== 'string'
+    || !SHA256_DIGEST_PATTERN.test(digest)
+  ) {
+    throw new Error(
+      'Progressive audio oracle file has an invalid progressive-audio-oracle-v1 structure.',
+    );
+  }
+  return {
+    ...base,
+    oracle: 'non-tauri-production-worker',
+    sampleIntervalMs: PROGRESSIVE_AUDIO_CHECKPOINT_MS,
+    input: {
+      sha256: input['sha256'],
+      bytes: input['bytes'],
+    },
+    firstCheckpoint: {
+      coveredUntilMs: firstCheckpoint['coveredUntilMs'],
+      partialRevision: firstCheckpoint['partialRevision'],
+      segmentCount: firstCheckpoint['segmentCount'],
+    },
+    extraction: {
+      engine: base.extraction.engine,
+      model: base.extraction.model,
+      device,
+      digest,
+    },
+  };
 }
 
 async function resolveSmokeConfig(): Promise<SmokeConfig> {
@@ -412,6 +597,44 @@ async function resolveSmokeConfig(): Promise<SmokeConfig> {
     );
   }
 
+  const expectedOcrDeviceRaw = readEnvFirst(['CAPTURE_REAL_ENGINES_EXPECTED_OCR_DEVICE']);
+  let expectedOcrDevice: ExpectedOcrDevice | undefined;
+  if (expectedOcrDeviceRaw !== undefined) {
+    if (expectedOcrDeviceRaw === 'windowsml-dml' || expectedOcrDeviceRaw === 'cpu') {
+      expectedOcrDevice = expectedOcrDeviceRaw;
+    } else {
+      missingOrInvalid.push(
+        'CAPTURE_REAL_ENGINES_EXPECTED_OCR_DEVICE must be "windowsml-dml" or "cpu"',
+      );
+    }
+  }
+
+  const progressiveAudioPath = readEnvFirst(['CAPTURE_REAL_ENGINES_PROGRESSIVE_AUDIO']);
+  const explicitProgressiveAudioExpPath = readEnvFirst([
+    'CAPTURE_REAL_ENGINES_PROGRESSIVE_AUDIO_EXPECTATIONS',
+  ]);
+  let progressiveAudioExpPath: string | undefined;
+  if (progressiveAudioPath !== undefined) {
+    if (!isRegularFile(progressiveAudioPath)) {
+      missingOrInvalid.push(
+        'CAPTURE_REAL_ENGINES_PROGRESSIVE_AUDIO must point to an existing regular file',
+      );
+    } else {
+      progressiveAudioExpPath =
+        explicitProgressiveAudioExpPath ?? `${progressiveAudioPath}.expected.json`;
+      if (!isRegularFile(progressiveAudioExpPath)) {
+        missingOrInvalid.push(
+          'CAPTURE_REAL_ENGINES_PROGRESSIVE_AUDIO_EXPECTATIONS (or <audio>.expected.json beside CAPTURE_REAL_ENGINES_PROGRESSIVE_AUDIO)',
+        );
+        progressiveAudioExpPath = undefined;
+      }
+    }
+  } else if (explicitProgressiveAudioExpPath !== undefined) {
+    missingOrInvalid.push(
+      'CAPTURE_REAL_ENGINES_PROGRESSIVE_AUDIO_EXPECTATIONS requires CAPTURE_REAL_ENGINES_PROGRESSIVE_AUDIO',
+    );
+  }
+
   const appDataDir = readEnvFirst([
     'CAPTURE_REAL_ENGINES_APP_DATA',
     'CAPTURE_REAL_MEDIA_APP_DATA',
@@ -472,11 +695,15 @@ async function resolveSmokeConfig(): Promise<SmokeConfig> {
     );
   }
 
-  const [pdfExpectation, imageExpectation, audioExpectation] = await Promise.all([
-    loadTextExpectation(pdfExpPath!, 'PDF'),
-    loadTextExpectation(imageExpPath!, 'Image'),
-    loadAudioExpectation(audioExpPath!),
-  ]);
+  const [pdfExpectation, imageExpectation, audioExpectation, progressiveAudioOracle] =
+    await Promise.all([
+      loadTextExpectation(pdfExpPath!, 'PDF'),
+      loadTextExpectation(imageExpPath!, 'Image'),
+      loadAudioExpectation(audioExpPath!),
+      progressiveAudioExpPath
+        ? loadProgressiveAudioOracle(progressiveAudioExpPath)
+        : Promise.resolve(undefined),
+    ]);
 
   const launcherEnv: Record<string, string> = {
     TEMP: tempDir!,
@@ -499,6 +726,9 @@ async function resolveSmokeConfig(): Promise<SmokeConfig> {
     imageExpectation,
     audioPath: audioPath!,
     audioExpectation,
+    ...(expectedOcrDevice !== undefined ? { expectedOcrDevice } : {}),
+    ...(progressiveAudioPath !== undefined ? { progressiveAudioPath } : {}),
+    ...(progressiveAudioOracle !== undefined ? { progressiveAudioOracle } : {}),
     appDataDir: appDataDir!,
     tempDir: tempDir!,
     modelOptionId: modelOptionId!,
@@ -641,6 +871,61 @@ function assertOrderedAnchors(
   }
 }
 
+function normalizedSegmentsDigest(segments: readonly RawSegmentRecord[]): string {
+  const fullText = segments.map((s) => s.text).join(' ').replace(/\s+/gu, ' ').trim();
+  assert.ok(fullText.length > 0, 'Transcript segments must contain non-empty text.');
+  return createHash('sha256').update(fullText, 'utf8').digest('hex');
+}
+
+function assertSegmentsMatchOracleDigest(
+  segments: readonly RawSegmentRecord[],
+  expectedSegmentCount: number,
+  expectedNormalizedSha256: string,
+  label: string,
+): void {
+  const digest = normalizedSegmentsDigest(segments);
+  assert.equal(
+    segments.length,
+    expectedSegmentCount,
+    `${label} segment count must match progressive audio oracle.`,
+  );
+  assert.equal(
+    digest,
+    expectedNormalizedSha256,
+    `${label} normalized transcript digest must match progressive audio oracle.`,
+  );
+}
+
+function assertOrderedTimeSegments(
+  segments: readonly RawSegmentRecord[],
+  label: string,
+): void {
+  assert.ok(segments.length > 0, `${label} must store raw segments.`);
+  let previousStartMs = 0;
+  segments.forEach((segment, index) => {
+    assert.equal(segment.order, index, `${label} segment order must be contiguous.`);
+    assert.equal(
+      segment.locator.kind,
+      'time',
+      `${label} segment must have a time locator.`,
+    );
+    const startMs = segment.locator.startMs;
+    const endMs = segment.locator.endMs;
+    assert.ok(
+      typeof startMs === 'number'
+        && Number.isSafeInteger(startMs)
+        && startMs >= previousStartMs,
+      `${label} segment startMs must be non-decreasing.`,
+    );
+    assert.ok(
+      typeof endMs === 'number' && Number.isSafeInteger(endMs) && endMs > startMs,
+      `${label} segment endMs must exceed startMs.`,
+    );
+    assert.ok(segment.text.trim().length > 0, `${label} segment text must not be empty.`);
+    previousStartMs = startMs;
+  });
+}
+
 function assertAudioAgainstExpectation(
   detail: DesktopLibraryDetailRecord,
   expectation: AudioExpectation,
@@ -653,17 +938,11 @@ function assertAudioAgainstExpectation(
   );
 
   if ('evidenceKind' in expectation) {
-    const fullText = segments.map((s) => s.text).join(' ').replace(/\s+/gu, ' ').trim();
-    const digest = createHash('sha256').update(fullText, 'utf8').digest('hex');
-    assert.equal(
-      segments.length,
+    assertSegmentsMatchOracleDigest(
+      segments,
       expectation.expectedOutput.segmentCount,
-      'Audio segment count must match progressive audio oracle.',
-    );
-    assert.equal(
-      digest,
       expectation.expectedOutput.normalizedSha256,
-      'Audio normalized transcript digest must match progressive audio oracle.',
+      'Audio',
     );
     return;
   }
@@ -682,15 +961,37 @@ function toProvenanceSummary(provenance: EngineProvenance): ProvenanceSummary {
   };
 }
 
-async function queueFileAndAwaitCompletion(
+function assertOcrExtractionProvenance(
+  detail: DesktopLibraryDetailRecord,
+  label: string,
+  expectedOcrDevice?: ExpectedOcrDevice,
+): ProvenanceSummary {
+  const extraction = detail.raw?.extractionEngine;
+  assert.ok(extraction, `${label} record must include extractionEngine provenance.`);
+  assert.equal(extraction.engine, 'windowsml-ocr');
+  assert.ok(
+    extraction.device === 'windowsml-dml' || extraction.device === 'cpu',
+    `Unexpected OCR device: ${String(extraction.device)}`,
+  );
+  if (expectedOcrDevice !== undefined) {
+    assert.equal(
+      extraction.device,
+      expectedOcrDevice,
+      `${label} OCR device must be ${expectedOcrDevice}, got ${String(extraction.device)}.`,
+    );
+  }
+  assert.match(extraction.digest, SHA256_DIGEST_PATTERN);
+  return toProvenanceSummary(extraction);
+}
+
+async function startQueuedFile(
   page: Page,
   options: {
     readonly filePath: string;
     readonly chooseButtonTestId: 'ocr-choose-files' | 'asr-choose-files';
     readonly queueRowTestId: 'ocr-queue-row' | 'asr-queue-row';
-    readonly timeoutMs: number;
   },
-): Promise<string> {
+): Promise<{ readonly documentId: string; readonly row: Locator }> {
   const beforeList = await invokeHost<readonly DesktopLibrarySummaryRecord[]>(
     page,
     'library_list',
@@ -705,7 +1006,7 @@ async function queueFileAndAwaitCompletion(
   expect(queueRes.status()).toBe(200);
   expect(await queueRes.json()).toEqual({ queued: 1 });
 
-  await page.getByTestId(options.chooseButtonTestId).click();
+  await page.getByTestId(options.chooseButtonTestId).click({ timeout: ACTION_TIMEOUT_MS });
 
   let newDocId: string | undefined;
   await expect
@@ -730,14 +1031,22 @@ async function queueFileAndAwaitCompletion(
   const row = page.locator(
     `[data-testid="${options.queueRowTestId}"][data-document-id="${newDocId}"]`,
   );
+  return { documentId: newDocId, row };
+}
 
+async function awaitQueuedRowDone(
+  page: Page,
+  documentId: string,
+  row: Locator,
+  timeoutMs: number,
+): Promise<void> {
   await expect
     .poll(
       async () => {
         const status = await row.getAttribute('data-user-status');
         if (status === 'needs-attention' || status === 'cancelled') {
           const detail = await invokeHost<DesktopLibraryDetailRecord>(page, 'library_get', {
-            request: { documentId: newDocId },
+            request: { documentId },
           });
           throw new Error(
             `Capture ended in "${status}": ${detail.errorCode ?? 'unknown'} (${detail.errorMessage ?? 'no detail'}).`,
@@ -745,11 +1054,182 @@ async function queueFileAndAwaitCompletion(
         }
         return status;
       },
-      { timeout: options.timeoutMs, intervals: [1_000] },
+      { timeout: timeoutMs, intervals: [1_000] },
     )
     .toBe('done');
+}
 
-  return newDocId;
+async function queueFileAndAwaitCompletion(
+  page: Page,
+  options: {
+    readonly filePath: string;
+    readonly chooseButtonTestId: 'ocr-choose-files' | 'asr-choose-files';
+    readonly queueRowTestId: 'ocr-queue-row' | 'asr-queue-row';
+    readonly timeoutMs: number;
+  },
+): Promise<string> {
+  const { documentId, row } = await startQueuedFile(page, options);
+  await awaitQueuedRowDone(page, documentId, row, options.timeoutMs);
+  return documentId;
+}
+
+async function waitForProgressivePartialAtCheckpoint(
+  page: Page,
+  documentId: string,
+  row: Locator,
+  timeoutMs: number,
+): Promise<PartialCaptureRecord> {
+  const partialEl = page.getByTestId('streaming-partial');
+  let observedPartial: PartialCaptureRecord | undefined;
+
+  await expect
+    .poll(
+      async () => {
+        const status = await row.getAttribute('data-user-status');
+        if (status === 'needs-attention' || status === 'cancelled') {
+          const detail = await invokeHost<DesktopLibraryDetailRecord>(page, 'library_get', {
+            request: { documentId },
+          });
+          throw new Error(
+            `Progressive audio capture ended in "${status}": ${detail.errorCode ?? 'unknown'} (${detail.errorMessage ?? 'no detail'}).`,
+          );
+        }
+        if (status === 'done') {
+          throw new Error(
+            `Progressive audio capture finished before a streaming partial at the ${PROGRESSIVE_AUDIO_CHECKPOINT_MS}ms checkpoint was observed.`,
+          );
+        }
+        if ((await partialEl.count()) !== 1 || !(await partialEl.isVisible().catch(() => false))) {
+          return false;
+        }
+        const coveredUntilMs = Number(await partialEl.getAttribute('data-covered-until-ms'));
+        const revision = Number(await partialEl.getAttribute('data-partial-revision'));
+        const lineCount = await partialEl.getByTestId('asr-live-line').count();
+        if (
+          !Number.isSafeInteger(coveredUntilMs)
+          || coveredUntilMs < PROGRESSIVE_AUDIO_CHECKPOINT_MS
+          || !Number.isSafeInteger(revision)
+          || revision <= 0
+          || lineCount === 0
+        ) {
+          return false;
+        }
+        const detail = await invokeHost<DesktopLibraryDetailRecord>(page, 'library_get', {
+          request: { documentId },
+        });
+        if (detail.status === 'completed' || !detail.captureId) {
+          throw new Error(
+            `Progressive audio capture finished before a streaming partial at the ${PROGRESSIVE_AUDIO_CHECKPOINT_MS}ms checkpoint was observed.`,
+          );
+        }
+        const partial = await invokeHost<PartialCaptureRecord | null>(
+          page,
+          'runtime_get_streaming_partial',
+          { input: { id: detail.captureId } },
+        ).catch(() => null);
+        if (!partial || partial.coveredUntilMs < PROGRESSIVE_AUDIO_CHECKPOINT_MS) {
+          return false;
+        }
+        observedPartial = partial;
+        return true;
+      },
+      { timeout: timeoutMs, intervals: [1_000] },
+    )
+    .toBe(true);
+
+  if (!observedPartial) {
+    throw new Error(
+      `Progressive audio capture did not expose a streaming partial at the ${PROGRESSIVE_AUDIO_CHECKPOINT_MS}ms checkpoint.`,
+    );
+  }
+  return observedPartial;
+}
+
+function assertProgressivePartialMatchesOracle(
+  partial: PartialCaptureRecord,
+  oracle: ProgressiveAudioCheckpointOracle,
+): number {
+  assert.ok(
+    Number.isSafeInteger(partial.coveredUntilMs)
+      && partial.coveredUntilMs >= PROGRESSIVE_AUDIO_CHECKPOINT_MS,
+    `Progressive partial coveredUntilMs must reach ${PROGRESSIVE_AUDIO_CHECKPOINT_MS}ms.`,
+  );
+  assert.ok(
+    Number.isSafeInteger(partial.revision) && partial.revision > 0,
+    'Progressive partial revision must be positive.',
+  );
+  assert.equal(
+    partial.source.sha256,
+    oracle.input.sha256,
+    'Progressive partial source sha256 must match oracle.',
+  );
+  assert.equal(
+    partial.source.bytes,
+    oracle.input.bytes,
+    'Progressive partial source bytes must match oracle.',
+  );
+  const segments = partial.segments ?? [];
+  assertOrderedTimeSegments(segments, 'Progressive partial');
+  assertSegmentsMatchOracleDigest(
+    segments,
+    oracle.expectedOutput.segmentCount,
+    oracle.expectedOutput.normalizedSha256,
+    'Progressive partial',
+  );
+  if (partial.extractionEngine) {
+    assert.equal(partial.extractionEngine.engine, oracle.extraction.engine);
+    assert.equal(partial.extractionEngine.model, oracle.extraction.model);
+    assert.equal(partial.extractionEngine.device, oracle.extraction.device);
+    assert.equal(partial.extractionEngine.digest, oracle.extraction.digest);
+  }
+  return segments.length;
+}
+
+async function assertDocumentAbsentFromHost(
+  page: Page,
+  documentId: string,
+  label: string,
+): Promise<void> {
+  const list = await invokeHost<readonly DesktopLibrarySummaryRecord[]>(page, 'library_list', {
+    request: { query: '', status: '' },
+  });
+  assert.ok(
+    !list.some((item) => item.documentId === documentId),
+    `library_list must not contain deleted ${label} document.`,
+  );
+  let rejected = false;
+  try {
+    await invokeHost(page, 'library_get', { request: { documentId } });
+  } catch {
+    rejected = true;
+  }
+  assert.equal(rejected, true, `library_get must reject for deleted ${label} document.`);
+}
+
+async function deleteDocumentFromHistoryList(
+  page: Page,
+  baseUrl: string,
+  documentId: string,
+  label: string,
+): Promise<void> {
+  await page.goto(`${baseUrl}/history`);
+  await waitForRuntimeReady(page);
+
+  const row = page.locator(
+    `[data-testid="history-row"][data-document-id="${documentId}"]`,
+  );
+  await expect(row).toBeVisible({ timeout: 15_000 });
+  const deleteBtn = row.getByTestId('history-row-delete');
+  await expect(deleteBtn).toBeEnabled({ timeout: 15_000 });
+  await deleteBtn.click({ timeout: ACTION_TIMEOUT_MS });
+
+  const dialog = page.getByTestId('history-delete-dialog');
+  await expect(dialog).toBeVisible({ timeout: 15_000 });
+  await page.getByTestId('history-delete-confirm').click({ timeout: ACTION_TIMEOUT_MS });
+
+  await expect(dialog).toHaveCount(0, { timeout: 15_000 });
+  await expect(row).toHaveCount(0, { timeout: 15_000 });
+  await assertDocumentAbsentFromHost(page, documentId, label);
 }
 
 async function verifyDiagnosticsProvenance(
@@ -769,6 +1249,7 @@ async function verifyDiagnosticsProvenance(
   await expect(extractionEl).toHaveAttribute('data-digest', expectedExtraction.digest);
   if (expectedExtraction.device) {
     await expect(extractionEl).toHaveAttribute('data-device', expectedExtraction.device);
+    await expect(extractionEl).toContainText(expectedExtraction.device);
   }
 
   if (expectedStructuring) {
@@ -808,6 +1289,9 @@ test('runs full real-engine capture, editing, export, and restart journey on loc
     installation: false,
     cancelAndRetry: false,
     modelInstallation: false,
+    ocrDevice: false,
+    progressivePartial: false,
+    deletion: false,
   };
   const evidence: SmokeEvidence = {
     evidenceKind: 'real-engines-localhost-v1',
@@ -1022,18 +1506,14 @@ test('runs full real-engine capture, editing, export, and restart journey on loc
         request: { documentId: pdfDocId },
       });
       assertDocumentCheckpoint(pdfDetail, 'PDF');
-      const pdfExtraction = pdfDetail.raw?.extractionEngine;
-      assert.ok(pdfExtraction, 'PDF record must include extractionEngine provenance.');
-      assert.equal(pdfExtraction.engine, 'windowsml-ocr');
-      assert.ok(
-        pdfExtraction.device === 'windowsml-dml' || pdfExtraction.device === 'cpu',
-        `Unexpected OCR device: ${String(pdfExtraction.device)}`,
+      const pdfExtractionSummary = assertOcrExtractionProvenance(
+        pdfDetail,
+        'PDF',
+        config.expectedOcrDevice,
       );
-      assert.match(pdfExtraction.digest, SHA256_DIGEST_PATTERN);
       const pdfSegments = pdfDetail.raw?.segments ?? [];
       assert.ok(pdfSegments.length > 0, 'PDF record must contain raw segments.');
 
-      const pdfExtractionSummary = toProvenanceSummary(pdfExtraction);
       await verifyDiagnosticsProvenance(page, pdfDocId, pdfExtractionSummary);
 
       evidence.provenance = {
@@ -1061,7 +1541,7 @@ test('runs full real-engine capture, editing, export, and restart journey on loc
       const imageRow = page.locator(
         `[data-testid="ocr-queue-row"][data-document-id="${imageDocId}"]`,
       );
-      await imageRow.getByTestId('ocr-row-view').click();
+      await imageRow.getByTestId('ocr-row-view').click({ timeout: ACTION_TIMEOUT_MS });
       await expect(page).toHaveURL(new RegExp(`/history/${imageDocId}/content$`));
 
       const sourceImage = page.getByTestId('result-source-image');
@@ -1083,18 +1563,14 @@ test('runs full real-engine capture, editing, export, and restart journey on loc
         request: { documentId: imageDocId },
       });
       assertDocumentCheckpoint(imageDetail, 'Image');
-      const imageExtraction = imageDetail.raw?.extractionEngine;
-      assert.ok(imageExtraction, 'Image record must include extractionEngine provenance.');
-      assert.equal(imageExtraction.engine, 'windowsml-ocr');
-      assert.ok(
-        imageExtraction.device === 'windowsml-dml' || imageExtraction.device === 'cpu',
-        `Unexpected OCR device: ${String(imageExtraction.device)}`,
+      const imageExtractionSummary = assertOcrExtractionProvenance(
+        imageDetail,
+        'Image',
+        config.expectedOcrDevice,
       );
-      assert.match(imageExtraction.digest, SHA256_DIGEST_PATTERN);
       const imageSegments = imageDetail.raw?.segments ?? [];
       assert.ok(imageSegments.length > 0, 'Image record must contain raw segments.');
 
-      const imageExtractionSummary = toProvenanceSummary(imageExtraction);
       await verifyDiagnosticsProvenance(page, imageDocId, imageExtractionSummary);
 
       evidence.provenance = {
@@ -1106,6 +1582,10 @@ test('runs full real-engine capture, editing, export, and restart journey on loc
           blockCount: imageDetail.result?.blocks?.length ?? 0,
         },
       };
+
+      if (config.expectedOcrDevice !== undefined) {
+        proven.ocrDevice = true;
+      }
     });
 
     // -------------------------------------------------------------------------
@@ -1257,16 +1737,154 @@ test('runs full real-engine capture, editing, export, and restart journey on loc
     });
 
     // -------------------------------------------------------------------------
-    // Stage 4: Edit, reload, export, and restore
+    // Stage 4: Progressive partial transcript at 5-minute checkpoint (optional)
+    // -------------------------------------------------------------------------
+    let progressiveAudioDocId = '';
+    if (config.progressiveAudioPath && config.progressiveAudioOracle) {
+      const progressivePath = config.progressiveAudioPath;
+      const progressiveOracle = config.progressiveAudioOracle;
+      await runStage(
+        stages,
+        '04-progressive-asr-partial',
+        PROGRESSIVE_ASR_STAGE_TIMEOUT_MS,
+        async () => {
+          await page.goto(`${launcher.baseUrl}/asr`);
+          await waitForRuntimeReady(page);
+          await expect(page.getByTestId('asr-choose-files')).toBeEnabled();
+
+          const identifySpeakers = page.getByTestId('asr-identify-speakers');
+          await expect(identifySpeakers).toBeVisible({ timeout: 15_000 });
+          if (await identifySpeakers.isChecked()) {
+            await identifySpeakers.uncheck({ timeout: ACTION_TIMEOUT_MS });
+          }
+          await expect(identifySpeakers).not.toBeChecked();
+
+          const started = await startQueuedFile(page, {
+            filePath: progressivePath,
+            chooseButtonTestId: 'asr-choose-files',
+            queueRowTestId: 'asr-queue-row',
+          });
+          progressiveAudioDocId = started.documentId;
+
+          const observedPartial = await waitForProgressivePartialAtCheckpoint(
+            page,
+            progressiveAudioDocId,
+            started.row,
+            PROGRESSIVE_ASR_STAGE_TIMEOUT_MS,
+          );
+          const checkpointSegmentCount = assertProgressivePartialMatchesOracle(
+            observedPartial,
+            progressiveOracle,
+          );
+
+          await awaitQueuedRowDone(
+            page,
+            progressiveAudioDocId,
+            started.row,
+            PROGRESSIVE_ASR_STAGE_TIMEOUT_MS,
+          );
+
+          await started.row.getByTestId('asr-row-view').click({ timeout: ACTION_TIMEOUT_MS });
+          await expect(page).toHaveURL(
+            new RegExp(`/history/${progressiveAudioDocId}/content$`),
+          );
+
+          const transcriptRows = page.getByTestId('result-transcript-row');
+          await expect
+            .poll(() => transcriptRows.count(), { timeout: 15_000 })
+            .toBeGreaterThan(0);
+
+          const progressiveDetail = await invokeHost<DesktopLibraryDetailRecord>(
+            page,
+            'library_get',
+            { request: { documentId: progressiveAudioDocId } },
+          );
+          assert.equal(progressiveDetail.status, 'completed');
+          const finalSegments = progressiveDetail.raw?.segments ?? [];
+          assertOrderedTimeSegments(finalSegments, 'Progressive audio final');
+          assert.ok(
+            finalSegments.length >= progressiveOracle.expectedOutput.segmentCount,
+            'Progressive audio final segment count must be at least the checkpoint segment count.',
+          );
+          const finalCombinedText =
+            progressiveDetail.raw?.sourceText
+            ?? finalSegments.map((segment) => segment.text).join('\n');
+          assert.ok(
+            normalizeText(finalCombinedText).length > 0,
+            'Progressive audio final transcript must not be empty.',
+          );
+
+          const progressiveExtraction =
+            progressiveDetail.result?.extractionEngine
+            ?? progressiveDetail.raw?.extractionEngine;
+          assert.ok(
+            progressiveExtraction,
+            'Progressive audio record must include extractionEngine provenance.',
+          );
+          assert.equal(progressiveExtraction.engine, progressiveOracle.extraction.engine);
+          assert.equal(progressiveExtraction.model, progressiveOracle.extraction.model);
+          assert.equal(progressiveExtraction.device, progressiveOracle.extraction.device);
+          const expectedSpeech = expectedSpeechProvenance();
+          assert.equal(progressiveExtraction.model, expectedSpeech.model);
+          assert.equal(progressiveExtraction.device, expectedSpeech.device);
+          assert.match(progressiveExtraction.digest, SHA256_DIGEST_PATTERN);
+
+          const progressiveStructuring = progressiveDetail.result?.structuringEngine;
+          assert.ok(
+            progressiveStructuring,
+            'Progressive audio record must include structuringEngine provenance.',
+          );
+          assert.equal(progressiveStructuring.engine, 'ollama');
+          assert.ok(
+            progressiveStructuring.model.trim().length > 0,
+            'Progressive audio structuring model must be recorded.',
+          );
+          assert.match(progressiveStructuring.digest, SHA256_DIGEST_PATTERN);
+
+          const progressiveExtractionSummary = toProvenanceSummary(progressiveExtraction);
+          const progressiveStructuringSummary = toProvenanceSummary(progressiveStructuring);
+          await verifyDiagnosticsProvenance(
+            page,
+            progressiveAudioDocId,
+            progressiveExtractionSummary,
+            progressiveStructuringSummary,
+          );
+
+          evidence.provenance = {
+            ...evidence.provenance,
+            progressiveAudio: {
+              extraction: progressiveExtractionSummary,
+              structuring: progressiveStructuringSummary,
+              checkpoint: {
+                coveredUntilMs: observedPartial.coveredUntilMs,
+                partialRevision: observedPartial.revision,
+                segmentCount: checkpointSegmentCount,
+              },
+              segmentCount: finalSegments.length,
+              blockCount: progressiveDetail.result?.blocks?.length ?? 0,
+            },
+          };
+          proven.progressivePartial = true;
+        },
+      );
+    } else {
+      logStage(
+        '04-progressive-asr-partial',
+        'skipped (CAPTURE_REAL_ENGINES_PROGRESSIVE_AUDIO not set)',
+      );
+    }
+
+    // -------------------------------------------------------------------------
+    // Stage 5: Edit, reload, export, and restore
     // -------------------------------------------------------------------------
     const asrEditMarker = `CAPTURE_ASR_MARKER_${randomBytes(6).toString('hex')}`;
 
     await runStage(
       stages,
-      '04-edit-restore-and-export',
+      '05-edit-restore-and-export',
       EDIT_EXPORT_STAGE_TIMEOUT_MS,
       async () => {
-        // 4a. PDF edit -> reload -> export -> restore
+        // 5a. PDF edit -> reload -> export -> restore
         await page.goto(`${launcher.baseUrl}/history/${pdfDocId}/content`);
         await waitForRuntimeReady(page);
 
@@ -1295,11 +1913,11 @@ test('runs full real-engine capture, editing, export, and restart journey on loc
           .toBe(sha256(`${originalPdfPage1Text}\n${ocrEditMarker}`));
         await expect(page.getByTestId('result-page-edited')).toBeVisible();
 
-        await page.getByTestId('result-nav-export').click();
+        await page.getByTestId('result-nav-export').click({ timeout: ACTION_TIMEOUT_MS });
         await expect(page).toHaveURL(new RegExp(`/history/${pdfDocId}/export$`));
         const [ocrDownload] = await Promise.all([
           page.waitForEvent('download', { timeout: 30_000 }),
-          page.getByTestId('result-export-text').click(),
+          page.getByTestId('result-export-text').click({ timeout: ACTION_TIMEOUT_MS }),
         ]);
         const ocrExportPath = join(exportTempDir, 'ocr-edited.txt');
         await ocrDownload.saveAs(ocrExportPath);
@@ -1311,8 +1929,8 @@ test('runs full real-engine capture, editing, export, and restart journey on loc
           'Exported OCR text file must reflect the edited marker.',
         );
 
-        await page.getByTestId('result-nav-content').click();
-        await page.getByTestId('result-page-restore').click();
+        await page.getByTestId('result-nav-content').click({ timeout: ACTION_TIMEOUT_MS });
+        await page.getByTestId('result-page-restore').click({ timeout: ACTION_TIMEOUT_MS });
         await expect(page.getByTestId('result-page-edited')).toHaveCount(0, { timeout: 15_000 });
         await expect
           .poll(async () => sha256(await pageTextArea.inputValue()), {
@@ -1329,7 +1947,7 @@ test('runs full real-engine capture, editing, export, and restart journey on loc
           }, { timeout: 15_000 })
           .toBe(true);
 
-        // 4b. ASR line edit -> reload -> SRT export (leave edit saved for restart check)
+        // 5b. ASR line edit -> reload -> SRT export (verified before deletion)
         await page.goto(`${launcher.baseUrl}/history/${audioDocId}/content`);
         await waitForRuntimeReady(page);
 
@@ -1338,7 +1956,7 @@ test('runs full real-engine capture, editing, export, and restart journey on loc
         );
         await expect(firstRow).toBeVisible({ timeout: 15_000 });
         await firstRow.hover();
-        await firstRow.getByTestId('result-line-edit').click();
+        await firstRow.getByTestId('result-line-edit').click({ timeout: ACTION_TIMEOUT_MS });
 
         const lineInput = firstRow.getByTestId('result-line-input');
         await lineInput.fill(`${originalAsrLine0Text} ${asrEditMarker}`);
@@ -1368,11 +1986,11 @@ test('runs full real-engine capture, editing, export, and restart journey on loc
           .toBe(true);
         await expect(firstRow.getByTestId('result-line-edited')).toBeVisible();
 
-        await page.getByTestId('result-nav-export').click();
+        await page.getByTestId('result-nav-export').click({ timeout: ACTION_TIMEOUT_MS });
         await expect(page).toHaveURL(new RegExp(`/history/${audioDocId}/export$`));
         const [asrDownload] = await Promise.all([
           page.waitForEvent('download', { timeout: 30_000 }),
-          page.getByTestId('result-export-srt').click(),
+          page.getByTestId('result-export-srt').click({ timeout: ACTION_TIMEOUT_MS }),
         ]);
         const asrExportPath = join(exportTempDir, 'asr-edited.srt');
         await asrDownload.saveAs(asrExportPath);
@@ -1387,9 +2005,17 @@ test('runs full real-engine capture, editing, export, and restart journey on loc
     );
 
     // -------------------------------------------------------------------------
-    // Stage 5: Stop and restart launcher on the same --app-data
+    // Stage 6: Delete image and first recording from /history
     // -------------------------------------------------------------------------
-    await runStage(stages, '05-restart-persistence', RESTART_STAGE_TIMEOUT_MS, async () => {
+    await runStage(stages, '06-delete-documents', DELETE_STAGE_TIMEOUT_MS, async () => {
+      await deleteDocumentFromHistoryList(page, launcher.baseUrl, imageDocId, 'image');
+      await deleteDocumentFromHistoryList(page, launcher.baseUrl, audioDocId, 'recording');
+    });
+
+    // -------------------------------------------------------------------------
+    // Stage 7: Stop and restart launcher on the same --app-data
+    // -------------------------------------------------------------------------
+    await runStage(stages, '07-restart-persistence', RESTART_STAGE_TIMEOUT_MS, async () => {
       const previousPort = launcher.port;
       const previousDevHostPort = launcher.devHostPort;
       await launcher.stop();
@@ -1419,13 +2045,27 @@ test('runs full real-engine capture, editing, export, and restart journey on loc
 
       await page.goto(`${launcher.baseUrl}/history`);
       await waitForRuntimeReady(page);
-      for (const docId of [pdfDocId, imageDocId, audioDocId]) {
+      const persistedIds = progressiveAudioDocId
+        ? [pdfDocId, progressiveAudioDocId]
+        : [pdfDocId];
+      for (const docId of persistedIds) {
         const historyRow = page.locator(
           `[data-testid="history-row"][data-document-id="${docId}"]`,
         );
         await expect(historyRow).toBeVisible({ timeout: 15_000 });
         await expect(historyRow).toHaveAttribute('data-user-status', 'done');
       }
+      for (const [deletedId, label] of [
+        [imageDocId, 'image'],
+        [audioDocId, 'recording'],
+      ] as const) {
+        const deletedRow = page.locator(
+          `[data-testid="history-row"][data-document-id="${deletedId}"]`,
+        );
+        await expect(deletedRow).toHaveCount(0);
+        await assertDocumentAbsentFromHost(page, deletedId, `${label} (after restart)`);
+      }
+      proven.deletion = true;
 
       // Restored PDF edit stays restored across restart
       await page.goto(`${launcher.baseUrl}/history/${pdfDocId}/content`);
@@ -1438,29 +2078,9 @@ test('runs full real-engine capture, editing, export, and restart journey on loc
         .toBe(sha256(originalPdfPage1Text));
       await expect(page.getByTestId('result-page-edited')).toHaveCount(0);
 
-      // Un-restored ASR edit stays saved across restart
-      await page.goto(`${launcher.baseUrl}/history/${audioDocId}/content`);
-      await waitForRuntimeReady(page);
-      const firstRowAfterRestart = page.locator(
-        `[data-testid="result-transcript-row"][data-segment-id="${firstAsrSegmentId}"]`,
-      );
-      await expect
-        .poll(
-          async () =>
-            (
-              await firstRowAfterRestart.getByTestId('result-line-text').innerText()
-            ).includes(asrEditMarker),
-          {
-            timeout: 15_000,
-            message: 'result-line-text must contain the edited marker after restart.',
-          },
-        )
-        .toBe(true);
-      await expect(firstRowAfterRestart.getByTestId('result-line-edited')).toBeVisible();
-
       evidence.restart = {
         oldPortsClosed: true,
-        persistedDocumentCount: 3,
+        persistedDocumentCount: persistedIds.length,
         featuresReadyWithoutReinstall: true,
       };
     });
