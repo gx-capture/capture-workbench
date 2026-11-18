@@ -144,13 +144,12 @@ returns `UnknownCommand`.
    seven-stage localhost journey (first-run install with cancel/retry and reload
    re-attach; PDF & image OCR with optional `CAPTURE_REAL_ENGINES_EXPECTED_OCR_DEVICE`
    device check; speech transcription + diarization + Ollama structuring;
-   optional `CAPTURE_REAL_ENGINES_PROGRESSIVE_AUDIO` progressive partial
-   transcript verification at the 300,000 ms checkpoint without speaker
-   identification against `progressive-audio-oracle-v1`, plus final transcript
-   and provenance; edit/export/restore; UI document deletion of the image and
-   first recording from `/history` verified against `library_list` and
-   `library_get`; and host/runtime restart persistence confirming kept documents
-   and restored state survive while deleted IDs stay absent).
+   edit/export/restore; host/runtime restart persistence confirming features,
+   active model, all three documents, restored PDF state, and saved ASR edit
+   survive; UI document deletion of the image and recording from `/history`
+   verified against `library_list` and `library_get`; and a second host/runtime
+   restart confirming the PDF document still opens while both deleted IDs stay
+   absent).
    Because `CHILD_ENVIRONMENT_ALLOWLIST` in
    `apps/capture-workbench-desktop/src-tauri/src/constants/launch.rs` and
    `LaunchPolicy::environment()` in `launch_policy.rs` strip
