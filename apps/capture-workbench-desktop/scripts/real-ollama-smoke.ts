@@ -59,7 +59,7 @@ export interface ExtractedOllamaResult {
 
 export interface RealOllamaSmokeEvidence {
   readonly evidenceKind: 'real-isolated-ollama-smoke';
-  readonly releaseGateSatisfied: true;
+  readonly releaseGateSatisfied: false;
   readonly sourceKind: 'pdf';
   readonly schemaVersion: unknown;
   readonly structuringEngine: StructuringProvenance;
@@ -97,7 +97,7 @@ export function buildRealOllamaSmokeEvidence(input: {
 }): RealOllamaSmokeEvidence {
   return {
     evidenceKind: 'real-isolated-ollama-smoke',
-    releaseGateSatisfied: true,
+    releaseGateSatisfied: false,
     sourceKind: 'pdf',
     schemaVersion: input.schemaVersion,
     structuringEngine: {

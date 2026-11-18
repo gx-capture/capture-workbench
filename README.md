@@ -234,8 +234,8 @@ Useful focused checks are:
 
 ```powershell
 corepack pnpm nx run capture-runtime:check-contracts
-corepack pnpm nx run capture-angular:clean-consumer-smoke
-corepack pnpm nx run capture-workbench-desktop:package-qa-test
+corepack pnpm nx run capture-workbench-ui:clean-consumer-smoke
+corepack pnpm nx run capture-workbench-desktop:test-scripts
 corepack pnpm nx run capture-workbench-e2e:e2e
 ```
 

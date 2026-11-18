@@ -14,7 +14,7 @@ import {
   DETERMINISTIC_SCHEMA_VERSION,
 } from './constants/deterministic.ts';
 import { appRoot } from './stage-runtime.ts';
-import { assertRedactedEvidence } from './package-qa.ts';
+import { assertRedactedEvidence } from './hash-qa-installer.ts';
 import {
   validateReady, verifyHostStructuring, verifyRequirements,
   verifyRequestPolicy, verifyRuntimeCapture,

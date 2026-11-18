@@ -1,4 +1,4 @@
-// Entry for `nx run capture-workbench-desktop:acceptance-real`: real OCR on
+// Entry for `nx run capture-workbench-desktop:diagnostic-desktop-ocr`: real OCR on
 // the locally built desktop app. It creates an acceptance run, runs the
 // Playwright spec real-desktop-ocr-acceptance.spec.ts (which drives
 // real-desktop-ocr-smoke.ts), and checks the run's terminal verdict and
@@ -22,6 +22,6 @@ async function runPlaywrightChild(cwd: string, environment: NodeJS.ProcessEnv): 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const recorded = process.argv.includes('--recorded'); process.env.E2E_ACCEPTANCE_RUN_ID ||= `local-${new Date().toISOString().replace(/[:.]/gu, '-')}-${process.pid}`; process.env.E2E_RECORD_VIDEO = recorded ? '1' : process.env.E2E_RECORD_VIDEO || '0'; process.env.E2E_ARTIFACT_ROOT ||= join(workspaceRoot, 'output', 'playwright', 'capture-workbench', process.env.E2E_ACCEPTANCE_RUN_ID);
   const run = createAcceptanceRun(process.env, 'capture-workbench', workspaceRoot); await mkdir(run.artifactRoot, { recursive: true }); const eventRoot = resolve(process.env.E2E_ACCEPTANCE_EVENT_ROOT?.trim() || join(run.artifactRoot, 'acceptance-events')); const scopePath = process.env.E2E_ACCEPTANCE_SCOPE_PATH?.trim();
-  const childEnvironment = { ...process.env, E2E_ACCEPTANCE_EVENT_ROOT: eventRoot }; const plan: AcceptanceProjectPlan = { project: 'capture-workbench', cwd: workspaceRoot, target: 'capture-workbench-desktop:acceptance-real', artifactRoot: run.artifactRoot, scopePath: scopePath ?? eventRoot, environment: childEnvironment };
-  const result = await runCaptureWorkbenchAcceptanceOrchestration({ run, acceptanceEventRoot: eventRoot, manifestValidationPlan: plan, child: () => runPlaywrightChild(workspaceRoot, childEnvironment), ...(scopePath ? { scope: { context: { item: plan, scopePath } } } : {}) }); if (result.terminal.phase1Verdict !== 'pass') throw new Error('Capture Workbench acceptance did not complete truthfully.');
+  const childEnvironment = { ...process.env, E2E_ACCEPTANCE_EVENT_ROOT: eventRoot }; const plan: AcceptanceProjectPlan = { project: 'capture-workbench', cwd: workspaceRoot, target: 'capture-workbench-desktop:diagnostic-desktop-ocr', artifactRoot: run.artifactRoot, scopePath: scopePath ?? eventRoot, environment: childEnvironment };
+  const result = await runCaptureWorkbenchAcceptanceOrchestration({ run, acceptanceEventRoot: eventRoot, manifestValidationPlan: plan, child: () => runPlaywrightChild(workspaceRoot, childEnvironment), ...(scopePath ? { scope: { context: { item: plan, scopePath } } } : {}) }); if (result.terminal.verdict !== 'pass') throw new Error('Capture Workbench acceptance did not complete truthfully.');
 }

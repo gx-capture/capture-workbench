@@ -13,9 +13,9 @@ const reportDirectory = join(
   workspaceRoot,
   'tmp',
   'capture-workbench-desktop',
-  'package-qa',
+  'hash-qa-installer',
 );
-const reportPath = join(reportDirectory, 'package-qa.json');
+const reportPath = join(reportDirectory, 'hash-qa-installer.json');
 
 export function collectPackageQa(): Observable<{ report: unknown; reportPath: string }> {
   return assertStagedRuntime('deterministic').pipe(
@@ -54,7 +54,7 @@ export function collectPackageQa(): Observable<{ report: unknown; reportPath: st
     ),
     concatMap(({ manifest, provenance, artifacts }) => {
       const report = {
-    evidenceKind: 'deterministic-package-qa',
+    evidenceKind: 'hash-qa-installer',
     releaseGateSatisfied: false,
     platform: 'windows',
     arch: 'x86_64',
@@ -71,7 +71,7 @@ export function collectPackageQa(): Observable<{ report: unknown; reportPath: st
     },
         artifacts,
         disclaimer:
-          'Deterministic fixture evidence only; real WindowsML, Whisper, and Ollama behavior is outside this QA check.',
+          'Deterministic fixture evidence only; real OCR, speech recognition, and structuring behavior is outside this QA check.',
       };
       assertRedactedEvidence(report);
       return defer(() => from(mkdir(reportDirectory, { recursive: true }))).pipe(
@@ -99,7 +99,7 @@ if (
 ) {
   collectPackageQa().subscribe({
     next: ({ reportPath: path }) => {
-      process.stdout.write(`Deterministic package QA report: ${path}\n`);
+      process.stdout.write(`QA installer hash report: ${path}\n`);
     },
     error: (error: unknown) => {
       process.stderr.write(

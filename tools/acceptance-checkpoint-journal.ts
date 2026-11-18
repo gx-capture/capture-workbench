@@ -59,7 +59,7 @@ export interface AcceptanceTerminalRecord {
   readonly checkpointJournalStatus: AcceptanceJournalStatus; readonly checkpointSequence: readonly AcceptanceCheckpointEntry[];
   readonly primaryAcceptanceFailure: AcceptancePrimaryAcceptanceFailure | null;
   readonly sourceManifestSha256: string | null; readonly artifactCount: number;
-  readonly cleanupOutcome: AcceptanceCleanupOutcome; readonly phase1Verdict: 'pass' | 'fail';
+  readonly cleanupOutcome: AcceptanceCleanupOutcome; readonly verdict: 'pass' | 'fail';
   readonly artifactCleanup: 'allowed' | 'blocked';
 }
 export class AcceptanceCheckpointJournalError extends Error {
@@ -164,7 +164,7 @@ function derive(input: AcceptanceTerminalInput): { primary: AcceptancePrimaryAcc
 }
 export async function writeAcceptanceTerminal(input: AcceptanceTerminalInput): Promise<{ readonly terminal: AcceptanceTerminalRecord; readonly verified: true }> {
   requestOk(input); const derived = derive(input); const source = input.manifest.sourceManifestSha256;
-  const terminal: AcceptanceTerminalRecord = { schemaVersion: 1, kind: 'acceptance-terminal', project: input.project, runId: input.runId, checkpointJournalStatus: input.journal.status, checkpointSequence: input.journal.state?.entries ?? [], primaryAcceptanceFailure: derived.primary, sourceManifestSha256: source && SHA256.test(source) ? source : null, artifactCount: derived.artifactCount, cleanupOutcome: { producer: derived.producer, outerScope: input.outerScope }, phase1Verdict: derived.primary ? 'fail' : 'pass', artifactCleanup: derived.producer === 'completed' && input.outerScope !== 'failed' ? 'allowed' : 'blocked' };
+  const terminal: AcceptanceTerminalRecord = { schemaVersion: 1, kind: 'acceptance-terminal', project: input.project, runId: input.runId, checkpointJournalStatus: input.journal.status, checkpointSequence: input.journal.state?.entries ?? [], primaryAcceptanceFailure: derived.primary, sourceManifestSha256: source && SHA256.test(source) ? source : null, artifactCount: derived.artifactCount, cleanupOutcome: { producer: derived.producer, outerScope: input.outerScope }, verdict: derived.primary ? 'fail' : 'pass', artifactCleanup: derived.producer === 'completed' && input.outerScope !== 'failed' ? 'allowed' : 'blocked' };
   const path = paths(input.eventRoot).terminal; try { await readFile(path); throw new AcceptanceCheckpointJournalError('terminal_already_written'); } catch (error) { if (error instanceof AcceptanceCheckpointJournalError) throw error; if (!(object(error) && error.code === 'ENOENT')) throw new AcceptanceCheckpointJournalError('terminal_read_failed'); }
   const temp = `${path}.${randomUUID()}.tmp`;
   try { await mkdir(dirname(path), { recursive: true }); await writeFile(temp, `${JSON.stringify(terminal)}\n`, 'utf8'); const parsed = JSON.parse(await readFile(temp, 'utf8')); if (JSON.stringify(parsed) !== JSON.stringify(terminal)) throw new AcceptanceCheckpointJournalError('terminal_publication_failed'); await rename(temp, path); return { terminal, verified: true }; }

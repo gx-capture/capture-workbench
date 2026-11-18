@@ -345,7 +345,7 @@ function runInstalledSizeMeasurement() {
           assertStagedRuntime('release'),
         );
         installer = await firstValueFrom(
-          lifecycle.findDeterministicInstaller(manifest.runtimeVersion),
+          lifecycle.findExpectedInstaller(manifest.runtimeVersion),
         );
         await firstValueFrom(registry.assertNoPreExistingInstallation());
         await firstValueFrom(lifecycle.safeRemoveTree(smokeRoot, runRoot));
@@ -500,7 +500,7 @@ function runInstalledSizeMeasurement() {
   });
 }
 
-export function runInstalledDeterministicSmoke(
+export function runInstalledNsisSmoke(
   { expectedSource = 'deterministic', measureOnly = false } = {},
   {
     runSizeMeasurement = runInstalledSizeMeasurement,
@@ -510,7 +510,7 @@ export function runInstalledDeterministicSmoke(
   if (process.platform !== 'win32') {
     return throwError(
       () =>
-        new Error('Installed deterministic Tauri smoke requires Windows x64.'),
+        new Error('Installed NSIS smoke requires Windows x64.'),
     );
   }
   if (measureOnly) {
@@ -653,7 +653,7 @@ export function runInstalledDeterministicSmoke(
       const installAndExercise = defer(() =>
         from(rm(evidencePath, { force: true })),
       ).pipe(
-        concatMap(() => lifecycle.findDeterministicInstaller(runtimeVersion)),
+        concatMap(() => lifecycle.findExpectedInstaller(runtimeVersion)),
         tap((installer) => (state.installer = installer)),
         concatMap(() => registry.assertNoPreExistingInstallation()),
         concatMap(() =>
@@ -696,7 +696,7 @@ export function runInstalledDeterministicSmoke(
           trackSmokeStep(state.timeline, 'install', () => lifecycle.runCheckedExecutable(
             state.installer.path,
             installerArguments(smokeRoot, installDirectory),
-            'Deterministic NSIS installer',
+            'NSIS installer',
             baseChildEnvironment(process.env, temporaryDirectory),
             installedSmokeExecutableTimeoutMs,
           )),
@@ -976,7 +976,7 @@ export function runInstalledDeterministicSmoke(
         concatMap(() => state.exerciseError || state.cleanupErrors.length > 0
           ? attempt(persistFailure(new AggregateError(
               [state.exerciseError, ...state.cleanupErrors].filter(Boolean),
-              'Installed deterministic Tauri smoke failed or could not clean up safely.',
+              'Installed NSIS smoke failed or could not clean up safely.',
             )))
           : of(undefined)),
         concatMap(() =>
@@ -999,7 +999,7 @@ export function runInstalledDeterministicSmoke(
               () =>
                 new AggregateError(
                   [state.exerciseError, ...state.cleanupErrors].filter(Boolean),
-                  'Installed deterministic Tauri smoke failed or could not clean up safely.',
+                  'Installed NSIS smoke failed or could not clean up safely.',
                 ),
             );
           }
@@ -1024,7 +1024,7 @@ export function runInstalledDeterministicSmoke(
             cleanup: state.cleanup,
             realAppDataGuard: { status: realAppDataGuard, before: realAppDataBefore, after: realAppDataAfter },
             disclaimer:
-              'Deterministic packaged verification only; it does not certify real WindowsML, Whisper, Ollama, or licensed-fixture behavior.',
+              'Deterministic packaged verification only; it does not certify real OCR, speech recognition, structuring, or licensed-fixture behavior.',
           };
           assertInstalledSmokeEvidence(report);
           return writeEvidence(report).pipe(
@@ -1123,7 +1123,7 @@ if (
     );
     process.exitCode = 1;
   } else {
-    runInstalledDeterministicSmoke(
+    runInstalledNsisSmoke(
       measureReleaseSize
         ? { expectedSource: 'release', measureOnly: true }
         : releaseSmoke
@@ -1141,3 +1141,4 @@ if (
     });
   }
 }
+

@@ -11,7 +11,7 @@ Everything here comes from reading the `main` checkouts. Producer tip is `055e0f
 
    It also runs on `release-desktop.yml:83-89`, which downloads the catalog asset. LAW therefore needs a code change, so the plan file's line 3 ("Cert Prep and LAW get no code change") and line 17 are wrong.
 2. **Cert Prep is not broken by this slice, but it has an old exact list.** `cert-prep/tools/capture-candidate-gate.mts:176-184` is the pinned inventory. It holds 14 required paths: 3 runtime assets, the catalog, the OCR zip and `-files.json`, `capture-engine-whisper-<v>` zip and `-files.json`, the Python wheel and sdist, the crate, and 3 contract files. Lines 186-194 add up to 6 optional `.sha256` sidecars.
-   - It still names the whisper worker. That worker was renamed at 0.7.0 and diarization is missing, so this "strict local candidate" path (used only by `acceptance-real-options.mts:758`) already fails on any real runtime candidate. S7 does not make it worse.
+   - It still names the old speech worker. That worker was renamed at 0.7.0 and diarization is missing, so this "strict local candidate" path (its only caller was a removed desktop options module) already fails on any real runtime candidate. S7 does not make it worse.
    - The release-candidate gate itself has no fixed list: it compares the manifest to the files on disk (`:917-935`). Its catalog reads look only at `windowsml-ocr` (`:301-303`, `:1323-1345`), and so does `build_backend_runtime.py:150-163`.
    - `install-capture-runtime.mts:42-55, 248-266` downloads only the exe, the runtime manifest, the schema and an optional sidecar.
 3. **Neither consumer installs speech by itself.** Both go through the runtime API, so the runtime picks the content and neither needs to know about contents (details in section 3).
@@ -43,7 +43,7 @@ How each piece reacts to a `contents` requirement and to two extra assets:
 | `verify-release-candidate.ts:140-162` | `some` requirement has artifacts → model-enabled | Not affected (OCR keeps `artifacts`) |
 | `verify-runtime-candidate.ts:181-238`, `assemble-runtime-candidate.ts:156,205`, `assemble-release-candidate.ts:77,101`, `create-release-manifest.ts:61-63`, `create-github-release.ts:20-45`, `create-runtime-github-release.ts:101-108`, `github-release-support.ts:29-39`, `verify-runtime-candidate-binding.ts:83-90` | read the directory; no fixed count | Not affected; `runtimeAssets` grows by 2 |
 | `engine-catalog-parts.ts` | one artifact at a time | Not affected |
-| `package-qa.ts` | npm package artifacts | Not a catalog reader |
+| `hash-qa-installer.ts` | npm package artifacts | Not a catalog reader |
 
 - **The 17-asset count** exists only in prose: runbook `:367-372`. No test pins it.
 - **Size limits:**
@@ -112,7 +112,7 @@ How each piece reacts to a `contents` requirement and to two extra assets:
 1. Build the CPU worker: `pnpm nx run capture-runtime:build-speech-recognition-cpu-worker` (about 4 min, 302 MiB).
 2. Put the other three workers in `packages/capture-runtime/dist/engines`, without the `.sha256` files: `gh release download v0.9.0 -R gx-capture/capture-workbench -D packages/capture-runtime/dist/engines -p 'capture-engine-ocr-0.9.0-windows-x64*' -p 'capture-engine-diarization-0.9.0-windows-x64*' -p 'capture-engine-speech-recognition-0.9.0-windows-x64*'`. That is about 3.4 GB; the CUDA parts are only hashed and are never fetched with `cpu`. Alternatively build them with the three `build-*-worker` targets.
 3. Generate the catalog: `pnpm nx run capture-runtime:generate-release-engine-catalog` (P3 passes the CPU archive and manifest).
-4. Build the exe: `pnpm nx run capture-runtime:prepare-production-environment`, then in `packages/capture-runtime` run `uv run --no-sync --python 3.13 python scripts/build_executable.py --layout onefile --catalog dist/catalog/capture-engine-catalog.json`.
+4. Build the exe: `pnpm nx run capture-runtime:prepare-core-build-environment`, then in `packages/capture-runtime` run `uv run --no-sync --python 3.13 python scripts/build_executable.py --layout onefile --catalog dist/catalog/capture-engine-catalog.json`.
 5. Serve the workers: `python -m http.server 8765 --bind 127.0.0.1 --directory packages/capture-runtime/dist/engines`.
 6. Start `dist/executable/capture-runtime.exe serve --port P` with these settings:
    - `CAPTURE_SMOKE_WORKER_MIRROR_OPT_IN=1`, `CAPTURE_SMOKE_WORKER_MIRROR_URL=http://127.0.0.1:8765`

@@ -524,16 +524,19 @@ export function buildAcceptancePlan(
       project: 'capture-workbench' as const,
       cwd: join(root, 'capture-workbench'),
       nx: 'capture-workbench-desktop',
+      targetName: 'diagnostic-desktop-ocr',
     },
     {
       project: 'cert-prep' as const,
       cwd: join(root, 'cert-prep'),
       nx: 'cert-prep-desktop',
+      targetName: 'acceptance-real',
     },
     {
       project: 'law-prep' as const,
       cwd: join(root, 'gx.law-prep'),
       nx: 'law-prep-web-e2e',
+      targetName: 'acceptance-real',
     },
   ];
   const scopeRoot = join(
@@ -545,10 +548,10 @@ export function buildAcceptancePlan(
     runId,
     'scopes',
   );
-  return projects.map(({ project, cwd, nx }) => ({
+  return projects.map(({ project, cwd, nx, targetName }) => ({
     project,
     cwd,
-    target: `${nx}:acceptance-real${recordVideo ? '-recorded' : ''}`,
+    target: `${nx}:${targetName}${recordVideo ? '-recorded' : ''}`,
     artifactRoot: join(cwd, 'output', 'playwright', project, runId),
     scopePath: join(scopeRoot, `${project}.json`),
     environment: {
@@ -588,7 +591,7 @@ export function buildCaptureWorkbenchAcceptancePlan(
   return {
     project: 'capture-workbench',
     cwd: root,
-    target: 'apps/capture-workbench-desktop/scripts/acceptance-real.ts',
+    target: 'apps/capture-workbench-desktop/scripts/diagnostic-desktop-ocr.ts',
     artifactRoot,
     scopePath,
     environment: {
@@ -614,7 +617,7 @@ export function buildCaptureWorkbenchChildRequest(
         'apps',
         'capture-workbench-desktop',
         'scripts',
-        'acceptance-real.ts',
+        'diagnostic-desktop-ocr.ts',
       ),
     ],
     options: {

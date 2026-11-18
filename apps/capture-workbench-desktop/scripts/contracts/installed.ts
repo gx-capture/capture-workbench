@@ -3,7 +3,7 @@ import { isAbsolute, join, relative, resolve } from 'node:path';
 import {
   CHILD_ENVIRONMENT_ALLOWLIST,
 } from '../constants/installed.ts';
-import { assertRedactedEvidence } from '../package-qa.ts';
+import { assertRedactedEvidence } from '../hash-qa-installer.ts';
 
 const childEnvironmentAllowlist = CHILD_ENVIRONMENT_ALLOWLIST;
 

@@ -190,7 +190,7 @@ jobs:
 
       - name: Measure exact installed size
         shell: pwsh
-        run: node apps/capture-workbench-desktop/scripts/installed-deterministic-smoke.ts --measure-release-size
+        run: node apps/capture-workbench-desktop/scripts/installed-nsis-smoke.ts --measure-release-size
 
       - name: Verify packaging budget
         shell: pwsh
@@ -346,7 +346,7 @@ jobs:
           if ($installer.Count -ne 1) { throw "Expected exactly one candidate installer, found $($installer.Count)." }
           $tauriInstallerName = "Capture Workbench_$env:RELEASE_VERSION`_x64-setup.exe"
           Copy-Item -LiteralPath $installer[0].FullName -Destination (Join-Path $nsis $tauriInstallerName)
-          node apps/capture-workbench-desktop/scripts/installed-deterministic-smoke.ts --release
+          node apps/capture-workbench-desktop/scripts/installed-nsis-smoke.ts --release
 
       - name: Record candidate verification result
         if: ${{ always() }}
@@ -471,7 +471,7 @@ jobs:
           Copy-Item -Path (Join-Path $candidate 'package/*.tgz') -Destination 'dist/packs' -Force
           node tools/verify-candidate-packages.ts --candidate "$candidate" --version "$env:RELEASE_VERSION"
           pnpm exec playwright install chromium
-          node tools/clean-angular-consumer-smoke.ts
+          node tools/web-component-consumer-smoke.ts
 
       - name: Record candidate verification result
         if: ${{ always() }}

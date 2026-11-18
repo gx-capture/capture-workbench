@@ -37,7 +37,7 @@ function item(root: string): AcceptanceProjectPlan {
   return {
     project: 'capture-workbench',
     cwd: root,
-    target: 'capture-workbench-desktop:acceptance-real',
+    target: 'capture-workbench-desktop:diagnostic-desktop-ocr',
     artifactRoot: join(root, 'artifacts'),
     scopePath: join(root, 'scope.json'),
     environment: { E2E_ACCEPTANCE_RUN_ID: 'run-cleanup' },

@@ -1,4 +1,4 @@
-// Shared process and port helpers for tests that spawn `real-backend-server.ts`.
+// Shared process and port helpers for tests that spawn `dev-host-preview-server.ts`.
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { connect as netConnect, createServer as createNetServer } from 'node:net';
 import { resolve } from 'node:path';
@@ -57,7 +57,7 @@ function escapeRegExp(value: string): string {
 
 export function launcherReadyLine(port: number, upstreamOrigin = 'http://localhost:4200'): RegExp {
   return new RegExp(
-    `^Real-backend preview: http://127\\.0\\.0\\.1:${port}/__preview `
+    `^Dev-host preview: http://127\\.0\\.0\\.1:${port}/__preview `
       + `\\(upstream ${escapeRegExp(upstreamOrigin)}, dev-host 127\\.0\\.0\\.1:(\\d+)\\)$`,
     'u',
   );
@@ -136,7 +136,7 @@ export function stopSpawnedChild(child: ChildProcess): Promise<void> {
   });
 }
 
-interface StartRealBackendLauncherOptions {
+interface StartDevHostLauncherOptions {
   readonly upstreamUrl?: string;
   readonly appDataDir?: string;
   readonly runtimeManifestPath?: string;
@@ -146,7 +146,7 @@ interface StartRealBackendLauncherOptions {
   readonly workspaceRoot?: string;
 }
 
-export interface StartedRealBackendLauncher {
+export interface StartedDevHostLauncher {
   readonly port: number;
   readonly devHostPort: number;
   readonly baseUrl: string;
@@ -155,17 +155,17 @@ export interface StartedRealBackendLauncher {
 }
 
 /**
- * Starts `real-backend-server.ts` on a free loopback port and waits until the
+ * Starts `dev-host-preview-server.ts` on a free loopback port and waits until the
  * proxy and `capture-workbench-dev-host` are both listening.
  */
-export async function startRealBackendLauncher(
-  options: StartRealBackendLauncherOptions = {},
-): Promise<StartedRealBackendLauncher> {
+export async function startDevHostLauncher(
+  options: StartDevHostLauncherOptions = {},
+): Promise<StartedDevHostLauncher> {
   const upstreamUrl = options.upstreamUrl ?? 'http://localhost:4200';
   const cwd = options.workspaceRoot ?? defaultWorkspaceRoot;
   const port = await reserveFreePort();
   const args = [
-    'apps/capture-workbench-e2e/real-backend-server.ts',
+    'apps/capture-workbench-e2e/dev-host-preview-server.ts',
     String(port),
     upstreamUrl,
   ];

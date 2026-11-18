@@ -79,7 +79,7 @@ test('async boundary permits only the exact approved CLI paths', async () => {
     'apps',
     'capture-workbench-desktop',
     'scripts',
-    'installed-deterministic-smoke.ts',
+    'installed-nsis-smoke.ts',
   );
   const nativeDialogHelperPath = join(
     workspaceRoot,
@@ -165,7 +165,7 @@ test('async boundary permits only the exact approved CLI paths', async () => {
     'apps',
     'capture-workbench-desktop',
     'scripts',
-    'acceptance-real.ts',
+    'diagnostic-desktop-ocr.ts',
   );
   const acceptanceContractPath = join(
     workspaceRoot,

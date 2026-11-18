@@ -118,11 +118,11 @@ every feature configuration. The two Tauri handler configurations and the dev
 host's "never served" names are generated from that list. Each of those names
 returns `UnknownCommand`.
 
-## Preview real-backend mode (launcher, bridge, proxy)
+## Preview dev-host mode (launcher, bridge, proxy)
 
-`apps/capture-workbench-e2e/real-backend-server.ts` owns one `capture-workbench-dev-host` child process for a preview or Playwright run:
+`apps/capture-workbench-e2e/dev-host-preview-server.ts` owns one `capture-workbench-dev-host` child process for a preview or Playwright run:
 
-- **Launcher lifecycle**: creates an isolated app-data directory under the temp root, generates an ephemeral `>=32`-character bearer token in memory, starts `capture-workbench-dev-host` with `--port 0`, `--app-data`, and the staged deterministic fixture runtime paths (`CAPTURE_DEV_HOST_TOKEN` in env, `--quiet` suppressed to its single `{"port":N}` stdout line), serves the upstream dev/preview server in real-backend mode, and shuts down via `POST /__dev/shutdown`, child wait/tree-kill fallback, and app-data directory removal.
+- **Launcher lifecycle**: creates an isolated app-data directory under the temp root, generates an ephemeral `>=32`-character bearer token in memory, starts `capture-workbench-dev-host` with `--port 0`, `--app-data`, and the staged deterministic fixture runtime paths (`CAPTURE_DEV_HOST_TOKEN` in env, `--quiet` suppressed to its single `{"port":N}` stdout line), serves the upstream dev/preview server against that dev host, and shuts down via `POST /__dev/shutdown`, child wait/tree-kill fallback, and app-data directory removal.
 - **Injected bridge**: HTML responses inject a `window.__TAURI_INTERNALS__` + `window.isTauri` bridge implementing `invoke`, `transformCallback`, `unregisterCallback`, `convertFileSrc`, and `metadata` (`{ currentWindow: { label: 'main' } }`). Commands go to same-origin `POST /__host/invoke/<command>` (returning JSON or `ArrayBuffer` for `application/octet-stream`, rejecting with error text on 400 or clear error on 404); `library_watch_native_sources` sends a `{ id }` channel object and delivers no events; `/__preview` shows a short active-host status page (port only, never the token) and ignores scenario cookies.
 - **Proxy boundary**: listening on `127.0.0.1` only, the proxy forwards only `POST /__host/invoke/<command>` -> `/invoke/<command>` and `POST /__host/selection` -> `/__dev/selection`, injecting `Authorization: Bearer <token>` and `Host: 127.0.0.1:<dev-host-port>` server-side while stripping any `Access-Control-Allow-*` response headers. It rejects any request that fails `Host` (`127.0.0.1:<port>` or `localhost:<port>`), optional `Origin` (exact launcher origin), optional `Sec-Fetch-Site` (`same-origin` or `none`), `POST`, `Content-Type: application/json`, `X-Capture-Preview: 1`, or the `1 MiB` body cap with plain `400`/`403` without detail or CORS headers.
 
@@ -131,12 +131,12 @@ returns `UnknownCommand`.
 1. **Rust**: the shared command functions, the
    dispatcher, the dev host executable, its tests against a fake runtime, Nx
    targets to build and test it, CI running those tests.
-2. **Preview and e2e**: `apps/capture-workbench-e2e/real-backend-server.ts`
+2. **Preview and e2e**: `apps/capture-workbench-e2e/dev-host-preview-server.ts`
    with its `__TAURI_INTERNALS__` bridge and strict host proxy, paired with the
-   `chromium-real-backend` Playwright project (`capture-workbench-e2e:e2e-real-backend`)
+   `chromium-dev-host` Playwright project (`capture-workbench-e2e:e2e-dev-host`)
    that exercises the Workbench against `capture-workbench-dev-host` and the
    staged deterministic fixture runtime in CI.
-3. **Real engines on localhost** (Part A built): `apps/capture-workbench-e2e/real-backend-server.ts`
+3. **Real engines on localhost** (Part A built): `apps/capture-workbench-e2e/dev-host-preview-server.ts`
    accepts `--app-data <abs-dir>` (preserved across exits) and
    `--runtime-manifest` / `--runtime-executable`, and
    `pnpm nx run capture-workbench-e2e:smoke-real-engines`

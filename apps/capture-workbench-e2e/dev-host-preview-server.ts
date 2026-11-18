@@ -2,7 +2,7 @@
 // owns a headless `capture-workbench-dev-host` child process for one run, and
 // injects a Tauri IPC bridge that forwards host commands over same-origin HTTP.
 //
-// Use: node apps/capture-workbench-e2e/real-backend-server.ts <port> [upstream] [--app-data <abs-dir>] [--runtime-manifest <path> --runtime-executable <path>]
+// Use: node apps/capture-workbench-e2e/dev-host-preview-server.ts <port> [upstream] [--app-data <abs-dir>] [--runtime-manifest <path> --runtime-executable <path>]
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync } from 'node:fs';
@@ -30,7 +30,7 @@ const CUSTOM_PREVIEW_HEADER = 'x-capture-preview';
 
 const workspaceRoot = resolve(import.meta.dirname, '..', '..');
 
-interface RealBackendServerCliArgs {
+interface DevHostPreviewServerCliArgs {
   readonly port: number;
   readonly upstreamUrl: URL;
   readonly appDataDir?: string;
@@ -39,7 +39,7 @@ interface RealBackendServerCliArgs {
 }
 
 const USAGE =
-  'Use: real-backend-server.ts <port> [upstream] [--app-data <abs-dir>] [--runtime-manifest <path> --runtime-executable <path>]';
+  'Use: dev-host-preview-server.ts <port> [upstream] [--app-data <abs-dir>] [--runtime-manifest <path> --runtime-executable <path>]';
 
 function readFlagValue(
   argv: readonly string[],
@@ -57,8 +57,8 @@ function readFlagValue(
   };
 }
 
-function parseRealBackendArgs(argv: readonly string[]): RealBackendServerCliArgs {
-  const positionals: string[] = [argv[0] ?? 'node', argv[1] ?? 'real-backend-server.ts'];
+function parseDevHostPreviewArgs(argv: readonly string[]): DevHostPreviewServerCliArgs {
+  const positionals: string[] = [argv[0] ?? 'node', argv[1] ?? 'dev-host-preview-server.ts'];
   let appDataDir: string | undefined;
   let runtimeManifestPath: string | undefined;
   let runtimeExecutablePath: string | undefined;
@@ -433,13 +433,13 @@ function removeAppDataDir(appDataDir: string): void {
 }
 
 /**
- * Installs the browser-side Tauri IPC bridge for real-backend mode.
+ * Installs the browser-side Tauri IPC bridge for dev-host preview mode.
  *
  * This function MUST remain completely self-contained: it is serialised with
  * `Function.prototype.toString()` and evaluated inside the browser page.
  */
-function installRealBackendBridge(): void {
-  interface RealBackendGlobal {
+function installDevHostBridge(): void {
+  interface DevHostGlobal {
     isTauri: boolean;
     __TAURI_INTERNALS__: {
       invoke: (command: string, args?: unknown) => Promise<unknown>;
@@ -452,7 +452,7 @@ function installRealBackendBridge(): void {
       convertFileSrc: (filePath: string, protocol?: string) => string;
     };
   }
-  const target = globalThis as unknown as RealBackendGlobal;
+  const target = globalThis as unknown as DevHostGlobal;
   let nextCallbackId = 1;
   const callbacks = new Map<number, (eventData: unknown) => void>();
 
@@ -522,22 +522,22 @@ function installRealBackendBridge(): void {
 }
 
 function buildBridgeScriptTag(): string {
-  const fnSource = installRealBackendBridge.toString();
+  const fnSource = installDevHostBridge.toString();
   if (/<\/script|<!--/iu.test(fnSource)) {
     throw new Error(
-      'installRealBackendBridge source must not contain </script or <!--.',
+      'installDevHostBridge source must not contain </script or <!--.',
     );
   }
   return `<script>(${fnSource})();</script>`;
 }
 
-function renderRealBackendStatusHtml(devHostPort: number): string {
+function renderDevHostStatusHtml(devHostPort: number): string {
   return `<!doctype html>
 <html lang="zh-Hant-TW">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Capture Workbench 真實後端預覽</title>
+    <title>Capture Workbench Dev Host 預覽</title>
     <style>
       body {
         font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
@@ -571,8 +571,8 @@ function renderRealBackendStatusHtml(devHostPort: number): string {
   </head>
   <body>
     <div class="card">
-      <h1>Capture Workbench 真實後端模式</h1>
-      <p>目前預覽伺服器已連線至本機 Dev Host（連接埠 <code>${escapeHtml(String(devHostPort))}</code>），情境 Cookie 已忽略。</p>
+      <h1>Capture Workbench Dev Host 模式</h1>
+      <p>Workbench 透過本機 Dev Host 執行，使用確定性測試 runtime（連接埠 <code>${escapeHtml(String(devHostPort))}</code>）。情境 Cookie 已忽略。</p>
       <a href="/">前往 Capture Workbench</a>
     </div>
   </body>
@@ -793,7 +793,7 @@ function handleHostProxy(
 }
 
 async function main(): Promise<void> {
-  const cliArgs = parseRealBackendArgs(process.argv);
+  const cliArgs = parseDevHostPreviewArgs(process.argv);
   const { port, upstreamUrl } = cliArgs;
   const paths = resolvePaths({
     ...(cliArgs.runtimeManifestPath !== undefined
@@ -853,7 +853,7 @@ async function main(): Promise<void> {
     }
   }
 
-  const statusHtml = renderRealBackendStatusHtml(devHostPort);
+  const statusHtml = renderDevHostStatusHtml(devHostPort);
 
   const server = createServer((request, response) => {
     request.on('error', () => {
@@ -951,7 +951,7 @@ async function main(): Promise<void> {
 
   server.listen(port, '127.0.0.1', () => {
     console.log(
-      `Real-backend preview: http://127.0.0.1:${port}/__preview (upstream ${upstreamUrl.origin}, dev-host 127.0.0.1:${devHostPort})`,
+      `Dev-host preview: http://127.0.0.1:${port}/__preview (upstream ${upstreamUrl.origin}, dev-host 127.0.0.1:${devHostPort})`,
     );
   });
 }
