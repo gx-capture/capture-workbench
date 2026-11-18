@@ -97,7 +97,7 @@ packages/capture-runtime/src/capture_runtime/
 ```mermaid
 flowchart TB
   subgraph ctx["每個上下文（例：ocr）"]
-    API["api<br/>FastAPI route（只有擷取、引擎供應有）"] --> APP["application<br/>用例、port"]
+    API["api<br/>FastAPI route（擷取、引擎供應、結構化有）"] --> APP["application<br/>用例、port"]
     APP --> DOM["domain<br/>模型、政策、純演算法"]
     INF["infrastructure<br/>worker、ONNX／Paddle、檔案"] --> APP
     INF --> DOM

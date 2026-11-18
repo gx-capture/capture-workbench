@@ -30,13 +30,13 @@ from capture_runtime.release import (
     write_capture_document_schema,
 )
 from capture_runtime.structuring.infrastructure.ollama import (
-    FakeRuntimeInstaller,
     IsolatedOllamaLifecycle,
     OllamaOwnershipError,
     OwnedProcess,
     SubprocessController,
 )
 from tests.conftest import TOKEN, idempotency_headers, poll_installation
+from tests.support.fake_requirement_installer import FakeRequirementInstaller
 
 
 class MutableClock(Clock):
@@ -52,7 +52,7 @@ def test_startup_recovery_marks_interrupted_installation_failed(
 ) -> None:
     settings = settings_factory()
     headers = {"Authorization": f"Bearer {TOKEN}"}
-    first_app = create_app(settings, installer=FakeRuntimeInstaller(delay_seconds=5))
+    first_app = create_app(settings, installer=FakeRequirementInstaller(delay_seconds=5))
     with TestClient(
         first_app, base_url=f"http://127.0.0.1:{settings.port}", headers=headers
     ) as first:
@@ -64,7 +64,7 @@ def test_startup_recovery_marks_interrupted_installation_failed(
         installation_id = response.json()["installationId"]
         poll_installation(first, installation_id, lambda job: job["status"] == "running")
 
-    restarted_app = create_app(settings, installer=FakeRuntimeInstaller())
+    restarted_app = create_app(settings, installer=FakeRequirementInstaller())
     with TestClient(
         restarted_app, base_url=f"http://127.0.0.1:{settings.port}", headers=headers
     ) as restarted:

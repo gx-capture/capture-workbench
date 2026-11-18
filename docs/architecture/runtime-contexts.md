@@ -153,8 +153,10 @@ flowchart LR
   n_capture_runtime_structuring --> n_capture_runtime_constants
   n_capture_runtime_structuring --> n_capture_runtime_contract_set
   n_capture_runtime_structuring --> n_capture_runtime_contracts
+  n_capture_runtime_structuring --> n_capture_runtime_dependencies
   n_capture_runtime_structuring --> n_capture_runtime_install_progress
   n_capture_runtime_structuring --> n_capture_runtime_provisioning
+  n_capture_runtime_structuring --> n_capture_runtime_routes
   n_capture_runtime_structuring --> n_capture_runtime_storage
   n_capture_runtime_testing --> n_capture_runtime_pdf_source
   n_capture_runtime_testing --> n_capture_runtime_capture
