@@ -28,15 +28,15 @@ const summary: DesktopLibrarySummary = {
   stage: 'uploading',
 };
 
-const runningJob = operation({
+const runningOperation = operation({
   captureId: 'capture-1',
   status: 'extracting',
 });
-const completedJob = operation({
+const completedOperation = operation({
   captureId: 'capture-1',
   status: 'completed',
 });
-const cancelledJob = operation({
+const cancelledOperation = operation({
   captureId: 'capture-1',
   status: 'cancelled',
 });
@@ -446,9 +446,9 @@ describe('DesktopWorkspaceStore', () => {
       fileName: 'interview.wav',
       mediaType: 'audio/wav',
     };
-    const startStreamingCapture = vi.fn(() => of(completedJob));
+    const startStreamingCapture = vi.fn(() => of(completedOperation));
     const getStreamingResult = vi.fn(() =>
-      of({ operation: completedJob, raw, result }),
+      of({ operation: completedOperation, raw, result }),
     );
     const deleteStreamingCapture = vi.fn(() => of(undefined));
     const startInstallation = vi.fn();
@@ -506,8 +506,8 @@ describe('DesktopWorkspaceStore', () => {
       fileName: 'interview.wav',
       mediaType: 'audio/wav',
     };
-    const startStreamingCapture = vi.fn(() => of(completedJob));
-    const createCapture = vi.fn(() => of(completedJob));
+    const startStreamingCapture = vi.fn(() => of(completedOperation));
+    const createCapture = vi.fn(() => of(completedOperation));
     const library = libraryStub({
       importSelection: vi.fn(() => of(audioDoc)),
       list: vi.fn(() => of([])),
@@ -529,7 +529,7 @@ describe('DesktopWorkspaceStore', () => {
       ),
       startStreamingCapture,
       createCapture,
-      getStreamingResult: vi.fn(() => of({ operation: completedJob, raw, result })),
+      getStreamingResult: vi.fn(() => of({ operation: completedOperation, raw, result })),
       deleteStreamingCapture: vi.fn(() => of(undefined)),
     });
     const store = initializeStore(library, client);
@@ -805,7 +805,7 @@ describe('DesktopWorkspaceStore', () => {
       updateCapture,
     });
     const client = runtimeStub({
-      createCapture: vi.fn(() => of(completedJob)),
+      createCapture: vi.fn(() => of(completedOperation)),
       deleteCapture,
     });
     const store = initializeStore(library, client);
@@ -1066,7 +1066,7 @@ describe('DesktopWorkspaceStore', () => {
   });
 
   it('uses an explicit native acceptance PDF page scope while keeping the default unbounded', () => {
-    const createCapture = vi.fn(() => of(completedJob));
+    const createCapture = vi.fn(() => of(completedOperation));
     const store = initializeStore(
       libraryStub({
         list: vi.fn(() => of<readonly DesktopLibrarySummary[]>([summary])),
@@ -1088,7 +1088,7 @@ describe('DesktopWorkspaceStore', () => {
   });
 
   it('publishes raw during structuring before the terminal result is committed', async () => {
-    const structuringJob = operation({
+    const structuringOperation = operation({
       captureId: 'capture-1',
       status: 'structuring',
     });
@@ -1098,8 +1098,8 @@ describe('DesktopWorkspaceStore', () => {
     const store = initializeStore(
       libraryStub({ updateCapture }),
       runtimeStub({
-        createCapture: vi.fn(() => of(structuringJob)),
-        getCapture: vi.fn(() => of(completedJob)),
+        createCapture: vi.fn(() => of(structuringOperation)),
+        getCapture: vi.fn(() => of(completedOperation)),
         getRaw,
       }),
     );
@@ -1433,10 +1433,10 @@ describe('DesktopWorkspaceStore', () => {
         captureId: 'capture-restart',
       } satisfies DesktopLibrarySummary;
       const terminal = operation({
-        ...completedJob,
+        ...completedOperation,
         captureId: 'capture-restart',
       });
-      const createCapture = vi.fn(() => of(completedJob));
+      const createCapture = vi.fn(() => of(completedOperation));
       const getCapture = vi.fn(() => of(terminal));
       const deleteCapture = vi.fn(() => of(undefined));
       const library = libraryStub({
@@ -1473,8 +1473,8 @@ describe('DesktopWorkspaceStore', () => {
         errorCode: status === 'completed' ? undefined : 'terminal_error',
         errorMessage: status === 'completed' ? undefined : 'terminal evidence',
       } satisfies DesktopLibrarySummary;
-      const createCapture = vi.fn(() => of(completedJob));
-      const getCapture = vi.fn(() => of(completedJob));
+      const createCapture = vi.fn(() => of(completedOperation));
+      const getCapture = vi.fn(() => of(completedOperation));
       const getRaw = vi.fn(() => of(raw));
       const deleteCapture = vi.fn(() => of(undefined));
       const updateCapture = vi.fn((update: Record<string, unknown>) =>
@@ -1548,8 +1548,8 @@ describe('DesktopWorkspaceStore', () => {
 
   it('remembers repeated cancel clicks before create resolves and sends one independent request', () => {
     const created = new Subject<CaptureOperation>();
-    const cancelCapture = vi.fn(() => of(cancelledJob));
-    const getCapture = vi.fn(() => of(completedJob));
+    const cancelCapture = vi.fn(() => of(cancelledOperation));
+    const getCapture = vi.fn(() => of(completedOperation));
     const library = libraryStub();
     const client = runtimeStub({
       createCapture: vi.fn(() => created),
@@ -1561,7 +1561,7 @@ describe('DesktopWorkspaceStore', () => {
     store.retry(summary.documentId);
     store.cancel(summary.documentId);
     store.cancel(summary.documentId);
-    created.next(runningJob);
+    created.next(runningOperation);
     created.complete();
     TestBed.tick();
 
@@ -1572,10 +1572,10 @@ describe('DesktopWorkspaceStore', () => {
 
   it('interrupts an in-flight poll and sends cancellation immediately', () => {
     const polled = new Subject<CaptureOperation>();
-    const cancelCapture = vi.fn(() => of(cancelledJob));
+    const cancelCapture = vi.fn(() => of(cancelledOperation));
     const getCapture = vi.fn(() => polled);
     const client = runtimeStub({
-      createCapture: vi.fn(() => of(runningJob)),
+      createCapture: vi.fn(() => of(runningOperation)),
       cancelCapture,
       getCapture,
     });
@@ -1600,7 +1600,7 @@ describe('DesktopWorkspaceStore', () => {
 
   it('lets an already-terminal runtime response win a cancel/complete race', async () => {
     const created = new Subject<CaptureOperation>();
-    const cancelCapture = vi.fn(() => of(cancelledJob));
+    const cancelCapture = vi.fn(() => of(cancelledOperation));
     const deleteCapture = vi.fn(() => of(undefined));
     const client = runtimeStub({
       createCapture: vi.fn(() => created),
@@ -1611,7 +1611,7 @@ describe('DesktopWorkspaceStore', () => {
 
     store.retry(summary.documentId);
     store.cancel(summary.documentId);
-    created.next(completedJob);
+    created.next(completedOperation);
     created.complete();
     TestBed.tick();
     await settleCaptureLifecycle();
@@ -1629,7 +1629,7 @@ describe('DesktopWorkspaceStore', () => {
     const store = initializeStore(
       libraryStub({ updateCapture }),
       runtimeStub({
-        createCapture: vi.fn(() => of(cancelledJob)),
+        createCapture: vi.fn(() => of(cancelledOperation)),
         getRaw,
         getOcr,
         deleteCapture,
@@ -1658,7 +1658,7 @@ describe('DesktopWorkspaceStore', () => {
     const store = initializeStore(
       libraryStub({ updateCapture }),
       runtimeStub({
-        createCapture: vi.fn(() => of(cancelledJob)),
+        createCapture: vi.fn(() => of(cancelledOperation)),
         getRaw: vi.fn(() => throwError(() => new Error('raw transport failed'))),
         deleteCapture,
       }),
@@ -1682,7 +1682,7 @@ describe('DesktopWorkspaceStore', () => {
       of({ ...summary, ...update } as DesktopLibrarySummary));
     const deleteCapture = vi.fn(() => of(undefined));
     const client = runtimeStub({
-      createCapture: vi.fn(() => of(runningJob)),
+      createCapture: vi.fn(() => of(runningOperation)),
       cancelCapture: vi.fn(() =>
         throwError(() => new Error('cancel request failed'))),
       deleteCapture,
@@ -1715,7 +1715,7 @@ describe('DesktopWorkspaceStore', () => {
       of({ ...summary, ...update } as DesktopLibrarySummary));
     const deleteCapture = vi.fn(() => of(undefined));
     const client = runtimeStub({
-      createCapture: vi.fn(() => of(completedJob)),
+      createCapture: vi.fn(() => of(completedOperation)),
       deleteCapture,
       ...runtimeOverride,
     });
@@ -1746,7 +1746,7 @@ describe('DesktopWorkspaceStore', () => {
     });
     const deleteCapture = vi.fn(() => of(undefined));
     const client = runtimeStub({
-      createCapture: vi.fn(() => of(completedJob)),
+      createCapture: vi.fn(() => of(completedOperation)),
       deleteCapture,
     });
     const store = initializeStore(libraryStub({ updateCapture }), client);
@@ -1868,7 +1868,7 @@ describe('DesktopWorkspaceStore', () => {
       return throwError(() => new Error('delete failed'));
     });
     const client = runtimeStub({
-      createCapture: vi.fn(() => of(completedJob)),
+      createCapture: vi.fn(() => of(completedOperation)),
       deleteCapture,
     });
     const store = initializeStore(libraryStub({ updateCapture }), client);
@@ -1955,8 +1955,8 @@ describe('DesktopWorkspaceStore', () => {
         recoveryCode: 'runtime_cleanup_failed',
         recoveryMessage: 'cleanup transport failed',
       } satisfies DesktopLibrarySummary;
-      const createCapture = vi.fn(() => of(completedJob));
-      const getCapture = vi.fn(() => of(completedJob));
+      const createCapture = vi.fn(() => of(completedOperation));
+      const getCapture = vi.fn(() => of(completedOperation));
       const getRaw = vi.fn(() => of(raw));
       const deleteCapture = vi.fn(() => of(undefined));
       const updateCapture = vi.fn((update: Record<string, unknown>) =>
@@ -2050,8 +2050,8 @@ describe('DesktopWorkspaceStore', () => {
     }));
 
     TestBed.resetTestingModule();
-    const createAfterRestart = vi.fn(() => of(completedJob));
-    const getAfterRestart = vi.fn(() => of(completedJob));
+    const createAfterRestart = vi.fn(() => of(completedOperation));
+    const getAfterRestart = vi.fn(() => of(completedOperation));
     const getRawAfterRestart = vi.fn(() => of(raw));
     const restartedStore = initializeStore(
       library,
@@ -2113,8 +2113,8 @@ describe('DesktopWorkspaceStore', () => {
       get: vi.fn(() => of(durable as DesktopLibraryDetail)),
       updateCapture,
     });
-    const createCapture = vi.fn(() => of(completedJob));
-    const getCapture = vi.fn(() => of(completedJob));
+    const createCapture = vi.fn(() => of(completedOperation));
+    const getCapture = vi.fn(() => of(completedOperation));
     const getRaw = vi.fn(() => of(raw));
     const deleteCapture = vi.fn(() => of(undefined));
     const store = initializeStore(
@@ -2150,9 +2150,9 @@ describe('DesktopWorkspaceStore', () => {
       captureId: 'capture-recovery',
       recoveryCode: 'capture_recovery_required',
     } satisfies DesktopLibrarySummary;
-    const createCapture = vi.fn(() => of(completedJob));
+    const createCapture = vi.fn(() => of(completedOperation));
     const getCapture = vi.fn(() => of(operation({
-      ...completedJob,
+      ...completedOperation,
       captureId: 'capture-recovery',
     })));
     const deleteCapture = vi.fn(() => of(undefined));
@@ -2182,8 +2182,8 @@ describe('DesktopWorkspaceStore', () => {
     } satisfies DesktopLibrarySummary;
     const updateCapture = vi.fn((update: Record<string, unknown>) =>
       of({ ...recovery, ...update } as DesktopLibrarySummary));
-    const createCapture = vi.fn(() => of(completedJob));
-    const getCapture = vi.fn(() => of(completedJob));
+    const createCapture = vi.fn(() => of(completedOperation));
+    const getCapture = vi.fn(() => of(completedOperation));
     const deleteCapture = vi.fn(() => of(undefined));
     const library = libraryStub({
       list: vi.fn(() => of([recovery])),
@@ -2432,9 +2432,9 @@ function runtimeStub(overrides: Record<string, unknown> = {}) {
     startModelInstallation: vi.fn(),
     getModelInstallation: vi.fn(),
     cancelUpload: vi.fn(() => of(undefined)),
-    createCapture: vi.fn(() => of(completedJob)),
-    getCapture: vi.fn(() => of(completedJob)),
-    cancelCapture: vi.fn(() => of(cancelledJob)),
+    createCapture: vi.fn(() => of(completedOperation)),
+    getCapture: vi.fn(() => of(completedOperation)),
+    cancelCapture: vi.fn(() => of(cancelledOperation)),
     getRaw: vi.fn(() => of(raw)),
     getResult: vi.fn(() => of(result)),
     getOcr: vi.fn((captureId: string) => of(ocrProjection(

@@ -54,8 +54,8 @@ export interface DesktopMessages {
   readonly startTimeout: (detail: string) => string;
   readonly canceled: string;
   readonly desktopOnly: string;
-  readonly speechUnitNeeded: string;
-  readonly speakerUnitNeeded: string;
+  readonly speechRequirementNeeded: string;
+  readonly speakerRequirementNeeded: string;
   readonly offerInstall: string;
   readonly requirementReady: string;
   readonly requirementUnavailable: string;
@@ -335,8 +335,8 @@ const ZH_TW: DesktopMessages = {
   startTimeout: (detail) => `啟動逾時：${detail}`,
   canceled: '處理已取消。',
   desktopOnly: 'Capture Workbench 僅能在 Windows 桌面 App 中使用。',
-  speechUnitNeeded: '處理錄音需要先下載台灣語音轉文字（TEA-ASR 1.1）。',
-  speakerUnitNeeded: '辨識說話者需要額外安裝一個元件。',
+  speechRequirementNeeded: '處理錄音需要先下載台灣語音轉文字（TEA-ASR 1.1）。',
+  speakerRequirementNeeded: '辨識說話者需要額外安裝一個元件。',
   offerInstall: '安裝',
   requirementReady: '已安裝',
   requirementUnavailable: '無法下載',
@@ -661,8 +661,8 @@ const EN: DesktopMessages = {
   startTimeout: (detail) => `Start-up timed out: ${detail}`,
   canceled: 'Processing was canceled.',
   desktopOnly: 'Capture Workbench runs only in the Windows desktop app.',
-  speechUnitNeeded: 'Recordings need Taiwan speech-to-text (TEA-ASR 1.1) downloaded first.',
-  speakerUnitNeeded: 'Telling speakers apart needs one more component installed.',
+  speechRequirementNeeded: 'Recordings need Taiwan speech-to-text (TEA-ASR 1.1) downloaded first.',
+  speakerRequirementNeeded: 'Telling speakers apart needs one more component installed.',
   offerInstall: 'Install',
   requirementReady: 'Installed',
   requirementUnavailable: 'Not downloadable',

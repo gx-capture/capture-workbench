@@ -137,7 +137,7 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
     pageCount?: number;
     durationMs?: number;
   }
-  const historyKindOcr = (): StoredDoc => ({
+  const historyDocument = (): StoredDoc => ({
     documentId: historyId,
     fileName: 'history.pdf',
     mediaType: 'application/pdf',
@@ -148,7 +148,7 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
     stage: 'completed',
     pageCount: 3,
   });
-  let documents: StoredDoc[] = [historyKindOcr()];
+  let documents: StoredDoc[] = [historyDocument()];
   const rawByDocument = new Map<string, unknown>();
   const editsByDocument = new Map<string, Record<string, unknown>>();
   if (installOptions.editedResults) {
@@ -167,7 +167,7 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
     editsByDocument.set(historyId, { schemaVersion: 1, updatedAtMs: 1,
       ocrPages: { '3': 'Edited page three' }, transcriptLines: {}, speakerNames: { sp1: 'Named speaker' } });
     const recordingId = 'b'.repeat(32);
-    documents.push({ ...historyKindOcr(), documentId: recordingId, fileName: 'meeting.mp3', mediaType: 'audio/mpeg', pageCount: undefined, durationMs: 65_000 });
+    documents.push({ ...historyDocument(), documentId: recordingId, fileName: 'meeting.mp3', mediaType: 'audio/mpeg', pageCount: undefined, durationMs: 65_000 });
     rawByDocument.set(recordingId, { sourceText: 'recognized line', speakers: [{ speakerId: 'sp1', displayName: 'Recognized speaker' }], segments: [
       { segmentId: 'line-1', order: 0, locator: { kind: 'time', startMs: 0, endMs: 1000 }, speaker: 'sp1', text: 'recognized line' },
     ] });
@@ -202,12 +202,12 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
         for (const [id, edits] of parsed.edits ?? []) editsByDocument.set(id, edits);
       }
     } catch {
-      documents = [historyKindOcr()];
+      documents = [historyDocument()];
       rawByDocument.clear();
       editsByDocument.clear();
     }
     if (!documents.some((item) => item.documentId === historyId)) {
-      documents = [historyKindOcr(), ...documents];
+      documents = [historyDocument(), ...documents];
     }
   }
   const listedSummary = (document: StoredDoc): StoredDoc => {

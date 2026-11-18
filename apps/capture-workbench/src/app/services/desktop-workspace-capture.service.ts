@@ -247,7 +247,7 @@ export class DesktopWorkspaceCaptureService {
       host.requestedRequirements.update(
         (current) => new Set([...current, 'speech-recognition']),
       );
-      host.setMessage(desktopMessages().speechUnitNeeded);
+      host.setMessage(desktopMessages().speechRequirementNeeded);
       return EMPTY;
     }
     if (
@@ -258,7 +258,7 @@ export class DesktopWorkspaceCaptureService {
       host.requestedRequirements.update(
         (current) => new Set([...current, 'speaker-diarization']),
       );
-      host.setMessage(desktopMessages().speakerUnitNeeded);
+      host.setMessage(desktopMessages().speakerRequirementNeeded);
       return EMPTY;
     }
     if (

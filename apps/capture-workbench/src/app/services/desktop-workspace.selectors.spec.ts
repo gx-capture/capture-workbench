@@ -73,7 +73,7 @@ describe('feature requirements and speech pack', () => {
     ).toEqual(['speech-recognition', 'speaker-diarization']);
   });
 
-  it('lists recognition engines in canonical order', () => {
+  it('lists recognition requirements in canonical order', () => {
     expect(
       selectRecognitionRequirements(requirements).map((item) => item.requirementId),
     ).toEqual([
@@ -115,7 +115,7 @@ describe('captureNeedsRequirement', () => {
     status,
   });
 
-  it('blocks the engines that kind of active capture needs', () => {
+  it('blocks the requirements that kind of active capture needs', () => {
     const pdf = document('processing', 'application/pdf');
     const image = document('persisting', 'image/png');
     const audio = document('processing', 'audio/mpeg');

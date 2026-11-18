@@ -335,7 +335,7 @@ describe('OcrQueueStore', () => {
       ocrReady: signal(false),
       asrReady: signal(false),
       speakersReady: signal(false),
-      engines: signal([]),
+      recognitionRequirements: signal([]),
       speechPack: signal(null),
       requestedMissing: signal([]),
       installableRequestedRequirements: signal([]),
