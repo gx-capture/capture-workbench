@@ -4,12 +4,12 @@ import { provideRouter } from '@angular/router';
 import type { RuntimeInstallation, RuntimeRequirement } from '@gx-capture/capture-workbench-ui';
 import { of } from 'rxjs';
 import { setDesktopLocale } from '../i18n/desktop-messages';
-import { CaptureQueueStore } from '../services/capture-queue.store';
+import { OcrQueueStore } from '../services/ocr-queue.store';
 import { DesktopLibraryService } from '../services/desktop-library.service';
 import { DesktopRuntimeClientService } from '../services/desktop-runtime-client.service';
-import { DesktopWorkspaceCaptureService } from '../services/desktop-workspace-capture.service';
+import { DesktopCaptureService } from '../services/desktop-capture.service';
 import { isFeatureReady, type RecognitionFeature } from '../services/desktop-workspace.selectors';
-import { DesktopWorkspaceStore } from '../services/desktop-workspace.store';
+import { LibraryStore } from '../services/library.store';
 import { RecognitionFeaturesStore } from '../services/recognition-features.store';
 import type { DesktopLibrarySummary } from '../contracts';
 import { OcrPage } from './ocr-page';
@@ -21,7 +21,7 @@ describe('OcrPage queue', () => {
     const requirements = signal<readonly RuntimeRequirement[]>([
       requirement('windowsml-ocr', 'installable', 144_000_000),
     ]);
-    const installUnit = vi.fn();
+    const installRequirement = vi.fn();
     const documents = [
       doc({ documentId: 'b'.repeat(32), fileName: 'charge.pdf', status: 'queued' }),
       doc({
@@ -58,12 +58,12 @@ describe('OcrPage queue', () => {
             installations: signal({}),
             installing: signal(false),
             firstRunDismissed: signal(true),
-            firstRunInstallableUnits: signal([]),
+            firstRunInstallableRequirements: signal([]),
             showFirstRunCard: signal(false),
             startingRequirementId: signal(null),
             activeInstallation: signal<RuntimeInstallation | null>(null),
             isFeatureReady: (feature: RecognitionFeature) => isFeatureReady(requirements(), feature),
-            installUnit,
+            installRequirement,
             installFirstRunSelection: vi.fn(),
             cancelInstallation: vi.fn(),
             dismissFirstRun: vi.fn(),
@@ -71,11 +71,11 @@ describe('OcrPage queue', () => {
           },
         },
         {
-          provide: DesktopWorkspaceStore,
+          provide: LibraryStore,
           useValue: { allDocuments: signal(documents), refreshDocuments: vi.fn() },
         },
-        DesktopWorkspaceCaptureService,
-        CaptureQueueStore,
+        DesktopCaptureService,
+        OcrQueueStore,
       ],
     });
 
@@ -93,7 +93,7 @@ describe('OcrPage queue', () => {
     expect(waiting.querySelector('[data-testid="ocr-row-install"]')).not.toBeNull();
 
     (waiting.querySelector('[data-testid="ocr-row-install"]') as HTMLButtonElement).click();
-    expect(installUnit).toHaveBeenCalledWith('windowsml-ocr');
+    expect(installRequirement).toHaveBeenCalledWith('windowsml-ocr');
 
     const doneExport = row(page, 'done.pdf').querySelector(
       '[data-testid="ocr-row-export-txt"]',
@@ -132,7 +132,7 @@ describe('OcrPage queue', () => {
             requirements,
             installing: signal(true),
             firstRunDismissed: signal(true),
-            firstRunInstallableUnits: signal([]),
+            firstRunInstallableRequirements: signal([]),
             showFirstRunCard: signal(false),
             startingRequirementId: signal(null),
             activeInstallation: signal({
@@ -144,7 +144,7 @@ describe('OcrPage queue', () => {
               updatedAt: '2026-11-10T00:00:00Z',
             } as RuntimeInstallation),
             isFeatureReady: (feature: RecognitionFeature) => isFeatureReady(requirements(), feature),
-            installUnit: vi.fn(),
+            installRequirement: vi.fn(),
             installFirstRunSelection: vi.fn(),
             cancelInstallation: vi.fn(),
             dismissFirstRun: vi.fn(),
@@ -152,14 +152,14 @@ describe('OcrPage queue', () => {
           },
         },
         {
-          provide: DesktopWorkspaceStore,
+          provide: LibraryStore,
           useValue: {
             allDocuments: signal([doc({ fileName: 'charge.pdf', status: 'queued' })]),
             refreshDocuments: vi.fn(),
           },
         },
-        DesktopWorkspaceCaptureService,
-        CaptureQueueStore,
+        DesktopCaptureService,
+        OcrQueueStore,
       ],
     });
 
@@ -202,12 +202,12 @@ describe('OcrPage queue', () => {
             requirements,
             installing: signal(true),
             firstRunDismissed: signal(true),
-            firstRunInstallableUnits: signal([]),
+            firstRunInstallableRequirements: signal([]),
             showFirstRunCard: signal(false),
             startingRequirementId: signal('windowsml-ocr'),
             activeInstallation: signal<RuntimeInstallation | null>(null),
             isFeatureReady: (feature: RecognitionFeature) => isFeatureReady(requirements(), feature),
-            installUnit: vi.fn(),
+            installRequirement: vi.fn(),
             installFirstRunSelection: vi.fn(),
             cancelInstallation: vi.fn(),
             dismissFirstRun: vi.fn(),
@@ -215,14 +215,14 @@ describe('OcrPage queue', () => {
           },
         },
         {
-          provide: DesktopWorkspaceStore,
+          provide: LibraryStore,
           useValue: {
             allDocuments: signal([doc({ fileName: 'charge.pdf', status: 'queued' })]),
             refreshDocuments: vi.fn(),
           },
         },
-        DesktopWorkspaceCaptureService,
-        CaptureQueueStore,
+        DesktopCaptureService,
+        OcrQueueStore,
       ],
     });
 
@@ -268,12 +268,12 @@ describe('OcrPage queue', () => {
             installations: signal({}),
             installing: signal(false),
             firstRunDismissed: signal(false),
-            firstRunInstallableUnits: signal(requirements()),
+            firstRunInstallableRequirements: signal(requirements()),
             showFirstRunCard: signal(true),
             startingRequirementId: signal(null),
             activeInstallation: signal<RuntimeInstallation | null>(null),
             isFeatureReady: (feature: RecognitionFeature) => isFeatureReady(requirements(), feature),
-            installUnit: vi.fn(),
+            installRequirement: vi.fn(),
             installFirstRunSelection: vi.fn(),
             cancelInstallation: vi.fn(),
             dismissFirstRun: vi.fn(),
@@ -281,11 +281,11 @@ describe('OcrPage queue', () => {
           },
         },
         {
-          provide: DesktopWorkspaceStore,
+          provide: LibraryStore,
           useValue: { allDocuments: signal(documents), refreshDocuments: vi.fn() },
         },
-        DesktopWorkspaceCaptureService,
-        CaptureQueueStore,
+        DesktopCaptureService,
+        OcrQueueStore,
       ],
     });
 

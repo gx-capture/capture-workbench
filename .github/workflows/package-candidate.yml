@@ -60,11 +60,11 @@ jobs:
         shell: bash
         run: pnpm verify:release-version -- "v${{ inputs.version }}"
 
-      - name: Build and pack the npm package set
+      - name: Build and pack the package candidate
         shell: bash
         run: |
           set -euo pipefail
-          pnpm nx run capture-angular:pack --skip-nx-cache
+          pnpm nx run capture-workbench-ui:pack --skip-nx-cache
           pnpm nx run capture-runtime-client-python:build --skip-nx-cache
 
       - name: Install Playwright Chromium for consumer evidence
@@ -110,9 +110,9 @@ jobs:
             --candidate "$PACKAGE_CANDIDATE" \
             --version '${{ inputs.version }}'
 
-      - name: Run Tier 1 Web Component consumer evidence
+      - name: Run cross-framework Web Component consumer smoke
         shell: bash
-        run: pnpm nx run capture-angular:clean-consumer-smoke --skip-nx-cache
+        run: pnpm nx run capture-workbench-ui:clean-consumer-smoke --skip-nx-cache
 
       - name: Record package consumer evidence
         if: ${{ always() && env.PACKAGE_CANDIDATE_ID != '' }}

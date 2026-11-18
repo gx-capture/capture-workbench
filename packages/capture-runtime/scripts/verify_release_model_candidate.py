@@ -44,7 +44,7 @@ CPU_SPEECH_CANDIDATE_TIMEOUT_SECONDS = 3 * 60 * 60
 CPU_SPEECH_CONTENT_MODEL = "tea-asr-1.1-mini"
 
 
-def _whisper_run_options(fixture: dict[str, Any]) -> dict[str, object]:
+def _speech_run_options(fixture: dict[str, Any]) -> dict[str, object]:
     return {
         "maxDurationMs": WHISPER_CANDIDATE_MAX_DURATION_MS,
         "preferGpu": fixture["preferGpu"],
@@ -357,7 +357,7 @@ async def _verify_cpu_speech_content(
         await manager.shutdown()
 
 
-async def _verify_whisper_preflight(
+async def _verify_speech_preflight(
     *,
     lock: dict[str, Any],
     lock_sha256: str,
@@ -479,7 +479,7 @@ async def verify_candidate(
         raise EngineInstallationError("private Whisper fixture is required on the trusted runner")
 
     if preflight:
-        await _verify_whisper_preflight(
+        await _verify_speech_preflight(
             lock=lock,
             lock_sha256=lock_sha256,
             catalog_path=catalog_path,
@@ -557,7 +557,7 @@ async def verify_candidate(
                         "maxImagePixels": 100_000_000,
                     }
                 else:
-                    run_options = _whisper_run_options(fixture)
+                    run_options = _speech_run_options(fixture)
                 run = await worker_client.run(
                     engine,
                     source_path=(fixture_root / fixture_kind).resolve(),

@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import test from 'node:test';
 
-import { assertRedactedEvidence } from './package-qa.ts';
+import { assertRedactedEvidence } from './hash-qa-installer.ts';
 import { appRoot } from './stage-runtime.ts';
 
 const workflowBlockScalarHeader =
@@ -171,7 +171,7 @@ test('release command detection rejects full verify variants but permits the ver
     'pnpm --silent verify -- --changed',
     'pnpm run verify --reporter append-only',
     'corepack pnpm verify',
-    'corepack pnpm --silent run verify --filter capture-angular',
+    'corepack pnpm --silent run verify --filter capture-workbench-ui',
   ]) {
     assert.equal(invokesFullWorkspaceVerify(command), true, command);
   }
@@ -209,7 +209,7 @@ test('Nx separates root verification build from release and deterministic NSIS l
       output.endsWith('capture-document-v2.schema.json'),
     ),
   );
-  assert.deepEqual(project.targets['package-qa'].dependsOn, [
+  assert.deepEqual(project.targets['hash-qa-installer'].dependsOn, [
     'build-nsis-deterministic',
   ]);
   assert.deepEqual(project.targets['smoke-real-ollama'].dependsOn, [
@@ -220,9 +220,9 @@ test('Nx separates root verification build from release and deterministic NSIS l
     /excluded from ordinary CI/u,
   );
   const directmlSmoke = project.targets['smoke-real-desktop-ocr-directml'];
-  assert.match(
+  assert.equal(
     directmlSmoke.metadata.description,
-    /requires DirectML provenance/u,
+    'Opt-in local standalone-app OCR smoke that requires DirectML provenance (not a release gate). Requires an explicitly prepared host app-data directory and a user-provided scanned PDF.',
   );
   assert.match(
     directmlSmoke.options.commands.at(-1),
@@ -259,7 +259,7 @@ test('desktop CI binds its staged contract resources to generated contracts', as
   assert.match(installerJob, /uses:\s*\.\/\.github\/actions\/ensure-webview2/u);
   assert.match(
     installerJob,
-    /node apps\/capture-workbench-desktop\/scripts\/installed-deterministic-smoke\.ts --release/u,
+    /node apps\/capture-workbench-desktop\/scripts\/installed-nsis-smoke\.ts --release/u,
   );
   assert.ok(
     installerJob.indexOf('capture-workbench-desktop:build-nsis') <
@@ -267,7 +267,7 @@ test('desktop CI binds its staged contract resources to generated contracts', as
   );
   assert.ok(
     installerJob.indexOf('./.github/actions/ensure-webview2') <
-      installerJob.indexOf('installed-deterministic-smoke.ts --release'),
+      installerJob.indexOf('installed-nsis-smoke.ts --release'),
   );
   const desktopJob = ci.slice(ci.indexOf('  desktop:'));
   assert.match(desktopJob, /^\s{4}if:\s*github\.event_name == 'push'$/mu);
@@ -317,7 +317,7 @@ test('ordinary CI keeps real OCR local while release promotion stays determinist
   }
   assert.doesNotMatch(
     ci,
-    /capture-workbench-desktop:acceptance-real|E2E_ACCEPTANCE_RUN_ID|CAPTURE_REAL_DESKTOP_OCR_(?:INPUT|EXPECTATIONS)|output\/playwright\/capture-workbench/u,
+    /capture-workbench-desktop:diagnostic-desktop-ocr|E2E_ACCEPTANCE_RUN_ID|CAPTURE_REAL_DESKTOP_OCR_(?:INPUT|EXPECTATIONS)|output\/playwright\/capture-workbench/u,
   );
   const referenceFlow = requiredWorkflowStep(ciSteps, 'Verify reference flow');
   assert.match(referenceFlow.script ?? '', /capture-workbench-e2e:e2e/u);
@@ -345,16 +345,16 @@ test('ordinary CI keeps real OCR local while release promotion stays determinist
       }
     >;
   };
-  const acceptance = project.targets['acceptance-real'];
+  const acceptance = project.targets['diagnostic-desktop-ocr'];
   assert.ok(acceptance);
   assert.equal(acceptance.cache, false);
   assert.deepEqual(acceptance.dependsOn, ['typecheck-scripts']);
   assert.ok(
     acceptance.options?.commands?.some((command) =>
-      /acceptance-real\.ts$/u.test(command),
+      /diagnostic-desktop-ocr\.ts$/u.test(command),
     ),
   );
-  const packageQaCommand = project.targets['package-qa-test']?.options?.command;
+  const packageQaCommand = project.targets['test-scripts']?.options?.command;
   assert.equal(typeof packageQaCommand, 'string');
   assert.match(
     packageQaCommand ?? '',
@@ -372,7 +372,7 @@ test('ordinary CI keeps real OCR local while release promotion stays determinist
   ]) {
     assert.doesNotMatch(
       source,
-      /acceptance-real|smoke-real-desktop-ocr-directml/u,
+      /diagnostic-desktop-ocr|smoke-real-desktop-ocr-directml/u,
     );
   }
   assert.match(candidateWorkflow, /verify-main-ci\.ts/u);
@@ -514,7 +514,7 @@ test('release candidate workflow is dispatch-only, exact-commit, and immutable',
   );
   assert.match(
     windowsInstallJob,
-    /installed-deterministic-smoke\.ts(?: --release)?\s*$/mu,
+    /installed-nsis-smoke\.ts(?: --release)?\s*$/mu,
   );
   assert.match(
     windowsInstallJob,
@@ -526,15 +526,15 @@ test('release candidate workflow is dispatch-only, exact-commit, and immutable',
   );
   assert.doesNotMatch(
     windowsInstallJob,
-    /installed-deterministic-smoke\.ts --measure-release-size/u,
+    /installed-nsis-smoke\.ts --measure-release-size/u,
   );
   assert.match(workflow, /local-release-consumer-smoke\.ts --runtime-dir/u);
   assert.match(workflow, /verify-candidate-packages\.ts/u);
   assert.match(
     workflow,
-    /pnpm exec playwright install chromium[\s\S]*node tools\/clean-angular-consumer-smoke\.ts/u,
+    /pnpm exec playwright install chromium[\s\S]*node tools\/web-component-consumer-smoke\.ts/u,
   );
-  assert.match(workflow, /clean-angular-consumer-smoke\.ts/u);
+  assert.match(workflow, /web-component-consumer-smoke\.ts/u);
   assert.match(workflow, /record-candidate-verification\.ts/u);
   assert.equal(
     (

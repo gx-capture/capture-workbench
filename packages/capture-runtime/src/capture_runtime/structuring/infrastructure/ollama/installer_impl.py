@@ -7,7 +7,6 @@ from capture_runtime.structuring.infrastructure.ollama.installer_runtime import 
     CommandRunner,
     RuntimeInstaller,
     _atomic_json,
-    _extract_safe_zip,
     _sha256_file,
 )
 from capture_runtime.structuring.infrastructure.ollama.system_installer import (
@@ -22,6 +21,5 @@ __all__ = [
     "RuntimeInstaller",
     "SystemRuntimeInstaller",
     "_atomic_json",
-    "_extract_safe_zip",
     "_sha256_file",
 ]

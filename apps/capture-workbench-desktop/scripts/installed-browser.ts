@@ -37,12 +37,12 @@ import {
 import {
   nativeClickWebViewElement,
   nativeOpenDialogUiAutomation,
-} from './real-media-model-smoke.ts';
+} from './installed-native-dialog.ts';
 
 export {
   nativeClickWebViewElement,
   nativeOpenDialogUiAutomation,
-} from './real-media-model-smoke.ts';
+} from './installed-native-dialog.ts';
 
 import { trackSmokeStep } from './smoke-diagnostics.ts';
 import type { SmokeStepEvent, SmokeCardDiagnostic } from './smoke-diagnostics.ts';

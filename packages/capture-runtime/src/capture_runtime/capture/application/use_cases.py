@@ -157,12 +157,10 @@ class CommitHostStructuring:
         *,
         clock: Clock,
         validate_document: Callable[[object, RawCapture], CaptureDocument],
-        discard_result: Callable[[str], None],
     ) -> None:
         self._repository = repository
         self._clock = clock
         self._validate_document = validate_document
-        self._discard_result = discard_result
 
     def execute(
         self,
@@ -171,42 +169,38 @@ class CommitHostStructuring:
         *,
         idempotency_key: str,
     ) -> CaptureOperationV2:
-        try:
-            operation = self._repository.get_capture(capture_id)
-            fingerprint = _candidate_fingerprint(document)
-            if operation.status is StreamingCaptureStatus.COMPLETED:
-                committed = self._repository.commit_host_result(
-                    capture_id,
-                    idempotency_key=idempotency_key,
-                    fingerprint=fingerprint,
-                    result=document,
-                )
-            else:
-                request = self._repository.capture_request(capture_id)
-                CaptureOperation(
-                    capture_id=operation.capture_id,
-                    ingestion_id=operation.ingestion_id,
-                    kind=operation.kind,
-                    status=operation.status,
-                ).require_host_structuring(request.structuring_mode)
-                raw = self._repository.read_raw(capture_id)
-                validated = self._validate_document(document, raw)
-                completed = CaptureDocument.model_validate(
-                    {
-                        **validated.model_dump(mode="json", by_alias=True),
-                        "completedAt": self._clock.now().isoformat(),
-                    }
-                )
-                committed = self._repository.commit_host_result(
-                    capture_id,
-                    idempotency_key=idempotency_key,
-                    fingerprint=fingerprint,
-                    result=completed,
-                )
-            return committed
-        except Exception:
-            self._discard_result(capture_id)
-            raise
+        operation = self._repository.get_capture(capture_id)
+        fingerprint = _candidate_fingerprint(document)
+        if operation.status is StreamingCaptureStatus.COMPLETED:
+            committed = self._repository.commit_host_result(
+                capture_id,
+                idempotency_key=idempotency_key,
+                fingerprint=fingerprint,
+                result=document,
+            )
+        else:
+            request = self._repository.capture_request(capture_id)
+            CaptureOperation(
+                capture_id=operation.capture_id,
+                ingestion_id=operation.ingestion_id,
+                kind=operation.kind,
+                status=operation.status,
+            ).require_host_structuring(request.structuring_mode)
+            raw = self._repository.read_raw(capture_id)
+            validated = self._validate_document(document, raw)
+            completed = CaptureDocument.model_validate(
+                {
+                    **validated.model_dump(mode="json", by_alias=True),
+                    "completedAt": self._clock.now().isoformat(),
+                }
+            )
+            committed = self._repository.commit_host_result(
+                capture_id,
+                idempotency_key=idempotency_key,
+                fingerprint=fingerprint,
+                result=completed,
+            )
+        return committed
 
 
 __all__ = [

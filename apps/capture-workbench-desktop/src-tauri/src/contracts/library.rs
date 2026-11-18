@@ -809,11 +809,11 @@ pub(crate) struct LibraryCaptureOptions {
     pub identify_speakers: Option<bool>,
 }
 
-#[cfg(any(test, feature = "model-smoke-app-data"))]
+#[cfg(test)]
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LibraryImportSourceRequest {
-    /// Native fixture input, available only to tests and the model smoke.
+    /// Native fixture input, available only to tests.
     #[serde(default)]
     pub source_path: String,
     #[serde(default)]
@@ -876,7 +876,7 @@ pub(crate) enum LibraryExportFormat {
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct LibraryDocumentSummary {
+pub(crate) struct DesktopLibrarySummary {
     pub document_id: String,
     pub file_name: String,
     pub media_type: String,
@@ -903,9 +903,9 @@ pub(crate) struct LibraryDocumentSummary {
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct LibraryDocumentDetail {
+pub(crate) struct DesktopLibraryDetail {
     #[serde(flatten)]
-    pub summary: LibraryDocumentSummary,
+    pub summary: DesktopLibrarySummary,
     pub raw: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub edits: Option<LibraryEdits>,

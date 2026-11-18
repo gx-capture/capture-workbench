@@ -1,0 +1,499 @@
+[
+  {
+    "name": "e2e-real-backend",
+    "match": "substring",
+    "replacement": "e2e-dev-host",
+    "allowed": []
+  },
+  {
+    "name": "preview-real-backend",
+    "match": "substring",
+    "replacement": "preview-dev-host",
+    "allowed": []
+  },
+  {
+    "name": "chromium-real-backend",
+    "match": "substring",
+    "replacement": "chromium-dev-host",
+    "allowed": []
+  },
+  {
+    "name": "real-backend-server",
+    "match": "substring",
+    "replacement": "dev-host-preview-server",
+    "allowed": []
+  },
+  {
+    "name": "real-backend-launcher",
+    "match": "substring",
+    "replacement": "dev-host-launcher",
+    "allowed": []
+  },
+  {
+    "name": "real-backend.spec",
+    "match": "substring",
+    "replacement": "dev-host.spec",
+    "allowed": []
+  },
+  {
+    "name": "playwright.real-backend",
+    "match": "substring",
+    "replacement": "playwright.dev-host",
+    "allowed": []
+  },
+  {
+    "name": "installed-deterministic-smoke",
+    "match": "substring",
+    "replacement": "installed-nsis-smoke",
+    "allowed": []
+  },
+  {
+    "name": "findDeterministicInstaller",
+    "match": "substring",
+    "replacement": "findExpectedInstaller",
+    "allowed": []
+  },
+  {
+    "name": "package-qa",
+    "match": "word",
+    "replacement": "hash-qa-installer",
+    "allowed": []
+  },
+  {
+    "name": "package-qa-test",
+    "match": "substring",
+    "replacement": "test-scripts",
+    "allowed": []
+  },
+  {
+    "name": "real-media-e2e-host-v1",
+    "match": "substring",
+    "replacement": "real-media-smoke-identity-host-v1",
+    "allowed": []
+  },
+  {
+    "name": "prepare-production-environment",
+    "match": "substring",
+    "replacement": "prepare-core-build-environment",
+    "allowed": []
+  },
+  {
+    "name": "verify-production-environment",
+    "match": "substring",
+    "replacement": "verify-onnxruntime-directml",
+    "allowed": []
+  },
+  {
+    "name": "capture-angular",
+    "match": "word",
+    "replacement": "capture-workbench-ui",
+    "allowed": []
+  },
+  {
+    "name": "clean-angular-consumer-smoke",
+    "match": "substring",
+    "replacement": "web-component-consumer-smoke",
+    "allowed": []
+  },
+  {
+    "name": "acceptance-real",
+    "match": "word",
+    "replacement": "diagnostic-desktop-ocr",
+    "allowed": [
+      {
+        "glob": "tools/three-project-acceptance.ts",
+        "reason": "Invokes Cert Prep and LAW's own acceptance targets."
+      },
+      {
+        "glob": "tools/three-project-acceptance.test.ts",
+        "reason": "Verifies the exact acceptance targets of Cert Prep and LAW."
+      },
+      {
+        "glob": ".agents/SPECS/capture-runtime-042-p2-hardening.md",
+        "reason": "Documents the release gates owned by Cert Prep and LAW."
+      },
+      {
+        "glob": "apps/capture-workbench-desktop/README.md",
+        "reason": "Documents the release gates owned by Cert Prep and LAW."
+      },
+      {
+        "glob": "packages/capture-workbench-ui/README.md",
+        "reason": "Documents the release gates owned by Cert Prep and LAW."
+      }
+    ]
+  },
+  {
+    "name": "CAPTURE_PHASE15_",
+    "match": "substring",
+    "replacement": "CAPTURE_WEB_COMPONENT_",
+    "allowed": []
+  },
+  {
+    "name": ".cw-phase15",
+    "match": "substring",
+    "replacement": ".cw-wc-e2e",
+    "allowed": []
+  },
+  {
+    "name": "phase-1-5",
+    "match": "substring",
+    "replacement": "wc-e2e",
+    "allowed": []
+  },
+  {
+    "name": ".cwpa",
+    "match": "substring",
+    "replacement": ".cw-audio-oracle",
+    "allowed": []
+  },
+  {
+    "name": "assertPhase1",
+    "match": "substring",
+    "replacement": "assertPdfPageOneSemanticEvidence",
+    "allowed": []
+  },
+  {
+    "name": "phase1Verdict",
+    "match": "substring",
+    "replacement": "verdict",
+    "allowed": []
+  },
+  {
+    "name": "HistoryPage",
+    "match": "word",
+    "replacement": "deleted",
+    "allowed": []
+  },
+  {
+    "name": "history-page",
+    "match": "word",
+    "replacement": "deleted",
+    "allowed": [
+      {
+        "glob": ".agents/PLANS/workbench-ocr-asr-ux.md",
+        "reason": "Records which workspace page files the routed UX replaced."
+      }
+    ]
+  },
+  {
+    "name": "app-history-page",
+    "match": "substring",
+    "replacement": "deleted",
+    "allowed": []
+  },
+  {
+    "name": "workbench-root",
+    "match": "substring",
+    "replacement": "deleted",
+    "allowed": []
+  },
+  {
+    "name": "@angular/material",
+    "match": "substring",
+    "replacement": "deleted",
+    "allowed": []
+  },
+  {
+    "name": "whisper",
+    "match": "substring-ignore-case",
+    "replacement": "speech (the engine is TEA-ASR)",
+    "allowed": [
+      {
+        "glob": ".agents/DECISIONS/capture-runtime-installer-size-reduction.md",
+        "reason": "Records the worker seams for the engines in use at the time of the installer decision."
+      },
+      {
+        "glob": ".agents/DECISIONS/capture-runtime-release-and-external-ollama.md",
+        "reason": "Records which engines informed the original release packaging decision."
+      }
+    ]
+  },
+  {
+    "name": "ComputeSettingsStore",
+    "match": "word",
+    "replacement": "SpeechGpuSettingsStore",
+    "allowed": []
+  },
+  {
+    "name": "ComputeSettings",
+    "match": "word",
+    "replacement": "SpeechGpuSettings",
+    "allowed": []
+  },
+  {
+    "name": "compute-settings.store",
+    "match": "substring",
+    "replacement": "speech-gpu-settings.store",
+    "allowed": []
+  },
+  {
+    "name": "DesktopComputeStatus",
+    "match": "word",
+    "replacement": "DesktopSpeechGpuStatus",
+    "allowed": []
+  },
+  {
+    "name": "desktop_compute_status",
+    "match": "word",
+    "replacement": "desktop_speech_gpu_status",
+    "allowed": []
+  },
+  {
+    "name": "desktop_set_prefer_gpu",
+    "match": "word",
+    "replacement": "desktop_set_speech_prefer_gpu",
+    "allowed": []
+  },
+  {
+    "name": "acceptance-app-data",
+    "match": "substring",
+    "replacement": "acceptance-harness",
+    "allowed": []
+  },
+  {
+    "name": "acceptance_app_data",
+    "match": "substring",
+    "replacement": "acceptance_harness",
+    "allowed": []
+  },
+  {
+    "name": "desktop_runtime_process_probe",
+    "match": "word",
+    "replacement": "desktop_acceptance_runtime_process_probe",
+    "allowed": []
+  },
+  {
+    "name": "DOCUMENT_MAX_SOURCE_BYTES",
+    "match": "word",
+    "replacement": "PAGE_SOURCE_MAX_BYTES or RENDERER_SOURCE_MAX_BYTES",
+    "allowed": []
+  },
+  {
+    "name": "LibraryDocumentSummary",
+    "match": "word",
+    "replacement": "DesktopLibrarySummary",
+    "allowed": []
+  },
+  {
+    "name": "LibraryDocumentDetail",
+    "match": "word",
+    "replacement": "DesktopLibraryDetail",
+    "allowed": []
+  },
+  {
+    "name": "DEFAULT_MAX_UPLOAD_BYTES",
+    "match": "word",
+    "replacement": "RUNTIME_MAX_UPLOAD_BYTES",
+    "allowed": []
+  },
+  {
+    "name": "DEFAULT_RETENTION_HOURS",
+    "match": "word",
+    "replacement": "RUNTIME_RETENTION_HOURS",
+    "allowed": []
+  },
+  {
+    "name": "RuntimeAssets",
+    "match": "word",
+    "replacement": "RuntimeExecutablePaths",
+    "allowed": []
+  },
+  {
+    "name": "resolve_runtime_assets",
+    "match": "word",
+    "replacement": "resolve_runtime_executable_paths",
+    "allowed": []
+  },
+  {
+    "name": "CaptureQueueStore",
+    "match": "word",
+    "replacement": "OcrQueueStore",
+    "allowed": []
+  },
+  {
+    "name": "capture-queue.store",
+    "match": "substring",
+    "replacement": "ocr-queue.store",
+    "allowed": []
+  },
+  {
+    "name": "isAudioMediaType",
+    "match": "word",
+    "replacement": "isRecordingMediaType",
+    "allowed": []
+  },
+  {
+    "name": "isAudioDocument",
+    "match": "word",
+    "replacement": "isRecordingDocument",
+    "allowed": []
+  },
+  {
+    "name": "OcrUserStatus",
+    "match": "word",
+    "replacement": "CaptureUserStatus",
+    "allowed": []
+  },
+  {
+    "name": "AsrUserStatus",
+    "match": "word",
+    "replacement": "CaptureUserStatus",
+    "allowed": []
+  },
+  {
+    "name": "ocrChipVariant",
+    "match": "word",
+    "replacement": "captureStatusChipVariant",
+    "allowed": []
+  },
+  {
+    "name": "ocrChipClasses",
+    "match": "word",
+    "replacement": "captureStatusChipClasses",
+    "allowed": []
+  },
+  {
+    "name": "historyDiagnostics",
+    "match": "word",
+    "replacement": "statusDiagnosticsLabel",
+    "allowed": []
+  },
+  {
+    "name": "SPEECH_PACK_UNITS",
+    "match": "word",
+    "replacement": "OPTIONAL_SPEECH_REQUIREMENTS",
+    "allowed": []
+  },
+  {
+    "name": "RECOGNITION_ENGINE_UNITS",
+    "match": "word",
+    "replacement": "RECOGNITION_REQUIREMENTS",
+    "allowed": []
+  },
+  {
+    "name": "speechUnitNeeded",
+    "match": "word",
+    "replacement": "speechRequirementNeeded",
+    "allowed": []
+  },
+  {
+    "name": "speakerUnitNeeded",
+    "match": "word",
+    "replacement": "speakerRequirementNeeded",
+    "allowed": []
+  },
+  {
+    "name": "ProgressiveCaptureError",
+    "match": "word",
+    "replacement": "CaptureProcessingError",
+    "allowed": []
+  },
+  {
+    "name": "_WorkerOcrEngineAdapter",
+    "match": "word",
+    "replacement": "_WorkerResultOcrEngine or _PaddlePageOcrEngine",
+    "allowed": []
+  },
+  {
+    "name": "_LegacyOcrEngineAdapter",
+    "match": "word",
+    "replacement": "deleted",
+    "allowed": []
+  },
+  {
+    "name": "_pending_execution_proofs",
+    "match": "word",
+    "replacement": "deleted",
+    "allowed": []
+  },
+  {
+    "name": "speaker_progress",
+    "match": "word",
+    "replacement": "staged_progress",
+    "allowed": []
+  },
+  {
+    "name": "capture_runtime.japanese_kanji",
+    "match": "substring",
+    "replacement": "capture_runtime.speech.infrastructure.japanese_kanji",
+    "allowed": []
+  },
+  {
+    "name": "workers.session_server",
+    "match": "substring",
+    "replacement": "workers.speech_session_server",
+    "allowed": []
+  },
+  {
+    "name": "workers/session_server",
+    "match": "substring",
+    "replacement": "workers/speech_session_server",
+    "allowed": []
+  },
+  {
+    "name": "--desktop-candidate",
+    "match": "substring",
+    "replacement": "--release-candidate",
+    "allowed": []
+  },
+  {
+    "name": "deterministic-installed-tauri-smoke",
+    "match": "substring",
+    "replacement": "installed-nsis-smoke",
+    "allowed": []
+  },
+  {
+    "name": "DesktopWorkspaceCaptureService",
+    "match": "word",
+    "replacement": "DesktopCaptureService",
+    "allowed": []
+  },
+  {
+    "name": "DesktopWorkspaceCaptureHost",
+    "match": "word",
+    "replacement": "DesktopCaptureHost",
+    "allowed": []
+  },
+  {
+    "name": "DesktopWorkspaceInstallationService",
+    "match": "word",
+    "replacement": "DesktopInstallationService",
+    "allowed": []
+  },
+  {
+    "name": "DesktopWorkspaceFormattingService",
+    "match": "word",
+    "replacement": "DesktopFormattingService",
+    "allowed": []
+  },
+  {
+    "name": "desktop-workspace-capture",
+    "match": "substring",
+    "replacement": "desktop-capture",
+    "allowed": []
+  },
+  {
+    "name": "desktop-workspace-installation",
+    "match": "substring",
+    "replacement": "desktop-installation",
+    "allowed": []
+  },
+  {
+    "name": "desktop-workspace-formatting",
+    "match": "substring",
+    "replacement": "desktop-formatting",
+    "allowed": []
+  },
+  {
+    "name": "DesktopWorkspaceStore",
+    "match": "word",
+    "replacement": "RuntimeStatusStore, LibraryStore, and RecognitionFeaturesStore",
+    "allowed": []
+  },
+  {
+    "name": "desktop-workspace.store",
+    "match": "substring",
+    "replacement": "runtime-status.store, library.store, and recognition-features.store",
+    "allowed": []
+  }
+]

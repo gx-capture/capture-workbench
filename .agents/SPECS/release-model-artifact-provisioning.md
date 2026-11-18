@@ -3,11 +3,11 @@
 ## Local verification boundary
 
 Model-enabled verification is local-only (since 2026-08-03). The operator runs the exact-SHA
-source-lock/model probe and Tauri/WebView media smoke on the Windows machine
-before creating a tag. There is no self-hosted runner, candidate workflow,
-Actions receipt, or remote model-probe rerun. The release workflow only builds
-and publishes the locally verified source tree; local evidence is redacted,
-reviewed, and removed after the run.
+source-lock/model probe on the Windows machine before creating a tag. There is
+no self-hosted runner, candidate workflow, Actions receipt, or remote
+model-probe rerun. The release workflow only builds and publishes the locally
+verified source tree; local evidence is redacted, reviewed, and removed after
+the run.
 
 ## Purpose
 
@@ -164,9 +164,9 @@ and before tagging. It uses the exact checked-out `main` SHA, validates the
 lock, performs checksum-pinned online model installation/probes, requires OCR
 `windowsml-ocr` / `pp-ocrv6-medium-windowsml` / `windowsml-dml`, requires the
 lock-selected speech recognition provenance, compares normalized output exactly
-with each fixture expectation, and runs the Tauri/WebView three-media smoke
-(`capture-workbench-desktop:smoke-real-media-model`). It writes
-only redacted local evidence and does not upload a receipt or model bytes.
+with each fixture expectation, and is paired with the localhost real-engines
+smoke (`capture-workbench-e2e:smoke-real-engines`). It writes only redacted local
+evidence and does not upload a receipt or model bytes.
 
 The release candidate workflow (`release-candidate.yml`) validates and
 classifies the lock, verifies exact-head main CI,

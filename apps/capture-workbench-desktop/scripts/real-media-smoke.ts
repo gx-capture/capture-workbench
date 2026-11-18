@@ -705,7 +705,7 @@ function hostCandidate(raw: RawCapture): Record<string, unknown> {
     extractionEngine: raw.extractionEngine,
     structuringEngine: {
       engine: 'host',
-      model: 'real-media-e2e-host-v1',
+      model: 'real-media-smoke-identity-host-v1',
       digest: `sha256:${'1'.repeat(64)}`,
       device: 'local',
     },

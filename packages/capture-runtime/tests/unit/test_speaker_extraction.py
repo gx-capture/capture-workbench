@@ -103,7 +103,7 @@ def _extract(
     installed: set[str],
     identify_speakers: bool,
     in_catalog: bool = True,
-    speaker_progress: Any = None,
+    staged_progress: Any = None,
     speech_recognition_model: str = "auto",
     content_id: str | None = None,
     speech_recognition_variant: str = "auto",
@@ -136,13 +136,12 @@ def _extract(
         SystemClock(),
         ExtractionRuntimeConfig(
             windowsml_model_dir=tmp_path / "windowsml",
-            whisper_models_dir=tmp_path / "whisper",
             temp_dir=tmp_path / "temp",
             max_pdf_pages=10,
             max_image_pixels=100_000,
             ocr_render_scale=2,
             max_audio_duration_ms=60_000,
-            whisper_prefer_gpu=True,
+            speech_prefer_gpu=True,
             speech_recognition_model=speech_recognition_model,
             speech_recognition_variant=speech_recognition_variant,
         ),
@@ -160,7 +159,7 @@ def _extract(
             source,
             asyncio.Event(),
             identify_speakers=identify_speakers,
-            speaker_progress=speaker_progress,
+            staged_progress=staged_progress,
         )
     )
     return outcome.raw, worker_client
@@ -303,7 +302,7 @@ def test_progress_covers_transcription_then_speaker_identification(tmp_path: Pat
         tmp_path,
         installed={"speech-recognition", "speaker-diarization"},
         identify_speakers=True,
-        speaker_progress=lambda stage, permille: reported.append((stage, permille)),
+        staged_progress=lambda stage, permille: reported.append((stage, permille)),
     )
 
     assert reported == [

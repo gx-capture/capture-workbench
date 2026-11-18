@@ -1,0 +1,1146 @@
+import { closeBrowserRendererBoundary } from './installed-renderer-boundary.ts';
+import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
+import {
+  lstat,
+  mkdir,
+  open,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises';
+import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
+
+import type { Observable } from 'rxjs';
+import {
+  catchError,
+  concatMap,
+  defer,
+  firstValueFrom,
+  finalize,
+  from,
+  map,
+  of,
+  race,
+  reduce,
+  switchMap,
+  tap,
+  throwError,
+  timer,
+  toArray,
+} from 'rxjs';
+
+import { deterministicQaNsis, deterministicQaProductName } from './deterministic-qa.ts';
+import { assertRealAppDataUnchanged, installedAppDataUse, realProductAppDataDirectory, snapshotRealAppData } from './installed-app-data-guard.ts';
+import type { AppDataSnapshot } from './installed-app-data-guard.ts';
+import { assertStagedRuntime } from './assert-staged-runtime.ts';
+import {
+  CHILD_ENVIRONMENT_ALLOWLIST,
+  INSTALLED_EXECUTABLE_NAME,
+  PRODUCT_REGISTRY_KEY,
+  REGISTRY_VIEWS,
+  UNINSTALLER_NAME,
+  UNINSTALL_REGISTRY_KEY,
+} from './constants/installed.ts';
+import { appRoot } from './stage-runtime.ts';
+import {
+  assertInstalledSmokeEvidence,
+  assertInstallationCleanupAllowed,
+  assertRegistryOwnership,
+  assertStrictDescendant,
+  assertTaskkillResult,
+  buildInstalledAppEnvironment,
+  installerArguments,
+  uninstallerArguments,
+} from './contracts/installed.ts';
+import {
+  collectInstalledWebViewStartupDiagnostics,
+  connectToInstalledWebView,
+  dynamicWebViewCdpPort,
+  exerciseInstalledUi,
+  installedPage,
+  reserveLoopbackPort,
+} from './installed-browser.ts';
+import {
+  createInstalledProcessCleanup,
+  createTrackedProcessTreeTerminator,
+} from './installed-process-cleanup.ts';
+import { createInstalledRegistry } from './installed-registry.ts';
+import { createInstalledSmokeLifecycle } from './installed-smoke-lifecycle.ts';
+
+export {
+  assertInstalledSmokeEvidence,
+  assertInstallationCleanupAllowed,
+  assertRegistryOwnership,
+  assertStrictDescendant,
+  assertTaskkillResult,
+  buildInstalledAppEnvironment,
+  installerArguments,
+  uninstallerArguments,
+};
+
+import {
+  buildInstalledSmokeFailureReport,
+  readSmokeRequestLog,
+  trackSmokeStep,
+  writeSmokeFailureReport,
+  nestedErrorMessages,
+} from './smoke-diagnostics.ts';
+import type { SmokeStepEvent, SmokeCardDiagnostic } from './smoke-diagnostics.ts';
+export {
+  buildInstalledSmokeFailureReport,
+  writeSmokeFailureReport,
+  installedSmokeDiagnosticMessageLimit,
+  installedSmokeDiagnosticRedactionMarker,
+  nestedErrorMessages,
+} from './smoke-diagnostics.ts';
+
+const workspaceRoot = resolve(appRoot, '..', '..');
+const smokeRoot = join(
+  workspaceRoot,
+  'tmp',
+  'capture-workbench-desktop',
+  'installed-smoke',
+);
+const runRoot = join(smokeRoot, 'run');
+const installDirectory = join(runRoot, 'install');
+const webViewDataDirectory = join(runRoot, 'webview2');
+const appDataDirectory = join(runRoot, 'appdata');
+const localAppDataDirectory = join(runRoot, 'localappdata');
+const temporaryDirectory = join(runRoot, 'temp');
+const requestLogPath = join(temporaryDirectory, 'deterministic-requests.jsonl');
+const evidencePath = join(smokeRoot, 'installed-smoke.json');
+const installedSizeEvidencePath = join(smokeRoot, 'installed-size.json');
+const smokeLockPath = join(smokeRoot, 'installed-smoke.lock');
+const nsisDirectory = join(
+  appRoot,
+  'src-tauri',
+  'target',
+  'x86_64-pc-windows-msvc',
+  'release',
+  'bundle',
+  'nsis',
+);
+const installedExecutableName = INSTALLED_EXECUTABLE_NAME;
+const uninstallerName = UNINSTALLER_NAME;
+const productRegistryKey = PRODUCT_REGISTRY_KEY;
+const uninstallRegistryKey = UNINSTALL_REGISTRY_KEY;
+const registryViews = REGISTRY_VIEWS;
+const childEnvironmentAllowlist = CHILD_ENVIRONMENT_ALLOWLIST;
+// Model-enabled Windows installers unpack large engine payloads on hosted
+// runners. Keep this budget explicit while process cleanup remains fail-closed.
+export const installedSmokeExecutableTimeoutMs = 600_000;
+
+function baseChildEnvironment(source: NodeJS.ProcessEnv, isolatedTemp: string, ownedRoot = runRoot) {
+  const environment: Record<string, string> = {};
+  for (const allowedName of childEnvironmentAllowlist) {
+    const sourceEntry = Object.entries(source).find(
+      ([name, value]) =>
+        name.toUpperCase() === allowedName &&
+        typeof value === 'string' &&
+        value.length > 0,
+    );
+    if (sourceEntry) environment[allowedName] = sourceEntry[1];
+  }
+  const safeTemp = assertStrictDescendant(
+    ownedRoot,
+    isolatedTemp,
+    'Temporary directory',
+  );
+  environment.TEMP = safeTemp;
+  environment.TMP = safeTemp;
+  return environment;
+}
+
+function pathExists(path) {
+  return defer(() => from(stat(path))).pipe(
+    map(() => true),
+    catchError((error) =>
+      error?.code === 'ENOENT' ? of(false) : throwError(() => error),
+    ),
+  );
+}
+
+function writeEvidence(report, destination = evidencePath) {
+  const safePath = assertStrictDescendant(
+    smokeRoot,
+    destination,
+    'Evidence path',
+  );
+  const temporary = `${safePath}.tmp`;
+  return defer(() => from(rm(temporary, { force: true }))).pipe(
+    concatMap(() =>
+      from(
+        writeFile(temporary, `${JSON.stringify(report, null, 2)}\n`, {
+          encoding: 'utf8',
+          flag: 'wx',
+        }),
+      ),
+    ),
+    concatMap(() => from(rm(safePath, { force: true }))),
+    concatMap(() => from(rename(temporary, safePath))),
+    map(() => undefined),
+  );
+}
+
+function acquireLock(root, candidate) {
+  const safePath = assertStrictDescendant(
+    root,
+    candidate,
+    'Installed smoke lock',
+  );
+  const token = randomUUID();
+  return defer(() => from(open(safePath, 'wx', 0o600))).pipe(
+    catchError((error) =>
+      error?.code === 'EEXIST'
+        ? throwError(
+            () =>
+              new Error(
+                'Another installed smoke is active or left a stale lock; refusing concurrent product mutation.',
+              ),
+          )
+        : throwError(() => error),
+    ),
+    concatMap((handle) =>
+      defer(() =>
+        from(
+          handle.writeFile(
+            `${JSON.stringify({ pid: process.pid, token })}\n`,
+            'utf8',
+          ),
+        ),
+      ).pipe(
+        concatMap(() => from(handle.sync())),
+        map(() => ({ handle, path: safePath, token })),
+        catchError((error) =>
+          defer(() => from(handle.close())).pipe(
+            catchError(() => of(undefined)),
+            concatMap(() => from(rm(safePath, { force: true }))),
+            concatMap(() => throwError(() => error)),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+function assertSmokeLockOwnership(serialized, expectedToken) {
+  let lock;
+  try {
+    lock = JSON.parse(serialized);
+  } catch {
+    throw new Error(
+      'Installed smoke lock metadata is malformed; refusing removal.',
+    );
+  }
+  if (
+    lock?.pid !== process.pid ||
+    typeof lock.token !== 'string' ||
+    lock.token !== expectedToken
+  ) {
+    throw new Error(
+      'Installed smoke lock ownership changed; refusing removal.',
+    );
+  }
+}
+
+function releaseLock(lock) {
+  return defer(() => from(readFile(lock.path, 'utf8'))).pipe(
+    map((serialized) => {
+      assertSmokeLockOwnership(serialized, lock.token);
+      return undefined;
+    }),
+    concatMap(() => from(lock.handle.close())),
+    concatMap(() => defer(() => from(readFile(lock.path, 'utf8')))),
+    tap((serialized) => assertSmokeLockOwnership(serialized, lock.token)),
+    concatMap(() => from(rm(lock.path))),
+    map(() => undefined),
+  );
+}
+
+function directoryBytes(directory: string): Observable<number> {
+  return defer(() => from(readdir(directory, { withFileTypes: true }))).pipe(
+    switchMap((entries) => from(entries)),
+    concatMap((entry) => {
+      const candidate = join(directory, entry.name);
+      return defer(() => from(lstat(candidate))).pipe(
+        concatMap((metadata) => {
+          if (metadata.isSymbolicLink()) {
+            return throwError(
+              () =>
+                new Error('Installed size evidence refuses symbolic links.'),
+            );
+          }
+          if (metadata.isDirectory()) {
+            return directoryBytes(candidate);
+          }
+          if (metadata.isFile()) {
+            return of(metadata.size);
+          }
+          return throwError(
+            () =>
+              new Error(
+                'Installed size evidence accepts only regular files and directories.',
+              ),
+          );
+        }),
+      );
+    }),
+    reduce((total, bytes) => total + bytes, 0),
+  );
+}
+
+function runInstalledSizeMeasurement() {
+  const registry = createInstalledRegistry({
+    smokeRoot,
+    workspaceRoot,
+    registryViews,
+    productRegistryKey,
+    uninstallRegistryKey,
+    baseChildEnvironment,
+    pathExists,
+  });
+  const terminateTrackedProcessTree = createTrackedProcessTreeTerminator({
+    smokeRoot,
+    workspaceRoot,
+    baseChildEnvironment,
+    windowsSystemExecutable: registry.windowsSystemExecutable,
+  });
+  const lifecycle = createInstalledSmokeLifecycle({
+    workspaceRoot,
+    smokeRoot,
+    nsisDirectory,
+    terminateTrackedProcessTree,
+  });
+
+  return defer(async () => {
+    await firstValueFrom(lifecycle.prepareSmokeDirectories());
+    const smokeLock = await firstValueFrom(
+      acquireLock(smokeRoot, smokeLockPath),
+    );
+    try {
+      let installer;
+      let installedBytes;
+      let installationAttempted = false;
+      let measurementError;
+      let nativeUninstallError;
+      const nativeUninstall = {
+        uninstallerCompleted: false,
+        installDirectoryRemoved: false,
+        nativeUninstallKeyRemoved: false,
+        productRegistryKeyRetainedAfterNativeUninstall: false,
+      };
+      const hygiene = {
+        registryResidueRemoved: false,
+        isolatedRunDataRemoved: false,
+      };
+
+      await rm(installedSizeEvidencePath, { force: true });
+      try {
+        const { manifest } = await firstValueFrom(
+          assertStagedRuntime('release'),
+        );
+        installer = await firstValueFrom(
+          lifecycle.findExpectedInstaller(manifest.runtimeVersion),
+        );
+        await firstValueFrom(registry.assertNoPreExistingInstallation());
+        await firstValueFrom(lifecycle.safeRemoveTree(smokeRoot, runRoot));
+        await Promise.all(
+          [installDirectory, temporaryDirectory].map((path) =>
+            mkdir(path, { recursive: true }),
+          ),
+        );
+        installationAttempted = true;
+        await firstValueFrom(
+          lifecycle.runCheckedExecutable(
+            installer.path,
+            installerArguments(smokeRoot, installDirectory),
+            'Release-size NSIS installer',
+            baseChildEnvironment(process.env, temporaryDirectory),
+            installedSmokeExecutableTimeoutMs,
+          ),
+        );
+        await firstValueFrom(
+          lifecycle.assertOwnedRegularFile(
+            installDirectory,
+            join(installDirectory, installedExecutableName),
+            'Installed Tauri executable',
+          ),
+        );
+        await firstValueFrom(
+          registry.assertInstalledRegistryPointsToOwnedDirectory(
+            installDirectory,
+          ),
+        );
+        installedBytes = await firstValueFrom(directoryBytes(installDirectory));
+        if (!Number.isSafeInteger(installedBytes) || installedBytes < 1) {
+          throw new Error(
+            'Installed size measurement must be a positive non-boolean safe integer.',
+          );
+        }
+      } catch (error) {
+        measurementError = error;
+      }
+
+      if (installationAttempted) {
+        try {
+          const uninstallerPath = join(installDirectory, uninstallerName);
+          if (!(await firstValueFrom(pathExists(uninstallerPath)))) {
+            throw new Error(
+              'Installed uninstaller is missing from the owned install directory.',
+            );
+          }
+          const uninstaller = await firstValueFrom(
+            lifecycle.assertOwnedRegularFile(
+              installDirectory,
+              uninstallerPath,
+              'Installed uninstaller',
+            ),
+          );
+          await firstValueFrom(
+            registry.assertInstalledRegistryPointsToOwnedDirectory(
+              installDirectory,
+            ),
+          );
+          await firstValueFrom(
+            lifecycle.runCheckedExecutable(
+              uninstaller,
+              uninstallerArguments(smokeRoot, installDirectory),
+              'Installed NSIS uninstaller',
+              baseChildEnvironment(process.env, temporaryDirectory),
+              installedSmokeExecutableTimeoutMs,
+            ),
+          );
+          nativeUninstall.uninstallerCompleted = true;
+          const nativeRegistryState = await firstValueFrom(
+            registry.waitForInstalledDirectoryRemoval(installDirectory),
+          );
+          nativeUninstall.installDirectoryRemoved = true;
+          nativeUninstall.nativeUninstallKeyRemoved =
+            nativeRegistryState.uninstallKeyRemoved;
+          nativeUninstall.productRegistryKeyRetainedAfterNativeUninstall =
+            nativeRegistryState.productKeyRetained;
+        } catch (error) {
+          nativeUninstallError = error;
+        }
+      }
+
+      const hardFailures = [measurementError, nativeUninstallError].filter(
+        Boolean,
+      );
+      if (
+        hardFailures.length === 0 &&
+        Number.isSafeInteger(installedBytes) &&
+        installedBytes >= 1
+      ) {
+        try {
+          await firstValueFrom(
+            registry.removeOwnedRegistryResidue(installDirectory),
+          );
+          hygiene.registryResidueRemoved = true;
+        } catch {
+          // Diagnostic hygiene does not invalidate native-uninstall proof.
+        }
+        try {
+          await firstValueFrom(lifecycle.safeRemoveTree(smokeRoot, runRoot));
+          hygiene.isolatedRunDataRemoved = !(await firstValueFrom(
+            pathExists(runRoot),
+          ));
+        } catch {
+          // Diagnostic hygiene does not invalidate native-uninstall proof.
+        }
+      }
+
+      if (hardFailures.length > 0) {
+        throw new AggregateError(
+          hardFailures,
+          'Release installed-size measurement or native uninstall proof failed.',
+        );
+      }
+      if (
+        !installer ||
+        !Number.isSafeInteger(installedBytes) ||
+        installedBytes < 1 ||
+        nativeUninstall.uninstallerCompleted !== true ||
+        nativeUninstall.installDirectoryRemoved !== true ||
+        nativeUninstall.nativeUninstallKeyRemoved !== true
+      ) {
+        throw new Error(
+          'Release installed-size evidence is incomplete or unsafe.',
+        );
+      }
+      const report = {
+        evidenceKind: 'release-installed-size',
+        releaseGateSatisfied: false,
+        platform: 'windows',
+        arch: 'x86_64',
+        bundle: 'nsis',
+        installer: {
+          fileName: installer.fileName,
+          bytes: installer.bytes,
+          sha256: installer.sha256,
+        },
+        installedBytes,
+        cleanup: {
+          ...nativeUninstall,
+          ...hygiene,
+        },
+        disclaimer:
+          'Scoped release install-size measurement only; Tauri startup and process observation were not performed.',
+      };
+      await firstValueFrom(writeEvidence(report, installedSizeEvidencePath));
+      return { report, reportPath: installedSizeEvidencePath };
+    } finally {
+      await firstValueFrom(releaseLock(smokeLock));
+    }
+  });
+}
+
+export function runInstalledNsisSmoke(
+  { expectedSource = 'deterministic', measureOnly = false } = {},
+  {
+    runSizeMeasurement = runInstalledSizeMeasurement,
+    createProcessCleanup = createInstalledProcessCleanup,
+  } = {},
+) {
+  if (process.platform !== 'win32') {
+    return throwError(
+      () =>
+        new Error('Installed NSIS smoke requires Windows x64.'),
+    );
+  }
+  if (measureOnly) {
+    if (expectedSource !== 'release') {
+      return throwError(
+        () =>
+          new Error('Installed size-only evidence requires the release stage.'),
+      );
+    }
+    return runSizeMeasurement();
+  }
+
+  const qa = expectedSource === 'deterministic';
+  const smokeProductName = qa ? deterministicQaProductName : 'Capture Workbench';
+  const smokeProductRegistryKey = qa ? productRegistryKey.replace('Capture Workbench', smokeProductName) : productRegistryKey;
+  const smokeUninstallRegistryKey = qa ? uninstallRegistryKey.replace('Capture Workbench', smokeProductName) : uninstallRegistryKey;
+  const processCleanup = createProcessCleanup({
+    smokeRoot,
+    workspaceRoot,
+    baseChildEnvironment,
+    windowsSystemExecutable: (...segments) => {
+      const registry = createInstalledRegistry({
+        smokeRoot,
+        workspaceRoot,
+        registryViews,
+        productRegistryKey: smokeProductRegistryKey,
+        uninstallRegistryKey: smokeUninstallRegistryKey,
+        baseChildEnvironment,
+        pathExists,
+      });
+      return registry.windowsSystemExecutable(...segments);
+    },
+  });
+  const registry = createInstalledRegistry({
+    smokeRoot,
+    workspaceRoot,
+    registryViews,
+    productRegistryKey: smokeProductRegistryKey,
+    uninstallRegistryKey: smokeUninstallRegistryKey,
+    baseChildEnvironment,
+    pathExists,
+  });
+  const lifecycle = createInstalledSmokeLifecycle({
+    workspaceRoot,
+    smokeRoot,
+    nsisDirectory: qa ? deterministicQaNsis : nsisDirectory,
+    productName: smokeProductName,
+    terminateTrackedProcessTree: processCleanup.terminateTrackedProcessTree,
+  });
+
+  if (!['deterministic', 'release'].includes(expectedSource)) {
+    return throwError(
+      () =>
+        new Error('Installed smoke source must be deterministic or release.'),
+    );
+  }
+  return assertStagedRuntime(expectedSource).pipe(
+    concatMap(({ manifest }) =>
+      lifecycle
+        .prepareSmokeDirectories()
+        .pipe(map(() => manifest.runtimeVersion)),
+    ),
+    concatMap((runtimeVersion) =>
+      acquireLock(smokeRoot, smokeLockPath).pipe(
+        map((smokeLock) => ({ runtimeVersion, smokeLock })),
+      ),
+    ),
+    catchError((error) => {
+      // Preflight/lock errors have no owned run data to inspect. Validate the
+      // output root before persisting their skipped-step report.
+      return lifecycle.prepareSmokeDirectories().pipe(
+        concatMap(() => defer(() => from(writeSmokeFailureReport(
+          smokeRoot, buildInstalledSmokeFailureReport({ error }),
+        )))),
+        catchError((reportError) => throwError(() => new AggregateError(
+          [error, reportError], 'Installed smoke preflight failed and its failure report could not be written.',
+        ))),
+        concatMap(() => throwError(() => error)),
+      );
+    }),
+    switchMap(({ runtimeVersion, smokeLock }) => {
+      let realAppDataDirectory: string | undefined;
+      let realAppDataBefore: AppDataSnapshot | undefined;
+      let realAppDataAfter: AppDataSnapshot | undefined;
+      let realAppDataGuard: 'not-started' | 'recorded' | 'passed' | 'failed' = 'not-started';
+      const state = {
+        appProcess: undefined,
+        browser: undefined,
+        cdpPort: undefined,
+        installer: undefined,
+        installationAttempted: false,
+        privateProcessRootsRegistered: false,
+        exerciseResult: undefined,
+        exerciseError: undefined,
+        cleanupErrors: [],
+        timeline: [] as SmokeStepEvent[],
+        cards: [] as SmokeCardDiagnostic[],
+        webViewDiagnostics: '',
+        requestLogLines: [] as string[],
+        failureReportPath: undefined as string | undefined,
+        failureReportTimestamp: undefined as string | undefined,
+        cleanup: {
+          ownedProcessCount: 0,
+          ownedProcessesStopped: false,
+          cdpPortReleased: false,
+          uninstallerCompleted: false,
+          installDirectoryRemoved: false,
+          nativeUninstallKeyRemoved: false,
+          productRegistryKeyRetainedAfterNativeUninstall: false,
+          registryResidueRemoved: false,
+          isolatedRunDataRemoved: false,
+        },
+      };
+
+      const attempt = (operation, onSuccess = () => undefined) =>
+        operation.pipe(
+          tap(onSuccess),
+          catchError((error) => {
+            state.cleanupErrors.push(error);
+            return of(undefined);
+          }),
+        );
+
+      const persistFailure = (error) => defer(async () => {
+        state.failureReportTimestamp ??= new Date().toISOString();
+        const report = buildInstalledSmokeFailureReport({
+          error, timeline: state.timeline, cardDiagnostics: state.cards,
+          realAppDataGuard: { status: realAppDataGuard, before: realAppDataBefore, after: realAppDataAfter },
+          webViewDiagnostics: state.webViewDiagnostics,
+          requestLogLines: state.requestLogLines, timestamp: state.failureReportTimestamp,
+        });
+        if (state.failureReportPath) {
+          // Add any later cleanup errors to this run's existing report.
+          await writeFile(state.failureReportPath, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
+        } else {
+          state.failureReportPath = await writeSmokeFailureReport(smokeRoot, report);
+        }
+      });
+
+      const installAndExercise = defer(() =>
+        from(rm(evidencePath, { force: true })),
+      ).pipe(
+        concatMap(() => lifecycle.findExpectedInstaller(runtimeVersion)),
+        tap((installer) => (state.installer = installer)),
+        concatMap(() => registry.assertNoPreExistingInstallation()),
+        concatMap(() =>
+          processCleanup.stopAndProveResidualProcessRoots([
+            installDirectory,
+            temporaryDirectory,
+          ]),
+        ),
+        concatMap(() => lifecycle.safeRemoveTree(smokeRoot, runRoot)),
+        concatMap(() =>
+          from([
+            installDirectory,
+            webViewDataDirectory,
+            appDataDirectory,
+            localAppDataDirectory,
+            temporaryDirectory,
+            join(runRoot, 'artifacts', 'appdata'),
+          ]).pipe(
+            concatMap((path) =>
+              defer(() => from(mkdir(path, { recursive: true }))),
+            ),
+            toArray(),
+          ),
+        ),
+        tap(() => {
+          processCleanup.registerPrivateProcessRoots([
+            installDirectory,
+            temporaryDirectory,
+          ]);
+          state.privateProcessRootsRegistered = true;
+        }),
+        concatMap(() => defer(async () => {
+          realAppDataGuard = 'failed';
+          realAppDataDirectory = realProductAppDataDirectory();
+          realAppDataBefore = await snapshotRealAppData(realAppDataDirectory);
+          realAppDataGuard = 'recorded';
+        })),
+        tap(() => (state.installationAttempted = true)),
+        concatMap(() =>
+          trackSmokeStep(state.timeline, 'install', () => lifecycle.runCheckedExecutable(
+            state.installer.path,
+            installerArguments(smokeRoot, installDirectory),
+            'NSIS installer',
+            baseChildEnvironment(process.env, temporaryDirectory),
+            installedSmokeExecutableTimeoutMs,
+          )),
+        ),
+        concatMap(() =>
+          lifecycle.assertOwnedRegularFile(
+            installDirectory,
+            join(installDirectory, installedExecutableName),
+            'Installed Tauri executable',
+          ),
+        ),
+        concatMap(() =>
+          registry.assertInstalledRegistryPointsToOwnedDirectory(
+            installDirectory,
+          ),
+        ),
+        concatMap(() =>
+          reserveLoopbackPort().pipe(
+            concatMap((cdpPort) => {
+              const appEnvironment = buildInstalledAppEnvironment(
+                process.env,
+                {
+                  root: runRoot,
+                  appData: appDataDirectory,
+                  localAppData: localAppDataDirectory,
+                  temporary: temporaryDirectory,
+                  webViewData: webViewDataDirectory,
+                  ...(expectedSource === 'deterministic' ? { requestLog: requestLogPath } : {}),
+                },
+                cdpPort,
+              );
+              if (expectedSource === 'deterministic') appEnvironment.WEBVIEW2_WAIT_FOR_SCRIPT_DEBUGGER = '1';
+              return (expectedSource === 'deterministic'
+                ? defer(() => from(writeFile(
+                    join(temporaryDirectory, 'capture-deterministic-request-log.json'),
+                    JSON.stringify({ CAPTURE_DETERMINISTIC_REQUEST_LOG: appEnvironment.CAPTURE_DETERMINISTIC_REQUEST_LOG }),
+                    { encoding: 'utf8', flag: 'wx' },
+                  )))
+                : of(undefined)).pipe(concatMap(() => {
+                state.timeline.push({ step: 'launch', timestamp: new Date().toISOString(), outcome: 'started' });
+                state.appProcess = spawn(
+                  join(installDirectory, installedExecutableName),
+                  [],
+                  {
+                    cwd: installDirectory,
+                    env: appEnvironment,
+                    stdio: 'ignore',
+                    windowsHide: true,
+                  },
+                );
+                state.appProcess.once('spawn', () => state.timeline.push({ step: 'launch', timestamp: new Date().toISOString(), outcome: 'passed' }));
+                state.appProcess.on('error', () => state.timeline.push({ step: 'launch', timestamp: new Date().toISOString(), outcome: 'failed' }));
+                return trackSmokeStep(state.timeline, 'WebView2 connect', () => connectToInstalledWebView(
+                  cdpPort,
+                  state.appProcess,
+                  webViewDataDirectory,
+                  expectedSource === 'deterministic',
+                )).pipe(
+                  tap(({ browser, port }) => {
+                    state.browser = browser;
+                    state.cdpPort = port;
+                  }),
+                  concatMap(() => trackSmokeStep(state.timeline, 'page found', () => installedPage(state.browser, state.appProcess))),
+                  concatMap((page) =>
+                    exerciseInstalledPageForSource(
+                      expectedSource,
+                      page,
+                      state.appProcess.pid,
+                      temporaryDirectory,
+                      { timeline: state.timeline, cards: state.cards },
+                    ),
+                  ),
+                  tap(
+                    (exerciseResult) => (state.exerciseResult = exerciseResult),
+                  ),
+                  concatMap(() =>
+                    processCleanup.processesRunningUnder(installDirectory),
+                  ),
+                  tap((processes) => {
+                    state.cleanup.ownedProcessCount = processes.length;
+                    if (state.cleanup.ownedProcessCount < 2) {
+                      throw new Error(
+                        'Installed smoke did not observe both the owned Tauri app and runtime process.',
+                      );
+                    }
+                  }),
+                );
+              }));
+            }),
+          ),
+        ),
+        map(() => undefined),
+        catchError((error) => {
+          const diagnostics = state.appProcess
+            ? collectInstalledWebViewStartupDiagnostics(
+                state.appProcess,
+                webViewDataDirectory,
+                state.cdpPort ?? dynamicWebViewCdpPort,
+              )
+            : undefined;
+          state.webViewDiagnostics = diagnostics ?? '';
+          state.exerciseError = installedAppExerciseError(error, diagnostics);
+          return of(undefined);
+        }),
+        finalize(() => closeBrowserRendererBoundary(state.browser)),
+      );
+
+      const cleanupRun = installAndExercise.pipe(
+        tap(() => closeBrowserRendererBoundary(state.browser)),
+        concatMap(() =>
+          attempt(
+            state.appProcess
+              ? processCleanup.terminateTrackedProcessTree(
+                  state.appProcess,
+                  'Owned Tauri application',
+                )
+              : of(undefined),
+          ),
+        ),
+        concatMap(() =>
+          attempt(
+            state.privateProcessRootsRegistered
+              ? processCleanup.stopAndProveOwnedProcessRoots([
+                  installDirectory,
+                  temporaryDirectory,
+                ])
+              : processCleanup.stopAndProveResidualProcessRoots([
+                  installDirectory,
+                  temporaryDirectory,
+                ]),
+            () => (state.cleanup.ownedProcessesStopped = true),
+          ),
+        ),
+        concatMap(() => {
+          if (!state.browser) return of(undefined);
+          return race(
+            defer(() => from(state.browser.close())),
+            timer(5_000).pipe(
+              concatMap(() =>
+                throwError(
+                  () => new Error('Playwright CDP disconnect timed out.'),
+                ),
+              ),
+            ),
+          ).pipe(catchError(() => of(undefined)));
+        }),
+        concatMap(() => {
+          if (state.cdpPort === undefined) {
+            state.cleanup.cdpPortReleased = true;
+            return of(undefined);
+          }
+          return attempt(
+            processCleanup.waitForLoopbackPortRelease(state.cdpPort),
+            () => (state.cleanup.cdpPortReleased = true),
+          );
+        }),
+        concatMap(() => {
+          if (!state.installationAttempted) {
+            state.cleanup.uninstallerCompleted = true;
+            state.cleanup.installDirectoryRemoved = true;
+            state.cleanup.nativeUninstallKeyRemoved = true;
+            state.cleanup.registryResidueRemoved = true;
+            return of(undefined);
+          }
+          if (!state.cleanup.ownedProcessesStopped) {
+            return attempt(
+              defer(() => {
+                assertInstallationCleanupAllowed(
+                  state.cleanup.ownedProcessesStopped,
+                );
+                return of(undefined);
+              }),
+            );
+          }
+          const uninstallerPath = join(installDirectory, uninstallerName);
+          return attempt(
+            pathExists(uninstallerPath).pipe(
+              switchMap((exists) => {
+                if (!exists) {
+                  return pathExists(
+                    join(installDirectory, installedExecutableName),
+                  ).pipe(
+                    concatMap((executableExists) =>
+                      executableExists
+                        ? throwError(
+                            () =>
+                              new Error(
+                                'Installed uninstaller is missing from the owned install directory.',
+                              ),
+                          )
+                        : registry.waitForInstalledDirectoryRemoval(
+                            installDirectory,
+                          ),
+                    ),
+                  );
+                }
+                return lifecycle
+                  .assertOwnedRegularFile(
+                    installDirectory,
+                    uninstallerPath,
+                    'Installed uninstaller',
+                  )
+                  .pipe(
+                    concatMap((uninstaller) =>
+                      registry
+                        .assertInstalledRegistryPointsToOwnedDirectory(
+                          installDirectory,
+                        )
+                        .pipe(
+                          concatMap(() =>
+                            lifecycle.runCheckedExecutable(
+                              uninstaller,
+                              uninstallerArguments(smokeRoot, installDirectory),
+                              'Installed NSIS uninstaller',
+                              baseChildEnvironment(
+                                process.env,
+                                temporaryDirectory,
+                              ),
+                              installedSmokeExecutableTimeoutMs,
+                            ),
+                          ),
+                        ),
+                    ),
+                    concatMap(() =>
+                      registry.waitForInstalledDirectoryRemoval(
+                        installDirectory,
+                      ),
+                    ),
+                  );
+              }),
+              tap((nativeRegistryState) => {
+                state.cleanup.uninstallerCompleted = true;
+                state.cleanup.installDirectoryRemoved = true;
+                state.cleanup.nativeUninstallKeyRemoved =
+                  nativeRegistryState.uninstallKeyRemoved;
+                state.cleanup.productRegistryKeyRetainedAfterNativeUninstall =
+                  nativeRegistryState.productKeyRetained;
+              }),
+            ),
+          ).pipe(
+            concatMap(() =>
+              attempt(
+                stopPostUninstallProcessRoots(
+                  processCleanup,
+                  state.privateProcessRootsRegistered,
+                  installDirectory,
+                  temporaryDirectory,
+                ),
+                () => (state.cleanup.ownedProcessesStopped = true),
+              ),
+            ),
+            concatMap(() =>
+              state.cleanup.ownedProcessesStopped
+                ? attempt(
+                    registry.removeOwnedRegistryResidue(installDirectory),
+                    () => (state.cleanup.registryResidueRemoved = true),
+                  )
+                : of(undefined),
+            ),
+          );
+        }),
+        concatMap(() => attempt(defer(async () => {
+          if (!realAppDataBefore || !realAppDataDirectory) return;
+          realAppDataGuard = 'failed';
+          realAppDataAfter = await snapshotRealAppData(realAppDataDirectory);
+          assertRealAppDataUnchanged(
+            realAppDataBefore,
+            realAppDataAfter,
+            installedAppDataUse(expectedSource),
+          );
+          realAppDataGuard = 'passed';
+        }))),
+        // Snapshot after stopping the fake, before deleting its isolated TEMP.
+        concatMap(() => defer(async () => {
+          state.requestLogLines = await readSmokeRequestLog(requestLogPath);
+        })),
+        concatMap(() => state.exerciseError || state.cleanupErrors.length > 0
+          ? attempt(persistFailure(new AggregateError(
+              [state.exerciseError, ...state.cleanupErrors].filter(Boolean),
+              'Installed NSIS smoke failed or could not clean up safely.',
+            )))
+          : of(undefined)),
+        concatMap(() =>
+          state.cleanup.ownedProcessesStopped &&
+          (!(state.exerciseError || state.cleanupErrors.length > 0) || state.failureReportPath)
+            ? attempt(
+                lifecycle.safeRemoveTree(smokeRoot, runRoot).pipe(
+                  concatMap(() => pathExists(runRoot)),
+                  tap(
+                    (exists) =>
+                      (state.cleanup.isolatedRunDataRemoved = !exists),
+                  ),
+                ),
+              )
+            : of(undefined),
+        ),
+        concatMap(() => {
+          if (state.exerciseError || state.cleanupErrors.length > 0) {
+            return throwError(
+              () =>
+                new AggregateError(
+                  [state.exerciseError, ...state.cleanupErrors].filter(Boolean),
+                  'Installed NSIS smoke failed or could not clean up safely.',
+                ),
+            );
+          }
+          const report = {
+            evidenceKind: 'installed-nsis-smoke',
+            installerSource: expectedSource,
+            releaseGateSatisfied: false,
+            realEnginesExercised: false,
+            platform: 'windows',
+            arch: 'x86_64',
+            bundle: 'nsis',
+            installer: {
+              fileName: state.installer.fileName,
+              bytes: state.installer.bytes,
+              sha256: state.installer.sha256,
+            },
+            installedApplication: {
+              fileName: installedExecutableName,
+              productTitle: state.exerciseResult.productTitle,
+            },
+            captures: state.exerciseResult.captures,
+            rendererIpcCommands: state.exerciseResult.rendererIpcCommands,
+            cleanup: state.cleanup,
+            realAppDataGuard: { status: realAppDataGuard, before: realAppDataBefore, after: realAppDataAfter },
+            disclaimer: expectedSource === 'deterministic'
+              ? 'Installed the fixture-runtime QA build. Real OCR, speech recognition and structuring were not exercised.'
+              : 'Installed the release installer. Real OCR, speech recognition and structuring were not exercised.',
+          };
+          assertInstalledSmokeEvidence(report);
+          return writeEvidence(report).pipe(
+            map(() => ({ report, reportPath: evidencePath })),
+          );
+        }),
+      );
+
+      return cleanupRun.pipe(
+        catchError((error) =>
+          persistFailure(error).pipe(
+            catchError((reportError) => throwError(() => new AggregateError([error, reportError], 'Installed smoke failed and its failure report could not be written.'))),
+            concatMap(() => throwError(() => error)),
+            catchError((failure) => releaseLock(smokeLock).pipe(concatMap(() => throwError(() => failure)))),
+          ),
+        ),
+        concatMap((result) => releaseLock(smokeLock).pipe(
+          catchError((error) => persistFailure(error).pipe(concatMap(() => throwError(() => error)))),
+          map(() => result),
+        )),
+      );
+    }),
+  );
+}
+
+export function acquireExclusiveSmokeLock(root, candidate) {
+  return acquireLock(root, candidate);
+}
+
+export function releaseExclusiveSmokeLock(lock) {
+  return releaseLock(lock);
+}
+
+export function exerciseInstalledPageForSource(
+  expectedSource: string,
+  page: Parameters<typeof exerciseInstalledUi>[0],
+  appPid: number | undefined,
+  fixtureDirectory: string,
+  diagnostics: { timeline: SmokeStepEvent[]; cards: SmokeCardDiagnostic[] },
+  runDeterministicExercise = exerciseInstalledUi,
+) {
+  return expectedSource === 'release'
+    ? of({
+        productTitle: 'Capture Workbench',
+        captures: [],
+      })
+    : runDeterministicExercise(page, appPid, fixtureDirectory, diagnostics);
+}
+
+export function stopPostUninstallProcessRoots(
+  processCleanup: Pick<
+    ReturnType<typeof createInstalledProcessCleanup>,
+    'stopAndProveResidualProcessRoots' | 'stopAndProveOwnedProcessRoots'
+  >,
+  privateProcessRootsRegistered: boolean,
+  ownedInstallDirectory: string,
+  ownedTemporaryDirectory: string,
+) {
+  return privateProcessRootsRegistered
+    ? processCleanup
+        .stopAndProveResidualProcessRoots([ownedInstallDirectory])
+        .pipe(
+          concatMap(() =>
+            processCleanup.stopAndProveOwnedProcessRoots([
+              ownedTemporaryDirectory,
+            ]),
+          ),
+        )
+    : processCleanup.stopAndProveResidualProcessRoots([
+        ownedInstallDirectory,
+        ownedTemporaryDirectory,
+      ]);
+}
+
+export function installedAppExerciseError(error, diagnostics?: string) {
+  return diagnostics
+    ? new AggregateError(
+        [error, new Error(diagnostics)],
+        'Installed app exercise failed.',
+      )
+    : error;
+}
+
+
+if (
+  process.argv[1] &&
+  pathToFileURL(resolve(process.argv[1])).href === import.meta.url
+) {
+  const measureReleaseSize =
+    process.argv.length === 3 && process.argv[2] === '--measure-release-size';
+  const releaseSmoke =
+    process.argv.length === 3 && process.argv[2] === '--release';
+  if (process.argv.length > (measureReleaseSize || releaseSmoke ? 3 : 2)) {
+    process.stderr.write(
+      'Use no arguments, --release, or exactly --measure-release-size.\n',
+    );
+    process.exitCode = 1;
+  } else {
+    runInstalledNsisSmoke(
+      measureReleaseSize
+        ? { expectedSource: 'release', measureOnly: true }
+        : releaseSmoke
+          ? { expectedSource: 'release' }
+          : undefined,
+    ).subscribe({
+      next: ({ reportPath }) =>
+        process.stdout.write(`Installed smoke evidence: ${reportPath}\n`),
+      error: (error) => {
+        const [summary, ...causes] = nestedErrorMessages(error);
+        process.stderr.write(`${summary}\n`);
+        for (const cause of causes) process.stderr.write(`- ${cause}\n`);
+        process.exitCode = 1;
+      },
+    });
+  }
+}
+

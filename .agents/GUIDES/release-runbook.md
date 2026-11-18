@@ -212,7 +212,7 @@ source of truth for inputs.
     text; a 1654 x 2339 PNG 23-25 s -> 8 s (no 2x enlargement above 1024 px).
 - New host settings: `CAPTURE_SPEECH_WORKER_IDLE_SECONDS` (300) and
   `CAPTURE_OCR_WORKER_IDLE_SECONDS` (120); 0 restores a worker per capture.
-  The desktop app writes `compute-settings.json` and passes
+  The desktop app writes `speech-gpu-settings.json` and passes
   `CAPTURE_WHISPER_PREFER_GPU`.
 - Compatible with 0.7.x clients. Contract-set SHA-256 unchanged (`60c62267…`);
   capture document schema unchanged (`5452631c…`). Model-source Commit A
@@ -507,10 +507,9 @@ Check a new release like this:
   each content is. Releases up to 0.9.0 published the legacy shape. From
   0.10.0 `speech-recognition` must be `contents` with exactly `cuda` and
   `cpu`:
-  - `build-release-artifacts` (`release.py`), the candidate verifier, the
-    local release consumer smoke and the real-media model smoke fail a
-    model-enabled release whose speech requirement is the legacy delivery or
-    has a single content.
+  - `build-release-artifacts` (`release.py`), the candidate verifier and the
+    local release consumer smoke fail a model-enabled release whose speech
+    requirement is the legacy delivery or has a single content.
   - `build-release-artifacts`, the local release consumer smoke and the
     practical installed check verify every content's worker archive, its
     parts and its `*-files.json` manifest; the consumer smoke also requires
@@ -520,11 +519,10 @@ Check a new release like this:
     installed check and the real-media smoke read both shapes, and the tag
     audit (`audit-release-tag.ts`), `resolve-capture-release.ts` and
     `verify-release-candidate.ts` do not read the speech requirement's shape.
-  - `verify_release_model_candidate.py` and `real-media-model-smoke.ts`
-    compare model deliveries with the source lock: `cuda` must carry the
-    lock's full speech files, and `cpu` exactly the subset that
-    `cpu_speech_model_delivery` in `model_source_lock.py` derives, with the
-    same bytes and sha256 and no `model/primary` path.
+  - `verify_release_model_candidate.py` compares model deliveries with the
+    source lock: `cuda` must carry the lock's full speech files, and `cpu`
+    exactly the subset that `cpu_speech_model_delivery` in `model_source_lock.py` derives,
+    with the same bytes and sha256 and no `model/primary` path.
   - `verify_release_model_candidate.py` runs both packs. It installs `cuda`
     whatever the machine's driver and checks the frozen private fixture. It
     then installs the candidate's own `cpu` archive and model subset in a
@@ -535,14 +533,16 @@ Check a new release like this:
     the CUDA one (its run timeout is 3 hours).
   - Smokes whose oracle is `tea-asr-1.1` / `cuda` force that pack: the
     real-media smoke and the progressive audio oracle set
-    `CAPTURE_SPEECH_RECOGNITION_VARIANT=cuda`. The real-media model smoke
-    goes through the desktop app, which cannot pass the variant, so it
-    requires the NVIDIA driver (`%SystemRoot%\System32\nvcuda.dll`) and its
-    mirror serves only the `cuda` archive. Its ambient-environment check, and
-    the one in `release-candidate.yml`, reject any
+    `CAPTURE_SPEECH_RECOGNITION_VARIANT=cuda`. The ambient-environment
+    check in `release-candidate.yml` rejects any
     `CAPTURE_SPEECH_RECOGNITION_*` variable.
 - Every runtime and desktop asset matches `runtimeAssets` in `capture-release-manifest-v1.json` (size and sha256).
 - That manifest's digest is `capture-release-manifest-v1.json.sha256` and `release-index/stable.json` `manifestSha256`.
+
+For local checks, the application-level journey with real engines is
+`pnpm nx run capture-workbench-e2e:smoke-real-engines` on the dev server; a
+Desktop App run is only for WebView2 behaviour, native dialogs, drag and drop of
+native paths, the installer, process cleanup on exit and pixel baselines.
 
 The packaging budget still fails the release candidate when a measured size exceeds its budget. The size report is the CI artifact `capture-size-report-<version>-<run>`. It is not one of the 19 release assets.
 
@@ -552,7 +552,7 @@ Candidate checksums stay inside the candidate artifact and are not release asset
 
 1. Merge the release source to `main` and wait for **push** CI on that commit
    (`ci.yml`), whose `installer` job includes the release-mode installed smoke
-   (`installed-deterministic-smoke.ts --release`). To pre-flight a branch before
+   (`installed-nsis-smoke.ts --release`). To pre-flight a branch before
    merging, dispatch `ci.yml` (`workflow_dispatch`), which runs only
    `installer`. Release candidates verify the `push` run on `main` with
    `tools/verify-main-ci.ts` (never a `workflow_dispatch` run). `ci.yml` skips
@@ -713,7 +713,7 @@ candidate with `node tools/install-capture-workbench-dependencies.mts
   them. Set `CAPTURE_ENGINE_CACHE_DIR=off` to time or debug a cold download.
 - A minor version bump also needs `CAPTURE_RUNTIME_MINOR` in
   `packages/capture-workbench-ui/src/lib/constants/runtime.ts`; the version sync
-  and its check do not own it, and `capture-angular:test` is what fails.
+  and its check do not own it, and `capture-workbench-ui:test` is what fails.
 - Lock refresh after a version bump: `cargo update -p <crate> --offline`
   changes only the first-party version lines. Once a project's version
   changes, uv re-resolves its whole lock (an implicit `uv run` does too) and
@@ -758,7 +758,7 @@ candidate with `node tools/install-capture-workbench-dependencies.mts
   ("not a successful exact-source package candidate") before anything is
   published. 0.10.0: the first candidates named `b890158` after `main` had
   moved to `b0924a8`; both were rebuilt for `b0924a8`.
-- `ci.yml`'s `installer` job runs `installed-deterministic-smoke.ts --release`
+- `ci.yml`'s `installer` job runs `installed-nsis-smoke.ts --release`
   on `main` pushes (and on `workflow_dispatch` as a branch pre-flight), in
   addition to `release-candidate.yml` (`verify-windows-install`). On a runner
   that has never started the product, the release build has no app-data

@@ -30,17 +30,18 @@ import {
   type DesktopSourceSelectionBatch,
 } from './desktop-library.service';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
-import { DesktopWorkspaceCaptureService } from './desktop-workspace-capture.service';
+import { DesktopCaptureService } from './desktop-capture.service';
 import { LibraryExportService } from './library-export.service';
 import {
   errorMessage,
   formatApproximateBytes,
   installationPercent,
   isActiveStreaming,
-  isAudioMediaType,
+  isRecordingMediaType,
   isFeatureReady,
 } from './desktop-workspace.selectors';
-import { DesktopWorkspaceStore } from './desktop-workspace.store';
+import { RuntimeStatusStore } from './runtime-status.store';
+import { LibraryStore } from './library.store';
 import { installationProgress } from './installation-progress';
 import { RecognitionFeaturesStore } from './recognition-features.store';
 import { selectionRejectionMessages } from './source-selection-messages';
@@ -48,10 +49,11 @@ import { selectionRejectionMessages } from './source-selection-messages';
 /** Owns the recording queue, options, live partial transcript, and capture orchestration for `/asr`. */
 @Injectable({ providedIn: 'root' })
 export class AsrQueueStore {
-  private readonly workspace = inject(DesktopWorkspaceStore);
+  private readonly runtimeStatus = inject(RuntimeStatusStore);
+  private readonly libraryStore = inject(LibraryStore);
   private readonly library = inject(DesktopLibraryService);
   private readonly runtime = inject(DesktopRuntimeClientService);
-  private readonly capture = inject(DesktopWorkspaceCaptureService);
+  private readonly capture = inject(DesktopCaptureService);
   private readonly features = inject(RecognitionFeaturesStore);
   private readonly exports = inject(LibraryExportService);
   readonly exportBusyIds = this.exports.busyIds;
@@ -61,7 +63,7 @@ export class AsrQueueStore {
 
   /** Session-only spoken language choice applied to newly added recordings. */
   readonly spokenLanguage = signal<AsrSpokenLanguage>('zh');
-  /** Whether newly added recordings request speaker diarization (when unit is ready). */
+  /** Whether newly added recordings request speaker diarization (when requirement is ready). */
   readonly identifySpeakers = signal(false);
   readonly importError = signal('');
 
@@ -84,10 +86,10 @@ export class AsrQueueStore {
   readonly speechPack = this.features.speechPack;
 
   readonly optionalSpeakerInstall = computed(() => {
-    const unit = this.features.requirements().find(
+    const requirement = this.features.requirements().find(
       (candidate) => candidate.requirementId === 'speaker-diarization',
     );
-    if (!unit || unit.status === 'ready') return null;
+    if (!requirement || requirement.status === 'ready') return null;
     const installation = this.features.installationFor('speaker-diarization');
     const installing = installation?.status === 'queued' || installation?.status === 'running';
     const messages = desktopMessages();
@@ -95,7 +97,7 @@ export class AsrQueueStore {
     return {
       installing,
       label: !installing
-        ? messages.asrInstallSpeakers(formatApproximateBytes(unit.downloadBytes))
+        ? messages.asrInstallSpeakers(formatApproximateBytes(requirement.downloadBytes))
         : progress.phase === 'preparing'
           ? messages.asrPreparingSpeakers
           : progress.phase === 'installing'
@@ -105,10 +107,10 @@ export class AsrQueueStore {
   });
 
   readonly speechSizeLabel = computed(() => {
-    const unit = this.features
+    const requirement = this.features
       .requirements()
       .find((candidate) => candidate.requirementId === 'speech-recognition');
-    return formatApproximateBytes(unit?.downloadBytes);
+    return formatApproximateBytes(requirement?.downloadBytes);
   });
 
   readonly speechInstallPercent = computed(() => {
@@ -123,11 +125,11 @@ export class AsrQueueStore {
   });
 
   readonly documents = computed(() =>
-    sortAsrDocumentsOldestFirst(this.workspace.allDocuments()),
+    sortAsrDocumentsOldestFirst(this.libraryStore.allDocuments()),
   );
 
   readonly rows = computed<readonly AsrQueueView[]>(() => {
-    const ops = this.capture.streamingOperations();
+    const ops = this.capture.recordingOperations();
     const busyIds = this.capture.busyIds();
     const details = this.details();
     const speechReady = this.speechReady();
@@ -145,7 +147,7 @@ export class AsrQueueStore {
   });
 
   readonly liveCapture = computed<AsrLiveCaptureView | null>(() => {
-    const ops = this.capture.streamingOperations();
+    const ops = this.capture.recordingOperations();
     const partials = this.capture.streamingPartials();
     const busyIds = this.capture.busyIds();
     const running = this.documents().find((document) => {
@@ -173,20 +175,17 @@ export class AsrQueueStore {
   });
 
   private readonly host = {
-    selectedId: this.workspace.selectedId,
+    selectedId: this.libraryStore.selectedId,
     requestedRequirements: this.features.requestedRequirements,
     requirements: () => this.features.requirements(),
-    documents: () => this.workspace.allDocuments(),
-    selected: () => this.workspace.selected(),
-    refreshDocuments: () => this.workspace.refreshDocuments(),
+    documents: () => this.libraryStore.allDocuments(),
+    selected: () => this.libraryStore.selected(),
+    refreshDocuments: () => this.libraryStore.refreshDocuments(),
     reloadDocumentState: (documentId: string) => {
       this.loadedUpdatedAt.delete(documentId);
-      this.workspace.refreshDocuments();
-      if (this.workspace.selectedId() === documentId) {
-        this.workspace.select(documentId);
-      }
+      this.libraryStore.reloadDocumentState(documentId);
     },
-    setMessage: (text: string) => this.workspace.message?.set(text),
+    setMessage: (text: string) => this.runtimeStatus.message.set(text),
     identifySpeakers: () => this.identifySpeakers(),
   };
 
@@ -197,7 +196,7 @@ export class AsrQueueStore {
     effect(
       () => {
         if (this.runtime.ready()) {
-          this.workspace.refreshDocuments();
+          this.libraryStore.refreshDocuments();
         }
       },
       { injector: this.injector },
@@ -243,7 +242,7 @@ export class AsrQueueStore {
     const recordings: DesktopSourceSelection[] = [];
     const nonRecordings: DesktopSourceSelection[] = [];
     for (const selection of batch.selections) {
-      if (isAudioMediaType(selection.mediaType)) {
+      if (isRecordingMediaType(selection.mediaType)) {
         recordings.push(selection);
       } else {
         nonRecordings.push(selection);
@@ -258,7 +257,7 @@ export class AsrQueueStore {
         .pipe(takeUntilDestroyed(this.destroyRef))
         .subscribe({
           error: (error: unknown) =>
-            this.workspace.message?.set(errorMessage(error)),
+            this.runtimeStatus.message.set(errorMessage(error)),
         });
     }
     this.importError.set(messages.join('\n'));
@@ -280,20 +279,20 @@ export class AsrQueueStore {
         takeUntilDestroyed(this.destroyRef),
       )
       .subscribe({
-        next: () => this.workspace.refreshDocuments(),
+        next: () => this.libraryStore.refreshDocuments(),
         error: (error: unknown) => {
           this.importError.set(errorMessage(error));
-          this.workspace.refreshDocuments();
+          this.libraryStore.refreshDocuments();
         },
       });
   }
 
   install(): void {
-    this.features.installUnit('speech-recognition');
+    this.features.installRequirement('speech-recognition');
   }
 
   installSpeakers(): void {
-    this.features.installUnit('speaker-diarization');
+    this.features.installRequirement('speaker-diarization');
   }
 
   cancel(documentId: string): void {
@@ -313,9 +312,9 @@ export class AsrQueueStore {
           takeUntilDestroyed(this.destroyRef),
         )
         .subscribe({
-          next: () => this.workspace.refreshDocuments(),
+          next: () => this.libraryStore.refreshDocuments(),
           error: (error: unknown) =>
-            this.workspace.message?.set(errorMessage(error)),
+            this.runtimeStatus.message.set(errorMessage(error)),
         });
       return;
     }
@@ -330,7 +329,7 @@ export class AsrQueueStore {
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
         error: (error: unknown) =>
-          this.workspace.message?.set(errorMessage(error)),
+          this.runtimeStatus.message.set(errorMessage(error)),
       });
   }
 
@@ -342,7 +341,7 @@ export class AsrQueueStore {
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
         error: (error: unknown) =>
-          this.workspace.message?.set(errorMessage(error)),
+          this.runtimeStatus.message.set(errorMessage(error)),
       });
   }
 
@@ -388,7 +387,7 @@ export class AsrQueueStore {
           .pipe(takeUntilDestroyed(this.destroyRef))
           .subscribe({
             error: (error: unknown) =>
-              this.workspace.message?.set(errorMessage(error)),
+              this.runtimeStatus.message.set(errorMessage(error)),
           });
       }
     }
@@ -424,7 +423,7 @@ export class AsrQueueStore {
       )
       .subscribe({
         error: (error: unknown) =>
-          this.workspace.message?.set(errorMessage(error)),
+          this.runtimeStatus.message.set(errorMessage(error)),
       });
   }
 
@@ -448,7 +447,7 @@ export class AsrQueueStore {
         continue;
       }
       this.loadingDetails.add(document.documentId);
-      this.library
+      this.libraryStore
         .get(document.documentId)
         .pipe(
           tap((detail) => {

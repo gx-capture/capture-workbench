@@ -17,18 +17,16 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
 
-from capture_runtime.japanese_kanji import TABLE as JAPANESE_KANJI
 from capture_runtime.speech.application.use_cases import DetectRepetitionLoop
 from capture_runtime.speech.domain import (
     LOOP_MAX_PERIOD,
     LOOP_REPEATS,
     RepetitionLoopPolicy,
+    SpeechTranscriptSegment,
+    SpeechWord,
 )
-from capture_runtime.speech.infrastructure.speech_transcript import (
-    WhisperTextSegment,
-    WhisperTranscriptionResult,
-    WhisperWord,
-)
+from capture_runtime.speech.domain.transcript.models import SpeechRecognitionResult
+from capture_runtime.speech.infrastructure.japanese_kanji import TABLE as JAPANESE_KANJI
 from capture_runtime.worker_probe import (
     EngineProbe,
     EngineRuntimeUnavailableError,
@@ -530,9 +528,9 @@ class TeaAsrAdapter:
             self._transformers = transformers
         return self._torch, self._transformers
 
-    def _cuda_devices(self) -> int:
+    def cuda_available(self) -> bool:
         torch, _ = self._dependencies()
-        return int(torch.cuda.is_available())
+        return bool(torch.cuda.is_available())
 
     def transcribe(
         self,
@@ -541,7 +539,7 @@ class TeaAsrAdapter:
         should_cancel: Callable[[], bool],
         allow_empty_output: bool = False,
         language: str | None = None,
-    ) -> WhisperTranscriptionResult:
+    ) -> SpeechRecognitionResult:
         """Transcribe ``source_path``; ``language`` is the spoken language (default Chinese)."""
         started = time.perf_counter()
         callback_error: BaseException | None = None
@@ -566,7 +564,7 @@ class TeaAsrAdapter:
         should_cancel: Callable[[], bool],
         allow_empty_output: bool,
         language: str,
-    ) -> WhisperTranscriptionResult:
+    ) -> SpeechRecognitionResult:
         self._reject_uninstalled_model()
         self._report_stage(speech_stage("assets-probe-start"))
         probe = self.probe()
@@ -587,7 +585,7 @@ class TeaAsrAdapter:
         # and disallowing CPU fallback must not report the device as missing.
         if self.content != "cpu" and self.prefer_gpu:
             try:
-                available = bool(self._cuda_devices())
+                available = self.cuda_available()
             except Exception as error:
                 if not self.allow_cpu_fallback or _cuda_failure_reason(error) is None:
                     raise
@@ -646,7 +644,7 @@ class TeaAsrAdapter:
         warning: str | None,
         *,
         language: str,
-    ) -> WhisperTranscriptionResult:
+    ) -> SpeechRecognitionResult:
         model = inputs = output = generated = None
 
         def cleanup() -> None:
@@ -755,7 +753,7 @@ class TeaAsrAdapter:
             )
             stage_ms["alignerLoad"] = round((time.perf_counter() - started) * 1000)
             started = time.perf_counter()
-            segments: list[WhisperTextSegment] = []
+            segments: list[SpeechTranscriptSegment] = []
             self._report_stage(speech_stage("transcription-iteration-start"))
             for start, chunk, result in pieces:
                 check_cancel()
@@ -783,16 +781,16 @@ class TeaAsrAdapter:
                 if not items:
                     raise ValueError("Speech recognition returned speech without word timestamps.")
                 aligned = _aligned_pieces(text, [item["text"] for item in items])
-                sentence: list[WhisperWord] = []
+                sentence: list[SpeechWord] = []
                 for index, (item, piece) in enumerate(zip(items, aligned, strict=True)):
                     begin = min(offset + item["start_time"], chunk_end)
                     end = min(offset + item["end_time"], chunk_end)
                     sentence.append(
-                        WhisperWord(round(begin * 1000), round(max(begin, end) * 1000), piece)
+                        SpeechWord(round(begin * 1000), round(max(begin, end) * 1000), piece)
                     )
                     if piece.rstrip().endswith(SENTENCE_ENDINGS) or index == len(items) - 1:
                         segments.append(
-                            WhisperTextSegment(
+                            SpeechTranscriptSegment(
                                 sentence[0].start_ms,
                                 max(word.end_ms for word in sentence),
                                 "".join(word.text for word in sentence).strip(),
@@ -817,6 +815,6 @@ class TeaAsrAdapter:
             except BaseException:
                 self._digests.pop(selected, None)
                 raise
-            return WhisperTranscriptionResult(
+            return SpeechRecognitionResult(
                 tuple(segments), duration_ms, device, identity, digest, warning, stage_ms=stage_ms
             )

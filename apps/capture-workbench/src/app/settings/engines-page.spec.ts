@@ -8,8 +8,8 @@ import type {
 } from '@gx-capture/capture-workbench-ui';
 import type { DesktopLibrarySummary } from '../contracts';
 import { setDesktopLocale } from '../i18n/desktop-messages';
-import { selectRecognitionEngines } from '../services/desktop-workspace.selectors';
-import { DesktopWorkspaceStore } from '../services/desktop-workspace.store';
+import { selectRecognitionRequirements } from '../services/desktop-workspace.selectors';
+import { LibraryStore } from '../services/library.store';
 import { RecognitionFeaturesStore } from '../services/recognition-features.store';
 import { EnginesPage } from './engines-page';
 
@@ -23,7 +23,7 @@ describe('EnginesPage removal', () => {
   });
 
   it('asks for confirmation with the size, and cancel leaves the engine installed', async () => {
-    const { fixture, removeUnit } = await renderEngines();
+    const { fixture, removeRequirement } = await renderEngines();
     const row = engineRow(fixture.nativeElement, 'windowsml-ocr');
     (row.querySelector('[data-testid="engine-row-remove"]') as HTMLButtonElement).click();
     fixture.detectChanges();
@@ -41,7 +41,7 @@ describe('EnginesPage removal', () => {
     fixture.detectChanges();
 
     expect(document.querySelector('[role="alertdialog"]')).toBeNull();
-    expect(removeUnit).not.toHaveBeenCalled();
+    expect(removeRequirement).not.toHaveBeenCalled();
     expect(row.querySelector('[data-testid="engine-row-status"]')?.textContent).toContain(
       '已安裝',
     );
@@ -53,7 +53,7 @@ describe('EnginesPage removal', () => {
   });
 
   it('removes the engine only after the user confirms', async () => {
-    const { fixture, removeUnit } = await renderEngines();
+    const { fixture, removeRequirement } = await renderEngines();
     const row = engineRow(fixture.nativeElement, 'windowsml-ocr');
     (row.querySelector('[data-testid="engine-row-remove"]') as HTMLButtonElement).click();
     fixture.detectChanges();
@@ -65,13 +65,13 @@ describe('EnginesPage removal', () => {
     fixture.detectChanges();
     await fixture.whenStable();
 
-    expect(removeUnit).toHaveBeenCalledTimes(1);
-    expect(removeUnit).toHaveBeenCalledWith('windowsml-ocr');
+    expect(removeRequirement).toHaveBeenCalledTimes(1);
+    expect(removeRequirement).toHaveBeenCalledWith('windowsml-ocr');
     expect(document.querySelector('[role="alertdialog"]')).toBeNull();
   });
 
-  it('disables removal while that unit is installing', async () => {
-    const { fixture, removeUnit } = await renderEngines({
+  it('disables removal while that requirement is installing', async () => {
+    const { fixture, removeRequirement } = await renderEngines({
       installation: {
         installationId: 'inst-ocr-1',
         requirementId: 'windowsml-ocr',
@@ -94,11 +94,11 @@ describe('EnginesPage removal', () => {
     fixture.detectChanges();
     await fixture.whenStable();
     expect(document.querySelector('[role="alertdialog"]')).toBeNull();
-    expect(removeUnit).not.toHaveBeenCalled();
+    expect(removeRequirement).not.toHaveBeenCalled();
   });
 
   it('disables removal while a capture that needs the engine is running', async () => {
-    const { fixture, removeUnit } = await renderEngines({
+    const { fixture, removeRequirement } = await renderEngines({
       documents: [libraryDocument('processing', 'application/pdf')],
     });
     const row = engineRow(fixture.nativeElement, 'windowsml-ocr');
@@ -112,7 +112,7 @@ describe('EnginesPage removal', () => {
     button.click();
     fixture.detectChanges();
     await fixture.whenStable();
-    expect(removeUnit).not.toHaveBeenCalled();
+    expect(removeRequirement).not.toHaveBeenCalled();
     expect(document.querySelector('[role="alertdialog"]')).toBeNull();
   });
 
@@ -149,7 +149,7 @@ async function renderEngines(
     requirement('windowsml-ocr', 'ready', 144_000_000),
     requirement('speech-recognition', 'installable', 2_800_000_000),
   ]);
-  const removeUnit = vi.fn();
+  const removeRequirement = vi.fn();
   await TestBed.configureTestingModule({
     imports: [EnginesPage],
     providers: [
@@ -157,7 +157,7 @@ async function renderEngines(
       {
         provide: RecognitionFeaturesStore,
         useValue: {
-          engines: computed(() => selectRecognitionEngines(requirements())),
+          recognitionRequirements: computed(() => selectRecognitionRequirements(requirements())),
           installing: signal(false),
           startingRequirementId: signal(null),
           installationFor: (requirementId: CaptureRequirementId) =>
@@ -168,14 +168,14 @@ async function renderEngines(
             options.removingId === requirementId,
           removalError: (requirementId: CaptureRequirementId) =>
             requirementId === 'windowsml-ocr' ? (options.removalError ?? null) : null,
-          removeUnit,
+          removeRequirement,
           cancelInstallation: vi.fn(),
           retryInstallation: vi.fn(),
-          installUnit: vi.fn(),
+          installRequirement: vi.fn(),
         },
       },
       {
-        provide: DesktopWorkspaceStore,
+        provide: LibraryStore,
         useValue: { allDocuments: signal(options.documents ?? []) },
       },
     ],
@@ -184,7 +184,7 @@ async function renderEngines(
   fixture.detectChanges();
   await fixture.whenStable();
   fixture.detectChanges();
-  return { fixture, removeUnit };
+  return { fixture, removeRequirement };
 }
 
 function engineRow(page: HTMLElement, requirementId: string): HTMLElement {

@@ -1,4 +1,6 @@
-"""Write capture_runtime/japanese_kanji/__init__.py, the old-to-Japanese kanji form table.
+"""Write the old-to-Japanese kanji form table.
+
+Output: capture_runtime/speech/infrastructure/japanese_kanji/__init__.py.
 
 Usage: generate_japanese_kanji.py <JPShinjitaiCharacters.txt> <Unihan_OtherMappings.txt>
 
@@ -31,6 +33,8 @@ TARGET = (
     Path(__file__).resolve().parents[1]
     / "src"
     / "capture_runtime"
+    / "speech"
+    / "infrastructure"
     / "japanese_kanji"
     / "__init__.py"
 )

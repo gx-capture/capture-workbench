@@ -17,13 +17,13 @@
         {{ m().asrInstallTitle }}
       </h2>
       <p class="pb-3.5 text-xs text-muted-foreground">{{ m().asrInstallHint }}</p>
-      @for (unit of queue.speechPack(); track unit.requirementId) {
+      @for (requirement of queue.speechPack(); track requirement.requirementId) {
         <app-engine-card
-          [requirement]="unit"
-          [installation]="features.installationFor(unit.requirementId)"
+          [requirement]="requirement"
+          [installation]="features.installationFor(requirement.requirementId)"
           [installing]="features.installing()"
-          [starting]="features.startingRequirementId() === unit.requirementId"
-          (install)="features.installUnit($event)"
+          [starting]="features.startingRequirementId() === requirement.requirementId"
+          (install)="features.installRequirement($event)"
           (cancelInstall)="features.cancelInstallation($event)"
           (retry)="features.retryInstallation($event)"
         />
@@ -168,10 +168,10 @@
           size="sm"
           type="button"
           data-testid="asr-live-cancel"
-          [attr.aria-label]="m().ocrCancelNamed(live.fileName)"
+          [attr.aria-label]="m().captureCancelNamed(live.fileName)"
           (click)="queue.cancel(live.documentId)"
         >
-          {{ m().cancelInstall }}
+          {{ m().cancel }}
         </button>
       </div>
 
@@ -274,10 +274,10 @@
         <table hlmTable data-testid="asr-queue">
           <thead hlmTHead>
             <tr hlmTr>
-              <th hlmTh>{{ m().ocrColFile }}</th>
+              <th hlmTh>{{ m().queueColFile }}</th>
               <th hlmTh>{{ m().asrColDuration }}</th>
-              <th hlmTh class="w-2/5">{{ m().ocrColStatus }}</th>
-              <th hlmTh class="text-right">{{ m().ocrColAction }}</th>
+              <th hlmTh class="w-2/5">{{ m().queueColStatus }}</th>
+              <th hlmTh class="text-right">{{ m().queueColAction }}</th>
             </tr>
           </thead>
           <tbody hlmTBody>
@@ -364,10 +364,10 @@
                         size="sm"
                         type="button"
                         data-testid="asr-row-cancel"
-                        [attr.aria-label]="m().ocrCancelNamed(row.fileName)"
+                        [attr.aria-label]="m().captureCancelNamed(row.fileName)"
                         (click)="queue.cancel(row.documentId)"
                       >
-                        {{ m().cancelInstall }}
+                        {{ m().cancel }}
                       </button>
                     }
                     @if (row.userStatus === 'needs-attention' && row.interrupted) {
@@ -377,10 +377,10 @@
                         size="sm"
                         type="button"
                         data-testid="asr-row-restart"
-                        [attr.aria-label]="m().ocrRestartNamed(row.fileName)"
+                        [attr.aria-label]="m().captureRestartNamed(row.fileName)"
                         (click)="queue.restart(row.documentId)"
                       >
-                        {{ m().ocrRestart }}
+                        {{ m().captureRestart }}
                       </button>
                     }
                     @if ((row.userStatus === 'needs-attention' && !row.interrupted) || row.userStatus === 'cancelled') {
@@ -390,10 +390,10 @@
                         size="sm"
                         type="button"
                         data-testid="asr-row-retry"
-                        [attr.aria-label]="m().ocrRetryNamed(row.fileName)"
+                        [attr.aria-label]="m().captureRetryNamed(row.fileName)"
                         (click)="queue.retry(row.documentId)"
                       >
-                        {{ m().ocrRetry }}
+                        {{ m().captureRetry }}
                       </button>
                     }
                     @if (row.userStatus === 'done') {
@@ -403,10 +403,10 @@
                         size="sm"
                         type="button"
                         data-testid="asr-row-view"
-                        [attr.aria-label]="m().ocrViewNamed(row.fileName)"
+                        [attr.aria-label]="m().captureViewNamed(row.fileName)"
                         (click)="queue.view(row.documentId)"
                       >
-                        {{ m().ocrView }}
+                        {{ m().captureView }}
                       </button>
                       <button
                         hlmBtn

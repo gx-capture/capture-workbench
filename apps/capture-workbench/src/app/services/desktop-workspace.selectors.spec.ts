@@ -3,14 +3,13 @@ import type { DesktopLibrarySummary } from '../contracts';
 import { setDesktopLocale } from '../i18n/desktop-messages';
 import {
   captureNeedsRequirement,
-  captureResultText,
   FEATURE_REQUIREMENTS,
   formatApproximateBytes,
   installationPercent,
   isFeatureReady,
   selectFeatureMissing,
   selectInstallableRequirements,
-  selectRecognitionEngines,
+  selectRecognitionRequirements,
   selectRequestedMissing,
   selectSpeechPack,
   uninstallFailureMessage,
@@ -43,7 +42,7 @@ describe('feature requirements and speech pack', () => {
     requirement('speech-recognition', 'installable', 2_800_000_000),
   ];
 
-  it('maps each recognition feature to its own requirement unit', () => {
+  it('maps each recognition feature to its own requirement', () => {
     expect(FEATURE_REQUIREMENTS).toEqual({
       ocr: ['windowsml-ocr'],
       asr: ['speech-recognition'],
@@ -74,9 +73,9 @@ describe('feature requirements and speech pack', () => {
     ).toEqual(['speech-recognition', 'speaker-diarization']);
   });
 
-  it('lists recognition engines in canonical order', () => {
+  it('lists recognition requirements in canonical order', () => {
     expect(
-      selectRecognitionEngines(requirements).map((item) => item.requirementId),
+      selectRecognitionRequirements(requirements).map((item) => item.requirementId),
     ).toEqual([
       'windowsml-ocr',
       'speech-recognition',
@@ -85,7 +84,7 @@ describe('feature requirements and speech pack', () => {
     ]);
   });
 
-  it('never holds up documents until the user asks for a unit', () => {
+  it('never holds up documents until the user asks for a requirement', () => {
     expect(selectRequestedMissing(requirements, new Set())).toEqual([]);
     expect(
       selectRequestedMissing(
@@ -116,7 +115,7 @@ describe('captureNeedsRequirement', () => {
     status,
   });
 
-  it('blocks the engines that kind of active capture needs', () => {
+  it('blocks the requirements that kind of active capture needs', () => {
     const pdf = document('processing', 'application/pdf');
     const image = document('persisting', 'image/png');
     const audio = document('processing', 'audio/mpeg');
@@ -179,40 +178,5 @@ describe('installationPercent', () => {
     expect(installationPercent({ progress: 1 / 3 })).toBe(33);
     expect(installationPercent({ progress: 1.2 })).toBe(100);
     expect(installationPercent(null)).toBe(0);
-  });
-});
-
-describe('captureResultText', () => {
-  const spoken = {
-    targetText: 'Good morning\nHello there\nmm',
-    rawSegments: [
-      { segmentId: 'segment-1', speaker: 'SPEAKER_00' },
-      { segmentId: 'segment-2', speaker: 'SPEAKER_01' },
-      { segmentId: 'segment-3', speaker: null },
-    ],
-    blocks: [
-      { sourceSegmentId: 'segment-1', targetText: 'Good morning' },
-      { sourceSegmentId: 'segment-2', targetText: 'Hello there' },
-      { sourceSegmentId: 'segment-3', targetText: 'mm' },
-    ],
-  };
-
-  it('puts the given name, or the anonymous label, before each line', () => {
-    expect(
-      captureResultText({
-        ...spoken,
-        speakers: [
-          { speakerId: 'SPEAKER_00', displayName: ' Ms. Lin ' },
-          { speakerId: 'SPEAKER_01', displayName: null },
-        ],
-      }),
-    ).toBe('Ms. Lin: Good morning\nSPEAKER_01: Hello there\nmm');
-  });
-
-  it('leaves a result without speakers as it is', () => {
-    expect(captureResultText({ ...spoken, speakers: [] })).toBe(
-      spoken.targetText,
-    );
-    expect(captureResultText({ targetText: 'page one' })).toBe('page one');
   });
 });

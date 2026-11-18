@@ -3,7 +3,7 @@ import { isAbsolute, join, relative, resolve } from 'node:path';
 import {
   CHILD_ENVIRONMENT_ALLOWLIST,
 } from '../constants/installed.ts';
-import { assertRedactedEvidence } from '../package-qa.ts';
+import { assertRedactedEvidence } from '../hash-qa-installer.ts';
 
 const childEnvironmentAllowlist = CHILD_ENVIRONMENT_ALLOWLIST;
 
@@ -136,21 +136,20 @@ export function buildInstalledAppEnvironment(source, directories, cdpPort): Reco
 
 export function assertInstalledSmokeEvidence(report) {
   if (
-    report?.evidenceKind !== 'deterministic-installed-tauri-smoke' ||
+    report?.evidenceKind !== 'installed-nsis-smoke' ||
     report?.releaseGateSatisfied !== false ||
     report?.realEnginesExercised !== false
   ) {
     throw new Error(
-      'Installed smoke evidence must remain deterministic and non-releaseable.',
+      'Installed smoke evidence requires the installed NSIS kind and must remain non-releaseable.',
     );
   }
   if (
-    typeof report.disclaimer !== 'string' ||
-    !/deterministic/iu.test(report.disclaimer) ||
-    !/does not/iu.test(report.disclaimer)
+    report.installerSource !== 'deterministic' &&
+    report.installerSource !== 'release'
   ) {
     throw new Error(
-      'Installed smoke evidence requires an explicit deterministic disclaimer.',
+      'Installed smoke evidence requires a valid installer source.',
     );
   }
   if (

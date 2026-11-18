@@ -37,7 +37,7 @@ describe('diagnostics pure functions', () => {
     expect(
       buildDiagnosticsRuntimeView({
         state: 'ready',
-        workspaceMessage: '',
+        runtimeStatusMessage: '',
         runtimeStatus: readyStatus,
         ocrCompute: preflight,
         messages,
@@ -55,7 +55,7 @@ describe('diagnostics pure functions', () => {
     expect(
       buildDiagnosticsRuntimeView({
         state: 'starting',
-        workspaceMessage: messages.starting,
+        runtimeStatusMessage: messages.starting,
         runtimeStatus: { status: 'starting', detail: messages.starting },
         ocrCompute: null,
         messages,
@@ -73,7 +73,7 @@ describe('diagnostics pure functions', () => {
     expect(
       buildDiagnosticsRuntimeView({
         state: 'error',
-        workspaceMessage: 'Sidecar failed',
+        runtimeStatusMessage: 'Sidecar failed',
         runtimeStatus: { status: 'failed', detail: 'Fallback detail' },
         ocrCompute: null,
         messages,
@@ -92,7 +92,7 @@ describe('diagnostics pure functions', () => {
     expect(
       buildDiagnosticsRuntimeView({
         state: 'error',
-        workspaceMessage: 'No desktop host',
+        runtimeStatusMessage: 'No desktop host',
         runtimeStatus: null,
         ocrCompute: null,
         messages,

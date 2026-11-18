@@ -30,7 +30,7 @@ the reference clip):
 - Chinese (`language="zh"`) is the default, as the model card recommends for Taiwan speech;
   it also keeps dense Chinese-English code-switching from being translated. A host may name
   the spoken language of a recording (`spokenLanguage`, 0.8.0); Japanese transcripts are then
-  written in Japanese kanji forms (`capture_runtime/japanese_kanji`).
+  written in Japanese kanji forms (`capture_runtime/speech/infrastructure/japanese_kanji`).
 
 Only the `cuda` speech pack uses CUDA PyTorch (the CUDA 12.8 index on Windows); it is about
 12.5x faster than CPU for transcription. The `cpu` speech pack and diarization use CPU PyTorch;
@@ -52,7 +52,7 @@ script, worker directory, executable and archive/manifest stem `capture-engine-s
 nx targets `build-speech-recognition-worker`, `verify-speech-recognition-worker`,
 `generate-speech-recognition-preflight-catalog`, `verify-speech-recognition-preflight`; catalog,
 boundary and preflight flags `--speech-recognition-*`; stages `speech-*`. Internal module names
-`whisper_session.py` and `progressive_whisper.py` keep their names and binary protocol.
+`speech_session.py` and `progressive_speech.py` keep the binary protocol.
 `whisper_download.py` is removed: installation uses the pinned direct-file lock pipeline, like
 `speaker-diarization`.
 
@@ -112,7 +112,7 @@ whose warm-worker key includes it. It replaces `CAPTURE_WHISPER_PRIMARY_MODEL` a
 The `cuda` pack holds both models. The `cpu` pack holds only mini and the aligner, in a worker
 built without the CUDA libraries (issues #274 and #154). The desktop app does not expose the
 model setting or the pack choice yet: it launches the runtime with a fixed environment, so
-either would need a field in `compute-settings.json` and a line in `launch_policy.rs`.
+either would need a field in `speech-gpu-settings.json` and a line in `launch_policy.rs`.
 
 ## Device follows the machine (2026-11-04)
 
@@ -157,7 +157,6 @@ The product owner decided on 2026-11-11, on issue #154:
    ordered segments against no frozen transcript.
 3. A release carries both packs. A model-enabled release whose `speech-recognition` has a
    single delivery or only one content fails the release tools: `build-release-artifacts`
-   (`release.py`), the candidate verifier, the local release consumer smoke and the
-   real-media model smoke.
+   (`release.py`), the candidate verifier and the local release consumer smoke.
 4. The unit guide shown before the download describes both packs; its title stays
    "台灣語音轉文字（TEA-ASR 1.1）".

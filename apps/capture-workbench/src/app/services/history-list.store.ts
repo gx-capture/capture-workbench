@@ -4,16 +4,14 @@ import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { Router } from '@angular/router';
 import { finalize } from 'rxjs';
 import { desktopMessages } from '../i18n/desktop-messages';
-import { DesktopLibraryService } from './desktop-library.service';
-import { DesktopWorkspaceCaptureService } from './desktop-workspace-capture.service';
-import { DesktopWorkspaceStore } from './desktop-workspace.store';
+import { DesktopCaptureService } from './desktop-capture.service';
+import { LibraryStore } from './library.store';
 import { filterHistoryRows, historyRow, type HistoryFilters, type HistoryRow } from './history-list';
 
 @Injectable({ providedIn: 'root' })
 export class HistoryListStore {
-  private readonly workspace = inject(DesktopWorkspaceStore);
-  private readonly capture = inject(DesktopWorkspaceCaptureService);
-  private readonly library = inject(DesktopLibraryService);
+  private readonly capture = inject(DesktopCaptureService);
+  private readonly library = inject(LibraryStore);
   private readonly router = inject(Router);
   private readonly document = inject(DOCUMENT);
   private readonly destroyRef = inject(DestroyRef);
@@ -26,11 +24,11 @@ export class HistoryListStore {
   readonly deleting = signal(false);
   readonly pendingDelete = signal<HistoryRow | null>(null);
   readonly dialogState = computed(() => this.pendingDelete() ? 'open' : 'closed');
-  readonly hasDocuments = computed(() => (this.workspace.allDocuments() ?? []).length > 0);
-  private readonly allRows = computed(() => (this.workspace.allDocuments() ?? []).map((document) => historyRow(
+  readonly hasDocuments = computed(() => (this.library.allDocuments() ?? []).length > 0);
+  private readonly allRows = computed(() => (this.library.allDocuments() ?? []).map((document) => historyRow(
     document,
     this.capture.busyIds().has(document.documentId),
-    this.capture.jobs().get(document.documentId) ?? this.capture.streamingOperations().get(document.documentId),
+    this.capture.oneShotOperations().get(document.documentId) ?? this.capture.recordingOperations().get(document.documentId),
     this.capture.hasActiveCapture(document.documentId),
   )));
   readonly rows = computed(() => filterHistoryRows(this.allRows(), {
@@ -44,7 +42,7 @@ export class HistoryListStore {
 
   askDelete(row: HistoryRow): void {
     this.error.set('');
-    if (this.deleting() || !this.canDelete(row.documentId)) return;
+    if (this.deleting() || !this.library.canDelete(row.documentId)) return;
     this.focusAfterClose = { documentId: row.documentId };
     this.pendingDelete.set(row);
   }
@@ -80,7 +78,7 @@ export class HistoryListStore {
   confirmDelete(): void {
     const pending = this.pendingDelete();
     if (!pending || this.deleting()) return;
-    if (!this.canDelete(pending.documentId)) {
+    if (!this.library.canDelete(pending.documentId)) {
       this.cancelDelete();
       return;
     }
@@ -91,7 +89,6 @@ export class HistoryListStore {
       finalize(() => this.deleting.set(false)),
     ).subscribe({
       next: () => {
-        this.workspace.refreshDocuments();
         if (generation !== this.transientGeneration) return;
         this.focusAfterClose = { documentId: null };
         this.pendingDelete.set(null);
@@ -102,12 +99,5 @@ export class HistoryListStore {
         this.pendingDelete.set(null);
       },
     });
-  }
-
-  private canDelete(documentId: string): boolean {
-    const document = (this.workspace.allDocuments() ?? []).find((item) => item.documentId === documentId);
-    return document !== undefined && !document.captureId
-      && !this.capture.busyIds().has(documentId)
-      && !this.capture.hasActiveCapture(documentId);
   }
 }

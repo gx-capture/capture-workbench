@@ -234,8 +234,8 @@ Useful focused checks are:
 
 ```powershell
 corepack pnpm nx run capture-runtime:check-contracts
-corepack pnpm nx run capture-angular:clean-consumer-smoke
-corepack pnpm nx run capture-workbench-desktop:package-qa-test
+corepack pnpm nx run capture-workbench-ui:clean-consumer-smoke
+corepack pnpm nx run capture-workbench-desktop:test-scripts
 corepack pnpm nx run capture-workbench-e2e:e2e
 ```
 
@@ -265,6 +265,11 @@ no file leaves the page.
 Use `pnpm nx` targets for discovery, build, lint, test, packaging, and smoke
 work. Product smokes and release checks should use their explicit Nx target;
 test fixtures are not release evidence.
+
+The Package Candidate (`candidateKind: package`) bundles the npm archives and
+the Python wheel and sdist. During full promotion, the binding verifiers use
+`--release-candidate` for the Release Candidate directory and check it against
+the Package and Runtime Candidates.
 
 ## Security and data boundaries
 

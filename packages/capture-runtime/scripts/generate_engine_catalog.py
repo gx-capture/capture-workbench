@@ -253,7 +253,9 @@ def main() -> None:
         arguments.speech_recognition_worker_archive.parent.resolve()
         != arguments.ocr_worker_archive.parent.resolve()
     ):
-        raise SystemExit("OCR and Whisper worker archives must share one engine directory")
+        raise SystemExit(
+            "OCR and speech-recognition worker archives must share one engine directory"
+        )
     cpu_archive = arguments.speech_recognition_cpu_worker_archive
     cpu_manifest = arguments.speech_recognition_cpu_worker_manifest
     if (cpu_archive is None) != (cpu_manifest is None):

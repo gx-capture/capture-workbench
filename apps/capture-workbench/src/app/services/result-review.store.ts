@@ -13,8 +13,9 @@ import { defer, map, Observable, of, Subject, throwError, timer, type Subscripti
 import type { DesktopLibraryDetail, DesktopLibraryEdits } from '../contracts';
 import { desktopMessages } from '../i18n/desktop-messages';
 import { DesktopLibraryService } from './desktop-library.service';
+import { LibraryStore } from './library.store';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
-import { DesktopWorkspaceFormattingService } from './desktop-workspace-formatting.service';
+import { DesktopFormattingService } from './desktop-formatting.service';
 import {
   errorMessage,
   isPdfMediaType,
@@ -61,9 +62,10 @@ export type PdfPreviewState = 'idle' | 'loading' | 'ready' | 'failed';
 @Injectable()
 export class ResultReviewStore {
   private readonly route = inject(ActivatedRoute, { optional: true });
-  private readonly library = inject(DesktopLibraryService);
+  private readonly library = inject(LibraryStore);
+  private readonly libraryAdapter = inject(DesktopLibraryService);
   private readonly runtime = inject(DesktopRuntimeClientService, { optional: true });
-  private readonly formatting = inject(DesktopWorkspaceFormattingService);
+  private readonly formatting = inject(DesktopFormattingService);
   private readonly pdfRenderer = inject(PdfPageRenderer);
   private readonly destroyRef = inject(DestroyRef);
 
@@ -524,7 +526,7 @@ export class ResultReviewStore {
     const requestedId = d.documentId;
     const mediaType = d.mediaType;
 
-    this.sourceSubscription = this.library.sourceBytes(requestedId).subscribe({
+    this.sourceSubscription = this.libraryAdapter.sourceBytes(requestedId).subscribe({
       next: (bytes) => {
         this.loadingSourceForId = null;
         this.sourceSubscription = null;

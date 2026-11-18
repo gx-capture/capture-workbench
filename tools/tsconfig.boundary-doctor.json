@@ -6,6 +6,8 @@
   "include": [
     "./pinned-values-gate.ts",
     "./pinned-values-gate.test.ts",
+    "./retired-names-gate.ts",
+    "./retired-names-gate.test.ts",
     "./capture-boundary-doctor.ts",
     "./capture-boundary-doctor.test.ts",
     "./three-project-acceptance.ts",

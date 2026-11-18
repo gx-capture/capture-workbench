@@ -4,10 +4,10 @@ import { ActivatedRoute } from '@angular/router';
 import { defer, finalize, from, throwError } from 'rxjs';
 import type { DesktopLibraryDetail } from '../contracts';
 import { desktopMessages } from '../i18n/desktop-messages';
-import { DesktopLibraryService } from './desktop-library.service';
+import { LibraryStore } from './library.store';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
-import { DesktopWorkspaceFormattingService } from './desktop-workspace-formatting.service';
-import { DesktopWorkspaceStore } from './desktop-workspace.store';
+import { DesktopFormattingService } from './desktop-formatting.service';
+import { RuntimeStatusStore } from './runtime-status.store';
 import {
   buildDiagnosticsDocumentView,
   buildDiagnosticsRuntimeView,
@@ -18,10 +18,10 @@ import { isNotFoundError } from './result-review';
 @Injectable()
 export class DiagnosticsStore {
   private readonly route = inject(ActivatedRoute);
-  private readonly library = inject(DesktopLibraryService);
-  private readonly formatting = inject(DesktopWorkspaceFormattingService);
+  private readonly library = inject(LibraryStore);
+  private readonly formatting = inject(DesktopFormattingService);
   private readonly runtime = inject(DesktopRuntimeClientService);
-  private readonly workspace = inject(DesktopWorkspaceStore);
+  private readonly runtimeStatus = inject(RuntimeStatusStore);
   private readonly destroyRef = inject(DestroyRef);
 
   private readonly queryParamMap = toSignal(this.route.queryParamMap);
@@ -46,8 +46,8 @@ export class DiagnosticsStore {
 
   readonly runtimeView = computed(() =>
     buildDiagnosticsRuntimeView({
-      state: this.workspace.state(),
-      workspaceMessage: this.workspace.message(),
+      state: this.runtimeStatus.state(),
+      runtimeStatusMessage: this.runtimeStatus.message(),
       // Reading a failed resource throws, and a failed runtime is when this page is needed.
       runtimeStatus: this.runtime.readiness.hasValue() ? this.runtime.status() : null,
       ocrCompute: this.runtime.ocrCompute(),
@@ -92,7 +92,7 @@ export class DiagnosticsStore {
   });
 
   reconnect(): void {
-    this.workspace.initialize();
+    this.runtimeStatus.reload();
   }
 
   copyDigest(digest: string): void {

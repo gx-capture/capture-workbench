@@ -82,7 +82,7 @@
  * environment and forwards a fixed list. So, as in the Desktop App:
  *   - the speech model is the installed pack's default, not a development
  *     override: this smoke is on the release side of "Speech development tests"
- *     in AGENTS.md, like the desktop model smoke it stands in for;
+ *     in AGENTS.md;
  *   - downloaded engines are cached in the runtime's default engine cache
  *     (`%LOCALAPPDATA%\gx-capture\engine-cache`), the one folder of the user's
  *     profile this run writes to. App data, runtime data, Ollama data and temp
@@ -101,9 +101,9 @@ import { isAbsolute, join, resolve } from 'node:path';
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import {
   canConnect,
-  startRealBackendLauncher,
-  type StartedRealBackendLauncher,
-} from './real-backend-launcher.ts';
+  startDevHostLauncher,
+  type StartedDevHostLauncher,
+} from './dev-host-launcher.ts';
 
 const workspaceRoot = resolve(import.meta.dirname, '..', '..', '..');
 const upstreamUrl = 'http://localhost:4200';
@@ -1304,10 +1304,10 @@ test('runs full real-engine capture, editing, export, and restart journey on loc
     provenance: {},
   };
 
-  let activeLauncher: StartedRealBackendLauncher | undefined;
+  let activeLauncher: StartedDevHostLauncher | undefined;
 
-  const startHostWithConfig = async (): Promise<StartedRealBackendLauncher> => {
-    const started = await startRealBackendLauncher({
+  const startHostWithConfig = async (): Promise<StartedDevHostLauncher> => {
+    const started = await startDevHostLauncher({
       upstreamUrl,
       appDataDir: config.appDataDir,
       runtimeManifestPath: config.runtimeManifestPath,

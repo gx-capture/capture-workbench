@@ -5,7 +5,7 @@ use std::fs;
 
 #[cfg(test)]
 use crate::contracts::{
-    LibraryCaptureOptions, LibraryCaptureUpdate, LibraryDocumentRequest, LibraryDocumentSummary,
+    DesktopLibrarySummary, LibraryCaptureOptions, LibraryCaptureUpdate, LibraryDocumentRequest,
     LibraryImportSourceRequest, LibraryListRequest, OcrEvidenceV1,
 };
 
@@ -13,10 +13,12 @@ const INDEX_FILE_NAME: &str = "library-index-v1.json";
 const INDEX_BACKUP_FILE_NAME: &str = "library-index-v1.backup.json";
 const TRANSACTION_FILE_NAME: &str = "library-transaction-v1.json";
 const INDEX_VERSION: u8 = 1;
-/// PDF and image sources; also the largest source the app loads for playback.
-pub(crate) const DOCUMENT_MAX_SOURCE_BYTES: u64 = 50 * 1024 * 1024;
+/// Import limit for PDF and image sources.
+pub(crate) const PAGE_SOURCE_MAX_BYTES: u64 = 50 * 1024 * 1024;
 /// Recordings: audio, and video whose audio track is transcribed (issue #155).
 pub(crate) const RECORDING_MAX_SOURCE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+/// Size limit for a source sent to the renderer.
+const RENDERER_SOURCE_MAX_BYTES: u64 = 50 * 1024 * 1024;
 const IMPORT_FREE_SPACE_MARGIN: u64 = 512 * 1024 * 1024;
 pub(crate) const NOT_ENOUGH_DISK_SPACE: &str = "Not enough free disk space to import this file.";
 const SOURCE_FILE_NAME: &str = "source.bin";
@@ -28,7 +30,7 @@ pub(crate) fn max_source_bytes(media_type: &str) -> u64 {
     if validation::RECORDING_MEDIA_TYPES.contains(&media_type) {
         RECORDING_MAX_SOURCE_BYTES
     } else {
-        DOCUMENT_MAX_SOURCE_BYTES
+        PAGE_SOURCE_MAX_BYTES
     }
 }
 
@@ -773,17 +775,17 @@ mod tests {
             .write(true)
             .open(&path)
             .expect("source")
-            .set_len(DOCUMENT_MAX_SOURCE_BYTES + 1)
+            .set_len(RENDERER_SOURCE_MAX_BYTES + 1)
             .expect("sparse length");
         let source = crate::source_selection::inspect::inspect_source(
             &path,
             crate::contracts::SourceSelectionKind::All,
         )
-        .expect("recording above document limit");
+        .expect("recording above renderer limit");
         let imported = library
             .import_opened_with_free_space(source, None, |_| Ok(Some(u64::MAX)))
             .expect("large recording import");
-        assert_eq!(imported.byte_length, DOCUMENT_MAX_SOURCE_BYTES + 1);
+        assert_eq!(imported.byte_length, RENDERER_SOURCE_MAX_BYTES + 1);
         let request = LibraryDocumentRequest {
             document_id: imported.document_id.clone(),
         };
@@ -1726,7 +1728,7 @@ mod tests {
         files
     }
 
-    fn recovery_source(library: &LibraryStore) -> LibraryDocumentSummary {
+    fn recovery_source(library: &LibraryStore) -> DesktopLibrarySummary {
         library
             .create_source(LibrarySourceInput {
                 file_name: "recovery.pdf".into(),
@@ -2573,7 +2575,7 @@ mod tests {
             .expect("exact source");
         exact_file.write_all(b"%PDF-").expect("signature");
         exact_file
-            .seek(SeekFrom::Start(DOCUMENT_MAX_SOURCE_BYTES - 1))
+            .seek(SeekFrom::Start(PAGE_SOURCE_MAX_BYTES - 1))
             .expect("seek");
         exact_file.write_all(&[0]).expect("limit byte");
         drop(exact_file);
@@ -2585,7 +2587,7 @@ mod tests {
                 ..Default::default()
             })
             .expect("exact limit");
-        assert_eq!(imported.byte_length, DOCUMENT_MAX_SOURCE_BYTES);
+        assert_eq!(imported.byte_length, PAGE_SOURCE_MAX_BYTES);
 
         let oversized = directory.path().join("oversized.pdf");
         let mut oversized_file = OpenOptions::new()
@@ -2596,7 +2598,7 @@ mod tests {
             .expect("oversized source");
         oversized_file.write_all(b"%PDF-").expect("signature");
         oversized_file
-            .set_len(DOCUMENT_MAX_SOURCE_BYTES + 1)
+            .set_len(PAGE_SOURCE_MAX_BYTES + 1)
             .expect("oversized length");
         drop(oversized_file);
         let error = library
@@ -2615,7 +2617,7 @@ mod tests {
                 entry
                     .ok()
                     .and_then(|item| fs::metadata(item.path()).ok())
-                    .is_some_and(|metadata| metadata.len() > DOCUMENT_MAX_SOURCE_BYTES)
+                    .is_some_and(|metadata| metadata.len() > PAGE_SOURCE_MAX_BYTES)
             }));
     }
 

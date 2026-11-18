@@ -22,7 +22,7 @@ import {
   captureNeedsRequirement,
   formatApproximateBytes,
 } from '../services/desktop-workspace.selectors';
-import { DesktopWorkspaceStore } from '../services/desktop-workspace.store';
+import { LibraryStore } from '../services/library.store';
 import { RecognitionFeaturesStore } from '../services/recognition-features.store';
 
 @Component({
@@ -40,7 +40,7 @@ import { RecognitionFeaturesStore } from '../services/recognition-features.store
 })
 export class EnginesPage {
   protected readonly features = inject(RecognitionFeaturesStore);
-  private readonly workspace = inject(DesktopWorkspaceStore);
+  private readonly library = inject(LibraryStore);
   protected readonly m = desktopMessages;
   private readonly locale = desktopLocale;
   protected readonly removeTarget = signal<RuntimeRequirement | null>(null);
@@ -72,85 +72,85 @@ export class EnginesPage {
   }
 
   protected installationFor(
-    unit: RuntimeRequirement,
+    requirement: RuntimeRequirement,
   ): RuntimeInstallation | null {
-    return this.features.installationFor(unit.requirementId);
+    return this.features.installationFor(requirement.requirementId);
   }
 
-  /** The unit's installation while it is queued or running; it can be cancelled. */
+  /** The requirement's installation while it is queued or running; it can be cancelled. */
   protected runningInstallation(
-    unit: RuntimeRequirement,
+    requirement: RuntimeRequirement,
   ): RuntimeInstallation | null {
-    const installation = this.installationFor(unit);
+    const installation = this.installationFor(requirement);
     return installation?.status === 'queued' || installation?.status === 'running'
       ? installation
       : null;
   }
 
   /** Also true while the start request is in flight, so progress shows with the click. */
-  protected isRunning(unit: RuntimeRequirement): boolean {
+  protected isRunning(requirement: RuntimeRequirement): boolean {
     return (
-      this.runningInstallation(unit) !== null ||
-      this.features.startingRequirementId() === unit.requirementId
+      this.runningInstallation(requirement) !== null ||
+      this.features.startingRequirementId() === requirement.requirementId
     );
   }
 
-  protected isFailed(unit: RuntimeRequirement): boolean {
-    const status = this.installationFor(unit)?.status;
+  protected isFailed(requirement: RuntimeRequirement): boolean {
+    const status = this.installationFor(requirement)?.status;
     return (
       (status === 'failed' || status === 'cancelled') &&
-      unit.status !== 'ready'
+      requirement.status !== 'ready'
     );
   }
 
-  protected rowStatus(unit: RuntimeRequirement): string {
-    const installation = this.installationFor(unit);
+  protected rowStatus(requirement: RuntimeRequirement): string {
+    const installation = this.installationFor(requirement);
     if (
       installation &&
       (installation.status === 'queued' ||
         installation.status === 'running' ||
-        (unit.status !== 'ready' &&
+        (requirement.status !== 'ready' &&
           (installation.status === 'failed' ||
             installation.status === 'cancelled')))
     ) {
       return installation.status;
     }
-    return unit.status;
+    return requirement.status;
   }
 
-  protected statusLabel(unit: RuntimeRequirement): string {
-    const status = this.rowStatus(unit);
-    return this.m().engineStatus[status] ?? status;
+  protected statusLabel(requirement: RuntimeRequirement): string {
+    const status = this.rowStatus(requirement);
+    return this.m().requirementStatus[status] ?? status;
   }
 
-  protected sizeLabel(unit: RuntimeRequirement): string | null {
-    return formatApproximateBytes(unit.downloadBytes);
+  protected sizeLabel(requirement: RuntimeRequirement): string | null {
+    return formatApproximateBytes(requirement.downloadBytes);
   }
 
-  protected installLabel(unit: RuntimeRequirement): string {
-    return this.m().installWithSize(this.sizeLabel(unit));
+  protected installLabel(requirement: RuntimeRequirement): string {
+    return this.m().installWithSize(this.sizeLabel(requirement));
   }
 
-  protected engineName(unit: RuntimeRequirement): string {
-    return this.m().engineName[unit.requirementId] ?? unit.displayName;
+  protected requirementName(requirement: RuntimeRequirement): string {
+    return this.m().requirementName[requirement.requirementId] ?? requirement.displayName;
   }
 
-  protected removing(unit: RuntimeRequirement): boolean {
-    return this.features.isRemoving(unit.requirementId);
+  protected removing(requirement: RuntimeRequirement): boolean {
+    return this.features.isRemoving(requirement.requirementId);
   }
 
-  protected removalFailure(unit: RuntimeRequirement): string | null {
-    return this.features.removalError(unit.requirementId);
+  protected removalFailure(requirement: RuntimeRequirement): string | null {
+    return this.features.removalError(requirement.requirementId);
   }
 
   protected removalBlock(
-    unit: RuntimeRequirement,
+    requirement: RuntimeRequirement,
   ): 'installing' | 'capture' | null {
-    if (this.isRunning(unit)) return 'installing';
+    if (this.isRunning(requirement)) return 'installing';
     if (
       captureNeedsRequirement(
-        unit.requirementId,
-        this.workspace.allDocuments(),
+        requirement.requirementId,
+        this.library.allDocuments(),
       )
     ) {
       return 'capture';
@@ -158,16 +158,16 @@ export class EnginesPage {
     return null;
   }
 
-  protected askRemove(unit: RuntimeRequirement): void {
-    if (this.removing(unit)) return;
-    if (this.removalBlock(unit) !== null) return;
-    this.removeTarget.set(unit);
+  protected askRemove(requirement: RuntimeRequirement): void {
+    if (this.removing(requirement)) return;
+    if (this.removalBlock(requirement) !== null) return;
+    this.removeTarget.set(requirement);
   }
 
   protected confirmRemove(): void {
     const target = this.removeTarget();
     if (!target) return;
-    this.features.removeUnit(target.requirementId);
+    this.features.removeRequirement(target.requirementId);
     this.removeTarget.set(null);
   }
 
@@ -175,11 +175,11 @@ export class EnginesPage {
     if (state === 'closed') this.removeTarget.set(null);
   }
 
-  protected removeTitle(unit: RuntimeRequirement): string {
-    return this.m().removeEngineTitle(this.engineName(unit));
+  protected removeTitle(requirement: RuntimeRequirement): string {
+    return this.m().removeRequirementTitle(this.requirementName(requirement));
   }
 
-  protected removeBody(unit: RuntimeRequirement): string {
-    return this.m().removeEngineBody(this.engineName(unit), this.sizeLabel(unit));
+  protected removeBody(requirement: RuntimeRequirement): string {
+    return this.m().removeRequirementBody(this.requirementName(requirement), this.sizeLabel(requirement));
   }
 }

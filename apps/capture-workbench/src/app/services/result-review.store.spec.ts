@@ -6,6 +6,7 @@ import { BehaviorSubject, of, Subject, throwError } from 'rxjs';
 import type { DesktopLibraryDetail, DesktopLibraryEdits } from '../contracts';
 import { setDesktopLocale } from '../i18n/desktop-messages';
 import { DesktopLibraryService } from './desktop-library.service';
+import { LibraryStore } from './library.store';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
 import {
   PdfPageRenderer,
@@ -75,7 +76,8 @@ describe('ResultReviewStore', () => {
             queryParamMap: queryParamMap$.asObservable(),
           },
         },
-        { provide: DesktopLibraryService, useValue: library },
+        { provide: LibraryStore, useValue: library },
+        { provide: DesktopLibraryService, useValue: { sourceBytes: library.sourceBytes } },
         { provide: DesktopRuntimeClientService, useValue: runtime },
         { provide: PdfPageRenderer, useValue: pdfRenderer },
       ],

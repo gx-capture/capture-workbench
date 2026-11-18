@@ -105,9 +105,6 @@ class SystemRuntimeInstaller:
         model_readiness_timeout_seconds: float = 10,
         model_readiness_poll_interval_seconds: float = 0.2,
         extraction_config: ExtractionRuntimeConfig | None = None,
-        ocr_adapter: object | None = None,
-        whisper_adapter: object | None = None,
-        http_client_factory: object | None = None,
     ) -> None:
         if model_readiness_timeout_seconds < 0:
             raise ValueError("model_readiness_timeout_seconds must be non-negative")
@@ -116,7 +113,6 @@ class SystemRuntimeInstaller:
         self._lifecycle = lifecycle
         self._engine_manager = engine_manager
         self._extraction_config = extraction_config
-        del ocr_adapter, whisper_adapter, http_client_factory
         self._runner = command_runner or AsyncSubprocessCommandRunner()
         self._resolve_winget = winget_resolver or (lambda: shutil.which("winget"))
         self._clock = clock
@@ -248,7 +244,7 @@ class SystemRuntimeInstaller:
             )
         if ollama_model_enabled:
             # Requirements discovery is a pure projection of persisted state.
-            # Starting/probing Ollama here competes with OCR and Whisper for
+            # Starting/probing Ollama here competes with OCR and speech recognition for
             # the machine's model memory; structuring acquires the live lease
             # when it actually needs the process.
             model_ready = self._recorded_model_profile_matches()
@@ -454,8 +450,8 @@ class SystemRuntimeInstaller:
             report_progress(1)
         finally:
             # Model installation only needs a short Ollama lease. Release the
-            # native process on success, failure, or cancellation before OCR/
-            # Whisper can claim the machine's model memory; later structuring
+            # native process on success, failure, or cancellation before OCR or
+            # speech recognition can claim the machine's model memory; later structuring
             # starts a fresh owned lease.
             self._lifecycle.stop()
 

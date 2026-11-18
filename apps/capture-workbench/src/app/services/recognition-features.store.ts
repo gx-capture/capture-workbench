@@ -15,7 +15,7 @@ import type {
   RuntimeRequirement,
 } from '@gx-capture/capture-workbench-ui';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
-import { DesktopWorkspaceInstallationService } from './desktop-workspace-installation.service';
+import { DesktopInstallationService } from './desktop-installation.service';
 import {
   activeModelOption as selectActiveModelOption,
   errorMessage,
@@ -28,7 +28,7 @@ import {
   type RecognitionFeature,
   selectFeatureMissing,
   selectInstallableRequirements,
-  selectRecognitionEngines,
+  selectRecognitionRequirements,
   selectRequestedMissing,
   selectSpeechPack,
 } from './desktop-workspace.selectors';
@@ -37,7 +37,7 @@ import { desktopMessages } from '../i18n/desktop-messages';
 export const FIRST_RUN_DISMISSED_STORAGE_KEY =
   'capture-workbench.first-run-dismissed';
 
-const FIRST_RUN_UNIT_IDS: readonly CaptureRequirementId[] = [
+const FIRST_RUN_REQUIREMENT_IDS: readonly CaptureRequirementId[] = [
   'windowsml-ocr',
   'speech-recognition',
   'speaker-diarization',
@@ -57,11 +57,11 @@ function readFirstRunDismissed(): boolean {
 @Injectable({ providedIn: 'root' })
 /**
  * Recognition features state: runtime requirements, per-feature readiness,
- * unit installations, first-run choice, and re-attaching after a reload.
+ * requirement installations, first-run choice, and re-attaching after a reload.
  */
 export class RecognitionFeaturesStore {
   private readonly runtime = inject(DesktopRuntimeClientService);
-  private readonly installation = inject(DesktopWorkspaceInstallationService);
+  private readonly installation = inject(DesktopInstallationService);
   private readonly destroyRef = inject(DestroyRef);
 
   readonly runtimeStarted = this.runtime.started;
@@ -144,8 +144,8 @@ export class RecognitionFeaturesStore {
     isFeatureReady(this.requirements(), 'asr.speakers'),
   );
 
-  readonly engines = computed(() =>
-    selectRecognitionEngines(this.requirements()),
+  readonly recognitionRequirements = computed(() =>
+    selectRecognitionRequirements(this.requirements()),
   );
   readonly speechPack = computed(() => selectSpeechPack(this.requirements()));
   readonly requestedMissing = computed(() =>
@@ -164,18 +164,18 @@ export class RecognitionFeaturesStore {
     selectActiveModelOption(this.modelOptions()),
   );
 
-  readonly firstRunInstallableUnits = computed(() =>
-    selectInstallableRequirements(this.requirements(), FIRST_RUN_UNIT_IDS),
+  readonly firstRunInstallableRequirements = computed(() =>
+    selectInstallableRequirements(this.requirements(), FIRST_RUN_REQUIREMENT_IDS),
   );
   readonly showFirstRunCard = computed(
     () =>
       !this.firstRunDismissed() &&
-      (this.firstRunInstallableUnits().length > 0 || this.installing()),
+      (this.firstRunInstallableRequirements().length > 0 || this.installing()),
   );
 
   /**
    * Drops an uninstall overlay once the runtime list no longer says ready.
-   * A finished reinstall drops it in installRequirements, so the next ready
+   * A finished reinstall drops it in installAvailableRequirements, so the next ready
    * state is not stuck on not-installed.
    */
   private readonly releaseUninstalledOverlay = effect(() => {
@@ -186,10 +186,10 @@ export class RecognitionFeaturesStore {
       : [];
     if (listed.length === 0) return;
     const stale = [...removed.keys()].filter((requirementId) => {
-      const listedUnit = listed.find(
+      const listedRequirement = listed.find(
         (item) => item.requirementId === requirementId,
       );
-      return !listedUnit || listedUnit.status !== 'ready';
+      return !listedRequirement || listedRequirement.status !== 'ready';
     });
     if (stale.length === 0) return;
     this.forgetUninstalled(stale);
@@ -217,40 +217,40 @@ export class RecognitionFeaturesStore {
     }
   }
 
-  /** Checks whether all requirement units for a feature are ready. */
+  /** Checks whether all requirements for a feature are ready. */
   isFeatureReady(feature: RecognitionFeature): boolean {
     return isFeatureReady(this.requirements(), feature);
   }
 
-  /** Returns requirement units for a feature that are not yet ready. */
+  /** Returns requirements for a feature that are not yet ready. */
   missingFor(feature: RecognitionFeature): readonly RuntimeRequirement[] {
     return selectFeatureMissing(this.requirements(), feature);
   }
 
-  /** Latest installation record for a requirement unit, if any. */
+  /** Latest installation record for a requirement, if any. */
   installationFor(
     requirementId: CaptureRequirementId,
   ): RuntimeInstallation | null {
     return this.installation.installationFor(requirementId);
   }
 
-  /** Installs one recognition unit chosen by the user. */
-  installUnit(requirementId: CaptureRequirementId): void {
-    this.installUnits([requirementId]);
+  /** Installs one recognition requirement chosen by the user. */
+  installRequirement(requirementId: CaptureRequirementId): void {
+    this.installRequirements([requirementId]);
   }
 
-  /** Installs the selected recognition units in deterministic order. */
-  installUnits(requirementIds: readonly CaptureRequirementId[]): void {
+  /** Installs the selected recognition requirements in deterministic order. */
+  installRequirements(requirementIds: readonly CaptureRequirementId[]): void {
     const installable = selectInstallableRequirements(
       this.requirements(),
       requirementIds,
     );
-    this.installRequirements(installable);
+    this.installAvailableRequirements(installable);
   }
 
-  /** Installs all requested missing units in deterministic order. */
+  /** Installs all requested missing requirements in deterministic order. */
   installRequestedRequirements(): void {
-    this.installRequirements(this.installableRequestedRequirements());
+    this.installAvailableRequirements(this.installableRequestedRequirements());
   }
 
   /**
@@ -258,25 +258,25 @@ export class RecognitionFeaturesStore {
    * files it already verified (they are cached by SHA-256).
    */
   retryInstallation(requirementId: CaptureRequirementId): void {
-    this.installUnits([requirementId]);
+    this.installRequirements([requirementId]);
   }
 
-  /** True while this unit's uninstall request is in flight. */
+  /** True while this requirement's uninstall request is in flight. */
   isRemoving(requirementId: CaptureRequirementId): boolean {
     return this.removingIds().has(requirementId);
   }
 
-  /** The last uninstall error for this unit, if the runtime still reports it. */
+  /** The last uninstall error for this requirement, if the runtime still reports it. */
   removalError(requirementId: CaptureRequirementId): string | null {
     return this.removalErrors().get(requirementId) ?? null;
   }
 
   /**
-   * Removes an installed engine after the user confirms.
-   * Refuses while that unit is installing; a capture in progress is refused
+   * Removes an installed requirement after the user confirms.
+   * Refuses while that requirement is installing; a capture in progress is refused
    * by the runtime and shown on the row.
    */
-  removeUnit(requirementId: CaptureRequirementId): void {
+  removeRequirement(requirementId: CaptureRequirementId): void {
     if (this.removingIds().has(requirementId)) return;
     const installation = this.installation.installationFor(requirementId);
     if (
@@ -286,10 +286,10 @@ export class RecognitionFeaturesStore {
       return;
     }
     if (!this.runtimeStarted()) return;
-    const unit = this.requirements().find(
+    const requirement = this.requirements().find(
       (item) => item.requirementId === requirementId,
     );
-    if (!unit || unit.status !== 'ready') return;
+    if (!requirement || requirement.status !== 'ready') return;
     this.removingIds.update(
       (current) => new Set([...current, requirementId]),
     );
@@ -349,16 +349,16 @@ export class RecognitionFeaturesStore {
     }
   }
 
-  /** Remembers the first-run choice and installs the selected units. */
+  /** Remembers the first-run choice and installs the selected requirements. */
   installFirstRunSelection(
     requirementIds: readonly CaptureRequirementId[],
   ): void {
     this.dismissFirstRun();
-    this.installUnits(requirementIds);
+    this.installRequirements(requirementIds);
   }
 
-  /** Offer an optional unit that a finished capture said it missed. */
-  requestUnit(requirementId: CaptureRequirementId): void {
+  /** Offer an optional requirement that a finished capture said it missed. */
+  requestRequirement(requirementId: CaptureRequirementId): void {
     this.requestedRequirements.update(
       (current) => new Set([...current, requirementId]),
     );
@@ -406,7 +406,7 @@ export class RecognitionFeaturesStore {
     });
   }
 
-  private installRequirements(
+  private installAvailableRequirements(
     installable: readonly RuntimeRequirement[],
   ): void {
     if (!this.runtimeStarted() || this.installing()) return;

@@ -9,7 +9,6 @@ from pathlib import Path
 
 from capture_runtime._pdf_source import PdfPageSelectionError
 from capture_runtime.capture.infrastructure.capture_extraction import CaptureExtractionOutcome
-from capture_runtime.capture.infrastructure.pdf_page_selection import is_pdf_page_selection
 from capture_runtime.capture.infrastructure.source_sniffing import (
     SNIFF_BYTES,
     SniffedSource,
@@ -27,6 +26,7 @@ from capture_runtime.contracts import (
     TimeLocator,
     project_source_text,
 )
+from capture_runtime.pdf_page_selection import is_pdf_page_selection
 
 
 def _engine_digest(engine: str, model: str) -> str:
@@ -53,7 +53,7 @@ class DeterministicCaptureExtractor:
         pdf_page_numbers: tuple[int, ...] | None = None,
         ocr_progress: Callable[[int, int], None] | None = None,
         identify_speakers: bool = False,
-        speaker_progress: Callable[[str, int], None] | None = None,
+        staged_progress: Callable[[str, int], None] | None = None,
         spoken_language: str | None = None,
     ) -> CaptureExtractionOutcome:
         if isinstance(content, Path):

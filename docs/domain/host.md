@@ -61,7 +61,7 @@ ASR 的顯示與啟動順序共用 OCR 的匯入順序選擇器：先反轉文�
 
 語音辨識已就緒而說話者辨識未安裝時，ASR 選項列顯示小型外框安裝按鈕與預估大小；安裝排隊或執行中改顯示簡短的進度文字。大小與百分比由佇列 store 推導，取消安裝留在「設定 › 辨識功能」。
 
-`/ocr` 與 `/asr` 把匯入和擷取分開。丟進來或選取的檔案以 selection token 呼叫 `library_import_selection`，文件庫立刻記成 `queued`、沒有 `captureId`，畫面顯示等待中；對應的辨識引擎（`windowsml-ocr` 或 `speech-recognition`）還沒安裝也一樣，安裝完成後等待中的檔案會自己開始擷取，不需要再按一次。`library_select_sources` 支援 `documents`、`recordings` 與 `all` 三種選取類型（`/ocr` 用 `documents`、`/asr` 用 `recordings`、`/history` 用 `all`）。整個視窗只有一個原生 drop channel：在 `/ocr` 路徑進入 OCR 佇列、在 `/asr` 路徑進入 ASR 佇列（拒絕非錄音格式），在其他頁面則由工作台先匯入整批 selection，再依序開始擷取。
+`/ocr` 與 `/asr` 把匯入和擷取分開。丟進來或選取的檔案以 selection token 呼叫 `library_import_selection`，文件庫立刻記成 `queued`、沒有 `captureId`，畫面顯示等待中；對應的辨識引擎（`windowsml-ocr` 或 `speech-recognition`）還沒安裝也一樣，安裝完成後等待中的檔案會自己開始擷取，不需要再按一次。`library_select_sources` 支援 `documents`、`recordings` 與 `all` 三種選取類型。畫面只要求 `documents`（`/ocr`）和 `recordings`（`/asr`）；`all` 仍是指令接受的類型，渲染程序不再要求它。整個視窗只有一個原生 drop channel：在 `/ocr` 路徑進入 OCR 佇列、在 `/asr` 路徑進入 ASR 佇列（拒絕非錄音格式），在其他頁面則由工作台先匯入整批 selection，再依序開始擷取。
 
 ```mermaid
 sequenceDiagram
@@ -88,7 +88,7 @@ sequenceDiagram
 
 等待中的檔案留在文件庫。重新載入視窗後，佇列仍列出它們，並接回還在跑的擷取。整個程式重開後，runtime 作業已經消失的文件或錄音標成 `recovery_required`，佇列顯示已中斷，可以重新開始。
 
-PDF 可以帶 `captureOptions` 的 `pdfPageCount`（前 K 頁，只接受 `1..=K`，最多 500）。錄音可以帶 `spokenLanguage`（依 runtime 合約的語系代碼，畫面提供 `zh`／`en`／`ja`，主機轉送 `POST /v2/captures` 並拒絕無效值，錯誤不含路徑）與 `identifySpeakers`；`/asr` 佇列與自動啟動順序依匯入順序（`createdAtMs` 升冪，同時間保留加入順序，#348），進行中時透過 `streamingOperations` 與 `streamingPartials` 顯示即時逐字稿與「已聽到／總長」。舊索引沒有這個欄位也讀得回來。直書日文閱讀器沒有逐次開關：runtime 在 `vertical-japanese-reader` 已安裝時會自己把它交給辨識工作。
+PDF 可以帶 `captureOptions` 的 `pdfPageCount`（前 K 頁，只接受 `1..=K`，最多 500）。錄音可以帶 `spokenLanguage`（依 runtime 合約的語系代碼，畫面提供 `zh`／`en`／`ja`，主機轉送 `POST /v2/captures` 並拒絕無效值，錯誤不含路徑）與 `identifySpeakers`；`/asr` 佇列與自動啟動順序依匯入順序（`createdAtMs` 升冪，同時間保留加入順序，#348），進行中時透過 `recordingOperations` 與 `streamingPartials` 顯示即時逐字稿與「已聽到／總長」。舊索引沒有這個欄位也讀得回來。直書日文閱讀器沒有逐次開關：runtime 在 `vertical-japanese-reader` 已安裝時會自己把它交給辨識工作。
 
 `/ocr` 的 `.txt` 由畫面用文件庫裡的原始文字組成（頁面順序，頁與頁之間空一行），不新增匯出指令。沒有 Ollama 的結構化結果時，只要原始文字在，這一頁就算完成。列表上的 `hasRaw` 表示原始文字已經寫進文件庫。
 
@@ -99,7 +99,7 @@ PDF 可以帶 `captureOptions` 的 `pdfPageCount`（前 K 頁，只接受 `1..=K
 ## 規則與資料來源
 
 - launcher 只有一條啟動路徑：每次啟動用新的 loopback port 與 token，runtime 放進 `KILL_ON_JOB_CLOSE` 的 Job；主機結束時系統關閉 Job 並停掉整棵程序樹。launcher 不寫磁碟、不記錄啟動過的程序；runtime 在執行啟動清理前先對自己的 App 資料目錄取得獨佔鎖（`runtime.lock`，等候 10 秒仍被占用時以代碼 `10` 拒絕啟動），當機後殘留的檔案由 runtime 啟動時清掉（見 [Phase 2 SPEC 的 runtime process lifecycle](../../.agents/SPECS/capture-runtime-042-p2-hardening.md#runtime-process-lifecycle)）。
-- 桌面版只執行一個實例（#343）：再次啟動時不開第二個視窗，而是把既有視窗還原、顯示並帶到前景，第二個行程隨即結束，不使用它的參數與工作目錄。文件庫索引與 runtime 的 App 資料因此只有一個擁有者。使用隔離資料目錄的建置（`acceptance-app-data`、`model-smoke-app-data`，包括 deterministic QA）不套用這項限制，可以與產品同時執行。
+- 桌面版只執行一個實例（#343）：再次啟動時不開第二個視窗，而是把既有視窗還原、顯示並帶到前景，第二個行程隨即結束，不使用它的參數與工作目錄。文件庫索引與 runtime 的 App 資料因此只有一個擁有者。使用隔離資料目錄的建置（`acceptance-harness`，包括 deterministic QA）不套用這項限制，可以與產品同時執行。
 - 測試用的假 runtime 只在 QA 安裝檔（Capture Workbench QA Fake Data）與 deterministic smoke 使用，資料寫在獨立目錄，不碰使用者真實的 App 資料（見 [desktop README](../../apps/capture-workbench-desktop/README.md)）。
 - 改 UI 模組或殼層資料夾時，同一個 PR 更新 `sheriff.config.ts` 並執行 `pnpm run architecture:update`。
 

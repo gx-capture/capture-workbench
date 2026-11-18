@@ -18,7 +18,7 @@ import { formatApproximateBytes } from '../services/desktop-workspace.selectors'
 import { InstallProgress } from './install-progress';
 
 /**
- * Displays one recognition engine unit: its model guide facts from
+ * Displays one recognition requirement: its model guide facts from
  * `CAPTURE_UNIT_GUIDES`, formatted download size from the runtime requirement,
  * explicit install consent button with size, byte-based progress with cancel,
  * and retry after failure.
@@ -33,7 +33,7 @@ export class EngineCard {
   readonly requirement = input.required<RuntimeRequirement>();
   readonly installation = input<RuntimeInstallation | null>(null);
   readonly installing = input(false);
-  /** The start request for this unit is in flight: progress shows with the click. */
+  /** The start request for this requirement is in flight: progress shows with the click. */
   readonly starting = input(false);
   readonly optional = input(false);
 

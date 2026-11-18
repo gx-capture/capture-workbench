@@ -1,8 +1,8 @@
-// Manual step before `smoke-real-media-model` with audio: runs a real
-// progressive Whisper capture of CAPTURE_PROGRESSIVE_AUDIO_ORACLE_SOURCE and
-// writes the reference evidence to CAPTURE_PROGRESSIVE_AUDIO_ORACLE_OUTPUT.
-// The model smoke compares its own audio result against that file
-// (CAPTURE_REAL_MEDIA_MODEL_AUDIO_ORACLE).
+// Manual oracle generator for progressive speech-recognition checks: runs a
+// real progressive speech recognition capture of
+// CAPTURE_PROGRESSIVE_AUDIO_ORACLE_SOURCE and writes the reference evidence to
+// CAPTURE_PROGRESSIVE_AUDIO_ORACLE_OUTPUT (read by the localhost smoke via
+// CAPTURE_REAL_MEDIA_MODEL_AUDIO_ORACLE).
 import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { createServer, type Server } from 'node:http';
@@ -15,8 +15,6 @@ import { firstValueFrom } from 'rxjs';
 import {
   PROGRESSIVE_AUDIO_CHECKPOINT_MS,
   REAL_MODEL_AUDIO_SAMPLE_SECONDS,
-} from './real-media-model-smoke.ts';
-import {
   deriveProgressiveAudioOracleEvidence,
   type ProgressiveAudioSampleInput,
 } from './progressive-audio-evidence.ts';
@@ -43,7 +41,7 @@ const ORACLE_MAX_SOURCE_BYTES = 2 * 1024 * 1024 * 1024;
 // Keep the frozen worker extraction tree short. Windows can reject a valid
 // catalog archive before the worker probe when the owned app-data root is
 // deeply nested under the workspace.
-const runRoot = resolve(workspaceRoot, '..', '.cwpa');
+const runRoot = resolve(workspaceRoot, '..', '.cw-audio-oracle');
 // Generate the process-local credential at launch. It is never written to an
 // artifact or included in diagnostics.
 const token = randomUUID().replaceAll('-', '');
@@ -295,8 +293,8 @@ async function run(): Promise<void> {
       CAPTURE_MAX_UPLOAD_BYTES: String(ORACLE_MAX_SOURCE_BYTES),
       CAPTURE_WHISPER_PREFER_GPU: '1',
       CAPTURE_WHISPER_ALLOW_CPU_FALLBACK: '1',
-      // The model smoke compares against this oracle on tea-asr-1.1, which
-      // only the cuda content carries; never let the driver check pick cpu.
+      // The oracle checks tea-asr-1.1, which only the cuda content carries;
+      // never let the driver check pick cpu.
       CAPTURE_SPEECH_RECOGNITION_VARIANT: 'cuda',
       CAPTURE_SMOKE_WORKER_MIRROR_OPT_IN: '1',
       CAPTURE_SMOKE_WORKER_MIRROR_URL: `http://127.0.0.1:${workerMirrorPort}`,

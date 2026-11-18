@@ -26,7 +26,6 @@ from capture_runtime._pdf_source import (
 )
 from capture_runtime._worker_payloads import WorkerRunResult
 from capture_runtime.capture.infrastructure.audio_run_timeout import audio_run_timeout_seconds
-from capture_runtime.capture.infrastructure.pdf_page_selection import is_ascending_page_numbers
 from capture_runtime.capture.infrastructure.source_sniffing import (
     SNIFF_BYTES,
     SniffedSource,
@@ -37,8 +36,8 @@ from capture_runtime.config import ExtractionRuntimeConfig
 from capture_runtime.constants import (
     DIARIZATION_REQUIREMENT_ID,
     SPEECH_RECOGNITION_REQUIREMENT_ID,
+    SPEECH_TEMP_PREFIX,
     VERTICAL_READER_REQUIREMENT_ID,
-    WHISPER_TEMP_PREFIX,
     WINDOWSML_REQUIREMENT_ID,
     WORKER_SOURCE_TEMP_PREFIX,
 )
@@ -100,6 +99,7 @@ from capture_runtime.ocr.infrastructure.ocr_worker_result import (
     OcrWorkerRunResult,
     WorkerOcrProgress,
 )
+from capture_runtime.pdf_page_selection import is_ascending_page_numbers
 from capture_runtime.provisioning.infrastructure.engine_catalog import EngineCatalogError
 from capture_runtime.provisioning.infrastructure.engine_content_selection import (
     speech_model_not_installed_message,
@@ -120,7 +120,7 @@ from capture_runtime.worker_process import (
 
 if TYPE_CHECKING:
     from capture_runtime.ocr.infrastructure.ocr_page_result import OcrAdapter
-    from capture_runtime.speech.infrastructure.speech_transcript import WhisperAdapter
+    from capture_runtime.speech.infrastructure.speech_transcript import SpeechRecognitionAdapter
 
 
 _OcrRunResult = OcrWorkerRunResult[OcrExecutionDeviceProofV1]
@@ -203,7 +203,7 @@ class CaptureExtractor(Protocol):
         pdf_page_numbers: tuple[int, ...] | None = None,
         ocr_progress: Callable[[int, int], None] | None = None,
         identify_speakers: bool = False,
-        speaker_progress: Callable[[str, int], None] | None = None,
+        staged_progress: Callable[[str, int], None] | None = None,
         spoken_language: str | None = None,
     ) -> CaptureExtractionOutcome: ...
 
@@ -290,7 +290,7 @@ class _SyncOcrEngineAdapter:
             raise InterruptedError("Capture extraction was cancelled.")
 
 
-class _WorkerOcrEngineAdapter:
+class _WorkerResultOcrEngine:
     """Remote-owned worker result adapter; no worker transport leaks into policy."""
 
     def __init__(
@@ -419,7 +419,7 @@ _SOURCE_SUFFIXES = {
 
 
 class StandaloneRuntimeCaptureExtractor:
-    """Production extractor using only package-owned WindowsML and Whisper adapters."""
+    """Production extractor using only package-owned WindowsML and speech recognition adapters."""
 
     def __init__(
         self,
@@ -427,14 +427,14 @@ class StandaloneRuntimeCaptureExtractor:
         config: ExtractionRuntimeConfig,
         *,
         ocr_adapter: OcrAdapter | None = None,
-        whisper_adapter: WhisperAdapter | None = None,
+        speech_recognition_adapter: SpeechRecognitionAdapter | None = None,
         engine_manager: EngineInstallationManager | None = None,
         contract_sha256: str | None = None,
     ) -> None:
         self._clock = clock
         self.config = config
         self.ocr_adapter = ocr_adapter
-        self.whisper_adapter = whisper_adapter
+        self.speech_recognition_adapter = speech_recognition_adapter
         self.engine_manager = engine_manager
         self._contract_sha256 = contract_sha256
         self.ocr_pipeline = OcrPipeline()
@@ -459,7 +459,7 @@ class StandaloneRuntimeCaptureExtractor:
         pdf_page_numbers: tuple[int, ...] | None = None,
         ocr_progress: Callable[[int, int], None] | None = None,
         identify_speakers: bool = False,
-        speaker_progress: Callable[[str, int], None] | None = None,
+        staged_progress: Callable[[str, int], None] | None = None,
         spoken_language: str | None = None,
     ) -> CaptureExtractionOutcome:
         if self.engine_manager is not None:
@@ -470,7 +470,7 @@ class StandaloneRuntimeCaptureExtractor:
                 pdf_page_numbers=pdf_page_numbers,
                 ocr_progress=ocr_progress,
                 identify_speakers=identify_speakers,
-                speaker_progress=speaker_progress,
+                staged_progress=staged_progress,
                 spoken_language=spoken_language,
             )
         if identify_speakers or isinstance(content, Path):
@@ -498,7 +498,7 @@ class StandaloneRuntimeCaptureExtractor:
         pdf_page_numbers: tuple[int, ...] | None = None,
         ocr_progress: Callable[[int, int], None] | None = None,
         identify_speakers: bool = False,
-        speaker_progress: Callable[[str, int], None] | None = None,
+        staged_progress: Callable[[str, int], None] | None = None,
         spoken_language: str | None = None,
     ) -> CaptureExtractionOutcome:
         sniffed = self.sniff(self._source_prefix(content))
@@ -622,8 +622,8 @@ class StandaloneRuntimeCaptureExtractor:
                     sniffed.media_type,
                     {
                         "maxDurationMs": self.config.max_audio_duration_ms,
-                        "preferGpu": self.config.whisper_prefer_gpu,
-                        "allowCpuFallback": self.config.whisper_allow_cpu_fallback,
+                        "preferGpu": self.config.speech_prefer_gpu,
+                        "allowCpuFallback": self.config.speech_recognition_allow_cpu_fallback,
                         **({"wordTimestamps": True} if identify_speakers else {}),
                         **({"language": spoken_language} if spoken_language else {}),
                         **(
@@ -633,7 +633,7 @@ class StandaloneRuntimeCaptureExtractor:
                         ),
                     },
                     cancel_event,
-                    progress=_stage_progress(speaker_progress, "transcribing", 0, 450),
+                    progress=_stage_progress(staged_progress, "transcribing", 0, 450),
                     timeout_seconds=audio_run_timeout_seconds(
                         content, self.config.max_audio_duration_ms
                     ),
@@ -645,7 +645,7 @@ class StandaloneRuntimeCaptureExtractor:
                         content,
                         sniffed.media_type,
                         cancel_event,
-                        _stage_progress(speaker_progress, "identifying-speakers", 450, 1000),
+                        _stage_progress(staged_progress, "identifying-speakers", 450, 1000),
                         timeout_seconds=audio_run_timeout_seconds(
                             content, self.config.max_audio_duration_ms
                         ),
@@ -738,7 +738,7 @@ class StandaloneRuntimeCaptureExtractor:
         )
         outcome = self.ocr_pipeline.extract(
             request,
-            _WorkerOcrEngineAdapter(result, engine),
+            _WorkerResultOcrEngine(result, engine),
         )
         if isinstance(outcome, OcrTerminalOutcome):
             raise OcrExtractionFailure(failure=outcome.failure, projection=outcome.projection)
@@ -983,7 +983,7 @@ class StandaloneRuntimeCaptureExtractor:
                         media_type=media_type,
                         options={
                             "maxDurationMs": self.config.max_audio_duration_ms,
-                            "preferGpu": self.config.whisper_prefer_gpu,
+                            "preferGpu": self.config.speech_prefer_gpu,
                             "allowCpuFallback": True,
                         },
                         cancel_event=cancel_event,
@@ -1386,7 +1386,7 @@ class StandaloneRuntimeCaptureExtractor:
         suffix = _SOURCE_SUFFIXES.get(media_type, ".audio")
         self.config.temp_dir.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(
-            prefix=WHISPER_TEMP_PREFIX,
+            prefix=SPEECH_TEMP_PREFIX,
             suffix=suffix,
             dir=self.config.temp_dir,
             delete=False,
@@ -1394,9 +1394,11 @@ class StandaloneRuntimeCaptureExtractor:
             temporary.write(content)
             path = Path(temporary.name)
         try:
-            if self.whisper_adapter is None:
-                raise ExtractionRuntimeUnavailableError("Whisper worker is not configured.")
-            result = TranscribeAudio(self.whisper_adapter).execute(
+            if self.speech_recognition_adapter is None:
+                raise ExtractionRuntimeUnavailableError(
+                    "Speech recognition worker is not configured."
+                )
+            result = TranscribeAudio(self.speech_recognition_adapter).execute(
                 path, should_cancel=cancel_event.is_set, language=spoken_language
             )
         finally:

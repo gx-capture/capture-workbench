@@ -14,7 +14,7 @@ residue.
 ## Interfaces
 
 - Input: `CAPTURE_REAL_DESKTOP_OCR_INPUT` (image) or `CAPTURE_REAL_DESKTOP_OCR_PDF`.
-- Target: `capture-workbench-desktop:acceptance-real`; the steps are in the
+- Target: `capture-workbench-desktop:diagnostic-desktop-ocr`; the steps are in the
   header of `apps/capture-workbench-desktop/scripts/real-desktop-ocr-smoke.ts`.
 - Oracle: `CAPTURE_REAL_DESKTOP_OCR_EXPECTATIONS`, or
   `<input-path>.expected.json`.

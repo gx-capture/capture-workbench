@@ -71,13 +71,13 @@ export interface DesktopLibraryExport {
 }
 
 /** Whether a CUDA driver is present and speech recognition may use the GPU. */
-export interface DesktopComputeStatus {
+export interface DesktopSpeechGpuStatus {
   readonly cudaAvailable: boolean;
   readonly preferGpu: boolean;
 }
 
 export interface DesktopRuntimeStatus {
-  readonly status: 'starting' | 'ready' | 'failed' | 'stopped';
+  readonly status: 'starting' | 'ready' | 'failed' | 'failed-cleanup' | 'stopped';
   readonly detail: string;
   readonly runtimeVersion?: string;
   readonly apiVersion?: string;

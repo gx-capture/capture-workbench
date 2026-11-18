@@ -332,7 +332,7 @@
         "command": "uv run --python 3.13 python scripts/build_executable.py --layout onedir --catalog src/capture_runtime/assets/engine-catalog.json"
       }
     },
-    "prepare-production-environment": {
+    "prepare-core-build-environment": {
       "cache": false,
       "executor": "nx:run-commands",
       "metadata": {
@@ -343,11 +343,11 @@
         "command": "uv sync --python 3.13 --extra windowsml --reinstall-package onnxruntime-directml"
       }
     },
-    "verify-production-environment": {
+    "verify-onnxruntime-directml": {
       "cache": false,
       "executor": "nx:run-commands",
       "dependsOn": [
-        "prepare-production-environment"
+        "prepare-core-build-environment"
       ],
       "metadata": {
         "description": "Requires DirectML to be the sole ONNX Runtime distribution and provider for Windows production builds."
@@ -378,7 +378,7 @@
       "cache": true,
       "executor": "nx:run-commands",
       "dependsOn": [
-        "verify-production-environment"
+        "verify-onnxruntime-directml"
       ],
       "inputs": [
         "production"

@@ -1,6 +1,6 @@
 # 通用語言（Ubiquitous Language）
 
-狀態：**草案**（2026-10-26）。這張表是命名的依據：畫面、文件、程式、合約用同一個詞。新增或改名時，同一個 PR 更新這張表。合約裡的名稱（`*V2`、`*V3`）不改。
+狀態：**定案**（2026-10-26）。這張表是命名的依據：畫面、文件、程式、合約用同一個詞。新增或改名時，同一個 PR 更新這張表。合約裡的名稱（`*V2`、`*V3`）不改。
 
 ## 擷取
 
@@ -32,7 +32,7 @@
 | 逐字稿     | `transcript`、`SpeechTranscript`、`SpeechTranscriptSegment`、`SpeechWord`、`RepetitionLoopPolicy` | 語音轉成的文字與時間                                                                                   |
 | 分窗       | `window`、`AudioWindow`、`WindowSlicingPolicy`                                                     | 串流語音時每次送給模型的 120 秒音訊，前後重疊 30 秒                                                    |
 | 暖 worker  | warm worker              | 擷取結束後保留模型、供下一次擷取使用的 worker 行程                                                     |
-| 語音模型   | speech recognition model | 轉寫用的 TEA-ASR 模型（`CAPTURE_SPEECH_RECOGNITION_MODEL`）：`auto` 在兩種裝置用完整模型，或指定一個在兩種裝置都用 |
+| 語音模型   | speech recognition model | 轉寫用的 TEA-ASR 模型（`CAPTURE_SPEECH_RECOGNITION_MODEL`）：`auto` 在 cuda 套件載入 TEA-ASR 1.1，在 cpu 套件載入 TEA-ASR 1.1 mini |
 | 說話者片段 | `SpeakerTurn`、`SpeakerAssignment`、`SpeakerSegment`、`TimedWord`、`TurnTimeline` | 一位說話者連續發言的時間範圍、對齊結果與時間軸聚合                                                     |
 | 說話者     | `CaptureSpeaker`、`SpeakerSample`                                                 | 擷取文件裡的一位說話者與試聽片段                                                                       |
 

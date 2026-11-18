@@ -13,8 +13,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [features]
 default = []
-model-smoke-app-data = []
-acceptance-app-data = []
+acceptance-harness = []
 dev-host = []
 
 [[bin]]

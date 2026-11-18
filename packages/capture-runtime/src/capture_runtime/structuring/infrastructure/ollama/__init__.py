@@ -8,7 +8,6 @@ from capture_runtime.structuring.infrastructure.ollama.installer import (
     RuntimeInstaller,
     SystemRuntimeInstaller,
 )
-from capture_runtime.structuring.infrastructure.ollama.installer_impl import _extract_safe_zip
 from capture_runtime.structuring.infrastructure.ollama.lifecycle import (
     IsolatedOllamaLifecycle,
     ManualActionRequiredError,
@@ -40,5 +39,4 @@ __all__ = [
     "RuntimeUnavailableError",
     "SubprocessController",
     "SystemRuntimeInstaller",
-    "_extract_safe_zip",
 ]

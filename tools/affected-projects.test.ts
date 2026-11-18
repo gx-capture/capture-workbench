@@ -53,7 +53,7 @@ test('a runtime contract fixture affects the clients and the launcher', () => {
   assertIncludes(projects, [
     'capture-runtime-client',
     'capture-runtime-client-python',
-    'capture-angular',
+    'capture-workbench-ui',
     'capture-sidecar-launcher',
   ]);
 });
@@ -65,7 +65,7 @@ test('a workflow file affects capture-tools', () => {
 
 test('a Workbench UI component does not affect the runtime, the Python client, or the launcher', () => {
   const projects = affectedProjects(
-    'apps/capture-workbench/src/app/history/history-page.ts',
+    'apps/capture-workbench/src/app/history/history-list-page.ts',
   );
   for (const name of [
     'capture-runtime',

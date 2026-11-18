@@ -59,12 +59,12 @@ from capture_runtime.contracts import (
     StructuringMode,
 )
 from capture_runtime.ocr.infrastructure.ocr_execution_proof import (
-    OcrExecutionDeviceProofV1,
     OcrExecutionEvidenceSink,
     acceptance_ocr_execution_evidence_sink_from_environment,
 )
 from capture_runtime.ocr.infrastructure.ocr_projection import OcrPipeline
 from capture_runtime.ocr.infrastructure.ocr_worker_result import OcrWorkerFailure
+from capture_runtime.processing_error import CaptureProcessingError
 from capture_runtime.provisioning.infrastructure.engine_installation import (
     ExtractionRuntimeUnavailableError,
     SpeechModelNotInstalledError,
@@ -74,7 +74,6 @@ from capture_runtime.speech.infrastructure.progressive_audio import (
     ProgressiveSessionEvent,
 )
 from capture_runtime.speech.infrastructure.progressive_capture import (
-    ProgressiveCaptureError,
     ProgressiveCaptureProcessor,
 )
 from capture_runtime.speech.infrastructure.progressive_decoder import ProgressiveDecoderError
@@ -125,10 +124,8 @@ class StreamingCaptureService:
         self._ocr_pipeline = OcrPipeline()
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._cancellations: dict[str, asyncio.Event] = {}
-        # Keep the discard hook used by structuring sessions. Host OCR proofs
-        # are published at the awaiting_structuring checkpoint and are never
+        # Host OCR proofs are published at the awaiting_structuring checkpoint and are never
         # retained here while waiting for a host-owned commit.
-        self._pending_execution_proofs: dict[str, OcrExecutionDeviceProofV1] = {}
         self._shutting_down = False
         # Cleared while an engine is uninstalled: a capture started meanwhile
         # waits here instead of reaching an engine whose files are going away.
@@ -145,7 +142,6 @@ class StreamingCaptureService:
             repository,
             clock=clock,
             validate_document=_validate_runtime_document,
-            discard_result=self._clear_pending_execution_proof,
         )
 
     def _cancel_task(self, capture_id: str) -> None:
@@ -157,7 +153,6 @@ class StreamingCaptureService:
 
     def request_cancel(self, capture_id: str) -> None:
         normalized = self.repository.get_capture(capture_id).capture_id
-        self._clear_pending_execution_proof(normalized)
         self._cancel_task(normalized)
 
     def get_ingestion(self, ingestion_id: str) -> IngestionV2:
@@ -272,27 +267,24 @@ class StreamingCaptureService:
         message: str,
         idempotency_key: str,
     ) -> CaptureOperationV2:
-        try:
-            operation = self.repository.get_capture(capture_id)
-            request = self.repository.capture_request(capture_id)
-            if (
-                request.structuring_mode is not StructuringMode.HOST
-                or operation.status is not StreamingCaptureStatus.AWAITING_STRUCTURING
-            ):
-                raise StreamingTransitionError("capture is not awaiting host structuring")
-            return self.repository.fail_host_structure(
-                capture_id,
-                idempotency_key=idempotency_key,
-                fingerprint=_failure_fingerprint(code, message),
-                failure=CaptureFailureV2(
-                    code=code,
-                    message=message,
-                    stage="structuring",
-                    retryable=False,
-                ),
-            )
-        finally:
-            self._clear_pending_execution_proof(capture_id)
+        operation = self.repository.get_capture(capture_id)
+        request = self.repository.capture_request(capture_id)
+        if (
+            request.structuring_mode is not StructuringMode.HOST
+            or operation.status is not StreamingCaptureStatus.AWAITING_STRUCTURING
+        ):
+            raise StreamingTransitionError("capture is not awaiting host structuring")
+        return self.repository.fail_host_structure(
+            capture_id,
+            idempotency_key=idempotency_key,
+            fingerprint=_failure_fingerprint(code, message),
+            failure=CaptureFailureV2(
+                code=code,
+                message=message,
+                stage="structuring",
+                retryable=False,
+            ),
+        )
 
     def fail_invalid_host_structure(
         self, capture_id: str, *, idempotency_key: str
@@ -317,12 +309,10 @@ class StreamingCaptureService:
             # propagates the worker task's own cancellation or exception.
             await asyncio.wait({task})
         self.repository.delete_capture(normalized)
-        self._clear_pending_execution_proof(normalized)
         self._cancellations.pop(normalized, None)
 
     async def close(self) -> None:
         self._shutting_down = True
-        self._pending_execution_proofs.clear()
         tasks = tuple(self._tasks.values())
         for capture_id in tuple(self._tasks):
             self._cancel_task(capture_id)
@@ -408,20 +398,20 @@ class StreamingCaptureService:
             if operation.status is StreamingCaptureStatus.CANCELLED:
                 return
             if operation.source is None:
-                raise ProgressiveCaptureError("finalized streaming source is unavailable")
+                raise CaptureProcessingError("finalized streaming source is unavailable")
             source_path = self.repository.source_path(operation.ingestion_id)
             processor = self._processor
             request = self.repository.capture_request(capture_id)
             identify_speakers = request.identify_speakers
             if identify_speakers and operation.kind is not CaptureSourceKind.AUDIO:
-                raise ProgressiveCaptureError(
+                raise CaptureProcessingError(
                     "Speaker identification is only valid for audio sources.",
                     code="invalid_speaker_identification",
                     retryable=False,
                 )
             spoken_language = request.spoken_language
             if spoken_language is not None and operation.kind is not CaptureSourceKind.AUDIO:
-                raise ProgressiveCaptureError(
+                raise CaptureProcessingError(
                     "A spoken language is only valid for audio sources.",
                     code="invalid_spoken_language",
                     retryable=False,
@@ -460,7 +450,7 @@ class StreamingCaptureService:
                     cancellation,
                 )
             else:
-                raise ProgressiveCaptureError(
+                raise CaptureProcessingError(
                     "The selected capture kind is unavailable in this runtime.",
                     code="requirement_unavailable",
                     retryable=True,
@@ -490,14 +480,13 @@ class StreamingCaptureService:
                 ):
                     self._publish_execution_proof(capture_id, operation.kind.value, extraction)
         except asyncio.CancelledError:
-            self._clear_pending_execution_proof(capture_id)
             if not cancellation.is_set() and not self._shutting_down:
                 self._fail(
                     capture_id,
                     "progressive_interrupted",
                     "Progressive capture was interrupted.",
                 )
-        except ProgressiveCaptureError as error:
+        except CaptureProcessingError as error:
             self._fail(
                 capture_id,
                 error.code,
@@ -613,7 +602,7 @@ class StreamingCaptureService:
     ) -> CaptureExtractionOutcome:
         extractor = self._extractor
         if extractor is None:
-            raise ProgressiveCaptureError(
+            raise CaptureProcessingError(
                 "The capture extractor is unavailable.",
                 code="extraction_runtime_unavailable",
                 retryable=False,
@@ -632,25 +621,25 @@ class StreamingCaptureService:
                 prefix = content[:SNIFF_BYTES]
             sniffed = extractor.sniff(prefix)
         except UnsupportedMediaError as error:
-            raise ProgressiveCaptureError(
+            raise CaptureProcessingError(
                 "Uploaded source content is not a supported capture kind.",
                 code="unsupported_media_type",
                 retryable=False,
             ) from error
         except OSError as error:
-            raise ProgressiveCaptureError(
+            raise CaptureProcessingError(
                 "Streaming source content could not be opened.",
                 code="streaming_source_unavailable",
             ) from error
         if sniffed.kind is not declared_kind:
-            raise ProgressiveCaptureError(
+            raise CaptureProcessingError(
                 "Uploaded source content does not match its declared capture kind.",
                 code="source_kind_mismatch",
                 retryable=False,
             )
         request = self.repository.capture_request(capture_id)
         if request.pdf_page_numbers is not None and declared_kind is not CaptureSourceKind.PDF:
-            raise ProgressiveCaptureError(
+            raise CaptureProcessingError(
                 "PDF page selection is only valid for PDF sources.",
                 code="invalid_pdf_page_selection",
                 retryable=False,
@@ -702,7 +691,7 @@ class StreamingCaptureService:
                 source,
                 cancellation,
                 identify_speakers=True,
-                speaker_progress=lambda stage, permille: report_progress(permille, 1000, stage),
+                staged_progress=lambda stage, permille: report_progress(permille, 1000, stage),
                 **_spoken_language(request),
             )
         elif request.pdf_page_numbers is None:
@@ -723,7 +712,7 @@ class StreamingCaptureService:
             )
         raw = extraction.raw
         if not raw.segments:
-            raise ProgressiveCaptureError(
+            raise CaptureProcessingError(
                 "Extraction produced no non-empty content.",
                 code="progressive_no_text_at_sample",
                 retryable=False,
@@ -821,9 +810,6 @@ class StreamingCaptureService:
             # failed diagnostic write must not replace or expose the OCR error.
             return
 
-    def _clear_pending_execution_proof(self, capture_id: str) -> None:
-        self._pending_execution_proofs.pop(capture_id, None)
-
     async def _persist_events(
         self,
         capture_id: str,
@@ -857,7 +843,6 @@ class StreamingCaptureService:
         retryable: bool = True,
         ocr_projection: CaptureOcrProjectionV3 | None = None,
     ) -> None:
-        self._clear_pending_execution_proof(capture_id)
         with suppress(StreamingRecordNotFoundError):
             failure = CaptureFailureV2(
                 code=code,
@@ -910,7 +895,7 @@ def _find_ocr_worker_failure(error: BaseException) -> OcrWorkerFailure | None:
 def _safe_failure_message(error: BaseException) -> str:
     if isinstance(error, RuntimeUnavailableError):
         return "Structuring failed at a bounded runtime boundary."
-    if isinstance(error, ProgressiveCaptureError):
+    if isinstance(error, CaptureProcessingError):
         return str(error)[:500] or "Progressive audio processing failed."
     if isinstance(error, SpeechModelNotInstalledError):
         return str(error)[:500]

@@ -921,7 +921,7 @@ def test_worker_engine_checks_cancellation_before_advancing_the_image_iterator()
         )
 
     with pytest.raises(InterruptedError):
-        ocr_main._WorkerOcrEngineAdapter(adapter, images).recognize(
+        ocr_main._PaddlePageOcrEngine(adapter, images).recognize(
             _engine_request_for_worker_adapter(manifest, cancellation, observe)
         )
 
@@ -978,7 +978,7 @@ def test_worker_engine_rejects_cancellation_after_iterator_exhaustion_before_ter
         )
 
     with pytest.raises(InterruptedError):
-        ocr_main._WorkerOcrEngineAdapter(Adapter(), FinalPageIterator()).recognize(
+        ocr_main._PaddlePageOcrEngine(Adapter(), FinalPageIterator()).recognize(
             _engine_request_for_worker_adapter(manifest, cancellation, observe)
         )
 
@@ -1021,7 +1021,7 @@ def test_worker_engine_rejects_cancellation_after_inference_before_observation()
         )
 
     with pytest.raises(InterruptedError):
-        ocr_main._WorkerOcrEngineAdapter(Adapter(), iter([(1, b"page-one")])).recognize(
+        ocr_main._PaddlePageOcrEngine(Adapter(), iter([(1, b"page-one")])).recognize(
             _engine_request_for_worker_adapter(manifest, cancellation, observe)
         )
 

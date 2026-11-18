@@ -1,4 +1,4 @@
-"""Command execution and safe archive primitives for runtime installation."""
+"""Command execution primitives for runtime installation."""
 
 from __future__ import annotations
 
@@ -7,7 +7,6 @@ import hashlib
 import json
 import os
 import subprocess
-import zipfile
 from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,7 +14,6 @@ from typing import Protocol
 
 from capture_runtime.contracts import RuntimeRequirementV2
 from capture_runtime.install_progress import DownloadProgress
-from capture_runtime.ocr.infrastructure.ocr_profile import WINDOWSML_REQUIRED_MODEL_FILES
 
 
 def _atomic_json(path: Path, payload: object) -> None:
@@ -31,67 +29,6 @@ def _sha256_file(path: Path) -> str:
         while chunk := source.read(1024 * 1024):
             digest.update(chunk)
     return digest.hexdigest()
-
-
-_MAX_WINDOWSML_UNCOMPRESSED_BYTES = 2 * 1024 * 1024 * 1024
-_MAX_WINDOWSML_ENTRY_BYTES = 1536 * 1024 * 1024
-_MAX_WINDOWSML_COMPRESSION_RATIO = 200
-
-
-def _extract_safe_zip(
-    archive: Path,
-    destination: Path,
-    cancel_event: asyncio.Event,
-) -> None:
-    destination.mkdir(parents=True, exist_ok=False)
-    root = destination.resolve()
-    total_uncompressed = 0
-    with zipfile.ZipFile(archive) as bundle:
-        members = bundle.infolist()
-        names = [member.filename for member in members]
-        if len(names) != len(set(names)):
-            raise RuntimeError("WindowsML bundle contains duplicate entries")
-        if len(names) != len(WINDOWSML_REQUIRED_MODEL_FILES) or set(names) != set(
-            WINDOWSML_REQUIRED_MODEL_FILES
-        ):
-            raise RuntimeError("WindowsML bundle must contain exactly the six allowlisted files")
-        for member in members:
-            if cancel_event.is_set():
-                raise asyncio.CancelledError
-            if (
-                member.is_dir()
-                or "\\" in member.filename
-                or ":" in member.filename
-                or member.flag_bits & 0x1
-            ):
-                raise RuntimeError("WindowsML bundle contains an unsafe entry")
-            member_path = Path(member.filename)
-            mode = (member.external_attr >> 16) & 0o170000
-            if mode == 0o120000:
-                raise RuntimeError("WindowsML bundle must not contain symbolic links")
-            total_uncompressed += member.file_size
-            if (
-                member.file_size > _MAX_WINDOWSML_ENTRY_BYTES
-                or total_uncompressed > _MAX_WINDOWSML_UNCOMPRESSED_BYTES
-                or (
-                    member.file_size > 0
-                    and (
-                        member.compress_size == 0
-                        or member.file_size
-                        > member.compress_size * _MAX_WINDOWSML_COMPRESSION_RATIO
-                    )
-                )
-            ):
-                raise RuntimeError("WindowsML bundle exceeds the extraction size limit")
-            target = (destination / member_path).resolve()
-            if target != root and root not in target.parents:
-                raise RuntimeError("WindowsML bundle escaped the extraction directory")
-            target.parent.mkdir(parents=True, exist_ok=True)
-            with bundle.open(member) as source, target.open("xb") as output:
-                while chunk := source.read(1024 * 1024):
-                    if cancel_event.is_set():
-                        raise asyncio.CancelledError
-                    output.write(chunk)
 
 
 @dataclass(frozen=True, slots=True)

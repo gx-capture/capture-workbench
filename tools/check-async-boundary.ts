@@ -178,6 +178,9 @@ function exceptionReason(relativePath) {
     // EAGAIN on a non-blocking pipe, so the CLI entry reads it as a stream.
     return 'dead-code gate CLI stdin boundary';
   }
+  if (relativePath === 'tools/retired-names-gate.ts') {
+    return 'retired names Stop hook stdin boundary';
+  }
   if (relativePath === 'tools/architecture-graph.ts') {
     // Its --hook mode reads the same Stop hook payload (readHookPayload).
     return 'architecture graph Stop hook stdin boundary';
@@ -195,11 +198,15 @@ function exceptionReason(relativePath) {
     relativePath ===
       'apps/capture-workbench-desktop/scripts/v2-capture-flow.ts' ||
       relativePath ===
-        'apps/capture-workbench-desktop/scripts/real-media-model-smoke.ts' ||
-      relativePath ===
       'apps/capture-workbench-desktop/scripts/progressive-audio-oracle.ts'
   ) {
     return 'opt-in real-engine CLI boundary';
+  }
+  if (
+    relativePath ===
+    'apps/capture-workbench-desktop/scripts/installed-native-dialog.ts'
+  ) {
+    return 'installed desktop native dialog UIA process boundary';
   }
   if (
     relativePath ===
@@ -210,7 +217,7 @@ function exceptionReason(relativePath) {
   if (relativePath === 'apps/capture-workbench-desktop/scripts/real-ocr-result-assertions.ts') {
     return 'opt-in real-engine CLI boundary';
   }
-  if (relativePath === 'apps/capture-workbench-desktop/scripts/acceptance-real.ts') {
+  if (relativePath === 'apps/capture-workbench-desktop/scripts/diagnostic-desktop-ocr.ts') {
     return 'opt-in real-engine process boundary';
   }
   // This exact acceptance I/O orchestration seam owns filesystem and OS probes;
@@ -238,7 +245,7 @@ function exceptionReason(relativePath) {
   }
   if (
     relativePath ===
-    'apps/capture-workbench-desktop/scripts/installed-deterministic-smoke.ts'
+    'apps/capture-workbench-desktop/scripts/installed-nsis-smoke.ts'
   ) {
     return 'installed desktop/release CLI process boundary';
   }
@@ -252,7 +259,7 @@ function exceptionReason(relativePath) {
   if (/\.(spec|test)\.ts$/u.test(relativePath)) {
     return 'Angular/Node test-runner boundary';
   }
-  if (relativePath === 'tools/clean-angular-consumer-smoke.ts') {
+  if (relativePath === 'tools/web-component-consumer-smoke.ts') {
     return 'generated consumer framework fixture boundary';
   }
   if (relativePath === 'tools/capture-boundary-doctor.ts') {

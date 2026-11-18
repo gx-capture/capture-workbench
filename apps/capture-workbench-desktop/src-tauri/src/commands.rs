@@ -1,51 +1,45 @@
 use std::sync::Arc;
 
-#[cfg(feature = "acceptance-app-data")]
+#[cfg(feature = "acceptance-harness")]
 use serde::Serialize;
 
 use tauri::Manager;
 
 use crate::{
-    compute::DesktopComputeStatus,
     config::DesktopRuntimeStatus,
     contracts::{
-        LibraryCaptureUpdate, LibraryDocumentDetail, LibraryDocumentRequest,
-        LibraryDocumentSummary, LibraryEdits, LibraryExportPayload, LibraryExportRequest,
-        LibraryListRequest, LibrarySaveEditsRequest, RuntimeCancelUploadInput,
-        RuntimeCreateCaptureInput, RuntimeIdInput, RuntimeInstallationStartInput,
-        RuntimeModelInstallationStartInput, RuntimeRequirementInput, RuntimeStreamingCaptureInput,
-        RuntimeStreamingEventsInput,
+        DesktopLibraryDetail, DesktopLibrarySummary, LibraryCaptureUpdate, LibraryDocumentRequest,
+        LibraryEdits, LibraryExportPayload, LibraryExportRequest, LibraryListRequest,
+        LibrarySaveEditsRequest, RuntimeCancelUploadInput, RuntimeCreateCaptureInput,
+        RuntimeIdInput, RuntimeInstallationStartInput, RuntimeModelInstallationStartInput,
+        RuntimeRequirementInput, RuntimeStreamingCaptureInput, RuntimeStreamingEventsInput,
     },
     host_api,
     library::LibraryStore,
-    resources::RuntimeAssets,
+    resources::RuntimeExecutablePaths,
     runtime_client::UploadCancellations,
+    speech_gpu::DesktopSpeechGpuStatus,
     state::DesktopState,
 };
 
-#[cfg(feature = "model-smoke-app-data")]
-use crate::contracts::LibraryImportSourceRequest;
-#[cfg(feature = "model-smoke-app-data")]
-use crate::model_smoke_fixtures::{ModelSmokeFixtureRegistry, ModelSmokeImportFixtureRequest};
-
 /// Whether a CUDA driver is present and speech recognition may use the GPU.
 #[tauri::command]
-pub(crate) fn desktop_compute_status(
+pub(crate) fn desktop_speech_gpu_status(
     state: tauri::State<'_, DesktopState>,
-) -> DesktopComputeStatus {
-    host_api::desktop_compute_status(state.inner())
+) -> DesktopSpeechGpuStatus {
+    host_api::desktop_speech_gpu_status(state.inner())
 }
 
 /// Save whether speech recognition may use the GPU and relaunch the runtime,
 /// which reads it at launch. A capture in progress is stopped by the relaunch.
 #[tauri::command]
-pub(crate) fn desktop_set_prefer_gpu(
+pub(crate) fn desktop_set_speech_prefer_gpu(
     prefer_gpu: bool,
     app: tauri::AppHandle,
     state: tauri::State<'_, DesktopState>,
-) -> Result<DesktopComputeStatus, String> {
-    let assets = app.try_state::<RuntimeAssets>();
-    host_api::desktop_set_prefer_gpu(
+) -> Result<DesktopSpeechGpuStatus, String> {
+    let assets = app.try_state::<RuntimeExecutablePaths>();
+    host_api::desktop_set_speech_prefer_gpu(
         state.inner(),
         assets.as_ref().map(|state| state.inner()),
         prefer_gpu,
@@ -71,16 +65,16 @@ pub(crate) async fn runtime_ready(
     run_blocking(move || host_api::runtime_ready(&state)).await
 }
 
-#[cfg(feature = "acceptance-app-data")]
+#[cfg(feature = "acceptance-harness")]
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct DesktopRuntimeProcessProbe {
     pub process_id: Option<u32>,
 }
 
-#[cfg(feature = "acceptance-app-data")]
+#[cfg(feature = "acceptance-harness")]
 #[tauri::command]
-pub(crate) fn desktop_runtime_process_probe(
+pub(crate) fn desktop_acceptance_runtime_process_probe(
     state: tauri::State<'_, DesktopState>,
 ) -> DesktopRuntimeProcessProbe {
     DesktopRuntimeProcessProbe {
@@ -100,7 +94,7 @@ pub(crate) fn desktop_acceptance_close_window(window: tauri::Window) -> Result<(
 /// Injects an app-root hard termination through the current process handle.
 /// This command intentionally accepts no PID: the native handle is resolved
 /// by the host itself, so the acceptance harness cannot race a reused PID.
-#[cfg(feature = "acceptance-app-data")]
+#[cfg(feature = "acceptance-harness")]
 #[tauri::command]
 pub(crate) fn desktop_acceptance_terminate_root() -> Result<(), String> {
     #[cfg(windows)]
@@ -201,7 +195,7 @@ pub(crate) async fn library_import_selection(
     selections: tauri::State<'_, Arc<crate::source_selection::SourceSelections>>,
     library: tauri::State<'_, Arc<LibraryStore>>,
     request: crate::contracts::LibraryImportSelectionRequest,
-) -> Result<LibraryDocumentSummary, String> {
+) -> Result<DesktopLibrarySummary, String> {
     let owner = window.label().to_owned();
     let selections = Arc::clone(selections.inner());
     let library = Arc::clone(library.inner());
@@ -218,30 +212,11 @@ pub(crate) async fn library_discard_selections(
     host_api::library_discard_selections(window.label(), selections.inner(), request)
 }
 
-#[cfg(feature = "model-smoke-app-data")]
-#[tauri::command]
-pub(crate) async fn model_smoke_import_fixture(
-    library: tauri::State<'_, Arc<LibraryStore>>,
-    fixtures: tauri::State<'_, ModelSmokeFixtureRegistry>,
-    request: ModelSmokeImportFixtureRequest,
-) -> Result<LibraryDocumentSummary, String> {
-    let library = Arc::clone(library.inner());
-    let fixtures = fixtures.inner().clone();
-    run_blocking(move || {
-        let source = fixtures.resolve(&request.fixture_key)?;
-        library.import_source(LibraryImportSourceRequest {
-            source_path: source.to_string_lossy().into_owned(),
-            ..Default::default()
-        })
-    })
-    .await
-}
-
 #[tauri::command]
 pub(crate) async fn library_update_capture(
     library: tauri::State<'_, Arc<LibraryStore>>,
     update: LibraryCaptureUpdate,
-) -> Result<LibraryDocumentSummary, String> {
+) -> Result<DesktopLibrarySummary, String> {
     let library = Arc::clone(library.inner());
     run_blocking(move || host_api::library_update_capture(&library, update)).await
 }
@@ -250,7 +225,7 @@ pub(crate) async fn library_update_capture(
 pub(crate) async fn library_list(
     library: tauri::State<'_, Arc<LibraryStore>>,
     request: LibraryListRequest,
-) -> Result<Vec<LibraryDocumentSummary>, String> {
+) -> Result<Vec<DesktopLibrarySummary>, String> {
     let library = Arc::clone(library.inner());
     run_blocking(move || host_api::library_list(&library, request)).await
 }
@@ -259,7 +234,7 @@ pub(crate) async fn library_list(
 pub(crate) async fn library_get(
     library: tauri::State<'_, Arc<LibraryStore>>,
     request: LibraryDocumentRequest,
-) -> Result<LibraryDocumentDetail, String> {
+) -> Result<DesktopLibraryDetail, String> {
     let library = Arc::clone(library.inner());
     run_blocking(move || host_api::library_get(&library, request)).await
 }

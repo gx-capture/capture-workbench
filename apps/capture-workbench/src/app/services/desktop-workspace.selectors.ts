@@ -18,7 +18,7 @@ import { desktopLocale, desktopMessages } from '../i18n/desktop-messages';
 
 export type RecognitionFeature = 'ocr' | 'asr' | 'asr.speakers';
 
-/** Recognition features and the runtime requirement units each one needs. */
+/** Recognition features and the runtime requirements each one needs. */
 export const FEATURE_REQUIREMENTS: Readonly<
   Record<RecognitionFeature, readonly CaptureRequirementId[]>
 > = {
@@ -27,8 +27,8 @@ export const FEATURE_REQUIREMENTS: Readonly<
   'asr.speakers': ['speaker-diarization'],
 };
 
-/** User-facing recognition engine units shown in settings and cards. */
-export const RECOGNITION_ENGINE_UNITS: readonly CaptureRequirementId[] = [
+/** User-facing recognition requirements shown in settings and cards. */
+export const RECOGNITION_REQUIREMENTS: readonly CaptureRequirementId[] = [
   'windowsml-ocr',
   'speech-recognition',
   'speaker-diarization',
@@ -48,24 +48,24 @@ export const INSTALLATION_ORDER = new Map<CaptureRequirementId, number>([
  * identification, which only adds to a transcript. The user downloads either
  * one when they want it; neither is needed for documents.
  */
-export const SPEECH_PACK_UNITS: readonly CaptureRequirementId[] = [
+export const OPTIONAL_SPEECH_REQUIREMENTS: readonly CaptureRequirementId[] = [
   'speech-recognition',
   'speaker-diarization',
 ];
 
-/** The speech pack units this runtime reports, in pack order. */
+/** The optional speech requirements this runtime reports, in display order. */
 export function selectSpeechPack(
   requirements: readonly RuntimeRequirement[],
 ): readonly RuntimeRequirement[] {
-  return SPEECH_PACK_UNITS.flatMap((requirementId) =>
+  return OPTIONAL_SPEECH_REQUIREMENTS.flatMap((requirementId) =>
     requirements.filter((requirement) => requirement.requirementId === requirementId));
 }
 
-/** The recognition engine units this runtime reports, in display order. */
-export function selectRecognitionEngines(
+/** The recognition requirements this runtime reports, in display order. */
+export function selectRecognitionRequirements(
   requirements: readonly RuntimeRequirement[],
 ): readonly RuntimeRequirement[] {
-  return RECOGNITION_ENGINE_UNITS.flatMap((requirementId) =>
+  return RECOGNITION_REQUIREMENTS.flatMap((requirementId) =>
     requirements.filter((requirement) => requirement.requirementId === requirementId));
 }
 
@@ -116,7 +116,7 @@ export function modelInstallationPhase(
   return phase.configuring;
 }
 
-/** Whether every requirement unit for a recognition feature is installed (`ready`). */
+/** Whether every requirement for a recognition feature is installed (`ready`). */
 export function isFeatureReady(
   requirements: readonly RuntimeRequirement[],
   feature: RecognitionFeature,
@@ -193,7 +193,7 @@ export function activeModelOption(
  * Identifies recordings, which use the streaming capture path: audio, and
  * video whose audio track is transcribed.
  */
-export function isAudioMediaType(mediaType: string): boolean {
+export function isRecordingMediaType(mediaType: string): boolean {
   return mediaType.startsWith('audio/') || mediaType.startsWith('video/');
 }
 
@@ -208,9 +208,9 @@ const OCR_CAPTURE_REQUIREMENTS = new Set<CaptureRequirementId>([
 ]);
 
 /**
- * Whether a capture that is still processing or saving needs this engine.
+ * Whether a capture that is still processing or saving needs this requirement.
  * The runtime does not record which engine a capture used, so a recording
- * blocks both speech units and a document blocks both OCR units.
+ * blocks both speech requirements and a document blocks both OCR requirements.
  */
 export function captureNeedsRequirement(
   requirementId: CaptureRequirementId,
@@ -221,10 +221,10 @@ export function captureNeedsRequirement(
   );
   if (active.length === 0) return false;
   if (SPEECH_CAPTURE_REQUIREMENTS.has(requirementId)) {
-    return active.some((document) => isAudioMediaType(document.mediaType));
+    return active.some((document) => isRecordingMediaType(document.mediaType));
   }
   if (OCR_CAPTURE_REQUIREMENTS.has(requirementId)) {
-    return active.some((document) => !isAudioMediaType(document.mediaType));
+    return active.some((document) => !isRecordingMediaType(document.mediaType));
   }
   return true;
 }
@@ -281,18 +281,18 @@ export function isPdfMediaType(mediaType: string): boolean {
   return mediaType === 'application/pdf';
 }
 
-/** Identifies non-terminal one-shot capture jobs. */
-export function isActiveJob(job: DesktopCaptureOperation): boolean {
-  return job.status === 'created'
-    || job.status === 'waiting_input'
-    || job.status === 'extracting'
-    || job.status === 'awaiting_structuring'
-    || job.status === 'structuring';
+/** Identifies non-terminal one-shot capture operations. */
+export function isActiveOneShotOperation(operation: DesktopCaptureOperation): boolean {
+  return operation.status === 'created'
+    || operation.status === 'waiting_input'
+    || operation.status === 'extracting'
+    || operation.status === 'awaiting_structuring'
+    || operation.status === 'structuring';
 }
 
 /** A one-shot OCR result is ready for host persistence before optional structuring. */
-export function isOcrCheckpoint(job: DesktopCaptureOperation): boolean {
-  return job.status === 'awaiting_structuring';
+export function isOcrCheckpoint(operation: DesktopCaptureOperation): boolean {
+  return operation.status === 'awaiting_structuring';
 }
 
 /** Identifies non-terminal streaming operations. */
@@ -304,10 +304,10 @@ export function isActiveStreaming(operation: CaptureOperation): boolean {
     || operation.status === 'structuring';
 }
 
-/** Maps a runtime terminal job to the library's persisted status vocabulary. */
-export function terminalLibraryStatus(job: DesktopCaptureOperation): DesktopLibraryStatus {
-  if (job.status === 'completed') return 'completed';
-  if (job.status === 'cancelled') return 'canceled';
+/** Maps a runtime terminal operation to the library's persisted status vocabulary. */
+export function terminalLibraryStatus(operation: DesktopCaptureOperation): DesktopLibraryStatus {
+  if (operation.status === 'completed') return 'completed';
+  if (operation.status === 'cancelled') return 'canceled';
   return 'failed';
 }
 
@@ -357,9 +357,9 @@ export function errorMessage(error: unknown): string {
 export function uninstallFailureMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   const messages = desktopMessages();
-  if (message.includes('HTTP 409')) return messages.removeEngineInUse;
-  if (message.includes('HTTP 422')) return messages.removeEngineNotUninstallable;
-  if (message.includes('HTTP 404')) return messages.removeEngineNotFound;
+  if (message.includes('HTTP 409')) return messages.removeRequirementInUse;
+  if (message.includes('HTTP 422')) return messages.removeRequirementNotUninstallable;
+  if (message.includes('HTTP 404')) return messages.removeRequirementNotFound;
   return errorMessage(error);
 }
 
@@ -377,47 +377,4 @@ export function redactSensitiveMessage(message: string): string {
 export function stageLabel(stage?: string): string {
   const labels = desktopMessages().stage;
   return labels[stage ?? ''] ?? labels['queued'] ?? '';
-}
-
-/** Maps a library status to its workspace label. */
-export function statusLabel(status: DesktopLibrarySummary['status']): string {
-  return desktopMessages().status[status] ?? status;
-}
-
-/** Result text; a transcript with speakers reads "name: what they said". */
-export function captureResultText(result: {
-  readonly targetText: string;
-  readonly speakers?: readonly {
-    readonly speakerId: string;
-    readonly displayName?: string | null;
-  }[];
-  readonly rawSegments?: readonly {
-    readonly segmentId: string;
-    readonly speaker?: string | null;
-  }[];
-  readonly blocks?: readonly {
-    readonly sourceSegmentId: string;
-    readonly targetText: string;
-  }[];
-}): string {
-  const speakers = result.speakers ?? [];
-  if (speakers.length === 0 || !result.blocks || !result.rawSegments) {
-    return result.targetText;
-  }
-  const names = new Map(
-    speakers.map((speaker) => [
-      speaker.speakerId,
-      speaker.displayName?.trim() || speaker.speakerId,
-    ]),
-  );
-  const speakerOf = new Map(
-    result.rawSegments.map((segment) => [segment.segmentId, segment.speaker]),
-  );
-  return result.blocks
-    .map((block) => {
-      const speaker = speakerOf.get(block.sourceSegmentId);
-      const name = speaker ? names.get(speaker) : undefined;
-      return name ? `${name}: ${block.targetText}` : block.targetText;
-    })
-    .join('\n');
 }

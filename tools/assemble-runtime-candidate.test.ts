@@ -95,7 +95,7 @@ async function makeCandidate(
   }
   const packageManifest = {
     schemaVersion: '1',
-    candidateKind: 'npm-package-set',
+    candidateKind: 'package',
     releaseVersion: version,
     packages: packageEntries,
   };
@@ -131,7 +131,7 @@ async function makeCandidate(
     .sort((left, right) => left.path.localeCompare(right.path));
   const baseManifest = {
     schemaVersion: '1',
-    candidateKind: 'npm-package-set',
+    candidateKind: 'package',
     sourceCommit,
     releaseVersion: version,
     producerRunId,

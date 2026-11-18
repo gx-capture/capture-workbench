@@ -161,7 +161,12 @@ export async function verifyPackageCandidate(input: {
     ],
     'Package candidate manifest',
   );
-  assert.equal(manifest.candidateKind, 'npm-package-set');
+  // Promotion can download candidates produced before the kind was renamed.
+  assert(
+    manifest.candidateKind === 'package' ||
+      manifest.candidateKind === 'npm-package-set',
+    'Package candidate kind is invalid.',
+  );
   assert.equal(manifest.schemaVersion, '1');
   assert.equal(manifest.candidateId, input.candidateId);
   assert.equal(manifest.sourceCommit, input.sourceCommit);
@@ -205,7 +210,7 @@ export async function verifyPackageCandidate(input: {
     ['candidateKind', 'packages', 'releaseVersion', 'schemaVersion'],
     'Package manifest',
   );
-  assert.equal(packageManifest.candidateKind, 'npm-package-set');
+  assert.equal(packageManifest.candidateKind, manifest.candidateKind);
   assert.equal(packageManifest.schemaVersion, '1');
   assert.equal(packageManifest.releaseVersion, input.version);
   assert(
@@ -396,7 +401,7 @@ async function main(): Promise<void> {
   const parsed = parseArguments(process.argv.slice(2));
   const verified = await verifyPackageCandidate(parsed);
   process.stdout.write(
-    `Verified npm package candidate ${verified.releaseVersion} (${verified.candidateId}).\n`,
+    `Verified package candidate ${verified.releaseVersion} (${verified.candidateId}).\n`,
   );
 }
 

@@ -110,7 +110,7 @@ async function main(): Promise<void> {
     .map((name) => join(candidate, 'package', name));
   if (packagePaths.length !== PACKAGE_NAMES.size) {
     throw new Error(
-      `Expected exactly ${PACKAGE_NAMES.size} npm package candidates.`,
+      `Expected exactly ${PACKAGE_NAMES.size} npm package archives.`,
     );
   }
   const packages: Array<{

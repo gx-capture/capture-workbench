@@ -23,13 +23,12 @@ def _extractor(tmp_path: Path, *, max_pdf_pages: int = 3) -> StandaloneRuntimeCa
         SystemClock(),
         ExtractionRuntimeConfig(
             windowsml_model_dir=tmp_path / "windowsml",
-            whisper_models_dir=tmp_path / "whisper",
             temp_dir=tmp_path / "temp",
             max_pdf_pages=max_pdf_pages,
             max_image_pixels=100_000,
             ocr_render_scale=2,
             max_audio_duration_ms=60_000,
-            whisper_prefer_gpu=True,
+            speech_prefer_gpu=True,
         ),
     )
 

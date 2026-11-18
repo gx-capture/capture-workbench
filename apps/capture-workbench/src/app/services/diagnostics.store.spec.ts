@@ -4,10 +4,10 @@ import { ActivatedRoute, convertToParamMap } from '@angular/router';
 import { BehaviorSubject, of, Subject, throwError } from 'rxjs';
 import type { DesktopLibraryDetail, DesktopRuntimeStatus } from '../contracts';
 import { setDesktopLocale } from '../i18n/desktop-messages';
-import { DesktopLibraryService } from './desktop-library.service';
+import { LibraryStore } from './library.store';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
-import { DesktopWorkspaceFormattingService } from './desktop-workspace-formatting.service';
-import { DesktopWorkspaceStore } from './desktop-workspace.store';
+import { DesktopFormattingService } from './desktop-formatting.service';
+import { RuntimeStatusStore } from './runtime-status.store';
 import { DiagnosticsStore } from './diagnostics.store';
 
 describe('DiagnosticsStore', () => {
@@ -190,24 +190,24 @@ function setupStore(
     status: signal<DesktopRuntimeStatus>({ status: 'ready', detail: 'Ready' }),
     ocrCompute: signal(null),
   };
-  const workspace = {
+  const runtimeStatus = {
     state: signal<'starting' | 'ready' | 'error'>('ready'),
     message: signal(''),
-    initialize: vi.fn(),
+    reload: vi.fn(),
   };
 
   TestBed.configureTestingModule({
     providers: [
       { provide: ActivatedRoute, useValue: { queryParamMap: queryParamMap$.asObservable() } },
-      { provide: DesktopLibraryService, useValue: library },
-      { provide: DesktopWorkspaceFormattingService, useValue: formatting },
+      { provide: LibraryStore, useValue: library },
+      { provide: DesktopFormattingService, useValue: formatting },
       { provide: DesktopRuntimeClientService, useValue: runtime },
-      { provide: DesktopWorkspaceStore, useValue: workspace },
+      { provide: RuntimeStatusStore, useValue: runtimeStatus },
       DiagnosticsStore,
     ],
   });
 
   const store = TestBed.inject(DiagnosticsStore);
   TestBed.tick();
-  return { store, library, formatting, workspace, queryParamMap$ };
+  return { store, library, formatting, runtimeStatus, queryParamMap$ };
 }

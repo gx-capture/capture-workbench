@@ -24,7 +24,7 @@ function build(): void {
     'pnpm', 'exec', 'tauri', dev ? 'dev' : 'build',
     '--target', 'x86_64-pc-windows-msvc',
     ...(dev ? [] : ['--bundles', 'nsis', '--ci']),
-    '--features', 'acceptance-app-data',
+    '--features', 'acceptance-harness',
     '--config', 'apps/capture-workbench-desktop/src-tauri/tauri.conf.json',
     '--config', 'apps/capture-workbench-desktop/src-tauri/tauri.deterministic-qa.conf.json',
   ], {

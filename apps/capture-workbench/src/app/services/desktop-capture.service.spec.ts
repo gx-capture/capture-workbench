@@ -1,0 +1,1709 @@
+import { signal } from '@angular/core';
+import { rxResource } from '@angular/core/rxjs-interop';
+import { TestBed } from '@angular/core/testing';
+import { RUNTIME_VERSION, type CaptureOcrProjection } from '@gx-capture/capture-runtime-client';
+import type { CaptureOperation, CaptureRequirementId, OcrComputePreflight } from '@gx-capture/capture-workbench-ui';
+import { finalize, of, Subject, throwError, type Observable } from 'rxjs';
+import type { DesktopLibraryDetail, DesktopLibrarySummary } from '../contracts';
+import { DesktopCaptureService, type DesktopCaptureHost } from './desktop-capture.service';
+import { DesktopLibraryService, type DesktopSourceSelection } from './desktop-library.service';
+import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
+
+const summary: DesktopLibrarySummary = {
+  documentId: 'a'.repeat(32),
+  fileName: 'fixture.pdf',
+  mediaType: 'application/pdf',
+  byteLength: 12,
+  createdAtMs: 1,
+  updatedAtMs: 1,
+  status: 'queued',
+  stage: 'uploading',
+};
+
+const runningOperation = operation({
+  captureId: 'capture-1',
+  status: 'extracting',
+});
+const completedOperation = operation({
+  captureId: 'capture-1',
+  status: 'completed',
+});
+const cancelledOperation = operation({
+  captureId: 'capture-1',
+  status: 'cancelled',
+});
+const raw = { sourceText: 'OCR text' };
+const result = { targetText: 'translated text' };
+const failedOcrCaptureIds = new Set([
+  'capture-terminal-error',
+  'capture-double-write',
+]);
+
+
+describe('DesktopCaptureService', () => {
+  it('persists the runtime ID before terminal data and clears it only after DELETE', async () => {
+    const events: string[] = [];
+    const updateCapture = vi.fn((update: Record<string, unknown>) => {
+      events.push(
+        `library:${String(update['status'])}:${String(update['clearCaptureId'] ?? false)}`,
+      );
+      return of({ ...summary, ...update, updatedAtMs: 2 });
+    });
+    const deleteCapture = vi.fn(() => {
+      events.push('runtime:delete');
+      return of(undefined);
+    });
+    const library = libraryStub({
+      list: vi.fn(() => of<readonly DesktopLibrarySummary[]>([summary])),
+      updateCapture,
+    });
+    const client = runtimeStub({
+      createCapture: vi.fn(() => of(completedOperation)),
+      deleteCapture,
+    });
+    const store = initializeCapture(library, client);
+
+    store.service.retry$(summary.documentId, store.host).subscribe();
+    TestBed.tick();
+    await settleCaptureLifecycle();
+
+    expect(client.createCapture).toHaveBeenCalledWith(
+      summary.documentId,
+      expect.any(String),
+      undefined,
+    );
+    const updates = captureUpdates(updateCapture);
+    expect(updates).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        status: 'processing',
+        captureId: 'capture-1',
+      }),
+      expect.objectContaining({
+        status: 'persisting',
+        captureId: 'capture-1',
+      }),
+      expect.objectContaining({
+        status: 'completed',
+        captureId: 'capture-1',
+        raw,
+        result,
+      }),
+      expect.objectContaining({
+        status: 'completed',
+        clearCaptureId: true,
+      }),
+    ]));
+    expect(events.indexOf('library:completed:false')).toBeLessThan(
+      events.indexOf('runtime:delete'),
+    );
+    expect(events.indexOf('runtime:delete')).toBeLessThan(
+      events.indexOf('library:completed:true'),
+    );
+    expect(deleteCapture).toHaveBeenCalledWith('capture-1');
+  });
+
+  it('reads OCR before the terminal atomic update and persists privacy-safe evidence', async () => {
+    const events: string[] = [];
+    const updateCapture = vi.fn((update: Record<string, unknown>) => {
+      events.push(`library:${String(update['status'])}:${String(update['clearCaptureId'] ?? false)}`);
+      return of({ ...summary, ...update });
+    });
+    const getOcr = vi.fn((captureId: string) => {
+      events.push(`runtime:ocr:${captureId}`);
+      return of(ocrProjection(captureId, 'completed'));
+    });
+    const deleteCapture = vi.fn((captureId: string) => {
+      events.push(`runtime:delete:${captureId}`);
+      return of(undefined);
+    });
+    const store = initializeCapture(
+      libraryStub({ updateCapture }),
+      runtimeStub({ getOcr, deleteCapture }),
+    );
+
+    store.service.retry$(summary.documentId, store.host).subscribe();
+    TestBed.tick();
+    await settleCaptureLifecycle();
+
+    const terminalUpdate = captureUpdates(updateCapture).find(
+      (update) => update['status'] === 'completed' && update['ocrEvidence'] !== undefined,
+    );
+    expect(terminalUpdate).toEqual(expect.objectContaining({
+      captureId: 'capture-1',
+      raw,
+      result,
+      ocrEvidence: expect.objectContaining({
+        schemaVersion: 1,
+        captureId: 'capture-1',
+        status: 'completed',
+        sourceSha256: 'a'.repeat(64),
+        provenance: expect.objectContaining({ workerSha256: 'f'.repeat(64) }),
+      }),
+    }));
+    expect(events.indexOf('runtime:ocr:capture-1')).toBeGreaterThan(
+      events.indexOf('library:persisting:false'),
+    );
+    expect(events.indexOf('runtime:ocr:capture-1')).toBeLessThan(
+      events.indexOf('library:completed:false'),
+    );
+    expect(events.indexOf('library:completed:false')).toBeLessThan(
+      events.indexOf('runtime:delete:capture-1'),
+    );
+  });
+
+  it('persists failed partial OCR pages and typed failures before cleanup', async () => {
+    const updateCapture = vi.fn((update: Record<string, unknown>) =>
+      of({ ...summary, ...update }));
+    const getOcr = vi.fn((captureId: string) =>
+      of(ocrProjection(captureId, 'failed')));
+    const deleteCapture = vi.fn(() => of(undefined));
+    const terminal = operation({
+      captureId: 'capture-terminal-error',
+      status: 'failed',
+      error: { code: 'terminal_error', message: 'terminal evidence' },
+    });
+    const store = initializeCapture(
+      libraryStub({ updateCapture }),
+      runtimeStub({ createCapture: vi.fn(() => of(terminal)), getOcr, deleteCapture }),
+    );
+
+    store.service.retry$(summary.documentId, store.host).subscribe();
+    TestBed.tick();
+    await settleCaptureLifecycle();
+
+    const terminalUpdate = captureUpdates(updateCapture).find(
+      (update) => update['status'] === 'failed' && update['ocrEvidence'] !== undefined,
+    );
+    expect(terminalUpdate).toEqual(expect.objectContaining({
+      captureId: 'capture-terminal-error',
+      raw,
+      errorCode: 'terminal_error',
+      ocrEvidence: expect.objectContaining({
+        status: 'failed',
+        pages: [expect.objectContaining({
+          status: 'failed',
+          failure: expect.objectContaining({ code: 'ocr_worker_failed' }),
+        })],
+      }),
+    }));
+    expect(getOcr).toHaveBeenCalledWith('capture-terminal-error');
+    expect(deleteCapture).toHaveBeenCalledWith('capture-terminal-error');
+  });
+
+  it('retains a zero-page failed OCR projection as readable evidence', async () => {
+    const updateCapture = vi.fn((update: Record<string, unknown>) =>
+      of({ ...summary, ...update }));
+    const base = ocrProjection('capture-zero-page', 'failed');
+    const unavailableProvenance = {
+      status: 'unavailable' as const,
+      profileId: 'profile-1',
+      profileSpecSha256: 'e'.repeat(64),
+      reason: 'worker_crashed' as const,
+    };
+    const zeroPage: CaptureOcrProjection = {
+      ...base,
+      source: null,
+      pageCount: 0,
+      pages: [],
+      provenance: unavailableProvenance,
+      failure: { code: 'ocr_worker_failed', message: 'OCR failed' },
+    };
+    const terminal = operation({
+      captureId: 'capture-zero-page',
+      status: 'failed',
+      error: { code: 'terminal_error', message: 'terminal evidence' },
+    });
+    const deleteCapture = vi.fn(() => of(undefined));
+    const store = initializeCapture(
+      libraryStub({ updateCapture }),
+      runtimeStub({
+        createCapture: vi.fn(() => of(terminal)),
+        getOcr: vi.fn(() => of(zeroPage)),
+        deleteCapture,
+      }),
+    );
+
+    store.service.retry$(summary.documentId, store.host).subscribe();
+    TestBed.tick();
+    await settleCaptureLifecycle();
+
+    expect(captureUpdates(updateCapture)).toContainEqual(expect.objectContaining({
+      status: 'failed',
+      captureId: 'capture-zero-page',
+      ocrEvidence: expect.objectContaining({
+        pageCount: 0,
+        pages: [],
+        provenance: expect.objectContaining({ status: 'unavailable' }),
+      }),
+    }));
+    expect(deleteCapture).toHaveBeenCalledWith('capture-zero-page');
+  });
+
+  it.each<[string, () => Observable<unknown>]>([
+    ['getOcr error', () => throwError(() => new Error('OCR transport failed'))],
+    ['identity mismatch', () => of({
+      ...ocrProjection('capture-identity-mismatch', 'completed'),
+      contractSha256: 'b'.repeat(64),
+    })],
+    ['malformed projection', () => of({
+      ...ocrProjection('capture-malformed', 'completed'),
+      pages: [{}],
+    })],
+  ])('keeps the runtime operation for %s before terminal commit', async (_case, getOcrFactory) => {
+    const updateCapture = vi.fn((update: Record<string, unknown>) =>
+      of({ ...summary, ...update }));
+    const deleteCapture = vi.fn(() => of(undefined));
+    const captureId = _case === 'getOcr error'
+      ? 'capture-1'
+      : _case === 'identity mismatch'
+        ? 'capture-identity-mismatch'
+        : 'capture-malformed';
+    const terminal = operation({ captureId, status: 'completed' });
+    const getOcr = vi.fn(getOcrFactory);
+    const store = initializeCapture(
+      libraryStub({ updateCapture }),
+      runtimeStub({ createCapture: vi.fn(() => of(terminal)), getOcr, deleteCapture }),
+    );
+
+    store.service.retry$(summary.documentId, store.host).subscribe();
+    TestBed.tick();
+    await settleCaptureLifecycle();
+
+    expect(captureUpdates(updateCapture)).toContainEqual(expect.objectContaining({
+      status: 'recovery_required',
+      captureId,
+    }));
+    expect(captureUpdates(updateCapture).some(
+      (update) => update['clearCaptureId'] === true && update['status'] !== 'processing',
+    )).toBe(false);
+    expect(deleteCapture).not.toHaveBeenCalled();
+  });
+
+  it('keeps the runtime operation when host OCR readiness lacks the worker identity', async () => {
+    const updateCapture = vi.fn((update: Record<string, unknown>) =>
+      of({ ...summary, ...update }));
+    const getOcr = vi.fn(() => of(ocrProjection('capture-1', 'completed')));
+    const deleteCapture = vi.fn(() => of(undefined));
+    const store = initializeCapture(
+      libraryStub({ updateCapture }),
+      runtimeStub({
+        ocrCompute: signal<OcrComputePreflight | null>({
+          apiVersion: '2.0',
+          schemaVersion: '1',
+          service: 'capture-runtime',
+          runtimeVersion: RUNTIME_VERSION,
+          contractSetVersion: '2',
+          contractSha256: 'a'.repeat(64),
+          workerSha256: undefined,
+          mode: 'gpu-dml',
+          adapterClass: 'dedicated',
+          reasonCode: null,
+          userNoticeRequired: false,
+          noticeCode: null,
+        }),
+        getOcr,
+        deleteCapture,
+      }),
+    );
+
+    store.service.retry$(summary.documentId, store.host).subscribe();
+    TestBed.tick();
+    await settleCaptureLifecycle();
+
+    expect(getOcr).toHaveBeenCalledWith('capture-1');
+    expect(captureUpdates(updateCapture)).toContainEqual(expect.objectContaining({
+      status: 'recovery_required',
+      captureId: 'capture-1',
+    }));
+    expect(deleteCapture).not.toHaveBeenCalled();
+  });
+
+  it('uses an explicit native acceptance PDF page scope while keeping the default unbounded', () => {
+    const createCapture = vi.fn(() => of(completedOperation));
+    const store = initializeCapture(
+      libraryStub({
+        list: vi.fn(() => of<readonly DesktopLibrarySummary[]>([summary])),
+      }),
+      runtimeStub({
+        pdfPageNumbers: signal<readonly number[]>([1]),
+        createCapture,
+      }),
+    );
+
+    store.service.retry$(summary.documentId, store.host).subscribe();
+    TestBed.tick();
+
+    expect(createCapture).toHaveBeenCalledWith(
+      summary.documentId,
+      expect.any(String),
+      [1],
+    );
+  });
+
+  it('publishes raw during structuring before the terminal result is committed', async () => {
+    const structuringOperation = operation({
+      captureId: 'capture-1',
+      status: 'structuring',
+    });
+    const updateCapture = vi.fn((update: Record<string, unknown>) =>
+      of({ ...summary, ...update }));
+    const getRaw = vi.fn(() => of(raw));
+    const store = initializeCapture(
+      libraryStub({ updateCapture }),
+      runtimeStub({
+        createCapture: vi.fn(() => of(structuringOperation)),
+        getCapture: vi.fn(() => of(completedOperation)),
+        getRaw,
+      }),
+    );
+
+    vi.useFakeTimers();
+    try {
+      store.service.retry$(summary.documentId, store.host).subscribe();
+      vi.advanceTimersByTime(700);
+      TestBed.tick();
+      vi.useRealTimers();
+      await settleCaptureLifecycle();
+
+      const updates = captureUpdates(updateCapture);
+      const rawUpdates = updates.filter((update) => 'raw' in update);
+      const resultIndex = updates.findIndex(
+        (update) => update['status'] === 'completed' && 'result' in update,
+      );
+
+      expect(rawUpdates).toHaveLength(1);
+      expect(rawUpdates[0]).toEqual(expect.objectContaining({
+        documentId: summary.documentId,
+        captureId: 'capture-1',
+        status: 'processing',
+        stage: 'structuring',
+        raw,
+      }));
+      expect(rawUpdates[0]).not.toHaveProperty('result');
+      expect(resultIndex).toBeGreaterThan(updates.indexOf(rawUpdates[0]));
+      expect(updates[resultIndex]).toEqual(expect.objectContaining({
+        status: 'completed',
+        captureId: 'capture-1',
+        result,
+      }));
+      expect(updates[resultIndex]).not.toHaveProperty('raw');
+      expect(getRaw).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops polling at awaiting_structuring and durably commits OCR before runtime cleanup', async () => {
+    const captureId = 'capture-ocr-first';
+    const created = operation({ captureId, status: 'created' });
+    const extracting = operation({ captureId, status: 'extracting' });
+    const awaitingStructuring = operation({
+      captureId,
+      status: 'awaiting_structuring',
+    });
+    const events: string[] = [];
+    const updateCapture = vi.fn((update: Record<string, unknown>) => {
+      const evidence = update['ocrEvidence'];
+      if (
+        evidence !== undefined
+        && typeof evidence === 'object'
+        && evidence !== null
+        && (evidence as { status?: unknown }).status !== update['status']
+      ) {
+        return throwError(() => new Error('native OCR evidence status validation failed'));
+      }
+      return of({ ...summary, ...update }).pipe(
+        finalize(() => {
+          if (update['ocrEvidence'] !== undefined) {
+            events.push('library:durable-awaiting-write:complete');
+          }
+          if (update['clearCaptureId'] === true && update['status'] === 'awaiting_confirmation') {
+            events.push('library:clearCaptureId:complete');
+          }
+        }),
+      );
+    });
+    const getCapture = vi.fn(() => {
+      if (getCapture.mock.calls.length === 1) return of(extracting);
+      if (getCapture.mock.calls.length === 2) return of(awaitingStructuring);
+      return throwError(() => new Error('poll after awaiting_structuring is forbidden'));
+    });
+    const getRaw = vi.fn(() => of(raw).pipe(
+      finalize(() => events.push('runtime:getRaw:complete')),
+    ));
+    const getOcr = vi.fn(() => of(ocrProjection(captureId, 'completed')).pipe(
+      finalize(() => events.push('runtime:getOcr:complete')),
+    ));
+    const getResult = vi.fn(() => of(result));
+    const deleteCapture = vi.fn(() => of(undefined).pipe(
+      finalize(() => events.push('runtime:delete:complete')),
+    ));
+    const startModelInstallation = vi.fn();
+    const store = initializeCapture(
+      libraryStub({
+        list: vi.fn(() => of<readonly DesktopLibrarySummary[]>([summary])),
+        updateCapture,
+      }),
+      runtimeStub({
+        createCapture: vi.fn(() => of(created)),
+        getCapture,
+        getRaw,
+        getOcr,
+        getResult,
+        deleteCapture,
+        startModelInstallation,
+      }),
+    );
+
+    vi.useFakeTimers();
+    try {
+      store.service.retry$(summary.documentId, store.host).subscribe();
+      TestBed.tick();
+      for (let index = 0; index < 3; index += 1) {
+        vi.advanceTimersByTime(700);
+        TestBed.tick();
+        for (let microtask = 0; microtask < 5; microtask += 1) {
+          await Promise.resolve();
+        }
+      }
+      vi.useRealTimers();
+      await settleCaptureLifecycle();
+
+      const updates = captureUpdates(updateCapture);
+      const evidenceUpdate = updates.find((update) => update['ocrEvidence'] !== undefined);
+      expect(evidenceUpdate).toEqual(expect.objectContaining({
+        documentId: summary.documentId,
+        captureId,
+        status: 'completed',
+        stage: 'awaiting_structuring',
+        raw,
+        ocrEvidence: expect.objectContaining({
+          schemaVersion: 1,
+          captureId,
+        }),
+      }));
+      const confirmationUpdate = updates.find(
+        (update) => update['status'] === 'awaiting_confirmation' && update['clearCaptureId'] === true,
+      );
+      expect(confirmationUpdate).toEqual(expect.objectContaining({
+        documentId: summary.documentId,
+        status: 'awaiting_confirmation',
+        stage: 'awaiting_structuring',
+        clearCaptureId: true,
+      }));
+      expect(confirmationUpdate).not.toHaveProperty('captureId');
+      expect(confirmationUpdate).not.toHaveProperty('ocrEvidence');
+      expect(getCapture).toHaveBeenCalledTimes(2);
+      expect(getRaw).toHaveBeenCalledOnce();
+      expect(getOcr).toHaveBeenCalledOnce();
+      expect(evidenceUpdate).not.toHaveProperty('result');
+      expect(getResult).not.toHaveBeenCalled();
+      expect(startModelInstallation).not.toHaveBeenCalled();
+      expect(deleteCapture).toHaveBeenCalledOnce();
+      expect(deleteCapture).toHaveBeenCalledWith(captureId);
+      const rawIndex = events.indexOf('runtime:getRaw:complete');
+      const ocrIndex = events.indexOf('runtime:getOcr:complete');
+      const durableIndex = events.indexOf('library:durable-awaiting-write:complete');
+      const deleteIndex = events.indexOf('runtime:delete:complete');
+      const clearIndex = events.indexOf('library:clearCaptureId:complete');
+      expect(rawIndex).toBeLessThan(ocrIndex);
+      expect(ocrIndex).toBeLessThan(durableIndex);
+      expect(durableIndex).toBeLessThan(deleteIndex);
+      expect(deleteIndex).toBeLessThan(clearIndex);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('retains the runtime operation when awaiting OCR durability fails before cleanup', async () => {
+    const captureId = 'capture-ocr-first-durable-failure';
+    const created = operation({ captureId, status: 'created' });
+    const extracting = operation({ captureId, status: 'extracting' });
+    const awaitingStructuring = operation({
+      captureId,
+      status: 'awaiting_structuring',
+    });
+    const events: string[] = [];
+    const updateCapture = vi.fn((update: Record<string, unknown>) => {
+      if (update['ocrEvidence'] !== undefined) {
+        events.push('library:durable-awaiting-write:failed');
+        return throwError(() => new Error('durable awaiting write failed'));
+      }
+      return of({ ...summary, ...update }).pipe(
+        finalize(() => {
+          if (update['clearCaptureId'] === true && update['status'] === 'awaiting_confirmation') {
+            events.push('library:clearCaptureId:complete');
+          }
+        }),
+      );
+    });
+    const getCapture = vi.fn(() => {
+      if (getCapture.mock.calls.length === 1) return of(extracting);
+      if (getCapture.mock.calls.length === 2) return of(awaitingStructuring);
+      return throwError(() => new Error('poll after awaiting_structuring is forbidden'));
+    });
+    const getRaw = vi.fn(() => of(raw).pipe(
+      finalize(() => events.push('runtime:getRaw:complete')),
+    ));
+    const getOcr = vi.fn(() => of(ocrProjection(captureId, 'completed')).pipe(
+      finalize(() => events.push('runtime:getOcr:complete')),
+    ));
+    const deleteCapture = vi.fn(() => of(undefined));
+    const store = initializeCapture(
+      libraryStub({
+        list: vi.fn(() => of<readonly DesktopLibrarySummary[]>([summary])),
+        updateCapture,
+      }),
+      runtimeStub({
+        createCapture: vi.fn(() => of(created)),
+        getCapture,
+        getRaw,
+        getOcr,
+        deleteCapture,
+      }),
+    );
+
+    vi.useFakeTimers();
+    try {
+      store.service.retry$(summary.documentId, store.host).subscribe();
+      TestBed.tick();
+      for (let index = 0; index < 3; index += 1) {
+        vi.advanceTimersByTime(700);
+        TestBed.tick();
+        for (let microtask = 0; microtask < 5; microtask += 1) {
+          await Promise.resolve();
+        }
+      }
+      vi.useRealTimers();
+      await settleCaptureLifecycle();
+
+      const updates = captureUpdates(updateCapture);
+      expect(getCapture).toHaveBeenCalledTimes(2);
+      expect(getRaw).toHaveBeenCalledOnce();
+      expect(getOcr).toHaveBeenCalledOnce();
+      expect(events).toContain('library:durable-awaiting-write:failed');
+      expect(events.indexOf('runtime:getRaw:complete')).toBeLessThan(
+        events.indexOf('runtime:getOcr:complete'),
+      );
+      expect(events.indexOf('runtime:getOcr:complete')).toBeLessThan(
+        events.indexOf('library:durable-awaiting-write:failed'),
+      );
+      expect(updates).toContainEqual(expect.objectContaining({
+        documentId: summary.documentId,
+        captureId,
+        status: 'recovery_required',
+      }));
+      expect(updates.some(
+        (update) => update['clearCaptureId'] === true && update['status'] !== 'processing',
+      )).toBe(false);
+      expect(deleteCapture).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([
+    ['failed OCR projection', (captureId: string) => ocrProjection(captureId, 'failed')],
+    ['completed projection with a failed page', (captureId: string) => ({
+      ...ocrProjection(captureId, 'completed'),
+      pages: [ocrProjection(captureId, 'failed').pages[0]],
+    })],
+  ] as const)(
+    'fails closed at the OCR checkpoint for %s',
+    async (_case, projectionFactory) => {
+      const captureId = `capture-ocr-checkpoint-${_case.replace(/ /g, '-')}`;
+      const created = operation({ captureId, status: 'created' });
+      const extracting = operation({ captureId, status: 'extracting' });
+      const awaitingStructuring = operation({
+        captureId,
+        status: 'awaiting_structuring',
+      });
+      const updateCapture = vi.fn((update: Record<string, unknown>) =>
+        of({ ...summary, ...update }));
+      const getCapture = vi.fn(() => {
+        if (getCapture.mock.calls.length === 1) return of(extracting);
+        if (getCapture.mock.calls.length === 2) return of(awaitingStructuring);
+        return throwError(() => new Error('poll after awaiting_structuring is forbidden'));
+      });
+      const getRaw = vi.fn(() => of(raw));
+      const getOcr = vi.fn(() => of(projectionFactory(captureId)));
+      const deleteCapture = vi.fn(() => of(undefined));
+      const store = initializeCapture(
+        libraryStub({
+          list: vi.fn(() => of<readonly DesktopLibrarySummary[]>([summary])),
+          updateCapture,
+        }),
+        runtimeStub({
+          createCapture: vi.fn(() => of(created)),
+          getCapture,
+          getRaw,
+          getOcr,
+          deleteCapture,
+        }),
+      );
+
+      vi.useFakeTimers();
+      try {
+        store.service.retry$(summary.documentId, store.host).subscribe();
+        TestBed.tick();
+        for (let index = 0; index < 3; index += 1) {
+          vi.advanceTimersByTime(700);
+          TestBed.tick();
+          for (let microtask = 0; microtask < 5; microtask += 1) {
+            await Promise.resolve();
+          }
+        }
+        vi.useRealTimers();
+        await settleCaptureLifecycle();
+
+        const updates = captureUpdates(updateCapture);
+        expect(getCapture).toHaveBeenCalledTimes(2);
+        expect(getRaw).toHaveBeenCalledOnce();
+        expect(getOcr).toHaveBeenCalledOnce();
+        expect(updates).toContainEqual(expect.objectContaining({
+          documentId: summary.documentId,
+          captureId,
+          status: 'recovery_required',
+        }));
+        expect(updates.some((update) => update['status'] === 'awaiting_confirmation')).toBe(false);
+        expect(updates.some(
+          (update) => update['clearCaptureId'] === true && update['status'] !== 'processing',
+        )).toBe(false);
+        expect(deleteCapture).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it.each(['processing', 'persisting'] as const)(
+    'resumes a retained runtime operation after restart from %s without creating a replacement',
+    async (status) => {
+      const retained = {
+        ...summary,
+        status,
+        stage: status === 'processing' ? 'extracting' : 'completed',
+        captureId: 'capture-restart',
+      } satisfies DesktopLibrarySummary;
+      const terminal = operation({
+        ...completedOperation,
+        captureId: 'capture-restart',
+      });
+      const createCapture = vi.fn(() => of(completedOperation));
+      const getCapture = vi.fn(() => of(terminal));
+      const deleteCapture = vi.fn(() => of(undefined));
+      const library = libraryStub({
+        list: vi.fn(() => of([retained])),
+        get: vi.fn(() => of<DesktopLibraryDetail>(retained)),
+      });
+      const store = initializeCapture(
+        library,
+        runtimeStub({ createCapture, getCapture, deleteCapture }),
+      );
+
+      store.service.retry$(retained.documentId, store.host).subscribe();
+      TestBed.tick();
+      await settleCaptureLifecycle();
+
+      expect(createCapture).not.toHaveBeenCalled();
+      expect(getCapture).toHaveBeenCalledWith('capture-restart');
+      expect(deleteCapture).toHaveBeenCalledWith('capture-restart');
+    },
+  );
+
+  it.each([
+    ['completed', 'completed'],
+    ['failed', 'failed'],
+    ['canceled', 'cancelled'],
+  ] as const)(
+    'retries only cleanup after restart when %s terminal data is already committed',
+    (status, stage) => {
+      const retained = {
+        ...summary,
+        status,
+        stage,
+        captureId: 'capture-committed',
+        errorCode: status === 'completed' ? undefined : 'terminal_error',
+        errorMessage: status === 'completed' ? undefined : 'terminal evidence',
+      } satisfies DesktopLibrarySummary;
+      const createCapture = vi.fn(() => of(completedOperation));
+      const getCapture = vi.fn(() => of(completedOperation));
+      const getRaw = vi.fn(() => of(raw));
+      const deleteCapture = vi.fn(() => of(undefined));
+      const updateCapture = vi.fn((update: Record<string, unknown>) =>
+        of({ ...retained, ...update }));
+      const store = initializeCapture(
+        libraryStub({
+          list: vi.fn(() => of([retained])),
+          get: vi.fn(() => of<DesktopLibraryDetail>(retained)),
+          updateCapture,
+        }),
+        runtimeStub({ createCapture, getCapture, getRaw, deleteCapture }),
+      );
+
+      store.service.retry$(retained.documentId, store.host).subscribe();
+      TestBed.tick();
+
+      expect(createCapture).not.toHaveBeenCalled();
+      expect(getCapture).not.toHaveBeenCalled();
+      expect(getRaw).not.toHaveBeenCalled();
+      expect(deleteCapture).toHaveBeenCalledWith('capture-committed');
+      expect(captureUpdates(updateCapture)).toContainEqual(
+        expect.objectContaining({
+          status,
+          clearCaptureId: true,
+          errorCode: retained.errorCode,
+          errorMessage: retained.errorMessage,
+        }),
+      );
+    },
+  );
+
+  it.each(['application/pdf', 'audio/mpeg'])(
+    'cancels a pending %s upload once and records a cancelled document',
+    (mediaType) => {
+      const pending = new Subject<CaptureOperation>();
+      const createCapture = vi.fn((_documentId: string, _clientRequestId: string) => pending);
+      const startStreamingCapture = vi.fn((_input: { clientRequestId: string }) => pending);
+      const cancelUpload = vi.fn(() => of(undefined));
+      const updateCapture = vi.fn((update: Record<string, unknown>) =>
+        of({ ...summary, mediaType, ...update }));
+      const client = runtimeStub({ createCapture, startStreamingCapture, cancelUpload });
+      const store = initializeCapture(libraryStub({
+        get: vi.fn(() => of({ ...summary, mediaType })),
+        list: vi.fn(() => of([{ ...summary, mediaType }])),
+        updateCapture,
+      }), client);
+
+      store.service.retry$(summary.documentId, store.host).subscribe();
+      const requestId = mediaType === 'audio/mpeg'
+        ? startStreamingCapture.mock.calls[0][0].clientRequestId
+        : createCapture.mock.calls[0][1];
+      store.service.cancel(summary.documentId);
+      store.service.cancel(summary.documentId);
+
+      expect(cancelUpload).toHaveBeenCalledOnce();
+      expect(cancelUpload).toHaveBeenCalledWith(requestId);
+      pending.error(new Error('Upload was cancelled.'));
+      TestBed.tick();
+
+      expect(captureUpdates(updateCapture)).toContainEqual({
+        documentId: summary.documentId,
+        status: 'canceled',
+        stage: 'cancelled',
+        clearCaptureId: true,
+      });
+      expect(captureUpdates(updateCapture).some((update) => update['status'] === 'failed')).toBe(false);
+      expect(store.service.busyIds().has(summary.documentId)).toBe(false);
+      expect(client.cancelCapture).not.toHaveBeenCalled();
+    },
+  );
+
+  it('remembers repeated cancel clicks before create resolves and sends one independent request', () => {
+    const created = new Subject<CaptureOperation>();
+    const cancelCapture = vi.fn(() => of(cancelledOperation));
+    const getCapture = vi.fn(() => of(completedOperation));
+    const library = libraryStub();
+    const client = runtimeStub({
+      createCapture: vi.fn(() => created),
+      cancelCapture,
+      getCapture,
+    });
+    const store = initializeCapture(library, client);
+
+    store.service.retry$(summary.documentId, store.host).subscribe();
+    store.service.cancel(summary.documentId);
+    store.service.cancel(summary.documentId);
+    created.next(runningOperation);
+    created.complete();
+    TestBed.tick();
+
+    expect(cancelCapture).toHaveBeenCalledOnce();
+    expect(cancelCapture).toHaveBeenCalledWith('capture-1');
+    expect(getCapture).not.toHaveBeenCalled();
+  });
+
+  it('interrupts an in-flight poll and sends cancellation immediately', () => {
+    const polled = new Subject<CaptureOperation>();
+    const cancelCapture = vi.fn(() => of(cancelledOperation));
+    const getCapture = vi.fn(() => polled);
+    const client = runtimeStub({
+      createCapture: vi.fn(() => of(runningOperation)),
+      cancelCapture,
+      getCapture,
+    });
+    const store = initializeCapture(libraryStub(), client);
+
+    vi.useFakeTimers();
+    try {
+      store.service.retry$(summary.documentId, store.host).subscribe();
+      vi.advanceTimersByTime(700);
+      expect(getCapture).toHaveBeenCalledWith('capture-1');
+      expect(cancelCapture).not.toHaveBeenCalled();
+
+      store.service.cancel(summary.documentId);
+      TestBed.tick();
+
+      expect(cancelCapture).toHaveBeenCalledOnce();
+      expect(client.cancelUpload).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('lets an already-terminal runtime response win a cancel/complete race', async () => {
+    const created = new Subject<CaptureOperation>();
+    const cancelCapture = vi.fn(() => of(cancelledOperation));
+    const deleteCapture = vi.fn(() => of(undefined));
+    const client = runtimeStub({
+      createCapture: vi.fn(() => created),
+      cancelCapture,
+      deleteCapture,
+    });
+    const store = initializeCapture(libraryStub(), client);
+
+    store.service.retry$(summary.documentId, store.host).subscribe();
+    store.service.cancel(summary.documentId);
+    created.next(completedOperation);
+    created.complete();
+    TestBed.tick();
+    await settleCaptureLifecycle();
+
+    expect(cancelCapture).not.toHaveBeenCalled();
+    expect(deleteCapture).toHaveBeenCalledWith('capture-1');
+  });
+
+  it('persists optional raw data before deleting a canceled runtime operation', () => {
+    const updateCapture = vi.fn((update: Record<string, unknown>) =>
+      of({ ...summary, ...update }));
+    const getRaw = vi.fn(() => of(raw));
+    const getOcr = vi.fn(() => of(ocrProjection('capture-1', 'completed')));
+    const deleteCapture = vi.fn(() => of(undefined));
+    const store = initializeCapture(
+      libraryStub({ updateCapture }),
+      runtimeStub({
+        createCapture: vi.fn(() => of(cancelledOperation)),
+        getRaw,
+        getOcr,
+        deleteCapture,
+      }),
+    );
+
+    store.service.retry$(summary.documentId, store.host).subscribe();
+    TestBed.tick();
+
+    expect(getRaw).toHaveBeenCalledWith('capture-1');
+    expect(captureUpdates(updateCapture)).toContainEqual(
+      expect.objectContaining({
+        status: 'canceled',
+        captureId: 'capture-1',
+        raw,
+      }),
+    );
+    expect(getOcr).not.toHaveBeenCalled();
+    expect(deleteCapture).toHaveBeenCalledWith('capture-1');
+  });
+
+  it('retains a canceled runtime operation when optional raw retrieval fails', () => {
+    const updateCapture = vi.fn((update: Record<string, unknown>) =>
+      of({ ...summary, ...update }));
+    const deleteCapture = vi.fn(() => of(undefined));
+    const store = initializeCapture(
+      libraryStub({ updateCapture }),
+      runtimeStub({
+        createCapture: vi.fn(() => of(cancelledOperation)),
+        getRaw: vi.fn(() => throwError(() => new Error('raw transport failed'))),
+        deleteCapture,
+      }),
+    );
+
+    store.service.retry$(summary.documentId, store.host).subscribe();
+    TestBed.tick();
+
+    expect(captureUpdates(updateCapture)).toContainEqual(
+      expect.objectContaining({
+        status: 'recovery_required',
+        captureId: 'capture-1',
+        recoveryCode: 'capture_recovery_required',
+      }),
+    );
+    expect(deleteCapture).not.toHaveBeenCalled();
+  });
+
+  it('retains the capture ID and skips DELETE when cancellation fails', () => {
+    const updateCapture = vi.fn((update: Record<string, unknown>) =>
+      of({ ...summary, ...update }));
+    const deleteCapture = vi.fn(() => of(undefined));
+    const client = runtimeStub({
+      createCapture: vi.fn(() => of(runningOperation)),
+      cancelCapture: vi.fn(() =>
+        throwError(() => new Error('cancel request failed'))),
+      deleteCapture,
+    });
+    const store = initializeCapture(libraryStub({ updateCapture }), client);
+
+    store.service.retry$(summary.documentId, store.host).subscribe();
+    store.service.cancel(summary.documentId);
+    TestBed.tick();
+
+    expect(captureUpdates(updateCapture)).toContainEqual(
+      expect.objectContaining({
+        status: 'recovery_required',
+        captureId: 'capture-1',
+        recoveryCode: 'cancel_failed',
+      }),
+    );
+    expect(deleteCapture).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['raw retrieval', {
+      getRaw: vi.fn(() => throwError(() => new Error('raw failed'))),
+    }],
+    ['result retrieval', {
+      getResult: vi.fn(() => throwError(() => new Error('result failed'))),
+    }],
+  ])('retains the runtime operation when %s fails', async (_case, runtimeOverride) => {
+    const updateCapture = vi.fn((update: Record<string, unknown>) =>
+      of({ ...summary, ...update }));
+    const deleteCapture = vi.fn(() => of(undefined));
+    const client = runtimeStub({
+      createCapture: vi.fn(() => of(completedOperation)),
+      deleteCapture,
+      ...runtimeOverride,
+    });
+    const store = initializeCapture(libraryStub({ updateCapture }), client);
+
+    store.service.retry$(summary.documentId, store.host).subscribe();
+    TestBed.tick();
+    await settleCaptureLifecycle();
+
+    expect(captureUpdates(updateCapture)).toContainEqual(
+      expect.objectContaining({
+        status: 'recovery_required',
+        captureId: 'capture-1',
+        recoveryCode: 'capture_recovery_required',
+      }),
+    );
+    expect(deleteCapture).not.toHaveBeenCalled();
+  });
+
+  it('retains the runtime operation when the terminal library commit fails', async () => {
+    let terminalCommitAttempted = false;
+    const updateCapture = vi.fn((update: Record<string, unknown>) => {
+      if (update['status'] === 'completed' && !update['clearCaptureId']) {
+        terminalCommitAttempted = true;
+        return throwError(() => new Error('library commit failed'));
+      }
+      return of({ ...summary, ...update });
+    });
+    const deleteCapture = vi.fn(() => of(undefined));
+    const client = runtimeStub({
+      createCapture: vi.fn(() => of(completedOperation)),
+      deleteCapture,
+    });
+    const store = initializeCapture(libraryStub({ updateCapture }), client);
+
+    store.service.retry$(summary.documentId, store.host).subscribe();
+    TestBed.tick();
+    await settleCaptureLifecycle();
+
+    expect(terminalCommitAttempted).toBe(true);
+    expect(captureUpdates(updateCapture)).toContainEqual(
+      expect.objectContaining({
+        status: 'recovery_required',
+        captureId: 'capture-1',
+      }),
+    );
+    expect(deleteCapture).not.toHaveBeenCalled();
+  });
+
+  it.each(['completed', 'failed'] as const)(
+    'retains the durable %s capture across terminal and recovery write failures',
+    async (terminalStatus) => {
+      const captureId = `capture-terminal-recovery-write-failure-${terminalStatus}`;
+      const terminal = operation({
+        captureId,
+        status: terminalStatus,
+        ...(terminalStatus === 'failed'
+          ? { error: { code: 'terminal_error', message: 'terminal evidence' } }
+          : {}),
+      });
+      const durable = { ...summary };
+      const terminalUpdates: Record<string, unknown>[] = [];
+      const recoveryUpdates: Record<string, unknown>[] = [];
+      const cleanupClearUpdates: Record<string, unknown>[] = [];
+      let failTerminalWrite = true;
+      let failRecoveryWrite = true;
+      const updateCapture = vi.fn((update: Record<string, unknown>) => {
+        if (
+          (update['status'] === 'completed' || update['status'] === 'failed')
+          && 'ocrEvidence' in update
+        ) {
+          terminalUpdates.push(update);
+          if (failTerminalWrite) {
+            failTerminalWrite = false;
+            return throwError(() => new Error('terminal OCR commit failed'));
+          }
+        }
+        if (update['status'] === 'recovery_required') {
+          recoveryUpdates.push(update);
+          if (failRecoveryWrite) {
+            failRecoveryWrite = false;
+            return throwError(() => new Error('recovery write failed'));
+          }
+        }
+        if (
+          update['clearCaptureId'] === true
+          && update['status'] !== 'processing'
+        ) {
+          cleanupClearUpdates.push(update);
+        }
+        Object.assign(durable, applyDurableCaptureUpdate(durable, update));
+        return of(durable);
+      });
+      const getOcr = vi.fn((id: string) => of(ocrProjection(id, terminalStatus)));
+      const deleteCapture = vi.fn(() => of(undefined));
+      const createCapture = vi.fn(() => of(terminal));
+      const getCapture = vi.fn(() => of(terminal));
+      const library = libraryStub({
+        list: vi.fn(() => of([durable])),
+        get: vi.fn(() => of<DesktopLibraryDetail>(durable)),
+        updateCapture,
+      });
+      const store = initializeCapture(
+        library,
+        runtimeStub({ createCapture, getCapture, getOcr, deleteCapture }),
+      );
+
+      store.service.retry$(summary.documentId, store.host).subscribe();
+      TestBed.tick();
+      await settleCaptureLifecycle();
+
+      expect(getOcr).toHaveBeenCalledWith(captureId);
+      expect(terminalUpdates).toHaveLength(1);
+      expect(terminalUpdates[0]).toEqual(expect.objectContaining({
+        captureId,
+        status: terminalStatus,
+        ocrEvidence: expect.objectContaining({
+          schemaVersion: 1,
+          captureId,
+          status: terminalStatus,
+          digest: expect.stringMatching(/^[a-f0-9]{64}$/u),
+        }),
+      }));
+      expect(recoveryUpdates).toHaveLength(1);
+      expect(deleteCapture).not.toHaveBeenCalled();
+      expect(cleanupClearUpdates).toHaveLength(0);
+      expect(durable).toEqual(expect.objectContaining({
+        status: 'persisting',
+        captureId,
+      }));
+      expect(store.service.busyIds().has(summary.documentId)).toBe(false);
+
+      store.service.retry$(summary.documentId, store.host).subscribe();
+      TestBed.tick();
+      await settleCaptureLifecycle();
+
+      expect(createCapture).toHaveBeenCalledOnce();
+      expect(getCapture).toHaveBeenCalledWith(captureId);
+    },
+  );
+
+  it('retains a recovery link when runtime DELETE fails after a successful commit', async () => {
+    const events: string[] = [];
+    const updateCapture = vi.fn((update: Record<string, unknown>) => {
+      events.push(`library:${String(update['status'])}`);
+      return of({ ...summary, ...update });
+    });
+    const deleteCapture = vi.fn(() => {
+      events.push('runtime:delete');
+      return throwError(() => new Error('delete failed'));
+    });
+    const client = runtimeStub({
+      createCapture: vi.fn(() => of(completedOperation)),
+      deleteCapture,
+    });
+    const store = initializeCapture(libraryStub({ updateCapture }), client);
+
+    store.service.retry$(summary.documentId, store.host).subscribe();
+    TestBed.tick();
+    await settleCaptureLifecycle();
+
+    expect(events.indexOf('library:completed')).toBeLessThan(
+      events.indexOf('runtime:delete'),
+    );
+    expect(captureUpdates(updateCapture)).toContainEqual(
+      expect.objectContaining({
+        status: 'recovery_required',
+        captureId: 'capture-1',
+        recoveryCode: 'runtime_cleanup_failed',
+      }),
+    );
+  });
+
+  it.each([
+    ['failed', 'failed'],
+    ['cancelled', 'canceled'],
+  ] as const)(
+    'keeps %s terminal evidence separate when runtime cleanup fails',
+    async (runtimeStatus, libraryStatus) => {
+      const terminal = operation({
+        captureId: 'capture-terminal-error',
+        status: runtimeStatus,
+        error: {
+          code: 'terminal_error',
+          message: 'terminal evidence',
+        },
+      });
+      const updateCapture = vi.fn((update: Record<string, unknown>) =>
+        of({ ...summary, ...update }));
+      const deleteCapture = vi.fn(() =>
+        throwError(() => new Error('cleanup transport failed')));
+      const store = initializeCapture(
+        libraryStub({ updateCapture }),
+        runtimeStub({
+          createCapture: vi.fn(() => of(terminal)),
+          deleteCapture,
+        }),
+      );
+
+      store.service.retry$(summary.documentId, store.host).subscribe();
+      TestBed.tick();
+      await settleCaptureLifecycle();
+
+      expect(captureUpdates(updateCapture)).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          status: libraryStatus,
+          captureId: 'capture-terminal-error',
+          raw,
+          errorCode: 'terminal_error',
+          errorMessage: 'terminal evidence',
+        }),
+        expect.objectContaining({
+          status: 'recovery_required',
+          captureId: 'capture-terminal-error',
+          errorCode: 'terminal_error',
+          errorMessage: 'terminal evidence',
+          recoveryCode: 'runtime_cleanup_failed',
+          recoveryMessage: 'cleanup transport failed',
+        }),
+      ]));
+    },
+  );
+
+  it.each([
+    ['failed', 'failed'],
+    ['canceled', 'cancelled'],
+  ] as const)(
+    'preserves %s terminal evidence when retrying cleanup after restart',
+    (status, stage) => {
+      const recovery = {
+        ...summary,
+        status: 'recovery_required',
+        stage,
+        captureId: 'capture-cleanup-terminal',
+        errorCode: 'terminal_error',
+        errorMessage: 'terminal evidence',
+        recoveryCode: 'runtime_cleanup_failed',
+        recoveryMessage: 'cleanup transport failed',
+      } satisfies DesktopLibrarySummary;
+      const createCapture = vi.fn(() => of(completedOperation));
+      const getCapture = vi.fn(() => of(completedOperation));
+      const getRaw = vi.fn(() => of(raw));
+      const deleteCapture = vi.fn(() => of(undefined));
+      const updateCapture = vi.fn((update: Record<string, unknown>) =>
+        of({ ...recovery, ...update }));
+      const store = initializeCapture(
+        libraryStub({
+          list: vi.fn(() => of([recovery])),
+          get: vi.fn(() => of<DesktopLibraryDetail>(recovery)),
+          updateCapture,
+        }),
+        runtimeStub({ createCapture, getCapture, getRaw, deleteCapture }),
+      );
+
+      store.service.retry$(recovery.documentId, store.host).subscribe();
+      TestBed.tick();
+
+      expect(createCapture).not.toHaveBeenCalled();
+      expect(getCapture).not.toHaveBeenCalled();
+      expect(getRaw).not.toHaveBeenCalled();
+      expect(deleteCapture).toHaveBeenCalledWith('capture-cleanup-terminal');
+      expect(captureUpdates(updateCapture)).toContainEqual(
+        expect.objectContaining({
+          status,
+          clearCaptureId: true,
+          errorCode: 'terminal_error',
+          errorMessage: 'terminal evidence',
+        }),
+      );
+    },
+  );
+
+  it('keeps cleanup-only recovery durable when both post-commit library writes fail', async () => {
+    const terminal = operation({
+      captureId: 'capture-double-write',
+      status: 'failed',
+      error: {
+        code: 'terminal_error',
+        message: 'terminal evidence',
+      },
+    });
+    let durable: DesktopLibrarySummary = summary;
+    let clearWriteFailed = false;
+    let recoveryWriteFailed = false;
+    const updateCapture = vi.fn((update: Record<string, unknown>) => {
+      if (
+        update['clearCaptureId'] === true
+        && update['status'] === 'failed'
+        && !clearWriteFailed
+      ) {
+        clearWriteFailed = true;
+        return throwError(() => new Error('clear link write failed'));
+      }
+      if (
+        update['recoveryCode'] === 'runtime_cleanup_failed'
+        && !recoveryWriteFailed
+      ) {
+        recoveryWriteFailed = true;
+        return throwError(() => new Error('recovery metadata write failed'));
+      }
+      durable = applyDurableCaptureUpdate(durable, update);
+      return of(durable);
+    });
+    const library = libraryStub({
+      list: vi.fn(() => of([durable])),
+      get: vi.fn(() => of<DesktopLibraryDetail>(durable)),
+      updateCapture,
+    });
+    const deleteCapture = vi.fn(() => of(undefined));
+    const firstStore = initializeCapture(
+      library,
+      runtimeStub({
+        createCapture: vi.fn(() => of(terminal)),
+        deleteCapture,
+      }),
+    );
+
+    firstStore.service.retry$(summary.documentId, firstStore.host).subscribe();
+    TestBed.tick();
+    await settleCaptureLifecycle();
+
+    expect(clearWriteFailed).toBe(true);
+    expect(recoveryWriteFailed).toBe(true);
+    expect(durable).toEqual(expect.objectContaining({
+      status: 'recovery_required',
+      stage: 'failed',
+      captureId: 'capture-double-write',
+      errorCode: 'terminal_error',
+      errorMessage: 'terminal evidence',
+      recoveryCode: 'runtime_cleanup_failed',
+      recoveryMessage: 'recovery metadata write failed',
+    }));
+
+    TestBed.resetTestingModule();
+    const createAfterRestart = vi.fn(() => of(completedOperation));
+    const getAfterRestart = vi.fn(() => of(completedOperation));
+    const getRawAfterRestart = vi.fn(() => of(raw));
+    const restartedStore = initializeCapture(
+      library,
+      runtimeStub({
+        createCapture: createAfterRestart,
+        getCapture: getAfterRestart,
+        getRaw: getRawAfterRestart,
+        deleteCapture,
+      }),
+    );
+
+    restartedStore.service.retry$(summary.documentId, restartedStore.host).subscribe();
+    TestBed.tick();
+
+    expect(createAfterRestart).not.toHaveBeenCalled();
+    expect(getAfterRestart).not.toHaveBeenCalled();
+    expect(getRawAfterRestart).not.toHaveBeenCalled();
+    expect(deleteCapture).toHaveBeenCalledTimes(2);
+    expect(durable).toEqual(expect.objectContaining({
+      status: 'failed',
+      captureId: undefined,
+      errorCode: 'terminal_error',
+      errorMessage: 'terminal evidence',
+      recoveryCode: undefined,
+      recoveryMessage: undefined,
+    }));
+  });
+
+  it('keeps cleanup-only recovery durable when retry cleanup writes fail twice', () => {
+    let durable: DesktopLibrarySummary = {
+      ...summary,
+      status: 'recovery_required',
+      stage: 'cancelled',
+      captureId: 'capture-retry-double-write',
+      errorCode: 'terminal_cancelled',
+      errorMessage: 'canceled terminal evidence',
+      recoveryCode: 'runtime_cleanup_failed',
+      recoveryMessage: 'initial cleanup failure',
+    };
+    let clearWriteFailed = false;
+    let recoveryWriteFailed = false;
+    const updateCapture = vi.fn((update: Record<string, unknown>) => {
+      if (update['clearCaptureId'] === true && !clearWriteFailed) {
+        clearWriteFailed = true;
+        return throwError(() => new Error('retry clear link write failed'));
+      }
+      if (
+        update['recoveryCode'] === 'runtime_cleanup_failed'
+        && !recoveryWriteFailed
+      ) {
+        recoveryWriteFailed = true;
+        return throwError(() => new Error('retry recovery metadata write failed'));
+      }
+      durable = applyDurableCaptureUpdate(durable, update);
+      return of(durable);
+    });
+    const library = libraryStub({
+      list: vi.fn(() => of([durable])),
+      get: vi.fn(() => of<DesktopLibraryDetail>(durable)),
+      updateCapture,
+    });
+    const createCapture = vi.fn(() => of(completedOperation));
+    const getCapture = vi.fn(() => of(completedOperation));
+    const getRaw = vi.fn(() => of(raw));
+    const deleteCapture = vi.fn(() => of(undefined));
+    const store = initializeCapture(
+      library,
+      runtimeStub({ createCapture, getCapture, getRaw, deleteCapture }),
+    );
+
+    store.service.retry$(summary.documentId, store.host).subscribe();
+    TestBed.tick();
+
+    expect(clearWriteFailed).toBe(true);
+    expect(recoveryWriteFailed).toBe(true);
+    expect(createCapture).not.toHaveBeenCalled();
+    expect(getCapture).not.toHaveBeenCalled();
+    expect(getRaw).not.toHaveBeenCalled();
+    expect(deleteCapture).toHaveBeenCalledOnce();
+    expect(durable).toEqual(expect.objectContaining({
+      status: 'recovery_required',
+      stage: 'cancelled',
+      captureId: 'capture-retry-double-write',
+      errorCode: 'terminal_cancelled',
+      errorMessage: 'canceled terminal evidence',
+      recoveryCode: 'runtime_cleanup_failed',
+      recoveryMessage: 'retry recovery metadata write failed',
+    }));
+  });
+
+  it('recovers persistence with the same runtime ID and never creates a new operation', async () => {
+    const recovery = {
+      ...summary,
+      status: 'recovery_required',
+      stage: 'completed',
+      captureId: 'capture-recovery',
+      recoveryCode: 'capture_recovery_required',
+    } satisfies DesktopLibrarySummary;
+    const createCapture = vi.fn(() => of(completedOperation));
+    const getCapture = vi.fn(() => of(operation({
+      ...completedOperation,
+      captureId: 'capture-recovery',
+    })));
+    const deleteCapture = vi.fn(() => of(undefined));
+    const library = libraryStub({
+      list: vi.fn(() => of([recovery])),
+      get: vi.fn(() => of<DesktopLibraryDetail>(recovery)),
+    });
+    const client = runtimeStub({ createCapture, getCapture, deleteCapture });
+    const store = initializeCapture(library, client);
+
+    store.service.retry$(recovery.documentId, store.host).subscribe();
+    TestBed.tick();
+    await settleCaptureLifecycle();
+
+    expect(createCapture).not.toHaveBeenCalled();
+    expect(getCapture).toHaveBeenCalledWith('capture-recovery');
+    expect(deleteCapture).toHaveBeenCalledWith('capture-recovery');
+  });
+
+  it('retries only DELETE for a cleanup recovery and treats success as clearable', () => {
+    const recovery = {
+      ...summary,
+      status: 'recovery_required',
+      stage: 'completed',
+      captureId: 'capture-cleanup',
+      recoveryCode: 'runtime_cleanup_failed',
+    } satisfies DesktopLibrarySummary;
+    const updateCapture = vi.fn((update: Record<string, unknown>) =>
+      of({ ...recovery, ...update }));
+    const createCapture = vi.fn(() => of(completedOperation));
+    const getCapture = vi.fn(() => of(completedOperation));
+    const deleteCapture = vi.fn(() => of(undefined));
+    const library = libraryStub({
+      list: vi.fn(() => of([recovery])),
+      get: vi.fn(() => of<DesktopLibraryDetail>(recovery)),
+      updateCapture,
+    });
+    const client = runtimeStub({ createCapture, getCapture, deleteCapture });
+    const store = initializeCapture(library, client);
+
+    store.service.retry$(recovery.documentId, store.host).subscribe();
+    TestBed.tick();
+
+    expect(createCapture).not.toHaveBeenCalled();
+    expect(getCapture).not.toHaveBeenCalled();
+    expect(deleteCapture).toHaveBeenCalledWith('capture-cleanup');
+    expect(captureUpdates(updateCapture)).toContainEqual(
+      expect.objectContaining({
+        status: 'completed',
+        clearCaptureId: true,
+      }),
+    );
+  });
+
+  it('imports the entire batch before waiting for the first capture', () => {
+    const pending = new Subject<CaptureOperation>();
+    const imported = vi.fn((input: DesktopSourceSelection) => of({
+      ...summary, documentId: input.fileName === 'first.pdf' ? '1'.repeat(32) : '2'.repeat(32),
+    }));
+    const createCapture = vi.fn(() => pending);
+    const store = initializeCapture(libraryStub({ importSelection: imported }), runtimeStub({ createCapture }));
+    store.service.addSelections$([selection('first.pdf'), selection('second.pdf')], store.host).subscribe();
+    TestBed.tick();
+    expect(imported).toHaveBeenCalledTimes(2);
+    expect(createCapture).toHaveBeenCalledTimes(1);
+    // The second document waits for its turn: nothing else may start it.
+    const lifecycle = store.service;
+    expect(lifecycle.hasActiveCapture('2'.repeat(32))).toBe(true);
+    pending.complete();
+  });
+
+  it('starts the next document of a batch when the previous capture ends, and then holds none', () => {
+    const firstCapture = new Subject<CaptureOperation>();
+    const secondCapture = new Subject<CaptureOperation>();
+    const imported = vi.fn((input: DesktopSourceSelection) => of({
+      ...summary, documentId: input.fileName === 'first.pdf' ? '1'.repeat(32) : '2'.repeat(32),
+    }));
+    const createCapture = vi.fn()
+      .mockReturnValueOnce(firstCapture)
+      .mockReturnValueOnce(secondCapture);
+    const store = initializeCapture(libraryStub({ importSelection: imported }), runtimeStub({ createCapture }));
+    const lifecycle = store.service;
+    store.service.addSelections$([selection('first.pdf'), selection('second.pdf')], store.host).subscribe();
+    TestBed.tick();
+    expect(createCapture).toHaveBeenCalledTimes(1);
+    expect(createCapture).toHaveBeenNthCalledWith(1, '1'.repeat(32), expect.any(String), undefined);
+    firstCapture.complete();
+    TestBed.tick();
+    expect(createCapture).toHaveBeenCalledTimes(2);
+    expect(createCapture).toHaveBeenNthCalledWith(2, '2'.repeat(32), expect.any(String), undefined);
+    secondCapture.complete();
+    TestBed.tick();
+    expect(lifecycle.hasActiveCapture('1'.repeat(32))).toBe(false);
+    expect(lifecycle.hasActiveCapture('2'.repeat(32))).toBe(false);
+  });
+});
+
+function initializeCapture(
+  library: ReturnType<typeof libraryStub>,
+  client: ReturnType<typeof runtimeStub>,
+) {
+  TestBed.configureTestingModule({
+    providers: [
+      { provide: DesktopLibraryService, useValue: library },
+      { provide: DesktopRuntimeClientService, useValue: client },
+    ],
+  });
+  const service = TestBed.inject(DesktopCaptureService);
+  const documents = TestBed.runInInjectionContext(() =>
+    rxResource<readonly DesktopLibrarySummary[], boolean>({
+      defaultValue: [],
+      params: () => true,
+      stream: ({ abortSignal }) => library.list('', '', abortSignal),
+    }),
+  );
+  const selectedId = signal<string | null>(null);
+  const selected = TestBed.runInInjectionContext(() =>
+    rxResource<DesktopLibraryDetail | null, string | undefined>({
+      defaultValue: null,
+      params: () => selectedId() ?? undefined,
+      stream: ({ params, abortSignal }) => library.get(params, abortSignal),
+    }),
+  );
+  const host: DesktopCaptureHost = {
+    selectedId,
+    requestedRequirements: signal<ReadonlySet<CaptureRequirementId>>(new Set()),
+    requirements: () => [],
+    documents: () => documents.value(),
+    selected: () => selected.value(),
+    refreshDocuments: () => documents.reload(),
+    reloadDocumentState: (documentId) => {
+      documents.reload();
+      if (selectedId() === documentId) selected.reload();
+    },
+    setMessage: vi.fn(),
+    identifySpeakers: () => false,
+  };
+  TestBed.tick();
+  return { service, host };
+}
+
+function selection(fileName: string): DesktopSourceSelection {
+  return { selectionToken: fileName.padEnd(32, '0'), fileName, byteLength: 16, mediaType: 'application/pdf' };
+}
+
+function libraryStub(overrides: Record<string, unknown> = {}) {
+  return Object.assign({
+    list: vi.fn((_search: string, _filter: string, _signal: AbortSignal) =>
+      of<readonly DesktopLibrarySummary[]>([])),
+    get: vi.fn((_documentId: string, _signal: AbortSignal) => of<DesktopLibraryDetail>(summary)),
+    updateCapture: vi.fn(() => of(summary)),
+  }, overrides);
+}
+
+function runtimeStub(overrides: Record<string, unknown> = {}) {
+  return Object.assign({
+    ready: signal(true),
+    ocrCompute: signal<OcrComputePreflight | null>({
+      apiVersion: '2.0',
+      schemaVersion: '1',
+      service: 'capture-runtime',
+      runtimeVersion: RUNTIME_VERSION,
+      contractSetVersion: '2',
+      contractSha256: 'a'.repeat(64),
+      workerSha256: 'f'.repeat(64),
+      mode: 'gpu-dml',
+      adapterClass: 'dedicated',
+      reasonCode: null,
+      userNoticeRequired: false,
+      noticeCode: null,
+    }),
+    pdfPageNumbers: signal<readonly number[] | undefined>(undefined),
+    cancelUpload: vi.fn(() => of(undefined)),
+    createCapture: vi.fn(() => of(completedOperation)),
+    getCapture: vi.fn(() => of(completedOperation)),
+    cancelCapture: vi.fn(() => of(cancelledOperation)),
+    getRaw: vi.fn(() => of(raw)),
+    getResult: vi.fn(() => of(result)),
+    getOcr: vi.fn((captureId: string) => of(ocrProjection(
+      captureId,
+      failedOcrCaptureIds.has(captureId) ? 'failed' : 'completed',
+    ))),
+    deleteCapture: vi.fn(() => of(undefined)),
+  }, overrides);
+}
+
+function captureUpdates(
+  updateCapture: ReturnType<typeof vi.fn>,
+): readonly Record<string, unknown>[] {
+  return updateCapture.mock.calls.map(
+    ([update]) => update as Record<string, unknown>,
+  );
+}
+
+function applyDurableCaptureUpdate(
+  current: DesktopLibrarySummary,
+  update: Record<string, unknown>,
+): DesktopLibrarySummary {
+  return {
+    ...current,
+    ...update,
+    captureId: update['clearCaptureId'] === true
+      ? undefined
+      : typeof update['captureId'] === 'string'
+        ? update['captureId']
+        : current.captureId,
+    errorCode: typeof update['errorCode'] === 'string' ? update['errorCode'] : undefined,
+    errorMessage: typeof update['errorMessage'] === 'string' ? update['errorMessage'] : undefined,
+    recoveryCode: typeof update['recoveryCode'] === 'string' ? update['recoveryCode'] : undefined,
+    recoveryMessage: typeof update['recoveryMessage'] === 'string'
+      ? update['recoveryMessage']
+      : undefined,
+  };
+}
+
+function operation(
+  input: Pick<CaptureOperation, 'captureId' | 'status'> & Partial<CaptureOperation>,
+): CaptureOperation {
+  return {
+    protocolVersion: '2',
+    ingestionId: 'ingestion-1',
+    partialRevision: 0,
+    lastEventSequence: 0,
+    createdAt: '2026-07-20T00:00:00Z',
+    updatedAt: '2026-07-20T00:00:00Z',
+    source: {
+      sha256: 'a'.repeat(64),
+      fileName: 'fixture.pdf',
+      mediaType: 'application/pdf',
+      bytes: 12,
+    },
+    ...input,
+  };
+}
+
+function ocrProjection(
+  captureId: string,
+  status: 'completed' | 'failed',
+): CaptureOcrProjection {
+  const provenance = {
+    status: 'resolved' as const,
+    engine: 'windowsml-ocr' as const,
+    model: 'ppocrv6-traditional-multilingual',
+    modelDigest: `sha256:${'d'.repeat(64)}`,
+    device: 'RTX4060',
+    profileId: 'profile-1',
+    profileSpecSha256: 'e'.repeat(64),
+  };
+  const page = status === 'completed'
+    ? {
+      page: 1,
+      status: 'recognized' as const,
+      raster: { width: 1200, height: 800, scale: 1, coordinateSystem: 'pixel' as const },
+      text: 'OCR text',
+      boxes: [{
+        polygon: [
+          { x: 100, y: 120 },
+          { x: 220, y: 120 },
+          { x: 220, y: 160 },
+          { x: 100, y: 160 },
+        ],
+        text: 'OCR text',
+        confidence: 0.875,
+      }],
+      confidence: 0.875,
+      provenance,
+    }
+    : {
+      page: 1,
+      status: 'failed' as const,
+      raster: { width: 1200, height: 800, scale: 1, coordinateSystem: 'pixel' as const },
+      provenance,
+      failure: { code: 'ocr_worker_failed', message: 'worker failed' },
+    };
+  return {
+    apiVersion: '2.0',
+    schemaVersion: '3',
+    captureId,
+    status,
+    source: {
+      sha256: 'a'.repeat(64),
+      fileName: 'fixture.pdf',
+      mediaType: 'application/pdf',
+      bytes: 12,
+    },
+    pages: [page],
+    pageCount: 1,
+    runtimeVersion: RUNTIME_VERSION,
+    contractSha256: 'a'.repeat(64),
+    provenance,
+    ...(status === 'failed'
+      ? { failure: { code: 'ocr_worker_failed', message: 'worker failed' } }
+      : {}),
+    createdAt: '2026-07-20T00:00:00Z',
+  };
+}
+
+async function settleCaptureLifecycle(): Promise<void> {
+  await new Promise<void>((resolve) => globalThis.setTimeout(resolve, 25));
+  await Promise.resolve();
+}

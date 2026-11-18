@@ -252,11 +252,11 @@ async function main(): Promise<void> {
   const npmPackages = await requireFiles(
     packages,
     /\.tgz$/u,
-    'npm package candidate',
+    'npm package archive',
   );
   if (npmPackages.length !== EXPECTED_NPM_PACKAGES.size) {
     throw new Error(
-      `Expected ${EXPECTED_NPM_PACKAGES.size} npm package candidates.`,
+      `Expected ${EXPECTED_NPM_PACKAGES.size} npm package archives.`,
     );
   }
 

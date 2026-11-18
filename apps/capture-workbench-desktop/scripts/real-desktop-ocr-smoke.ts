@@ -66,7 +66,7 @@ import {
   expectedVisibleOcrPagesForRaw,
   type ExpectedVisibleOcrPage,
 } from './installed-document-assertions.ts';
-import { assertRedactedEvidence } from './package-qa.ts';
+import { assertRedactedEvidence } from './hash-qa-installer.ts';
 import {
   assertDurableOcrSegmentsEqual,
   assertRealOcrOnlyResult,
@@ -383,7 +383,7 @@ interface PdfPageScopeEvidence {
  * seam. The caller passes the same object to the atomic writer only after this
  * assertion succeeds.
  */
-export function assertPhase1PageOnePdfSemanticEvidence(
+export function assertPdfPageOneSemanticEvidence(
   pageScope: PdfPageScopeEvidence,
   semanticEvidence: OcrSemanticEvidenceV1,
 ): void {
@@ -918,7 +918,7 @@ export async function main(options: {
 
   const observeOwnedSidecarFromExecutableSignal = async (runtimePage: Page): Promise<void> => {
     if (!acceptance || sidecarObserved) return;
-    const probe = await invokeTauriCommand(runtimePage, 'desktop_runtime_process_probe', {});
+    const probe = await invokeTauriCommand(runtimePage, 'desktop_acceptance_runtime_process_probe', {});
     if (probe === null || typeof probe !== 'object' || Array.isArray(probe)) return;
     const processId = (probe as { processId?: unknown }).processId;
     if (!Number.isSafeInteger(processId) || Number(processId) <= 0) return;
@@ -2243,14 +2243,14 @@ export async function emitAcceptanceSemanticEvidence(options: {
   readonly artifactRoot: string;
   readonly pdfPageScope?: PdfPageScopeEvidence;
   readonly buildOcrOnly: () => OcrSemanticEvidenceV1;
-  readonly assertPdfPageOne?: typeof assertPhase1PageOnePdfSemanticEvidence;
+  readonly assertPdfPageOne?: typeof assertPdfPageOneSemanticEvidence;
   readonly writeArtifact?: typeof writeOcrSemanticEvidenceArtifact;
 }): Promise<OcrSemanticArtifactIdentity> {
   const writeArtifact = options.writeArtifact ?? writeOcrSemanticEvidenceArtifact;
   const semanticEvidence = options.buildOcrOnly();
   if (options.sourceKind === 'pdf') {
     assert.ok(options.pdfPageScope, 'Phase 1 PDF semantic gate requires durable page-scope evidence.');
-    (options.assertPdfPageOne ?? assertPhase1PageOnePdfSemanticEvidence)(
+    (options.assertPdfPageOne ?? assertPdfPageOneSemanticEvidence)(
       options.pdfPageScope,
       semanticEvidence,
     );

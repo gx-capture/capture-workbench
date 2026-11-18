@@ -14,9 +14,10 @@ import { desktopMessages, setDesktopLocale } from '../i18n/desktop-messages';
 import { AsrQueueStore } from './asr-queue.store';
 import { DesktopLibraryService, type DesktopSourceSelection } from './desktop-library.service';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
-import { DesktopWorkspaceCaptureService } from './desktop-workspace-capture.service';
-import { DesktopWorkspaceFormattingService } from './desktop-workspace-formatting.service';
-import { DesktopWorkspaceStore } from './desktop-workspace.store';
+import { DesktopCaptureService } from './desktop-capture.service';
+import { DesktopFormattingService } from './desktop-formatting.service';
+import { RuntimeStatusStore } from './runtime-status.store';
+import { LibraryStore } from './library.store';
 import { RecognitionFeaturesStore } from './recognition-features.store';
 
 function requirement(
@@ -57,13 +58,13 @@ describe('AsrQueueStore', () => {
     const document = makeRecording({
       status: 'completed', durationMs: 90_000, captureOptions: { identifySpeakers: false },
     });
-    const { store, library, docs, streamingOperations } = setup({ initialDocs: [document] });
+    const { store, library, docs, recordingOperations } = setup({ initialDocs: [document] });
     store.attach();
     TestBed.tick();
     expect(store.rows()[0].durationLabel).toBe('1:30');
     expect(library.get).not.toHaveBeenCalled();
 
-    streamingOperations.set(new Map([[document.documentId, {
+    recordingOperations.set(new Map([[document.documentId, {
       status: 'completed', durationMs: 800_000,
     } as CaptureOperation]]));
     docs.set([{ ...document, durationMs: 125_000, updatedAtMs: 200 }]);
@@ -74,8 +75,8 @@ describe('AsrQueueStore', () => {
 
   it('keeps the live operation duration while a recording is running', () => {
     const document = makeRecording({ status: 'processing', captureId: 'running', durationMs: 90_000 });
-    const { store, library, streamingOperations } = setup({ initialDocs: [document] });
-    streamingOperations.set(new Map([[document.documentId, {
+    const { store, library, recordingOperations } = setup({ initialDocs: [document] });
+    recordingOperations.set(new Map([[document.documentId, {
       captureId: 'running', status: 'extracting', durationMs: 125_000,
     } as CaptureOperation]]));
     expect(store.rows()[0].durationLabel).toBe('2:05');
@@ -123,7 +124,7 @@ describe('AsrQueueStore', () => {
       requirement('speaker-diarization', options.speakersStatus ?? 'installable'),
     ]);
     const busyIds = signal<ReadonlySet<string>>(new Set());
-    const streamingOperations = signal<ReadonlyMap<string, CaptureOperation>>(new Map());
+    const recordingOperations = signal<ReadonlyMap<string, CaptureOperation>>(new Map());
     const streamingPartials = signal<ReadonlyMap<string, PartialCapture>>(new Map());
     const ready = signal(true);
     const runtime = {
@@ -155,7 +156,7 @@ describe('AsrQueueStore', () => {
     const startDocSubject = new Subject<void>();
     const capture = {
       busyIds,
-      streamingOperations,
+      recordingOperations,
       streamingPartials,
       hasActiveCapture: vi.fn((id: string) => busyIds().has(id)),
       startDocument$: vi.fn(() => startDocSubject),
@@ -165,20 +166,22 @@ describe('AsrQueueStore', () => {
       cancel: vi.fn(),
     };
 
-    const workspace = {
+    const runtimeStatus = { message: signal('') };
+    const libraryStore = {
       allDocuments: docs,
       selectedId,
-      selected: () => null,
-      message: signal(''),
+      selected: signal(null),
+      get: library.get,
       refreshDocuments: vi.fn(),
-      select: vi.fn((id: string) => selectedId.set(id)),
+      reloadDocumentState: vi.fn(),
+      export: library.export,
     };
 
     const features = {
       requirements,
       requestedRequirements: signal<ReadonlySet<CaptureRequirementId>>(new Set()),
       installationFor: vi.fn((): RuntimeInstallation | null => null),
-      installUnit: vi.fn(),
+      installRequirement: vi.fn(),
     };
 
     const formatting = {
@@ -192,14 +195,15 @@ describe('AsrQueueStore', () => {
 
     TestBed.configureTestingModule({
       providers: [
-        { provide: DesktopWorkspaceStore, useValue: workspace },
+        { provide: RuntimeStatusStore, useValue: runtimeStatus },
+        { provide: LibraryStore, useValue: libraryStore },
         { provide: DesktopLibraryService, useValue: library },
         { provide: DesktopRuntimeClientService, useValue: runtime },
         options.realCapture
-          ? DesktopWorkspaceCaptureService
-          : { provide: DesktopWorkspaceCaptureService, useValue: capture },
+          ? DesktopCaptureService
+          : { provide: DesktopCaptureService, useValue: capture },
         { provide: RecognitionFeaturesStore, useValue: features },
-        { provide: DesktopWorkspaceFormattingService, useValue: formatting },
+        { provide: DesktopFormattingService, useValue: formatting },
         { provide: Router, useValue: router },
       ],
     });
@@ -211,11 +215,12 @@ describe('AsrQueueStore', () => {
       docs,
       requirements,
       busyIds,
-      streamingOperations,
+      recordingOperations,
       streamingPartials,
       library,
       capture,
-      workspace,
+      runtimeStatus,
+      libraryStore,
       features,
       formatting,
       router,
@@ -223,7 +228,7 @@ describe('AsrQueueStore', () => {
   }
 
   it.each(['ready', 'installable'] as const)('reports export failures and clears them on the next press with speech %s', (speechStatus) => {
-    const { store, library, workspace, formatting } = setup({ speechStatus });
+    const { store, library, runtimeStatus, formatting } = setup({ speechStatus });
     const first = new Subject<DesktopLibraryExport>();
     const second = new Subject<DesktopLibraryExport>();
     library.export.mockReturnValueOnce(first).mockReturnValueOnce(second);
@@ -233,7 +238,7 @@ describe('AsrQueueStore', () => {
     expect(store.exportBusyIds().has('recording')).toBe(true);
     first.error(new Error('private transcript'));
     expect(store.importError()).toBe(desktopMessages().exportFailed);
-    expect(workspace.message()).toBe('');
+    expect(runtimeStatus.message()).toBe('');
     expect(store.exportBusyIds().has('recording')).toBe(false);
     store.exportTxt('recording');
     expect(store.importError()).toBe('');
@@ -316,7 +321,7 @@ describe('AsrQueueStore', () => {
   });
 
   it('continues importing after a failed selection and reports the error', () => {
-    const { store, library, workspace } = setup();
+    const { store, library, libraryStore } = setup();
     const first: DesktopSourceSelection = {
       selectionToken: '1'.repeat(32), fileName: 'first.mp3',
       byteLength: 200, mediaType: 'audio/mpeg',
@@ -334,7 +339,7 @@ describe('AsrQueueStore', () => {
       spokenLanguage: 'zh', identifySpeakers: false,
     });
     expect(store.importError()).toBe('Import failed');
-    expect(workspace.refreshDocuments).toHaveBeenCalledTimes(1);
+    expect(libraryStore.refreshDocuments).toHaveBeenCalledTimes(1);
   });
 
   it('shows and starts equal-timestamp recordings in import order', () => {
@@ -391,7 +396,7 @@ describe('AsrQueueStore', () => {
       installing: false, label: '安裝說話者辨識（約 2.8 GB）',
     });
     store.installSpeakers();
-    expect(features.installUnit).toHaveBeenCalledExactlyOnceWith('speaker-diarization');
+    expect(features.installRequirement).toHaveBeenCalledExactlyOnceWith('speaker-diarization');
     setDesktopLocale('en');
     expect(store.optionalSpeakerInstall()?.label).toBe('Install speaker identification (~2.8 GB)');
     requirements.set([requirement('speaker-diarization', 'ready')]);
@@ -415,7 +420,7 @@ describe('AsrQueueStore', () => {
   it('supports cancel on queued & running rows, retry, restart, view in /history, and txt export', () => {
     const queuedDoc = makeRecording({ documentId: '1'.repeat(32), status: 'queued' });
     const doneDoc = makeRecording({ documentId: '2'.repeat(32), status: 'completed' });
-    const { store, library, capture, workspace, formatting, router } = setup({
+    const { store, library, capture, libraryStore, formatting, router } = setup({
       initialDocs: [queuedDoc, doneDoc],
     });
 
@@ -437,7 +442,7 @@ describe('AsrQueueStore', () => {
     expect(capture.restartLost$).toHaveBeenCalledWith(doneDoc.documentId, expect.anything());
 
     store.view(doneDoc.documentId);
-    expect(workspace.select).not.toHaveBeenCalled();
+    expect(libraryStore.selectedId()).toBeNull();
     expect(router.navigateByUrl).toHaveBeenCalledWith(`/history/${doneDoc.documentId}`);
 
     store.exportTxt(doneDoc.documentId);

@@ -156,7 +156,11 @@ function assertCandidateIdentity(
     readonly packageCandidateId?: string;
   },
 ): void {
-  assert.equal(manifest.candidateKind, expected.kind, 'Candidate kind differs.');
+  assert(
+    manifest.candidateKind === expected.kind ||
+      (expected.kind === 'package' && manifest.candidateKind === 'npm-package-set'),
+    'Candidate kind differs.',
+  );
   assert.equal(manifest.schemaVersion, '1', 'Candidate schema version differs.');
   assert.equal(manifest.sourceCommit, expected.sourceCommit, 'Candidate source commit differs.');
   assert.equal(manifest.releaseVersion, expected.version, 'Candidate version differs.');
@@ -174,7 +178,7 @@ async function sourceDistributions(
   const root = resolve(packageCandidate);
   const { manifest } = await readCandidateManifests(root);
   assertCandidateIdentity(manifest, {
-    kind: 'npm-package-set',
+    kind: 'package',
     sourceCommit: String(manifest.sourceCommit),
     version,
     contractSetSha256: String(manifest.contractSetSha256),
@@ -239,7 +243,7 @@ async function validateInputs(input: {
   const packageCandidate = await readCandidateManifests(input.packageCandidate);
   const runtimeCandidate = await readCandidateManifests(input.runtimeCandidate);
   assertCandidateIdentity(packageCandidate.manifest, {
-    kind: 'npm-package-set',
+    kind: 'package',
     sourceCommit: input.sourceCommit,
     version: input.version,
     contractSetSha256: input.contractSetSha256,
@@ -301,7 +305,7 @@ export async function assemblePythonCandidateIndex(input: PythonCandidateIndexIn
     schemaVersion: '1',
     candidateKind: 'python-candidate-index',
     packageName: PROJECT,
-    packageCandidateKind: String(validated.packageManifest.candidateKind),
+    packageCandidateKind: 'package',
     packageCandidateSchemaVersion: String(validated.packageManifest.schemaVersion),
     packageCandidateManifestSha256: validated.packageManifestSha256,
     packageCandidateId: String(validated.packageManifest.candidateId),
@@ -430,11 +434,14 @@ export async function verifyPythonCandidateIndex(input: VerifyPythonCandidateInd
   assert.equal(manifest.candidateKind, 'python-candidate-index');
   assert.equal(manifest.schemaVersion, '1');
   assert.equal(manifest.packageName, PROJECT);
-  assert.equal(manifest.packageCandidateKind, 'npm-package-set');
+  assert(
+    manifest.packageCandidateKind === 'package' ||
+      manifest.packageCandidateKind === 'npm-package-set',
+    'Index package candidate kind is invalid.',
+  );
   assert.equal(manifest.packageCandidateSchemaVersion, '1');
   assert.equal(manifest.runtimeCandidateKind, 'runtime');
   assert.equal(manifest.runtimeCandidateSchemaVersion, '1');
-  assert(typeof manifest.packageCandidateKind === 'string' && /^[a-z0-9][a-z0-9.-]*$/u.test(manifest.packageCandidateKind));
   assert(typeof manifest.runtimeCandidateKind === 'string' && /^[a-z0-9][a-z0-9.-]*$/u.test(manifest.runtimeCandidateKind));
   assert(typeof manifest.packageCandidateSchemaVersion === 'string' && /^[0-9]+$/u.test(manifest.packageCandidateSchemaVersion));
   assert(typeof manifest.runtimeCandidateSchemaVersion === 'string' && /^[0-9]+$/u.test(manifest.runtimeCandidateSchemaVersion));

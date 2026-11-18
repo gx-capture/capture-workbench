@@ -23,7 +23,7 @@ import { createInstalledProcessCleanup } from './installed-process-cleanup.ts';
 import {
   installedSmokeDiagnosticRedactionMarker,
   nestedErrorMessages,
-} from './installed-deterministic-smoke.ts';
+} from './installed-nsis-smoke.ts';
 
 function observe(observable) {
   return new Promise((resolvePromise, rejectPromise) => {

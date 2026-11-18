@@ -1,16 +1,16 @@
 import { Injectable, inject, signal } from '@angular/core';
 import { concatMap, defer, EMPTY, finalize, from, map, of, tap, type Observable } from 'rxjs';
 import { desktopMessages } from '../i18n/desktop-messages';
-import { DesktopLibraryService } from './desktop-library.service';
-import { DesktopWorkspaceFormattingService } from './desktop-workspace-formatting.service';
+import { LibraryStore } from './library.store';
+import { DesktopFormattingService } from './desktop-formatting.service';
 
 type ExportFormat = 'text' | 'markdown' | 'srt' | 'vtt';
 
 /** Browser effects and host export shared by result and queue commands. */
 @Injectable({ providedIn: 'root' })
 export class LibraryExportService {
-  private readonly library = inject(DesktopLibraryService);
-  private readonly formatting = inject(DesktopWorkspaceFormattingService);
+  private readonly library = inject(LibraryStore);
+  private readonly formatting = inject(DesktopFormattingService);
   readonly busyIds = signal<ReadonlySet<string>>(new Set());
 
   run(id: string, format: ExportFormat, copy = false, save: Observable<void> = of(undefined)): Observable<void> {

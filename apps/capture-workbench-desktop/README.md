@@ -7,15 +7,15 @@ Capture Runtime sidecar with a memory-only bearer token.
 The Windows product runs as a single instance. Starting it again restores a
 minimized main window, shows and focuses it, and exits the second process.
 Second-launch arguments and working directory are ignored. Builds with
-`acceptance-app-data` or `model-smoke-app-data` (including deterministic QA)
-skip the single-instance lock so isolated test runs and the product can coexist.
+`acceptance-harness` (including deterministic QA) skip the single-instance
+lock so isolated test runs and the product can coexist.
 
 The desktop host starts one verified `capture-runtime` sidecar on a random loopback port with a memory-only 256-bit bearer token. Its product provider is an isolated Ollama lane with dedicated app data, model storage, port, profile, and PID file.
 
 ## Acceptance targets
 
-- `capture-workbench-desktop:acceptance-real` runs real OCR against a locally
-  built installed runtime; it is a diagnostic, not release evidence.
+- `capture-workbench-desktop:diagnostic-desktop-ocr` runs real OCR against the
+  non-installed `build-acceptance` binary; it is a diagnostic, not release evidence.
 - `capture-workbench-desktop:build-practical-installer` and
   `acceptance-practical-installed` build a side-by-side production installer
   (only the identifier, product name, and binary name differ) and run the
@@ -39,7 +39,7 @@ diagnostic-only test lane and never proves real engines or Ollama.
 corepack pnpm nx run capture-workbench-desktop:cargo-fmt-check
 corepack pnpm nx run capture-workbench-desktop:cargo-check
 corepack pnpm nx run capture-workbench-desktop:cargo-test
-corepack pnpm nx run capture-workbench-desktop:package-qa-test
+corepack pnpm nx run capture-workbench-desktop:test-scripts
 ```
 
 `cargo-check` and `cargo-test` first run `stage-deterministic-runtime` and point
@@ -63,13 +63,13 @@ The ordinary `build` target compiles the Tauri app with `--no-bundle`.
 `build-nsis` packages the staged release runtime using `tauri.conf.json`.
 
 `build-nsis-deterministic` builds **Capture Workbench QA Fake Data** using
-`tauri.deterministic-qa.conf.json` and the `acceptance-app-data` Cargo feature.
+`tauri.deterministic-qa.conf.json` and the `acceptance-harness` Cargo feature.
 Its identifier is `io.github.gx-capture.capture-workbench.deterministic-qa`.
 The fake executable, manifest, schema and provenance are staged only under
 `src-tauri/target/deterministic-qa/staged`; product resources are untouched.
 Its separate Cargo output is `src-tauri/target/deterministic-qa`, with installers
 in `x86_64-pc-windows-msvc/release/bundle/nsis` below that directory.
-`package-qa` and the installed deterministic smoke consume this QA installer.
+`hash-qa-installer` and the installed QA fixture smoke consume this QA installer.
 The smokes drive the classic file dialog with window messages (`WM_SETTEXT` on
 the file-name field, then `WM_COMMAND`/`IDOK`), without keyboard input or focus,
 so that step also runs in a background session. A brokered (Explorer-hosted)
@@ -140,53 +140,37 @@ The diagnostic forwards `LOCALAPPDATA`, `TEMP`, and `USERNAME` to the runtime,
 strips ambient provider/model overrides, verifies DirectML OCR and lock-selected
 TEA-ASR provenance, proves UUID-scoped capture deletion, and checks its owned
 runtime process is gone. Its report (`tmp/capture-workbench-desktop/real-media-smoke/real-media-smoke.json`)
-always records `releaseGateSatisfied=false` and `consumerE2e=false`: it is not
-the Tauri/WebView preflight below and is not candidate release evidence input.
+always records `releaseGateSatisfied=false` and `consumerE2e=false`; it is not
+candidate release evidence input.
 
-## Opt-in real model-enabled Tauri/WebView preflight
+## Real-engines localhost smoke
 
-`smoke-real-media-model` is the local production three-media preflight. It launches
-the packaged Tauri WebView with fresh app-data, performs consented catalog
-installation, imports a private cert-prep PDF, the project-owned image, and a
-private cert-prep audio fixture through the UI, and verifies raw/result,
-provenance, DirectML OCR, lock-selected TEA-ASR segments, UUID-scoped deletion,
-and owned process cleanup. The preflight selects `qwen3.5-0.8b-v1` through the
-runtime model-options API; the release installer contains no Qwen model bytes.
-The report is redacted by construction and records
-`releaseGateSatisfied=false`, `localProductionPreflight=true`, and
-`consumerE2e=false`; it is not exact-candidate release evidence.
+For the full application-level journey with real engines (installation, PDF and
+image OCR, recording transcription with speaker identification, Ollama
+structuring, edit/export/restore, and restart persistence), run the dev-server
+smoke (`apps/capture-workbench-e2e/src/real-engines.spec.ts`):
 
 ```powershell
-$env:CAPTURE_REAL_MEDIA_MODEL_PDF = '<cert-prep-root>\pdfs\private-exam.pdf'
-$env:CAPTURE_REAL_MEDIA_MODEL_AUDIO = '<cert-prep-root>\audio\private-listening.mp3'
-corepack pnpm nx run capture-workbench-desktop:smoke-real-media-model
+corepack pnpm nx run capture-workbench-e2e:smoke-real-engines
 ```
 
-Replace `<cert-prep-root>` with the local cert-prep checkout; the example is
-intentionally portable and contains no repository-specific absolute path.
-
-Both real-media smokes check the lock-selected product pair, TEA-ASR 1.1 on CUDA. A
-development transcription outside them uses TEA-ASR 1.1 mini on CUDA, as
+`smoke-real-media` forces the `cuda` pack and checks TEA-ASR 1.1 on CUDA;
+`smoke-real-engines` checks the installed pack (`tea-asr-1.1` on `cuda` with the
+NVIDIA driver, `tea-asr-1.1-mini` on `cpu` without it). A development
+transcription outside them uses TEA-ASR 1.1 mini on CUDA, as
 `.agents/RESEARCH/tea-asr-1.1-mini-gpu-2026-11-04.md` describes, by setting
 `CAPTURE_SPEECH_RECOGNITION_MODEL=tea-asr-1.1-mini` on the runtime. The desktop
 GPU switch only selects the device; its fixed launch environment does not yet
 expose the model setting.
 
-The cert-prep PDF and audio are copied only into the owned temporary run and
-must not be committed or uploaded. The image remains a lock-pinned project
-fixture. Only the packaged executable can be overridden for local runs with
-`CAPTURE_REAL_MEDIA_MODEL_EXECUTABLE`. The preflight fails closed unless the staged
-generated catalog and source lock are the approved model-enabled contract of
-the release version in `release/version.json`.
-
 To also check progressive audio, first record a reference with
 `node apps/capture-workbench-desktop/scripts/progressive-audio-oracle.ts`
 (`CAPTURE_PROGRESSIVE_AUDIO_ORACLE_SOURCE` and `_OUTPUT`), then pass the output
-file as `CAPTURE_REAL_MEDIA_MODEL_AUDIO_ORACLE`.
+file as `CAPTURE_REAL_ENGINES_AUDIO_EXPECTATIONS` (or `CAPTURE_REAL_MEDIA_MODEL_AUDIO_ORACLE`).
 
-## Installed deterministic smoke
+## Installed QA fixture smoke
 
-The installed deterministic smoke is intentionally opt-in because it performs a
+The installed QA fixture smoke (`smoke-installed-deterministic`) is intentionally opt-in because it performs a
 silent, current-user NSIS install and uninstall:
 
 ```powershell
@@ -222,8 +206,10 @@ contents are read, copied or logged. Failures are saved as timestamped
 `installed-smoke-failure-*.json` files alongside the smoke evidence.
 
 The resulting `tmp/capture-workbench-desktop/installed-smoke/installed-smoke.json`
-is explicitly marked deterministic and diagnostic only. It does not certify
-real WindowsML, TEA-ASR, Ollama, or licensed-fixture behavior.
+records `evidenceKind: installed-nsis-smoke` and the installer source.
+`deterministic` identifies the fixture-runtime QA build and `release` identifies
+the release installer. Both reports are diagnostic. Real OCR, speech recognition
+and structuring were not exercised.
 
 ## Loopback ownership boundary
 

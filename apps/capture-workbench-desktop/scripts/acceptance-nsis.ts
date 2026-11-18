@@ -16,7 +16,7 @@ import {
 import { join, relative, resolve, sep } from 'node:path';
 
 export const ACCEPTANCE_NSIS_TARGET_TRIPLE = 'x86_64-pc-windows-msvc';
-export const ACCEPTANCE_NSIS_FEATURE = 'acceptance-app-data';
+export const ACCEPTANCE_NSIS_FEATURE = 'acceptance-harness';
 const ACCEPTANCE_NSIS_PROVENANCE_NAME = 'capture-workbench-acceptance-nsis.provenance.json';
 
 export interface AcceptanceNsisBuildCommand {

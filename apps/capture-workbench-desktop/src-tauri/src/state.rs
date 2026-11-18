@@ -13,7 +13,7 @@ use capture_sidecar_launcher::OwnedRuntimeSession;
 use crate::{
     config::{BackendConfig, DesktopRuntimeStatus},
     launcher::{launch_runtime, LaunchedRuntime},
-    resources::RuntimeAssets,
+    resources::RuntimeExecutablePaths,
 };
 
 const RUNTIME_MONITOR_INTERVAL: Duration = Duration::from_millis(100);
@@ -86,7 +86,7 @@ impl DesktopState {
         &self.inner.data_dir
     }
 
-    pub(crate) fn start(&self, assets: RuntimeAssets) {
+    pub(crate) fn start(&self, assets: RuntimeExecutablePaths) {
         let generation = match self.begin_launch() {
             Ok(generation) => generation,
             Err(error) => {
@@ -453,9 +453,8 @@ impl DesktopState {
             })
     }
 
-    /// Only the acceptance-only `desktop_runtime_process_probe` command and the
-    /// tests read the process id, so it is compiled only for them.
-    #[cfg(any(test, feature = "acceptance-app-data"))]
+    /// Only the acceptance harness and tests read the process id.
+    #[cfg(any(test, feature = "acceptance-harness"))]
     pub(crate) fn runtime_process_id(&self) -> Option<u32> {
         self.inner.runtime.lock().ok().and_then(|runtime| {
             runtime

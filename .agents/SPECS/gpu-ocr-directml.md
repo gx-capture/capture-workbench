@@ -38,10 +38,10 @@ every operator ran on the GPU because the same session retains the CPU execution
 
 ## Production environment gate
 
-The Windows production build must run `capture-runtime:prepare-production-environment` before
+The Windows production build must run `capture-runtime:prepare-core-build-environment` before
 packaging. That target performs an exact uv sync and reinstalls `onnxruntime-directml`, because
 switching from another ORT distribution can otherwise leave distribution metadata while removing
-the shared `onnxruntime` package files. `capture-runtime:verify-production-environment` then
+the shared `onnxruntime` package files. `capture-runtime:verify-onnxruntime-directml` then
 requires DirectML to be the only ORT distribution and namespace owner, with both
 `DmlExecutionProvider` and `CPUExecutionProvider` registered. PyInstaller runs with
 `uv run --no-sync` only after that gate succeeds. Release schema generation shares the same

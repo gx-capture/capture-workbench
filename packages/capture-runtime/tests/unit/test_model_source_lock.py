@@ -380,7 +380,6 @@ def test_source_lock_rejects_release_aggregate_above_ten_gib() -> None:
 
 
 def test_cpu_speech_subset_matches_the_shared_sample() -> None:
-    # real-media-model-smoke.ts applies the same rule to the same sample.
     sample = json.loads(
         (Path(__file__).resolve().parents[1] / "fixtures" / "cpu-speech-subset-samples.json")
         .read_bytes()

@@ -28,14 +28,8 @@ from capture_runtime.structuring.infrastructure.ollama import (
     OwnedProcess,
     SystemRuntimeInstaller,
 )
-from capture_runtime.worker_probe import EngineProbe
 from tests.conftest import TOKEN
 from tests.support.ollama_legacy import install_legacy_model
-
-
-class ProbeAdapter:
-    def probe(self) -> EngineProbe:
-        return EngineProbe(True, True, True, "ready")
 
 
 class FakePopen:
@@ -133,20 +127,17 @@ def _installer(
     )
     extraction = ExtractionRuntimeConfig(
         windowsml_model_dir=tmp_path / "windowsml",
-        whisper_models_dir=tmp_path / "whisper",
         temp_dir=tmp_path / "temp",
         max_pdf_pages=10,
         max_image_pixels=100_000,
         ocr_render_scale=2,
         max_audio_duration_ms=60_000,
-        whisper_prefer_gpu=False,
+        speech_prefer_gpu=False,
     )
     installer = SystemRuntimeInstaller(
         lifecycle,
         winget_resolver=lambda: None,
         extraction_config=extraction,
-        ocr_adapter=ProbeAdapter(),  # type: ignore[arg-type]
-        whisper_adapter=ProbeAdapter(),  # type: ignore[arg-type]
         clock=SystemClock(),
         model_readiness_timeout_seconds=readiness_timeout_seconds,
         model_readiness_poll_interval_seconds=0,

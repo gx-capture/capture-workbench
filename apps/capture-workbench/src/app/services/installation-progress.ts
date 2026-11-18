@@ -30,7 +30,7 @@ const PREPARING_PROGRESS = 0.05;
  * Describes an installation that is queued or running.
  *
  * With byte counts the figure is the downloaded share, and it stays below 100
- * until every byte has arrived; from then on the unit is being unpacked and
+ * until every byte has arrived; from then on the requirement is being unpacked and
  * verified, which is its own phase rather than "downloading 100 %". Without
  * byte counts the runtime's overall progress stands in.
  */

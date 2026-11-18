@@ -54,7 +54,6 @@ class StructuringSessionService:
         clock: Clock,
         contract_set_sha256: str,
         host_result_committer: Callable[..., CaptureOperationV2] | None = None,
-        host_result_discarder: Callable[[str], None] | None = None,
     ) -> None:
         self.repository = repository
         self.streaming_repository = streaming_repository
@@ -62,7 +61,6 @@ class StructuringSessionService:
         self._clock = clock
         self._contract_set_sha256 = contract_set_sha256
         self._host_result_committer = host_result_committer
-        self._host_result_discarder = host_result_discarder
 
         self.open_use_case = OpenStructuringSession(
             repository,
@@ -76,7 +74,6 @@ class StructuringSessionService:
             clock=clock,
             validate_batch=validate_structuring_batch,
             assemble_document=assemble_structuring_document,
-            discard_result=self._discard_host_result,
             recover=self._recover_completed_sessions,
             commit_result=self._commit_completed_capture,
         )
@@ -88,10 +85,6 @@ class StructuringSessionService:
 
     def batch(self, session_id: str, batch_index: int) -> StructuringBatchV2:
         return self.repository.batch(session_id, batch_index)
-
-    def _discard_host_result(self, capture_id: str) -> None:
-        if self._host_result_discarder is not None:
-            self._host_result_discarder(capture_id)
 
     def _commit_completed_capture(
         self,

@@ -6,8 +6,9 @@ import { BehaviorSubject, of, Subject, throwError } from 'rxjs';
 import type { DesktopLibraryEdits, DesktopLibraryExport } from '../contracts';
 import { desktopMessages, setDesktopLocale } from '../i18n/desktop-messages';
 import { DesktopLibraryService } from './desktop-library.service';
+import { LibraryStore } from './library.store';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
-import { DesktopWorkspaceFormattingService } from './desktop-workspace-formatting.service';
+import { DesktopFormattingService } from './desktop-formatting.service';
 import { PdfPageRenderer } from './pdf-page-renderer.service';
 import { LibraryExportService } from './library-export.service';
 import { ResultExportStore } from './result-export.store';
@@ -34,9 +35,10 @@ describe('ResultExportStore', () => {
     const paramMap$ = new BehaviorSubject(convertToParamMap({ id: 'doc' }));
     TestBed.configureTestingModule({ providers: [ResultReviewStore, ResultExportStore,
       { provide: ActivatedRoute, useValue: { snapshot: { paramMap: paramMap$.value }, paramMap: paramMap$.asObservable() } },
-      { provide: DesktopLibraryService, useValue: library },
+      { provide: LibraryStore, useValue: library },
+      { provide: DesktopLibraryService, useValue: { sourceBytes: () => of(new ArrayBuffer(0)) } },
       { provide: DesktopRuntimeClientService, useValue: { started: signal(true) } },
-      { provide: DesktopWorkspaceFormattingService, useValue: formatting },
+      { provide: DesktopFormattingService, useValue: formatting },
       { provide: PdfPageRenderer, useValue: {} },
     ] });
     const store = TestBed.inject(ResultExportStore);

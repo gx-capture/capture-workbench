@@ -1,7 +1,7 @@
 """Choose a cuda or cpu content without importing torch.
 
 The desktop launcher treats ``nvcuda.dll`` in ``%SystemRoot%\\System32`` as an
-NVIDIA driver (``compute.rs``). This process uses that file check. It does not
+NVIDIA driver (``speech_gpu.rs``). This process uses that file check. It does not
 decide again after install: the chosen content is written into ``active.json``.
 
 ``capture_runtime.config`` cannot import provisioning, so the environment

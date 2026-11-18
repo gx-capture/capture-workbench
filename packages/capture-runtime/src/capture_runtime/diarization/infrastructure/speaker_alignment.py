@@ -1,6 +1,6 @@
 """Give timed transcript items a speaker from diarization turns, without guessing.
 
-Pure standard library: the core runtime joins Whisper output with the
+Pure standard library: the core runtime joins speech-recognition output with the
 diarization worker's turns here, so neither worker depends on the other.
 """
 

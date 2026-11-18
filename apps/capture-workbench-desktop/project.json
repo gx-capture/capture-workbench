@@ -44,19 +44,6 @@
         "command": "corepack pnpm exec tauri build --target x86_64-pc-windows-msvc --no-bundle --ci --config apps/capture-workbench-desktop/src-tauri/tauri.conf.json"
       }
     },
-    "build-model-smoke": {
-      "cache": false,
-      "executor": "nx:run-commands",
-      "outputs": [
-        "{projectRoot}/src-tauri/target/x86_64-pc-windows-msvc/release/capture-workbench-desktop.exe"
-      ],
-      "metadata": {
-        "description": "Builds the release desktop with compile-time isolated app-data and keyed fixture-injection hooks used only by the deterministic model smoke."
-      },
-      "options": {
-        "command": "corepack pnpm exec tauri build --target x86_64-pc-windows-msvc --no-bundle --ci --features model-smoke-app-data --config apps/capture-workbench-desktop/src-tauri/tauri.conf.json"
-      }
-    },
     "build-nsis-deterministic": {
       "cache": false,
       "executor": "nx:run-commands",
@@ -66,7 +53,7 @@
         "command": "node apps/capture-workbench-desktop/scripts/build-deterministic-qa.ts"
       },
       "metadata": {
-        "description": "QA ONLY: separately named installer with fake runtime/data, acceptance-app-data, isolated resources and Cargo output."
+        "description": "QA ONLY: separately named installer with fake runtime/data, acceptance-harness, isolated resources and Cargo output."
       }
     },
     "cargo-fmt": {
@@ -233,7 +220,7 @@
       "cache": false,
       "executor": "nx:run-commands",
       "metadata": {
-        "description": "Builds a separately named acceptance-only NSIS bundle with the compile-time acceptance-app-data feature; never use as the release NSIS artifact."
+        "description": "Builds a separately named acceptance-only NSIS bundle with the compile-time acceptance-harness feature; never use as the release NSIS artifact."
       },
       "outputs": [
         "{workspaceRoot}/output/acceptance-nsis"
@@ -242,27 +229,26 @@
         "command": "node apps/capture-workbench-desktop/scripts/build-acceptance-nsis.ts"
       }
     },
-    "package-qa-test": {
+    "test-scripts": {
       "cache": true,
       "executor": "nx:run-commands",
       "inputs": [
         "default",
         "^default",
         "toolingCorpus",
-        "{workspaceRoot}/packages/capture-runtime/src/capture_runtime/assets/worker-stage-policy-corpus.json",
-        "{workspaceRoot}/packages/capture-runtime/tests/fixtures/cpu-speech-subset-samples.json"
+        "{workspaceRoot}/packages/capture-runtime/src/capture_runtime/assets/worker-stage-policy-corpus.json"
       ],
       "options": {
         "command": "node --import ./tools/test-temp-root.ts --test apps/capture-workbench-desktop/scripts/*.test.ts tools/acceptance-contract.test.ts tools/worker-stage-policy.test.ts tools/three-project-acceptance.test.ts tools/three-project-cleanup-verifier.test.ts tools/check-async-boundary.test.ts tools/finalize-packed-package.test.ts tools/local-release-consumer-smoke.test.ts tools/node24-corepack.test.ts tools/record-candidate-verification.test.ts tools/acceptance-checkpoint-journal.test.ts tools/check-fake-runtime-routes.test.ts"
       }
     },
-    "package-qa": {
+    "hash-qa-installer": {
       "cache": false,
       "executor": "nx:run-commands",
       "dependsOn": ["build-nsis-deterministic"],
-      "outputs": ["{workspaceRoot}/tmp/capture-workbench-desktop/package-qa"],
+      "outputs": ["{workspaceRoot}/tmp/capture-workbench-desktop/hash-qa-installer"],
       "options": {
-        "command": "node apps/capture-workbench-desktop/scripts/package-qa.ts"
+        "command": "node apps/capture-workbench-desktop/scripts/hash-qa-installer.ts"
       }
     },
     "build-acceptance": {
@@ -272,7 +258,7 @@
         "{projectRoot}/src-tauri/target/x86_64-pc-windows-msvc/release/capture-workbench-desktop.exe"
       ],
       "options": {
-        "command": "corepack pnpm exec tauri build --target x86_64-pc-windows-msvc --no-bundle --ci --features acceptance-app-data --config apps/capture-workbench-desktop/src-tauri/tauri.conf.json"
+        "command": "corepack pnpm exec tauri build --target x86_64-pc-windows-msvc --no-bundle --ci --features acceptance-harness --config apps/capture-workbench-desktop/src-tauri/tauri.conf.json"
       }
     },
     "typecheck-scripts": {
@@ -330,24 +316,6 @@
         "parallel": false
       }
     },
-    "smoke-real-media-model": {
-      "cache": false,
-      "executor": "nx:run-commands",
-      "metadata": {
-        "description": "Opt-in local Windows production preflight using a feature-gated deterministic picker bypass for prepared PDF/image/audio fixtures; private inputs are never uploaded and this is not native-picker or candidate-release evidence."
-      },
-      "outputs": [
-        "{workspaceRoot}/tmp/capture-workbench-desktop/real-media-model/real-media-model.json"
-      ],
-      "options": {
-        "commands": [
-          "corepack pnpm nx run capture-workbench-desktop:stage-product-runtime",
-          "corepack pnpm nx run capture-workbench-desktop:build-model-smoke",
-          "node apps/capture-workbench-desktop/scripts/real-media-model-smoke.ts"
-        ],
-        "parallel": false
-      }
-    },
     "smoke-real-desktop-ocr": {
       "cache": false,
       "executor": "nx:run-commands",
@@ -370,7 +338,7 @@
       "cache": false,
       "executor": "nx:run-commands",
       "metadata": {
-        "description": "Opt-in Windows standalone-app OCR release gate that requires DirectML provenance. Requires an explicitly prepared host app-data directory and a user-provided scanned PDF."
+        "description": "Opt-in local standalone-app OCR smoke that requires DirectML provenance (not a release gate). Requires an explicitly prepared host app-data directory and a user-provided scanned PDF."
       },
       "outputs": [
         "{workspaceRoot}/tmp/capture-workbench-desktop/real-desktop-ocr-smoke/real-desktop-ocr-smoke.json"
@@ -384,12 +352,12 @@
         "parallel": false
       }
     },
-    "acceptance-real": {
+    "diagnostic-desktop-ocr": {
       "cache": false,
       "executor": "nx:run-commands",
       "dependsOn": ["typecheck-scripts"],
       "metadata": {
-        "description": "Fail-closed real Windows WebView2 golden journey: first-run OCR setup, supplied document OCR, semantic result verification, diagnostics provenance, cleanup, and process/CDP proof."
+        "description": "Diagnostic only, not a release gate. Fail-closed Windows WebView2 OCR journey on the non-installed build-acceptance binary: first-run OCR setup, supplied document OCR, semantic result verification, diagnostics provenance, cleanup, and process/CDP proof."
       },
       "outputs": [
         "{workspaceRoot}/output/playwright/capture-workbench"
@@ -398,17 +366,17 @@
         "commands": [
           "corepack pnpm nx run capture-workbench-desktop:stage-product-runtime",
           "corepack pnpm nx run capture-workbench-desktop:build-acceptance",
-          "node apps/capture-workbench-desktop/scripts/acceptance-real.ts"
+          "node apps/capture-workbench-desktop/scripts/diagnostic-desktop-ocr.ts"
         ],
         "parallel": false
       }
     },
-    "acceptance-real-recorded": {
+    "diagnostic-desktop-ocr-recorded": {
       "cache": false,
       "executor": "nx:run-commands",
       "dependsOn": ["typecheck-scripts"],
       "metadata": {
-        "description": "Recorded fail-closed real Windows WebView2 golden journey with WebM, screenshots, hashes, and cleanup manifest."
+        "description": "Diagnostic only, not a release gate. Recorded fail-closed Windows WebView2 OCR journey on the non-installed build-acceptance binary, with WebM, screenshots, hashes, and cleanup manifest."
       },
       "outputs": [
         "{workspaceRoot}/output/playwright/capture-workbench"
@@ -417,7 +385,7 @@
         "commands": [
           "corepack pnpm nx run capture-workbench-desktop:stage-product-runtime",
           "corepack pnpm nx run capture-workbench-desktop:build-acceptance",
-          "node apps/capture-workbench-desktop/scripts/acceptance-real.ts --recorded"
+          "node apps/capture-workbench-desktop/scripts/diagnostic-desktop-ocr.ts --recorded"
         ],
         "parallel": false
       }
@@ -448,7 +416,7 @@
       "cache": false,
       "executor": "nx:run-commands",
       "metadata": {
-        "description": "Sequentially runs the real acceptance target in Capture Workbench, Cert Prep, and gx.law-prep and verifies each child manifest."
+        "description": "Sequentially runs Capture Workbench diagnostic desktop OCR, then the Cert Prep and LAW acceptance targets, and verifies each child manifest."
       },
       "outputs": ["{workspaceRoot}/output/playwright/three-projects"],
       "options": {
@@ -459,7 +427,7 @@
       "cache": false,
       "executor": "nx:run-commands",
       "metadata": {
-        "description": "Recorded sequential real acceptance runner for all three products."
+        "description": "Recorded sequential runner for Capture Workbench diagnostic desktop OCR and the Cert Prep and LAW acceptance targets."
       },
       "outputs": ["{workspaceRoot}/output/playwright/three-projects"],
       "options": {
@@ -477,7 +445,7 @@
         "{workspaceRoot}/tmp/capture-workbench-desktop/installed-smoke/installed-smoke.json"
       ],
       "options": {
-        "command": "node apps/capture-workbench-desktop/scripts/installed-deterministic-smoke.ts"
+        "command": "node apps/capture-workbench-desktop/scripts/installed-nsis-smoke.ts"
       }
     },
     "measure-installed-core-size": {
@@ -493,7 +461,7 @@
         "commands": [
           "corepack pnpm nx run capture-workbench-desktop:stage-core-runtime",
           "corepack pnpm nx run capture-workbench-desktop:build-nsis",
-          "node apps/capture-workbench-desktop/scripts/installed-deterministic-smoke.ts --measure-release-size"
+          "node apps/capture-workbench-desktop/scripts/installed-nsis-smoke.ts --measure-release-size"
         ],
         "parallel": false
       }

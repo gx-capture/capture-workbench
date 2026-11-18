@@ -1,14 +1,15 @@
 import type { DesktopLibrarySummary } from '../contracts';
 import { describeAsrDocument } from './asr-queue';
-import { describeOcrDocument, type OcrUserStatus } from './ocr-queue';
+import type { CaptureUserStatus } from './capture-user-status';
+import { describeOcrDocument } from './ocr-queue';
 import type { DesktopCaptureOperation } from './desktop-runtime-client.service';
-import { isAudioMediaType } from './desktop-workspace.selectors';
+import { isRecordingMediaType } from './desktop-workspace.selectors';
 
 export interface HistoryRow {
   readonly documentId: string;
   readonly fileName: string;
   readonly kind: 'ocr' | 'asr';
-  readonly userStatus: OcrUserStatus;
+  readonly userStatus: CaptureUserStatus;
   readonly statusText: string;
   readonly extent: string;
   readonly updatedAtMs: number;
@@ -29,15 +30,15 @@ export function formatHistoryDate(milliseconds: number): string {
 
 export interface HistoryFilters {
   readonly type: 'all' | 'ocr' | 'asr';
-  readonly status: 'all' | OcrUserStatus;
+  readonly status: 'all' | CaptureUserStatus;
   readonly search: string;
 }
 
-export function historyRow(document: DesktopLibrarySummary, busy: boolean, job?: DesktopCaptureOperation, active = false): HistoryRow {
-  const kind = isAudioMediaType(document.mediaType) ? 'asr' : 'ocr';
+export function historyRow(document: DesktopLibrarySummary, busy: boolean, operation?: DesktopCaptureOperation, active = false): HistoryRow {
+  const kind = isRecordingMediaType(document.mediaType) ? 'asr' : 'ocr';
   const described = kind === 'asr'
-    ? describeAsrDocument({ document, operation: job, busy: busy || active, speechReady: true, installPercent: null })
-    : describeOcrDocument({ document, job, busy: busy || active, ocrReady: true, installPercent: null });
+    ? describeAsrDocument({ document, operation, busy: busy || active, speechReady: true, installPercent: null })
+    : describeOcrDocument({ document, operation, busy: busy || active, ocrReady: true, installPercent: null });
   return {
     documentId: document.documentId,
     fileName: document.fileName,

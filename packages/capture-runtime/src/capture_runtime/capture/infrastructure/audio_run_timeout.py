@@ -9,7 +9,7 @@ from capture_runtime.worker_process import DEFAULT_RUN_TIMEOUT_SECONDS
 
 
 def audio_run_timeout_seconds(content: bytes | Path, max_duration_ms: int) -> float:
-    """How long one Whisper or speaker-diarization run on this audio may take.
+    """How long one speech-recognition or speaker-diarization run on this audio may take.
 
     Both take time in proportion to the recording, and diarization runs on the
     CPU at about a third of real time: with the standard limit alone a

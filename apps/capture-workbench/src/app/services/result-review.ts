@@ -4,7 +4,7 @@ import { desktopMessages } from '../i18n/desktop-messages';
 import { detailDurationMs } from './asr-queue';
 import {
   formatRecordingTime,
-  isAudioMediaType,
+  isRecordingMediaType,
   isPdfMediaType,
   transcriptLines,
   type TranscriptLine,
@@ -88,7 +88,7 @@ export interface ResultSeekRequest {
 
 /** Classifies a library item as an OCR document or an ASR recording (audio or video). */
 export function resultKind(mediaType: string): ResultKind {
-  return isAudioMediaType(mediaType) ? 'asr' : 'ocr';
+  return isRecordingMediaType(mediaType) ? 'asr' : 'ocr';
 }
 
 /** Returns true when a library lookup error indicates the document does not exist. */
@@ -100,23 +100,23 @@ export function isNotFoundError(error: unknown): boolean {
 /** Maps a library item's persisted state to the user-facing status vocabulary. */
 export function resultStatusText(detail: DesktopLibraryDetail): string {
   const messages = desktopMessages();
-  if (detail.status === 'queued') return messages.ocrStatusWaiting;
+  if (detail.status === 'queued') return messages.captureStatusWaiting;
   if (detail.status === 'processing' || detail.status === 'persisting') {
-    return detail.captureId ? messages.ocrStatusProcessing : messages.ocrInterrupted;
+    return detail.captureId ? messages.captureStatusProcessing : messages.captureInterrupted;
   }
-  if (detail.status === 'canceled') return messages.ocrStatusCancelled;
+  if (detail.status === 'canceled') return messages.captureStatusCancelled;
   if (detail.status === 'failed' || detail.status === 'recovery_required') {
     return detail.recoveryCode === 'capture_recovery_required'
-      ? messages.ocrInterrupted
-      : messages.ocrStatusNeedsAttention;
+      ? messages.captureInterrupted
+      : messages.captureStatusNeedsAttention;
   }
   if (
     detail.status === 'completed'
     || (detail.status === 'awaiting_confirmation' && (detail.hasRaw === true || detail.raw !== undefined))
   ) {
-    return messages.ocrStatusDone;
+    return messages.captureStatusDone;
   }
-  return messages.ocrStatusNeedsAttention;
+  return messages.captureStatusNeedsAttention;
 }
 
 /** Resolves the speaker list from structured result first, falling back to raw capture. */

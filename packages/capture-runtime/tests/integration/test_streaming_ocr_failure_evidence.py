@@ -268,13 +268,12 @@ os._exit(7)
             clock,
             ExtractionRuntimeConfig(
                 windowsml_model_dir=tmp_path / "models",
-                whisper_models_dir=tmp_path / "whisper",
                 temp_dir=tmp_path / "temp",
                 max_pdf_pages=4,
                 max_image_pixels=1_000_000,
                 ocr_render_scale=2.0,
                 max_audio_duration_ms=60_000,
-                whisper_prefer_gpu=False,
+                speech_prefer_gpu=False,
             ),
             engine_manager=InstalledFailureCatalog(),  # type: ignore[arg-type]
         )

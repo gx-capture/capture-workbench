@@ -4,8 +4,8 @@ mod runtime;
 
 pub use desktop::{BackendConfig, DesktopRuntimeStatus};
 pub(crate) use library::{
-    LibraryCaptureOptions, LibraryCaptureUpdate, LibraryDocumentDetail, LibraryDocumentRequest,
-    LibraryDocumentSummary, LibraryEditMaps, LibraryEdits, LibraryExportFormat,
+    DesktopLibraryDetail, DesktopLibrarySummary, LibraryCaptureOptions, LibraryCaptureUpdate,
+    LibraryDocumentRequest, LibraryEditMaps, LibraryEdits, LibraryExportFormat,
     LibraryExportPayload, LibraryExportRequest, LibraryListRequest, LibrarySaveEditsRequest,
     LibrarySourcePayload, OcrEvidenceV1, MAX_EDITS_BYTES,
 };
@@ -18,5 +18,5 @@ pub(crate) use runtime::{
 mod selection;
 pub(crate) use selection::*;
 
-#[cfg(any(test, feature = "model-smoke-app-data"))]
+#[cfg(test)]
 pub(crate) use library::LibraryImportSourceRequest;

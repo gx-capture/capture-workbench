@@ -426,6 +426,26 @@ describe('DesktopRuntimeClientService', () => {
     );
   });
 
+  it('reports the host cleanup failure detail without polling again', () => {
+    const detail = 'The runtime could not clean up its processes.';
+    const commands = {
+      invoke: vi.fn(() => of({ status: 'failed-cleanup', detail })),
+    };
+    TestBed.configureTestingModule({
+      providers: [
+        { provide: DesktopTauriCommandService, useValue: commands },
+        DesktopRuntimeClientService,
+      ],
+    });
+
+    const service = TestBed.inject(DesktopRuntimeClientService);
+    TestBed.tick();
+
+    expect(service.readiness.status()).toBe('error');
+    expect(service.error()?.message).toBe(detail);
+    expect(commands.invoke).toHaveBeenCalledTimes(1);
+  });
+
   it('keeps the OCR compute accessor safe when readiness is errored', () => {
     const commands = {
       invoke: vi.fn((command: string) => command === 'desktop_runtime_status'

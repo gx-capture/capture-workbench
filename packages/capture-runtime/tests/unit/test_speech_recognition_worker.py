@@ -5,7 +5,7 @@ from threading import Event
 
 import pytest
 
-import capture_runtime.workers.speech_recognition_main as whisper_main
+import capture_runtime.workers.speech_recognition_main as speech_main
 from capture_runtime.constants import RUNTIME_VERSION
 from capture_runtime.provisioning.infrastructure.engine_content_selection import (
     speech_content_allows_model,
@@ -66,8 +66,8 @@ def _probe_request(*, options: object, model_path: Path | None = None) -> Worker
 def test_worker_code_probe_accepts_prefer_gpu_install_option(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(whisper_main.importlib.util, "find_spec", lambda _name: object())
-    result = whisper_main._probe(_probe_request(options={"preferGpu": True}))
+    monkeypatch.setattr(speech_main.importlib.util, "find_spec", lambda _name: object())
+    result = speech_main._probe(_probe_request(options={"preferGpu": True}))
 
     assert result["ready"] is True
     assert result["codeReady"] is True
@@ -78,7 +78,7 @@ def test_worker_code_probe_accepts_prefer_gpu_install_option(
 @pytest.mark.parametrize("options", [{"unexpected": True}, {"preferGpu": 1}, None])
 def test_worker_code_probe_rejects_invalid_options(options: object) -> None:
     with pytest.raises(ValueError, match="Speech recognition probe"):
-        whisper_main._probe(_probe_request(options=options))
+        speech_main._probe(_probe_request(options=options))
 
 
 def _run_with_factory(
@@ -105,9 +105,9 @@ def _run_with_factory(
                 **kwargs,
             )
 
-    monkeypatch.setattr(whisper_main, "TeaAsrAdapter", TestAdapter)
-    monkeypatch.setattr(whisper_main, "_import_speech_runtime", lambda: None)
-    result = whisper_main._run(request, Event())
+    monkeypatch.setattr(speech_main, "TeaAsrAdapter", TestAdapter)
+    monkeypatch.setattr(speech_main, "_import_speech_runtime", lambda: None)
+    result = speech_main._run(request, Event())
     calls = [
         (Path(event[2]).name, "cuda" if i == 0 else "cpu")
         for i, event in enumerate(fake.loads("asr"))
@@ -203,7 +203,7 @@ def test_worker_rejects_an_unknown_model(tmp_path: Path, model: object) -> None:
     source.write_bytes(b"RIFF" + b"\x00" * 8 + b"WAVE")
 
     with pytest.raises(ValueError, match="run options are invalid"):
-        whisper_main._run(_request(model_root, source, prefer_gpu=True, model=model), Event())
+        speech_main._run(_request(model_root, source, prefer_gpu=True, model=model), Event())
 
 
 @pytest.mark.parametrize("chosen", [None, "tea-asr-1.1-mini"])
@@ -216,10 +216,10 @@ def test_session_worker_runs_the_model_the_runtime_chose(
         def __init__(self, _model_path: Path, **kwargs: object) -> None:
             constructors.append(kwargs)
 
-    monkeypatch.setattr(whisper_main, "TeaAsrAdapter", RecordingAdapter)
-    monkeypatch.setattr(whisper_main, "_import_speech_runtime", lambda: None)
+    monkeypatch.setattr(speech_main, "TeaAsrAdapter", RecordingAdapter)
+    monkeypatch.setattr(speech_main, "_import_speech_runtime", lambda: None)
     monkeypatch.setattr(
-        "capture_runtime.workers.session_server.serve_session", lambda *_a, **_k: None
+        "capture_runtime.workers.speech_session_server.serve_session", lambda *_a, **_k: None
     )
     monkeypatch.setenv("CAPTURE_SESSION_MODEL_PATH", str(tmp_path))
     monkeypatch.setenv("CAPTURE_SESSION_TEMP_DIR", str(tmp_path))
@@ -228,7 +228,7 @@ def test_session_worker_runs_the_model_the_runtime_chose(
     else:
         monkeypatch.setenv("CAPTURE_SESSION_SPEECH_MODEL", chosen)
 
-    whisper_main._session()
+    speech_main._session()
 
     assert constructors[0]["model"] == chosen
 
@@ -306,7 +306,7 @@ def test_worker_rejects_an_unknown_content(tmp_path: Path, content: object) -> N
     source.write_bytes(b"RIFF" + b"\x00" * 8 + b"WAVE")
 
     with pytest.raises(ValueError, match="content is invalid"):
-        whisper_main._run(_request(model_root, source, prefer_gpu=True, content=content), Event())
+        speech_main._run(_request(model_root, source, prefer_gpu=True, content=content), Event())
 
 
 def _asset_probe(
@@ -314,14 +314,14 @@ def _asset_probe(
 ) -> dict[str, object]:
     monkeypatch.setattr(speech_backend.importlib.util, "find_spec", lambda _name: object())
 
-    def cuda_devices(self: object) -> int:
+    def cuda_available(self: object) -> bool:
         raise AssertionError("content probe must not be what decides CUDA")
 
     if content == "cpu":
-        monkeypatch.setattr(whisper_main.TeaAsrAdapter, "_cuda_devices", cuda_devices)
+        monkeypatch.setattr(speech_main.TeaAsrAdapter, "cuda_available", cuda_available)
     else:
-        monkeypatch.setattr(whisper_main.TeaAsrAdapter, "_cuda_devices", lambda _self: 0)
-    return whisper_main._probe(
+        monkeypatch.setattr(speech_main.TeaAsrAdapter, "cuda_available", lambda _self: False)
+    return speech_main._probe(
         _probe_request(options={"preferGpu": True, "content": content}, model_path=model_root)
     )
 
@@ -366,10 +366,10 @@ def test_session_worker_uses_the_installed_content(
         def __init__(self, _model_path: Path, **kwargs: object) -> None:
             constructors.append(kwargs)
 
-    monkeypatch.setattr(whisper_main, "TeaAsrAdapter", RecordingAdapter)
-    monkeypatch.setattr(whisper_main, "_import_speech_runtime", lambda: None)
+    monkeypatch.setattr(speech_main, "TeaAsrAdapter", RecordingAdapter)
+    monkeypatch.setattr(speech_main, "_import_speech_runtime", lambda: None)
     monkeypatch.setattr(
-        "capture_runtime.workers.session_server.serve_session", lambda *_a, **_k: None
+        "capture_runtime.workers.speech_session_server.serve_session", lambda *_a, **_k: None
     )
     monkeypatch.setenv("CAPTURE_SESSION_MODEL_PATH", str(tmp_path))
     monkeypatch.setenv("CAPTURE_SESSION_TEMP_DIR", str(tmp_path))
@@ -379,7 +379,7 @@ def test_session_worker_uses_the_installed_content(
     else:
         monkeypatch.setenv("CAPTURE_SESSION_SPEECH_CONTENT", raw)
 
-    whisper_main._session()
+    speech_main._session()
 
     assert constructors[0]["content"] == raw
 
@@ -393,14 +393,14 @@ def test_session_worker_rejects_an_unknown_content(
         def __init__(self, _model_path: Path, **kwargs: object) -> None:
             constructors.append(kwargs)
 
-    monkeypatch.setattr(whisper_main, "TeaAsrAdapter", RecordingAdapter)
-    monkeypatch.setattr(whisper_main, "_import_speech_runtime", lambda: None)
+    monkeypatch.setattr(speech_main, "TeaAsrAdapter", RecordingAdapter)
+    monkeypatch.setattr(speech_main, "_import_speech_runtime", lambda: None)
     monkeypatch.setenv("CAPTURE_SESSION_MODEL_PATH", str(tmp_path))
     monkeypatch.setenv("CAPTURE_SESSION_TEMP_DIR", str(tmp_path))
     monkeypatch.setenv("CAPTURE_SESSION_SPEECH_CONTENT", "mps")
 
     with pytest.raises(ValueError, match="content is invalid"):
-        whisper_main._session()
+        speech_main._session()
     assert constructors == []
 
 

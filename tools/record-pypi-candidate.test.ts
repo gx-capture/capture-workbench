@@ -85,7 +85,7 @@ async function packageFixture(
     kind === 'package'
       ? {
           schemaVersion: '1',
-          candidateKind: 'npm-package-set',
+          candidateKind: 'package',
           sourceCommit,
           releaseVersion: version,
           producerRunId: 42,
@@ -662,7 +662,7 @@ test('full runtime aliases are independently validated even when both candidate 
       m.packageCandidateId = 'f'.repeat(64);
     },
     (m) => {
-      m.candidateKind = 'npm-package-set';
+      m.candidateKind = 'package';
     },
     (m) => {
       m.artifacts.push(m.artifacts[0]);

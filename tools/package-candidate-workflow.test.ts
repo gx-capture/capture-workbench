@@ -90,7 +90,7 @@ test('package candidate workflow is independent from the desktop product lane', 
       candidateWorkflow.indexOf('capture-runtime-client-python:build'),
     'uv and Python must be installed before the Python package builds run.',
   );
-  assert.match(candidateWorkflow, /capture-angular:clean-consumer-smoke/u);
+  assert.match(candidateWorkflow, /capture-workbench-ui:clean-consumer-smoke/u);
   assert.match(candidateWorkflow, /pnpm exec playwright install chromium/u);
   assert.equal(
     [
@@ -410,7 +410,7 @@ test('runtime promotion requires npm evidence before publishing runtime registri
   assert.match(promoteWorkflow, /tooling_commit: \$\{\{ github\.sha \}\}/u);
 });
 
-test('desktop candidate consumes an exact Runtime Candidate', async () => {
+test('Release Candidate consumes an exact Runtime Candidate', async () => {
   const candidateWorkflow = await readFile(
     join(root, '.github/workflows/release-candidate.yml'),
     'utf8',
@@ -432,7 +432,11 @@ test('desktop candidate consumes an exact Runtime Candidate', async () => {
     /capture-runtime:build-release-artifacts/u,
   );
   assert.match(promoteWorkflow, /runtime_candidate_manifest_sha256/u);
-  assert.match(promoteWorkflow, /verify-runtime-candidate-binding\.ts/u);
+  for (const kind of ['package', 'runtime']) {
+    const bindings = toolCommands(promoteWorkflow, `verify-${kind}-candidate-binding.ts`);
+    assert.equal(bindings.length, 1);
+    assert.match(bindings[0] ?? '', /--release-candidate "\$candidate_root"/u);
+  }
   const promotedRuntimeVerifications = toolCommands(
     promoteWorkflow,
     'verify-runtime-candidate.ts',

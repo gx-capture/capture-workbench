@@ -38,7 +38,7 @@ results and owns domain persistence only.
 | OCR | `OcrPipeline`, PDFium rasterization, Paddle profile, normalization, page order, confidence, provenance, and typed failures | Invoke the public capture/ocr seam through an adapter; never create or route an OCR engine |
 | Compute | `OcrComputePlan`, hardware truth, model/profile/catalog identity | Render readiness/notice; never probe, rank, select, or persist a GPU ordinal |
 | Process lifecycle | `capture-sidecar-launcher`: one launch path, a kill-on-close Job per root, descendant cleanup, and termination proof | Launch and stop through the crate's ownership token; never hold OS handles or name-kill |
-| Acceptance | Desktop acceptance in this repository (`acceptance-real`, practical installed OCR, `acceptance-three-projects`) and the manifests it writes through `tools/acceptance-contract.ts` | Each product runs its own acceptance gate and writes its own manifest. Cert Prep: `acceptance-real`. LAW: `law-prep-web-e2e:acceptance-real`. Releases are gated by those consumer gates |
+| Acceptance | Desktop acceptance in this repository (`diagnostic-desktop-ocr`, practical installed OCR, `acceptance-three-projects`) and the manifests it writes through `tools/acceptance-contract.ts` | Each product runs its own acceptance gate and writes its own manifest. Cert Prep: `acceptance-real`. LAW: `law-prep-web-e2e:acceptance-real`. Releases are gated by those consumer gates |
 | Version/release | One inventory, candidate bytes, manifests, publication ledgers, download-back, and stable-pointer policy | Pin exact bytes and verify before model start |
 
 Runtime/model caches are durable only where explicitly declared. Staging,
@@ -233,9 +233,9 @@ Cert Prep's gate is `acceptance-real`. LAW's gate is
 `law-prep-web-e2e:acceptance-real`. A release is gated by those consumer
 gates. The [release runbook](../GUIDES/release-runbook.md) owns the procedure.
 
-Desktop acceptance in this repository (`acceptance-real`, practical installed
+Desktop acceptance in this repository (`diagnostic-desktop-ocr`, practical installed
 OCR, and `acceptance-three-projects`) writes its own manifests through
-`tools/acceptance-contract.ts`. `acceptance-real` is a diagnostic, not release
+`tools/acceptance-contract.ts`. `diagnostic-desktop-ocr` is a diagnostic, not release
 evidence.
 
 ## Version, schema, projection, and release-channel inventory

@@ -1,5 +1,5 @@
 {
-  "about": "Shared sample of the cpu speech content rule. cpu_speech_model_delivery (packages/capture-runtime/scripts/model_source_lock.py) and cpuSpeechModelFiles (apps/capture-workbench-desktop/scripts/real-media-model-smoke.ts) must both select cpuPaths from speechFiles. The decoys model/fallback-extra, model/vad and the primary directories, and the notices only they cite, stay out.",
+  "about": "Sample of the cpu speech content rule. cpu_speech_model_delivery (packages/capture-runtime/scripts/model_source_lock.py) must select cpuPaths from speechFiles. The decoys model/fallback-extra, model/vad and the primary directories, and the notices only they cite, stay out.",
   "speechFiles": [
     {
       "bytes": 1,

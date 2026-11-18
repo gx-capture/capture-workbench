@@ -21,7 +21,7 @@ def main() -> None:
     except ImportError as error:
         raise SystemExit(
             "The ONNX Runtime namespace is incomplete. Run the "
-            "capture-runtime:prepare-production-environment Nx target."
+            "capture-runtime:prepare-core-build-environment Nx target."
         ) from error
 
     distributions = sorted(
