@@ -23,11 +23,6 @@ use crate::{
     state::DesktopState,
 };
 
-#[cfg(feature = "model-smoke-app-data")]
-use crate::contracts::LibraryImportSourceRequest;
-#[cfg(feature = "model-smoke-app-data")]
-use crate::model_smoke_fixtures::{ModelSmokeFixtureRegistry, ModelSmokeImportFixtureRequest};
-
 /// Whether a CUDA driver is present and speech recognition may use the GPU.
 #[tauri::command]
 pub(crate) fn desktop_compute_status(
@@ -216,25 +211,6 @@ pub(crate) async fn library_discard_selections(
     request: crate::contracts::LibraryDiscardSelectionsRequest,
 ) -> Result<(), String> {
     host_api::library_discard_selections(window.label(), selections.inner(), request)
-}
-
-#[cfg(feature = "model-smoke-app-data")]
-#[tauri::command]
-pub(crate) async fn model_smoke_import_fixture(
-    library: tauri::State<'_, Arc<LibraryStore>>,
-    fixtures: tauri::State<'_, ModelSmokeFixtureRegistry>,
-    request: ModelSmokeImportFixtureRequest,
-) -> Result<LibraryDocumentSummary, String> {
-    let library = Arc::clone(library.inner());
-    let fixtures = fixtures.inner().clone();
-    run_blocking(move || {
-        let source = fixtures.resolve(&request.fixture_key)?;
-        library.import_source(LibraryImportSourceRequest {
-            source_path: source.to_string_lossy().into_owned(),
-            ..Default::default()
-        })
-    })
-    .await
 }
 
 #[tauri::command]

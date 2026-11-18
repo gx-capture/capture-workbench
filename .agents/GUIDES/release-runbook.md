@@ -507,10 +507,9 @@ Check a new release like this:
   each content is. Releases up to 0.9.0 published the legacy shape. From
   0.10.0 `speech-recognition` must be `contents` with exactly `cuda` and
   `cpu`:
-  - `build-release-artifacts` (`release.py`), the candidate verifier, the
-    local release consumer smoke and the real-media model smoke fail a
-    model-enabled release whose speech requirement is the legacy delivery or
-    has a single content.
+  - `build-release-artifacts` (`release.py`), the candidate verifier and the
+    local release consumer smoke fail a model-enabled release whose speech
+    requirement is the legacy delivery or has a single content.
   - `build-release-artifacts`, the local release consumer smoke and the
     practical installed check verify every content's worker archive, its
     parts and its `*-files.json` manifest; the consumer smoke also requires
@@ -520,11 +519,10 @@ Check a new release like this:
     installed check and the real-media smoke read both shapes, and the tag
     audit (`audit-release-tag.ts`), `resolve-capture-release.ts` and
     `verify-release-candidate.ts` do not read the speech requirement's shape.
-  - `verify_release_model_candidate.py` and `real-media-model-smoke.ts`
-    compare model deliveries with the source lock: `cuda` must carry the
-    lock's full speech files, and `cpu` exactly the subset that
-    `cpu_speech_model_delivery` in `model_source_lock.py` derives, with the
-    same bytes and sha256 and no `model/primary` path.
+  - `verify_release_model_candidate.py` compares model deliveries with the
+    source lock: `cuda` must carry the lock's full speech files, and `cpu`
+    exactly the subset that `cpu_speech_model_delivery` in `model_source_lock.py` derives,
+    with the same bytes and sha256 and no `model/primary` path.
   - `verify_release_model_candidate.py` runs both packs. It installs `cuda`
     whatever the machine's driver and checks the frozen private fixture. It
     then installs the candidate's own `cpu` archive and model subset in a
@@ -535,14 +533,16 @@ Check a new release like this:
     the CUDA one (its run timeout is 3 hours).
   - Smokes whose oracle is `tea-asr-1.1` / `cuda` force that pack: the
     real-media smoke and the progressive audio oracle set
-    `CAPTURE_SPEECH_RECOGNITION_VARIANT=cuda`. The real-media model smoke
-    goes through the desktop app, which cannot pass the variant, so it
-    requires the NVIDIA driver (`%SystemRoot%\System32\nvcuda.dll`) and its
-    mirror serves only the `cuda` archive. Its ambient-environment check, and
-    the one in `release-candidate.yml`, reject any
+    `CAPTURE_SPEECH_RECOGNITION_VARIANT=cuda`. The ambient-environment
+    check in `release-candidate.yml` rejects any
     `CAPTURE_SPEECH_RECOGNITION_*` variable.
 - Every runtime and desktop asset matches `runtimeAssets` in `capture-release-manifest-v1.json` (size and sha256).
 - That manifest's digest is `capture-release-manifest-v1.json.sha256` and `release-index/stable.json` `manifestSha256`.
+
+For local checks, the application-level journey with real engines is
+`pnpm nx run capture-workbench-e2e:smoke-real-engines` on the dev server; a
+Desktop App run is only for WebView2 behaviour, native dialogs, drag and drop of
+native paths, the installer, process cleanup on exit and pixel baselines.
 
 The packaging budget still fails the release candidate when a measured size exceeds its budget. The size report is the CI artifact `capture-size-report-<version>-<run>`. It is not one of the 19 release assets.
 

@@ -284,7 +284,7 @@ mod tests {
     }
 
     #[test]
-    fn source_lock_model_smoke_can_disable_whisper_cpu_fallback() {
+    fn worker_mirror_can_disable_speech_cpu_fallback() {
         assert!(!whisper_cpu_fallback_enabled(
             Some("1".into()),
             Some("false".into())

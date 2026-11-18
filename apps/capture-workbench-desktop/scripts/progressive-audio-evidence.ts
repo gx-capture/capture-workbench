@@ -2,6 +2,11 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 
 export const PROGRESSIVE_AUDIO_SAMPLE_INTERVAL_MS = 5 * 60_000;
+// Both the oracle and progressive audio checks use the same exact 310-second
+// sample. This guarantees that the five-minute checkpoint is exercised before
+// terminal completion assertions.
+export const REAL_MODEL_AUDIO_SAMPLE_SECONDS = 5 * 60 + 10;
+export const PROGRESSIVE_AUDIO_CHECKPOINT_MS = 5 * 60_000;
 
 const SHA256 = /^[a-f0-9]{64}$/u;
 const ENGINE_DIGEST = /^sha256:[a-f0-9]{64}$/u;
@@ -66,15 +71,6 @@ export interface ProgressiveAudioOracleEvidence {
   readonly extraction: ProgressiveAudioSampleInput['extraction'];
 }
 
-export interface ProgressiveAudioObservedOutput {
-  readonly sourceSha256: string;
-  readonly sourceBytes: number;
-  readonly coveredUntilMs: number;
-  readonly partialRevision: number;
-  readonly segments: readonly ProgressiveAudioSampleSegment[];
-  readonly extraction: ProgressiveAudioSampleInput['extraction'];
-}
-
 export function deriveProgressiveAudioSampleEvidence(
   input: ProgressiveAudioSampleInput,
 ): ProgressiveAudioSampleEvidence {
@@ -130,8 +126,8 @@ export function deriveProgressiveAudioSampleEvidence(
 
 /**
  * Create the digest-only oracle from a separately executed non-Tauri worker.
- * The caller must provide segments from that independent process; the Tauri
- * observation is checked later by assertProgressiveAudioSampleMatchesOracle.
+ * The caller must provide segments from that independent process; the
+ * localhost real-engine smoke compares its own result against this digest.
  */
 export function deriveProgressiveAudioOracleEvidence(
   input: ProgressiveAudioSampleInput,
@@ -146,111 +142,6 @@ export function deriveProgressiveAudioOracleEvidence(
     expectedOutput: evidence.expectedOutput,
     extraction: evidence.extraction,
   };
-}
-
-export function assertProgressiveAudioOracleEvidence(
-  value: unknown,
-): asserts value is ProgressiveAudioOracleEvidence {
-  const report = value as Partial<ProgressiveAudioOracleEvidence> | null;
-  assert.equal(report?.evidenceKind, 'progressive-audio-oracle-v1');
-  assert.equal(report?.oracle, 'non-tauri-production-worker');
-  assert.equal(report?.sampleIntervalMs, PROGRESSIVE_AUDIO_SAMPLE_INTERVAL_MS);
-  assert.match(String(report?.input?.sha256), SHA256);
-  assert.ok(Number.isSafeInteger(report?.input?.bytes) && Number(report.input.bytes) > 0);
-  assert.ok(
-    Number.isSafeInteger(report?.firstCheckpoint?.coveredUntilMs)
-      && Number(report.firstCheckpoint.coveredUntilMs) >= PROGRESSIVE_AUDIO_SAMPLE_INTERVAL_MS,
-  );
-  assert.ok(
-    Number.isSafeInteger(report?.firstCheckpoint?.partialRevision)
-      && Number(report.firstCheckpoint.partialRevision) > 0,
-  );
-  assert.ok(
-    Number.isSafeInteger(report?.firstCheckpoint?.segmentCount)
-      && Number(report.firstCheckpoint.segmentCount) > 0,
-  );
-  assert.match(String(report?.expectedOutput?.normalizedSha256), SHA256);
-  assert.equal(report?.expectedOutput?.segmentCount, report?.firstCheckpoint?.segmentCount);
-  assert.match(String(report?.extraction?.engine), /^[a-z][a-z0-9-]{1,63}$/u);
-  assert.match(String(report?.extraction?.model), /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/u);
-  assert.match(String(report?.extraction?.device), /^(?:cuda|cpu)$/u);
-  assert.match(String(report?.extraction?.digest), ENGINE_DIGEST);
-  assertSafeEvidenceSerialization(value);
-}
-
-export function assertProgressiveAudioSampleMatchesOracle(
-  oracle: ProgressiveAudioOracleEvidence,
-  observed: ProgressiveAudioObservedOutput,
-): void {
-  assertProgressiveAudioOracleEvidence(oracle);
-  assert.equal(observed.sourceSha256, oracle.input.sha256);
-  assert.equal(observed.sourceBytes, oracle.input.bytes);
-  assert.equal(observed.extraction.engine, oracle.extraction.engine);
-  assert.equal(observed.extraction.model, oracle.extraction.model);
-  assert.equal(observed.extraction.device, oracle.extraction.device);
-  assert.equal(observed.extraction.digest, oracle.extraction.digest);
-  assert.ok(observed.coveredUntilMs >= PROGRESSIVE_AUDIO_SAMPLE_INTERVAL_MS);
-  assert.ok(observed.partialRevision > 0);
-  assert.equal(observed.segments.length, oracle.expectedOutput.segmentCount);
-  assert.equal(normalizedSegmentDigest(observed.segments), oracle.expectedOutput.normalizedSha256);
-}
-
-export function assertProgressiveAudioSampleEvidence(
-  value: unknown,
-): asserts value is ProgressiveAudioSampleEvidence {
-  const report = value as Partial<ProgressiveAudioSampleEvidence> | null;
-  assert.equal(report?.evidenceKind, 'progressive-audio-sample-v1');
-  assert.equal(report?.sampleIntervalMs, PROGRESSIVE_AUDIO_SAMPLE_INTERVAL_MS);
-  assert.match(String(report?.input?.sha256), SHA256);
-  assert.ok(Number.isSafeInteger(report?.input?.bytes) && Number(report.input.bytes) > 0);
-  assert.ok(
-    Number.isSafeInteger(report?.firstCheckpoint?.coveredUntilMs)
-      && Number(report.firstCheckpoint.coveredUntilMs) >= PROGRESSIVE_AUDIO_SAMPLE_INTERVAL_MS,
-  );
-  assert.ok(
-    Number.isSafeInteger(report?.firstCheckpoint?.partialRevision)
-      && Number(report.firstCheckpoint.partialRevision) > 0,
-  );
-  assert.ok(
-    Number.isSafeInteger(report?.firstCheckpoint?.segmentCount)
-      && Number(report.firstCheckpoint.segmentCount) > 0,
-  );
-  assert.match(String(report?.expectedOutput?.normalizedSha256), SHA256);
-  assert.equal(
-    report?.expectedOutput?.segmentCount,
-    report?.firstCheckpoint?.segmentCount,
-  );
-  assert.match(String(report?.extraction?.engine), /^[a-z][a-z0-9-]{1,63}$/u);
-  assert.match(String(report?.extraction?.model), /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/u);
-  assert.match(String(report?.extraction?.device), /^(?:cuda|cpu)$/u);
-  assert.match(String(report?.extraction?.digest), ENGINE_DIGEST);
-
-  assertSafeEvidenceSerialization(value);
-}
-
-function assertSafeEvidenceSerialization(value: unknown): void {
-  const serialized = JSON.stringify(value);
-  assert.doesNotMatch(serialized, /[A-Za-z]:[\\/]/u);
-  assert.doesNotMatch(serialized, /(?:authorization|bearer|token|secret|api[_-]?key)/iu);
-  assert.doesNotMatch(serialized, /(?:sourceText|expectedText|transcript|audioText|fileName|sourcePath|warnings)/iu);
-}
-
-function normalizedSegmentDigest(segments: readonly ProgressiveAudioSampleSegment[]): string {
-  let previousStartMs = 0;
-  const normalized = segments.map((segment, index) => {
-    assert.equal(segment.order, index);
-    // Overlap windows may legitimately extend a later segment over the prior
-    // locator. The durable contract is stable ordering by start time and
-    // bounded, positive locators; requiring non-overlap would reject the
-    // decoder's 30-second merge window.
-    assert.ok(Number.isSafeInteger(segment.startMs) && segment.startMs >= previousStartMs);
-    assert.ok(Number.isSafeInteger(segment.endMs) && segment.endMs > segment.startMs);
-    assert.ok(segment.text.trim().length > 0);
-    previousStartMs = segment.startMs;
-    return segment.text.replace(/\s+/gu, ' ').trim();
-  }).filter(Boolean).join(' ');
-  assert.ok(normalized.length > 0);
-  return sha256Utf8(normalized);
 }
 
 function sha256Utf8(value: string): string {

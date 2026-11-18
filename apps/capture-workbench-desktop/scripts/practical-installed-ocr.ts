@@ -82,7 +82,7 @@ import {
   waitForPackagedRuntimeReadySignal,
   waitUntil,
 } from './real-desktop-ocr-smoke.ts';
-import { nativeClickWebViewElement, nativeOpenDialogUiAutomation } from './real-media-model-smoke.ts';
+import { nativeClickWebViewElement, nativeOpenDialogUiAutomation } from './installed-native-dialog.ts';
 import { appRoot } from './stage-runtime.ts';
 
 const execFileAsync = promisify(execFile);

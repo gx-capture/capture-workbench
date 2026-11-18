@@ -81,12 +81,12 @@ test('async boundary permits only the exact approved CLI paths', async () => {
     'scripts',
     'installed-deterministic-smoke.ts',
   );
-  const modelMediaCliPath = join(
+  const nativeDialogHelperPath = join(
     workspaceRoot,
     'apps',
     'capture-workbench-desktop',
     'scripts',
-    'real-media-model-smoke.ts',
+    'installed-native-dialog.ts',
   );
   const boundaryDoctorPath = join(
     workspaceRoot,
@@ -209,7 +209,7 @@ test('async boundary permits only the exact approved CLI paths', async () => {
     await Promise.all([
       mkdir(dirname(checkerPath), { recursive: true }),
       mkdir(dirname(installedCliPath), { recursive: true }),
-      mkdir(dirname(modelMediaCliPath), { recursive: true }),
+      mkdir(dirname(nativeDialogHelperPath), { recursive: true }),
       mkdir(dirname(boundaryDoctorPath), { recursive: true }),
       mkdir(dirname(angularSourcePath), { recursive: true }),
       mkdir(join(workspaceRoot, 'packages'), { recursive: true }),
@@ -231,8 +231,8 @@ test('async boundary permits only the exact approved CLI paths', async () => {
       'utf8',
     );
     await writeFile(
-      modelMediaCliPath,
-      'export async function runModelMediaCli() { await Promise.resolve(); }\n',
+      nativeDialogHelperPath,
+      'export async function nativeClickWebViewElement() { await Promise.resolve(); }\n',
       'utf8',
     );
     await writeFile(

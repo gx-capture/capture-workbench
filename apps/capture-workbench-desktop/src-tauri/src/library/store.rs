@@ -1,9 +1,9 @@
-#[cfg(any(test, feature = "model-smoke-app-data"))]
+#[cfg(test)]
 use super::RECORDING_MAX_SOURCE_BYTES;
 use super::{
     max_source_bytes, DOCUMENT_MAX_SOURCE_BYTES, IMPORT_FREE_SPACE_MARGIN, NOT_ENOUGH_DISK_SPACE,
 };
-#[cfg(any(test, feature = "model-smoke-app-data"))]
+#[cfg(test)]
 use crate::contracts::LibraryImportSourceRequest;
 use std::{
     fs::{self, File},
@@ -415,7 +415,7 @@ impl LibraryStore {
         )
     }
 
-    #[cfg(any(test, feature = "model-smoke-app-data"))]
+    #[cfg(test)]
     pub(crate) fn import_source(
         &self,
         request: LibraryImportSourceRequest,
@@ -423,7 +423,7 @@ impl LibraryStore {
         self.import_source_bounded(request, RECORDING_MAX_SOURCE_BYTES as usize)
     }
 
-    #[cfg(any(test, feature = "model-smoke-app-data"))]
+    #[cfg(test)]
     pub(super) fn import_source_bounded(
         &self,
         request: LibraryImportSourceRequest,

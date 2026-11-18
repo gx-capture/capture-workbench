@@ -40,12 +40,13 @@ and checks provenance `tea-asr-1.1-mini` with device `cuda`. Set
 `CAPTURE_WHISPER_ALLOW_CPU_FALLBACK=false`. Follow
 `.agents/RESEARCH/tea-asr-1.1-mini-gpu-2026-11-04.md`. Release smokes and the
 private speech fixture stay on `tea-asr-1.1` / `cuda`, and those smokes force the
-`cuda` pack: the candidate verifier and the real-media smokes set the variant,
-and the desktop model smoke, which cannot, requires the NVIDIA driver. The
-`cpu` pack has no frozen transcript: the candidate verifier also installs the
-candidate's own `cpu` pack and checks provenance `tea-asr-1.1-mini` / `cpu`, and
-its release evidence is one manual mini transcription on CPU, recorded in the
-release runbook.
+`cuda` pack: the candidate verifier and `real-media-smoke` set the variant. The
+localhost smoke (`smoke-real-engines`) follows the installed pack (with the
+NVIDIA driver it expects `tea-asr-1.1` / `cuda`, and without it
+`tea-asr-1.1-mini` / `cpu`). The `cpu` pack has no frozen transcript: the
+candidate verifier also installs the candidate's own `cpu` pack and checks
+provenance `tea-asr-1.1-mini` / `cpu`, and its release evidence is one manual
+mini transcription on CPU, recorded in the release runbook.
 
 # Architecture
 
@@ -61,7 +62,7 @@ release runbook.
 - Layer 1 is the dev server, frontend and backend: whatever can be verified there is verified there first. Layer 2 is the Desktop App, only for what layer 1 cannot prove: WebView2 behaviour, native dialogs and drag and drop of native paths, the installer, process cleanup on exit, pixel baselines. Before planning or asking for a Desktop App run, list what the run must prove and move every item layer 1 can prove to layer 1. A Desktop App run needs a build, opens windows on the user's machine and takes long; a dev-server run is headless, cheap and repeatable.
 - Calibrate screens and discuss screen behaviour on the dev server first: `pnpm nx run capture-workbench-e2e:preview` serves the Workbench at `http://localhost:4300` with the simulated desktop backend of the browser e2e (`apps/capture-workbench-e2e/src/fake-desktop.ts`); scenarios are listed at `/__preview`, with the query parameters that change the simulated timing (`speed`, `startDelay`). Record a run with headless Playwright against that URL.
 - A new screen state that people need to look at becomes a scenario in `apps/capture-workbench-e2e/src/preview-scenarios.ts` or an option of the simulated backend, not a one-off script.
-- Real engines do not by themselves need the Desktop App. The backend is verified at the runtime API (`apps/capture-workbench-desktop/scripts/real-media-smoke.ts`: installation, OCR and transcription; `real-ollama-smoke.ts`: structuring with the real model). For renderer-plus-host verification against the deterministic fixture runtime without the Desktop App, `pnpm nx run capture-workbench-e2e:preview-real-backend` serves the Workbench in real-backend mode via `apps/capture-workbench-e2e/real-backend-server.ts` against the headless dev host (`capture-workbench-dev-host`, built via `pnpm nx run capture-workbench-desktop:build-dev-host`), and `pnpm nx run capture-workbench-e2e:e2e-real-backend` runs the Playwright `chromium-real-backend` project against it. For renderer-plus-host verification with real engines on localhost, `pnpm nx run capture-workbench-e2e:smoke-real-engines` runs the manual opt-in smoke (`apps/capture-workbench-e2e/src/real-engines.spec.ts`) against `capture-workbench-dev-host` and the staged product runtime. Slice 3 of `.agents/DECISIONS/dev-host.md` (tracked in [#418](https://github.com/gx-capture/capture-workbench/issues/418)) connects real-engine smokes to the dev host and moves the remaining backend-plus-renderer checks from the Desktop App to layer 1.
+- Real engines do not by themselves need the Desktop App. The backend is verified at the runtime API (`apps/capture-workbench-desktop/scripts/real-media-smoke.ts`: installation, OCR and transcription; `real-ollama-smoke.ts`: structuring with the real model). For renderer-plus-host verification against the deterministic fixture runtime without the Desktop App, `pnpm nx run capture-workbench-e2e:preview-real-backend` serves the Workbench in real-backend mode via `apps/capture-workbench-e2e/real-backend-server.ts` against the headless dev host (`capture-workbench-dev-host`, built via `pnpm nx run capture-workbench-desktop:build-dev-host`), and `pnpm nx run capture-workbench-e2e:e2e-real-backend` runs the Playwright `chromium-real-backend` project against it. For renderer-plus-host verification with real engines on localhost, `pnpm nx run capture-workbench-e2e:smoke-real-engines` runs the manual opt-in smoke (`apps/capture-workbench-e2e/src/real-engines.spec.ts`) against `capture-workbench-dev-host` and the staged product runtime; it is where the real-engine model journey is verified. Slice 3 of `.agents/DECISIONS/dev-host.md` (tracked in [#418](https://github.com/gx-capture/capture-workbench/issues/418)) still moves the layer-1 parts of the OCR Desktop smoke there.
 
 # Release and CI guidance
 

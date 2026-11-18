@@ -157,7 +157,6 @@ The product owner decided on 2026-11-11, on issue #154:
    ordered segments against no frozen transcript.
 3. A release carries both packs. A model-enabled release whose `speech-recognition` has a
    single delivery or only one content fails the release tools: `build-release-artifacts`
-   (`release.py`), the candidate verifier, the local release consumer smoke and the
-   real-media model smoke.
+   (`release.py`), the candidate verifier and the local release consumer smoke.
 4. The unit guide shown before the download describes both packs; its title stays
    "台灣語音轉文字（TEA-ASR 1.1）".

@@ -18,5 +18,5 @@ pub(crate) use runtime::{
 mod selection;
 pub(crate) use selection::*;
 
-#[cfg(any(test, feature = "model-smoke-app-data"))]
+#[cfg(test)]
 pub(crate) use library::LibraryImportSourceRequest;

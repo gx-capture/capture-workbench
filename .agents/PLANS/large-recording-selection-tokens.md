@@ -61,7 +61,7 @@ A rejection carries a reason code only, never a name or a path; the renderer tur
 
 The drop hook in `lib.rs` handles `WindowEvent::DragDrop(Drop { paths })`: with no subscriber nothing happens; otherwise it inspects on a blocking thread, admits, and sends the batch through the channel. It does not use `app.listen("tauri://drag-drop")`, because the renderer could forge that event while `emit` is allowed.
 
-Removed: the command `library_import_source` and its registration. `model_smoke_import_fixture` keeps resolving its fixture key inside Rust.
+Removed: the command `library_import_source` and its registration.
 
 ### Capability (`src-tauri/capabilities/default.json`)
 
