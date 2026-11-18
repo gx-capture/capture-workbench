@@ -76,6 +76,7 @@ packages = ["src/capture_runtime"]
 "src/capture_runtime/assets/contract-set.json" = "capture_runtime/assets/contract-set.json"
 "src/capture_runtime/assets/contract-set.sha256" = "capture_runtime/assets/contract-set.sha256"
 "src/capture_runtime/assets/ocr-profile.json" = "capture_runtime/assets/ocr-profile.json"
+"src/capture_runtime/speech/infrastructure/japanese_kanji/LICENSE" = "capture_runtime/speech/infrastructure/japanese_kanji/LICENSE"
 
 [tool.uv]
 # speech-recognition resolves CUDA PyTorch on Windows. diarization and

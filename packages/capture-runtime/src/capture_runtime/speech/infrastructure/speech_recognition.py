@@ -17,7 +17,6 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
 
-from capture_runtime.japanese_kanji import TABLE as JAPANESE_KANJI
 from capture_runtime.speech.application.use_cases import DetectRepetitionLoop
 from capture_runtime.speech.domain import (
     LOOP_MAX_PERIOD,
@@ -27,6 +26,7 @@ from capture_runtime.speech.domain import (
     SpeechWord,
 )
 from capture_runtime.speech.domain.transcript.models import SpeechRecognitionResult
+from capture_runtime.speech.infrastructure.japanese_kanji import TABLE as JAPANESE_KANJI
 from capture_runtime.worker_probe import (
     EngineProbe,
     EngineRuntimeUnavailableError,

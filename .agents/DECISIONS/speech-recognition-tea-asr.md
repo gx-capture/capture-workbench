@@ -30,7 +30,7 @@ the reference clip):
 - Chinese (`language="zh"`) is the default, as the model card recommends for Taiwan speech;
   it also keeps dense Chinese-English code-switching from being translated. A host may name
   the spoken language of a recording (`spokenLanguage`, 0.8.0); Japanese transcripts are then
-  written in Japanese kanji forms (`capture_runtime/japanese_kanji`).
+  written in Japanese kanji forms (`capture_runtime/speech/infrastructure/japanese_kanji`).
 
 Only the `cuda` speech pack uses CUDA PyTorch (the CUDA 12.8 index on Windows); it is about
 12.5x faster than CPU for transcription. The `cpu` speech pack and diarization use CPU PyTorch;

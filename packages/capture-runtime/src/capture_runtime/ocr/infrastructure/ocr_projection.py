@@ -12,9 +12,8 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
-from typing import Literal, Protocol, cast, overload
+from typing import Literal, Protocol
 
-from capture_runtime.capture.infrastructure.pdf_page_selection import is_ascending_page_numbers
 from capture_runtime.constants import API_VERSION, RUNTIME_VERSION
 from capture_runtime.contracts import (
     CaptureEngine,
@@ -31,6 +30,7 @@ from capture_runtime.contracts import (
     OcrRasterV3,
 )
 from capture_runtime.ocr.infrastructure.ocr_profile import load_profile_spec
+from capture_runtime.pdf_page_selection import is_ascending_page_numbers
 
 
 def _default_profile_identity() -> tuple[str, str]:
@@ -115,12 +115,6 @@ class OcrEngineRun:
     warnings: tuple[str, ...] = ()
 
 
-class OcrEnginePort(Protocol):
-    """Legacy manifest-based engine seam retained for compatibility."""
-
-    def recognize(self, manifest: tuple[OcrPageManifest, ...]) -> OcrEngineRun: ...
-
-
 @dataclass(frozen=True, slots=True)
 class OcrRequest:
     """Metadata-only request owned by the canonical OCR execution seam."""
@@ -148,16 +142,6 @@ class OcrEngineRequest:
 
 class OcrRequestEnginePort(Protocol):
     def recognize(self, request: OcrEngineRequest) -> OcrEngineRun: ...
-
-
-class _LegacyOcrEngineAdapter:
-    """Keep the existing synchronous engine port compatible during convergence."""
-
-    def __init__(self, engine: OcrEnginePort) -> None:
-        self._engine = engine
-
-    def recognize(self, request: OcrEngineRequest) -> OcrEngineRun:
-        return self._engine.recognize(request.manifest)
 
 
 class OcrEngineFailure(RuntimeError):
@@ -255,8 +239,7 @@ class OcrPipeline:
     normalization, empty-page semantics, and sanitized terminal failures.
     ``OcrRequestEnginePort`` is deliberately transport-neutral so the
     synchronous rasterizer, remote worker adapter, and in-memory test adapter
-    exercise the same policy.  The older ``OcrEnginePort`` remains available
-    through the keyword compatibility form.
+    exercise the same policy.
     """
 
     def __init__(
@@ -278,79 +261,18 @@ class OcrPipeline:
     def default_provenance(self) -> OcrProvenanceV3:
         return self._builder.default_provenance
 
-    @overload
     def extract(
         self,
         request: OcrRequest,
         engine: OcrRequestEnginePort,
         /,
-    ) -> OcrTerminalResult: ...
-
-    @overload
-    def extract(
-        self,
-        *,
-        capture_id: str,
-        source: CaptureSource,
-        manifest: Sequence[OcrPageManifest],
-        engine: OcrEnginePort,
-        created_at: datetime,
-        warnings: Sequence[str] = (),
-    ) -> CaptureOcrProjectionV3: ...
-
-    def extract(self, *args: object, **kwargs: object) -> OcrTerminalResult:
-        """Run OCR through the canonical request seam or legacy keyword API.
-
-        The two forms intentionally have disjoint call shapes.  Canonical
-        callers pass exactly ``(request, engine)`` positionally and receive a
-        typed terminal union; compatibility callers keep the old keyword-only
-        arguments and receive a projection or ``OcrExtractionFailure``.
-        """
-
-        if len(args) == 2:
-            if kwargs:
-                raise TypeError("canonical OCR extraction does not accept keyword arguments")
-            request, engine = args
-            if not isinstance(request, OcrRequest):
-                raise OcrProjectionError("OCR request is invalid")
-            if not callable(getattr(engine, "recognize", None)):
-                raise OcrProjectionError("OCR request engine port is invalid")
-            return self._execute(request, cast(OcrRequestEnginePort, engine))
-        if args:
-            raise TypeError("OCR extraction requires either two positional arguments or keywords")
-        return self._extract_legacy(kwargs)
-
-    def _extract_legacy(self, kwargs: dict[str, object]) -> CaptureOcrProjectionV3:
-        required = {"capture_id", "source", "manifest", "engine", "created_at"}
-        allowed = required | {"warnings"}
-        missing = required - kwargs.keys()
-        unknown = kwargs.keys() - allowed
-        if missing or unknown:
-            raise TypeError("legacy OCR extraction requires its existing keyword arguments")
-        try:
-            manifest_value = kwargs["manifest"]
-            warnings_value = kwargs.get("warnings", ())
-            request = OcrRequest(
-                capture_id=cast(str, kwargs["capture_id"]),
-                source=cast(CaptureSource, kwargs["source"]),
-                page_scope=None,
-                manifest=self._validate_manifest(cast(Sequence[OcrPageManifest], manifest_value)),
-                created_at=cast(datetime, kwargs["created_at"]),
-                warnings=tuple(cast(Sequence[str], warnings_value)),
-                is_cancelled=lambda: False,
-            )
-        except OcrProjectionError:
-            raise
-        except (AttributeError, TypeError, ValueError) as error:
-            raise OcrProjectionError("OCR request is invalid") from error
-        self._validate_request(request)
-        engine = cast(OcrEnginePort, kwargs["engine"])
+    ) -> OcrTerminalResult:
+        """Run OCR against a source manifest and return its terminal result."""
+        if not isinstance(request, OcrRequest):
+            raise OcrProjectionError("OCR request is invalid")
         if not callable(getattr(engine, "recognize", None)):
-            raise OcrProjectionError("OCR engine port is invalid")
-        outcome = self._execute(request, _LegacyOcrEngineAdapter(engine))
-        if isinstance(outcome, OcrTerminalOutcome):
-            raise OcrExtractionFailure(failure=outcome.failure, projection=outcome.projection)
-        return outcome
+            raise OcrProjectionError("OCR request engine port is invalid")
+        return self._execute(request, engine)
 
     def _validate_request(self, request: OcrRequest) -> tuple[OcrPageManifest, ...]:
         """Validate request metadata and scope before engine or progress effects."""
@@ -1319,7 +1241,6 @@ class _OcrProjectionBuilder:
 
 __all__ = [
     "OcrEngineFailure",
-    "OcrEnginePort",
     "OcrEngineRun",
     "OcrEngineRequest",
     "OcrExtractionFailure",

@@ -84,7 +84,6 @@ class SubmitStructuringBatch:
         clock: Clock,
         validate_batch: Callable[..., list[dict[str, object]]],
         assemble_document: Callable[..., dict[str, object]],
-        discard_result: Callable[[str], None],
         recover: Callable[[], None],
         commit_result: Callable[[str, str, CaptureDocument], None],
     ) -> None:
@@ -93,7 +92,6 @@ class SubmitStructuringBatch:
         self._clock = clock
         self._validate_batch = validate_batch
         self._assemble_document = assemble_document
-        self._discard_result = discard_result
         self._recover = recover
         self._commit_result = commit_result
 
@@ -106,16 +104,12 @@ class SubmitStructuringBatch:
         idempotency_key: str,
     ) -> StructuringSessionV2:
         session = self._repository.get(session_id)
-        try:
-            return self._submit_session(
-                session,
-                batch_index,
-                payload,
-                idempotency_key=idempotency_key,
-            )
-        except Exception:
-            self._discard_result(session.capture_id)
-            raise
+        return self._submit_session(
+            session,
+            batch_index,
+            payload,
+            idempotency_key=idempotency_key,
+        )
 
     def _submit_session(
         self,

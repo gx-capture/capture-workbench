@@ -219,7 +219,7 @@ def test_session_worker_runs_the_model_the_runtime_chose(
     monkeypatch.setattr(speech_main, "TeaAsrAdapter", RecordingAdapter)
     monkeypatch.setattr(speech_main, "_import_speech_runtime", lambda: None)
     monkeypatch.setattr(
-        "capture_runtime.workers.session_server.serve_session", lambda *_a, **_k: None
+        "capture_runtime.workers.speech_session_server.serve_session", lambda *_a, **_k: None
     )
     monkeypatch.setenv("CAPTURE_SESSION_MODEL_PATH", str(tmp_path))
     monkeypatch.setenv("CAPTURE_SESSION_TEMP_DIR", str(tmp_path))
@@ -369,7 +369,7 @@ def test_session_worker_uses_the_installed_content(
     monkeypatch.setattr(speech_main, "TeaAsrAdapter", RecordingAdapter)
     monkeypatch.setattr(speech_main, "_import_speech_runtime", lambda: None)
     monkeypatch.setattr(
-        "capture_runtime.workers.session_server.serve_session", lambda *_a, **_k: None
+        "capture_runtime.workers.speech_session_server.serve_session", lambda *_a, **_k: None
     )
     monkeypatch.setenv("CAPTURE_SESSION_MODEL_PATH", str(tmp_path))
     monkeypatch.setenv("CAPTURE_SESSION_TEMP_DIR", str(tmp_path))

@@ -149,7 +149,7 @@ one line, invalid UTF-8/JSON, an unknown field/operation, wrong request ID,
 protocol mismatch, oversized output, invalid provenance, or a nonzero exit is
 fail-closed. A worker process serves one run plus its cancel message
 (`workers/server.py`); progressive speech recognition uses a binary-framed
-session for one recording (`workers/session_server.py`). Core never sends its
+session for one recording (`workers/speech_session_server.py`). Core never sends its
 API bearer token in worker argv, environment, stdin, source file, or model
 path.
 

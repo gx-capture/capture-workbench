@@ -86,7 +86,7 @@ How each piece reacts to a `contents` requirement and to two extra assets:
 - `requirement_unavailable` already exists in the problem registry (`problem_registry.py:198-203`) and is already used as a capture failure (`streaming_capture_service.py:409`, `490-495`).
 - `RuntimeRequirementV2.detail` (string or null) already exists. It is `None` for installed contents (`system_installer.py:325-331`).
 - The worker's own errors become generic `worker_failed`, retryable (`workers/server.py:166, 214, 313, 337`).
-- `_safe_failure_message` forwards text only from `ProgressiveCaptureError` (`:838-841`).
+- `_safe_failure_message` forwards text only from `CaptureProcessingError` (`:838-841`).
 
 **Decision (no new code, no contract change).**
 - **Rule:** add a pure rule in `engine_content_selection.py`: content `cpu` allows only `auto` and `tea-asr-1.1-mini`; `cuda` and legacy allow all.

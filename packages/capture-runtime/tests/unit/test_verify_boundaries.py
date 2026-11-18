@@ -72,7 +72,7 @@ def test_cpu_speech_archive_accepts_cpu_torch_without_cuda_runtime(
             "torch/lib/c10.dll",
             "torch/cuda/__init__.py",
             "torch/lib/cublas64_12.py",
-            "capture_runtime/japanese_kanji/LICENSE",
+            "capture_runtime/speech/infrastructure/japanese_kanji/LICENSE",
         ),
     )
     inventory = tmp_path / "inventory.txt"

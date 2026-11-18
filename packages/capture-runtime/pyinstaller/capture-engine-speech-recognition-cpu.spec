@@ -46,8 +46,8 @@ except PackageNotFoundError:
 # Attribution for the OpenCC-derived Japanese kanji table travels with the worker.
 datas += [
     (
-        str(root / "src" / "capture_runtime" / "japanese_kanji" / "LICENSE"),
-        "capture_runtime/japanese_kanji",
+        str(root / "src/capture_runtime/speech/infrastructure/japanese_kanji/LICENSE"),
+        "capture_runtime/speech/infrastructure/japanese_kanji",
     )
 ]
 binaries = (

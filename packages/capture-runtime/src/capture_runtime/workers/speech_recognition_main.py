@@ -365,7 +365,7 @@ def _session() -> None:
         ProgressiveSpeechWorkerBackend,
         SpeechRecognitionWindowTranscriber,
     )
-    from capture_runtime.workers.session_server import serve_session
+    from capture_runtime.workers.speech_session_server import serve_session
 
     model_path = Path(os.environ.get("CAPTURE_SESSION_MODEL_PATH", ""))
     temp_dir = Path(os.environ.get("CAPTURE_SESSION_TEMP_DIR", ""))

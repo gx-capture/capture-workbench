@@ -1,4 +1,4 @@
-"""Binary framed server used by the progressive speech recognition worker entrypoint."""
+"""Serve the speech recognition worker session over a framed binary protocol."""
 
 from __future__ import annotations
 
