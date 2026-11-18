@@ -13,6 +13,7 @@
     "packages/capture-runtime/tests/unit/*.test.ts",
     "tools/verify-main-ci.ts",
     "tools/pinned-values-gate.ts",
+    "tools/retired-names-gate.ts",
     "tools/web-component-consumer-smoke.ts",
     "tools/check-fake-runtime-routes.ts",
     "**/*.test.ts",

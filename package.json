@@ -15,6 +15,8 @@
     "test": "corepack pnpm nx run-many -t test",
     "pinned-values:check": "node tools/pinned-values-gate.ts",
     "pinned-values:update": "node tools/pinned-values-gate.ts --update",
+    "retired-names:check": "node tools/retired-names-gate.ts",
+    "retired-names:update": "node tools/retired-names-gate.ts --update",
     "dead-code:check": "node tools/dead-code-gate.ts",
     "dead-code:update": "node tools/dead-code-gate.ts --update",
     "architecture:update": "node tools/architecture-graph.ts --write",
