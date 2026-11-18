@@ -483,5 +483,17 @@
     "match": "substring",
     "replacement": "desktop-formatting",
     "allowed": []
+  },
+  {
+    "name": "DesktopWorkspaceStore",
+    "match": "word",
+    "replacement": "RuntimeStatusStore, LibraryStore, and RecognitionFeaturesStore",
+    "allowed": []
+  },
+  {
+    "name": "desktop-workspace.store",
+    "match": "substring",
+    "replacement": "runtime-status.store, library.store, and recognition-features.store",
+    "allowed": []
   }
 ]

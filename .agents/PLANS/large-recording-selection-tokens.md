@@ -77,7 +77,7 @@ The window is granted no plugin permission. `core:default` was dropped in slice 
 
 - `DesktopLibraryService`: `selectSources(kind)` and `droppedSources()` return selection batches; `importSelection(selection, captureOptions?)` replaces `createSource` and `importSource`; `discardSelections(selections)`. The dialog and webview imports go.
 - `DesktopTauriCommandService.watch(command, channelArg)` wraps a `Channel` so tests mock the service and never build one.
-- `OcrQueueStore` and `DesktopWorkspaceStore` hold selections instead of paths; names come from `fileName`; what they refuse is discarded.
+- `OcrQueueStore` queues selections and `App` routes native drop selections, instead of paths; names come from `fileName`; what they refuse is discarded.
 - The workspace imports every selection of a batch first, then runs the captures in the same order: waiting for each capture before the next import would let later tokens expire during a long transcription. The documents that wait for their turn are held by the capture service, so the OCR queue, which starts queued documents on its own, does not start them early or twice.
 - A message per rejection reason (zh-TW and en).
 

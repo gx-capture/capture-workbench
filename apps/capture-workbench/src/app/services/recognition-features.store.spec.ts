@@ -8,7 +8,7 @@ import { of, Subject, throwError } from 'rxjs';
 import { setDesktopLocale } from '../i18n/desktop-messages';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
 import { DesktopInstallationService } from './desktop-installation.service';
-import { RecognitionFeaturesStore } from './recognition-features.store';
+import { FIRST_RUN_DISMISSED_STORAGE_KEY, RecognitionFeaturesStore } from './recognition-features.store';
 
 describe('RecognitionFeaturesStore removeRequirement', () => {
   beforeEach(() => setDesktopLocale('zh-TW'));
@@ -248,6 +248,58 @@ describe('RecognitionFeaturesStore installation', () => {
     store.installRequirement('windowsml-ocr');
 
     expect(startInstallation).not.toHaveBeenCalled();
+  });
+
+  it('remembers the first-run dismissal choice in localStorage', () => {
+    localStorage.removeItem(FIRST_RUN_DISMISSED_STORAGE_KEY);
+    try {
+      initializeFeatures(
+        runtimeStub({
+          getRequirements: vi.fn(() =>
+            of([
+              {
+                requirementId: 'windowsml-ocr',
+                displayName: 'WindowsML OCR',
+                status: 'installable',
+                kind: 'engine',
+                requiredFor: ['capture'],
+                installStrategy: 'runtime-catalog',
+                downloadBytes: 144_000_000,
+              },
+            ]),
+          ),
+        }),
+      );
+      const features = TestBed.inject(RecognitionFeaturesStore);
+      expect(features.showFirstRunCard()).toBe(true);
+
+      features.dismissFirstRun();
+      expect(features.showFirstRunCard()).toBe(false);
+      expect(localStorage.getItem(FIRST_RUN_DISMISSED_STORAGE_KEY)).toBe('true');
+
+      TestBed.resetTestingModule();
+      const reloadedFeatures = initializeFeatures(
+        runtimeStub({
+          getRequirements: vi.fn(() =>
+            of([
+              {
+                requirementId: 'windowsml-ocr',
+                displayName: 'WindowsML OCR',
+                status: 'installable',
+                kind: 'engine',
+                requiredFor: ['capture'],
+                installStrategy: 'runtime-catalog',
+                downloadBytes: 144_000_000,
+              },
+            ]),
+          ),
+        }),
+      );
+      expect(reloadedFeatures.firstRunDismissed()).toBe(true);
+      expect(reloadedFeatures.showFirstRunCard()).toBe(false);
+    } finally {
+      localStorage.removeItem(FIRST_RUN_DISMISSED_STORAGE_KEY);
+    }
   });
 
   it('allows requirement installation while worker-owned OCR preflight is pending', () => {

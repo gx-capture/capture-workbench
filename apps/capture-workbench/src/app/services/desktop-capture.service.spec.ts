@@ -6,7 +6,7 @@ import type { CaptureOperation, CaptureRequirementId, OcrComputePreflight } from
 import { finalize, of, Subject, throwError, type Observable } from 'rxjs';
 import type { DesktopLibraryDetail, DesktopLibrarySummary } from '../contracts';
 import { DesktopCaptureService, type DesktopCaptureHost } from './desktop-capture.service';
-import { DesktopLibraryService } from './desktop-library.service';
+import { DesktopLibraryService, type DesktopSourceSelection } from './desktop-library.service';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
 
 const summary: DesktopLibrarySummary = {
@@ -1459,6 +1459,48 @@ describe('DesktopCaptureService', () => {
       }),
     );
   });
+
+  it('imports the entire batch before waiting for the first capture', () => {
+    const pending = new Subject<CaptureOperation>();
+    const imported = vi.fn((input: DesktopSourceSelection) => of({
+      ...summary, documentId: input.fileName === 'first.pdf' ? '1'.repeat(32) : '2'.repeat(32),
+    }));
+    const createCapture = vi.fn(() => pending);
+    const store = initializeCapture(libraryStub({ importSelection: imported }), runtimeStub({ createCapture }));
+    store.service.addSelections$([selection('first.pdf'), selection('second.pdf')], store.host).subscribe();
+    TestBed.tick();
+    expect(imported).toHaveBeenCalledTimes(2);
+    expect(createCapture).toHaveBeenCalledTimes(1);
+    // The second document waits for its turn: nothing else may start it.
+    const lifecycle = store.service;
+    expect(lifecycle.hasActiveCapture('2'.repeat(32))).toBe(true);
+    pending.complete();
+  });
+
+  it('starts the next document of a batch when the previous capture ends, and then holds none', () => {
+    const firstCapture = new Subject<CaptureOperation>();
+    const secondCapture = new Subject<CaptureOperation>();
+    const imported = vi.fn((input: DesktopSourceSelection) => of({
+      ...summary, documentId: input.fileName === 'first.pdf' ? '1'.repeat(32) : '2'.repeat(32),
+    }));
+    const createCapture = vi.fn()
+      .mockReturnValueOnce(firstCapture)
+      .mockReturnValueOnce(secondCapture);
+    const store = initializeCapture(libraryStub({ importSelection: imported }), runtimeStub({ createCapture }));
+    const lifecycle = store.service;
+    store.service.addSelections$([selection('first.pdf'), selection('second.pdf')], store.host).subscribe();
+    TestBed.tick();
+    expect(createCapture).toHaveBeenCalledTimes(1);
+    expect(createCapture).toHaveBeenNthCalledWith(1, '1'.repeat(32), expect.any(String), undefined);
+    firstCapture.complete();
+    TestBed.tick();
+    expect(createCapture).toHaveBeenCalledTimes(2);
+    expect(createCapture).toHaveBeenNthCalledWith(2, '2'.repeat(32), expect.any(String), undefined);
+    secondCapture.complete();
+    TestBed.tick();
+    expect(lifecycle.hasActiveCapture('1'.repeat(32))).toBe(false);
+    expect(lifecycle.hasActiveCapture('2'.repeat(32))).toBe(false);
+  });
 });
 
 function initializeCapture(
@@ -1503,6 +1545,10 @@ function initializeCapture(
   };
   TestBed.tick();
   return { service, host };
+}
+
+function selection(fileName: string): DesktopSourceSelection {
+  return { selectionToken: fileName.padEnd(32, '0'), fileName, byteLength: 16, mediaType: 'application/pdf' };
 }
 
 function libraryStub(overrides: Record<string, unknown> = {}) {

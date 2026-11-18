@@ -48,13 +48,13 @@ export interface DiagnosticsDocumentView {
 
 export function buildDiagnosticsRuntimeView(input: {
   readonly state: 'starting' | 'ready' | 'error';
-  readonly workspaceMessage: string;
+  readonly runtimeStatusMessage: string;
   /** Null while the readiness check has failed: there is no status to show then. */
   readonly runtimeStatus: DesktopRuntimeStatus | null;
   readonly ocrCompute: OcrComputePreflight | null;
   readonly messages: DesktopMessages;
 }): DiagnosticsRuntimeView {
-  const { state, workspaceMessage, runtimeStatus, ocrCompute, messages } =
+  const { state, runtimeStatusMessage, runtimeStatus, ocrCompute, messages } =
     input;
   const statusLabel =
     state === 'ready'
@@ -67,7 +67,7 @@ export function buildDiagnosticsRuntimeView(input: {
     statusLabel,
     errorMessage:
       state === 'error'
-        ? nonEmpty(workspaceMessage) ?? nonEmpty(runtimeStatus?.detail)
+        ? nonEmpty(runtimeStatusMessage) ?? nonEmpty(runtimeStatus?.detail)
         : null,
     runtimeVersion: nonEmpty(
       runtimeStatus?.runtimeVersion ?? ocrCompute?.runtimeVersion,

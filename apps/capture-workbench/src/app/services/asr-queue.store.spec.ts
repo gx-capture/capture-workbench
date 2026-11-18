@@ -16,7 +16,7 @@ import { DesktopLibraryService, type DesktopSourceSelection } from './desktop-li
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
 import { DesktopCaptureService } from './desktop-capture.service';
 import { DesktopFormattingService } from './desktop-formatting.service';
-import { DesktopWorkspaceStore } from './desktop-workspace.store';
+import { RuntimeStatusStore } from './runtime-status.store';
 import { LibraryStore } from './library.store';
 import { RecognitionFeaturesStore } from './recognition-features.store';
 
@@ -166,7 +166,7 @@ describe('AsrQueueStore', () => {
       cancel: vi.fn(),
     };
 
-    const workspace = { message: signal('') };
+    const runtimeStatus = { message: signal('') };
     const libraryStore = {
       allDocuments: docs,
       selectedId,
@@ -195,7 +195,7 @@ describe('AsrQueueStore', () => {
 
     TestBed.configureTestingModule({
       providers: [
-        { provide: DesktopWorkspaceStore, useValue: workspace },
+        { provide: RuntimeStatusStore, useValue: runtimeStatus },
         { provide: LibraryStore, useValue: libraryStore },
         { provide: DesktopLibraryService, useValue: library },
         { provide: DesktopRuntimeClientService, useValue: runtime },
@@ -219,7 +219,7 @@ describe('AsrQueueStore', () => {
       streamingPartials,
       library,
       capture,
-      workspace,
+      runtimeStatus,
       libraryStore,
       features,
       formatting,
@@ -228,7 +228,7 @@ describe('AsrQueueStore', () => {
   }
 
   it.each(['ready', 'installable'] as const)('reports export failures and clears them on the next press with speech %s', (speechStatus) => {
-    const { store, library, workspace, formatting } = setup({ speechStatus });
+    const { store, library, runtimeStatus, formatting } = setup({ speechStatus });
     const first = new Subject<DesktopLibraryExport>();
     const second = new Subject<DesktopLibraryExport>();
     library.export.mockReturnValueOnce(first).mockReturnValueOnce(second);
@@ -238,7 +238,7 @@ describe('AsrQueueStore', () => {
     expect(store.exportBusyIds().has('recording')).toBe(true);
     first.error(new Error('private transcript'));
     expect(store.importError()).toBe(desktopMessages().exportFailed);
-    expect(workspace.message()).toBe('');
+    expect(runtimeStatus.message()).toBe('');
     expect(store.exportBusyIds().has('recording')).toBe(false);
     store.exportTxt('recording');
     expect(store.importError()).toBe('');
