@@ -3,40 +3,40 @@ use std::{path::PathBuf, sync::Arc};
 use serde_json::Value;
 
 use crate::{
-    compute::{ComputeSettings, DesktopComputeStatus},
     config::DesktopRuntimeStatus,
     contracts::{
-        LibraryCaptureUpdate, LibraryDiscardSelectionsRequest, LibraryDocumentDetail,
-        LibraryDocumentRequest, LibraryDocumentSummary, LibraryEdits, LibraryExportPayload,
-        LibraryExportRequest, LibraryImportSelectionRequest, LibraryListRequest,
-        LibrarySaveEditsRequest, LibrarySourceSelectionBatch, RuntimeCancelUploadInput,
-        RuntimeCreateCaptureInput, RuntimeIdInput, RuntimeInstallationStartInput,
-        RuntimeModelInstallationStartInput, RuntimeRequirementInput, RuntimeStreamingCaptureInput,
-        RuntimeStreamingEventsInput, SourceSelectionKind,
+        DesktopLibraryDetail, DesktopLibrarySummary, LibraryCaptureUpdate,
+        LibraryDiscardSelectionsRequest, LibraryDocumentRequest, LibraryEdits,
+        LibraryExportPayload, LibraryExportRequest, LibraryImportSelectionRequest,
+        LibraryListRequest, LibrarySaveEditsRequest, LibrarySourceSelectionBatch,
+        RuntimeCancelUploadInput, RuntimeCreateCaptureInput, RuntimeIdInput,
+        RuntimeInstallationStartInput, RuntimeModelInstallationStartInput, RuntimeRequirementInput,
+        RuntimeStreamingCaptureInput, RuntimeStreamingEventsInput, SourceSelectionKind,
     },
     library::LibraryStore,
-    resources::RuntimeAssets,
+    resources::RuntimeExecutablePaths,
     runtime_client::{self, UploadCancellations},
     source_selection::SourceSelections,
+    speech_gpu::{DesktopSpeechGpuStatus, SpeechGpuSettings},
     state::DesktopState,
 };
 
-pub(crate) fn desktop_compute_status(state: &DesktopState) -> DesktopComputeStatus {
-    DesktopComputeStatus::read(state.data_dir())
+pub(crate) fn desktop_speech_gpu_status(state: &DesktopState) -> DesktopSpeechGpuStatus {
+    DesktopSpeechGpuStatus::read(state.data_dir())
 }
 
-pub(crate) fn desktop_set_prefer_gpu(
+pub(crate) fn desktop_set_speech_prefer_gpu(
     state: &DesktopState,
-    assets: Option<&RuntimeAssets>,
+    assets: Option<&RuntimeExecutablePaths>,
     prefer_gpu: bool,
-) -> Result<DesktopComputeStatus, String> {
-    let settings = ComputeSettings { prefer_gpu };
-    if settings != ComputeSettings::load(state.data_dir()) {
+) -> Result<DesktopSpeechGpuStatus, String> {
+    let settings = SpeechGpuSettings { prefer_gpu };
+    if settings != SpeechGpuSettings::load(state.data_dir()) {
         settings.save(state.data_dir())?;
         let assets = assets.ok_or_else(|| "Capture runtime assets are unavailable.".to_string())?;
         state.start(assets.clone());
     }
-    Ok(DesktopComputeStatus::read(state.data_dir()))
+    Ok(DesktopSpeechGpuStatus::read(state.data_dir()))
 }
 
 pub(crate) fn desktop_runtime_status(state: &DesktopState) -> DesktopRuntimeStatus {
@@ -61,7 +61,7 @@ pub(crate) fn library_import_selection(
     selections: &SourceSelections,
     library: &LibraryStore,
     request: LibraryImportSelectionRequest,
-) -> Result<LibraryDocumentSummary, String> {
+) -> Result<DesktopLibrarySummary, String> {
     selections.import(owner, request, library)
 }
 
@@ -76,21 +76,21 @@ pub(crate) fn library_discard_selections(
 pub(crate) fn library_update_capture(
     library: &LibraryStore,
     update: LibraryCaptureUpdate,
-) -> Result<LibraryDocumentSummary, String> {
+) -> Result<DesktopLibrarySummary, String> {
     library.update_capture(update)
 }
 
 pub(crate) fn library_list(
     library: &LibraryStore,
     request: LibraryListRequest,
-) -> Result<Vec<LibraryDocumentSummary>, String> {
+) -> Result<Vec<DesktopLibrarySummary>, String> {
     library.list(request)
 }
 
 pub(crate) fn library_get(
     library: &LibraryStore,
     request: LibraryDocumentRequest,
-) -> Result<LibraryDocumentDetail, String> {
+) -> Result<DesktopLibraryDetail, String> {
     library.get(request)
 }
 

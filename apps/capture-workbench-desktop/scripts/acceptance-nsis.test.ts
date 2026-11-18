@@ -115,7 +115,7 @@ test('acceptance NSIS output is isolated and provenance binds the built installe
       buildFlavor: 'acceptance',
       tauriBundleTarget: 'nsis',
       targetTriple: TARGET_TRIPLE,
-      cargoFeature: 'acceptance-app-data',
+      cargoFeature: 'acceptance-harness',
       stagedRuntimeSha256: RUNTIME_SHA,
       runtimeManifestSha256: RUNTIME_MANIFEST_SHA,
       installer: {

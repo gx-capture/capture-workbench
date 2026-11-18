@@ -7,7 +7,7 @@ Capture Runtime sidecar with a memory-only bearer token.
 The Windows product runs as a single instance. Starting it again restores a
 minimized main window, shows and focuses it, and exits the second process.
 Second-launch arguments and working directory are ignored. Builds with
-`acceptance-app-data` (including deterministic QA) skip the single-instance
+`acceptance-harness` (including deterministic QA) skip the single-instance
 lock so isolated test runs and the product can coexist.
 
 The desktop host starts one verified `capture-runtime` sidecar on a random loopback port with a memory-only 256-bit bearer token. Its product provider is an isolated Ollama lane with dedicated app data, model storage, port, profile, and PID file.
@@ -63,7 +63,7 @@ The ordinary `build` target compiles the Tauri app with `--no-bundle`.
 `build-nsis` packages the staged release runtime using `tauri.conf.json`.
 
 `build-nsis-deterministic` builds **Capture Workbench QA Fake Data** using
-`tauri.deterministic-qa.conf.json` and the `acceptance-app-data` Cargo feature.
+`tauri.deterministic-qa.conf.json` and the `acceptance-harness` Cargo feature.
 Its identifier is `io.github.gx-capture.capture-workbench.deterministic-qa`.
 The fake executable, manifest, schema and provenance are staged only under
 `src-tauri/target/deterministic-qa/staged`; product resources are untouched.

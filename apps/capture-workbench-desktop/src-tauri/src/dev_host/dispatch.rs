@@ -8,7 +8,7 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    library::LibraryStore, resources::RuntimeAssets, runtime_client::UploadCancellations,
+    library::LibraryStore, resources::RuntimeExecutablePaths, runtime_client::UploadCancellations,
     source_selection::SourceSelections, state::DesktopState,
 };
 
@@ -19,7 +19,7 @@ pub(crate) struct HostContext {
     pub(crate) library: Arc<LibraryStore>,
     pub(crate) selections: Arc<SourceSelections>,
     pub(crate) uploads: Arc<UploadCancellations>,
-    pub(crate) assets: Option<RuntimeAssets>,
+    pub(crate) assets: Option<RuntimeExecutablePaths>,
     queued_selections: Mutex<VecDeque<Vec<PathBuf>>>,
     pub(crate) owner: String,
 }
@@ -28,7 +28,7 @@ impl HostContext {
     pub(crate) fn new(
         state: DesktopState,
         library: Arc<LibraryStore>,
-        assets: Option<RuntimeAssets>,
+        assets: Option<RuntimeExecutablePaths>,
     ) -> Self {
         Self {
             state,
@@ -121,7 +121,7 @@ macro_rules! build_dispatch_table {
 
 macro_rules! define_feature_gated_commands {
     (
-        acceptance_app_data: [$($acceptance:ident),* $(,)?],
+        acceptance_harness: [$($acceptance:ident),* $(,)?],
     ) => {
         pub(super) fn is_feature_gated_command(command: &str) -> bool {
             matches!(command, $(stringify!($acceptance))|*)
@@ -210,20 +210,20 @@ mod handlers {
         json_ok(host_api::desktop_runtime_status(&context.state))
     }
 
-    pub(super) fn desktop_compute_status(
+    pub(super) fn desktop_speech_gpu_status(
         args: Value,
         context: &HostContext,
     ) -> Result<HostResponse, HostError> {
         let EmptyArgs {} = parse_args(args)?;
-        json_ok(host_api::desktop_compute_status(&context.state))
+        json_ok(host_api::desktop_speech_gpu_status(&context.state))
     }
 
-    pub(super) fn desktop_set_prefer_gpu(
+    pub(super) fn desktop_set_speech_prefer_gpu(
         args: Value,
         context: &HostContext,
     ) -> Result<HostResponse, HostError> {
         let SetPreferGpuArgs { prefer_gpu } = parse_args(args)?;
-        json_result(host_api::desktop_set_prefer_gpu(
+        json_result(host_api::desktop_set_speech_prefer_gpu(
             &context.state,
             context.assets.as_ref(),
             prefer_gpu,

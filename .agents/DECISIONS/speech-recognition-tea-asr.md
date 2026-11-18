@@ -112,7 +112,7 @@ whose warm-worker key includes it. It replaces `CAPTURE_WHISPER_PRIMARY_MODEL` a
 The `cuda` pack holds both models. The `cpu` pack holds only mini and the aligner, in a worker
 built without the CUDA libraries (issues #274 and #154). The desktop app does not expose the
 model setting or the pack choice yet: it launches the runtime with a fixed environment, so
-either would need a field in `compute-settings.json` and a line in `launch_policy.rs`.
+either would need a field in `speech-gpu-settings.json` and a line in `launch_policy.rs`.
 
 ## Device follows the machine (2026-11-04)
 

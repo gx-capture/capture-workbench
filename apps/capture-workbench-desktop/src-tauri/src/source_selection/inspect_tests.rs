@@ -137,7 +137,7 @@ fn per_kind_limits_follow_verified_signatures() {
             .write(true)
             .open(&path)
             .unwrap()
-            .set_len(crate::library::DOCUMENT_MAX_SOURCE_BYTES + 1)
+            .set_len(crate::library::PAGE_SOURCE_MAX_BYTES + 1)
             .unwrap();
         let result = inspect_source(&path, SourceSelectionKind::All);
         if accepted {

@@ -1,2 +1,4 @@
-pub(crate) const DEFAULT_RETENTION_HOURS: u64 = 24;
-pub(crate) const DEFAULT_MAX_UPLOAD_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+use crate::library::RECORDING_MAX_SOURCE_BYTES;
+
+pub(crate) const RUNTIME_RETENTION_HOURS: u64 = 24;
+pub(crate) const RUNTIME_MAX_UPLOAD_BYTES: u64 = RECORDING_MAX_SOURCE_BYTES;
