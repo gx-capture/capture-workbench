@@ -3,7 +3,7 @@ import type { DesktopLibrarySummary } from '../contracts';
 import { desktopMessages } from '../i18n/desktop-messages';
 import type { DesktopCaptureOperation } from './desktop-runtime-client.service';
 import { captureStatusChipVariant, type CaptureStatusChipVariant, type CaptureUserStatus } from './capture-user-status';
-import { isActiveOneShotOperation, stageLabel } from './desktop-workspace.selectors';
+import { isActiveOneShotOperation, stageLabel } from './capture-operation-status';
 
 export interface OcrQueueView {
   readonly documentId: string;

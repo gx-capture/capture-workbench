@@ -32,17 +32,14 @@ import {
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
 import { DesktopCaptureService } from './desktop-capture.service';
 import { LibraryExportService } from './library-export.service';
-import {
-  errorMessage,
-  formatApproximateBytes,
-  installationPercent,
-  isActiveStreaming,
-  isRecordingMediaType,
-  isFeatureReady,
-} from './desktop-workspace.selectors';
+import { errorMessage } from './desktop-errors';
+import { formatApproximateBytes } from './desktop-formatting.service';
+import { isActiveStreaming } from './capture-operation-status';
+import { isRecordingMediaType } from './capture-media-types';
+import { isFeatureReady } from './recognition-requirements';
 import { RuntimeStatusStore } from './runtime-status.store';
 import { LibraryStore } from './library.store';
-import { installationProgress } from './installation-progress';
+import { installationProgress, installationPercent } from './installation-progress';
 import { RecognitionFeaturesStore } from './recognition-features.store';
 import { selectionRejectionMessages } from './source-selection-messages';
 

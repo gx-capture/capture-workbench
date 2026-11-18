@@ -16,10 +16,8 @@ import { DesktopLibraryService } from './desktop-library.service';
 import { LibraryStore } from './library.store';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
 import { DesktopFormattingService } from './desktop-formatting.service';
-import {
-  errorMessage,
-  isPdfMediaType,
-} from './desktop-workspace.selectors';
+import { errorMessage } from './desktop-errors';
+import { isPdfMediaType } from './capture-media-types';
 import {
   PdfPageRenderer,
   type PdfDocumentHandle,

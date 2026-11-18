@@ -28,7 +28,7 @@ import {
   selectInstallableRequirements,
   selectRecognitionRequirements,
   selectSpeechPack,
-} from './services/desktop-workspace.selectors';
+} from './services/recognition-requirements';
 import { AsrQueueStore } from './services/asr-queue.store';
 import { DesktopLibraryService, type DesktopSourceSelection, type DesktopSourceSelectionBatch } from './services/desktop-library.service';
 import { DesktopRuntimeClientService } from './services/desktop-runtime-client.service';

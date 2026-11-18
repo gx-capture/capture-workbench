@@ -1,4 +1,5 @@
 import { Injectable } from '@angular/core';
+import { formatApproximateBytes as formatApproximateBytesIn } from '@gx-capture/capture-workbench-ui';
 
 import { desktopLocale } from '../i18n/desktop-messages';
 
@@ -36,4 +37,11 @@ export class DesktopFormattingService {
       timeStyle: 'short',
     }).format(milliseconds);
   }
+}
+
+/** A download size in the app's current language (`約 2.8 GB`, `~2.8 GB`), or null when unknown. */
+export function formatApproximateBytes(
+  bytes: number | null | undefined,
+): string | null {
+  return formatApproximateBytesIn(bytes, desktopLocale());
 }

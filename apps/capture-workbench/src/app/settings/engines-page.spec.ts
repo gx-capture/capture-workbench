@@ -8,7 +8,7 @@ import type {
 } from '@gx-capture/capture-workbench-ui';
 import type { DesktopLibrarySummary } from '../contracts';
 import { setDesktopLocale } from '../i18n/desktop-messages';
-import { selectRecognitionRequirements } from '../services/desktop-workspace.selectors';
+import { selectRecognitionRequirements } from '../services/recognition-requirements';
 import { LibraryStore } from '../services/library.store';
 import { RecognitionFeaturesStore } from '../services/recognition-features.store';
 import { EnginesPage } from './engines-page';

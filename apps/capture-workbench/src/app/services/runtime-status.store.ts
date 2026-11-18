@@ -3,7 +3,7 @@ import { SpeechGpuSettingsStore } from './speech-gpu-settings.store';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
 import { LibraryStore } from './library.store';
 import { RecognitionFeaturesStore } from './recognition-features.store';
-import { errorMessage } from './desktop-workspace.selectors';
+import { errorMessage } from './desktop-errors';
 import { desktopMessages } from '../i18n/desktop-messages';
 
 type RuntimeState = 'starting' | 'ready' | 'error';

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  installationPercent,
   installationProgress,
   installationProgressLabel,
 } from './installation-progress';
@@ -63,5 +64,20 @@ describe('installationProgressLabel', () => {
     expect(installationProgressLabel({ phase: 'preparing', percent: 0 }, messages)).toBe('preparing');
     expect(installationProgressLabel({ phase: 'downloading', percent: 37 }, messages)).toBe('downloading 37%');
     expect(installationProgressLabel({ phase: 'installing', percent: 100 }, messages)).toBe('installing');
+  });
+});
+
+describe('installationPercent', () => {
+  it('computes percentage from downloadedBytes / downloadBytes and falls back to progress', () => {
+    expect(
+      installationPercent({
+        progress: 0.1,
+        downloadedBytes: 1_400_000_000,
+        downloadBytes: 2_800_000_000,
+      }),
+    ).toBe(50);
+    expect(installationPercent({ progress: 1 / 3 })).toBe(33);
+    expect(installationPercent({ progress: 1.2 })).toBe(100);
+    expect(installationPercent(null)).toBe(0);
   });
 });
