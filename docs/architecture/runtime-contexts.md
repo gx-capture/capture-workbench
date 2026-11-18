@@ -27,6 +27,7 @@ flowchart LR
   n_capture_runtime_ocr["capture_runtime.ocr"]
   n_capture_runtime_pdf_page_selection["capture_runtime.pdf_page_selection"]
   n_capture_runtime_problem_registry["capture_runtime.problem_registry"]
+  n_capture_runtime_processing_error["capture_runtime.processing_error"]
   n_capture_runtime_provisioning["capture_runtime.provisioning"]
   n_capture_runtime_release["capture_runtime.release"]
   n_capture_runtime_routes["capture_runtime.routes"]
@@ -69,6 +70,7 @@ flowchart LR
   n_capture_runtime_capture --> n_capture_runtime_diarization
   n_capture_runtime_capture --> n_capture_runtime_ocr
   n_capture_runtime_capture --> n_capture_runtime_pdf_page_selection
+  n_capture_runtime_capture --> n_capture_runtime_processing_error
   n_capture_runtime_capture --> n_capture_runtime_provisioning
   n_capture_runtime_capture --> n_capture_runtime_routes
   n_capture_runtime_capture --> n_capture_runtime_speech
@@ -133,11 +135,11 @@ flowchart LR
   n_capture_runtime_routes --> n_capture_runtime_contract_set
   n_capture_runtime_routes --> n_capture_runtime_contracts
   n_capture_runtime_speech --> n_capture_runtime_worker_payloads
-  n_capture_runtime_speech --> n_capture_runtime_capture
   n_capture_runtime_speech --> n_capture_runtime_clock
   n_capture_runtime_speech --> n_capture_runtime_config
   n_capture_runtime_speech --> n_capture_runtime_constants
   n_capture_runtime_speech --> n_capture_runtime_contracts
+  n_capture_runtime_speech --> n_capture_runtime_processing_error
   n_capture_runtime_speech --> n_capture_runtime_provisioning
   n_capture_runtime_speech --> n_capture_runtime_worker_client
   n_capture_runtime_speech --> n_capture_runtime_worker_probe

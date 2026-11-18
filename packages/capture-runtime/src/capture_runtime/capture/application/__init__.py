@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from capture_runtime.capture.application.streaming_capture_service import (
+    StreamingCaptureService,
+)
 from capture_runtime.capture.application.use_cases import (
     AppendChunk,
     CancelCapture,
@@ -20,4 +23,5 @@ __all__ = [
     "OpenIngestion",
     "PollCaptureEvents",
     "StartCapture",
+    "StreamingCaptureService",
 ]

@@ -12,7 +12,6 @@ from typing import Any, TypedDict
 
 from pydantic import ValidationError
 
-from capture_runtime.capture.application.processing_error import CaptureProcessingError
 from capture_runtime.capture.application.use_cases import (
     AppendChunk,
     CancelCapture,
@@ -65,6 +64,7 @@ from capture_runtime.ocr.infrastructure.ocr_execution_proof import (
 )
 from capture_runtime.ocr.infrastructure.ocr_projection import OcrPipeline
 from capture_runtime.ocr.infrastructure.ocr_worker_result import OcrWorkerFailure
+from capture_runtime.processing_error import CaptureProcessingError
 from capture_runtime.provisioning.infrastructure.engine_installation import (
     ExtractionRuntimeUnavailableError,
     SpeechModelNotInstalledError,
@@ -124,8 +124,7 @@ class StreamingCaptureService:
         self._ocr_pipeline = OcrPipeline()
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._cancellations: dict[str, asyncio.Event] = {}
-        # Keep the discard hook used by structuring sessions. Host OCR proofs
-        # are published at the awaiting_structuring checkpoint and are never
+        # Host OCR proofs are published at the awaiting_structuring checkpoint and are never
         # retained here while waiting for a host-owned commit.
         self._shutting_down = False
         # Cleared while an engine is uninstalled: a capture started meanwhile

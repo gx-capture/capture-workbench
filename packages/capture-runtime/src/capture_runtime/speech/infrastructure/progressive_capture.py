@@ -15,7 +15,6 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
-from capture_runtime.capture.application.processing_error import CaptureProcessingError
 from capture_runtime.clock import Clock
 from capture_runtime.config import ExtractionRuntimeConfig, worker_child_environment
 from capture_runtime.constants import SPEECH_RECOGNITION_REQUIREMENT_ID
@@ -30,6 +29,7 @@ from capture_runtime.contracts import (
     TimeLocator,
     project_source_text,
 )
+from capture_runtime.processing_error import CaptureProcessingError
 from capture_runtime.provisioning.infrastructure.engine_content_selection import (
     speech_model_not_installed_message,
 )
