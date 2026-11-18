@@ -1,4 +1,3 @@
-import { playbackUnavailable } from './recording-playback';
 import { selectionRejectionMessages } from './source-selection-messages';
 import {
   computed,
@@ -12,10 +11,7 @@ import {
 import { rxResource, takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { Router } from '@angular/router';
 import type {
-  CaptureDocument,
   CaptureRequirementId,
-  PartialCapture,
-  RawCapture,
   RuntimeInstallation,
 } from '@gx-capture/capture-workbench-ui';
 import type {
@@ -26,21 +22,13 @@ import { AsrQueueStore } from './asr-queue.store';
 import { CaptureQueueStore } from './capture-queue.store';
 import { ComputeSettingsStore } from './compute-settings.store';
 import { DesktopLibraryService, type DesktopSourceSelectionBatch } from './desktop-library.service';
-import { DesktopWorkspaceFormattingService } from './desktop-workspace-formatting.service';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
 import {
   DesktopWorkspaceCaptureService,
   type DesktopWorkspaceCaptureHost,
 } from './desktop-workspace-capture.service';
 import { RecognitionFeaturesStore } from './recognition-features.store';
-import {
-  captureResultText,
-  errorMessage,
-  isAudioMediaType,
-  stageLabel as selectStageLabel,
-  statusLabel as selectStatusLabel,
-  transcriptLines,
-} from './desktop-workspace.selectors';
+import { errorMessage } from './desktop-workspace.selectors';
 import { desktopMessages } from '../i18n/desktop-messages';
 
 type WorkspaceState = 'starting' | 'ready' | 'error';
@@ -50,7 +38,6 @@ type WorkspaceState = 'starting' | 'ready' | 'error';
 export class DesktopWorkspaceStore {
   private readonly runtime = inject(DesktopRuntimeClientService);
   private readonly library = inject(DesktopLibraryService);
-  private readonly formatting = inject(DesktopWorkspaceFormattingService);
   private readonly captureLifecycle = inject(DesktopWorkspaceCaptureService);
   private readonly compute = inject(ComputeSettingsStore);
   private readonly destroyRef = inject(DestroyRef);
@@ -60,8 +47,6 @@ export class DesktopWorkspaceStore {
 
   readonly message = signal(desktopMessages().starting);
   readonly selectedId = signal<string | null>(null);
-  readonly query = signal('');
-  readonly statusFilter = signal('');
   readonly installing = this.features.installing;
   readonly activeInstallation = this.features.activeInstallation;
   readonly activeModelInstallation = this.features.activeModelInstallation;
@@ -72,27 +57,12 @@ export class DesktopWorkspaceStore {
   readonly busyIds = this.captureLifecycle.busyIds;
   readonly runtimeStarted = this.runtime.started;
   readonly requestedRequirements = this.features.requestedRequirements;
-  /** Tell speakers apart in audio added from now on. */
-  readonly identifySpeakers = signal(false);
-  /** Addresses of source files loaded for playing speaker samples, by document. */
-  readonly sampleSources = signal<ReadonlyMap<string, string>>(new Map());
-  readonly streamingPartials = this.captureLifecycle.streamingPartials;
-
-  /** Returns the current partial result for a document, when streaming has emitted one. */
-  partialFor(documentId: string): PartialCapture | null {
-    return this.streamingPartials().get(documentId) ?? null;
-  }
 
   get requirements() {
     return this.features.requirements;
   }
 
-  /** History search result. The OCR queue reads {@link allDocuments} instead. */
-  get documents() {
-    return this.visibleDocuments;
-  }
-
-  /** Every library document, including ones the history search hides. */
+  /** Every library document. */
   get allDocuments() {
     return this.documentsResource.value;
   }
@@ -127,7 +97,6 @@ export class DesktopWorkspaceStore {
   readonly asrReady = this.features.asrReady;
   readonly speakersReady = this.features.speakersReady;
   readonly engines = this.features.engines;
-  readonly speechPack = this.features.speechPack;
   readonly requestedMissing = this.features.requestedMissing;
   readonly installableRequestedRequirements =
     this.features.installableRequestedRequirements;
@@ -144,14 +113,6 @@ export class DesktopWorkspaceStore {
     params: () => (this.runtimeStarted() ? { ready: true } : undefined),
     stream: ({ abortSignal }) => this.library.list('', '', abortSignal),
   });
-
-  private readonly visibleDocuments = computed(() =>
-    filterLibraryDocuments(
-      this.documentsResource.value(),
-      this.query(),
-      this.statusFilter(),
-    ),
-  );
 
   private readonly selectedResource = rxResource<
     DesktopLibraryDetail | null,
@@ -170,12 +131,12 @@ export class DesktopWorkspaceStore {
     selectedId: this.selectedId,
     requestedRequirements: this.requestedRequirements,
     requirements: () => this.requirements(),
-    documents: () => this.documents(),
+    documents: () => this.allDocuments() ?? [],
     selected: () => this.selected(),
     refreshDocuments: () => this.refreshDocuments(),
     reloadDocumentState: (documentId) => this.reloadDocumentState(documentId),
     setMessage: (message) => this.message.set(message),
-    identifySpeakers: () => this.identifySpeakers(),
+    identifySpeakers: () => false,
   };
 
   private readonly resourceErrorEffect = effect(() => {
@@ -237,26 +198,11 @@ export class DesktopWorkspaceStore {
     this.selectedResource.reload();
   }
 
-  /** Updates the library search query used by the document resource. */
-  updateQuery(query: string): void {
-    this.query.set(query);
-  }
-
-  /** Updates the library status filter used by the document resource. */
-  updateStatusFilter(status: string): void {
-    this.statusFilter.set(status);
-  }
-
   /** Latest installation record for a requirement unit, if any. */
   installationFor(
     requirementId: CaptureRequirementId,
   ): RuntimeInstallation | null {
     return this.features.installationFor(requirementId);
-  }
-
-  /** Installs all requested missing requirements in deterministic order. */
-  installRequestedRequirements(): void {
-    this.features.installRequestedRequirements();
   }
 
   /** Downloads one recognition unit the user chose. */
@@ -267,11 +213,6 @@ export class DesktopWorkspaceStore {
   /** Downloads the selected recognition units in deterministic order. */
   installUnits(requirementIds: readonly CaptureRequirementId[]): void {
     this.features.installUnits(requirementIds);
-  }
-
-  /** Downloads one speech pack unit the user chose after reading its guide. */
-  installSpeechUnit(requirementId: CaptureRequirementId): void {
-    this.features.installUnit(requirementId);
   }
 
   /** Cancels a running installation. */
@@ -296,15 +237,6 @@ export class DesktopWorkspaceStore {
   /** Starts the selected model installation and refreshes dependent resources. */
   installSelectedModel(): void {
     this.features.installSelectedModel();
-  }
-
-  /** Opens the host source picker and enqueues the selected selections. */
-  chooseSources(): void {
-    if (!this.runtime.ready() || !this.canCapture()) return;
-    this.library.selectSources().subscribe({
-      next: (batch) => this.addSelections(batch),
-      error: (error: unknown) => this.message.set(errorMessage(error)),
-    });
   }
 
   /** Enqueues selections through the capture lifecycle collaborator. */
@@ -342,7 +274,7 @@ export class DesktopWorkspaceStore {
       return;
     }
     const document =
-      this.documents().find(
+      (this.allDocuments() ?? []).find(
         (candidate) => candidate.documentId === documentId,
       ) ??
       (this.selected()?.documentId === documentId
@@ -354,7 +286,6 @@ export class DesktopWorkspaceStore {
     }
     this.library.delete(documentId).subscribe({
       next: () => {
-        this.releaseSampleSource(documentId);
         if (this.selectedId() === documentId) {
           this.selectedId.set(null);
           this.selectedResource.set(null);
@@ -363,160 +294,6 @@ export class DesktopWorkspaceStore {
       },
       error: (error: unknown) => this.message.set(errorMessage(error)),
     });
-  }
-
-  /** Offer an optional unit that a finished capture said it missed. */
-  requestUnit(requirementId: CaptureRequirementId): void {
-    this.features.requestUnit(requirementId);
-  }
-
-  /** Units a result missed that are not installed yet. */
-  missedUnits(result: CaptureDocument): readonly CaptureRequirementId[] {
-    const ready = new Set(
-      this.requirements()
-        .filter((requirement) => requirement.status === 'ready')
-        .map((requirement) => requirement.requirementId),
-    );
-    return (result.suggestedUnits ?? []).filter((unit) => !ready.has(unit));
-  }
-
-  /** Loads the source file once so the speakers' samples can be played. */
-  loadSpeakerSamples(
-    documentId: string,
-    mediaType: string,
-    byteLength: number,
-  ): void {
-    if (playbackUnavailable(byteLength)) {
-      this.message.set(desktopMessages().largeRecordingPlaybackUnavailable);
-      return;
-    }
-    if (this.sampleSources().has(documentId)) return;
-    this.library.sourceBytes(documentId).subscribe({
-      next: (bytes) => {
-        const url = URL.createObjectURL(new Blob([bytes], { type: mediaType }));
-        this.sampleSources.update((current) =>
-          new Map(current).set(documentId, url),
-        );
-      },
-      error: (error: unknown) => this.message.set(errorMessage(error)),
-    });
-  }
-
-  /** Whether a document is a recording (audio, or video whose audio was transcribed). */
-  isRecording(mediaType: string): boolean {
-    return isAudioMediaType(mediaType);
-  }
-
-  /** Address of a recording loaded for playback, or null before it is loaded. */
-  recordingUrl(documentId: string): string | null {
-    return this.sampleSources().get(documentId) ?? null;
-  }
-
-  /** A recording's transcript lines, with the names given to its speakers. */
-  transcriptLines(item: {
-    readonly raw?: RawCapture;
-    readonly result?: CaptureDocument;
-  }) {
-    return item.raw
-      ? transcriptLines(item.raw, item.result?.speakers ?? [])
-      : [];
-  }
-
-  /** Address that plays only one speaker's sample, once the source is loaded. */
-  speakerSampleUrl(
-    documentId: string,
-    sample?: { readonly startMs: number; readonly endMs: number } | null,
-  ): string | null {
-    const source = this.sampleSources().get(documentId);
-    return source && sample
-      ? `${source}#t=${sample.startMs / 1000},${sample.endMs / 1000}`
-      : null;
-  }
-
-  /** Stores the name the user gave a speaker; an empty name removes it. */
-  nameSpeaker(documentId: string, speakerId: string, name: string): void {
-    const detail = this.selected();
-    const result =
-      detail?.documentId === documentId ? detail.result : undefined;
-    const speakers = result?.speakers ?? [];
-    if (!result || !speakers.some((speaker) => speaker.speakerId === speakerId))
-      return;
-    const displayName = name.trim().slice(0, 100) || null;
-    this.library
-      .updateCapture({
-        documentId,
-        status: detail!.status,
-        stage: detail!.stage,
-        result: {
-          ...result,
-          speakers: speakers.map((speaker) =>
-            speaker.speakerId === speakerId
-              ? { ...speaker, displayName }
-              : speaker,
-          ),
-        },
-      })
-      .subscribe({
-        next: () => this.reloadDocumentState(documentId),
-        error: (error: unknown) => this.message.set(errorMessage(error)),
-      });
-  }
-
-  /** Result text; a transcript with speakers reads "name: what they said". */
-  resultText(result: CaptureDocument): string {
-    let text = this.resultTexts.get(result);
-    if (text === undefined) {
-      text = captureResultText(result);
-      this.resultTexts.set(result, text);
-    }
-    return text;
-  }
-
-  private readonly resultTexts = new WeakMap<CaptureDocument, string>();
-
-  private releaseSampleSource(documentId: string): void {
-    const url = this.sampleSources().get(documentId);
-    if (!url) return;
-    URL.revokeObjectURL(url);
-    this.sampleSources.update((current) => {
-      const next = new Map(current);
-      next.delete(documentId);
-      return next;
-    });
-  }
-
-  /** Exports a document through the host download boundary. */
-  export(documentId: string, format: 'json' | 'text'): void {
-    this.library.export(documentId, format).subscribe({
-      next: (exported) => {
-        this.formatting.downloadText(
-          exported.fileName,
-          exported.content,
-          exported.mediaType,
-        );
-      },
-      error: (error: unknown) => this.message.set(errorMessage(error)),
-    });
-  }
-
-  /** Formats bytes using the workspace presentation service. */
-  formatBytes(bytes: number): string {
-    return this.formatting.formatBytes(bytes);
-  }
-
-  /** Formats persisted timestamps using the workspace presentation service. */
-  formatDate(milliseconds: number): string {
-    return this.formatting.formatDate(milliseconds);
-  }
-
-  /** Returns a human-readable label for a runtime stage. */
-  stageLabel(stage?: string): string {
-    return selectStageLabel(stage);
-  }
-
-  /** Returns a human-readable label for a persisted library status. */
-  statusLabel(status: DesktopLibrarySummary['status']): string {
-    return selectStatusLabel(status);
   }
 
   /**
@@ -544,18 +321,4 @@ export class DesktopWorkspaceStore {
     this.documentsResource.reload();
     if (this.selectedId() === documentId) this.selectedResource.reload();
   }
-}
-
-/** Same rule as the host list: file name contains the query, status matches exactly. */
-function filterLibraryDocuments(
-  documents: readonly DesktopLibrarySummary[],
-  query: string,
-  status: string,
-): readonly DesktopLibrarySummary[] {
-  const needle = query.trim().toLowerCase();
-  const wanted = status.trim().toLowerCase();
-  return documents.filter((document) =>
-    (needle === '' || document.fileName.toLowerCase().includes(needle))
-    && (wanted === '' || document.status === wanted),
-  );
 }

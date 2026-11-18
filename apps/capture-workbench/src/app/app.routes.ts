@@ -1,6 +1,5 @@
 import type { Routes } from '@angular/router';
 import { AsrPage } from './asr/asr-page';
-import { HistoryPage } from './history/history-page';
 import { HistoryListPage } from './history/history-list-page';
 import { OcrPage } from './ocr/ocr-page';
 import { ResultContentPage } from './result/result-content-page';
@@ -19,7 +18,6 @@ export const appRoutes: Routes = [
   { path: '', pathMatch: 'full', redirectTo: 'ocr' },
   { path: 'ocr', component: OcrPage },
   { path: 'asr', component: AsrPage },
-  { path: 'workspace', component: HistoryPage },
   { path: 'history', component: HistoryListPage },
   {
     path: 'history/:id',

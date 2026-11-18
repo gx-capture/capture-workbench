@@ -1,25 +1,10 @@
-/* Tailwind and the Spartan helm tokens (.agents/DECISIONS/tailwind-spartan-ui.md).
-   Layered, so the unlayered Material theme and component styles of the
-   workspace still win until later phases remove them. */
+/* Tailwind and the Spartan helm tokens (.agents/DECISIONS/tailwind-spartan-ui.md). */
 @layer theme, base, components, utilities;
 @import 'tailwindcss/theme.css' layer(theme);
 @import 'tailwindcss/preflight.css' layer(base);
 @import 'tailwindcss/utilities.css' layer(utilities) source(none);
 @import '@spartan-ng/brain/hlm-tailwind-preset.css';
 @source './app/**/*.{html,ts}';
-
-/* The workspace on /history was styled against browser defaults, not
-   Tailwind's preflight; undo preflight inside it until phase 7 of
-   .agents/PLANS/workbench-ocr-asr-ux.md deletes that workspace. */
-@layer base {
-  app-history-page {
-    line-height: normal;
-  }
-
-  app-history-page :where(*) {
-    all: revert-layer;
-  }
-}
 
 :root {
   --radius: 0.625rem;

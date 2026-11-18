@@ -55,7 +55,7 @@ A host that sends a recording over its configured `maxUploadBytes` is refused wh
 ## Whole-file memory inventory
 
 - Library byte retrieval (playback): complete compressed `Vec` and IPC response. Evidence: `apps/capture-workbench-desktop/src-tauri/src/library/store.rs` (`load_source`), `apps/capture-workbench-desktop/src-tauri/src/commands.rs` (`library_source_bytes`). The import itself holds 1 MiB.
-- Renderer playback: complete `ArrayBuffer` and Blob-backed object URL. Evidence: `apps/capture-workbench/src/app/services/desktop-workspace.store.ts:409`.
+- Renderer playback: complete `ArrayBuffer` and Blob-backed object URL. Evidence: `apps/capture-workbench/src/app/services/result-review.store.ts` (`recordingUrl`) and `apps/capture-workbench/src/app/services/recording-playback.ts`.
 - Buffered runtime extraction: complete compressed Python `bytes` for PDF and image only. Evidence: `packages/capture-runtime/src/capture_runtime/capture/application/streaming_capture_service.py` (`_extract_finalized_source`).
 - Whole-recording speech: all decoded pieces, concatenated waveform, float32 conversion; inference subsequently chunks audio, but decoding already holds the whole waveform. Evidence: `packages/capture-runtime/src/capture_runtime/speech/infrastructure/speech_recognition.py:334`, `packages/capture-runtime/src/capture_runtime/speech/infrastructure/speech_recognition.py:351`, `packages/capture-runtime/src/capture_runtime/speech/infrastructure/speech_recognition.py:45`.
 - Diarization: frames are decoded one at a time into one PCM buffer, then converted in place to the float waveform; memory grows with the duration, within the duration budget. Evidence: `packages/capture-runtime/src/capture_runtime/diarization/infrastructure/speaker_diarization.py`.

@@ -12,7 +12,6 @@ import type {
 } from '@gx-capture/capture-workbench-ui';
 import { App } from './app';
 import { appRoutes } from './app.routes';
-import { HistoryPage } from './history/history-page';
 import { HistoryListPage } from './history/history-list-page';
 import { setDesktopLocale } from './i18n/desktop-messages';
 import {
@@ -280,13 +279,11 @@ describe('App shell and recognition pages', () => {
     );
   });
 
-  it('keeps the existing workspace on its diagnostic route and sends unknown paths home', async () => {
+  it('keeps history on its route and sends unknown paths home', async () => {
     expect(appRoutes.find((route) => route.path === 'history')?.component).toBe(
       HistoryListPage,
     );
-    expect(appRoutes.find((route) => route.path === 'workspace')?.component).toBe(
-      HistoryPage,
-    );
+    expect(appRoutes.some((route) => route.path === 'workspace')).toBe(false);
     await renderShell('/no-such-page');
 
     expect(TestBed.inject(Router).url).toBe('/ocr');

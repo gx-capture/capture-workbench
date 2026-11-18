@@ -12,7 +12,7 @@ and procedure: [release-runbook.md](../GUIDES/release-runbook.md).
   [#158](https://github.com/gx-capture/capture-workbench/issues/158) (ASR page),
   [#159](https://github.com/gx-capture/capture-workbench/issues/159) (result view and editing),
   [#160](https://github.com/gx-capture/capture-workbench/issues/160) (history table and export),
-  [#161](https://github.com/gx-capture/capture-workbench/issues/161) (diagnostics; remove Angular Material),
+  [#161](https://github.com/gx-capture/capture-workbench/issues/161) (diagnostics),
   [#162](https://github.com/gx-capture/capture-workbench/issues/162) (Web Component sizes from the runtime),
   [#163](https://github.com/gx-capture/capture-workbench/issues/163) (packaged real OCR/ASR run, pixel baselines).
 - DDD refactor, epic [#169](https://github.com/gx-capture/capture-workbench/issues/169):
