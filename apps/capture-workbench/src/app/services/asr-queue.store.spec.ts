@@ -17,6 +17,7 @@ import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
 import { DesktopCaptureService } from './desktop-capture.service';
 import { DesktopFormattingService } from './desktop-formatting.service';
 import { DesktopWorkspaceStore } from './desktop-workspace.store';
+import { LibraryStore } from './library.store';
 import { RecognitionFeaturesStore } from './recognition-features.store';
 
 function requirement(
@@ -165,13 +166,15 @@ describe('AsrQueueStore', () => {
       cancel: vi.fn(),
     };
 
-    const workspace = {
+    const workspace = { message: signal('') };
+    const libraryStore = {
       allDocuments: docs,
       selectedId,
-      selected: () => null,
-      message: signal(''),
+      selected: signal(null),
+      get: library.get,
       refreshDocuments: vi.fn(),
-      select: vi.fn((id: string) => selectedId.set(id)),
+      reloadDocumentState: vi.fn(),
+      export: library.export,
     };
 
     const features = {
@@ -193,6 +196,7 @@ describe('AsrQueueStore', () => {
     TestBed.configureTestingModule({
       providers: [
         { provide: DesktopWorkspaceStore, useValue: workspace },
+        { provide: LibraryStore, useValue: libraryStore },
         { provide: DesktopLibraryService, useValue: library },
         { provide: DesktopRuntimeClientService, useValue: runtime },
         options.realCapture
@@ -216,6 +220,7 @@ describe('AsrQueueStore', () => {
       library,
       capture,
       workspace,
+      libraryStore,
       features,
       formatting,
       router,
@@ -316,7 +321,7 @@ describe('AsrQueueStore', () => {
   });
 
   it('continues importing after a failed selection and reports the error', () => {
-    const { store, library, workspace } = setup();
+    const { store, library, libraryStore } = setup();
     const first: DesktopSourceSelection = {
       selectionToken: '1'.repeat(32), fileName: 'first.mp3',
       byteLength: 200, mediaType: 'audio/mpeg',
@@ -334,7 +339,7 @@ describe('AsrQueueStore', () => {
       spokenLanguage: 'zh', identifySpeakers: false,
     });
     expect(store.importError()).toBe('Import failed');
-    expect(workspace.refreshDocuments).toHaveBeenCalledTimes(1);
+    expect(libraryStore.refreshDocuments).toHaveBeenCalledTimes(1);
   });
 
   it('shows and starts equal-timestamp recordings in import order', () => {
@@ -415,7 +420,7 @@ describe('AsrQueueStore', () => {
   it('supports cancel on queued & running rows, retry, restart, view in /history, and txt export', () => {
     const queuedDoc = makeRecording({ documentId: '1'.repeat(32), status: 'queued' });
     const doneDoc = makeRecording({ documentId: '2'.repeat(32), status: 'completed' });
-    const { store, library, capture, workspace, formatting, router } = setup({
+    const { store, library, capture, libraryStore, formatting, router } = setup({
       initialDocs: [queuedDoc, doneDoc],
     });
 
@@ -437,7 +442,7 @@ describe('AsrQueueStore', () => {
     expect(capture.restartLost$).toHaveBeenCalledWith(doneDoc.documentId, expect.anything());
 
     store.view(doneDoc.documentId);
-    expect(workspace.select).not.toHaveBeenCalled();
+    expect(libraryStore.selectedId()).toBeNull();
     expect(router.navigateByUrl).toHaveBeenCalledWith(`/history/${doneDoc.documentId}`);
 
     store.exportTxt(doneDoc.documentId);

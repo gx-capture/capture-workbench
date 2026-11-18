@@ -13,6 +13,7 @@ import { DesktopCaptureService } from './desktop-capture.service';
 import { DesktopFormattingService } from './desktop-formatting.service';
 import { isFeatureReady, type RecognitionFeature } from './desktop-workspace.selectors';
 import { DesktopWorkspaceStore } from './desktop-workspace.store';
+import { LibraryStore } from './library.store';
 import { HistoryListStore } from './history-list.store';
 import { RecognitionFeaturesStore } from './recognition-features.store';
 
@@ -453,7 +454,7 @@ function configure(options: { readonly ocrReady: boolean; readonly operation?: D
       { provide: DesktopLibraryService, useValue: library },
       { provide: DesktopRuntimeClientService, useValue: runtime },
       { provide: RecognitionFeaturesStore, useValue: features },
-      { provide: DesktopWorkspaceStore, useValue: { allDocuments: documents, refreshDocuments } },
+      { provide: LibraryStore, useValue: { allDocuments: documents, refreshDocuments, export: library.export } },
       DesktopCaptureService,
       OcrQueueStore,
     ],

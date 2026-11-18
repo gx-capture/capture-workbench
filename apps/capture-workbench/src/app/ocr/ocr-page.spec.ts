@@ -9,7 +9,7 @@ import { DesktopLibraryService } from '../services/desktop-library.service';
 import { DesktopRuntimeClientService } from '../services/desktop-runtime-client.service';
 import { DesktopCaptureService } from '../services/desktop-capture.service';
 import { isFeatureReady, type RecognitionFeature } from '../services/desktop-workspace.selectors';
-import { DesktopWorkspaceStore } from '../services/desktop-workspace.store';
+import { LibraryStore } from '../services/library.store';
 import { RecognitionFeaturesStore } from '../services/recognition-features.store';
 import type { DesktopLibrarySummary } from '../contracts';
 import { OcrPage } from './ocr-page';
@@ -71,7 +71,7 @@ describe('OcrPage queue', () => {
           },
         },
         {
-          provide: DesktopWorkspaceStore,
+          provide: LibraryStore,
           useValue: { allDocuments: signal(documents), refreshDocuments: vi.fn() },
         },
         DesktopCaptureService,
@@ -152,7 +152,7 @@ describe('OcrPage queue', () => {
           },
         },
         {
-          provide: DesktopWorkspaceStore,
+          provide: LibraryStore,
           useValue: {
             allDocuments: signal([doc({ fileName: 'charge.pdf', status: 'queued' })]),
             refreshDocuments: vi.fn(),
@@ -215,7 +215,7 @@ describe('OcrPage queue', () => {
           },
         },
         {
-          provide: DesktopWorkspaceStore,
+          provide: LibraryStore,
           useValue: {
             allDocuments: signal([doc({ fileName: 'charge.pdf', status: 'queued' })]),
             refreshDocuments: vi.fn(),
@@ -281,7 +281,7 @@ describe('OcrPage queue', () => {
           },
         },
         {
-          provide: DesktopWorkspaceStore,
+          provide: LibraryStore,
           useValue: { allDocuments: signal(documents), refreshDocuments: vi.fn() },
         },
         DesktopCaptureService,

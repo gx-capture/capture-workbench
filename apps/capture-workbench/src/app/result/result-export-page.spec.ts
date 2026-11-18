@@ -2,7 +2,7 @@ import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { of } from 'rxjs';
 import { desktopMessages, setDesktopLocale } from '../i18n/desktop-messages';
-import { DesktopLibraryService } from '../services/desktop-library.service';
+import { LibraryStore } from '../services/library.store';
 import { DesktopFormattingService } from '../services/desktop-formatting.service';
 import { LibraryExportService } from '../services/library-export.service';
 import { ResultExportStore } from '../services/result-export.store';
@@ -15,7 +15,7 @@ describe('ResultExportPage', () => {
   it.each(['ocr', 'asr'] as const)('renders and binds %s format buttons and copy', (kind) => {
     TestBed.configureTestingModule({ imports: [ResultExportPage], providers: [
       { provide: ResultReviewStore, useValue: { kind: signal(kind), documentId: signal('doc'), hasResult: signal(true), saveBeforeExport: () => of(undefined) } },
-      { provide: DesktopLibraryService, useValue: { export: vi.fn(() => of({ fileName: 'host.txt', mediaType: 'text/plain', content: 'host text' })) } },
+      { provide: LibraryStore, useValue: { export: vi.fn(() => of({ fileName: 'host.txt', mediaType: 'text/plain', content: 'host text' })) } },
       { provide: DesktopFormattingService, useValue: { downloadText: vi.fn() } },
     ] });
     const fixture = TestBed.createComponent(ResultExportPage);

@@ -22,7 +22,7 @@ import {
   captureNeedsRequirement,
   formatApproximateBytes,
 } from '../services/desktop-workspace.selectors';
-import { DesktopWorkspaceStore } from '../services/desktop-workspace.store';
+import { LibraryStore } from '../services/library.store';
 import { RecognitionFeaturesStore } from '../services/recognition-features.store';
 
 @Component({
@@ -40,7 +40,7 @@ import { RecognitionFeaturesStore } from '../services/recognition-features.store
 })
 export class EnginesPage {
   protected readonly features = inject(RecognitionFeaturesStore);
-  private readonly workspace = inject(DesktopWorkspaceStore);
+  private readonly library = inject(LibraryStore);
   protected readonly m = desktopMessages;
   private readonly locale = desktopLocale;
   protected readonly removeTarget = signal<RuntimeRequirement | null>(null);
@@ -150,7 +150,7 @@ export class EnginesPage {
     if (
       captureNeedsRequirement(
         requirement.requirementId,
-        this.workspace.allDocuments(),
+        this.library.allDocuments(),
       )
     ) {
       return 'capture';

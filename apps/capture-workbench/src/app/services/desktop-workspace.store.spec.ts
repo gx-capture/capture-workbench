@@ -427,28 +427,6 @@ describe('DesktopWorkspaceStore', () => {
     store.addSelections({ selections: [selection('first.pdf')], rejected: [] });
     expect(library.discardSelections).toHaveBeenCalledWith([selection('first.pdf')]);
   });
-
-  it('refreshes the selected document after processing and runtime ID updates', () => {
-    const pendingCapture = new Subject<CaptureOperation>();
-    const list = vi.fn(() => of<readonly DesktopLibrarySummary[]>([summary]));
-    const get = vi.fn(() => of<DesktopLibraryDetail>(summary));
-    const store = initializeStore(
-      libraryStub({ list, get }),
-      runtimeStub({ createCapture: vi.fn(() => pendingCapture) }),
-    );
-    store.select(summary.documentId);
-    TestBed.tick();
-    const beforeCapture = list.mock.calls.length;
-    const detailBeforeCapture = get.mock.calls.length;
-
-    store.addSelections({ rejected: [], selections: [selection(summary.fileName)] });
-    TestBed.tick();
-
-    expect(list.mock.calls.length).toBeGreaterThan(beforeCapture);
-    // The import alone refreshes the list; only the processing update reloads the selected detail.
-    expect(get.mock.calls.length).toBeGreaterThan(detailBeforeCapture);
-    pendingCapture.complete();
-  });
 });
 
 function initializeStore(

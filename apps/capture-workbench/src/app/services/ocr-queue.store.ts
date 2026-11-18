@@ -8,7 +8,7 @@ import { DesktopLibraryService, type DesktopSourceSelection, type DesktopSourceS
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
 import { DesktopCaptureService, type DesktopCaptureHost } from './desktop-capture.service';
 import { LibraryExportService } from './library-export.service';
-import { DesktopWorkspaceStore } from './desktop-workspace.store';
+import { LibraryStore } from './library.store';
 import {
   errorMessage,
   formatApproximateBytes,
@@ -33,7 +33,7 @@ export class OcrQueueStore {
   private readonly capture = inject(DesktopCaptureService);
   private readonly runtime = inject(DesktopRuntimeClientService);
   private readonly features = inject(RecognitionFeaturesStore);
-  private readonly workspace = inject(DesktopWorkspaceStore);
+  private readonly libraryStore = inject(LibraryStore);
   private readonly exports = inject(LibraryExportService);
   readonly exportBusyIds = this.exports.busyIds;
   private readonly destroyRef = inject(DestroyRef);
@@ -111,7 +111,7 @@ export class OcrQueueStore {
     this.reattachRunning(documents);
   });
 
-  /** Safe to call more than once. The document list itself lives on the workspace. */
+  /** Safe to call more than once. The document list itself lives on `LibraryStore`. */
   attach(): void {
     this.attached.set(true);
   }
@@ -216,11 +216,11 @@ export class OcrQueueStore {
   }
 
   private sharedDocuments(): readonly DesktopLibrarySummary[] {
-    return this.workspace.allDocuments();
+    return this.libraryStore.allDocuments();
   }
 
   private refreshShared(): void {
-    this.workspace.refreshDocuments();
+    this.libraryStore.refreshDocuments();
   }
 
   private startWaiting(documents: readonly DesktopLibrarySummary[]): void {

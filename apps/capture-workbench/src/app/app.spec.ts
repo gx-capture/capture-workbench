@@ -23,6 +23,7 @@ import {
   selectSpeechPack,
 } from './services/desktop-workspace.selectors';
 import { DesktopWorkspaceStore } from './services/desktop-workspace.store';
+import { LibraryStore } from './services/library.store';
 import { RecognitionFeaturesStore } from './services/recognition-features.store';
 
 describe('App shell and recognition pages', () => {
@@ -395,8 +396,6 @@ async function renderShell(
   const store = {
     state: signal<'starting' | 'ready' | 'error'>('starting'),
     initialize: vi.fn(),
-    allDocuments: signal([]),
-    refreshDocuments: () => undefined,
   };
 
   await TestBed.configureTestingModule({
@@ -404,6 +403,16 @@ async function renderShell(
     providers: [
       provideRouter(appRoutes, withComponentInputBinding()),
       { provide: DesktopWorkspaceStore, useValue: store },
+      {
+        provide: LibraryStore,
+        useValue: {
+          allDocuments: signal([]),
+          selectedId: signal<string | null>(null),
+          selected: signal(null),
+          refreshDocuments: vi.fn(),
+          reloadDocumentState: vi.fn(),
+        },
+      },
       { provide: RecognitionFeaturesStore, useValue: features },
     ],
   }).compileComponents();
