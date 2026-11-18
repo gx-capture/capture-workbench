@@ -58,7 +58,7 @@ function runTauriBuild(cargoTargetDir: string): Promise<void> {
         'nsis',
         '--ci',
         '--features',
-        'acceptance-app-data',
+        'acceptance-harness',
         '--config',
         'apps/capture-workbench-desktop/src-tauri/tauri.conf.json',
       ],

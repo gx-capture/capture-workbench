@@ -212,7 +212,7 @@ source of truth for inputs.
     text; a 1654 x 2339 PNG 23-25 s -> 8 s (no 2x enlargement above 1024 px).
 - New host settings: `CAPTURE_SPEECH_WORKER_IDLE_SECONDS` (300) and
   `CAPTURE_OCR_WORKER_IDLE_SECONDS` (120); 0 restores a worker per capture.
-  The desktop app writes `compute-settings.json` and passes
+  The desktop app writes `speech-gpu-settings.json` and passes
   `CAPTURE_WHISPER_PREFER_GPU`.
 - Compatible with 0.7.x clients. Contract-set SHA-256 unchanged (`60c62267…`);
   capture document schema unchanged (`5452631c…`). Model-source Commit A

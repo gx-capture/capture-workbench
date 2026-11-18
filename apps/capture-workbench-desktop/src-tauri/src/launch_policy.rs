@@ -3,8 +3,8 @@ use std::{collections::HashSet, path::PathBuf};
 use capture_sidecar_launcher::{generate_bearer_token, reserve_distinct_loopback_port};
 
 use crate::{
-    compute::ComputeSettings,
-    constants::{DEFAULT_MAX_UPLOAD_BYTES, DEFAULT_RETENTION_HOURS, LOOPBACK_HOST},
+    constants::{LOOPBACK_HOST, RUNTIME_MAX_UPLOAD_BYTES, RUNTIME_RETENTION_HOURS},
+    speech_gpu::SpeechGpuSettings,
 };
 
 pub(crate) struct LaunchPolicy {
@@ -57,7 +57,9 @@ impl LaunchPolicy {
             ("CAPTURE_STRUCTURING_PROVIDER", "ollama".into()),
             (
                 "CAPTURE_WHISPER_PREFER_GPU",
-                ComputeSettings::load(&self.data_dir).prefer_gpu.to_string(),
+                SpeechGpuSettings::load(&self.data_dir)
+                    .prefer_gpu
+                    .to_string(),
             ),
             (
                 "CAPTURE_WHISPER_ALLOW_CPU_FALLBACK",
@@ -65,11 +67,11 @@ impl LaunchPolicy {
             ),
             (
                 "CAPTURE_RETENTION_HOURS",
-                DEFAULT_RETENTION_HOURS.to_string(),
+                RUNTIME_RETENTION_HOURS.to_string(),
             ),
             (
                 "CAPTURE_MAX_UPLOAD_BYTES",
-                DEFAULT_MAX_UPLOAD_BYTES.to_string(),
+                RUNTIME_MAX_UPLOAD_BYTES.to_string(),
             ),
             (
                 "CAPTURE_OLLAMA_APP_DATA",
@@ -101,7 +103,7 @@ impl LaunchPolicy {
             environment.push(("CAPTURE_PDF_OCR_E2E_LOCAL_MODEL_OPT_IN", "1".into()));
             environment.push(("CAPTURE_PDF_OCR_E2E_LOCAL_MODEL_ROOT", model_root));
         }
-        #[cfg(feature = "acceptance-app-data")]
+        #[cfg(feature = "acceptance-harness")]
         if std::env::var("CAPTURE_OCR_EXECUTION_EVIDENCE_OPT_IN")
             .ok()
             .as_deref()
@@ -124,7 +126,7 @@ impl LaunchPolicy {
     }
 }
 
-#[cfg(feature = "acceptance-app-data")]
+#[cfg(feature = "acceptance-harness")]
 fn acceptance_ocr_execution_evidence_value(name: &str) -> Option<String> {
     std::env::var(name)
         .ok()
@@ -215,7 +217,7 @@ mod tests {
         configured_cuda_path, local_ocr_model_override, smoke_worker_mirror_url,
         whisper_cpu_fallback_enabled, LaunchPolicy,
     };
-    use crate::compute::ComputeSettings;
+    use crate::speech_gpu::SpeechGpuSettings;
 
     #[test]
     fn runtime_environment_explicitly_prefers_whisper_gpu() {
@@ -237,7 +239,7 @@ mod tests {
     #[test]
     fn the_runtime_uses_the_gpu_only_while_the_user_allows_it() {
         let directory = tempfile::tempdir().unwrap();
-        ComputeSettings { prefer_gpu: false }
+        SpeechGpuSettings { prefer_gpu: false }
             .save(directory.path())
             .unwrap();
         let environment = LaunchPolicy {

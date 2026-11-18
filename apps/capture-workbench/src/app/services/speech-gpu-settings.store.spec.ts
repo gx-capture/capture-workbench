@@ -2,13 +2,13 @@ import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { of, Subject, throwError } from 'rxjs';
 import type { OcrComputePreflight } from '@gx-capture/capture-workbench-ui';
-import type { DesktopComputeStatus } from '../contracts';
-import { ComputeSettingsStore } from './compute-settings.store';
+import type { DesktopSpeechGpuStatus } from '../contracts';
+import { SpeechGpuSettingsStore } from './speech-gpu-settings.store';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
 import { DesktopWorkspaceCaptureService } from './desktop-workspace-capture.service';
 import { RecognitionFeaturesStore } from './recognition-features.store';
 
-describe('ComputeSettingsStore', () => {
+describe('SpeechGpuSettingsStore', () => {
   it('offers the GPU setting only when a CUDA driver is present', () => {
     const cpuStore = setupComputeStore({
       getComputeStatus: vi.fn(() => of({ cudaAvailable: false, preferGpu: true })),
@@ -52,8 +52,8 @@ describe('ComputeSettingsStore', () => {
   });
 
   it('tracks saving state while updating the GPU preference and reloads runtime on success', () => {
-    const saved: DesktopComputeStatus = { cudaAvailable: true, preferGpu: false };
-    const pending = new Subject<DesktopComputeStatus>();
+    const saved: DesktopSpeechGpuStatus = { cudaAvailable: true, preferGpu: false };
+    const pending = new Subject<DesktopSpeechGpuStatus>();
     const getComputeStatus = vi.fn(() => of({ cudaAvailable: true, preferGpu: true }));
     const setPreferGpu = vi.fn(() => pending);
     const { store, runtime, features } = setupComputeStore({
@@ -127,11 +127,11 @@ function setupComputeStore(overrides: {
       { provide: DesktopRuntimeClientService, useValue: runtime },
       { provide: RecognitionFeaturesStore, useValue: features },
       { provide: DesktopWorkspaceCaptureService, useValue: captureLifecycle },
-      ComputeSettingsStore,
+      SpeechGpuSettingsStore,
     ],
   });
 
-  const store = TestBed.inject(ComputeSettingsStore);
+  const store = TestBed.inject(SpeechGpuSettingsStore);
   TestBed.tick();
   return { store, runtime, features, busyIds, installing };
 }

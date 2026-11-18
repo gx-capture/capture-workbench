@@ -13,7 +13,7 @@ use crate::{
         RUNTIME_BINARY_TARGET_FILE, SCHEMA_FILE_NAME,
     },
     launch_policy::{LaunchPolicy, LaunchPolicyFactory},
-    resources::RuntimeAssets,
+    resources::RuntimeExecutablePaths,
 };
 
 pub(crate) struct LaunchedRuntime {
@@ -22,7 +22,7 @@ pub(crate) struct LaunchedRuntime {
 }
 
 pub(crate) fn launch_runtime(
-    assets: &RuntimeAssets,
+    assets: &RuntimeExecutablePaths,
     data_dir: PathBuf,
     stopping: &AtomicBool,
     observe_spawn: impl FnMut(OwnedRuntimeSession) -> Result<(), String>,

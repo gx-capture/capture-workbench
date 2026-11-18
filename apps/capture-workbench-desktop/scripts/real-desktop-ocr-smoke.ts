@@ -918,7 +918,7 @@ export async function main(options: {
 
   const observeOwnedSidecarFromExecutableSignal = async (runtimePage: Page): Promise<void> => {
     if (!acceptance || sidecarObserved) return;
-    const probe = await invokeTauriCommand(runtimePage, 'desktop_runtime_process_probe', {});
+    const probe = await invokeTauriCommand(runtimePage, 'desktop_acceptance_runtime_process_probe', {});
     if (probe === null || typeof probe !== 'object' || Array.isArray(probe)) return;
     const processId = (probe as { processId?: unknown }).processId;
     if (!Number.isSafeInteger(processId) || Number(processId) <= 0) return;

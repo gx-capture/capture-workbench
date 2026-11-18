@@ -10,12 +10,14 @@ use crate::constants::{
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct RuntimeAssets {
+pub(crate) struct RuntimeExecutablePaths {
     pub manifest_path: PathBuf,
     pub executable_path: PathBuf,
 }
 
-pub(crate) fn resolve_runtime_assets<R: Runtime>(app: &App<R>) -> Result<RuntimeAssets, String> {
+pub(crate) fn resolve_runtime_executable_paths<R: Runtime>(
+    app: &App<R>,
+) -> Result<RuntimeExecutablePaths, String> {
     #[cfg(debug_assertions)]
     if let Some(assets) = debug_assets_override()? {
         return Ok(assets);
@@ -41,7 +43,7 @@ pub(crate) fn resolve_runtime_assets<R: Runtime>(app: &App<R>) -> Result<Runtime
     let executable_path = first_file(executable_candidates(app, &manifest.file_name))
         .ok_or_else(|| "Bundled Capture runtime executable was not found.".to_string())?;
 
-    Ok(RuntimeAssets {
+    Ok(RuntimeExecutablePaths {
         manifest_path,
         executable_path,
     })
@@ -108,12 +110,12 @@ fn first_file(candidates: Vec<PathBuf>) -> Option<PathBuf> {
 }
 
 #[cfg(debug_assertions)]
-fn debug_assets_override() -> Result<Option<RuntimeAssets>, String> {
+fn debug_assets_override() -> Result<Option<RuntimeExecutablePaths>, String> {
     let manifest = trimmed_env("CAPTURE_WORKBENCH_RUNTIME_MANIFEST");
     let executable = trimmed_env("CAPTURE_WORKBENCH_RUNTIME_EXECUTABLE");
     match (manifest, executable) {
         (None, None) => Ok(None),
-        (Some(manifest_path), Some(executable_path)) => Ok(Some(RuntimeAssets {
+        (Some(manifest_path), Some(executable_path)) => Ok(Some(RuntimeExecutablePaths {
             manifest_path: PathBuf::from(manifest_path),
             executable_path: PathBuf::from(executable_path),
         })),

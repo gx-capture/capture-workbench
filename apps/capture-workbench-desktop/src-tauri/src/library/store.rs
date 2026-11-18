@@ -1,7 +1,7 @@
 #[cfg(test)]
 use super::RECORDING_MAX_SOURCE_BYTES;
 use super::{
-    max_source_bytes, DOCUMENT_MAX_SOURCE_BYTES, IMPORT_FREE_SPACE_MARGIN, NOT_ENOUGH_DISK_SPACE,
+    max_source_bytes, IMPORT_FREE_SPACE_MARGIN, NOT_ENOUGH_DISK_SPACE, RENDERER_SOURCE_MAX_BYTES,
 };
 #[cfg(test)]
 use crate::contracts::LibraryImportSourceRequest;
@@ -17,8 +17,8 @@ use crate::random_id::random_id;
 use serde::{Deserialize, Serialize};
 
 use crate::contracts::{
-    LibraryCaptureOptions, LibraryCaptureUpdate, LibraryDocumentDetail, LibraryDocumentRequest,
-    LibraryDocumentSummary, LibraryEditMaps, LibraryEdits, LibraryExportFormat,
+    DesktopLibraryDetail, DesktopLibrarySummary, LibraryCaptureOptions, LibraryCaptureUpdate,
+    LibraryDocumentRequest, LibraryEditMaps, LibraryEdits, LibraryExportFormat,
     LibraryExportPayload, LibraryExportRequest, LibraryListRequest, LibrarySourcePayload,
     MAX_EDITS_BYTES,
 };
@@ -136,8 +136,8 @@ pub(crate) struct StoredDocument {
 }
 
 impl StoredDocument {
-    fn summary(&self, has_raw: bool) -> LibraryDocumentSummary {
-        LibraryDocumentSummary {
+    fn summary(&self, has_raw: bool) -> DesktopLibrarySummary {
+        DesktopLibrarySummary {
             document_id: self.document_id.clone(),
             file_name: self.file_name.clone(),
             media_type: self.media_type.clone(),
@@ -275,7 +275,7 @@ impl LibraryStore {
         mut index: std::sync::MutexGuard<'_, LibraryIndex>,
         source: StagedSource,
         capture_options: Option<LibraryCaptureOptions>,
-    ) -> Result<LibraryDocumentSummary, String> {
+    ) -> Result<DesktopLibrarySummary, String> {
         let StagedSource {
             file_name,
             media_type,
@@ -380,7 +380,7 @@ impl LibraryStore {
     pub(crate) fn create_source(
         &self,
         input: LibrarySourceInput,
-    ) -> Result<LibraryDocumentSummary, String> {
+    ) -> Result<DesktopLibrarySummary, String> {
         self.create_source_with_options(input, None)
     }
 
@@ -389,7 +389,7 @@ impl LibraryStore {
         &self,
         input: LibrarySourceInput,
         capture_options: Option<LibraryCaptureOptions>,
-    ) -> Result<LibraryDocumentSummary, String> {
+    ) -> Result<DesktopLibrarySummary, String> {
         if let Some(options) = &capture_options {
             super::validation::validate_capture_options(options)?;
         }
@@ -419,7 +419,7 @@ impl LibraryStore {
     pub(crate) fn import_source(
         &self,
         request: LibraryImportSourceRequest,
-    ) -> Result<LibraryDocumentSummary, String> {
+    ) -> Result<DesktopLibrarySummary, String> {
         self.import_source_bounded(request, RECORDING_MAX_SOURCE_BYTES as usize)
     }
 
@@ -428,7 +428,7 @@ impl LibraryStore {
         &self,
         request: LibraryImportSourceRequest,
         max_bytes: usize,
-    ) -> Result<LibraryDocumentSummary, String> {
+    ) -> Result<DesktopLibrarySummary, String> {
         if let Some(options) = &request.capture_options {
             super::validation::validate_capture_options(options)?;
         }
@@ -443,7 +443,7 @@ impl LibraryStore {
         &self,
         source: crate::source_selection::inspect::OpenedSource,
         capture_options: Option<LibraryCaptureOptions>,
-    ) -> Result<LibraryDocumentSummary, String> {
+    ) -> Result<DesktopLibrarySummary, String> {
         self.import_opened_with_free_space(source, capture_options, available_space)
     }
 
@@ -452,7 +452,7 @@ impl LibraryStore {
         mut source: crate::source_selection::inspect::OpenedSource,
         capture_options: Option<LibraryCaptureOptions>,
         free_space: impl FnOnce(&Path) -> Result<Option<u64>, String>,
-    ) -> Result<LibraryDocumentSummary, String> {
+    ) -> Result<DesktopLibrarySummary, String> {
         if let Some(options) = &capture_options {
             super::validation::validate_capture_options(options)?;
         }
@@ -511,7 +511,7 @@ impl LibraryStore {
     pub(crate) fn update_capture(
         &self,
         update: LibraryCaptureUpdate,
-    ) -> Result<LibraryDocumentSummary, String> {
+    ) -> Result<DesktopLibrarySummary, String> {
         validate_document_id(&update.document_id)?;
         validate_status(&update.status)?;
         if let Some(options) = &update.capture_options {
@@ -676,7 +676,7 @@ impl LibraryStore {
     pub(crate) fn list(
         &self,
         request: LibraryListRequest,
-    ) -> Result<Vec<LibraryDocumentSummary>, String> {
+    ) -> Result<Vec<DesktopLibrarySummary>, String> {
         let query = request.query.unwrap_or_default().trim().to_lowercase();
         let status = request.status.unwrap_or_default().trim().to_lowercase();
         let documents = self.lock_index()?.documents.clone();
@@ -708,7 +708,7 @@ impl LibraryStore {
     pub(crate) fn get(
         &self,
         request: LibraryDocumentRequest,
-    ) -> Result<LibraryDocumentDetail, String> {
+    ) -> Result<DesktopLibraryDetail, String> {
         validate_document_id(&request.document_id)?;
         // Keep raw and edits from the same committed generation while reading.
         let directory = self.document_directory(&request.document_id)?;
@@ -738,7 +738,7 @@ impl LibraryStore {
         }
         // The structured result is not part of the raw-and-edits generation,
         // so it is read after the index lock is released.
-        Ok(LibraryDocumentDetail {
+        Ok(DesktopLibraryDetail {
             summary: document.summary(raw.is_some()),
             raw,
             edits,
@@ -792,7 +792,7 @@ impl LibraryStore {
             .document_directory(&document.document_id)?
             .join(SOURCE_FILE_NAME);
         const PLAYBACK_TOO_LARGE: &str = "This recording is too large to play in the app.";
-        if document.byte_length > DOCUMENT_MAX_SOURCE_BYTES {
+        if document.byte_length > RENDERER_SOURCE_MAX_BYTES {
             return Err(PLAYBACK_TOO_LARGE.into());
         }
         let mut source = File::open(source_path)
@@ -800,16 +800,16 @@ impl LibraryStore {
         let metadata = source
             .metadata()
             .map_err(|_| "Capture library source cannot be inspected.".to_string())?;
-        if metadata.len() > DOCUMENT_MAX_SOURCE_BYTES {
+        if metadata.len() > RENDERER_SOURCE_MAX_BYTES {
             return Err(PLAYBACK_TOO_LARGE.into());
         }
         // Bound the read as well: a source can grow after its metadata was checked.
         let mut bytes = Vec::new();
         (&mut source)
-            .take(DOCUMENT_MAX_SOURCE_BYTES + 1)
+            .take(RENDERER_SOURCE_MAX_BYTES + 1)
             .read_to_end(&mut bytes)
             .map_err(|_| "Capture library source cannot be read.".to_string())?;
-        if bytes.len() as u64 > DOCUMENT_MAX_SOURCE_BYTES {
+        if bytes.len() as u64 > RENDERER_SOURCE_MAX_BYTES {
             return Err(PLAYBACK_TOO_LARGE.into());
         }
         Ok(LibrarySourcePayload {

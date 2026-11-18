@@ -1408,7 +1408,7 @@ test('acceptance NSIS packaging is feature-gated and output-separated from relea
   const releaseCommand = JSON.stringify(release);
   const acceptanceCommand = JSON.stringify(acceptance);
   assert.match(releaseCommand, /--bundles nsis/u);
-  assert.doesNotMatch(releaseCommand, /acceptance-app-data/u);
+  assert.doesNotMatch(releaseCommand, /acceptance-harness/u);
   assert.match(acceptanceCommand, /build-acceptance-nsis\.ts/u);
   assert.match(acceptanceCommand, /output\/acceptance-nsis/u);
   assert.doesNotMatch(acceptanceCommand, /src-tauri[\\/]target[\\/].*bundle[\\/]nsis/u);

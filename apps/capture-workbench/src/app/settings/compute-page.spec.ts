@@ -2,9 +2,9 @@ import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { RUNTIME_VERSION } from '@gx-capture/capture-runtime-client';
 import type { OcrComputePreflight } from '@gx-capture/capture-workbench-ui';
-import type { DesktopComputeStatus } from '../contracts';
+import type { DesktopSpeechGpuStatus } from '../contracts';
 import { setDesktopLocale } from '../i18n/desktop-messages';
-import { ComputeSettingsStore } from '../services/compute-settings.store';
+import { SpeechGpuSettingsStore } from '../services/speech-gpu-settings.store';
 import { ComputePage } from './compute-page';
 
 describe('ComputePage', () => {
@@ -13,19 +13,19 @@ describe('ComputePage', () => {
 
   function setup(options: {
     readonly ocrCompute?: OcrComputePreflight | null;
-    readonly speechStatus?: DesktopComputeStatus | null;
-    readonly speechGpu?: DesktopComputeStatus | null;
+    readonly speechStatus?: DesktopSpeechGpuStatus | null;
+    readonly speechGpu?: DesktopSpeechGpuStatus | null;
   } = {}) {
     const compute = {
       ocrCompute: signal<OcrComputePreflight | null>(
         options.ocrCompute === undefined ? gpuPreflight() : options.ocrCompute,
       ),
-      speechStatus: signal<DesktopComputeStatus | null>(
+      speechStatus: signal<DesktopSpeechGpuStatus | null>(
         options.speechStatus === undefined
           ? { cudaAvailable: false, preferGpu: true }
           : options.speechStatus,
       ),
-      speechGpu: signal<DesktopComputeStatus | null>(
+      speechGpu: signal<DesktopSpeechGpuStatus | null>(
         options.speechGpu === undefined ? null : options.speechGpu,
       ),
       savingCompute: signal(false),
@@ -37,7 +37,7 @@ describe('ComputePage', () => {
 
     TestBed.configureTestingModule({
       imports: [ComputePage],
-      providers: [{ provide: ComputeSettingsStore, useValue: compute }],
+      providers: [{ provide: SpeechGpuSettingsStore, useValue: compute }],
     });
 
     const fixture = TestBed.createComponent(ComputePage);
