@@ -5,6 +5,8 @@ from pathlib import Path
 
 import pytest
 
+from capture_runtime.speech.domain import SpeechTranscriptSegment
+from capture_runtime.speech.domain.transcript.models import SpeechRecognitionResult
 from capture_runtime.speech.infrastructure.progressive_audio import (
     DecodedAudioWindow,
 )
@@ -13,12 +15,8 @@ from capture_runtime.speech.infrastructure.progressive_decoder import (
     ProgressiveDecoderError,
     PyAVFileDecoder,
 )
-from capture_runtime.speech.infrastructure.progressive_whisper import (
+from capture_runtime.speech.infrastructure.progressive_speech import (
     SpeechRecognitionWindowTranscriber,
-)
-from capture_runtime.speech.infrastructure.speech_transcript import (
-    WhisperTextSegment,
-    WhisperTranscriptionResult,
 )
 
 
@@ -271,15 +269,15 @@ def test_video_without_audio_fails_and_closes(tmp_path):
     path.unlink()
 
 
-class FakeWhisper:
+class FakeSpeechRecognition:
     def __init__(self) -> None:
         self.paths: list[Path] = []
 
     def transcribe(self, source_path: Path, *, should_cancel, **_kwargs):
         self.paths.append(source_path)
         assert source_path.is_file()
-        return WhisperTranscriptionResult(
-            segments=(WhisperTextSegment(0, 100, "window text"),),
+        return SpeechRecognitionResult(
+            segments=(SpeechTranscriptSegment(0, 100, "window text"),),
             duration_ms=100,
             device="cpu",
             model="tea-asr-1.1-mini",
@@ -287,10 +285,10 @@ class FakeWhisper:
         )
 
 
-def test_progressive_whisper_adapter_cleans_window_and_preserves_provenance(
+def test_progressive_speech_adapter_cleans_window_and_preserves_provenance(
     tmp_path: Path,
 ) -> None:
-    adapter = FakeWhisper()
+    adapter = FakeSpeechRecognition()
     transcriber = SpeechRecognitionWindowTranscriber(adapter, temp_dir=tmp_path)
 
     result = transcriber.transcribe(DecodedAudioWindow(0, 100, b"\x00\x00" * 100))
@@ -301,7 +299,7 @@ def test_progressive_whisper_adapter_cleans_window_and_preserves_provenance(
     assert not list(tmp_path.glob("capture-progressive-window-*.wav"))
 
 
-class TimedWhisper:
+class TimedSpeechRecognition:
     """Loads its model in the first window only, like the TEA-ASR adapter."""
 
     def __init__(self) -> None:
@@ -310,8 +308,8 @@ class TimedWhisper:
     def transcribe(self, source_path: Path, *, should_cancel, **_kwargs):
         self.calls += 1
         first = self.calls == 1
-        return WhisperTranscriptionResult(
-            segments=(WhisperTextSegment(0, 100, "window text"),),
+        return SpeechRecognitionResult(
+            segments=(SpeechTranscriptSegment(0, 100, "window text"),),
             duration_ms=100,
             device="cuda",
             model="tea-asr-1.1",
@@ -321,8 +319,8 @@ class TimedWhisper:
         )
 
 
-def test_progressive_whisper_adapter_times_the_whole_recording(tmp_path: Path) -> None:
-    transcriber = SpeechRecognitionWindowTranscriber(TimedWhisper(), temp_dir=tmp_path)
+def test_progressive_speech_adapter_times_the_whole_recording(tmp_path: Path) -> None:
+    transcriber = SpeechRecognitionWindowTranscriber(TimedSpeechRecognition(), temp_dir=tmp_path)
     window = DecodedAudioWindow(0, 100, b"\x00\x00" * 100)
 
     transcriber.transcribe(window)
@@ -463,11 +461,11 @@ def test_fractional_millisecond_frames_keep_sample_time_and_every_sample(
 
 def test_second_decoded_window_segments_use_its_true_sample_start(tmp_path):
     from capture_runtime.contracts import CaptureEngine
-    from capture_runtime.speech.infrastructure.progressive_audio import (
-        ProgressiveAudioSession,
-        WhisperWindowResult,
-        WhisperWindowSegment,
+    from capture_runtime.speech.domain.window.models import (
+        WindowTranscript,
+        WindowTranscriptSegment,
     )
+    from capture_runtime.speech.infrastructure.progressive_audio import ProgressiveAudioSession
 
     path = tmp_path / "source.wav"
     _wav(path, seconds=2)
@@ -482,8 +480,8 @@ def test_second_decoded_window_segments_use_its_true_sample_start(tmp_path):
 
     class Transcriber:
         def transcribe(self, window):
-            return WhisperWindowResult(
-                (WhisperWindowSegment(200, 300, str(window.start_ms)),),
+            return WindowTranscript(
+                (WindowTranscriptSegment(200, 300, str(window.start_ms)),),
                 CaptureEngine(
                     engine="speech-recognition",
                     model="tea-asr-1.1-mini",

@@ -101,7 +101,7 @@ os._exit(7)
     asyncio.run(run())
 
 
-def test_worker_stage_policy_preserves_ocr_and_whisper_dynamic_families(
+def test_worker_stage_policy_preserves_ocr_and_speech_dynamic_families(
     tmp_path: Path,
 ) -> None:
     worker = tmp_path / "dynamic_stage_worker.py"

@@ -8,7 +8,7 @@ from capture_runtime.speech.infrastructure.progressive_audio import (
     DecodedAudioWindow,
     ProgressiveSessionEvent,
 )
-from capture_runtime.speech.infrastructure.whisper_session import (
+from capture_runtime.speech.infrastructure.speech_session import (
     SessionFrameDecoder,
     SessionFrameType,
     encode_audio_input,

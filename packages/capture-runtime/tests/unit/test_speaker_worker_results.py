@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-import capture_runtime.workers.speech_recognition_main as whisper_main
+import capture_runtime.workers.speech_recognition_main as speech_main
 from capture_runtime._worker_payloads import WorkerResultError, WorkerWord
 from capture_runtime.constants import RUNTIME_VERSION
 from capture_runtime.diarization.infrastructure.speaker_turns import SpeakerTurn
@@ -22,7 +22,7 @@ from tests.speech_model_fakes import FakeModels, model_tree
 DIGEST = "sha256:" + "a" * 64
 
 
-def _whisper_run(
+def _speech_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, options: dict[str, Any], words: Any
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     model_tree(tmp_path / "models")
@@ -57,10 +57,10 @@ def _whisper_run(
             transcribe_options[-1]["language"] = kwargs.get("language")
             return super().transcribe(source_path, **kwargs)
 
-    monkeypatch.setattr(whisper_main, "TeaAsrAdapter", TestAdapter)
-    monkeypatch.setattr(whisper_main, "_import_speech_runtime", lambda: None)
+    monkeypatch.setattr(speech_main, "TeaAsrAdapter", TestAdapter)
+    monkeypatch.setattr(speech_main, "_import_speech_runtime", lambda: None)
     request = WorkerRequest(
-        request_id="whisper-words-test",
+        request_id="speech-words-test",
         operation="run",
         payload={
             "requirementId": "speech-recognition",
@@ -71,7 +71,7 @@ def _whisper_run(
             "options": {"maxDurationMs": 60_000, "preferGpu": False, **options},
         },
     )
-    return whisper_main._run(request, Event()), transcribe_options
+    return speech_main._run(request, Event()), transcribe_options
 
 
 def test_speech_recognition_worker_returns_word_times_only_when_asked(
@@ -82,7 +82,7 @@ def test_speech_recognition_worker_returns_word_times_only_when_asked(
         SimpleNamespace(start=0.4, end=1.3, word=" words"),
     ]
 
-    result, options = _whisper_run(tmp_path, monkeypatch, {"wordTimestamps": True}, words)
+    result, options = _speech_run(tmp_path, monkeypatch, {"wordTimestamps": True}, words)
 
     assert options[0]["word_timestamps"] is True
     assert result["segments"][0]["words"] == [
@@ -98,7 +98,7 @@ def test_speech_recognition_worker_returns_word_times_only_when_asked(
 def test_speech_recognition_worker_omits_words_by_default(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    result, options = _whisper_run(tmp_path, monkeypatch, {}, None)
+    result, options = _speech_run(tmp_path, monkeypatch, {}, None)
 
     assert options[0]["word_timestamps"] is False
     assert "words" not in result["segments"][0]
@@ -111,7 +111,7 @@ def test_speech_worker_emits_processing_times(tmp_path, monkeypatch):
         "capture_runtime.speech.infrastructure.speech_recognition.time.perf_counter",
         lambda: next(clock),
     )
-    result, _ = _whisper_run(tmp_path, monkeypatch, {}, None)
+    result, _ = _speech_run(tmp_path, monkeypatch, {}, None)
     assert result["provenance"]["elapsedMs"] == 45000
     assert result["provenance"]["stageMs"] == {
         "modelLoad": 5000,
@@ -187,7 +187,7 @@ def test_worker_parsers_reject_invalid_processing_times(kind, timings):
 def test_speech_recognition_worker_recognizes_the_requested_language(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, options: dict[str, Any], language: str | None
 ) -> None:
-    _, transcribe_options = _whisper_run(tmp_path, monkeypatch, options, None)
+    _, transcribe_options = _speech_run(tmp_path, monkeypatch, options, None)
 
     assert transcribe_options[0]["language"] == language
 
@@ -197,16 +197,16 @@ def test_speech_recognition_worker_rejects_a_language_outside_the_list(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, language: object
 ) -> None:
     with pytest.raises(ValueError, match="options"):
-        _whisper_run(tmp_path, monkeypatch, {"language": language}, None)
+        _speech_run(tmp_path, monkeypatch, {"language": language}, None)
 
 
 def test_speech_recognition_worker_rejects_speech_without_requested_word_times(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     with pytest.raises(ValueError, match="word timestamps"):
-        _whisper_run(tmp_path, monkeypatch, {"wordTimestamps": True}, None)
+        _speech_run(tmp_path, monkeypatch, {"wordTimestamps": True}, None)
     with pytest.raises(ValueError, match="options"):
-        _whisper_run(tmp_path, monkeypatch, {"wordTimestamps": 1}, None)
+        _speech_run(tmp_path, monkeypatch, {"wordTimestamps": 1}, None)
 
 
 def _diarization_payload(**overrides: Any) -> dict[str, Any]:

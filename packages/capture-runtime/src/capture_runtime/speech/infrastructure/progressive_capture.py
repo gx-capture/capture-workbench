@@ -50,7 +50,7 @@ from capture_runtime.speech.infrastructure.progressive_decoder import (
     ProgressiveDecoderError,
     PyAVFileDecoder,
 )
-from capture_runtime.speech.infrastructure.whisper_session import (
+from capture_runtime.speech.infrastructure.speech_session import (
     SESSION_PROTOCOL_VERSION,
     SessionFrameType,
     encode_audio_input,
@@ -195,15 +195,15 @@ def _worker_key(engine: InstalledEngine, config: ExtractionRuntimeConfig) -> tup
         str(engine.executable),
         str(engine.model_dir),
         str(engine.worker_sha256),
-        str(config.whisper_prefer_gpu),
-        str(config.whisper_allow_cpu_fallback),
+        str(config.speech_prefer_gpu),
+        str(config.speech_recognition_allow_cpu_fallback),
         config.speech_recognition_model,
         engine.content_id or "",
     )
 
 
 class ProgressiveCaptureProcessor:
-    """Decode bounded windows and drive the framed Whisper session worker.
+    """Decode bounded windows and drive the framed speech recognition session worker.
 
     A worker that completes a capture stays warm, with its models loaded, for
     `speech_worker_idle_seconds`: loading TEA-ASR and its aligner takes about
@@ -273,7 +273,7 @@ class ProgressiveCaptureProcessor:
             raise
         except Exception as error:
             raise ProgressiveCaptureError(
-                "Progressive Whisper engine could not be prepared.",
+                "Progressive speech recognition engine could not be prepared.",
                 code="progressive_engine_resolution_failed",
             ) from error
         try:
@@ -324,7 +324,7 @@ class ProgressiveCaptureProcessor:
             raise
         except Exception as error:
             raise ProgressiveCaptureError(
-                "Progressive Whisper worker could not be started.",
+                "Progressive speech recognition worker could not be started.",
                 code="progressive_worker_start_failed",
             ) from error
         reusable = False
@@ -335,7 +335,7 @@ class ProgressiveCaptureProcessor:
                 )
             except Exception as error:
                 raise ProgressiveCaptureError(
-                    "Progressive Whisper worker could not be started.",
+                    "Progressive speech recognition worker could not be started.",
                     code="progressive_worker_start_failed",
                 ) from error
             windows = decoder.windows()
@@ -372,7 +372,8 @@ class ProgressiveCaptureProcessor:
                         raise
                     except Exception as error:
                         raise ProgressiveCaptureError(
-                            "Progressive Whisper worker failed while processing a window.",
+                            "Progressive speech recognition worker failed while processing a "
+                            "window.",
                             code="progressive_worker_input_failed",
                         ) from error
             finally:
@@ -384,7 +385,7 @@ class ProgressiveCaptureProcessor:
                     raise
                 except Exception as error:
                     raise ProgressiveCaptureError(
-                        "Progressive Whisper worker failed while finishing the session.",
+                        "Progressive speech recognition worker failed while finishing the session.",
                         code="progressive_worker_finish_failed",
                     ) from error
             failure = next(
@@ -491,9 +492,9 @@ class _SessionWorker:
             {
                 "CAPTURE_SESSION_MODEL_PATH": subprocess_path(engine.model_dir),
                 "CAPTURE_SESSION_TEMP_DIR": subprocess_path(config.temp_dir),
-                "CAPTURE_SESSION_PREFER_GPU": "1" if config.whisper_prefer_gpu else "0",
+                "CAPTURE_SESSION_PREFER_GPU": "1" if config.speech_prefer_gpu else "0",
                 "CAPTURE_SESSION_ALLOW_CPU_FALLBACK": (
-                    "1" if config.whisper_allow_cpu_fallback else "0"
+                    "1" if config.speech_recognition_allow_cpu_fallback else "0"
                 ),
                 **(
                     {"CAPTURE_SESSION_SPEECH_MODEL": config.speech_recognition_model}
@@ -658,7 +659,7 @@ class _SessionWorker:
                                     error=event.error.model_copy(
                                         update={
                                             "message": (
-                                                "Whisper session failed at stages "
+                                                "Speech recognition session failed at stages "
                                                 f"{stage_sequence}."
                                             )
                                         }

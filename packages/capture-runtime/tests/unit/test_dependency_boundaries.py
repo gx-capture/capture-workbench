@@ -58,9 +58,9 @@ def test_default_dev_dependencies_cover_ocr_typecheck_without_entering_core() ->
         assert _requirements_named(base, name) == []
     for name in PRODUCTION_ONLY_DEPENDENCIES:
         assert _requirements_named(dev, name) == []
-    whisper = project["project"]["optional-dependencies"]["speech-recognition"]
+    speech = project["project"]["optional-dependencies"]["speech-recognition"]
     for name, exact_requirement in SPEECH_EXACT_DEPENDENCIES.items():
-        assert _requirements_named(whisper, name) == [exact_requirement]
+        assert _requirements_named(speech, name) == [exact_requirement]
 
 
 def test_ocr_bundle_collects_pypdfium2_runtime_metadata() -> None:

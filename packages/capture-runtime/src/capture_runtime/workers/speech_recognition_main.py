@@ -212,7 +212,7 @@ def _probe(request: WorkerRequestModel) -> dict[str, Any]:
     if content == "cpu":
         device = "cpu"
     else:
-        device = "cuda" if prefer_gpu and adapter._cuda_devices() > 0 else "cpu"
+        device = "cuda" if prefer_gpu and adapter.cuda_available() else "cpu"
     return {
         "ready": probe.ready,
         "codeReady": probe.code_ready,
@@ -361,9 +361,9 @@ def prepare(request: WorkerRequestModel) -> None:
 
 def _session() -> None:
     from capture_runtime.speech.infrastructure.progressive_audio import ProgressiveAudioSession
-    from capture_runtime.speech.infrastructure.progressive_whisper import (
+    from capture_runtime.speech.infrastructure.progressive_speech import (
+        ProgressiveSpeechWorkerBackend,
         SpeechRecognitionWindowTranscriber,
-        ProgressiveWhisperWorkerBackend,
     )
     from capture_runtime.workers.session_server import serve_session
 
@@ -396,7 +396,7 @@ def _session() -> None:
         )
 
     serve_session(
-        ProgressiveWhisperWorkerBackend(new_session),
+        ProgressiveSpeechWorkerBackend(new_session),
         failure_context=_last_worker_stage,
         stage=_heartbeat_stage,
     )

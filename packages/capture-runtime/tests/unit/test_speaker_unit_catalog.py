@@ -103,8 +103,8 @@ def test_lock_accepts_the_optional_speaker_unit_after_the_required_ones() -> Non
         lambda base: [*base, base[2]],
     ],
     ids=[
-        "before-whisper",
-        "replacing-whisper",
+        "before-speech",
+        "replacing-speech",
         "unknown-unit",
         "listed-twice",
         "after-the-reader",

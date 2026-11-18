@@ -100,7 +100,7 @@ def test_whisper_candidate_uses_bounded_one_hour_audio_budget() -> None:
 
 
 def test_cuda_source_lock_candidate_disables_cpu_fallback() -> None:
-    assert candidate._whisper_run_options({"preferGpu": True, "expectedDevice": "cuda"}) == {
+    assert candidate._speech_run_options({"preferGpu": True, "expectedDevice": "cuda"}) == {
         "maxDurationMs": candidate.WHISPER_CANDIDATE_MAX_DURATION_MS,
         "preferGpu": True,
         "allowCpuFallback": False,

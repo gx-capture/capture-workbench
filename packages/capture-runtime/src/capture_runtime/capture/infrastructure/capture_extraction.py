@@ -37,8 +37,8 @@ from capture_runtime.config import ExtractionRuntimeConfig
 from capture_runtime.constants import (
     DIARIZATION_REQUIREMENT_ID,
     SPEECH_RECOGNITION_REQUIREMENT_ID,
+    SPEECH_TEMP_PREFIX,
     VERTICAL_READER_REQUIREMENT_ID,
-    WHISPER_TEMP_PREFIX,
     WINDOWSML_REQUIREMENT_ID,
     WORKER_SOURCE_TEMP_PREFIX,
 )
@@ -120,7 +120,7 @@ from capture_runtime.worker_process import (
 
 if TYPE_CHECKING:
     from capture_runtime.ocr.infrastructure.ocr_page_result import OcrAdapter
-    from capture_runtime.speech.infrastructure.speech_transcript import WhisperAdapter
+    from capture_runtime.speech.infrastructure.speech_transcript import SpeechRecognitionAdapter
 
 
 _OcrRunResult = OcrWorkerRunResult[OcrExecutionDeviceProofV1]
@@ -419,7 +419,7 @@ _SOURCE_SUFFIXES = {
 
 
 class StandaloneRuntimeCaptureExtractor:
-    """Production extractor using only package-owned WindowsML and Whisper adapters."""
+    """Production extractor using only package-owned WindowsML and speech recognition adapters."""
 
     def __init__(
         self,
@@ -427,14 +427,14 @@ class StandaloneRuntimeCaptureExtractor:
         config: ExtractionRuntimeConfig,
         *,
         ocr_adapter: OcrAdapter | None = None,
-        whisper_adapter: WhisperAdapter | None = None,
+        speech_recognition_adapter: SpeechRecognitionAdapter | None = None,
         engine_manager: EngineInstallationManager | None = None,
         contract_sha256: str | None = None,
     ) -> None:
         self._clock = clock
         self.config = config
         self.ocr_adapter = ocr_adapter
-        self.whisper_adapter = whisper_adapter
+        self.speech_recognition_adapter = speech_recognition_adapter
         self.engine_manager = engine_manager
         self._contract_sha256 = contract_sha256
         self.ocr_pipeline = OcrPipeline()
@@ -622,8 +622,8 @@ class StandaloneRuntimeCaptureExtractor:
                     sniffed.media_type,
                     {
                         "maxDurationMs": self.config.max_audio_duration_ms,
-                        "preferGpu": self.config.whisper_prefer_gpu,
-                        "allowCpuFallback": self.config.whisper_allow_cpu_fallback,
+                        "preferGpu": self.config.speech_prefer_gpu,
+                        "allowCpuFallback": self.config.speech_recognition_allow_cpu_fallback,
                         **({"wordTimestamps": True} if identify_speakers else {}),
                         **({"language": spoken_language} if spoken_language else {}),
                         **(
@@ -983,7 +983,7 @@ class StandaloneRuntimeCaptureExtractor:
                         media_type=media_type,
                         options={
                             "maxDurationMs": self.config.max_audio_duration_ms,
-                            "preferGpu": self.config.whisper_prefer_gpu,
+                            "preferGpu": self.config.speech_prefer_gpu,
                             "allowCpuFallback": True,
                         },
                         cancel_event=cancel_event,
@@ -1386,7 +1386,7 @@ class StandaloneRuntimeCaptureExtractor:
         suffix = _SOURCE_SUFFIXES.get(media_type, ".audio")
         self.config.temp_dir.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(
-            prefix=WHISPER_TEMP_PREFIX,
+            prefix=SPEECH_TEMP_PREFIX,
             suffix=suffix,
             dir=self.config.temp_dir,
             delete=False,
@@ -1394,9 +1394,11 @@ class StandaloneRuntimeCaptureExtractor:
             temporary.write(content)
             path = Path(temporary.name)
         try:
-            if self.whisper_adapter is None:
-                raise ExtractionRuntimeUnavailableError("Whisper worker is not configured.")
-            result = TranscribeAudio(self.whisper_adapter).execute(
+            if self.speech_recognition_adapter is None:
+                raise ExtractionRuntimeUnavailableError(
+                    "Speech recognition worker is not configured."
+                )
+            result = TranscribeAudio(self.speech_recognition_adapter).execute(
                 path, should_cancel=cancel_event.is_set, language=spoken_language
             )
         finally:

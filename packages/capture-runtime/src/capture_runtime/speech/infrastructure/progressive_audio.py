@@ -39,14 +39,8 @@ class ProgressiveSessionClosedError(ProgressiveAudioError):
 DecodedAudioWindow = AudioWindow
 
 
-WhisperWindowSegment = WindowTranscriptSegment
-
-
-WhisperWindowResult = WindowTranscript
-
-
-class WhisperWindowTranscriber(Protocol):
-    def transcribe(self, window: DecodedAudioWindow) -> WhisperWindowResult: ...
+class WindowTranscriber(Protocol):
+    def transcribe(self, window: DecodedAudioWindow) -> WindowTranscript: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,7 +64,7 @@ class ProgressiveAudioSession:
     def __init__(
         self,
         *,
-        transcriber: WhisperWindowTranscriber,
+        transcriber: WindowTranscriber,
         window_ms: int = DEFAULT_WINDOW_MS,
         overlap_ms: int = DEFAULT_OVERLAP_MS,
         checkpoint_ms: int = DEFAULT_CHECKPOINT_MS,
@@ -142,7 +136,7 @@ class ProgressiveAudioSession:
         self._pending_events = []
         return events
 
-    def _consume_result(self, window: DecodedAudioWindow, result: WhisperWindowResult) -> None:
+    def _consume_result(self, window: DecodedAudioWindow, result: WindowTranscript) -> None:
         self._engine = result.extraction_engine
         for warning in result.warnings:
             if warning not in self._warnings:
@@ -155,7 +149,7 @@ class ProgressiveAudioSession:
     def _release_held_tail(self, window: DecodedAudioWindow) -> int:
         """Split the overlap with the previous window at its middle.
 
-        Consecutive windows both hear the overlap, and Whisper writes the same
+        Consecutive windows both hear the overlap, and speech recognition writes the same
         speech differently in each (other words, Simplified or Traditional
         script), so text matching cannot tell the copies apart. Each moment is
         kept from one window: the earlier window up to the middle of the
@@ -174,7 +168,7 @@ class ProgressiveAudioSession:
     def _merge_segments(
         self,
         window: DecodedAudioWindow,
-        segments: Iterable[WhisperWindowSegment],
+        segments: Iterable[WindowTranscriptSegment],
         *,
         from_ms: int,
     ) -> None:
@@ -337,7 +331,5 @@ __all__ = [
     "ProgressiveAudioSession",
     "ProgressiveSessionClosedError",
     "ProgressiveSessionEvent",
-    "WhisperWindowResult",
-    "WhisperWindowSegment",
-    "WhisperWindowTranscriber",
+    "WindowTranscriber",
 ]

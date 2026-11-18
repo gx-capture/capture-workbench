@@ -1254,13 +1254,12 @@ def test_system_installer_passes_nonzero_directml_device_to_model_probe(tmp_path
     )
     extraction = ExtractionRuntimeConfig(
         windowsml_model_dir=tmp_path / "windowsml",
-        whisper_models_dir=tmp_path / "whisper",
         temp_dir=tmp_path / "temp",
         max_pdf_pages=10,
         max_image_pixels=100_000,
         ocr_render_scale=2,
         max_audio_duration_ms=60_000,
-        whisper_prefer_gpu=False,
+        speech_prefer_gpu=False,
     )
     installer = SystemRuntimeInstaller(
         _Lifecycle(_LifecycleConfig(tmp_path / "app-data")),  # type: ignore[arg-type]
@@ -1345,10 +1344,10 @@ def test_pdf_ocr_e2e_local_worker_url_maps_only_ocr_worker_transport(
 ) -> None:
     catalog, sources = _catalog(tmp_path)
     payload = catalog.to_dict()
-    whisper = json.loads(json.dumps(payload["requirements"][0]))
-    whisper["requirementId"] = "speech-recognition"
-    whisper["artifacts"][0]["requirementId"] = "speech-recognition"
-    payload["requirements"].append(whisper)
+    speech = json.loads(json.dumps(payload["requirements"][0]))
+    speech["requirementId"] = "speech-recognition"
+    speech["artifacts"][0]["requirementId"] = "speech-recognition"
+    payload["requirements"].append(speech)
     catalog = EngineCatalog.from_dict(payload)
     ocr_worker = catalog.requirement("windowsml-ocr").worker_artifact()
     dedicated_url = f"http://127.0.0.1:43124/{ocr_worker.file_name}"
@@ -2685,13 +2684,12 @@ _WAV = b"RIFF\x00\x00\x00\x00WAVEpayload"
 def _speech_config(tmp_path: Path, *, model: str, variant: str) -> ExtractionRuntimeConfig:
     return ExtractionRuntimeConfig(
         windowsml_model_dir=tmp_path / "windowsml",
-        whisper_models_dir=tmp_path / "whisper",
         temp_dir=tmp_path / "temp",
         max_pdf_pages=10,
         max_image_pixels=100_000,
         ocr_render_scale=2,
         max_audio_duration_ms=60_000,
-        whisper_prefer_gpu=True,
+        speech_prefer_gpu=True,
         speech_recognition_model=model,
         speech_recognition_variant=variant,
         speech_worker_idle_seconds=0,

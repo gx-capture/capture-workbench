@@ -44,7 +44,7 @@ from capture_runtime.speech.infrastructure.progressive_capture import (
     _worker_key,
 )
 from capture_runtime.speech.infrastructure.progressive_decoder import ProgressiveDecoderError
-from capture_runtime.speech.infrastructure.whisper_session import (
+from capture_runtime.speech.infrastructure.speech_session import (
     SessionFrameDecoder,
     SessionFrameType,
 )
@@ -143,13 +143,12 @@ def _warm_processor(
     monkeypatch.setattr(_SessionWorker, "start", start)
     config = ExtractionRuntimeConfig(
         windowsml_model_dir=tmp_path / "windowsml",
-        whisper_models_dir=tmp_path / "whisper",
         temp_dir=tmp_path / "temp",
         max_pdf_pages=10,
         max_image_pixels=100_000,
         ocr_render_scale=2,
         max_audio_duration_ms=60_000,
-        whisper_prefer_gpu=True,
+        speech_prefer_gpu=True,
         speech_worker_idle_seconds=idle,
     )
     processor = ProgressiveCaptureProcessor(
@@ -224,13 +223,12 @@ def test_a_session_worker_is_told_the_chosen_speech_model(
     engine = replace(_engine(tmp_path), executable=script, model_dir=tmp_path)
     config = ExtractionRuntimeConfig(
         windowsml_model_dir=tmp_path / "windowsml",
-        whisper_models_dir=tmp_path / "whisper",
         temp_dir=tmp_path / "temp",
         max_pdf_pages=10,
         max_image_pixels=100_000,
         ocr_render_scale=2,
         max_audio_duration_ms=60_000,
-        whisper_prefer_gpu=True,
+        speech_prefer_gpu=True,
         speech_recognition_model=model,
     )
 
@@ -264,13 +262,12 @@ def test_a_session_worker_is_told_the_installed_content_and_not_the_variant(
     )
     config = ExtractionRuntimeConfig(
         windowsml_model_dir=tmp_path / "windowsml",
-        whisper_models_dir=tmp_path / "whisper",
         temp_dir=tmp_path / "temp",
         max_pdf_pages=10,
         max_image_pixels=100_000,
         ocr_render_scale=2,
         max_audio_duration_ms=60_000,
-        whisper_prefer_gpu=True,
+        speech_prefer_gpu=True,
         speech_recognition_model="auto",
         speech_recognition_variant=variant,
     )

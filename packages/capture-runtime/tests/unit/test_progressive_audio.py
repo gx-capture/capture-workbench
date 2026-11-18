@@ -4,20 +4,22 @@ from capture_runtime.contracts import (
     CaptureEngine,
     StreamingEventType,
 )
+from capture_runtime.speech.domain.window.models import (
+    WindowTranscript,
+    WindowTranscriptSegment,
+)
 from capture_runtime.speech.infrastructure.progressive_audio import (
     DecodedAudioWindow,
     ProgressiveAudioSession,
     ProgressiveSessionEvent,
-    WhisperWindowResult,
-    WhisperWindowSegment,
 )
 
 
 class FakeTranscriber:
-    def __init__(self, results: dict[int, WhisperWindowResult]) -> None:
+    def __init__(self, results: dict[int, WindowTranscript]) -> None:
         self.results = results
 
-    def transcribe(self, window: DecodedAudioWindow) -> WhisperWindowResult:
+    def transcribe(self, window: DecodedAudioWindow) -> WindowTranscript:
         return self.results[window.start_ms]
 
 
@@ -41,21 +43,21 @@ def test_progressive_session_merges_overlap_and_emits_checkpoint() -> None:
     ]
     transcriber = FakeTranscriber(
         {
-            0: WhisperWindowResult(
-                (WhisperWindowSegment(80_000, 120_000, "same words"),), _engine()
+            0: WindowTranscript(
+                (WindowTranscriptSegment(80_000, 120_000, "same words"),), _engine()
             ),
-            90_000: WhisperWindowResult(
+            90_000: WindowTranscript(
                 (
-                    WhisperWindowSegment(0, 40_000, "SAME   WORDS"),
-                    WhisperWindowSegment(45_000, 65_000, "later words"),
+                    WindowTranscriptSegment(0, 40_000, "SAME   WORDS"),
+                    WindowTranscriptSegment(45_000, 65_000, "later words"),
                 ),
                 _engine(),
             ),
-            210_000: WhisperWindowResult((), _engine()),
-            330_000: WhisperWindowResult((), _engine()),
-            450_000: WhisperWindowResult((), _engine()),
-            510_000: WhisperWindowResult(
-                (WhisperWindowSegment(90_000, 110_000, "five minute words"),), _engine()
+            210_000: WindowTranscript((), _engine()),
+            330_000: WindowTranscript((), _engine()),
+            450_000: WindowTranscript((), _engine()),
+            510_000: WindowTranscript(
+                (WindowTranscriptSegment(90_000, 110_000, "five minute words"),), _engine()
             ),
         }
     )
@@ -85,7 +87,7 @@ def test_progressive_session_merges_overlap_and_emits_checkpoint() -> None:
 
 
 def test_progressive_session_keeps_each_moment_of_an_overlap_from_one_window() -> None:
-    # Both windows hear 90-120 s, and Whisper writes the same speech in a
+    # Both windows hear 90-120 s, and speech recognition writes the same speech in a
     # different script in each; the first window keeps up to the middle of
     # the overlap (105 s), the second from there.
     windows = [
@@ -94,18 +96,18 @@ def test_progressive_session_keeps_each_moment_of_an_overlap_from_one_window() -
     ]
     transcriber = FakeTranscriber(
         {
-            0: WhisperWindowResult(
+            0: WindowTranscript(
                 (
-                    WhisperWindowSegment(95_000, 100_000, "有一個本於事實的陳述"),
-                    WhisperWindowSegment(110_000, 115_000, "對對對 那如果都是讀字的話"),
+                    WindowTranscriptSegment(95_000, 100_000, "有一個本於事實的陳述"),
+                    WindowTranscriptSegment(110_000, 115_000, "對對對 那如果都是讀字的話"),
                 ),
                 _engine(),
             ),
-            90_000: WhisperWindowResult(
+            90_000: WindowTranscript(
                 (
-                    WhisperWindowSegment(5_000, 10_000, "有一个本于事实的陈述"),
-                    WhisperWindowSegment(20_000, 25_000, "对对对那如果都是读字的话"),
-                    WhisperWindowSegment(40_000, 45_000, "下一句"),
+                    WindowTranscriptSegment(5_000, 10_000, "有一个本于事实的陈述"),
+                    WindowTranscriptSegment(20_000, 25_000, "对对对那如果都是读字的话"),
+                    WindowTranscriptSegment(40_000, 45_000, "下一句"),
                 ),
                 _engine(),
             ),
@@ -139,7 +141,7 @@ def test_progressive_session_keeps_each_moment_of_an_overlap_from_one_window() -
 def test_progressive_session_keeps_the_last_window_text_at_the_end() -> None:
     windows = [DecodedAudioWindow(0, 120_000, b"only")]
     transcriber = FakeTranscriber(
-        {0: WhisperWindowResult((WhisperWindowSegment(115_000, 119_000, "goodbye"),), _engine())}
+        {0: WindowTranscript((WindowTranscriptSegment(115_000, 119_000, "goodbye"),), _engine())}
     )
     session = ProgressiveAudioSession(
         transcriber=transcriber,
@@ -159,9 +161,9 @@ def test_progressive_session_keeps_listening_past_a_silent_opening() -> None:
     ]
     transcriber = FakeTranscriber(
         {
-            0: WhisperWindowResult((), _engine()),
-            270_000: WhisperWindowResult(
-                (WhisperWindowSegment(40_000, 45_000, "Please state your name."),), _engine()
+            0: WindowTranscript((), _engine()),
+            270_000: WindowTranscript(
+                (WindowTranscriptSegment(40_000, 45_000, "Please state your name."),), _engine()
             ),
         }
     )
@@ -185,7 +187,7 @@ def test_progressive_session_keeps_listening_past_a_silent_opening() -> None:
 
 def test_progressive_session_fails_audio_without_speech_once_it_is_all_heard() -> None:
     windows = [DecodedAudioWindow(0, 300_000, b"silence")]
-    transcriber = FakeTranscriber({0: WhisperWindowResult((), _engine())})
+    transcriber = FakeTranscriber({0: WindowTranscript((), _engine())})
     session = ProgressiveAudioSession(
         transcriber=transcriber,
     )
