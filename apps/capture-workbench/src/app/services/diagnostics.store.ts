@@ -4,7 +4,7 @@ import { ActivatedRoute } from '@angular/router';
 import { defer, finalize, from, throwError } from 'rxjs';
 import type { DesktopLibraryDetail } from '../contracts';
 import { desktopMessages } from '../i18n/desktop-messages';
-import { DesktopLibraryService } from './desktop-library.service';
+import { LibraryStore } from './library.store';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
 import { DesktopFormattingService } from './desktop-formatting.service';
 import { DesktopWorkspaceStore } from './desktop-workspace.store';
@@ -18,7 +18,7 @@ import { isNotFoundError } from './result-review';
 @Injectable()
 export class DiagnosticsStore {
   private readonly route = inject(ActivatedRoute);
-  private readonly library = inject(DesktopLibraryService);
+  private readonly library = inject(LibraryStore);
   private readonly formatting = inject(DesktopFormattingService);
   private readonly runtime = inject(DesktopRuntimeClientService);
   private readonly workspace = inject(DesktopWorkspaceStore);

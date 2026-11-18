@@ -41,6 +41,7 @@ import {
   isFeatureReady,
 } from './desktop-workspace.selectors';
 import { DesktopWorkspaceStore } from './desktop-workspace.store';
+import { LibraryStore } from './library.store';
 import { installationProgress } from './installation-progress';
 import { RecognitionFeaturesStore } from './recognition-features.store';
 import { selectionRejectionMessages } from './source-selection-messages';
@@ -49,6 +50,7 @@ import { selectionRejectionMessages } from './source-selection-messages';
 @Injectable({ providedIn: 'root' })
 export class AsrQueueStore {
   private readonly workspace = inject(DesktopWorkspaceStore);
+  private readonly libraryStore = inject(LibraryStore);
   private readonly library = inject(DesktopLibraryService);
   private readonly runtime = inject(DesktopRuntimeClientService);
   private readonly capture = inject(DesktopCaptureService);
@@ -123,7 +125,7 @@ export class AsrQueueStore {
   });
 
   readonly documents = computed(() =>
-    sortAsrDocumentsOldestFirst(this.workspace.allDocuments()),
+    sortAsrDocumentsOldestFirst(this.libraryStore.allDocuments()),
   );
 
   readonly rows = computed<readonly AsrQueueView[]>(() => {
@@ -173,18 +175,15 @@ export class AsrQueueStore {
   });
 
   private readonly host = {
-    selectedId: this.workspace.selectedId,
+    selectedId: this.libraryStore.selectedId,
     requestedRequirements: this.features.requestedRequirements,
     requirements: () => this.features.requirements(),
-    documents: () => this.workspace.allDocuments(),
-    selected: () => this.workspace.selected(),
-    refreshDocuments: () => this.workspace.refreshDocuments(),
+    documents: () => this.libraryStore.allDocuments(),
+    selected: () => this.libraryStore.selected(),
+    refreshDocuments: () => this.libraryStore.refreshDocuments(),
     reloadDocumentState: (documentId: string) => {
       this.loadedUpdatedAt.delete(documentId);
-      this.workspace.refreshDocuments();
-      if (this.workspace.selectedId() === documentId) {
-        this.workspace.select(documentId);
-      }
+      this.libraryStore.reloadDocumentState(documentId);
     },
     setMessage: (text: string) => this.workspace.message?.set(text),
     identifySpeakers: () => this.identifySpeakers(),
@@ -197,7 +196,7 @@ export class AsrQueueStore {
     effect(
       () => {
         if (this.runtime.ready()) {
-          this.workspace.refreshDocuments();
+          this.libraryStore.refreshDocuments();
         }
       },
       { injector: this.injector },
@@ -280,10 +279,10 @@ export class AsrQueueStore {
         takeUntilDestroyed(this.destroyRef),
       )
       .subscribe({
-        next: () => this.workspace.refreshDocuments(),
+        next: () => this.libraryStore.refreshDocuments(),
         error: (error: unknown) => {
           this.importError.set(errorMessage(error));
-          this.workspace.refreshDocuments();
+          this.libraryStore.refreshDocuments();
         },
       });
   }
@@ -313,7 +312,7 @@ export class AsrQueueStore {
           takeUntilDestroyed(this.destroyRef),
         )
         .subscribe({
-          next: () => this.workspace.refreshDocuments(),
+          next: () => this.libraryStore.refreshDocuments(),
           error: (error: unknown) =>
             this.workspace.message?.set(errorMessage(error)),
         });
@@ -448,7 +447,7 @@ export class AsrQueueStore {
         continue;
       }
       this.loadingDetails.add(document.documentId);
-      this.library
+      this.libraryStore
         .get(document.documentId)
         .pipe(
           tap((detail) => {

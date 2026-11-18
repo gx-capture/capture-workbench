@@ -4,7 +4,7 @@ import { ActivatedRoute, convertToParamMap } from '@angular/router';
 import { BehaviorSubject, of, Subject, throwError } from 'rxjs';
 import type { DesktopLibraryDetail, DesktopRuntimeStatus } from '../contracts';
 import { setDesktopLocale } from '../i18n/desktop-messages';
-import { DesktopLibraryService } from './desktop-library.service';
+import { LibraryStore } from './library.store';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
 import { DesktopFormattingService } from './desktop-formatting.service';
 import { DesktopWorkspaceStore } from './desktop-workspace.store';
@@ -199,7 +199,7 @@ function setupStore(
   TestBed.configureTestingModule({
     providers: [
       { provide: ActivatedRoute, useValue: { queryParamMap: queryParamMap$.asObservable() } },
-      { provide: DesktopLibraryService, useValue: library },
+      { provide: LibraryStore, useValue: library },
       { provide: DesktopFormattingService, useValue: formatting },
       { provide: DesktopRuntimeClientService, useValue: runtime },
       { provide: DesktopWorkspaceStore, useValue: workspace },

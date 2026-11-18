@@ -2,7 +2,7 @@ import { TestBed } from '@angular/core/testing';
 import { of, Subject } from 'rxjs';
 import type { DesktopLibraryExport } from '../contracts';
 import { setDesktopLocale } from '../i18n/desktop-messages';
-import { DesktopLibraryService } from './desktop-library.service';
+import { LibraryStore } from './library.store';
 import { DesktopFormattingService } from './desktop-formatting.service';
 import { LibraryExportService } from './library-export.service';
 
@@ -14,7 +14,7 @@ describe('LibraryExportService', () => {
     const library = { export: vi.fn(() => response) };
     const formatting = { downloadText: vi.fn() };
     TestBed.configureTestingModule({ providers: [
-      { provide: DesktopLibraryService, useValue: library },
+      { provide: LibraryStore, useValue: library },
       { provide: DesktopFormattingService, useValue: formatting },
     ] });
     return { service: TestBed.inject(LibraryExportService), library, formatting, response };

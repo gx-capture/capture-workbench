@@ -9,7 +9,7 @@ import type {
 import type { DesktopLibrarySummary } from '../contracts';
 import { setDesktopLocale } from '../i18n/desktop-messages';
 import { selectRecognitionRequirements } from '../services/desktop-workspace.selectors';
-import { DesktopWorkspaceStore } from '../services/desktop-workspace.store';
+import { LibraryStore } from '../services/library.store';
 import { RecognitionFeaturesStore } from '../services/recognition-features.store';
 import { EnginesPage } from './engines-page';
 
@@ -175,7 +175,7 @@ async function renderEngines(
         },
       },
       {
-        provide: DesktopWorkspaceStore,
+        provide: LibraryStore,
         useValue: { allDocuments: signal(options.documents ?? []) },
       },
     ],

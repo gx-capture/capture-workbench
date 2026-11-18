@@ -1,33 +1,36 @@
 import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { Router } from '@angular/router';
-import { of, Subject } from 'rxjs';
+import { BehaviorSubject, of, Subject } from 'rxjs';
 import type { DesktopLibrarySummary } from '../contracts';
 import { desktopMessages, setDesktopLocale } from '../i18n/desktop-messages';
 import { DesktopLibraryService } from './desktop-library.service';
 import { DesktopCaptureService } from './desktop-capture.service';
-import { DesktopWorkspaceStore } from './desktop-workspace.store';
+import { LibraryStore } from './library.store';
+import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
 import { HistoryListStore } from './history-list.store';
 
 describe('HistoryListStore', () => {
   function setup() {
     setDesktopLocale('zh-TW');
-    const allDocuments = signal<DesktopLibrarySummary[]>([
+    const allDocuments = new BehaviorSubject<DesktopLibrarySummary[]>([
       { documentId: 'a', fileName: 'report.pdf', mediaType: 'application/pdf', byteLength: 1, createdAtMs: 1, updatedAtMs: 2, status: 'completed' },
       { documentId: 'b', fileName: 'meeting.mp3', mediaType: 'audio/mpeg', byteLength: 1, createdAtMs: 1, updatedAtMs: 3, status: 'queued' },
     ]);
-    const workspace = { allDocuments, refreshDocuments: vi.fn() };
-    const library = { delete: vi.fn(() => of(undefined)) };
+    const library = { list: vi.fn(() => allDocuments), delete: vi.fn(() => of(undefined)) };
     const router = { navigate: vi.fn() };
     const busyIds = signal<ReadonlySet<string>>(new Set());
     const activeIds = signal<ReadonlySet<string>>(new Set());
     TestBed.configureTestingModule({ providers: [
-      { provide: DesktopWorkspaceStore, useValue: workspace },
+      { provide: DesktopRuntimeClientService, useValue: { started: signal(true) } },
       { provide: DesktopLibraryService, useValue: library },
       { provide: DesktopCaptureService, useValue: { busyIds, oneShotOperations: signal(new Map()), recordingOperations: signal(new Map()), hasActiveCapture: (id: string) => activeIds().has(id) } },
       { provide: Router, useValue: router },
     ] });
-    return { store: TestBed.inject(HistoryListStore), workspace, library, router, busyIds, activeIds };
+    const store = TestBed.inject(HistoryListStore);
+    const refreshDocuments = vi.spyOn(TestBed.inject(LibraryStore), 'refreshDocuments');
+    TestBed.tick();
+    return { store, allDocuments, refreshDocuments, library, router, busyIds, activeIds };
   }
   it('retains filters on the root instance and opens with a reload-safe origin', () => {
     const { store, router } = setup();
@@ -43,7 +46,7 @@ describe('HistoryListStore', () => {
     expect(TestBed.inject(HistoryListStore).search()).toBe('REPORT');
   });
   it('cancels without deleting and refreshes only after successful deletion', () => {
-    const { store, library, workspace } = setup();
+    const { store, library, refreshDocuments } = setup();
     const row = store.rows()[0];
     if (!row) throw new Error('missing row');
     store.askDelete(row);
@@ -53,11 +56,11 @@ describe('HistoryListStore', () => {
     store.askDelete(row);
     store.confirmDelete();
     expect(library.delete).toHaveBeenCalledWith('b');
-    expect(workspace.refreshDocuments).toHaveBeenCalledOnce();
+    expect(refreshDocuments).toHaveBeenCalledOnce();
     expect(store.pendingDelete()).toBeNull();
   });
   it('localizes failure and guards against double submission and newly busy rows', () => {
-    const { store, library, workspace, busyIds } = setup();
+    const { store, library, refreshDocuments, busyIds } = setup();
     const response = new Subject<undefined>();
     library.delete.mockReturnValue(response);
     const row = store.rows()[0];
@@ -74,17 +77,18 @@ describe('HistoryListStore', () => {
     response.error(new Error('private host path'));
     expect(store.error()).toBe(desktopMessages().historyDeleteFailed);
     expect(store.deleting()).toBe(false);
-    expect(workspace.refreshDocuments).not.toHaveBeenCalled();
+    expect(refreshDocuments).not.toHaveBeenCalled();
   });
   it.each(['removed', 'captureId', 'active capture'] as const)('rechecks a document that is %s while confirmation is open', (change) => {
-    const { store, workspace, library, activeIds } = setup();
+    const { store, allDocuments, library, activeIds } = setup();
     const row = store.rows()[0];
     if (!row) throw new Error('missing row');
     store.askDelete(row);
     if (change === 'active capture') {
       activeIds.set(new Set([row.documentId]));
     } else {
-      workspace.allDocuments.update((documents) => change === 'removed'
+      const documents = allDocuments.value;
+      allDocuments.next(change === 'removed'
         ? documents.filter((document) => document.documentId !== row.documentId)
         : documents.map((document) => document.documentId === row.documentId ? { ...document, captureId: 'capture' } : document));
     }

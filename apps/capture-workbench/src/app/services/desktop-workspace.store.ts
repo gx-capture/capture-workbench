@@ -1,19 +1,7 @@
 import { selectionRejectionMessages } from './source-selection-messages';
-import {
-  computed,
-  DestroyRef,
-  effect,
-  Injectable,
-  inject,
-  Injector,
-  signal,
-} from '@angular/core';
-import { rxResource, takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { computed, DestroyRef, effect, Injectable, inject, Injector, signal } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { Router } from '@angular/router';
-import type {
-  DesktopLibraryDetail,
-  DesktopLibrarySummary,
-} from '../contracts';
 import { AsrQueueStore } from './asr-queue.store';
 import { OcrQueueStore } from './ocr-queue.store';
 import { SpeechGpuSettingsStore } from './speech-gpu-settings.store';
@@ -23,6 +11,7 @@ import {
   DesktopCaptureService,
   type DesktopCaptureHost,
 } from './desktop-capture.service';
+import { LibraryStore } from './library.store';
 import { RecognitionFeaturesStore } from './recognition-features.store';
 import { errorMessage } from './desktop-workspace.selectors';
 import { desktopMessages } from '../i18n/desktop-messages';
@@ -42,22 +31,12 @@ export class DesktopWorkspaceStore {
   private readonly features = inject(RecognitionFeaturesStore);
 
   readonly message = signal(desktopMessages().starting);
-  readonly selectedId = signal<string | null>(null);
-
-  /** Every library document. */
-  get allDocuments() {
-    return this.documentsResource.value;
-  }
-
-  get selected() {
-    return this.selectedResource.value;
-  }
 
   readonly state = computed<WorkspaceState>(() => {
     if (
       this.runtime.error() ||
       this.features.requirementsResource.error() ||
-      this.documentsResource.error()
+      this.libraryStore.listError()
     ) {
       return 'error';
     }
@@ -78,36 +57,16 @@ export class DesktopWorkspaceStore {
 
   private dropListenerStarted = false;
 
-  private readonly documentsResource = rxResource<
-    readonly DesktopLibrarySummary[],
-    { readonly ready: true } | undefined
-  >({
-    defaultValue: [],
-    params: () => (this.runtime.started() ? { ready: true } : undefined),
-    stream: ({ abortSignal }) => this.library.list('', '', abortSignal),
-  });
-
-  private readonly selectedResource = rxResource<
-    DesktopLibraryDetail | null,
-    { readonly documentId: string } | undefined
-  >({
-    defaultValue: null,
-    params: () => {
-      const documentId = this.selectedId();
-      return this.runtime.started() && documentId ? { documentId } : undefined;
-    },
-    stream: ({ params, abortSignal }) =>
-      this.library.get(params.documentId, abortSignal),
-  });
+  private readonly libraryStore = inject(LibraryStore);
 
   private readonly captureHost: DesktopCaptureHost = {
-    selectedId: this.selectedId,
+    selectedId: this.libraryStore.selectedId,
     requestedRequirements: this.features.requestedRequirements,
     requirements: () => this.features.requirements(),
-    documents: () => this.allDocuments() ?? [],
-    selected: () => this.selected(),
-    refreshDocuments: () => this.refreshDocuments(),
-    reloadDocumentState: (documentId) => this.reloadDocumentState(documentId),
+    documents: () => this.libraryStore.allDocuments() ?? [],
+    selected: () => this.libraryStore.selected(),
+    refreshDocuments: () => this.libraryStore.refreshDocuments(),
+    reloadDocumentState: (documentId) => this.libraryStore.reloadDocumentState(documentId),
     setMessage: (message) => this.message.set(message),
     identifySpeakers: () => false,
   };
@@ -116,8 +75,8 @@ export class DesktopWorkspaceStore {
     const error =
       this.runtime.error() ??
       this.features.requirementsResource.error() ??
-      this.documentsResource.error() ??
-      this.selectedResource.error();
+      this.libraryStore.listError() ??
+      this.libraryStore.detailError();
     if (error) this.message.set(errorMessage(error));
   });
 
@@ -157,18 +116,7 @@ export class DesktopWorkspaceStore {
     this.runtime.reload();
     this.compute.reload();
     this.features.initialize();
-    this.documentsResource.reload();
-  }
-
-  /** Reloads the document list without changing the current selection. */
-  refreshDocuments(): void {
-    this.documentsResource.reload();
-  }
-
-  /** Selects a document and reloads its detail resource. */
-  select(documentId: string): void {
-    this.selectedId.set(documentId);
-    this.selectedResource.reload();
+    this.libraryStore.refreshDocuments();
   }
 
   /** Enqueues selections through the capture lifecycle collaborator. */
@@ -202,10 +150,5 @@ export class DesktopWorkspaceStore {
 
   private currentRoutePath(): string {
     return (this.router?.url ?? '').split(/[?#]/u)[0] ?? '';
-  }
-
-  private reloadDocumentState(documentId: string): void {
-    this.documentsResource.reload();
-    if (this.selectedId() === documentId) this.selectedResource.reload();
   }
 }
