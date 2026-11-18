@@ -1,6 +1,7 @@
 import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
-import type { RuntimeInstallation, RuntimeRequirement } from '@gx-capture/capture-workbench-ui';
+import { provideRouter } from '@angular/router';
+import type { CaptureRequirementId, RuntimeInstallation, RuntimeRequirement } from '@gx-capture/capture-workbench-ui';
 import { of, Subject } from 'rxjs';
 import type { DesktopCaptureOptions, DesktopLibraryExport, DesktopLibrarySummary } from '../contracts';
 import { desktopMessages, setDesktopLocale } from '../i18n/desktop-messages';
@@ -12,6 +13,7 @@ import { DesktopCaptureService } from './desktop-capture.service';
 import { DesktopFormattingService } from './desktop-formatting.service';
 import { isFeatureReady, type RecognitionFeature } from './desktop-workspace.selectors';
 import { DesktopWorkspaceStore } from './desktop-workspace.store';
+import { HistoryListStore } from './history-list.store';
 import { RecognitionFeaturesStore } from './recognition-features.store';
 
 describe('OcrQueueStore', () => {
@@ -325,7 +327,7 @@ describe('OcrQueueStore', () => {
       modelInstallationPercent: signal(0),
       modelInstallationPhase: signal(null),
       selectedModelOptionId: signal(null),
-      requestedRequirements: signal(new Set<string>()),
+      requestedRequirements: signal<ReadonlySet<CaptureRequirementId>>(new Set()),
       requirements,
       requirementsResource: {
         error: () => undefined,
@@ -350,6 +352,7 @@ describe('OcrQueueStore', () => {
         { provide: DesktopLibraryService, useValue: library },
         { provide: DesktopRuntimeClientService, useValue: runtime },
         { provide: RecognitionFeaturesStore, useValue: features },
+        provideRouter([]),
         DesktopWorkspaceStore,
         DesktopCaptureService,
         OcrQueueStore,
@@ -362,15 +365,17 @@ describe('OcrQueueStore', () => {
 
     expect(queue.rows().map((row) => row.fileName)).toEqual(['kept.pdf']);
 
-    const confirm = vi.spyOn(globalThis, 'confirm').mockReturnValue(true);
-    workspace.delete('a'.repeat(32));
+    const history = TestBed.inject(HistoryListStore);
+    const row = history.rows()[0];
+    if (!row) throw new Error('missing History row');
+    history.askDelete(row);
+    history.confirmDelete();
     TestBed.tick();
     expect(queue.rows().map((row) => row.fileName)).toEqual([]);
 
     workspace.addSelections({ rejected: [], selections: [selection('added.png')] });
     TestBed.tick();
     expect(queue.rows().map((row) => row.fileName)).toEqual(['added.png']);
-    confirm.mockRestore();
   });
 });
 

@@ -11,10 +11,6 @@ import {
 import { rxResource, takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { Router } from '@angular/router';
 import type {
-  CaptureRequirementId,
-  RuntimeInstallation,
-} from '@gx-capture/capture-workbench-ui';
-import type {
   DesktopLibraryDetail,
   DesktopLibrarySummary,
 } from '../contracts';
@@ -43,24 +39,10 @@ export class DesktopWorkspaceStore {
   private readonly destroyRef = inject(DestroyRef);
   private readonly injector = inject(Injector);
   private readonly router = inject(Router, { optional: true });
-  readonly features = inject(RecognitionFeaturesStore);
+  private readonly features = inject(RecognitionFeaturesStore);
 
   readonly message = signal(desktopMessages().starting);
   readonly selectedId = signal<string | null>(null);
-  readonly installing = this.features.installing;
-  readonly activeInstallation = this.features.activeInstallation;
-  readonly activeModelInstallation = this.features.activeModelInstallation;
-  readonly installationPercent = this.features.installationPercent;
-  readonly modelInstallationPercent = this.features.modelInstallationPercent;
-  readonly modelInstallationPhase = this.features.modelInstallationPhase;
-  readonly selectedModelOptionId = this.features.selectedModelOptionId;
-  readonly busyIds = this.captureLifecycle.busyIds;
-  readonly runtimeStarted = this.runtime.started;
-  readonly requestedRequirements = this.features.requestedRequirements;
-
-  get requirements() {
-    return this.features.requirements;
-  }
 
   /** Every library document. */
   get allDocuments() {
@@ -79,7 +61,7 @@ export class DesktopWorkspaceStore {
     ) {
       return 'error';
     }
-    if (!this.runtimeStarted()) return 'starting';
+    if (!this.runtime.started()) return 'starting';
     const requirementsStatus = this.features.requirementsResource.status();
     if (
       requirementsStatus === 'idle' ||
@@ -93,15 +75,6 @@ export class DesktopWorkspaceStore {
 
   /** Installing one feature does not block capturing with another (plan §2, ASR journey). */
   readonly canCapture = computed(() => this.state() === 'ready');
-  readonly ocrReady = this.features.ocrReady;
-  readonly asrReady = this.features.asrReady;
-  readonly speakersReady = this.features.speakersReady;
-  readonly recognitionRequirements = this.features.recognitionRequirements;
-  readonly requestedMissing = this.features.requestedMissing;
-  readonly installableRequestedRequirements =
-    this.features.installableRequestedRequirements;
-  readonly modelSelectionRequired = this.features.modelSelectionRequired;
-  readonly activeModelOption = this.features.activeModelOption;
 
   private dropListenerStarted = false;
 
@@ -110,7 +83,7 @@ export class DesktopWorkspaceStore {
     { readonly ready: true } | undefined
   >({
     defaultValue: [],
-    params: () => (this.runtimeStarted() ? { ready: true } : undefined),
+    params: () => (this.runtime.started() ? { ready: true } : undefined),
     stream: ({ abortSignal }) => this.library.list('', '', abortSignal),
   });
 
@@ -121,7 +94,7 @@ export class DesktopWorkspaceStore {
     defaultValue: null,
     params: () => {
       const documentId = this.selectedId();
-      return this.runtimeStarted() && documentId ? { documentId } : undefined;
+      return this.runtime.started() && documentId ? { documentId } : undefined;
     },
     stream: ({ params, abortSignal }) =>
       this.library.get(params.documentId, abortSignal),
@@ -129,8 +102,8 @@ export class DesktopWorkspaceStore {
 
   private readonly captureHost: DesktopCaptureHost = {
     selectedId: this.selectedId,
-    requestedRequirements: this.requestedRequirements,
-    requirements: () => this.requirements(),
+    requestedRequirements: this.features.requestedRequirements,
+    requirements: () => this.features.requirements(),
     documents: () => this.allDocuments() ?? [],
     selected: () => this.selected(),
     refreshDocuments: () => this.refreshDocuments(),
@@ -198,47 +171,6 @@ export class DesktopWorkspaceStore {
     this.selectedResource.reload();
   }
 
-  /** Latest installation record for a requirement, if any. */
-  installationFor(
-    requirementId: CaptureRequirementId,
-  ): RuntimeInstallation | null {
-    return this.features.installationFor(requirementId);
-  }
-
-  /** Downloads one recognition requirement the user chose. */
-  installRequirement(requirementId: CaptureRequirementId): void {
-    this.features.installRequirement(requirementId);
-  }
-
-  /** Downloads the selected recognition requirements in deterministic order. */
-  installRequirements(requirementIds: readonly CaptureRequirementId[]): void {
-    this.features.installRequirements(requirementIds);
-  }
-
-  /** Cancels a running installation. */
-  cancelInstallation(installationId?: string): void {
-    this.features.cancelInstallation(installationId);
-  }
-
-  /** Retries a failed or cancelled installation for a requirement. */
-  retryInstallation(requirementId: CaptureRequirementId): void {
-    this.features.retryInstallation(requirementId);
-  }
-
-  get modelOptions() {
-    return this.features.modelOptions;
-  }
-
-  /** Selects the model option used by the next installation command. */
-  selectModelOption(optionId: string): void {
-    this.features.selectModelOption(optionId);
-  }
-
-  /** Starts the selected model installation and refreshes dependent resources. */
-  installSelectedModel(): void {
-    this.features.installSelectedModel();
-  }
-
   /** Enqueues selections through the capture lifecycle collaborator. */
   addSelections(batch: DesktopSourceSelectionBatch): void {
     this.message.set(selectionRejectionMessages(batch).join('\n'));
@@ -247,51 +179,6 @@ export class DesktopWorkspaceStore {
       return;
     }
     this.captureLifecycle.addSelections$(batch.selections, this.captureHost).subscribe({
-      error: (error: unknown) => this.message.set(errorMessage(error)),
-    });
-  }
-
-  /** Retries a failed or recoverable document capture. */
-  retry(documentId: string): void {
-    if (!this.canCapture()) return;
-    this.captureLifecycle.retry$(documentId, this.captureHost).subscribe({
-      error: (error: unknown) => this.message.set(errorMessage(error)),
-    });
-  }
-
-  /** Requests cancellation for an active capture. */
-  cancel(documentId: string): void {
-    this.captureLifecycle.cancel(documentId);
-  }
-
-  /** Deletes a non-active, non-recoverable library document after confirmation. */
-  delete(documentId: string): void {
-    if (
-      this.captureLifecycle.hasActiveCapture(documentId) ||
-      this.busyIds().has(documentId)
-    ) {
-      this.message.set(desktopMessages().cancelBeforeDelete);
-      return;
-    }
-    const document =
-      (this.allDocuments() ?? []).find(
-        (candidate) => candidate.documentId === documentId,
-      ) ??
-      (this.selected()?.documentId === documentId
-        ? this.selected()
-        : undefined);
-    if (document?.captureId) {
-      this.message.set(desktopMessages().waitBeforeDelete);
-      return;
-    }
-    this.library.delete(documentId).subscribe({
-      next: () => {
-        if (this.selectedId() === documentId) {
-          this.selectedId.set(null);
-          this.selectedResource.set(null);
-        }
-        this.refreshDocuments();
-      },
       error: (error: unknown) => this.message.set(errorMessage(error)),
     });
   }
