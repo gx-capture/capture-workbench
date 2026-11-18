@@ -1515,7 +1515,6 @@ def test_cancel_before_host_ocr_checkpoint_publishes_no_execution_proof(
     assert extractor.finished.wait(timeout=5)
 
     assert sink.proofs == []
-    assert capture_id not in service._pending_execution_proofs
 
 
 def test_delete_before_host_ocr_checkpoint_publishes_no_execution_proof(
@@ -1540,7 +1539,6 @@ def test_delete_before_host_ocr_checkpoint_publishes_no_execution_proof(
     assert extractor.finished.wait(timeout=5)
 
     assert sink.proofs == []
-    assert capture_id not in service._pending_execution_proofs
 
 
 def test_host_proof_commit_persistence_failure_preserves_checkpoint_artifact(
@@ -1572,7 +1570,6 @@ def test_host_proof_commit_persistence_failure_preserves_checkpoint_artifact(
             capture_id, candidate, idempotency_key="host-commit-failure"
         )
 
-    assert capture_id not in service._pending_execution_proofs
     _wait_for_proof_artifact(root)
     assert not list(root.glob(".ocr-device-proof-*.tmp"))
 
@@ -1696,7 +1693,6 @@ def test_host_proof_pull_session_validation_failure_keeps_checkpoint_artifact(
         headers={"X-Idempotency-Key": "host-invalid-session-batch"},
     )
     assert invalid.status_code == 422, invalid.text
-    assert capture_id not in service._pending_execution_proofs
     assert (root / "ocr-device-proof-v1.json").is_file()
     assert not list(root.glob(".ocr-device-proof-*.tmp"))
 

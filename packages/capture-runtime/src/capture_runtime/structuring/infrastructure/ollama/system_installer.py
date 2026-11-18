@@ -105,9 +105,6 @@ class SystemRuntimeInstaller:
         model_readiness_timeout_seconds: float = 10,
         model_readiness_poll_interval_seconds: float = 0.2,
         extraction_config: ExtractionRuntimeConfig | None = None,
-        ocr_adapter: object | None = None,
-        speech_recognition_adapter: object | None = None,
-        http_client_factory: object | None = None,
     ) -> None:
         if model_readiness_timeout_seconds < 0:
             raise ValueError("model_readiness_timeout_seconds must be non-negative")
@@ -116,7 +113,6 @@ class SystemRuntimeInstaller:
         self._lifecycle = lifecycle
         self._engine_manager = engine_manager
         self._extraction_config = extraction_config
-        del ocr_adapter, speech_recognition_adapter, http_client_factory
         self._runner = command_runner or AsyncSubprocessCommandRunner()
         self._resolve_winget = winget_resolver or (lambda: shutil.which("winget"))
         self._clock = clock

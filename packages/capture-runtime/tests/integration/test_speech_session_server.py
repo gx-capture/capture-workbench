@@ -15,7 +15,7 @@ from capture_runtime.speech.infrastructure.speech_session import (
     encode_control,
     encode_credit,
 )
-from capture_runtime.workers.session_server import serve_session
+from capture_runtime.workers.speech_session_server import serve_session
 
 
 class _BlockingInput:
@@ -97,7 +97,7 @@ class _ImmediateBackend:
         return None
 
 
-def test_session_server_heartbeats_carry_the_workers_stage() -> None:
+def test_speech_session_server_heartbeats_carry_the_workers_stage() -> None:
     wire = (
         encode_control(
             SessionFrameType.START,
@@ -150,7 +150,7 @@ def test_session_server_heartbeats_carry_the_workers_stage() -> None:
     assert "loading-model" in stages
 
 
-def test_session_server_emits_heartbeat_while_window_transcription_is_running() -> None:
+def test_speech_session_server_emits_heartbeat_while_window_transcription_is_running() -> None:
     wire = (
         encode_control(
             SessionFrameType.START,
@@ -200,7 +200,7 @@ def test_session_server_emits_heartbeat_while_window_transcription_is_running() 
     assert any(frame.frame_type is SessionFrameType.COMPLETED for frame in frames)
 
 
-def test_session_server_reads_short_final_pipe_chunk_without_waiting_for_eof() -> None:
+def test_speech_session_server_reads_short_final_pipe_chunk_without_waiting_for_eof() -> None:
     wire = (
         encode_control(
             SessionFrameType.START,

@@ -27,7 +27,6 @@ from capture_runtime.ocr.infrastructure.ocr_projection import (
     OcrEngineFailure,
     OcrEngineRequest,
     OcrEngineRun,
-    OcrExtractionFailure,
     OcrPageInput,
     OcrPageManifest,
     OcrPipeline,
@@ -299,8 +298,8 @@ class _InMemoryOcrEngine:
         self.pages = pages
         self.manifest: tuple[OcrPageManifest, ...] | None = None
 
-    def recognize(self, manifest: tuple[OcrPageManifest, ...]) -> OcrEngineRun:
-        self.manifest = manifest
+    def recognize(self, request: OcrEngineRequest) -> OcrEngineRun:
+        self.manifest = request.manifest
         return OcrEngineRun(
             pages=self.pages,
             provenance=_engine(),
@@ -331,16 +330,22 @@ def test_pipeline_interface_accepts_source_manifest_and_engine_port() -> None:
     )
 
     projection = OcrPipeline().extract(
-        capture_id="capture-pipeline",
-        source=_source(),
-        manifest=(
-            OcrPageManifest(page=1, raster_width=1200, raster_height=800, raster_scale=2),
-            OcrPageManifest(page=2, raster_width=1200, raster_height=800, raster_scale=2),
+        OcrRequest(
+            capture_id="capture-pipeline",
+            source=_source(),
+            page_scope=None,
+            manifest=(
+                OcrPageManifest(page=1, raster_width=1200, raster_height=800, raster_scale=2),
+                OcrPageManifest(page=2, raster_width=1200, raster_height=800, raster_scale=2),
+            ),
+            created_at=datetime.now(UTC),
+            warnings=(),
+            is_cancelled=lambda: False,
         ),
-        engine=engine,
-        created_at=datetime.now(UTC),
+        engine,
     )
 
+    assert isinstance(projection, CaptureOcrProjectionV3)
     assert engine.manifest is not None
     assert projection.status is OcrProjectionStatus.COMPLETED
     assert [page.page for page in projection.pages] == [1, 2]
@@ -490,10 +495,8 @@ def _malformed_manifest_item(**changes: object) -> OcrPageManifest:
         (_malformed_manifest_item(raster_scale=float("nan")),),
     ],
 )
-@pytest.mark.parametrize("legacy", [False, True])
 def test_public_extract_rejects_malformed_manifest_before_engine_or_progress(
     manifest: object,
-    legacy: bool,
 ) -> None:
     progress: list[dict[str, object]] = []
     engine_calls = 0
@@ -505,34 +508,24 @@ def test_public_extract_rejects_malformed_manifest_before_engine_or_progress(
             raise AssertionError("invalid manifest must stop before the engine")
 
     pipeline = OcrPipeline()
-    if legacy:
-        with pytest.raises(OcrProjectionError):
-            pipeline.extract(
-                capture_id="capture-malformed-manifest",
-                source=_source(),
-                manifest=manifest,  # type: ignore[arg-type]
-                engine=NeverEngine(),  # type: ignore[arg-type]
-                created_at=datetime.now(UTC),
-            )
-    else:
-        request = OcrRequest(
-            capture_id="capture-malformed-manifest",
-            source=_source(),
-            page_scope=None,
-            manifest=manifest,  # type: ignore[arg-type]
-            created_at=datetime.now(UTC),
-            warnings=(),
-            is_cancelled=lambda: False,
-            progress=progress.append,
-        )
-        with pytest.raises(OcrProjectionError):
-            pipeline.extract(request, NeverEngine())  # type: ignore[arg-type]
+    request = OcrRequest(
+        capture_id="capture-malformed-manifest",
+        source=_source(),
+        page_scope=None,
+        manifest=manifest,  # type: ignore[arg-type]
+        created_at=datetime.now(UTC),
+        warnings=(),
+        is_cancelled=lambda: False,
+        progress=progress.append,
+    )
+    with pytest.raises(OcrProjectionError):
+        pipeline.extract(request, NeverEngine())
 
     assert engine_calls == 0
     assert progress == []
 
 
-def test_extract_dispatch_rejects_mixed_and_request_keyword_forms() -> None:
+def test_extract_requires_positional_request_and_engine() -> None:
     manifest = (OcrPageManifest(page=1, raster_width=640, raster_height=480, raster_scale=1),)
     request = _streaming_request(manifest, [], lambda: False)
     pipeline = OcrPipeline()
@@ -853,21 +846,26 @@ def test_public_pipeline_boundary_retired_helpers_are_absent() -> None:
 
 def test_pipeline_failure_keeps_a_readable_typed_projection() -> None:
     class FailingEngine:
-        def recognize(self, _manifest: tuple[OcrPageManifest, ...]) -> OcrEngineRun:
+        def recognize(self, _request: OcrEngineRequest) -> OcrEngineRun:
             raise OcrEngineFailure(kind="worker")
 
-    with pytest.raises(OcrExtractionFailure) as raised:
-        OcrPipeline().extract(
+    outcome = OcrPipeline().extract(
+        OcrRequest(
             capture_id="capture-failure",
             source=_source(),
+            page_scope=None,
             manifest=(
                 OcrPageManifest(page=1, raster_width=640, raster_height=480, raster_scale=1),
             ),
-            engine=FailingEngine(),
             created_at=datetime.now(UTC),
-        )
+            warnings=(),
+            is_cancelled=lambda: False,
+        ),
+        FailingEngine(),
+    )
+    assert isinstance(outcome, OcrTerminalOutcome)
 
-    projection = raised.value.projection
+    projection = outcome.projection
     assert projection.status is OcrProjectionStatus.FAILED
     assert projection.failure is not None
     assert projection.failure.code == "ocr_worker_failed"
@@ -877,7 +875,7 @@ def test_pipeline_failure_keeps_a_readable_typed_projection() -> None:
 
 def test_invalid_model_digest_fails_closed_with_unavailable_provenance() -> None:
     class InvalidIdentityEngine:
-        def recognize(self, _manifest: tuple[OcrPageManifest, ...]) -> OcrEngineRun:
+        def recognize(self, _request: OcrEngineRequest) -> OcrEngineRun:
             return OcrEngineRun(
                 pages=(
                     OcrPageInput(
@@ -896,18 +894,23 @@ def test_invalid_model_digest_fails_closed_with_unavailable_provenance() -> None
                 ),
             )
 
-    with pytest.raises(OcrExtractionFailure) as raised:
-        OcrPipeline().extract(
+    outcome = OcrPipeline().extract(
+        OcrRequest(
             capture_id="capture-invalid-model-digest",
             source=_source(),
+            page_scope=None,
             manifest=(
                 OcrPageManifest(page=1, raster_width=640, raster_height=480, raster_scale=1),
             ),
-            engine=InvalidIdentityEngine(),
             created_at=datetime.now(UTC),
-        )
+            warnings=(),
+            is_cancelled=lambda: False,
+        ),
+        InvalidIdentityEngine(),
+    )
+    assert isinstance(outcome, OcrTerminalOutcome)
 
-    projection = raised.value.projection
+    projection = outcome.projection
     assert projection.provenance.status == "unavailable"
     assert projection.provenance.reason == "protocol_failure"
     assert projection.pages[0].status is OcrPageStatus.FAILED
@@ -923,19 +926,24 @@ def test_all_empty_terminal_projection_is_failed_with_stable_no_text_failure() -
         )
     )
 
-    with pytest.raises(OcrExtractionFailure) as raised:
-        OcrPipeline().extract(
+    outcome = OcrPipeline().extract(
+        OcrRequest(
             capture_id="capture-empty",
             source=_source(),
+            page_scope=None,
             manifest=(
                 OcrPageManifest(page=1, raster_width=640, raster_height=480, raster_scale=1),
                 OcrPageManifest(page=2, raster_width=640, raster_height=480, raster_scale=1),
             ),
-            engine=engine,
             created_at=datetime.now(UTC),
-        )
+            warnings=(),
+            is_cancelled=lambda: False,
+        ),
+        engine,
+    )
+    assert isinstance(outcome, OcrTerminalOutcome)
 
-    projection = raised.value.projection
+    projection = outcome.projection
     assert projection.status is OcrProjectionStatus.FAILED
     assert projection.failure is not None
     assert projection.failure.code == "ocr_no_text"
@@ -1010,28 +1018,38 @@ def test_pipeline_rejects_box_outside_raw_raster_as_typed_failure() -> None:
         )
     )
 
-    with pytest.raises(OcrExtractionFailure) as raised:
-        OcrPipeline().extract(
+    outcome = OcrPipeline().extract(
+        OcrRequest(
             capture_id="capture-box",
             source=_source(),
+            page_scope=None,
             manifest=(OcrPageManifest(page=1, raster_width=10, raster_height=10, raster_scale=1),),
-            engine=engine,
             created_at=datetime.now(UTC),
-        )
+            warnings=(),
+            is_cancelled=lambda: False,
+        ),
+        engine,
+    )
+    assert isinstance(outcome, OcrTerminalOutcome)
 
-    assert raised.value.projection.failure is not None
-    assert raised.value.projection.failure.code == "ocr_worker_protocol"
-    assert raised.value.projection.pages[0].status is OcrPageStatus.FAILED
+    assert outcome.projection.failure is not None
+    assert outcome.projection.failure.code == "ocr_worker_protocol"
+    assert outcome.projection.pages[0].status is OcrPageStatus.FAILED
 
 
 def test_pipeline_requires_a_nonempty_ordered_manifest() -> None:
     with pytest.raises(OcrProjectionError, match="complete and ordered"):
         OcrPipeline().extract(
-            capture_id="capture-no-pages",
-            source=_source(),
-            manifest=(),
-            engine=_InMemoryOcrEngine(()),
-            created_at=datetime.now(UTC),
+            OcrRequest(
+                capture_id="capture-no-pages",
+                source=_source(),
+                page_scope=None,
+                manifest=(),
+                created_at=datetime.now(UTC),
+                warnings=(),
+                is_cancelled=lambda: False,
+            ),
+            _InMemoryOcrEngine(()),
         )
 
 
@@ -1155,11 +1173,16 @@ def test_pipeline_rejects_a_manifest_that_is_not_ascending_source_pages(
 ) -> None:
     with pytest.raises(OcrProjectionError, match="complete and ordered"):
         OcrPipeline().extract(
-            capture_id="capture-unordered-selection",
-            source=_source(),
-            manifest=_selection_manifest(pages),
-            engine=_InMemoryOcrEngine(()),
-            created_at=datetime.now(UTC),
+            OcrRequest(
+                capture_id="capture-unordered-selection",
+                source=_source(),
+                page_scope=None,
+                manifest=_selection_manifest(pages),
+                created_at=datetime.now(UTC),
+                warnings=(),
+                is_cancelled=lambda: False,
+            ),
+            _InMemoryOcrEngine(()),
         )
 
 

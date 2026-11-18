@@ -26,7 +26,6 @@ from capture_runtime._pdf_source import (
 )
 from capture_runtime._worker_payloads import WorkerRunResult
 from capture_runtime.capture.infrastructure.audio_run_timeout import audio_run_timeout_seconds
-from capture_runtime.capture.infrastructure.pdf_page_selection import is_ascending_page_numbers
 from capture_runtime.capture.infrastructure.source_sniffing import (
     SNIFF_BYTES,
     SniffedSource,
@@ -100,6 +99,7 @@ from capture_runtime.ocr.infrastructure.ocr_worker_result import (
     OcrWorkerRunResult,
     WorkerOcrProgress,
 )
+from capture_runtime.pdf_page_selection import is_ascending_page_numbers
 from capture_runtime.provisioning.infrastructure.engine_catalog import EngineCatalogError
 from capture_runtime.provisioning.infrastructure.engine_content_selection import (
     speech_model_not_installed_message,
@@ -203,7 +203,7 @@ class CaptureExtractor(Protocol):
         pdf_page_numbers: tuple[int, ...] | None = None,
         ocr_progress: Callable[[int, int], None] | None = None,
         identify_speakers: bool = False,
-        speaker_progress: Callable[[str, int], None] | None = None,
+        staged_progress: Callable[[str, int], None] | None = None,
         spoken_language: str | None = None,
     ) -> CaptureExtractionOutcome: ...
 
@@ -290,7 +290,7 @@ class _SyncOcrEngineAdapter:
             raise InterruptedError("Capture extraction was cancelled.")
 
 
-class _WorkerOcrEngineAdapter:
+class _WorkerResultOcrEngine:
     """Remote-owned worker result adapter; no worker transport leaks into policy."""
 
     def __init__(
@@ -459,7 +459,7 @@ class StandaloneRuntimeCaptureExtractor:
         pdf_page_numbers: tuple[int, ...] | None = None,
         ocr_progress: Callable[[int, int], None] | None = None,
         identify_speakers: bool = False,
-        speaker_progress: Callable[[str, int], None] | None = None,
+        staged_progress: Callable[[str, int], None] | None = None,
         spoken_language: str | None = None,
     ) -> CaptureExtractionOutcome:
         if self.engine_manager is not None:
@@ -470,7 +470,7 @@ class StandaloneRuntimeCaptureExtractor:
                 pdf_page_numbers=pdf_page_numbers,
                 ocr_progress=ocr_progress,
                 identify_speakers=identify_speakers,
-                speaker_progress=speaker_progress,
+                staged_progress=staged_progress,
                 spoken_language=spoken_language,
             )
         if identify_speakers or isinstance(content, Path):
@@ -498,7 +498,7 @@ class StandaloneRuntimeCaptureExtractor:
         pdf_page_numbers: tuple[int, ...] | None = None,
         ocr_progress: Callable[[int, int], None] | None = None,
         identify_speakers: bool = False,
-        speaker_progress: Callable[[str, int], None] | None = None,
+        staged_progress: Callable[[str, int], None] | None = None,
         spoken_language: str | None = None,
     ) -> CaptureExtractionOutcome:
         sniffed = self.sniff(self._source_prefix(content))
@@ -633,7 +633,7 @@ class StandaloneRuntimeCaptureExtractor:
                         ),
                     },
                     cancel_event,
-                    progress=_stage_progress(speaker_progress, "transcribing", 0, 450),
+                    progress=_stage_progress(staged_progress, "transcribing", 0, 450),
                     timeout_seconds=audio_run_timeout_seconds(
                         content, self.config.max_audio_duration_ms
                     ),
@@ -645,7 +645,7 @@ class StandaloneRuntimeCaptureExtractor:
                         content,
                         sniffed.media_type,
                         cancel_event,
-                        _stage_progress(speaker_progress, "identifying-speakers", 450, 1000),
+                        _stage_progress(staged_progress, "identifying-speakers", 450, 1000),
                         timeout_seconds=audio_run_timeout_seconds(
                             content, self.config.max_audio_duration_ms
                         ),
@@ -738,7 +738,7 @@ class StandaloneRuntimeCaptureExtractor:
         )
         outcome = self.ocr_pipeline.extract(
             request,
-            _WorkerOcrEngineAdapter(result, engine),
+            _WorkerResultOcrEngine(result, engine),
         )
         if isinstance(outcome, OcrTerminalOutcome):
             raise OcrExtractionFailure(failure=outcome.failure, projection=outcome.projection)

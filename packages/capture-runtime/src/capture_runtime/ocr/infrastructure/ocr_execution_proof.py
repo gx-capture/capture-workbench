@@ -19,7 +19,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
-from capture_runtime.capture.infrastructure.pdf_page_selection import is_pdf_page_selection
 from capture_runtime.ocr.infrastructure.ocr_execution_evidence import (
     OcrExecutionEvidence,
     OcrSessionDeviceProof,
@@ -29,6 +28,7 @@ from capture_runtime.ocr.infrastructure.ocr_preflight import (
     OcrSelectedDeviceIdentityV1,
     OcrSelectionDeviceProofV1,
 )
+from capture_runtime.pdf_page_selection import is_pdf_page_selection
 from capture_runtime.worker_process import WorkerFailureDiagnostics
 
 if TYPE_CHECKING:

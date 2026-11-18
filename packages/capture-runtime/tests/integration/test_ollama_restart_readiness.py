@@ -28,14 +28,8 @@ from capture_runtime.structuring.infrastructure.ollama import (
     OwnedProcess,
     SystemRuntimeInstaller,
 )
-from capture_runtime.worker_probe import EngineProbe
 from tests.conftest import TOKEN
 from tests.support.ollama_legacy import install_legacy_model
-
-
-class ProbeAdapter:
-    def probe(self) -> EngineProbe:
-        return EngineProbe(True, True, True, "ready")
 
 
 class FakePopen:
@@ -144,8 +138,6 @@ def _installer(
         lifecycle,
         winget_resolver=lambda: None,
         extraction_config=extraction,
-        ocr_adapter=ProbeAdapter(),  # type: ignore[arg-type]
-        speech_recognition_adapter=ProbeAdapter(),  # type: ignore[arg-type]
         clock=SystemClock(),
         model_readiness_timeout_seconds=readiness_timeout_seconds,
         model_readiness_poll_interval_seconds=0,

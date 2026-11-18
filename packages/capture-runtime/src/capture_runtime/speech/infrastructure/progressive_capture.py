@@ -15,6 +15,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
+from capture_runtime.capture.application.processing_error import CaptureProcessingError
 from capture_runtime.clock import Clock
 from capture_runtime.config import ExtractionRuntimeConfig, worker_child_environment
 from capture_runtime.constants import SPEECH_RECOGNITION_REQUIREMENT_ID
@@ -64,24 +65,6 @@ from capture_runtime.worker_stage_policy import (
     WORKER_STAGE_PATTERN,
     sanitize_worker_stage_sequence,
 )
-
-
-class ProgressiveCaptureError(RuntimeError):
-    """A safe runtime-side progressive processing failure."""
-
-    def __init__(
-        self,
-        message: str,
-        *,
-        code: str = "progressive_failed",
-        retryable: bool = True,
-        stage: str = "extraction",
-    ) -> None:
-        super().__init__(message)
-        self.code = code
-        self.retryable = retryable
-        self.stage = stage
-
 
 EventSink = Callable[
     [tuple[ProgressiveSessionEvent, ...], PartialCaptureV2 | None], Awaitable[None]
@@ -138,7 +121,7 @@ class _ProgressiveState:
     def raw(self) -> RawCapture:
         partial = self.partial
         if partial is None or not partial.segments:
-            raise ProgressiveCaptureError(
+            raise CaptureProcessingError(
                 "Progressive audio produced no non-empty content.",
                 code="progressive_no_text_at_sample",
                 stage="checkpoint",
@@ -157,14 +140,14 @@ class _ProgressiveState:
 def _state_segment_start(segment: RawCaptureSegment) -> int:
     locator = segment.locator
     if not isinstance(locator, TimeLocator):
-        raise ProgressiveCaptureError("progressive audio segment locator is not time-based")
+        raise CaptureProcessingError("progressive audio segment locator is not time-based")
     return locator.start_ms
 
 
 def _state_segment_end(segment: RawCaptureSegment) -> int:
     locator = segment.locator
     if not isinstance(locator, TimeLocator):
-        raise ProgressiveCaptureError("progressive audio segment locator is not time-based")
+        raise CaptureProcessingError("progressive audio segment locator is not time-based")
     return locator.end_ms
 
 
@@ -272,7 +255,7 @@ class ProgressiveCaptureProcessor:
         except (ExtractionRuntimeUnavailableError, TimeoutError):
             raise
         except Exception as error:
-            raise ProgressiveCaptureError(
+            raise CaptureProcessingError(
                 "Progressive speech recognition engine could not be prepared.",
                 code="progressive_engine_resolution_failed",
             ) from error
@@ -286,7 +269,7 @@ class ProgressiveCaptureProcessor:
                 overlap_ms=DEFAULT_OVERLAP_MS,
             )
         except (ProgressiveDecoderError, ValueError) as error:
-            raise ProgressiveCaptureError(
+            raise CaptureProcessingError(
                 "Progressive audio decoder could not be prepared.",
                 code="progressive_decoder_init_failed",
             ) from error
@@ -304,26 +287,26 @@ class ProgressiveCaptureProcessor:
                     else None
                 )
             except Exception as error:
-                raise ProgressiveCaptureError(
+                raise CaptureProcessingError(
                     "Progressive partial output failed strict schema validation.",
                     code="progressive_partial_invalid",
                 ) from error
             try:
                 await sink((event,), partial)
-            except ProgressiveCaptureError:
+            except CaptureProcessingError:
                 raise
             except Exception as error:
-                raise ProgressiveCaptureError(
+                raise CaptureProcessingError(
                     "Progressive event could not be persisted.",
                     code="progressive_event_persist_failed",
                 ) from error
 
         try:
             worker = await self._acquire(engine)
-        except ProgressiveCaptureError:
+        except CaptureProcessingError:
             raise
         except Exception as error:
-            raise ProgressiveCaptureError(
+            raise CaptureProcessingError(
                 "Progressive speech recognition worker could not be started.",
                 code="progressive_worker_start_failed",
             ) from error
@@ -334,7 +317,7 @@ class ProgressiveCaptureProcessor:
                     capture_id=capture_id, source=source, spoken_language=spoken_language
                 )
             except Exception as error:
-                raise ProgressiveCaptureError(
+                raise CaptureProcessingError(
                     "Progressive speech recognition worker could not be started.",
                     code="progressive_worker_start_failed",
                 ) from error
@@ -357,7 +340,7 @@ class ProgressiveCaptureProcessor:
                             raise asyncio.CancelledError from None
                         raise
                     except AudioDurationExceededError as error:
-                        raise ProgressiveCaptureError(
+                        raise CaptureProcessingError(
                             "Worker operation failed.",
                             code="worker_failed",
                             stage="extraction",
@@ -368,10 +351,10 @@ class ProgressiveCaptureProcessor:
                     self._check_cancel(cancellation)
                     try:
                         events = await worker.input(window, cancellation, emit_event)
-                    except ProgressiveCaptureError:
+                    except CaptureProcessingError:
                         raise
                     except Exception as error:
-                        raise ProgressiveCaptureError(
+                        raise CaptureProcessingError(
                             "Progressive speech recognition worker failed while processing a "
                             "window.",
                             code="progressive_worker_input_failed",
@@ -381,10 +364,10 @@ class ProgressiveCaptureProcessor:
             if not _terminal_event(events):
                 try:
                     events = await worker.finish(cancellation, emit_event)
-                except ProgressiveCaptureError:
+                except CaptureProcessingError:
                     raise
                 except Exception as error:
-                    raise ProgressiveCaptureError(
+                    raise CaptureProcessingError(
                         "Progressive speech recognition worker failed while finishing the session.",
                         code="progressive_worker_finish_failed",
                     ) from error
@@ -393,14 +376,14 @@ class ProgressiveCaptureProcessor:
                 None,
             )
             if failure is not None:
-                raise ProgressiveCaptureError(
+                raise CaptureProcessingError(
                     failure.message,
                     code=failure.code,
                     retryable=failure.retryable,
                     stage=failure.stage or "extraction",
                 )
             if not any(event.event_type is StreamingEventType.COMPLETED for event in events):
-                raise ProgressiveCaptureError("Progressive audio worker ended without completion.")
+                raise CaptureProcessingError("Progressive audio worker ended without completion.")
             raw = state.raw()
             reusable = not cancellation.is_set()
             return raw
@@ -583,7 +566,7 @@ class _SessionWorker:
                 done, _ = await asyncio.wait({read_task}, timeout=DEFAULT_HEARTBEAT_MS / 1000)
                 if not done:
                     if time.monotonic() - last_observable >= DEFAULT_STALL_TIMEOUT_MS / 1000:
-                        raise ProgressiveCaptureError(
+                        raise CaptureProcessingError(
                             "Progressive audio extraction stopped producing observable progress.",
                             code="progressive_stall",
                             stage="watchdog",
@@ -595,15 +578,15 @@ class _SessionWorker:
                 try:
                     frame_type, payload = read_task.result()
                 except asyncio.IncompleteReadError as error:
-                    raise ProgressiveCaptureError(
+                    raise CaptureProcessingError(
                         "Progressive audio worker exited before completing the session.",
                         code="progressive_worker_exit",
                         stage="extraction",
                     ) from error
-                except ProgressiveCaptureError:
+                except CaptureProcessingError:
                     raise
                 except Exception as error:
-                    raise ProgressiveCaptureError(
+                    raise CaptureProcessingError(
                         "Progressive audio worker frame could not be read.",
                         code="progressive_worker_frame_read_failed",
                         stage="extraction",
@@ -624,10 +607,10 @@ class _SessionWorker:
                 if frame_type is SessionFrameType.SEALED_SEGMENT:
                     try:
                         event = _segment_event(payload)
-                    except ProgressiveCaptureError:
+                    except CaptureProcessingError:
                         raise
                     except Exception as error:
-                        raise ProgressiveCaptureError(
+                        raise CaptureProcessingError(
                             "Progressive worker returned an invalid segment event.",
                             code="progressive_worker_event_invalid",
                         ) from error
@@ -637,10 +620,10 @@ class _SessionWorker:
                 if frame_type is SessionFrameType.CHECKPOINT:
                     try:
                         event = _checkpoint_event(payload)
-                    except ProgressiveCaptureError:
+                    except CaptureProcessingError:
                         raise
                     except Exception as error:
-                        raise ProgressiveCaptureError(
+                        raise CaptureProcessingError(
                             "Progressive worker returned an invalid checkpoint event.",
                             code="progressive_worker_event_invalid",
                         ) from error
@@ -665,10 +648,10 @@ class _SessionWorker:
                                         }
                                     ),
                                 )
-                    except ProgressiveCaptureError:
+                    except CaptureProcessingError:
                         raise
                     except Exception as error:
-                        raise ProgressiveCaptureError(
+                        raise CaptureProcessingError(
                             "Progressive worker returned an invalid failure event.",
                             code="progressive_worker_event_invalid",
                         ) from error
@@ -680,7 +663,7 @@ class _SessionWorker:
                     events.append(event)
                     await on_event(event)
                     return events
-                raise ProgressiveCaptureError("Progressive worker returned an invalid frame.")
+                raise CaptureProcessingError("Progressive worker returned an invalid frame.")
         finally:
             if not read_task.done():
                 read_task.cancel()
@@ -691,12 +674,12 @@ class _SessionWorker:
         header = await self.stdout.readexactly(5)
         raw_type, payload_size = struct.unpack(">BI", header)
         if payload_size > 4 * 1024 * 1024:
-            raise ProgressiveCaptureError("Progressive worker frame exceeded the safety limit.")
+            raise CaptureProcessingError("Progressive worker frame exceeded the safety limit.")
         payload = await self.stdout.readexactly(payload_size)
         try:
             return SessionFrameType(chr(raw_type)), payload
         except ValueError as error:
-            raise ProgressiveCaptureError("Progressive worker frame type was invalid.") from error
+            raise CaptureProcessingError("Progressive worker frame type was invalid.") from error
 
     async def _send(self, payload: bytes) -> None:
         try:
@@ -709,7 +692,7 @@ class _SessionWorker:
                 if not stage_sequence
                 else f"Source extraction worker failed at stages {stage_sequence}."
             )
-            raise ProgressiveCaptureError(
+            raise CaptureProcessingError(
                 message,
                 code="progressive_worker_exit",
                 stage="extraction",
@@ -808,10 +791,10 @@ def _json_object(payload: bytes) -> dict[str, Any]:
     try:
         value = json.loads(payload.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise ProgressiveCaptureError("Progressive worker event was invalid.") from error
+        raise CaptureProcessingError("Progressive worker event was invalid.") from error
     if not isinstance(value, dict):
-        raise ProgressiveCaptureError("Progressive worker event was not an object.")
+        raise CaptureProcessingError("Progressive worker event was not an object.")
     return value
 
 
-__all__ = ["ProgressiveCaptureError", "ProgressiveCaptureProcessor"]
+__all__ = ["ProgressiveCaptureProcessor"]

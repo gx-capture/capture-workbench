@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from capture_runtime.japanese_kanji import TABLE
+from capture_runtime.speech.infrastructure.japanese_kanji import TABLE
 
 
 def test_old_kanji_forms_become_their_japanese_forms() -> None:
