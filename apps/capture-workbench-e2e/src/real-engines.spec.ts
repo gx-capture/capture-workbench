@@ -1642,8 +1642,16 @@ test('runs full real-engine capture, editing, export, and restart journey on loc
         'library_list',
         { request: { query: '', status: '' } },
       );
-      assert.equal(remainingList.length, 1, 'Only the PDF document must remain after deletion.');
-      assert.equal(remainingList[0]?.documentId, pdfDocId);
+      // The app data may be reused across runs, so only this run's documents count.
+      const runDocumentIds: readonly string[] = [pdfDocId, imageDocId, audioDocId];
+      const remainingRunIds = remainingList
+        .map((item) => item.documentId)
+        .filter((documentId) => runDocumentIds.includes(documentId));
+      assert.deepEqual(
+        remainingRunIds,
+        [pdfDocId],
+        'Of this run\'s documents only the PDF must remain after deletion.',
+      );
 
       // Kept PDF document still opens with its restored state
       await page.goto(`${launcher.baseUrl}/history/${pdfDocId}/content`);
@@ -1659,7 +1667,7 @@ test('runs full real-engine capture, editing, export, and restart journey on loc
       proven.deletion = true;
       evidence.restartAfterDeletion = {
         oldPortsClosed: true,
-        remainingDocumentCount: remainingList.length,
+        remainingDocumentCount: remainingRunIds.length,
         deletedIdsAbsent: true,
       };
     });
