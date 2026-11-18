@@ -7,8 +7,6 @@ mod host_api;
 mod launch_policy;
 mod launcher;
 mod library;
-#[cfg(feature = "model-smoke-app-data")]
-mod model_smoke_fixtures;
 mod random_id;
 mod resources;
 mod runtime_client;
@@ -17,7 +15,7 @@ mod state;
 
 use std::{fs, path::PathBuf, sync::Arc};
 
-#[cfg(any(feature = "model-smoke-app-data", feature = "acceptance-app-data"))]
+#[cfg(feature = "acceptance-app-data")]
 use std::path::Path;
 
 use tauri::Manager;
@@ -115,9 +113,6 @@ macro_rules! for_each_feature_gated_desktop_command {
                 desktop_runtime_process_probe,
                 desktop_acceptance_terminate_root,
             ],
-            model_smoke_app_data: [
-                model_smoke_import_fixture,
-            ],
         }
     };
 }
@@ -126,30 +121,15 @@ macro_rules! for_each_feature_gated_desktop_command {
 macro_rules! expand_acceptance_invoke_handler {
     (
         acceptance_app_data: [$($command:ident),* $(,)?],
-        model_smoke_app_data: [$($_model_smoke:ident),* $(,)?],
     ) => {
         desktop_invoke_handler!($(commands::$command),*)
     };
 }
 
-#[cfg(all(not(feature = "acceptance-app-data"), feature = "model-smoke-app-data"))]
-macro_rules! expand_model_smoke_invoke_handler {
-    (
-        acceptance_app_data: [$($_acceptance:ident),* $(,)?],
-        model_smoke_app_data: [$($command:ident),* $(,)?],
-    ) => {
-        desktop_invoke_handler!($(commands::$command),*)
-    };
-}
-
-#[cfg(all(
-    not(feature = "acceptance-app-data"),
-    not(feature = "model-smoke-app-data")
-))]
+#[cfg(not(feature = "acceptance-app-data"))]
 macro_rules! expand_default_invoke_handler {
     (
         acceptance_app_data: [$($_acceptance:ident),* $(,)?],
-        model_smoke_app_data: [$($_model_smoke:ident),* $(,)?],
     ) => {
         desktop_invoke_handler!()
     };
@@ -165,10 +145,7 @@ pub fn run() {
     let builder = tauri::Builder::default();
     // Register first, before any other plugin or runtime/library setup. Isolated
     // QA features can share the product identifier, so they skip this lock.
-    #[cfg(all(
-        windows,
-        not(any(feature = "acceptance-app-data", feature = "model-smoke-app-data"))
-    ))]
+    #[cfg(all(windows, not(feature = "acceptance-app-data")))]
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _, _| {
         if let Some(window) = app.get_webview_window("main") {
             let _ = window.unminimize();
@@ -208,12 +185,6 @@ pub fn run() {
             window_builder.build()?;
 
             let data_dir = app_data_dir(app)?;
-            #[cfg(feature = "model-smoke-app-data")]
-            let model_smoke_fixtures =
-                model_smoke_fixtures::ModelSmokeFixtureRegistry::from_environment(
-                    &data_dir,
-                    &std::env::temp_dir(),
-                )?;
             fs::create_dir_all(&data_dir).map_err(|error| {
                 format!("Capture Workbench app data cannot be created: {error}")
             })?;
@@ -224,8 +195,6 @@ pub fn run() {
             app.manage(Arc::new(source_selection::SourceSelections::default()));
             app.manage(Arc::new(runtime_client::UploadCancellations::default()));
             app.manage(state.clone());
-            #[cfg(feature = "model-smoke-app-data")]
-            app.manage(model_smoke_fixtures);
             match resources::resolve_runtime_assets(app) {
                 Ok(assets) => {
                     // Kept to relaunch the runtime when a setting it reads changes.
@@ -261,14 +230,7 @@ pub fn run() {
     let builder = builder.invoke_handler(for_each_feature_gated_desktop_command!(
         expand_acceptance_invoke_handler
     ));
-    #[cfg(all(not(feature = "acceptance-app-data"), feature = "model-smoke-app-data"))]
-    let builder = builder.invoke_handler(for_each_feature_gated_desktop_command!(
-        expand_model_smoke_invoke_handler
-    ));
-    #[cfg(all(
-        not(feature = "acceptance-app-data"),
-        not(feature = "model-smoke-app-data")
-    ))]
+    #[cfg(not(feature = "acceptance-app-data"))]
     let builder = builder.invoke_handler(for_each_feature_gated_desktop_command!(
         expand_default_invoke_handler
     ));
@@ -278,7 +240,7 @@ pub fn run() {
         .expect("failed to run Capture Workbench desktop application");
 }
 
-#[cfg(not(any(feature = "model-smoke-app-data", feature = "acceptance-app-data")))]
+#[cfg(not(feature = "acceptance-app-data"))]
 fn app_data_dir(app: &tauri::App) -> Result<PathBuf, String> {
     app.path()
         .app_data_dir()
@@ -294,13 +256,6 @@ fn app_data_dir(_app: &tauri::App) -> Result<PathBuf, String> {
         "Capture Workbench acceptance artifact root is not configured.".to_string()
     })?;
     validate_acceptance_app_data_dir(Path::new(&configured), Path::new(&artifact_root))
-}
-
-#[cfg(feature = "model-smoke-app-data")]
-fn app_data_dir(_app: &tauri::App) -> Result<PathBuf, String> {
-    let configured = std::env::var_os("CAPTURE_SMOKE_APP_DATA_ROOT")
-        .ok_or_else(|| "Capture Workbench smoke app data root is not configured.".to_string())?;
-    validate_model_smoke_app_data_dir(Path::new(&configured), &std::env::temp_dir())
 }
 
 #[cfg(feature = "acceptance-app-data")]
@@ -324,63 +279,6 @@ fn validate_acceptance_app_data_dir(
         );
     }
     Ok(canonical_configured)
-}
-
-#[cfg(feature = "model-smoke-app-data")]
-fn validate_model_smoke_app_data_dir(
-    configured: &Path,
-    temp_root: &Path,
-) -> Result<PathBuf, String> {
-    if !configured.is_absolute() {
-        return Err("Capture Workbench smoke app data root must be absolute.".into());
-    }
-
-    let canonical_temp_root = fs::canonicalize(temp_root)
-        .map_err(|_| "Capture Workbench smoke TEMP root is unavailable.".to_string())?;
-    let canonical_configured = fs::canonicalize(configured)
-        .map_err(|_| "Capture Workbench smoke app data root is unavailable.".to_string())?;
-
-    if canonical_configured == canonical_temp_root
-        || !canonical_configured.starts_with(&canonical_temp_root)
-    {
-        return Err(
-            "Capture Workbench smoke app data root must be a strict TEMP descendant.".into(),
-        );
-    }
-
-    Ok(canonical_configured)
-}
-
-#[cfg(all(test, feature = "model-smoke-app-data"))]
-mod model_smoke_app_data_tests {
-    use std::fs;
-
-    use tempfile::tempdir;
-
-    use super::validate_model_smoke_app_data_dir;
-
-    #[test]
-    fn requires_existing_strict_temp_descendant() {
-        let temp_root = tempdir().expect("temporary root");
-        let app_data = temp_root.path().join("appdata");
-        fs::create_dir(&app_data).expect("app data root");
-
-        assert!(validate_model_smoke_app_data_dir(&app_data, temp_root.path()).is_ok());
-        assert!(validate_model_smoke_app_data_dir(temp_root.path(), temp_root.path()).is_err());
-        assert!(validate_model_smoke_app_data_dir(
-            &temp_root.path().join("missing"),
-            temp_root.path()
-        )
-        .is_err());
-    }
-
-    #[test]
-    fn rejects_path_outside_temp_root() {
-        let temp_root = tempdir().expect("temporary root");
-        let outside_root = tempdir().expect("outside root");
-
-        assert!(validate_model_smoke_app_data_dir(outside_root.path(), temp_root.path()).is_err());
-    }
 }
 
 #[cfg(test)]

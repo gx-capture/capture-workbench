@@ -36,7 +36,7 @@ the dev host's dispatcher both call it. Nothing is reimplemented in Node.
 | `runtime_*`, `desktop_runtime_status`, `desktop_compute_status`, `desktop_set_prefer_gpu`, `library_list`, `library_get`, `library_update_capture`, `library_save_edits`, `library_export`, `library_source_bytes`, `library_delete`, `library_import_selection`, `library_discard_selections` | the same function as the Tauri command |
 | `library_select_sources` (native file dialog) | no dialog: it takes the paths a test queued through the dev endpoint `POST /__dev/selection` and inspects them with the same `SourceSelections::inspect_batch`; an empty queue answers like a cancelled dialog |
 | `library_watch_native_sources` (drag and drop of native paths) | accepted, never delivers an event |
-| `desktop_acceptance_close_window`, the feature-gated acceptance and model-smoke commands | not served |
+| `desktop_acceptance_close_window`, the feature-gated acceptance commands | not served |
 
 The replaced rows are exactly what stays in layer 2: native dialogs, drag and
 drop, window behaviour.
@@ -113,10 +113,10 @@ drop, window behaviour.
 The list of commands is written once. The Tauri handler and the dispatcher are
 both generated from it, and a test fails when a command registered with Tauri
 is neither served nor explicitly listed as replaced or not served. The
-feature-gated acceptance and model-smoke commands are a second list in the
-same file, one group per feature, visible in every feature configuration. The
-three Tauri handler configurations and the dev host's "never served" names are
-generated from that list. Each of those names returns `UnknownCommand`.
+feature-gated acceptance commands are a second list in the same file, visible in
+every feature configuration. The two Tauri handler configurations and the dev
+host's "never served" names are generated from that list. Each of those names
+returns `UnknownCommand`.
 
 ## Preview real-backend mode (launcher, bridge, proxy)
 
@@ -152,9 +152,10 @@ generated from that list. Each of those names returns `UnknownCommand`.
    `CAPTURE_WHISPER_ALLOW_CPU_FALLBACK=false` when
    `CAPTURE_SMOKE_WORKER_MIRROR_OPT_IN=1`), forwarding those variables without
    local workarounds awaits the Rust allowlist follow-up before a full
-   `tea-asr-1.1-mini` / custom engine-cache run succeeds end to end. Part B
-   moves the Desktop App checks this replaces out of the desktop smokes and
-   acceptance list and records the split in the release runbook.
+   `tea-asr-1.1-mini` / custom engine-cache run succeeds end to end.
+   `smoke-real-engines` is where the real-engine model journey is verified, and
+   the release runbook records the dev-server vs. Desktop App split; moving the
+   layer-1 parts of the OCR Desktop smoke is still to do.
 
 ## Rejected
 

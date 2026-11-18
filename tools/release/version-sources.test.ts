@@ -50,7 +50,6 @@ const INVENTORY_FILES = [
   'apps/capture-workbench-desktop/src-tauri/resources/capture-runtime-manifest.example.json',
   'apps/capture-workbench-desktop/scripts/stage-deterministic-runtime.ts',
   'apps/capture-workbench-desktop/scripts/stage-runtime.ts',
-  'apps/capture-workbench-desktop/scripts/real-media-model-smoke.ts',
   'packages/capture-runtime/src/capture_runtime/contracts/__init__.py',
   'packages/capture-sidecar-launcher/src/manifest.rs',
   'packages/capture-sidecar-launcher/src/lib.rs',

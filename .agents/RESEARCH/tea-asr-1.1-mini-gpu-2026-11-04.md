@@ -20,8 +20,8 @@ the model name alone no longer shows which device ran.
 Release checks stay on the frozen pair. The private fixture
 `whisper-private-reference` expects `tea-asr-1.1` on `cuda`, and
 `model_source_lock.py` accepts `(tea-asr-1.1, cuda)`, `(tea-asr-1.1, cpu)`,
-and `(tea-asr-1.1-mini, cpu)`. `smoke-real-media` and `smoke-real-media-model`
-check that lock. Do not retarget them.
+and `(tea-asr-1.1-mini, cpu)`. `smoke-real-media` and `smoke-real-engines`
+follow that lock. Do not retarget them.
 
 There is no import-linter or CI check for this. Set
 `CAPTURE_SPEECH_RECOGNITION_MODEL=tea-asr-1.1-mini`,

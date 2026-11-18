@@ -195,11 +195,15 @@ function exceptionReason(relativePath) {
     relativePath ===
       'apps/capture-workbench-desktop/scripts/v2-capture-flow.ts' ||
       relativePath ===
-        'apps/capture-workbench-desktop/scripts/real-media-model-smoke.ts' ||
-      relativePath ===
       'apps/capture-workbench-desktop/scripts/progressive-audio-oracle.ts'
   ) {
     return 'opt-in real-engine CLI boundary';
+  }
+  if (
+    relativePath ===
+    'apps/capture-workbench-desktop/scripts/installed-native-dialog.ts'
+  ) {
+    return 'installed desktop native dialog UIA process boundary';
   }
   if (
     relativePath ===

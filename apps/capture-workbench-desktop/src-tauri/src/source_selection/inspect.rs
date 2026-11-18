@@ -28,7 +28,7 @@ impl InspectionFailure {
     fn reason(&self) -> Reason {
         match self {
             Self::Unreadable(message) | Self::Unsupported(message) => {
-                // Messages are static, privacy-safe compatibility errors for smoke imports.
+                // Messages are static, privacy-safe compatibility errors for test imports.
                 let _ = message;
                 if matches!(self, Self::Unsupported(_)) {
                     Reason::Unsupported
@@ -43,7 +43,7 @@ impl InspectionFailure {
             Self::Changed => Reason::Unreadable,
         }
     }
-    #[cfg(any(test, feature = "model-smoke-app-data"))]
+    #[cfg(test)]
     fn message(self) -> String {
         match self {
             Self::Unreadable(message) | Self::Unsupported(message) => message,
@@ -63,7 +63,7 @@ pub(crate) fn inspect_source(
     inspect(path, kind, RECORDING_MAX_SOURCE_BYTES).map_err(|error| error.reason())
 }
 
-#[cfg(any(test, feature = "model-smoke-app-data"))]
+#[cfg(test)]
 pub(crate) fn inspect_source_for_fixture(
     path: &Path,
     max_bytes: usize,

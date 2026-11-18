@@ -52,7 +52,7 @@
  * environment and forwards a fixed list. So, as in the Desktop App:
  *   - the speech model is the installed pack's default, not a development
  *     override: this smoke is on the release side of "Speech development tests"
- *     in AGENTS.md, like the desktop model smoke it stands in for;
+ *     in AGENTS.md;
  *   - downloaded engines are cached in the runtime's default engine cache
  *     (`%LOCALAPPDATA%\gx-capture\engine-cache`), the one folder of the user's
  *     profile this run writes to. App data, runtime data, Ollama data and temp

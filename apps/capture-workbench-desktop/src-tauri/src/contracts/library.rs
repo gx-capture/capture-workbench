@@ -809,11 +809,11 @@ pub(crate) struct LibraryCaptureOptions {
     pub identify_speakers: Option<bool>,
 }
 
-#[cfg(any(test, feature = "model-smoke-app-data"))]
+#[cfg(test)]
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LibraryImportSourceRequest {
-    /// Native fixture input, available only to tests and the model smoke.
+    /// Native fixture input, available only to tests.
     #[serde(default)]
     pub source_path: String,
     #[serde(default)]

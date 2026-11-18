@@ -122,19 +122,14 @@ macro_rules! build_dispatch_table {
 macro_rules! define_feature_gated_commands {
     (
         acceptance_app_data: [$($acceptance:ident),* $(,)?],
-        model_smoke_app_data: [$($model_smoke:ident),* $(,)?],
     ) => {
         pub(super) fn is_feature_gated_command(command: &str) -> bool {
-            matches!(
-                command,
-                $(stringify!($acceptance))|* | $(stringify!($model_smoke))|*
-            )
+            matches!(command, $(stringify!($acceptance))|*)
         }
 
         #[cfg(test)]
         pub(crate) const FEATURE_GATED_GROUPS: &[&[&str]] = &[
             &[$(stringify!($acceptance)),*],
-            &[$(stringify!($model_smoke)),*],
         ];
     };
 }

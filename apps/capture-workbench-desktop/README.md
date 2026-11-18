@@ -7,8 +7,8 @@ Capture Runtime sidecar with a memory-only bearer token.
 The Windows product runs as a single instance. Starting it again restores a
 minimized main window, shows and focuses it, and exits the second process.
 Second-launch arguments and working directory are ignored. Builds with
-`acceptance-app-data` or `model-smoke-app-data` (including deterministic QA)
-skip the single-instance lock so isolated test runs and the product can coexist.
+`acceptance-app-data` (including deterministic QA) skip the single-instance
+lock so isolated test runs and the product can coexist.
 
 The desktop host starts one verified `capture-runtime` sidecar on a random loopback port with a memory-only 256-bit bearer token. Its product provider is an isolated Ollama lane with dedicated app data, model storage, port, profile, and PID file.
 
@@ -140,49 +140,33 @@ The diagnostic forwards `LOCALAPPDATA`, `TEMP`, and `USERNAME` to the runtime,
 strips ambient provider/model overrides, verifies DirectML OCR and lock-selected
 TEA-ASR provenance, proves UUID-scoped capture deletion, and checks its owned
 runtime process is gone. Its report (`tmp/capture-workbench-desktop/real-media-smoke/real-media-smoke.json`)
-always records `releaseGateSatisfied=false` and `consumerE2e=false`: it is not
-the Tauri/WebView preflight below and is not candidate release evidence input.
+always records `releaseGateSatisfied=false` and `consumerE2e=false`; it is not
+candidate release evidence input.
 
-## Opt-in real model-enabled Tauri/WebView preflight
+## Real-engines localhost smoke
 
-`smoke-real-media-model` is the local production three-media preflight. It launches
-the packaged Tauri WebView with fresh app-data, performs consented catalog
-installation, imports a private cert-prep PDF, the project-owned image, and a
-private cert-prep audio fixture through the UI, and verifies raw/result,
-provenance, DirectML OCR, lock-selected TEA-ASR segments, UUID-scoped deletion,
-and owned process cleanup. The preflight selects `qwen3.5-0.8b-v1` through the
-runtime model-options API; the release installer contains no Qwen model bytes.
-The report is redacted by construction and records
-`releaseGateSatisfied=false`, `localProductionPreflight=true`, and
-`consumerE2e=false`; it is not exact-candidate release evidence.
+For the full application-level journey with real engines (installation, PDF and
+image OCR, recording transcription with speaker identification, Ollama
+structuring, edit/export/restore, and restart persistence), run the dev-server
+smoke (`apps/capture-workbench-e2e/src/real-engines.spec.ts`):
 
 ```powershell
-$env:CAPTURE_REAL_MEDIA_MODEL_PDF = '<cert-prep-root>\pdfs\private-exam.pdf'
-$env:CAPTURE_REAL_MEDIA_MODEL_AUDIO = '<cert-prep-root>\audio\private-listening.mp3'
-corepack pnpm nx run capture-workbench-desktop:smoke-real-media-model
+corepack pnpm nx run capture-workbench-e2e:smoke-real-engines
 ```
 
-Replace `<cert-prep-root>` with the local cert-prep checkout; the example is
-intentionally portable and contains no repository-specific absolute path.
-
-Both real-media smokes check the lock-selected product pair, TEA-ASR 1.1 on CUDA. A
-development transcription outside them uses TEA-ASR 1.1 mini on CUDA, as
+`smoke-real-media` forces the `cuda` pack and checks TEA-ASR 1.1 on CUDA;
+`smoke-real-engines` checks the installed pack (`tea-asr-1.1` on `cuda` with the
+NVIDIA driver, `tea-asr-1.1-mini` on `cpu` without it). A development
+transcription outside them uses TEA-ASR 1.1 mini on CUDA, as
 `.agents/RESEARCH/tea-asr-1.1-mini-gpu-2026-11-04.md` describes, by setting
 `CAPTURE_SPEECH_RECOGNITION_MODEL=tea-asr-1.1-mini` on the runtime. The desktop
 GPU switch only selects the device; its fixed launch environment does not yet
 expose the model setting.
 
-The cert-prep PDF and audio are copied only into the owned temporary run and
-must not be committed or uploaded. The image remains a lock-pinned project
-fixture. Only the packaged executable can be overridden for local runs with
-`CAPTURE_REAL_MEDIA_MODEL_EXECUTABLE`. The preflight fails closed unless the staged
-generated catalog and source lock are the approved model-enabled contract of
-the release version in `release/version.json`.
-
 To also check progressive audio, first record a reference with
 `node apps/capture-workbench-desktop/scripts/progressive-audio-oracle.ts`
 (`CAPTURE_PROGRESSIVE_AUDIO_ORACLE_SOURCE` and `_OUTPUT`), then pass the output
-file as `CAPTURE_REAL_MEDIA_MODEL_AUDIO_ORACLE`.
+file as `CAPTURE_REAL_ENGINES_AUDIO_EXPECTATIONS` (or `CAPTURE_REAL_MEDIA_MODEL_AUDIO_ORACLE`).
 
 ## Installed deterministic smoke
 
