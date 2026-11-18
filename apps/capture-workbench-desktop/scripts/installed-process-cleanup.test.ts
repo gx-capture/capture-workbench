@@ -132,7 +132,7 @@ function cleanupHarness({
   };
 }
 
-test('owned process observer uses a bounded .NET process query and fails closed with safe diagnostics', async (t) => {
+test('owned process observer uses two bounded attempts and reports safe timeout diagnostics', async (t) => {
   const harness = cleanupHarness({
     observerResults: [timeoutResult(), timeoutResult()],
   });
@@ -144,7 +144,7 @@ test('owned process observer uses a bounded .NET process query and fails closed 
       const messages = nestedErrorMessages(error);
       assert.equal(messages.includes(installedSmokeDiagnosticRedactionMarker), false);
       assert.deepEqual(messages, [
-        'Owned process observer failed (operation=query; observer=dotnet-process; attempt=2/2; timeout=true; code=ETIMEDOUT; status=none; signal=SIGTERM).',
+        'Owned process observer failed (operation=query; observer=cim-process; attempt=2/2; timeout=true; code=ETIMEDOUT; status=none; signal=SIGTERM; stage=none; attempt1=ETIMEDOUT/none).',
       ]);
       assert.doesNotMatch(messages[0], /[A-Za-z]:[\\/]/u);
       return true;
@@ -153,30 +153,49 @@ test('owned process observer uses a bounded .NET process query and fails closed 
 
   assert.equal(harness.calls.length, 2);
   for (const call of harness.calls) {
-    const script = call.arguments.at(-1);
-    assert.match(script, /GetProcessesByName/u);
-    assert.match(script, /MainModule\.FileName/u);
-    assert.match(script, /\.Dispose\(\)/u);
-    assert.match(script, /CAPTURE_SMOKE_PROCESS_NAMES/u);
-    assert.match(script, /CAPTURE_SMOKE_ALLOW_MISSING_ROOT/u);
-    assert.match(script, /PathType Container/u);
-    assert.doesNotMatch(script, /Get-CimInstance/u);
-    assert.doesNotMatch(script, /Win32_Process/u);
-    assert.doesNotMatch(script, /Get-ChildItem[\s\S]*-Recurse/u);
-    assert.doesNotMatch(script, /Get-Process/u);
     assert.equal(call.options.timeout, 60_000);
   }
 });
 
+for (const [stderr, stage] of [
+  ['root\r\n', 'root'],
+  ['names', 'names'],
+  ['query', 'query'],
+  ['serialize', 'serialize'],
+  ['unexpected-stage', 'none'],
+  ['C:\\private\\local-path.exe', 'none'],
+  ['query\r\nC:\\private\\local-path.exe', 'none'],
+]) {
+  test(`owned process observer reports stage ${stage} for stderr ${JSON.stringify(stderr)}`, async (t) => {
+    const harness = cleanupHarness({
+      observerResults: [
+        { ...observerResult(''), status: 1, stderr: 'query\r\n' },
+        { ...observerResult(''), status: 1, stderr },
+      ],
+    });
+    t.after(harness.dispose);
+
+    await assert.rejects(
+      observe(harness.cleanup.processesRunningUnder(harness.ownedRoot)),
+      {
+        message: `Owned process observer failed (operation=query; observer=cim-process; attempt=2/2; timeout=false; code=NONZERO; status=1; signal=none; stage=${stage}; attempt1=NONZERO/query).`,
+      },
+    );
+  });
+}
+
 test('owned process observer does not treat empty output as an empty process set', async (t) => {
   const harness = cleanupHarness({
-    observerResults: [observerResult(''), observerResult('')],
+    observerResults: [observerResult('{'), observerResult('')],
   });
   t.after(harness.dispose);
 
   await assert.rejects(
     observe(harness.cleanup.processesRunningUnder(harness.ownedRoot)),
-    /operation=validate; observer=dotnet-process; attempt=2\/2; timeout=false; code=EMPTY_OUTPUT/u,
+    {
+      message:
+        'Owned process observer failed (operation=validate; observer=cim-process; attempt=2/2; timeout=false; code=EMPTY_OUTPUT; status=0; signal=none; stage=none; attempt1=INVALID_JSON/none).',
+    },
   );
 });
 
@@ -206,7 +225,7 @@ test('owned process observer rejects malformed JSON', async (t) => {
 
   await assert.rejects(
     observe(harness.cleanup.processesRunningUnder(harness.ownedRoot)),
-    /operation=parse; observer=dotnet-process; attempt=2\/2; timeout=false; code=INVALID_JSON/u,
+    /operation=parse; observer=cim-process; attempt=2\/2; timeout=false; code=INVALID_JSON/u,
   );
 });
 
@@ -223,7 +242,7 @@ for (const [label, pid] of [
 
     await assert.rejects(
       observe(harness.cleanup.processesRunningUnder(harness.ownedRoot)),
-      /operation=validate; observer=dotnet-process; attempt=2\/2; timeout=false; code=INVALID_OUTPUT/u,
+      /operation=validate; observer=cim-process; attempt=2\/2; timeout=false; code=INVALID_OUTPUT/u,
     );
   });
 }

@@ -31,6 +31,7 @@ import {
 const ownedProcessObserverAttemptLimit = 2;
 const ownedProcessObserverTimeoutMs = 60_000;
 const safeDiagnosticToken = /^[A-Za-z0-9_-]+$/u;
+const processObserverStages = new Set(['root', 'names', 'query', 'serialize']);
 const defaultOwnedProcessExecutableNames = [
   'capture-workbench-desktop.exe',
   'capture-runtime-x86_64-pc-windows-msvc.exe',
@@ -62,14 +63,20 @@ function diagnosticToken(value, fallback = 'none') {
   return safeDiagnosticToken.test(candidate) ? candidate : fallback;
 }
 
-function processObserverError(result, attempt, operation, code) {
+function processObserverError(result, attempt, operation, code, firstAttempt) {
   const errorCode = diagnosticToken(result.error?.code, code);
   const status = Number.isInteger(result.status) ? String(result.status) : 'none';
   const signal = diagnosticToken(result.signal);
   const timedOut = errorCode === 'ETIMEDOUT';
-  return new Error(
-    `Owned process observer failed (operation=${operation}; observer=dotnet-process; attempt=${attempt}/${ownedProcessObserverAttemptLimit}; timeout=${String(timedOut)}; code=${errorCode}; status=${status}; signal=${signal}).`,
-  );
+  const stderr = result.stderr?.trim();
+  const stage = processObserverStages.has(stderr) ? stderr : 'none';
+  const summary = `${errorCode}/${stage}`;
+  return {
+    summary,
+    error: new Error(
+      `Owned process observer failed (operation=${operation}; observer=cim-process; attempt=${attempt}/${ownedProcessObserverAttemptLimit}; timeout=${String(timedOut)}; code=${errorCode}; status=${status}; signal=${signal}; stage=${stage}; attempt1=${firstAttempt ?? summary}).`,
+    ),
+  };
 }
 
 export function createTrackedProcessTreeTerminator({
@@ -229,55 +236,44 @@ export function createInstalledProcessCleanup({
       );
     }
     const names = [...ownedProcessExecutableNames];
-    const script = `
-$root = [IO.Path]::GetFullPath($env:CAPTURE_SMOKE_PROCESS_ROOT).TrimEnd('\\') + '\\'
-if (-not (Test-Path -LiteralPath $env:CAPTURE_SMOKE_PROCESS_ROOT)) {
-  if ($env:CAPTURE_SMOKE_ALLOW_MISSING_ROOT -eq '1') {
-    Write-Output '[]'
-    exit 0
+    const script = String.raw`
+$ErrorActionPreference = 'Stop'
+$stage = 'root'
+try {
+  $root = [IO.Path]::GetFullPath($env:CAPTURE_SMOKE_PROCESS_ROOT).TrimEnd('\') + '\'
+  if (-not (Test-Path -LiteralPath $env:CAPTURE_SMOKE_PROCESS_ROOT)) {
+    if ($env:CAPTURE_SMOKE_ALLOW_MISSING_ROOT -eq '1') {
+      $stage = 'serialize'
+      Write-Output '[]'
+      exit 0
+    }
+    throw 'Owned process root is missing.'
   }
-  throw 'Owned process root is missing.'
-}
-if (-not (Test-Path -LiteralPath $env:CAPTURE_SMOKE_PROCESS_ROOT -PathType Container)) {
-  throw 'Owned process root is not a directory.'
-}
-$decodedNames = ConvertFrom-Json -InputObject $env:CAPTURE_SMOKE_PROCESS_NAMES
-$names = if ($decodedNames -is [System.Array]) {
-  @($decodedNames | ForEach-Object { [string]$_ })
-} else {
-  @([string]$decodedNames)
-}
-if ($names.Count -eq 0) {
-  Write-Output '[]'
-  exit 0
-}
-$items = New-Object 'System.Collections.Generic.List[object]'
-foreach ($name in $names) {
-  $processName = [IO.Path]::GetFileNameWithoutExtension([string]$name)
-  foreach ($process in [Diagnostics.Process]::GetProcessesByName($processName)) {
-    try {
-      if ($process.HasExited) { continue }
-      $path = $process.MainModule.FileName
-      if ([string]::IsNullOrWhiteSpace($path)) {
-        throw 'Owned process did not expose an executable path.'
-      }
+  if (-not (Test-Path -LiteralPath $env:CAPTURE_SMOKE_PROCESS_ROOT -PathType Container)) {
+    throw 'Owned process root is not a directory.'
+  }
+  $stage = 'names'
+  $decodedNames = ConvertFrom-Json -InputObject $env:CAPTURE_SMOKE_PROCESS_NAMES
+  $names = @($decodedNames | Where-Object { $null -ne $_ })
+  $items = @()
+  if ($names.Count -gt 0) {
+    $stage = 'query'
+    $snapshot = Get-CimInstance -ClassName Win32_Process -Property Name, ExecutablePath, ProcessId
+    $items = @(foreach ($process in $snapshot) {
+      if ($process.Name -notin $names) { continue }
+      $path = $process.ExecutablePath
+      if ([string]::IsNullOrWhiteSpace($path)) { continue }
       $fullPath = [IO.Path]::GetFullPath($path)
       if ($fullPath.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) {
-        [void]$items.Add([pscustomobject]@{ pid = [int]$process.Id })
+        [pscustomobject]@{ pid = [int]$process.ProcessId }
       }
-    } catch [ComponentModel.Win32Exception] {
-      if (-not $process.HasExited) { throw }
-    } catch [InvalidOperationException] {
-      if (-not $process.HasExited) { throw }
-    } finally {
-      $process.Dispose()
-    }
+    })
   }
-}
-if ($items.Count -eq 0) {
-  Write-Output '[]'
-} else {
-  ConvertTo-Json -Compress -InputObject @($items.ToArray())
+  $stage = 'serialize'
+  ConvertTo-Json -Compress -InputObject $items
+} catch {
+  [Console]::Error.WriteLine($stage)
+  exit 1
 }
 `;
     const environment = {
@@ -289,12 +285,13 @@ if ($items.Count -eq 0) {
       CAPTURE_SMOKE_PROCESS_NAMES: JSON.stringify(names),
     };
     return defer(() => {
-      let lastError;
+      let lastFailure;
       for (
         let attempt = 1;
         attempt <= ownedProcessObserverAttemptLimit;
         attempt += 1
       ) {
+        const firstAttempt = lastFailure?.summary;
         const result = spawnSyncProcess(
           windowsSystemExecutable(
             'System32',
@@ -311,16 +308,23 @@ if ($items.Count -eq 0) {
           },
         );
         if (result.error || result.status !== 0) {
-          lastError = processObserverError(result, attempt, 'query', 'NONZERO');
+          lastFailure = processObserverError(
+            result,
+            attempt,
+            'query',
+            'NONZERO',
+            firstAttempt,
+          );
           continue;
         }
         const output = String(result.stdout ?? '').trim();
         if (!output) {
-          lastError = processObserverError(
+          lastFailure = processObserverError(
             result,
             attempt,
             'validate',
             'EMPTY_OUTPUT',
+            firstAttempt,
           );
           continue;
         }
@@ -328,11 +332,12 @@ if ($items.Count -eq 0) {
         try {
           value = JSON.parse(output);
         } catch {
-          lastError = processObserverError(
+          lastFailure = processObserverError(
             result,
             attempt,
             'parse',
             'INVALID_JSON',
+            firstAttempt,
           );
           continue;
         }
@@ -346,11 +351,12 @@ if ($items.Count -eq 0) {
               candidate.pid < 1,
           )
         ) {
-          lastError = processObserverError(
+          lastFailure = processObserverError(
             result,
             attempt,
             'validate',
             'INVALID_OUTPUT',
+            firstAttempt,
           );
           continue;
         }
@@ -358,9 +364,9 @@ if ($items.Count -eq 0) {
       }
       return throwError(
         () =>
-          lastError ??
+          lastFailure?.error ??
           new Error(
-            'Owned process observer failed (operation=query; observer=dotnet-process; attempt=none; timeout=false; code=UNKNOWN; status=none; signal=none).',
+            'Owned process observer failed (operation=query; observer=cim-process; attempt=none; timeout=false; code=UNKNOWN; status=none; signal=none; stage=none; attempt1=none).',
           ),
       );
     });
