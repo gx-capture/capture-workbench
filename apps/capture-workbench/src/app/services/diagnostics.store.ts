@@ -7,7 +7,7 @@ import { desktopMessages } from '../i18n/desktop-messages';
 import { LibraryStore } from './library.store';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
 import { DesktopFormattingService } from './desktop-formatting.service';
-import { DesktopWorkspaceStore } from './desktop-workspace.store';
+import { RuntimeStatusStore } from './runtime-status.store';
 import {
   buildDiagnosticsDocumentView,
   buildDiagnosticsRuntimeView,
@@ -21,7 +21,7 @@ export class DiagnosticsStore {
   private readonly library = inject(LibraryStore);
   private readonly formatting = inject(DesktopFormattingService);
   private readonly runtime = inject(DesktopRuntimeClientService);
-  private readonly workspace = inject(DesktopWorkspaceStore);
+  private readonly runtimeStatus = inject(RuntimeStatusStore);
   private readonly destroyRef = inject(DestroyRef);
 
   private readonly queryParamMap = toSignal(this.route.queryParamMap);
@@ -46,8 +46,8 @@ export class DiagnosticsStore {
 
   readonly runtimeView = computed(() =>
     buildDiagnosticsRuntimeView({
-      state: this.workspace.state(),
-      workspaceMessage: this.workspace.message(),
+      state: this.runtimeStatus.state(),
+      runtimeStatusMessage: this.runtimeStatus.message(),
       // Reading a failed resource throws, and a failed runtime is when this page is needed.
       runtimeStatus: this.runtime.readiness.hasValue() ? this.runtime.status() : null,
       ocrCompute: this.runtime.ocrCompute(),
@@ -92,7 +92,7 @@ export class DiagnosticsStore {
   });
 
   reconnect(): void {
-    this.workspace.initialize();
+    this.runtimeStatus.reload();
   }
 
   copyDigest(digest: string): void {

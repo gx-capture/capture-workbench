@@ -36,16 +36,16 @@
       routerLink="/settings/diagnostics"
       class="mt-auto flex items-center gap-2 px-2.5 text-sm text-muted-foreground"
       data-testid="runtime-status"
-      [attr.data-state]="store.state()"
+      [attr.data-state]="runtimeStatus.state()"
     >
       <span
         class="size-2 rounded-full"
         aria-hidden="true"
-        [class.bg-primary]="store.state() === 'ready'"
-        [class.bg-destructive]="store.state() === 'error'"
-        [class.bg-muted-foreground]="store.state() === 'starting'"
+        [class.bg-primary]="runtimeStatus.state() === 'ready'"
+        [class.bg-destructive]="runtimeStatus.state() === 'error'"
+        [class.bg-muted-foreground]="runtimeStatus.state() === 'starting'"
       ></span>
-      <span aria-live="polite">{{ store.state() === 'ready' ? m().ready : m().notReady }}</span>
+      <span aria-live="polite">{{ runtimeStatus.state() === 'ready' ? m().ready : m().notReady }}</span>
       <span class="sr-only">{{ m().statusDiagnosticsLabel }}</span>
     </a>
   </nav>

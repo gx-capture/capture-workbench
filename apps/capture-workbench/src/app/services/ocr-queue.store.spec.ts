@@ -3,16 +3,16 @@ import { TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 import type { CaptureRequirementId, RuntimeInstallation, RuntimeRequirement } from '@gx-capture/capture-workbench-ui';
 import { of, Subject } from 'rxjs';
+import { App } from '../app';
 import type { DesktopCaptureOptions, DesktopLibraryExport, DesktopLibrarySummary } from '../contracts';
 import { desktopMessages, setDesktopLocale } from '../i18n/desktop-messages';
 import { OcrQueueStore } from './ocr-queue.store';
-import { DesktopLibraryService, type DesktopSourceSelection } from './desktop-library.service';
+import { DesktopLibraryService, type DesktopSourceSelection, type DesktopSourceSelectionBatch } from './desktop-library.service';
 import type { DesktopCaptureOperation } from './desktop-runtime-client.service';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
 import { DesktopCaptureService } from './desktop-capture.service';
 import { DesktopFormattingService } from './desktop-formatting.service';
 import { isFeatureReady, type RecognitionFeature } from './desktop-workspace.selectors';
-import { DesktopWorkspaceStore } from './desktop-workspace.store';
 import { LibraryStore } from './library.store';
 import { HistoryListStore } from './history-list.store';
 import { RecognitionFeaturesStore } from './recognition-features.store';
@@ -275,6 +275,7 @@ describe('OcrQueueStore', () => {
     const docs: DesktopLibrarySummary[] = [
       doc({ documentId: 'a'.repeat(32), fileName: 'kept.pdf', status: 'queued' }),
     ];
+    const dropped = new Subject<DesktopSourceSelectionBatch>();
     const library = {
       discardSelections: vi.fn(() => of(undefined)),
       list: vi.fn(() => of([...docs])),
@@ -298,7 +299,7 @@ describe('OcrQueueStore', () => {
         return of(undefined);
       }),
       updateCapture: vi.fn(() => of(docs[0])),
-      droppedSources: vi.fn(() => of({ selections: [], rejected: [] })),
+      droppedSources: vi.fn(() => dropped),
       selectSources: vi.fn(() => of({ selections: [], rejected: [] })),
     };
     const requirements = signal<readonly RuntimeRequirement[]>([requirement('installable')]);
@@ -349,17 +350,17 @@ describe('OcrQueueStore', () => {
       initialize: vi.fn(),
     };
     TestBed.configureTestingModule({
+      imports: [App],
       providers: [
         { provide: DesktopLibraryService, useValue: library },
         { provide: DesktopRuntimeClientService, useValue: runtime },
         { provide: RecognitionFeaturesStore, useValue: features },
         provideRouter([]),
-        DesktopWorkspaceStore,
         DesktopCaptureService,
         OcrQueueStore,
       ],
-    });
-    const workspace = TestBed.inject(DesktopWorkspaceStore);
+    }).overrideComponent(App, { set: { template: '' } });
+    TestBed.createComponent(App);
     const queue = TestBed.inject(OcrQueueStore);
     queue.attach();
     TestBed.tick();
@@ -374,8 +375,9 @@ describe('OcrQueueStore', () => {
     TestBed.tick();
     expect(queue.rows().map((row) => row.fileName)).toEqual([]);
 
-    workspace.addSelections({ rejected: [], selections: [selection('added.png')] });
+    dropped.next({ rejected: [], selections: [selection('added.png')] });
     TestBed.tick();
+    expect(library.importSelection).toHaveBeenCalledWith(selection('added.png'));
     expect(queue.rows().map((row) => row.fileName)).toEqual(['added.png']);
   });
 });

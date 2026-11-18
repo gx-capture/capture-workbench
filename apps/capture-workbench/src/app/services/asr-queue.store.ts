@@ -40,7 +40,7 @@ import {
   isRecordingMediaType,
   isFeatureReady,
 } from './desktop-workspace.selectors';
-import { DesktopWorkspaceStore } from './desktop-workspace.store';
+import { RuntimeStatusStore } from './runtime-status.store';
 import { LibraryStore } from './library.store';
 import { installationProgress } from './installation-progress';
 import { RecognitionFeaturesStore } from './recognition-features.store';
@@ -49,7 +49,7 @@ import { selectionRejectionMessages } from './source-selection-messages';
 /** Owns the recording queue, options, live partial transcript, and capture orchestration for `/asr`. */
 @Injectable({ providedIn: 'root' })
 export class AsrQueueStore {
-  private readonly workspace = inject(DesktopWorkspaceStore);
+  private readonly runtimeStatus = inject(RuntimeStatusStore);
   private readonly libraryStore = inject(LibraryStore);
   private readonly library = inject(DesktopLibraryService);
   private readonly runtime = inject(DesktopRuntimeClientService);
@@ -185,7 +185,7 @@ export class AsrQueueStore {
       this.loadedUpdatedAt.delete(documentId);
       this.libraryStore.reloadDocumentState(documentId);
     },
-    setMessage: (text: string) => this.workspace.message?.set(text),
+    setMessage: (text: string) => this.runtimeStatus.message.set(text),
     identifySpeakers: () => this.identifySpeakers(),
   };
 
@@ -257,7 +257,7 @@ export class AsrQueueStore {
         .pipe(takeUntilDestroyed(this.destroyRef))
         .subscribe({
           error: (error: unknown) =>
-            this.workspace.message?.set(errorMessage(error)),
+            this.runtimeStatus.message.set(errorMessage(error)),
         });
     }
     this.importError.set(messages.join('\n'));
@@ -314,7 +314,7 @@ export class AsrQueueStore {
         .subscribe({
           next: () => this.libraryStore.refreshDocuments(),
           error: (error: unknown) =>
-            this.workspace.message?.set(errorMessage(error)),
+            this.runtimeStatus.message.set(errorMessage(error)),
         });
       return;
     }
@@ -329,7 +329,7 @@ export class AsrQueueStore {
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
         error: (error: unknown) =>
-          this.workspace.message?.set(errorMessage(error)),
+          this.runtimeStatus.message.set(errorMessage(error)),
       });
   }
 
@@ -341,7 +341,7 @@ export class AsrQueueStore {
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
         error: (error: unknown) =>
-          this.workspace.message?.set(errorMessage(error)),
+          this.runtimeStatus.message.set(errorMessage(error)),
       });
   }
 
@@ -387,7 +387,7 @@ export class AsrQueueStore {
           .pipe(takeUntilDestroyed(this.destroyRef))
           .subscribe({
             error: (error: unknown) =>
-              this.workspace.message?.set(errorMessage(error)),
+              this.runtimeStatus.message.set(errorMessage(error)),
           });
       }
     }
@@ -423,7 +423,7 @@ export class AsrQueueStore {
       )
       .subscribe({
         error: (error: unknown) =>
-          this.workspace.message?.set(errorMessage(error)),
+          this.runtimeStatus.message.set(errorMessage(error)),
       });
   }
 

@@ -7,7 +7,7 @@ import { setDesktopLocale } from '../i18n/desktop-messages';
 import { LibraryStore } from './library.store';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
 import { DesktopFormattingService } from './desktop-formatting.service';
-import { DesktopWorkspaceStore } from './desktop-workspace.store';
+import { RuntimeStatusStore } from './runtime-status.store';
 import { DiagnosticsStore } from './diagnostics.store';
 
 describe('DiagnosticsStore', () => {
@@ -190,10 +190,10 @@ function setupStore(
     status: signal<DesktopRuntimeStatus>({ status: 'ready', detail: 'Ready' }),
     ocrCompute: signal(null),
   };
-  const workspace = {
+  const runtimeStatus = {
     state: signal<'starting' | 'ready' | 'error'>('ready'),
     message: signal(''),
-    initialize: vi.fn(),
+    reload: vi.fn(),
   };
 
   TestBed.configureTestingModule({
@@ -202,12 +202,12 @@ function setupStore(
       { provide: LibraryStore, useValue: library },
       { provide: DesktopFormattingService, useValue: formatting },
       { provide: DesktopRuntimeClientService, useValue: runtime },
-      { provide: DesktopWorkspaceStore, useValue: workspace },
+      { provide: RuntimeStatusStore, useValue: runtimeStatus },
       DiagnosticsStore,
     ],
   });
 
   const store = TestBed.inject(DiagnosticsStore);
   TestBed.tick();
-  return { store, library, formatting, workspace, queryParamMap$ };
+  return { store, library, formatting, runtimeStatus, queryParamMap$ };
 }

@@ -97,7 +97,7 @@ export interface DesktopCaptureHost {
 }
 
 @Injectable({ providedIn: 'root' })
-/** Owns capture lifecycle side effects behind the workspace store facade. */
+/** Owns capture lifecycle side effects for the shell and the OCR and recording queue stores. */
 export class DesktopCaptureService {
   readonly busyIds = signal<ReadonlySet<string>>(new Set());
   readonly streamingPartials = signal<ReadonlyMap<string, PartialCapture>>(new Map());
