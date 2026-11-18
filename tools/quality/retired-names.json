@@ -501,5 +501,11 @@
     "match": "substring",
     "replacement": "recognition-requirements.ts, capture-media-types.ts, recording-transcript.ts, capture-operation-status.ts, desktop-errors.ts, installation-progress.ts, desktop-formatting.service.ts",
     "allowed": []
+  },
+  {
+    "name": "dotnet-process",
+    "match": "substring",
+    "replacement": "cim-process (the owned-process observer reads a Win32_Process snapshot)",
+    "allowed": []
   }
 ]
