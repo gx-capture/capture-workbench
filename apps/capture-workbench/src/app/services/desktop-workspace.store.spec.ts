@@ -1,6 +1,6 @@
 import { Router } from '@angular/router';
 import { AsrQueueStore } from './asr-queue.store';
-import { CaptureQueueStore } from './capture-queue.store';
+import { OcrQueueStore } from './ocr-queue.store';
 import { RUNTIME_VERSION } from '@gx-capture/capture-runtime-client';
 import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
@@ -28,15 +28,15 @@ const summary: DesktopLibrarySummary = {
   stage: 'uploading',
 };
 
-const runningJob = job({
+const runningJob = operation({
   captureId: 'capture-1',
   status: 'extracting',
 });
-const completedJob = job({
+const completedJob = operation({
   captureId: 'capture-1',
   status: 'completed',
 });
-const cancelledJob = job({
+const cancelledJob = operation({
   captureId: 'capture-1',
   status: 'cancelled',
 });
@@ -106,12 +106,12 @@ describe('DesktopWorkspaceStore', () => {
     expect(store.state()).toBe('ready');
     expect(store.ocrReady()).toBe(false);
     expect(store.installableRequestedRequirements()).toEqual([]);
-    store.installUnit('windowsml-ocr');
+    store.installRequirement('windowsml-ocr');
 
     expect(startInstallation).not.toHaveBeenCalled();
   });
 
-  it('allows unit installation while worker-owned OCR preflight is pending', () => {
+  it('allows requirement installation while worker-owned OCR preflight is pending', () => {
     const startInstallation = vi.fn((request: { requirementId: string }) =>
       of({
         installationId: `install-${request.requirementId}`,
@@ -144,7 +144,7 @@ describe('DesktopWorkspaceStore', () => {
     );
 
     expect(store.state()).toBe('ready');
-    store.installUnit('windowsml-ocr');
+    store.installRequirement('windowsml-ocr');
     TestBed.tick();
 
     expect(startInstallation).toHaveBeenCalledWith({
@@ -204,7 +204,7 @@ describe('DesktopWorkspaceStore', () => {
         startInstallation,
       }),
     );
-    store.installUnits(['speech-recognition', 'windowsml-ocr']);
+    store.installRequirements(['speech-recognition', 'windowsml-ocr']);
     TestBed.tick();
 
     expect(startInstallation.mock.calls.map(([request]) => request.requirementId)).toEqual([
@@ -213,7 +213,7 @@ describe('DesktopWorkspaceStore', () => {
     ]);
   });
 
-  it('downloads only the speech unit the user picked, without asking for OCR', () => {
+  it('downloads only the speech requirement the user picked, without asking for OCR', () => {
     const startInstallation = vi.fn((request: { requirementId: string }) =>
       of({
         installationId: `install-${request.requirementId}`,
@@ -225,7 +225,7 @@ describe('DesktopWorkspaceStore', () => {
         completedAt: '2026-11-01T00:00:00Z',
       }),
     );
-    const unit = (requirementId: string, status: string) => ({
+    const requirement = (requirementId: string, status: string) => ({
       requirementId,
       displayName: requirementId,
       status,
@@ -238,9 +238,9 @@ describe('DesktopWorkspaceStore', () => {
       libraryStub(),
       runtimeStub({
         getRequirements: vi.fn(() => of([
-          unit('windowsml-ocr', 'installable'),
-          unit('speaker-diarization', 'installable'),
-          unit('speech-recognition', 'installable'),
+          requirement('windowsml-ocr', 'installable'),
+          requirement('speaker-diarization', 'installable'),
+          requirement('speech-recognition', 'installable'),
         ])),
         startInstallation,
       }),
@@ -250,7 +250,7 @@ describe('DesktopWorkspaceStore', () => {
       'speech-recognition',
       'speaker-diarization',
     ]);
-    store.installUnit('speaker-diarization');
+    store.installRequirement('speaker-diarization');
     TestBed.tick();
 
     expect(startInstallation.mock.calls.map(([request]) => request.requirementId)).toEqual([
@@ -302,7 +302,7 @@ describe('DesktopWorkspaceStore', () => {
 
     vi.useFakeTimers();
     try {
-      store.installUnit('windowsml-ocr');
+      store.installRequirement('windowsml-ocr');
       expect(observedStatuses).toEqual(['queued']);
 
       vi.advanceTimersByTime(1_500);
@@ -594,7 +594,7 @@ describe('DesktopWorkspaceStore', () => {
 
     vi.useFakeTimers();
     try {
-      store.installUnit('speech-recognition');
+      store.installRequirement('speech-recognition');
       expect(store.installing()).toBe(true);
       expect(store.installationPercent()).toBe(50);
 
@@ -618,7 +618,7 @@ describe('DesktopWorkspaceStore', () => {
     }
   });
 
-  it('stops the rest of a multi-unit install when the user cancels', () => {
+  it('stops the rest of a multi-requirement install when the user cancels', () => {
     const startInstallation = vi.fn((request: { requirementId: string }) =>
       of({
         installationId: `install-${request.requirementId}`,
@@ -669,7 +669,7 @@ describe('DesktopWorkspaceStore', () => {
 
     vi.useFakeTimers();
     try {
-      store.installUnits(['windowsml-ocr', 'speech-recognition']);
+      store.installRequirements(['windowsml-ocr', 'speech-recognition']);
       store.cancelInstallation('install-windowsml-ocr');
       vi.advanceTimersByTime(3_000);
       TestBed.tick();
@@ -904,7 +904,7 @@ describe('DesktopWorkspaceStore', () => {
     const getOcr = vi.fn((captureId: string) =>
       of(ocrProjection(captureId, 'failed')));
     const deleteCapture = vi.fn(() => of(undefined));
-    const terminal = job({
+    const terminal = operation({
       captureId: 'capture-terminal-error',
       status: 'failed',
       error: { code: 'terminal_error', message: 'terminal evidence' },
@@ -955,7 +955,7 @@ describe('DesktopWorkspaceStore', () => {
       provenance: unavailableProvenance,
       failure: { code: 'ocr_worker_failed', message: 'OCR failed' },
     };
-    const terminal = job({
+    const terminal = operation({
       captureId: 'capture-zero-page',
       status: 'failed',
       error: { code: 'terminal_error', message: 'terminal evidence' },
@@ -996,7 +996,7 @@ describe('DesktopWorkspaceStore', () => {
       ...ocrProjection('capture-malformed', 'completed'),
       pages: [{}],
     } as unknown as CaptureOcrProjection)],
-  ])('keeps the runtime job for %s before terminal commit', async (_case, getOcrFactory) => {
+  ])('keeps the runtime operation for %s before terminal commit', async (_case, getOcrFactory) => {
     const updateCapture = vi.fn((update: Record<string, unknown>) =>
       of({ ...summary, ...update } as DesktopLibrarySummary));
     const deleteCapture = vi.fn(() => of(undefined));
@@ -1005,7 +1005,7 @@ describe('DesktopWorkspaceStore', () => {
       : _case === 'identity mismatch'
         ? 'capture-identity-mismatch'
         : 'capture-malformed';
-    const terminal = job({ captureId, status: 'completed' });
+    const terminal = operation({ captureId, status: 'completed' });
     const getOcr = vi.fn(getOcrFactory);
     const store = initializeStore(
       libraryStub({ updateCapture }),
@@ -1026,7 +1026,7 @@ describe('DesktopWorkspaceStore', () => {
     expect(deleteCapture).not.toHaveBeenCalled();
   });
 
-  it('keeps the runtime job when host OCR readiness lacks the worker identity', async () => {
+  it('keeps the runtime operation when host OCR readiness lacks the worker identity', async () => {
     const updateCapture = vi.fn((update: Record<string, unknown>) =>
       of({ ...summary, ...update } as DesktopLibrarySummary));
     const getOcr = vi.fn(() => of(ocrProjection('capture-1', 'completed')));
@@ -1088,7 +1088,7 @@ describe('DesktopWorkspaceStore', () => {
   });
 
   it('publishes raw during structuring before the terminal result is committed', async () => {
-    const structuringJob = job({
+    const structuringJob = operation({
       captureId: 'capture-1',
       status: 'structuring',
     });
@@ -1142,9 +1142,9 @@ describe('DesktopWorkspaceStore', () => {
 
   it('stops polling at awaiting_structuring and durably commits OCR before runtime cleanup', async () => {
     const captureId = 'capture-ocr-first';
-    const created = job({ captureId, status: 'created' });
-    const extracting = job({ captureId, status: 'extracting' });
-    const awaitingStructuring = job({
+    const created = operation({ captureId, status: 'created' });
+    const extracting = operation({ captureId, status: 'extracting' });
+    const awaitingStructuring = operation({
       captureId,
       status: 'awaiting_structuring',
     });
@@ -1262,11 +1262,11 @@ describe('DesktopWorkspaceStore', () => {
     }
   });
 
-  it('retains the runtime job when awaiting OCR durability fails before cleanup', async () => {
+  it('retains the runtime operation when awaiting OCR durability fails before cleanup', async () => {
     const captureId = 'capture-ocr-first-durable-failure';
-    const created = job({ captureId, status: 'created' });
-    const extracting = job({ captureId, status: 'extracting' });
-    const awaitingStructuring = job({
+    const created = operation({ captureId, status: 'created' });
+    const extracting = operation({ captureId, status: 'extracting' });
+    const awaitingStructuring = operation({
       captureId,
       status: 'awaiting_structuring',
     });
@@ -1359,9 +1359,9 @@ describe('DesktopWorkspaceStore', () => {
     'fails closed at the OCR checkpoint for %s',
     async (_case, projectionFactory) => {
       const captureId = `capture-ocr-checkpoint-${_case.replace(/ /g, '-')}`;
-      const created = job({ captureId, status: 'created' });
-      const extracting = job({ captureId, status: 'extracting' });
-      const awaitingStructuring = job({
+      const created = operation({ captureId, status: 'created' });
+      const extracting = operation({ captureId, status: 'extracting' });
+      const awaitingStructuring = operation({
         captureId,
         status: 'awaiting_structuring',
       });
@@ -1424,7 +1424,7 @@ describe('DesktopWorkspaceStore', () => {
   );
 
   it.each(['processing', 'persisting'] as const)(
-    'resumes a retained runtime job after restart from %s without creating a replacement',
+    'resumes a retained runtime operation after restart from %s without creating a replacement',
     async (status) => {
       const retained = {
         ...summary,
@@ -1432,7 +1432,7 @@ describe('DesktopWorkspaceStore', () => {
         stage: status === 'processing' ? 'extracting' : 'completed',
         captureId: 'capture-restart',
       } satisfies DesktopLibrarySummary;
-      const terminal = job({
+      const terminal = operation({
         ...completedJob,
         captureId: 'capture-restart',
       });
@@ -1620,7 +1620,7 @@ describe('DesktopWorkspaceStore', () => {
     expect(deleteCapture).toHaveBeenCalledWith('capture-1');
   });
 
-  it('persists optional raw data before deleting a canceled runtime job', () => {
+  it('persists optional raw data before deleting a canceled runtime operation', () => {
     const updateCapture = vi.fn((update: Record<string, unknown>) =>
       of({ ...summary, ...update } as DesktopLibrarySummary));
     const getRaw = vi.fn(() => of(raw));
@@ -1651,7 +1651,7 @@ describe('DesktopWorkspaceStore', () => {
     expect(deleteCapture).toHaveBeenCalledWith('capture-1');
   });
 
-  it('retains a canceled runtime job when optional raw retrieval fails', () => {
+  it('retains a canceled runtime operation when optional raw retrieval fails', () => {
     const updateCapture = vi.fn((update: Record<string, unknown>) =>
       of({ ...summary, ...update } as DesktopLibrarySummary));
     const deleteCapture = vi.fn(() => of(undefined));
@@ -1710,7 +1710,7 @@ describe('DesktopWorkspaceStore', () => {
     ['result retrieval', {
       getResult: vi.fn(() => throwError(() => new Error('result failed'))),
     }],
-  ])('retains the runtime job when %s fails', async (_case, runtimeOverride) => {
+  ])('retains the runtime operation when %s fails', async (_case, runtimeOverride) => {
     const updateCapture = vi.fn((update: Record<string, unknown>) =>
       of({ ...summary, ...update } as DesktopLibrarySummary));
     const deleteCapture = vi.fn(() => of(undefined));
@@ -1735,7 +1735,7 @@ describe('DesktopWorkspaceStore', () => {
     expect(deleteCapture).not.toHaveBeenCalled();
   });
 
-  it('retains the runtime job when the terminal library commit fails', async () => {
+  it('retains the runtime operation when the terminal library commit fails', async () => {
     let terminalCommitAttempted = false;
     const updateCapture = vi.fn((update: Record<string, unknown>) => {
       if (update['status'] === 'completed' && !update['clearCaptureId']) {
@@ -1769,7 +1769,7 @@ describe('DesktopWorkspaceStore', () => {
     'retains the durable %s capture across terminal and recovery write failures',
     async (terminalStatus) => {
       const captureId = `capture-terminal-recovery-write-failure-${terminalStatus}`;
-      const terminal = job({
+      const terminal = operation({
         captureId,
         status: terminalStatus,
         ...(terminalStatus === 'failed'
@@ -1895,7 +1895,7 @@ describe('DesktopWorkspaceStore', () => {
   ] as const)(
     'keeps %s terminal evidence separate when runtime cleanup fails',
     async (runtimeStatus, libraryStatus) => {
-      const terminal = job({
+      const terminal = operation({
         captureId: 'capture-terminal-error',
         status: runtimeStatus,
         error: {
@@ -1989,7 +1989,7 @@ describe('DesktopWorkspaceStore', () => {
   );
 
   it('keeps cleanup-only recovery durable when both post-commit library writes fail', async () => {
-    const terminal = job({
+    const terminal = operation({
       captureId: 'capture-double-write',
       status: 'failed',
       error: {
@@ -2142,7 +2142,7 @@ describe('DesktopWorkspaceStore', () => {
     }));
   });
 
-  it('recovers persistence with the same runtime ID and never creates a new job', async () => {
+  it('recovers persistence with the same runtime ID and never creates a new operation', async () => {
     const recovery = {
       ...summary,
       status: 'recovery_required',
@@ -2151,7 +2151,7 @@ describe('DesktopWorkspaceStore', () => {
       recoveryCode: 'capture_recovery_required',
     } satisfies DesktopLibrarySummary;
     const createCapture = vi.fn(() => of(completedJob));
-    const getCapture = vi.fn(() => of(job({
+    const getCapture = vi.fn(() => of(operation({
       ...completedJob,
       captureId: 'capture-recovery',
     })));
@@ -2244,7 +2244,7 @@ describe('DesktopWorkspaceStore', () => {
     const router = { url: '/ocr' };
     TestBed.configureTestingModule({ providers: [
       { provide: Router, useValue: router },
-      { provide: CaptureQueueStore, useValue: ocrQueue },
+      { provide: OcrQueueStore, useValue: ocrQueue },
       { provide: AsrQueueStore, useValue: asrQueue },
     ] });
     const library = libraryStub({ droppedSources: vi.fn(() => dropped) });
@@ -2474,7 +2474,7 @@ function applyDurableCaptureUpdate(
   } as DesktopLibrarySummary;
 }
 
-function job(input: Record<string, unknown>): CaptureOperation {
+function operation(input: Record<string, unknown>): CaptureOperation {
   return {
     protocolVersion: '2',
     ingestionId: 'ingestion-1',

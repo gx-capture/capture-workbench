@@ -7,7 +7,7 @@
     <p class="text-muted-foreground text-sm">{{ m().ocrSubtitle }}</p>
   </header>
 
-  @if (features.showFirstRunCard() && features.firstRunInstallableUnits().length > 0) {
+  @if (features.showFirstRunCard() && features.firstRunInstallableRequirements().length > 0) {
     <section
       class="rounded-xl border border-border bg-card px-6 py-5 flex flex-col"
       data-testid="first-run-card"
@@ -16,7 +16,7 @@
       <h2 id="setup-title" class="text-lg font-bold text-foreground">{{ m().firstRunTitle }}</h2>
       <p class="text-muted-foreground text-xs mb-2">{{ m().firstRunHint }}</p>
 
-      @if (ocrUnit(); as ocr) {
+      @if (ocrRequirement(); as ocr) {
         <label
           class="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 border-t border-border py-3 cursor-pointer text-sm"
           data-testid="first-run-option"
@@ -28,7 +28,7 @@
             data-testid="first-run-checkbox-ocr"
             [checked]="isSelected('windowsml-ocr')"
             [disabled]="features.installing()"
-            (change)="toggleUnit('windowsml-ocr', $any($event.target).checked)"
+            (change)="toggleRequirement('windowsml-ocr', $any($event.target).checked)"
           />
           <span class="flex flex-col">
             <span class="font-semibold text-foreground">{{ m().firstRunOcrLabel }}</span>
@@ -42,7 +42,7 @@
         </label>
       }
 
-      @if (asrUnit(); as asr) {
+      @if (asrRequirement(); as asr) {
         <label
           class="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 border-t border-border py-3 cursor-pointer text-sm"
           data-testid="first-run-option"
@@ -54,7 +54,7 @@
             data-testid="first-run-checkbox-asr"
             [checked]="isSelected('speech-recognition')"
             [disabled]="features.installing()"
-            (change)="toggleUnit('speech-recognition', $any($event.target).checked)"
+            (change)="toggleRequirement('speech-recognition', $any($event.target).checked)"
           />
           <span class="flex flex-col">
             <span class="font-semibold text-foreground">{{ m().firstRunAsrLabel }}</span>
@@ -68,7 +68,7 @@
         </label>
       }
 
-      @if (speakersUnit(); as speakers) {
+      @if (speakersRequirement(); as speakers) {
         <label
           class="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 border-t border-border py-3 pl-7 cursor-pointer text-sm"
           data-testid="first-run-option"
@@ -80,7 +80,7 @@
             data-testid="first-run-checkbox-speakers"
             [checked]="isSelected('speaker-diarization')"
             [disabled]="features.installing()"
-            (change)="toggleUnit('speaker-diarization', $any($event.target).checked)"
+            (change)="toggleRequirement('speaker-diarization', $any($event.target).checked)"
           />
           <span class="flex flex-col">
             <span class="font-semibold text-foreground">{{ m().firstRunSpeakersLabel }}{{ m().optionalSuffix }}</span>
@@ -234,10 +234,10 @@
         <table hlmTable data-testid="ocr-queue" class="w-full text-sm">
           <thead hlmTHead>
             <tr hlmTr class="border-b border-border">
-              <th hlmTh class="text-muted-foreground py-2 px-3 text-left font-semibold">{{ m().ocrColFile }}</th>
-              <th hlmTh class="text-muted-foreground py-2 px-3 text-left font-semibold">{{ m().ocrColPages }}</th>
-              <th hlmTh class="text-muted-foreground py-2 px-3 text-left font-semibold w-[38%]">{{ m().ocrColStatus }}</th>
-              <th hlmTh class="text-muted-foreground py-2 px-3 text-right font-semibold">{{ m().ocrColAction }}</th>
+              <th hlmTh class="text-muted-foreground py-2 px-3 text-left font-semibold">{{ m().queueColFile }}</th>
+              <th hlmTh class="text-muted-foreground py-2 px-3 text-left font-semibold">{{ m().queueColPages }}</th>
+              <th hlmTh class="text-muted-foreground py-2 px-3 text-left font-semibold w-[38%]">{{ m().queueColStatus }}</th>
+              <th hlmTh class="text-muted-foreground py-2 px-3 text-right font-semibold">{{ m().queueColAction }}</th>
             </tr>
           </thead>
           <tbody hlmTBody>
@@ -296,7 +296,7 @@
                         <span class="text-muted-foreground text-xs">{{ m().ocrInterruptedHint }}</span>
                       }
                       @if (row.needsInstall && row.installPercent === null) {
-                        <span class="text-muted-foreground text-xs">{{ m().ocrNeedsEngine(queue.ocrSizeLabel()) }}</span>
+                        <span class="text-muted-foreground text-xs">{{ m().ocrNeedsRequirement(queue.ocrSizeLabel()) }}</span>
                       }
                       @if (row.needsInstall && row.installPercent !== null) {
                         <span class="text-muted-foreground text-xs" data-testid="ocr-row-install-progress">{{ queue.ocrInstallLabel() }}</span>
@@ -332,10 +332,10 @@
                         size="sm"
                         type="button"
                         data-testid="ocr-row-cancel"
-                        [attr.aria-label]="m().ocrCancelNamed(row.fileName)"
+                        [attr.aria-label]="m().captureCancelNamed(row.fileName)"
                         (click)="queue.cancel(row.documentId)"
                       >
-                        {{ m().cancelInstall }}
+                        {{ m().cancel }}
                       </button>
                     }
                     @if (row.userStatus === 'needs-attention' && row.interrupted) {
@@ -345,10 +345,10 @@
                         size="sm"
                         type="button"
                         data-testid="ocr-row-restart"
-                        [attr.aria-label]="m().ocrRestartNamed(row.fileName)"
+                        [attr.aria-label]="m().captureRestartNamed(row.fileName)"
                         (click)="queue.restart(row.documentId)"
                       >
-                        {{ m().ocrRestart }}
+                        {{ m().captureRestart }}
                       </button>
                     }
                     @if ((row.userStatus === 'needs-attention' && !row.interrupted) || row.userStatus === 'cancelled') {
@@ -358,10 +358,10 @@
                         size="sm"
                         type="button"
                         data-testid="ocr-row-retry"
-                        [attr.aria-label]="m().ocrRetryNamed(row.fileName)"
+                        [attr.aria-label]="m().captureRetryNamed(row.fileName)"
                         (click)="queue.retry(row.documentId)"
                       >
-                        {{ m().ocrRetry }}
+                        {{ m().captureRetry }}
                       </button>
                     }
                     @if (row.userStatus === 'done') {
@@ -371,9 +371,9 @@
                         size="sm"
                         [routerLink]="['/history', row.documentId]"
                         data-testid="ocr-row-view"
-                        [attr.aria-label]="m().ocrViewNamed(row.fileName)"
+                        [attr.aria-label]="m().captureViewNamed(row.fileName)"
                       >
-                        {{ m().ocrView }}
+                        {{ m().captureView }}
                       </a>
                       <button
                         hlmBtn

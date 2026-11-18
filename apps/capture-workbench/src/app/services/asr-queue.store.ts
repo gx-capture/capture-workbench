@@ -37,7 +37,7 @@ import {
   formatApproximateBytes,
   installationPercent,
   isActiveStreaming,
-  isAudioMediaType,
+  isRecordingMediaType,
   isFeatureReady,
 } from './desktop-workspace.selectors';
 import { DesktopWorkspaceStore } from './desktop-workspace.store';
@@ -61,7 +61,7 @@ export class AsrQueueStore {
 
   /** Session-only spoken language choice applied to newly added recordings. */
   readonly spokenLanguage = signal<AsrSpokenLanguage>('zh');
-  /** Whether newly added recordings request speaker diarization (when unit is ready). */
+  /** Whether newly added recordings request speaker diarization (when requirement is ready). */
   readonly identifySpeakers = signal(false);
   readonly importError = signal('');
 
@@ -84,10 +84,10 @@ export class AsrQueueStore {
   readonly speechPack = this.features.speechPack;
 
   readonly optionalSpeakerInstall = computed(() => {
-    const unit = this.features.requirements().find(
+    const requirement = this.features.requirements().find(
       (candidate) => candidate.requirementId === 'speaker-diarization',
     );
-    if (!unit || unit.status === 'ready') return null;
+    if (!requirement || requirement.status === 'ready') return null;
     const installation = this.features.installationFor('speaker-diarization');
     const installing = installation?.status === 'queued' || installation?.status === 'running';
     const messages = desktopMessages();
@@ -95,7 +95,7 @@ export class AsrQueueStore {
     return {
       installing,
       label: !installing
-        ? messages.asrInstallSpeakers(formatApproximateBytes(unit.downloadBytes))
+        ? messages.asrInstallSpeakers(formatApproximateBytes(requirement.downloadBytes))
         : progress.phase === 'preparing'
           ? messages.asrPreparingSpeakers
           : progress.phase === 'installing'
@@ -105,10 +105,10 @@ export class AsrQueueStore {
   });
 
   readonly speechSizeLabel = computed(() => {
-    const unit = this.features
+    const requirement = this.features
       .requirements()
       .find((candidate) => candidate.requirementId === 'speech-recognition');
-    return formatApproximateBytes(unit?.downloadBytes);
+    return formatApproximateBytes(requirement?.downloadBytes);
   });
 
   readonly speechInstallPercent = computed(() => {
@@ -127,7 +127,7 @@ export class AsrQueueStore {
   );
 
   readonly rows = computed<readonly AsrQueueView[]>(() => {
-    const ops = this.capture.streamingOperations();
+    const ops = this.capture.recordingOperations();
     const busyIds = this.capture.busyIds();
     const details = this.details();
     const speechReady = this.speechReady();
@@ -145,7 +145,7 @@ export class AsrQueueStore {
   });
 
   readonly liveCapture = computed<AsrLiveCaptureView | null>(() => {
-    const ops = this.capture.streamingOperations();
+    const ops = this.capture.recordingOperations();
     const partials = this.capture.streamingPartials();
     const busyIds = this.capture.busyIds();
     const running = this.documents().find((document) => {
@@ -243,7 +243,7 @@ export class AsrQueueStore {
     const recordings: DesktopSourceSelection[] = [];
     const nonRecordings: DesktopSourceSelection[] = [];
     for (const selection of batch.selections) {
-      if (isAudioMediaType(selection.mediaType)) {
+      if (isRecordingMediaType(selection.mediaType)) {
         recordings.push(selection);
       } else {
         nonRecordings.push(selection);
@@ -289,11 +289,11 @@ export class AsrQueueStore {
   }
 
   install(): void {
-    this.features.installUnit('speech-recognition');
+    this.features.installRequirement('speech-recognition');
   }
 
   installSpeakers(): void {
-    this.features.installUnit('speaker-diarization');
+    this.features.installRequirement('speaker-diarization');
   }
 
   cancel(documentId: string): void {

@@ -1,12 +1,11 @@
 import type { RawCapture } from '@gx-capture/capture-workbench-ui';
 import type { DesktopLibrarySummary } from '../contracts';
 import { setDesktopLocale } from '../i18n/desktop-messages';
+import { captureStatusChipClasses, captureStatusChipVariant } from './capture-user-status';
 import type { DesktopCaptureOperation } from './desktop-runtime-client.service';
 import {
   describeOcrDocument,
   groupRawOcrPages,
-  ocrChipClasses,
-  ocrChipVariant,
   parsePdfPageList,
 } from './ocr-queue';
 
@@ -61,7 +60,7 @@ describe('OCR queue presentation', () => {
 
   it('shows page progress only as the processing step', () => {
     const described = view(doc({ status: 'processing', captureId: 'capture-1' }), {
-      job: {
+      operation: {
         protocolVersion: '2',
         captureId: 'capture-1',
         ingestionId: 'ingestion-1',
@@ -153,16 +152,16 @@ describe('OCR queue presentation', () => {
   });
 
   it('maps OCR user statuses to chip variants and classes', () => {
-    expect(ocrChipVariant('processing')).toBe('running');
-    expect(ocrChipVariant('waiting')).toBe('waiting');
-    expect(ocrChipVariant('cancelled')).toBe('waiting');
-    expect(ocrChipVariant('done')).toBe('done');
-    expect(ocrChipVariant('needs-attention')).toBe('error');
+    expect(captureStatusChipVariant('processing')).toBe('running');
+    expect(captureStatusChipVariant('waiting')).toBe('waiting');
+    expect(captureStatusChipVariant('cancelled')).toBe('waiting');
+    expect(captureStatusChipVariant('done')).toBe('done');
+    expect(captureStatusChipVariant('needs-attention')).toBe('error');
 
-    expect(ocrChipClasses('running')).toContain('bg-secondary');
-    expect(ocrChipClasses('waiting')).toContain('border-border');
-    expect(ocrChipClasses('done')).toContain('bg-muted');
-    expect(ocrChipClasses('error')).toContain('text-destructive');
+    expect(captureStatusChipClasses('running')).toContain('bg-secondary');
+    expect(captureStatusChipClasses('waiting')).toContain('border-border');
+    expect(captureStatusChipClasses('done')).toContain('bg-muted');
+    expect(captureStatusChipClasses('error')).toContain('text-destructive');
   });
 
   it('includes chipVariant and progressPercent in the described document', () => {
@@ -171,7 +170,7 @@ describe('OCR queue presentation', () => {
     expect(queuedDoc.progressPercent).toBeNull();
 
     const runningDoc = view(doc({ status: 'processing', captureId: 'capture-1' }), {
-      job: {
+      operation: {
         protocolVersion: '2',
         captureId: 'capture-1',
         ingestionId: 'ingestion-1',
@@ -208,7 +207,7 @@ function view(
   extra: {
     readonly ocrReady?: boolean;
     readonly busy?: boolean;
-    readonly job?: DesktopCaptureOperation;
+    readonly operation?: DesktopCaptureOperation;
     readonly installPercent?: number | null;
   } = {},
 ) {
@@ -216,7 +215,7 @@ function view(
     document,
     ocrReady: extra.ocrReady ?? true,
     busy: extra.busy ?? false,
-    job: extra.job,
+    operation: extra.operation,
     installPercent: extra.installPercent ?? null,
   });
 }

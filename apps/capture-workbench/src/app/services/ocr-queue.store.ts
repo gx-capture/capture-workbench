@@ -28,7 +28,7 @@ import {
 
 @Injectable({ providedIn: 'root' })
 /** Import, waiting queue, start, cancel, retry and progress for the OCR page. */
-export class CaptureQueueStore {
+export class OcrQueueStore {
   private readonly library = inject(DesktopLibraryService);
   private readonly capture = inject(DesktopWorkspaceCaptureService);
   private readonly runtime = inject(DesktopRuntimeClientService);
@@ -67,7 +67,7 @@ export class CaptureQueueStore {
     .filter((document) => isOcrMediaType(document.mediaType))
     .map((document) => describeOcrDocument({
       document,
-      job: this.capture.jobs().get(document.documentId),
+      operation: this.capture.oneShotOperations().get(document.documentId),
       busy: this.capture.busyIds().has(document.documentId),
       ocrReady: this.features.isFeatureReady('ocr'),
       installPercent: this.ocrInstallPercent(),
@@ -117,7 +117,7 @@ export class CaptureQueueStore {
   }
 
   install(): void {
-    this.features.installUnit('windowsml-ocr');
+    this.features.installRequirement('windowsml-ocr');
   }
 
   cancel(documentId: string): void {

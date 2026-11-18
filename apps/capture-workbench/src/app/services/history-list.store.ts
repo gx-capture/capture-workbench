@@ -30,7 +30,7 @@ export class HistoryListStore {
   private readonly allRows = computed(() => (this.workspace.allDocuments() ?? []).map((document) => historyRow(
     document,
     this.capture.busyIds().has(document.documentId),
-    this.capture.jobs().get(document.documentId) ?? this.capture.streamingOperations().get(document.documentId),
+    this.capture.oneShotOperations().get(document.documentId) ?? this.capture.recordingOperations().get(document.documentId),
     this.capture.hasActiveCapture(document.documentId),
   )));
   readonly rows = computed(() => filterHistoryRows(this.allRows(), {

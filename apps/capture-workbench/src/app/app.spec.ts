@@ -19,7 +19,7 @@ import {
   type RecognitionFeature,
   selectFeatureMissing,
   selectInstallableRequirements,
-  selectRecognitionEngines,
+  selectRecognitionRequirements,
   selectSpeechPack,
 } from './services/desktop-workspace.selectors';
 import { DesktopWorkspaceStore } from './services/desktop-workspace.store';
@@ -162,7 +162,7 @@ describe('App shell and recognition pages', () => {
     ) as HTMLButtonElement;
     expect(installButton.textContent?.trim()).toBe('安裝（約 2.8 GB）');
     installButton.click();
-    expect(features.installUnit).toHaveBeenCalledWith('speech-recognition');
+    expect(features.installRequirement).toHaveBeenCalledWith('speech-recognition');
 
     features.requirements.set([
       makeRequirement('speech-recognition', 'ready', 2_800_000_000),
@@ -311,7 +311,7 @@ describe('App shell and recognition pages', () => {
   });
 });
 
-const FIRST_RUN_UNIT_IDS: readonly CaptureRequirementId[] = [
+const FIRST_RUN_REQUIREMENT_IDS: readonly CaptureRequirementId[] = [
   'windowsml-ocr',
   'speech-recognition',
   'speaker-diarization',
@@ -356,15 +356,15 @@ async function renderShell(
     installations,
     installing,
     firstRunDismissed,
-    engines: computed(() => selectRecognitionEngines(requirements())),
+    recognitionRequirements: computed(() => selectRecognitionRequirements(requirements())),
     speechPack: computed(() => selectSpeechPack(requirements())),
-    firstRunInstallableUnits: computed(() =>
-      selectInstallableRequirements(requirements(), FIRST_RUN_UNIT_IDS),
+    firstRunInstallableRequirements: computed(() =>
+      selectInstallableRequirements(requirements(), FIRST_RUN_REQUIREMENT_IDS),
     ),
     showFirstRunCard: computed(
       () =>
         !firstRunDismissed() &&
-        selectInstallableRequirements(requirements(), FIRST_RUN_UNIT_IDS).length > 0,
+        selectInstallableRequirements(requirements(), FIRST_RUN_REQUIREMENT_IDS).length > 0,
     ),
     startingRequirementId: signal<CaptureRequirementId | null>(null),
     activeInstallation: computed(() => {
@@ -379,12 +379,12 @@ async function renderShell(
       selectFeatureMissing(requirements(), feature),
     installationFor: (requirementId: CaptureRequirementId) =>
       installations()[requirementId] ?? null,
-    installUnit: vi.fn(),
-    installUnits: vi.fn(),
+    installRequirement: vi.fn(),
+    installRequirements: vi.fn(),
     installFirstRunSelection: vi.fn(),
     isRemoving: () => false,
     removalError: () => null,
-    removeUnit: vi.fn(),
+    removeRequirement: vi.fn(),
     cancelInstallation: vi.fn(),
     retryInstallation: vi.fn(),
     dismissFirstRun: vi.fn(() => {

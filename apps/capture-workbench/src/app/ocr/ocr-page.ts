@@ -15,13 +15,13 @@ import { HlmCardImports } from '@spartan-ng/helm/card';
 import { HlmTableImports } from '@spartan-ng/helm/table';
 import { InstallProgress } from '../engine-card/install-progress';
 import { desktopMessages } from '../i18n/desktop-messages';
-import { CaptureQueueStore } from '../services/capture-queue.store';
-import { formatApproximateBytes } from '../services/desktop-workspace.selectors';
 import {
-  ocrChipClasses,
-  ocrChipVariant,
-  type OcrUserStatus,
-} from '../services/ocr-queue';
+  captureStatusChipClasses,
+  captureStatusChipVariant,
+  type CaptureUserStatus,
+} from '../services/capture-user-status';
+import { formatApproximateBytes } from '../services/desktop-workspace.selectors';
+import { OcrQueueStore } from '../services/ocr-queue.store';
 import { RecognitionFeaturesStore } from '../services/recognition-features.store';
 
 @Component({
@@ -38,7 +38,7 @@ import { RecognitionFeaturesStore } from '../services/recognition-features.store
 })
 export class OcrPage {
   protected readonly features = inject(RecognitionFeaturesStore);
-  protected readonly queue = inject(CaptureQueueStore);
+  protected readonly queue = inject(OcrQueueStore);
   protected readonly m = desktopMessages;
 
   private readonly manualSelection = signal<ReadonlySet<CaptureRequirementId> | null>(
@@ -49,19 +49,19 @@ export class OcrPage {
     this.queue.attach();
   }
 
-  protected readonly ocrUnit = computed(() =>
+  protected readonly ocrRequirement = computed(() =>
     this.findInstallable('windowsml-ocr'),
   );
-  protected readonly asrUnit = computed(() =>
+  protected readonly asrRequirement = computed(() =>
     this.findInstallable('speech-recognition'),
   );
-  protected readonly speakersUnit = computed(() =>
+  protected readonly speakersRequirement = computed(() =>
     this.findInstallable('speaker-diarization'),
   );
 
   protected readonly selectedIds = computed<readonly CaptureRequirementId[]>(() => {
     const available = new Set(
-      this.features.firstRunInstallableUnits().map((u) => u.requirementId),
+      this.features.firstRunInstallableRequirements().map((u) => u.requirementId),
     );
     const manual = this.manualSelection();
     if (manual === null) {
@@ -72,13 +72,13 @@ export class OcrPage {
 
   protected readonly selectedSizeLabel = computed(() => {
     const ids = new Set(this.selectedIds());
-    const units = this.features
-      .firstRunInstallableUnits()
+    const requirements = this.features
+      .firstRunInstallableRequirements()
       .filter((u) => ids.has(u.requirementId));
-    const totalBytes = units.reduce(
-      (sum, unit) =>
-        typeof unit.downloadBytes === 'number' && unit.downloadBytes > 0
-          ? sum + unit.downloadBytes
+    const totalBytes = requirements.reduce(
+      (sum, requirement) =>
+        typeof requirement.downloadBytes === 'number' && requirement.downloadBytes > 0
+          ? sum + requirement.downloadBytes
           : sum,
       0,
     );
@@ -104,15 +104,15 @@ export class OcrPage {
     this.features.isFeatureReady('ocr'),
   );
 
-  protected chipClass(status: OcrUserStatus): string {
-    return ocrChipClasses(ocrChipVariant(status));
+  protected chipClass(status: CaptureUserStatus): string {
+    return captureStatusChipClasses(captureStatusChipVariant(status));
   }
 
   protected isSelected(requirementId: CaptureRequirementId): boolean {
     return this.selectedIds().includes(requirementId);
   }
 
-  protected toggleUnit(
+  protected toggleRequirement(
     requirementId: CaptureRequirementId,
     checked: boolean,
   ): void {
@@ -121,7 +121,7 @@ export class OcrPage {
       next.add(requirementId);
       if (
         requirementId === 'speaker-diarization' &&
-        this.asrUnit() !== null
+        this.asrRequirement() !== null
       ) {
         next.add('speech-recognition');
       }
@@ -160,8 +160,8 @@ export class OcrPage {
   ): RuntimeRequirement | null {
     return (
       this.features
-        .firstRunInstallableUnits()
-        .find((unit) => unit.requirementId === requirementId) ?? null
+        .firstRunInstallableRequirements()
+        .find((requirement) => requirement.requirementId === requirementId) ?? null
     );
   }
 }

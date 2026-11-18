@@ -13,7 +13,7 @@ export type ShellRoute = 'ocr' | 'asr' | 'history' | 'settings';
 /** Every piece of text the desktop app shows. */
 export interface DesktopMessages {
   readonly historyType: string;
-  readonly historyDocument: string;
+  readonly historyKindOcr: string;
   readonly historyRecording: string;
   readonly historyExtent: string;
   readonly historyUpdated: string;
@@ -22,7 +22,7 @@ export interface DesktopMessages {
   readonly historyNoMatches: string;
   readonly historyDeleteFailed: string;
   readonly historyDeleteNamed: (name: string) => string;
-  readonly historyDiagnostics: string;
+  readonly statusDiagnosticsLabel: string;
   readonly sourceRejections: Readonly<Record<'unsupported' | 'empty' | 'tooLarge' | 'notRegularFile' | 'notLocal' | 'unreadable' | 'limitReached', (count: number) => string>>;
   readonly languageName: string;
   readonly language: string;
@@ -57,8 +57,8 @@ export interface DesktopMessages {
   readonly speechUnitNeeded: string;
   readonly speakerUnitNeeded: string;
   readonly offerInstall: string;
-  readonly unitReady: string;
-  readonly unitUnavailable: string;
+  readonly requirementReady: string;
+  readonly requirementUnavailable: string;
   readonly guideDetails: string;
   readonly guideSummary: string;
   readonly guideLanguages: string;
@@ -95,19 +95,20 @@ export interface DesktopMessages {
   readonly downloadingProgress: (percent: number) => string;
   readonly installProgressPreparing: string;
   readonly installProgressInstalling: string;
+  readonly cancel: string;
   readonly cancelInstall: string;
   readonly retryInstall: string;
-  readonly removeEngine: string;
-  readonly removeEngineNamed: (name: string) => string;
-  readonly removeEngineTitle: (name: string) => string;
-  readonly removeEngineBody: (name: string, size: string | null) => string;
-  readonly removeEngineCancel: string;
-  readonly removingEngine: string;
+  readonly removeRequirement: string;
+  readonly removeRequirementNamed: (name: string) => string;
+  readonly removeRequirementTitle: (name: string) => string;
+  readonly removeRequirementBody: (name: string, size: string | null) => string;
+  readonly removeRequirementCancel: string;
+  readonly removingRequirement: string;
   readonly removeBlockedInstalling: string;
   readonly removeBlockedCapture: string;
-  readonly removeEngineInUse: string;
-  readonly removeEngineNotUninstallable: string;
-  readonly removeEngineNotFound: string;
+  readonly removeRequirementInUse: string;
+  readonly removeRequirementNotUninstallable: string;
+  readonly removeRequirementNotFound: string;
   readonly later: string;
   readonly optionalSuffix: string;
   readonly firstRunTitle: string;
@@ -124,9 +125,9 @@ export interface DesktopMessages {
   readonly engineColStatus: string;
   readonly engineColSize: string;
   readonly engineColAction: string;
-  readonly engineName: Readonly<Record<string, string | undefined>>;
-  readonly enginePurpose: Readonly<Record<string, string | undefined>>;
-  readonly engineStatus: Readonly<Record<string, string | undefined>>;
+  readonly requirementName: Readonly<Record<string, string | undefined>>;
+  readonly requirementPurpose: Readonly<Record<string, string | undefined>>;
+  readonly requirementStatus: Readonly<Record<string, string | undefined>>;
   readonly ocrSubtitle: string;
   readonly ocrDropHint: string;
   readonly ocrDropSupported: string;
@@ -135,30 +136,30 @@ export interface DesktopMessages {
   readonly ocrPagesPlaceholder: string;
   readonly ocrQueueTitle: string;
   readonly ocrQueueCount: (count: number) => string;
-  readonly ocrColFile: string;
-  readonly ocrColPages: string;
-  readonly ocrColStatus: string;
-  readonly ocrColAction: string;
-  readonly ocrStatusWaiting: string;
-  readonly ocrStatusProcessing: string;
-  readonly ocrStatusDone: string;
-  readonly ocrStatusNeedsAttention: string;
-  readonly ocrStatusCancelled: string;
-  readonly ocrNeedsEngine: (size: string | null) => string;
+  readonly queueColFile: string;
+  readonly queueColPages: string;
+  readonly queueColStatus: string;
+  readonly queueColAction: string;
+  readonly captureStatusWaiting: string;
+  readonly captureStatusProcessing: string;
+  readonly captureStatusDone: string;
+  readonly captureStatusNeedsAttention: string;
+  readonly captureStatusCancelled: string;
+  readonly ocrNeedsRequirement: (size: string | null) => string;
   readonly ocrPageProgress: (done: number, total: number) => string;
   readonly ocrProgressNamed: (name: string) => string;
-  readonly ocrView: string;
+  readonly captureView: string;
   readonly ocrExportTxt: string;
-  readonly ocrRestart: string;
-  readonly ocrInterrupted: string;
+  readonly captureRestart: string;
+  readonly captureInterrupted: string;
   readonly ocrInterruptedHint: string;
-  readonly ocrRetry: string;
+  readonly captureRetry: string;
   readonly ocrPageSelectionInvalid: string;
   readonly ocrInstallNamed: (name: string) => string;
-  readonly ocrCancelNamed: (name: string) => string;
-  readonly ocrRetryNamed: (name: string) => string;
-  readonly ocrRestartNamed: (name: string) => string;
-  readonly ocrViewNamed: (name: string) => string;
+  readonly captureCancelNamed: (name: string) => string;
+  readonly captureRetryNamed: (name: string) => string;
+  readonly captureRestartNamed: (name: string) => string;
+  readonly captureViewNamed: (name: string) => string;
   readonly ocrExportNamed: (name: string) => string;
   readonly asrSubtitle: string;
   readonly asrInstallTitle: string;
@@ -295,7 +296,7 @@ const ZH_TW: DesktopMessages = {
   },
   languageName: '中文',
   historyType: '類型',
-  historyDocument: '文件',
+  historyKindOcr: '文件',
   historyRecording: '錄音',
   historyExtent: '長度/頁數',
   historyUpdated: '更新時間',
@@ -304,7 +305,7 @@ const ZH_TW: DesktopMessages = {
   historyNoMatches: '沒有符合篩選條件的紀錄。',
   historyDeleteFailed: '無法刪除文件，請稍後再試。',
   historyDeleteNamed: (name) => `刪除 ${name}`,
-  historyDiagnostics: '診斷',
+  statusDiagnosticsLabel: '診斷',
   language: '語言',
   queue: '處理佇列',
   searchDocuments: '搜尋文件',
@@ -337,8 +338,8 @@ const ZH_TW: DesktopMessages = {
   speechUnitNeeded: '處理錄音需要先下載台灣語音轉文字（TEA-ASR 1.1）。',
   speakerUnitNeeded: '辨識說話者需要額外安裝一個元件。',
   offerInstall: '安裝',
-  unitReady: '已安裝',
-  unitUnavailable: '無法下載',
+  requirementReady: '已安裝',
+  requirementUnavailable: '無法下載',
   guideDetails: '詳細說明',
   guideSummary: '特性',
   guideLanguages: '適用語言',
@@ -397,22 +398,23 @@ const ZH_TW: DesktopMessages = {
   downloadingProgress: (percent) => `正在下載 ${percent}%`,
   installProgressPreparing: '正在準備安裝…',
   installProgressInstalling: '下載完成，正在安裝…',
+  cancel: '取消',
   cancelInstall: '取消',
   retryInstall: '再試一次',
-  removeEngine: '移除',
-  removeEngineNamed: (name) => `移除${name}`,
-  removeEngineTitle: (name) => `移除${name}？`,
-  removeEngineBody: (name, size) =>
+  removeRequirement: '移除',
+  removeRequirementNamed: (name) => `移除${name}`,
+  removeRequirementTitle: (name) => `移除${name}？`,
+  removeRequirementBody: (name, size) =>
     size
       ? `這會刪除${name}（${size}）。已經做好的文件和逐字稿會留在這台電腦，之後可以再安裝。`
       : `這會刪除${name}。已經做好的文件和逐字稿會留在這台電腦，之後可以再安裝。`,
-  removeEngineCancel: '取消',
-  removingEngine: '正在移除',
+  removeRequirementCancel: '取消',
+  removingRequirement: '正在移除',
   removeBlockedInstalling: '這項功能正在安裝',
   removeBlockedCapture: '有辨識正在使用它',
-  removeEngineInUse: '安裝或辨識還在進行，請稍後再移除',
-  removeEngineNotUninstallable: '這項功能無法從這裡移除',
-  removeEngineNotFound: '找不到這項功能',
+  removeRequirementInUse: '安裝或辨識還在進行，請稍後再移除',
+  removeRequirementNotUninstallable: '這項功能無法從這裡移除',
+  removeRequirementNotFound: '找不到這項功能',
   later: '稍後再說',
   optionalSuffix: '（選用）',
   firstRunTitle: '要安裝哪些辨識功能？',
@@ -429,19 +431,19 @@ const ZH_TW: DesktopMessages = {
   engineColStatus: '狀態',
   engineColSize: '大小',
   engineColAction: '動作',
-  engineName: {
+  requirementName: {
     'windowsml-ocr': '文字辨識',
     'speech-recognition': '錄音轉文字',
     'speaker-diarization': '說話者辨識',
     'vertical-japanese-reader': '直書日文',
   },
-  enginePurpose: {
+  requirementPurpose: {
     'windowsml-ocr': '讀出掃描檔與照片的文字',
     'speech-recognition': '台灣華語與中英夾雜語音轉逐字稿',
     'speaker-diarization': '標出每段話是誰說的',
     'vertical-japanese-reader': '讀出直排日文頁面',
   },
-  engineStatus: {
+  requirementStatus: {
     ready: '已安裝',
     installable: '未安裝',
     missing: '未安裝',
@@ -460,30 +462,30 @@ const ZH_TW: DesktopMessages = {
   ocrPagesPlaceholder: '1-5, 8, 10-12',
   ocrQueueTitle: '佇列',
   ocrQueueCount: (count) => `${count} 個檔案`,
-  ocrColFile: '檔名',
-  ocrColPages: '頁數',
-  ocrColStatus: '狀態',
-  ocrColAction: '動作',
-  ocrStatusWaiting: '等待中',
-  ocrStatusProcessing: '處理中',
-  ocrStatusDone: '完成',
-  ocrStatusNeedsAttention: '需要處理',
-  ocrStatusCancelled: '已取消',
-  ocrNeedsEngine: (size) => size ? `需要文字辨識（${size}）` : '需要文字辨識',
+  queueColFile: '檔名',
+  queueColPages: '頁數',
+  queueColStatus: '狀態',
+  queueColAction: '動作',
+  captureStatusWaiting: '等待中',
+  captureStatusProcessing: '處理中',
+  captureStatusDone: '完成',
+  captureStatusNeedsAttention: '需要處理',
+  captureStatusCancelled: '已取消',
+  ocrNeedsRequirement: (size) => size ? `需要文字辨識（${size}）` : '需要文字辨識',
   ocrPageProgress: (done, total) => `第 ${done}/${total} 頁`,
   ocrProgressNamed: (name) => `${name} 的進度`,
-  ocrView: '檢視',
+  captureView: '檢視',
   ocrExportTxt: '匯出 .txt',
-  ocrRestart: '重新開始',
-  ocrInterrupted: '已中斷',
+  captureRestart: '重新開始',
+  captureInterrupted: '已中斷',
   ocrInterruptedHint: '上次關閉程式時尚未完成。',
-  ocrRetry: '重試',
+  captureRetry: '重試',
   ocrPageSelectionInvalid: '頁碼格式不正確，請輸入例如 1-5, 8, 10-12（最多 500 頁）。',
   ocrInstallNamed: (name) => `安裝文字辨識以處理 ${name}`,
-  ocrCancelNamed: (name) => `取消 ${name}`,
-  ocrRetryNamed: (name) => `重試 ${name}`,
-  ocrRestartNamed: (name) => `重新開始 ${name}`,
-  ocrViewNamed: (name) => `檢視 ${name}`,
+  captureCancelNamed: (name) => `取消 ${name}`,
+  captureRetryNamed: (name) => `重試 ${name}`,
+  captureRestartNamed: (name) => `重新開始 ${name}`,
+  captureViewNamed: (name) => `檢視 ${name}`,
   ocrExportNamed: (name) => `匯出 ${name} 的文字`,
   asrSubtitle: '把錄音轉成有時間標記的逐字稿。錄音不會離開這台電腦。',
   asrInstallTitle: '先安裝語音辨識',
@@ -620,7 +622,7 @@ const EN: DesktopMessages = {
   },
   languageName: 'English',
   historyType: 'Type',
-  historyDocument: 'Document',
+  historyKindOcr: 'Document',
   historyRecording: 'Recording',
   historyExtent: 'Length / pages',
   historyUpdated: 'Updated',
@@ -629,7 +631,7 @@ const EN: DesktopMessages = {
   historyNoMatches: 'No records match the filters.',
   historyDeleteFailed: 'Could not delete the document. Please try again later.',
   historyDeleteNamed: (name) => `Delete ${name}`,
-  historyDiagnostics: 'Diagnostics',
+  statusDiagnosticsLabel: 'Diagnostics',
   language: 'Language',
   queue: 'Queue',
   searchDocuments: 'Search documents',
@@ -662,8 +664,8 @@ const EN: DesktopMessages = {
   speechUnitNeeded: 'Recordings need Taiwan speech-to-text (TEA-ASR 1.1) downloaded first.',
   speakerUnitNeeded: 'Telling speakers apart needs one more component installed.',
   offerInstall: 'Install',
-  unitReady: 'Installed',
-  unitUnavailable: 'Not downloadable',
+  requirementReady: 'Installed',
+  requirementUnavailable: 'Not downloadable',
   guideDetails: 'Details',
   guideSummary: 'What it does',
   guideLanguages: 'Languages',
@@ -723,23 +725,24 @@ const EN: DesktopMessages = {
   downloadingProgress: (percent) => `Downloading ${percent}%`,
   installProgressPreparing: 'Preparing installation…',
   installProgressInstalling: 'Download complete, installing…',
+  cancel: 'Cancel',
   cancelInstall: 'Cancel',
   retryInstall: 'Try again',
-  removeEngine: 'Remove',
-  removeEngineNamed: (name) => `Remove ${name}`,
-  removeEngineTitle: (name) => `Remove ${name}?`,
-  removeEngineBody: (name, size) =>
+  removeRequirement: 'Remove',
+  removeRequirementNamed: (name) => `Remove ${name}`,
+  removeRequirementTitle: (name) => `Remove ${name}?`,
+  removeRequirementBody: (name, size) =>
     size
       ? `This deletes ${name} (${size}). Documents and transcripts already saved stay on this computer, and you can install it again later.`
       : `This deletes ${name}. Documents and transcripts already saved stay on this computer, and you can install it again later.`,
-  removeEngineCancel: 'Cancel',
-  removingEngine: 'Removing',
+  removeRequirementCancel: 'Cancel',
+  removingRequirement: 'Removing',
   removeBlockedInstalling: 'This feature is installing',
   removeBlockedCapture: 'A recognition is using it',
-  removeEngineInUse:
+  removeRequirementInUse:
     'An installation or recognition is still running. Try again when it finishes.',
-  removeEngineNotUninstallable: 'This feature cannot be removed from here.',
-  removeEngineNotFound: 'This feature was not found.',
+  removeRequirementNotUninstallable: 'This feature cannot be removed from here.',
+  removeRequirementNotFound: 'This feature was not found.',
   later: 'Maybe later',
   optionalSuffix: ' (optional)',
   firstRunTitle: 'Which recognition features do you want to install?',
@@ -757,20 +760,20 @@ const EN: DesktopMessages = {
   engineColStatus: 'Status',
   engineColSize: 'Size',
   engineColAction: 'Action',
-  engineName: {
+  requirementName: {
     'windowsml-ocr': 'Text recognition',
     'speech-recognition': 'Speech to text',
     'speaker-diarization': 'Speaker identification',
     'vertical-japanese-reader': 'Vertical Japanese',
   },
-  enginePurpose: {
+  requirementPurpose: {
     'windowsml-ocr': 'Read text from scans and photos',
     'speech-recognition':
       'Taiwan Mandarin and mixed Mandarin-English speech to transcript',
     'speaker-diarization': 'Mark who said each segment',
     'vertical-japanese-reader': 'Read vertical Japanese pages',
   },
-  engineStatus: {
+  requirementStatus: {
     ready: 'Installed',
     installable: 'Not installed',
     missing: 'Not installed',
@@ -789,30 +792,30 @@ const EN: DesktopMessages = {
   ocrPagesPlaceholder: '1-5, 8, 10-12',
   ocrQueueTitle: 'Queue',
   ocrQueueCount: (count) => `${count} file${count === 1 ? '' : 's'}`,
-  ocrColFile: 'File',
-  ocrColPages: 'Pages',
-  ocrColStatus: 'Status',
-  ocrColAction: 'Action',
-  ocrStatusWaiting: 'Waiting',
-  ocrStatusProcessing: 'Processing',
-  ocrStatusDone: 'Done',
-  ocrStatusNeedsAttention: 'Needs attention',
-  ocrStatusCancelled: 'Canceled',
-  ocrNeedsEngine: (size) => size ? `Text recognition is required (${size})` : 'Text recognition is required',
+  queueColFile: 'File',
+  queueColPages: 'Pages',
+  queueColStatus: 'Status',
+  queueColAction: 'Action',
+  captureStatusWaiting: 'Waiting',
+  captureStatusProcessing: 'Processing',
+  captureStatusDone: 'Done',
+  captureStatusNeedsAttention: 'Needs attention',
+  captureStatusCancelled: 'Canceled',
+  ocrNeedsRequirement: (size) => size ? `Text recognition is required (${size})` : 'Text recognition is required',
   ocrPageProgress: (done, total) => `Page ${done}/${total}`,
   ocrProgressNamed: (name) => `Progress for ${name}`,
-  ocrView: 'View',
+  captureView: 'View',
   ocrExportTxt: 'Export .txt',
-  ocrRestart: 'Start again',
-  ocrInterrupted: 'Interrupted',
+  captureRestart: 'Start again',
+  captureInterrupted: 'Interrupted',
   ocrInterruptedHint: 'Not finished before the app was last closed.',
-  ocrRetry: 'Retry',
+  captureRetry: 'Retry',
   ocrPageSelectionInvalid: 'Invalid page selection. Enter pages such as 1-5, 8, 10-12 (up to 500 pages).',
   ocrInstallNamed: (name) => `Install text recognition for ${name}`,
-  ocrCancelNamed: (name) => `Cancel ${name}`,
-  ocrRetryNamed: (name) => `Retry ${name}`,
-  ocrRestartNamed: (name) => `Start ${name} again`,
-  ocrViewNamed: (name) => `View ${name}`,
+  captureCancelNamed: (name) => `Cancel ${name}`,
+  captureRetryNamed: (name) => `Retry ${name}`,
+  captureRestartNamed: (name) => `Start ${name} again`,
+  captureViewNamed: (name) => `View ${name}`,
   ocrExportNamed: (name) => `Export text for ${name}`,
   asrSubtitle: 'Turn recordings into timed transcripts. Audio stays on this computer.',
   asrInstallTitle: 'Install speech recognition first',

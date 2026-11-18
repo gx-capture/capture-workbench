@@ -46,7 +46,7 @@
         [class.bg-muted-foreground]="store.state() === 'starting'"
       ></span>
       <span aria-live="polite">{{ store.state() === 'ready' ? m().ready : m().notReady }}</span>
-      <span class="sr-only">{{ m().historyDiagnostics }}</span>
+      <span class="sr-only">{{ m().statusDiagnosticsLabel }}</span>
     </a>
   </nav>
 

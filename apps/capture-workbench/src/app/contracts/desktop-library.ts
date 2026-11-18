@@ -77,7 +77,7 @@ export interface DesktopComputeStatus {
 }
 
 export interface DesktopRuntimeStatus {
-  readonly status: 'starting' | 'ready' | 'failed' | 'stopped';
+  readonly status: 'starting' | 'ready' | 'failed' | 'failed-cleanup' | 'stopped';
   readonly detail: string;
   readonly runtimeVersion?: string;
   readonly apiVersion?: string;

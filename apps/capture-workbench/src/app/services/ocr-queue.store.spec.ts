@@ -4,7 +4,7 @@ import type { RuntimeInstallation, RuntimeRequirement } from '@gx-capture/captur
 import { of, Subject } from 'rxjs';
 import type { DesktopCaptureOptions, DesktopLibraryExport, DesktopLibrarySummary } from '../contracts';
 import { desktopMessages, setDesktopLocale } from '../i18n/desktop-messages';
-import { CaptureQueueStore } from './capture-queue.store';
+import { OcrQueueStore } from './ocr-queue.store';
 import { DesktopLibraryService, type DesktopSourceSelection } from './desktop-library.service';
 import type { DesktopCaptureOperation } from './desktop-runtime-client.service';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
@@ -14,7 +14,7 @@ import { isFeatureReady, type RecognitionFeature } from './desktop-workspace.sel
 import { DesktopWorkspaceStore } from './desktop-workspace.store';
 import { RecognitionFeaturesStore } from './recognition-features.store';
 
-describe('CaptureQueueStore', () => {
+describe('OcrQueueStore', () => {
   beforeEach(() => setDesktopLocale('zh-TW'));
 
   it('ignores repeated exports and clears a visible export error when the next request starts', () => {
@@ -210,13 +210,13 @@ describe('CaptureQueueStore', () => {
     // The upload was still running, so its native cancel is asked for first.
     expect(harness.runtime.cancelUpload).toHaveBeenCalledTimes(1);
     // If the capture is created anyway, it is cancelled through the runtime.
-    harness.created.next(runningJob());
+    harness.created.next(runningOperation());
     await settle();
 
     expect(harness.runtime.cancelCapture).toHaveBeenCalledWith('capture-1');
   });
 
-  it('retries a failed file and restarts a file whose runtime job is gone', async () => {
+  it('retries a failed file and restarts a file whose runtime operation is gone', async () => {
     const harness = configure({ ocrReady: true });
     harness.docs.push(doc({ status: 'failed', documentId: 'c'.repeat(32), fileName: 'failed.pdf' }));
     harness.docs.push(doc({
@@ -256,8 +256,8 @@ describe('CaptureQueueStore', () => {
     );
   });
 
-  it('shows page progress from the live capture job', async () => {
-    const harness = configure({ ocrReady: true, job: runningJob() });
+  it('shows page progress from the live capture operation', async () => {
+    const harness = configure({ ocrReady: true, operation: runningOperation() });
     harness.store.attach();
     TestBed.tick();
     harness.store.importSelections({ rejected: [], selections: [selection('charge.pdf')] });
@@ -352,11 +352,11 @@ describe('CaptureQueueStore', () => {
         { provide: RecognitionFeaturesStore, useValue: features },
         DesktopWorkspaceStore,
         DesktopWorkspaceCaptureService,
-        CaptureQueueStore,
+        OcrQueueStore,
       ],
     });
     const workspace = TestBed.inject(DesktopWorkspaceStore);
-    const queue = TestBed.inject(CaptureQueueStore);
+    const queue = TestBed.inject(OcrQueueStore);
     queue.attach();
     TestBed.tick();
 
@@ -374,7 +374,7 @@ describe('CaptureQueueStore', () => {
   });
 });
 
-function configure(options: { readonly ocrReady: boolean; readonly job?: DesktopCaptureOperation }) {
+function configure(options: { readonly ocrReady: boolean; readonly operation?: DesktopCaptureOperation }) {
   const docs: DesktopLibrarySummary[] = [];
   const documents = signal<readonly DesktopLibrarySummary[]>([]);
   const created = new Subject<DesktopCaptureOperation>();
@@ -427,7 +427,7 @@ function configure(options: { readonly ocrReady: boolean; readonly job?: Desktop
     ready: signal(true),
     pdfPageNumbers: signal<readonly number[] | undefined>(undefined),
     ocrCompute: signal(null),
-    createCapture: vi.fn(() => options.job ? of(options.job) : created),
+    createCapture: vi.fn(() => options.operation ? of(options.operation) : created),
     getCapture: vi.fn(() => new Subject<DesktopCaptureOperation>()),
     cancelCapture: vi.fn(() => new Subject<DesktopCaptureOperation>()),
     cancelUpload: vi.fn(() => of(undefined)),
@@ -439,7 +439,7 @@ function configure(options: { readonly ocrReady: boolean; readonly job?: Desktop
   const features = {
     requirements,
     isFeatureReady: (feature: RecognitionFeature) => isFeatureReady(requirements(), feature),
-    installUnit: vi.fn(),
+    installRequirement: vi.fn(),
     activeInstallation: signal<RuntimeInstallation | null>(null),
     requestedRequirements: signal(new Set<string>()),
   };
@@ -450,17 +450,17 @@ function configure(options: { readonly ocrReady: boolean; readonly job?: Desktop
       { provide: RecognitionFeaturesStore, useValue: features },
       { provide: DesktopWorkspaceStore, useValue: { allDocuments: documents, refreshDocuments } },
       DesktopWorkspaceCaptureService,
-      CaptureQueueStore,
+      OcrQueueStore,
     ],
   });
   return {
-    store: TestBed.inject(CaptureQueueStore),
+    store: TestBed.inject(OcrQueueStore),
     library,
     runtime,
     requirements,
     docs,
     created,
-    rows: () => TestBed.inject(CaptureQueueStore).rows(),
+    rows: () => TestBed.inject(OcrQueueStore).rows(),
   };
 }
 
@@ -491,7 +491,7 @@ function doc(partial: Partial<DesktopLibrarySummary>): DesktopLibrarySummary {
   };
 }
 
-function runningJob(): DesktopCaptureOperation {
+function runningOperation(): DesktopCaptureOperation {
   return {
     protocolVersion: '2',
     captureId: 'capture-1',

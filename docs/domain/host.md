@@ -88,7 +88,7 @@ sequenceDiagram
 
 等待中的檔案留在文件庫。重新載入視窗後，佇列仍列出它們，並接回還在跑的擷取。整個程式重開後，runtime 作業已經消失的文件或錄音標成 `recovery_required`，佇列顯示已中斷，可以重新開始。
 
-PDF 可以帶 `captureOptions` 的 `pdfPageCount`（前 K 頁，只接受 `1..=K`，最多 500）。錄音可以帶 `spokenLanguage`（依 runtime 合約的語系代碼，畫面提供 `zh`／`en`／`ja`，主機轉送 `POST /v2/captures` 並拒絕無效值，錯誤不含路徑）與 `identifySpeakers`；`/asr` 佇列與自動啟動順序依匯入順序（`createdAtMs` 升冪，同時間保留加入順序，#348），進行中時透過 `streamingOperations` 與 `streamingPartials` 顯示即時逐字稿與「已聽到／總長」。舊索引沒有這個欄位也讀得回來。直書日文閱讀器沒有逐次開關：runtime 在 `vertical-japanese-reader` 已安裝時會自己把它交給辨識工作。
+PDF 可以帶 `captureOptions` 的 `pdfPageCount`（前 K 頁，只接受 `1..=K`，最多 500）。錄音可以帶 `spokenLanguage`（依 runtime 合約的語系代碼，畫面提供 `zh`／`en`／`ja`，主機轉送 `POST /v2/captures` 並拒絕無效值，錯誤不含路徑）與 `identifySpeakers`；`/asr` 佇列與自動啟動順序依匯入順序（`createdAtMs` 升冪，同時間保留加入順序，#348），進行中時透過 `recordingOperations` 與 `streamingPartials` 顯示即時逐字稿與「已聽到／總長」。舊索引沒有這個欄位也讀得回來。直書日文閱讀器沒有逐次開關：runtime 在 `vertical-japanese-reader` 已安裝時會自己把它交給辨識工作。
 
 `/ocr` 的 `.txt` 由畫面用文件庫裡的原始文字組成（頁面順序，頁與頁之間空一行），不新增匯出指令。沒有 Ollama 的結構化結果時，只要原始文字在，這一頁就算完成。列表上的 `hasRaw` 表示原始文字已經寫進文件庫。
 

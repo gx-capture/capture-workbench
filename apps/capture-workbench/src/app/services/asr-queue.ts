@@ -4,10 +4,11 @@ import type {
 } from '@gx-capture/capture-workbench-ui';
 import type { DesktopLibraryDetail, DesktopLibrarySummary } from '../contracts';
 import { desktopMessages } from '../i18n/desktop-messages';
+import type { CaptureUserStatus } from './capture-user-status';
 import {
   formatRecordingTime,
   isActiveStreaming,
-  isAudioMediaType,
+  isRecordingMediaType,
 } from './desktop-workspace.selectors';
 import { playbackUnavailable } from './recording-playback';
 import { inImportOrder } from './ocr-queue';
@@ -19,14 +20,6 @@ export const ASR_SPOKEN_LANGUAGES: readonly AsrSpokenLanguage[] = [
   'en',
   'ja',
 ];
-
-/** The user-facing statuses shown in the ASR queue (matching OCR terminology). */
-export type AsrUserStatus =
-  | 'waiting'
-  | 'processing'
-  | 'done'
-  | 'needs-attention'
-  | 'cancelled';
 
 export interface AsrTranscriptLine {
   readonly segmentId: string;
@@ -53,7 +46,7 @@ export interface AsrQueueView {
   readonly mediaType: string;
   readonly byteLength: number;
   readonly durationLabel: string;
-  readonly userStatus: AsrUserStatus;
+  readonly userStatus: CaptureUserStatus;
   readonly statusText: string;
   readonly needsInstall: boolean;
   readonly installPercent: number | null;
@@ -68,27 +61,27 @@ export interface AsrQueueView {
 export function sortAsrDocumentsOldestFirst(
   documents: readonly DesktopLibrarySummary[],
 ): readonly DesktopLibrarySummary[] {
-  return inImportOrder(documents).filter((document) => isAudioMediaType(document.mediaType));
+  return inImportOrder(documents).filter((document) => isRecordingMediaType(document.mediaType));
 }
 
 export function asrStatusText(
-  status: AsrUserStatus,
+  status: CaptureUserStatus,
   interrupted = false,
 ): string {
   const messages = desktopMessages();
   switch (status) {
     case 'waiting':
-      return messages.ocrStatusWaiting;
+      return messages.captureStatusWaiting;
     case 'processing':
-      return messages.ocrStatusProcessing;
+      return messages.captureStatusProcessing;
     case 'done':
-      return messages.ocrStatusDone;
+      return messages.captureStatusDone;
     case 'cancelled':
-      return messages.ocrStatusCancelled;
+      return messages.captureStatusCancelled;
     default:
       return interrupted
-        ? messages.ocrInterrupted
-        : messages.ocrStatusNeedsAttention;
+        ? messages.captureInterrupted
+        : messages.captureStatusNeedsAttention;
   }
 }
 
@@ -201,7 +194,7 @@ export function buildLiveTranscriptLines(
 function describeStatus(
   document: DesktopLibrarySummary,
   active: boolean,
-): { readonly userStatus: AsrUserStatus; readonly interrupted: boolean } {
+): { readonly userStatus: CaptureUserStatus; readonly interrupted: boolean } {
   if (active) return { userStatus: 'processing', interrupted: false };
   if (
     (document.status === 'processing' || document.status === 'persisting')
