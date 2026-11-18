@@ -17,8 +17,8 @@ function digest(value: string): string {
 
 async function makeCandidates() {
   const runtime = await mkdtemp(join(tmpdir(), 'capture-runtime-binding-'));
-  const desktop = await mkdtemp(join(tmpdir(), 'capture-desktop-binding-'));
-  for (const root of [runtime, desktop]) {
+  const release = await mkdtemp(join(tmpdir(), 'capture-release-binding-'));
+  for (const root of [runtime, release]) {
     for (const directory of ['runtime', 'python', 'crate', 'contracts'])
       await mkdir(join(root, directory));
   }
@@ -30,7 +30,7 @@ async function makeCandidates() {
   ];
   for (const [path, value] of artifacts) {
     await writeFile(join(runtime, path), value);
-    await writeFile(join(desktop, path), value);
+    await writeFile(join(release, path), value);
   }
   await writeFile(
     join(runtime, 'candidate-manifest.json'),
@@ -48,7 +48,7 @@ async function makeCandidates() {
     }),
   );
   await writeFile(
-    join(desktop, 'candidate-manifest.json'),
+    join(release, 'candidate-manifest.json'),
     JSON.stringify({
       runtimeCandidateId: candidateId,
       sourceCommit: 'a'.repeat(40),
@@ -61,36 +61,36 @@ async function makeCandidates() {
       })),
     }),
   );
-  return { runtime, desktop };
+  return { runtime, release };
 }
 
-test('desktop candidate binds exact runtime candidate bytes', async () => {
+test('Release Candidate binds exact runtime candidate bytes', async () => {
   const candidates = await makeCandidates();
   try {
     await assert.doesNotReject(() =>
       verifyRuntimeCandidateBinding({
-        desktopCandidate: candidates.desktop,
+        releaseCandidate: candidates.release,
         runtimeCandidate: candidates.runtime,
         candidateId,
       }),
     );
   } finally {
     await rm(candidates.runtime, { recursive: true, force: true });
-    await rm(candidates.desktop, { recursive: true, force: true });
+    await rm(candidates.release, { recursive: true, force: true });
   }
 });
 
-test('desktop candidate binding rejects changed runtime bytes', async () => {
+test('Release Candidate binding rejects changed runtime bytes', async () => {
   const candidates = await makeCandidates();
   try {
     await writeFile(
-      join(candidates.desktop, 'runtime/capture-runtime.exe'),
+      join(candidates.release, 'runtime/capture-runtime.exe'),
       'tampered',
     );
     await assert.rejects(
       () =>
         verifyRuntimeCandidateBinding({
-          desktopCandidate: candidates.desktop,
+          releaseCandidate: candidates.release,
           runtimeCandidate: candidates.runtime,
           candidateId,
         }),
@@ -98,6 +98,6 @@ test('desktop candidate binding rejects changed runtime bytes', async () => {
     );
   } finally {
     await rm(candidates.runtime, { recursive: true, force: true });
-    await rm(candidates.desktop, { recursive: true, force: true });
+    await rm(candidates.release, { recursive: true, force: true });
   }
 });

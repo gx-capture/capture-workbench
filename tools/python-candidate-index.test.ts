@@ -24,7 +24,7 @@ function sha256(value: Buffer | string): string {
   return createHash('sha256').update(value).digest('hex');
 }
 
-async function makeCandidate(root: string): Promise<string> {
+async function makeCandidate(root: string, candidateKind = 'package'): Promise<string> {
   const python = join(root, 'python');
   await mkdir(python, { recursive: true });
   const wheel = Buffer.from('wheel-bytes');
@@ -33,7 +33,7 @@ async function makeCandidate(root: string): Promise<string> {
   await writeFile(join(python, ("capture_runtime_client-" + RELEASE_VERSION + ".tar.gz")), source);
   const packageManifest = {
     schemaVersion: '1',
-    candidateKind: 'npm-package-set',
+    candidateKind,
     releaseVersion: RELEASE_VERSION,
     packages: [],
   };
@@ -41,7 +41,7 @@ async function makeCandidate(root: string): Promise<string> {
   await writeFile(join(root, 'package-manifest.json'), packageManifestBytes);
   const candidateBase = {
     schemaVersion: '1',
-    candidateKind: 'npm-package-set',
+    candidateKind,
     sourceCommit: SOURCE_COMMIT,
     releaseVersion: RELEASE_VERSION,
     producerRunId: 1,
@@ -107,7 +107,7 @@ async function makeGeneratedWheelCandidate(root: string): Promise<{ readonly pac
   const wheel = await readFile(join(python, ("capture_runtime_client-" + RELEASE_VERSION + "-py3-none-any.whl")));
   const source = Buffer.from('not-installed-by-poetry\n');
   await writeFile(join(python, ("capture_runtime_client-" + RELEASE_VERSION + ".tar.gz")), source);
-  const packageId = await writeCandidateManifest(packageCandidate, wheel, source, 'npm-package-set');
+  const packageId = await writeCandidateManifest(packageCandidate, wheel, source, 'package');
   await writeCandidateManifest(runtimeCandidate, Buffer.alloc(0), Buffer.alloc(0), 'runtime', packageId);
   return { packageCandidate, runtimeCandidate };
 }
@@ -115,7 +115,7 @@ async function makeGeneratedWheelCandidate(root: string): Promise<{ readonly pac
 async function writeCandidateManifest(root: string, wheel: Buffer, source: Buffer, kind: string, packageCandidateId?: string): Promise<string> {
   await mkdir(root, { recursive: true });
   const sourceCommit = SOURCE_COMMIT;
-  const base = kind === 'npm-package-set'
+  const base = kind === 'package'
     ? {
         schemaVersion: '1', candidateKind: kind, sourceCommit, releaseVersion: RELEASE_VERSION, producerRunId: 1,
         packageManifestSha256: '', contractSetSha256: CONTRACT_SHA,
@@ -129,7 +129,7 @@ async function writeCandidateManifest(root: string, wheel: Buffer, source: Buffe
         producerRunId: 2, packageCandidateId, contractSetSha256: CONTRACT_SHA, artifacts: [],
         toolchains: { node: 'v24.20.0', python: '3.12', runtime: 'capture-runtime' },
       };
-  if (kind === 'npm-package-set') {
+  if (kind === 'package') {
     const packageManifest = { schemaVersion: '1', candidateKind: kind, releaseVersion: RELEASE_VERSION, packages: [] };
     const bytes = Buffer.from(`${JSON.stringify(packageManifest, null, 2)}\n`);
     await writeFile(join(root, 'package-manifest.json'), bytes);
@@ -140,42 +140,62 @@ async function writeCandidateManifest(root: string, wheel: Buffer, source: Buffe
   return candidateId;
 }
 
-test('builds and verifies a relative PEP 503 Python candidate index', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'python-candidate-index-'));
-  const packageCandidate = join(root, 'package-candidate');
-  const runtimeCandidate = join(root, 'runtime-candidate');
-  const output = join(root, 'index');
-  try {
-    const packageCandidateId = await makeCandidate(packageCandidate);
-    const runtimeCandidateId = await makeRuntimeCandidate(runtimeCandidate, packageCandidateId);
-    const result = await assemblePythonCandidateIndex({
-      packageCandidate,
-      runtimeCandidate,
-      output,
-      sourceCommit: SOURCE_COMMIT,
-      version: RELEASE_VERSION,
-      contractSetSha256: CONTRACT_SHA,
-    });
-    assert.equal(result.candidateId.length, 64);
-    const projectIndex = await readFile(join(output, 'simple/capture-runtime-client/index.html'), 'utf8');
-    assert.match(projectIndex, /href="capture_runtime_client-\d+\.\d+\.\d+-py3-none-any\.whl#sha256=[0-9a-f]{64}"/u);
-    assert.match(projectIndex, /href="capture_runtime_client-\d+\.\d+\.\d+\.tar\.gz#sha256=[0-9a-f]{64}"/u);
-    assert.doesNotMatch(projectIndex, /(?:[A-Za-z]:|file:|https?:|\\|\.\.)/iu);
-    const verified = await verifyPythonCandidateIndex({
-      index: output,
-      packageCandidate,
-      runtimeCandidate,
-      sourceCommit: SOURCE_COMMIT,
-      version: RELEASE_VERSION,
-      packageCandidateId,
-      runtimeCandidateId,
-      contractSetSha256: CONTRACT_SHA,
-    });
-    assert.equal(verified.candidateId, result.candidateId);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
+for (const candidateKind of ['package', 'npm-package-set'] as const) {
+  test(`builds and verifies a relative PEP 503 Python candidate index from ${candidateKind}`, async () => {
+    const root = await mkdtemp(join(tmpdir(), 'python-candidate-index-'));
+    const packageCandidate = join(root, 'package-candidate');
+    const runtimeCandidate = join(root, 'runtime-candidate');
+    const output = join(root, 'index');
+    try {
+      const packageCandidateId = await makeCandidate(packageCandidate, candidateKind);
+      const runtimeCandidateId = await makeRuntimeCandidate(runtimeCandidate, packageCandidateId);
+      const result = await assemblePythonCandidateIndex({
+        packageCandidate,
+        runtimeCandidate,
+        output,
+        sourceCommit: SOURCE_COMMIT,
+        version: RELEASE_VERSION,
+        contractSetSha256: CONTRACT_SHA,
+      });
+      assert.equal(result.candidateId.length, 64);
+      const projectIndex = await readFile(join(output, 'simple/capture-runtime-client/index.html'), 'utf8');
+      assert.match(projectIndex, /href="capture_runtime_client-\d+\.\d+\.\d+-py3-none-any\.whl#sha256=[0-9a-f]{64}"/u);
+      assert.match(projectIndex, /href="capture_runtime_client-\d+\.\d+\.\d+\.tar\.gz#sha256=[0-9a-f]{64}"/u);
+      assert.doesNotMatch(projectIndex, /(?:[A-Za-z]:|file:|https?:|\\|\.\.)/iu);
+      const verificationInput = {
+        index: output,
+        packageCandidate,
+        runtimeCandidate,
+        sourceCommit: SOURCE_COMMIT,
+        version: RELEASE_VERSION,
+        packageCandidateId,
+        runtimeCandidateId,
+        contractSetSha256: CONTRACT_SHA,
+      };
+      const verified = await verifyPythonCandidateIndex(verificationInput);
+      assert.equal(verified.candidateId, result.candidateId);
+      const manifestPath = join(output, 'candidate-index-manifest.json');
+      const indexManifest = JSON.parse(await readFile(manifestPath, 'utf8')) as {
+        candidateId: string;
+        packageCandidateKind: string;
+      };
+      assert.equal(indexManifest.packageCandidateKind, 'package');
+      if (candidateKind === 'npm-package-set') {
+        const { candidateId: newIndexId, ...base } = indexManifest;
+        assert.equal(newIndexId, result.candidateId);
+        const oldBase = { ...base, packageCandidateKind: candidateKind };
+        const oldId = sha256(JSON.stringify(oldBase));
+        const oldBytes = `${JSON.stringify({ ...oldBase, candidateId: oldId }, null, 2)}\n`;
+        await writeFile(manifestPath, oldBytes);
+        await writeFile(`${manifestPath}.sha256`, `${sha256(oldBytes)}  candidate-index-manifest.json\n`);
+        assert.equal((await verifyPythonCandidateIndex(verificationInput)).candidateId, oldId);
+        assert.equal(await readFile(manifestPath, 'utf8'), oldBytes);
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+}
 
 test('rejects changed distribution bytes, direct URLs, duplicate links, and extra files', async () => {
   const root = await mkdtemp(join(tmpdir(), 'python-candidate-index-rejections-'));

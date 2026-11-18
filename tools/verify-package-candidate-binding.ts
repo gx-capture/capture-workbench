@@ -1,4 +1,3 @@
-import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
@@ -23,7 +22,7 @@ function parseArguments(args: readonly string[]) {
     const value = args[index + 1];
     if (
       ![
-        '--desktop-candidate',
+        '--release-candidate',
         '--package-candidate',
         '--candidate-id',
       ].includes(name) ||
@@ -31,35 +30,35 @@ function parseArguments(args: readonly string[]) {
       values.has(name)
     ) {
       throw new Error(
-        'Use --desktop-candidate <directory> --package-candidate <directory> --candidate-id <sha>.',
+        'Use --release-candidate <directory> --package-candidate <directory> --candidate-id <sha>.',
       );
     }
     values.set(name, value);
   }
   if (
-    !values.has('--desktop-candidate') ||
+    !values.has('--release-candidate') ||
     !values.has('--package-candidate') ||
     !/^[0-9a-f]{64}$/u.test(values.get('--candidate-id')!)
   ) {
     throw new Error(
-      'Use --desktop-candidate <directory> --package-candidate <directory> --candidate-id <sha>.',
+      'Use --release-candidate <directory> --package-candidate <directory> --candidate-id <sha>.',
     );
   }
   return {
-    desktopCandidate: resolve(values.get('--desktop-candidate')!),
+    releaseCandidate: resolve(values.get('--release-candidate')!),
     packageCandidate: resolve(values.get('--package-candidate')!),
     candidateId: values.get('--candidate-id')!,
   };
 }
 
 export async function verifyPackageCandidateBinding(input: {
-  readonly desktopCandidate: string;
+  readonly releaseCandidate: string;
   readonly packageCandidate: string;
   readonly candidateId: string;
 }): Promise<void> {
-  const desktopManifest = JSON.parse(
+  const releaseManifest = JSON.parse(
     await readFile(
-      join(input.desktopCandidate, 'candidate-manifest.json'),
+      join(input.releaseCandidate, 'candidate-manifest.json'),
       'utf8',
     ),
   ) as unknown;
@@ -69,38 +68,41 @@ export async function verifyPackageCandidateBinding(input: {
       'utf8',
     ),
   ) as unknown;
-  if (!isRecord(desktopManifest) || !isRecord(packageManifest)) {
-    throw new Error('Desktop and package candidate manifests must be objects.');
+  if (!isRecord(releaseManifest) || !isRecord(packageManifest)) {
+    throw new Error('Release and package candidate manifests must be objects.');
   }
   if (packageManifest.candidateId !== input.candidateId) {
     throw new Error('Package candidate ID does not match the binding input.');
   }
-  if (packageManifest.candidateKind !== 'npm-package-set') {
-    throw new Error('Binding input is not an npm Package Candidate.');
+  if (
+    packageManifest.candidateKind !== 'package' &&
+    packageManifest.candidateKind !== 'npm-package-set'
+  ) {
+    throw new Error('Binding input must be a Package Candidate.');
   }
-  if (desktopManifest.packageCandidateId !== input.candidateId) {
+  if (releaseManifest.packageCandidateId !== input.candidateId) {
     throw new Error(
-      'Desktop Product Candidate does not reference the Package Candidate.',
+      'Release Candidate does not reference the Package Candidate.',
     );
   }
   if (
-    desktopManifest.sourceCommit !== packageManifest.sourceCommit ||
-    desktopManifest.releaseVersion !== packageManifest.releaseVersion
+    releaseManifest.sourceCommit !== packageManifest.sourceCommit ||
+    releaseManifest.releaseVersion !== packageManifest.releaseVersion
   ) {
     throw new Error(
-      'Desktop and package candidates do not share source commit and release version.',
+      'Release and package candidates do not share source commit and release version.',
     );
   }
   if (
-    !Array.isArray(desktopManifest.artifacts) ||
+    !Array.isArray(releaseManifest.artifacts) ||
     !Array.isArray(packageManifest.artifacts)
   ) {
     throw new Error(
-      'Desktop and package candidate artifact inventories are invalid.',
+      'Release and package candidate artifact inventories are invalid.',
     );
   }
-  const desktopArtifacts = new Map(
-    desktopManifest.artifacts
+  const releaseArtifacts = new Map(
+    releaseManifest.artifacts
       .filter(isRecord)
       .map((artifact) => [artifact.path, artifact] as const),
   );
@@ -110,22 +112,22 @@ export async function verifyPackageCandidateBinding(input: {
       !artifact.path.startsWith('package/')
     )
       continue;
-    const desktopArtifact = desktopArtifacts.get(artifact.path);
+    const releaseArtifact = releaseArtifacts.get(artifact.path);
     if (
-      !desktopArtifact ||
-      desktopArtifact.sha256 !== artifact.sha256 ||
-      desktopArtifact.bytes !== artifact.bytes
+      !releaseArtifact ||
+      releaseArtifact.sha256 !== artifact.sha256 ||
+      releaseArtifact.bytes !== artifact.bytes
     ) {
       throw new Error(
-        `Desktop candidate package bytes differ: ${artifact.path}.`,
+        `Release Candidate package bytes differ: ${artifact.path}.`,
       );
     }
     if (
-      (await sha256(join(input.desktopCandidate, artifact.path))) !==
+      (await sha256(join(input.releaseCandidate, artifact.path))) !==
       artifact.sha256
     ) {
       throw new Error(
-        `Desktop candidate package digest is not self-consistent: ${artifact.path}.`,
+        `Release Candidate package digest is not self-consistent: ${artifact.path}.`,
       );
     }
   }
@@ -135,7 +137,7 @@ async function main(): Promise<void> {
   const input = parseArguments(process.argv.slice(2));
   await verifyPackageCandidateBinding(input);
   process.stdout.write(
-    `Desktop candidate is bound to Package Candidate ${input.candidateId}.\n`,
+    `Release Candidate is bound to Package Candidate ${input.candidateId}.\n`,
   );
 }
 

@@ -211,7 +211,7 @@ async function readManifest(
   if (kind !== 'full-release') {
     assert.equal(
       manifest.candidateKind,
-      kind === 'package' ? 'npm-package-set' : 'runtime',
+      kind,
       'Candidate kind differs.',
     );
     assert(

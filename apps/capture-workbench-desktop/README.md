@@ -206,8 +206,10 @@ contents are read, copied or logged. Failures are saved as timestamped
 `installed-smoke-failure-*.json` files alongside the smoke evidence.
 
 The resulting `tmp/capture-workbench-desktop/installed-smoke/installed-smoke.json`
-is fixture evidence for this QA install and is diagnostic only. It does not certify
-real OCR, speech recognition, structuring, or licensed-fixture behavior.
+records `evidenceKind: installed-nsis-smoke` and the installer source.
+`deterministic` identifies the fixture-runtime QA build and `release` identifies
+the release installer. Both reports are diagnostic. Real OCR, speech recognition
+and structuring were not exercised.
 
 ## Loopback ownership boundary
 

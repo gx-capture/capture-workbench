@@ -619,13 +619,12 @@ test('installed raw assertion enforces source, engine, ordering, locator provena
   );
 });
 
-test('installed evidence is permanently deterministic, redacted, and path-free', () => {
+test('installed evidence identifies its installer source and stays non-releaseable, redacted, and path-free', () => {
   const valid = {
-    evidenceKind: 'deterministic-installed-tauri-smoke',
+    evidenceKind: 'installed-nsis-smoke',
+    installerSource: 'deterministic',
     releaseGateSatisfied: false,
     realEnginesExercised: false,
-    disclaimer:
-      'Deterministic verification only; it does not satisfy release gates.',
     installedApplication: {
       fileName: 'Capture Workbench Setup.exe',
       productTitle: 'Capture Workbench',
@@ -635,6 +634,19 @@ test('installed evidence is permanently deterministic, redacted, and path-free',
     ],
   };
   assert.doesNotThrow(() => assertInstalledSmokeEvidence(valid));
+  assert.doesNotThrow(() => assertInstalledSmokeEvidence({ ...valid, installerSource: 'release' }));
+  assert.throws(
+    () => assertInstalledSmokeEvidence({ ...valid, installerSource: undefined }),
+    /installer source/u,
+  );
+  assert.throws(
+    () => assertInstalledSmokeEvidence({ ...valid, installerSource: 'unknown' }),
+    /installer source/u,
+  );
+  assert.throws(
+    () => assertInstalledSmokeEvidence({ ...valid, evidenceKind: 'other-smoke' }),
+    /installed NSIS kind/u,
+  );
   assert.throws(
     () =>
       assertInstalledSmokeEvidence({ ...valid, releaseGateSatisfied: true }),

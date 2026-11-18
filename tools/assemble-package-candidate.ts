@@ -19,7 +19,7 @@ const PACKAGE_FILES = new Map([
 
 export type PackageCandidateManifest = {
   readonly schemaVersion: '1';
-  readonly candidateKind: 'npm-package-set';
+  readonly candidateKind: 'package';
   readonly candidateId: string;
   readonly sourceCommit: string;
   readonly releaseVersion: string;
@@ -147,7 +147,7 @@ async function main(): Promise<void> {
 
   const packageManifest = {
     schemaVersion: '1',
-    candidateKind: 'npm-package-set',
+    candidateKind: 'package',
     releaseVersion: version,
     packages: await Promise.all(
       archiveNames.map(async (archiveName) => {
@@ -215,7 +215,7 @@ async function main(): Promise<void> {
   );
   const baseManifest = {
     schemaVersion: '1',
-    candidateKind: 'npm-package-set',
+    candidateKind: 'package',
     sourceCommit,
     releaseVersion: version,
     producerRunId,
@@ -248,7 +248,7 @@ async function main(): Promise<void> {
     );
   }
   process.stdout.write(
-    `Assembled npm package candidate ${version} (${candidateId}) at ${output}.\n`,
+    `Assembled package candidate ${version} (${candidateId}) at ${output}.\n`,
   );
 }
 

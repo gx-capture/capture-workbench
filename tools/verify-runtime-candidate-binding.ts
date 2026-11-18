@@ -23,7 +23,7 @@ function parseArguments(args: readonly string[]) {
     const value = args[index + 1];
     if (
       ![
-        '--desktop-candidate',
+        '--release-candidate',
         '--runtime-candidate',
         '--candidate-id',
       ].includes(name) ||
@@ -31,35 +31,35 @@ function parseArguments(args: readonly string[]) {
       values.has(name)
     ) {
       throw new Error(
-        'Use --desktop-candidate <directory> --runtime-candidate <directory> --candidate-id <sha>.',
+        'Use --release-candidate <directory> --runtime-candidate <directory> --candidate-id <sha>.',
       );
     }
     values.set(name, value);
   }
   if (
-    !values.has('--desktop-candidate') ||
+    !values.has('--release-candidate') ||
     !values.has('--runtime-candidate') ||
     !/^[0-9a-f]{64}$/u.test(values.get('--candidate-id')!)
   ) {
     throw new Error(
-      'Use --desktop-candidate <directory> --runtime-candidate <directory> --candidate-id <sha>.',
+      'Use --release-candidate <directory> --runtime-candidate <directory> --candidate-id <sha>.',
     );
   }
   return {
-    desktopCandidate: resolve(values.get('--desktop-candidate')!),
+    releaseCandidate: resolve(values.get('--release-candidate')!),
     runtimeCandidate: resolve(values.get('--runtime-candidate')!),
     candidateId: values.get('--candidate-id')!,
   };
 }
 
 export async function verifyRuntimeCandidateBinding(input: {
-  readonly desktopCandidate: string;
+  readonly releaseCandidate: string;
   readonly runtimeCandidate: string;
   readonly candidateId: string;
 }): Promise<void> {
-  const desktopManifest = JSON.parse(
+  const releaseManifest = JSON.parse(
     await readFile(
-      join(input.desktopCandidate, 'candidate-manifest.json'),
+      join(input.releaseCandidate, 'candidate-manifest.json'),
       'utf8',
     ),
   ) as unknown;
@@ -69,40 +69,40 @@ export async function verifyRuntimeCandidateBinding(input: {
       'utf8',
     ),
   ) as unknown;
-  assert(isRecord(desktopManifest) && isRecord(runtimeManifest));
+  assert(isRecord(releaseManifest) && isRecord(runtimeManifest));
   assert.equal(runtimeManifest.candidateId, input.candidateId);
   assert.equal(runtimeManifest.candidateKind, 'runtime');
   assert.equal(
-    desktopManifest.runtimeCandidateId,
+    releaseManifest.runtimeCandidateId,
     input.candidateId,
-    'Desktop Product Candidate does not reference the Runtime Candidate.',
+    'Release Candidate does not reference the Runtime Candidate.',
   );
-  assert.equal(desktopManifest.sourceCommit, runtimeManifest.sourceCommit);
-  assert.equal(desktopManifest.releaseVersion, runtimeManifest.releaseVersion);
-  assert.equal(desktopManifest.releaseMode, runtimeManifest.releaseMode);
-  assert(Array.isArray(desktopManifest.artifacts));
+  assert.equal(releaseManifest.sourceCommit, runtimeManifest.sourceCommit);
+  assert.equal(releaseManifest.releaseVersion, runtimeManifest.releaseVersion);
+  assert.equal(releaseManifest.releaseMode, runtimeManifest.releaseMode);
+  assert(Array.isArray(releaseManifest.artifacts));
   assert(Array.isArray(runtimeManifest.artifacts));
-  const desktopArtifacts = new Map(
-    desktopManifest.artifacts
+  const releaseArtifacts = new Map(
+    releaseManifest.artifacts
       .filter(isRecord)
       .map((artifact) => [artifact.path, artifact] as const),
   );
   for (const artifact of runtimeManifest.artifacts.filter(isRecord)) {
     if (typeof artifact.path !== 'string') continue;
-    const desktopArtifact = desktopArtifacts.get(artifact.path);
+    const releaseArtifact = releaseArtifacts.get(artifact.path);
     if (
-      !desktopArtifact ||
-      desktopArtifact.sha256 !== artifact.sha256 ||
-      desktopArtifact.bytes !== artifact.bytes
+      !releaseArtifact ||
+      releaseArtifact.sha256 !== artifact.sha256 ||
+      releaseArtifact.bytes !== artifact.bytes
     ) {
       throw new Error(
-        `Desktop candidate runtime bytes differ: ${artifact.path}.`,
+        `Release Candidate runtime bytes differ: ${artifact.path}.`,
       );
     }
     assert.equal(
-      await sha256(join(input.desktopCandidate, artifact.path)),
+      await sha256(join(input.releaseCandidate, artifact.path)),
       artifact.sha256,
-      `Desktop candidate runtime digest is not self-consistent: ${artifact.path}.`,
+      `Release Candidate runtime digest is not self-consistent: ${artifact.path}.`,
     );
   }
 }
@@ -111,7 +111,7 @@ async function main(): Promise<void> {
   const input = parseArguments(process.argv.slice(2));
   await verifyRuntimeCandidateBinding(input);
   process.stdout.write(
-    `Desktop candidate is bound to Runtime Candidate ${input.candidateId}.\n`,
+    `Release Candidate is bound to Runtime Candidate ${input.candidateId}.\n`,
   );
 }
 

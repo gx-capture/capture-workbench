@@ -266,6 +266,11 @@ Use `pnpm nx` targets for discovery, build, lint, test, packaging, and smoke
 work. Product smokes and release checks should use their explicit Nx target;
 test fixtures are not release evidence.
 
+The Package Candidate (`candidateKind: package`) bundles the npm archives and
+the Python wheel and sdist. During full promotion, the binding verifiers use
+`--release-candidate` for the Release Candidate directory and check it against
+the Package and Runtime Candidates.
+
 ## Security and data boundaries
 
 - Keep bearer tokens in native or backend processes only. Never put them in
