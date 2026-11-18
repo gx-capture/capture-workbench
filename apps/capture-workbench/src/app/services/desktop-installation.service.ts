@@ -31,7 +31,7 @@ import { errorMessage } from './desktop-workspace.selectors';
 import { desktopMessages } from '../i18n/desktop-messages';
 
 @Injectable({ providedIn: 'root' })
-/** Coordinates runtime and model installation workflows for the workspace facade. */
+/** Coordinates runtime and model installation workflows for `RecognitionFeaturesStore`. */
 export class DesktopInstallationService {
   readonly installing = signal(false);
   readonly activeInstallation = signal<RuntimeInstallation | null>(null);
