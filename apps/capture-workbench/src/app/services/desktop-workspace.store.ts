@@ -19,7 +19,7 @@ import type {
   DesktopLibrarySummary,
 } from '../contracts';
 import { AsrQueueStore } from './asr-queue.store';
-import { CaptureQueueStore } from './capture-queue.store';
+import { OcrQueueStore } from './ocr-queue.store';
 import { SpeechGpuSettingsStore } from './speech-gpu-settings.store';
 import { DesktopLibraryService, type DesktopSourceSelectionBatch } from './desktop-library.service';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
@@ -96,7 +96,7 @@ export class DesktopWorkspaceStore {
   readonly ocrReady = this.features.ocrReady;
   readonly asrReady = this.features.asrReady;
   readonly speakersReady = this.features.speakersReady;
-  readonly engines = this.features.engines;
+  readonly recognitionRequirements = this.features.recognitionRequirements;
   readonly requestedMissing = this.features.requestedMissing;
   readonly installableRequestedRequirements =
     this.features.installableRequestedRequirements;
@@ -198,21 +198,21 @@ export class DesktopWorkspaceStore {
     this.selectedResource.reload();
   }
 
-  /** Latest installation record for a requirement unit, if any. */
+  /** Latest installation record for a requirement, if any. */
   installationFor(
     requirementId: CaptureRequirementId,
   ): RuntimeInstallation | null {
     return this.features.installationFor(requirementId);
   }
 
-  /** Downloads one recognition unit the user chose. */
-  installUnit(requirementId: CaptureRequirementId): void {
-    this.features.installUnit(requirementId);
+  /** Downloads one recognition requirement the user chose. */
+  installRequirement(requirementId: CaptureRequirementId): void {
+    this.features.installRequirement(requirementId);
   }
 
-  /** Downloads the selected recognition units in deterministic order. */
-  installUnits(requirementIds: readonly CaptureRequirementId[]): void {
-    this.features.installUnits(requirementIds);
+  /** Downloads the selected recognition requirements in deterministic order. */
+  installRequirements(requirementIds: readonly CaptureRequirementId[]): void {
+    this.features.installRequirements(requirementIds);
   }
 
   /** Cancels a running installation. */
@@ -220,7 +220,7 @@ export class DesktopWorkspaceStore {
     this.features.cancelInstallation(installationId);
   }
 
-  /** Retries a failed or cancelled installation for a requirement unit. */
+  /** Retries a failed or cancelled installation for a requirement. */
   retryInstallation(requirementId: CaptureRequirementId): void {
     this.features.retryInstallation(requirementId);
   }
@@ -303,7 +303,7 @@ export class DesktopWorkspaceStore {
   private routeDroppedSources(batch: DesktopSourceSelectionBatch): void {
     const path = this.currentRoutePath();
     if (path === '/ocr') {
-      this.injector.get(CaptureQueueStore).importSelections(batch);
+      this.injector.get(OcrQueueStore).importSelections(batch);
       return;
     }
     if (path === '/asr') {

@@ -10,15 +10,15 @@ import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
 import { DesktopWorkspaceInstallationService } from './desktop-workspace-installation.service';
 import { RecognitionFeaturesStore } from './recognition-features.store';
 
-describe('RecognitionFeaturesStore removeUnit', () => {
+describe('RecognitionFeaturesStore removeRequirement', () => {
   beforeEach(() => setDesktopLocale('zh-TW'));
 
-  it('uninstalls a ready unit and reports it not installed before the list reloads', () => {
+  it('uninstalls a ready requirement and reports it not installed before the list reloads', () => {
     const { store, runtime, pending, listed } = createHarness();
     expect(store.ocrReady()).toBe(true);
 
-    store.removeUnit('windowsml-ocr');
-    store.removeUnit('windowsml-ocr');
+    store.removeRequirement('windowsml-ocr');
+    store.removeRequirement('windowsml-ocr');
     expect(store.isRemoving('windowsml-ocr')).toBe(true);
     expect(runtime.uninstallRequirement).toHaveBeenCalledTimes(1);
     expect(runtime.uninstallRequirement).toHaveBeenCalledWith('windowsml-ocr');
@@ -29,44 +29,44 @@ describe('RecognitionFeaturesStore removeUnit', () => {
 
     expect(store.isRemoving('windowsml-ocr')).toBe(false);
     expect(store.removalError('windowsml-ocr')).toBeNull();
-    expect(unitStatus(store)).toBe('installable');
+    expect(requirementStatus(store)).toBe('installable');
     expect(store.ocrReady()).toBe(false);
     expect(runtime.reload).toHaveBeenCalled();
 
     listed.set([requirement('windowsml-ocr', 'installable', 144_000_000)]);
     store.requirementsResource.reload();
     TestBed.tick();
-    expect(unitStatus(store)).toBe('installable');
+    expect(requirementStatus(store)).toBe('installable');
     expect(store.ocrReady()).toBe(false);
 
-    store.removeUnit('windowsml-ocr');
+    store.removeRequirement('windowsml-ocr');
     expect(runtime.uninstallRequirement).toHaveBeenCalledTimes(1);
   });
 
-  it('does not call the runtime while that unit is installing', () => {
+  it('does not call the runtime while that requirement is installing', () => {
     const { store, runtime, installation } = createHarness();
     installation.installationsByRequirement.set(
       new Map([['windowsml-ocr', runningInstallation('running')]]),
     );
 
-    store.removeUnit('windowsml-ocr');
+    store.removeRequirement('windowsml-ocr');
 
     expect(runtime.uninstallRequirement).not.toHaveBeenCalled();
     expect(store.isRemoving('windowsml-ocr')).toBe(false);
-    expect(unitStatus(store)).toBe('ready');
+    expect(requirementStatus(store)).toBe('ready');
     expect(store.ocrReady()).toBe(true);
   });
 
   it('keeps the runtime status and shows a readable error when removal is refused', () => {
     const { store, runtime, pending } = createHarness();
-    store.removeUnit('windowsml-ocr');
+    store.removeRequirement('windowsml-ocr');
     pending.error(
       new Error('Capture Runtime request was rejected with HTTP 409.'),
     );
     TestBed.tick();
 
     expect(store.isRemoving('windowsml-ocr')).toBe(false);
-    expect(unitStatus(store)).toBe('ready');
+    expect(requirementStatus(store)).toBe('ready');
     expect(store.ocrReady()).toBe(true);
     expect(store.removalError('windowsml-ocr')).toBe(
       '安裝或辨識還在進行，請稍後再移除',
@@ -76,17 +76,17 @@ describe('RecognitionFeaturesStore removeUnit', () => {
 
   it('lets a finished reinstall leave the not-installed overlay', () => {
     const { store, runtime, pending } = createHarness();
-    store.removeUnit('windowsml-ocr');
+    store.removeRequirement('windowsml-ocr');
     pending.next(requirement('windowsml-ocr', 'installable', 144_000_000));
     pending.complete();
     TestBed.tick();
-    expect(unitStatus(store)).toBe('installable');
+    expect(requirementStatus(store)).toBe('installable');
 
-    store.installUnit('windowsml-ocr');
+    store.installRequirement('windowsml-ocr');
     TestBed.tick();
 
     expect(runtime.startInstallation).toHaveBeenCalled();
-    expect(unitStatus(store)).toBe('ready');
+    expect(requirementStatus(store)).toBe('ready');
     expect(store.ocrReady()).toBe(true);
   });
 
@@ -110,8 +110,8 @@ describe('RecognitionFeaturesStore removeUnit', () => {
     expect(store.requirementsResource.status()).toBe('error');
     expect(() => store.requirements()).not.toThrow();
     expect(store.requirements()).toEqual([]);
-    expect(store.engines()).toEqual([]);
-    expect(store.firstRunInstallableUnits()).toEqual([]);
+    expect(store.recognitionRequirements()).toEqual([]);
+    expect(store.firstRunInstallableRequirements()).toEqual([]);
     expect(store.ocrReady()).toBe(false);
     expect(store.asrReady()).toBe(false);
   });
@@ -151,7 +151,7 @@ function createHarness(
   return { store, runtime, pending, listed, installation };
 }
 
-function unitStatus(store: RecognitionFeaturesStore): string | undefined {
+function requirementStatus(store: RecognitionFeaturesStore): string | undefined {
   return store
     .requirements()
     .find((item) => item.requirementId === 'windowsml-ocr')?.status;

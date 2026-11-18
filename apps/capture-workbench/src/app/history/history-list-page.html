@@ -18,7 +18,7 @@
           (change)="store.typeFilter.set($any($event.target).value)"
         >
           <option value="all">{{ m().all }}</option>
-          <option value="ocr">{{ m().historyDocument }}</option>
+          <option value="ocr">{{ m().historyKindOcr }}</option>
           <option value="asr">{{ m().historyRecording }}</option>
         </select>
       </label>
@@ -31,11 +31,11 @@
           (change)="store.statusFilter.set($any($event.target).value)"
         >
           <option value="all">{{ m().all }}</option>
-          <option value="waiting">{{ m().ocrStatusWaiting }}</option>
-          <option value="processing">{{ m().ocrStatusProcessing }}</option>
-          <option value="done">{{ m().ocrStatusDone }}</option>
-          <option value="needs-attention">{{ m().ocrStatusNeedsAttention }}</option>
-          <option value="cancelled">{{ m().ocrStatusCancelled }}</option>
+          <option value="waiting">{{ m().captureStatusWaiting }}</option>
+          <option value="processing">{{ m().captureStatusProcessing }}</option>
+          <option value="done">{{ m().captureStatusDone }}</option>
+          <option value="needs-attention">{{ m().captureStatusNeedsAttention }}</option>
+          <option value="cancelled">{{ m().captureStatusCancelled }}</option>
         </select>
       </label>
       <label class="flex flex-col gap-1.5 text-sm text-secondary-foreground">
@@ -83,11 +83,11 @@
         <thead hlmTHead>
           <tr hlmTr class="border-b border-border">
             <th hlmTh scope="col" class="text-muted-foreground py-2 px-3 text-left font-semibold">{{ m().historyType }}</th>
-            <th hlmTh scope="col" class="text-muted-foreground py-2 px-3 text-left font-semibold">{{ m().ocrColFile }}</th>
+            <th hlmTh scope="col" class="text-muted-foreground py-2 px-3 text-left font-semibold">{{ m().queueColFile }}</th>
             <th hlmTh scope="col" class="text-muted-foreground py-2 px-3 text-left font-semibold">{{ m().historyExtent }}</th>
-            <th hlmTh scope="col" class="text-muted-foreground py-2 px-3 text-left font-semibold">{{ m().ocrColStatus }}</th>
+            <th hlmTh scope="col" class="text-muted-foreground py-2 px-3 text-left font-semibold">{{ m().queueColStatus }}</th>
             <th hlmTh scope="col" class="text-muted-foreground py-2 px-3 text-left font-semibold">{{ m().historyUpdated }}</th>
-            <th hlmTh scope="col" class="text-muted-foreground py-2 px-3 text-right font-semibold">{{ m().ocrColAction }}</th>
+            <th hlmTh scope="col" class="text-muted-foreground py-2 px-3 text-right font-semibold">{{ m().queueColAction }}</th>
           </tr>
         </thead>
         <tbody hlmTBody>
@@ -103,7 +103,7 @@
                 @if (row.kind === 'ocr') {
                   <svg
                     role="img"
-                    [attr.aria-label]="m().historyDocument"
+                    [attr.aria-label]="m().historyKindOcr"
                     width="18"
                     height="18"
                     viewBox="0 0 24 24"
@@ -160,10 +160,10 @@
                     size="sm"
                     type="button"
                     data-testid="history-row-view"
-                    [attr.aria-label]="m().ocrViewNamed(row.fileName)"
+                    [attr.aria-label]="m().captureViewNamed(row.fileName)"
                     (click)="store.open(row.documentId)"
                   >
-                    {{ m().ocrView }}
+                    {{ m().captureView }}
                   </button>
                   <button
                     hlmBtn

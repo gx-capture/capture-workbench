@@ -19,12 +19,12 @@
             </tr>
           </thead>
           <tbody hlmTBody>
-            @for (unit of features.engines(); track unit.requirementId) {
+            @for (requirement of features.recognitionRequirements(); track requirement.requirementId) {
               <tr
                 hlmTr
                 data-testid="engine-row"
-                [attr.data-requirement-id]="unit.requirementId"
-                [attr.data-status]="rowStatus(unit)"
+                [attr.data-requirement-id]="requirement.requirementId"
+                [attr.data-status]="rowStatus(requirement)"
               >
                 <td hlmTd class="min-w-40 font-medium">
                   <div class="flex flex-col gap-0.5">
@@ -32,37 +32,37 @@
                       type="button"
                       class="inline-flex items-center gap-2 self-start text-left font-medium hover:underline"
                       data-testid="engine-row-toggle"
-                      [attr.aria-expanded]="isExpanded(unit.requirementId)"
-                      (click)="toggleExpand(unit.requirementId)"
+                      [attr.aria-expanded]="isExpanded(requirement.requirementId)"
+                      (click)="toggleExpand(requirement.requirementId)"
                     >
                       <span aria-hidden="true" class="text-muted-foreground text-xs">
-                        {{ isExpanded(unit.requirementId) ? '▾' : '▸' }}
+                        {{ isExpanded(requirement.requirementId) ? '▾' : '▸' }}
                       </span>
                       <span>
-                        {{ m().engineName[unit.requirementId] ?? unit.displayName }}
+                        {{ m().requirementName[requirement.requirementId] ?? requirement.displayName }}
                       </span>
                     </button>
                     <p
                       class="text-muted-foreground pl-4 text-xs font-normal text-balance whitespace-normal"
                       data-testid="engine-row-purpose"
                     >
-                      {{ m().enginePurpose[unit.requirementId] ?? guides()[unit.requirementId]?.summary ?? '' }}
+                      {{ m().requirementPurpose[requirement.requirementId] ?? guides()[requirement.requirementId]?.summary ?? '' }}
                     </p>
                   </div>
                 </td>
                 <td hlmTd data-testid="engine-row-status">
-                  @if (removing(unit)) {
+                  @if (removing(requirement)) {
                     <span data-testid="engine-row-removing" aria-live="polite">
-                      {{ m().removingEngine }}
+                      {{ m().removingRequirement }}
                     </span>
-                  } @else if (isRunning(unit)) {
+                  } @else if (isRunning(requirement)) {
                     <div data-testid="engine-row-progress" aria-live="polite">
-                      <app-install-progress [installation]="runningInstallation(unit)" />
+                      <app-install-progress [installation]="runningInstallation(requirement)" />
                     </div>
                   } @else {
-                    <span>{{ statusLabel(unit) }}</span>
+                    <span>{{ statusLabel(requirement) }}</span>
                   }
-                  @if (removalFailure(unit); as removeError) {
+                  @if (removalFailure(requirement); as removeError) {
                     <p
                       class="text-destructive mt-1 text-xs whitespace-normal"
                       role="alert"
@@ -73,11 +73,11 @@
                   }
                 </td>
                 <td hlmTd data-testid="engine-row-size">
-                  {{ sizeLabel(unit) ?? '—' }}
+                  {{ sizeLabel(requirement) ?? '—' }}
                 </td>
                 <td hlmTd class="text-right">
                   <div class="flex flex-col items-end gap-1">
-                    @if (runningInstallation(unit); as running) {
+                    @if (runningInstallation(requirement); as running) {
                       <button
                         hlmBtn
                         variant="outline"
@@ -89,27 +89,27 @@
                         {{ m().cancelInstall }}
                       </button>
                     }
-                    @if (!removing(unit) && unit.status === 'ready') {
+                    @if (!removing(requirement) && requirement.status === 'ready') {
                       <button
                         hlmBtn
                         variant="outline"
                         size="sm"
                         type="button"
                         data-testid="engine-row-remove"
-                        [attr.aria-label]="m().removeEngineNamed(engineName(unit))"
-                        [disabled]="removalBlock(unit) !== null"
-                        (click)="askRemove(unit)"
+                        [attr.aria-label]="m().removeRequirementNamed(requirementName(requirement))"
+                        [disabled]="removalBlock(requirement) !== null"
+                        (click)="askRemove(requirement)"
                       >
-                        {{ m().removeEngine }}
+                        {{ m().removeRequirement }}
                       </button>
-                      @if (removalBlock(unit) === 'installing') {
+                      @if (removalBlock(requirement) === 'installing') {
                         <p
                           class="text-muted-foreground max-w-48 text-xs whitespace-normal"
                           data-testid="engine-row-remove-reason"
                         >
                           {{ m().removeBlockedInstalling }}
                         </p>
-                      } @else if (removalBlock(unit) === 'capture') {
+                      } @else if (removalBlock(requirement) === 'capture') {
                         <p
                           class="text-muted-foreground max-w-48 text-xs whitespace-normal"
                           data-testid="engine-row-remove-reason"
@@ -117,7 +117,7 @@
                           {{ m().removeBlockedCapture }}
                         </p>
                       }
-                    } @else if (!isRunning(unit) && isFailed(unit)) {
+                    } @else if (!isRunning(requirement) && isFailed(requirement)) {
                       <button
                         hlmBtn
                         variant="default"
@@ -125,11 +125,11 @@
                         type="button"
                         data-testid="engine-row-retry"
                         [disabled]="features.installing()"
-                        (click)="features.retryInstallation(unit.requirementId)"
+                        (click)="features.retryInstallation(requirement.requirementId)"
                       >
                         {{ m().retryInstall }}
                       </button>
-                    } @else if (!isRunning(unit) && unit.status === 'installable') {
+                    } @else if (!isRunning(requirement) && requirement.status === 'installable') {
                       <button
                         hlmBtn
                         variant="default"
@@ -137,23 +137,23 @@
                         type="button"
                         data-testid="engine-row-install"
                         [disabled]="features.installing()"
-                        (click)="features.installUnit(unit.requirementId)"
+                        (click)="features.installRequirement(requirement.requirementId)"
                       >
-                        {{ installLabel(unit) }}
+                        {{ installLabel(requirement) }}
                       </button>
                     }
                   </div>
                 </td>
               </tr>
 
-              @if (isExpanded(unit.requirementId)) {
+              @if (isExpanded(requirement.requirementId)) {
                 <tr
                   hlmTr
                   data-testid="engine-row-details"
-                  [attr.data-requirement-id]="unit.requirementId"
+                  [attr.data-requirement-id]="requirement.requirementId"
                 >
                   <td hlmTd colspan="4" class="bg-muted/30 whitespace-normal p-4">
-                    @if (guides()[unit.requirementId]; as guide) {
+                    @if (guides()[requirement.requirementId]; as guide) {
                       <dl class="grid grid-cols-[5rem_1fr] gap-x-3 gap-y-1.5 text-xs leading-relaxed">
                         <dt class="text-muted-foreground font-medium">{{ m().model }}</dt>
                         <dd>{{ guide.name }}</dd>
@@ -167,7 +167,7 @@
                         <dd>{{ guide.license }}</dd>
                       </dl>
                     }
-                    @if (isFailed(unit) && installationFor(unit)?.error; as error) {
+                    @if (isFailed(requirement) && installationFor(requirement)?.error; as error) {
                       <p
                         class="text-destructive mt-2 text-xs"
                         role="alert"
@@ -212,7 +212,7 @@
               brnDialogClose
               data-testid="engine-remove-cancel"
             >
-              {{ m().removeEngineCancel }}
+              {{ m().removeRequirementCancel }}
             </button>
             <button
               hlmBtn
@@ -222,7 +222,7 @@
               data-testid="engine-remove-confirm"
               (click)="confirmRemove()"
             >
-              {{ m().removeEngine }}
+              {{ m().removeRequirement }}
             </button>
           </div>
         </div>

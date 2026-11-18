@@ -9,7 +9,7 @@ import {
   isFeatureReady,
   selectFeatureMissing,
   selectInstallableRequirements,
-  selectRecognitionEngines,
+  selectRecognitionRequirements,
   selectRequestedMissing,
   selectSpeechPack,
   uninstallFailureMessage,
@@ -42,7 +42,7 @@ describe('feature requirements and speech pack', () => {
     requirement('speech-recognition', 'installable', 2_800_000_000),
   ];
 
-  it('maps each recognition feature to its own requirement unit', () => {
+  it('maps each recognition feature to its own requirement', () => {
     expect(FEATURE_REQUIREMENTS).toEqual({
       ocr: ['windowsml-ocr'],
       asr: ['speech-recognition'],
@@ -73,9 +73,9 @@ describe('feature requirements and speech pack', () => {
     ).toEqual(['speech-recognition', 'speaker-diarization']);
   });
 
-  it('lists recognition engines in canonical order', () => {
+  it('lists recognition requirements in canonical order', () => {
     expect(
-      selectRecognitionEngines(requirements).map((item) => item.requirementId),
+      selectRecognitionRequirements(requirements).map((item) => item.requirementId),
     ).toEqual([
       'windowsml-ocr',
       'speech-recognition',
@@ -84,7 +84,7 @@ describe('feature requirements and speech pack', () => {
     ]);
   });
 
-  it('never holds up documents until the user asks for a unit', () => {
+  it('never holds up documents until the user asks for a requirement', () => {
     expect(selectRequestedMissing(requirements, new Set())).toEqual([]);
     expect(
       selectRequestedMissing(
@@ -115,7 +115,7 @@ describe('captureNeedsRequirement', () => {
     status,
   });
 
-  it('blocks the engines that kind of active capture needs', () => {
+  it('blocks the requirements that kind of active capture needs', () => {
     const pdf = document('processing', 'application/pdf');
     const image = document('persisting', 'image/png');
     const audio = document('processing', 'audio/mpeg');

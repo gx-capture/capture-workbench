@@ -35,7 +35,7 @@ import { desktopMessages } from '../i18n/desktop-messages';
 export class DesktopWorkspaceInstallationService {
   readonly installing = signal(false);
   readonly activeInstallation = signal<RuntimeInstallation | null>(null);
-  /** The unit whose start request is in flight: the runtime has not answered with an installation yet. */
+  /** The requirement whose start request is in flight: the runtime has not answered with an installation yet. */
   readonly startingRequirementId = signal<CaptureRequirementId | null>(null);
   readonly installationsByRequirement = signal<
     ReadonlyMap<CaptureRequirementId, RuntimeInstallation>
@@ -47,7 +47,7 @@ export class DesktopWorkspaceInstallationService {
   /** Stops the running install queue when the user cancels. */
   private readonly cancelled$ = new Subject<void>();
 
-  /** Latest installation record known for a requirement unit, if any. */
+  /** Latest installation record known for a requirement, if any. */
   installationFor(requirementId: CaptureRequirementId): RuntimeInstallation | null {
     const active = this.activeInstallation();
     if (active?.requirementId === requirementId) {
@@ -70,7 +70,7 @@ export class DesktopWorkspaceInstallationService {
     this.installing.set(true);
     return from(requirements).pipe(
       concatMap((requirement) => this.installRequirement$(requirement)),
-      // A cancelled unit ends the queue: the user chose to stop, not to skip one unit.
+      // A cancelled requirement ends the queue: the user chose to stop, not to skip one requirement.
       takeWhile((installation) => installation.status !== 'cancelled', true),
       takeUntil(this.cancelled$),
       finalize(() => {

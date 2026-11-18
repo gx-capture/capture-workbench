@@ -12,10 +12,10 @@ import {
 } from '../services/installation-progress';
 
 /**
- * The progress of one unit's installation: a line that says what is happening
+ * The progress of one requirement's installation: a line that says what is happening
  * and a bar. The bar shows the downloaded share while downloading and pulses
  * while there is no figure to show (before the download size is known, and
- * while the downloaded unit is being installed).
+ * while the downloaded requirement is being installed).
  */
 @Component({
   selector: 'app-install-progress',

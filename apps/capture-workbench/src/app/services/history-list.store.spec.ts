@@ -23,7 +23,7 @@ describe('HistoryListStore', () => {
     TestBed.configureTestingModule({ providers: [
       { provide: DesktopWorkspaceStore, useValue: workspace },
       { provide: DesktopLibraryService, useValue: library },
-      { provide: DesktopWorkspaceCaptureService, useValue: { busyIds, jobs: signal(new Map()), streamingOperations: signal(new Map()), hasActiveCapture: () => false } },
+      { provide: DesktopWorkspaceCaptureService, useValue: { busyIds, oneShotOperations: signal(new Map()), recordingOperations: signal(new Map()), hasActiveCapture: () => false } },
       { provide: Router, useValue: router },
     ] });
     return { store: TestBed.inject(HistoryListStore), workspace, library, router, busyIds };

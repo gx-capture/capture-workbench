@@ -57,13 +57,13 @@ describe('AsrQueueStore', () => {
     const document = makeRecording({
       status: 'completed', durationMs: 90_000, captureOptions: { identifySpeakers: false },
     });
-    const { store, library, docs, streamingOperations } = setup({ initialDocs: [document] });
+    const { store, library, docs, recordingOperations } = setup({ initialDocs: [document] });
     store.attach();
     TestBed.tick();
     expect(store.rows()[0].durationLabel).toBe('1:30');
     expect(library.get).not.toHaveBeenCalled();
 
-    streamingOperations.set(new Map([[document.documentId, {
+    recordingOperations.set(new Map([[document.documentId, {
       status: 'completed', durationMs: 800_000,
     } as CaptureOperation]]));
     docs.set([{ ...document, durationMs: 125_000, updatedAtMs: 200 }]);
@@ -74,8 +74,8 @@ describe('AsrQueueStore', () => {
 
   it('keeps the live operation duration while a recording is running', () => {
     const document = makeRecording({ status: 'processing', captureId: 'running', durationMs: 90_000 });
-    const { store, library, streamingOperations } = setup({ initialDocs: [document] });
-    streamingOperations.set(new Map([[document.documentId, {
+    const { store, library, recordingOperations } = setup({ initialDocs: [document] });
+    recordingOperations.set(new Map([[document.documentId, {
       captureId: 'running', status: 'extracting', durationMs: 125_000,
     } as CaptureOperation]]));
     expect(store.rows()[0].durationLabel).toBe('2:05');
@@ -123,7 +123,7 @@ describe('AsrQueueStore', () => {
       requirement('speaker-diarization', options.speakersStatus ?? 'installable'),
     ]);
     const busyIds = signal<ReadonlySet<string>>(new Set());
-    const streamingOperations = signal<ReadonlyMap<string, CaptureOperation>>(new Map());
+    const recordingOperations = signal<ReadonlyMap<string, CaptureOperation>>(new Map());
     const streamingPartials = signal<ReadonlyMap<string, PartialCapture>>(new Map());
     const ready = signal(true);
     const runtime = {
@@ -155,7 +155,7 @@ describe('AsrQueueStore', () => {
     const startDocSubject = new Subject<void>();
     const capture = {
       busyIds,
-      streamingOperations,
+      recordingOperations,
       streamingPartials,
       hasActiveCapture: vi.fn((id: string) => busyIds().has(id)),
       startDocument$: vi.fn(() => startDocSubject),
@@ -178,7 +178,7 @@ describe('AsrQueueStore', () => {
       requirements,
       requestedRequirements: signal<ReadonlySet<CaptureRequirementId>>(new Set()),
       installationFor: vi.fn((): RuntimeInstallation | null => null),
-      installUnit: vi.fn(),
+      installRequirement: vi.fn(),
     };
 
     const formatting = {
@@ -211,7 +211,7 @@ describe('AsrQueueStore', () => {
       docs,
       requirements,
       busyIds,
-      streamingOperations,
+      recordingOperations,
       streamingPartials,
       library,
       capture,
@@ -391,7 +391,7 @@ describe('AsrQueueStore', () => {
       installing: false, label: '安裝說話者辨識（約 2.8 GB）',
     });
     store.installSpeakers();
-    expect(features.installUnit).toHaveBeenCalledExactlyOnceWith('speaker-diarization');
+    expect(features.installRequirement).toHaveBeenCalledExactlyOnceWith('speaker-diarization');
     setDesktopLocale('en');
     expect(store.optionalSpeakerInstall()?.label).toBe('Install speaker identification (~2.8 GB)');
     requirements.set([requirement('speaker-diarization', 'ready')]);

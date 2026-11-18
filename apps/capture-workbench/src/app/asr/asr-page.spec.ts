@@ -94,7 +94,7 @@ describe('AsrPage', () => {
       startingRequirementId: signal<CaptureRequirementId | null>(null),
       installationFor: vi.fn((requirementId: CaptureRequirementId): RuntimeInstallation | null =>
         options.installation?.requirementId === requirementId ? options.installation : null),
-      installUnit: vi.fn(),
+      installRequirement: vi.fn(),
       cancelInstallation: vi.fn(),
       retryInstallation: vi.fn(),
     };
@@ -121,7 +121,7 @@ describe('AsrPage', () => {
     expect(el.querySelector('[data-testid="asr-import-error"]')).toBeNull();
   });
 
-  it('shows the unit as preparing from the click, before the runtime has answered', () => {
+  it('shows the requirement as preparing from the click, before the runtime has answered', () => {
     const { fixture, features } = setup({ speechReady: false });
     const el = fixture.nativeElement as HTMLElement;
     const card = el.querySelector(
@@ -171,7 +171,7 @@ describe('AsrPage', () => {
       '[data-testid="engine-card"][data-requirement-id="speech-recognition"] [data-testid="engine-card-install"]',
     ) as HTMLButtonElement;
     installBtn.click();
-    expect(features.installUnit).toHaveBeenCalledWith('speech-recognition');
+    expect(features.installRequirement).toHaveBeenCalledWith('speech-recognition');
   });
 
   it('renders drop zone, language selector, optional speaker install vs checkbox, and speaker note', () => {

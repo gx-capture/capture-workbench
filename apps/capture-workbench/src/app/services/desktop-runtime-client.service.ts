@@ -274,7 +274,11 @@ export class DesktopRuntimeClientService {
         if (status.status === 'ready') {
           return EMPTY;
         }
-        if (status.status === 'failed' || status.status === 'stopped') {
+        if (
+          status.status === 'failed' ||
+          status.status === 'failed-cleanup' ||
+          status.status === 'stopped'
+        ) {
           return throwError(() => new Error(status.detail));
         }
         return timer(500).pipe(switchMap(() => this.status$(signal)));

@@ -49,9 +49,9 @@ import {
   committedTerminalStatus,
   errorMessage,
   hasCommittedTerminalData,
-  isActiveJob,
+  isActiveOneShotOperation,
   isActiveStreaming,
-  isAudioMediaType,
+  isRecordingMediaType,
   isFeatureReady,
   isOcrCheckpoint,
   isPdfMediaType,
@@ -102,9 +102,9 @@ export class DesktopWorkspaceCaptureService {
   readonly busyIds = signal<ReadonlySet<string>>(new Set());
   readonly streamingPartials = signal<ReadonlyMap<string, PartialCapture>>(new Map());
   /** Live streaming operations, so the ASR queue can show audio time progress. */
-  readonly streamingOperations = signal<ReadonlyMap<string, CaptureOperation>>(new Map());
-  /** Live one-shot jobs, so a queue can show page progress that the library does not store. */
-  readonly jobs = signal<ReadonlyMap<string, DesktopCaptureOperation>>(new Map());
+  readonly recordingOperations = signal<ReadonlyMap<string, CaptureOperation>>(new Map());
+  /** Live one-shot operations, so a queue can show page progress that the library does not store. */
+  readonly oneShotOperations = signal<ReadonlyMap<string, DesktopCaptureOperation>>(new Map());
 
   private readonly runtime = inject(DesktopRuntimeClientService);
   private readonly library = inject(DesktopLibraryService);
@@ -154,7 +154,7 @@ export class DesktopWorkspaceCaptureService {
     return this.captureExisting$(documentId, host);
   }
 
-  /** Re-attaches to a runtime job the library still points at. */
+  /** Re-attaches to a runtime operation the library still points at. */
   reattach$(
     document: DesktopLibrarySummary,
     host: DesktopWorkspaceCaptureHost,
@@ -163,7 +163,7 @@ export class DesktopWorkspaceCaptureService {
   }
 
   /**
-   * A restart lost the runtime job. Clear the stale id and start again.
+   * A restart lost the runtime operation. Clear the stale id and start again.
    * Unlike `retry$`, this does not try to recover that id.
    */
   restartLost$(
@@ -208,16 +208,16 @@ export class DesktopWorkspaceCaptureService {
     }
   }
 
-  private isAudioDocument(
+  private isRecordingDocument(
     documentId: string,
     host: DesktopWorkspaceCaptureHost,
     mediaType?: string,
   ): boolean {
     // A new import is not in the library list yet, so the caller's media type wins.
-    if (mediaType !== undefined) return isAudioMediaType(mediaType);
+    if (mediaType !== undefined) return isRecordingMediaType(mediaType);
     const document = host.documents().find((item) => item.documentId === documentId)
       ?? (host.selected()?.documentId === documentId ? host.selected() : undefined);
-    return isAudioMediaType(document?.mediaType ?? '');
+    return isRecordingMediaType(document?.mediaType ?? '');
   }
 
   private isPdfDocument(
@@ -236,33 +236,33 @@ export class DesktopWorkspaceCaptureService {
     active.lastStage = event.stage;
   }
 
-  /** Selects the imported file and starts it, unless its recognition unit is missing. */
+  /** Selects the imported file and starts it, unless its recognition requirement is missing. */
   private continueImported$(
     document: DesktopLibrarySummary,
     host: DesktopWorkspaceCaptureHost,
   ): Observable<void> {
     host.selectedId.set(document.documentId);
     host.refreshDocuments();
-    if (isAudioMediaType(document.mediaType) && !isFeatureReady(host.requirements(), 'asr')) {
+    if (isRecordingMediaType(document.mediaType) && !isFeatureReady(host.requirements(), 'asr')) {
       host.requestedRequirements.update(
         (current) => new Set([...current, 'speech-recognition']),
       );
-      host.setMessage(desktopMessages().speechUnitNeeded);
+      host.setMessage(desktopMessages().speechRequirementNeeded);
       return EMPTY;
     }
     if (
-      isAudioMediaType(document.mediaType)
+      isRecordingMediaType(document.mediaType)
       && host.identifySpeakers()
       && !isFeatureReady(host.requirements(), 'asr.speakers')
     ) {
       host.requestedRequirements.update(
         (current) => new Set([...current, 'speaker-diarization']),
       );
-      host.setMessage(desktopMessages().speakerUnitNeeded);
+      host.setMessage(desktopMessages().speakerRequirementNeeded);
       return EMPTY;
     }
     if (
-      !isAudioMediaType(document.mediaType)
+      !isRecordingMediaType(document.mediaType)
       && selectFeatureMissing(host.requirements(), 'ocr').length > 0
     ) {
       host.requestedRequirements.update(
@@ -284,7 +284,7 @@ export class DesktopWorkspaceCaptureService {
       const pdfPageNumbers = this.pdfPageNumbersFor(documentId, host, mediaType);
       const active: ActiveCapture = {
         clientRequestId: crypto.randomUUID(),
-        streaming: this.isAudioDocument(documentId, host, mediaType),
+        streaming: this.isRecordingDocument(documentId, host, mediaType),
         lastEventSequence: 0,
         rawPersisted: false,
         cancelRequested: false,
@@ -321,23 +321,23 @@ export class DesktopWorkspaceCaptureService {
     if (active.cancelRequested) return throwError(() => new Error('Upload was cancelled.'));
     const clientRequestId = active.clientRequestId ??= crypto.randomUUID();
     return this.runtime.createCapture(documentId, clientRequestId, pdfPageNumbers).pipe(
-      switchMap((job) => {
-        active.captureId = job.captureId;
-        this.rememberSourceIdentity(active, job);
-        this.rememberJob(documentId, job);
-        active.lastStage = job.status;
+      switchMap((operation) => {
+        active.captureId = operation.captureId;
+        this.rememberSourceIdentity(active, operation);
+        this.rememberOneShotOperation(documentId, operation);
+        active.lastStage = operation.status;
         return this.library.updateCapture({
           documentId,
-          captureId: job.captureId,
+          captureId: operation.captureId,
           status: 'processing',
-          stage: job.status,
+          stage: operation.status,
         }).pipe(
           tap(() => host.reloadDocumentState(documentId)),
-          map(() => job),
+          map(() => operation),
         );
       }),
-      switchMap((job) => this.waitForTerminal$(documentId, job, active, host)),
-      switchMap((job) => this.persistOneShot$(documentId, job, active, host)),
+      switchMap((operation) => this.waitForTerminal$(documentId, operation, active, host)),
+      switchMap((operation) => this.persistOneShot$(documentId, operation, active, host)),
       map(() => undefined),
     );
   }
@@ -362,7 +362,7 @@ export class DesktopWorkspaceCaptureService {
       switchMap((operation) => {
         active.captureId = operation.captureId;
         active.lastStage = operation.status;
-        this.rememberStreamingOperation(documentId, operation);
+        this.rememberRecordingOperation(documentId, operation);
         return this.library.updateCapture({
           documentId,
           captureId: operation.captureId,
@@ -417,14 +417,14 @@ export class DesktopWorkspaceCaptureService {
     if (!active.cancelRequested || active.cancelSent) {
       return events$.pipe(
         switchMap(() => this.runtime.getStreamingCapture(operation.captureId)),
-        tap((next) => this.rememberStreamingOperation(documentId, next)),
+        tap((next) => this.rememberRecordingOperation(documentId, next)),
       );
     }
     active.cancelSent = true;
     return this.runtime.cancelStreamingCapture(operation.captureId).pipe(
       switchMap(() => events$),
       switchMap(() => this.runtime.getStreamingCapture(operation.captureId)),
-      tap((next) => this.rememberStreamingOperation(documentId, next)),
+      tap((next) => this.rememberRecordingOperation(documentId, next)),
     );
   }
 
@@ -486,7 +486,7 @@ export class DesktopWorkspaceCaptureService {
       const terminalCommitted = hasCommittedTerminalData(document);
       const active: ActiveCapture = {
         captureId: document.captureId,
-        streaming: isAudioMediaType(document.mediaType),
+        streaming: isRecordingMediaType(document.mediaType),
         lastEventSequence: 0,
         rawPersisted: false,
         cancelRequested: false,
@@ -509,7 +509,7 @@ export class DesktopWorkspaceCaptureService {
           ? this.runtime.getStreamingCapture(document.captureId).pipe(
             tap((operation) => {
               active.lastStage = operation.status;
-              this.rememberStreamingOperation(document.documentId, operation);
+              this.rememberRecordingOperation(document.documentId, operation);
             }),
             switchMap((operation) => this.waitForStreamingTerminal$(
               document.documentId,
@@ -524,13 +524,13 @@ export class DesktopWorkspaceCaptureService {
             )),
           )
           : this.runtime.getCapture(document.captureId).pipe(
-            tap((job) => {
-              this.rememberSourceIdentity(active, job);
-              this.rememberJob(document.documentId, job);
-              active.lastStage = job.status;
+            tap((operation) => {
+              this.rememberSourceIdentity(active, operation);
+              this.rememberOneShotOperation(document.documentId, operation);
+              active.lastStage = operation.status;
             }),
-            switchMap((job) => this.waitForTerminal$(document.documentId, job, active, host)),
-            switchMap((job) => this.persistOneShot$(document.documentId, job, active, host)),
+            switchMap((operation) => this.waitForTerminal$(document.documentId, operation, active, host)),
+            switchMap((operation) => this.persistOneShot$(document.documentId, operation, active, host)),
           );
       return this.trackCaptureLifecycle$(document.documentId, active, work$, host);
     });
@@ -554,8 +554,8 @@ export class DesktopWorkspaceCaptureService {
       finalize(() => {
         active.cancelWake.complete();
         this.activeCaptures.delete(documentId);
-        this.forgetJob(documentId);
-        this.forgetStreamingOperation(documentId);
+        this.forgetOneShotOperation(documentId);
+        this.forgetRecordingOperation(documentId);
         this.markBusy(documentId, false);
       }),
       map(() => undefined),
@@ -569,46 +569,46 @@ export class DesktopWorkspaceCaptureService {
     host: DesktopWorkspaceCaptureHost,
   ): Observable<DesktopCaptureOperation> {
     return of(initial).pipe(
-      switchMap((job) => this.persistRawDuringExtraction$(documentId, job, active, host)),
-      tap((job) => active.lastStage = job.status),
-      expand((job) => {
-        if (!isActiveJob(job) || isOcrCheckpoint(job)) return EMPTY;
-        return this.advanceCapture$(documentId, job, active, host);
+      switchMap((operation) => this.persistRawDuringExtraction$(documentId, operation, active, host)),
+      tap((operation) => active.lastStage = operation.status),
+      expand((operation) => {
+        if (!isActiveOneShotOperation(operation) || isOcrCheckpoint(operation)) return EMPTY;
+        return this.advanceCapture$(documentId, operation, active, host);
       }),
-      filter((job) => !isActiveJob(job) || isOcrCheckpoint(job)),
+      filter((operation) => !isActiveOneShotOperation(operation) || isOcrCheckpoint(operation)),
       take(1),
     );
   }
 
   private advanceCapture$(
     documentId: string,
-    job: DesktopCaptureOperation,
+    operation: DesktopCaptureOperation,
     active: ActiveCapture,
     host: DesktopWorkspaceCaptureHost,
   ): Observable<DesktopCaptureOperation> {
     return this.library.updateCapture({
       documentId,
-      captureId: job.captureId,
+      captureId: operation.captureId,
       status: 'processing',
-      stage: job.status,
+      stage: operation.status,
     }).pipe(
       switchMap(() => {
         if (active.cancelRequested && !active.cancelSent) {
-          return this.sendCancellation$(job.captureId, active);
+          return this.sendCancellation$(operation.captureId, active);
         }
         return race(
           timer(700).pipe(
-            switchMap(() => this.runtime.getCapture(job.captureId)),
+            switchMap(() => this.runtime.getCapture(operation.captureId)),
           ),
           active.cancelWake.pipe(
             take(1),
-            switchMap(() => this.sendCancellation$(job.captureId, active)),
+            switchMap(() => this.sendCancellation$(operation.captureId, active)),
           ),
         );
       }),
       switchMap((next) => this.persistRawDuringExtraction$(documentId, next, active, host)),
       tap((next) => {
-        this.rememberJob(documentId, next);
+        this.rememberOneShotOperation(documentId, next);
         active.lastStage = next.status;
       }),
     );
@@ -616,31 +616,31 @@ export class DesktopWorkspaceCaptureService {
 
   private persistRawDuringExtraction$(
     documentId: string,
-    job: DesktopCaptureOperation,
+    operation: DesktopCaptureOperation,
     active: ActiveCapture,
     host: DesktopWorkspaceCaptureHost,
   ): Observable<DesktopCaptureOperation> {
     if (
       active.rawPersisted
-      || job.status !== 'structuring'
+      || operation.status !== 'structuring'
     ) {
-      return of(job);
+      return of(operation);
     }
-    return this.runtime.getRaw(job.captureId).pipe(
+    return this.runtime.getRaw(operation.captureId).pipe(
       switchMap((raw) => {
-        if (!raw) return of(job);
+        if (!raw) return of(operation);
         return this.library.updateCapture({
           documentId,
-          captureId: job.captureId,
+          captureId: operation.captureId,
           status: 'processing',
-          stage: job.status,
+          stage: operation.status,
           raw,
         }).pipe(
           tap(() => {
             active.rawPersisted = true;
             host.reloadDocumentState(documentId);
           }),
-          map(() => job),
+          map(() => operation),
         );
       }),
     );
@@ -656,50 +656,50 @@ export class DesktopWorkspaceCaptureService {
 
   private persistTerminal$(
     documentId: string,
-    job: DesktopCaptureOperation,
+    operation: DesktopCaptureOperation,
     active: ActiveCapture,
   ): Observable<DesktopLibrarySummary> {
     return this.library.updateCapture({
       documentId,
-      captureId: job.captureId,
+      captureId: operation.captureId,
       status: 'persisting',
-      stage: job.status,
+      stage: operation.status,
     }).pipe(
-      switchMap(() => this.persistTerminalData$(documentId, job, active)),
+      switchMap(() => this.persistTerminalData$(documentId, operation, active)),
       tap(() => {
         active.terminalCommitted = true;
-        active.terminalStatus = terminalLibraryStatus(job);
-        active.terminalErrorCode = job.error?.code;
-        active.terminalErrorMessage = job.error?.message;
+        active.terminalStatus = terminalLibraryStatus(operation);
+        active.terminalErrorCode = operation.error?.code;
+        active.terminalErrorMessage = operation.error?.message;
       }),
-      switchMap(() => this.cleanupAfterCommit$(documentId, job)),
+      switchMap(() => this.cleanupAfterCommit$(documentId, operation)),
     );
   }
 
   private persistOneShot$(
     documentId: string,
-    job: DesktopCaptureOperation,
+    operation: DesktopCaptureOperation,
     active: ActiveCapture,
     host: DesktopWorkspaceCaptureHost,
   ): Observable<DesktopLibrarySummary> {
-    return isOcrCheckpoint(job)
-      ? this.persistOcrCheckpoint$(documentId, job, active, host)
-      : this.persistTerminal$(documentId, job, active);
+    return isOcrCheckpoint(operation)
+      ? this.persistOcrCheckpoint$(documentId, operation, active, host)
+      : this.persistTerminal$(documentId, operation, active);
   }
 
   private persistOcrCheckpoint$(
     documentId: string,
-    job: DesktopCaptureOperation,
+    operation: DesktopCaptureOperation,
     active: ActiveCapture,
     host: DesktopWorkspaceCaptureHost,
   ): Observable<DesktopLibrarySummary> {
-    const stage = job.status;
-    return this.settleOne$(this.runtime.getRaw(job.captureId)).pipe(
+    const stage = operation.status;
+    return this.settleOne$(this.runtime.getRaw(operation.captureId)).pipe(
       switchMap((raw) => {
         if (!raw) {
           return throwError(() => new Error('Capture Runtime OCR checkpoint raw projection is unavailable.'));
         }
-        return this.settleOne$(this.runtime.getOcr(job.captureId)).pipe(
+        return this.settleOne$(this.runtime.getOcr(operation.captureId)).pipe(
           switchMap((projection) => {
             if (
               projection.status !== 'completed'
@@ -709,7 +709,7 @@ export class DesktopWorkspaceCaptureService {
             }
             return buildOcrEvidence({
               projection,
-              expected: this.expectedOcrIdentity(job, active, projection.status),
+              expected: this.expectedOcrIdentity(operation, active, projection.status),
               requestedPages: active.pdfPageNumbers ?? null,
             }).pipe(map((ocrEvidence) => ({ raw, ocrEvidence })));
           }),
@@ -717,7 +717,7 @@ export class DesktopWorkspaceCaptureService {
       }),
       switchMap(({ raw, ocrEvidence }) => this.settleOne$(this.library.updateCapture({
         documentId,
-        captureId: job.captureId,
+        captureId: operation.captureId,
         status: ocrEvidence.status,
         stage,
         raw,
@@ -729,7 +729,7 @@ export class DesktopWorkspaceCaptureService {
         active.lastStage = stage;
         host.reloadDocumentState(documentId);
       }),
-      switchMap(() => this.settleOne$(this.runtime.deleteCapture(job.captureId))),
+      switchMap(() => this.settleOne$(this.runtime.deleteCapture(operation.captureId))),
       switchMap(() => this.settleOne$(this.library.updateCapture({
         documentId,
         status: 'awaiting_confirmation',
@@ -741,54 +741,54 @@ export class DesktopWorkspaceCaptureService {
 
   private persistTerminalData$(
     documentId: string,
-    job: DesktopCaptureOperation,
+    operation: DesktopCaptureOperation,
     active: ActiveCapture,
     ocrEvidence?: OcrEvidenceV1,
   ): Observable<DesktopLibrarySummary> {
     if (
       ocrEvidence === undefined
-      && (job.status === 'completed' || job.status === 'failed')
+      && (operation.status === 'completed' || operation.status === 'failed')
     ) {
-      this.rememberSourceIdentity(active, job);
-      return this.settleOne$(this.runtime.getOcr(job.captureId)).pipe(
+      this.rememberSourceIdentity(active, operation);
+      return this.settleOne$(this.runtime.getOcr(operation.captureId)).pipe(
         switchMap((projection) => buildOcrEvidence({
           projection,
-          expected: this.expectedOcrIdentity(job, active),
+          expected: this.expectedOcrIdentity(operation, active),
           requestedPages: active.pdfPageNumbers ?? null,
         })),
         switchMap((evidence) => this.persistTerminalData$(
           documentId,
-          job,
+          operation,
           active,
           evidence,
         )),
       );
     }
-    if (job.status === 'completed') {
+    if (operation.status === 'completed') {
       if (active.rawPersisted) {
-        return this.runtime.getResult(job.captureId).pipe(
+        return this.runtime.getResult(operation.captureId).pipe(
           switchMap((result) => this.library.updateCapture({
             documentId,
-            captureId: job.captureId,
+            captureId: operation.captureId,
             status: 'completed' as const,
-            stage: job.status,
+            stage: operation.status,
             result,
             ...(ocrEvidence === undefined ? {} : { ocrEvidence }),
           })),
         );
       }
-      return this.runtime.getRaw(job.captureId).pipe(
+      return this.runtime.getRaw(operation.captureId).pipe(
         switchMap((raw) => {
           if (!raw) {
             return throwError(() => new Error(desktopMessages().missingRawResult));
           }
-          return this.runtime.getResult(job.captureId).pipe(
+          return this.runtime.getResult(operation.captureId).pipe(
             switchMap((result) => {
               const update = {
                 documentId,
-                captureId: job.captureId,
+                captureId: operation.captureId,
                 status: 'completed' as const,
-                stage: job.status,
+                stage: operation.status,
                 result,
                 ...(ocrEvidence === undefined ? {} : { ocrEvidence }),
                 ...(active.rawPersisted ? {} : { raw }),
@@ -803,28 +803,28 @@ export class DesktopWorkspaceCaptureService {
         }),
       );
     }
-    if (job.status === 'failed' || job.status === 'cancelled') {
+    if (operation.status === 'failed' || operation.status === 'cancelled') {
       if (active.rawPersisted) {
         return this.library.updateCapture({
           documentId,
-          captureId: job.captureId,
-          status: terminalLibraryStatus(job),
-          stage: job.status,
+          captureId: operation.captureId,
+          status: terminalLibraryStatus(operation),
+          stage: operation.status,
           ...(ocrEvidence === undefined ? {} : { ocrEvidence }),
-          errorCode: job.error?.code,
-          errorMessage: job.error?.message,
+          errorCode: operation.error?.code,
+          errorMessage: operation.error?.message,
         });
       }
-      return this.runtime.getRaw(job.captureId).pipe(
+      return this.runtime.getRaw(operation.captureId).pipe(
         switchMap((raw) => {
           const update = {
             documentId,
-            captureId: job.captureId,
-            status: terminalLibraryStatus(job),
-            stage: job.status,
+            captureId: operation.captureId,
+            status: terminalLibraryStatus(operation),
+            stage: operation.status,
             ...(ocrEvidence === undefined ? {} : { ocrEvidence }),
-            errorCode: job.error?.code,
-            errorMessage: job.error?.message,
+            errorCode: operation.error?.code,
+            errorMessage: operation.error?.message,
             ...(active.rawPersisted || !raw ? {} : { raw }),
           };
           return this.library.updateCapture(update).pipe(
@@ -835,19 +835,19 @@ export class DesktopWorkspaceCaptureService {
         }),
       );
     }
-    return throwError(() => new Error(`Capture Runtime returned unsupported terminal status: ${job.status}`));
+    return throwError(() => new Error(`Capture Runtime returned unsupported terminal status: ${operation.status}`));
   }
 
   private expectedOcrIdentity(
-    job: DesktopCaptureOperation,
+    operation: DesktopCaptureOperation,
     active: ActiveCapture,
-    terminalStatus: CaptureOcrProjection['status'] = job.status === 'failed' ? 'failed' : 'completed',
+    terminalStatus: CaptureOcrProjection['status'] = operation.status === 'failed' ? 'failed' : 'completed',
   ): OcrEvidenceExpectedIdentity {
     const compute = active.ocrCompute;
     if (!compute) {
       throw new Error('OCR evidence identity unavailable: runtime OCR readiness is missing.');
     }
-    const sourceSha256 = active.sourceSha256 ?? job.source?.sha256;
+    const sourceSha256 = active.sourceSha256 ?? operation.source?.sha256;
     if (!sourceSha256) {
       throw new Error('OCR evidence identity unavailable: capture source identity is missing.');
     }
@@ -858,7 +858,7 @@ export class DesktopWorkspaceCaptureService {
       throw new Error(`OCR evidence is unsupported for terminal status: ${terminalStatus}`);
     }
     return {
-      captureId: job.captureId,
+      captureId: operation.captureId,
       sourceSha256,
       runtimeVersion: compute.runtimeVersion,
       contractSha256: compute.contractSha256,
@@ -869,9 +869,9 @@ export class DesktopWorkspaceCaptureService {
 
   private rememberSourceIdentity(
     active: ActiveCapture,
-    job: DesktopCaptureOperation,
+    operation: DesktopCaptureOperation,
   ): void {
-    const sourceSha256 = job.source?.sha256;
+    const sourceSha256 = operation.source?.sha256;
     if (sourceSha256 === undefined) return;
     if (active.sourceSha256 !== undefined && active.sourceSha256 !== sourceSha256) {
       throw new Error('OCR evidence identity mismatch: capture source changed.');
@@ -900,25 +900,25 @@ export class DesktopWorkspaceCaptureService {
 
   private cleanupAfterCommit$(
     documentId: string,
-    job: DesktopCaptureOperation,
+    operation: DesktopCaptureOperation,
   ): Observable<DesktopLibrarySummary> {
-    const terminalStatus = terminalLibraryStatus(job);
-    return this.runtime.deleteCapture(job.captureId).pipe(
+    const terminalStatus = terminalLibraryStatus(operation);
+    return this.runtime.deleteCapture(operation.captureId).pipe(
       switchMap(() => this.library.updateCapture({
         documentId,
         status: terminalStatus,
-        stage: job.status,
+        stage: operation.status,
         clearCaptureId: true,
-        errorCode: job.error?.code,
-        errorMessage: job.error?.message,
+        errorCode: operation.error?.code,
+        errorMessage: operation.error?.message,
       })),
       catchError((error) => this.library.updateCapture({
         documentId,
-        captureId: job.captureId,
+        captureId: operation.captureId,
         status: 'recovery_required',
-        stage: job.status,
-        errorCode: job.error?.code,
-        errorMessage: job.error?.message,
+        stage: operation.status,
+        errorCode: operation.error?.code,
+        errorMessage: operation.error?.message,
         recoveryCode: 'runtime_cleanup_failed',
         recoveryMessage: errorMessage(error),
       })),
@@ -928,7 +928,7 @@ export class DesktopWorkspaceCaptureService {
   private retryRuntimeCleanup$(document: DesktopLibrarySummary): Observable<DesktopLibrarySummary> {
     const captureId = document.captureId;
     if (!captureId) return EMPTY;
-    const delete$ = isAudioMediaType(document.mediaType)
+    const delete$ = isRecordingMediaType(document.mediaType)
       ? this.runtime.deleteStreamingCapture(captureId)
       : this.runtime.deleteCapture(captureId);
     return delete$.pipe(
@@ -1025,16 +1025,16 @@ export class DesktopWorkspaceCaptureService {
     return this.runtime.pdfPageNumbers();
   }
 
-  private rememberStreamingOperation(documentId: string, operation: CaptureOperation): void {
-    this.streamingOperations.update((current) => {
+  private rememberRecordingOperation(documentId: string, operation: CaptureOperation): void {
+    this.recordingOperations.update((current) => {
       const next = new Map(current);
       next.set(documentId, operation);
       return next;
     });
   }
 
-  private forgetStreamingOperation(documentId: string): void {
-    this.streamingOperations.update((current) => {
+  private forgetRecordingOperation(documentId: string): void {
+    this.recordingOperations.update((current) => {
       if (!current.has(documentId)) return current;
       const next = new Map(current);
       next.delete(documentId);
@@ -1042,16 +1042,16 @@ export class DesktopWorkspaceCaptureService {
     });
   }
 
-  private rememberJob(documentId: string, job: DesktopCaptureOperation): void {
-    this.jobs.update((current) => {
+  private rememberOneShotOperation(documentId: string, operation: DesktopCaptureOperation): void {
+    this.oneShotOperations.update((current) => {
       const next = new Map(current);
-      next.set(documentId, job);
+      next.set(documentId, operation);
       return next;
     });
   }
 
-  private forgetJob(documentId: string): void {
-    this.jobs.update((current) => {
+  private forgetOneShotOperation(documentId: string): void {
+    this.oneShotOperations.update((current) => {
       if (!current.has(documentId)) return current;
       const next = new Map(current);
       next.delete(documentId);

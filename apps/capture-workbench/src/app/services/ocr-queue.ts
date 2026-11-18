@@ -2,57 +2,18 @@ import type { RawCapture } from '@gx-capture/capture-workbench-ui';
 import type { DesktopLibrarySummary } from '../contracts';
 import { desktopMessages } from '../i18n/desktop-messages';
 import type { DesktopCaptureOperation } from './desktop-runtime-client.service';
-import { isActiveJob, stageLabel } from './desktop-workspace.selectors';
-
-/** The five statuses the OCR queue shows. The pipeline stage is only a progress step. */
-export type OcrUserStatus =
-  | 'waiting'
-  | 'processing'
-  | 'done'
-  | 'needs-attention'
-  | 'cancelled';
-
-export type OcrChipVariant = 'running' | 'waiting' | 'done' | 'error';
-
-/** Maps an OCR user status to its chip styling variant. */
-export function ocrChipVariant(status: OcrUserStatus): OcrChipVariant {
-  switch (status) {
-    case 'processing':
-      return 'running';
-    case 'done':
-      return 'done';
-    case 'needs-attention':
-      return 'error';
-    case 'waiting':
-    case 'cancelled':
-    default:
-      return 'waiting';
-  }
-}
-
-/** Returns the Tailwind CSS classes for the given chip variant. */
-export function ocrChipClasses(variant: OcrChipVariant): string {
-  switch (variant) {
-    case 'running':
-      return 'bg-secondary text-secondary-foreground';
-    case 'waiting':
-      return 'border border-border text-muted-foreground';
-    case 'done':
-      return 'bg-muted text-secondary-foreground';
-    case 'error':
-      return 'bg-destructive/10 text-destructive';
-  }
-}
+import { captureStatusChipVariant, type CaptureStatusChipVariant, type CaptureUserStatus } from './capture-user-status';
+import { isActiveOneShotOperation, stageLabel } from './desktop-workspace.selectors';
 
 export interface OcrQueueView {
   readonly documentId: string;
   readonly fileName: string;
   readonly pageLabel: string;
-  readonly userStatus: OcrUserStatus;
+  readonly userStatus: CaptureUserStatus;
   readonly statusText: string;
   readonly progressText: string;
   readonly progressPercent: number | null;
-  readonly chipVariant: OcrChipVariant;
+  readonly chipVariant: CaptureStatusChipVariant;
   readonly needsInstall: boolean;
   readonly installPercent: number | null;
   readonly interrupted: boolean;
@@ -128,19 +89,19 @@ function parsePositivePageNumber(token: string): number | null {
   return page;
 }
 
-export function ocrStatusText(status: OcrUserStatus): string {
+export function ocrStatusText(status: CaptureUserStatus): string {
   const messages = desktopMessages();
   switch (status) {
     case 'waiting':
-      return messages.ocrStatusWaiting;
+      return messages.captureStatusWaiting;
     case 'processing':
-      return messages.ocrStatusProcessing;
+      return messages.captureStatusProcessing;
     case 'done':
-      return messages.ocrStatusDone;
+      return messages.captureStatusDone;
     case 'cancelled':
-      return messages.ocrStatusCancelled;
+      return messages.captureStatusCancelled;
     default:
-      return messages.ocrStatusNeedsAttention;
+      return messages.captureStatusNeedsAttention;
   }
 }
 
@@ -180,29 +141,29 @@ export function groupRawOcrPages(
 
 export function describeOcrDocument(input: {
   readonly document: DesktopLibrarySummary;
-  readonly job?: DesktopCaptureOperation;
+  readonly operation?: DesktopCaptureOperation;
   readonly busy: boolean;
   readonly ocrReady: boolean;
   readonly installPercent: number | null;
 }): OcrQueueView {
   const { document } = input;
-  const jobActive = input.job !== undefined && isActiveJob(input.job);
-  const described = describeStatus(document, input.busy || jobActive);
+  const operationActive = input.operation !== undefined && isActiveOneShotOperation(input.operation);
+  const described = describeStatus(document, input.busy || operationActive);
   const waiting = described.userStatus === 'waiting';
-  const percent = typeof input.job?.progress === 'number' && Number.isFinite(input.job.progress)
-    ? Math.round(Math.min(Math.max(input.job.progress, 0), 1) * 100)
+  const percent = typeof input.operation?.progress === 'number' && Number.isFinite(input.operation.progress)
+    ? Math.round(Math.min(Math.max(input.operation.progress, 0), 1) * 100)
     : null;
   return {
     documentId: document.documentId,
     fileName: document.fileName,
-    pageLabel: pageLabel(document, input.job),
+    pageLabel: pageLabel(document, input.operation),
     userStatus: described.userStatus,
     statusText: ocrStatusText(described.userStatus),
     progressText: described.userStatus === 'processing'
-      ? progressText(input.job)
+      ? progressText(input.operation)
       : '',
     progressPercent: described.userStatus === 'processing' ? percent : null,
-    chipVariant: ocrChipVariant(described.userStatus),
+    chipVariant: captureStatusChipVariant(described.userStatus),
     needsInstall: waiting && !input.ocrReady,
     installPercent: waiting && !input.ocrReady ? input.installPercent : null,
     interrupted: described.interrupted,
@@ -213,7 +174,7 @@ export function describeOcrDocument(input: {
 function describeStatus(
   document: DesktopLibrarySummary,
   active: boolean,
-): { readonly userStatus: OcrUserStatus; readonly interrupted: boolean } {
+): { readonly userStatus: CaptureUserStatus; readonly interrupted: boolean } {
   if (active) return { userStatus: 'processing', interrupted: false };
   if (
     (document.status === 'processing' || document.status === 'persisting')
@@ -247,12 +208,12 @@ function describeStatus(
 
 function pageLabel(
   document: DesktopLibrarySummary,
-  job: DesktopCaptureOperation | undefined,
+  operation: DesktopCaptureOperation | undefined,
 ): string {
   if (document.mediaType === 'image/png' || document.mediaType === 'image/jpeg') {
     return '1';
   }
-  if (typeof job?.pagesTotal === 'number') return String(job.pagesTotal);
+  if (typeof operation?.pagesTotal === 'number') return String(operation.pagesTotal);
   const selectedPages = document.captureOptions?.pdfPageNumbers;
   if (Array.isArray(selectedPages) && selectedPages.length >= 1) {
     return String(selectedPages.length);
@@ -263,15 +224,15 @@ function pageLabel(
   return '—';
 }
 
-function progressText(job: DesktopCaptureOperation | undefined): string {
-  if (!job) return '';
-  const percent = typeof job.progress === 'number' && Number.isFinite(job.progress)
-    ? Math.round(Math.min(Math.max(job.progress, 0), 1) * 100)
+function progressText(operation: DesktopCaptureOperation | undefined): string {
+  if (!operation) return '';
+  const percent = typeof operation.progress === 'number' && Number.isFinite(operation.progress)
+    ? Math.round(Math.min(Math.max(operation.progress, 0), 1) * 100)
     : null;
-  const pages = typeof job.pagesDone === 'number' && typeof job.pagesTotal === 'number'
-    ? desktopMessages().ocrPageProgress(job.pagesDone, job.pagesTotal)
+  const pages = typeof operation.pagesDone === 'number' && typeof operation.pagesTotal === 'number'
+    ? desktopMessages().ocrPageProgress(operation.pagesDone, operation.pagesTotal)
     : null;
-  return [stageLabel(job.status), percent === null ? null : `${percent}%`, pages]
+  return [stageLabel(operation.status), percent === null ? null : `${percent}%`, pages]
     .filter((part): part is string => part !== null && part !== '')
     .join(' ');
 }
