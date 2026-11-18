@@ -23,12 +23,12 @@ from capture_runtime.structuring.infrastructure.model_catalog import (
 )
 from capture_runtime.structuring.infrastructure.ollama import (
     CommandResult,
-    FakeRuntimeInstaller,
     IsolatedOllamaLifecycle,
     OwnedProcess,
     SystemRuntimeInstaller,
 )
 from tests.conftest import TOKEN
+from tests.support.fake_requirement_installer import FakeRequirementInstaller
 from tests.support.ollama_legacy import install_legacy_model
 
 
@@ -445,7 +445,7 @@ def test_requirements_api_recovers_installed_profile_after_process_restart(
 def test_requirements_api_runs_sync_installer_off_the_event_loop(
     settings_factory: Callable[..., RuntimeSettings],
 ) -> None:
-    class ThreadRecordingInstaller(FakeRuntimeInstaller):
+    class ThreadRecordingInstaller(FakeRequirementInstaller):
         thread_id: int | None = None
 
         def requirements(self, enabled_requirement_ids=None):

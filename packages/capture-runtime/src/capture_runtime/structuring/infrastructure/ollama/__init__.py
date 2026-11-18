@@ -4,7 +4,6 @@ import shutil as _shutil
 
 from capture_runtime.structuring.infrastructure.ollama.installer import (
     CommandResult,
-    FakeRuntimeInstaller,
     RuntimeInstaller,
     SystemRuntimeInstaller,
 )
@@ -26,7 +25,6 @@ from capture_runtime.structuring.infrastructure.ollama.provider import (
 shutil = _shutil
 
 __all__ = [
-    "FakeRuntimeInstaller",
     "CommandResult",
     "ExternalOllamaCaptureStructuringProvider",
     "IsolatedOllamaLifecycle",

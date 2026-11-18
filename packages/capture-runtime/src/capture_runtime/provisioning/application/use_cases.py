@@ -9,8 +9,8 @@ from capture_runtime.contracts import RuntimeInstallationV2, RuntimeRequirementV
 if TYPE_CHECKING:
     from capture_runtime.provisioning.application.installation_service import (
         InstallationService,
+        RuntimeInstaller,
     )
-    from capture_runtime.structuring.infrastructure.ollama import RuntimeInstaller
 
 
 class CaptureGate(Protocol):

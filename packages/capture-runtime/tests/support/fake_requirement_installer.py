@@ -1,4 +1,4 @@
-"""Fake runtime requirement installer for tests and deterministic hosts."""
+"""Fake requirement installer for tests."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from capture_runtime.structuring.infrastructure.ollama.lifecycle_impl import (
 )
 
 
-class FakeRuntimeInstaller:
+class FakeRequirementInstaller:
     def __init__(
         self,
         *,

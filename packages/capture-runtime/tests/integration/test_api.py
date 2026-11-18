@@ -19,8 +19,8 @@ from capture_runtime.ocr.infrastructure.ocr_preflight import (
     OcrGpuAdapter,
     OcrGpuCapabilitySnapshot,
 )
-from capture_runtime.structuring.infrastructure.ollama import FakeRuntimeInstaller
 from tests.conftest import TOKEN, idempotency_headers
+from tests.support.fake_requirement_installer import FakeRequirementInstaller
 
 
 class StaticCapabilityProbe:
@@ -73,7 +73,7 @@ def test_legacy_runtime_paths_are_not_public(client: TestClient) -> None:
 def test_v2_runtime_requirements_and_installation_lifecycle(settings_factory) -> None:
     settings = settings_factory()
     with TestClient(
-        create_app(settings, installer=FakeRuntimeInstaller()),
+        create_app(settings, installer=FakeRequirementInstaller()),
         base_url=f"http://127.0.0.1:{settings.port}",
         headers={"Authorization": f"Bearer {TOKEN}"},
     ) as client:
@@ -194,7 +194,7 @@ def test_v2_uninstall_returns_the_requirement_not_installed_and_repeats_safely(
     settings_factory,
 ) -> None:
     settings = settings_factory()
-    installer = FakeRuntimeInstaller(initially_ready={"windowsml-ocr"})
+    installer = FakeRequirementInstaller(initially_ready={"windowsml-ocr"})
     with TestClient(
         create_app(settings, installer=installer),
         base_url=f"http://127.0.0.1:{settings.port}",
@@ -216,7 +216,7 @@ def test_v2_uninstall_rejects_unknown_disabled_and_non_engine_requirements(
 ) -> None:
     settings = settings_factory()
     with TestClient(
-        create_app(settings, installer=FakeRuntimeInstaller()),
+        create_app(settings, installer=FakeRequirementInstaller()),
         base_url=f"http://127.0.0.1:{settings.port}",
         headers={"Authorization": f"Bearer {TOKEN}"},
     ) as client:
@@ -224,7 +224,7 @@ def test_v2_uninstall_rejects_unknown_disabled_and_non_engine_requirements(
         model = _uninstall(client, "capture-ollama-model")
     host_settings = settings_factory(CAPTURE_STRUCTURING_PROVIDER="host")
     with TestClient(
-        create_app(host_settings, installer=FakeRuntimeInstaller()),
+        create_app(host_settings, installer=FakeRequirementInstaller()),
         base_url=f"http://127.0.0.1:{host_settings.port}",
         headers={"Authorization": f"Bearer {TOKEN}"},
     ) as client:
@@ -246,7 +246,7 @@ def test_v2_uninstall_rejects_unknown_disabled_and_non_engine_requirements(
 
 def test_v2_uninstall_conflicts_while_its_installation_runs(settings_factory) -> None:
     settings = settings_factory()
-    installer = FakeRuntimeInstaller(initially_ready={"windowsml-ocr"}, delay_seconds=30)
+    installer = FakeRequirementInstaller(initially_ready={"windowsml-ocr"}, delay_seconds=30)
     with TestClient(
         create_app(settings, installer=installer),
         base_url=f"http://127.0.0.1:{settings.port}",
@@ -272,7 +272,7 @@ def test_v2_uninstall_conflicts_while_its_installation_runs(settings_factory) ->
 
 def test_v2_uninstall_conflicts_while_a_capture_is_active(settings_factory) -> None:
     settings = settings_factory()
-    installer = FakeRuntimeInstaller(initially_ready={"speech-recognition"})
+    installer = FakeRequirementInstaller(initially_ready={"speech-recognition"})
     with TestClient(
         create_app(settings, installer=installer),
         base_url=f"http://127.0.0.1:{settings.port}",

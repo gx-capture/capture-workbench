@@ -54,7 +54,7 @@ sequenceDiagram
 
 ## 與其他上下文的關係
 
-讀取擷取上下文的公開結果；Ollama adapter 負責模型及 HTTP 技術機制。模型安裝 API 經 `InstallModelOption`、`GetModelInstallation`、`CancelModelInstallation`。
+讀取擷取上下文的公開結果；Ollama adapter 負責模型及 HTTP 技術機制。模型選項（`/runtime/model-options`）與模型安裝（`/runtime/model-installations`）路由位於 `capture_runtime.structuring.api.model_routes`。模型安裝 API 經 `InstallModelOption`、`GetModelInstallation`、`CancelModelInstallation`。
 
 ## 規則與資料來源
 
