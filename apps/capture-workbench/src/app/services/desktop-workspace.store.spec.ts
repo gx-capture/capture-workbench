@@ -10,7 +10,7 @@ import { EMPTY, finalize, of, Subject, throwError } from 'rxjs';
 import type { DesktopLibraryDetail, DesktopLibrarySummary } from '../contracts';
 import { DesktopLibraryService, type DesktopSourceSelection } from './desktop-library.service';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
-import { DesktopWorkspaceCaptureService } from './desktop-workspace-capture.service';
+import { DesktopCaptureService } from './desktop-capture.service';
 import { DesktopWorkspaceStore } from './desktop-workspace.store';
 import {
   FIRST_RUN_DISMISSED_STORAGE_KEY,
@@ -2275,7 +2275,7 @@ describe('DesktopWorkspaceStore', () => {
     expect(imported).toHaveBeenCalledTimes(2);
     expect(createCapture).toHaveBeenCalledTimes(1);
     // The second document waits for its turn: nothing else may start it.
-    const lifecycle = TestBed.inject(DesktopWorkspaceCaptureService);
+    const lifecycle = TestBed.inject(DesktopCaptureService);
     expect(lifecycle.hasActiveCapture('2'.repeat(32))).toBe(true);
     pending.complete();
   });
@@ -2288,7 +2288,7 @@ describe('DesktopWorkspaceStore', () => {
     let started = 0;
     const createCapture = vi.fn(() => captures[started++]);
     const store = initializeStore(libraryStub({ importSelection: imported }), runtimeStub({ createCapture }));
-    const lifecycle = TestBed.inject(DesktopWorkspaceCaptureService);
+    const lifecycle = TestBed.inject(DesktopCaptureService);
     store.addSelections({ selections: [selection('first.pdf'), selection('second.pdf')], rejected: [] });
     TestBed.tick();
     expect(createCapture).toHaveBeenCalledTimes(1);

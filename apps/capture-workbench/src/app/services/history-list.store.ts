@@ -5,14 +5,14 @@ import { Router } from '@angular/router';
 import { finalize } from 'rxjs';
 import { desktopMessages } from '../i18n/desktop-messages';
 import { DesktopLibraryService } from './desktop-library.service';
-import { DesktopWorkspaceCaptureService } from './desktop-workspace-capture.service';
+import { DesktopCaptureService } from './desktop-capture.service';
 import { DesktopWorkspaceStore } from './desktop-workspace.store';
 import { filterHistoryRows, historyRow, type HistoryFilters, type HistoryRow } from './history-list';
 
 @Injectable({ providedIn: 'root' })
 export class HistoryListStore {
   private readonly workspace = inject(DesktopWorkspaceStore);
-  private readonly capture = inject(DesktopWorkspaceCaptureService);
+  private readonly capture = inject(DesktopCaptureService);
   private readonly library = inject(DesktopLibraryService);
   private readonly router = inject(Router);
   private readonly document = inject(DOCUMENT);

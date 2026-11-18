@@ -441,5 +441,47 @@
     "match": "substring",
     "replacement": "installed-nsis-smoke",
     "allowed": []
+  },
+  {
+    "name": "DesktopWorkspaceCaptureService",
+    "match": "word",
+    "replacement": "DesktopCaptureService",
+    "allowed": []
+  },
+  {
+    "name": "DesktopWorkspaceCaptureHost",
+    "match": "word",
+    "replacement": "DesktopCaptureHost",
+    "allowed": []
+  },
+  {
+    "name": "DesktopWorkspaceInstallationService",
+    "match": "word",
+    "replacement": "DesktopInstallationService",
+    "allowed": []
+  },
+  {
+    "name": "DesktopWorkspaceFormattingService",
+    "match": "word",
+    "replacement": "DesktopFormattingService",
+    "allowed": []
+  },
+  {
+    "name": "desktop-workspace-capture",
+    "match": "substring",
+    "replacement": "desktop-capture",
+    "allowed": []
+  },
+  {
+    "name": "desktop-workspace-installation",
+    "match": "substring",
+    "replacement": "desktop-installation",
+    "allowed": []
+  },
+  {
+    "name": "desktop-workspace-formatting",
+    "match": "substring",
+    "replacement": "desktop-formatting",
+    "allowed": []
   }
 ]

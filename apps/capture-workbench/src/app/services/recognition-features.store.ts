@@ -15,7 +15,7 @@ import type {
   RuntimeRequirement,
 } from '@gx-capture/capture-workbench-ui';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
-import { DesktopWorkspaceInstallationService } from './desktop-workspace-installation.service';
+import { DesktopInstallationService } from './desktop-installation.service';
 import {
   activeModelOption as selectActiveModelOption,
   errorMessage,
@@ -61,7 +61,7 @@ function readFirstRunDismissed(): boolean {
  */
 export class RecognitionFeaturesStore {
   private readonly runtime = inject(DesktopRuntimeClientService);
-  private readonly installation = inject(DesktopWorkspaceInstallationService);
+  private readonly installation = inject(DesktopInstallationService);
   private readonly destroyRef = inject(DestroyRef);
 
   readonly runtimeStarted = this.runtime.started;

@@ -2,7 +2,7 @@ import { Injectable, inject, signal } from '@angular/core';
 import { concatMap, defer, EMPTY, finalize, from, map, of, tap, type Observable } from 'rxjs';
 import { desktopMessages } from '../i18n/desktop-messages';
 import { DesktopLibraryService } from './desktop-library.service';
-import { DesktopWorkspaceFormattingService } from './desktop-workspace-formatting.service';
+import { DesktopFormattingService } from './desktop-formatting.service';
 
 type ExportFormat = 'text' | 'markdown' | 'srt' | 'vtt';
 
@@ -10,7 +10,7 @@ type ExportFormat = 'text' | 'markdown' | 'srt' | 'vtt';
 @Injectable({ providedIn: 'root' })
 export class LibraryExportService {
   private readonly library = inject(DesktopLibraryService);
-  private readonly formatting = inject(DesktopWorkspaceFormattingService);
+  private readonly formatting = inject(DesktopFormattingService);
   readonly busyIds = signal<ReadonlySet<string>>(new Set());
 
   run(id: string, format: ExportFormat, copy = false, save: Observable<void> = of(undefined)): Observable<void> {

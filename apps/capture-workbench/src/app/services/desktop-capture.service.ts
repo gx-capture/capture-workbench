@@ -83,7 +83,7 @@ interface ActiveCapture {
   readonly cancelWake: Subject<void>;
 }
 
-export interface DesktopWorkspaceCaptureHost {
+export interface DesktopCaptureHost {
   readonly selectedId: WritableSignal<string | null>;
   readonly requestedRequirements: WritableSignal<ReadonlySet<CaptureRequirementId>>;
   readonly requirements: () => readonly RuntimeRequirement[];
@@ -98,7 +98,7 @@ export interface DesktopWorkspaceCaptureHost {
 
 @Injectable({ providedIn: 'root' })
 /** Owns capture lifecycle side effects behind the workspace store facade. */
-export class DesktopWorkspaceCaptureService {
+export class DesktopCaptureService {
   readonly busyIds = signal<ReadonlySet<string>>(new Set());
   readonly streamingPartials = signal<ReadonlyMap<string, PartialCapture>>(new Map());
   /** Live streaming operations, so the ASR queue can show audio time progress. */
@@ -123,7 +123,7 @@ export class DesktopWorkspaceCaptureService {
   /** Enqueues sources while preserving the existing sequential capture policy. */
   addSelections$(
     selections: readonly DesktopSourceSelection[],
-    host: DesktopWorkspaceCaptureHost,
+    host: DesktopCaptureHost,
   ): Observable<void> {
     return from(selections).pipe(
       concatMap((selection) => this.library.importSelection(selection).pipe(
@@ -149,7 +149,7 @@ export class DesktopWorkspaceCaptureService {
   /** Starts a capture for a file that is already in the library. */
   startDocument$(
     documentId: string,
-    host: DesktopWorkspaceCaptureHost,
+    host: DesktopCaptureHost,
   ): Observable<void> {
     return this.captureExisting$(documentId, host);
   }
@@ -157,7 +157,7 @@ export class DesktopWorkspaceCaptureService {
   /** Re-attaches to a runtime operation the library still points at. */
   reattach$(
     document: DesktopLibrarySummary,
-    host: DesktopWorkspaceCaptureHost,
+    host: DesktopCaptureHost,
   ): Observable<void> {
     return document.captureId ? this.recoverCapture$(document, host) : EMPTY;
   }
@@ -168,7 +168,7 @@ export class DesktopWorkspaceCaptureService {
    */
   restartLost$(
     documentId: string,
-    host: DesktopWorkspaceCaptureHost,
+    host: DesktopCaptureHost,
   ): Observable<void> {
     return this.library.updateCapture({
       documentId,
@@ -184,7 +184,7 @@ export class DesktopWorkspaceCaptureService {
   /** Resumes a recoverable capture or starts a capture for the selected document. */
   retry$(
     documentId: string,
-    host: DesktopWorkspaceCaptureHost,
+    host: DesktopCaptureHost,
   ): Observable<void> {
     const document = host.documents().find((item) => item.documentId === documentId)
       ?? (host.selected()?.documentId === documentId ? host.selected() : undefined);
@@ -210,7 +210,7 @@ export class DesktopWorkspaceCaptureService {
 
   private isRecordingDocument(
     documentId: string,
-    host: DesktopWorkspaceCaptureHost,
+    host: DesktopCaptureHost,
     mediaType?: string,
   ): boolean {
     // A new import is not in the library list yet, so the caller's media type wins.
@@ -222,7 +222,7 @@ export class DesktopWorkspaceCaptureService {
 
   private isPdfDocument(
     documentId: string,
-    host: DesktopWorkspaceCaptureHost,
+    host: DesktopCaptureHost,
     mediaType?: string,
   ): boolean {
     if (mediaType !== undefined) return isPdfMediaType(mediaType);
@@ -239,7 +239,7 @@ export class DesktopWorkspaceCaptureService {
   /** Selects the imported file and starts it, unless its recognition requirement is missing. */
   private continueImported$(
     document: DesktopLibrarySummary,
-    host: DesktopWorkspaceCaptureHost,
+    host: DesktopCaptureHost,
   ): Observable<void> {
     host.selectedId.set(document.documentId);
     host.refreshDocuments();
@@ -276,7 +276,7 @@ export class DesktopWorkspaceCaptureService {
 
   private captureExisting$(
     documentId: string,
-    host: DesktopWorkspaceCaptureHost,
+    host: DesktopCaptureHost,
     mediaType?: string,
   ): Observable<void> {
     return defer(() => {
@@ -315,7 +315,7 @@ export class DesktopWorkspaceCaptureService {
   private captureOneShot$(
     documentId: string,
     active: ActiveCapture,
-    host: DesktopWorkspaceCaptureHost,
+    host: DesktopCaptureHost,
     pdfPageNumbers?: readonly number[],
   ): Observable<void> {
     if (active.cancelRequested) return throwError(() => new Error('Upload was cancelled.'));
@@ -345,7 +345,7 @@ export class DesktopWorkspaceCaptureService {
   private captureStreaming$(
     documentId: string,
     active: ActiveCapture,
-    host: DesktopWorkspaceCaptureHost,
+    host: DesktopCaptureHost,
   ): Observable<void> {
     if (active.cancelRequested) return throwError(() => new Error('Upload was cancelled.'));
     const clientRequestId = active.clientRequestId ??= crypto.randomUUID();
@@ -432,7 +432,7 @@ export class DesktopWorkspaceCaptureService {
     documentId: string,
     operation: CaptureOperation,
     active: ActiveCapture,
-    host: DesktopWorkspaceCaptureHost,
+    host: DesktopCaptureHost,
   ): Observable<void> {
     active.terminalStatus = operation.status === 'completed' ? 'completed'
       : operation.status === 'cancelled' ? 'canceled' : 'failed';
@@ -473,7 +473,7 @@ export class DesktopWorkspaceCaptureService {
 
   private recoverCapture$(
     document: DesktopLibrarySummary,
-    host: DesktopWorkspaceCaptureHost,
+    host: DesktopCaptureHost,
   ): Observable<void> {
     return defer(() => {
       if (
@@ -540,7 +540,7 @@ export class DesktopWorkspaceCaptureService {
     documentId: string,
     active: ActiveCapture,
     work$: Observable<unknown>,
-    host: DesktopWorkspaceCaptureHost,
+    host: DesktopCaptureHost,
   ): Observable<void> {
     return work$.pipe(
       tap(() => host.reloadDocumentState(documentId)),
@@ -566,7 +566,7 @@ export class DesktopWorkspaceCaptureService {
     documentId: string,
     initial: DesktopCaptureOperation,
     active: ActiveCapture,
-    host: DesktopWorkspaceCaptureHost,
+    host: DesktopCaptureHost,
   ): Observable<DesktopCaptureOperation> {
     return of(initial).pipe(
       switchMap((operation) => this.persistRawDuringExtraction$(documentId, operation, active, host)),
@@ -584,7 +584,7 @@ export class DesktopWorkspaceCaptureService {
     documentId: string,
     operation: DesktopCaptureOperation,
     active: ActiveCapture,
-    host: DesktopWorkspaceCaptureHost,
+    host: DesktopCaptureHost,
   ): Observable<DesktopCaptureOperation> {
     return this.library.updateCapture({
       documentId,
@@ -618,7 +618,7 @@ export class DesktopWorkspaceCaptureService {
     documentId: string,
     operation: DesktopCaptureOperation,
     active: ActiveCapture,
-    host: DesktopWorkspaceCaptureHost,
+    host: DesktopCaptureHost,
   ): Observable<DesktopCaptureOperation> {
     if (
       active.rawPersisted
@@ -680,7 +680,7 @@ export class DesktopWorkspaceCaptureService {
     documentId: string,
     operation: DesktopCaptureOperation,
     active: ActiveCapture,
-    host: DesktopWorkspaceCaptureHost,
+    host: DesktopCaptureHost,
   ): Observable<DesktopLibrarySummary> {
     return isOcrCheckpoint(operation)
       ? this.persistOcrCheckpoint$(documentId, operation, active, host)
@@ -691,7 +691,7 @@ export class DesktopWorkspaceCaptureService {
     documentId: string,
     operation: DesktopCaptureOperation,
     active: ActiveCapture,
-    host: DesktopWorkspaceCaptureHost,
+    host: DesktopCaptureHost,
   ): Observable<DesktopLibrarySummary> {
     const stage = operation.status;
     return this.settleOne$(this.runtime.getRaw(operation.captureId)).pipe(
@@ -1000,7 +1000,7 @@ export class DesktopWorkspaceCaptureService {
 
   private captureOptionsFor(
     documentId: string,
-    host: DesktopWorkspaceCaptureHost,
+    host: DesktopCaptureHost,
   ) {
     const document = host.documents().find((item) => item.documentId === documentId)
       ?? (host.selected()?.documentId === documentId ? host.selected() : undefined);
@@ -1009,7 +1009,7 @@ export class DesktopWorkspaceCaptureService {
 
   private pdfPageNumbersFor(
     documentId: string,
-    host: DesktopWorkspaceCaptureHost,
+    host: DesktopCaptureHost,
     mediaType?: string,
   ): readonly number[] | undefined {
     if (!this.isPdfDocument(documentId, host, mediaType)) return undefined;

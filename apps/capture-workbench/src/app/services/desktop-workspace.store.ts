@@ -24,9 +24,9 @@ import { SpeechGpuSettingsStore } from './speech-gpu-settings.store';
 import { DesktopLibraryService, type DesktopSourceSelectionBatch } from './desktop-library.service';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
 import {
-  DesktopWorkspaceCaptureService,
-  type DesktopWorkspaceCaptureHost,
-} from './desktop-workspace-capture.service';
+  DesktopCaptureService,
+  type DesktopCaptureHost,
+} from './desktop-capture.service';
 import { RecognitionFeaturesStore } from './recognition-features.store';
 import { errorMessage } from './desktop-workspace.selectors';
 import { desktopMessages } from '../i18n/desktop-messages';
@@ -38,7 +38,7 @@ type WorkspaceState = 'starting' | 'ready' | 'error';
 export class DesktopWorkspaceStore {
   private readonly runtime = inject(DesktopRuntimeClientService);
   private readonly library = inject(DesktopLibraryService);
-  private readonly captureLifecycle = inject(DesktopWorkspaceCaptureService);
+  private readonly captureLifecycle = inject(DesktopCaptureService);
   private readonly compute = inject(SpeechGpuSettingsStore);
   private readonly destroyRef = inject(DestroyRef);
   private readonly injector = inject(Injector);
@@ -127,7 +127,7 @@ export class DesktopWorkspaceStore {
       this.library.get(params.documentId, abortSignal),
   });
 
-  private readonly captureHost: DesktopWorkspaceCaptureHost = {
+  private readonly captureHost: DesktopCaptureHost = {
     selectedId: this.selectedId,
     requestedRequirements: this.requestedRequirements,
     requirements: () => this.requirements(),

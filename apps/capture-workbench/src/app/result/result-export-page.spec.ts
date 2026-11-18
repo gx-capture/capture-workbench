@@ -3,7 +3,7 @@ import { TestBed } from '@angular/core/testing';
 import { of } from 'rxjs';
 import { desktopMessages, setDesktopLocale } from '../i18n/desktop-messages';
 import { DesktopLibraryService } from '../services/desktop-library.service';
-import { DesktopWorkspaceFormattingService } from '../services/desktop-workspace-formatting.service';
+import { DesktopFormattingService } from '../services/desktop-formatting.service';
 import { LibraryExportService } from '../services/library-export.service';
 import { ResultExportStore } from '../services/result-export.store';
 import { ResultReviewStore } from '../services/result-review.store';
@@ -16,7 +16,7 @@ describe('ResultExportPage', () => {
     TestBed.configureTestingModule({ imports: [ResultExportPage], providers: [
       { provide: ResultReviewStore, useValue: { kind: signal(kind), documentId: signal('doc'), hasResult: signal(true), saveBeforeExport: () => of(undefined) } },
       { provide: DesktopLibraryService, useValue: { export: vi.fn(() => of({ fileName: 'host.txt', mediaType: 'text/plain', content: 'host text' })) } },
-      { provide: DesktopWorkspaceFormattingService, useValue: { downloadText: vi.fn() } },
+      { provide: DesktopFormattingService, useValue: { downloadText: vi.fn() } },
     ] });
     const fixture = TestBed.createComponent(ResultExportPage);
     const store = fixture.debugElement.injector.get(ResultExportStore);

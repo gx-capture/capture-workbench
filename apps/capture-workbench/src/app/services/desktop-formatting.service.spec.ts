@@ -1,11 +1,11 @@
 import { TestBed } from '@angular/core/testing';
-import { DesktopWorkspaceFormattingService } from './desktop-workspace-formatting.service';
+import { DesktopFormattingService } from './desktop-formatting.service';
 
-describe('DesktopWorkspaceFormattingService', () => {
-  let service: DesktopWorkspaceFormattingService;
+describe('DesktopFormattingService', () => {
+  let service: DesktopFormattingService;
 
   beforeEach(() => {
-    service = TestBed.inject(DesktopWorkspaceFormattingService);
+    service = TestBed.inject(DesktopFormattingService);
   });
 
   it('keeps the existing decimal byte formatting contract', () => {

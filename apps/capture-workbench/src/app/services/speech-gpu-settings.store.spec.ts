@@ -5,7 +5,7 @@ import type { OcrComputePreflight } from '@gx-capture/capture-workbench-ui';
 import type { DesktopSpeechGpuStatus } from '../contracts';
 import { SpeechGpuSettingsStore } from './speech-gpu-settings.store';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
-import { DesktopWorkspaceCaptureService } from './desktop-workspace-capture.service';
+import { DesktopCaptureService } from './desktop-capture.service';
 import { RecognitionFeaturesStore } from './recognition-features.store';
 
 describe('SpeechGpuSettingsStore', () => {
@@ -126,7 +126,7 @@ function setupComputeStore(overrides: {
     providers: [
       { provide: DesktopRuntimeClientService, useValue: runtime },
       { provide: RecognitionFeaturesStore, useValue: features },
-      { provide: DesktopWorkspaceCaptureService, useValue: captureLifecycle },
+      { provide: DesktopCaptureService, useValue: captureLifecycle },
       SpeechGpuSettingsStore,
     ],
   });

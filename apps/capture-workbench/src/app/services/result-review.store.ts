@@ -14,7 +14,7 @@ import type { DesktopLibraryDetail, DesktopLibraryEdits } from '../contracts';
 import { desktopMessages } from '../i18n/desktop-messages';
 import { DesktopLibraryService } from './desktop-library.service';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
-import { DesktopWorkspaceFormattingService } from './desktop-workspace-formatting.service';
+import { DesktopFormattingService } from './desktop-formatting.service';
 import {
   errorMessage,
   isPdfMediaType,
@@ -63,7 +63,7 @@ export class ResultReviewStore {
   private readonly route = inject(ActivatedRoute, { optional: true });
   private readonly library = inject(DesktopLibraryService);
   private readonly runtime = inject(DesktopRuntimeClientService, { optional: true });
-  private readonly formatting = inject(DesktopWorkspaceFormattingService);
+  private readonly formatting = inject(DesktopFormattingService);
   private readonly pdfRenderer = inject(PdfPageRenderer);
   private readonly destroyRef = inject(DestroyRef);
 

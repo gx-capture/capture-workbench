@@ -30,7 +30,7 @@ import {
   type DesktopSourceSelectionBatch,
 } from './desktop-library.service';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
-import { DesktopWorkspaceCaptureService } from './desktop-workspace-capture.service';
+import { DesktopCaptureService } from './desktop-capture.service';
 import { LibraryExportService } from './library-export.service';
 import {
   errorMessage,
@@ -51,7 +51,7 @@ export class AsrQueueStore {
   private readonly workspace = inject(DesktopWorkspaceStore);
   private readonly library = inject(DesktopLibraryService);
   private readonly runtime = inject(DesktopRuntimeClientService);
-  private readonly capture = inject(DesktopWorkspaceCaptureService);
+  private readonly capture = inject(DesktopCaptureService);
   private readonly features = inject(RecognitionFeaturesStore);
   private readonly exports = inject(LibraryExportService);
   readonly exportBusyIds = this.exports.busyIds;

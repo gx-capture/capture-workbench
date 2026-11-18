@@ -8,8 +8,8 @@ import { OcrQueueStore } from './ocr-queue.store';
 import { DesktopLibraryService, type DesktopSourceSelection } from './desktop-library.service';
 import type { DesktopCaptureOperation } from './desktop-runtime-client.service';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
-import { DesktopWorkspaceCaptureService } from './desktop-workspace-capture.service';
-import { DesktopWorkspaceFormattingService } from './desktop-workspace-formatting.service';
+import { DesktopCaptureService } from './desktop-capture.service';
+import { DesktopFormattingService } from './desktop-formatting.service';
 import { isFeatureReady, type RecognitionFeature } from './desktop-workspace.selectors';
 import { DesktopWorkspaceStore } from './desktop-workspace.store';
 import { RecognitionFeaturesStore } from './recognition-features.store';
@@ -22,7 +22,7 @@ describe('OcrQueueStore', () => {
     docs.push(doc({ status: 'completed', hasRaw: true }));
     store.attach();
     TestBed.tick();
-    const download = vi.spyOn(TestBed.inject(DesktopWorkspaceFormattingService), 'downloadText').mockImplementation(() => undefined);
+    const download = vi.spyOn(TestBed.inject(DesktopFormattingService), 'downloadText').mockImplementation(() => undefined);
     const first = new Subject<DesktopLibraryExport>();
     const second = new Subject<DesktopLibraryExport>();
     library.export.mockReturnValueOnce(first).mockReturnValueOnce(second);
@@ -47,7 +47,7 @@ describe('OcrQueueStore', () => {
     docs.push(doc({ status: 'completed', hasRaw: true }));
     store.attach();
     TestBed.tick();
-    const download = vi.spyOn(TestBed.inject(DesktopWorkspaceFormattingService), 'downloadText').mockImplementation(() => undefined);
+    const download = vi.spyOn(TestBed.inject(DesktopFormattingService), 'downloadText').mockImplementation(() => undefined);
     store.exportTxt(docs[0].documentId);
     expect(library.export).toHaveBeenCalledWith(docs[0].documentId, 'text', '第 {page} 頁');
     expect(download).toHaveBeenCalledWith('host.txt', 'host text', 'text/plain');
@@ -351,7 +351,7 @@ describe('OcrQueueStore', () => {
         { provide: DesktopRuntimeClientService, useValue: runtime },
         { provide: RecognitionFeaturesStore, useValue: features },
         DesktopWorkspaceStore,
-        DesktopWorkspaceCaptureService,
+        DesktopCaptureService,
         OcrQueueStore,
       ],
     });
@@ -449,7 +449,7 @@ function configure(options: { readonly ocrReady: boolean; readonly operation?: D
       { provide: DesktopRuntimeClientService, useValue: runtime },
       { provide: RecognitionFeaturesStore, useValue: features },
       { provide: DesktopWorkspaceStore, useValue: { allDocuments: documents, refreshDocuments } },
-      DesktopWorkspaceCaptureService,
+      DesktopCaptureService,
       OcrQueueStore,
     ],
   });

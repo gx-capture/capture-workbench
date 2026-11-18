@@ -3,7 +3,7 @@ import { rxResource } from '@angular/core/rxjs-interop';
 import { finalize } from 'rxjs';
 import type { DesktopSpeechGpuStatus } from '../contracts';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
-import { DesktopWorkspaceCaptureService } from './desktop-workspace-capture.service';
+import { DesktopCaptureService } from './desktop-capture.service';
 import { errorMessage } from './desktop-workspace.selectors';
 import { RecognitionFeaturesStore } from './recognition-features.store';
 
@@ -12,7 +12,7 @@ import { RecognitionFeaturesStore } from './recognition-features.store';
 export class SpeechGpuSettingsStore {
   private readonly runtime = inject(DesktopRuntimeClientService);
   private readonly features = inject(RecognitionFeaturesStore);
-  private readonly captureLifecycle = inject(DesktopWorkspaceCaptureService);
+  private readonly captureLifecycle = inject(DesktopCaptureService);
 
   readonly ocrCompute = this.runtime.ocrCompute;
   readonly savingCompute = signal(false);
