@@ -112,7 +112,7 @@ class OllamaCaptureStructuringProvider:
         finally:
             # The process owns native model allocations beyond one request.
             # End the bounded per-document lease before another extractor,
-            # especially Whisper CPU fallback, needs those resources.
+            # especially speech recognition CPU fallback, needs those resources.
             self._lifecycle.stop()
 
     async def _generate_batch(

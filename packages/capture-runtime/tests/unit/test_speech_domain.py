@@ -25,14 +25,10 @@ from capture_runtime.speech.domain import (
     SpeechWord,
     WindowSlicingPolicy,
 )
-from capture_runtime.speech.infrastructure.progressive_audio import (
-    WhisperWindowResult,
-    WhisperWindowSegment,
-)
-from capture_runtime.speech.infrastructure.speech_transcript import (
-    WhisperTextSegment,
-    WhisperTranscriptionResult,
-    WhisperWord,
+from capture_runtime.speech.domain.transcript.models import SpeechRecognitionResult
+from capture_runtime.speech.domain.window.models import (
+    WindowTranscript,
+    WindowTranscriptSegment,
 )
 
 
@@ -177,13 +173,13 @@ def test_repetition_loop_policy() -> None:
 def test_use_cases() -> None:
     # 1. TranscribeAudio
     mock_transcriber = Mock()
-    mock_transcriber.transcribe.return_value = WhisperTranscriptionResult(
+    mock_transcriber.transcribe.return_value = SpeechRecognitionResult(
         segments=(
-            WhisperTextSegment(
+            SpeechTranscriptSegment(
                 start_ms=0,
                 end_ms=500,
                 text="Hi",
-                words=(WhisperWord(start_ms=0, end_ms=500, text="Hi"),),
+                words=(SpeechWord(start_ms=0, end_ms=500, text="Hi"),),
             ),
         ),
         duration_ms=600,
@@ -203,8 +199,8 @@ def test_use_cases() -> None:
     engine = CaptureEngine(
         engine="speech-recognition", model="tea-asr", digest=digest, device="cuda"
     )
-    mock_window_transcriber.transcribe.return_value = WhisperWindowResult(
-        segments=(WhisperWindowSegment(start_ms=0, end_ms=1000, text="Window text"),),
+    mock_window_transcriber.transcribe.return_value = WindowTranscript(
+        segments=(WindowTranscriptSegment(start_ms=0, end_ms=1000, text="Window text"),),
         extraction_engine=engine,
     )
     uc_window = TranscribeAudioWindow(mock_window_transcriber)

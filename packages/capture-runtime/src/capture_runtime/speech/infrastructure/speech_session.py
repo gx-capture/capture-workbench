@@ -37,7 +37,7 @@ class SessionFrameType(StrEnum):
     ERROR = "e"
 
 
-class WhisperSessionProtocolError(ValueError):
+class SpeechSessionProtocolError(ValueError):
     def __init__(self, code: str, message: str, *, retryable: bool = False) -> None:
         super().__init__(message)
         self.code = code
@@ -61,7 +61,7 @@ class SessionFrameDecoder:
 
     def feed(self, data: bytes) -> list[SessionFrame]:
         if len(self._buffer) + len(data) > self.max_buffer_bytes:
-            raise WhisperSessionProtocolError(
+            raise SpeechSessionProtocolError(
                 "session_backpressure",
                 "Speech recognition session frame buffer is full.",
                 retryable=True,
@@ -71,7 +71,7 @@ class SessionFrameDecoder:
         while len(self._buffer) >= _HEADER.size:
             raw_type, payload_size = _HEADER.unpack(self._buffer[: _HEADER.size])
             if payload_size > MAX_SESSION_FRAME_PAYLOAD:
-                raise WhisperSessionProtocolError(
+                raise SpeechSessionProtocolError(
                     "session_frame_too_large",
                     "Speech recognition session frame exceeds the bounded payload limit.",
                 )
@@ -81,7 +81,7 @@ class SessionFrameDecoder:
             try:
                 frame_type = SessionFrameType(chr(raw_type))
             except ValueError as error:
-                raise WhisperSessionProtocolError(
+                raise SpeechSessionProtocolError(
                     "session_frame_invalid", "Speech recognition session frame type is invalid."
                 ) from error
             payload = bytes(self._buffer[_HEADER.size : frame_size])
@@ -90,7 +90,7 @@ class SessionFrameDecoder:
         return frames
 
 
-class WhisperSessionBackend(Protocol):
+class SpeechSessionBackend(Protocol):
     def start(self, metadata: dict[str, Any]) -> None: ...
 
     def input(self, window: DecodedAudioWindow) -> Iterable[ProgressiveSessionEvent]: ...
@@ -100,12 +100,12 @@ class WhisperSessionBackend(Protocol):
     def cancel(self) -> None: ...
 
 
-class WhisperSessionProtocol:
+class SpeechSessionProtocol:
     """State machine for start/input/credit/cancel/finish worker messages."""
 
     def __init__(
         self,
-        backend: WhisperSessionBackend,
+        backend: SpeechSessionBackend,
         *,
         max_credits: int = MAX_SESSION_CREDITS,
         failure_context: Callable[[], str] | None = None,
@@ -125,7 +125,7 @@ class WhisperSessionProtocol:
                 self._start(frame.payload)
                 return []
             if not self._started:
-                raise WhisperSessionProtocolError(
+                raise SpeechSessionProtocolError(
                     "session_not_started", "Speech recognition session must start before input."
                 )
             if frame.frame_type is SessionFrameType.CREDIT:
@@ -145,10 +145,10 @@ class WhisperSessionProtocol:
                 ]
             if frame.frame_type is SessionFrameType.FINISH:
                 return self._finish()
-            raise WhisperSessionProtocolError(
+            raise SpeechSessionProtocolError(
                 "session_frame_invalid", "Frame type is not valid for a client session."
             )
-        except WhisperSessionProtocolError as error:
+        except SpeechSessionProtocolError as error:
             self._terminal = error.code in {"session_cancelled", "session_failed"}
             return [self._error(error.code, str(error), retryable=error.retryable)]
         except Exception as error:
@@ -165,7 +165,7 @@ class WhisperSessionProtocol:
 
     def _start(self, payload: bytes) -> None:
         if self._started:
-            raise WhisperSessionProtocolError(
+            raise SpeechSessionProtocolError(
                 "session_conflict", "Speech recognition session already started."
             )
         metadata = _json_object(payload)
@@ -183,21 +183,21 @@ class WhisperSessionProtocol:
             not expected <= set(metadata) <= expected | {"spokenLanguage"}
             or metadata["protocolVersion"] != SESSION_PROTOCOL_VERSION
         ):
-            raise WhisperSessionProtocolError(
+            raise SpeechSessionProtocolError(
                 "session_start_invalid", "Speech recognition session start is invalid."
             )
         if not isinstance(metadata["sessionId"], str) or not metadata["sessionId"]:
-            raise WhisperSessionProtocolError(
+            raise SpeechSessionProtocolError(
                 "session_start_invalid", "Speech recognition session id is invalid."
             )
         for field in ("sampleRate", "channels", "windowMs", "overlapMs"):
             value = metadata[field]
             if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
-                raise WhisperSessionProtocolError(
+                raise SpeechSessionProtocolError(
                     "session_start_invalid", "Speech recognition session timing is invalid."
                 )
         if metadata["overlapMs"] >= metadata["windowMs"]:
-            raise WhisperSessionProtocolError(
+            raise SpeechSessionProtocolError(
                 "session_start_invalid", "Speech recognition session overlap is invalid."
             )
         source = metadata["source"]
@@ -212,14 +212,14 @@ class WhisperSessionProtocol:
             or isinstance(source["bytes"], bool)
             or source["bytes"] <= 0
         ):
-            raise WhisperSessionProtocolError(
+            raise SpeechSessionProtocolError(
                 "session_start_invalid", "Speech recognition session source is invalid."
             )
         language = metadata.get("spokenLanguage")
         if "spokenLanguage" in metadata and (
             not isinstance(language, str) or language not in SPOKEN_LANGUAGES
         ):
-            raise WhisperSessionProtocolError(
+            raise SpeechSessionProtocolError(
                 "session_start_invalid", "Speech recognition session language is invalid."
             )
         self.backend.start(metadata)
@@ -227,12 +227,10 @@ class WhisperSessionProtocol:
 
     def _credit(self, payload: bytes) -> None:
         if len(payload) != 4:
-            raise WhisperSessionProtocolError(
-                "session_credit_invalid", "Session credit is invalid."
-            )
+            raise SpeechSessionProtocolError("session_credit_invalid", "Session credit is invalid.")
         amount = struct.unpack(">I", payload)[0]
         if amount <= 0 or amount > self.max_credits or self._credits + amount > self.max_credits:
-            raise WhisperSessionProtocolError(
+            raise SpeechSessionProtocolError(
                 "session_credit_invalid",
                 "Session credit exceeds the bounded window limit.",
             )
@@ -240,13 +238,13 @@ class WhisperSessionProtocol:
 
     def _input(self, payload: bytes) -> list[bytes]:
         if self._credits <= 0:
-            raise WhisperSessionProtocolError(
+            raise SpeechSessionProtocolError(
                 "session_credit_required",
                 "Session input requires available credit.",
                 retryable=True,
             )
         if len(payload) <= _AUDIO_HEADER.size:
-            raise WhisperSessionProtocolError(
+            raise SpeechSessionProtocolError(
                 "session_input_invalid", "Session audio input is empty."
             )
         start_ms, end_ms = _AUDIO_HEADER.unpack(payload[: _AUDIO_HEADER.size])
@@ -328,11 +326,11 @@ def _json_object(payload: bytes) -> dict[str, Any]:
     try:
         value = json.loads(payload.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise WhisperSessionProtocolError(
+        raise SpeechSessionProtocolError(
             "session_json_invalid", "Session control payload is invalid."
         ) from error
     if not isinstance(value, dict) or any(not isinstance(key, str) for key in value):
-        raise WhisperSessionProtocolError(
+        raise SpeechSessionProtocolError(
             "session_json_invalid", "Session control payload must be an object."
         )
     return value
@@ -387,9 +385,9 @@ __all__ = [
     "SessionFrame",
     "SessionFrameDecoder",
     "SessionFrameType",
-    "WhisperSessionBackend",
-    "WhisperSessionProtocol",
-    "WhisperSessionProtocolError",
+    "SpeechSessionBackend",
+    "SpeechSessionProtocol",
+    "SpeechSessionProtocolError",
     "encode_audio_input",
     "encode_control",
     "encode_credit",

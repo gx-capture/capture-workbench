@@ -59,10 +59,8 @@ from capture_runtime.ocr.infrastructure.ocr_worker_result import (
 from capture_runtime.provisioning.infrastructure.engine_installation import (
     ExtractionRuntimeUnavailableError,
 )
-from capture_runtime.speech.infrastructure.speech_transcript import (
-    WhisperTextSegment,
-    WhisperTranscriptionResult,
-)
+from capture_runtime.speech.domain import SpeechTranscriptSegment
+from capture_runtime.speech.domain.transcript.models import SpeechRecognitionResult
 from capture_runtime.structuring.infrastructure.ollama import IsolatedOllamaLifecycle
 from capture_runtime.worker_client import InstalledEngine
 from capture_runtime.worker_probe import EngineProbe, EngineRuntimeUnavailableError
@@ -195,13 +193,12 @@ def test_offline_huggingface_stub_blocks_model_downloads() -> None:
 def _config(tmp_path: Path) -> ExtractionRuntimeConfig:
     return ExtractionRuntimeConfig(
         windowsml_model_dir=tmp_path / "windowsml",
-        whisper_models_dir=tmp_path / "whisper",
         temp_dir=tmp_path / "temp",
         max_pdf_pages=10,
         max_image_pixels=100_000,
         ocr_render_scale=2,
         max_audio_duration_ms=60_000,
-        whisper_prefer_gpu=True,
+        speech_prefer_gpu=True,
     )
 
 
@@ -2966,11 +2963,11 @@ def test_windowsml_adapter_is_unavailable_without_dml_or_cpu(tmp_path: Path) -> 
     ]
 
 
-def test_runtime_settings_defaults_to_nvidia_whisper_gpu_preference() -> None:
+def test_runtime_settings_defaults_to_nvidia_speech_gpu_preference() -> None:
     settings = RuntimeSettings.from_env({"CAPTURE_API_TOKEN": "a" * 32})
 
-    assert settings.extraction.whisper_prefer_gpu is True
-    assert settings.extraction.whisper_allow_cpu_fallback is True
+    assert settings.extraction.speech_prefer_gpu is True
+    assert settings.extraction.speech_recognition_allow_cpu_fallback is True
     assert settings.extraction.speech_recognition_model == "auto"
 
 
@@ -3021,7 +3018,7 @@ def test_runtime_settings_rejects_retired_windowsml_device_override() -> None:
         )
 
 
-def test_runtime_settings_allows_explicit_whisper_gpu_opt_in() -> None:
+def test_runtime_settings_allows_explicit_speech_gpu_opt_in() -> None:
     settings = RuntimeSettings.from_env(
         {
             "CAPTURE_API_TOKEN": "a" * 32,
@@ -3029,10 +3026,10 @@ def test_runtime_settings_allows_explicit_whisper_gpu_opt_in() -> None:
         }
     )
 
-    assert settings.extraction.whisper_prefer_gpu is True
+    assert settings.extraction.speech_prefer_gpu is True
 
 
-def test_runtime_settings_can_disable_whisper_cpu_fallback() -> None:
+def test_runtime_settings_can_disable_speech_cpu_fallback() -> None:
     settings = RuntimeSettings.from_env(
         {
             "CAPTURE_API_TOKEN": "a" * 32,
@@ -3040,7 +3037,7 @@ def test_runtime_settings_can_disable_whisper_cpu_fallback() -> None:
         }
     )
 
-    assert settings.extraction.whisper_allow_cpu_fallback is False
+    assert settings.extraction.speech_recognition_allow_cpu_fallback is False
 
 
 class FakeOcrAdapter:
@@ -3063,7 +3060,7 @@ class FakeOcrAdapter:
         )
 
 
-class FakeWhisperAdapter:
+class FakeSpeechRecognitionAdapter:
     def __init__(self) -> None:
         self.paths: list[Path] = []
 
@@ -3076,8 +3073,8 @@ class FakeWhisperAdapter:
         assert not should_cancel()
         assert source_path.is_file()
         self.paths.append(source_path)
-        return WhisperTranscriptionResult(
-            segments=(WhisperTextSegment(0, 900, "Audio words"),),
+        return SpeechRecognitionResult(
+            segments=(SpeechTranscriptSegment(0, 900, "Audio words"),),
             duration_ms=900,
             device="cpu",
             model="tea-asr-1.1-mini",
@@ -3710,9 +3707,12 @@ def test_pdf_sync_raster_lifetime_is_bounded_after_cancellation(
 
 def test_standalone_image_normalization_and_audio_provenance(tmp_path: Path) -> None:
     ocr = FakeOcrAdapter()
-    whisper = FakeWhisperAdapter()
+    speech = FakeSpeechRecognitionAdapter()
     extractor = StandaloneRuntimeCaptureExtractor(
-        SystemClock(), _config(tmp_path), ocr_adapter=ocr, whisper_adapter=whisper
+        SystemClock(),
+        _config(tmp_path),
+        ocr_adapter=ocr,
+        speech_recognition_adapter=speech,
     )
     image_buffer = BytesIO()
     Image.new("RGBA", (2, 2), (255, 0, 0, 0)).save(image_buffer, format="WEBP")
@@ -3742,7 +3742,7 @@ def test_standalone_image_normalization_and_audio_provenance(tmp_path: Path) -> 
     assert audio_raw.segments[0].locator.start_ms == 0
     assert audio_raw.segments[0].locator.end_ms == 900
     assert audio_raw.extraction_engine.engine == "speech-recognition"
-    assert whisper.paths and not whisper.paths[0].exists()
+    assert speech.paths and not speech.paths[0].exists()
 
 
 def test_sync_ocr_all_empty_is_failed_with_readable_no_text_projection(
@@ -3752,7 +3752,7 @@ def test_sync_ocr_all_empty_is_failed_with_readable_no_text_projection(
         SystemClock(),
         _config(tmp_path),
         ocr_adapter=FakeOcrAdapter("   "),
-        whisper_adapter=FakeWhisperAdapter(),
+        speech_recognition_adapter=FakeSpeechRecognitionAdapter(),
     )
     image_buffer = BytesIO()
     Image.new("RGB", (2, 2), "white").save(image_buffer, format="PNG")
@@ -3818,7 +3818,7 @@ def test_worker_backed_audio_forwards_strict_cuda_fallback_policy(tmp_path: Path
             return InstalledEngine(
                 requirement_id="speech-recognition",
                 artifact_version=RUNTIME_VERSION,
-                executable=tmp_path / "whisper.exe",
+                executable=tmp_path / "speech.exe",
                 model_dir=tmp_path / "models",
             )
 
@@ -3826,7 +3826,7 @@ def test_worker_backed_audio_forwards_strict_cuda_fallback_policy(tmp_path: Path
     manager.worker_client = worker_client  # type: ignore[attr-defined]
     extractor = StandaloneRuntimeCaptureExtractor(
         SystemClock(),
-        replace(_config(tmp_path), whisper_allow_cpu_fallback=False),
+        replace(_config(tmp_path), speech_recognition_allow_cpu_fallback=False),
         engine_manager=manager,  # type: ignore[arg-type]
     )
     audio_content = b"RIFF\x00\x00\x00\x00WAVEpayload"
@@ -5293,7 +5293,7 @@ def test_pdf_pages_always_use_ocr_and_preserve_page_provenance(
         SystemClock(),
         _config(tmp_path),
         ocr_adapter=ocr,
-        whisper_adapter=FakeWhisperAdapter(),
+        speech_recognition_adapter=FakeSpeechRecognitionAdapter(),
     )
     page_png = BytesIO()
     Image.new("RGB", (120, 80), "white").save(page_png, format="PNG")

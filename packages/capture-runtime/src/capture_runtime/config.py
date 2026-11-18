@@ -122,14 +122,13 @@ class ExternalOllamaConfig:
 @dataclass(frozen=True, slots=True)
 class ExtractionRuntimeConfig:
     windowsml_model_dir: Path
-    whisper_models_dir: Path
     temp_dir: Path
     max_pdf_pages: int
     max_image_pixels: int
     ocr_render_scale: float
     max_audio_duration_ms: int
-    whisper_prefer_gpu: bool
-    whisper_allow_cpu_fallback: bool = True
+    speech_prefer_gpu: bool
+    speech_recognition_allow_cpu_fallback: bool = True
     # "auto" runs tea-asr-1.1 on either device; an explicit choice also keeps its
     # checkpoint after a GPU fallback.
     speech_recognition_model: str = "auto"
@@ -286,9 +285,6 @@ class RuntimeSettings:
                 env.get("CAPTURE_WINDOWSML_MODEL_DIR")
                 or app_data_dir / "runtime-assets" / "windowsml-ocr" / "models"
             ),
-            whisper_models_dir=Path(
-                env.get("CAPTURE_WHISPER_MODELS_DIR") or app_data_dir / "runtime-assets" / "whisper"
-            ),
             temp_dir=Path(env.get("CAPTURE_EXTRACTION_TEMP_DIR") or app_data_dir / "temp"),
             max_pdf_pages=max_pdf_pages,
             max_image_pixels=max_image_pixels,
@@ -297,8 +293,13 @@ class RuntimeSettings:
             # Prefer Nvidia CUDA when the bundled PyTorch runtime can
             # initialize it. Diagnostics retain the bounded CPU fallback;
             # source-lock production verification can explicitly fail closed.
-            whisper_prefer_gpu=_bool(env.get("CAPTURE_WHISPER_PREFER_GPU"), True),
-            whisper_allow_cpu_fallback=_bool(env.get("CAPTURE_WHISPER_ALLOW_CPU_FALLBACK"), True),
+            # These environment variables keep their old names until the hosts
+            # change with them; they control speech recognition and (for
+            # CAPTURE_WHISPER_PREFER_GPU) speaker diarization.
+            speech_prefer_gpu=_bool(env.get("CAPTURE_WHISPER_PREFER_GPU"), True),
+            speech_recognition_allow_cpu_fallback=_bool(
+                env.get("CAPTURE_WHISPER_ALLOW_CPU_FALLBACK"), True
+            ),
             speech_recognition_model=env.get("CAPTURE_SPEECH_RECOGNITION_MODEL", "auto"),
             engine_resolution_timeout_seconds=engine_resolution_timeout_seconds,
             speech_worker_idle_seconds=speech_worker_idle_seconds,

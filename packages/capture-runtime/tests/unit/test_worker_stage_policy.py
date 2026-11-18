@@ -89,7 +89,7 @@ def test_all_literal_producer_stages_are_registered_and_dynamic_forms_are_builde
             ), f"{path}:{call.lineno} uses an unregistered dynamic stage form"
 
 
-def test_stage_builders_preserve_current_ocr_and_whisper_families() -> None:
+def test_stage_builders_preserve_current_ocr_and_speech_families() -> None:
     assert ocr_import_stage("paddleocr", "start") == "python-import-paddleocr-start"
     assert ocr_import_failure_stage("paddleocr", ModuleNotFoundError()) == (
         "python-import-paddleocr-failed-modulenotfounderror-missing-module-paddleocr"

@@ -173,14 +173,14 @@ async def _test_dependency_installations_are_serialized(tmp_path: Path) -> None:
         request_fingerprint="ocr-fingerprint",
         requirement_id="windowsml-ocr",
     )
-    whisper = service.create(
-        idempotency_key="whisper-key",
-        request_fingerprint="whisper-fingerprint",
+    speech = service.create(
+        idempotency_key="speech-key",
+        request_fingerprint="speech-fingerprint",
         requirement_id="speech-recognition",
     )
     await asyncio.gather(
         _wait_for_terminal(service, ocr.installation_id),
-        _wait_for_terminal(service, whisper.installation_id),
+        _wait_for_terminal(service, speech.installation_id),
     )
     await service.shutdown()
 

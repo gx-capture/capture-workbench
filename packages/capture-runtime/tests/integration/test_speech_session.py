@@ -11,12 +11,12 @@ from capture_runtime.speech.infrastructure.progressive_audio import (
     DecodedAudioWindow,
     ProgressiveSessionEvent,
 )
-from capture_runtime.speech.infrastructure.whisper_session import (
+from capture_runtime.speech.infrastructure.speech_session import (
     MAX_SESSION_FRAME_PAYLOAD,
     SessionFrameDecoder,
     SessionFrameType,
-    WhisperSessionProtocol,
-    WhisperSessionProtocolError,
+    SpeechSessionProtocol,
+    SpeechSessionProtocolError,
     encode_audio_input,
     encode_control,
     encode_credit,
@@ -66,7 +66,7 @@ def _start(session_id: str = "session-1", *, version: str = "3", **extra: Any) -
 
 def test_session_protocol_requires_credit_and_accepts_fragmented_binary_input() -> None:
     backend = FakeBackend()
-    protocol = WhisperSessionProtocol(backend)
+    protocol = SpeechSessionProtocol(backend)
     decoder = SessionFrameDecoder()
     wire = _start() + encode_credit(1) + encode_audio_input(DecodedAudioWindow(0, 1_000, b"pcm"))
     outputs: list[bytes] = []
@@ -79,7 +79,7 @@ def test_session_protocol_requires_credit_and_accepts_fragmented_binary_input() 
     assert backend.started is not None
     assert backend.windows == [DecodedAudioWindow(0, 1_000, b"pcm")]
 
-    no_credit = WhisperSessionProtocol(FakeBackend())
+    no_credit = SpeechSessionProtocol(FakeBackend())
     no_credit.handle(next(iter(SessionFrameDecoder().feed(_start()))))
     input_frame = next(
         iter(SessionFrameDecoder().feed(encode_audio_input(DecodedAudioWindow(0, 1, b"x"))))
@@ -91,7 +91,7 @@ def test_session_protocol_requires_credit_and_accepts_fragmented_binary_input() 
 def test_a_completed_session_accepts_the_next_start_and_cancel_is_terminal() -> None:
     # A warm worker serves one capture after another with its models loaded.
     backend = FakeBackend()
-    protocol = WhisperSessionProtocol(backend)
+    protocol = SpeechSessionProtocol(backend)
     decoder = SessionFrameDecoder()
     for frame in decoder.feed(_start() + encode_credit(1)):
         protocol.handle(frame)
@@ -131,7 +131,7 @@ def test_session_protocol_rejects_a_previous_version_or_a_missing_source() -> No
         ),
     ):
         backend = FakeBackend()
-        error = WhisperSessionProtocol(backend).handle(next(iter(SessionFrameDecoder().feed(wire))))
+        error = SpeechSessionProtocol(backend).handle(next(iter(SessionFrameDecoder().feed(wire))))
         assert error[0][0] == ord(SessionFrameType.ERROR.value)
         assert backend.started is None
 
@@ -139,7 +139,7 @@ def test_session_protocol_rejects_a_previous_version_or_a_missing_source() -> No
 def test_session_start_carries_an_optional_spoken_language() -> None:
     for wire, language in ((_start(), None), (_start(spokenLanguage="ja"), "ja")):
         backend = FakeBackend()
-        WhisperSessionProtocol(backend).handle(next(iter(SessionFrameDecoder().feed(wire))))
+        SpeechSessionProtocol(backend).handle(next(iter(SessionFrameDecoder().feed(wire))))
         assert backend.started is not None
         assert backend.started.get("spokenLanguage") == language
 
@@ -148,7 +148,7 @@ def test_session_start_carries_an_optional_spoken_language() -> None:
 def test_session_start_rejects_a_spoken_language_outside_the_list(language: object) -> None:
     backend = FakeBackend()
     wire = _start(spokenLanguage=language)
-    error = WhisperSessionProtocol(backend).handle(next(iter(SessionFrameDecoder().feed(wire))))
+    error = SpeechSessionProtocol(backend).handle(next(iter(SessionFrameDecoder().feed(wire))))
     assert error[0][0] == ord(SessionFrameType.ERROR.value)
     assert backend.started is None
 
@@ -158,7 +158,7 @@ def test_session_protocol_adds_only_allowlisted_failure_context() -> None:
         def input(self, _window: DecodedAudioWindow) -> list[ProgressiveSessionEvent]:
             raise ValueError("private backend detail")
 
-    protocol = WhisperSessionProtocol(
+    protocol = SpeechSessionProtocol(
         FailingBackend(),
         failure_context=lambda: "speech-transcription-call-complete",
     )
@@ -180,7 +180,7 @@ def test_session_protocol_adds_only_allowlisted_failure_context() -> None:
 
 def test_session_protocol_rejects_oversized_declared_frame_before_buffering() -> None:
     decoder = SessionFrameDecoder()
-    with pytest.raises(WhisperSessionProtocolError, match="exceeds"):
+    with pytest.raises(SpeechSessionProtocolError, match="exceeds"):
         decoder.feed(
             struct.pack(">BI", ord(SessionFrameType.INPUT.value), MAX_SESSION_FRAME_PAYLOAD + 1)
         )

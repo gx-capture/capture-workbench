@@ -52,7 +52,7 @@ script, worker directory, executable and archive/manifest stem `capture-engine-s
 nx targets `build-speech-recognition-worker`, `verify-speech-recognition-worker`,
 `generate-speech-recognition-preflight-catalog`, `verify-speech-recognition-preflight`; catalog,
 boundary and preflight flags `--speech-recognition-*`; stages `speech-*`. Internal module names
-`whisper_session.py` and `progressive_whisper.py` keep their names and binary protocol.
+`speech_session.py` and `progressive_speech.py` keep the binary protocol.
 `whisper_download.py` is removed: installation uses the pinned direct-file lock pipeline, like
 `speaker-diarization`.
 

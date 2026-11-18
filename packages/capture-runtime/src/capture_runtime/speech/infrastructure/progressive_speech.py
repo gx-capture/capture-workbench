@@ -10,14 +10,16 @@ from typing import Any
 
 from capture_runtime.constants import PROGRESSIVE_WINDOW_TEMP_PREFIX
 from capture_runtime.contracts import CaptureEngine
+from capture_runtime.speech.domain.window.models import (
+    WindowTranscript,
+    WindowTranscriptSegment,
+)
 from capture_runtime.speech.infrastructure.progressive_audio import (
     DecodedAudioWindow,
     ProgressiveAudioSession,
     ProgressiveSessionEvent,
-    WhisperWindowResult,
-    WhisperWindowSegment,
 )
-from capture_runtime.speech.infrastructure.speech_transcript import WhisperAdapter
+from capture_runtime.speech.infrastructure.speech_transcript import SpeechRecognitionAdapter
 
 
 class SpeechRecognitionWindowTranscriber:
@@ -25,14 +27,14 @@ class SpeechRecognitionWindowTranscriber:
 
     def __init__(
         self,
-        adapter: WhisperAdapter,
+        adapter: SpeechRecognitionAdapter,
         *,
         temp_dir: Path,
         sample_rate: int = 16_000,
         language: str | None = None,
     ) -> None:
         if sample_rate <= 0:
-            raise ValueError("Whisper sample rate must be positive")
+            raise ValueError("Speech recognition sample rate must be positive")
         self.adapter = adapter
         self.temp_dir = temp_dir
         self.sample_rate = sample_rate
@@ -41,7 +43,7 @@ class SpeechRecognitionWindowTranscriber:
         self._elapsed_ms = 0
         self._stage_ms: dict[str, int] = {}
 
-    def transcribe(self, window: DecodedAudioWindow) -> WhisperWindowResult:
+    def transcribe(self, window: DecodedAudioWindow) -> WindowTranscript:
         self.temp_dir.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(
             prefix=PROGRESSIVE_WINDOW_TEMP_PREFIX,
@@ -65,9 +67,9 @@ class SpeechRecognitionWindowTranscriber:
             self._elapsed_ms += result.elapsed_ms or 0
             for stage, milliseconds in (result.stage_ms or {}).items():
                 self._stage_ms[stage] = self._stage_ms.get(stage, 0) + milliseconds
-            return WhisperWindowResult(
+            return WindowTranscript(
                 segments=tuple(
-                    WhisperWindowSegment(item.start_ms, item.end_ms, item.text)
+                    WindowTranscriptSegment(item.start_ms, item.end_ms, item.text)
                     for item in result.segments
                 ),
                 extraction_engine=CaptureEngine(
@@ -84,7 +86,7 @@ class SpeechRecognitionWindowTranscriber:
             path.unlink(missing_ok=True)
 
 
-class ProgressiveWhisperWorkerBackend:
+class ProgressiveSpeechWorkerBackend:
     """Bind the binary worker protocol to one progressive session per START."""
 
     def __init__(
@@ -129,5 +131,5 @@ class ProgressiveWhisperWorkerBackend:
 
 __all__ = [
     "SpeechRecognitionWindowTranscriber",
-    "ProgressiveWhisperWorkerBackend",
+    "ProgressiveSpeechWorkerBackend",
 ]

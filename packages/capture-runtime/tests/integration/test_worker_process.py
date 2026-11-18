@@ -314,7 +314,7 @@ def test_worker_client_never_repeats_the_speech_workers_bounded_retry(
     assert calls == [(options, 10)]
 
 
-def test_worker_client_keeps_ocr_probe_options_empty_without_changing_whisper(
+def test_worker_client_keeps_ocr_probe_options_empty_without_changing_speech_recognition(
     tmp_path: Path,
 ) -> None:
     process = RecordingWorkerProcess()
@@ -337,7 +337,7 @@ def test_worker_client_keeps_ocr_probe_options_empty_without_changing_whisper(
             InstalledEngine(
                 requirement_id="speech-recognition",
                 artifact_version="engine-1",
-                executable=tmp_path / "whisper.exe",
+                executable=tmp_path / "speech.exe",
                 model_dir=model_dir,
             ),
             include_model=True,

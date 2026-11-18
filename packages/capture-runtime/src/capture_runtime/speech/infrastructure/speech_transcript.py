@@ -1,8 +1,4 @@
-"""Transcript produced by the speech recognition adapter, and the adapter port.
-
-The ``Whisper*`` names predate the TEA-ASR engine; they are renamed when the
-speech context moves into its own package (DDD plan, decision D9).
-"""
+"""Transcript adapter port for speech recognition."""
 
 from __future__ import annotations
 
@@ -10,22 +6,11 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Protocol
 
-from capture_runtime.speech.domain import (
-    SpeechTranscriptSegment,
-    SpeechWord,
-)
 from capture_runtime.speech.domain.transcript.models import SpeechRecognitionResult
 from capture_runtime.worker_probe import EngineProbe
 
-# Backwards compatibility aliases for domain models
-WhisperWord = SpeechWord
-WhisperTextSegment = SpeechTranscriptSegment
 
-
-WhisperTranscriptionResult = SpeechRecognitionResult
-
-
-class WhisperAdapter(Protocol):
+class SpeechRecognitionAdapter(Protocol):
     def probe(self) -> EngineProbe: ...
 
     def transcribe(
@@ -35,12 +20,9 @@ class WhisperAdapter(Protocol):
         should_cancel: Callable[[], bool],
         allow_empty_output: bool = False,
         language: str | None = None,
-    ) -> WhisperTranscriptionResult: ...
+    ) -> SpeechRecognitionResult: ...
 
 
 __all__ = [
-    "WhisperAdapter",
-    "WhisperTextSegment",
-    "WhisperTranscriptionResult",
-    "WhisperWord",
+    "SpeechRecognitionAdapter",
 ]

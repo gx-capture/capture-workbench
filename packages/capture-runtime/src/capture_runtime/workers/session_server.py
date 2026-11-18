@@ -1,4 +1,4 @@
-"""Binary framed server used by the progressive Whisper worker entrypoint."""
+"""Binary framed server used by the progressive speech recognition worker entrypoint."""
 
 from __future__ import annotations
 
@@ -8,12 +8,12 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from typing import BinaryIO, cast
 
-from capture_runtime.speech.infrastructure.whisper_session import (
+from capture_runtime.speech.infrastructure.speech_session import (
     SessionFrame,
     SessionFrameDecoder,
-    WhisperSessionBackend,
-    WhisperSessionProtocol,
-    WhisperSessionProtocolError,
+    SpeechSessionBackend,
+    SpeechSessionProtocol,
+    SpeechSessionProtocolError,
     encode_error,
     encode_heartbeat,
 )
@@ -23,7 +23,7 @@ HEARTBEAT_INTERVAL_SECONDS = 5.0
 
 
 def serve_session(
-    backend: WhisperSessionBackend,
+    backend: SpeechSessionBackend,
     *,
     stdin: BinaryIO | None = None,
     stdout: BinaryIO | None = None,
@@ -38,7 +38,7 @@ def serve_session(
     input_stream = stdin or sys.stdin.buffer
     output_stream = stdout or sys.stdout.buffer
     decoder = SessionFrameDecoder()
-    protocol = WhisperSessionProtocol(backend, failure_context=failure_context)
+    protocol = SpeechSessionProtocol(backend, failure_context=failure_context)
     executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="capture-session")
     try:
         while True:
@@ -59,7 +59,7 @@ def serve_session(
                     for response in responses:
                         output_stream.write(response)
                         output_stream.flush()
-            except WhisperSessionProtocolError as error:
+            except SpeechSessionProtocolError as error:
                 output_stream.write(encode_error(error.code, str(error), retryable=error.retryable))
                 output_stream.flush()
                 return
@@ -78,7 +78,7 @@ def _read_available(input_stream: BinaryIO) -> bytes:
 
 def _handle_with_heartbeats(
     executor: ThreadPoolExecutor,
-    protocol: WhisperSessionProtocol,
+    protocol: SpeechSessionProtocol,
     frame: SessionFrame,
     output_stream: BinaryIO,
     heartbeat_interval_seconds: float,

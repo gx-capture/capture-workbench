@@ -352,13 +352,12 @@ def test_extraction_joins_worker_after_repeated_cancellation(
             FixedClock(),
             ExtractionRuntimeConfig(
                 windowsml_model_dir=tmp_path / "ocr",
-                whisper_models_dir=tmp_path / "asr",
                 temp_dir=tmp_path / "temp",
                 max_pdf_pages=10,
                 max_image_pixels=100000,
                 ocr_render_scale=2,
                 max_audio_duration_ms=60000,
-                whisper_prefer_gpu=False,
+                speech_prefer_gpu=False,
             ),
             engine_manager=cast(
                 EngineInstallationManager,
