@@ -19,13 +19,10 @@ This supersedes the Angular Material line of `standalone-desktop-product.md`.
 - Generate a primitive only when a page uses it. Exports nobody calls (such as
   the CLI's `provide…Config()` helpers) are deleted rather than baselined, as
   the dead-code gate requires.
-- Tailwind's preflight and utilities live in CSS layers, so the unlayered
-  Material theme and the workspace's own stylesheet keep winning while
-  Material remains on `/history`. That workspace was written against browser
-  defaults, so `styles.css` reverts preflight inside `app-history-page`
-  (`all: revert-layer`, `line-height: normal`); a page built with helm
-  components must not be nested there. Phase 7 of the plan deletes that rule,
-  Material, `history-page.css` and the prebuilt theme.
+- Tailwind's preflight and utilities live in CSS layers. The single-screen
+  workspace, its stylesheet, the preflight exception for that element, and
+  the prebuilt theme are gone. The renderer styles pages with these tokens
+  and Spartan helm components.
 - Tailwind scans only `src/app/**/*.{html,ts}` (`source(none)` plus `@source`),
   so packages and tooling never add classes to the bundle.
 - PR CI does not run `capture-workbench:build:production`, whose 10 kB

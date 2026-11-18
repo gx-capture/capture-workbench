@@ -247,7 +247,7 @@ export class DesktopWorkspaceCaptureService {
       host.requestedRequirements.update(
         (current) => new Set([...current, 'speech-recognition']),
       );
-      host.setMessage(desktopMessages().whisperNeeded);
+      host.setMessage(desktopMessages().speechUnitNeeded);
       return EMPTY;
     }
     if (

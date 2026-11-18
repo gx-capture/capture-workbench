@@ -21,10 +21,7 @@
   archive, while runtime requirement discovery and the consented installation
   path remain intact for OCR-capable installations.
 - The desktop renderer uses Tailwind tokens and Spartan helm components
-  (`tailwind-spartan-ui.md`). Angular Material remains only in the document
-  workspace on `/history` until UI phase 7
-  ([#161](https://github.com/gx-capture/capture-workbench/issues/161)) deletes
-  it.
+  (`tailwind-spartan-ui.md`).
 
 ## Sidecar launch
 
