@@ -110,7 +110,7 @@
   "[\"whisper\",\"apps/capture-workbench-desktop/src-tauri/src/launch_policy.rs\"]#9",
   "[\"whisper\",\"apps/capture-workbench/src/app/services/desktop-workspace.selectors.ts\"]",
   "[\"whisper\",\"apps/capture-workbench/src/app/services/desktop-workspace.store.spec.ts\"]",
-  "[\"whisper\",\"apps/capture-workbench/src/app/services/desktop-workspace.store.spec.ts\"]#2",
+  "[\"whisper\",\"apps/capture-workbench/src/app/services/recognition-features.store.spec.ts\"]",
   "[\"whisper\",\"packages/capture-runtime-client-python/src/capture_runtime_client/client.py\"]",
   "[\"whisper\",\"packages/capture-runtime-client/src/client.ts\"]",
   "[\"whisper\",\"packages/capture-runtime/README.md\"]",

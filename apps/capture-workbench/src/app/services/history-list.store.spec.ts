@@ -20,13 +20,14 @@ describe('HistoryListStore', () => {
     const library = { delete: vi.fn(() => of(undefined)) };
     const router = { navigate: vi.fn() };
     const busyIds = signal<ReadonlySet<string>>(new Set());
+    const activeIds = signal<ReadonlySet<string>>(new Set());
     TestBed.configureTestingModule({ providers: [
       { provide: DesktopWorkspaceStore, useValue: workspace },
       { provide: DesktopLibraryService, useValue: library },
-      { provide: DesktopCaptureService, useValue: { busyIds, oneShotOperations: signal(new Map()), recordingOperations: signal(new Map()), hasActiveCapture: () => false } },
+      { provide: DesktopCaptureService, useValue: { busyIds, oneShotOperations: signal(new Map()), recordingOperations: signal(new Map()), hasActiveCapture: (id: string) => activeIds().has(id) } },
       { provide: Router, useValue: router },
     ] });
-    return { store: TestBed.inject(HistoryListStore), workspace, library, router, busyIds };
+    return { store: TestBed.inject(HistoryListStore), workspace, library, router, busyIds, activeIds };
   }
   it('retains filters on the root instance and opens with a reload-safe origin', () => {
     const { store, router } = setup();
@@ -75,14 +76,18 @@ describe('HistoryListStore', () => {
     expect(store.deleting()).toBe(false);
     expect(workspace.refreshDocuments).not.toHaveBeenCalled();
   });
-  it.each(['removed', 'captureId'] as const)('rechecks a document that is %s while confirmation is open', (change) => {
-    const { store, workspace, library } = setup();
+  it.each(['removed', 'captureId', 'active capture'] as const)('rechecks a document that is %s while confirmation is open', (change) => {
+    const { store, workspace, library, activeIds } = setup();
     const row = store.rows()[0];
     if (!row) throw new Error('missing row');
     store.askDelete(row);
-    workspace.allDocuments.update((documents) => change === 'removed'
-      ? documents.filter((document) => document.documentId !== row.documentId)
-      : documents.map((document) => document.documentId === row.documentId ? { ...document, captureId: 'capture' } : document));
+    if (change === 'active capture') {
+      activeIds.set(new Set([row.documentId]));
+    } else {
+      workspace.allDocuments.update((documents) => change === 'removed'
+        ? documents.filter((document) => document.documentId !== row.documentId)
+        : documents.map((document) => document.documentId === row.documentId ? { ...document, captureId: 'capture' } : document));
+    }
     store.confirmDelete();
     expect(library.delete).not.toHaveBeenCalled();
     expect(store.pendingDelete()).toBeNull();
