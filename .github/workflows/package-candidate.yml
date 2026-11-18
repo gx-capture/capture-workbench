@@ -60,7 +60,7 @@ jobs:
         shell: bash
         run: pnpm verify:release-version -- "v${{ inputs.version }}"
 
-      - name: Build and pack the npm package set
+      - name: Build and pack the package candidate
         shell: bash
         run: |
           set -euo pipefail

@@ -35,6 +35,7 @@ function integrity(value: Buffer): string {
 
 async function makeCandidate(
   options: {
+    readonly candidateKind?: 'package' | 'npm-package-set';
     readonly contractSetBytes?: Buffer;
     readonly runtimePackageContractSetSha256?: string;
   } = {},
@@ -101,7 +102,7 @@ async function makeCandidate(
   }
   const packageManifest = {
     schemaVersion: '1',
-    candidateKind: 'npm-package-set',
+    candidateKind: options.candidateKind ?? 'package',
     releaseVersion: version,
     packages: packageEntries,
   };
@@ -137,7 +138,7 @@ async function makeCandidate(
     .sort((left, right) => left.path.localeCompare(right.path));
   const baseManifest = {
     schemaVersion: '1',
-    candidateKind: 'npm-package-set',
+    candidateKind: options.candidateKind ?? 'package',
     sourceCommit,
     releaseVersion: version,
     producerRunId,
@@ -160,24 +161,26 @@ async function makeCandidate(
   return { root, candidateId, manifestSha256, contractSetSha256 };
 }
 
-test('package candidate verification binds the complete npm package set', async () => {
-  const candidate = await makeCandidate();
-  try {
-    await assert.doesNotReject(() =>
-      verifyPackageCandidate({
-        candidate: candidate.root,
-        version,
-        sourceCommit,
-        producerRunId,
-        candidateId: candidate.candidateId,
-        candidateManifestSha256: candidate.manifestSha256,
-        contractSetSha256: candidate.contractSetSha256,
-      }),
-    );
-  } finally {
-    await rm(candidate.root, { recursive: true, force: true });
-  }
-});
+for (const candidateKind of ['package', 'npm-package-set'] as const) {
+  test(`package candidate verification binds the complete package candidate (${candidateKind})`, async () => {
+    const candidate = await makeCandidate({ candidateKind });
+    try {
+      await assert.doesNotReject(() =>
+        verifyPackageCandidate({
+          candidate: candidate.root,
+          version,
+          sourceCommit,
+          producerRunId,
+          candidateId: candidate.candidateId,
+          candidateManifestSha256: candidate.manifestSha256,
+          contractSetSha256: candidate.contractSetSha256,
+        }),
+      );
+    } finally {
+      await rm(candidate.root, { recursive: true, force: true });
+    }
+  });
+}
 
 test('package candidate verification rejects a packed runtime client with stale contract metadata', async () => {
   const canonicalContractSetBytes = await readFile(
@@ -307,40 +310,42 @@ test('package candidate evidence is required for promotion', async () => {
   }
 });
 
-test('desktop candidate binding requires the exact Package Candidate bytes', async () => {
-  const candidate = await makeCandidate();
-  const desktop = await mkdtemp(join(tmpdir(), 'capture-desktop-candidate-'));
-  try {
-    await mkdir(join(desktop, 'package'));
-    await cp(join(candidate.root, 'package'), join(desktop, 'package'), {
-      recursive: true,
-    });
-    const packageManifest = JSON.parse(
-      await readFile(join(candidate.root, 'candidate-manifest.json'), 'utf8'),
-    ) as {
-      sourceCommit: string;
-      releaseVersion: string;
-      candidateId: string;
-      artifacts: unknown[];
-    };
-    await writeFile(
-      join(desktop, 'candidate-manifest.json'),
-      `${JSON.stringify({
-        sourceCommit: packageManifest.sourceCommit,
-        releaseVersion: packageManifest.releaseVersion,
-        packageCandidateId: packageManifest.candidateId,
-        artifacts: packageManifest.artifacts,
-      })}\n`,
-    );
-    await assert.doesNotReject(() =>
-      verifyPackageCandidateBinding({
-        desktopCandidate: desktop,
-        packageCandidate: candidate.root,
-        candidateId: candidate.candidateId,
-      }),
-    );
-  } finally {
-    await rm(candidate.root, { recursive: true, force: true });
-    await rm(desktop, { recursive: true, force: true });
-  }
-});
+for (const candidateKind of ['package', 'npm-package-set'] as const) {
+  test(`Release Candidate binding requires the exact Package Candidate bytes (${candidateKind})`, async () => {
+    const candidate = await makeCandidate({ candidateKind });
+    const release = await mkdtemp(join(tmpdir(), 'capture-release-candidate-'));
+    try {
+      await mkdir(join(release, 'package'));
+      await cp(join(candidate.root, 'package'), join(release, 'package'), {
+        recursive: true,
+      });
+      const packageManifest = JSON.parse(
+        await readFile(join(candidate.root, 'candidate-manifest.json'), 'utf8'),
+      ) as {
+        sourceCommit: string;
+        releaseVersion: string;
+        candidateId: string;
+        artifacts: unknown[];
+      };
+      await writeFile(
+        join(release, 'candidate-manifest.json'),
+        `${JSON.stringify({
+          sourceCommit: packageManifest.sourceCommit,
+          releaseVersion: packageManifest.releaseVersion,
+          packageCandidateId: packageManifest.candidateId,
+          artifacts: packageManifest.artifacts,
+        })}\n`,
+      );
+      await assert.doesNotReject(() =>
+        verifyPackageCandidateBinding({
+          releaseCandidate: release,
+          packageCandidate: candidate.root,
+          candidateId: candidate.candidateId,
+        }),
+      );
+    } finally {
+      await rm(candidate.root, { recursive: true, force: true });
+      await rm(release, { recursive: true, force: true });
+    }
+  });
+}

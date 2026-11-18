@@ -1004,7 +1004,8 @@ export function runInstalledNsisSmoke(
             );
           }
           const report = {
-            evidenceKind: 'deterministic-installed-tauri-smoke',
+            evidenceKind: 'installed-nsis-smoke',
+            installerSource: expectedSource,
             releaseGateSatisfied: false,
             realEnginesExercised: false,
             platform: 'windows',
@@ -1023,8 +1024,9 @@ export function runInstalledNsisSmoke(
             rendererIpcCommands: state.exerciseResult.rendererIpcCommands,
             cleanup: state.cleanup,
             realAppDataGuard: { status: realAppDataGuard, before: realAppDataBefore, after: realAppDataAfter },
-            disclaimer:
-              'Deterministic packaged verification only; it does not certify real OCR, speech recognition, structuring, or licensed-fixture behavior.',
+            disclaimer: expectedSource === 'deterministic'
+              ? 'Installed the fixture-runtime QA build. Real OCR, speech recognition and structuring were not exercised.'
+              : 'Installed the release installer. Real OCR, speech recognition and structuring were not exercised.',
           };
           assertInstalledSmokeEvidence(report);
           return writeEvidence(report).pipe(
