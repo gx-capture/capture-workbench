@@ -178,6 +178,9 @@ function exceptionReason(relativePath) {
     // EAGAIN on a non-blocking pipe, so the CLI entry reads it as a stream.
     return 'dead-code gate CLI stdin boundary';
   }
+  if (relativePath === 'tools/retired-names-gate.ts') {
+    return 'retired names Stop hook stdin boundary';
+  }
   if (relativePath === 'tools/architecture-graph.ts') {
     // Its --hook mode reads the same Stop hook payload (readHookPayload).
     return 'architecture graph Stop hook stdin boundary';

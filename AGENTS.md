@@ -29,6 +29,8 @@
 - One term per concept across runtime, contract, clients, hosts, UI, and documents. The terms are in `docs/domain/` and the glossary `.agents/PLANS/ddd-refactor/glossary.md`.
 - A name states its scope. Code that handles every capture kind is not named for one. A target says what it runs against (fixture runtime or real engines; dev server, packaged Desktop App, or installed application) and whether a release requires it.
 - When behaviour changes so that a name stops being true, rename it in the same change, including contract values while a contract-changing release is open. A misleading name is a defect, not a style matter.
+- Renamed or retired names do not come back: `pnpm run retired-names:check` rejects them. When a change retires a name, add it to `tools/quality/retired-names.json` in the same change; after removing remaining occurrences run `pnpm run retired-names:update` (CI runs the gate with `--ci`).
+- `.claude/settings.json` runs the retired names check as a Claude Code Stop hook when the checkout has changes.
 
 # Speech development tests
 

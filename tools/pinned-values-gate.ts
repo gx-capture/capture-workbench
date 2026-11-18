@@ -48,7 +48,7 @@ function scannedFile(file: string): boolean {
     /^(?:apps\/.*\/src-tauri\/src\/|packages\/capture-sidecar-launcher\/src\/).*\.rs$/u.test(file);
 }
 
-function trackedFiles(repoRoot: string): string[] {
+export function trackedFiles(repoRoot: string): string[] {
   const result = spawnSync('git', ['ls-files', '-z'], {
     cwd: repoRoot, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024,
   });
