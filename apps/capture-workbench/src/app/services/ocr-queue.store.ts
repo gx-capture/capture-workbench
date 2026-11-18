@@ -111,7 +111,7 @@ export class OcrQueueStore {
     this.reattachRunning(documents);
   });
 
-  /** Safe to call more than once. The document list itself lives on the workspace. */
+  /** Safe to call more than once. The document list itself lives on `LibraryStore`. */
   attach(): void {
     this.attached.set(true);
   }
