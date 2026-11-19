@@ -84,7 +84,7 @@ How each piece reacts to a `contents` requirement and to two extra assets:
 **Existing codes and fields.**
 - `CaptureFailureV2.code` is a pattern string, not an enum (`contracts/__init__.py:720-724`).
 - `requirement_unavailable` already exists in the problem registry (`problem_registry.py:198-203`) and is already used as a capture failure (`streaming_capture_service.py:409`, `490-495`).
-- `RuntimeRequirementV2.detail` (string or null) already exists. It is `None` for installed contents (`system_installer.py:325-331`).
+- `RuntimeRequirementV2.detail` (string or null) already exists. It is `None` for installed contents (`system_requirement_installer.py:234-253`).
 - The worker's own errors become generic `worker_failed`, retryable (`workers/server.py:166, 214, 313, 337`).
 - `_safe_failure_message` forwards text only from `CaptureProcessingError` (`:838-841`).
 
@@ -93,7 +93,7 @@ How each piece reacts to a `contents` requirement and to two extra assets:
 - **Error type:** add `SpeechModelNotInstalledError(ExtractionRuntimeUnavailableError)` in `_engine_installation_errors.py`, re-exported by `engine_installation.py`. Both the streaming service and `capture_extraction` already import from there.
 - **Where it is raised:** after engine resolution and before any worker starts, in `progressive_capture._resolve_engine` and in `capture_extraction._run_worker` for speech.
 - **How it is reported:** catch it before line 490 and call `_fail(capture_id, "requirement_unavailable", str(error), stage="extraction", retryable=False)`.
-- **Listing:** `_contents_requirement` sets `detail` to the same sentence when the installed content is `cpu` and `extraction_config.speech_recognition_model` is `tea-asr-1.1`. `extraction_config` is already injected (`system_installer.py:103`). Status stays `ready`, because `auto` and mini still work on that install. LAW treats anything other than `ready` or `installable` as unavailable (`capture_setup.py:58-60`), so changing the status would block hosts.
+- **Listing:** `_listed_content_requirement` sets `detail` to the same sentence when the installed content is `cpu` and `extraction_config.speech_recognition_model` is `tea-asr-1.1`. `extraction_config` is already injected (`system_requirement_installer.py:77`). Status stays `ready`, because `auto` and mini still work on that install. LAW treats anything other than `ready` or `installable` as unavailable (`capture_setup.py:58-60`), so changing the status would block hosts.
 - **What the host sees:** the capture fails with `{code:"requirement_unavailable", stage:"extraction", retryable:false}` and this message (≤500 chars): "Speech recognition model tea-asr-1.1 is not in the installed cpu content. Set CAPTURE_SPEECH_RECOGNITION_MODEL to auto or tea-asr-1.1-mini, or uninstall speech-recognition and install it with CAPTURE_SPEECH_RECOGNITION_VARIANT=cuda."
 - **Defence in depth:** the worker's own `model not installed` check stays.
 - **Drift risk:** the runtime rule duplicates the worker's selection in `speech_recognition.py`. Pin the two with a test that compares them.
@@ -137,7 +137,7 @@ Forcing `cpu` on the RTX box exercises everything except driver detection, which
 | CW P1 | `provisioning/infrastructure/engine_content_selection.py`; `_engine_installation_errors.py` (+ re-export in `engine_installation.py`) | content→models rule; `SpeechModelNotInstalledError` |
 | CW P1 | `speech/infrastructure/progressive_capture.py:443-449`; `capture/infrastructure/capture_extraction.py:854-857` | raise before the worker starts, streaming and with-speakers paths |
 | CW P1 | `capture/application/streaming_capture_service.py:490-495` | `requirement_unavailable`, message kept, retryable false |
-| CW P1 | `structuring/infrastructure/ollama/system_installer.py:325-331` | `detail` on a ready `cpu` install |
+| CW P1 | `provisioning/infrastructure/system_requirement_installer.py:234-253` | `detail` on a ready `cpu` install |
 | CW P1 | `docs/domain/speech.md:69` | the "only `worker_failed`" sentence becomes false |
 | CW P2 | `src/capture_runtime/release.py:56-123` | completeness and artifact walk per content |
 | CW P2 | `scripts/verify_release_model_candidate.py:291-298, 356-361` | per-content check (`cuda` = the lock's delivery, `cpu` = `cpu_speech_model_delivery`); `speech_variant="cuda"` for the frozen fixture |

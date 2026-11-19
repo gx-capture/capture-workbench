@@ -7,10 +7,8 @@ from typing import TYPE_CHECKING, Protocol
 from capture_runtime.contracts import RuntimeInstallationV2, RuntimeRequirementV2
 
 if TYPE_CHECKING:
-    from capture_runtime.provisioning.application.installation_service import (
-        InstallationService,
-        RuntimeInstaller,
-    )
+    from capture_runtime.provisioning.application.installation_service import InstallationService
+    from capture_runtime.provisioning.application.requirement_installer import RequirementInstaller
 
 
 class CaptureGate(Protocol):
@@ -90,7 +88,7 @@ class UninstallRequirement:
 class ListRequirements:
     """List available runtime requirements and their current status."""
 
-    def __init__(self, installer: RuntimeInstaller) -> None:
+    def __init__(self, installer: RequirementInstaller) -> None:
         self._installer = installer
 
     def execute(

@@ -115,6 +115,7 @@ flowchart LR
   n_capture_runtime_ocr --> n_capture_runtime_worker_stage_policy
   n_capture_runtime_provisioning --> n_capture_runtime_worker_payloads
   n_capture_runtime_provisioning --> n_capture_runtime_clock
+  n_capture_runtime_provisioning --> n_capture_runtime_config
   n_capture_runtime_provisioning --> n_capture_runtime_constants
   n_capture_runtime_provisioning --> n_capture_runtime_contracts
   n_capture_runtime_provisioning --> n_capture_runtime_dependencies
@@ -124,7 +125,6 @@ flowchart LR
   n_capture_runtime_provisioning --> n_capture_runtime_release
   n_capture_runtime_provisioning --> n_capture_runtime_routes
   n_capture_runtime_provisioning --> n_capture_runtime_storage
-  n_capture_runtime_provisioning --> n_capture_runtime_structuring
   n_capture_runtime_provisioning --> n_capture_runtime_worker_client
   n_capture_runtime_provisioning --> n_capture_runtime_worker_contracts
   n_capture_runtime_provisioning --> n_capture_runtime_worker_process
@@ -154,7 +154,6 @@ flowchart LR
   n_capture_runtime_structuring --> n_capture_runtime_contract_set
   n_capture_runtime_structuring --> n_capture_runtime_contracts
   n_capture_runtime_structuring --> n_capture_runtime_dependencies
-  n_capture_runtime_structuring --> n_capture_runtime_install_progress
   n_capture_runtime_structuring --> n_capture_runtime_provisioning
   n_capture_runtime_structuring --> n_capture_runtime_routes
   n_capture_runtime_structuring --> n_capture_runtime_storage

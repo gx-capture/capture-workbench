@@ -56,6 +56,8 @@ sequenceDiagram
 
 讀取擷取上下文的公開結果；Ollama adapter 負責模型及 HTTP 技術機制。模型選項（`/runtime/model-options`）與模型安裝（`/runtime/model-installations`）路由位於 `capture_runtime.structuring.api.model_routes`。模型安裝 API 經 `InstallModelOption`、`GetModelInstallation`、`CancelModelInstallation`。
 
+`OllamaRequirementInstaller` 實作引擎供應的 `StructuringRequirementInstaller`，查詢 Ollama 需求並處理應用程式的安裝。同一個介接器也供 `ModelInstallationService` 安裝選定的模型。
+
 ## 規則與資料來源
 
 重播先於語意驗證；順序檢查先於最後批次的文件組裝，錯序回傳 409。Repository 的鎖內檢查仍為寫入的權威。模型下載的鎖、任務 registry 與取消等待由生命週期服務持有。

@@ -13,6 +13,7 @@ from capture_runtime.contracts import (
     RuntimeInstallationStatus,
     RuntimeModelInstallationV2,
 )
+from capture_runtime.provisioning.application.requirement_installer import ManualActionRequiredError
 from capture_runtime.structuring.application.use_cases import (
     CancelModelInstallation,
     GetModelInstallation,
@@ -24,9 +25,6 @@ from capture_runtime.structuring.domain.installation.models import (
 )
 from capture_runtime.structuring.infrastructure.model_installation_repository import (
     ModelInstallationRepository,
-)
-from capture_runtime.structuring.infrastructure.ollama.lifecycle_impl import (
-    ManualActionRequiredError,
 )
 
 

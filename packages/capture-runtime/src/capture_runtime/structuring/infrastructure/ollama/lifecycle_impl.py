@@ -32,10 +32,6 @@ class RuntimeUnavailableError(RuntimeError):
     pass
 
 
-class ManualActionRequiredError(RuntimeError):
-    pass
-
-
 @dataclass(slots=True)
 class OwnedProcess:
     process: subprocess.Popen[bytes]

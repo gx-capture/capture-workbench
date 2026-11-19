@@ -23,11 +23,14 @@ from capture_runtime.structuring.infrastructure.ollama import (
     OllamaCaptureStructuringProvider,
     OwnedProcess,
     RuntimeUnavailableError,
-    SystemRuntimeInstaller,
 )
+from capture_runtime.structuring.infrastructure.ollama.installation_commands import CommandResult
 from capture_runtime.structuring.infrastructure.ollama.listener_owner import (
     SystemListenerOwner,
     choose_loopback_port,
+)
+from capture_runtime.structuring.infrastructure.ollama.requirement_installation import (
+    OllamaRequirementInstaller,
 )
 from tests.integration.test_ollama_restart_readiness import (
     FakePopen,
@@ -185,7 +188,7 @@ def test_foreign_http_listener_receives_no_requests_or_install_commands(tmp_path
             port_selector=lambda: server.server_port,
         )
         provider = OllamaCaptureStructuringProvider(lifecycle, clock=SystemClock())
-        installer = SystemRuntimeInstaller(
+        installer = OllamaRequirementInstaller(
             lifecycle,
             clock=SystemClock(),
             command_runner=SimpleNamespace(run=lambda *args, **kwargs: commands.append(args)),
@@ -220,7 +223,6 @@ def test_installer_tags_and_cli_use_verified_lease(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from capture_runtime.structuring.infrastructure.model_catalog import model_option
-    from capture_runtime.structuring.infrastructure.ollama import CommandResult
 
     controller = FakeProcessController()
     lifecycle = IsolatedOllamaLifecycle(
@@ -259,7 +261,7 @@ def test_installer_tags_and_cli_use_verified_lease(
             return CommandResult(0, "")
 
     monkeypatch.setattr(httpx, "get", tags)
-    installer = SystemRuntimeInstaller(lifecycle, clock=SystemClock(), command_runner=Runner())
+    installer = OllamaRequirementInstaller(lifecycle, clock=SystemClock(), command_runner=Runner())
     asyncio.run(
         installer.install_model_option(
             option.option_id,
@@ -434,7 +436,7 @@ def test_installer_rejects_environment_from_previous_lease(tmp_path, monkeypatch
         listener_owner=SimpleNamespace(listener_pid=lambda _port: 4242),
     )
     commands = []
-    installer = SystemRuntimeInstaller(
+    installer = OllamaRequirementInstaller(
         lifecycle,
         clock=SystemClock(),
         command_runner=SimpleNamespace(run=lambda *args, **kwargs: commands.append(args)),

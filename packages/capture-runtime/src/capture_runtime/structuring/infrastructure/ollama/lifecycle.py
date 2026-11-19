@@ -2,7 +2,6 @@
 
 from capture_runtime.structuring.infrastructure.ollama.lifecycle_impl import (
     IsolatedOllamaLifecycle,
-    ManualActionRequiredError,
     OllamaOwnershipError,
     OwnedProcess,
     ProcessController,
@@ -12,7 +11,6 @@ from capture_runtime.structuring.infrastructure.ollama.lifecycle_impl import (
 
 __all__ = [
     "IsolatedOllamaLifecycle",
-    "ManualActionRequiredError",
     "OllamaOwnershipError",
     "OwnedProcess",
     "ProcessController",
