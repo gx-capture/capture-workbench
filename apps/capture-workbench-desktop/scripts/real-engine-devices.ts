@@ -574,3 +574,58 @@ export function renderMarkdownReport(input: {
   }
   return `${lines.join('\n')}\n`;
 }
+
+export interface DeviceCheckSummary {
+  readonly pass: number;
+  readonly fail: number;
+  readonly notRunnable: number;
+  readonly notRunnableScenarios: readonly string[];
+  readonly exitCode: 0 | 1;
+}
+
+export function summarizeResults(results: readonly Pick<ScenarioResult, 'scenario' | 'verdict'>[]): DeviceCheckSummary {
+  let pass = 0;
+  let fail = 0;
+  const notRunnableScenarios: string[] = [];
+  for (const result of results) {
+    if (result.verdict === 'pass') pass += 1;
+    else if (result.verdict === 'not runnable') notRunnableScenarios.push(result.scenario);
+    else fail += 1;
+  }
+  return {
+    pass,
+    fail,
+    notRunnable: notRunnableScenarios.length,
+    notRunnableScenarios,
+    exitCode: fail > 0 ? 1 : 0,
+  };
+}
+
+export function formatResultSummary(summary: DeviceCheckSummary): string {
+  const notRunnableDetail = summary.notRunnableScenarios.length > 0
+    ? ` (${summary.notRunnableScenarios.join(', ')})`
+    : '';
+  return `Summary: ${summary.pass} pass, ${summary.fail} fail, ${summary.notRunnable} not runnable${notRunnableDetail}`;
+}
+
+export interface RemainingProcess {
+  readonly pid: number;
+  readonly name: string;
+}
+
+export interface CleanupLeftover {
+  readonly processes: readonly RemainingProcess[];
+  readonly listeners: readonly { readonly pid: number; readonly port: number }[];
+  readonly waitMs: number;
+}
+
+export function formatCleanupFailure(leftover: CleanupLeftover): string {
+  const waitSeconds = Math.round(leftover.waitMs / 1000);
+  const processList = leftover.processes.length > 0
+    ? ` (${leftover.processes.map((process) => `${process.name || 'unknown'} (pid ${process.pid})`).join(', ')})`
+    : '';
+  const listenerList = leftover.listeners.length > 0
+    ? ` (${leftover.listeners.map((listener) => `pid ${listener.pid} port ${listener.port}`).join(', ')})`
+    : '';
+  return `Owned Capture Runtime cleanup left ${leftover.processes.length} process(es)${processList} and ${leftover.listeners.length} listener(s)${listenerList} after ${waitSeconds} s wait.`;
+}

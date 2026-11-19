@@ -4,11 +4,14 @@ import { test } from 'node:test';
 import {
   decideVerdict,
   deviceScenarios,
+  formatCleanupFailure,
+  formatResultSummary,
   parseNvidiaSamples,
   parseWindowsSamples,
   preflightScenario,
   renderMarkdownReport,
   summarizeObservation,
+  summarizeResults,
   type GpuAdapter,
   type ReportedCapture,
 } from './real-engine-devices.ts';
@@ -173,4 +176,67 @@ test('observe mode does not report an empty process tree as CPU use', () => {
   }] });
   assert.match(markdown, /not observed \(no matching process\)/u);
   assert.match(markdown, /speech-cpu-pack \| \| \| \| not run yet/u);
+});
+
+test('exit decision returns 0 for pass and not runnable alone, and 1 for any failure verdict', () => {
+  const allPass = summarizeResults([
+    { scenario: 'ocr-default', verdict: 'pass' },
+    { scenario: 'speech-cpu-pack', verdict: 'pass' },
+  ]);
+  assert.deepEqual(allPass, { pass: 2, fail: 0, notRunnable: 0, notRunnableScenarios: [], exitCode: 0 });
+  assert.equal(formatResultSummary(allPass), 'Summary: 2 pass, 0 fail, 0 not runnable');
+
+  const withNotRunnable = summarizeResults([
+    { scenario: 'ocr-default', verdict: 'pass' },
+    { scenario: 'speech-development', verdict: 'not runnable' },
+    { scenario: 'speaker-identification', verdict: 'not runnable' },
+  ]);
+  assert.deepEqual(withNotRunnable, {
+    pass: 1,
+    fail: 0,
+    notRunnable: 2,
+    notRunnableScenarios: ['speech-development', 'speaker-identification'],
+    exitCode: 0,
+  });
+  assert.equal(
+    formatResultSummary(withNotRunnable),
+    'Summary: 1 pass, 0 fail, 2 not runnable (speech-development, speaker-identification)',
+  );
+
+  for (const failingVerdict of ['failed', 'mismatch', 'not observed'] as const) {
+    const summary = summarizeResults([
+      { scenario: 'ocr-default', verdict: 'pass' },
+      { scenario: 'speech-development', verdict: 'not runnable' },
+      { scenario: 'speech-cpu-pack', verdict: failingVerdict },
+    ]);
+    assert.equal(summary.exitCode, 1);
+    assert.equal(summary.pass, 1);
+    assert.equal(summary.fail, 1);
+    assert.equal(summary.notRunnable, 1);
+    assert.deepEqual(summary.notRunnableScenarios, ['speech-development']);
+  }
+
+  assert.equal(summarizeResults([]).exitCode, 0);
+});
+
+test('cleanup failure report names process image, pid and wait duration', () => {
+  const message = formatCleanupFailure({
+    processes: [{ pid: 4321, name: 'python' }],
+    listeners: [],
+    waitMs: 35_000,
+  });
+  assert.equal(
+    message,
+    'Owned Capture Runtime cleanup left 1 process(es) (python (pid 4321)) and 0 listener(s) after 35 s wait.',
+  );
+
+  const withListener = formatCleanupFailure({
+    processes: [],
+    listeners: [{ pid: 9999, port: 18421 }],
+    waitMs: 10_000,
+  });
+  assert.equal(
+    withListener,
+    'Owned Capture Runtime cleanup left 0 process(es) and 1 listener(s) (pid 9999 port 18421) after 10 s wait.',
+  );
 });

@@ -50,20 +50,24 @@ import { catalogDeliveries } from './practical-installed.ts';
 import {
   decideVerdict,
   deviceScenarios,
+  formatCleanupFailure,
+  formatResultSummary,
   parseNvidiaSamples,
   parseWindowsSamples,
   preflightScenario,
   renderMarkdownReport,
   summarizeObservation,
+  summarizeResults,
   type CaptureInput,
   type CaptureObservation,
   type DeviceScenario,
   type GpuAdapter,
   type OcrComputeReport,
+  type RemainingProcess,
   type ReportedCapture,
   type ScenarioResult,
 } from './real-engine-devices.ts';
-import { request, reservePort, terminateOwnedTree } from './real-media-smoke.ts';
+import { request, reservePort } from './real-media-smoke.ts';
 import { appRoot } from './stage-runtime.ts';
 import { isTerminalCaptureStatus, startV2Capture, type CaptureOperation } from './v2-capture-flow.ts';
 
@@ -74,6 +78,8 @@ const workspaceEvidenceDirectory = join(workspaceRoot, 'tmp', 'capture-workbench
 const installationTimeoutMs = 90 * 60_000;
 const captureTimeoutMs = 60 * 60_000;
 const readyTimeoutMs = 200_000;
+const runtimeCleanupWaitMs = 35_000;
+const ownedRuntimeObserverTimeoutMs = 30_000;
 const sampleIntervalSeconds = 2;
 
 interface RunOptions {
@@ -176,7 +182,7 @@ async function main(): Promise<void> {
   const scratchIdentity = scratchRoot ? await lstat(runTree) : undefined;
   const nvidiaPresent = spawnSync('nvidia-smi', ['-L'], { windowsHide: true, stdio: 'ignore' }).status === 0;
   try {
-    await run({
+    const results = await run({
       inputs,
       scenarios,
       releaseDirectory,
@@ -186,6 +192,9 @@ async function main(): Promise<void> {
       nvidiaPresent,
       driverPresent,
     });
+    const summary = summarizeResults(results);
+    process.stdout.write(`${formatResultSummary(summary)}\n`);
+    process.exitCode = summary.exitCode;
   } finally {
     if (!scratchRoot) {
       process.stdout.write(`Kept the run tree at ${runTree}; remove it with pnpm run kept-run-trees -- --remove ${runTree}\n`);
@@ -198,7 +207,7 @@ async function main(): Promise<void> {
   }
 }
 
-async function run(options: RunOptions): Promise<void> {
+async function run(options: RunOptions): Promise<readonly ScenarioResult[]> {
   const canRun = options.scenarios.some((scenario) => !preflightScenario(scenario, options.adapters, options.driverPresent));
   const evidenceDirectory = await mkdtemp(join(options.runTree, 'evidence-'));
   const mirrorPort = canRun ? await reservePort() : 0;
@@ -219,6 +228,7 @@ async function run(options: RunOptions): Promise<void> {
   } finally {
     if (mirror) await new Promise<void>((resolveClose) => mirror.close(() => resolveClose()));
   }
+  return results;
 }
 
 async function runScenario(
@@ -278,7 +288,7 @@ async function runScenario(
   } catch (error) {
     failure = error instanceof Error ? error.message : String(error);
   } finally {
-    if (runtime) await terminateOwnedTree(runtime.child).catch((error: unknown) => {
+    if (runtime) await cleanupOwnedRuntime(runtime.child).catch((error: unknown) => {
       failure ??= `runtime cleanup: ${error instanceof Error ? error.message : String(error)}`;
     });
   }
@@ -765,6 +775,119 @@ async function writeRunReport(
     await writeFile(join(directory, 'report.json'), json, 'utf8');
   }
   if (options.reportPath) await writeFile(options.reportPath, markdown, 'utf8');
+}
+
+async function cleanupOwnedRuntime(child: ChildProcess): Promise<void> {
+  const pid = child.pid;
+  if (!pid) throw new Error('Owned Capture Runtime did not expose a PID.');
+  const ownedPids = observeOwnedRuntimePids(pid);
+  if (isProcessAlive(pid)) {
+    const taskkill = join(process.env['SystemRoot'] ?? 'C:\\Windows', 'System32', 'taskkill.exe');
+    const terminated = spawnSync(taskkill, ['/PID', String(pid), '/T', '/F'], {
+      stdio: 'ignore',
+      windowsHide: true,
+    });
+    if (terminated.error && isProcessAlive(pid)) throw terminated.error;
+  }
+  const deadline = Date.now() + runtimeCleanupWaitMs;
+  let remaining = observeRemainingRuntime(ownedPids);
+  while (Date.now() < deadline && (remaining.processes.length > 0 || remaining.listeners.length > 0)) {
+    await delay(100);
+    remaining = observeRemainingRuntime(ownedPids);
+  }
+  if (remaining.processes.length > 0 || remaining.listeners.length > 0) {
+    throw new Error(formatCleanupFailure({ ...remaining, waitMs: runtimeCleanupWaitMs }));
+  }
+}
+
+function observeOwnedRuntimePids(rootPid: number): readonly number[] {
+  const parsed = runPowerShellJson(`
+$rootPid = ${String(rootPid)}
+$processes = @(Get-CimInstance Win32_Process -Property ProcessId, ParentProcessId | Select-Object ProcessId, ParentProcessId)
+$owned = [System.Collections.Generic.HashSet[int]]::new()
+[void]$owned.Add($rootPid)
+do {
+  $changed = $false
+  foreach ($process in $processes) {
+    if ($owned.Contains([int]$process.ParentProcessId) -and $owned.Add([int]$process.ProcessId)) {
+      $changed = $true
+    }
+  }
+} while ($changed)
+[pscustomobject]@{ pids = @($owned | Sort-Object) } | ConvertTo-Json -Compress
+`);
+  const pids = (parsed as { readonly pids?: unknown })?.pids;
+  if (!Array.isArray(pids) || !pids.every((item): item is number => Number.isSafeInteger(item) && item > 0)) {
+    throw new Error('Owned Capture Runtime process tree evidence was malformed.');
+  }
+  return pids;
+}
+
+function observeRemainingRuntime(pids: readonly number[]): {
+  readonly processes: readonly RemainingProcess[];
+  readonly listeners: readonly { readonly pid: number; readonly port: number }[];
+} {
+  if (pids.length === 0) return { processes: [], listeners: [] };
+  const parsed = runPowerShellJson(`
+$known = @(${pids.join(',')})
+$live = @(Get-Process -Id $known -ErrorAction SilentlyContinue | ForEach-Object {
+  [pscustomobject]@{ pid = [int]$_.Id; name = [string]$_.ProcessName }
+})
+$knownSet = [System.Collections.Generic.HashSet[int]]::new()
+foreach ($processId in $known) { [void]$knownSet.Add([int]$processId) }
+$listeners = @(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
+  Where-Object { $knownSet.Contains([int]$_.OwningProcess) } |
+  ForEach-Object { [pscustomobject]@{ pid = [int]$_.OwningProcess; port = [int]$_.LocalPort } })
+[pscustomobject]@{ processes = @($live); listeners = @($listeners) } | ConvertTo-Json -Compress
+`) as { readonly processes?: unknown; readonly listeners?: unknown } | null;
+  if (!parsed || !Array.isArray(parsed.processes) || !Array.isArray(parsed.listeners)) {
+    throw new Error('Owned Capture Runtime process evidence was malformed.');
+  }
+  const processes = parsed.processes.map((entry): RemainingProcess => {
+    const item = entry as { readonly pid?: unknown; readonly name?: unknown };
+    if (!Number.isSafeInteger(item?.pid) || Number(item.pid) < 1 || typeof item?.name !== 'string') {
+      throw new Error('Owned Capture Runtime process entry was malformed.');
+    }
+    return { pid: Number(item.pid), name: item.name };
+  });
+  const listeners = parsed.listeners.map((entry) => {
+    const item = entry as { readonly pid?: unknown; readonly port?: unknown };
+    if (
+      !Number.isSafeInteger(item?.pid)
+      || Number(item.pid) < 1
+      || !Number.isSafeInteger(item?.port)
+      || Number(item.port) < 1
+      || Number(item.port) > 65_535
+    ) {
+      throw new Error('Owned Capture Runtime listener entry was malformed.');
+    }
+    return { pid: Number(item.pid), port: Number(item.port) };
+  });
+  return { processes, listeners };
+}
+
+function runPowerShellJson(script: string): unknown {
+  const powershell = join(process.env['SystemRoot'] ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  const result = spawnSync(powershell, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script], {
+    encoding: 'utf8',
+    windowsHide: true,
+    timeout: ownedRuntimeObserverTimeoutMs,
+  });
+  if (result.error || result.status !== 0 || !result.stdout.trim()) {
+    const code = (result.error as NodeJS.ErrnoException | undefined)?.code ?? 'none';
+    const status = Number.isInteger(result.status) ? String(result.status) : 'none';
+    throw new Error(`Owned Capture Runtime process observer failed (code=${code}; status=${status}).`);
+  }
+  return JSON.parse(result.stdout) as unknown;
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function delay(milliseconds: number): Promise<void> {
