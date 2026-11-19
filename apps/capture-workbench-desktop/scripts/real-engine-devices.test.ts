@@ -34,11 +34,11 @@ const speechScenario = scenario('speech-development');
 const ocrScenario = scenario('ocr-default');
 const speakerScenario = scenario('speaker-identification');
 const cpuScenario = scenario('speech-cpu-pack');
-const baseline = 'cpu,t0,10,5,1,True';
-const poll = 'cpu,t1,11,5,2,True';
-const finalPoll = 'cpu,t2,10,5,1,True';
-const worker = (kind: string, identity = '40:100') => `worker,t1,${identity},${kind},1.25`;
-const burst = (kind: string, luid = discrete, identity = '40:100') => `busy,t1,${identity},${luid},0,Compute,7000000,${kind}`;
+const baseline = 'cpu,2026-11-20T00:00:00.000Z,10,5,1,True';
+const poll = 'cpu,2026-11-20T00:00:02.000Z,11,5,2,True';
+const finalPoll = 'cpu,2026-11-20T00:00:10.000Z,10,5,1,True';
+const worker = (kind: string, identity = '40:639307296010000000') => `worker,2026-11-20T00:00:02.000Z,${identity},${kind},1.25`;
+const burst = (kind: string, luid = discrete, identity = '40:639307296010000000') => `busy,2026-11-20T00:00:02.000Z,${identity},${luid},0,Compute,7000000,${kind}`;
 const observe = (kind: string, ...rows: string[]) => summarizeObservation({
   ...parseWindowsSamples([baseline, ...rows, finalPoll].join('\n')), adapters, nvidia: [], worker: kind,
 });
@@ -69,7 +69,7 @@ test('preflight requires discrete DirectML hardware and the NVIDIA driver only f
 });
 
 test('sampler parses complete ticks, strips the BOM and skips malformed rows', () => {
-  const parsed = parseWindowsSamples(`\uFEFF${baseline}\ncpu,t1,x,40,5,True\n${worker(speech)}\n${poll}\n${burst(speech)}`);
+  const parsed = parseWindowsSamples(`\uFEFF${baseline}\ncpu,2026-11-20T00:00:02.000Z,x,40,5,True\n${worker(speech)}\n${poll}\n${burst(speech)}`);
   assert.equal(parsed.cpu.length, 2);
   assert.equal(parsed.cpu[0].gpuOk, true);
   assert.equal(parsed.workers[0].worker, speech);
@@ -88,18 +88,18 @@ test('a single post-baseline worker burst survives worker exit', () => {
 
 test('seven-field utilization rows classify the integrated GPU and expose dual-GPU activity', () => {
   const integratedRows = [
-    `gpu,t1,owned,${integrated},Compute,20,${speech}`,
-    `gpu,t2,owned,${integrated},Compute,25,${speech}`,
+    `gpu,2026-11-20T00:00:02.000Z,owned,${integrated},Compute,20,${speech}`,
+    `gpu,2026-11-20T00:00:10.000Z,owned,${integrated},Compute,25,${speech}`,
   ];
   assert.deepEqual(parseWindowsSamples(integratedRows[0]).gpu, [
-    { time: 't1', owned: true, luid: integrated, engineType: 'Compute', utilization: 20, worker: speech },
+    { time: '2026-11-20T00:00:02.000Z', owned: true, luid: integrated, engineType: 'Compute', utilization: 20, worker: speech },
   ]);
   const single = observe(speech, worker(speech), poll, ...integratedRows);
   assert.equal(single.observedDevice, 'integrated-gpu');
   assert.equal(single.ownedAdapterUse[0].activeSamples, 2);
   const dual = observe(speech, worker(speech), poll, ...integratedRows,
-    `gpu,t1,owned,${discrete},Compute,30,${speech}`,
-    `gpu,t2,owned,${discrete},Compute,35,${speech}`);
+    `gpu,2026-11-20T00:00:02.000Z,owned,${discrete},Compute,30,${speech}`,
+    `gpu,2026-11-20T00:00:10.000Z,owned,${discrete},Compute,35,${speech}`);
   assert.equal(dual.conflictingAdapters, true);
   assert.equal(dual.observedDevice, null);
 });
@@ -116,8 +116,8 @@ test('NVIDIA summary reports peak utilization and memory increase from the first
 });
 
 test('existing worker cumulative time is subtracted; an uncompleted tick is ignored', () => {
-  const observed = observe(speech, 'worker,t0,40:100,speech-recognition,1.25', worker(speech),
-    burst(speech).replace(',t1,', ',t0,'), burst(speech), poll, burst(speech, integrated).replace(',t1,', ',incomplete,'));
+  const observed = observe(speech, 'worker,2026-11-20T00:00:00.000Z,40:639307296010000000,speech-recognition,1.25', worker(speech),
+    burst(speech).replace(',2026-11-20T00:00:02.000Z,', ',2026-11-20T00:00:00.000Z,'), burst(speech), poll, burst(speech, integrated).replace(',2026-11-20T00:00:02.000Z,', ',incomplete,'));
   assert.equal(observed.ownedCpuSeconds, 0);
   assert.equal(observed.ownedAdapterUse[0].busySeconds, 0);
   assert.equal(observed.observedDevice, null);
@@ -144,7 +144,7 @@ test('OCR needs independent PDF and image evidence and rejects simultaneous GPU 
 
 test('speaker identification requires its own CPU evidence, not speech GPU activity', () => {
   const extraction = observe(speech, worker(speech), burst(speech), poll);
-  const speakerCpu = observe(speaker, worker(speech), burst(speech), worker(speaker, '41:100'), poll);
+  const speakerCpu = observe(speaker, worker(speech), burst(speech), worker(speaker, '41:639307296010000000'), poll);
   const speakerGpu = observe(speaker, worker(speaker), burst(speaker), poll);
   const input = { scenario: speakerScenario, captures: [{ ...speechCapture, diarizationDevice: 'cpu' }], installedPack: 'cuda' };
   assert.equal(decideVerdict({ ...input, observations: { audio: { extraction, speaker: speakerCpu } } }).verdict, 'pass');
@@ -166,7 +166,7 @@ test('verified installed pack and matching provenance are required', () => {
 });
 
 test('observe mode does not report an empty process tree as CPU use', () => {
-  const observation = summarizeObservation({ ...parseWindowsSamples('cpu,t0,0,10,0,True\ncpu,t1,0,20,0,True'), adapters, nvidia: [] });
+  const observation = summarizeObservation({ ...parseWindowsSamples('cpu,2026-11-20T00:00:00.000Z,0,10,0,True\ncpu,2026-11-20T00:00:02.000Z,0,20,0,True'), adapters, nvidia: [] });
   assert.equal(observation.matchingProcessObserved, false);
   assert.equal(observation.observedDevice, null);
   const markdown = renderMarkdownReport({ title: 'Device check', preamble: [], pending: ['speech-cpu-pack'], results: [{
@@ -239,4 +239,44 @@ test('cleanup failure report names process image, pid and wait duration', () => 
     withListener,
     'Owned Capture Runtime cleanup left 0 process(es) and 1 listener(s) (pid 9999 port 18421) after 10 s wait.',
   );
+});
+
+const counterObservation = (instances: readonly { identity: string; values: readonly (number | undefined)[] }[]) => {
+  const rows = ['cpu,2026-11-20T00:00:00.000Z,0,0,0,True'];
+  for (let index = 0; index < 5; index += 1) {
+    const time = new Date(Date.UTC(2026, 10, 20, 0, 0, 2 + index * 2)).toISOString();
+    for (const instance of instances) {
+      const value = instance.values[index];
+      if (value !== undefined) rows.push(`busy,${time},${instance.identity},${discrete},0,3D,${value},${speech}`);
+    }
+    rows.push(`cpu,${time},1,0,1,True`);
+  }
+  return summarizeObservation({ ...parseWindowsSamples(rows.join('\n')), adapters, nvidia: [], worker: speech }).ownedAdapterUse[0].busySeconds;
+};
+
+test('late unsigned wrapped counters count only the few seconds observed', () => {
+  const seconds = counterObservation([{ identity: '27156:639307296010000000', values: [
+    18446744071665208880, 18446744071678173805, 18446744071697336103,
+    18446744071717395543, 18446744071717395543,
+  ] }]);
+  assert.ok(seconds > 5.2 && seconds < 5.3, String(seconds));
+});
+
+test('late plausible counters count from zero, while old or impossible starts rebase', () => {
+  assert.equal(counterObservation([{ identity: '40:639307296010000000', values: [7_000_000] }]), 0.7);
+  assert.equal(counterObservation([{ identity: '40:639307295990000000', values: [7_000_000] }]), 0);
+  assert.equal(counterObservation([{ identity: '40:639307296010000000', values: [20_000_000, 25_000_000] }]), 0.5);
+});
+
+test('counter resets start a new segment and impossible increases are bounded', () => {
+  assert.equal(counterObservation([{ identity: '40:639307296010000000', values: [7_000_000, 17_000_000, 1_000_000, 6_000_000] }]), 2.2);
+  assert.equal(counterObservation([{ identity: '40:639307296010000000', values: [0, 1e19] }]), 2);
+});
+
+test('restarting instances on one adapter accumulate independently', () => {
+  assert.equal(counterObservation([
+    { identity: '40:639307296010000000', values: [7_000_000, 17_000_000] },
+    { identity: '40:639307296030000000', values: [undefined, 5_000_000, 15_000_000] },
+    { identity: '41:639307296050000000', values: [undefined, undefined, 4_000_000] },
+  ]), 3.6);
 });

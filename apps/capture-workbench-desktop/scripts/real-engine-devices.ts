@@ -294,24 +294,32 @@ export interface AdapterUse {
 
 /** Busy seconds of the runtime's work engines per adapter over the sampled span. */
 function busySecondsByAdapter(samples: readonly GpuBusySample[], baselineTime: string | undefined): Map<string, number> {
-  const engines = new Map<string, { luid: string; baseline: number; last: number }>();
+  const engines = new Map<string, { last: number; time: number }>();
+  const byAdapter = new Map<string, number>();
+  const baselineMs = Date.parse(baselineTime ?? '');
   for (const sample of samples) {
     const engine = engines.get(sample.engine);
+    const time = Date.parse(sample.time);
+    let seconds = 0;
     if (!engine) {
-      // An engine seen from the first sample counts from there; one that
-      // appears later belongs to a process started during the span.
-      engines.set(sample.engine, {
-        luid: sample.luid,
-        baseline: sample.time === baselineTime ? sample.runningTime : 0,
-        last: sample.runningTime,
-      });
-    } else {
-      engine.last = Math.max(engine.last, sample.runningTime);
+      // Windows has reported a negative start as unsigned, near 2^64
+      // (18446744071665208880). Only a plausible process-age total starts at zero.
+      // CreationDate.Ticks uses 100 ns since year 1, not the Unix epoch.
+      const startMs = Number(BigInt(sample.engine.split(':')[1]) / 10_000n) - 62_135_596_800_000;
+      const ageSeconds = (time - startMs) / 1000;
+      const initialSeconds = sample.runningTime / 1e7;
+      if (startMs >= baselineMs && time > baselineMs && initialSeconds >= 0 && initialSeconds <= ageSeconds) {
+        seconds = initialSeconds;
+      }
+    } else if (sample.runningTime >= engine.last) {
+      // Bound each segment by wall time; a backwards counter rebases below.
+      const elapsedSeconds = Math.max(0, (time - engine.time) / 1000);
+      if (Number.isFinite(elapsedSeconds)) {
+        seconds = Math.min((sample.runningTime - engine.last) / 1e7, elapsedSeconds);
+      }
     }
-  }
-  const byAdapter = new Map<string, number>();
-  for (const engine of engines.values()) {
-    byAdapter.set(engine.luid, (byAdapter.get(engine.luid) ?? 0) + (engine.last - engine.baseline) / 1e7);
+    engines.set(sample.engine, { last: sample.runningTime, time });
+    byAdapter.set(sample.luid, (byAdapter.get(sample.luid) ?? 0) + seconds);
   }
   return byAdapter;
 }
