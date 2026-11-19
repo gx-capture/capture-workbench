@@ -100,17 +100,15 @@ def verify_device_execution(
         elif load_records or matching_discovered_devices(policy, discovered):
             state = "selected_unverified"
 
+    if observed is None or observed == "cpu":
+        runner = None
     return DeviceExecution(
         target=policy.target,
         state=state,
         observed_backend=observed,
-        observed_library=(
-            runner.device_name if runner is not None and observed != "cpu" else observed
-        ),
-        observed_description=(
-            runner.description if runner is not None and observed != "cpu" else None
-        ),
-        observed_pci_bus=(runner.pci_bus if runner is not None and observed != "cpu" else None),
+        observed_library=(runner.device_name if runner is not None else observed),
+        observed_description=(runner.description if runner is not None else None),
+        observed_pci_bus=(runner.pci_bus if runner is not None else None),
         offloaded_layers=offload.offloaded_layers if offload is not None else None,
         total_layers=offload.total_layers if offload is not None else None,
     )

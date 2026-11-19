@@ -127,13 +127,22 @@ def test_discovery_or_selection_is_not_execution() -> None:
 def test_runner_requires_positive_gpu_layers_and_matching_identity() -> None:
     devices = _parse_fixture(_ROCM_LOG).discovered_devices()
     runner = RunnerDevice("CUDA0", _NVIDIA, "63:00.0")
-    assert verify_device_execution(_CUDA, (runner,), devices).state == "selected_unverified"
-    assert (
-        verify_device_execution(_CUDA, (runner, LayerOffload(0, 34)), devices).state
-        == "selected_unverified"
-    )
+    for records in ((runner,), (runner, LayerOffload(0, 34))):
+        result = verify_device_execution(_CUDA, records, devices)
+        assert result.state == "selected_unverified"
+        assert result.observed_backend is None
+        assert (
+            result.observed_library
+            is result.observed_description
+            is result.observed_pci_bus
+            is None
+        )
     partial = (runner, LayerOffload(1, 34))
-    assert verify_device_execution(_CUDA, partial, devices).state == "verified"
+    result = verify_device_execution(_CUDA, partial, devices)
+    assert result.state == "verified"
+    assert result.observed_library == runner.device_name
+    assert result.observed_description == runner.description
+    assert result.observed_pci_bus == runner.pci_bus
     assert verify_device_execution(OllamaDevicePolicy("cpu"), partial, devices).state == "mismatch"
     wrong_bus = (replace(runner, pci_bus="64:00.0"), LayerOffload(1, 34))
     assert verify_device_execution(_CUDA, wrong_bus, devices).state == "mismatch"

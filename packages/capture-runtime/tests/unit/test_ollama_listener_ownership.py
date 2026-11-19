@@ -701,3 +701,50 @@ def test_device_restart_reaps_before_replacing_and_respects_blockers(
             assert len(controller.spawned) == 1
 
     asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("blocker", ["task_cancel", "shutdown"])
+def test_corrective_start_reaps_interrupted_replacement(tmp_path: Path, blocker: str) -> None:
+    entered = threading.Event()
+    release = threading.Event()
+
+    def listener_pid(port: int) -> int:
+        if port == 12004:
+            entered.set()
+            assert release.wait(timeout=3)
+        return 4242
+
+    controller = FakeProcessController()
+    ports = iter((12003, 12004))
+    lifecycle = IsolatedOllamaLifecycle(
+        _ollama_config(tmp_path),
+        clock=SystemClock(),
+        process_controller=controller,
+        executable_resolver=lambda: "ollama",
+        listener_owner=SimpleNamespace(listener_pid=listener_pid),
+        port_selector=lambda: next(ports),
+    )
+
+    async def exercise() -> None:
+        cancel_event = asyncio.Event()
+        async with lifecycle.lease(cancel_event):
+            lifecycle.start()
+            task = asyncio.create_task(
+                lifecycle.restart_for_device(device_policy.OllamaDevicePolicy("cuda"), cancel_event)
+            )
+            try:
+                assert await asyncio.to_thread(entered.wait, 2)
+                if blocker == "task_cancel":
+                    task.cancel()
+                    await asyncio.wait_for(cancel_event.wait(), timeout=2)
+                else:
+                    lifecycle.begin_shutdown()
+            finally:
+                release.set()
+            error = asyncio.CancelledError if blocker == "task_cancel" else RuntimeUnavailableError
+            with pytest.raises(error):
+                await task
+            assert len(controller.spawned) == len(controller.stopped) == 2
+            assert not lifecycle.owns_running_process()
+
+    asyncio.run(exercise())

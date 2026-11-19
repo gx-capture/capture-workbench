@@ -183,6 +183,10 @@ class OllamaCaptureStructuringProvider:
         policy = self._lifecycle.device_policy
         if parser is None or policy is None:
             return None
+        if cancel_event.is_set():
+            raise asyncio.CancelledError
+        if not first_batch and parser.load_revision() <= revision:
+            return None
         loop = asyncio.get_running_loop()
         deadline = loop.time() + _RUNNER_EVIDENCE_TIMEOUT_SECONDS
         execution = None

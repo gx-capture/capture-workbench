@@ -647,16 +647,18 @@ def test_verified_selection_under_the_old_model_name_plans_for_the_current_profi
 
 
 @pytest.mark.parametrize(
-    ("mode", "expected_calls", "expected_backend"),
+    ("mode", "expected_calls", "expected_backend", "expected_state"),
     [
-        ("verified", 1, "cuda"),
-        ("corrected", 2, "cuda"),
-        ("repeated_mismatch", 2, "rocm"),
-        ("no_target", 1, "rocm"),
-        ("zero_offload", 1, None),
-        ("stale", 1, None),
-        ("unmanaged", 1, "rocm"),
-        ("reload", 2, "cuda"),
+        ("verified", 1, "cuda", "verified"),
+        ("corrected", 2, "cuda", "verified"),
+        ("repeated_mismatch", 2, "rocm", "mismatch"),
+        ("no_target", 1, "rocm", "mismatch"),
+        ("zero_offload", 1, None, "selected_unverified"),
+        ("stale", 1, None, "unknown"),
+        ("unmanaged", 1, "rocm", "unknown"),
+        ("reload", 2, "cuda", "verified"),
+        ("resident", 2, "cuda", "verified"),
+        ("changed_digest", 1, None, None),
     ],
 )
 def test_owned_document_verifies_and_replays_only_once(
@@ -666,10 +668,12 @@ def test_owned_document_verifies_and_replays_only_once(
     mode: str,
     expected_calls: int,
     expected_backend: str | None,
+    expected_state: str | None,
 ) -> None:
     config = _config(tmp_path)
     config.app_data_dir.mkdir()
-    _record_installed_profile(config, "qwen3.5-0.8b-v1" if mode == "reload" else "qwen3.5-4b-v1")
+    multi_batch = mode in ("reload", "resident")
+    _record_installed_profile(config, "qwen3.5-0.8b-v1" if multi_batch else "qwen3.5-4b-v1")
     log_path = config.app_data_dir / "ollama.log"
     fixtures = Path(__file__).parents[1] / "fixtures/ollama_0_40_13"
     cuda = (fixtures / "cuda-dgpu-hip-hidden.log").read_text(encoding="utf-8")
@@ -695,24 +699,33 @@ def test_owned_document_verifies_and_replays_only_once(
     )
     calls: list[httpx.Request] = []
     tags: list[int | None] = []
+    original_sleep = asyncio.sleep
+
+    async def observe_sleep(delay: float, result: object = None) -> object:
+        assert len(calls) < 2, "the resident batch must skip the runner evidence wait"
+        return await original_sleep(delay, result)
+
+    if mode == "resident":
+        monkeypatch.setattr(asyncio, "sleep", observe_sleep)
 
     async def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/api/tags":
             tags.append(request.url.port)
-            if mode == "reload":
+            if mode == "changed_digest" and len(tags) == 2:
+                payload = _tags(config).json()
+                payload["models"][0]["digest"] = "e" * 64
+                return httpx.Response(200, json=payload)
+            if multi_batch:
                 payload = _tags(config).json()
                 payload["models"][0]["name"] = model_option("qwen3.5-0.8b-v1").profile_id
                 return httpx.Response(200, json=payload)
             return _tags(config)
         calls.append(request)
-        if mode != "stale":
+        if mode != "stale" and not (mode == "resident" and len(calls) == 2):
             log = (
                 cuda
                 if mode in ("verified", "zero_offload")
-                or (
-                    (mode == "corrected" and len(calls) == 2)
-                    or (mode == "reload" and len(calls) == 1)
-                )
+                or ((mode == "corrected" and len(calls) == 2) or (multi_batch and len(calls) == 1))
                 else rocm
             )
             if mode == "zero_offload":
@@ -723,6 +736,12 @@ def test_owned_document_verifies_and_replays_only_once(
                 stream.flush()
                 await asyncio.sleep(0.04)
                 stream.write(log[split:])
+            if mode == "reload":
+                parser = lifecycle.log_parser
+                assert parser is not None
+                async with asyncio.timeout(2):
+                    while parser.load_revision() < 2 * len(calls):
+                        await asyncio.sleep(0.01)
         payload = json.loads(request.content)
         candidate = (
             "discard this candidate"
@@ -734,18 +753,26 @@ def test_owned_document_verifies_and_replays_only_once(
     provider = OllamaCaptureStructuringProvider(
         lifecycle, clock=FixedClock(), transport=httpx.MockTransport(handler)
     )
-    raw = _raw(count=2, text_chars=40) if mode == "reload" else _raw()
+    raw = _raw(count=2, text_chars=40) if multi_batch else _raw()
+    if mode == "changed_digest":
+        with pytest.raises(RuntimeUnavailableError, match="model identity changed"):
+            asyncio.run(provider.structure(raw, target_language=None, cancel_event=asyncio.Event()))
+        assert tags == [12001, 12002]
+        assert len(calls) == expected_calls
+        assert len(controller.spawned) == len(controller.stopped) == 2
+        return
     result = asyncio.run(
         provider.structure(raw, target_language=None, cancel_event=asyncio.Event())
     )
     assert isinstance(result, CaptureDocument)
     assert len(calls) == expected_calls
-    expected_processes = 1 if mode == "reload" else expected_calls
+    expected_processes = 1 if multi_batch else expected_calls
     assert len(controller.spawned) == len(controller.stopped) == expected_processes
     if mode == "reload":
         assert "model reload disagreed with the document device" in caplog.text
     assert provider.device_execution is not None
     assert provider.device_execution.observed_backend == expected_backend
+    assert provider.device_execution.state == expected_state
     if expected_processes == 2:
         assert tags == [12001, 12002]
         assert [call.url.port for call in calls] == tags
