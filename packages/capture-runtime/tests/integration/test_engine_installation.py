@@ -957,7 +957,7 @@ class _DownloadUntilStopped(ArtifactDownloader):
         raise AssertionError("the download was never told to stop")
 
 
-@pytest.mark.parametrize("held_step", ["extraction", "cached download"])
+@pytest.mark.parametrize("held_step", ["extraction", "model verification", "cached download"])
 @pytest.mark.parametrize("action", ["shutdown", "cancel"])
 def test_a_shutdown_stops_the_install_and_leaves_it_recoverable_a_cancel_records_it(
     tmp_path: Path,
@@ -987,6 +987,29 @@ def test_a_shutdown_stops_the_install_and_leaves_it_recoverable_a_cancel_records
             inner = _DownloadUntilStopped(started.set)
             stopped_by_event = inner.stopped_by_event
             downloader = CachingDownloader(inner, VerifiedDownloadCache(tmp_path / "cache"))
+        elif held_step == "model verification":
+            from capture_runtime.provisioning.infrastructure import (
+                _engine_installation_artifacts as artifacts,
+            )
+
+            original_hash = artifacts.sha256_file
+
+            def slow_model_hash(
+                path: Path, *, cancel_event: asyncio.Event | None = None, **options: object
+            ) -> str:
+                # The real verification calls this per model file, with its stop.
+                if "model" not in path.parts or cancel_event is None:
+                    return original_hash(path, cancel_event=cancel_event, **options)  # type: ignore[arg-type]
+                loop.call_soon_threadsafe(started.set)
+                for _ in range(500):
+                    if cancel_event.is_set():
+                        stopped_by_event.append(True)
+                        raise asyncio.CancelledError
+                    threading.Event().wait(0.01)
+                stopped_by_event.append(False)
+                return original_hash(path, cancel_event=cancel_event, **options)  # type: ignore[arg-type]
+
+            monkeypatch.setattr(artifacts, "sha256_file", slow_model_hash)
         else:
 
             def extract_until_stopped(
