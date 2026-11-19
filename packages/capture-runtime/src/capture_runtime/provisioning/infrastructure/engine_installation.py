@@ -38,6 +38,13 @@ from capture_runtime.worker_process import WorkerExecutionError
 from . import _engine_installation_limits as _installation_limits
 from ._engine_download_cache import VerifiedDownloadCache, default_cache_root, with_shared_cache
 from ._engine_installation_activation import (
+    VERIFICATION_RECORD_NAME,
+    discard_verification_record,
+    matches_verification_record,
+    verification_record,
+    write_verification_record,
+)
+from ._engine_installation_activation import (
     InstalledFileSnapshot as _InstalledFileSnapshot,
 )
 from ._engine_installation_activation import (
@@ -453,6 +460,8 @@ class EngineInstallationManager:
             cached = self._verified_model_units.get(requirement_id)
         if cached is not None and snapshot and cached == (snapshot, model_unit_state(root)):
             return requirement_model_dir(root, requirement)
+        with self._verified_active_engines_lock:
+            self._verified_model_units.pop(requirement_id, None)
         directory = active_model_unit_dir(root, requirement)
         if directory is None:
             return None
@@ -504,16 +513,24 @@ class EngineInstallationManager:
             and cached.engine.model_dir.is_dir()
         ):
             return cached.engine
-        try:
-            verify_extracted_artifact(worker_root, worker_descriptor)
-            verify_direct_model_files(model_root, model_descriptor)
-        except EngineInstallationError:
-            return None
+        record_path = version_root / VERIFICATION_RECORD_NAME
+        record = verification_record(state.to_dict(), files_before_verification)
+        record_matches = matches_verification_record(record_path, record)
+        if not record_matches:
+            discard_verification_record(record_path)
+            with self._verified_active_engines_lock:
+                self._verified_active_engines.pop(requirement_id, None)
+            try:
+                verify_extracted_artifact(worker_root, worker_descriptor)
+                verify_direct_model_files(model_root, model_descriptor)
+            except EngineInstallationError:
+                return None
         files_after_verification = _installed_engine_snapshot(worker_root, model_root)
         if (
             files_before_verification is None
             or files_after_verification != files_before_verification
         ):
+            discard_verification_record(record_path)
             return None
         executable = self._resolved_child(self._requirement_root(requirement_id), state.entry_point)
         model_dir = self._resolved_child(model_root, model_descriptor.entry_point)
@@ -530,6 +547,8 @@ class EngineInstallationManager:
             worker_sha256=sha256_file(executable),
             content_id=state.content_id,
         )
+        if not record_matches:
+            write_verification_record(record_path, record)
         with self._verified_active_engines_lock:
             self._verified_active_engines[requirement_id] = _VerifiedActiveEngine(
                 state=state,
@@ -980,6 +999,11 @@ class EngineInstallationManager:
                 _installed_engine_snapshot, version / "worker", version / "model"
             )
             if installed_files is not None:
+                await _commit_operation(
+                    write_verification_record,
+                    version / VERIFICATION_RECORD_NAME,
+                    verification_record(state.to_dict(), installed_files),
+                )
                 with self._verified_active_engines_lock:
                     self._verified_active_engines[requirement.requirement_id] = (
                         _VerifiedActiveEngine(
@@ -1035,6 +1059,10 @@ class EngineInstallationManager:
             )
 
     def _forget_verified(self, requirement_id: str) -> None:
+        root = self._requirement_root(requirement_id)
+        discard_verification_record(root / VERIFICATION_RECORD_NAME)
+        for record in (root / "versions").glob(f"*/{VERIFICATION_RECORD_NAME}"):
+            discard_verification_record(record)
         with self._verified_active_engines_lock:
             self._verified_active_engines.pop(requirement_id, None)
             self._verified_model_units.pop(requirement_id, None)

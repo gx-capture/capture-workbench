@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import tempfile
@@ -52,6 +53,39 @@ def installed_engine_snapshot(worker_root: Path, model_root: Path) -> InstalledF
     except (OSError, RuntimeError):
         return None
     return tuple(sorted(files))
+
+
+VERIFICATION_RECORD_NAME = "verified-files.json"
+
+
+def verification_record(binding: object, files: InstalledFileSnapshot | None) -> dict[str, object]:
+    return {"schemaVersion": "1", "binding": binding, "files": files}
+
+
+def matches_verification_record(path: Path, payload: dict[str, object]) -> bool:
+    if payload["files"] is None:
+        return False
+    try:
+        recorded = json.loads(path.read_text(encoding="utf-8"))
+        return canonical_json_bytes(recorded) == canonical_json_bytes(payload)
+    except (OSError, ValueError, UnicodeError, RecursionError):
+        return False
+
+
+def discard_verification_record(path: Path) -> None:
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        # An unreadable or unwritable record still requires full verification.
+        pass
+
+
+def write_verification_record(path: Path, payload: dict[str, object]) -> None:
+    try:
+        atomic_write_json(path, payload)
+    except OSError:
+        # Persistence is optional: the next process can verify the files again.
+        pass
 
 
 def atomic_write_json(path: Path, payload: object) -> None:

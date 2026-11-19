@@ -22,6 +22,13 @@ from capture_runtime.provisioning.infrastructure.engine_catalog import (
     EngineRequirementDescriptor,
 )
 
+from ._engine_installation_activation import (
+    VERIFICATION_RECORD_NAME,
+    discard_verification_record,
+    matches_verification_record,
+    verification_record,
+    write_verification_record,
+)
 from ._engine_installation_artifacts import verify_direct_model_files
 from ._engine_installation_download import (
     ModelFileDownloader,
@@ -35,7 +42,7 @@ from ._install_stop import InstallStop
 STATE_FILE_NAME = "active-model.json"
 STATE_VERSION = "1"
 
-ModelUnitSnapshot = tuple[tuple[str, int, int], ...]
+ModelUnitSnapshot = tuple[tuple[str, int, int, int], ...]
 
 
 def _delivery(requirement: EngineRequirementDescriptor) -> EngineModelDeliveryDescriptor:
@@ -49,19 +56,28 @@ def _model_root(root: Path, delivery: EngineModelDeliveryDescriptor) -> Path:
 
 
 def model_unit_snapshot(root: Path, requirement: EngineRequirementDescriptor) -> ModelUnitSnapshot:
-    """Names, sizes and modification times of the installed files; cheap to compare."""
+    """Names, sizes, modification and change times of the installed files; cheap to compare."""
 
     model_root = _model_root(root, _delivery(requirement))
+    files: list[tuple[str, int, int, int]] = []
     try:
-        return tuple(
-            sorted(
-                (path.relative_to(model_root).as_posix(), stat.st_size, stat.st_mtime_ns)
-                for path in model_root.rglob("*")
-                if path.is_file()
-                for stat in (path.stat(),)
-            )
-        )
-    except OSError:
+        if not model_root.is_dir() or model_root.is_symlink():
+            return ()
+        for path in model_root.rglob("*"):
+            if path.is_symlink():
+                return ()
+            if path.is_file():
+                stat = path.stat()
+                files.append(
+                    (
+                        path.relative_to(model_root).as_posix(),
+                        stat.st_size,
+                        stat.st_mtime_ns,
+                        stat.st_ctime_ns,
+                    )
+                )
+        return tuple(sorted(files))
+    except (OSError, RuntimeError):
         return ()
 
 
@@ -95,12 +111,25 @@ def active_model_unit_dir(root: Path, requirement: EngineRequirementDescriptor) 
     }:
         return None
     model_root = _model_root(root, delivery)
-    try:
-        verify_direct_model_files(model_root, delivery)
-    except EngineInstallationError:
+    record_path = root / VERIFICATION_RECORD_NAME
+    files = model_unit_snapshot(root, requirement)
+    record = verification_record(state, files or None)
+    record_matches = matches_verification_record(record_path, record)
+    if not record_matches:
+        discard_verification_record(record_path)
+        try:
+            verify_direct_model_files(model_root, delivery)
+        except EngineInstallationError:
+            return None
+    if not files or model_unit_snapshot(root, requirement) != files:
+        discard_verification_record(record_path)
         return None
     model_dir = model_root / delivery.entry_point
-    return model_dir if model_dir.is_dir() else None
+    if not model_dir.is_dir():
+        return None
+    if not record_matches:
+        write_verification_record(record_path, record)
+    return model_dir
 
 
 async def install_model_unit(
@@ -148,6 +177,7 @@ async def install_model_unit(
         state_path = root / STATE_FILE_NAME
         # Without its state file the previous copy is no longer active, so it can
         # be replaced; the new copy becomes active only once its state is written.
+        discard_verification_record(root / VERIFICATION_RECORD_NAME)
         state_path.unlink(missing_ok=True)
         if final.exists():
             await _file_operation(shutil.rmtree, final)
@@ -172,6 +202,21 @@ async def install_model_unit(
             await _commit_operation(replace_with_retry, pending, state_path)
         finally:
             pending.unlink(missing_ok=True)
+        files = model_unit_snapshot(root, requirement)
+        if files:
+            await _commit_operation(
+                write_verification_record,
+                root / VERIFICATION_RECORD_NAME,
+                verification_record(
+                    {
+                        "stateVersion": STATE_VERSION,
+                        "requirementId": requirement.requirement_id,
+                        "artifactVersion": delivery.artifact_version,
+                        "manifestSha256": delivery.manifest_sha256,
+                    },
+                    files,
+                ),
+            )
         # The state file makes the unit active; a cancel after it is too late.
         report_progress(1)
     finally:

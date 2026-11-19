@@ -3789,3 +3789,264 @@ def test_late_cancel_or_shutdown_finishes_active_unit(tmp_path, monkeypatch, uni
         assert not service._tasks
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("models_only", [False, True])
+@pytest.mark.parametrize(
+    "change",
+    [
+        "none",
+        "missing",
+        "malformed",
+        "schema",
+        "version",
+        "digest",
+        "content",
+        "requirement",
+        "size",
+        "mtime",
+    ],
+)
+def test_installed_file_verification_survives_restart(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, models_only: bool, change: str
+) -> None:
+    from capture_runtime.provisioning.infrastructure import _engine_model_units as models
+
+    catalog, sources = _model_unit_catalog(tmp_path) if models_only else _catalog(tmp_path)
+    requirement_id = "vertical-japanese-reader" if models_only else "text-recognition"
+
+    def manager() -> EngineInstallationManager:
+        return EngineInstallationManager(
+            tmp_path / "engines",
+            catalog,
+            worker_client=FakeWorkerClient(),  # type: ignore[arg-type]
+            downloader=CopyDownloader(sources),
+            model_downloader=CopyModelDownloader(sources),
+        )
+
+    installed = manager()
+    asyncio.run(
+        installed.install(
+            requirement_id,
+            cancel_event=asyncio.Event(),
+            report_progress=lambda _value: None,
+        )
+    )
+    root = tmp_path / "engines" / requirement_id
+    records = list(root.rglob("verified-files.json"))
+    assert len(records) == 1
+    record_path = records[0]
+    assert "worker" not in record_path.relative_to(root).parts
+    assert "model" not in record_path.relative_to(root).parts
+    original = json.loads(record_path.read_text(encoding="utf-8"))
+    if change == "missing":
+        record_path.unlink()
+    elif change == "malformed":
+        record_path.write_text("{", encoding="utf-8")
+    elif change in {"schema", "version", "digest", "content", "requirement"}:
+        if change == "schema":
+            original["schemaVersion"] = "unknown"
+        else:
+            binding = original["binding"]
+            if change == "digest":
+                if models_only:
+                    binding["manifestSha256"] = "0" * 64
+                else:
+                    binding["activatedArtifacts"][0]["sha256"] = "0" * 64
+            else:
+                key = {
+                    "version": "artifactVersion",
+                    "content": "contentId",
+                    "requirement": "requirementId",
+                }[change]
+                binding[key] = "another-value"
+        record_path.write_text(json.dumps(original), encoding="utf-8")
+    elif change in {"size", "mtime"}:
+        model_file = next(root.glob("versions/*/model/model/model.bin"))
+        previous = model_file.stat()
+        contents = model_file.read_bytes()
+        model_file.write_bytes(b"!" if change == "size" else bytes(c ^ 1 for c in contents))
+        os.utime(model_file, ns=(previous.st_atime_ns, previous.st_mtime_ns + 1_000_000_000))
+
+    calls: list[str] = []
+    target = models if models_only else engine_installation_module
+    verify_model = target.verify_direct_model_files
+
+    def count_model(root: Path, descriptor: object, **options: object) -> None:
+        calls.append("model")
+        verify_model(root, descriptor, **options)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(target, "verify_direct_model_files", count_model)
+    if not models_only:
+        verify_worker = engine_installation_module.verify_extracted_artifact
+
+        def count_worker(root: Path, descriptor: object) -> None:
+            calls.append("worker")
+            verify_worker(root, descriptor)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(engine_installation_module, "verify_extracted_artifact", count_worker)
+
+    restarted = manager()
+    resolved = (
+        restarted.active_model_unit(requirement_id)
+        if models_only
+        else restarted.active_engine(requirement_id)
+    )
+    corrupted = change in {"size", "mtime"}
+    assert (resolved is None) == corrupted
+    assert calls == ([] if change == "none" else ["model"] if models_only else ["worker", "model"])
+    if corrupted:
+        assert not record_path.exists()
+        again = manager()
+        assert (
+            again.active_model_unit(requirement_id)
+            if models_only
+            else again.active_engine(requirement_id)
+        ) is None
+        assert not record_path.exists()
+    else:
+        assert json.loads(record_path.read_text(encoding="utf-8"))["schemaVersion"] == "1"
+        calls.clear()
+        again = manager()
+        assert (
+            again.active_model_unit(requirement_id)
+            if models_only
+            else again.active_engine(requirement_id)
+        ) is not None
+        assert calls == []
+
+
+@pytest.mark.parametrize("models_only", [False, True])
+def test_forgetting_and_uninstall_remove_file_verification_records(
+    tmp_path: Path, models_only: bool
+) -> None:
+    catalog, sources = _model_unit_catalog(tmp_path) if models_only else _catalog(tmp_path)
+    requirement_id = "vertical-japanese-reader" if models_only else "text-recognition"
+    manager = EngineInstallationManager(
+        tmp_path / "engines",
+        catalog,
+        worker_client=FakeWorkerClient(),  # type: ignore[arg-type]
+        downloader=CopyDownloader(sources),
+        model_downloader=CopyModelDownloader(sources),
+    )
+    asyncio.run(
+        manager.install(
+            requirement_id,
+            cancel_event=asyncio.Event(),
+            report_progress=lambda _value: None,
+        )
+    )
+    root = tmp_path / "engines" / requirement_id
+    record_path = next(root.rglob("verified-files.json"))
+    manager._forget_verified(requirement_id)
+    assert not record_path.exists()
+    assert manager.is_installed(requirement_id)
+    assert record_path.exists()
+    asyncio.run(manager.uninstall(requirement_id))
+    assert not list(root.rglob("verified-files.json"))
+    asyncio.run(
+        manager.install(
+            requirement_id,
+            cancel_event=asyncio.Event(),
+            report_progress=lambda _value: None,
+        )
+    )
+    assert manager.is_installed(requirement_id)
+    assert len(list(root.rglob("verified-files.json"))) == 1
+
+
+def test_removing_inactive_versions_removes_their_verification_records(tmp_path: Path) -> None:
+    from capture_runtime.provisioning.infrastructure._engine_installation_residue import (
+        remove_inactive_versions,
+    )
+
+    for version in ("old", "current"):
+        directory = tmp_path / "versions" / version
+        directory.mkdir(parents=True)
+        (directory / "verified-files.json").write_text("{}", encoding="utf-8")
+    remove_inactive_versions(tmp_path, "current")
+    assert not (tmp_path / "versions" / "old").exists()
+    assert (tmp_path / "versions" / "current" / "verified-files.json").is_file()
+
+
+@pytest.mark.parametrize("record_content", ["cuda", "cpu"])
+def test_verification_record_binds_the_installed_content(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, record_content: str
+) -> None:
+    catalog, sources = _speech_contents_catalog(tmp_path)
+
+    def manager() -> EngineInstallationManager:
+        return EngineInstallationManager(
+            tmp_path / "engines",
+            catalog,
+            worker_client=FakeWorkerClient(),  # type: ignore[arg-type]
+            downloader=CopyDownloader(sources),
+            model_downloader=CopyModelDownloader(sources),
+            speech_variant="cuda",
+        )
+
+    installed = manager()
+    asyncio.run(
+        installed.install(
+            "speech-recognition",
+            cancel_event=asyncio.Event(),
+            report_progress=lambda _value: None,
+        )
+    )
+    record_path = next((tmp_path / "engines").rglob("verified-files.json"))
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    assert record["binding"]["contentId"] == "cuda"
+    record["binding"]["contentId"] = record_content
+    record_path.write_text(json.dumps(record), encoding="utf-8")
+    calls: list[str] = []
+    verify_model = engine_installation_module.verify_direct_model_files
+
+    def count_model(root: Path, descriptor: object, **options: object) -> None:
+        calls.append("model")
+        verify_model(root, descriptor, **options)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(engine_installation_module, "verify_direct_model_files", count_model)
+    engine = manager().active_engine("speech-recognition")
+    assert engine is not None
+    assert engine.content_id == "cuda"
+    assert calls == ([] if record_content == "cuda" else ["model"])
+
+
+def test_corrupt_worker_invalidates_persisted_verification(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    catalog, sources = _catalog(tmp_path)
+
+    def manager() -> EngineInstallationManager:
+        return EngineInstallationManager(
+            tmp_path / "engines",
+            catalog,
+            worker_client=FakeWorkerClient(),  # type: ignore[arg-type]
+            downloader=CopyDownloader(sources),
+            model_downloader=CopyModelDownloader(sources),
+        )
+
+    installed = manager()
+    asyncio.run(
+        installed.install(
+            "text-recognition",
+            cancel_event=asyncio.Event(),
+            report_progress=lambda _value: None,
+        )
+    )
+    engine = installed.active_engine("text-recognition")
+    assert engine is not None
+    engine.executable.write_bytes(b"corrupted")
+    record_path = next((tmp_path / "engines").rglob("verified-files.json"))
+    calls: list[str] = []
+    verify_worker = engine_installation_module.verify_extracted_artifact
+
+    def count_worker(root: Path, descriptor: object) -> None:
+        calls.append("worker")
+        verify_worker(root, descriptor)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(engine_installation_module, "verify_extracted_artifact", count_worker)
+    assert manager().active_engine("text-recognition") is None
+    assert not record_path.exists()
+    assert manager().active_engine("text-recognition") is None
+    assert calls == ["worker", "worker"]
