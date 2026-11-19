@@ -5,7 +5,7 @@ import type {
   StructuringModelInstallation,
   StructuringModelOption,
 } from '@gx-capture/capture-workbench-ui';
-import { setDesktopLocale } from '../i18n/desktop-messages';
+import { desktopMessages, setDesktopLocale } from '../i18n/desktop-messages';
 import type {
   DiagnosticsDocumentView,
   DiagnosticsRuntimeView,
@@ -74,6 +74,7 @@ describe('DiagnosticsPage', () => {
         status: 'active',
       }),
       activeModelInstallation: signal<StructuringModelInstallation | null>(null),
+      modelProgressUnavailable: signal(false),
       modelInstallationPercent: signal(0),
       modelInstallationPhase: signal(''),
       installing: signal(false),
@@ -113,6 +114,31 @@ describe('DiagnosticsPage', () => {
 
     (el.querySelector('[data-testid="diagnostics-copy-contract-digest"]') as HTMLButtonElement).click();
     expect(store.copyDigest).toHaveBeenCalledWith('a'.repeat(64));
+  });
+
+  it('keeps the model progress with a hint while status requests fail and the runtime stays ready', () => {
+    const { fixture, features, el } = setup();
+    features.activeModelInstallation.set({
+      installationId: 'model-inst-1',
+      optionId: 'qwen-test',
+      status: 'running',
+      progress: 0.3,
+      createdAt: '2026-07-20T00:00:00Z',
+      updatedAt: '2026-07-20T00:00:00Z',
+    });
+    features.modelProgressUnavailable.set(true);
+    fixture.detectChanges();
+
+    expect(el.querySelector('[data-testid="diagnostics-runtime-error"]')).toBeNull();
+    const progress = el.querySelector('[data-testid="diagnostics-model-progress"]') as HTMLElement;
+    expect(progress.getAttribute('data-status')).toBe('running');
+    expect(progress.querySelector('[data-testid="diagnostics-model-progress-retrying"]')?.textContent).toContain(
+      desktopMessages().installProgressRetrying,
+    );
+
+    features.modelProgressUnavailable.set(false);
+    fixture.detectChanges();
+    expect(el.querySelector('[data-testid="diagnostics-model-progress-retrying"]')).toBeNull();
   });
 
   it('shows error message and reconnect action when runtime is in error state', () => {

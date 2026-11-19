@@ -7,6 +7,12 @@ export function errorMessage(error: unknown): string {
   return redactSensitiveMessage(message);
 }
 
+/** True when the runtime answered that the requested resource does not exist (HTTP 404). */
+export function isRuntimeNotFound(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes('HTTP 404');
+}
+
 /**
  * Maps an uninstall rejection to settings copy.
  * The desktop bridge keeps only the HTTP status, so every 422 shares one message.
@@ -16,7 +22,7 @@ export function uninstallFailureMessage(error: unknown): string {
   const messages = desktopMessages();
   if (message.includes('HTTP 409')) return messages.removeRequirementInUse;
   if (message.includes('HTTP 422')) return messages.removeRequirementNotUninstallable;
-  if (message.includes('HTTP 404')) return messages.removeRequirementNotFound;
+  if (isRuntimeNotFound(error)) return messages.removeRequirementNotFound;
   return errorMessage(error);
 }
 

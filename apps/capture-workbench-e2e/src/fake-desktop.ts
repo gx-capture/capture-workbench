@@ -3,6 +3,18 @@ export interface FakeDesktopOptions {
   readonly editedResults?: boolean;
   readonly completeInstallOnPoll?: number;
   readonly holdRunningUntilCancel?: boolean;
+  /**
+   * Fail the status request of each runtime or model installation
+   * (`runtime_get_installation`, `runtime_get_structuring_model_installation`)
+   * this many times in a row before answering.
+   */
+  readonly failInstallStatusChecks?: number;
+  /**
+   * Answer the first status request of each runtime or model installation
+   * with HTTP 404, as a restarted runtime would; the installation list still
+   * holds a runtime installation, while a model installation is gone.
+   */
+  readonly answerInstallStatusNotFoundOnce?: boolean;
   readonly initialRunningInstallations?: readonly Record<string, unknown>[];
   /** Script capture commands so one OCR file can reach raw text. */
   readonly ocrJourney?: boolean;
@@ -70,6 +82,21 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
   const mutableRequirements = runtimeRequirements.map((item) => ({ ...item }));
   const installations = new Map<string, Record<string, unknown>>();
   const pollCounts = new Map<string, number>();
+  const statusFailures = new Map<string, number>();
+  const statusNotFoundAnswered = new Set<string>();
+  /** The simulated failure for this status request, if any. */
+  const statusRequestFailure = (installationId: string): Error | null => {
+    if (installOptions.answerInstallStatusNotFoundOnce && !statusNotFoundAnswered.has(installationId)) {
+      statusNotFoundAnswered.add(installationId);
+      return new Error('Capture Runtime request was rejected with HTTP 404.');
+    }
+    const failedSoFar = statusFailures.get(installationId) ?? 0;
+    if (failedSoFar >= (installOptions.failInstallStatusChecks ?? 0)) return null;
+    statusFailures.set(installationId, failedSoFar + 1);
+    return new Error('Capture Runtime response could not be read.');
+  };
+  const modelInstallations = new Map<string, Record<string, unknown>>();
+  let nextModelInstallSeq = 1;
   const installStartedAtMs = new Map<string, number>();
   const installDownloadBytes = new Map<string, number>();
   const syncTimelineInstallation = (record: Record<string, unknown>): void => {
@@ -382,6 +409,7 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
           readonly id?: string;
           readonly installationId?: string;
           readonly requirementId?: string;
+          readonly optionId?: string;
         };
         readonly request?: Record<string, unknown>;
         readonly update?: Record<string, unknown>;
@@ -499,6 +527,8 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
         if (!record) {
           return Promise.reject(new Error(`Unknown installation: ${id}`));
         }
+        const failure = statusRequestFailure(id);
+        if (failure) return Promise.reject(failure);
         if (installOptions.installTimeline) {
           syncTimelineInstallation(record);
           return Promise.resolve({ ...record });
@@ -558,6 +588,35 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
             });
           }, 1500);
         });
+      }
+      if (command === 'runtime_start_structuring_model_installation') {
+        const installationId = `model-inst-${nextModelInstallSeq++}`;
+        const record: Record<string, unknown> = {
+          installationId,
+          optionId: String(args.input?.optionId ?? ''),
+          status: 'running',
+          progress: 0.1,
+          createdAt: '2026-11-03T00:00:00Z',
+          updatedAt: '2026-11-03T00:00:00Z',
+        };
+        modelInstallations.set(installationId, record);
+        return Promise.resolve({ ...record });
+      }
+      if (command === 'runtime_get_structuring_model_installation') {
+        const id = String(args.input?.id ?? '');
+        const record = modelInstallations.get(id);
+        if (!record) {
+          return Promise.reject(new Error('Capture Runtime request was rejected with HTTP 404.'));
+        }
+        const failure = statusRequestFailure(id);
+        if (failure) return Promise.reject(failure);
+        // Each answered status request moves the download on by a tenth.
+        if (record['status'] === 'running') {
+          const progress = Math.min(1, Math.round((Number(record['progress'] ?? 0) + 0.1) * 10) / 10);
+          record['progress'] = progress;
+          if (progress >= 1) record['status'] = 'completed';
+        }
+        return Promise.resolve({ ...record });
       }
       if (command === 'runtime_structuring_model_options') {
         return Promise.resolve({

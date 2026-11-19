@@ -106,7 +106,7 @@
         data-testid="engine-card-progress"
         aria-live="polite"
       >
-        <app-install-progress [installation]="runningInstallation()" />
+        <app-install-progress [installation]="runningInstallation()" [retrying]="retrying()" />
       </div>
     }
 

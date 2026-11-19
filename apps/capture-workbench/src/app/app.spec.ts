@@ -382,6 +382,7 @@ async function renderShell(
         selectInstallableRequirements(requirements(), FIRST_RUN_REQUIREMENT_IDS).length > 0,
     ),
     startingRequirementId: signal<CaptureRequirementId | null>(null),
+    isProgressUnavailable: () => false,
     activeInstallation: computed(() => {
       const values = Object.values(installations()).filter(
         (item): item is RuntimeInstallation => item !== undefined,

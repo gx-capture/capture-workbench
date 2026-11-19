@@ -61,6 +61,7 @@ describe('OcrPage queue', () => {
             firstRunInstallableRequirements: signal([]),
             showFirstRunCard: signal(false),
             startingRequirementId: signal(null),
+            isProgressUnavailable: () => false,
             activeInstallation: signal<RuntimeInstallation | null>(null),
             isFeatureReady: (feature: RecognitionFeature) => isFeatureReady(requirements(), feature),
             installRequirement,
@@ -135,6 +136,7 @@ describe('OcrPage queue', () => {
             firstRunInstallableRequirements: signal([]),
             showFirstRunCard: signal(false),
             startingRequirementId: signal(null),
+            isProgressUnavailable: () => false,
             activeInstallation: signal({
               installationId: 'inst-1',
               requirementId: 'text-recognition',
@@ -177,6 +179,76 @@ describe('OcrPage queue', () => {
     expect(card?.querySelector('progress')).toBeNull();
   });
 
+  it('keeps the last known progress on the card with a hint while status requests fail', async () => {
+    const requirements = signal<readonly RuntimeRequirement[]>([
+      requirement('text-recognition', 'installable', 144_000_000),
+    ]);
+    TestBed.configureTestingModule({
+      imports: [OcrPage],
+      providers: [
+        provideRouter([]),
+        {
+          provide: DesktopLibraryService,
+          useValue: {
+            list: () => of([doc({ fileName: 'charge.pdf', status: 'queued' })]),
+            get: vi.fn(),
+          },
+        },
+        {
+          provide: DesktopRuntimeClientService,
+          useValue: { started: signal(true), ready: signal(true), pdfPageNumbers: signal(undefined), ocrCompute: signal(null) },
+        },
+        {
+          provide: RecognitionFeaturesStore,
+          useValue: {
+            requirements,
+            installing: signal(true),
+            firstRunDismissed: signal(true),
+            firstRunInstallableRequirements: signal([]),
+            showFirstRunCard: signal(false),
+            startingRequirementId: signal(null),
+            isProgressUnavailable: (requirementId: string) => requirementId === 'text-recognition',
+            activeInstallation: signal({
+              installationId: 'inst-1',
+              requirementId: 'text-recognition',
+              status: 'running',
+              progress: 0.4,
+              createdAt: '2026-11-10T00:00:00Z',
+              updatedAt: '2026-11-10T00:00:00Z',
+            } as RuntimeInstallation),
+            isFeatureReady: (feature: RecognitionFeature) => isFeatureReady(requirements(), feature),
+            installRequirement: vi.fn(),
+            installFirstRunSelection: vi.fn(),
+            cancelInstallation: vi.fn(),
+            dismissFirstRun: vi.fn(),
+            requestedRequirements: signal(new Set()),
+          },
+        },
+        {
+          provide: LibraryStore,
+          useValue: {
+            allDocuments: signal([doc({ fileName: 'charge.pdf', status: 'queued' })]),
+            refreshDocuments: vi.fn(),
+          },
+        },
+        DesktopCaptureService,
+        OcrQueueStore,
+      ],
+    });
+
+    const fixture = TestBed.createComponent(OcrPage);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    fixture.detectChanges();
+
+    const card = (fixture.nativeElement as HTMLElement).querySelector('[data-testid="ocr-install-progress"]');
+    expect(card?.querySelector('[data-testid="install-progress-label"]')?.textContent).toContain('正在下載 40%');
+    expect(card?.querySelector('[data-testid="install-progress-retrying"]')?.textContent).toContain(
+      '暫時無法取得安裝進度，持續重試中。',
+    );
+    expect(card?.querySelector('[data-testid="ocr-install-cancel"]')).not.toBeNull();
+  });
+
   it('shows the progress card as soon as an installation is requested, before the runtime has answered', async () => {
     const requirements = signal<readonly RuntimeRequirement[]>([
       requirement('text-recognition', 'installable', 144_000_000),
@@ -205,6 +277,7 @@ describe('OcrPage queue', () => {
             firstRunInstallableRequirements: signal([]),
             showFirstRunCard: signal(false),
             startingRequirementId: signal('text-recognition'),
+            isProgressUnavailable: () => false,
             activeInstallation: signal<RuntimeInstallation | null>(null),
             isFeatureReady: (feature: RecognitionFeature) => isFeatureReady(requirements(), feature),
             installRequirement: vi.fn(),
@@ -271,6 +344,7 @@ describe('OcrPage queue', () => {
             firstRunInstallableRequirements: signal(requirements()),
             showFirstRunCard: signal(true),
             startingRequirementId: signal(null),
+            isProgressUnavailable: () => false,
             activeInstallation: signal<RuntimeInstallation | null>(null),
             isFeatureReady: (feature: RecognitionFeature) => isFeatureReady(requirements(), feature),
             installRequirement: vi.fn(),

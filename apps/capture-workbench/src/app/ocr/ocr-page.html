@@ -132,6 +132,7 @@
         <app-install-progress
           class="flex-1"
           [installation]="activeRunningInstallation()"
+          [retrying]="activeProgressUnavailable()"
         />
         @if (activeRunningInstallation(); as running) {
           <button

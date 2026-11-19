@@ -65,7 +65,9 @@ export class RecognitionFeaturesStore {
   readonly installing = this.installation.installing;
   readonly activeInstallation = this.installation.activeInstallation;
   readonly startingRequirementId = this.installation.startingRequirementId;
+  readonly progressUnavailableRequirements = this.installation.progressUnavailableRequirements;
   readonly activeModelInstallation = this.installation.activeModelInstallation;
+  readonly modelProgressUnavailable = this.installation.modelProgressUnavailable;
   readonly selectedModelOptionId = this.installation.selectedModelOptionId;
   readonly installationPercent = computed(() =>
     installationPercent(this.activeInstallation()),
@@ -224,6 +226,11 @@ export class RecognitionFeaturesStore {
     return selectFeatureMissing(this.requirements(), feature);
   }
 
+  /** True while this requirement's installation status requests fail and are being retried. */
+  isProgressUnavailable(requirementId: CaptureRequirementId): boolean {
+    return this.installation.isProgressUnavailable(requirementId);
+  }
+
   /** Latest installation record for a requirement, if any. */
   installationFor(
     requirementId: CaptureRequirementId,
@@ -327,6 +334,8 @@ export class RecognitionFeaturesStore {
     this.installation.cancelInstallation$(installationId).subscribe({
       next: () => {
         this.requirementsResource.reload();
+        // The cancel stopped every poll; resume the other installations still running.
+        this.reattachInstallations();
       },
       error: (error: unknown) => {
         this.message.set(errorMessage(error));

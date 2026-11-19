@@ -94,6 +94,7 @@ export interface DesktopMessages {
   readonly installSelectedWithSize: (size?: string | null) => string;
   readonly downloadingProgress: (percent: number) => string;
   readonly installProgressPreparing: string;
+  readonly installProgressRetrying: string;
   readonly installProgressInstalling: string;
   readonly cancel: string;
   readonly cancelInstall: string;
@@ -397,6 +398,7 @@ const ZH_TW: DesktopMessages = {
   installSelectedWithSize: (size) => (size ? `安裝所選（${size}）` : '安裝所選'),
   downloadingProgress: (percent) => `正在下載 ${percent}%`,
   installProgressPreparing: '正在準備安裝…',
+  installProgressRetrying: '暫時無法取得安裝進度，持續重試中。',
   installProgressInstalling: '下載完成，正在安裝…',
   cancel: '取消',
   cancelInstall: '取消',
@@ -724,6 +726,7 @@ const EN: DesktopMessages = {
     size ? `Install selected (${size})` : 'Install selected',
   downloadingProgress: (percent) => `Downloading ${percent}%`,
   installProgressPreparing: 'Preparing installation…',
+  installProgressRetrying: 'Installation progress is temporarily unavailable. Still trying.',
   installProgressInstalling: 'Download complete, installing…',
   cancel: 'Cancel',
   cancelInstall: 'Cancel',

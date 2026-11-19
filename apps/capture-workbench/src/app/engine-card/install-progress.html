@@ -21,4 +21,9 @@
       [style.transform]="'scaleX(' + fill() + ')'"
     ></span>
   </div>
+  @if (retrying()) {
+    <span class="text-xs whitespace-normal text-muted-foreground" data-testid="install-progress-retrying">
+      {{ m().installProgressRetrying }}
+    </span>
+  }
 </div>

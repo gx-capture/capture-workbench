@@ -89,9 +89,12 @@ describe('AsrPage', () => {
       exportBusyIds: signal(new Set<string>()),
     };
 
+    const progressUnavailable = signal<ReadonlySet<CaptureRequirementId>>(new Set());
     const features = {
       installing: signal(false),
       startingRequirementId: signal<CaptureRequirementId | null>(null),
+      progressUnavailable,
+      isProgressUnavailable: (requirementId: CaptureRequirementId) => progressUnavailable().has(requirementId),
       installationFor: vi.fn((requirementId: CaptureRequirementId): RuntimeInstallation | null =>
         options.installation?.requirementId === requirementId ? options.installation : null),
       installRequirement: vi.fn(),
@@ -143,6 +146,34 @@ describe('AsrPage', () => {
       '[data-testid="engine-card"][data-requirement-id="speaker-diarization"]',
     ) as HTMLElement;
     expect(other.querySelector('[data-testid="engine-card-progress"]')).toBeNull();
+  });
+
+  it('keeps the engine card progress with a hint while status requests fail', () => {
+    const { fixture, features } = setup({
+      speechReady: false,
+      installation: {
+        installationId: 'inst-speech-1',
+        requirementId: 'speech-recognition',
+        status: 'running',
+        progress: 0.3,
+        createdAt: '2026-11-10T00:00:00Z',
+        updatedAt: '2026-11-10T00:00:00Z',
+      },
+    });
+    const el = fixture.nativeElement as HTMLElement;
+    const card = el.querySelector(
+      '[data-testid="engine-card"][data-requirement-id="speech-recognition"]',
+    ) as HTMLElement;
+    expect(card.querySelector('[data-testid="install-progress-retrying"]')).toBeNull();
+
+    features.progressUnavailable.set(new Set(['speech-recognition']));
+    fixture.detectChanges();
+
+    expect(card.querySelector('[data-testid="install-progress-bar"]')).not.toBeNull();
+    expect(card.querySelector('[data-testid="install-progress-retrying"]')?.textContent).toContain(
+      desktopMessages().installProgressRetrying,
+    );
+    expect(card.querySelector('[data-testid="engine-card-cancel"]')).not.toBeNull();
   });
 
   it('shows the install panel and disabled empty-queue button when speech recognition is missing', () => {

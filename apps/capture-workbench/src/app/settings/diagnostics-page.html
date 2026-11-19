@@ -366,6 +366,11 @@
         <small class="text-xs text-muted-foreground">
           {{ m().downloading(installation.optionId) }}
         </small>
+        @if (features.modelProgressUnavailable()) {
+          <small class="text-xs text-muted-foreground" data-testid="diagnostics-model-progress-retrying">
+            {{ m().installProgressRetrying }}
+          </small>
+        }
       </div>
     }
   </section>

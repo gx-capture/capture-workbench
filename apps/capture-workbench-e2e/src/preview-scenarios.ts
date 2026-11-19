@@ -64,6 +64,42 @@ export const PREVIEW_SCENARIOS: Readonly<Record<string, PreviewScenario>> = {
       installTimeline: DEFAULT_INSTALL_TIMELINE,
     },
   },
+  'install-status-recovers': {
+    label: '安裝進度暫時查不到（重試後恢復）',
+    description: '三個辨識功能尚未安裝；每筆辨識功能或模型安裝的進度查詢先失敗兩次，進度卡保留進度並提示持續重試，恢復後提示消失。',
+    requirements: scenarioRequirements('installable'),
+    options: {
+      cudaAvailable: true,
+      persistLibrary: true,
+      ocrJourney: true,
+      installTimeline: DEFAULT_INSTALL_TIMELINE,
+      failInstallStatusChecks: 2,
+    },
+  },
+  'install-status-unavailable': {
+    label: '安裝進度長時間查不到（持續重試）',
+    description: '三個辨識功能尚未安裝；每筆安裝的進度查詢連續失敗約兩分半鐘，期間進度卡保留最後進度並提示持續重試，之後恢復。',
+    requirements: scenarioRequirements('installable'),
+    options: {
+      cudaAvailable: true,
+      persistLibrary: true,
+      ocrJourney: true,
+      installTimeline: DEFAULT_INSTALL_TIMELINE,
+      failInstallStatusChecks: 20,
+    },
+  },
+  'install-status-not-found': {
+    label: '安裝進度查無此安裝（自清單接回）',
+    description: '三個辨識功能尚未安裝；每筆安裝的第一次進度查詢回覆查無此安裝，辨識功能自安裝清單接回並完成，模型安裝則移除進度並重新載入選項。',
+    requirements: scenarioRequirements('installable'),
+    options: {
+      cudaAvailable: true,
+      persistLibrary: true,
+      ocrJourney: true,
+      installTimeline: DEFAULT_INSTALL_TIMELINE,
+      answerInstallStatusNotFoundOnce: true,
+    },
+  },
 };
 
 export function previewScenarioConfig(

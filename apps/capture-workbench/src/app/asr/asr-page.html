@@ -23,6 +23,7 @@
           [installation]="features.installationFor(requirement.requirementId)"
           [installing]="features.installing()"
           [starting]="features.startingRequirementId() === requirement.requirementId"
+          [retrying]="features.isProgressUnavailable(requirement.requirementId)"
           (install)="features.installRequirement($event)"
           (cancelInstall)="features.cancelInstallation($event)"
           (retry)="features.retryInstallation($event)"

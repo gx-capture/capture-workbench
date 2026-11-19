@@ -93,6 +93,12 @@ export class OcrPage {
       : null;
   });
 
+  /** The running installation's status requests are failing and being retried. */
+  protected readonly activeProgressUnavailable = computed(() => {
+    const running = this.activeRunningInstallation();
+    return running !== null && this.features.isProgressUnavailable(running.requirementId);
+  });
+
   /** Shown from the click on: the start request takes a moment to answer. */
   protected readonly installProgressShown = computed(
     () =>

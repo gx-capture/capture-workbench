@@ -25,6 +25,10 @@ import {
 export class InstallProgress {
   /** The running installation; `null` while its start request is in flight. */
   readonly installation = input<InstallationProgressSource | null>(null);
+  /** Status requests are failing and being retried: the progress shown is the last known one. */
+  readonly retrying = input(false);
+
+  protected readonly m = desktopMessages;
 
   protected readonly progress = computed(() =>
     installationProgress(this.installation()),

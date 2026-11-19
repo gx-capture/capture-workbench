@@ -97,6 +97,29 @@ describe('EnginesPage removal', () => {
     expect(removeRequirement).not.toHaveBeenCalled();
   });
 
+  it('keeps the row progress with a hint while status requests fail', async () => {
+    const { fixture } = await renderEngines({
+      installation: {
+        installationId: 'inst-speech-1',
+        requirementId: 'speech-recognition',
+        status: 'running',
+        progress: 0.2,
+        createdAt: '2026-11-10T00:00:00Z',
+        updatedAt: '2026-11-10T00:00:00Z',
+      },
+      progressUnavailable: 'speech-recognition',
+    });
+    const row = engineRow(fixture.nativeElement, 'speech-recognition');
+    const progress = row.querySelector('[data-testid="engine-row-progress"]');
+    expect(progress?.querySelector('[data-testid="install-progress-bar"]')).not.toBeNull();
+    expect(progress?.querySelector('[data-testid="install-progress-retrying"]')?.textContent).toContain(
+      '暫時無法取得安裝進度，持續重試中。',
+    );
+    expect(engineRow(fixture.nativeElement, 'text-recognition').querySelector(
+      '[data-testid="install-progress-retrying"]',
+    )).toBeNull();
+  });
+
   it('disables removal while a capture that needs the engine is running', async () => {
     const { fixture, removeRequirement } = await renderEngines({
       documents: [libraryDocument('processing', 'application/pdf')],
@@ -143,6 +166,7 @@ async function renderEngines(
     readonly documents?: readonly DesktopLibrarySummary[];
     readonly removingId?: CaptureRequirementId;
     readonly removalError?: string | null;
+    readonly progressUnavailable?: CaptureRequirementId;
   } = {},
 ) {
   const requirements = signal<readonly RuntimeRequirement[]>([
@@ -160,6 +184,8 @@ async function renderEngines(
           recognitionRequirements: computed(() => selectRecognitionRequirements(requirements())),
           installing: signal(false),
           startingRequirementId: signal(null),
+          isProgressUnavailable: (requirementId: CaptureRequirementId) =>
+            options.progressUnavailable === requirementId,
           installationFor: (requirementId: CaptureRequirementId) =>
             options.installation?.requirementId === requirementId
               ? options.installation
