@@ -201,6 +201,7 @@ def create_app(
         try:
             yield
         finally:
+            runtime_dependencies.lifecycle.begin_shutdown()
             await runtime_dependencies.installation_service.shutdown()
             await runtime_dependencies.model_installation_service.shutdown()
             await runtime_dependencies.streaming_capture_service.shutdown()

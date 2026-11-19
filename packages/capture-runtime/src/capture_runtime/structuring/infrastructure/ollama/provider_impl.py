@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
+from contextlib import AsyncExitStack
 from pathlib import Path
 
 import httpx
@@ -24,10 +26,19 @@ from capture_runtime.structuring.infrastructure.model_catalog import (
     legacy_profile_id,
     model_option,
 )
+from capture_runtime.structuring.infrastructure.ollama.device_policy import corrected_device_policy
+from capture_runtime.structuring.infrastructure.ollama.device_verification import (
+    DeviceExecution,
+    verify_device_execution,
+)
 from capture_runtime.structuring.infrastructure.ollama.lifecycle_impl import (
     IsolatedOllamaLifecycle,
     RuntimeUnavailableError,
 )
+
+_RUNNER_EVIDENCE_TIMEOUT_SECONDS = 0.25
+_RUNNER_EVIDENCE_POLL_SECONDS = 0.02
+_LOG = logging.getLogger(__name__)
 
 _QWEN_0_8B_PROFILE_ID = model_option("qwen3.5-0.8b-v1").profile_id
 
@@ -57,6 +68,7 @@ class OllamaCaptureStructuringProvider:
             single_segment_profile_id=_QWEN_0_8B_PROFILE_ID,
         )
         self._engine_identity: CaptureEngine | None = None
+        self.device_execution: DeviceExecution | None = None
 
     @property
     def engine_identity(self) -> CaptureEngine | None:
@@ -85,25 +97,56 @@ class OllamaCaptureStructuringProvider:
     ) -> object:
         model_name = self._selected_model_name()
         profile_id = _planning_profile_id(model_name)
+        self.device_execution = None
+        self._engine_identity = None
         self._lifecycle.start()
         try:
             engine_identity = await self._wait_until_ready(cancel_event, model_name)
             self._engine_identity = engine_identity
-            async with httpx.AsyncClient(
-                base_url=self._lifecycle.host_url,
-                timeout=self._timeout,
-                follow_redirects=False,
-                trust_env=False,
-                transport=self._transport,
-            ) as client:
+            async with AsyncExitStack() as clients:
+                client = await clients.enter_async_context(self._generation_client())
+                first_batch = True
 
                 async def generate(request: StructuringGenerationRequest) -> str:
-                    return await self._generate_batch(
-                        client,
-                        request,
-                        cancel_event=cancel_event,
-                        model_name=model_name,
+                    nonlocal client, first_batch
+                    revision = self._load_revision()
+                    candidate = await self._generate_batch(
+                        client, request, cancel_event=cancel_event, model_name=model_name
                     )
+                    execution = await self._observe_load(revision, first_batch, cancel_event)
+                    if first_batch:
+                        first_batch = False
+                        policy = self._lifecycle.device_policy
+                        parser = self._lifecycle.log_parser
+                        if execution and execution.state == "mismatch" and policy and parser:
+                            correction = corrected_device_policy(
+                                policy, parser.discovered_devices()
+                            )
+                            if correction is not None:
+                                await client.aclose()
+                                await self._lifecycle.restart_for_device(correction, cancel_event)
+                                if await self._wait_until_ready(cancel_event, model_name) != (
+                                    engine_identity
+                                ):
+                                    raise RuntimeUnavailableError(
+                                        "isolated Ollama model identity changed after restart"
+                                    )
+                                client = await clients.enter_async_context(
+                                    self._generation_client()
+                                )
+                                revision = self._load_revision()
+                                candidate = await self._generate_batch(
+                                    client,
+                                    request,
+                                    cancel_event=cancel_event,
+                                    model_name=model_name,
+                                )
+                                execution = await self._observe_load(revision, True, cancel_event)
+                        self.device_execution = execution
+                    elif execution is not None:
+                        self._record_reload(execution)
+                    self._require_owned_process(str(client.base_url).rstrip("/"))
+                    return candidate
 
                 return await self._coordinator.structure(
                     raw,
@@ -119,6 +162,60 @@ class OllamaCaptureStructuringProvider:
             # End the bounded per-document lease before another extractor,
             # especially speech recognition CPU fallback, needs those resources.
             self._lifecycle.stop()
+
+    def _generation_client(self) -> httpx.AsyncClient:
+        return httpx.AsyncClient(
+            base_url=self._lifecycle.host_url,
+            timeout=self._timeout,
+            follow_redirects=False,
+            trust_env=False,
+            transport=self._transport,
+        )
+
+    def _load_revision(self) -> int:
+        parser = self._lifecycle.log_parser
+        return parser.load_revision() if parser is not None else 0
+
+    async def _observe_load(
+        self, revision: int, first_batch: bool, cancel_event: asyncio.Event
+    ) -> DeviceExecution | None:
+        parser = self._lifecycle.log_parser
+        policy = self._lifecycle.device_policy
+        if parser is None or policy is None:
+            return None
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + _RUNNER_EVIDENCE_TIMEOUT_SECONDS
+        execution = None
+        while True:
+            if cancel_event.is_set():
+                raise asyncio.CancelledError
+            if parser.load_revision() > revision:
+                execution = verify_device_execution(
+                    policy, parser.latest_load(), parser.discovered_devices()
+                )
+                if execution.observed_backend is not None:
+                    return execution
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                if execution is None and first_batch:
+                    return verify_device_execution(policy, (), ())
+                return execution
+            await asyncio.sleep(min(_RUNNER_EVIDENCE_POLL_SECONDS, remaining))
+
+    def _record_reload(self, execution: DeviceExecution) -> None:
+        previous = self.device_execution
+        if previous is None or previous.observed_backend is None:
+            self.device_execution = execution
+        elif execution.observed_backend is not None and (
+            previous.observed_backend,
+            previous.observed_description,
+            previous.observed_pci_bus,
+        ) != (
+            execution.observed_backend,
+            execution.observed_description,
+            execution.observed_pci_bus,
+        ):
+            _LOG.warning("Owned Ollama model reload disagreed with the document device")
 
     async def _generate_batch(
         self,

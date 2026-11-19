@@ -218,6 +218,7 @@ class OllamaLogParser:
     def __init__(self, maxlen: int = MAX_RECORD_HISTORY) -> None:
         self._lock = Lock()
         self._records: deque[LogRecord] = deque(maxlen=maxlen)
+        self._load_revision = 0
         self._buffer: str = ""
         self._discarding_overlong: bool = False
 
@@ -233,6 +234,8 @@ class OllamaLogParser:
                 ):
                     line = (self._buffer + text_chunk[start:end]).removesuffix("\r")
                     if (record := parse_log_line(line)) is not None:
+                        if isinstance(record, ModelLoadStarted):
+                            self._load_revision += 1
                         self._records.append(record)
                         new_records.append(record)
                 self._buffer = ""
@@ -246,6 +249,10 @@ class OllamaLogParser:
                     self._buffer = ""
                     self._discarding_overlong = True
         return tuple(new_records)
+
+    def load_revision(self) -> int:
+        with self._lock:
+            return self._load_revision
 
     def records(self) -> tuple[LogRecord, ...]:
         """Return all retained log records."""

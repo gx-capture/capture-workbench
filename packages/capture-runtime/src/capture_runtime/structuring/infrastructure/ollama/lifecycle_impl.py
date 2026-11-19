@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import codecs
 import json
 import os
 import shutil
@@ -19,12 +20,35 @@ from capture_runtime._windows_job import create_kill_on_close_job, terminate_and
 from capture_runtime.clock import Clock
 from capture_runtime.config import OllamaRuntimeConfig
 from capture_runtime.structuring.infrastructure.model_catalog import ActiveModelSelectionStore
-from capture_runtime.structuring.infrastructure.ollama.device_policy import resolve_device_policy
+from capture_runtime.structuring.infrastructure.ollama.device_policy import (
+    OllamaDevicePolicy,
+    resolve_device_policy,
+)
 from capture_runtime.structuring.infrastructure.ollama.listener_owner import (
     ListenerOwner,
     SystemListenerOwner,
     choose_loopback_port,
 )
+from capture_runtime.structuring.infrastructure.ollama.server_log import OllamaLogParser
+
+_LOG_READ_BYTES = 16 * 1024
+_LOG_POLL_SECONDS = 0.02
+
+
+def _drain_log(path: Path, offset: int, parser: OllamaLogParser, stop: threading.Event) -> None:
+    decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+    while not stop.is_set():
+        try:
+            with path.open("rb") as stream:
+                stream.seek(offset)
+                chunk = stream.read(_LOG_READ_BYTES)
+        except OSError:
+            chunk = b""
+        if chunk:
+            offset += len(chunk)
+            parser.feed(decoder.decode(chunk))
+        else:
+            stop.wait(_LOG_POLL_SECONDS)
 
 
 class OllamaOwnershipError(RuntimeError):
@@ -316,6 +340,41 @@ class IsolatedOllamaLifecycle:
         self._owned: OwnedProcess | None = None
         self._lock = threading.RLock()
         self._lease_lock = asyncio.Lock()
+        self._shutdown = threading.Event()
+        self._log_stop: threading.Event | None = None
+        self._log_thread: threading.Thread | None = None
+        self.log_parser: OllamaLogParser | None = None
+        self.device_policy: OllamaDevicePolicy | None = None
+
+    def begin_shutdown(self) -> None:
+        self._shutdown.set()
+
+    def _check_start_allowed(self, cancel_event: asyncio.Event | None) -> None:
+        if cancel_event is not None and cancel_event.is_set():
+            raise asyncio.CancelledError
+        if self._shutdown.is_set():
+            raise RuntimeUnavailableError("isolated Ollama is shutting down")
+
+    async def restart_for_device(
+        self, policy: OllamaDevicePolicy, cancel_event: asyncio.Event
+    ) -> None:
+        """Reap under the document lease before attempting a corrected launch."""
+        self._check_start_allowed(cancel_event)
+
+        def replace_process() -> None:
+            self.stop()
+            self._check_start_allowed(cancel_event)
+            self.start(policy=policy, cancel_event=cancel_event)
+
+        replacement = asyncio.create_task(asyncio.to_thread(replace_process))
+        try:
+            await asyncio.shield(replacement)
+        except asyncio.CancelledError:
+            cancel_event.set()
+            await asyncio.gather(replacement, return_exceptions=True)
+            raise
+        except OSError as exc:
+            raise RuntimeUnavailableError("isolated Ollama could not restart") from exc
 
     @asynccontextmanager
     async def lease(self, cancel_event: asyncio.Event) -> AsyncIterator[None]:
@@ -369,8 +428,14 @@ class IsolatedOllamaLifecycle:
     def active_model_selection(self) -> dict[str, object] | None:
         return ActiveModelSelectionStore(self.config.app_data_dir).load()
 
-    def start(self) -> int:
+    def start(
+        self,
+        *,
+        policy: OllamaDevicePolicy | None = None,
+        cancel_event: asyncio.Event | None = None,
+    ) -> int:
         with self._lock:
+            self._check_start_allowed(cancel_event)
             if self.owns_running_process():
                 assert self._owned is not None
                 return self._owned.pid
@@ -381,9 +446,15 @@ class IsolatedOllamaLifecycle:
                 raise RuntimeUnavailableError("Ollama executable is not installed")
             self.config.app_data_dir.mkdir(parents=True, exist_ok=True)
             self.config.models_dir.mkdir(parents=True, exist_ok=True)
-            device_policy = resolve_device_policy()
+            device_policy = policy or resolve_device_policy()
+            output_path = self.config.app_data_dir / "ollama.log"
             for _ in range(5):
                 try:
+                    self._check_start_allowed(cancel_event)
+                    try:
+                        output_offset = output_path.stat().st_size
+                    except FileNotFoundError:
+                        output_offset = 0
                     port = self._port_selector()
                     self._host_url = f"http://127.0.0.1:{port}"
                     owned = self._controller.spawn(
@@ -393,11 +464,21 @@ class IsolatedOllamaLifecycle:
                             self.config.process_environment(f"127.0.0.1:{port}")
                         ),
                         cwd=self.config.app_data_dir,
-                        output_path=self.config.app_data_dir / "ollama.log",
+                        output_path=output_path,
                     )
                     self._owned = owned
+                    self.device_policy = device_policy
+                    self.log_parser = OllamaLogParser()
+                    self._log_stop = threading.Event()
+                    self._log_thread = threading.Thread(
+                        target=_drain_log,
+                        args=(output_path, output_offset, self.log_parser, self._log_stop),
+                        daemon=True,
+                    )
+                    self._log_thread.start()
                     deadline = time.monotonic() + self._listener_timeout
                     while owned.poll() is None:
+                        self._check_start_allowed(cancel_event)
                         owner = self._listener_owner.listener_pid(port)
                         # shell=False launches the server directly: other PIDs fail closed.
                         if owner == owned.pid:
@@ -405,6 +486,7 @@ class IsolatedOllamaLifecycle:
                         if owner is not None or time.monotonic() >= deadline:
                             break
                         time.sleep(0.05)
+                    self._check_start_allowed(cancel_event)
                     if self.owns_running_process():
                         break
                 except OSError:
@@ -441,8 +523,18 @@ class IsolatedOllamaLifecycle:
             self._host_url = None
             if owned is None:
                 return
+            if self._log_stop is not None and self._log_thread is not None:
+                self._log_stop.set()
+                self._log_thread.join()
+                self._log_stop = None
+                self._log_thread = None
+            self.log_parser = None
+            self.device_policy = None
+            try:
+                self._controller.stop_tree(owned)
+            except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+                raise RuntimeUnavailableError("isolated Ollama could not be reaped") from exc
             self._owned = None
-            self._controller.stop_tree(owned)
             self._remove_pid_file_if_owned(owned.pid)
 
     def _reject_unowned_live_pid(self) -> None:
