@@ -275,7 +275,7 @@ fn malformed_requests_unknown_commands_bad_args_and_oversized_bodies() {
     let (status, _, _) = invoke_json(server.port(), "unknown_command", &json!({}));
     assert_eq!(status, 404);
 
-    let (status, _, _) = invoke_json(server.port(), "desktop_acceptance_close_window", &json!({}));
+    let (status, _, _) = invoke_json(server.port(), "desktop_close_window", &json!({}));
     assert_eq!(status, 404);
 
     let (status, _, _) = invoke_json(
@@ -673,10 +673,7 @@ fn command_list_cannot_drift() {
         &["library_select_sources", "library_watch_native_sources"]
     );
     // Commands registered with Tauri that the dev host intentionally does not serve.
-    assert_eq!(
-        COMMAND_GROUPS.not_served,
-        &["desktop_acceptance_close_window"]
-    );
+    assert_eq!(COMMAND_GROUPS.not_served, &["desktop_close_window"]);
     // Default Tauri command count matches the decision record (38 shared + 2 replaced + 1 not served = 41).
     assert_eq!(
         COMMAND_GROUPS.served.len()

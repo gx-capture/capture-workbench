@@ -36,7 +36,7 @@ the dev host's dispatcher both call it. Nothing is reimplemented in Node.
 | `runtime_*`, `desktop_runtime_status`, `desktop_speech_gpu_status`, `desktop_set_speech_prefer_gpu`, `library_list`, `library_get`, `library_update_capture`, `library_save_edits`, `library_export`, `library_source_bytes`, `library_delete`, `library_import_selection`, `library_discard_selections` | the same function as the Tauri command |
 | `library_select_sources` (native file dialog) | no dialog: it takes the paths a test queued through the dev endpoint `POST /__dev/selection` and inspects them with the same `SourceSelections::inspect_batch`; an empty queue answers like a cancelled dialog |
 | `library_watch_native_sources` (drag and drop of native paths) | accepted, never delivers an event |
-| `desktop_acceptance_close_window`, the feature-gated acceptance commands | not served |
+| `desktop_close_window`, the feature-gated acceptance commands | not served |
 
 The replaced rows are exactly what stays in layer 2: native dialogs, drag and
 drop, window behaviour.

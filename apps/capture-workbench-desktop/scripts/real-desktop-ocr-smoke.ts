@@ -315,7 +315,7 @@ export async function requestDesktopTeardown(
   timeoutMs = realDesktopTeardownTimeoutMs,
 ): Promise<'requested' | 'connection-closed'> {
   const command = mode === 'window-close'
-    ? 'desktop_acceptance_close_window'
+    ? 'desktop_close_window'
     : 'desktop_acceptance_terminate_root';
   try {
     await withTimeout(

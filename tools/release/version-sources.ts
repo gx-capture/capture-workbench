@@ -76,8 +76,8 @@ const CHANNEL_OWNER_SPECS = [
   },
   {
     channels: ['pypi'],
-    role: 'publisher',
-    workflowPath: '.github/workflows/_publish-pypi.yml',
+    role: 'verifier',
+    workflowPath: '.github/workflows/_verify-pypi-publication.yml',
     orchestrators: ['.github/workflows/runtime-promote.yml'],
   },
   {
