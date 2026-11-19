@@ -72,7 +72,7 @@ macro_rules! for_each_desktop_command {
                 library_watch_native_sources,
             ],
             not_served: [
-                desktop_acceptance_close_window,
+                desktop_close_window,
             ],
         }
     };

@@ -455,7 +455,7 @@ missing ones.
   `breaking` or `manual-review`, the last for any change it cannot place.
   `.github/consumer-gates.json` lists the gates: Cert Prep is required always,
   LAW whenever the classification is not `no-impact`.
-- `release.yml` audits every pushed `v*` tag against its candidate, release and
+- `release-tag-audit.yml` audits every pushed `v*` tag against its candidate, release and
   registries. `release-supersede.yml` marks a defective tag superseded in
   `release-index/releases.json` and moves the stable pointer to a known-good
   replacement; its assets stay, and the defective release's notes get a
@@ -652,7 +652,7 @@ candidate with `node tools/install-capture-workbench-dependencies.mts
   `packages/capture-runtime/size-budgets/*` and the measurement evidence file
   (budget = measured bytes plus `headroomBasisPoints`) when the runtime grows.
 - PyPI Trusted Publishing binds the top-level workflow: uploads stay inline in
-  `package-promote.yml` and `release-promote.yml`. `_publish-pypi.yml` only
+  `package-promote.yml` and `release-promote.yml`. `_verify-pypi-publication.yml` only
   verifies and has no Trusted Publisher entry on pypi.org; do not re-add one.
 - Consumer gate workflows pin `pnpm/action-setup@f40ffcd9…`; `b0f76dfb`
   installs a broken pnpm v11 shim. Gate check steps need GitHub Packages auth

@@ -60,7 +60,7 @@ permissions:
   contents: read
 
 jobs:
-  publish:
+  verify-pypi-publication:
     runs-on: ubuntu-latest
     environment: capture-registry-pypi
     env:

@@ -1,5 +1,23 @@
 [
   {
+    "name": "_publish-pypi.yml",
+    "match": "substring",
+    "replacement": "_verify-pypi-publication.yml",
+    "allowed": []
+  },
+  {
+    "name": "desktop_acceptance_close_window",
+    "match": "word",
+    "replacement": "desktop_close_window",
+    "allowed": []
+  },
+  {
+    "name": "workflows/release.yml",
+    "match": "substring",
+    "replacement": "workflows/release-tag-audit.yml",
+    "allowed": []
+  },
+  {
     "name": "e2e-real-backend",
     "match": "substring",
     "replacement": "e2e-dev-host",

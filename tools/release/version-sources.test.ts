@@ -71,7 +71,7 @@ const INVENTORY_FILES = [
   '.github/workflows/release-promote.yml',
   '.github/workflows/runtime-promote.yml',
   '.github/workflows/_publish-npm.yml',
-  '.github/workflows/_publish-pypi.yml',
+  '.github/workflows/_verify-pypi-publication.yml',
   '.github/workflows/_publish-crates.yml',
   '.github/workflows/_publish-github-release.yml',
   '.github/workflows/_publish-runtime-github-release.yml',

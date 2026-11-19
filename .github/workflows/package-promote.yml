@@ -56,7 +56,7 @@ jobs:
   # PyPI Trusted Publishing binds both the upload token and the upload
   # attestation to the workflow that runs the publish action, and does not
   # support reusable workflows. Keep this job inline so both identities are
-  # package-promote.yml; _publish-pypi.yml only verifies existing uploads.
+  # package-promote.yml; _verify-pypi-publication.yml only verifies existing uploads.
   publish-pypi:
     runs-on: ubuntu-latest
     environment: capture-registry-pypi
