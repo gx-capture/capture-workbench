@@ -195,6 +195,7 @@ function exceptionReason(relativePath) {
       'apps/capture-workbench-desktop/scripts/real-ollama-smoke.ts' ||
     relativePath ===
       'apps/capture-workbench-desktop/scripts/real-media-smoke.ts' ||
+      'apps/capture-workbench-desktop/scripts/real-engine-device-check.ts' ||
     relativePath ===
       'apps/capture-workbench-desktop/scripts/v2-capture-flow.ts' ||
       relativePath ===

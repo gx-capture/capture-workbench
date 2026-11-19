@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import { test } from 'node:test';
 
 import {
   decideVerdict,
-  designedOcrAdapter,
   deviceScenarios,
   parseNvidiaSamples,
   parseWindowsSamples,
+  preflightScenario,
   renderMarkdownReport,
   summarizeObservation,
   type GpuAdapter,
@@ -18,186 +18,125 @@ const integrated = '000000000000a001';
 const adapters: readonly GpuAdapter[] = [
   { luid: integrated, adapterClass: 'integrated', description: 'Integrated test GPU' },
   { luid: discrete, adapterClass: 'dedicated', description: 'Discrete test GPU' },
-  { luid: '000000000000f001', adapterClass: 'software', description: 'Software renderer' },
 ];
+const speech = 'speech-recognition';
+const speaker = 'speaker-diarization';
+const ocr = 'text-recognition';
+const scenario = (id: string) => deviceScenarios().find((item) => item.id === id)!;
+const speechScenario = scenario('speech-development');
+const ocrScenario = scenario('ocr-default');
+const speakerScenario = scenario('speaker-identification');
+const cpuScenario = scenario('speech-cpu-pack');
+const baseline = 'cpu,t0,10,5,1,True';
+const poll = 'cpu,t1,11,5,2,True';
+const finalPoll = 'cpu,t2,10,5,1,True';
+const worker = (kind: string, identity = '40:100') => `worker,t1,${identity},${kind},1.25`;
+const burst = (kind: string, luid = discrete, identity = '40:100') => `busy,t1,${identity},${luid},0,Compute,7000000,${kind}`;
+const observe = (kind: string, ...rows: string[]) => summarizeObservation({
+  ...parseWindowsSamples([baseline, ...rows, finalPoll].join('\n')), adapters, nvidia: [], worker: kind,
+});
+const speechCapture: ReportedCapture = {
+  input: 'audio', status: 'awaiting_structuring', engine: speech, model: 'tea-asr-1.1-mini',
+  device: 'cuda', fallbackWarnings: [], stages: [],
+};
+const ocrCapture: ReportedCapture = {
+  input: 'pdf', status: 'awaiting_structuring', engine: ocr, device: 'directml', fallbackWarnings: [], stages: [],
+};
+const ocrCompute = { mode: 'gpu', adapterClass: 'dedicated' };
 
-function windowsSamples(rows: readonly (readonly [string, string, string, number])[], ticks: number): string {
-  const lines = ['\uFEFFcpu,2026-01-01T00:00:00.000Z,1.5,10,3'];
-  for (let tick = 1; tick <= ticks; tick += 1) {
-    const time = `2026-01-01T00:00:0${tick}.000Z`;
-    for (const [scope, luid, engine, value] of rows) lines.push(`gpu,${time},${scope},${luid},${engine},${value}`);
-    lines.push(`cpu,${time},${1.5 + tick * 2},${20 + tick},4`);
+test('preflight requires discrete DirectML hardware and the NVIDIA driver only for CUDA speech packs', () => {
+  assert.match(preflightScenario(ocrScenario, [adapters[0]], true)!, /no discrete GPU/u);
+  assert.match(preflightScenario(ocrScenario, [], true)!, /no discrete GPU/u);
+  assert.equal(preflightScenario(ocrScenario, adapters, false), undefined);
+  assert.equal(preflightScenario(cpuScenario, [], false), undefined);
+  for (const cudaScenario of [speechScenario, speakerScenario, scenario('speech-gpu-preference-off')]) {
+    const unavailable = preflightScenario(cudaScenario, adapters, false);
+    assert.match(unavailable!, /nvcuda/u);
+    assert.equal(decideVerdict({ scenario: cudaScenario, captures: [], observations: {}, unavailable }).verdict, 'not runnable');
+    assert.equal(cudaScenario.environment['CAPTURE_SPEECH_RECOGNITION_VARIANT'], 'cuda');
+    assert.equal(cudaScenario.environment['CAPTURE_SPEECH_RECOGNITION_ALLOW_CPU_FALLBACK'], 'false');
+    assert.equal(preflightScenario(cudaScenario, adapters, true), undefined);
   }
-  return `${lines.join('\r\n')}\r\n`;
-}
-
-test('the designed OCR adapter is the discrete GPU, then the integrated one', () => {
-  assert.equal(designedOcrAdapter(adapters), 'dedicated');
-  assert.equal(designedOcrAdapter(adapters.filter((item) => item.adapterClass !== 'dedicated')), 'integrated');
-  assert.equal(designedOcrAdapter(adapters.filter((item) => item.adapterClass === 'software')), undefined);
-  const ocr = deviceScenarios([adapters[2]]).find((scenario) => scenario.id === 'ocr-default');
-  assert.equal(ocr?.expectation.device, 'cpu');
-  assert.equal(ocr?.expectation.observed, 'cpu');
+  assert.equal(cpuScenario.environment['CAPTURE_SPEECH_RECOGNITION_VARIANT'], 'cpu');
 });
 
-test('scenario ids are unique and every speech scenario refuses a CPU fallback', () => {
-  const scenarios = deviceScenarios(adapters);
-  assert.equal(new Set(scenarios.map((scenario) => scenario.id)).size, scenarios.length);
-  for (const scenario of scenarios.filter((item) => item.expectation.engine === 'speech-recognition')) {
-    assert.equal(scenario.environment['CAPTURE_SPEECH_RECOGNITION_ALLOW_CPU_FALLBACK'], 'false', scenario.id);
-  }
-  assert.equal(scenarios.find((item) => item.id === 'speech-cpu-pack')?.appData, 'cpu-pack');
-});
-
-test('sampler lines parse, skipping malformed rows and the byte order mark', () => {
-  const parsed = parseWindowsSamples([
-    '\uFEFFgpu,t1,owned,000000000000d001,Compute,12.5',
-    'gpu,t1,owned,not-a-luid,Compute,12.5',
-    'gpu,t1,mine,000000000000d001,3D,1',
-    'cpu,t1,3.25,40,5',
-    'cpu,t1,x,40,5',
-    '',
-  ].join('\n'));
-  assert.deepEqual(parsed.gpu, [{ time: 't1', owned: true, luid: discrete, engineType: 'Compute', utilization: 12.5 }]);
-  assert.deepEqual(parsed.cpu, [{ time: 't1', ownedCpuSeconds: 3.25, totalPercent: 40, ownedProcesses: 5 }]);
+test('sampler parses complete ticks, strips the BOM and skips malformed rows', () => {
+  const parsed = parseWindowsSamples(`\uFEFF${baseline}\ncpu,t1,x,40,5,True\n${worker(speech)}\n${poll}\n${burst(speech)}`);
+  assert.equal(parsed.cpu.length, 2);
+  assert.equal(parsed.cpu[0].gpuOk, true);
+  assert.equal(parsed.workers[0].worker, speech);
+  assert.equal(parsed.busy[0].runningTime, 7_000_000);
   assert.deepEqual(parseNvidiaSamples('2026/01/01 00:00:00.000, 37, 2048\r\nbad line\n'), [
     { time: '2026/01/01 00:00:00.000', utilization: 37, memoryUsedMiB: 2048 },
   ]);
 });
 
-test('owned compute work on the discrete adapter is observed as the discrete GPU', () => {
-  const windows = parseWindowsSamples(windowsSamples([
-    ['owned', discrete, 'Compute', 40],
-    ['owned', integrated, 'Copy', 90],
-    ['other', integrated, '3D', 80],
-  ], 4));
-  const observation = summarizeObservation({ ...windows, nvidia: parseNvidiaSamples('t, 0, 600\nt, 55, 2600\n'), adapters });
-  assert.equal(observation.observedDevice, 'dedicated-gpu');
-  assert.equal(observation.ownedAdapterUse[0]?.luid, discrete);
-  assert.equal(observation.ownedAdapterUse[0]?.activeSamples, 4);
-  assert.equal(observation.ownedCpuSeconds, 8);
-  assert.equal(observation.nvidiaMaxUtilization, 55);
-  assert.equal(observation.nvidiaMemoryRiseMiB, 2000);
+test('a single post-baseline worker burst survives worker exit', () => {
+  const observed = observe(speech, worker(speech), burst(speech), poll);
+  assert.equal(observed.observedDevice, 'dedicated-gpu');
+  assert.equal(observed.ownedAdapterUse[0].busySeconds, 0.7);
+  assert.equal(observed.ownedCpuSeconds, 1.25);
 });
 
-test('copy traffic, other processes and brief touches are observed as the CPU', () => {
-  const windows = parseWindowsSamples(windowsSamples([
-    ['owned', discrete, 'Copy', 60],
-    ['other', discrete, 'Compute', 99],
-  ], 5));
-  assert.equal(summarizeObservation({ ...windows, nvidia: [], adapters }).observedDevice, 'cpu');
-  const brief = parseWindowsSamples(`${windowsSamples([], 3)}gpu,2026-01-01T00:00:09.000Z,owned,${discrete},Compute,70\n`);
-  assert.equal(summarizeObservation({ ...brief, nvidia: [], adapters }).observedDevice, 'cpu');
-  const integratedWork = parseWindowsSamples(windowsSamples([['owned', integrated, 'Compute', 30]], 3));
-  assert.equal(summarizeObservation({ ...integratedWork, nvidia: [], adapters }).observedDevice, 'integrated-gpu');
-  assert.equal(summarizeObservation({ gpu: [], cpu: [], nvidia: [], adapters }).observedDevice, null);
+test('existing worker cumulative time is subtracted; an uncompleted tick is ignored', () => {
+  const observed = observe(speech, 'worker,t0,40:100,speech-recognition,1.25', worker(speech),
+    burst(speech).replace(',t1,', ',t0,'), burst(speech), poll, burst(speech, integrated).replace(',t1,', ',incomplete,'));
+  assert.equal(observed.ownedCpuSeconds, 0);
+  assert.equal(observed.ownedAdapterUse[0].busySeconds, 0);
+  assert.equal(observed.observedDevice, null);
 });
 
-test('busy time counts a GPU burst that no utilization sample caught', () => {
-  const text = [
-    windowsSamples([], 3),
-    // The worker existed from the first sample; its earlier busy time is not counted.
-    `busy,2026-01-01T00:00:01.000Z,40,${discrete},0,Compute,90000000`,
-    `busy,2026-01-01T00:00:03.000Z,40,${discrete},0,Compute,120000000`,
-    // A process started during the span counts from zero.
-    `busy,2026-01-01T00:00:02.000Z,41,${discrete},1,Compute,4000000`,
-    // Copy engines and short probes do not make an adapter used.
-    `busy,2026-01-01T00:00:01.000Z,40,${integrated},0,Copy,1`,
-    `busy,2026-01-01T00:00:03.000Z,40,${integrated},0,Copy,90000000`,
-    `busy,2026-01-01T00:00:02.000Z,42,${integrated},0,3D,1000000`,
-  ].join('\n');
-  const parsed = parseWindowsSamples(text);
-  assert.equal(parsed.busy.length, 6);
-  const observation = summarizeObservation({ ...parsed, nvidia: [], adapters });
-  assert.equal(observation.observedDevice, 'dedicated-gpu');
-  assert.equal(observation.ownedAdapterUse[0]?.busySeconds, 3.4);
-  assert.equal(observation.ownedAdapterUse.find((use) => use.luid === integrated)?.busySeconds, 0.1);
+test('CPU requires positive worker CPU time and complete, quiet GPU telemetry', () => {
+  assert.equal(observe(speech, worker(speech), poll).observedDevice, 'cpu');
+  assert.equal(observe(speech, worker(speaker), poll).observedDevice, null);
+  assert.equal(observe(speech, worker(speech), poll.replace('True', 'False')).observedDevice, null);
+  assert.equal(observe(speech, worker(speech), burst(speech).replace('7000000', '1'), poll).observedDevice, null);
+  assert.equal(observe(speech, worker(speech), burst(speech).replace(/,compute,/iu, ',Copy,'), poll).observedDevice, null);
+  assert.equal(observe(speech, worker(speech).replace('1.25', '0'), poll).observedDevice, null);
 });
 
-const speechScenario = deviceScenarios(adapters).find((scenario) => scenario.id === 'speech-development')!;
-const ocrScenario = deviceScenarios(adapters).find((scenario) => scenario.id === 'ocr-default')!;
-const gpuObservation = summarizeObservation({
-  ...parseWindowsSamples(windowsSamples([['owned', discrete, 'Compute', 50]], 4)),
-  nvidia: [],
-  adapters,
-});
-const speechCapture: ReportedCapture = {
-  input: 'audio',
-  status: 'awaiting_structuring',
-  engine: 'speech-recognition',
-  model: 'tea-asr-1.1-mini',
-  device: 'cuda',
-  diarizationDevice: null,
-  fallbackWarnings: [],
-  stages: [],
-};
-
-test('a capture on the designed device, seen on that device, passes', () => {
-  assert.deepEqual(
-    decideVerdict({ expectation: speechScenario.expectation, captures: [speechCapture], observation: gpuObservation }),
-    { verdict: 'pass', reasons: [] },
-  );
+test('OCR needs independent PDF and image evidence and rejects simultaneous GPU activity', () => {
+  const extraction = observe(ocr, worker(ocr), burst(ocr), poll);
+  const both = observe(ocr, worker(ocr), burst(ocr), burst(ocr, integrated), poll);
+  const input = { scenario: ocrScenario, captures: [ocrCapture, { ...ocrCapture, input: 'image' as const }], ocrCompute };
+  assert.equal(decideVerdict({ ...input, observations: { pdf: { extraction }, image: { extraction } } }).verdict, 'pass');
+  assert.equal(decideVerdict({ ...input, observations: { pdf: { extraction } } }).verdict, 'not observed');
+  assert.equal(decideVerdict({ ...input, observations: { pdf: { extraction }, image: { extraction: both } } }).verdict, 'mismatch');
+  assert.equal(decideVerdict({ ...input, ocrCompute: { mode: 'gpu', adapterClass: 'integrated' }, observations: { pdf: { extraction }, image: { extraction } } }).verdict, 'mismatch');
 });
 
-test('a wrong reported device, a fallback notice or a wrong observed device is a mismatch', () => {
-  const cpuCapture = { ...speechCapture, device: 'cpu', fallbackWarnings: ['Speech recognition GPU fallback: OutOfMemoryError'] };
-  const decided = decideVerdict({ expectation: speechScenario.expectation, captures: [cpuCapture], observation: gpuObservation });
-  assert.equal(decided.verdict, 'mismatch');
-  assert.equal(decided.reasons.length, 2);
-  const cpuObservation = { ...gpuObservation, observedDevice: 'cpu' as const };
-  assert.deepEqual(
-    decideVerdict({ expectation: speechScenario.expectation, captures: [speechCapture], observation: cpuObservation }).reasons,
-    ['observed cpu, designed dedicated-gpu'],
-  );
+test('speaker identification requires its own CPU evidence, not speech GPU activity', () => {
+  const extraction = observe(speech, worker(speech), burst(speech), poll);
+  const speakerCpu = observe(speaker, worker(speech), burst(speech), worker(speaker, '41:100'), poll);
+  const speakerGpu = observe(speaker, worker(speaker), burst(speaker), poll);
+  const input = { scenario: speakerScenario, captures: [{ ...speechCapture, diarizationDevice: 'cpu' }], installedPack: 'cuda' };
+  assert.equal(decideVerdict({ ...input, observations: { audio: { extraction, speaker: speakerCpu } } }).verdict, 'pass');
+  assert.equal(decideVerdict({ ...input, observations: { audio: { extraction } } }).verdict, 'not observed');
+  assert.equal(decideVerdict({ ...input, observations: { audio: { extraction, speaker: speakerGpu } } }).verdict, 'mismatch');
 });
 
-test('OCR also checks the readiness selection, and failed captures fail the scenario', () => {
-  const ocrCapture: ReportedCapture = {
-    input: 'pdf', status: 'awaiting_structuring', engine: 'text-recognition', model: 'pp-ocrv6-medium',
-    device: 'directml', fallbackWarnings: [], stages: [],
-  };
-  assert.equal(decideVerdict({
-    expectation: ocrScenario.expectation,
-    captures: [ocrCapture],
-    ocrCompute: { mode: 'gpu', adapterClass: 'dedicated' },
-    observation: gpuObservation,
-  }).verdict, 'pass');
-  assert.deepEqual(decideVerdict({
-    expectation: ocrScenario.expectation,
-    captures: [ocrCapture],
-    ocrCompute: { mode: 'gpu', adapterClass: 'integrated' },
-    observation: gpuObservation,
-  }).reasons, ['OCR readiness adapter integrated, designed dedicated']);
-  assert.deepEqual(decideVerdict({
-    expectation: speechScenario.expectation,
-    captures: [{ input: 'audio', status: 'failed', fallbackWarnings: [], stages: [], errorCode: 'session_failed', errorStage: 'speech-model-load-cuda-failed' }],
-    observation: gpuObservation,
-  }), { verdict: 'failed', reasons: ['audio capture ended as failed (session_failed at speech-model-load-cuda-failed)'] });
-  assert.equal(decideVerdict({
-    expectation: speechScenario.expectation,
-    captures: [speechCapture],
-    observation: { ...gpuObservation, observedDevice: null },
-  }).verdict, 'inconclusive');
+test('verified installed pack and matching provenance are required', () => {
+  const extraction = observe(speech, worker(speech), burst(speech), poll);
+  const input = { scenario: speechScenario, captures: [speechCapture], observations: { audio: { extraction } } };
+  assert.equal(decideVerdict({ ...input, installedPack: 'cuda' }).verdict, 'pass');
+  assert.equal(decideVerdict(input).verdict, 'not observed');
+  assert.equal(decideVerdict({ ...input, installedPack: 'cuda', captures: [{ ...speechCapture, device: null }] }).verdict, 'not observed');
+  assert.equal(decideVerdict({ ...input, installedPack: 'cpu' }).verdict, 'mismatch');
+  assert.equal(decideVerdict({ ...input, installedPack: 'cuda', captures: [{ ...speechCapture, device: 'cpu', fallbackWarnings: ['GPU fallback'] }] }).verdict, 'mismatch');
+  assert.equal(decideVerdict({ ...input, captures: [{ ...speechCapture, status: 'failed' }] }).verdict, 'failed');
+  assert.equal(decideVerdict({ scenario: cpuScenario, captures: [{ ...speechCapture, device: 'cpu' }],
+    observations: { audio: { extraction: observe(speech, worker(speech), poll) } }, installedPack: 'cpu' }).verdict, 'pass');
 });
 
-test('the report lists finished and pending scenarios', () => {
-  const markdown = renderMarkdownReport({
-    title: 'Device check',
-    preamble: ['Synthetic run.'],
-    results: [{
-      scenario: speechScenario.id,
-      summary: speechScenario.summary,
-      expectation: speechScenario.expectation,
-      environment: speechScenario.environment,
-      ocrCompute: null,
-      captures: [speechCapture],
-      observation: gpuObservation,
-      verdict: 'pass',
-      reasons: [],
-      evidenceDirectory: 'evidence/speech-development',
-    }],
-    pending: ['speech-cpu-pack'],
-  });
-  assert.match(markdown, /\| speech-development \| cuda \(tea-asr-1\.1-mini\)/u);
-  assert.match(markdown, /\| speech-cpu-pack \| \| \| \| not run yet \|/u);
+test('observe mode does not report an empty process tree as CPU use', () => {
+  const observation = summarizeObservation({ ...parseWindowsSamples('cpu,t0,0,10,0,True\ncpu,t1,0,20,0,True'), adapters, nvidia: [] });
+  assert.equal(observation.matchingProcessObserved, false);
+  assert.equal(observation.observedDevice, null);
+  const markdown = renderMarkdownReport({ title: 'Device check', preamble: [], pending: ['speech-cpu-pack'], results: [{
+    scenario: speechScenario.id, summary: speechScenario.summary, expectation: speechScenario.expectation,
+    environment: speechScenario.environment, ocrCompute: null, captures: [speechCapture], observations: { audio: { extraction: observation } },
+    verdict: 'not observed', reasons: [], evidenceDirectory: 'evidence/speech-development',
+  }] });
+  assert.match(markdown, /not observed \(no matching process\)/u);
+  assert.match(markdown, /speech-cpu-pack \| \| \| \| not run yet/u);
 });

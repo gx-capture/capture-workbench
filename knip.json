@@ -8,6 +8,7 @@
     "apps/capture-workbench-e2e/preview-server.ts",
     "apps/capture-workbench-e2e/dev-host-preview-server.ts",
     "apps/capture-workbench-desktop/scripts/progressive-audio-oracle.ts",
+    "apps/capture-workbench-desktop/scripts/real-engine-device-check.ts",
     "packages/capture-runtime/scripts/*.mjs",
     "packages/capture-runtime/tests/e2e/**/*.e2e.ts",
     "packages/capture-runtime/tests/unit/*.test.ts",

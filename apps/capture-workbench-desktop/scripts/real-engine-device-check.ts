@@ -25,24 +25,24 @@
  *   --list prints the scenarios.
  *   --observe <process name> --observe-into <directory> only samples the
  *   devices of that process's trees (for example capture-workbench-dev-host.exe
- *   during smoke-real-engines) until <directory>/stop exists.
+ *   during smoke-real-engines) until the printed session stop file exists.
  *
- * A local run keeps its tree (two app-data directories with installed
- * engines, gigabytes) as a kept run tree (`pnpm run kept-run-trees -- --list`);
- * `--run-tree` reuses one so installed engines are not installed again. On a
- * GitHub runner the tree is deleted at the end.
+ * A local run keeps its tree (`pnpm run kept-run-trees -- --list`).
+ * `--run-tree` reuses the shared installs, except for the fresh CPU pack.
+ * On GitHub Actions only a scratch tree created by this run is deleted.
  *
  * Private inputs are read by path only. Their names, their contents and the
  * recognized text never reach the evidence or the console; the runtime sees a
  * synthetic file name. The bearer token is generated per runtime start and
- * removed from the runtime log before the log is kept.
+ * redacted before any runtime output is written to disk.
  */
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { closeSync, createReadStream, existsSync, openSync, writeFileSync } from 'node:fs';
-import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { appendFileSync, createReadStream, existsSync, writeFileSync } from 'node:fs';
+import { lstat, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
-import { extname, join, resolve } from 'node:path';
+import { dirname, extname, isAbsolute, join, resolve } from 'node:path';
+import { createInterface } from 'node:readline';
 import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
 
@@ -52,10 +52,11 @@ import {
   deviceScenarios,
   parseNvidiaSamples,
   parseWindowsSamples,
+  preflightScenario,
   renderMarkdownReport,
   summarizeObservation,
-  type AppDataKind,
   type CaptureInput,
+  type CaptureObservation,
   type DeviceScenario,
   type GpuAdapter,
   type OcrComputeReport,
@@ -74,25 +75,22 @@ const installationTimeoutMs = 90 * 60_000;
 const captureTimeoutMs = 60 * 60_000;
 const readyTimeoutMs = 200_000;
 const sampleIntervalSeconds = 2;
-// Idle samples before and after the captures frame the work.
-const idleFrameMs = 4_000;
 
 interface RunOptions {
   readonly inputs: Partial<Record<CaptureInput, string>>;
   readonly scenarios: readonly DeviceScenario[];
   readonly releaseDirectory: string;
   readonly runTree: string;
-  readonly keepsRunTree: boolean;
   readonly reportPath?: string;
   readonly adapters: readonly GpuAdapter[];
   readonly nvidiaPresent: boolean;
+  readonly driverPresent: boolean;
 }
 
 interface StartedRuntime {
   readonly child: ChildProcess;
   readonly port: number;
   readonly token: string;
-  readonly logPath: string;
 }
 
 interface RawCaptureView {
@@ -134,17 +132,18 @@ async function main(): Promise<void> {
     allowPositionals: false,
   });
   if (process.platform !== 'win32') throw new Error('The real-engine device check runs on Windows only.');
+  const all = deviceScenarios();
+  if (values.list) {
+    for (const scenario of all) process.stdout.write(`${scenario.id}\t${scenario.summary}\n`);
+    return;
+  }
   const adapters = discoverAdapters();
   if (values.observe) {
     if (!values['observe-into']) throw new Error('--observe needs --observe-into <directory>.');
     await observeProcesses(values.observe, resolve(values['observe-into']), adapters);
     return;
   }
-  const all = deviceScenarios(adapters);
-  if (values.list) {
-    for (const scenario of all) process.stdout.write(`${scenario.id}\t${scenario.summary}\n`);
-    return;
-  }
+  const driverPresent = existsSync(join(process.env['SystemRoot'] ?? 'C:\\Windows', 'System32', 'nvcuda.dll'));
   const selectedIds = values.scenarios?.split(',').map((id) => id.trim()).filter(Boolean);
   const scenarios = selectedIds ? selectedIds.map((id) => {
     const scenario = all.find((item) => item.id === id);
@@ -152,7 +151,8 @@ async function main(): Promise<void> {
     return scenario;
   }) : all;
   const inputs: Partial<Record<CaptureInput, string>> = {};
-  for (const input of new Set(scenarios.flatMap((scenario) => scenario.captures))) {
+  const runnable = scenarios.filter((scenario) => !preflightScenario(scenario, adapters, driverPresent));
+  for (const input of new Set(runnable.flatMap((scenario) => scenario.captures))) {
     const value = values[input]?.trim();
     if (!value) throw new Error(`--${input} is required by the selected scenarios.`);
     const metadata = await stat(value).catch(() => undefined);
@@ -160,14 +160,16 @@ async function main(): Promise<void> {
     inputs[input] = resolve(value);
   }
   const releaseDirectory = resolve(values['release-dir'] ?? join(workspaceRoot, 'packages', 'capture-runtime', 'dist', 'release'));
-  for (const name of [runtimeExecutableName, 'capture-engine-catalog.json']) {
+  for (const name of runnable.length ? [runtimeExecutableName, 'capture-engine-catalog.json'] : []) {
     if (!existsSync(join(releaseDirectory, name))) {
       throw new Error(`${name} is missing in ${releaseDirectory}; build it with capture-runtime:build-release-artifacts.`);
     }
   }
-  const keepsRunTree = process.env['GITHUB_ACTIONS'] !== 'true';
-  const runTree = values['run-tree'] ? resolve(values['run-tree']) : createRunTree(keepsRunTree);
-  await mkdir(runTree, { recursive: true });
+  const ownsScratch = !values['run-tree'] && process.env['GITHUB_ACTIONS'] === 'true';
+  const scratchRoot = await realpath(workspaceRoot);
+  const runTree = values['run-tree'] ? await validateRunTree(values['run-tree'])
+    : ownsScratch ? await mkdtemp(join(scratchRoot, '.devices-')) : await validateRunTree(createRunTree());
+  const scratchIdentity = ownsScratch ? await lstat(runTree) : undefined;
   const nvidiaPresent = spawnSync('nvidia-smi', ['-L'], { windowsHide: true, stdio: 'ignore' }).status === 0;
   try {
     await run({
@@ -175,38 +177,43 @@ async function main(): Promise<void> {
       scenarios,
       releaseDirectory,
       runTree,
-      keepsRunTree,
       ...(values.report ? { reportPath: resolve(values.report) } : {}),
       adapters,
       nvidiaPresent,
+      driverPresent,
     });
   } finally {
-    if (keepsRunTree) {
+    if (!ownsScratch) {
       process.stdout.write(`Kept the run tree at ${runTree}; remove it with pnpm run kept-run-trees -- --remove ${runTree}\n`);
-    } else {
-      await rm(runTree, { recursive: true, force: true });
+    } else if (scratchIdentity && dirname(runTree) === scratchRoot) {
+      const current = await lstat(runTree);
+      if (current.isDirectory() && current.dev === scratchIdentity.dev && current.ino === scratchIdentity.ino && await realpath(runTree) === runTree) {
+        await rm(runTree, { recursive: true, force: true });
+      }
     }
   }
 }
 
 async function run(options: RunOptions): Promise<void> {
-  const mirrorPort = await reservePort();
-  const mirror = await startWorkerMirror(options.releaseDirectory, mirrorPort);
+  const canRun = options.scenarios.some((scenario) => !preflightScenario(scenario, options.adapters, options.driverPresent));
+  const evidenceDirectory = await mkdtemp(join(options.runTree, 'evidence-'));
+  const mirrorPort = canRun ? await reservePort() : 0;
+  const mirror = canRun ? await startWorkerMirror(options.releaseDirectory, mirrorPort) : undefined;
   const results: ScenarioResult[] = [];
   const preamble = [
     `Runtime: \`${join(options.releaseDirectory, runtimeExecutableName)}\`. Run tree: \`${options.runTree}\`.`,
-    `Adapters: ${options.adapters.map((adapter) => `${adapter.adapterClass} ${adapter.luid} ${adapter.description}`).join('; ') || 'none'}. NVIDIA driver: ${options.nvidiaPresent ? 'present' : 'absent'}.`,
+    `Adapters: ${options.adapters.map((adapter) => `${adapter.adapterClass} ${adapter.luid} ${adapter.description}`).join('; ') || 'none'}. NVIDIA driver: ${options.driverPresent ? 'present' : 'absent'}.`,
   ];
   try {
     for (const [index, scenario] of options.scenarios.entries()) {
       process.stdout.write(`[${new Date().toISOString()}] scenario ${scenario.id}: start\n`);
-      const result = await runScenario(scenario, options, mirrorPort);
+      const result = await runScenario(scenario, options, mirrorPort, evidenceDirectory);
       results.push(result);
       process.stdout.write(`[${new Date().toISOString()}] scenario ${scenario.id}: ${result.verdict}${result.reasons.length ? ` (${result.reasons.join('; ')})` : ''}\n`);
-      await writeRunReport(options, preamble, results, options.scenarios.slice(index + 1).map((item) => item.id));
+      await writeRunReport(options, evidenceDirectory, preamble, results, options.scenarios.slice(index + 1).map((item) => item.id));
     }
   } finally {
-    await new Promise<void>((resolveClose) => mirror.close(() => resolveClose()));
+    if (mirror) await new Promise<void>((resolveClose) => mirror.close(() => resolveClose()));
   }
 }
 
@@ -214,41 +221,61 @@ async function runScenario(
   scenario: DeviceScenario,
   options: RunOptions,
   mirrorPort: number,
+  runEvidence: string,
 ): Promise<ScenarioResult> {
-  const evidenceDirectory = join(options.runTree, 'evidence', scenario.id);
-  await rm(evidenceDirectory, { recursive: true, force: true });
-  await mkdir(evidenceDirectory, { recursive: true });
-  const appData = join(options.runTree, appDataDirectoryName(scenario.appData));
-  await mkdir(appData, { recursive: true });
+  const evidenceDirectory = await mkdtemp(join(runEvidence, `${scenario.id}-`));
   const captures: ReportedCapture[] = [];
+  const observations: Partial<Record<CaptureInput, CaptureObservation>> = {};
+  const unavailable = preflightScenario(scenario, options.adapters, options.driverPresent);
   let ocrCompute: OcrComputeReport | null = null;
   let failure: string | undefined;
-  let samplesFrom: Samplers | undefined;
-  const runtime = await startRuntime(options, scenario, appData, evidenceDirectory, mirrorPort);
+  let installedPack: string | undefined;
+  let runtime: StartedRuntime | undefined;
   try {
-    await waitForReady(runtime);
-    await installRequirements(runtime, scenario.requirements);
-    await waitForReady(runtime);
-    ocrCompute = await readOcrCompute(runtime);
-    samplesFrom = startSamplers({ pid: runtime.child.pid! }, evidenceDirectory, options.nvidiaPresent);
-    await delay(idleFrameMs);
-    for (const input of scenario.captures) {
-      captures.push(await captureAndReport(runtime, input, options.inputs[input]!, scenario.identifySpeakers));
+    if (!unavailable) {
+      const appData = scenario.appData === 'cpu-pack' ? await mkdtemp(join(options.runTree, 'cpu-')) : join(options.runTree, 'cuda');
+      await mkdir(appData, { recursive: true });
+      const checkedAppData = await checkedChild(appData, options.runTree);
+      const runtimeData = join(checkedAppData, 'runtime');
+      await mkdir(runtimeData, { recursive: true });
+      await checkedChild(runtimeData, checkedAppData);
+      const active = await startRuntime(options, scenario, checkedAppData, evidenceDirectory, mirrorPort);
+      runtime = active;
+      await waitForReady(active);
+      await installRequirements(active, scenario.requirements, scenario.appData === 'cpu-pack');
+      await waitForReady(active);
+      ocrCompute = await readOcrCompute(active);
+      if (scenario.requirements.includes('speech-recognition')) installedPack = await readInstalledPack(appData);
+      for (const input of scenario.captures) {
+        const directory = join(evidenceDirectory, input);
+        await mkdir(directory);
+        const sampler = startSamplers({ pid: active.child.pid!, appData }, directory, options.nvidiaPresent);
+        let complete: boolean;
+        try {
+          const baseline = await waitForSample(directory);
+          captures.push(await captureAndReport(active, input, options.inputs[input]!, scenario.identifySpeakers));
+          const captureEnded = new Date().toISOString();
+          complete = baseline && await waitForSample(directory, captureEnded);
+        } finally {
+          sampler.stop();
+        }
+        if (complete) {
+          observations[input] = {
+            extraction: await readObservation(directory, options.adapters, scenario.expectation.engine),
+            ...(scenario.identifySpeakers ? { speaker: await readObservation(directory, options.adapters, 'speaker-diarization') } : {}),
+          };
+        }
+      }
     }
-    await delay(idleFrameMs);
   } catch (error) {
     failure = error instanceof Error ? error.message : String(error);
   } finally {
-    samplesFrom?.stop();
-    await terminateOwnedTree(runtime.child).catch((error: unknown) => {
+    if (runtime) await terminateOwnedTree(runtime.child).catch((error: unknown) => {
       failure ??= `runtime cleanup: ${error instanceof Error ? error.message : String(error)}`;
     });
-    await scrubToken(runtime.logPath, runtime.token);
   }
-  const observation = samplesFrom ? await readObservation(evidenceDirectory, options.adapters) : null;
-  const decided = failure || !observation
-    ? { verdict: 'failed' as const, reasons: [failure ?? 'no device samples'] }
-    : decideVerdict({ expectation: scenario.expectation, captures, ocrCompute, observation });
+  const decided = failure ? { verdict: 'failed' as const, reasons: [runtime ? failure.replaceAll(runtime.token, '[token]') : failure] }
+    : decideVerdict({ scenario, captures, ocrCompute, observations, installedPack, unavailable });
   const result: ScenarioResult = {
     scenario: scenario.id,
     summary: scenario.summary,
@@ -256,7 +283,8 @@ async function runScenario(
     environment: scenario.environment,
     ocrCompute,
     captures,
-    observation,
+    observations,
+    installedPack,
     verdict: decided.verdict,
     reasons: decided.reasons,
     evidenceDirectory,
@@ -270,11 +298,6 @@ async function runScenario(
   return result;
 }
 
-function appDataDirectoryName(kind: AppDataKind): string {
-  // Short names: installed engines below them must stay under the Windows path limit.
-  return kind === 'cuda-pack' ? 'cuda' : 'cpu';
-}
-
 async function startRuntime(
   options: RunOptions,
   scenario: DeviceScenario,
@@ -284,25 +307,29 @@ async function startRuntime(
 ): Promise<StartedRuntime> {
   const port = await reservePort();
   const token = randomBytes(32).toString('hex');
-  const temp = join(options.runTree, 'temp');
-  await mkdir(temp, { recursive: true });
+  const temp = await mkdtemp(join(options.runTree, 'temp-'));
   const logPath = join(evidenceDirectory, 'runtime.log');
-  const log = openSync(logPath, 'w');
-  try {
-    const child = spawn(
-      join(options.releaseDirectory, runtimeExecutableName),
-      ['serve', '--host', '127.0.0.1', '--port', String(port)],
-      {
-        cwd: options.releaseDirectory,
-        windowsHide: true,
-        stdio: ['ignore', log, log],
-        env: runtimeEnvironment({ appData, temp, port, token, mirrorPort, scenario: scenario.environment }),
-      },
-    );
-    return { child, port, token, logPath };
-  } finally {
-    closeSync(log);
+  writeFileSync(logPath, '', { flag: 'wx' });
+  const child = spawn(
+    join(options.releaseDirectory, runtimeExecutableName),
+    ['serve', '--host', '127.0.0.1', '--port', String(port)],
+    {
+      cwd: options.releaseDirectory,
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: runtimeEnvironment({ appData, temp, port, token, mirrorPort, scenario: scenario.environment }),
+    },
+  );
+  for (const output of [child.stdout!, child.stderr!]) {
+    createInterface({ input: output, crlfDelay: Infinity }).on('line', (line: string) => {
+      appendFileSync(logPath, `${line.replaceAll(token, '[token]')}\n`, 'utf8');
+    });
   }
+  await new Promise<void>((resolveSpawn, rejectSpawn) => {
+    child.once('spawn', resolveSpawn);
+    child.once('error', rejectSpawn);
+  });
+  return { child, port, token };
 }
 
 function runtimeEnvironment(input: {
@@ -330,7 +357,7 @@ function runtimeEnvironment(input: {
     CAPTURE_ALLOWED_HOSTS: `127.0.0.1:${input.port}`,
     CAPTURE_ALLOWED_ORIGINS: 'http://tauri.localhost,tauri://localhost',
     CAPTURE_ENABLE_API_DOCS: 'false',
-    CAPTURE_APP_DATA_DIR: input.appData,
+    CAPTURE_APP_DATA_DIR: join(input.appData, 'runtime'),
     CAPTURE_STRUCTURING_PROVIDER: 'host',
     CAPTURE_EXTRACTION_PROVIDER: 'runtime',
     CAPTURE_RETENTION_HOURS: '24',
@@ -360,13 +387,13 @@ async function readOcrCompute(runtime: StartedRuntime): Promise<OcrComputeReport
     : null;
 }
 
-async function installRequirements(runtime: StartedRuntime, requirementIds: readonly string[]): Promise<void> {
+async function installRequirements(runtime: StartedRuntime, requirementIds: readonly string[], fresh: boolean): Promise<void> {
   for (const requirementId of requirementIds) {
     const listed = await request<{ readonly items: readonly { readonly requirementId: string; readonly status: string; readonly detail?: string | null }[] }>(
       runtime.port, runtime.token, '/v2/runtime/requirements');
     const requirement = listed.items.find((item) => item.requirementId === requirementId);
     if (!requirement) throw new Error(`The runtime does not offer ${requirementId}.`);
-    if (requirement.status === 'ready') continue;
+    if (requirement.status === 'ready' && !fresh) continue;
     if (requirement.status !== 'installable') {
       throw new Error(`${requirementId} is ${requirement.status}${requirement.detail ? ` (${requirement.detail})` : ''}.`);
     }
@@ -405,7 +432,10 @@ async function captureAndReport(
     fileName: `device-check${extension}`,
     kind: input === 'audio' ? 'recording' : input,
     mediaType,
-    sourceBytes: await readFile(path),
+    sourceBytes: await readFile(path).catch((error: NodeJS.ErrnoException) => {
+      const code = error.code;
+      throw new Error(`Could not read ${input} fixture (${code && /^[A-Z][A-Z0-9_]{1,30}$/u.test(code) ? code : 'READ_ERROR'}).`);
+    }),
     structuringMode: 'host',
     ...(input === 'audio' && identifySpeakers ? { identifySpeakers: true } : {}),
   });
@@ -457,12 +487,21 @@ interface Samplers {
 // localized, and they read the GPU engine instances faster than Get-Counter.
 // nvidia-smi is queried once per sample: its own loop (-l) buffers its output
 // and loses it when it is stopped.
-const windowsSamplerScript = String.raw`param([int]$RootPid, [string]$RootName, [string]$Out, [string]$NvidiaOut, [int]$IntervalSeconds)
+const windowsSamplerScript = String.raw`param([int]$RootPid, [string]$RootName, [string]$EngineRoot, [string]$Out, [string]$NvidiaOut, [int]$IntervalSeconds)
 $ErrorActionPreference = 'SilentlyContinue'
 while ($true) {
-  $all = @(Get-CimInstance Win32_Process -Property ProcessId, ParentProcessId, Name)
+  $time = (Get-Date).ToUniversalTime().ToString('o')
+  $gpuOk = $true
+  $all = @()
+  $formatted = @()
+  $raw = @()
+  try {
+    $all = @(Get-CimInstance Win32_Process -Property ProcessId, ParentProcessId, Name, ExecutablePath, CreationDate, KernelModeTime, UserModeTime -ErrorAction Stop)
+    $formatted = @(Get-CimInstance Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine -Property Name, UtilizationPercentage -ErrorAction Stop)
+    $raw = @(Get-CimInstance Win32_PerfRawData_GPUPerformanceCounters_GPUEngine -Property Name, RunningTime -ErrorAction Stop)
+  } catch { $gpuOk = $false }
   $owned = [System.Collections.Generic.HashSet[int]]::new()
-  if ($RootPid) { [void]$owned.Add($RootPid) }
+  if ($RootPid -and ($all | Where-Object ProcessId -eq $RootPid)) { [void]$owned.Add($RootPid) }
   if ($RootName) { foreach ($process in $all) { if ($process.Name -eq $RootName) { [void]$owned.Add([int]$process.ProcessId) } } }
   do {
     $changed = $false
@@ -470,44 +509,61 @@ while ($true) {
       if ($owned.Contains([int]$process.ParentProcessId) -and $owned.Add([int]$process.ProcessId)) { $changed = $true }
     }
   } while ($changed)
-  $time = (Get-Date).ToUniversalTime().ToString('o')
+  $lines = @()
+  $attribution = @{}
+  $identities = @{}
+  $cpuSeconds = 0.0
+  foreach ($process in $all) {
+    $processId = [int]$process.ProcessId
+    if (!$owned.Contains($processId)) { continue }
+    if (!$process.ExecutablePath -or !$process.CreationDate) { $gpuOk = $false; continue }
+    $worker = 'runtime-tree'
+    if ($EngineRoot -and $process.ExecutablePath.StartsWith(($EngineRoot + '\'), [StringComparison]::OrdinalIgnoreCase)) {
+      $requirement = $process.ExecutablePath.Substring($EngineRoot.Length + 1).Split('\')[0]
+      if ($requirement -in @('text-recognition', 'speech-recognition', 'speaker-diarization')) { $worker = $requirement }
+    }
+    $attribution[$processId] = $worker
+    $identity = [string]$processId + ':' + $process.CreationDate.ToUniversalTime().Ticks
+    $identities[$processId] = $identity
+    if ($null -ne $process.KernelModeTime -and $null -ne $process.UserModeTime) {
+      $seconds = ([double]$process.KernelModeTime + [double]$process.UserModeTime) / 10000000
+      $cpuSeconds += $seconds
+      $lines += 'worker,' + $time + ',' + $identity + ',' + $worker + ',' + $seconds.ToString('0.0000000', [cultureinfo]::InvariantCulture)
+    }
+  }
   $sum = @{}
-  foreach ($sample in Get-CimInstance Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine -Property Name, UtilizationPercentage) {
+  foreach ($sample in $formatted) {
     if ($sample.Name -match '^pid_(\d+)_luid_0x([0-9a-f]{8})_0x([0-9a-f]{8})_phys_\d+_eng_\d+_engtype_(.+)$') {
       $scope = if ($owned.Contains([int]$Matches[1])) { 'owned' } else { 'other' }
-      $key = $scope + ',' + ($Matches[2] + $Matches[3]).ToLowerInvariant() + ',' + $Matches[4]
+      $worker = $attribution[[int]$Matches[1]]
+      $key = $scope + ',' + ($Matches[2] + $Matches[3]).ToLowerInvariant() + ',' + $Matches[4] + ',' + $worker
       $sum[$key] = [double]$sum[$key] + $sample.UtilizationPercentage
     }
   }
-  $lines = @()
   # Cumulative busy time (100 ns units) of the runtime's own engines: unlike a
   # utilization sample it also counts a GPU burst shorter than the interval.
-  foreach ($sample in Get-CimInstance Win32_PerfRawData_GPUPerformanceCounters_GPUEngine -Property Name, RunningTime) {
-    if ($sample.RunningTime -gt 0 -and $sample.Name -match '^pid_(\d+)_luid_0x([0-9a-f]{8})_0x([0-9a-f]{8})_phys_\d+_eng_(\d+)_engtype_(.+)$' -and $owned.Contains([int]$Matches[1])) {
-      $lines += 'busy,' + $time + ',' + $Matches[1] + ',' + ($Matches[2] + $Matches[3]).ToLowerInvariant() + ',' + $Matches[4] + ',' + $Matches[5] + ',' + $sample.RunningTime
+  foreach ($sample in $raw) {
+    if ($sample.Name -match '^pid_(\d+)_luid_0x([0-9a-f]{8})_0x([0-9a-f]{8})_phys_\d+_eng_(\d+)_engtype_(.+)$' -and $identities.ContainsKey([int]$Matches[1])) {
+      $lines += 'busy,' + $time + ',' + $identities[[int]$Matches[1]] + ',' + ($Matches[2] + $Matches[3]).ToLowerInvariant() + ',' + $Matches[4] + ',' + $Matches[5] + ',' + $sample.RunningTime + ',' + $attribution[[int]$Matches[1]]
     }
   }
   foreach ($key in $sum.Keys) {
-    if ($sum[$key] -gt 0) { $lines += 'gpu,' + $time + ',' + $key + ',' + [math]::Round($sum[$key], 2).ToString([cultureinfo]::InvariantCulture) }
-  }
-  $cpuSeconds = 0.0
-  foreach ($id in $owned) {
-    $process = Get-Process -Id $id
-    if ($process) { $cpuSeconds += $process.TotalProcessorTime.TotalSeconds }
+    $parts = $key.Split(',')
+    if ($sum[$key] -gt 0) { $lines += 'gpu,' + $time + ',' + ($parts[0..2] -join ',') + ',' + $sum[$key].ToString([cultureinfo]::InvariantCulture) + ',' + $parts[3] }
   }
   $total = (Get-CimInstance Win32_PerfFormattedData_PerfOS_Processor -Filter "Name='_Total'").PercentProcessorTime
-  $lines += 'cpu,' + $time + ',' + [math]::Round($cpuSeconds, 2).ToString([cultureinfo]::InvariantCulture) + ',' + $total + ',' + $owned.Count
-  Add-Content -Path $Out -Value $lines -Encoding UTF8
+  $lines += 'cpu,' + $time + ',' + $cpuSeconds.ToString([cultureinfo]::InvariantCulture) + ',' + $total + ',' + $owned.Count + ',' + $gpuOk
+  Add-Content -LiteralPath $Out -Value $lines -Encoding UTF8
   if ($NvidiaOut) {
     $nvidia = & nvidia-smi --query-gpu=timestamp,utilization.gpu,memory.used --format=csv,noheader,nounits
-    if ($nvidia) { Add-Content -Path $NvidiaOut -Value $nvidia -Encoding UTF8 }
+    if ($nvidia) { Add-Content -LiteralPath $NvidiaOut -Value $nvidia -Encoding UTF8 }
   }
   Start-Sleep -Seconds $IntervalSeconds
 }
 `;
 
 function startSamplers(
-  root: { readonly pid: number } | { readonly processName: string },
+  root: { readonly pid: number; readonly appData: string } | { readonly processName: string },
   evidenceDirectory: string,
   nvidiaPresent: boolean,
 ): Samplers {
@@ -517,13 +573,14 @@ function startSamplers(
     spawn(
       'powershell.exe',
       ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', scriptPath,
-        ...('pid' in root ? ['-RootPid', String(root.pid)] : ['-RootName', root.processName]),
+        ...('pid' in root ? ['-RootPid', String(root.pid), '-EngineRoot', join(root.appData, 'runtime', 'engines')] : ['-RootName', root.processName]),
         '-Out', join(evidenceDirectory, 'windows-devices.csv'),
         ...(nvidiaPresent ? ['-NvidiaOut', join(evidenceDirectory, 'nvidia.csv')] : []),
         '-IntervalSeconds', String(sampleIntervalSeconds)],
       { windowsHide: true, stdio: 'ignore' },
     ),
   ];
+  for (const child of children) child.on('error', () => { process.stderr.write('Device sampler could not start.\n'); });
   return {
     stop() {
       for (const child of children) {
@@ -540,10 +597,10 @@ function startSamplers(
  * name (for example the dev host during the localhost smoke) until the file
  * `stop` appears in the directory, then writes observation.json there.
  */
-async function observeProcesses(processName: string, directory: string, adapters: readonly GpuAdapter[]): Promise<void> {
-  await mkdir(directory, { recursive: true });
+async function observeProcesses(processName: string, parent: string, adapters: readonly GpuAdapter[]): Promise<void> {
+  await mkdir(parent, { recursive: true });
+  const directory = await mkdtemp(join(parent, 'session-'));
   const stopFile = join(directory, 'stop');
-  await rm(stopFile, { force: true });
   const nvidiaPresent = spawnSync('nvidia-smi', ['-L'], { windowsHide: true, stdio: 'ignore' }).status === 0;
   const samplers = startSamplers({ processName }, directory, nvidiaPresent);
   process.stdout.write(`Sampling the devices of ${processName} into ${directory}; create ${stopFile} to stop.\n`);
@@ -553,21 +610,34 @@ async function observeProcesses(processName: string, directory: string, adapters
     samplers.stop();
   }
   const observation = await readObservation(directory, adapters);
+  if (!observation.matchingProcessObserved) process.stdout.write('Not observed: no matching process was sampled.\n');
   process.stdout.write(`${JSON.stringify(observation)}\n`);
 }
 
-async function readObservation(evidenceDirectory: string, adapters: readonly GpuAdapter[]) {
+async function waitForSample(directory: string, after?: string): Promise<boolean> {
+  const deadline = Date.now() + 20_000;
+  while (Date.now() < deadline) {
+    const windows = parseWindowsSamples(await readFile(join(directory, 'windows-devices.csv'), 'utf8').catch(() => ''));
+    if (windows.cpu.some((sample) => !after || Date.parse(sample.time) > Date.parse(after))) return true;
+    await delay(250);
+  }
+  return false;
+}
+
+async function readObservation(evidenceDirectory: string, adapters: readonly GpuAdapter[], worker?: string) {
   const windows = parseWindowsSamples(await readFile(join(evidenceDirectory, 'windows-devices.csv'), 'utf8').catch(() => ''));
   const nvidia = parseNvidiaSamples(await readFile(join(evidenceDirectory, 'nvidia.csv'), 'utf8').catch(() => ''));
-  const observation = summarizeObservation({ ...windows, nvidia, adapters });
-  await writeFile(join(evidenceDirectory, 'observation.json'), `${JSON.stringify(observation, null, 2)}\n`, 'utf8');
+  const observation = summarizeObservation({ ...windows, nvidia, adapters, worker });
+  await writeFile(join(evidenceDirectory, `${worker ?? 'observation'}.json`), `${JSON.stringify(observation, null, 2)}\n`, 'utf8');
   return observation;
 }
 
-async function scrubToken(logPath: string, token: string): Promise<void> {
-  const text = await readFile(logPath, 'utf8').catch(() => undefined);
-  if (text !== undefined && text.includes(token)) {
-    await writeFile(logPath, text.replaceAll(token, '[token]'), 'utf8');
+async function readInstalledPack(appData: string): Promise<string | undefined> {
+  try {
+    const state = JSON.parse(await readFile(join(appData, 'runtime', 'engines', 'speech-recognition', 'active.json'), 'utf8'));
+    return state?.contentId === 'cuda' || state?.contentId === 'cpu' ? state.contentId : undefined;
+  } catch {
+    return undefined;
   }
 }
 
@@ -632,8 +702,30 @@ function discoverAdapters(): readonly GpuAdapter[] {
 
 // Workspace tooling is another Nx project, so the check uses its command line
 // rather than importing it.
-function createRunTree(keepsRunTree: boolean): string {
-  if (!keepsRunTree) return resolve(workspaceRoot, '..', '.cw-device-check');
+function keptRoot(): string {
+  const configured = process.env['CAPTURE_KEPT_RUN_TREES_ROOT']?.trim();
+  if (configured && !isAbsolute(configured)) throw new Error('CAPTURE_KEPT_RUN_TREES_ROOT must be absolute.');
+  return resolve(configured || join(workspaceRoot, '..', '.kept-run-trees'));
+}
+
+async function checkedChild(path: string, parent: string): Promise<string> {
+  const actual = await realpath(path);
+  if (actual.toLowerCase() !== resolve(path).toLowerCase() || dirname(actual).toLowerCase() !== parent.toLowerCase()) {
+    throw new Error('Expected a real, direct child directory.');
+  }
+  return actual;
+}
+
+async function validateRunTree(path: string): Promise<string> {
+  const tree = await checkedChild(path, await realpath(keptRoot()));
+  const marker = join(tree, 'kept-run-tree.json');
+  if (!(await lstat(marker)).isFile()) throw new Error('Expected a kept run tree marker.');
+  const value = JSON.parse(await readFile(marker, 'utf8'));
+  if (value?.script !== scriptName || !Number.isFinite(Date.parse(value.createdAt))) throw new Error('Expected a device-check kept run tree marker.');
+  return tree;
+}
+
+function createRunTree(): string {
   const created = spawnSync(
     process.execPath,
     [join(workspaceRoot, 'tools', 'kept-run-trees.ts'), '--create', scriptName, 'devices'],
@@ -646,6 +738,7 @@ function createRunTree(keepsRunTree: boolean): string {
 
 async function writeRunReport(
   options: RunOptions,
+  evidenceDirectory: string,
   preamble: readonly string[],
   results: readonly ScenarioResult[],
   pending: readonly string[],
@@ -653,7 +746,7 @@ async function writeRunReport(
   const markdown = renderMarkdownReport({ title: 'Real-engine device check', preamble, results, pending });
   const json = `${JSON.stringify({ adapters: options.adapters, nvidiaPresent: options.nvidiaPresent, results }, null, 2)}\n`;
   await mkdir(workspaceEvidenceDirectory, { recursive: true });
-  for (const directory of [join(options.runTree, 'evidence'), workspaceEvidenceDirectory]) {
+  for (const directory of [evidenceDirectory, workspaceEvidenceDirectory]) {
     await writeFile(join(directory, 'report.md'), markdown, 'utf8');
     await writeFile(join(directory, 'report.json'), json, 'utf8');
   }
