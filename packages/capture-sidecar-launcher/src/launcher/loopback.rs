@@ -2,38 +2,40 @@ use std::{collections::HashSet, net::TcpListener};
 
 use crate::constants::LOOPBACK_HOST;
 
-/// Binds one ephemeral `127.0.0.1` port and releases the listener immediately.
+/// Picks a currently free `127.0.0.1` port by binding and releasing a listener.
 ///
-/// The returned port is not held. Another process can bind it before the
-/// sidecar starts.
+/// Another process can bind the port before the sidecar does. The caller
+/// must handle that race. When the sidecar exits before readiness, the
+/// launcher can retry with a new launch spec, subject to its retry policy.
 ///
 /// # Errors
 ///
 /// Returns `Err(String)` when the bind fails or the bound address cannot be
 /// read.
-pub fn reserve_loopback_port() -> Result<u16, String> {
+pub fn pick_free_loopback_port() -> Result<u16, String> {
     TcpListener::bind((LOOPBACK_HOST, 0))
-        .map_err(|error| format!("A loopback runtime port could not be reserved: {error}"))?
+        .map_err(|error| format!("A free loopback port could not be picked: {error}"))?
         .local_addr()
         .map(|address| address.port())
-        .map_err(|error| format!("The reserved loopback port could not be read: {error}"))
+        .map_err(|error| format!("The bound loopback port could not be read: {error}"))
 }
 
-/// Binds an ephemeral `127.0.0.1` port that is not in `excluded`.
+/// Picks a currently free `127.0.0.1` port outside `excluded`.
 ///
-/// Tries [`reserve_loopback_port`] up to 32 times. Each try binds a port and
-/// drops the listener before the next try, so the returned port is not held.
+/// Tries [`pick_free_loopback_port`] up to 32 times. Each try binds a port and
+/// drops the listener immediately. The caller must handle the same bind race
+/// described in [`pick_free_loopback_port`].
 ///
 /// # Errors
 ///
 /// Returns `Err(String)` when a bind fails or all 32 candidates were in
 /// `excluded`.
-pub fn reserve_distinct_loopback_port(excluded: &HashSet<u16>) -> Result<u16, String> {
+pub fn pick_distinct_free_loopback_port(excluded: &HashSet<u16>) -> Result<u16, String> {
     for _ in 0..32 {
-        let candidate = reserve_loopback_port()?;
+        let candidate = pick_free_loopback_port()?;
         if !excluded.contains(&candidate) {
             return Ok(candidate);
         }
     }
-    Err("A fresh independent loopback port could not be reserved.".into())
+    Err("A distinct free loopback port could not be picked.".into())
 }

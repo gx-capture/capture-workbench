@@ -585,5 +585,41 @@
     "match": "substring",
     "replacement": "structuring.infrastructure.ollama.requirement_installation and provisioning.application.requirement_installer",
     "allowed": []
+  },
+  {
+    "name": "OwnedRuntimeSession",
+    "match": "word",
+    "replacement": "OwnedSidecarSession",
+    "allowed": []
+  },
+  {
+    "name": "RuntimeTerminationProof",
+    "match": "word",
+    "replacement": "SidecarTerminationProof",
+    "allowed": []
+  },
+  {
+    "name": "RuntimeCleanupError",
+    "match": "word",
+    "replacement": "SidecarCleanupError",
+    "allowed": []
+  },
+  {
+    "name": "RuntimeCleanupErrorKind",
+    "match": "word",
+    "replacement": "SidecarCleanupErrorKind",
+    "allowed": []
+  },
+  {
+    "name": "reserve_loopback_port",
+    "match": "word",
+    "replacement": "pick_free_loopback_port",
+    "allowed": []
+  },
+  {
+    "name": "reserve_distinct_loopback_port",
+    "match": "word",
+    "replacement": "pick_distinct_free_loopback_port",
+    "allowed": []
   }
 ]

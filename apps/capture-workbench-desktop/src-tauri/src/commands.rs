@@ -83,7 +83,7 @@ pub(crate) fn desktop_acceptance_runtime_process_probe(
 }
 
 /// Requests the normal Tauri close lifecycle. The window event handler owns
-/// the native runtime shutdown, including the OwnedRuntimeSession Job.
+/// the native runtime shutdown, including the OwnedSidecarSession Job.
 #[tauri::command]
 pub(crate) fn desktop_close_window(window: tauri::Window) -> Result<(), String> {
     window

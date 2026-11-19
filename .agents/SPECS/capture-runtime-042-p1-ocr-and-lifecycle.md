@@ -172,7 +172,7 @@ the route does not hide the typed failure behind a 409.
 
 ## Lifecycle interface
 
-`OwnedRuntimeSession` is the Rust deep module for one launch attempt.  Its
+`OwnedSidecarSession` is the Rust deep module for one launch attempt.  Its
 interface guarantees suspended creation, Job assignment before resume,
 `CREATE_BREAKAWAY_FROM_JOB` rejection, root-exit observation, idempotent
 `terminate_and_prove`, and a terminal cleanup result.  Desktop/Tauri and other

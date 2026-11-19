@@ -22,7 +22,7 @@
    infer failure from a missing body. No partial successful raw document is
    emitted as a substitute for an OCR failure.
 6. **Ownership.** Windows Job Object ownership is implemented in one Rust
-   `OwnedRuntimeSession` per launch attempt. Host adapters own graceful intent;
+   `OwnedSidecarSession` per launch attempt. Host adapters own graceful intent;
    they do not share or duplicate native Job handles. Runtime-root exit is
    observed and invokes the same terminate-and-prove path. After a host crash
    the system closes the Job and stops the runtime tree; after an OS crash or
@@ -133,6 +133,6 @@
   empty pages, and typed failures.
 - Authenticated route plus repository fixture: test 401, 404, pending/unavailable,
   completed projection, and readable failed projection.
-- `OwnedRuntimeSession` with a native-process test seam: test assignment before
+- `OwnedSidecarSession` with a native-process test seam: test assignment before
   resume, breakaway rejection, root exit, idempotent terminate-and-prove, and
   no descendant residue.

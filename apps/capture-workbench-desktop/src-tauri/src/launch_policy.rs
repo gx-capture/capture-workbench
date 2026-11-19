@@ -1,6 +1,6 @@
 use std::{collections::HashSet, path::PathBuf};
 
-use capture_sidecar_launcher::{generate_bearer_token, reserve_distinct_loopback_port};
+use capture_sidecar_launcher::{generate_bearer_token, pick_distinct_free_loopback_port};
 
 use crate::{
     constants::{LOOPBACK_HOST, RUNTIME_MAX_UPLOAD_BYTES, RUNTIME_RETENTION_HOURS},
@@ -186,7 +186,7 @@ impl LaunchPolicyFactory {
     }
 
     pub(crate) fn next(&mut self) -> Result<LaunchPolicy, String> {
-        let runtime_port = reserve_distinct_loopback_port(&self.used_ports)?;
+        let runtime_port = pick_distinct_free_loopback_port(&self.used_ports)?;
         let token = self.next_token()?;
 
         self.used_ports.insert(runtime_port);

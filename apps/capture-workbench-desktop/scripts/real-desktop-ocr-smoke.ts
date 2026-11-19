@@ -1547,7 +1547,7 @@ export async function main(options: {
     // Ask the native Tauri host to close its window (or, for the explicit hard
     // termination injection, terminate itself through its held process
     // handle). The JS harness never terminates a PID: runtime/model
-    // descendants belong to the native OwnedRuntimeSession and its Job.
+    // descendants belong to the native OwnedSidecarSession and its Job.
     const ownedChildren = descendantProcessRecords(app.pid);
     const ownedSidecars = ownedChildren?.filter(isCaptureSidecarProcess) ?? [];
     sidecarObserved = sidecarObserved || (ownedChildren !== undefined && ownedSidecars.length > 0);

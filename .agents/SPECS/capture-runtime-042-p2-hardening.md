@@ -139,15 +139,15 @@ already been changed.
 There is one launch path and it writes nothing to disk:
 
 - **Launch.** The host verifies the manifest and executable
-  (`load_manifest`, `validate_manifest_contract`, `verify_sidecar`), reserves a
-  fresh loopback port (`reserve_loopback_port` or
-  `reserve_distinct_loopback_port`) and generates a fresh bearer token
+  (`load_manifest`, `validate_manifest_contract`, `verify_sidecar`), picks a currently
+  free loopback port (`pick_free_loopback_port` or
+  `pick_distinct_free_loopback_port`) and generates a fresh bearer token
   (`generate_bearer_token`) for every launch attempt. `launch_sidecar` or
   `launch_sidecar_with_observer` then makes up to 3 attempts within 60 seconds
   (`LaunchOptions::default()`), probes `GET /v2/health/ready` with that token,
   and returns a `LaunchedSidecar` only when the handshake matches the manifest.
   An old listener cannot pass for the new runtime because it does not know the
-  new token. A host that runs its own process uses `OwnedRuntimeSession::spawn`
+  new token. A host that runs its own process uses `OwnedSidecarSession::spawn`
   or `OwnedSidecarProcess::spawn`.
 - **Containment.** Every root is created suspended and without a window,
   assigned to a new unnamed Job configured with
@@ -155,12 +155,12 @@ There is one launch path and it writes nothing to disk:
   `IsProcessInJob`, and only then resumed. A child that asks for breakaway is
   refused. If assignment or resume fails, the root is stopped before the call
   returns.
-- **Live cleanup.** `OwnedRuntimeSession::monitor_root_exit` lets a host poll
+- **Live cleanup.** `OwnedSidecarSession::monitor_root_exit` lets a host poll
   for an unexpected root exit; it terminates the Job and returns the exit only
   after the root is reaped and the Job reports no process.
-  `terminate_and_prove` stops an attempt and returns `RuntimeTerminationProof`.
+  `terminate_and_prove` stops an attempt and returns `SidecarTerminationProof`.
   A failed proof keeps the process and Job handle for a retry. Dropping the
-  last `OwnedRuntimeSession` clone stops the attempt.
+  last `OwnedSidecarSession` clone stops the attempt.
 - **Host crash or kill.** The system closes the host's Job handle and stops
   the runtime root and every descendant (the onefile child, Ollama, and the
   workers), which releases their listeners. Nothing blocks the next start.
@@ -185,9 +185,9 @@ The hosts use this path as follows:
 
 | Host | Launch | Supervision |
 | --- | --- | --- |
-| Capture Workbench desktop | `launch_sidecar_with_observer` at setup and when the compute setting changes | Keeps the `OwnedRuntimeSession` clone and polls `monitor_root_exit` every 100 ms; a runtime exit becomes a failed status and is not relaunched automatically |
+| Capture Workbench desktop | `launch_sidecar_with_observer` at setup and when the compute setting changes | Keeps the `OwnedSidecarSession` clone and polls `monitor_root_exit` every 100 ms; a runtime exit becomes a failed status and is not relaunched automatically |
 | Cert Prep | `launch_sidecar` for Capture Runtime; `OwnedSidecarProcess::spawn` for its own backend | Keeps the ownership value and stops it with `terminate` on shutdown or replacement |
-| GX Law Prep | `OwnedRuntimeSession::spawn` for each of its runtime processes | Each process has its own Job and is stopped with `terminate` |
+| GX Law Prep | `OwnedSidecarSession::spawn` for each of its runtime processes | Each process has its own Job and is stopped with `terminate` |
 
 Limits that follow from this design:
 

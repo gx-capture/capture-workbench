@@ -2,7 +2,7 @@ use std::{fs, path::PathBuf, sync::atomic::AtomicBool};
 
 use capture_sidecar_launcher::{
     launch_sidecar_with_observer, verify_sidecar, LaunchOptions, ManifestExpectations,
-    OwnedRuntimeSession, SidecarLaunchSpec,
+    OwnedSidecarSession, SidecarLaunchSpec,
 };
 
 use crate::{
@@ -17,7 +17,7 @@ use crate::{
 };
 
 pub(crate) struct LaunchedRuntime {
-    pub child: OwnedRuntimeSession,
+    pub child: OwnedSidecarSession,
     pub config: BackendConfig,
 }
 
@@ -25,7 +25,7 @@ pub(crate) fn launch_runtime(
     assets: &RuntimeExecutablePaths,
     data_dir: PathBuf,
     stopping: &AtomicBool,
-    observe_spawn: impl FnMut(OwnedRuntimeSession) -> Result<(), String>,
+    observe_spawn: impl FnMut(OwnedSidecarSession) -> Result<(), String>,
 ) -> Result<LaunchedRuntime, String> {
     let verified = verify_sidecar(
         &assets.manifest_path,
