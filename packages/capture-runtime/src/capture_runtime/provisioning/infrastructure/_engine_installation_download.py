@@ -673,13 +673,22 @@ def _allocate(path: Path, size: int) -> None:
 
 
 async def _checkpoint(writer: BinaryIO, plan: _Plan, segment: _Segment) -> None:
-    """Make the segment's new bytes durable, then record them in the sidecar."""
+    """Make the segment's new bytes durable, then record them in the sidecar.
+
+    A started checkpoint finishes before a cancellation propagates: bytes
+    already flushed are recorded, so the next attempt resumes after them.
+    The receiving loop awaits this before its next write to the handle.
+    """
 
     if segment.saved == segment.received and not plan._progress_stale:
         return
-    # The receiving loop awaits this before its next write to the handle.
+    await _drained(asyncio.create_task(_record_durable_bytes(writer, plan, segment)))
+
+
+async def _record_durable_bytes(writer: BinaryIO, plan: _Plan, segment: _Segment) -> None:
+    received = segment.received
     await _file_operation(_flush_durably, writer)
-    segment.saved = segment.received
+    segment.saved = received
     await plan.save()
 
 

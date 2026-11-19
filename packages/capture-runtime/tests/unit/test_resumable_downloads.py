@@ -6,7 +6,10 @@ import asyncio
 import hashlib
 import json
 import threading
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
+from typing import BinaryIO
 
 import httpx
 import pytest
@@ -606,7 +609,53 @@ def test_a_finished_part_is_not_downloaded_again(tmp_path: Path) -> None:
     assert destination.read_bytes() == whole
 
 
-@pytest.mark.parametrize("step", ["_allocate", "_flush_durably"])
+class _HeldFlushWriter:
+    """The partial's writer, with a hook run before each flush."""
+
+    def __init__(self, handle: BinaryIO, before_flush: Callable[[], None]) -> None:
+        self._handle = handle
+        self._before_flush = before_flush
+
+    def write(self, data: bytes) -> int:
+        return self._handle.write(data)
+
+    def flush(self) -> None:
+        self._before_flush()
+        self._handle.flush()
+
+    def fileno(self) -> int:
+        return self._handle.fileno()
+
+
+_FlushHold = Callable[[int, "asyncio.Task[object] | None"], Callable[[], None] | None]
+
+
+def _hold_partial_flushes(monkeypatch: pytest.MonkeyPatch, hold: _FlushHold) -> None:
+    """Wrap each partial writer; `hold(position, opening_task)` may return a flush hook."""
+
+    original = download_module._open_part
+
+    @contextmanager
+    def open_part(plan: object, position: int) -> Iterator[object]:
+        with original(plan, position) as handle:  # type: ignore[arg-type]
+            hook = hold(position, asyncio.current_task())
+            yield handle if hook is None else _HeldFlushWriter(handle, hook)
+
+    monkeypatch.setattr(download_module, "_open_part", open_part)
+
+
+def _wait_until_cancelled(task: asyncio.Task[object] | None) -> bool:
+    """From a worker thread, wait for a cancel request to reach the task."""
+
+    assert task is not None
+    for _ in range(500):
+        if task.cancelling():
+            return True
+        threading.Event().wait(0.01)
+    return False
+
+
+@pytest.mark.parametrize("step", ["allocate", "flush"])
 def test_the_event_loop_keeps_answering_while_a_download_preallocates_or_checkpoints(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, step: str
 ) -> None:
@@ -627,7 +676,6 @@ def test_the_event_loop_keeps_answering_while_a_download_preallocates_or_checkpo
             200, content=pieces[0] if name.endswith(".001") else pieces[1], request=request
         )
 
-    original = getattr(download_module, step)
     release = threading.Event()
     held: list[bool] = []
     loop_blocked: list[str] = []
@@ -636,16 +684,24 @@ def test_the_event_loop_keeps_answering_while_a_download_preallocates_or_checkpo
         started = asyncio.Event()
         loop = asyncio.get_running_loop()
 
-        def hold_first_call(*args: object) -> object:
+        def hold_first_time() -> None:
             if not held:
                 held.append(True)
                 loop.call_soon_threadsafe(started.set)
                 # On the event loop nothing can release it: record that and go on.
                 if not release.wait(timeout=5):
-                    loop_blocked.append(f"{step} held the event loop")
-            return original(*args)
+                    loop_blocked.append(f"the {step} held the event loop")
 
-        monkeypatch.setattr(download_module, step, hold_first_call)
+        if step == "allocate":
+            original = download_module._allocate
+
+            def allocate(path: Path, size: int) -> None:
+                hold_first_time()
+                original(path, size)
+
+            monkeypatch.setattr(download_module, "_allocate", allocate)
+        else:
+            _hold_partial_flushes(monkeypatch, lambda _position, _task: hold_first_time)
         download = asyncio.create_task(
             _artifact_downloader(handler).download(
                 descriptor,
@@ -665,6 +721,154 @@ def test_the_event_loop_keeps_answering_while_a_download_preallocates_or_checkpo
 
     asyncio.run(scenario())
     assert destination.read_bytes() == whole
+
+
+def test_a_cancel_during_the_final_flush_records_the_flushed_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The retry resumes after every byte the cancelled attempt flushed."""
+
+    payload = bytes(range(100))
+    descriptor = _artifact(payload)
+    destination = tmp_path / "download.zip"
+    ranges: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        byte_range = request.headers.get("range")
+        ranges.append(byte_range)
+        if byte_range is None and len(ranges) == 1:
+            # Ends after 40 bytes: the final checkpoint of the attempt follows.
+            return httpx.Response(200, stream=_Once(payload[:40]), request=request)
+        if byte_range is None:
+            return httpx.Response(200, content=payload, request=request)
+        start = int(byte_range.removeprefix("bytes=").split("-", 1)[0])
+        return httpx.Response(
+            206,
+            headers={"content-range": f"bytes {start}-{len(payload) - 1}/{len(payload)}"},
+            content=payload[start:],
+            request=request,
+        )
+
+    async def cancelled_attempt() -> None:
+        flushing = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        cancel_seen: list[bool] = []
+
+        def hold(_position: int, task: asyncio.Task[object] | None) -> Callable[[], None]:
+            def wait_for_cancel() -> None:
+                if not cancel_seen:
+                    loop.call_soon_threadsafe(flushing.set)
+                    cancel_seen.append(_wait_until_cancelled(task))
+
+            return wait_for_cancel
+
+        _hold_partial_flushes(monkeypatch, hold)
+        download = asyncio.create_task(
+            _artifact_downloader(handler).download(
+                descriptor,
+                destination,
+                cancel_event=asyncio.Event(),
+                progress=lambda _copied: None,
+            )
+        )
+        await asyncio.wait_for(flushing.wait(), 5)
+        download.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(download, 10)
+        assert cancel_seen == [True], "the flush held the event loop"
+
+    asyncio.run(cancelled_attempt())
+    monkeypatch.undo()
+    _run(_artifact_downloader(handler), descriptor, destination)
+
+    assert ranges == [None, "bytes=40-"]
+    assert destination.read_bytes() == payload
+
+
+def test_a_failed_range_cancelling_a_sibling_mid_flush_keeps_the_sibling_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A sibling cancelled during its final checkpoint is not fetched again."""
+
+    payload = bytes(index % 256 for index in range(200))
+    descriptor = _artifact(payload)
+    destination = tmp_path / "download.zip"
+    ranges: list[str] = []
+
+    def served(byte_range: str, stream: httpx.AsyncByteStream | None = None) -> httpx.Response:
+        start_text, end_text = byte_range.removeprefix("bytes=").split("-")
+        start, end = int(start_text), int(end_text)
+        headers = {"content-range": f"bytes {start}-{end}/{len(payload)}"}
+        if stream is not None:
+            return httpx.Response(206, headers=headers, stream=stream)
+        return httpx.Response(206, headers=headers, content=payload[start : end + 1])
+
+    async def failed_attempt() -> None:
+        loop = asyncio.get_running_loop()
+        sibling_flushing = asyncio.Event()
+        cancel_seen: list[bool] = []
+
+        class _FailAfterSibling(httpx.AsyncByteStream):
+            async def __aiter__(self):
+                yield payload[:40]
+                await asyncio.wait_for(sibling_flushing.wait(), 5)
+                raise httpx.ReadError("interrupted")
+
+            async def aclose(self) -> None:
+                return None
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            byte_range = request.headers["range"]
+            if byte_range == "bytes=0-0":
+                return served(byte_range)
+            ranges.append(byte_range)
+            if byte_range.startswith("bytes=0-"):
+                return served(byte_range, _FailAfterSibling())
+            return served(byte_range)
+
+        def hold(position: int, task: asyncio.Task[object] | None) -> Callable[[], None] | None:
+            if position != 100:
+                return None
+
+            def wait_for_cancel() -> None:
+                if not cancel_seen:
+                    loop.call_soon_threadsafe(sibling_flushing.set)
+                    cancel_seen.append(_wait_until_cancelled(task))
+
+            return wait_for_cancel
+
+        _hold_partial_flushes(monkeypatch, hold)
+        downloader = _artifact_downloader(handler, parallel_min_bytes=1, parallel_segments=2)
+        with pytest.raises(httpx.ReadError):
+            await asyncio.wait_for(
+                downloader.download(
+                    descriptor,
+                    destination,
+                    cancel_event=asyncio.Event(),
+                    progress=lambda _copied: None,
+                ),
+                10,
+            )
+        assert cancel_seen == [True], "the sibling's flush held the event loop"
+
+    asyncio.run(failed_attempt())
+    monkeypatch.undo()
+    resumed = len(ranges)
+
+    def retry_handler(request: httpx.Request) -> httpx.Response:
+        byte_range = request.headers["range"]
+        if byte_range != "bytes=0-0":
+            ranges.append(byte_range)
+        return served(byte_range)
+
+    _run(
+        _artifact_downloader(retry_handler, parallel_min_bytes=1, parallel_segments=2),
+        descriptor,
+        destination,
+    )
+
+    assert ranges[resumed:] == ["bytes=40-99"]
+    assert destination.read_bytes() == payload
 
 
 @pytest.mark.parametrize("failures", [1, 100])
