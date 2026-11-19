@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import threading
 from pathlib import Path
 
 import httpx
@@ -602,6 +603,67 @@ def test_a_finished_part_is_not_downloaded_again(tmp_path: Path) -> None:
     _run(downloader, descriptor, destination)
 
     assert requested[started:] == [(f"{NAME}.002", "bytes=30-")]
+    assert destination.read_bytes() == whole
+
+
+@pytest.mark.parametrize("step", ["_allocate", "_flush_durably"])
+def test_the_event_loop_keeps_answering_while_a_download_preallocates_or_checkpoints(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, step: str
+) -> None:
+    """Preallocating a multi-GB archive or fsyncing it must leave the event loop free.
+
+    A published-parts worker is preallocated in full before its first byte
+    arrives; on the event loop that held a readiness query for 31 s.
+    """
+
+    whole = bytes(index % 256 for index in range(300))
+    pieces = [whole[:150], whole[150:]]
+    descriptor = _artifact(whole, parts=pieces)
+    destination = tmp_path / "download.zip"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        name = request.url.path.rsplit("/", 1)[-1]
+        return httpx.Response(
+            200, content=pieces[0] if name.endswith(".001") else pieces[1], request=request
+        )
+
+    original = getattr(download_module, step)
+    release = threading.Event()
+    held: list[bool] = []
+    loop_blocked: list[str] = []
+
+    async def scenario() -> None:
+        started = asyncio.Event()
+        loop = asyncio.get_running_loop()
+
+        def hold_first_call(*args: object) -> object:
+            if not held:
+                held.append(True)
+                loop.call_soon_threadsafe(started.set)
+                # On the event loop nothing can release it: record that and go on.
+                if not release.wait(timeout=5):
+                    loop_blocked.append(f"{step} held the event loop")
+            return original(*args)
+
+        monkeypatch.setattr(download_module, step, hold_first_call)
+        download = asyncio.create_task(
+            _artifact_downloader(handler).download(
+                descriptor,
+                destination,
+                cancel_event=asyncio.Event(),
+                progress=lambda _copied: None,
+            )
+        )
+        try:
+            await asyncio.wait_for(started.wait(), 10)
+            assert not loop_blocked, loop_blocked[0]
+            assert not download.done()
+            release.set()
+            await asyncio.wait_for(download, 5)
+        finally:
+            release.set()
+
+    asyncio.run(scenario())
     assert destination.read_bytes() == whole
 
 

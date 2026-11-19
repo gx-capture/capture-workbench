@@ -475,7 +475,7 @@ class _Plan:
                 _split_segments(self.total_bytes, count),
             )
         ]
-        _allocate(self.part_path, self.total_bytes)
+        await _file_operation(_allocate, self.part_path, self.total_bytes)
         await self.save()
 
     async def begin_parts(self, parts: tuple[EngineArtifactPart, ...]) -> None:
@@ -488,7 +488,7 @@ class _Plan:
             offset += part.bytes
         self.parts = slots
         self.preallocated = True
-        _allocate(self.part_path, self.total_bytes)
+        await _file_operation(_allocate, self.part_path, self.total_bytes)
         await self.save()
 
     async def rewind(self, part: _PartState) -> None:
@@ -662,6 +662,9 @@ def _atomic_write(path: Path, data: bytes) -> None:
 
 
 def _allocate(path: Path, size: int) -> None:
+    # On Windows the C runtime extends a file by writing its zeros, and the
+    # fsync then flushes them: tens of seconds for a 3 GB archive on a busy
+    # disk, so callers run this in a worker thread.
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("wb") as handle:
         handle.truncate(size)
@@ -674,10 +677,15 @@ async def _checkpoint(writer: BinaryIO, plan: _Plan, segment: _Segment) -> None:
 
     if segment.saved == segment.received and not plan._progress_stale:
         return
-    writer.flush()
-    os.fsync(writer.fileno())
+    # The receiving loop awaits this before its next write to the handle.
+    await _file_operation(_flush_durably, writer)
     segment.saved = segment.received
     await plan.save()
+
+
+def _flush_durably(writer: BinaryIO) -> None:
+    writer.flush()
+    os.fsync(writer.fileno())
 
 
 @contextmanager
