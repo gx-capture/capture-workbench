@@ -48,6 +48,11 @@ const ready = {
     supportsCancellation: true,
     supportsRawDiagnostics: true,
     maxUploadBytes: 100,
+    maxChunkBytes: 10,
+    checkpointIntervalMs: 500,
+    heartbeatIntervalMs: 1000,
+    stallTimeoutMs: 5000,
+    supportsProgressiveRecording: true,
   },
 };
 
@@ -252,19 +257,6 @@ function withDiscovery(
         });
       },
     },
-    {
-      path: '/v2/streaming/health/ready',
-      handle: () => {
-        observe('/v2/streaming/health/ready');
-        return Response.json({
-          protocolVersion: '2',
-          maxChunkBytes: 10,
-          checkpointIntervalMs: 500,
-          heartbeatIntervalMs: 1000,
-          stallTimeoutMs: 5000,
-        });
-      },
-    },
     ...routes,
   ];
 }
@@ -322,7 +314,7 @@ describe('CaptureRuntimeClient', () => {
     await client.getRequirements();
     await client.listInstallations();
     await client.getModelOptions();
-    await client.getStreamingCapabilities();
+    await client.getReady();
 
     expect(requestedPaths.length).toBeGreaterThan(0);
     for (const path of requestedPaths) {
@@ -378,7 +370,6 @@ describe('CaptureRuntimeClient', () => {
           requiredHeaders: ['X-Idempotency-Key'],
           idempotency: { mode: 'required', header: 'X-Idempotency-Key' },
         }),
-        operation('/v2/streaming/health/ready'),
         operation('/v2/runtime/requirements'),
         operation('/v2/runtime/installations', {
           method: 'POST',
@@ -440,17 +431,6 @@ describe('CaptureRuntimeClient', () => {
     };
     const transport = new InMemoryRuntimeTransport([
       { path: '/v2/health/ready', handle: () => Response.json(ready) },
-      {
-        path: '/v2/streaming/health/ready',
-        handle: () =>
-          Response.json({
-            protocolVersion: '2',
-            maxChunkBytes: 10,
-            checkpointIntervalMs: 500,
-            heartbeatIntervalMs: 1000,
-            stallTimeoutMs: 5000,
-          }),
-      },
       { path: '/meta/v2/contracts', handle: () => Response.json(index) },
       {
         path: index.href,
@@ -514,7 +494,6 @@ describe('CaptureRuntimeClient', () => {
       '/v2/health/ready',
       '/meta/v2/contracts',
       canonicalContractIndex.href,
-      '/v2/streaming/health/ready',
       '/v2/runtime/requirements',
       '/v2/runtime/requirements',
     ]);
@@ -1100,9 +1079,6 @@ data: ${JSON.stringify(event)}
     expect((await client.getModelInstallation('model-1')).status).toBe(
       'running',
     );
-    expect((await client.getModelInstallationStatus('model-1')).status).toBe(
-      'running',
-    );
     expect((await client.cancelModelInstallation('model-1')).status).toBe(
       'cancelled',
     );
@@ -1267,8 +1243,8 @@ data: ${JSON.stringify(event)}
       clientRequestId: 'request-selected-pages',
     };
 
-    await client.startStreamingCapture({ ...upload, pdfPageNumbers: [3, 7, 8, 20] });
-    await client.startStreamingCapture(upload);
+    await client.startCapture({ ...upload, pdfPageNumbers: [3, 7, 8, 20] });
+    await client.startCapture(upload);
 
     expect(starts[0]?.['pdfPageNumbers']).toEqual([3, 7, 8, 20]);
     expect(starts[1]).not.toHaveProperty('pdfPageNumbers');
@@ -1279,10 +1255,136 @@ data: ${JSON.stringify(event)}
       Array.from({ length: 501 }, (_, index) => index + 1),
     ]) {
       await expect(
-        client.startStreamingCapture({ ...upload, pdfPageNumbers }),
+        client.startCapture({ ...upload, pdfPageNumbers }),
       ).rejects.toBeInstanceOf(CaptureRuntimeProtocolError);
     }
     expect(opened).toBe(2);
+  });
+
+  it('uploads in chunks no larger than the readiness maxChunkBytes', async () => {
+    const body = new TextEncoder().encode('a'.repeat(25));
+    const digest = createHash('sha256').update(body).digest('hex');
+    const ingestion = (received: number, nextChunkIndex: number, status = 'open') => ({
+      protocolVersion: '2',
+      kind: 'pdf',
+      ingestionId: 'ingestion-1',
+      status,
+      fileName: 'scan.pdf',
+      mediaType: 'application/pdf',
+      totalBytes: body.byteLength,
+      receivedBytes: received,
+      contiguousBytes: received,
+      nextChunkIndex,
+      nextOffset: received,
+      sourceSha256: digest,
+      finalizedSha256: status === 'ready' ? digest : null,
+      expiresAt: '2026-01-01T00:00:00Z',
+    });
+    const ranges: string[] = [];
+    const visited: string[] = [];
+    const transport = new InMemoryRuntimeTransport(
+      withDiscovery(
+        [
+          {
+            method: 'POST',
+            path: '/v2/ingestions',
+            handle: () => Response.json(ingestion(0, 0), { status: 201 }),
+          },
+          {
+            method: 'PUT',
+            path: /^\/v2\/ingestions\/ingestion-1\/chunks\/\d+$/u,
+            handle: (request) => {
+              const range = new Headers(request.headers).get('Content-Range') ?? '';
+              ranges.push(range);
+              const end = Number(/-(\d+)\//u.exec(range)?.[1]) + 1;
+              return Response.json(ingestion(end, ranges.length));
+            },
+          },
+          {
+            method: 'POST',
+            path: '/v2/ingestions/ingestion-1/finalize',
+            handle: () => Response.json(ingestion(body.byteLength, ranges.length, 'ready')),
+          },
+          {
+            method: 'POST',
+            path: '/v2/captures',
+            handle: () =>
+              Response.json(
+                {
+                  protocolVersion: '2',
+                  captureId: 'capture-1',
+                  ingestionId: 'ingestion-1',
+                  kind: 'pdf',
+                  status: 'extracting',
+                  partialRevision: 0,
+                  lastEventSequence: 0,
+                  createdAt: '2026-01-01T00:00:00Z',
+                  updatedAt: '2026-01-01T00:00:00Z',
+                },
+                { status: 202 },
+              ),
+          },
+        ],
+        visited,
+      ),
+    );
+    const client = new CaptureRuntimeClient({ baseUrl: 43123, transport });
+
+    await client.startCapture({
+      fileName: 'scan.pdf',
+      body,
+      mediaType: 'application/pdf',
+      sourceKind: 'pdf',
+      clientRequestId: 'request-chunked',
+    });
+
+    expect(ranges).toEqual(['bytes 0-9/25', 'bytes 10-19/25', 'bytes 20-24/25']);
+    expect(visited.filter((path) => path === '/v2/health/ready')).toHaveLength(1);
+  });
+
+  it('deletes an ingestion through its own endpoint', async () => {
+    const deleted: string[] = [];
+    const transport = new InMemoryRuntimeTransport(
+      withDiscovery([
+        {
+          method: 'DELETE',
+          path: '/v2/ingestions/ingestion%201',
+          handle: (request) => {
+            deleted.push(`${request.method ?? 'GET'} ${request.path}`);
+            return new Response(null, { status: 204 });
+          },
+        },
+      ]),
+    );
+    const client = new CaptureRuntimeClient({ baseUrl: 43123, transport });
+
+    await expect(client.deleteIngestion('ingestion 1')).resolves.toBeUndefined();
+    expect(deleted).toEqual(['DELETE /v2/ingestions/ingestion%201']);
+  });
+
+  it('reads every readiness capability and rejects a field outside the contract', async () => {
+    const capabilitySchema = (
+      JSON.parse(new TextDecoder().decode(canonicalBundleBytes)) as {
+        schemas: { name: string; schema: { properties: Record<string, unknown> } }[];
+      }
+    ).schemas.find((entry) => entry.name === 'RuntimeCapabilities');
+    expect(Object.keys(capabilitySchema?.schema.properties ?? {}).sort()).toEqual(
+      Object.keys(ready.capabilities).sort(),
+    );
+    let body: Record<string, unknown> = ready;
+    const transport = new InMemoryRuntimeTransport([
+      { path: '/v2/health/ready', handle: () => Response.json(body) },
+    ]);
+    const client = new CaptureRuntimeClient({ baseUrl: 43123, transport, maxRetries: 0 });
+
+    expect((await client.getReady()).capabilities.supportsProgressiveRecording).toBe(true);
+
+    body = { ...ready, capabilities: { ...ready.capabilities, notInContract: true } };
+    await expect(client.getReady()).rejects.toThrow(
+      'unknown RuntimeReady capabilities field: notInContract',
+    );
+    body = { ...ready, capabilities: { ...ready.capabilities, maxChunkBytes: 0 } };
+    await expect(client.getReady()).rejects.toThrow('invalid readiness maxChunkBytes');
   });
 
   it('names the spoken language of an audio capture only when given', async () => {
@@ -1354,8 +1456,8 @@ data: ${JSON.stringify(event)}
       clientRequestId: 'request-spoken-language',
     };
 
-    await client.startStreamingCapture({ ...upload, spokenLanguage: 'ja' });
-    await client.startStreamingCapture(upload);
+    await client.startCapture({ ...upload, spokenLanguage: 'ja' });
+    await client.startCapture(upload);
 
     expect(starts[0]?.['spokenLanguage']).toBe('ja');
     expect(starts[1]).not.toHaveProperty('spokenLanguage');
@@ -1677,7 +1779,7 @@ data: ${JSON.stringify(event)}
     expect(openHeaders?.get('X-Idempotency-Key')).toBe('session-key');
     expect((await client.getStructuringSession('cap')).sessionId).toBe('session-1');
     expect((await client.getStructuringSession('cap')).providerCapability.provider).toEqual(session.providerCapability.provider);
-    expect((await client.pullStructuringBatch('cap', 0)).batchDigest).toBe(batch.batchDigest);
+    expect((await client.getStructuringBatch('cap', 0)).batchDigest).toBe(batch.batchDigest);
     const submission: SubmitStructuringBatch = {
       batchDigest: batch.batchDigest,
       blocks: [{ sourceSegmentId: 'segment-1', type: 'paragraph', targetText: 'translated' }],
@@ -1781,7 +1883,6 @@ describe('response field lists follow the contract set', () => {
   );
   const contractNames: Record<RuntimeResponseModel, string> = {
     RuntimeReady: 'RuntimeReady',
-    RuntimeStreamingCapabilities: 'RuntimeStreamingCapabilities',
     RuntimeRequirement: 'RuntimeRequirement',
     RuntimeRequirements: 'RuntimeRequirements',
     RuntimeInstallation: 'RuntimeInstallation',

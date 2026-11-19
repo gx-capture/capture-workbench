@@ -520,33 +520,41 @@ class _GatedHostProofExtractor(_HostProofExtractor):
             self.finished.set()
 
 
-def test_streaming_capability_is_strictly_advertised(client: TestClient) -> None:
-    response = client.get("/v2/streaming/health/ready")
+def test_readiness_advertises_every_capture_capability_in_one_document(
+    client: TestClient,
+) -> None:
+    response = client.get("/v2/health/ready")
 
     assert response.status_code == 200
-    assert response.json() == {
-        "protocolVersion": "2",
+    assert response.json()["capabilities"] == {
         "captureKinds": ["pdf", "image", "recording"],
-        "supportsProgressiveAudio": True,
+        "structuringModes": ["runtime", "host"],
+        "supportsCancellation": True,
+        "supportsRawDiagnostics": True,
+        "maxUploadBytes": 50 * 1024 * 1024,
         "maxChunkBytes": 4 * 1024 * 1024,
         "checkpointIntervalMs": 300_000,
         "heartbeatIntervalMs": 5_000,
         "stallTimeoutMs": 90_000,
+        "supportsProgressiveRecording": True,
     }
+    assert client.get("/v2/streaming/health/ready").status_code == 404
 
 
-def test_streaming_capability_keeps_ocr_available_without_progressive_decoder(
+def test_readiness_keeps_ocr_available_without_progressive_decoder(
     client: TestClient, monkeypatch
 ) -> None:
     monkeypatch.setattr(
-        "capture_runtime.capture.api.streaming.progressive_decoder_ready", lambda: False
+        "capture_runtime.capture.application.streaming_capture_service.progressive_decoder_ready",
+        lambda: False,
     )
 
-    response = client.get("/v2/streaming/health/ready")
+    response = client.get("/v2/health/ready")
 
     assert response.status_code == 200
-    assert response.json()["captureKinds"] == ["pdf", "image", "recording"]
-    assert response.json()["supportsProgressiveAudio"] is False
+    capabilities = response.json()["capabilities"]
+    assert capabilities["captureKinds"] == ["pdf", "image", "recording"]
+    assert capabilities["supportsProgressiveRecording"] is False
 
 
 def test_open_ingestion_and_start_capture_require_matching_idempotency_headers(

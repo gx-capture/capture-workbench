@@ -19,7 +19,6 @@ from .contracts import (
     CAPTURE_DOCUMENT_SCHEMA_VERSION,
     CAPTURE_RUNTIME_VERSION,
     RuntimeReady,
-    RuntimeStreamingCapabilities,
     StructuringMode,
 )
 from .errors import CaptureRuntimeCompatibilityError, CaptureRuntimeProtocolError
@@ -32,7 +31,6 @@ class RuntimeDiscovery:
     """Authenticated compatibility evidence cached by ``CaptureRuntimeClient``."""
 
     ready: RuntimeReady
-    streaming: RuntimeStreamingCapabilities | None
     capture_document_schema_sha256: str
     contract_index: Mapping[str, Any]
     contract_bundle: Mapping[str, Any]
@@ -93,12 +91,8 @@ def discover(
             "Capture Runtime contract bundle is not valid JSON."
         ) from error
     capture_document_schema_sha256 = validate_contract_bundle(bundle, digest)
-    streaming = decode_model(
-        request("GET", "/v2/streaming/health/ready"), RuntimeStreamingCapabilities
-    )
     return RuntimeDiscovery(
         ready=ready,
-        streaming=streaming,
         capture_document_schema_sha256=capture_document_schema_sha256,
         contract_index=index,
         contract_bundle=bundle,
@@ -116,10 +110,10 @@ def assert_compatible(ready: RuntimeReady) -> None:
             f"runtime version {ready.runtime_version} is incompatible with "
             f"{CAPTURE_RUNTIME_VERSION}"
         )
-    structuring_modes = ready.capabilities.get("structuringModes", [])
+    structuring_modes = ready.capabilities.structuring_modes
     if (
-        StructuringMode.HOST.value not in structuring_modes
-        and StructuringMode.RUNTIME.value not in structuring_modes
+        StructuringMode.HOST not in structuring_modes
+        and StructuringMode.RUNTIME not in structuring_modes
     ):
         failures.append("runtime exposes no structuring mode")
     if failures:
@@ -212,7 +206,6 @@ def validate_contract_bundle(bundle: Any, digest: str) -> str:
     }
     required_paths = {
         "/v2/health/ready",
-        "/v2/streaming/health/ready",
         "/v2/runtime/requirements",
         "/v2/runtime/installations",
         "/v2/runtime/structuring-model-options",

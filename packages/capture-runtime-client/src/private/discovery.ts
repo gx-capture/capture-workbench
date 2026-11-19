@@ -6,7 +6,6 @@ import {
   type CaptureRuntimeClientOptions,
   type RuntimeDiscovery,
   type RuntimeReady,
-  type RuntimeStreamingCapabilities,
   type RuntimeTransport,
   type RuntimeTransportRequest,
 } from '../contracts.js';
@@ -30,12 +29,9 @@ export interface RuntimeDiscoveryContext {
   readonly transport: RuntimeTransport;
   readonly json: RuntimeJson;
   readonly getReady: (signal?: AbortSignal) => Promise<RuntimeReady>;
-  readonly getStreamingCapabilities: (
-    signal?: AbortSignal,
-  ) => Promise<RuntimeStreamingCapabilities>;
 }
 
-/** Negotiate readiness, contract identity, and the v2 streaming surface. */
+/** Negotiate readiness, its capabilities, and contract identity. */
 export async function negotiateRuntime(
   context: RuntimeDiscoveryContext,
   signal?: AbortSignal,
@@ -59,11 +55,10 @@ export async function negotiateRuntime(
   const remoteHash = ready.captureDocumentSchemaSha256;
   if (remoteHash && remoteHash !== expectedHash)
     failures.push('document schema hash is incompatible');
-  const structuringModes = ready.capabilities['structuringModes'];
+  const structuringModes = ready.capabilities.structuringModes;
   if (
-    !Array.isArray(structuringModes) ||
-    (!structuringModes.includes('host') &&
-      !structuringModes.includes('runtime'))
+    !structuringModes.includes('host') &&
+    !structuringModes.includes('runtime')
   )
     failures.push('runtime exposes no structuring mode');
   if (failures.length)
@@ -130,9 +125,6 @@ export async function negotiateRuntime(
     );
   }
   const bundleSchemaHash = validateContractBundle(contractBundle);
-  // V2 readiness is part of the negotiated client surface. Do not silently
-  // continue after a malformed or otherwise incompatible response.
-  const streaming = await context.getStreamingCapabilities(signal);
   if (
     ready.captureDocumentSchemaSha256 &&
     ready.captureDocumentSchemaSha256 !== bundleSchemaHash
@@ -143,7 +135,6 @@ export async function negotiateRuntime(
   }
   return {
     ready,
-    streaming,
     captureDocumentSchemaSha256: bundleSchemaHash,
     contractIndex,
     contractBundle,
@@ -250,7 +241,6 @@ function validateContractBundle(bundle: ContractBundle): string {
   );
   for (const path of [
     '/v2/health/ready',
-    '/v2/streaming/health/ready',
     '/v2/runtime/requirements',
     '/v2/runtime/installations',
     '/v2/captures',

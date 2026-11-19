@@ -367,14 +367,6 @@ def _operation_definitions() -> list[dict[str, Any]]:
             problems=_COMMON_PROBLEMS,
         ),
         _operation(
-            "v2.streaming.health.ready",
-            "v2",
-            "GET",
-            f"{v2}/streaming/health/ready",
-            response_schema="RuntimeStreamingCapabilities",
-            problems=_COMMON_PROBLEMS,
-        ),
-        _operation(
             "v2.ingestions.open",
             "v2",
             "POST",

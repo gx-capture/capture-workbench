@@ -28,8 +28,8 @@ from ._discovery import (
 )
 from ._error_mapping import (
     decode_capture_operation,
+    decode_capture_result,
     decode_response,
-    decode_streaming_result,
 )
 from ._retry import RetryPolicy
 from ._transport import create_http_runtime_transport
@@ -50,7 +50,6 @@ from .contracts import (
     RuntimeReady,
     RuntimeRequirement,
     RuntimeRequirements,
-    RuntimeStreamingCapabilities,
     StructuringBatch,
     StructuringMode,
     StructuringModelInstallation,
@@ -219,6 +218,20 @@ class CaptureRuntimeClient:
             StructuringModelOptions,
         )
 
+    def start_model_installation(
+        self, option_id: str, *, idempotency_key: UUID | str
+    ) -> StructuringModelInstallation:
+        """Start installing the selected structuring model with user consent."""
+        return decode_model(
+            self._request(
+                "POST",
+                "/v2/runtime/structuring-model-installations",
+                headers={"X-Idempotency-Key": str(idempotency_key)},
+                json={"optionId": option_id, "consent": True},
+            ),
+            StructuringModelInstallation,
+        )
+
     def get_model_installation(self, installation_id: str) -> StructuringModelInstallation:
         """Read one structuring model installation's status."""
         return decode_model(
@@ -227,10 +240,6 @@ class CaptureRuntimeClient:
             ),
             StructuringModelInstallation,
         )
-
-    def get_model_installation_status(self, installation_id: str) -> StructuringModelInstallation:
-        """Status-oriented alias for :meth:`get_model_installation`."""
-        return self.get_model_installation(installation_id)
 
     def cancel_model_installation(self, installation_id: str) -> StructuringModelInstallation:
         """Cancel a structuring model installation."""
@@ -243,8 +252,88 @@ class CaptureRuntimeClient:
         )
 
     def start_capture(self, upload: CaptureUpload, *, client_request_id: str) -> CaptureOperation:
-        """Open, upload, finalize, and start one v2 capture operation."""
-        return self.start_streaming_capture(upload, client_request_id=client_request_id)
+        """Upload a file through a chunked ingestion and start its capture.
+
+        Chunks stay within the readiness ``maxChunkBytes``. The ingestion is
+        deleted if any step before the capture starts fails.
+        """
+        content = upload.content
+        digest = hashlib.sha256(content).hexdigest()
+        kind = CaptureSourceKind(upload.source_kind)
+        ingestion = decode_model(
+            self._request(
+                "POST",
+                "/v2/ingestions",
+                headers={"X-Idempotency-Key": f"{client_request_id}-ingestion"},
+                json={
+                    "protocolVersion": "2",
+                    "kind": kind.value,
+                    "mode": "file",
+                    "clientRequestId": f"{client_request_id}-ingestion",
+                    "fileName": upload.file_name,
+                    "mediaType": upload.media_type,
+                    "totalBytes": len(content),
+                    "sourceSha256": digest,
+                },
+            ),
+            Ingestion,
+        )
+        try:
+            capabilities = self._ensure_discovered().ready.capabilities
+            chunk_size = min(1024 * 1024, capabilities.max_chunk_bytes)
+            for offset in range(ingestion.next_offset, len(content), chunk_size):
+                chunk = content[offset : offset + chunk_size]
+                ingestion = decode_model(
+                    self._request(
+                        "PUT",
+                        f"/v2/ingestions/{ingestion.ingestion_id}/chunks/{ingestion.next_chunk_index}",
+                        headers={
+                            "Content-Range": (
+                                f"bytes {offset}-{offset + len(chunk) - 1}/{len(content)}"
+                            ),
+                            "Digest": f"sha-256={hashlib.sha256(chunk).hexdigest()}",
+                            "X-Idempotency-Key": (
+                                f"{ingestion.ingestion_id}-{ingestion.next_chunk_index}"
+                            ),
+                        },
+                        content=chunk,
+                    ),
+                    Ingestion,
+                )
+            decode_model(
+                self._request(
+                    "POST",
+                    f"/v2/ingestions/{ingestion.ingestion_id}/finalize",
+                    json={"protocolVersion": "2", "totalBytes": len(content), "sha256": digest},
+                ),
+                Ingestion,
+            )
+            start_payload: dict[str, object] = {
+                "protocolVersion": "2",
+                "clientRequestId": client_request_id,
+                "ingestionId": ingestion.ingestion_id,
+                "structuringMode": StructuringMode(upload.structuring_mode).value,
+                "targetLanguage": upload.target_language,
+                "startPolicy": "eager",
+            }
+            if upload.pdf_page_numbers is not None:
+                start_payload["pdfPageNumbers"] = list(upload.pdf_page_numbers)
+            if upload.identify_speakers:
+                start_payload["identifySpeakers"] = True
+            if upload.spoken_language is not None:
+                start_payload["spokenLanguage"] = upload.spoken_language
+            return decode_model(
+                self._request(
+                    "POST",
+                    "/v2/captures",
+                    headers={"X-Idempotency-Key": client_request_id},
+                    json=start_payload,
+                ),
+                CaptureOperation,
+            )
+        except Exception:
+            self._transport.request("DELETE", f"/v2/ingestions/{ingestion.ingestion_id}")
+            raise
 
     def upload_path(
         self,
@@ -253,6 +342,7 @@ class CaptureRuntimeClient:
         source_kind: CaptureSourceKind | str,
         client_request_id: str,
         media_type: str = "application/octet-stream",
+        structuring_mode: StructuringMode | str = StructuringMode.RUNTIME,
         target_language: str | None = None,
         pdf_page_numbers: Sequence[int] | None = None,
         identify_speakers: bool = False,
@@ -265,6 +355,7 @@ class CaptureRuntimeClient:
                 path.read_bytes(),
                 source_kind,
                 media_type,
+                structuring_mode=structuring_mode,
                 target_language=target_language,
                 pdf_page_numbers=pdf_page_numbers,
                 identify_speakers=identify_speakers,
@@ -274,12 +365,16 @@ class CaptureRuntimeClient:
         )
 
     def get_capture(self, capture_id: str) -> CaptureOperation:
-        """Read a capture operation's current state."""
-        return self.get_streaming_capture(capture_id)
+        """Read a capture operation and check that it matches ``capture_id``."""
+        return self._decode_capture_operation(
+            self._request("GET", f"/v2/captures/{_safe_id(capture_id)}"), capture_id
+        )
 
     def cancel_capture(self, capture_id: str) -> CaptureOperation:
         """Request cancellation of a capture operation."""
-        return self.cancel_streaming_capture(capture_id)
+        return self._decode_capture_operation(
+            self._request("POST", f"/v2/captures/{_safe_id(capture_id)}/cancel"), capture_id
+        )
 
     def get_raw(self, capture_id: str) -> RawCapture:
         """Read the raw extraction of a capture."""
@@ -296,7 +391,11 @@ class CaptureRuntimeClient:
 
     def get_result(self, capture_id: str) -> CaptureResult:
         """Read the terminal capture state, raw extraction, and structured document."""
-        return self.get_streaming_result(capture_id)
+        operation, raw, result = decode_capture_result(
+            self._request("GET", f"/v2/captures/{_safe_id(capture_id)}/result"),
+            capture_id,
+        )
+        return CaptureResult(operation=operation, raw=raw, result=result)
 
     def open_structuring_session(
         self,
@@ -355,10 +454,6 @@ class CaptureRuntimeClient:
             StructuringBatch,
         )
 
-    def pull_structuring_batch(self, capture_id: str, batch_index: int) -> StructuringBatch:
-        """Alias that makes the pull nature explicit for host coordinators."""
-        return self.get_structuring_batch(capture_id, batch_index)
-
     def submit_structuring_batch(
         self,
         capture_id: str,
@@ -396,136 +491,6 @@ class CaptureRuntimeClient:
             StructuringSession,
         )
 
-    def commit_structure(
-        self,
-        capture_id: str,
-        candidate: str | bytes | Mapping[str, object] | CaptureDocument,
-        *,
-        idempotency_key: UUID | str,
-    ) -> CaptureOperation:
-        """Commit the final structured document for a capture."""
-        return self.commit_streaming_structure(
-            capture_id,
-            candidate,
-            idempotency_key=idempotency_key,
-        )
-
-    def report_structuring_failure(
-        self,
-        capture_id: str,
-        *,
-        code: str,
-        message: str,
-        idempotency_key: UUID | str,
-    ) -> CaptureOperation:
-        """Report that host-side structuring failed for a capture."""
-        return self.report_streaming_failure(
-            capture_id,
-            code=code,
-            message=message,
-            idempotency_key=idempotency_key,
-        )
-
-    def delete_capture(self, capture_id: str) -> None:
-        """Delete a capture and its stored artifacts from the runtime."""
-        self.delete_streaming_capture(capture_id)
-
-    def get_streaming_capabilities(self) -> RuntimeStreamingCapabilities:
-        """Read streaming limits such as the maximum upload chunk size."""
-        return decode_model(
-            self._request("GET", "/v2/streaming/health/ready"), RuntimeStreamingCapabilities
-        )
-
-    def start_streaming_capture(
-        self, upload: CaptureUpload, *, client_request_id: str
-    ) -> CaptureOperation:
-        """Upload a file through a chunked ingestion and start its capture.
-
-        The ingestion is deleted if any step before the capture starts fails.
-        """
-        content = upload.content
-        digest = hashlib.sha256(content).hexdigest()
-        kind = CaptureSourceKind(upload.source_kind)
-        ingestion = decode_model(
-            self._request(
-                "POST",
-                "/v2/ingestions",
-                headers={"X-Idempotency-Key": f"{client_request_id}-ingestion"},
-                json={
-                    "protocolVersion": "2",
-                    "kind": kind.value,
-                    "mode": "file",
-                    "clientRequestId": f"{client_request_id}-ingestion",
-                    "fileName": upload.file_name,
-                    "mediaType": upload.media_type,
-                    "totalBytes": len(content),
-                    "sourceSha256": digest,
-                },
-            ),
-            Ingestion,
-        )
-        try:
-            chunk_size = min(1024 * 1024, self.get_streaming_capabilities().max_chunk_bytes)
-            for offset in range(ingestion.next_offset, len(content), chunk_size):
-                chunk = content[offset : offset + chunk_size]
-                ingestion = decode_model(
-                    self._request(
-                        "PUT",
-                        f"/v2/ingestions/{ingestion.ingestion_id}/chunks/{ingestion.next_chunk_index}",
-                        headers={
-                            "Content-Range": (
-                                f"bytes {offset}-{offset + len(chunk) - 1}/{len(content)}"
-                            ),
-                            "Digest": f"sha-256={hashlib.sha256(chunk).hexdigest()}",
-                            "X-Idempotency-Key": (
-                                f"{ingestion.ingestion_id}-{ingestion.next_chunk_index}"
-                            ),
-                        },
-                        content=chunk,
-                    ),
-                    Ingestion,
-                )
-            decode_model(
-                self._request(
-                    "POST",
-                    f"/v2/ingestions/{ingestion.ingestion_id}/finalize",
-                    json={"protocolVersion": "2", "totalBytes": len(content), "sha256": digest},
-                ),
-                Ingestion,
-            )
-            start_payload: dict[str, object] = {
-                "protocolVersion": "2",
-                "clientRequestId": client_request_id,
-                "ingestionId": ingestion.ingestion_id,
-                "structuringMode": StructuringMode(upload.structuring_mode).value,
-                "targetLanguage": upload.target_language,
-                "startPolicy": "eager",
-            }
-            if upload.pdf_page_numbers is not None:
-                start_payload["pdfPageNumbers"] = list(upload.pdf_page_numbers)
-            if upload.identify_speakers:
-                start_payload["identifySpeakers"] = True
-            if upload.spoken_language is not None:
-                start_payload["spokenLanguage"] = upload.spoken_language
-            return decode_model(
-                self._request(
-                    "POST",
-                    "/v2/captures",
-                    headers={"X-Idempotency-Key": client_request_id},
-                    json=start_payload,
-                ),
-                CaptureOperation,
-            )
-        except Exception:
-            self._transport.request("DELETE", f"/v2/ingestions/{ingestion.ingestion_id}")
-            raise
-
-    def get_streaming_capture(self, capture_id: str) -> CaptureOperation:
-        """Read a capture operation and check that it matches ``capture_id``."""
-        return self._decode_capture_operation(
-            self._request("GET", f"/v2/captures/{_safe_id(capture_id)}"), capture_id
-        )
-
     def get_partial(self, capture_id: str) -> PartialCapture:
         """Read the partial result a capture has produced so far."""
         partial = decode_model(
@@ -536,14 +501,6 @@ class CaptureRuntimeClient:
                 "Capture Runtime returned an invalid capture identity."
             )
         return partial
-
-    def get_streaming_result(self, capture_id: str) -> CaptureResult:
-        """Read the terminal capture state, raw extraction, and structured document."""
-        operation, raw, result = decode_streaming_result(
-            self._request("GET", f"/v2/captures/{_safe_id(capture_id)}/result"),
-            capture_id,
-        )
-        return CaptureResult(operation=operation, raw=raw, result=result)
 
     def capture_events(
         self,
@@ -615,13 +572,7 @@ class CaptureRuntimeClient:
                 return
             reconnects += 1
 
-    def cancel_streaming_capture(self, capture_id: str) -> CaptureOperation:
-        """Request cancellation of a capture operation."""
-        return self._decode_capture_operation(
-            self._request("POST", f"/v2/captures/{_safe_id(capture_id)}/cancel"), capture_id
-        )
-
-    def commit_streaming_structure(
+    def commit_structure(
         self,
         capture_id: str,
         candidate: str | bytes | Mapping[str, object] | CaptureDocument,
@@ -651,7 +602,7 @@ class CaptureRuntimeClient:
             capture_id,
         )
 
-    def report_streaming_failure(
+    def report_structuring_failure(
         self, capture_id: str, *, code: str, message: str, idempotency_key: UUID | str
     ) -> CaptureOperation:
         """Report that host-side structuring failed for a capture."""
@@ -665,14 +616,14 @@ class CaptureRuntimeClient:
             capture_id,
         )
 
-    def delete_streaming_capture(self, capture_id: str) -> None:
+    def delete_capture(self, capture_id: str) -> None:
         """Delete a capture and its stored artifacts from the runtime.
 
         The uploaded source goes with it once no other capture uses it.
         """
         decode_response(self._request("DELETE", f"/v2/captures/{_safe_id(capture_id)}"))
 
-    def delete_streaming_ingestion(self, ingestion_id: str) -> None:
+    def delete_ingestion(self, ingestion_id: str) -> None:
         """Delete an uploaded source; refused while a capture using it is unfinished."""
         decode_response(self._request("DELETE", f"/v2/ingestions/{_safe_id(ingestion_id)}"))
 

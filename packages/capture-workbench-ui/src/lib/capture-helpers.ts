@@ -159,7 +159,7 @@ export class CaptureHelpersService {
         `Capture runtime does not support schema ${CAPTURE_DOCUMENT_SCHEMA_VERSION}.`,
       );
     }
-    const structuringModes = ready.capabilities['structuringModes'];
+    const structuringModes: unknown = ready.capabilities.structuringModes;
     if (
       requiredStructuringMode &&
       (!Array.isArray(structuringModes) ||

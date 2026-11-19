@@ -163,63 +163,47 @@ export class DesktopRuntimeClientService {
     }, signal);
   }
 
-  startStreamingCapture(input: {
+  startRecordingCapture(input: {
     readonly documentId: string;
     readonly clientRequestId: string;
     readonly structuringMode: 'runtime' | 'host';
     readonly identifySpeakers?: boolean;
     readonly spokenLanguage?: string;
   }, signal?: AbortSignal): Observable<CaptureOperation> {
-    return this.commands.invoke('runtime_start_streaming_capture', { input }, signal);
+    return this.commands.invoke('runtime_start_recording_capture', { input }, signal);
   }
 
-  getStreamingCapture(captureId: string, signal?: AbortSignal): Observable<CaptureOperation> {
-    return this.commands.invoke('runtime_get_streaming_capture', { input: { id: captureId } }, signal);
+  getCapture(captureId: string, signal?: AbortSignal): Observable<CaptureOperation> {
+    return this.commands.invoke('runtime_get_capture', { input: { id: captureId } }, signal);
   }
 
-  getStreamingEvents(
+  getCaptureEvents(
     captureId: string,
     lastEventId?: number,
     signal?: AbortSignal,
   ): Observable<readonly CaptureEvent[]> {
-    return this.commands.invoke('runtime_get_streaming_events', {
+    return this.commands.invoke('runtime_get_capture_events', {
       input: { id: captureId, lastEventId: lastEventId ?? null },
     }, signal);
   }
 
-  getStreamingPartial(captureId: string, signal?: AbortSignal): Observable<PartialCapture | null> {
-    return this.commands.invoke('runtime_get_streaming_partial', { input: { id: captureId } }, signal);
+  getPartial(captureId: string, signal?: AbortSignal): Observable<PartialCapture | null> {
+    return this.commands.invoke('runtime_get_partial', { input: { id: captureId } }, signal);
   }
 
-  getStreamingResult(
-    captureId: string,
-    signal?: AbortSignal,
-  ): Observable<CaptureResult> {
-    return this.commands.invoke('runtime_get_streaming_result', { input: { id: captureId } }, signal);
+  /** The terminal capture state with its raw extraction and structured document. */
+  getResult(captureId: string, signal?: AbortSignal): Observable<CaptureResult> {
+    return this.commands.invoke('runtime_get_result', { input: { id: captureId } }, signal);
   }
 
-  structureStreamingCapture(
+  structureCapture(
     captureId: string,
     signal?: AbortSignal,
   ): Observable<CaptureDocument> {
-    return this.commands.invoke('runtime_structure_streaming_capture', { input: { id: captureId } }, signal);
+    return this.commands.invoke('runtime_structure_capture', { input: { id: captureId } }, signal);
   }
 
-  cancelStreamingCapture(captureId: string, signal?: AbortSignal): Observable<CaptureOperation> {
-    return this.commands.invoke('runtime_cancel_streaming_capture', { input: { id: captureId } }, signal);
-  }
-
-  deleteStreamingCapture(captureId: string, signal?: AbortSignal): Observable<void> {
-    return this.commands
-      .invoke<null>('runtime_delete_streaming_capture', { input: { id: captureId } }, signal)
-      .pipe(map(() => undefined));
-  }
-
-  getCapture(captureId: string, signal?: AbortSignal): Observable<DesktopCaptureOperation> {
-    return this.commands.invoke('runtime_get_capture', { input: { id: captureId } }, signal);
-  }
-
-  cancelCapture(captureId: string, signal?: AbortSignal): Observable<DesktopCaptureOperation> {
+  cancelCapture(captureId: string, signal?: AbortSignal): Observable<CaptureOperation> {
     return this.commands.invoke('runtime_cancel_capture', { input: { id: captureId } }, signal);
   }
 
@@ -233,12 +217,7 @@ export class DesktopRuntimeClientService {
       .pipe(map(parseCaptureOcrProjection));
   }
 
-  getResult(captureId: string, signal?: AbortSignal): Observable<CaptureDocument> {
-    return this.commands
-      .invoke<CaptureResult>('runtime_get_result', { input: { id: captureId } }, signal)
-      .pipe(map(({ result }) => result));
-  }
-
+  /** Deletes the runtime capture; one the runtime no longer knows counts as deleted. */
   deleteCapture(captureId: string, signal?: AbortSignal): Observable<void> {
     return this.commands
       .invoke<null>('runtime_delete_capture', { input: { id: captureId } }, signal)

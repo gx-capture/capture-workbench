@@ -10,6 +10,8 @@ from fastapi import APIRouter, Header, status
 
 from capture_runtime.constants.requirements import RETIRED_STRUCTURING_REQUIREMENT_IDS
 from capture_runtime.contracts import (
+    CaptureSourceKind,
+    RuntimeCapabilities,
     RuntimeInstallation,
     RuntimeInstallations,
     RuntimeReady,
@@ -49,18 +51,26 @@ def register_runtime_routes(
     @router.get("/health/ready", response_model=RuntimeReady)
     async def ready() -> RuntimeReady:
         ocr_compute = await dependencies.ocr_preflight.decide_async()
+        capture_service = dependencies.streaming_capture_service
         return RuntimeReady(
             ready=True,
             capture_document_schema_sha256=CAPTURE_DOCUMENT_SCHEMA_RELEASE_SHA256,
-            capabilities={
-                "captureKinds": ["pdf", "image", "recording"],
-                "structuringModes": [
-                    mode.value for mode in dependencies.supported_structuring_modes
+            capabilities=RuntimeCapabilities(
+                capture_kinds=[
+                    CaptureSourceKind.PDF,
+                    CaptureSourceKind.IMAGE,
+                    CaptureSourceKind.RECORDING,
                 ],
-                "supportsCancellation": True,
-                "supportsRawDiagnostics": True,
-                "maxUploadBytes": dependencies.settings.max_upload_bytes,
-            },
+                structuring_modes=dependencies.supported_structuring_modes,
+                supports_cancellation=True,
+                supports_raw_diagnostics=True,
+                max_upload_bytes=dependencies.settings.max_upload_bytes,
+                max_chunk_bytes=capture_service.max_chunk_bytes,
+                checkpoint_interval_ms=capture_service.checkpoint_interval_ms,
+                heartbeat_interval_ms=capture_service.heartbeat_interval_ms,
+                stall_timeout_ms=capture_service.stall_timeout_ms,
+                supports_progressive_recording=capture_service.supports_progressive_recording(),
+            ),
             ocr_compute=ocr_compute,
         )
 

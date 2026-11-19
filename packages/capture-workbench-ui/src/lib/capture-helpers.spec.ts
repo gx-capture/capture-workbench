@@ -90,6 +90,11 @@ describe('capture helpers', () => {
         supportsCancellation: true,
         supportsRawDiagnostics: true,
         maxUploadBytes: 100,
+        maxChunkBytes: 1024 * 1024,
+        checkpointIntervalMs: 300_000,
+        heartbeatIntervalMs: 5_000,
+        stallTimeoutMs: 90_000,
+        supportsProgressiveRecording: true,
       },
     };
 
@@ -111,6 +116,11 @@ describe('capture helpers', () => {
         supportsCancellation: true,
         supportsRawDiagnostics: true,
         maxUploadBytes: 100,
+        maxChunkBytes: 1024 * 1024,
+        checkpointIntervalMs: 300_000,
+        heartbeatIntervalMs: 5_000,
+        stallTimeoutMs: 90_000,
+        supportsProgressiveRecording: true,
       },
     } as unknown as RuntimeReady;
 
@@ -132,6 +142,11 @@ describe('capture helpers', () => {
         supportsCancellation: true,
         supportsRawDiagnostics: true,
         maxUploadBytes: 100,
+        maxChunkBytes: 1024 * 1024,
+        checkpointIntervalMs: 300_000,
+        heartbeatIntervalMs: 5_000,
+        stallTimeoutMs: 90_000,
+        supportsProgressiveRecording: true,
       },
     };
 
@@ -156,6 +171,11 @@ describe('capture helpers', () => {
         supportsCancellation: true,
         supportsRawDiagnostics: true,
         maxUploadBytes: 100,
+        maxChunkBytes: 1024 * 1024,
+        checkpointIntervalMs: 300_000,
+        heartbeatIntervalMs: 5_000,
+        stallTimeoutMs: 90_000,
+        supportsProgressiveRecording: true,
       },
     };
 
@@ -177,6 +197,11 @@ describe('capture helpers', () => {
         supportsCancellation: true,
         supportsRawDiagnostics: true,
         maxUploadBytes: 100,
+        maxChunkBytes: 1024 * 1024,
+        checkpointIntervalMs: 300_000,
+        heartbeatIntervalMs: 5_000,
+        stallTimeoutMs: 90_000,
+        supportsProgressiveRecording: true,
       },
     };
 

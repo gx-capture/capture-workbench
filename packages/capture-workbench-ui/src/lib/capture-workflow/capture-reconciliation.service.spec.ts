@@ -83,8 +83,8 @@ describe('CaptureReconciliationService', () => {
 
   it('reconciles a v2 terminal snapshot to a completed task', async () => {
     const client = fakeClient({
-      getStreamingCapture: vi.fn(() => of(streamingOperation('completed'))),
-      getStreamingResult: vi.fn(() => of(streamingResult())),
+      getCapture: vi.fn(() => of(streamingOperation('completed'))),
+      getResult: vi.fn(() => of(streamingResult())),
     });
     const { emitCompleted } = configure(client);
 
@@ -94,7 +94,7 @@ describe('CaptureReconciliationService', () => {
 
     expect(currentTask.status).toBe('completed');
     expect(currentTask.result).toBe(streamingResult().result);
-    expect(client.getStreamingResult).toHaveBeenCalledWith(
+    expect(client.getResult).toHaveBeenCalledWith(
       'capture-1',
       expect.any(AbortSignal),
     );
@@ -105,14 +105,14 @@ describe('CaptureReconciliationService', () => {
 
   it('waits on v2 SSE and resumes from the snapshot event sequence', async () => {
     const events = new Subject<ReturnType<typeof streamingEvent>>();
-    const getStreamingCapture = vi
-      .fn<NonNullable<CaptureClient['getStreamingCapture']>>()
+    const getCapture = vi
+      .fn<NonNullable<CaptureClient['getCapture']>>()
       .mockReturnValueOnce(of(streamingOperation('extracting', 0.3)))
       .mockReturnValueOnce(of(streamingOperation('completed')));
     const captureEvents = vi.fn<NonNullable<CaptureClient['captureEvents']>>(() =>
       events.asObservable(),
     );
-    const client = fakeClient({ getStreamingCapture, captureEvents });
+    const client = fakeClient({ getCapture, captureEvents });
     configure(client);
 
     const settled = firstValueFrom(service.reconcile('task-1'));
@@ -144,12 +144,12 @@ describe('CaptureReconciliationService', () => {
       ...streamingOperation('extracting', 0.4),
       lastEventSequence: 7,
     };
-    const getStreamingCapture = vi
-      .fn<NonNullable<CaptureClient['getStreamingCapture']>>()
+    const getCapture = vi
+      .fn<NonNullable<CaptureClient['getCapture']>>()
       .mockReturnValueOnce(of(streamingOperation('extracting', 0.2)))
       .mockReturnValueOnce(of(resyncedOperation))
       .mockReturnValueOnce(of(streamingOperation('completed')));
-    const client = fakeClient({ captureEvents, getStreamingCapture });
+    const client = fakeClient({ captureEvents, getCapture });
     configure(client);
 
     const settled = firstValueFrom(service.reconcile('task-1'));
@@ -158,8 +158,8 @@ describe('CaptureReconciliationService', () => {
     firstEvents.next(streamingEvent('resync_required', 'resync'));
     await vi.waitFor(() => expect(captureEvents).toHaveBeenCalledTimes(2));
 
-    expect(client.getStreamingCapture).toHaveBeenCalledTimes(2);
-    expect(client.getStreamingPartial).toHaveBeenCalledWith(
+    expect(client.getCapture).toHaveBeenCalledTimes(2);
+    expect(client.getPartial).toHaveBeenCalledWith(
       'capture-1',
       expect.any(AbortSignal),
     );
@@ -172,16 +172,16 @@ describe('CaptureReconciliationService', () => {
     secondEvents.next(streamingEvent('completed', 'completed'));
     await settled;
 
-    expect(client.getStreamingCapture).toHaveBeenCalledTimes(3);
+    expect(client.getCapture).toHaveBeenCalledTimes(3);
     expect(currentTask.status).toBe('completed');
   });
 
   it('confirms a lost v2 commit response through the v2 snapshot', async () => {
     const client = fakeClient({
-      commitStreamingStructuredResult: vi.fn(() =>
+      commitStructure: vi.fn(() =>
         throwError(() => new Error('response lost')),
       ),
-      getStreamingCapture: vi.fn(() => of(streamingOperation('completed'))),
+      getCapture: vi.fn(() => of(streamingOperation('completed'))),
     });
     configure(client);
 
@@ -195,13 +195,13 @@ describe('CaptureReconciliationService', () => {
     );
 
     expect(operation.status).toBe('completed');
-    expect(client.commitStreamingStructuredResult).toHaveBeenCalledOnce();
-    expect(client.getStreamingCapture).toHaveBeenCalledOnce();
+    expect(client.commitStructure).toHaveBeenCalledOnce();
+    expect(client.getCapture).toHaveBeenCalledOnce();
   });
 
   it('cancels a reconciliation-required v2 capture and emits cancellation after confirmation', async () => {
     const client = fakeClient({
-      cancelStreamingCapture: vi.fn(() => of(streamingOperation('cancelled'))),
+      cancelCapture: vi.fn(() => of(streamingOperation('cancelled'))),
     });
     const { emitCanceled } = configure(client);
 
@@ -209,7 +209,7 @@ describe('CaptureReconciliationService', () => {
 
     expect(currentTask.status).toBe('canceled');
     expect(emitCanceled).toHaveBeenCalledWith(currentTask);
-    expect(client.cancelStreamingCapture).toHaveBeenCalledWith(
+    expect(client.cancelCapture).toHaveBeenCalledWith(
       'capture-1',
       expect.any(AbortSignal),
     );
@@ -224,15 +224,15 @@ describe('CaptureReconciliationService', () => {
         stage: 'structuring' as const,
       },
     };
-    const reportStreamingStructuringFailure = vi.fn<
-      NonNullable<CaptureClient['reportStreamingStructuringFailure']>
+    const reportStructuringFailure = vi.fn<
+      NonNullable<CaptureClient['reportStructuringFailure']>
     >(() => throwError(() => new Error('response lost')));
-    const getStreamingCapture = vi.fn<
-      NonNullable<CaptureClient['getStreamingCapture']>
+    const getCapture = vi.fn<
+      NonNullable<CaptureClient['getCapture']>
     >(() => of(failed));
     const client = fakeClient({
-      reportStreamingStructuringFailure,
-      getStreamingCapture,
+      reportStructuringFailure,
+      getCapture,
     });
     configure(client);
 
@@ -246,19 +246,19 @@ describe('CaptureReconciliationService', () => {
     );
 
     expect(operation.status).toBe('failed');
-    expect(getStreamingCapture).toHaveBeenCalledWith(
+    expect(getCapture).toHaveBeenCalledWith(
       'capture-1',
       expect.any(AbortSignal),
     );
-    expect(client.cancelStreamingCapture).not.toHaveBeenCalled();
+    expect(client.cancelCapture).not.toHaveBeenCalled();
   });
 
   it('retries an unresolved v2 commit with the same idempotency key', async () => {
-    const commitStreamingStructuredResult = vi
-      .fn<NonNullable<CaptureClient['commitStreamingStructuredResult']>>()
+    const commitStructure = vi
+      .fn<NonNullable<CaptureClient['commitStructure']>>()
       .mockReturnValueOnce(of(streamingOperation('awaiting_structuring')))
       .mockReturnValueOnce(of(streamingOperation('completed')));
-    const client = fakeClient({ commitStreamingStructuredResult });
+    const client = fakeClient({ commitStructure });
     configure(client);
 
     const operation = await firstValueFrom(
@@ -271,22 +271,22 @@ describe('CaptureReconciliationService', () => {
     );
 
     expect(operation.status).toBe('completed');
-    expect(commitStreamingStructuredResult).toHaveBeenCalledTimes(2);
-    expect(commitStreamingStructuredResult.mock.calls[1]?.[1]).toBe(
-      commitStreamingStructuredResult.mock.calls[0]?.[1],
+    expect(commitStructure).toHaveBeenCalledTimes(2);
+    expect(commitStructure.mock.calls[1]?.[1]).toBe(
+      commitStructure.mock.calls[0]?.[1],
     );
   });
 
   it('cancels and confirms a nonterminal v2 failure-report outcome', async () => {
-    const reportStreamingStructuringFailure = vi.fn<
-      NonNullable<CaptureClient['reportStreamingStructuringFailure']>
+    const reportStructuringFailure = vi.fn<
+      NonNullable<CaptureClient['reportStructuringFailure']>
     >(() => of(streamingOperation('awaiting_structuring')));
-    const cancelStreamingCapture = vi.fn<
-      NonNullable<CaptureClient['cancelStreamingCapture']>
+    const cancelCapture = vi.fn<
+      NonNullable<CaptureClient['cancelCapture']>
     >(() => of(streamingOperation('cancelled')));
     const client = fakeClient({
-      reportStreamingStructuringFailure,
-      cancelStreamingCapture,
+      reportStructuringFailure,
+      cancelCapture,
     });
     configure(client);
 
@@ -300,7 +300,7 @@ describe('CaptureReconciliationService', () => {
     );
 
     expect(operation.status).toBe('cancelled');
-    expect(cancelStreamingCapture).toHaveBeenCalledWith(
+    expect(cancelCapture).toHaveBeenCalledWith(
       'capture-1',
       expect.any(AbortSignal),
     );
@@ -308,7 +308,7 @@ describe('CaptureReconciliationService', () => {
 
   it('keeps reconciliation required when the v2 operation is still nonterminal', async () => {
     const client = fakeClient({
-      getStreamingCapture: vi.fn(() => of(streamingOperation('extracting'))),
+      getCapture: vi.fn(() => of(streamingOperation('extracting'))),
     });
     const { requireReconciliation } = configure(client);
 

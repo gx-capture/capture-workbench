@@ -348,7 +348,7 @@ export class DesktopCaptureService {
     if (active.cancelRequested) return throwError(() => new Error('Upload was cancelled.'));
     const clientRequestId = active.clientRequestId ??= crypto.randomUUID();
     const options = this.captureOptionsFor(documentId, host);
-    return this.runtime.startStreamingCapture({
+    return this.runtime.startRecordingCapture({
       documentId,
       clientRequestId,
       structuringMode: 'runtime',
@@ -396,12 +396,12 @@ export class DesktopCaptureService {
     operation: CaptureOperation,
     active: ActiveCapture,
   ): Observable<CaptureOperation> {
-    const events$ = this.runtime.getStreamingEvents(
+    const events$ = this.runtime.getCaptureEvents(
       operation.captureId,
       active.lastEventSequence,
     ).pipe(
       tap((events) => events.forEach((event) => this.applyStreamingEvent(active, event))),
-      switchMap(() => this.runtime.getStreamingPartial(operation.captureId)),
+      switchMap(() => this.runtime.getPartial(operation.captureId)),
       tap((partial) => {
         if (partial) {
           this.streamingPartials.update((current) => {
@@ -414,14 +414,14 @@ export class DesktopCaptureService {
     );
     if (!active.cancelRequested || active.cancelSent) {
       return events$.pipe(
-        switchMap(() => this.runtime.getStreamingCapture(operation.captureId)),
+        switchMap(() => this.runtime.getCapture(operation.captureId)),
         tap((next) => this.rememberRecordingOperation(documentId, next)),
       );
     }
     active.cancelSent = true;
-    return this.runtime.cancelStreamingCapture(operation.captureId).pipe(
+    return this.runtime.cancelCapture(operation.captureId).pipe(
       switchMap(() => events$),
-      switchMap(() => this.runtime.getStreamingCapture(operation.captureId)),
+      switchMap(() => this.runtime.getCapture(operation.captureId)),
       tap((next) => this.rememberRecordingOperation(documentId, next)),
     );
   }
@@ -437,7 +437,7 @@ export class DesktopCaptureService {
     active.terminalErrorCode = operation.error?.code;
     active.terminalErrorMessage = operation.error?.message;
     const terminalData$: Observable<CaptureResult | null> = operation.status === 'completed'
-      ? this.runtime.getStreamingResult(operation.captureId)
+      ? this.runtime.getResult(operation.captureId)
       : of(null);
     return terminalData$.pipe(
       switchMap((terminalData) => this.library.updateCapture({
@@ -455,7 +455,7 @@ export class DesktopCaptureService {
         active.terminalCommitted = true;
         host.reloadDocumentState(documentId);
       }),
-      switchMap(() => this.runtime.deleteStreamingCapture(operation.captureId)),
+      switchMap(() => this.runtime.deleteCapture(operation.captureId)),
       switchMap(() => this.library.updateCapture({
         documentId,
         status: active.terminalStatus ?? 'failed',
@@ -504,7 +504,7 @@ export class DesktopCaptureService {
       const work$ = terminalCommitted
         ? this.retryRuntimeCleanup$(document)
         : active.streaming
-          ? this.runtime.getStreamingCapture(document.captureId).pipe(
+          ? this.runtime.getCapture(document.captureId).pipe(
             tap((operation) => {
               active.lastStage = operation.status;
               this.rememberRecordingOperation(document.documentId, operation);
@@ -765,7 +765,7 @@ export class DesktopCaptureService {
     if (operation.status === 'completed') {
       if (active.rawPersisted) {
         return this.runtime.getResult(operation.captureId).pipe(
-          switchMap((result) => this.library.updateCapture({
+          switchMap(({ result }) => this.library.updateCapture({
             documentId,
             captureId: operation.captureId,
             status: 'completed' as const,
@@ -781,7 +781,7 @@ export class DesktopCaptureService {
             return throwError(() => new Error(desktopMessages().missingRawResult));
           }
           return this.runtime.getResult(operation.captureId).pipe(
-            switchMap((result) => {
+            switchMap(({ result }) => {
               const update = {
                 documentId,
                 captureId: operation.captureId,
@@ -926,10 +926,7 @@ export class DesktopCaptureService {
   private retryRuntimeCleanup$(document: DesktopLibrarySummary): Observable<DesktopLibrarySummary> {
     const captureId = document.captureId;
     if (!captureId) return EMPTY;
-    const delete$ = isRecordingMediaType(document.mediaType)
-      ? this.runtime.deleteStreamingCapture(captureId)
-      : this.runtime.deleteCapture(captureId);
-    return delete$.pipe(
+    return this.runtime.deleteCapture(captureId).pipe(
       switchMap(() => this.library.updateCapture({
         documentId: document.documentId,
         status: committedTerminalStatus(document),

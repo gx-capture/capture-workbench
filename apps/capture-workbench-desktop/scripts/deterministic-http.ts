@@ -275,6 +275,8 @@ export function validateReady(response) {
     captureKinds: ['pdf', 'image', 'recording'],
     structuringModes: ['runtime', 'host'],
     supportsCancellation: true, supportsRawDiagnostics: true, maxUploadBytes,
+    maxChunkBytes: 4 * 1024 * 1024, checkpointIntervalMs: 300_000,
+    heartbeatIntervalMs: 5_000, stallTimeoutMs: 90_000, supportsProgressiveRecording: true,
   });
   const compute = response.body.ocrCompute;
   assert.deepEqual(Object.keys(compute).sort(), [

@@ -70,13 +70,17 @@ from capture_runtime.provisioning.infrastructure.engine_installation import (
     SpeechModelNotInstalledError,
 )
 from capture_runtime.speech.infrastructure.progressive_audio import (
+    DEFAULT_CHECKPOINT_MS,
     ProgressiveAudioError,
     ProgressiveSessionEvent,
 )
 from capture_runtime.speech.infrastructure.progressive_capture import (
     ProgressiveCaptureProcessor,
 )
-from capture_runtime.speech.infrastructure.progressive_decoder import ProgressiveDecoderError
+from capture_runtime.speech.infrastructure.progressive_decoder import (
+    ProgressiveDecoderError,
+    progressive_decoder_ready,
+)
 from capture_runtime.structuring.infrastructure.ollama.lifecycle_impl import RuntimeUnavailableError
 from capture_runtime.structuring.infrastructure.structuring import (
     StructuringValidationError,
@@ -88,6 +92,11 @@ from capture_runtime.structuring.infrastructure.structuring_provider import (
 from capture_runtime.worker_process import complete_worker_cleanup
 
 MAX_EVENT_SEGMENTS = 1_000
+# Advertised in the readiness capabilities: the event stream sends a heartbeat
+# this often, and a client treats a capture without news for the stall timeout
+# as stalled.
+EVENT_HEARTBEAT_INTERVAL_MS = 5_000
+EVENT_STALL_TIMEOUT_MS = 90_000
 # A speech session's end is not the capture's: the capture publishes its next
 # state (awaiting structuring, completed, failed or cancelled) once its status
 # has moved. Forwarding the session's end let hosts read `completed` while the
@@ -123,6 +132,9 @@ class StreamingCaptureService:
         self.repository = repository
         self._clock = clock
         self.max_chunk_bytes = max_chunk_bytes
+        self.checkpoint_interval_ms = DEFAULT_CHECKPOINT_MS
+        self.heartbeat_interval_ms = EVENT_HEARTBEAT_INTERVAL_MS
+        self.stall_timeout_ms = EVENT_STALL_TIMEOUT_MS
         self._processor = processor
         self._extractor = extractor
         self._structurer = structurer
@@ -153,6 +165,10 @@ class StreamingCaptureService:
             clock=clock,
             validate_document=_validate_runtime_document,
         )
+
+    def supports_progressive_recording(self) -> bool:
+        """Whether a recording can be transcribed while it is still uploading."""
+        return progressive_decoder_ready()
 
     def _cancel_task(self, capture_id: str) -> None:
         """Cancel a normalized task at most once, including while it stops workers."""

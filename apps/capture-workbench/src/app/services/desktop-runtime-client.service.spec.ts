@@ -8,6 +8,7 @@ import {
 import type {
   CaptureDocument,
   CaptureOperation,
+  CaptureResult,
   RawCapture,
   RuntimeReady,
 } from '@gx-capture/capture-workbench-ui';
@@ -23,7 +24,18 @@ const readyPayload: RuntimeReady = {
   apiVersion: '2.0',
   runtimeVersion: RUNTIME_VERSION,
   captureDocumentSchemaVersion: '2',
-  capabilities: {},
+  capabilities: {
+    captureKinds: ['pdf', 'image', 'recording'],
+    structuringModes: ['runtime', 'host'],
+    supportsCancellation: true,
+    supportsRawDiagnostics: true,
+    maxUploadBytes: 50 * 1024 * 1024,
+    maxChunkBytes: 4 * 1024 * 1024,
+    checkpointIntervalMs: 300_000,
+    heartbeatIntervalMs: 5_000,
+    stallTimeoutMs: 90_000,
+    supportsProgressiveRecording: true,
+  },
   ocrCompute: {
     apiVersion: '2.0',
     schemaVersion: '1',
@@ -200,7 +212,7 @@ describe('DesktopRuntimeClientService', () => {
     expect(service.pdfPageNumbers()).toBeUndefined();
   });
 
-  it('unwraps the v2 terminal result envelope for the one-shot capture path', () => {
+  it('reads the terminal result envelope through the one result command', () => {
     const operation = { captureId: 'capture-1', status: 'completed' } as CaptureOperation;
     const raw = { sourceText: 'OCR text' } as RawCapture;
     const result = { targetText: 'structured text' } as CaptureDocument;
@@ -219,12 +231,15 @@ describe('DesktopRuntimeClientService', () => {
     });
 
     const service = TestBed.inject(DesktopRuntimeClientService);
-    let received: CaptureDocument | undefined;
+    let received: CaptureResult | undefined;
     service.getResult('capture-1').subscribe((value) => received = value);
 
-    expect(received).toBe(result);
-    expect(received).not.toHaveProperty('operation');
-    expect(received).not.toHaveProperty('raw');
+    expect(received).toEqual({ operation, raw, result });
+    expect(commands.invoke).toHaveBeenCalledWith(
+      'runtime_get_result',
+      { input: { id: 'capture-1' } },
+      undefined,
+    );
   });
 
   it('gets the OCR projection through the fixed native command', () => {

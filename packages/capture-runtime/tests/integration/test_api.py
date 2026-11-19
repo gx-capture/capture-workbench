@@ -38,31 +38,25 @@ class StaticCapabilityProbe:
 
 
 def test_v2_health_auth_host_origin_and_version_handshake(client: TestClient) -> None:
-    unauthorized = client.get("/v2/streaming/health/ready", headers={"Authorization": ""})
+    unauthorized = client.get("/v2/health/ready", headers={"Authorization": ""})
     assert unauthorized.status_code == 401
     assert unauthorized.json()["error"]["code"] == "unauthorized"
     assert unauthorized.headers["www-authenticate"] == "Bearer"
 
-    invalid_host = client.get("/v2/streaming/health/ready", headers={"Host": "attacker.invalid"})
+    invalid_host = client.get("/v2/health/ready", headers={"Host": "attacker.invalid"})
     assert invalid_host.status_code == 400
     assert invalid_host.json()["error"]["code"] == "invalid_host"
 
-    invalid_origin = client.get(
-        "/v2/streaming/health/ready", headers={"Origin": "https://attacker.invalid"}
-    )
+    invalid_origin = client.get("/v2/health/ready", headers={"Origin": "https://attacker.invalid"})
     assert invalid_origin.status_code == 403
     assert invalid_origin.json()["error"]["code"] == "origin_not_allowed"
 
-    ready = client.get("/v2/streaming/health/ready", headers={"Origin": "tauri://localhost"})
-    assert ready.status_code == 200
-    payload = ready.json()
-    assert payload["protocolVersion"] == "2"
-    assert payload["captureKinds"] == ["pdf", "image", "recording"]
-    assert ready.headers["cache-control"] == "no-store"
-
-    runtime_ready = client.get("/v2/health/ready")
+    runtime_ready = client.get("/v2/health/ready", headers={"Origin": "tauri://localhost"})
     assert runtime_ready.status_code == 200
+    assert runtime_ready.headers["cache-control"] == "no-store"
     runtime_payload = runtime_ready.json()
+    assert runtime_payload["capabilities"]["captureKinds"] == ["pdf", "image", "recording"]
+    assert "protocolVersion" not in runtime_payload["capabilities"]
     assert runtime_payload["ready"] is True
     assert runtime_payload["apiVersion"] == "2.0"
     assert runtime_payload["captureDocumentSchemaVersion"] == "2"

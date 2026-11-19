@@ -8,16 +8,19 @@
       ],
       "title": "CaptureSourceKind",
       "type": "string"
+    },
+    "StructuringMode": {
+      "enum": [
+        "runtime",
+        "host"
+      ],
+      "title": "StructuringMode",
+      "type": "string"
     }
   },
   "additionalProperties": false,
+  "description": "What this runtime accepts: capture kinds, structuring modes and upload limits.",
   "properties": {
-    "protocolVersion": {
-      "const": "2",
-      "default": "2",
-      "title": "Protocolversion",
-      "type": "string"
-    },
     "captureKinds": {
       "items": {
         "$ref": "#/$defs/CaptureSourceKind"
@@ -26,10 +29,26 @@
       "title": "Capturekinds",
       "type": "array"
     },
-    "supportsProgressiveAudio": {
-      "default": true,
-      "title": "Supportsprogressiveaudio",
+    "structuringModes": {
+      "items": {
+        "$ref": "#/$defs/StructuringMode"
+      },
+      "minItems": 1,
+      "title": "Structuringmodes",
+      "type": "array"
+    },
+    "supportsCancellation": {
+      "title": "Supportscancellation",
       "type": "boolean"
+    },
+    "supportsRawDiagnostics": {
+      "title": "Supportsrawdiagnostics",
+      "type": "boolean"
+    },
+    "maxUploadBytes": {
+      "exclusiveMinimum": 0,
+      "title": "Maxuploadbytes",
+      "type": "integer"
     },
     "maxChunkBytes": {
       "exclusiveMinimum": 0,
@@ -51,14 +70,24 @@
       "exclusiveMinimum": 0,
       "title": "Stalltimeoutms",
       "type": "integer"
+    },
+    "supportsProgressiveRecording": {
+      "title": "Supportsprogressiverecording",
+      "type": "boolean"
     }
   },
   "required": [
+    "captureKinds",
+    "structuringModes",
+    "supportsCancellation",
+    "supportsRawDiagnostics",
+    "maxUploadBytes",
     "maxChunkBytes",
     "checkpointIntervalMs",
     "heartbeatIntervalMs",
-    "stallTimeoutMs"
+    "stallTimeoutMs",
+    "supportsProgressiveRecording"
   ],
-  "title": "RuntimeStreamingCapabilities",
+  "title": "RuntimeCapabilities",
   "type": "object"
 }

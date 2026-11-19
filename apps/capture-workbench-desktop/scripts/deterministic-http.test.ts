@@ -17,6 +17,8 @@ function readyResponse() {
     capabilities: {
       captureKinds: ['pdf', 'image', 'recording'], structuringModes: ['runtime', 'host'],
       supportsCancellation: true, supportsRawDiagnostics: true, maxUploadBytes: DETERMINISTIC_MAX_UPLOAD_BYTES,
+      maxChunkBytes: 4 * 1024 * 1024, checkpointIntervalMs: 300_000,
+      heartbeatIntervalMs: 5_000, stallTimeoutMs: 90_000, supportsProgressiveRecording: true,
     },
     ocrCompute: {
       apiVersion: '2.0', schemaVersion: '1', service: 'capture-runtime', runtimeVersion: SYNTHETIC_RUNTIME_VERSION,

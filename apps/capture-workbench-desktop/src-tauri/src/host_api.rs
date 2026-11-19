@@ -9,9 +9,9 @@ use crate::{
         LibraryDiscardSelectionsRequest, LibraryDocumentRequest, LibraryEdits,
         LibraryExportPayload, LibraryExportRequest, LibraryImportSelectionRequest,
         LibraryListRequest, LibrarySaveEditsRequest, LibrarySourceSelectionBatch,
-        RuntimeCancelUploadInput, RuntimeCreateCaptureInput, RuntimeIdInput,
-        RuntimeInstallationStartInput, RuntimeRequirementInput, RuntimeStreamingCaptureInput,
-        RuntimeStreamingEventsInput, SourceSelectionKind, StructuringModelInstallationStartInput,
+        RuntimeCancelUploadInput, RuntimeCaptureEventsInput, RuntimeCreateCaptureInput,
+        RuntimeIdInput, RuntimeInstallationStartInput, RuntimeRecordingCaptureInput,
+        RuntimeRequirementInput, SourceSelectionKind, StructuringModelInstallationStartInput,
     },
     library::LibraryStore,
     resources::RuntimeExecutablePaths,
@@ -193,14 +193,14 @@ pub(crate) fn runtime_create_capture(
     runtime_client::create_capture(state, library, input, &upload)
 }
 
-pub(crate) fn runtime_start_streaming_capture(
+pub(crate) fn runtime_start_recording_capture(
     state: &DesktopState,
     library: &LibraryStore,
     uploads: &Arc<UploadCancellations>,
-    input: RuntimeStreamingCaptureInput,
+    input: RuntimeRecordingCaptureInput,
 ) -> Result<Value, String> {
     let upload = uploads.begin(&input.client_request_id)?;
-    runtime_client::start_streaming_capture(state, library, input, &upload)
+    runtime_client::start_recording_capture(state, library, input, &upload)
 }
 
 pub(crate) fn runtime_get_capture(
@@ -210,39 +210,25 @@ pub(crate) fn runtime_get_capture(
     runtime_client::capture(state, input)
 }
 
-pub(crate) fn runtime_get_streaming_capture(
+pub(crate) fn runtime_get_capture_events(
+    state: &DesktopState,
+    input: RuntimeCaptureEventsInput,
+) -> Result<Value, String> {
+    runtime_client::capture_events(state, input)
+}
+
+pub(crate) fn runtime_get_partial(
     state: &DesktopState,
     input: RuntimeIdInput,
 ) -> Result<Value, String> {
-    runtime_client::streaming_capture(state, input)
+    runtime_client::capture_partial(state, input)
 }
 
-pub(crate) fn runtime_get_streaming_events(
-    state: &DesktopState,
-    input: RuntimeStreamingEventsInput,
-) -> Result<Value, String> {
-    runtime_client::streaming_events(state, input)
-}
-
-pub(crate) fn runtime_get_streaming_partial(
+pub(crate) fn runtime_structure_capture(
     state: &DesktopState,
     input: RuntimeIdInput,
 ) -> Result<Value, String> {
-    runtime_client::streaming_partial(state, input)
-}
-
-pub(crate) fn runtime_get_streaming_result(
-    state: &DesktopState,
-    input: RuntimeIdInput,
-) -> Result<Value, String> {
-    runtime_client::streaming_result(state, input)
-}
-
-pub(crate) fn runtime_structure_streaming_capture(
-    state: &DesktopState,
-    input: RuntimeIdInput,
-) -> Result<Value, String> {
-    runtime_client::streaming_structure(state, input)
+    runtime_client::structure_capture(state, input)
 }
 
 pub(crate) fn runtime_cancel_capture(
@@ -250,13 +236,6 @@ pub(crate) fn runtime_cancel_capture(
     input: RuntimeIdInput,
 ) -> Result<Value, String> {
     runtime_client::cancel_capture(state, input)
-}
-
-pub(crate) fn runtime_cancel_streaming_capture(
-    state: &DesktopState,
-    input: RuntimeIdInput,
-) -> Result<Value, String> {
-    runtime_client::cancel_streaming_capture(state, input)
 }
 
 pub(crate) fn runtime_get_raw(
@@ -285,11 +264,4 @@ pub(crate) fn runtime_delete_capture(
     input: RuntimeIdInput,
 ) -> Result<Value, String> {
     runtime_client::delete_capture(state, input)
-}
-
-pub(crate) fn runtime_delete_streaming_capture(
-    state: &DesktopState,
-    input: RuntimeIdInput,
-) -> Result<Value, String> {
-    runtime_client::delete_streaming_capture(state, input)
 }

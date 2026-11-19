@@ -77,7 +77,7 @@ sequenceDiagram
   UI->>Tauri: library_import_selection（selectionToken）
   Tauri->>Lib: 寫入來源檔，狀態 queued
   Note over UI,Lib: /ocr、/asr 停在這裡，直到對應辨識功能就緒
-  UI->>Tauri: runtime_create_capture 或 runtime_start_streaming_capture
+  UI->>Tauri: runtime_create_capture 或 runtime_start_recording_capture
   Tauri->>RT: 上傳來源，開始擷取
   RT-->>Tauri: 進度、原始文字、結果
   Tauri-->>UI: 進度與結果

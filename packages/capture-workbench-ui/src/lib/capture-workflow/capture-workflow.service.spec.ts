@@ -51,13 +51,13 @@ describe('CaptureWorkflowService', () => {
     const firstEvents = new Subject<CaptureEvent>();
     const secondEvents = new Subject<CaptureEvent>();
     let streamIndex = 0;
-    const startStreamingCapture = vi.fn(() =>
+    const startCapture = vi.fn(() =>
       of(streamingOperation('extracting')),
     );
     const captureEvents = vi.fn<NonNullable<CaptureClient['captureEvents']>>(
       () => (streamIndex++ === 0 ? firstEvents : secondEvents).asObservable(),
     );
-    const client = fakeClient({ startStreamingCapture, captureEvents });
+    const client = fakeClient({ startCapture, captureEvents });
     configure(client, { concurrency: 1 });
 
     workflow.enqueueFiles([
@@ -66,14 +66,14 @@ describe('CaptureWorkflowService', () => {
     ]);
 
     await vi.waitFor(() => expect(captureEvents).toHaveBeenCalledOnce());
-    expect(startStreamingCapture).toHaveBeenCalledOnce();
+    expect(startCapture).toHaveBeenCalledOnce();
     expect(workflow.tasks().map((task) => task.status)).toEqual([
       'processing',
       'queued',
     ]);
 
     firstEvents.next(streamingEvent('completed', 'completed'));
-    await vi.waitFor(() => expect(startStreamingCapture).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(startCapture).toHaveBeenCalledTimes(2));
     expect(workflow.tasks().map((task) => task.status)).toEqual([
       'completed',
       'processing',
@@ -86,12 +86,12 @@ describe('CaptureWorkflowService', () => {
         'completed',
       ]),
     );
-    expect(client.getStreamingResult).toHaveBeenCalledTimes(2);
+    expect(client.getResult).toHaveBeenCalledTimes(2);
   });
 
   it('completes a capture through the public workflow facade', async () => {
     const client = fakeClient({
-      startStreamingCapture: vi.fn(() => of(streamingOperation('completed'))),
+      startCapture: vi.fn(() => of(streamingOperation('completed'))),
     });
     const completed = vi.fn();
     workflow.events.subscribe((event) => {
@@ -108,8 +108,8 @@ describe('CaptureWorkflowService', () => {
         expect.objectContaining({ status: 'completed', stage: 'completed' }),
       ),
     );
-    expect(client.startStreamingCapture).toHaveBeenCalledOnce();
-    expect(client.getStreamingResult).toHaveBeenCalledWith(
+    expect(client.startCapture).toHaveBeenCalledOnce();
+    expect(client.getResult).toHaveBeenCalledWith(
       'capture-1',
       expect.any(AbortSignal),
     );
@@ -125,19 +125,19 @@ describe('CaptureWorkflowService', () => {
     const captureEvents = vi.fn<NonNullable<CaptureClient['captureEvents']>>(
       () => (streamIndex++ === 0 ? firstEvents : secondEvents).asObservable(),
     );
-    const getStreamingCapture = vi
-      .fn<NonNullable<CaptureClient['getStreamingCapture']>>()
+    const getCapture = vi
+      .fn<NonNullable<CaptureClient['getCapture']>>()
       .mockReturnValueOnce(
         of({ ...streamingOperation('extracting', 0.4), lastEventSequence: 7 }),
       )
       .mockReturnValueOnce(of(streamingOperation('completed')));
     const client = fakeClient({
-      startStreamingCapture: vi.fn(() =>
+      startCapture: vi.fn(() =>
         of(streamingOperation('extracting', 0.1)),
       ),
       captureEvents,
-      getStreamingCapture,
-      getStreamingPartial: vi.fn(() => of(PARTIAL)),
+      getCapture,
+      getPartial: vi.fn(() => of(PARTIAL)),
     });
     configure(client);
 
@@ -146,7 +146,7 @@ describe('CaptureWorkflowService', () => {
 
     firstEvents.next(streamingEvent('resync_required', 'resync'));
     await vi.waitFor(() => expect(captureEvents).toHaveBeenCalledTimes(2));
-    expect(client.getStreamingPartial).toHaveBeenCalledWith(
+    expect(client.getPartial).toHaveBeenCalledWith(
       'capture-1',
       expect.any(AbortSignal),
     );
@@ -160,7 +160,7 @@ describe('CaptureWorkflowService', () => {
     await vi.waitFor(() =>
       expect(workflow.tasks()[0]?.status).toBe('completed'),
     );
-    expect(client.getStreamingResult).toHaveBeenCalledOnce();
+    expect(client.getResult).toHaveBeenCalledOnce();
   });
 
   it('cancels an active capture and ignores a late terminal event', async () => {
@@ -169,7 +169,7 @@ describe('CaptureWorkflowService', () => {
       () => events.asObservable(),
     );
     const client = fakeClient({
-      startStreamingCapture: vi.fn(() =>
+      startCapture: vi.fn(() =>
         of(streamingOperation('extracting')),
       ),
       captureEvents,
@@ -191,7 +191,7 @@ describe('CaptureWorkflowService', () => {
       expect.objectContaining({ status: 'canceled', stage: 'cancelled' }),
     );
     expect(streamSignal?.aborted).toBe(true);
-    expect(client.cancelStreamingCapture).toHaveBeenCalledWith(
+    expect(client.cancelCapture).toHaveBeenCalledWith(
       'capture-1',
       expect.any(AbortSignal),
     );
@@ -203,16 +203,16 @@ describe('CaptureWorkflowService', () => {
     await vi.waitFor(() =>
       expect(workflow.tasks()[0]?.status).toBe('canceled'),
     );
-    expect(client.getStreamingResult).not.toHaveBeenCalled();
+    expect(client.getResult).not.toHaveBeenCalled();
   });
 
   it('retries an uncertain start through the public enqueue seam', async () => {
     const source = new File(['pdf'], 'retry.pdf', { type: 'application/pdf' });
-    const startStreamingCapture = vi
-      .fn<NonNullable<CaptureClient['startStreamingCapture']>>()
+    const startCapture = vi
+      .fn<NonNullable<CaptureClient['startCapture']>>()
       .mockReturnValueOnce(throwError(() => new TypeError('connection reset')))
       .mockReturnValueOnce(of(streamingOperation('completed')));
-    const client = fakeClient({ startStreamingCapture });
+    const client = fakeClient({ startCapture });
     configure(client);
 
     workflow.enqueueFiles([source]);
@@ -220,9 +220,9 @@ describe('CaptureWorkflowService', () => {
       expect(workflow.tasks()[0]?.status).toBe('completed'),
     );
 
-    expect(startStreamingCapture).toHaveBeenCalledTimes(2);
-    const firstRequest = startStreamingCapture.mock.calls[0]?.[0];
-    const retryRequest = startStreamingCapture.mock.calls[1]?.[0];
+    expect(startCapture).toHaveBeenCalledTimes(2);
+    const firstRequest = startCapture.mock.calls[0]?.[0];
+    const retryRequest = startCapture.mock.calls[1]?.[0];
     expect(firstRequest).toBe(retryRequest);
     expect(firstRequest?.file).toBe(source);
     expect(firstRequest?.clientRequestId).toMatch(/^[0-9a-f-]{36}$/u);
@@ -230,7 +230,7 @@ describe('CaptureWorkflowService', () => {
 
   it('removes a completed capture through the configured client seam', async () => {
     const client = fakeClient({
-      startStreamingCapture: vi.fn(() =>
+      startCapture: vi.fn(() =>
         of(streamingOperation('completed')),
       ),
     });
@@ -246,7 +246,7 @@ describe('CaptureWorkflowService', () => {
     workflow.remove(taskId);
     await vi.waitFor(() => expect(workflow.tasks()).toHaveLength(0));
 
-    expect(client.deleteStreamingCapture).toHaveBeenCalledWith('capture-1');
+    expect(client.deleteCapture).toHaveBeenCalledWith('capture-1');
   });
 
   it('holds host structuring for review and completes after confirmation', async () => {
@@ -254,7 +254,7 @@ describe('CaptureWorkflowService', () => {
       of(DOCUMENT),
     );
     const client = fakeClient({
-      startStreamingCapture: vi.fn(() =>
+      startCapture: vi.fn(() =>
         of(streamingOperation('awaiting_structuring', 0.7)),
       ),
     });
@@ -306,7 +306,7 @@ describe('CaptureWorkflowService', () => {
         },
       }),
     );
-    expect(client.commitStreamingStructuredResult).toHaveBeenCalledOnce();
+    expect(client.commitStructure).toHaveBeenCalledOnce();
     expect(workflow.tasks()[0]?.result).toEqual(DOCUMENT);
   });
 
@@ -321,7 +321,7 @@ describe('CaptureWorkflowService', () => {
       },
     };
     const client = fakeClient({
-      startStreamingCapture: vi.fn(() => of(failedOperation)),
+      startCapture: vi.fn(() => of(failedOperation)),
     });
     const failed = vi.fn();
     workflow.events.subscribe((event) => {
@@ -350,6 +350,6 @@ describe('CaptureWorkflowService', () => {
         error: expect.objectContaining({ code: 'capture_failed' }),
       }),
     );
-    expect(client.getStreamingResult).not.toHaveBeenCalled();
+    expect(client.getResult).not.toHaveBeenCalled();
   });
 });

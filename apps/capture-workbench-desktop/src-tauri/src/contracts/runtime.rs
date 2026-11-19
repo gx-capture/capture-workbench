@@ -25,7 +25,7 @@ pub(crate) struct RuntimeCreateCaptureInput {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct RuntimeStreamingCaptureInput {
+pub(crate) struct RuntimeRecordingCaptureInput {
     pub document_id: String,
     pub client_request_id: String,
     pub structuring_mode: String,
@@ -39,7 +39,7 @@ pub(crate) struct RuntimeStreamingCaptureInput {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct RuntimeStreamingEventsInput {
+pub(crate) struct RuntimeCaptureEventsInput {
     pub id: String,
     pub last_event_id: Option<u64>,
 }

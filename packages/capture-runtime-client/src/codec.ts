@@ -25,7 +25,6 @@ const REQUIREMENT_IDS: ReadonlySet<unknown> = new Set<CaptureRequirementId>([
 /** Generated wire models whose top-level fields are checked before casting. */
 export type RuntimeResponseModel =
   | 'RuntimeReady'
-  | 'RuntimeStreamingCapabilities'
   | 'RuntimeRequirement'
   | 'RuntimeRequirements'
   | 'RuntimeInstallation'
@@ -44,7 +43,6 @@ export type RuntimeResponseModel =
 
 const MODEL_FIELDS: Record<RuntimeResponseModel, { readonly required: readonly string[]; readonly optional: readonly string[] }> = {
   RuntimeReady: { required: ['ready', 'service', 'apiVersion', 'runtimeVersion', 'captureDocumentSchemaVersion', 'capabilities'], optional: ['message', 'captureDocumentSchemaSha256', 'contractSetVersion', 'ocrCompute'] },
-  RuntimeStreamingCapabilities: { required: ['protocolVersion', 'maxChunkBytes', 'checkpointIntervalMs', 'heartbeatIntervalMs', 'stallTimeoutMs'], optional: ['captureKinds', 'supportsProgressiveAudio'] },
   RuntimeRequirement: { required: ['requirementId', 'kind', 'displayName', 'status', 'requiredFor', 'installStrategy'], optional: ['optional', 'detail', 'artifact', 'downloadBytes'] },
   RuntimeRequirements: { required: ['items'], optional: [] },
   RuntimeInstallation: { required: ['installationId', 'requirementId', 'status', 'progress', 'createdAt', 'updatedAt'], optional: ['error', 'completedAt', 'downloadBytes', 'downloadedBytes'] },
@@ -100,9 +98,8 @@ function validateModelShape(value: unknown, model: RuntimeResponseModel): void {
   if (model === 'CaptureOcrProjection') validateCaptureOcrProjection(record);
   if (model === 'RuntimeReady') {
     validateRuntimeReady(record);
-    validateCaptureKinds(asRecord(record['capabilities'], 'RuntimeReady capabilities')['captureKinds']);
+    validateRuntimeCapabilities(asRecord(record['capabilities'], 'RuntimeReady capabilities'));
   }
-  if (model === 'RuntimeStreamingCapabilities') validateCaptureKinds(record['captureKinds']);
   if (model === 'RuntimeInstallation') {
     if (!REQUIREMENT_IDS.has(record['requirementId'])) {
       throw new CaptureRuntimeProtocolError('Capture Runtime returned invalid RuntimeInstallation requirement identifier.');
@@ -701,12 +698,43 @@ function assertCaptureKind(kind: unknown, label: string): void {
   }
 }
 
-function validateCaptureKinds(value: unknown): void {
-  if (value === undefined) return;
-  if (!Array.isArray(value)) {
+/** The readiness capabilities: what the runtime accepts and its upload and event limits. */
+function validateRuntimeCapabilities(record: Record<string, unknown>): void {
+  assertExactFields(
+    record,
+    [
+      'captureKinds',
+      'structuringModes',
+      'supportsCancellation',
+      'supportsRawDiagnostics',
+      'maxUploadBytes',
+      'maxChunkBytes',
+      'checkpointIntervalMs',
+      'heartbeatIntervalMs',
+      'stallTimeoutMs',
+      'supportsProgressiveRecording',
+    ],
+    'RuntimeReady capabilities',
+  );
+  const kinds = record['captureKinds'];
+  if (!Array.isArray(kinds) || kinds.length < 1) {
     throw new CaptureRuntimeProtocolError('Capture Runtime returned invalid readiness capture kinds.');
   }
-  for (const kind of value) assertCaptureKind(kind, 'readiness capability');
+  for (const kind of kinds) assertCaptureKind(kind, 'readiness capability');
+  const modes = record['structuringModes'];
+  if (!Array.isArray(modes) || modes.some((mode) => mode !== 'runtime' && mode !== 'host')) {
+    throw new CaptureRuntimeProtocolError('Capture Runtime returned invalid readiness structuring modes.');
+  }
+  for (const field of ['maxUploadBytes', 'maxChunkBytes', 'checkpointIntervalMs', 'heartbeatIntervalMs', 'stallTimeoutMs']) {
+    if (!isSafeIntegerAtLeast(record[field], 1)) {
+      throw new CaptureRuntimeProtocolError(`Capture Runtime returned invalid readiness ${field}.`);
+    }
+  }
+  for (const field of ['supportsCancellation', 'supportsRawDiagnostics', 'supportsProgressiveRecording']) {
+    if (typeof record[field] !== 'boolean') {
+      throw new CaptureRuntimeProtocolError(`Capture Runtime returned invalid readiness ${field}.`);
+    }
+  }
 }
 
 /** Download bytes come as a pair, and the count never passes the total. */

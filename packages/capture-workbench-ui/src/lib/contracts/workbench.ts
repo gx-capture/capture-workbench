@@ -26,6 +26,7 @@ export interface ResolvedCaptureWorkbenchConfig {
   readonly reviewEditable: boolean;
   readonly identifySpeakers: boolean;
   readonly spokenLanguage?: SpokenLanguage;
+  readonly pdfPageNumbers?: readonly number[];
   readonly width: string;
   readonly height: string;
   readonly density: 'compact' | 'comfortable';

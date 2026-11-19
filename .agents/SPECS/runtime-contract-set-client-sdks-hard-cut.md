@@ -22,7 +22,7 @@ agree on the same contract-set digest.
   catalog.
 - `ProblemRegistry` defines each remote code, HTTP status, category, retry
   policy, and details schema exactly once.
-- The active HTTP surface covers readiness, streaming readiness, runtime
+- The active HTTP surface covers readiness (with its capabilities), runtime
   requirements/installations/model options, ingestion, capture, structuring,
   results, cancellation/deletion, and SSE events.
 - Runtime startup fails closed when registered routes, models, operations, or

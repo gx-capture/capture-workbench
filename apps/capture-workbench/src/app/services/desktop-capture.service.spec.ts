@@ -434,7 +434,7 @@ describe('DesktopCaptureService', () => {
     const getOcr = vi.fn(() => of(ocrProjection(captureId, 'completed')).pipe(
       finalize(() => events.push('runtime:getOcr:complete')),
     ));
-    const getResult = vi.fn(() => of(result));
+    const getResult = vi.fn(() => of({ operation: completedOperation, raw, result }));
     const deleteCapture = vi.fn(() => of(undefined).pipe(
       finalize(() => events.push('runtime:delete:complete')),
     ));
@@ -764,11 +764,11 @@ describe('DesktopCaptureService', () => {
     (mediaType) => {
       const pending = new Subject<CaptureOperation>();
       const createCapture = vi.fn((_documentId: string, _clientRequestId: string) => pending);
-      const startStreamingCapture = vi.fn((_input: { clientRequestId: string }) => pending);
+      const startRecordingCapture = vi.fn((_input: { clientRequestId: string }) => pending);
       const cancelUpload = vi.fn(() => of(undefined));
       const updateCapture = vi.fn((update: Record<string, unknown>) =>
         of({ ...summary, mediaType, ...update }));
-      const client = runtimeStub({ createCapture, startStreamingCapture, cancelUpload });
+      const client = runtimeStub({ createCapture, startRecordingCapture, cancelUpload });
       const store = initializeCapture(libraryStub({
         get: vi.fn(() => of({ ...summary, mediaType })),
         list: vi.fn(() => of([{ ...summary, mediaType }])),
@@ -777,7 +777,7 @@ describe('DesktopCaptureService', () => {
 
       store.service.retry$(summary.documentId, store.host).subscribe();
       const requestId = mediaType === 'audio/mpeg'
-        ? startStreamingCapture.mock.calls[0][0].clientRequestId
+        ? startRecordingCapture.mock.calls[0][0].clientRequestId
         : createCapture.mock.calls[0][1];
       store.service.cancel(summary.documentId);
       store.service.cancel(summary.documentId);
@@ -1583,7 +1583,7 @@ function runtimeStub(overrides: Record<string, unknown> = {}) {
     getCapture: vi.fn(() => of(completedOperation)),
     cancelCapture: vi.fn(() => of(cancelledOperation)),
     getRaw: vi.fn(() => of(raw)),
-    getResult: vi.fn(() => of(result)),
+    getResult: vi.fn(() => of({ operation: completedOperation, raw, result })),
     getOcr: vi.fn((captureId: string) => of(ocrProjection(
       captureId,
       failedOcrCaptureIds.has(captureId) ? 'failed' : 'completed',

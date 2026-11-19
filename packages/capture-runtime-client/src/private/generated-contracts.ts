@@ -364,6 +364,19 @@ export interface RuntimeArtifactDescriptor {
   readonly sha256: string;
 }
 
+export interface RuntimeCapabilities {
+  readonly captureKinds: readonly (CaptureSourceKind)[];
+  readonly structuringModes: readonly (StructuringMode)[];
+  readonly supportsCancellation: boolean;
+  readonly supportsRawDiagnostics: boolean;
+  readonly maxUploadBytes: number;
+  readonly maxChunkBytes: number;
+  readonly checkpointIntervalMs: number;
+  readonly heartbeatIntervalMs: number;
+  readonly stallTimeoutMs: number;
+  readonly supportsProgressiveRecording: boolean;
+}
+
 export interface RuntimeInstallation {
   readonly installationId: string;
   readonly requirementId: "text-recognition" | "speech-recognition" | "speaker-diarization" | "vertical-japanese-reader" | "structuring-runtime" | "structuring-model";
@@ -389,7 +402,7 @@ export interface RuntimeReady {
   readonly captureDocumentSchemaVersion: "2";
   readonly captureDocumentSchemaSha256?: string | null;
   readonly contractSetVersion: "2";
-  readonly capabilities?: Record<string, unknown>;
+  readonly capabilities: RuntimeCapabilities;
   readonly ocrCompute?: OcrComputePreflight | null;
   readonly message?: string | null;
 }
@@ -409,16 +422,6 @@ export interface RuntimeRequirement {
 
 export interface RuntimeRequirements {
   readonly items: readonly (RuntimeRequirement)[];
-}
-
-export interface RuntimeStreamingCapabilities {
-  readonly protocolVersion: "2";
-  readonly captureKinds?: readonly (CaptureSourceKind)[];
-  readonly supportsProgressiveAudio?: boolean;
-  readonly maxChunkBytes: number;
-  readonly checkpointIntervalMs: number;
-  readonly heartbeatIntervalMs: number;
-  readonly stallTimeoutMs: number;
 }
 
 export interface StartCapture {
@@ -532,7 +535,7 @@ export interface TimeLocator {
   readonly endMs: number;
 }
 
-export type CaptureContractName = "CaptureBlock" | "CaptureDocument" | "CaptureEngine" | "CaptureEvent" | "CaptureOcrProjection" | "CaptureOperation" | "CaptureResult" | "CaptureSource" | "CaptureSpeaker" | "ErrorBody" | "ErrorEnvelope" | "FinalizeIngestion" | "Ingestion" | "OcrBox" | "OcrComputePreflight" | "OcrPageProjection" | "OcrPageScope" | "OcrPoint" | "OcrProvenance" | "OcrProvenanceResolved" | "OcrProvenanceUnavailable" | "OcrRaster" | "OpenIngestion" | "OpenStructuringSession" | "OperationFailure" | "PageLocator" | "PartialCapture" | "RawCapture" | "RawCaptureSegment" | "ReportStructuringFailure" | "RuntimeArtifactDescriptor" | "RuntimeInstallation" | "RuntimeInstallations" | "RuntimeReady" | "RuntimeRequirement" | "RuntimeRequirements" | "RuntimeStreamingCapabilities" | "StartCapture" | "StartRuntimeInstallation" | "StartStructuringModelInstallation" | "StructuringBatch" | "StructuringModelInstallation" | "StructuringModelInstallations" | "StructuringModelOption" | "StructuringModelOptions" | "StructuringProviderCapability" | "StructuringSemanticBlock" | "StructuringSession" | "SubmitStructuringBatch" | "TimeLocator";
+export type CaptureContractName = "CaptureBlock" | "CaptureDocument" | "CaptureEngine" | "CaptureEvent" | "CaptureOcrProjection" | "CaptureOperation" | "CaptureResult" | "CaptureSource" | "CaptureSpeaker" | "ErrorBody" | "ErrorEnvelope" | "FinalizeIngestion" | "Ingestion" | "OcrBox" | "OcrComputePreflight" | "OcrPageProjection" | "OcrPageScope" | "OcrPoint" | "OcrProvenance" | "OcrProvenanceResolved" | "OcrProvenanceUnavailable" | "OcrRaster" | "OpenIngestion" | "OpenStructuringSession" | "OperationFailure" | "PageLocator" | "PartialCapture" | "RawCapture" | "RawCaptureSegment" | "ReportStructuringFailure" | "RuntimeArtifactDescriptor" | "RuntimeCapabilities" | "RuntimeInstallation" | "RuntimeInstallations" | "RuntimeReady" | "RuntimeRequirement" | "RuntimeRequirements" | "StartCapture" | "StartRuntimeInstallation" | "StartStructuringModelInstallation" | "StructuringBatch" | "StructuringModelInstallation" | "StructuringModelInstallations" | "StructuringModelOption" | "StructuringModelOptions" | "StructuringProviderCapability" | "StructuringSemanticBlock" | "StructuringSession" | "SubmitStructuringBatch" | "TimeLocator";
 
 export type CaptureContractInvariant = {
   readonly id: string;
@@ -667,12 +670,12 @@ export const CAPTURE_CONTRACT_EXTRA_POLICIES = {
   "RawCaptureSegment": "forbid",
   "ReportStructuringFailure": "forbid",
   "RuntimeArtifactDescriptor": "forbid",
+  "RuntimeCapabilities": "forbid",
   "RuntimeInstallation": "forbid",
   "RuntimeInstallations": "forbid",
   "RuntimeReady": "forbid",
   "RuntimeRequirement": "forbid",
   "RuntimeRequirements": "forbid",
-  "RuntimeStreamingCapabilities": "forbid",
   "StartCapture": "forbid",
   "StartRuntimeInstallation": "forbid",
   "StartStructuringModelInstallation": "forbid",

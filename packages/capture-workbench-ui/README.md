@@ -58,10 +58,10 @@ bootstrapApplication(App, {
 
 When that backend also invokes the host's existing LLM provider, configure
 `structuringMode: 'host'` and `hostStructuringOwner: 'client'`. The v2 client
-uses `captureEvents()` for authenticated SSE and the streaming operation
+uses `captureEvents()` for authenticated SSE and the capture operation
 methods for snapshot/reconciliation. The host commits a validated candidate
-with `commitStreamingStructuredResult()` or reports a terminal failure with
-`reportStreamingStructuringFailure()`; the package never receives a bearer
+with `commitStructure()` or reports a terminal failure with
+`reportStructuringFailure()`; the package never receives a bearer
 token or invokes an LLM provider in the WebView.
 
 Do not put a sidecar bearer token in a URL, browser log, or `localStorage`.
@@ -93,10 +93,11 @@ after a reconnect; the runtime suppresses already-delivered events. Terminal
 `resync_required` tells consumers to reload the capture snapshot.
 
 Host adapters that proxy the v2 endpoint must implement `captureEvents`,
-`startStreamingCapture`, `getStreamingCapture`, `cancelStreamingCapture`,
-`getStreamingPartial`, `getStreamingResult`,
-`commitStreamingStructuredResult`, `reportStreamingStructuringFailure`, and
-`deleteStreamingCapture`. The first-party client exposes only the canonical v2
+`startCapture`, `getCapture`, `cancelCapture`,
+`getPartial`, `getRaw`, `getResult`,
+`commitStructure`, `reportStructuringFailure`, and
+`deleteCapture`, the same verbs as the TypeScript SDK. A client that lacks one
+fails each capture with `capture_client_unavailable`. The first-party client exposes only the canonical v2
 capture methods and public DTOs. Generated wire codecs remain private
 implementation details.
 
@@ -287,3 +288,11 @@ set `spokenLanguage` in the configuration to one of `zh`, `yue`, `en`, `ja`, `ko
 `fr`, `de`, `it`, `pt`, `ru` or `es`, for example `spokenLanguage: 'ja'` for
 Japanese listening tests. The workbench sends it only with recordings; PDFs and
 images are captured as before. Omitting it keeps Chinese.
+
+## Pages of a PDF
+
+Set `pdfPageNumbers` in the configuration to read only some pages of PDF
+captures: one-based source pages in ascending order without duplicates, for
+example `pdfPageNumbers: [3, 7]`. OCR pages and page locators keep those
+numbers. The workbench sends the selection only with PDFs; images and recordings
+ignore it. Omitting it reads every page.

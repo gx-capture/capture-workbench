@@ -130,7 +130,7 @@ describe('AsrQueueStore', () => {
     const runtime = {
       ready,
       ocrCompute: signal(null),
-      startStreamingCapture: vi.fn(() => new Subject<CaptureOperation>()),
+      startRecordingCapture: vi.fn(() => new Subject<CaptureOperation>()),
     };
 
     const library = {
@@ -463,7 +463,7 @@ describe('AsrQueueStore', () => {
     store.attach();
     TestBed.tick();
 
-    expect(runtime.startStreamingCapture).toHaveBeenCalledExactlyOnceWith({
+    expect(runtime.startRecordingCapture).toHaveBeenCalledExactlyOnceWith({
       documentId: document.documentId,
       clientRequestId: expect.any(String),
       structuringMode: 'runtime',

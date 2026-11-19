@@ -31,7 +31,7 @@ def test_default_contract_set_is_deterministic_and_covers_v2() -> None:
     assert first.sha256 == hashlib.sha256(first.bundle_bytes).hexdigest()
     assert first.index["sha256"] == first.sha256
     assert {surface["id"] for surface in first.bundle["surfaces"]} == {"v2"}
-    assert len(first.bundle["operations"]) == 33
+    assert len(first.bundle["operations"]) == 32
     assert {operation["surface"] for operation in first.bundle["operations"]} == {"v2"}
     assert any(
         operation["path"] == "/v2/captures/{capture_id}/events"
@@ -242,13 +242,30 @@ def test_executable_packaging_embeds_contract_bytes_and_digest() -> None:
 
 def test_contract_set_does_not_change_with_the_release_version() -> None:
     from capture_runtime.constants import RUNTIME_VERSION
-    from capture_runtime.contracts import RuntimeReady
+    from capture_runtime.contracts import (
+        CaptureSourceKind,
+        RuntimeCapabilities,
+        RuntimeReady,
+        StructuringMode,
+    )
 
     bundle = load_contract_set().bundle_bytes
     assert RUNTIME_VERSION.encode() not in bundle
 
+    capabilities = RuntimeCapabilities(
+        capture_kinds=[CaptureSourceKind.PDF],
+        structuring_modes=[StructuringMode.HOST],
+        supports_cancellation=True,
+        supports_raw_diagnostics=True,
+        max_upload_bytes=1,
+        max_chunk_bytes=1,
+        checkpoint_interval_ms=1,
+        heartbeat_interval_ms=1,
+        stall_timeout_ms=1,
+        supports_progressive_recording=False,
+    )
     ready = RuntimeReady.model_validate(
-        RuntimeReady(ready=True).model_dump(mode="json", by_alias=True)
+        RuntimeReady(ready=True, capabilities=capabilities).model_dump(mode="json", by_alias=True)
         | {"runtimeVersion": "12.34.56"}
     )
     assert ready.runtime_version == "12.34.56"

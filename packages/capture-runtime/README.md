@@ -105,9 +105,10 @@ Speech recognition and speaker diarization engine provenance records the result 
 
 ## Public endpoints
 
-All runtime endpoints require the configured Bearer token. Runtime readiness is
-advertised at `GET /v2/health/ready`; streaming capabilities are advertised at
-`GET /v2/streaming/health/ready`.
+All runtime endpoints require the configured Bearer token. `GET /v2/health/ready`
+returns one readiness document whose `capabilities` list the capture kinds,
+structuring modes, upload and chunk limits, event timing, and whether a recording
+can be transcribed while it uploads (`supportsProgressiveRecording`).
 The capture lifecycle uses `/v2/ingestions` and `/v2/captures`; runtime
 requirements, model options, and installations use `/v2/runtime/*`.
 

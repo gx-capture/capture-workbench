@@ -3,7 +3,7 @@ import type {
   CaptureOperation,
   CaptureUpload,
   Ingestion,
-  RuntimeStreamingCapabilities,
+  RuntimeDiscovery,
   RuntimeTransportRequest,
 } from '../contracts.js';
 import {
@@ -28,23 +28,24 @@ type RuntimeJson = <T>(
   model?: RuntimeResponseModel,
 ) => Promise<T>;
 
-interface StreamingRequestContext {
+interface CaptureRequestContext {
   readonly json: RuntimeJson;
-  readonly getStreamingCapabilities: (
-    signal?: AbortSignal,
-  ) => Promise<RuntimeStreamingCapabilities>;
+  readonly discover: (signal?: AbortSignal) => Promise<RuntimeDiscovery>;
   readonly request: (request: RuntimeTransportRequest) => Promise<Response>;
 }
 
-/** Upload, finalize, and start one v2 streaming capture through the JSON facade. */
-export async function startStreamingCapture(
-  context: Pick<StreamingRequestContext, 'json' | 'getStreamingCapabilities'>,
+/**
+ * Upload a file through a chunked ingestion, finalize it, and start its
+ * capture. Chunks stay within the readiness `maxChunkBytes`.
+ */
+export async function startCapture(
+  context: Pick<CaptureRequestContext, 'json' | 'discover'>,
   upload: CaptureUpload,
 ): Promise<CaptureOperation> {
   const pdfPageNumbers = pdfPageSelection(upload.pdfPageNumbers);
   const bytes = await bodyBytes(upload.body);
   const digest = await sha256(bytes);
-  const capabilities = await context.getStreamingCapabilities(upload.signal);
+  const { capabilities } = (await context.discover(upload.signal)).ready;
   const maxChunk = Math.max(
     1,
     Math.min(CHUNK_BYTES, capabilities.maxChunkBytes),
@@ -176,7 +177,7 @@ function pdfPageSelection(
 
 /** Stream ordered SSE events and resume with the latest accepted sequence. */
 export async function* captureEvents(
-  context: Pick<StreamingRequestContext, 'request'>,
+  context: Pick<CaptureRequestContext, 'request'>,
   id: string,
   options: {
     readonly lastEventId?: string | number;

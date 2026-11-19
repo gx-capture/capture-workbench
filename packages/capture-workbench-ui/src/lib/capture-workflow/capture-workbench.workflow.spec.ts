@@ -32,12 +32,12 @@ describe('CaptureWorkbenchComponent', () => {
   });
 
   it('completes through the v2 streaming result boundary', async () => {
-    const startStreamingCapture = vi.fn<
-      NonNullable<CaptureClient['startStreamingCapture']>
+    const startCapture = vi.fn<
+      NonNullable<CaptureClient['startCapture']>
     >(
       () => of(streamingOperation('completed')),
     );
-    const client = fakeClient({ startStreamingCapture });
+    const client = fakeClient({ startCapture });
     const completed = vi.fn();
     inputSource.client.set(client);
     inputSource.config.set({ showRuntimeSetup: false });
@@ -50,8 +50,8 @@ describe('CaptureWorkbenchComponent', () => {
     await fixture.whenStable();
     fixture.detectChanges();
 
-    expect(startStreamingCapture).toHaveBeenCalledOnce();
-    expect(client.getStreamingResult).toHaveBeenCalledWith(
+    expect(startCapture).toHaveBeenCalledOnce();
+    expect(client.getResult).toHaveBeenCalledWith(
       'capture-1',
       expect.any(AbortSignal),
     );
@@ -65,25 +65,48 @@ describe('CaptureWorkbenchComponent', () => {
     ).toContain('page one');
   });
 
+  it('sends the configured PDF pages with PDF captures only', async () => {
+    const startCapture = vi.fn<
+      NonNullable<CaptureClient['startCapture']>
+    >(
+      () => of(streamingOperation('completed')),
+    );
+    inputSource.client.set(fakeClient({ startCapture }));
+    inputSource.config.set({ showRuntimeSetup: false, pdfPageNumbers: [2, 5] });
+    fixture.detectChanges();
+
+    selectFiles(fixture, [
+      new File(['test'], 'scan.pdf', { type: 'application/pdf' }),
+    ]);
+    await fixture.whenStable();
+    selectFiles(fixture, [
+      new File(['image'], 'photo.png', { type: 'image/png' }),
+    ]);
+    await fixture.whenStable();
+
+    expect(startCapture.mock.calls[0][0].pdfPageNumbers).toEqual([2, 5]);
+    expect(startCapture.mock.calls[1][0]).not.toHaveProperty('pdfPageNumbers');
+  });
+
   it('consumes v2 SSE stages without timer polling', async () => {
     const events = new Subject<CaptureEvent>();
-    const startStreamingCapture = vi.fn<
-      NonNullable<CaptureClient['startStreamingCapture']>
+    const startCapture = vi.fn<
+      NonNullable<CaptureClient['startCapture']>
     >(
       () => of(streamingOperation('extracting', 0.1)),
     );
     const captureEvents = vi.fn<NonNullable<CaptureClient['captureEvents']>>(() =>
       events.asObservable(),
     );
-    const getStreamingCapture = vi.fn<
-      NonNullable<CaptureClient['getStreamingCapture']>
+    const getCapture = vi.fn<
+      NonNullable<CaptureClient['getCapture']>
     >(() =>
       of(streamingOperation('completed')),
     );
     const client = fakeClient({
-      startStreamingCapture,
+      startCapture,
       captureEvents,
-      getStreamingCapture,
+      getCapture,
     });
     inputSource.client.set(client);
     inputSource.config.set({ showRuntimeSetup: false, pollIntervalMs: 25_000 });
@@ -99,7 +122,7 @@ describe('CaptureWorkbenchComponent', () => {
     events.next(streamingEvent('completed', 'completed'));
     await fixture.whenStable();
 
-    expect(getStreamingCapture).toHaveBeenCalledWith(
+    expect(getCapture).toHaveBeenCalledWith(
       'capture-1',
       expect.any(AbortSignal),
     );
@@ -116,14 +139,14 @@ describe('CaptureWorkbenchComponent', () => {
       ...streamingOperation('extracting', 0.4),
       lastEventSequence: 7,
     };
-    const getStreamingCapture = vi
-      .fn<NonNullable<CaptureClient['getStreamingCapture']>>()
+    const getCapture = vi
+      .fn<NonNullable<CaptureClient['getCapture']>>()
       .mockReturnValueOnce(of(resyncedOperation))
       .mockReturnValueOnce(of(streamingOperation('completed')));
     const client = fakeClient({
-      startStreamingCapture: vi.fn(() => of(streamingOperation('extracting', 0.1))),
+      startCapture: vi.fn(() => of(streamingOperation('extracting', 0.1))),
       captureEvents,
-      getStreamingCapture,
+      getCapture,
     });
     inputSource.client.set(client);
     inputSource.config.set({ showRuntimeSetup: false });
@@ -135,8 +158,8 @@ describe('CaptureWorkbenchComponent', () => {
     firstEvents.next(streamingEvent('resync_required', 'resync'));
     await vi.waitFor(() => expect(captureEvents).toHaveBeenCalledTimes(2));
 
-    expect(client.getStreamingCapture).toHaveBeenCalledTimes(1);
-    expect(client.getStreamingPartial).toHaveBeenCalledWith(
+    expect(client.getCapture).toHaveBeenCalledTimes(1);
+    expect(client.getPartial).toHaveBeenCalledWith(
       'capture-1',
       expect.any(AbortSignal),
     );
@@ -149,8 +172,8 @@ describe('CaptureWorkbenchComponent', () => {
     secondEvents.next(streamingEvent('completed', 'completed'));
     await fixture.whenStable();
 
-    expect(client.getStreamingCapture).toHaveBeenCalledTimes(2);
-    expect(client.getStreamingResult).toHaveBeenCalledOnce();
+    expect(client.getCapture).toHaveBeenCalledTimes(2);
+    expect(client.getResult).toHaveBeenCalledOnce();
   });
 
   it('aborts a v2 SSE subscription on cancellation and ignores late events', async () => {
@@ -159,7 +182,7 @@ describe('CaptureWorkbenchComponent', () => {
       events.asObservable(),
     );
     const client = fakeClient({
-      startStreamingCapture: vi.fn(() => of(streamingOperation('extracting'))),
+      startCapture: vi.fn(() => of(streamingOperation('extracting'))),
       captureEvents,
     });
     inputSource.client.set(client);
@@ -177,21 +200,21 @@ describe('CaptureWorkbenchComponent', () => {
     await fixture.whenStable();
 
     expect(streamSignal?.aborted).toBe(true);
-    expect(client.cancelStreamingCapture).toHaveBeenCalledWith(
+    expect(client.cancelCapture).toHaveBeenCalledWith(
       'capture-1',
       expect.any(AbortSignal),
     );
     expect(fixture.componentInstance.tasks()[0]?.status).toBe('canceled');
-    expect(client.getStreamingResult).not.toHaveBeenCalled();
+    expect(client.getResult).not.toHaveBeenCalled();
   });
 
   it('retries uncertain v2 start with the same request object', async () => {
     const source = new File(['test'], 'retry.pdf', { type: 'application/pdf' });
-    const startStreamingCapture = vi
-      .fn<NonNullable<CaptureClient['startStreamingCapture']>>()
+    const startCapture = vi
+      .fn<NonNullable<CaptureClient['startCapture']>>()
       .mockReturnValueOnce(throwError(() => new TypeError('connection reset')))
       .mockReturnValueOnce(of(streamingOperation('completed')));
-    const client = fakeClient({ startStreamingCapture });
+    const client = fakeClient({ startCapture });
     inputSource.client.set(client);
     inputSource.config.set({ showRuntimeSetup: false });
     fixture.detectChanges();
@@ -199,9 +222,9 @@ describe('CaptureWorkbenchComponent', () => {
     selectFiles(fixture, [source]);
     await fixture.whenStable();
 
-    expect(startStreamingCapture).toHaveBeenCalledTimes(2);
-    const firstRequest = startStreamingCapture.mock.calls[0]?.[0];
-    const retryRequest = startStreamingCapture.mock.calls[1]?.[0];
+    expect(startCapture).toHaveBeenCalledTimes(2);
+    const firstRequest = startCapture.mock.calls[0]?.[0];
+    const retryRequest = startCapture.mock.calls[1]?.[0];
     expect(firstRequest).toBe(retryRequest);
     expect(firstRequest?.clientRequestId).toMatch(/^[0-9a-f-]{36}$/u);
     expect(firstRequest?.file).toBe(source);
@@ -211,17 +234,17 @@ describe('CaptureWorkbenchComponent', () => {
     const structure = vi.fn<CaptureStructuringProvider['structure']>(() =>
       of(DOCUMENT),
     );
-    const startStreamingCapture = vi.fn<
-      NonNullable<CaptureClient['startStreamingCapture']>
+    const startCapture = vi.fn<
+      NonNullable<CaptureClient['startCapture']>
     >(
       () => of(streamingOperation('awaiting_structuring', 0.7)),
     );
-    const commitStreamingStructuredResult = vi.fn<
-      NonNullable<CaptureClient['commitStreamingStructuredResult']>
+    const commitStructure = vi.fn<
+      NonNullable<CaptureClient['commitStructure']>
     >(() => of(streamingOperation('completed')));
     const client = fakeClient({
-      startStreamingCapture,
-      commitStreamingStructuredResult,
+      startCapture,
+      commitStructure,
     });
     const completed = vi.fn();
     inputSource.client.set(client);
@@ -237,17 +260,17 @@ describe('CaptureWorkbenchComponent', () => {
     selectFiles(fixture, [new File(['test'], 'host.pdf')]);
     await fixture.whenStable();
 
-    expect(client.getStreamingRaw).toHaveBeenCalledWith(
+    expect(client.getRaw).toHaveBeenCalledWith(
       'capture-1',
       expect.any(AbortSignal),
     );
     expect(structure).toHaveBeenCalledOnce();
-    expect(commitStreamingStructuredResult).toHaveBeenCalledWith(
+    expect(commitStructure).toHaveBeenCalledWith(
       'capture-1',
       expect.objectContaining({ candidate: DOCUMENT }),
       expect.any(AbortSignal),
     );
-    expect(client.getStreamingResult).toHaveBeenCalledOnce();
+    expect(client.getResult).toHaveBeenCalledOnce();
     expect(completed).toHaveBeenCalledOnce();
   });
 
@@ -256,7 +279,7 @@ describe('CaptureWorkbenchComponent', () => {
       of(DOCUMENT),
     );
     const client = fakeClient({
-      startStreamingCapture: vi.fn(() =>
+      startCapture: vi.fn(() =>
         of(streamingOperation('awaiting_structuring', 0.7)),
       ),
     });
@@ -301,6 +324,6 @@ describe('CaptureWorkbenchComponent', () => {
         },
       }),
     );
-    expect(client.commitStreamingStructuredResult).toHaveBeenCalledOnce();
+    expect(client.commitStructure).toHaveBeenCalledOnce();
   });
 });

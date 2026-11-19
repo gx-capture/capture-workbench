@@ -61,7 +61,7 @@ describe('CaptureWorkbenchComponent optional units', () => {
       fakeClient({
         getRequirements: vi.fn(() => of([READER])),
         startInstallation,
-        getStreamingResult: vi.fn(() =>
+        getResult: vi.fn(() =>
           of({
             operation: streamingOperation('completed'),
             raw: RAW,

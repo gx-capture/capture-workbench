@@ -32,7 +32,7 @@ def decode_capture_operation(
     return operation
 
 
-def decode_streaming_result(
+def decode_capture_result(
     response: httpx.Response, requested_capture_id: str
 ) -> tuple[CaptureOperation, RawCapture, CaptureDocument]:
     """Decode a result while preserving operation, source, and result identity."""
@@ -57,6 +57,6 @@ def decode_streaming_result(
 __all__ = [
     "decode_capture_operation",
     "decode_response",
-    "decode_streaming_result",
+    "decode_capture_result",
     "map_http_request_error",
 ]

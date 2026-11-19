@@ -77,14 +77,11 @@ type RuntimeIngestion = {
   readonly nextChunkIndex: number;
 };
 
-type StreamingCapabilities = {
-  readonly maxChunkBytes: number;
-};
-
 type RuntimeReady = {
   readonly ready: boolean;
   readonly apiVersion?: unknown;
   readonly runtimeVersion?: unknown;
+  readonly capabilities: { readonly maxChunkBytes: number };
 };
 
 type OcrProjectionIdentity = {
@@ -507,10 +504,10 @@ async function startPdfCapture(
 ): Promise<CaptureJob> {
   const clientRequestId = randomUUID();
   const sourceDigest = sha256(pdfBytes);
-  const capabilities = await request<StreamingCapabilities>(
+  const { capabilities } = await request<RuntimeReady>(
     port,
     token,
-    '/v2/streaming/health/ready',
+    '/v2/health/ready',
   );
   const chunkBytes = Math.max(
     1,

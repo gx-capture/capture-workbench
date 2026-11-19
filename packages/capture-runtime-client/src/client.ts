@@ -14,7 +14,6 @@ import {
   type RuntimeReady,
   type RuntimeRequirement,
   type RuntimeRequirements,
-  type RuntimeStreamingCapabilities,
   type RuntimeTransport,
   type RuntimeTransportRequest,
   type CaptureUpload,
@@ -37,7 +36,7 @@ import {
 import { negotiateRuntime } from './private/discovery.js';
 import {
   captureEvents as streamCaptureEvents,
-  startStreamingCapture as startStreamingCaptureRequest,
+  startCapture as startCaptureRequest,
 } from './private/streaming.js';
 import { requestWithRetry } from './private/transport-retry.js';
 
@@ -95,7 +94,6 @@ export class CaptureRuntimeClient {
           transport: this.transport,
           json: this.json.bind(this),
           getReady: this.getReady.bind(this),
-          getStreamingCapabilities: this.getStreamingCapabilities.bind(this),
         },
         signal,
       ).catch((error: unknown) => {
@@ -107,21 +105,14 @@ export class CaptureRuntimeClient {
     return this.discovery;
   }
 
-  /** Read `/v2/health/ready`: runtime version, API version, and contract identity. */
+  /**
+   * Read `/v2/health/ready`: runtime version, API version, contract identity,
+   * and the capabilities (capture kinds, structuring modes, upload limits).
+   */
   getReady(signal?: AbortSignal): Promise<RuntimeReady> {
     return this.json<RuntimeReady>(
       { path: '/v2/health/ready', signal },
       'RuntimeReady',
-    );
-  }
-
-  /** Read streaming limits such as the maximum upload chunk size. */
-  getStreamingCapabilities(
-    signal?: AbortSignal,
-  ): Promise<RuntimeStreamingCapabilities> {
-    return this.json(
-      { path: '/v2/streaming/health/ready', signal },
-      'RuntimeStreamingCapabilities',
     );
   }
 
@@ -254,14 +245,6 @@ export class CaptureRuntimeClient {
     );
   }
 
-  /** Alias retained for callers that use the status-oriented operation name. */
-  getModelInstallationStatus(
-    id: string,
-    signal?: AbortSignal,
-  ): Promise<StructuringModelInstallation> {
-    return this.getModelInstallation(id, signal);
-  }
-
   /** Cancel a structuring model installation. */
   cancelModelInstallation(
     id: string,
@@ -277,19 +260,28 @@ export class CaptureRuntimeClient {
     );
   }
 
-  /** Upload a file and start its capture (see `startStreamingCapture`). */
-  createCapture(upload: CaptureUpload): Promise<CaptureOperation> {
-    return this.startStreamingCapture(upload);
+  /** Upload a file through a chunked ingestion and start its capture. */
+  startCapture(upload: CaptureUpload): Promise<CaptureOperation> {
+    return startCaptureRequest(
+      { json: this.json.bind(this), discover: this.discover.bind(this) },
+      upload,
+    );
   }
 
   /** Read a capture operation's current state. */
   getCapture(id: string, signal?: AbortSignal): Promise<CaptureOperation> {
-    return this.getStreamingCapture(id, signal);
+    return this.json(
+      { path: `/v2/captures/${encodeURIComponent(id)}`, signal },
+      'CaptureOperation',
+    );
   }
 
-  /** Request cancellation of a capture operation. */
-  cancelCapture(id: string, signal?: AbortSignal): Promise<CaptureOperation> {
-    return this.cancelStreamingCapture(id, signal);
+  /** Read the partial result a capture has produced so far. */
+  getPartial(id: string, signal?: AbortSignal): Promise<PartialCapture> {
+    return this.json(
+      { path: `/v2/captures/${encodeURIComponent(id)}/partial`, signal },
+      'PartialCapture',
+    );
   }
 
   /** Read the raw extraction of a capture. */
@@ -310,7 +302,22 @@ export class CaptureRuntimeClient {
 
   /** Read the terminal capture state, raw extraction, and structured document. */
   getResult(id: string, signal?: AbortSignal): Promise<CaptureResult> {
-    return this.getStreamingResult(id, signal);
+    return this.json(
+      { path: `/v2/captures/${encodeURIComponent(id)}/result`, signal },
+      'CaptureResult',
+    );
+  }
+
+  /** Request cancellation of a capture operation. */
+  cancelCapture(id: string, signal?: AbortSignal): Promise<CaptureOperation> {
+    return this.json(
+      {
+        path: `/v2/captures/${encodeURIComponent(id)}/cancel`,
+        method: 'POST',
+        signal,
+      },
+      'CaptureOperation',
+    );
   }
 
   /** Commit the final structured document for a capture. */
@@ -320,11 +327,18 @@ export class CaptureRuntimeClient {
     idempotencyKey: string,
     signal?: AbortSignal,
   ): Promise<CaptureOperation> {
-    return this.commitStreamingStructuredResult(
-      id,
-      candidate,
-      idempotencyKey,
-      signal,
+    return this.json(
+      {
+        path: `/v2/captures/${encodeURIComponent(id)}/structure/commit`,
+        method: 'POST',
+        signal,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Idempotency-Key': idempotencyKey,
+        },
+        body: JSON.stringify(candidate),
+      },
+      'CaptureOperation',
     );
   }
 
@@ -336,13 +350,40 @@ export class CaptureRuntimeClient {
     idempotencyKey: string,
     signal?: AbortSignal,
   ): Promise<CaptureOperation> {
-    return this.reportStreamingStructuringFailure(
-      id,
-      code,
-      message,
-      idempotencyKey,
-      signal,
+    return this.json(
+      {
+        path: `/v2/captures/${encodeURIComponent(id)}/structure/failure`,
+        method: 'POST',
+        signal,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Idempotency-Key': idempotencyKey,
+        },
+        body: JSON.stringify({ protocolVersion: '2', code, message }),
+      },
+      'CaptureOperation',
     );
+  }
+
+  /** Delete a capture and its stored artifacts from the runtime. */
+  deleteCapture(id: string, signal?: AbortSignal): Promise<void> {
+    return this.json<void>({
+      path: `/v2/captures/${encodeURIComponent(id)}`,
+      method: 'DELETE',
+      signal,
+    });
+  }
+
+  /**
+   * Delete an ingestion and its uploaded bytes. The runtime rejects it with
+   * `ingestion_delete_rejected` while a capture of it is still running.
+   */
+  deleteIngestion(id: string, signal?: AbortSignal): Promise<void> {
+    return this.json<void>({
+      path: `/v2/ingestions/${encodeURIComponent(id)}`,
+      method: 'DELETE',
+      signal,
+    });
   }
 
   /** Open an authenticated pull-based structuring session for one capture. */
@@ -411,15 +452,6 @@ export class CaptureRuntimeClient {
     );
   }
 
-  /** Alias that makes the pull nature explicit for host coordinators. */
-  pullStructuringBatch(
-    captureId: string,
-    batchIndex: number,
-    signal?: AbortSignal,
-  ): Promise<StructuringBatch> {
-    return this.getStructuringBatch(captureId, batchIndex, signal);
-  }
-
   /** Submit the host's result for one structuring batch. */
   submitStructuringBatch(
     captureId: string,
@@ -453,115 +485,6 @@ export class CaptureRuntimeClient {
       },
       'StructuringSession',
     );
-  }
-
-  /** Upload a file through a chunked ingestion and start its capture. */
-  async startStreamingCapture(
-    upload: CaptureUpload,
-  ): Promise<CaptureOperation> {
-    return startStreamingCaptureRequest(
-      {
-        json: this.json.bind(this),
-        getStreamingCapabilities: this.getStreamingCapabilities.bind(this),
-      },
-      upload,
-    );
-  }
-
-  /** Read a capture operation's current state. */
-  getStreamingCapture(
-    id: string,
-    signal?: AbortSignal,
-  ): Promise<CaptureOperation> {
-    return this.json(
-      { path: `/v2/captures/${encodeURIComponent(id)}`, signal },
-      'CaptureOperation',
-    );
-  }
-  /** Read the partial result a capture has produced so far. */
-  getStreamingPartial(
-    id: string,
-    signal?: AbortSignal,
-  ): Promise<PartialCapture> {
-    return this.json(
-      { path: `/v2/captures/${encodeURIComponent(id)}/partial`, signal },
-      'PartialCapture',
-    );
-  }
-  /** Read the terminal capture state, raw extraction, and structured document. */
-  getStreamingResult(
-    id: string,
-    signal?: AbortSignal,
-  ): Promise<CaptureResult> {
-    return this.json(
-      { path: `/v2/captures/${encodeURIComponent(id)}/result`, signal },
-      'CaptureResult',
-    );
-  }
-  /** Request cancellation of a capture operation. */
-  cancelStreamingCapture(
-    id: string,
-    signal?: AbortSignal,
-  ): Promise<CaptureOperation> {
-    return this.json(
-      {
-        path: `/v2/captures/${encodeURIComponent(id)}/cancel`,
-        method: 'POST',
-        signal,
-      },
-      'CaptureOperation',
-    );
-  }
-  /** Commit the final structured document for a capture. */
-  commitStreamingStructuredResult(
-    id: string,
-    candidate: CaptureDocument,
-    idempotencyKey: string,
-    signal?: AbortSignal,
-  ): Promise<CaptureOperation> {
-    return this.json(
-      {
-        path: `/v2/captures/${encodeURIComponent(id)}/structure/commit`,
-        method: 'POST',
-        signal,
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Idempotency-Key': idempotencyKey,
-        },
-        body: JSON.stringify(candidate),
-      },
-      'CaptureOperation',
-    );
-  }
-  /** Report that host-side structuring failed for a capture. */
-  reportStreamingStructuringFailure(
-    id: string,
-    code: string,
-    message: string,
-    idempotencyKey: string,
-    signal?: AbortSignal,
-  ): Promise<CaptureOperation> {
-    return this.json(
-      {
-        path: `/v2/captures/${encodeURIComponent(id)}/structure/failure`,
-        method: 'POST',
-        signal,
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Idempotency-Key': idempotencyKey,
-        },
-        body: JSON.stringify({ protocolVersion: '2', code, message }),
-      },
-      'CaptureOperation',
-    );
-  }
-  /** Delete a capture and its stored artifacts from the runtime. */
-  deleteCapture(id: string, signal?: AbortSignal): Promise<void> {
-    return this.json<void>({
-      path: `/v2/captures/${encodeURIComponent(id)}`,
-      method: 'DELETE',
-      signal,
-    });
   }
 
   /** Yield capture events from the SSE stream until a terminal event, resuming after the last seen event. */

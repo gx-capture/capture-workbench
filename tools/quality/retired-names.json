@@ -1479,7 +1479,7 @@
   {
     "name": "runtime-streaming-capabilities-v2.schema.json",
     "match": "substring",
-    "replacement": "runtime-streaming-capabilities.schema.json",
+    "replacement": "runtime-capabilities.schema.json",
     "allowed": []
   },
   {
@@ -1528,6 +1528,299 @@
     "name": "submit-structuring-batch-v2.schema.json",
     "match": "substring",
     "replacement": "submit-structuring-batch.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "streaming/health/ready",
+    "match": "substring",
+    "replacement": "/v2/health/ready",
+    "allowed": [
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_streaming_api.py",
+        "reason": "Asserts that the retired readiness route answers 404."
+      }
+    ]
+  },
+  {
+    "name": "v2.streaming.health.ready",
+    "match": "substring",
+    "replacement": "v2.health.ready",
+    "allowed": []
+  },
+  {
+    "name": "RuntimeStreamingCapabilities",
+    "match": "word",
+    "replacement": "RuntimeCapabilities",
+    "allowed": []
+  },
+  {
+    "name": "runtime-streaming-capabilities.schema.json",
+    "match": "substring",
+    "replacement": "runtime-capabilities.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "supportsProgressiveAudio",
+    "match": "word",
+    "replacement": "supportsProgressiveRecording",
+    "allowed": []
+  },
+  {
+    "name": "supports_progressive_audio",
+    "match": "word",
+    "replacement": "supports_progressive_recording",
+    "allowed": []
+  },
+  {
+    "name": "getStreamingCapabilities",
+    "match": "word",
+    "replacement": "getReady",
+    "allowed": []
+  },
+  {
+    "name": "get_streaming_capabilities",
+    "match": "word",
+    "replacement": "handshake",
+    "allowed": []
+  },
+  {
+    "name": "startStreamingCapture",
+    "match": "word",
+    "replacement": "startCapture",
+    "allowed": []
+  },
+  {
+    "name": "getStreamingCapture",
+    "match": "word",
+    "replacement": "getCapture",
+    "allowed": []
+  },
+  {
+    "name": "getStreamingPartial",
+    "match": "word",
+    "replacement": "getPartial",
+    "allowed": []
+  },
+  {
+    "name": "getStreamingRaw",
+    "match": "word",
+    "replacement": "getRaw",
+    "allowed": []
+  },
+  {
+    "name": "getStreamingResult",
+    "match": "word",
+    "replacement": "getResult",
+    "allowed": []
+  },
+  {
+    "name": "getStreamingEvents",
+    "match": "word",
+    "replacement": "getCaptureEvents",
+    "allowed": []
+  },
+  {
+    "name": "cancelStreamingCapture",
+    "match": "word",
+    "replacement": "cancelCapture",
+    "allowed": []
+  },
+  {
+    "name": "deleteStreamingCapture",
+    "match": "word",
+    "replacement": "deleteCapture",
+    "allowed": []
+  },
+  {
+    "name": "structureStreamingCapture",
+    "match": "word",
+    "replacement": "structureCapture",
+    "allowed": []
+  },
+  {
+    "name": "commitStreamingStructuredResult",
+    "match": "word",
+    "replacement": "commitStructure",
+    "allowed": []
+  },
+  {
+    "name": "reportStreamingStructuringFailure",
+    "match": "word",
+    "replacement": "reportStructuringFailure",
+    "allowed": []
+  },
+  {
+    "name": "getModelInstallationStatus",
+    "match": "word",
+    "replacement": "getModelInstallation",
+    "allowed": []
+  },
+  {
+    "name": "pullStructuringBatch",
+    "match": "word",
+    "replacement": "getStructuringBatch",
+    "allowed": []
+  },
+  {
+    "name": "start_streaming_capture",
+    "match": "word",
+    "replacement": "start_capture",
+    "allowed": []
+  },
+  {
+    "name": "get_streaming_capture",
+    "match": "word",
+    "replacement": "get_capture",
+    "allowed": []
+  },
+  {
+    "name": "get_streaming_result",
+    "match": "word",
+    "replacement": "get_result",
+    "allowed": []
+  },
+  {
+    "name": "cancel_streaming_capture",
+    "match": "word",
+    "replacement": "cancel_capture",
+    "allowed": []
+  },
+  {
+    "name": "commit_streaming_structure",
+    "match": "word",
+    "replacement": "commit_structure",
+    "allowed": []
+  },
+  {
+    "name": "report_streaming_failure",
+    "match": "word",
+    "replacement": "report_structuring_failure",
+    "allowed": []
+  },
+  {
+    "name": "delete_streaming_capture",
+    "match": "word",
+    "replacement": "delete_capture",
+    "allowed": []
+  },
+  {
+    "name": "delete_streaming_ingestion",
+    "match": "word",
+    "replacement": "delete_ingestion",
+    "allowed": []
+  },
+  {
+    "name": "get_model_installation_status",
+    "match": "word",
+    "replacement": "get_model_installation",
+    "allowed": []
+  },
+  {
+    "name": "pull_structuring_batch",
+    "match": "word",
+    "replacement": "get_structuring_batch",
+    "allowed": []
+  },
+  {
+    "name": "decode_streaming_result",
+    "match": "word",
+    "replacement": "decode_capture_result",
+    "allowed": []
+  },
+  {
+    "name": "StartStreamingCaptureRequest",
+    "match": "word",
+    "replacement": "StartCaptureRequest",
+    "allowed": []
+  },
+  {
+    "name": "CommitStreamingStructuredResultRequest",
+    "match": "word",
+    "replacement": "CommitStructuredResultRequest",
+    "allowed": []
+  },
+  {
+    "name": "ReportStreamingStructuringFailureRequest",
+    "match": "word",
+    "replacement": "ReportStructuringFailureRequest",
+    "allowed": []
+  },
+  {
+    "name": "CreateCaptureRequest",
+    "match": "word",
+    "replacement": "StartCaptureRequest",
+    "allowed": []
+  },
+  {
+    "name": "streaming_client_unavailable",
+    "match": "word",
+    "replacement": "capture_client_unavailable",
+    "allowed": []
+  },
+  {
+    "name": "asStreamingClient",
+    "match": "word",
+    "replacement": "asCompleteCaptureClient",
+    "allowed": []
+  },
+  {
+    "name": "runtime_start_streaming_capture",
+    "match": "word",
+    "replacement": "runtime_start_recording_capture",
+    "allowed": []
+  },
+  {
+    "name": "runtime_get_streaming_capture",
+    "match": "word",
+    "replacement": "runtime_get_capture",
+    "allowed": []
+  },
+  {
+    "name": "runtime_get_streaming_events",
+    "match": "word",
+    "replacement": "runtime_get_capture_events",
+    "allowed": []
+  },
+  {
+    "name": "runtime_get_streaming_partial",
+    "match": "word",
+    "replacement": "runtime_get_partial",
+    "allowed": []
+  },
+  {
+    "name": "runtime_get_streaming_result",
+    "match": "word",
+    "replacement": "runtime_get_result",
+    "allowed": []
+  },
+  {
+    "name": "runtime_structure_streaming_capture",
+    "match": "word",
+    "replacement": "runtime_structure_capture",
+    "allowed": []
+  },
+  {
+    "name": "runtime_cancel_streaming_capture",
+    "match": "word",
+    "replacement": "runtime_cancel_capture",
+    "allowed": []
+  },
+  {
+    "name": "runtime_delete_streaming_capture",
+    "match": "word",
+    "replacement": "runtime_delete_capture",
+    "allowed": []
+  },
+  {
+    "name": "RuntimeStreamingCaptureInput",
+    "match": "word",
+    "replacement": "RuntimeRecordingCaptureInput",
+    "allowed": []
+  },
+  {
+    "name": "RuntimeStreamingEventsInput",
+    "match": "word",
+    "replacement": "RuntimeCaptureEventsInput",
     "allowed": []
   }
 ]

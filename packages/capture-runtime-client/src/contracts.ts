@@ -61,11 +61,11 @@ export interface RuntimeReady {
   readonly captureDocumentSchemaVersion: string;
   readonly captureDocumentSchemaSha256?: string;
   readonly contractSetVersion?: string;
-  readonly capabilities: Readonly<Record<string, unknown>>;
+  readonly capabilities: RuntimeCapabilities;
   readonly ocrCompute?: OcrComputePreflight | null;
   readonly message?: string | null;
 }
-export interface RuntimeStreamingCapabilities extends Generated.RuntimeStreamingCapabilities {}
+export interface RuntimeCapabilities extends Generated.RuntimeCapabilities {}
 export type CaptureLocator = Generated.CaptureLocator;
 export type PageLocator = Generated.PageLocator;
 export type TimeLocator = Generated.TimeLocator;
@@ -105,11 +105,10 @@ export {
 
 /** Approved current runtime contract-set identity; update only with a release. */
 export const CAPTURE_CONTRACT_SET_SHA256 =
-  'b3ba2f5387bd1c043299d436f74ce64748ffbebfa63a34eaed1a453918423671';
+  '13693220682792100ddc12f0b022ed2b8ea2e2f010ecd7aedad94cb5df378534';
 
 export interface RuntimeDiscovery {
   readonly ready: RuntimeReady;
-  readonly streaming?: RuntimeStreamingCapabilities;
   readonly captureDocumentSchemaSha256: string;
   readonly contractIndex: Readonly<Record<string, unknown>>;
   readonly contractBundle: Readonly<Record<string, unknown>>;

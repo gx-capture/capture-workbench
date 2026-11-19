@@ -130,6 +130,11 @@ def _ready(**overrides: object) -> dict[str, object]:
             "supportsCancellation": True,
             "supportsRawDiagnostics": True,
             "maxUploadBytes": 100,
+            "maxChunkBytes": 1_048_576,
+            "checkpointIntervalMs": 500,
+            "heartbeatIntervalMs": 1_000,
+            "stallTimeoutMs": 5_000,
+            "supportsProgressiveRecording": True,
         },
     }
     payload.update(overrides)
@@ -159,19 +164,6 @@ def _discovery_routes() -> dict[tuple[str, str], Callable[[httpx.Request], httpx
             200,
             content=bundle,
             headers={"X-Contract-SHA256": digest, "ETag": f'"{digest}"'},
-            request=request,
-        ),
-        ("GET", "/v2/streaming/health/ready"): lambda request: httpx.Response(
-            200,
-            json={
-                "protocolVersion": "2",
-                "captureKinds": ["pdf", "image", "recording"],
-                "supportsProgressiveAudio": True,
-                "maxChunkBytes": 1_048_576,
-                "checkpointIntervalMs": 500,
-                "heartbeatIntervalMs": 1_000,
-                "stallTimeoutMs": 5_000,
-            },
             request=request,
         ),
     }
@@ -303,6 +295,93 @@ def test_start_capture_sends_a_non_contiguous_pdf_page_selection() -> None:
     )
 
     assert operation.capture_id == "capture-1"
+
+
+def test_upload_path_forwards_the_structuring_mode_and_readiness_chunk_size(
+    tmp_path: Path,
+) -> None:
+    content = b"0123456789abcdefghijklmnopqrstuvwxy"
+    digest = hashlib.sha256(content).hexdigest()
+    ranges: list[str] = []
+    started: list[dict[str, object]] = []
+
+    def ingestion(request: httpx.Request, *, received: int, status: str = "open") -> httpx.Response:
+        return httpx.Response(
+            201 if received == 0 else 200,
+            json={
+                "protocolVersion": "2",
+                "kind": "pdf",
+                "ingestionId": "ingestion-1",
+                "status": status,
+                "fileName": "scan.pdf",
+                "mediaType": "application/pdf",
+                "totalBytes": len(content),
+                "receivedBytes": received,
+                "contiguousBytes": received,
+                "nextChunkIndex": len(ranges),
+                "nextOffset": received,
+                "sourceSha256": digest,
+                "finalizedSha256": digest if status == "ready" else None,
+                "expiresAt": "2026-01-01T00:00:00+00:00",
+            },
+            request=request,
+        )
+
+    def chunk(request: httpx.Request) -> httpx.Response:
+        content_range = request.headers["content-range"]
+        ranges.append(content_range)
+        return ingestion(request, received=int(content_range.split("-")[1].split("/")[0]) + 1)
+
+    def start(request: httpx.Request) -> httpx.Response:
+        started.append(json.loads(request.content))
+        return httpx.Response(
+            202,
+            json={
+                "protocolVersion": "2",
+                "captureId": "capture-1",
+                "ingestionId": "ingestion-1",
+                "kind": "pdf",
+                "status": "extracting",
+                "partialRevision": 0,
+                "lastEventSequence": 0,
+                "createdAt": "2026-01-01T00:00:00+00:00",
+                "updatedAt": "2026-01-01T00:00:00+00:00",
+            },
+            request=request,
+        )
+
+    small_chunks = _ready()
+    capabilities = small_chunks["capabilities"]
+    assert isinstance(capabilities, dict)
+    small_chunks["capabilities"] = {**capabilities, "maxChunkBytes": 16}
+    transport = _transport(
+        {
+            ("GET", "/v2/health/ready"): lambda request: httpx.Response(
+                200, json=small_chunks, request=request
+            ),
+            ("POST", "/v2/ingestions"): lambda request: ingestion(request, received=0),
+            ("PUT", "/v2/ingestions/ingestion-1/chunks/0"): chunk,
+            ("PUT", "/v2/ingestions/ingestion-1/chunks/1"): chunk,
+            ("PUT", "/v2/ingestions/ingestion-1/chunks/2"): chunk,
+            ("POST", "/v2/ingestions/ingestion-1/finalize"): lambda request: ingestion(
+                request, received=len(content), status="ready"
+            ),
+            ("POST", "/v2/captures"): start,
+        }
+    )
+    source = tmp_path / "scan.pdf"
+    source.write_bytes(content)
+
+    CaptureRuntimeClient(transport=transport).upload_path(
+        source,
+        source_kind="pdf",
+        client_request_id="request-host",
+        media_type="application/pdf",
+        structuring_mode="host",
+    )
+
+    assert ranges == ["bytes 0-15/35", "bytes 16-31/35", "bytes 32-34/35"]
+    assert started[0]["structuringMode"] == "host"
 
 
 @pytest.mark.parametrize("spoken_language", [None, "ja"])
@@ -494,7 +573,6 @@ def test_loopback_transport_and_handshake() -> None:
                 requiredHeaders=["X-Idempotency-Key"],
                 idempotency={"mode": "required", "header": "X-Idempotency-Key"},
             ),
-            operation("/v2/streaming/health/ready"),
             operation("/v2/runtime/requirements"),
             operation(
                 "/v2/runtime/installations",
@@ -567,17 +645,6 @@ def test_loopback_transport_and_handshake() -> None:
             ("GET", "/meta/v2/contracts"): lambda request: httpx.Response(
                 200, json=index, request=request
             ),
-            ("GET", "/v2/streaming/health/ready"): lambda request: httpx.Response(
-                200,
-                json={
-                    "protocolVersion": "2",
-                    "maxChunkBytes": 10,
-                    "checkpointIntervalMs": 500,
-                    "heartbeatIntervalMs": 1000,
-                    "stallTimeoutMs": 5000,
-                },
-                request=request,
-            ),
             ("GET", index["href"]): lambda request: httpx.Response(
                 200,
                 content=bundle_bytes,
@@ -634,7 +701,10 @@ def test_handshake_requires_current_ocr_compute_names(
     )
     client = CaptureRuntimeClient(transport=transport)
     if accepted:
-        assert client.handshake().ocr_compute == compute
+        ocr_compute = client.handshake().ocr_compute
+        assert ocr_compute is not None
+        assert ocr_compute.mode.value == mode
+        assert (ocr_compute.reason_code and ocr_compute.reason_code.value) == reason
     else:
         with pytest.raises(CaptureProtocolError):
             client.handshake()
@@ -1138,8 +1208,15 @@ def test_model_installation_operations_and_failure_idempotency_header() -> None:
         captured_headers.update(dict(request.headers))
         return httpx.Response(200, json=job, request=request)
 
+    started: list[tuple[str | None, object]] = []
+
+    def start_model(request: httpx.Request) -> httpx.Response:
+        started.append((request.headers.get("x-idempotency-key"), json.loads(request.content)))
+        return httpx.Response(202, json=model_installation, request=request)
+
     transport = _transport(
         {
+            ("POST", "/v2/runtime/structuring-model-installations"): start_model,
             ("GET", "/v2/runtime/structuring-model-installations/model-1"): lambda request: (
                 httpx.Response(200, json=model_installation, request=request)
             ),
@@ -1155,8 +1232,12 @@ def test_model_installation_operations_and_failure_idempotency_header() -> None:
         }
     )
     client = CaptureRuntimeClient(transport=transport)
+    assert (
+        client.start_model_installation("option-1", idempotency_key="install-1").installation_id
+        == model_installation["installationId"]
+    )
+    assert started == [("install-1", {"optionId": "option-1", "consent": True})]
     assert client.get_model_installation("model-1").status.value == "running"
-    assert client.get_model_installation_status("model-1").status.value == "running"
     assert client.cancel_model_installation("model-1").status.value == "cancelled"
     client.report_structuring_failure(
         "cap", code="invalid", message="unable to structure", idempotency_key="failure-1"
@@ -1453,7 +1534,7 @@ def test_pull_session_methods_use_routes_and_matching_idempotency() -> None:
     assert client.open_structuring_session("cap", request).session_id == "session-1"
     assert client.open_structuring_session("cap", request).session_id == "session-1"
     assert client.get_structuring_session("cap").session_id == "session-1"
-    assert client.pull_structuring_batch("cap", 0).batch_digest == batch["batchDigest"]
+    assert client.get_structuring_batch("cap", 0).batch_digest == batch["batchDigest"]
     client.submit_structuring_batch(
         "cap",
         0,
@@ -1644,7 +1725,7 @@ def test_engine_processing_times_round_trip_through_public_client_model(timings)
     assert CaptureEngine.model_validate_json(engine.model_dump_json(by_alias=True)) == engine
 
 
-def test_delete_streaming_ingestion_deletes_the_uploaded_source() -> None:
+def test_delete_ingestion_deletes_the_uploaded_source() -> None:
     deleted: list[str] = []
 
     def delete(request: httpx.Request) -> httpx.Response:
@@ -1653,6 +1734,6 @@ def test_delete_streaming_ingestion_deletes_the_uploaded_source() -> None:
 
     transport = _transport({("DELETE", "/v2/ingestions/ingestion-1"): delete})
 
-    CaptureRuntimeClient(transport=transport).delete_streaming_ingestion("ingestion-1")
+    CaptureRuntimeClient(transport=transport).delete_ingestion("ingestion-1")
 
     assert deleted == ["/v2/ingestions/ingestion-1"]

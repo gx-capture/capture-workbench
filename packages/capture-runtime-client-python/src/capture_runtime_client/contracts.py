@@ -12,8 +12,6 @@ import json
 from importlib.resources import files
 from typing import Any, cast
 
-from pydantic import Field, field_validator
-
 from .private import generated_models as _generated
 
 for _generated_name in (
@@ -208,7 +206,11 @@ class SubmitStructuringBatch(_generated.SubmitStructuringBatch):
     pass
 
 
-class RuntimeStreamingCapabilities(_generated.RuntimeStreamingCapabilities):
+class RuntimeCapabilities(_generated.RuntimeCapabilities):
+    pass
+
+
+class OcrComputePreflight(_generated.OcrComputePreflight):
     pass
 
 
@@ -222,16 +224,9 @@ class RuntimeReady(_generated.StrictModel):
     capture_document_schema_version: str
     capture_document_schema_sha256: str | None = None
     contract_set_version: str = "2"
-    capabilities: dict[str, Any] = Field(default_factory=dict)
-    ocr_compute: dict[str, Any] | None = None
+    capabilities: RuntimeCapabilities
+    ocr_compute: OcrComputePreflight | None = None
     message: str | None = None
-
-    @field_validator("ocr_compute")
-    @classmethod
-    def validate_ocr_compute(_cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
-        if value is not None:
-            _generated.OcrComputePreflight.model_validate(value)
-        return value
 
 
 class ReportStructuringFailure(_generated.ReportStructuringFailure):
@@ -346,7 +341,8 @@ __all__ = [
     "StructuringBatch",
     "StructuringSemanticBlock",
     "SubmitStructuringBatch",
-    "RuntimeStreamingCapabilities",
+    "RuntimeCapabilities",
+    "OcrComputePreflight",
     "RuntimeReady",
     "ReportStructuringFailure",
     "ErrorBody",

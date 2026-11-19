@@ -537,11 +537,11 @@ describe('App native drops', () => {
       fileName: 'interview.wav',
       mediaType: 'audio/wav',
     };
-    const startStreamingCapture = vi.fn(() => of(completedOperation));
-    const getStreamingResult = vi.fn(() =>
+    const startRecordingCapture = vi.fn(() => of(completedOperation));
+    const getResult = vi.fn(() =>
       of({ operation: completedOperation, raw, result }),
     );
-    const deleteStreamingCapture = vi.fn(() => of(undefined));
+    const deleteCapture = vi.fn(() => of(undefined));
     const startInstallation = vi.fn();
     const library = libraryStub({
       importSelection: vi.fn(() => of(audioDoc)),
@@ -573,9 +573,9 @@ describe('App native drops', () => {
         ]),
       ),
       startInstallation,
-      startStreamingCapture,
-      getStreamingResult,
-      deleteStreamingCapture,
+      startRecordingCapture,
+      getResult,
+      deleteCapture,
     });
     const { store, drop } = renderDropShell(library, client);
 
@@ -588,8 +588,8 @@ describe('App native drops', () => {
 
     expect(startInstallation).not.toHaveBeenCalled();
     expect(TestBed.inject(RecognitionFeaturesStore).requestedRequirements().has('text-recognition')).toBe(false);
-    expect(startStreamingCapture).toHaveBeenCalledOnce();
-    expect(getStreamingResult).toHaveBeenCalledWith(completedOperation.captureId);
+    expect(startRecordingCapture).toHaveBeenCalledOnce();
+    expect(getResult).toHaveBeenCalledWith(completedOperation.captureId);
   });
 
   it('streams a newly imported recording before the library list includes it', () => {
@@ -598,7 +598,7 @@ describe('App native drops', () => {
       fileName: 'interview.wav',
       mediaType: 'audio/wav',
     };
-    const startStreamingCapture = vi.fn(() => of(completedOperation));
+    const startRecordingCapture = vi.fn(() => of(completedOperation));
     const createCapture = vi.fn(() => of(completedOperation));
     const library = libraryStub({
       importSelection: vi.fn(() => of(audioDoc)),
@@ -619,18 +619,18 @@ describe('App native drops', () => {
           },
         ]),
       ),
-      startStreamingCapture,
+      startRecordingCapture,
       createCapture,
-      getStreamingResult: vi.fn(() => of({ operation: completedOperation, raw, result })),
-      deleteStreamingCapture: vi.fn(() => of(undefined)),
+      getResult: vi.fn(() => of({ operation: completedOperation, raw, result })),
+      deleteCapture: vi.fn(() => of(undefined)),
     });
     const { drop } = renderDropShell(library, client);
 
     drop({ rejected: [], selections: [selection('interview.wav')] });
     TestBed.tick();
 
-    expect(startStreamingCapture).toHaveBeenCalledOnce();
-    expect(startStreamingCapture).toHaveBeenCalledWith(expect.objectContaining({ documentId: audioDoc.documentId }));
+    expect(startRecordingCapture).toHaveBeenCalledOnce();
+    expect(startRecordingCapture).toHaveBeenCalledWith(expect.objectContaining({ documentId: audioDoc.documentId }));
     expect(TestBed.inject(LibraryStore).allDocuments()).toEqual([]);
     expect(createCapture).not.toHaveBeenCalled();
   });
@@ -809,12 +809,11 @@ function runtimeStub(overrides: Record<string, unknown> = {}) {
     createCapture: vi.fn(() => of(completedOperation)),
     getCapture: vi.fn(() => of(completedOperation)),
     getRaw: vi.fn(() => of(raw)),
-    getResult: vi.fn(() => of(result)),
+    getResult: vi.fn(() => of({ operation: completedOperation, raw, result })),
     getOcr: vi.fn((captureId: string) => of(ocrProjection(captureId))),
     deleteCapture: vi.fn(() => of(undefined)),
-    getStreamingEvents: vi.fn(() => of([])),
-    getStreamingPartial: vi.fn(() => of(null)),
-    getStreamingCapture: vi.fn(() => of(completedOperation)),
+    getCaptureEvents: vi.fn(() => of([])),
+    getPartial: vi.fn(() => of(null)),
   }, overrides);
 }
 

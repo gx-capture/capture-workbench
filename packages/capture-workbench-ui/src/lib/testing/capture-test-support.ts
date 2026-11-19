@@ -41,6 +41,11 @@ export const READY: RuntimeReady = {
     supportsCancellation: true,
     supportsRawDiagnostics: true,
     maxUploadBytes: 25_000_000,
+    maxChunkBytes: 1024 * 1024,
+    checkpointIntervalMs: 300_000,
+    heartbeatIntervalMs: 5_000,
+    stallTimeoutMs: 90_000,
+    supportsProgressiveRecording: true,
   },
 };
 
@@ -180,16 +185,16 @@ export function fakeClient(
     getInstallation: vi.fn(),
     cancelInstallation: vi.fn(),
     captureEvents: vi.fn(() => of(streamingEvent('completed', 'completed'))),
-    startStreamingCapture: vi.fn(() => of(streamingOperation('completed'))),
-    getStreamingCapture: vi.fn(() => of(streamingOperation('completed'))),
-    cancelStreamingCapture: vi.fn(() => of(streamingOperation('cancelled'))),
-    getStreamingPartial: vi.fn(() => of(PARTIAL)),
-    getStreamingRaw: vi.fn(() => of(RAW)),
-    getStreamingResult: vi.fn(() => of(streamingResult())),
-    commitStreamingStructuredResult: vi.fn(() =>
+    startCapture: vi.fn(() => of(streamingOperation('completed'))),
+    getCapture: vi.fn(() => of(streamingOperation('completed'))),
+    cancelCapture: vi.fn(() => of(streamingOperation('cancelled'))),
+    getPartial: vi.fn(() => of(PARTIAL)),
+    getRaw: vi.fn(() => of(RAW)),
+    getResult: vi.fn(() => of(streamingResult())),
+    commitStructure: vi.fn(() =>
       of(streamingOperation('completed')),
     ),
-    reportStreamingStructuringFailure: vi.fn(() =>
+    reportStructuringFailure: vi.fn(() =>
       of({
         ...streamingOperation('failed'),
         error: {
@@ -199,7 +204,7 @@ export function fakeClient(
         },
       }),
     ),
-    deleteStreamingCapture: vi.fn(() => of(undefined)),
+    deleteCapture: vi.fn(() => of(undefined)),
     ...overrides,
   };
 }

@@ -1044,7 +1044,6 @@ window.__captureE2eReady = true;
     const expectedPaths = [
       '/v2/health/ready',
       '/meta/v2/contracts',
-      '/v2/streaming/health/ready',
       '/v2/runtime/requirements',
       '/v2/ingestions',
       '/v2/captures',

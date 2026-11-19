@@ -80,6 +80,11 @@ describe('HttpCaptureClient', () => {
           supportsCancellation: true,
           supportsRawDiagnostics: true,
           maxUploadBytes: 1024,
+          maxChunkBytes: 1024 * 1024,
+          checkpointIntervalMs: 300_000,
+          heartbeatIntervalMs: 5_000,
+          stallTimeoutMs: 90_000,
+          supportsProgressiveRecording: true,
         },
       }),
     );
@@ -112,7 +117,7 @@ describe('HttpCaptureClient', () => {
     const client = configureClient(fetchMock);
 
     let error: unknown;
-    client.getStreamingResult('capture-1').subscribe({
+    client.getResult('capture-1').subscribe({
       error: (value) => (error = value),
     });
     await vi.waitFor(() =>
@@ -231,11 +236,12 @@ describe('HttpCaptureClient', () => {
     let received: unknown;
 
     client
-      .startStreamingCapture({
+      .startCapture({
         clientRequestId: 'request-1',
         file: new File(['abc'], 'scan.pdf', { type: 'application/pdf' }),
         sourceKind: 'pdf',
         structuringMode: 'runtime',
+        pdfPageNumbers: [3, 7],
       })
       .subscribe({ next: (value) => (received = value) });
 
@@ -262,6 +268,9 @@ describe('HttpCaptureClient', () => {
       ),
     ).toBe('request-1');
     expect(String(fetchMock.mock.calls[3]?.[0])).not.toContain('secret-token');
+    expect(JSON.parse(String(fetchMock.mock.calls[3]?.[1]?.body))).toMatchObject({
+      pdfPageNumbers: [3, 7],
+    });
   });
 
   it('uses v2 operation, partial, result, control, and delete routes', async () => {
@@ -327,20 +336,20 @@ describe('HttpCaptureClient', () => {
     const client = configureClient(fetchMock) as HttpCaptureClient;
     const signal = new AbortController().signal;
 
-    client.getStreamingCapture('capture-1', signal).subscribe();
-    client.cancelStreamingCapture('capture-1', signal).subscribe();
-    client.getStreamingPartial('capture-1', signal).subscribe();
-    client.getStreamingRaw('capture-1', signal).subscribe();
-    client.getStreamingResult('capture-1', signal).subscribe();
+    client.getCapture('capture-1', signal).subscribe();
+    client.cancelCapture('capture-1', signal).subscribe();
+    client.getPartial('capture-1', signal).subscribe();
+    client.getRaw('capture-1', signal).subscribe();
+    client.getResult('capture-1', signal).subscribe();
     client
-      .commitStreamingStructuredResult(
+      .commitStructure(
         'capture-1',
         { clientRequestId: 'commit-1', candidate },
         signal,
       )
       .subscribe();
     client
-      .reportStreamingStructuringFailure(
+      .reportStructuringFailure(
         'capture-1',
         {
           clientRequestId: 'failure-1',
@@ -350,7 +359,7 @@ describe('HttpCaptureClient', () => {
         signal,
       )
       .subscribe();
-    client.deleteStreamingCapture('capture-1', signal).subscribe();
+    client.deleteCapture('capture-1', signal).subscribe();
 
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(8));
     expect(
@@ -524,6 +533,11 @@ function discoveryResponse(path: string): Response | undefined {
         supportsCancellation: true,
         supportsRawDiagnostics: true,
         maxUploadBytes: 1024,
+        maxChunkBytes: 1024 * 1024,
+        checkpointIntervalMs: 300_000,
+        heartbeatIntervalMs: 5_000,
+        stallTimeoutMs: 90_000,
+        supportsProgressiveRecording: true,
       },
     });
   }
@@ -537,9 +551,6 @@ function discoveryResponse(path: string): Response | undefined {
       },
     });
   }
-  if (path === '/v2/streaming/health/ready') {
-    return jsonResponse(streamingCapabilities());
-  }
   return undefined;
 }
 
@@ -548,16 +559,6 @@ function jsonResponse(value: unknown, status = 200): Response {
     status,
     headers: { 'Content-Type': 'application/json' },
   });
-}
-
-function streamingCapabilities() {
-  return {
-    protocolVersion: '2',
-    maxChunkBytes: 1024 * 1024,
-    checkpointIntervalMs: 250,
-    heartbeatIntervalMs: 1000,
-    stallTimeoutMs: 30000,
-  };
 }
 
 function ingestion(receivedBytes: number) {

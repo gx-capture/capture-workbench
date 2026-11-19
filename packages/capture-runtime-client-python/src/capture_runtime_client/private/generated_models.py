@@ -1187,21 +1187,21 @@ class CaptureEvent(StrictModel):
         return self
 
 
-class RuntimeStreamingCapabilities(StrictModel):
-    protocol_version: Literal["2"] = "2"
-    capture_kinds: list[CaptureSourceKind] = Field(
-        default_factory=lambda: [
-            CaptureSourceKind.PDF,
-            CaptureSourceKind.IMAGE,
-            CaptureSourceKind.RECORDING,
-        ],
-        min_length=1,
-    )
-    supports_progressive_audio: bool = True
+class RuntimeCapabilities(StrictModel):
+    """What this runtime accepts: capture kinds, structuring modes and upload limits."""
+
+    capture_kinds: list[CaptureSourceKind] = Field(min_length=1)
+    structuring_modes: list[StructuringMode] = Field(min_length=1)
+    supports_cancellation: bool
+    supports_raw_diagnostics: bool
+    max_upload_bytes: int = Field(gt=0)
     max_chunk_bytes: int = Field(gt=0, le=4 * 1024 * 1024)
     checkpoint_interval_ms: int = Field(gt=0)
     heartbeat_interval_ms: int = Field(gt=0)
     stall_timeout_ms: int = Field(gt=0)
+    # Whether the packaged decoder that transcribes a recording while it is
+    # still uploading can load in this runtime.
+    supports_progressive_recording: bool
 
 
 class OcrComputePreflight(StrictModel):
@@ -1255,7 +1255,7 @@ class RuntimeReady(StrictModel):
     capture_document_schema_version: Literal["2"] = CAPTURE_DOCUMENT_SCHEMA_VERSION
     capture_document_schema_sha256: Sha256Hex | None = None
     contract_set_version: Literal["2"] = "2"
-    capabilities: dict[str, Any] = Field(default_factory=dict)
+    capabilities: RuntimeCapabilities
     ocr_compute: OcrComputePreflight | None = None
     message: str | None = None
 
@@ -1327,7 +1327,7 @@ __all__ = [
     'CaptureResult',
     'PartialCapture',
     'CaptureEvent',
-    'RuntimeStreamingCapabilities',
+    'RuntimeCapabilities',
     'OcrComputePreflight',
     'RuntimeReady',
     'ErrorBody',

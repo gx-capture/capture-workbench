@@ -37,7 +37,6 @@ from capture_runtime.contracts import (
     PartialCapture,
     RawCapture,
     ReportStructuringFailure,
-    RuntimeStreamingCapabilities,
     StartCapture,
     StructuringBatch,
     StructuringSession,
@@ -45,8 +44,6 @@ from capture_runtime.contracts import (
 )
 from capture_runtime.dependencies import RuntimeDependencies
 from capture_runtime.routes.common import ApiProblem
-from capture_runtime.speech.infrastructure.progressive_audio import DEFAULT_CHECKPOINT_MS
-from capture_runtime.speech.infrastructure.progressive_decoder import progressive_decoder_ready
 from capture_runtime.structuring.infrastructure.contracts import StructuringValidationError
 from capture_runtime.structuring.infrastructure.structuring_session_repository import (
     StructuringSessionDigestConflictError,
@@ -73,16 +70,6 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
     open_session = structuring_session_service.open_use_case
     submit_batch = structuring_session_service.submit_use_case
     get_session = structuring_session_service.get_use_case
-
-    @router.get("/streaming/health/ready", response_model=RuntimeStreamingCapabilities)
-    async def streaming_ready() -> RuntimeStreamingCapabilities:
-        return RuntimeStreamingCapabilities(
-            supports_progressive_audio=progressive_decoder_ready(),
-            max_chunk_bytes=service.max_chunk_bytes,
-            checkpoint_interval_ms=DEFAULT_CHECKPOINT_MS,
-            heartbeat_interval_ms=5_000,
-            stall_timeout_ms=90_000,
-        )
 
     @router.post(
         "/ingestions",
@@ -248,7 +235,8 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
         async def stream() -> AsyncIterator[str]:
             cursor = after_sequence
             initial_replay = True
-            heartbeat_deadline = time.monotonic() + 5
+            heartbeat_seconds = service.heartbeat_interval_ms / 1000
+            heartbeat_deadline = time.monotonic() + heartbeat_seconds
             while True:
                 current_events = (
                     events
@@ -267,7 +255,7 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
                         f"\ndata: {payload}\n\n"
                     )
                     cursor = max(cursor, event.sequence)
-                    heartbeat_deadline = time.monotonic() + 5
+                    heartbeat_deadline = time.monotonic() + heartbeat_seconds
 
                 if service.event_stream_should_close(capture_id):
                     # A repository transition persists the terminal snapshot
@@ -288,7 +276,7 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
                     return
                 if time.monotonic() >= heartbeat_deadline:
                     yield ": heartbeat\n\n"
-                    heartbeat_deadline = time.monotonic() + 5
+                    heartbeat_deadline = time.monotonic() + heartbeat_seconds
                 await asyncio.sleep(0.05)
 
         return StreamingResponse(

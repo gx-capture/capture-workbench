@@ -33,7 +33,7 @@ import {
   type CaptureStructuringProvider,
   type CaptureTaskView,
   type RawCapture,
-  type StartStreamingCaptureRequest,
+  type StartCaptureRequest,
 } from '../contracts';
 import type { ResolvedCaptureWorkbenchConfig } from '../contracts';
 import type {
@@ -159,10 +159,10 @@ export class CaptureWorkflowService {
     const captureId = this.captureIds.get(taskId);
     const client = this.activeClient();
     if (captureId && client) {
-      const streamingClient = asStreamingClient(client);
+      const streamingClient = asCompleteCaptureClient(client);
       if (streamingClient) {
         defer(() =>
-          streamingClient.cancelStreamingCapture(
+          streamingClient.cancelCapture(
             captureId,
             this.lifecycleController.signal,
           ),
@@ -236,10 +236,10 @@ export class CaptureWorkflowService {
     if (!task || !this.helpers.isTerminalTask(task)) return;
     const client = this.activeClient();
     if (task.captureId && client) {
-      const streamingClient = asStreamingClient(client);
+      const streamingClient = asCompleteCaptureClient(client);
       if (streamingClient) {
         defer(() =>
-          streamingClient.deleteStreamingCapture(task.captureId as string),
+          streamingClient.deleteCapture(task.captureId as string),
         )
           .pipe(
             catchError((error: unknown) => {
@@ -390,12 +390,12 @@ export class CaptureWorkflowService {
       });
     }
     const signal = internal.controller.signal;
-    const streamingClient = asStreamingClient(client);
+    const streamingClient = asCompleteCaptureClient(client);
     if (!streamingClient) {
       return defer(() => {
         this.failTask(taskId, task.fileName, {
-          code: 'streaming_client_unavailable',
-          message: 'The capture client does not support streaming capture.',
+          code: 'capture_client_unavailable',
+          message: 'The capture client does not implement every capture operation.',
           stage: 'runtime',
         });
         return of(undefined);
@@ -458,7 +458,7 @@ export class CaptureWorkflowService {
   }
 
   private processStreamingTask(
-    client: StreamingClient,
+    client: CompleteCaptureClient,
     internal: InternalCaptureTask,
     task: CaptureTaskView,
     config: ResolvedCaptureWorkbenchConfig,
@@ -471,12 +471,15 @@ export class CaptureWorkflowService {
       tap(() => this.helpers.throwIfAborted(signal)),
       concatMap((file) => {
         this.updateTask(taskId, { stage: 'uploading', progress: 5 });
-        const request: StartStreamingCaptureRequest = {
+        const request: StartCaptureRequest = {
           clientRequestId: internal.clientRequestId,
           file,
           sourceKind: task.sourceKind,
           structuringMode: config.structuringMode,
           targetLanguage: config.targetLanguage,
+          ...(task.sourceKind === 'pdf' && config.pdfPageNumbers !== undefined
+            ? { pdfPageNumbers: config.pdfPageNumbers }
+            : {}),
           identifySpeakers:
             config.identifySpeakers && task.sourceKind === 'recording',
           spokenLanguage:
@@ -484,7 +487,7 @@ export class CaptureWorkflowService {
           signal,
         };
         return this.helpers.retryUncertainResponse(
-          () => client.startStreamingCapture(request),
+          () => client.startCapture(request),
           signal,
         );
       }),
@@ -528,7 +531,7 @@ export class CaptureWorkflowService {
   }
 
   private processStreamingHostStructuring(
-    client: StreamingClient,
+    client: CompleteCaptureClient,
     provider: CaptureStructuringProvider,
     initial: CaptureOperation,
     config: ResolvedCaptureWorkbenchConfig,
@@ -538,7 +541,7 @@ export class CaptureWorkflowService {
     return this.waitForStreamingOperation(client, initial, signal, true, taskId).pipe(
       concatMap((operation) => {
         if (operation.status !== 'awaiting_structuring') return of(operation);
-        return client.getStreamingRaw(operation.captureId, signal).pipe(
+        return client.getRaw(operation.captureId, signal).pipe(
           concatMap((raw) =>
             this.awaitReview(taskId, raw, config, operation.progress ?? 0).pipe(
               concatMap((review) =>
@@ -629,7 +632,7 @@ export class CaptureWorkflowService {
   }
 
   private waitForStreamingOperation(
-    client: StreamingClient,
+    client: CompleteCaptureClient,
     initial: CaptureOperation,
     signal: AbortSignal,
     stopForHost: boolean,
@@ -693,17 +696,17 @@ export class CaptureWorkflowService {
   }
 
   private reloadStreamingSnapshot$(
-    client: StreamingClient,
+    client: CompleteCaptureClient,
     captureId: string,
     signal: AbortSignal,
     taskId: string,
     includePartial: boolean,
   ): Observable<CaptureOperation> {
-    return client.getStreamingCapture(captureId, signal).pipe(
+    return client.getCapture(captureId, signal).pipe(
       tap((operation) => this.applyStreamingOperation(taskId, operation)),
       concatMap((operation) => {
         if (!includePartial) return of(operation);
-        return client.getStreamingPartial(captureId, signal).pipe(
+        return client.getPartial(captureId, signal).pipe(
           tap((partial) => this.applyStreamingPartial(taskId, partial)),
           map(() => operation),
           catchError(() => of(operation)),
@@ -723,7 +726,7 @@ export class CaptureWorkflowService {
   }
 
   private settleStreaming(
-    client: StreamingClient,
+    client: CompleteCaptureClient,
     task: CaptureTaskView,
     operation: CaptureOperation,
     signal: AbortSignal,
@@ -768,7 +771,7 @@ export class CaptureWorkflowService {
         () => new Error(`Capture ended in unexpected state: ${operation.status}`),
       );
     }
-    return client.getStreamingResult(operation.captureId, signal).pipe(
+    return client.getResult(operation.captureId, signal).pipe(
       tap((result) => {
         const completedTask = this.updateTask(taskId, {
           status: 'completed',
@@ -860,9 +863,9 @@ export class CaptureWorkflowService {
     captureId: string,
     signal?: AbortSignal,
   ): Observable<RawCapture | undefined> {
-    const streamingClient = asStreamingClient(client);
+    const streamingClient = asCompleteCaptureClient(client);
     if (streamingClient) {
-      return defer(() => streamingClient.getStreamingRaw(captureId, signal)).pipe(
+      return defer(() => streamingClient.getRaw(captureId, signal)).pipe(
         catchError(() => of(undefined)),
       );
     }
@@ -972,34 +975,34 @@ function isResyncRequiredEvent(event: CaptureEvent): boolean {
   return event.eventType === 'resync_required';
 }
 
-type StreamingClient = CaptureClient &
+type CompleteCaptureClient = CaptureClient &
   Required<
     Pick<
       CaptureClient,
       | 'captureEvents'
-      | 'startStreamingCapture'
-      | 'getStreamingCapture'
-      | 'cancelStreamingCapture'
-      | 'getStreamingPartial'
-      | 'getStreamingRaw'
-      | 'getStreamingResult'
-      | 'commitStreamingStructuredResult'
-      | 'reportStreamingStructuringFailure'
-      | 'deleteStreamingCapture'
+      | 'startCapture'
+      | 'getCapture'
+      | 'cancelCapture'
+      | 'getPartial'
+      | 'getRaw'
+      | 'getResult'
+      | 'commitStructure'
+      | 'reportStructuringFailure'
+      | 'deleteCapture'
     >
   >;
 
-function asStreamingClient(client: CaptureClient): StreamingClient | undefined {
+function asCompleteCaptureClient(client: CaptureClient): CompleteCaptureClient | undefined {
   return typeof client.captureEvents === 'function' &&
-    typeof client.startStreamingCapture === 'function' &&
-    typeof client.getStreamingCapture === 'function' &&
-    typeof client.cancelStreamingCapture === 'function' &&
-    typeof client.getStreamingPartial === 'function' &&
-    typeof client.getStreamingRaw === 'function' &&
-    typeof client.getStreamingResult === 'function' &&
-    typeof client.commitStreamingStructuredResult === 'function' &&
-    typeof client.reportStreamingStructuringFailure === 'function' &&
-    typeof client.deleteStreamingCapture === 'function'
-    ? client as StreamingClient
+    typeof client.startCapture === 'function' &&
+    typeof client.getCapture === 'function' &&
+    typeof client.cancelCapture === 'function' &&
+    typeof client.getPartial === 'function' &&
+    typeof client.getRaw === 'function' &&
+    typeof client.getResult === 'function' &&
+    typeof client.commitStructure === 'function' &&
+    typeof client.reportStructuringFailure === 'function' &&
+    typeof client.deleteCapture === 'function'
+    ? client as CompleteCaptureClient
     : undefined;
 }

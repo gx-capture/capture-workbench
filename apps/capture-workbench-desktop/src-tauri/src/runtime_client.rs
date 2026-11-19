@@ -6,9 +6,9 @@ use sha2::{Digest, Sha256};
 use crate::{
     config::BackendConfig,
     contracts::{
-        RuntimeCancelUploadInput, RuntimeCreateCaptureInput, RuntimeIdInput,
-        RuntimeInstallationStartInput, RuntimeRequirementInput, RuntimeStreamingCaptureInput,
-        RuntimeStreamingEventsInput, StructuringModelInstallationStartInput,
+        RuntimeCancelUploadInput, RuntimeCaptureEventsInput, RuntimeCreateCaptureInput,
+        RuntimeIdInput, RuntimeInstallationStartInput, RuntimeRecordingCaptureInput,
+        RuntimeRequirementInput, StructuringModelInstallationStartInput,
     },
     library::{validate_spoken_language, LibraryStore, RuntimeSourceFile, RECORDING_MEDIA_TYPES},
     state::DesktopState,
@@ -23,9 +23,7 @@ pub(crate) mod validation;
 
 pub(crate) use upload_cancellation::{Upload, UploadCancellations};
 
-use transport::{
-    is_http_rejection, request, request_sse, request_with_headers, request_with_retry, RequestBody,
-};
+use transport::{is_http_rejection, request, request_sse, request_with_retry, RequestBody};
 use validation::{
     validate_client_request_id, validate_document_id, validate_model_option_id, validate_opaque_id,
     validate_pdf_page_numbers, validate_requirement_id, validate_structuring_mode,
@@ -216,7 +214,7 @@ pub(crate) fn create_capture(
     finish_capture_start(&config, &ingestion_id, result)
 }
 
-fn validate_streaming_capture_input(input: &RuntimeStreamingCaptureInput) -> Result<(), String> {
+fn validate_recording_capture_input(input: &RuntimeRecordingCaptureInput) -> Result<(), String> {
     validate_document_id(&input.document_id)?;
     validate_client_request_id(&input.client_request_id)?;
     validate_structuring_mode(&input.structuring_mode)?;
@@ -226,23 +224,23 @@ fn validate_streaming_capture_input(input: &RuntimeStreamingCaptureInput) -> Res
     Ok(())
 }
 
-pub(crate) fn start_streaming_capture(
+pub(crate) fn start_recording_capture(
     state: &DesktopState,
     library: &LibraryStore,
-    input: RuntimeStreamingCaptureInput,
+    input: RuntimeRecordingCaptureInput,
     upload: &Upload,
 ) -> Result<Value, String> {
-    validate_streaming_capture_input(&input)?;
+    validate_recording_capture_input(&input)?;
     let source = library.runtime_source_file(&input.document_id)?;
     // Audio, or video whose audio track is transcribed.
     if !RECORDING_MEDIA_TYPES.contains(&source.media_type.as_str()) {
         return Err("Progressive capture is available only for recordings.".into());
     }
     let config = state.backend_config()?;
-    start_streaming_capture_inner(&config, &source, &input, upload)
+    start_recording_capture_inner(&config, &source, &input, upload)
 }
 
-fn streaming_capture_body(input: &RuntimeStreamingCaptureInput, ingestion_id: &str) -> Value {
+fn recording_capture_body(input: &RuntimeRecordingCaptureInput, ingestion_id: &str) -> Value {
     let mut body = serde_json::Map::new();
     body.insert("clientRequestId".into(), json!(input.client_request_id));
     body.insert("ingestionId".into(), json!(ingestion_id));
@@ -255,10 +253,10 @@ fn streaming_capture_body(input: &RuntimeStreamingCaptureInput, ingestion_id: &s
     Value::Object(body)
 }
 
-fn start_streaming_capture_inner(
+fn start_recording_capture_inner(
     config: &BackendConfig,
     source: &RuntimeSourceFile,
-    input: &RuntimeStreamingCaptureInput,
+    input: &RuntimeRecordingCaptureInput,
     upload: &Upload,
 ) -> Result<Value, String> {
     let open_body = RequestBody {
@@ -276,7 +274,7 @@ fn start_streaming_capture_inner(
     let ingestion_id =
         upload_ingestion_source(config, source, open_body, &input.client_request_id, upload)?;
     let capture_body = RequestBody {
-        bytes: serde_json::to_vec(&streaming_capture_body(input, &ingestion_id))
+        bytes: serde_json::to_vec(&recording_capture_body(input, &ingestion_id))
             .map_err(|_| "Progressive capture request cannot be encoded.".to_string())?,
         content_type: "application/json".into(),
     };
@@ -385,66 +383,35 @@ fn upload_ingestion_source(
     Ok(ingestion_id.to_string())
 }
 
-pub(crate) fn streaming_capture(
-    state: &DesktopState,
-    input: RuntimeIdInput,
-) -> Result<Value, String> {
-    streaming_value(state, "GET", &input.id, "", None, None)
-}
-
-pub(crate) fn streaming_partial(
+pub(crate) fn capture_partial(
     state: &DesktopState,
     input: RuntimeIdInput,
 ) -> Result<Value, String> {
     null_for_http_rejection(
-        streaming_value(state, "GET", &input.id, "/partial", None, None),
+        capture_value(state, "GET", &input.id, "/partial", None),
         409,
     )
 }
 
-pub(crate) fn streaming_result(
+pub(crate) fn structure_capture(
     state: &DesktopState,
     input: RuntimeIdInput,
 ) -> Result<Value, String> {
-    streaming_value(state, "GET", &input.id, "/result", None, None)
+    capture_value(state, "POST", &input.id, "/structure", None)
 }
 
-pub(crate) fn streaming_structure(
+/// Reads the capture's events after `lastEventId` from the runtime's SSE stream.
+pub(crate) fn capture_events(
     state: &DesktopState,
-    input: RuntimeIdInput,
+    input: RuntimeCaptureEventsInput,
 ) -> Result<Value, String> {
-    streaming_value(state, "POST", &input.id, "/structure", None, None)
-}
-
-pub(crate) fn streaming_events(
-    state: &DesktopState,
-    input: RuntimeStreamingEventsInput,
-) -> Result<Value, String> {
+    validate_opaque_id(&input.id)?;
+    let config = state.backend_config()?;
     let last_event_id = input.last_event_id.map(|value| value.to_string());
-    streaming_value(
-        state,
-        "GET",
-        &input.id,
-        "/events",
-        None,
+    request_sse(
+        &config,
+        &capture_path(&input.id, "/events"),
         last_event_id.as_deref(),
-    )
-}
-
-pub(crate) fn cancel_streaming_capture(
-    state: &DesktopState,
-    input: RuntimeIdInput,
-) -> Result<Value, String> {
-    streaming_value(state, "POST", &input.id, "/cancel", None, None)
-}
-
-pub(crate) fn delete_streaming_capture(
-    state: &DesktopState,
-    input: RuntimeIdInput,
-) -> Result<Value, String> {
-    null_for_http_rejection(
-        streaming_value(state, "DELETE", &input.id, "", None, None),
-        404,
     )
 }
 
@@ -583,23 +550,6 @@ fn capture_value(
 
 fn capture_path(capture_id: &str, suffix: &str) -> String {
     format!("/v2/captures/{capture_id}{suffix}")
-}
-
-fn streaming_value(
-    state: &DesktopState,
-    method: &str,
-    capture_id: &str,
-    suffix: &str,
-    body: Option<RequestBody>,
-    last_event_id: Option<&str>,
-) -> Result<Value, String> {
-    validate_opaque_id(capture_id)?;
-    let config = state.backend_config()?;
-    let path = format!("/v2/captures/{capture_id}{suffix}");
-    if suffix == "/events" {
-        return request_sse(&config, &path, last_event_id);
-    }
-    request_with_headers(&config, method, &path, body, None, &[])
 }
 
 fn request_json(
@@ -1292,7 +1242,7 @@ mod tests {
                 &vec![b'x'; STREAM_CHUNK_BYTES + 1],
                 "audio/mpeg",
             );
-            let input = RuntimeStreamingCaptureInput {
+            let input = RuntimeRecordingCaptureInput {
                 document_id: "0123456789abcdef0123456789abcdef".into(),
                 client_request_id: "cancel-boundary".into(),
                 structuring_mode: "host".into(),
@@ -1351,7 +1301,7 @@ mod tests {
             });
             let result = (|| {
                 let upload = registry.begin(&input.client_request_id)?;
-                start_streaming_capture_inner(&config, &source, &input, &upload)
+                start_recording_capture_inner(&config, &source, &input, &upload)
             })();
             server.join().expect("server");
             match boundary {
@@ -1379,7 +1329,7 @@ mod tests {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("listener");
         let config = test_backend_config(listener.local_addr().expect("address").port());
         let (_guard, source) = create_test_source_file("cancel-retry", b"ID3audio", "audio/mpeg");
-        let input = RuntimeStreamingCaptureInput {
+        let input = RuntimeRecordingCaptureInput {
             document_id: "0123456789abcdef0123456789abcdef".into(),
             client_request_id: "cancel-retry".into(),
             structuring_mode: "host".into(),
@@ -1423,7 +1373,7 @@ mod tests {
         });
         let result = (|| {
             let upload = registry.begin(&input.client_request_id)?;
-            start_streaming_capture_inner(&config, &source, &input, &upload)
+            start_recording_capture_inner(&config, &source, &input, &upload)
         })();
         server.join().expect("server");
         assert_eq!(
@@ -1439,7 +1389,7 @@ mod tests {
         let (_guard, source) =
             create_test_source_file("streaming-rec", b"small audio content", "audio/mpeg");
         let config = test_backend_config(port);
-        let input = RuntimeStreamingCaptureInput {
+        let input = RuntimeRecordingCaptureInput {
             document_id: "0123456789abcdef0123456789abcdef".into(),
             client_request_id: "test-client-req".into(),
             structuring_mode: "host".into(),
@@ -1496,7 +1446,7 @@ mod tests {
             (ingestion_key, capture_key)
         });
 
-        let result = start_streaming_capture_inner(&config, &source, &input, &test_upload())
+        let result = start_recording_capture_inner(&config, &source, &input, &test_upload())
             .expect("capture call succeeds");
         let (ingestion_key, capture_key) = server.join().expect("server thread");
 
@@ -1513,7 +1463,7 @@ mod tests {
         let (_guard, source) =
             create_test_source_file("streaming-invalid-id", b"audio-bytes", "audio/mpeg");
         let config = test_backend_config(port);
-        let input = RuntimeStreamingCaptureInput {
+        let input = RuntimeRecordingCaptureInput {
             document_id: "0123456789abcdef0123456789abcdef".into(),
             client_request_id: "test-client-req".into(),
             structuring_mode: "host".into(),
@@ -1535,7 +1485,7 @@ mod tests {
             .expect("write response");
         });
 
-        let error = start_streaming_capture_inner(&config, &source, &input, &test_upload())
+        let error = start_recording_capture_inner(&config, &source, &input, &test_upload())
             .expect_err("should reject invalid ingestionId");
         assert_eq!(error, "Capture Runtime identifier is invalid.");
         server.join().expect("server thread");
@@ -1548,7 +1498,7 @@ mod tests {
         let (_guard, source) =
             create_test_source_file("streaming-fail", b"audio-bytes", "audio/mpeg");
         let config = test_backend_config(port);
-        let input = RuntimeStreamingCaptureInput {
+        let input = RuntimeRecordingCaptureInput {
             document_id: "0123456789abcdef0123456789abcdef".into(),
             client_request_id: "test-client-req".into(),
             structuring_mode: "host".into(),
@@ -1616,7 +1566,7 @@ mod tests {
             .expect("write delete response");
         });
 
-        let error = start_streaming_capture_inner(&config, &source, &input, &test_upload())
+        let error = start_recording_capture_inner(&config, &source, &input, &test_upload())
             .expect_err("capture start should fail");
         assert!(error.contains("HTTP 500"));
         server.join().expect("server thread");
@@ -1648,7 +1598,7 @@ mod tests {
         let expected_digest = hex_digest(&content);
         let (_guard, source) = create_test_source_file("replay", &content, "audio/mpeg");
         let config = test_backend_config(port);
-        let input = RuntimeStreamingCaptureInput {
+        let input = RuntimeRecordingCaptureInput {
             document_id: "0123456789abcdef0123456789abcdef".into(),
             client_request_id: "replay-request".into(),
             structuring_mode: "host".into(),
@@ -1733,7 +1683,7 @@ mod tests {
             // forbidden extra request is observed rather than connection-refused.
             listener
         });
-        let result = start_streaming_capture_inner(&config, &source, &input, &test_upload());
+        let result = start_recording_capture_inner(&config, &source, &input, &test_upload());
         let listener = server.join().expect("server");
         assert!(listener.accept().is_err(), "unexpected additional request");
         if succeeds {
@@ -1786,8 +1736,8 @@ mod tests {
     }
 
     #[test]
-    fn streaming_capture_body_serializes_with_and_without_spoken_language() {
-        let with_language: RuntimeStreamingCaptureInput = serde_json::from_value(json!({
+    fn recording_capture_body_serializes_with_and_without_spoken_language() {
+        let with_language: RuntimeRecordingCaptureInput = serde_json::from_value(json!({
             "documentId": "0123456789abcdef0123456789abcdef",
             "clientRequestId": "lang-req",
             "structuringMode": "runtime",
@@ -1795,34 +1745,34 @@ mod tests {
             "spokenLanguage": "ja",
         }))
         .expect("input with spokenLanguage");
-        validate_streaming_capture_input(&with_language).expect("valid language");
-        let encoded_with = streaming_capture_body(&with_language, "ing-1");
+        validate_recording_capture_input(&with_language).expect("valid language");
+        let encoded_with = recording_capture_body(&with_language, "ing-1");
         assert_eq!(encoded_with["spokenLanguage"], "ja");
         assert_eq!(encoded_with["identifySpeakers"], true);
 
-        let without_language: RuntimeStreamingCaptureInput = serde_json::from_value(json!({
+        let without_language: RuntimeRecordingCaptureInput = serde_json::from_value(json!({
             "documentId": "0123456789abcdef0123456789abcdef",
             "clientRequestId": "nolang-req",
             "structuringMode": "runtime",
         }))
         .expect("input without spokenLanguage");
-        validate_streaming_capture_input(&without_language).expect("none language");
-        let encoded_without = streaming_capture_body(&without_language, "ing-2");
+        validate_recording_capture_input(&without_language).expect("none language");
+        let encoded_without = recording_capture_body(&without_language, "ing-2");
         assert!(encoded_without.get("spokenLanguage").is_none());
         assert_eq!(encoded_without["identifySpeakers"], false);
     }
 
     #[test]
-    fn streaming_capture_rejects_invalid_spoken_language_without_paths() {
+    fn recording_capture_rejects_invalid_spoken_language_without_paths() {
         for bad in ["", "tlh", "zh-TW", "C:\\recordings\\secret.mp3"] {
-            let input = RuntimeStreamingCaptureInput {
+            let input = RuntimeRecordingCaptureInput {
                 document_id: "0123456789abcdef0123456789abcdef".into(),
                 client_request_id: "bad-lang".into(),
                 structuring_mode: "runtime".into(),
                 identify_speakers: false,
                 spoken_language: Some(bad.into()),
             };
-            let error = validate_streaming_capture_input(&input).expect_err("invalid rejected");
+            let error = validate_recording_capture_input(&input).expect_err("invalid rejected");
             assert_eq!(error, "Capture spoken language is invalid.");
             assert!(!error.contains("secret.mp3"));
         }
