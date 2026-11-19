@@ -7,6 +7,23 @@ function ocrFirstRunOption(page: Page) {
   return page.locator('[data-testid="first-run-option"][data-requirement-id="text-recognition"]');
 }
 
+/** What the page asked the simulated desktop backend so far (`installFakeDesktop` records it). */
+async function fakeDesktopLog(page: Page): Promise<{
+  readonly commands: readonly string[];
+  readonly startedRequirementIds: readonly string[];
+}> {
+  return page.evaluate(() => {
+    const target = globalThis as unknown as {
+      readonly __captureInvokedCommands: readonly string[];
+      readonly __captureStartedRequirementIds: readonly string[];
+    };
+    return {
+      commands: [...target.__captureInvokedCommands],
+      startedRequirementIds: [...target.__captureStartedRequirementIds],
+    };
+  });
+}
+
 async function observeInstallProgress(progressContainer: Locator): Promise<void> {
   const label = progressContainer.getByTestId('install-progress-label');
 
@@ -173,6 +190,39 @@ test('shows preparing immediately and monotonic progress on the /asr engine card
 
   await expect(page.getByTestId('asr-dropzone')).toBeVisible();
   await expect(page.getByTestId('asr-install-panel')).toHaveCount(0);
+});
+
+test('stops the install queue when the user cancels while the runtime is still looking up a lost installation', async ({ page }) => {
+  // The first status request of every installation answers "not found" and the
+  // listing that resolves it takes 15 s to answer: the cancel must not wait for it.
+  await page.goto('/?scenario=install-status-not-found-slow-listing');
+
+  // Text recognition, then speech recognition: a queue of two.
+  await page.getByTestId('first-run-checkbox-asr').check();
+  await page.getByTestId('first-run-install').click();
+
+  // The listing is pending once one was asked after the status request that answered 404.
+  await expect
+    .poll(
+      async () => {
+        const { commands } = await fakeDesktopLog(page);
+        const firstStatusRequest = commands.indexOf('runtime_get_installation');
+        return (
+          firstStatusRequest >= 0 &&
+          commands.indexOf('runtime_list_installations', firstStatusRequest) >= 0
+        );
+      },
+      { timeout: 10_000 },
+    )
+    .toBe(true);
+
+  await page.getByTestId('ocr-install-cancel').click();
+
+  // Far sooner than the listing answers, the card is gone and the next requirement never started.
+  await expect(page.getByTestId('ocr-install-progress')).toHaveCount(0, { timeout: 5_000 });
+  const { commands, startedRequirementIds } = await fakeDesktopLog(page);
+  expect(commands).toContain('runtime_cancel_installation');
+  expect(startedRequirementIds).toEqual(['text-recognition']);
 });
 
 test('answers 400 for an unknown scenario, an invalid speed, or an invalid startDelay', async ({ page }) => {

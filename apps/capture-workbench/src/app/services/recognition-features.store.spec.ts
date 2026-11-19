@@ -888,7 +888,14 @@ describe('RecognitionFeaturesStore installation', () => {
       const store = initializeFeatures(runtimeStub({ listInstallations, getInstallation }));
       expect(listInstallations).toHaveBeenCalledTimes(1);
 
-      vi.advanceTimersByTime(1_000 + 2_000);
+      // The retries wait 1 s, then 2 s: one boundary at a time.
+      vi.advanceTimersByTime(999);
+      expect(listInstallations).toHaveBeenCalledTimes(1);
+      vi.advanceTimersByTime(1);
+      expect(listInstallations).toHaveBeenCalledTimes(2);
+      vi.advanceTimersByTime(1_999);
+      expect(listInstallations).toHaveBeenCalledTimes(2);
+      vi.advanceTimersByTime(1);
       expect(listInstallations).toHaveBeenCalledTimes(3);
       expect(store.installationFor('text-recognition')?.status).toBe('running');
       expect(store.installing()).toBe(true);
@@ -1038,6 +1045,94 @@ describe('RecognitionFeaturesStore installation', () => {
       expect(startInstallation.mock.calls.map(([request]) => request.requirementId)).toEqual(['text-recognition']);
       expect(store.installing()).toBe(false);
       vi.advanceTimersByTime(60_000);
+      expect(startInstallation).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops the queue with the interrupted message when the runtime no longer knows the installation', () => {
+    const startInstallation = vi.fn((request: { requirementId: string }) =>
+      of({ ...runningInstallation('running'), installationId: `install-${request.requirementId}`, requirementId: request.requirementId }),
+    );
+    const getInstallation = vi.fn(() =>
+      throwError(() => new Error('Capture Runtime request was rejected with HTTP 404.')));
+    const store = initializeFeatures(
+      runtimeStub({
+        getRequirements: vi.fn(() => of([
+          requirement('text-recognition', 'installable', 144_000_000),
+          requirement('speech-recognition', 'installable', 2_800_000_000),
+        ])),
+        startInstallation,
+        listInstallations: vi.fn(() => of([])),
+        getInstallation,
+      }),
+    );
+
+    vi.useFakeTimers();
+    try {
+      store.installRequirements(['text-recognition', 'speech-recognition']);
+      expect(store.installing()).toBe(true);
+      vi.advanceTimersByTime(750);
+      TestBed.tick();
+
+      expect(store.message()).toBe(desktopMessages().installationInterrupted('text-recognition'));
+      expect(startInstallation.mock.calls.map(([request]) => request.requirementId)).toEqual(['text-recognition']);
+      expect(store.installing()).toBe(false);
+      vi.advanceTimersByTime(60_000);
+      expect(startInstallation).toHaveBeenCalledOnce();
+      expect(getInstallation).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('follows another running installation that the listing names and still stops the queue with the interrupted message', () => {
+    const startInstallation = vi.fn((request: { requirementId: string }) =>
+      of({ ...runningInstallation('running'), installationId: `install-${request.requirementId}`, requirementId: request.requirementId }),
+    );
+    const otherRunning: RuntimeInstallation = {
+      ...runningInstallation('running'),
+      installationId: 'inst-diarization-1',
+      requirementId: 'speaker-diarization',
+    };
+    const getInstallation = vi.fn((installationId: string): Observable<RuntimeInstallation> =>
+      installationId === otherRunning.installationId
+        ? of(otherRunning)
+        : throwError(() => new Error('Capture Runtime request was rejected with HTTP 404.')));
+    const store = initializeFeatures(
+      runtimeStub({
+        getRequirements: vi.fn(() => of([
+          requirement('text-recognition', 'installable', 144_000_000),
+          requirement('speech-recognition', 'installable', 2_800_000_000),
+        ])),
+        startInstallation,
+        // The startup listing is empty; the one that resolves the lost installation names another one.
+        listInstallations: vi.fn()
+          .mockReturnValueOnce(of([]))
+          .mockReturnValue(of([otherRunning])),
+        getInstallation,
+      }),
+    );
+    const callsFor = (installationId: string) =>
+      getInstallation.mock.calls.filter(([id]) => id === installationId).length;
+
+    vi.useFakeTimers();
+    try {
+      store.installRequirements(['text-recognition', 'speech-recognition']);
+      vi.advanceTimersByTime(750);
+      TestBed.tick();
+
+      expect(store.message()).toBe(desktopMessages().installationInterrupted('text-recognition'));
+      expect(startInstallation.mock.calls.map(([request]) => request.requirementId)).toEqual(['text-recognition']);
+      expect(store.installationFor('speaker-diarization')?.status).toBe('running');
+      // The other installation is still running, so the store stays busy, but the queue is over.
+      expect(store.installing()).toBe(true);
+
+      expect(callsFor('inst-diarization-1')).toBe(0);
+      vi.advanceTimersByTime(750);
+      expect(callsFor('inst-diarization-1')).toBe(1);
+      expect(callsFor('install-text-recognition')).toBe(1);
       expect(startInstallation).toHaveBeenCalledOnce();
     } finally {
       vi.useRealTimers();

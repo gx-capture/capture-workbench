@@ -277,8 +277,9 @@ export class InstallationTracker<T extends TrackedRecord> {
           this.finish(installationId, endOfRecord(listed).outcome, listed);
           return null;
         }
-        // The list says running while the status said "not found": ask again, backing off while they disagree.
-        this.store(listed, true);
+        // The list says running while the status said "not found". The list is an answer, so the retry
+        // hint goes off (a failed list keeps it on); ask the status again, backing off while they disagree.
+        this.store(listed, false);
         const disagreements = step.disagreements + 1;
         return { phase: 'status', waitMs: this.backoff(disagreements), failures: 0, disagreements };
       }),

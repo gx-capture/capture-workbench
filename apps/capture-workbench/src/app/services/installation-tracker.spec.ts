@@ -111,7 +111,8 @@ describe('InstallationTracker', () => {
     vi.advanceTimersByTime(750);
     expect(get).toHaveBeenCalledTimes(1);
     expect(list).toHaveBeenCalledTimes(1);
-    expect(tracker.jobs().get('a')?.statusUnavailable).toBe(true);
+    // The listing answered, so there is no retry hint (a failed listing sets it, see below).
+    expect(tracker.jobs().get('a')?.statusUnavailable).toBe(false);
 
     vi.advanceTimersByTime(999);
     expect(get).toHaveBeenCalledTimes(1);
