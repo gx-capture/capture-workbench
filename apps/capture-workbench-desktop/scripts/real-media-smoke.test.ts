@@ -195,20 +195,23 @@ test('model-enabled preflight rejects immutable v0.3.8', () => {
 });
 
 test('real-media runtime environment removes ambient provider and model overrides', () => {
+  const legacyModelDirectoryKey = 'CAPTURE_WHISPER_MODELS_DIR';
   const environment = runtimeEnvironment(
     'C:\\owned-app-data',
     43123,
     't'.repeat(64),
     {
       ocrModel: 'pp-ocrv6-medium',
-      whisperModel: 'tea-asr-1.1-mini',
-      whisperDevice: 'cpu',
-      whisperPreferGpu: true,
+      speechModel: 'tea-asr-1.1-mini',
+      speechDevice: 'cpu',
+      speechPreferGpu: true,
     },
     {
       PATH: 'C:\\Windows\\System32',
       CAPTURE_EXTRACTION_PROVIDER: 'fake',
-      CAPTURE_WHISPER_MODELS_DIR: 'C:\\ambient-whisper',
+      [legacyModelDirectoryKey]: 'C:\\ambient-legacy-models',
+      CAPTURE_SPEECH_PREFER_GPU: 'false',
+      CAPTURE_SPEECH_RECOGNITION_ALLOW_CPU_FALLBACK: 'false',
       CAPTURE_REAL_MEDIA_PDF: 'C:\\secret-fixture.pdf',
       CAPTURE_SPEECH_RECOGNITION_VARIANT: 'cpu',
       OLLAMA_MODELS: 'C:\\ambient-ollama',
@@ -217,10 +220,11 @@ test('real-media runtime environment removes ambient provider and model override
 
   assert.equal(environment.PATH, 'C:\\Windows\\System32');
   assert.equal(environment.CAPTURE_EXTRACTION_PROVIDER, 'runtime');
-  assert.equal(environment.CAPTURE_WHISPER_MODELS_DIR, undefined);
+  assert.equal(environment[legacyModelDirectoryKey], undefined);
   assert.equal(environment.CAPTURE_REAL_MEDIA_PDF, undefined);
   assert.equal(environment.OLLAMA_MODELS, undefined);
-  assert.equal(environment.CAPTURE_WHISPER_PREFER_GPU, 'true');
+  assert.equal(environment.CAPTURE_SPEECH_PREFER_GPU, 'true');
+  assert.equal(environment.CAPTURE_SPEECH_RECOGNITION_ALLOW_CPU_FALLBACK, undefined);
   // An ambient cpu cannot reach the runtime: the smoke installs cuda on any machine.
   assert.equal(environment.CAPTURE_SPEECH_RECOGNITION_VARIANT, 'cuda');
   assert.equal(environment.CAPTURE_SMOKE_WORKER_MIRROR_OPT_IN, undefined);
@@ -235,9 +239,9 @@ test('real-media runtime environment forwards Windows cache/user variables and o
     't'.repeat(64),
     {
       ocrModel: 'pp-ocrv6-medium',
-      whisperModel: 'tea-asr-1.1',
-      whisperDevice: 'cuda',
-      whisperPreferGpu: true,
+      speechModel: 'tea-asr-1.1',
+      speechDevice: 'cuda',
+      speechPreferGpu: true,
     },
     {
       LocalAppData: 'C:\\Users\\tester\\AppData\\Local',
@@ -317,7 +321,7 @@ test('extractHostCaptureResult reads nested v2 result and rejects invalid payloa
   );
 });
 
-test('source-lock Whisper role is the production worker model provenance', () => {
+test('source-lock speech role is the production worker model provenance', () => {
   const expected = expectedProvenanceFromSourceLock({
     fixtures: [
       {
@@ -327,7 +331,7 @@ test('source-lock Whisper role is the production worker model provenance', () =>
         expectedDevice: 'directml',
       },
       {
-        kind: 'whisper',
+        kind: 'speech-recognition',
         expectedEngine: 'speech-recognition',
         expectedModel: 'tea-asr-1.1-mini',
         expectedDevice: 'cpu',
@@ -336,9 +340,9 @@ test('source-lock Whisper role is the production worker model provenance', () =>
     ],
   });
 
-  assert.equal(expected.whisperModel, 'tea-asr-1.1-mini');
-  assert.equal(expected.whisperDevice, 'cpu');
-  assert.equal(expected.whisperPreferGpu, true);
+  assert.equal(expected.speechModel, 'tea-asr-1.1-mini');
+  assert.equal(expected.speechDevice, 'cpu');
+  assert.equal(expected.speechPreferGpu, true);
 });
 
 test('owned runtime evidence keeps descendant and listener identities bounded', () => {

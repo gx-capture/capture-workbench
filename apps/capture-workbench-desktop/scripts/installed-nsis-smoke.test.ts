@@ -851,7 +851,7 @@ function rawCapture(fixture) {
     extractionEngine: {
       engine: fixture.sourceKind === 'audio' ? 'speech-recognition' : 'text-recognition',
       model: fixture.sourceKind === 'audio'
-        ? 'deterministic-speech-recognition-v1'
+        ? 'deterministic-speech-v1'
         : 'deterministic-ocr-v1',
       digest: `sha256:${'a'.repeat(64)}`,
       device: 'fake',

@@ -48,7 +48,7 @@ runs on either pack. Do not "fix" the `cpu` pack back to TEA-ASR 1.1.
 A development test that transcribes real audio uses TEA-ASR 1.1 mini on CUDA
 and checks provenance `tea-asr-1.1-mini` with device `cuda`. Set
 `CAPTURE_SPEECH_RECOGNITION_MODEL=tea-asr-1.1-mini` and
-`CAPTURE_WHISPER_ALLOW_CPU_FALLBACK=false`. Follow
+`CAPTURE_SPEECH_RECOGNITION_ALLOW_CPU_FALLBACK=false`. Follow
 `.agents/RESEARCH/tea-asr-1.1-mini-gpu-2026-11-04.md`. Release smokes and the
 private speech fixture stay on `tea-asr-1.1` / `cuda`, and those smokes force the
 `cuda` pack: the candidate verifier and `real-media-smoke` set the variant. The

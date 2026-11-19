@@ -89,8 +89,8 @@ class DeterministicCaptureExtractor:
             ]
             engine = CaptureEngine(
                 engine="speech-recognition",
-                model="deterministic-whisper-v1",
-                digest=_engine_digest("speech-recognition", "deterministic-whisper-v1"),
+                model="deterministic-speech-v1",
+                digest=_engine_digest("speech-recognition", "deterministic-speech-v1"),
                 device="fake",
             )
         else:

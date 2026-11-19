@@ -98,6 +98,13 @@ mod tests {
     use super::inherited_environment_allowlist;
 
     #[test]
+    fn ambient_capture_settings_are_excluded_from_the_runtime_allowlist() {
+        assert!(inherited_environment_allowlist()
+            .iter()
+            .all(|name| !name.to_ascii_uppercase().starts_with("CAPTURE_")));
+    }
+
+    #[test]
     fn forwarded_runtime_environment_includes_username() {
         assert!(inherited_environment_allowlist()
             .iter()

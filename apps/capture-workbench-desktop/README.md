@@ -136,6 +136,8 @@ For a build that is not published yet, set
 `CAPTURE_REAL_MEDIA_WORKER_MIRROR_URL` to a loopback mirror
 (`http://127.0.0.1:<port>`) to opt into the local worker mirror
 (`CAPTURE_SMOKE_WORKER_MIRROR_OPT_IN=1` and `CAPTURE_ENGINE_CACHE_DIR=off`).
+The Desktop App's loopback worker mirror and absolute local OCR model root
+overrides are for verification only and each requires its explicit opt-in.
 The diagnostic forwards `LOCALAPPDATA`, `TEMP`, and `USERNAME` to the runtime,
 strips ambient provider/model overrides, verifies DirectML OCR and lock-selected
 TEA-ASR provenance, proves UUID-scoped capture deletion, and checks its owned

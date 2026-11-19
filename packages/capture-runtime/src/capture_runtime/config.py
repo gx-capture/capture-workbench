@@ -255,6 +255,15 @@ class RuntimeSettings:
         max_candidate_bytes = int(env.get("CAPTURE_MAX_CANDIDATE_BYTES", str(8 * 1024 * 1024)))
         if max_candidate_bytes <= 0:
             raise ValueError("CAPTURE_MAX_CANDIDATE_BYTES must be positive")
+        for retired, replacement in (
+            ("CAPTURE_WHISPER_PREFER_GPU", "CAPTURE_SPEECH_PREFER_GPU"),
+            (
+                "CAPTURE_WHISPER_ALLOW_CPU_FALLBACK",
+                "CAPTURE_SPEECH_RECOGNITION_ALLOW_CPU_FALLBACK",
+            ),
+        ):
+            if retired in env:
+                raise ValueError(f"{retired} is retired; use {replacement}")
         if "CAPTURE_WINDOWSML_DEVICE_ID" in env:
             raise ValueError(
                 "CAPTURE_WINDOWSML_DEVICE_ID is retired; use worker-owned OCR selection"
@@ -290,12 +299,10 @@ class RuntimeSettings:
             # Prefer Nvidia CUDA when the bundled PyTorch runtime can
             # initialize it. Diagnostics retain the bounded CPU fallback;
             # source-lock production verification can explicitly fail closed.
-            # These environment variables keep their old names until the hosts
-            # change with them; they control speech recognition and (for
-            # CAPTURE_WHISPER_PREFER_GPU) speaker diarization.
-            speech_prefer_gpu=_bool(env.get("CAPTURE_WHISPER_PREFER_GPU"), True),
+            # GPU preference also applies to speaker diarization.
+            speech_prefer_gpu=_bool(env.get("CAPTURE_SPEECH_PREFER_GPU"), True),
             speech_recognition_allow_cpu_fallback=_bool(
-                env.get("CAPTURE_WHISPER_ALLOW_CPU_FALLBACK"), True
+                env.get("CAPTURE_SPEECH_RECOGNITION_ALLOW_CPU_FALLBACK"), True
             ),
             speech_recognition_model=env.get("CAPTURE_SPEECH_RECOGNITION_MODEL", "auto"),
             engine_resolution_timeout_seconds=engine_resolution_timeout_seconds,

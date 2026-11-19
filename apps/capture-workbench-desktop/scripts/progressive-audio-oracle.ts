@@ -217,7 +217,7 @@ async function startWorkerMirror(port: number): Promise<Server> {
   return server;
 }
 
-async function installWhisper(
+async function installSpeechRecognition(
   baseUrl: string,
   child: ReturnType<typeof spawn>,
 ): Promise<void> {
@@ -232,7 +232,7 @@ async function installWhisper(
   const installationId = requiredString(started.installationId);
   const deadline = Date.now() + 30 * 60_000;
   while (Date.now() < deadline) {
-    if (child.exitCode !== null) throw new Error('Progressive audio oracle runtime exited during Whisper installation.');
+    if (child.exitCode !== null) throw new Error('Progressive audio oracle runtime exited during speech recognition installation.');
     const current = await jsonRequest<JsonRecord>(baseUrl, `/v2/runtime/installations/${installationId}`);
     const status = requiredString(current.status);
     if (status === 'completed') return;
@@ -253,11 +253,11 @@ async function installWhisper(
             : message.includes('archive')
               ? 'worker-archive'
               : 'unknown';
-      throw new Error(`Progressive audio oracle Whisper installation failed: code=${errorCode}; progressBand=${progressBand}; reason=${reason}.`);
+      throw new Error(`Progressive audio oracle speech recognition installation failed: code=${errorCode}; progressBand=${progressBand}; reason=${reason}.`);
     }
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 1000));
   }
-  throw new Error('Progressive audio oracle Whisper installation timed out.');
+  throw new Error('Progressive audio oracle speech recognition installation timed out.');
 }
 
 async function run(): Promise<void> {
@@ -291,8 +291,8 @@ async function run(): Promise<void> {
       // The runtime's default upload limit is lower than the recordings the
       // oracle admits.
       CAPTURE_MAX_UPLOAD_BYTES: String(ORACLE_MAX_SOURCE_BYTES),
-      CAPTURE_WHISPER_PREFER_GPU: '1',
-      CAPTURE_WHISPER_ALLOW_CPU_FALLBACK: '1',
+      CAPTURE_SPEECH_PREFER_GPU: '1',
+      CAPTURE_SPEECH_RECOGNITION_ALLOW_CPU_FALLBACK: 'true',
       // The oracle checks tea-asr-1.1, which only the cuda content carries;
       // never let the driver check pick cpu.
       CAPTURE_SPEECH_RECOGNITION_VARIANT: 'cuda',
@@ -309,7 +309,7 @@ async function run(): Promise<void> {
   try {
     workerMirror = await startWorkerMirror(workerMirrorPort);
     await waitForReady(baseUrl, child);
-    await installWhisper(baseUrl, child);
+    await installSpeechRecognition(baseUrl, child);
     const ingestion = await jsonRequest<IngestionRecord>(baseUrl, '/v2/ingestions', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },

@@ -94,14 +94,14 @@ def test_candidate_fixture_download_requests_identity_encoding(
     assert captured["headers"] == {"Accept-Encoding": "identity"}
 
 
-def test_whisper_candidate_uses_bounded_one_hour_audio_budget() -> None:
-    assert candidate.WHISPER_CANDIDATE_MAX_DURATION_MS == 3_600_000
-    assert candidate.WHISPER_CANDIDATE_TIMEOUT_SECONDS == 3_600
+def test_speech_candidate_uses_bounded_one_hour_audio_budget() -> None:
+    assert candidate.SPEECH_CANDIDATE_MAX_DURATION_MS == 3_600_000
+    assert candidate.SPEECH_CANDIDATE_TIMEOUT_SECONDS == 3_600
 
 
 def test_cuda_source_lock_candidate_disables_cpu_fallback() -> None:
     assert candidate._speech_run_options({"preferGpu": True, "expectedDevice": "cuda"}) == {
-        "maxDurationMs": candidate.WHISPER_CANDIDATE_MAX_DURATION_MS,
+        "maxDurationMs": candidate.SPEECH_CANDIDATE_MAX_DURATION_MS,
         "preferGpu": True,
         "allowCpuFallback": False,
     }
@@ -444,7 +444,7 @@ def test_model_enabled_candidate_requires_both_speech_contents(
         speech = _speech_payload(payload)
         speech["contents"] = [item for item in speech["contents"] if item["id"] == kept]
     lock_path, catalog_path = _write_candidate_inputs(tmp_path, lock, payload)
-    monkeypatch.delenv("CAPTURE_PRIVATE_WHISPER_FIXTURE", raising=False)
+    monkeypatch.delenv("CAPTURE_PRIVATE_SPEECH_FIXTURE", raising=False)
     output = tmp_path / "evidence.json"
 
     with pytest.raises(candidate.EngineInstallationError, match="cuda and cpu contents"):
@@ -454,7 +454,7 @@ def test_model_enabled_candidate_requires_both_speech_contents(
                 engine_dir=tmp_path,
                 source_lock_path=lock_path,
                 output=output,
-                private_whisper_fixture=None,
+                private_speech_fixture=None,
             )
         )
     assert not output.exists()
@@ -466,16 +466,16 @@ def test_model_enabled_candidate_with_both_speech_contents_goes_on_to_the_fixtur
     lock, _content = approved_source_lock()
     payload = _candidate_catalog(lock, speech_contents=True).to_dict()
     lock_path, catalog_path = _write_candidate_inputs(tmp_path, lock, payload)
-    monkeypatch.delenv("CAPTURE_PRIVATE_WHISPER_FIXTURE", raising=False)
+    monkeypatch.delenv("CAPTURE_PRIVATE_SPEECH_FIXTURE", raising=False)
 
-    with pytest.raises(candidate.EngineInstallationError, match="private Whisper fixture"):
+    with pytest.raises(candidate.EngineInstallationError, match="private speech fixture"):
         asyncio.run(
             candidate.verify_candidate(
                 catalog_path=catalog_path,
                 engine_dir=tmp_path,
                 source_lock_path=lock_path,
                 output=tmp_path / "evidence.json",
-                private_whisper_fixture=None,
+                private_speech_fixture=None,
             )
         )
 
@@ -486,18 +486,18 @@ def test_speech_preflight_still_reads_a_legacy_catalog(
     lock = pending_source_lock()
     payload = _candidate_catalog(lock, speech_contents=False).to_dict()
     lock_path, catalog_path = _write_candidate_inputs(tmp_path, lock, payload)
-    monkeypatch.delenv("CAPTURE_PRIVATE_WHISPER_FIXTURE", raising=False)
+    monkeypatch.delenv("CAPTURE_PRIVATE_SPEECH_FIXTURE", raising=False)
 
     # The legacy catalog passes the binding check and stops only at the
     # missing private fixture, not at the release rule for both speech packs.
-    with pytest.raises(candidate.EngineInstallationError, match="private Whisper fixture"):
+    with pytest.raises(candidate.EngineInstallationError, match="private speech fixture"):
         asyncio.run(
             candidate.verify_candidate(
                 catalog_path=catalog_path,
                 engine_dir=tmp_path,
                 source_lock_path=lock_path,
                 output=tmp_path / "evidence.json",
-                private_whisper_fixture=None,
+                private_speech_fixture=None,
                 preflight=True,
             )
         )
@@ -574,12 +574,12 @@ def _cpu_engine(tmp_path: Path, content_id: str | None = "cpu") -> InstalledEngi
 
 def _cpu_pass(tmp_path: Path, worker: _FakeCpuWorker, content_id: str | None = "cpu"):
     lock, _content = approved_source_lock()
-    fixture = next(item for item in lock["fixtures"] if item["kind"] == "whisper")
+    fixture = next(item for item in lock["fixtures"] if item["kind"] == "speech-recognition")
     return asyncio.run(
         candidate._verify_cpu_speech_engine(
             _cpu_engine(tmp_path, content_id),
             cast(Any, worker),
-            source_path=tmp_path / "whisper",
+            source_path=tmp_path / "speech-recognition",
             fixture=fixture,
         )
     ), fixture
@@ -593,7 +593,7 @@ def test_cpu_pass_records_mini_on_the_cpu_without_the_transcript(tmp_path: Path)
     assert worker.probe_options == [{"preferGpu": True, "content": "cpu"}]
     assert worker.run_options == [
         {
-            "maxDurationMs": candidate.WHISPER_CANDIDATE_MAX_DURATION_MS,
+            "maxDurationMs": candidate.SPEECH_CANDIDATE_MAX_DURATION_MS,
             "preferGpu": True,
             "allowCpuFallback": True,
             "content": "cpu",

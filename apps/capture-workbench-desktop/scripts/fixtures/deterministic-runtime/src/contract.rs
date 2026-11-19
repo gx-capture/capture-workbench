@@ -715,7 +715,7 @@ fn build_raw_capture(source: &Value, source_kind: &str, content: &[u8]) -> Value
         })
         .collect::<Vec<_>>();
     let (engine, model) = if source_kind == "audio" {
-        ("speech-recognition", "deterministic-speech-recognition-v1")
+        ("speech-recognition", "deterministic-speech-v1")
     } else {
         ("text-recognition", "deterministic-ocr-v1")
     };

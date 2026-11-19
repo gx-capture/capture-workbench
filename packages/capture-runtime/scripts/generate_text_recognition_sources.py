@@ -24,8 +24,6 @@ PADDLEOCR_DICT_SHA256: Final = "b5f2bfe2bdd9448429e3e82b51c789775d9b42f2403d082b
 DET_REVISION: Final = "61323801669c338b7891481ec7bac61ce31b576a"
 REC_REVISION: Final = "50c7eacafc52fa7bcf4194e8cd08e46f8558504b"
 PADDLEOCR_DICT_REVISION: Final = "b03f46425e8ff4442b268ce449e3eef758146cd4"
-WHISPER_PRIMARY_REVISION: Final = "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf"
-WHISPER_FALLBACK_REVISION: Final = "536b0662742c02347bc0e980a01041f333bce120"
 NDLOCR_LITE_REPOSITORY: Final = "ndl-lab/ndlocr-lite"
 NDLOCR_LITE_REVISION: Final = "636d1cfeb1331f89f4048f416e49e23a09a714b5"
 # Kept equal to
@@ -335,8 +333,6 @@ def _provenance(
                 "paddleocrDictionary": PADDLEOCR_DICT_REVISION,
                 "paddleocrDetection": DET_REVISION,
                 "paddleocrRecognition": REC_REVISION,
-                "whisperFallback": WHISPER_FALLBACK_REVISION,
-                "whisperPrimary": WHISPER_PRIMARY_REVISION,
             },
             "generator": "packages/capture-runtime/scripts/generate_text_recognition_sources.py",
             "licensePath": "licenses/LICENSE.txt",

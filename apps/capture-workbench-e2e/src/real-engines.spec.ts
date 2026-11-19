@@ -59,6 +59,8 @@
  *     and can still pass.
  *   - CAPTURE_REAL_ENGINES_RUNTIME_MANIFEST & CAPTURE_REAL_ENGINES_RUNTIME_EXECUTABLE (both or neither; default is staged product runtime)
  *   - CAPTURE_SMOKE_WORKER_MIRROR_OPT_IN / CAPTURE_SMOKE_WORKER_MIRROR_URL
+ *   - CAPTURE_SPEECH_RECOGNITION_ALLOW_CPU_FALLBACK: explicit override.
+ *     Defaults to false for this smoke so the installed pack's device is verified.
  *
  * Evidence `proven` records what this run actually proved (a passed stage alone
  * does not prove optional or reused capabilities):
@@ -527,6 +529,8 @@ async function resolveSmokeConfig(): Promise<SmokeConfig> {
     TEMP: tempDir!,
     TMP: tempDir!,
     TMPDIR: tempDir!,
+    CAPTURE_SPEECH_RECOGNITION_ALLOW_CPU_FALLBACK:
+      readEnvFirst(['CAPTURE_SPEECH_RECOGNITION_ALLOW_CPU_FALLBACK']) ?? 'false',
   };
   const mirrorOptIn = readEnvFirst(['CAPTURE_SMOKE_WORKER_MIRROR_OPT_IN']);
   const mirrorUrl = readEnvFirst(['CAPTURE_SMOKE_WORKER_MIRROR_URL']);

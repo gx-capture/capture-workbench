@@ -35,11 +35,11 @@ def test_approved_production_lock_is_canonical_model_enabled() -> None:
     lock = model_source_lock.load_source_lock(source, require_approved=False)
     assert lock["approval"]["status"] == "approved"
     assert lock["approval"]["blockers"] == []
-    whisper = lock["fixtures"][1]
-    assert whisper["expectedEngine"] == "speech-recognition"
-    assert whisper["expectedModel"] == "tea-asr-1.1"
-    assert whisper["expectedDevice"] == "cuda"
-    assert len(whisper["expectedNormalizedOutputSha256"]) == 64
+    speech = lock["fixtures"][1]
+    assert speech["expectedEngine"] == "speech-recognition"
+    assert speech["expectedModel"] == "tea-asr-1.1"
+    assert speech["expectedDevice"] == "cuda"
+    assert len(speech["expectedNormalizedOutputSha256"]) == 64
     assert [item["requirementId"] for item in lock["requirements"]] == [
         "text-recognition",
         "speech-recognition",
@@ -164,7 +164,7 @@ def test_nonempty_blocked_source_lock_fails_closed() -> None:
     }
     with pytest.raises(
         model_source_lock.ModelSourceLockError,
-        match="only the private Whisper two-run freeze blocker",
+        match="only the private speech two-run freeze blocker",
     ):
         model_source_lock.validate_source_lock(payload)
 
@@ -175,14 +175,14 @@ def test_blocked_source_lock_rejects_additional_approval_blockers() -> None:
         "approvedAt": None,
         "approvedBy": None,
         "blockers": [
-            model_source_lock.PENDING_WHISPER_FREEZE_BLOCKER,
+            model_source_lock.PENDING_SPEECH_FREEZE_BLOCKER,
             "Unrelated approval blocker.",
         ],
         "status": "blocked",
     }
     with pytest.raises(
         model_source_lock.ModelSourceLockError,
-        match="only the private Whisper two-run freeze blocker",
+        match="only the private speech two-run freeze blocker",
     ):
         model_source_lock.validate_source_lock(payload)
 
@@ -282,7 +282,7 @@ def test_approved_lock_generates_checksum_pinned_manifest_equivalent(
         ),
         (
             lambda payload: payload["fixtures"][1].update({"preferGpu": "true"}),
-            "private Whisper GPU preference is invalid",
+            "private speech GPU preference is invalid",
         ),
         (
             lambda payload: payload["fixtures"][1].update(
@@ -312,7 +312,7 @@ def test_approved_lock_generates_checksum_pinned_manifest_equivalent(
         ),
         (
             lambda payload: payload["fixtures"][1].update({"id": payload["fixtures"][0]["id"]}),
-            "private Whisper fixture identity",
+            "private speech fixture identity",
         ),
         (
             lambda payload: payload.pop("requirements"),

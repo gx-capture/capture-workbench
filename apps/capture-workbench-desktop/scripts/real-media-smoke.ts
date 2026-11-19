@@ -159,9 +159,9 @@ interface MediaEvidence {
 
 export interface ExpectedProvenance {
   readonly ocrModel: string;
-  readonly whisperModel: string;
-  readonly whisperDevice: string;
-  readonly whisperPreferGpu: boolean;
+  readonly speechModel: string;
+  readonly speechDevice: string;
+  readonly speechPreferGpu: boolean;
 }
 
 export interface OwnedRuntimeEvidence {
@@ -354,8 +354,8 @@ export function expectedProvenanceFromSourceLock(
   const ocr = asObject(
     fixtures.find((fixture) => asObject(fixture)?.['kind'] === 'ocr'),
   );
-  const whisper = asObject(
-    fixtures.find((fixture) => asObject(fixture)?.['kind'] === 'whisper'),
+  const speech = asObject(
+    fixtures.find((fixture) => asObject(fixture)?.['kind'] === 'speech-recognition'),
   );
   if (
     ocr?.['expectedEngine'] !== 'text-recognition' ||
@@ -364,24 +364,24 @@ export function expectedProvenanceFromSourceLock(
   ) {
     throw new Error('Canonical OCR fixture does not pin DirectML provenance.');
   }
-  const whisperRole = whisper?.['expectedModel'];
-  const whisperDevice = whisper?.['expectedDevice'];
-  const whisperPreferGpu = whisper?.['preferGpu'];
+  const speechModel = speech?.['expectedModel'];
+  const speechDevice = speech?.['expectedDevice'];
+  const speechPreferGpu = speech?.['preferGpu'];
   if (
-    whisper?.['expectedEngine'] !== 'speech-recognition' ||
-    !['tea-asr-1.1', 'tea-asr-1.1-mini'].includes(String(whisperRole)) ||
-    !['cuda', 'cpu'].includes(String(whisperDevice)) ||
-    typeof whisperPreferGpu !== 'boolean'
+    speech?.['expectedEngine'] !== 'speech-recognition' ||
+    !['tea-asr-1.1', 'tea-asr-1.1-mini'].includes(String(speechModel)) ||
+    !['cuda', 'cpu'].includes(String(speechDevice)) ||
+    typeof speechPreferGpu !== 'boolean'
   ) {
     throw new Error(
-      'Canonical Whisper fixture does not pin execution provenance.',
+      'Canonical speech recognition fixture does not pin execution provenance.',
     );
   }
   return {
     ocrModel: ocr['expectedModel'],
-    whisperModel: String(whisperRole),
-    whisperDevice: String(whisperDevice),
-    whisperPreferGpu,
+    speechModel: String(speechModel),
+    speechDevice: String(speechDevice),
+    speechPreferGpu,
   };
 }
 
@@ -596,11 +596,11 @@ async function captureAndVerify(
     assert.ok(raw.segments.some((segment) => segment.locator.kind === 'page'));
   } else {
     assert.equal(raw.extractionEngine.engine, 'speech-recognition');
-    assert.equal(raw.extractionEngine.model, expectedProvenance.whisperModel);
-    if (expectedProvenance.whisperPreferGpu) {
+    assert.equal(raw.extractionEngine.model, expectedProvenance.speechModel);
+    if (expectedProvenance.speechPreferGpu) {
       assert.ok(['cuda', 'cpu'].includes(raw.extractionEngine.device));
     } else {
-      assert.equal(raw.extractionEngine.device, expectedProvenance.whisperDevice);
+      assert.equal(raw.extractionEngine.device, expectedProvenance.speechDevice);
     }
     assert.ok(raw.segments.some((segment) => segment.locator.kind === 'time'));
   }
@@ -757,7 +757,7 @@ export function runtimeEnvironment(
     CAPTURE_EXTRACTION_PROVIDER: 'runtime',
     CAPTURE_RETENTION_HOURS: '24',
     CAPTURE_MAX_UPLOAD_BYTES: String(2 * 1024 * 1024 * 1024),
-    CAPTURE_WHISPER_PREFER_GPU: String(expectedProvenance.whisperPreferGpu),
+    CAPTURE_SPEECH_PREFER_GPU: String(expectedProvenance.speechPreferGpu),
     // The lock's speech fixture is TEA-ASR 1.1, which only the cuda content
     // carries. Without this a machine with no NVIDIA driver installs cpu.
     CAPTURE_SPEECH_RECOGNITION_VARIANT: 'cuda',

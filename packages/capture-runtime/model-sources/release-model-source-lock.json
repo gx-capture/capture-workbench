@@ -17,21 +17,21 @@
       "licenseBytes": 1087,
       "licensePath": "licenses/LICENSE.txt",
       "licenseSha256": "20d8153042f147e730a2265e35e3862f8d1ad67b5f6804d44fb81e7dfbc5818b",
-      "licenseUrl": "https://raw.githubusercontent.com/gx-capture/capture-workbench/710cb3a8ec9c044b68ca1ee2060dbe3b3bcd0887/packages/capture-runtime/model-sources/text-recognition/licenses/LICENSE.txt",
+      "licenseUrl": "https://raw.githubusercontent.com/gx-capture/capture-workbench/d714256fc188df67702f0e7d027d2098d4e91054/packages/capture-runtime/model-sources/text-recognition/licenses/LICENSE.txt",
       "mediaType": "image/png",
       "noticeBytes": 304,
       "noticePath": "licenses/NOTICE.txt",
       "noticeSha256": "e8d7eab24c7f7ee0f93daf8945f649933e024071473d6506d8af6656a4ad2b2d",
-      "noticeUrl": "https://raw.githubusercontent.com/gx-capture/capture-workbench/710cb3a8ec9c044b68ca1ee2060dbe3b3bcd0887/packages/capture-runtime/model-sources/text-recognition/licenses/NOTICE.txt",
+      "noticeUrl": "https://raw.githubusercontent.com/gx-capture/capture-workbench/d714256fc188df67702f0e7d027d2098d4e91054/packages/capture-runtime/model-sources/text-recognition/licenses/NOTICE.txt",
       "owner": "gx-capture/capture-workbench",
       "pdfBytes": 2421,
       "pdfSha256": "5eec85d2b2e98e06577cb5310d1b3037ca26f03d06d85a292ae78b68d4c57f30",
-      "pdfUrl": "https://raw.githubusercontent.com/gx-capture/capture-workbench/710cb3a8ec9c044b68ca1ee2060dbe3b3bcd0887/packages/capture-runtime/model-sources/text-recognition/fixtures/ocr-scanned.pdf",
+      "pdfUrl": "https://raw.githubusercontent.com/gx-capture/capture-workbench/d714256fc188df67702f0e7d027d2098d4e91054/packages/capture-runtime/model-sources/text-recognition/fixtures/ocr-scanned.pdf",
       "redistributable": true,
-      "revision": "710cb3a8ec9c044b68ca1ee2060dbe3b3bcd0887",
+      "revision": "d714256fc188df67702f0e7d027d2098d4e91054",
       "sha256": "7d61f4835837c4c387a0d46c4f21f7442fe22aab3f14f330b86f6857f5f3bc82",
       "spdx": "MIT",
-      "url": "https://raw.githubusercontent.com/gx-capture/capture-workbench/710cb3a8ec9c044b68ca1ee2060dbe3b3bcd0887/packages/capture-runtime/model-sources/text-recognition/fixtures/ocr-reference.png"
+      "url": "https://raw.githubusercontent.com/gx-capture/capture-workbench/d714256fc188df67702f0e7d027d2098d4e91054/packages/capture-runtime/model-sources/text-recognition/fixtures/ocr-reference.png"
     },
     {
       "bytes": 39199307,
@@ -43,8 +43,8 @@
         "maximum": 10000,
         "minimum": 1
       },
-      "id": "whisper-private-reference",
-      "kind": "whisper",
+      "id": "speech-recognition-private-reference",
+      "kind": "speech-recognition",
       "mediaType": "audio/mp4",
       "monotonicSegments": true,
       "preferGpu": true,
@@ -148,7 +148,7 @@
               "model/vertical/parseq-ndl-24x384-50-tiny-300epoch-tegaki3-r8data-202604.onnx",
               "model/vertical/parseq-ndl-24x768-100-tiny-153epoch-tegaki3-r8data-202604.onnx"
             ],
-            "sourceCommit": "710cb3a8ec9c044b68ca1ee2060dbe3b3bcd0887",
+            "sourceCommit": "d714256fc188df67702f0e7d027d2098d4e91054",
             "toolVersions": {
               "generator": "text-recognition-source-v2",
               "python": "3.13.14"
@@ -160,10 +160,10 @@
           "owner": "gx-capture/capture-workbench",
           "path": "model/pipeline.json",
           "redirectHosts": [],
-          "revision": "710cb3a8ec9c044b68ca1ee2060dbe3b3bcd0887",
+          "revision": "d714256fc188df67702f0e7d027d2098d4e91054",
           "sha256": "b91467a65bf3aee2b2c3eea222bba890beb42ded3fd1593eba2439d2e8561926",
           "spdx": "MIT",
-          "url": "https://raw.githubusercontent.com/gx-capture/capture-workbench/710cb3a8ec9c044b68ca1ee2060dbe3b3bcd0887/packages/capture-runtime/model-sources/text-recognition/model/pipeline.json"
+          "url": "https://raw.githubusercontent.com/gx-capture/capture-workbench/d714256fc188df67702f0e7d027d2098d4e91054/packages/capture-runtime/model-sources/text-recognition/model/pipeline.json"
         },
         {
           "bytes": 76554979,
@@ -210,7 +210,7 @@
           "url": "https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/b03f46425e8ff4442b268ce449e3eef758146cd4/ppocr/utils/dict/ppocrv6_dict.txt"
         },
         {
-          "bytes": 2437,
+          "bytes": 2304,
           "derivation": null,
           "kind": "provenance",
           "licensePath": "licenses/LICENSE-PaddleOCR.txt",
@@ -218,10 +218,10 @@
           "owner": "gx-capture/capture-workbench",
           "path": "provenance/text-recognition.json",
           "redirectHosts": [],
-          "revision": "710cb3a8ec9c044b68ca1ee2060dbe3b3bcd0887",
-          "sha256": "6cb4414dc6ca0a1d4ae009d4b87af72db5b533f23415a3e41b76c47fdc6c73ba",
+          "revision": "d714256fc188df67702f0e7d027d2098d4e91054",
+          "sha256": "c5184647a268250b47ca837ef30fbae5d0a09fdc54ae942ed2d5a6a1d40e1663",
           "spdx": "MIT",
-          "url": "https://raw.githubusercontent.com/gx-capture/capture-workbench/710cb3a8ec9c044b68ca1ee2060dbe3b3bcd0887/packages/capture-runtime/model-sources/text-recognition/provenance/text-recognition.json"
+          "url": "https://raw.githubusercontent.com/gx-capture/capture-workbench/d714256fc188df67702f0e7d027d2098d4e91054/packages/capture-runtime/model-sources/text-recognition/provenance/text-recognition.json"
         }
       ],
       "requirementId": "text-recognition"

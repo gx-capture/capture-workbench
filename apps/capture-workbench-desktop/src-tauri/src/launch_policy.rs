@@ -31,15 +31,21 @@ impl LaunchPolicy {
     }
 
     pub(crate) fn environment(&self) -> Vec<(&'static str, String)> {
+        self.environment_with(|name| std::env::var(name).ok())
+    }
+
+    fn environment_with(
+        &self,
+        read_env: impl Fn(&str) -> Option<String>,
+    ) -> Vec<(&'static str, String)> {
         let mut origins = vec!["http://tauri.localhost", "tauri://localhost"];
         if cfg!(debug_assertions) {
             origins.push("http://localhost:4200");
         }
-        let smoke_worker_mirror_opt_in = std::env::var("CAPTURE_SMOKE_WORKER_MIRROR_OPT_IN").ok();
-        let whisper_cpu_fallback = whisper_cpu_fallback_enabled(
-            smoke_worker_mirror_opt_in.clone(),
-            std::env::var("CAPTURE_WHISPER_ALLOW_CPU_FALLBACK").ok(),
-        );
+        let speech_cpu_fallback = read_env("CAPTURE_SPEECH_RECOGNITION_ALLOW_CPU_FALLBACK")
+            .as_deref()
+            .map(str::trim)
+            != Some("false");
         let mut environment = vec![
             ("CAPTURE_HOST", LOOPBACK_HOST.into()),
             ("CAPTURE_PORT", self.runtime_port.to_string()),
@@ -56,14 +62,14 @@ impl LaunchPolicy {
             ),
             ("CAPTURE_STRUCTURING_PROVIDER", "ollama".into()),
             (
-                "CAPTURE_WHISPER_PREFER_GPU",
+                "CAPTURE_SPEECH_PREFER_GPU",
                 SpeechGpuSettings::load(&self.data_dir)
                     .prefer_gpu
                     .to_string(),
             ),
             (
-                "CAPTURE_WHISPER_ALLOW_CPU_FALLBACK",
-                whisper_cpu_fallback.to_string(),
+                "CAPTURE_SPEECH_RECOGNITION_ALLOW_CPU_FALLBACK",
+                speech_cpu_fallback.to_string(),
             ),
             (
                 "CAPTURE_RETENTION_HOURS",
@@ -86,19 +92,20 @@ impl LaunchPolicy {
                 self.ollama_models_dir().to_string_lossy().into_owned(),
             ),
         ];
-        if let Some(cuda_path) = configured_cuda_path(std::env::var("CUDA_PATH").ok()) {
+        if let Some(cuda_path) = configured_cuda_path(read_env("CUDA_PATH")) {
             environment.push(("CUDA_PATH", cuda_path));
         }
+        // These overrides exist only for verification, including in release builds.
         if let Some(mirror_url) = smoke_worker_mirror_url(
-            smoke_worker_mirror_opt_in,
-            std::env::var("CAPTURE_SMOKE_WORKER_MIRROR_URL").ok(),
+            read_env("CAPTURE_SMOKE_WORKER_MIRROR_OPT_IN"),
+            read_env("CAPTURE_SMOKE_WORKER_MIRROR_URL"),
         ) {
             environment.push(("CAPTURE_SMOKE_WORKER_MIRROR_OPT_IN", "1".into()));
             environment.push(("CAPTURE_SMOKE_WORKER_MIRROR_URL", mirror_url));
         }
         if let Some(model_root) = local_ocr_model_override(
-            std::env::var("CAPTURE_PDF_OCR_E2E_LOCAL_MODEL_OPT_IN").ok(),
-            std::env::var("CAPTURE_PDF_OCR_E2E_LOCAL_MODEL_ROOT").ok(),
+            read_env("CAPTURE_PDF_OCR_E2E_LOCAL_MODEL_OPT_IN"),
+            read_env("CAPTURE_PDF_OCR_E2E_LOCAL_MODEL_ROOT"),
         ) {
             environment.push(("CAPTURE_PDF_OCR_E2E_LOCAL_MODEL_OPT_IN", "1".into()));
             environment.push(("CAPTURE_PDF_OCR_E2E_LOCAL_MODEL_ROOT", model_root));
@@ -140,16 +147,6 @@ fn configured_cuda_path(value: Option<String>) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
-fn whisper_cpu_fallback_enabled(
-    smoke_worker_mirror_opt_in: Option<String>,
-    value: Option<String>,
-) -> bool {
-    if smoke_worker_mirror_opt_in.as_deref().map(str::trim) != Some("1") {
-        return true;
-    }
-    value.as_deref().map(str::trim) == Some("true")
-}
-
 fn smoke_worker_mirror_url(opt_in: Option<String>, raw_url: Option<String>) -> Option<String> {
     if opt_in.as_deref().map(str::trim) != Some("1") {
         return None;
@@ -167,7 +164,7 @@ fn local_ocr_model_override(opt_in: Option<String>, root: Option<String>) -> Opt
         return None;
     }
     root.map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty())
+        .filter(|value| std::path::Path::new(value).is_absolute())
 }
 
 pub(crate) struct LaunchPolicyFactory {
@@ -214,13 +211,12 @@ mod tests {
     use std::path::PathBuf;
 
     use super::{
-        configured_cuda_path, local_ocr_model_override, smoke_worker_mirror_url,
-        whisper_cpu_fallback_enabled, LaunchPolicy,
+        configured_cuda_path, local_ocr_model_override, smoke_worker_mirror_url, LaunchPolicy,
     };
     use crate::speech_gpu::SpeechGpuSettings;
 
     #[test]
-    fn runtime_environment_explicitly_prefers_whisper_gpu() {
+    fn runtime_environment_explicitly_prefers_speech_gpu() {
         let environment = LaunchPolicy {
             runtime_port: 43123,
             token: "a".repeat(64),
@@ -230,7 +226,7 @@ mod tests {
 
         assert!(environment
             .iter()
-            .any(|(name, value)| { *name == "CAPTURE_WHISPER_PREFER_GPU" && value == "true" }));
+            .any(|(name, value)| { *name == "CAPTURE_SPEECH_PREFER_GPU" && value == "true" }));
         assert!(environment
             .iter()
             .any(|(name, value)| { *name == "CAPTURE_MAX_UPLOAD_BYTES" && value == "2147483648" }));
@@ -251,7 +247,7 @@ mod tests {
 
         assert!(environment
             .iter()
-            .any(|(name, value)| { *name == "CAPTURE_WHISPER_PREFER_GPU" && value == "false" }));
+            .any(|(name, value)| { *name == "CAPTURE_SPEECH_PREFER_GPU" && value == "false" }));
     }
 
     #[test]
@@ -286,17 +282,75 @@ mod tests {
     }
 
     #[test]
-    fn worker_mirror_can_disable_speech_cpu_fallback() {
-        assert!(!whisper_cpu_fallback_enabled(
-            Some("1".into()),
-            Some("false".into())
+    fn worker_mirror_and_speech_cpu_fallback_are_independent() {
+        let directory = tempfile::tempdir().unwrap();
+        let policy = LaunchPolicy {
+            runtime_port: 43123,
+            token: "a".repeat(64),
+            data_dir: directory.path().to_path_buf(),
+        };
+        let environment = |mirror, fallback: Option<&str>| {
+            policy.environment_with(|name| match name {
+                "CAPTURE_SMOKE_WORKER_MIRROR_OPT_IN" if mirror => Some("1".into()),
+                "CAPTURE_SMOKE_WORKER_MIRROR_URL" => Some("http://127.0.0.1:43124".into()),
+                "CAPTURE_SPEECH_RECOGNITION_ALLOW_CPU_FALLBACK" => fallback.map(str::to_owned),
+                _ => None,
+            })
+        };
+        let baseline = environment(false, None);
+        let mut mirror_only = baseline.clone();
+        mirror_only.push(("CAPTURE_SMOKE_WORKER_MIRROR_OPT_IN", "1".into()));
+        mirror_only.push((
+            "CAPTURE_SMOKE_WORKER_MIRROR_URL",
+            "http://127.0.0.1:43124".into(),
         ));
-        assert!(whisper_cpu_fallback_enabled(
-            Some("1".into()),
-            Some("true".into())
-        ));
-        assert!(!whisper_cpu_fallback_enabled(Some("1".into()), None));
-        assert!(whisper_cpu_fallback_enabled(None, Some("false".into())));
+        assert_eq!(environment(true, None), mirror_only);
+
+        let disable_fallback = |mut values: Vec<(&'static str, String)>| {
+            let (_, value) = values
+                .iter_mut()
+                .find(|(name, _)| *name == "CAPTURE_SPEECH_RECOGNITION_ALLOW_CPU_FALLBACK")
+                .unwrap();
+            assert_eq!(value.as_str(), "true");
+            *value = "false".into();
+            values
+        };
+        assert_eq!(
+            environment(false, Some("false")),
+            disable_fallback(baseline.clone())
+        );
+        assert_eq!(
+            environment(true, Some("false")),
+            disable_fallback(mirror_only.clone())
+        );
+        assert_eq!(environment(true, Some("true")), mirror_only);
+        assert_eq!(environment(false, Some("invalid")), baseline);
+    }
+
+    #[test]
+    fn reopened_legacy_settings_supply_the_speech_gpu_preference() {
+        let directory = tempfile::tempdir().unwrap();
+        let settings_path = directory.path().join("compute-settings.json");
+        let settings_bytes = br#"{"preferGpu":false}"#;
+        std::fs::write(&settings_path, settings_bytes).unwrap();
+
+        for runtime_port in [43123, 43124] {
+            let environment = LaunchPolicy {
+                runtime_port,
+                token: "a".repeat(64),
+                data_dir: directory.path().to_path_buf(),
+            }
+            .environment_with(|_| None);
+            assert!(environment
+                .iter()
+                .any(|(name, value)| *name == "CAPTURE_SPEECH_PREFER_GPU" && value == "false"));
+        }
+
+        assert_eq!(
+            std::fs::read(settings_path).unwrap().as_slice(),
+            settings_bytes
+        );
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
     }
 
     #[test]
@@ -325,9 +379,15 @@ mod tests {
 
     #[test]
     fn local_ocr_model_override_requires_explicit_opt_in_and_root() {
+        let absolute_root = tempfile::tempdir().unwrap();
+        let root = absolute_root.path().to_string_lossy().into_owned();
         assert_eq!(
-            local_ocr_model_override(Some("1".into()), Some("C:\\probe-model".into())),
-            Some("C:\\probe-model".into())
+            local_ocr_model_override(Some("1".into()), Some(root.clone())),
+            Some(root)
+        );
+        assert_eq!(
+            local_ocr_model_override(Some("1".into()), Some("relative-model".into())),
+            None
         );
         assert_eq!(
             local_ocr_model_override(Some("0".into()), Some("C:\\probe-model".into())),

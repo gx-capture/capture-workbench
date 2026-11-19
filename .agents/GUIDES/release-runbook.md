@@ -213,7 +213,7 @@ source of truth for inputs.
 - New host settings: `CAPTURE_SPEECH_WORKER_IDLE_SECONDS` (300) and
   `CAPTURE_OCR_WORKER_IDLE_SECONDS` (120); 0 restores a worker per capture.
   The desktop app writes `speech-gpu-settings.json` and passes
-  `CAPTURE_WHISPER_PREFER_GPU`.
+  `CAPTURE_SPEECH_PREFER_GPU`.
 - Compatible with 0.7.x clients. Contract-set SHA-256 unchanged (`60c62267…`);
   capture document schema unchanged (`5452631c…`). Model-source snapshot
   `954f19f` (annotated tag `capture-runtime-model-sources-v0.7.2`). The lock
@@ -260,7 +260,7 @@ source of truth for inputs.
   profile `capture-workbench-ocr-e012547f1f9da4da`.
 - Hosts: keep `CAPTURE_APP_DATA_DIR` to about 130 characters. The speech
   worker's longest DLL path is 78 characters below its install folder.
-- The `whisper-private-reference` expected output hash was still Whisper's in
+- The `speech-recognition-private-reference` expected output hash was still Whisper's in
   0.7.1. After the release it was frozen on the owner's 40-minute M4A interview,
   which replaced the missing MP3 (see the speech recognition decision); that
   change shipped in 0.7.2 (PR #108).
@@ -475,11 +475,11 @@ person:
   `verify-speech-recognition-preflight` are the way to freeze the private
   speech fixture again when the private recording or the speech model changes.
   They accept only a model-source lock whose approval is `blocked` with the
-  single pending-freeze blocker (`PENDING_WHISPER_FREEZE_BLOCKER` in
-  `scripts/model_source_lock.py`) and whose `whisper` fixture has no expected
+  single pending-freeze blocker (`PENDING_SPEECH_FREEZE_BLOCKER` in
+  `scripts/model_source_lock.py`) and whose `speech-recognition` fixture has no expected
   model, device or output hash. On the approved lock they stop with an error;
   that is intended. Procedure: put the lock in that blocked state, run the
-  preflight twice with the private recording (`--private-whisper-fixture`),
+  preflight twice with the private recording (`--private-speech-fixture`),
   compare the two evidence files (they hold hashes, provenance and segment
   bounds, never the audio path or the transcript), then write the frozen
   model, device and normalized output hash into the lock and approve it.

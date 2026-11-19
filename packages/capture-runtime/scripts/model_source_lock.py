@@ -13,7 +13,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 LOCK_VERSION = "2"
-TEXT_RECOGNITION_SOURCE_COMMIT = "710cb3a8ec9c044b68ca1ee2060dbe3b3bcd0887"
+TEXT_RECOGNITION_SOURCE_COMMIT = "d714256fc188df67702f0e7d027d2098d4e91054"
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 # Release CI invokes this script with --no-project before installing the runtime.
 # Read the repository's declared owner without importing the runtime package.
@@ -37,8 +37,8 @@ REQUIREMENT_IDS = ("text-recognition", "speech-recognition")
 OPTIONAL_REQUIREMENT_IDS = ("speaker-diarization", "vertical-japanese-reader")
 CORE_ONLY_RELEASE_MODE = "core-only"
 MODEL_ENABLED_RELEASE_MODE = "model-enabled"
-PENDING_WHISPER_FREEZE_BLOCKER = (
-    "Freeze private Whisper model/device pair and normalized output digest "
+PENDING_SPEECH_FREEZE_BLOCKER = (
+    "Freeze private speech model/device pair and normalized output digest "
     "from two identical production runs."
 )
 HEX = frozenset("0123456789abcdef")
@@ -52,8 +52,8 @@ OCR_FIXTURE_SHA256 = "7d61f4835837c4c387a0d46c4f21f7442fe22aab3f14f330b86f6857f5
 OCR_FIXTURE_BYTES = 2157
 OCR_PDF_SHA256 = "5eec85d2b2e98e06577cb5310d1b3037ca26f03d06d85a292ae78b68d4c57f30"
 OCR_PDF_BYTES = 2421
-PRIVATE_WHISPER_FIXTURE_BYTES = 39_199_307
-PRIVATE_WHISPER_FIXTURE_SHA256 = "9801672552693524aa6e325e0afe4f3cec7920f4625de4bd8c5a35a40be3b7f7"
+PRIVATE_SPEECH_FIXTURE_BYTES = 39_199_307
+PRIVATE_SPEECH_FIXTURE_SHA256 = "9801672552693524aa6e325e0afe4f3cec7920f4625de4bd8c5a35a40be3b7f7"
 
 
 class ModelSourceLockError(ValueError):
@@ -463,7 +463,7 @@ def _validate_ocr_fixture(value: object) -> dict[str, Any]:
     return fixture
 
 
-def _validate_private_whisper_fixture(value: object, *, require_approved: bool) -> dict[str, Any]:
+def _validate_private_speech_fixture(value: object, *, require_approved: bool) -> dict[str, Any]:
     fixture = _exact(
         value,
         {
@@ -480,29 +480,30 @@ def _validate_private_whisper_fixture(value: object, *, require_approved: bool) 
             "preferGpu",
             "sha256",
         },
-        "private Whisper fixture",
+        "private speech fixture",
     )
-    if fixture["kind"] != "whisper" or fixture["id"] != "whisper-private-reference":
-        raise ModelSourceLockError("private Whisper fixture identity is invalid")
     if (
-        fixture["bytes"] != PRIVATE_WHISPER_FIXTURE_BYTES
-        or fixture["sha256"] != PRIVATE_WHISPER_FIXTURE_SHA256
+        fixture["kind"] != "speech-recognition"
+        or fixture["id"] != "speech-recognition-private-reference"
+    ):
+        raise ModelSourceLockError("private speech fixture identity is invalid")
+    if (
+        fixture["bytes"] != PRIVATE_SPEECH_FIXTURE_BYTES
+        or fixture["sha256"] != PRIVATE_SPEECH_FIXTURE_SHA256
         or fixture["mediaType"] != "audio/mp4"
         or fixture["expectedEngine"] != "speech-recognition"
         or fixture["monotonicSegments"] is not True
     ):
-        raise ModelSourceLockError("private Whisper fixture bytes/provenance are invalid")
+        raise ModelSourceLockError("private speech fixture bytes/provenance are invalid")
     if not isinstance(fixture["preferGpu"], bool):
-        raise ModelSourceLockError("private Whisper GPU preference is invalid")
+        raise ModelSourceLockError("private speech GPU preference is invalid")
     expected_model = fixture["expectedModel"]
     expected_device = fixture["expectedDevice"]
     if expected_model is None or expected_device is None:
         if require_approved:
-            raise ModelSourceLockError(
-                "private Whisper model/device pair is pending two-run freeze"
-            )
+            raise ModelSourceLockError("private speech model/device pair is pending two-run freeze")
         if expected_model is not None or expected_device is not None:
-            raise ModelSourceLockError("private Whisper model/device pair must be frozen together")
+            raise ModelSourceLockError("private speech model/device pair must be frozen together")
     elif (expected_model, expected_device) not in {
         # Shipping runs tea-asr-1.1 on CUDA when a GPU is present, and the same
         # checkpoint on CPU when it is not (2026-11-04).
@@ -510,17 +511,17 @@ def _validate_private_whisper_fixture(value: object, *, require_approved: bool) 
         ("tea-asr-1.1", "cpu"),
         ("tea-asr-1.1-mini", "cpu"),
     }:
-        raise ModelSourceLockError("private Whisper model/device pair is unsupported")
-    count = _exact(fixture["expectedSegmentCount"], {"maximum", "minimum"}, "Whisper segment count")
+        raise ModelSourceLockError("private speech model/device pair is unsupported")
+    count = _exact(fixture["expectedSegmentCount"], {"maximum", "minimum"}, "speech segment count")
     if count["minimum"] != 1 or count["maximum"] != 10_000:
-        raise ModelSourceLockError("private Whisper segment count bounds are invalid")
+        raise ModelSourceLockError("private speech segment count bounds are invalid")
     digest = _sha256(
         fixture["expectedNormalizedOutputSha256"],
-        "private Whisper expectedNormalizedOutputSha256",
+        "private speech expectedNormalizedOutputSha256",
         allow_pending=True,
     )
     if require_approved and digest is None:
-        raise ModelSourceLockError("private Whisper output digest is pending two-run freeze")
+        raise ModelSourceLockError("private speech output digest is pending two-run freeze")
     return fixture
 
 
@@ -565,9 +566,9 @@ def validate_source_lock(
         if lock["fixtures"]:
             raise ModelSourceLockError("core-only source lock cannot contain fixtures")
         return lock
-    if approval["status"] == "blocked" and approval["blockers"] != [PENDING_WHISPER_FREEZE_BLOCKER]:
+    if approval["status"] == "blocked" and approval["blockers"] != [PENDING_SPEECH_FREEZE_BLOCKER]:
         raise ModelSourceLockError(
-            "blocked model source lock must contain only the private Whisper two-run freeze blocker"
+            "blocked model source lock must contain only the private speech two-run freeze blocker"
         )
     requirement_ids = tuple(
         item.get("requirementId") for item in requirements if isinstance(item, dict)
@@ -601,12 +602,15 @@ def validate_source_lock(
     fixtures = lock["fixtures"]
     if not isinstance(fixtures, list) or len(fixtures) != 2:
         raise ModelSourceLockError(
-            "model-enabled source lock needs OCR and private Whisper fixtures"
+            "model-enabled source lock needs OCR and private speech fixtures"
         )
-    if [item.get("kind") for item in fixtures if isinstance(item, dict)] != ["ocr", "whisper"]:
-        raise ModelSourceLockError("fixtures must be ordered OCR then private Whisper")
+    if [item.get("kind") for item in fixtures if isinstance(item, dict)] != [
+        "ocr",
+        "speech-recognition",
+    ]:
+        raise ModelSourceLockError("fixtures must be ordered OCR then private speech")
     _validate_ocr_fixture(fixtures[0])
-    _validate_private_whisper_fixture(fixtures[1], require_approved=require_approved)
+    _validate_private_speech_fixture(fixtures[1], require_approved=require_approved)
     if require_approved and approval["status"] != "approved":
         raise ModelSourceLockError("model source lock is blocked: " + "; ".join(blockers))
     return lock

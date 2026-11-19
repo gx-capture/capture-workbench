@@ -59,8 +59,6 @@ def test_text_recognition_provenance_binds_bytes_and_fixed_revisions() -> None:
         "paddleocrDetection": "61323801669c338b7891481ec7bac61ce31b576a",
         "paddleocrDictionary": "b03f46425e8ff4442b268ce449e3eef758146cd4",
         "paddleocrRecognition": "50c7eacafc52fa7bcf4194e8cd08e46f8558504b",
-        "whisperFallback": "536b0662742c02347bc0e980a01041f333bce120",
-        "whisperPrimary": "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf",
     }
     assert provenance["sourceRepositories"] == {
         "ndlocrLite": "ndl-lab/ndlocr-lite",

@@ -154,9 +154,9 @@ returns `UnknownCommand`.
    `apps/capture-workbench-desktop/src-tauri/src/constants/launch.rs` and
    `LaunchPolicy::environment()` in `launch_policy.rs` strip
    `CAPTURE_ENGINE_CACHE_DIR`, `CAPTURE_SPEECH_RECOGNITION_MODEL`, and
-   `CAPTURE_SPEECH_RECOGNITION_VARIANT` (and only honor
-   `CAPTURE_WHISPER_ALLOW_CPU_FALLBACK=false` when
-   `CAPTURE_SMOKE_WORKER_MIRROR_OPT_IN=1`), forwarding those variables without
+   `CAPTURE_SPEECH_RECOGNITION_VARIANT`. The host honors
+   `CAPTURE_SPEECH_RECOGNITION_ALLOW_CPU_FALLBACK` independently of the mirror.
+   Forwarding the stripped variables without
    local workarounds awaits the Rust allowlist follow-up before a full
    `tea-asr-1.1-mini` / custom engine-cache run succeeds end to end.
    `smoke-real-engines` is where the real-engine model journey is verified, and

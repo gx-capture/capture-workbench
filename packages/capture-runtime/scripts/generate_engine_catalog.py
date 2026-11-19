@@ -10,7 +10,7 @@ from urllib.parse import quote
 from model_source_lock import (
     CORE_ONLY_RELEASE_MODE,
     OPTIONAL_REQUIREMENT_IDS,
-    PENDING_WHISPER_FREEZE_BLOCKER,
+    PENDING_SPEECH_FREEZE_BLOCKER,
     cpu_speech_model_delivery,
     load_source_lock,
     model_delivery,
@@ -226,7 +226,7 @@ def main() -> None:
     parser.add_argument(
         "--allow-pending-preflight",
         action="store_true",
-        help="Allow only the blocked private-Whisper preflight lock; never use for release output.",
+        help="Allow only the blocked private-speech preflight lock; never use for release output.",
     )
     arguments = parser.parse_args()
     if arguments.development_stub:
@@ -271,24 +271,24 @@ def main() -> None:
         approval = source_lock["approval"]
         if (
             approval["status"] != "blocked"
-            or approval["blockers"] != [PENDING_WHISPER_FREEZE_BLOCKER]
+            or approval["blockers"] != [PENDING_SPEECH_FREEZE_BLOCKER]
             or [item["requirementId"] for item in source_lock["requirements"]][:2]
             != ["text-recognition", "speech-recognition"]
             or len(source_lock["fixtures"]) != 2
-            or [item["kind"] for item in source_lock["fixtures"]] != ["ocr", "whisper"]
+            or [item["kind"] for item in source_lock["fixtures"]] != ["ocr", "speech-recognition"]
         ):
             raise SystemExit(
-                "Pending preflight requires the exact blocked private Whisper two-run freeze lock."
+                "Pending preflight requires the exact blocked private speech two-run freeze lock."
             )
-        whisper_fixture = next(
-            (item for item in source_lock["fixtures"] if item.get("kind") == "whisper"),
+        speech_fixture = next(
+            (item for item in source_lock["fixtures"] if item.get("kind") == "speech-recognition"),
             None,
         )
-        if whisper_fixture is None or any(
-            whisper_fixture.get(field) is not None
+        if speech_fixture is None or any(
+            speech_fixture.get(field) is not None
             for field in ("expectedModel", "expectedDevice", "expectedNormalizedOutputSha256")
         ):
-            raise SystemExit("Pending preflight requires an unfrozen private Whisper fixture.")
+            raise SystemExit("Pending preflight requires an unfrozen private speech fixture.")
     if (
         arguments.speech_recognition_worker_archive.parent.resolve()
         != arguments.ocr_worker_archive.parent.resolve()

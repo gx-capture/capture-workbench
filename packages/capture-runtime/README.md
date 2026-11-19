@@ -83,8 +83,8 @@ runs the installed pack's model: TEA-ASR-1.1 on the `cuda` pack, including the
 CPU retry, and TEA-ASR-1.1-mini on the `cpu` pack. `tea-asr-1.1-mini` runs on
 either pack. `tea-asr-1.1` runs on the `cuda` pack on either device; on the `cpu`
 pack the capture fails with `requirement_unavailable` before a worker starts.
-On the `cuda` pack `CAPTURE_WHISPER_PREFER_GPU` (default `true`) still decides
-whether CUDA is tried, and `CAPTURE_WHISPER_ALLOW_CPU_FALLBACK=false` turns the
+On the `cuda` pack, `CAPTURE_SPEECH_PREFER_GPU` defaults to `true` and controls
+whether CUDA is tried. `CAPTURE_SPEECH_RECOGNITION_ALLOW_CPU_FALLBACK=false` turns the
 retry off. Provenance names the model and device that produced the result.
 
 A development test that transcribes real audio sets

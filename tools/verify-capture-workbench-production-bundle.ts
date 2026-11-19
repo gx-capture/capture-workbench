@@ -15,7 +15,7 @@ const forbiddenMarkers = [
   'isolated-ollama-fake',
   'host-provider-fake',
   'deterministic-ocr-v1',
-  'deterministic-speech-recognition-v1',
+  'deterministic-speech-v1',
   'unknown fake capture',
   'unknown fake installation',
   'capture fakes',

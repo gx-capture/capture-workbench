@@ -3022,11 +3022,25 @@ def test_runtime_settings_rejects_retired_ocr_device_override() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    ("old_name", "new_name"),
+    [
+        ("CAPTURE_WHISPER_PREFER_GPU", "CAPTURE_SPEECH_PREFER_GPU"),
+        ("CAPTURE_WHISPER_ALLOW_CPU_FALLBACK", "CAPTURE_SPEECH_RECOGNITION_ALLOW_CPU_FALLBACK"),
+    ],
+)
+def test_runtime_settings_reject_retired_speech_variables(old_name: str, new_name: str) -> None:
+    with pytest.raises(ValueError, match=f"{old_name} is retired; use {new_name}"):
+        RuntimeSettings.from_env(
+            {"CAPTURE_API_TOKEN": "a" * 32, old_name: "false", new_name: "true"}
+        )
+
+
 def test_runtime_settings_allows_explicit_speech_gpu_opt_in() -> None:
     settings = RuntimeSettings.from_env(
         {
             "CAPTURE_API_TOKEN": "a" * 32,
-            "CAPTURE_WHISPER_PREFER_GPU": "true",
+            "CAPTURE_SPEECH_PREFER_GPU": "true",
         }
     )
 
@@ -3037,7 +3051,7 @@ def test_runtime_settings_can_disable_speech_cpu_fallback() -> None:
     settings = RuntimeSettings.from_env(
         {
             "CAPTURE_API_TOKEN": "a" * 32,
-            "CAPTURE_WHISPER_ALLOW_CPU_FALLBACK": "false",
+            "CAPTURE_SPEECH_RECOGNITION_ALLOW_CPU_FALLBACK": "false",
         }
     )
 
