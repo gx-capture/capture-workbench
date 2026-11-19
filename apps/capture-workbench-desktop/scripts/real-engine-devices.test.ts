@@ -22,7 +22,11 @@ const adapters: readonly GpuAdapter[] = [
 const speech = 'speech-recognition';
 const speaker = 'speaker-diarization';
 const ocr = 'text-recognition';
-const scenario = (id: string) => deviceScenarios().find((item) => item.id === id)!;
+const scenario = (id: string) => {
+  const found = deviceScenarios().find((item) => item.id === id);
+  assert.ok(found, `no device scenario ${id}`);
+  return found;
+};
 const speechScenario = scenario('speech-development');
 const ocrScenario = scenario('ocr-default');
 const speakerScenario = scenario('speaker-identification');
@@ -45,13 +49,14 @@ const ocrCapture: ReportedCapture = {
 const ocrCompute = { mode: 'gpu', adapterClass: 'dedicated' };
 
 test('preflight requires discrete DirectML hardware and the NVIDIA driver only for CUDA speech packs', () => {
-  assert.match(preflightScenario(ocrScenario, [adapters[0]], true)!, /no discrete GPU/u);
-  assert.match(preflightScenario(ocrScenario, [], true)!, /no discrete GPU/u);
+  assert.match(preflightScenario(ocrScenario, [adapters[0]], true) ?? '', /no discrete GPU/u);
+  assert.match(preflightScenario(ocrScenario, [], true) ?? '', /no discrete GPU/u);
   assert.equal(preflightScenario(ocrScenario, adapters, false), undefined);
   assert.equal(preflightScenario(cpuScenario, [], false), undefined);
   for (const cudaScenario of [speechScenario, speakerScenario, scenario('speech-gpu-preference-off')]) {
     const unavailable = preflightScenario(cudaScenario, adapters, false);
-    assert.match(unavailable!, /nvcuda/u);
+    assert.ok(unavailable !== undefined);
+    assert.match(unavailable, /nvcuda/u);
     assert.equal(decideVerdict({ scenario: cudaScenario, captures: [], observations: {}, unavailable }).verdict, 'not runnable');
     assert.equal(cudaScenario.environment['CAPTURE_SPEECH_RECOGNITION_VARIANT'], 'cuda');
     assert.equal(cudaScenario.environment['CAPTURE_SPEECH_RECOGNITION_ALLOW_CPU_FALLBACK'], 'false');

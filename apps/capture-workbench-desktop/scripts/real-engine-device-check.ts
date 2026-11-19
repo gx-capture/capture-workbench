@@ -250,14 +250,18 @@ async function runScenario(
       await waitForReady(active);
       ocrCompute = await readOcrCompute(active);
       if (scenario.requirements.includes('speech-recognition')) installedPack = await readInstalledPack(appData);
+      const runtimePid = active.child.pid;
+      if (runtimePid === undefined) throw new Error('Capture Runtime started without a process id.');
       for (const input of scenario.captures) {
+        const source = options.inputs[input];
+        if (source === undefined) throw new Error(`No ${input} input was given for ${scenario.id}.`);
         const directory = join(evidenceDirectory, input);
         await mkdir(directory);
-        const sampler = startSamplers({ pid: active.child.pid!, appData }, directory, options.nvidiaPresent);
+        const sampler = startSamplers({ pid: runtimePid, appData }, directory, options.nvidiaPresent);
         let complete: boolean;
         try {
           const baseline = await waitForSample(directory);
-          captures.push(await captureAndReport(active, input, options.inputs[input]!, scenario.identifySpeakers));
+          captures.push(await captureAndReport(active, input, source, scenario.identifySpeakers));
           const captureEnded = new Date().toISOString();
           complete = baseline && await waitForSample(directory, captureEnded);
         } finally {
@@ -324,7 +328,9 @@ async function startRuntime(
       env: runtimeEnvironment({ appData, temp, port, token, mirrorPort, scenario: scenario.environment }),
     },
   );
-  for (const output of [child.stdout!, child.stderr!]) {
+  const { stdout, stderr } = child;
+  if (stdout === null || stderr === null) throw new Error('Capture Runtime output is not piped.');
+  for (const output of [stdout, stderr]) {
     createInterface({ input: output, crlfDelay: Infinity }).on('line', (line: string) => {
       appendFileSync(logPath, `${line.replaceAll(token, '[token]')}\n`, 'utf8');
     });
