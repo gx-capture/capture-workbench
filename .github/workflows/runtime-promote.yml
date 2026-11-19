@@ -143,10 +143,10 @@ jobs:
           retention-days: 14
           compression-level: 0
 
-  publish-pypi:
+  verify-pypi-publication:
     if: ${{ inputs.publication_scope == 'registries' }}
     needs: prepare-candidate
-    uses: ./.github/workflows/_publish-pypi.yml
+    uses: ./.github/workflows/_verify-pypi-publication.yml
     permissions:
       actions: read
       contents: read
@@ -181,9 +181,9 @@ jobs:
         always() &&
         needs.prepare-candidate.result == 'success' &&
         (inputs.publication_scope == 'github-release' ||
-         (needs.publish-pypi.result == 'success' && needs.publish-crates.result == 'success'))
+         (needs.verify-pypi-publication.result == 'success' && needs.publish-crates.result == 'success'))
       }}
-    needs: [prepare-candidate, publish-pypi, publish-crates]
+    needs: [prepare-candidate, verify-pypi-publication, publish-crates]
     runs-on: ubuntu-latest
     permissions:
       contents: write

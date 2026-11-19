@@ -252,8 +252,10 @@ UI and the TypeScript runtime client), PyPI (`pypi`: the Python runtime
 client), crates.io (`crates-io`: `capture-sidecar-launcher`), and GitHub
 Releases (`github-releases`: runtime, engine and desktop assets and the
 immutable release manifests). Their only publication owners are
-`_publish-npm.yml`, `_publish-pypi.yml`, `_publish-crates.yml`,
-`_publish-github-release.yml`, `_publish-runtime-github-release.yml` and
+`_publish-npm.yml`, `_publish-crates.yml`, `_publish-github-release.yml`,
+`_publish-runtime-github-release.yml`, the inline PyPI uploads of
+`package-promote.yml` and `release-promote.yml` (Trusted Publishing binds the
+top-level workflow; `_verify-pypi-publication.yml` only verifies them) and
 `_verify-registries.yml`, orchestrated by `release-promote.yml`; the stable
 pointer is moved only by `_publish-stable-pointer.yml`. No local script or
 consumer may mutate it.

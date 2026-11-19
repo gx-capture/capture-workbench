@@ -356,8 +356,16 @@ test('ordinary CI keeps real OCR local while release promotion stays determinist
   );
   const packageQaCommand = project.targets['test-scripts']?.options?.command;
   assert.equal(typeof packageQaCommand, 'string');
-  assert.match(
+  // The three-project acceptance suite runs once, in the tools project's tests.
+  assert.doesNotMatch(
     packageQaCommand ?? '',
+    /tools\/three-project-acceptance\.test\.ts/u,
+  );
+  const toolsProject = JSON.parse(
+    await readFile(join(workspaceRoot, 'tools', 'project.json'), 'utf8'),
+  ) as { targets: Record<string, { options?: { command?: string } }> };
+  assert.match(
+    toolsProject.targets['test']?.options?.command ?? '',
     /tools\/three-project-acceptance\.test\.ts/u,
   );
   assert.match(
@@ -606,7 +614,7 @@ test('promotion is candidate-only and creates the tag after registry verificatio
       'utf8',
     ),
     readFile(
-      join(workspaceRoot, '.github', 'workflows', 'release.yml'),
+      join(workspaceRoot, '.github', 'workflows', 'release-tag-audit.yml'),
       'utf8',
     ),
     readFile(
@@ -614,7 +622,7 @@ test('promotion is candidate-only and creates the tag after registry verificatio
       'utf8',
     ),
     readFile(
-      // PyPI uploads run inline here; _publish-pypi.yml only verifies.
+      // PyPI uploads run inline here; _verify-pypi-publication.yml only verifies.
       join(workspaceRoot, '.github', 'workflows', 'package-promote.yml'),
       'utf8',
     ),
@@ -742,7 +750,7 @@ test('release workflow is SHA-pinned and tag-audit-only', async () => {
   const workspaceRoot = join(appRoot, '..', '..');
   const [workflow, ciWorkflow] = await Promise.all([
     readFile(
-      join(workspaceRoot, '.github', 'workflows', 'release.yml'),
+      join(workspaceRoot, '.github', 'workflows', 'release-tag-audit.yml'),
       'utf8',
     ),
     readFile(join(workspaceRoot, '.github', 'workflows', 'ci.yml'), 'utf8'),

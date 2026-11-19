@@ -65,7 +65,7 @@ test('package candidate workflow is independent from the desktop product lane', 
     'utf8',
   );
   const pypiWorkflow = await readFile(
-    join(root, '.github/workflows/_publish-pypi.yml'),
+    join(root, '.github/workflows/_verify-pypi-publication.yml'),
     'utf8',
   );
   const releasePromoteWorkflow = await readFile(
@@ -220,7 +220,7 @@ test('PyPI uploads run only inline in the top-level workflows registered as Trus
   assert(uploaders.every((filename) => !filename.startsWith('_')));
 
   const verification = await readFile(
-    join(root, '.github/workflows/_publish-pypi.yml'),
+    join(root, '.github/workflows/_verify-pypi-publication.yml'),
     'utf8',
   );
   assert.doesNotMatch(verification, /id-token: write/u);
@@ -236,7 +236,7 @@ test('PyPI uploads run only inline in the top-level workflows registered as Trus
     'utf8',
   );
   const runtimePypi = runtimePromote
-    .split('  publish-pypi:')[1]
+    .split('  verify-pypi-publication:')[1]
     .split(/\n {2}[a-z][a-z-]+:/u)[0];
   assert.doesNotMatch(runtimePypi, /id-token: write/u);
 });
@@ -324,7 +324,7 @@ test('all PyPI uploaders preflight before Trusted Publishing and consume the bin
       'utf8',
     );
     const job = workflow
-      .split('  publish-pypi:')[1]
+      .split('  verify-pypi-publication:')[1]
       .split(/\n {2}[a-z][a-z-]+:/u)[0];
     assert(job.includes(`candidate_kind: ${kind}`));
     assert(
@@ -401,7 +401,7 @@ test('runtime promotion requires npm evidence before publishing runtime registri
   assert.match(promoteWorkflow, /publication_scope/u);
   assert.match(promoteWorkflow, /github-release/u);
   assert.match(promoteWorkflow, /inputs\.publication_scope == 'registries'/u);
-  assert.match(promoteWorkflow, /publish-pypi/u);
+  assert.match(promoteWorkflow, /verify-pypi-publication/u);
   assert.match(promoteWorkflow, /publish-crates/u);
   assert.match(promoteWorkflow, /tag-runtime-release/u);
   assert.match(releaseWorkflow, /create-runtime-github-release\.ts/u);

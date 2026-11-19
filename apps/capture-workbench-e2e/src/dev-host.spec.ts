@@ -252,7 +252,7 @@ test('refuses unauthorized proxy requests, omits CORS and tokens, and bridges er
     );
     let unservedError = '';
     try {
-      await win.__TAURI_INTERNALS__.invoke('desktop_acceptance_close_window', {});
+      await win.__TAURI_INTERNALS__.invoke('desktop_close_window', {});
     } catch (error) {
       unservedError = String(error);
     }
@@ -277,7 +277,7 @@ test('refuses unauthorized proxy requests, omits CORS and tokens, and bridges er
   expect(bridgeChecks.windowLabel).toBe('main');
   expect(bridgeChecks.assetUrl).toContain('sample.pdf');
   expect(bridgeChecks.watchResult).toBeNull();
-  expect(bridgeChecks.unservedError).toContain('desktop_acceptance_close_window');
+  expect(bridgeChecks.unservedError).toContain('desktop_close_window');
   expect(bridgeChecks.commandError).toBe('Capture library document identifier is invalid.');
 });
 

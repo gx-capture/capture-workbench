@@ -1753,7 +1753,7 @@ test('real desktop teardown delegates ownership to native Tauri seams', async ()
     commands.push(command);
     args.push(commandArgs);
   });
-  assert.deepEqual(commands, ['desktop_acceptance_close_window']);
+  assert.deepEqual(commands, ['desktop_close_window']);
   assert.deepEqual(args, [{}]);
 
   await requestDesktopTeardown('terminate-process', async (command, commandArgs) => {
@@ -1762,7 +1762,7 @@ test('real desktop teardown delegates ownership to native Tauri seams', async ()
     throw new Error('Target page, context or browser has been closed.');
   });
   assert.deepEqual(commands, [
-    'desktop_acceptance_close_window',
+    'desktop_close_window',
     'desktop_acceptance_terminate_root',
   ]);
   assert.deepEqual(args, [{}, {}]);
