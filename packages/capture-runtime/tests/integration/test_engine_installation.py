@@ -30,6 +30,10 @@ from capture_runtime.capture.infrastructure.streaming_repository import Streamin
 from capture_runtime.clock import SystemClock
 from capture_runtime.config import ExtractionRuntimeConfig, RuntimeSettings
 from capture_runtime.constants import MAX_RUNTIME_ARTIFACT_BYTES, RUNTIME_VERSION
+from capture_runtime.constants.requirements import (
+    VERTICAL_READER_REQUIREMENT_ID,
+    WINDOWSML_REQUIREMENT_ID,
+)
 from capture_runtime.contracts import (
     CaptureEngine,
     CaptureSourceKind,
@@ -1593,6 +1597,107 @@ def _model_unit_catalog(tmp_path: Path) -> tuple[EngineCatalog, dict[str, Path]]
         ),
         sources,
     )
+
+
+def _prepare_local_ocr_models(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    catalog: EngineCatalog,
+    sources: dict[str, Path],
+) -> Path:
+    local_root = tmp_path / "local-models"
+    for file in catalog.requirement(WINDOWSML_REQUIREMENT_ID).model_delivery().files:
+        destination = local_root / file.path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(sources[file.path], destination)
+    monkeypatch.setenv("CAPTURE_PDF_OCR_E2E_LOCAL_MODEL_OPT_IN", "1")
+    monkeypatch.setenv("CAPTURE_PDF_OCR_E2E_LOCAL_MODEL_ROOT", str(local_root))
+    return local_root
+
+
+@pytest.mark.parametrize(
+    ("local_opt_in", "inject_downloader"),
+    [(True, False), (False, False), (True, True)],
+    ids=["local-ocr-only", "normal-downloads", "injected-override"],
+)
+def test_model_installations_select_the_source_per_requirement(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    local_opt_in: bool,
+    inject_downloader: bool,
+) -> None:
+    ocr_catalog, sources = _catalog(tmp_path)
+    catalog_data = ocr_catalog.to_dict()
+    ocr = catalog_data["requirements"][0]
+    catalog_data["requirements"].append(
+        ocr | {"requirementId": VERTICAL_READER_REQUIREMENT_ID, "artifacts": []}
+    )
+    catalog = EngineCatalog.from_dict(catalog_data)
+    monkeypatch.delenv("CAPTURE_PDF_OCR_E2E_LOCAL_MODEL_OPT_IN", raising=False)
+    monkeypatch.setenv("CAPTURE_ENGINE_CACHE_DIR", "off")
+    if local_opt_in:
+        _prepare_local_ocr_models(tmp_path, monkeypatch, catalog, sources)
+    normal = CopyModelDownloader(sources)
+    injected = CopyModelDownloader(sources)
+    monkeypatch.setattr(engine_installation_module, "HttpModelFileDownloader", lambda: normal)
+    manager = EngineInstallationManager(
+        tmp_path / "engines",
+        catalog,
+        worker_client=FakeWorkerClient(),  # type: ignore[arg-type]
+        downloader=CopyDownloader(sources),
+        model_downloader=injected if inject_downloader else None,
+    )
+    file_count = len(catalog.requirement(WINDOWSML_REQUIREMENT_ID).model_delivery().files)
+
+    async def install_both() -> None:
+        await manager.install(
+            WINDOWSML_REQUIREMENT_ID, cancel_event=asyncio.Event(), report_progress=lambda _: None
+        )
+        assert manager.is_installed(WINDOWSML_REQUIREMENT_ID)
+        assert normal.calls == (0 if local_opt_in else file_count)
+        assert injected.calls == (file_count if inject_downloader else 0)
+
+        await manager.install(
+            VERTICAL_READER_REQUIREMENT_ID,
+            cancel_event=asyncio.Event(),
+            report_progress=lambda _: None,
+        )
+        assert manager.is_installed(VERTICAL_READER_REQUIREMENT_ID)
+
+    asyncio.run(install_both())
+    assert normal.calls == (0 if inject_downloader else file_count * (1 if local_opt_in else 2))
+    assert injected.calls == (2 * file_count if inject_downloader else 0)
+
+
+def test_local_ocr_model_install_rejects_a_checksum_mismatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    catalog, sources = _catalog(tmp_path)
+    local_root = _prepare_local_ocr_models(tmp_path, monkeypatch, catalog, sources)
+    model = local_root / "model" / "model.bin"
+    model.write_bytes(b"x" * model.stat().st_size)
+    normal = CopyModelDownloader(sources)
+    monkeypatch.setenv("CAPTURE_ENGINE_CACHE_DIR", "off")
+    monkeypatch.setattr(engine_installation_module, "HttpModelFileDownloader", lambda: normal)
+    manager = EngineInstallationManager(
+        tmp_path / "engines",
+        catalog,
+        worker_client=FakeWorkerClient(),  # type: ignore[arg-type]
+        downloader=CopyDownloader(sources),
+    )
+
+    with pytest.raises(
+        EngineInstallationError, match="^local OCR model file checksum does not match catalog$"
+    ):
+        asyncio.run(
+            manager.install(
+                WINDOWSML_REQUIREMENT_ID,
+                cancel_event=asyncio.Event(),
+                report_progress=lambda _: None,
+            )
+        )
+    assert normal.calls == 0
+    assert not manager.is_installed(WINDOWSML_REQUIREMENT_ID)
 
 
 def _model_unit_manager(
