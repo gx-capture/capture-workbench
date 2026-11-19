@@ -213,7 +213,7 @@ source of truth for inputs.
 - New host settings: `CAPTURE_SPEECH_WORKER_IDLE_SECONDS` (300) and
   `CAPTURE_OCR_WORKER_IDLE_SECONDS` (120); 0 restores a worker per capture.
   The desktop app writes `speech-gpu-settings.json` and passes
-  `CAPTURE_SPEECH_PREFER_GPU`.
+  the speech GPU preference to the runtime.
 - Compatible with 0.7.x clients. Contract-set SHA-256 unchanged (`60c62267…`);
   capture document schema unchanged (`5452631c…`). Model-source snapshot
   `954f19f` (annotated tag `capture-runtime-model-sources-v0.7.2`). The lock
@@ -260,7 +260,7 @@ source of truth for inputs.
   profile `capture-workbench-ocr-e012547f1f9da4da`.
 - Hosts: keep `CAPTURE_APP_DATA_DIR` to about 130 characters. The speech
   worker's longest DLL path is 78 characters below its install folder.
-- The `speech-recognition-private-reference` expected output hash was still Whisper's in
+- The private speech reference fixture's expected output hash was still Whisper's in
   0.7.1. After the release it was frozen on the owner's 40-minute M4A interview,
   which replaced the missing MP3 (see the speech recognition decision); that
   change shipped in 0.7.2 (PR #108).
