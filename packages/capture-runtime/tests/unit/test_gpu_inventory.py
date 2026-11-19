@@ -162,6 +162,5 @@ def test_ocr_joins_preference_and_directml_ordinals_by_native_luid(
 
     assert adapters is not None
     assert {
-        adapter.luid: (adapter.dml_device_id, adapter.high_performance_rank)
-        for adapter in adapters
+        adapter.luid: (adapter.dml_device_id, adapter.high_performance_rank) for adapter in adapters
     } == {"fffffffe00000004": (0, 1), "fffffffe00000005": (1, 0)}
