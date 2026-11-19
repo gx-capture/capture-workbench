@@ -9,7 +9,7 @@ import {
 } from './release/candidate-verification-summary.ts';
 
 const EXPECTED_SCHEMA_SHA256 =
-  'e3a68a577acc740fb79abcd8a0ca59cfc93c7bffd8eec3fc154aec50b9fc4b01';
+  '7d2262f13489df24eab83f8c3b5a5b5b7f5e8f7af0f521ac1b247ae86df9b493';
 const EXPECTED_NPM_PACKAGES = new Set([
   '@gx-capture/capture-workbench-ui',
   '@gx-capture/capture-runtime-client',

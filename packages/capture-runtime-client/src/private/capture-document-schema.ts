@@ -91,6 +91,19 @@ export const GENERATED_CAPTURE_DOCUMENT_JSON_SCHEMA = {
           "default": null,
           "title": "Device"
         },
+        "deviceName": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Devicename"
+        },
         "digest": {
           "pattern": "^sha256:[0-9a-f]{64}$",
           "title": "Digest",

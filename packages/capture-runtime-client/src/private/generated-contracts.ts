@@ -7,7 +7,7 @@ export const API_VERSION = "2.0" as const;
 export const CAPTURE_API_VERSION = API_VERSION;
 export const CAPTURE_DOCUMENT_SCHEMA_VERSION = "2" as const;
 export const CAPTURE_DOCUMENT_SCHEMA_ID = "https://github.com/gx-capture/capture-workbench/schema/capture-document-v2.schema.json" as const;
-export const CAPTURE_DOCUMENT_SCHEMA_SHA256 = "e3a68a577acc740fb79abcd8a0ca59cfc93c7bffd8eec3fc154aec50b9fc4b01" as const;
+export const CAPTURE_DOCUMENT_SCHEMA_SHA256 = "7d2262f13489df24eab83f8c3b5a5b5b7f5e8f7af0f521ac1b247ae86df9b493" as const;
 
 /** Wire enum. */
 export type CaptureEventType = "accepted" | "input_checkpoint" | "heartbeat" | "segment" | "checkpoint" | "resync_required" | "completed" | "failed" | "cancelled";
@@ -102,6 +102,7 @@ export interface CaptureEngine {
   readonly model: string;
   readonly digest: string;
   readonly device?: string | null;
+  readonly deviceName?: string | null;
   readonly elapsedMs?: number | null;
   readonly stageMs?: Record<string, number> | null;
 }

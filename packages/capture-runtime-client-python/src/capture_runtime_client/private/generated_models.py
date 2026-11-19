@@ -185,6 +185,7 @@ class CaptureEngine(StrictModel):
     model: NonEmptyString
     digest: EngineDigest
     device: NonEmptyString | None = None
+    device_name: NonEmptyString | None = None
     elapsed_ms: int | None = Field(default=None, ge=0)
     stage_ms: dict[NonEmptyString, Annotated[int, Field(ge=0)]] | None = None
 
