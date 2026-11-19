@@ -82,14 +82,15 @@ def discard_verification_record(path: Path) -> None:
 
 def write_verification_record(path: Path, payload: dict[str, object]) -> None:
     try:
-        atomic_write_json(path, payload)
+        atomic_write_json(path, payload, create_parent=False)
     except OSError:
         # Persistence is optional: the next process can verify the files again.
         pass
 
 
-def atomic_write_json(path: Path, payload: object) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+def atomic_write_json(path: Path, payload: object, *, create_parent: bool = True) -> None:
+    if create_parent:
+        path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     temporary = Path(name)
     try:

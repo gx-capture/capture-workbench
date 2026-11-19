@@ -55,10 +55,30 @@ def _model_root(root: Path, delivery: EngineModelDeliveryDescriptor) -> Path:
     return root / "versions" / delivery.artifact_version / "model"
 
 
-def model_unit_snapshot(root: Path, requirement: EngineRequirementDescriptor) -> ModelUnitSnapshot:
-    """Names, sizes, modification and change times of the installed files; cheap to compare."""
+def _verification_record_path(root: Path, delivery: EngineModelDeliveryDescriptor) -> Path:
+    # Beside the version's model directory, outside the files it describes, and
+    # removed with the version, so a verification that finishes after an
+    # uninstall cannot write it back.
+    return root / "versions" / delivery.artifact_version / VERIFICATION_RECORD_NAME
 
-    model_root = _model_root(root, _delivery(requirement))
+
+def _model_unit_state(requirement: EngineRequirementDescriptor) -> dict[str, str]:
+    delivery = _delivery(requirement)
+    return {
+        "stateVersion": STATE_VERSION,
+        "requirementId": requirement.requirement_id,
+        "artifactVersion": delivery.artifact_version,
+        "manifestSha256": delivery.manifest_sha256,
+    }
+
+
+def model_unit_snapshot(root: Path, requirement: EngineRequirementDescriptor) -> ModelUnitSnapshot:
+    """Paths, sizes, modification times and Windows creation times; cheap to compare."""
+
+    return _model_files_snapshot(_model_root(root, _delivery(requirement)))
+
+
+def _model_files_snapshot(model_root: Path) -> ModelUnitSnapshot:
     files: list[tuple[str, int, int, int]] = []
     try:
         if not model_root.is_dir() or model_root.is_symlink():
@@ -103,17 +123,12 @@ def active_model_unit_dir(root: Path, requirement: EngineRequirementDescriptor) 
         state = json.loads((root / STATE_FILE_NAME).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
-    if state != {
-        "stateVersion": STATE_VERSION,
-        "requirementId": requirement.requirement_id,
-        "artifactVersion": delivery.artifact_version,
-        "manifestSha256": delivery.manifest_sha256,
-    }:
+    if state != _model_unit_state(requirement):
         return None
     model_root = _model_root(root, delivery)
-    record_path = root / VERIFICATION_RECORD_NAME
+    record_path = _verification_record_path(root, delivery)
     files = model_unit_snapshot(root, requirement)
-    record = verification_record(state, files or None)
+    record = verification_record({**state, "modelDelivery": delivery.to_dict()}, files or None)
     record_matches = matches_verification_record(record_path, record)
     if not record_matches:
         discard_verification_record(record_path)
@@ -172,12 +187,15 @@ async def install_model_unit(
         await _cancellable_file_operation(
             stop, verify_direct_model_files, model_root, delivery, cancel_event=stop
         )
+        verified_files = await _file_operation(_model_files_snapshot, model_root)
+        state = _model_unit_state(requirement)
         if cancel_event.is_set():
             raise asyncio.CancelledError
         state_path = root / STATE_FILE_NAME
         # Without its state file the previous copy is no longer active, so it can
         # be replaced; the new copy becomes active only once its state is written.
-        discard_verification_record(root / VERIFICATION_RECORD_NAME)
+        for record_path in (root / "versions").glob(f"*/{VERIFICATION_RECORD_NAME}"):
+            discard_verification_record(record_path)
         state_path.unlink(missing_ok=True)
         if final.exists():
             await _file_operation(shutil.rmtree, final)
@@ -187,12 +205,7 @@ async def install_model_unit(
         pending = state_path.with_suffix(f".{uuid4().hex}.tmp")
         pending.write_text(
             json.dumps(
-                {
-                    "stateVersion": STATE_VERSION,
-                    "requirementId": requirement.requirement_id,
-                    "artifactVersion": delivery.artifact_version,
-                    "manifestSha256": delivery.manifest_sha256,
-                },
+                state,
                 indent=2,
                 sort_keys=True,
             ),
@@ -203,17 +216,12 @@ async def install_model_unit(
         finally:
             pending.unlink(missing_ok=True)
         files = model_unit_snapshot(root, requirement)
-        if files:
+        if files and files == verified_files:
             await _commit_operation(
                 write_verification_record,
-                root / VERIFICATION_RECORD_NAME,
+                _verification_record_path(root, delivery),
                 verification_record(
-                    {
-                        "stateVersion": STATE_VERSION,
-                        "requirementId": requirement.requirement_id,
-                        "artifactVersion": delivery.artifact_version,
-                        "manifestSha256": delivery.manifest_sha256,
-                    },
+                    {**state, "modelDelivery": delivery.to_dict()},
                     files,
                 ),
             )

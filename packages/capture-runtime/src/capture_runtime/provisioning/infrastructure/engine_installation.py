@@ -514,7 +514,14 @@ class EngineInstallationManager:
         ):
             return cached.engine
         record_path = version_root / VERIFICATION_RECORD_NAME
-        record = verification_record(state.to_dict(), files_before_verification)
+        record = verification_record(
+            {
+                **state.to_dict(),
+                "workerDescriptor": worker_descriptor.to_dict(),
+                "modelDelivery": model_descriptor.to_dict(),
+            },
+            files_before_verification,
+        )
         record_matches = matches_verification_record(record_path, record)
         if not record_matches:
             discard_verification_record(record_path)
@@ -835,6 +842,11 @@ class EngineInstallationManager:
                 worker_descriptor,
                 cancel_event=stop,
             )
+            model_root = new_version / "model"
+            model_root.mkdir()
+            verified_worker_files = await _file_operation(
+                _installed_engine_snapshot, new_version / "worker", model_root
+            )
             # Fail before the model download rather than at the model probe.
             await _file_operation(_check_worker_path_lengths, new_version / "worker")
             probe_executable = self._resolved_child(
@@ -868,8 +880,6 @@ class EngineInstallationManager:
                 )
             report_progress(0.35)
 
-            model_root = new_version / "model"
-            model_root.mkdir()
             model_downloader = self._model_downloader_for(requirement)
             completed_model_bytes = 0
             for file_descriptor in model_descriptor.files:
@@ -906,6 +916,18 @@ class EngineInstallationManager:
                 model_descriptor,
                 cancel_event=stop,
             )
+            verified_files = await _file_operation(
+                _installed_engine_snapshot, new_version / "worker", model_root
+            )
+            if verified_files is not None and verified_worker_files is not None:
+                verified_files = tuple(
+                    sorted(
+                        verified_worker_files
+                        + tuple(item for item in verified_files if item[0].startswith("model/"))
+                    )
+                )
+            else:
+                verified_files = None
             report_progress(0.85)
             engine_executable = self._resolved_child(
                 new_version / "worker", worker_descriptor.entry_point
@@ -998,11 +1020,18 @@ class EngineInstallationManager:
             installed_files = await _commit_operation(
                 _installed_engine_snapshot, version / "worker", version / "model"
             )
-            if installed_files is not None:
+            if installed_files is not None and installed_files == verified_files:
                 await _commit_operation(
                     write_verification_record,
                     version / VERIFICATION_RECORD_NAME,
-                    verification_record(state.to_dict(), installed_files),
+                    verification_record(
+                        {
+                            **state.to_dict(),
+                            "workerDescriptor": worker_descriptor.to_dict(),
+                            "modelDelivery": model_descriptor.to_dict(),
+                        },
+                        installed_files,
+                    ),
                 )
                 with self._verified_active_engines_lock:
                     self._verified_active_engines[requirement.requirement_id] = (
@@ -1060,7 +1089,6 @@ class EngineInstallationManager:
 
     def _forget_verified(self, requirement_id: str) -> None:
         root = self._requirement_root(requirement_id)
-        discard_verification_record(root / VERIFICATION_RECORD_NAME)
         for record in (root / "versions").glob(f"*/{VERIFICATION_RECORD_NAME}"):
             discard_verification_record(record)
         with self._verified_active_engines_lock:

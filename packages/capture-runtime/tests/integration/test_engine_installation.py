@@ -10,7 +10,7 @@ import sys
 import threading
 import zipfile
 from collections.abc import Callable, Collection
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import pytest
@@ -3956,17 +3956,18 @@ def test_forgetting_and_uninstall_remove_file_verification_records(
 
 
 def test_removing_inactive_versions_removes_their_verification_records(tmp_path: Path) -> None:
-    from capture_runtime.provisioning.infrastructure._engine_installation_residue import (
-        remove_inactive_versions,
-    )
-
-    for version in ("old", "current"):
-        directory = tmp_path / "versions" / version
-        directory.mkdir(parents=True)
-        (directory / "verified-files.json").write_text("{}", encoding="utf-8")
-    remove_inactive_versions(tmp_path, "current")
-    assert not (tmp_path / "versions" / "old").exists()
-    assert (tmp_path / "versions" / "current" / "verified-files.json").is_file()
+    for version in ("engine-1", "engine-2"):
+        catalog, sources = _catalog(tmp_path, version=version)
+        manager = _record_test_manager(tmp_path, catalog, sources)
+        asyncio.run(
+            manager.install(
+                "text-recognition", cancel_event=asyncio.Event(), report_progress=lambda _: None
+            )
+        )
+        records = list((tmp_path / "engines").rglob("verified-files.json"))
+        assert len(records) == 1
+        assert records[0].parent.name == version
+    assert _record_test_manager(tmp_path, catalog, sources).active_engine("text-recognition")
 
 
 @pytest.mark.parametrize("record_content", ["cuda", "cpu"])
@@ -4050,3 +4051,184 @@ def test_corrupt_worker_invalidates_persisted_verification(
     assert not record_path.exists()
     assert manager().active_engine("text-recognition") is None
     assert calls == ["worker", "worker"]
+
+
+def _record_test_manager(tmp_path, catalog, sources, worker=None):
+    return EngineInstallationManager(
+        tmp_path / "engines",
+        catalog,
+        worker_client=worker or FakeWorkerClient(),
+        downloader=CopyDownloader(sources),
+        model_downloader=CopyModelDownloader(sources),
+    )
+
+
+@pytest.mark.parametrize("models_only", [False, True])
+@pytest.mark.parametrize("outcome", ["failure", "cancel"])
+def test_incomplete_install_leaves_no_verification_record(tmp_path, models_only, outcome):
+    catalog, sources = _model_unit_catalog(tmp_path) if models_only else _catalog(tmp_path)
+    requirement_id = "vertical-japanese-reader" if models_only else "text-recognition"
+    manager = _record_test_manager(
+        tmp_path, catalog, sources, FakeWorkerClient(full_probe_ready=False)
+    )
+    stop = asyncio.Event()
+    if outcome == "cancel":
+        stop.set()
+    elif models_only:
+        next(path for key, path in sources.items() if key.endswith("model.bin")).write_bytes(b"bad")
+    with pytest.raises(asyncio.CancelledError if outcome == "cancel" else EngineInstallationError):
+        asyncio.run(
+            manager.install(requirement_id, cancel_event=stop, report_progress=lambda _: None)
+        )
+    assert not list((tmp_path / "engines").rglob("verified-files.json"))
+
+
+@pytest.mark.parametrize("models_only", [False, True])
+def test_late_verification_after_uninstall_does_not_recreate_directory(
+    tmp_path, monkeypatch, models_only
+):
+    from capture_runtime.provisioning.infrastructure import (
+        _engine_installation_activation as activation,
+    )
+
+    catalog, sources = _model_unit_catalog(tmp_path) if models_only else _catalog(tmp_path)
+    requirement_id = "vertical-japanese-reader" if models_only else "text-recognition"
+    manager = _record_test_manager(tmp_path, catalog, sources)
+    asyncio.run(
+        manager.install(
+            requirement_id, cancel_event=asyncio.Event(), report_progress=lambda _: None
+        )
+    )
+    record = next((tmp_path / "engines").rglob("verified-files.json"))
+    record.unlink()
+    original = activation.atomic_write_json
+
+    def remove_before_write(path, data, **options):
+        asyncio.run(manager.uninstall(requirement_id))
+        assert not record.parent.exists()
+        original(path, data, **options)
+
+    monkeypatch.setattr(activation, "atomic_write_json", remove_before_write)
+    fresh = _record_test_manager(tmp_path, catalog, sources)
+    if models_only:
+        fresh.active_model_unit(requirement_id)
+    else:
+        fresh.active_engine(requirement_id)
+    assert not record.parent.exists()
+
+
+@pytest.mark.parametrize("models_only", [False, True])
+def test_install_mutation_after_verification_requires_full_hash(tmp_path, monkeypatch, models_only):
+    from capture_runtime.provisioning.infrastructure import _engine_model_units as models
+
+    catalog, sources = _model_unit_catalog(tmp_path) if models_only else _catalog(tmp_path)
+    requirement_id = "vertical-japanese-reader" if models_only else "text-recognition"
+    worker = FakeWorkerClient()
+    original_probe = worker.probe
+
+    async def mutate_probe(engine, **options):
+        result = await original_probe(engine, **options)
+        if options["include_model"]:
+            (engine.model_dir / "model.bin").write_bytes(b"changed")
+        return result
+
+    if models_only:
+        original_replace = models.replace_with_retry
+
+        def mutate_move(source, target):
+            if source.is_dir():
+                (source / "model/model/model.bin").write_bytes(b"changed")
+            original_replace(source, target)
+
+        monkeypatch.setattr(models, "replace_with_retry", mutate_move)
+    else:
+        monkeypatch.setattr(worker, "probe", mutate_probe)
+    manager = _record_test_manager(tmp_path, catalog, sources, worker)
+    asyncio.run(
+        manager.install(
+            requirement_id, cancel_event=asyncio.Event(), report_progress=lambda _: None
+        )
+    )
+    assert not list((tmp_path / "engines").rglob("verified-files.json"))
+    target = models if models_only else engine_installation_module
+    verify = target.verify_direct_model_files
+    calls = []
+
+    def count(*args, **kwargs):
+        calls.append(True)
+        return verify(*args, **kwargs)
+
+    monkeypatch.setattr(target, "verify_direct_model_files", count)
+    fresh = _record_test_manager(tmp_path, catalog, sources)
+    resolved = (
+        fresh.active_model_unit(requirement_id)
+        if models_only
+        else fresh.active_engine(requirement_id)
+    )
+    assert resolved is None
+    assert calls == [True]
+
+
+@pytest.mark.parametrize("models_only", [False, True])
+@pytest.mark.parametrize("field", ["filesManifestSha256", "extractedBytes", "sha256", "model"])
+def test_catalog_verification_changes_invalidate_record(tmp_path, field, models_only):
+    if models_only and field in {"filesManifestSha256", "sha256"}:
+        pytest.skip("models-only units have no worker archive")
+    catalog, sources = _model_unit_catalog(tmp_path) if models_only else _catalog(tmp_path)
+    requirement_id = "vertical-japanese-reader" if models_only else "text-recognition"
+    manager = _record_test_manager(tmp_path, catalog, sources)
+    asyncio.run(
+        manager.install(
+            requirement_id, cancel_event=asyncio.Event(), report_progress=lambda _: None
+        )
+    )
+    requirement = catalog.requirements[0]
+    if models_only or field == "model":
+        delivery = requirement.model_delivery()
+        changed_delivery = (
+            replace(delivery, extracted_bytes=delivery.extracted_bytes + 1)
+            if field == "extractedBytes"
+            else replace(delivery, manifest_sha256="0" * 64)
+        )
+        requirement = replace(requirement, model_files=changed_delivery)
+    else:
+        descriptor = requirement.worker_artifact()
+        changes = {
+            "filesManifestSha256": {"files_manifest_sha256": "0" * 64},
+            "extractedBytes": {"extracted_bytes": descriptor.extracted_bytes + 1},
+            "sha256": {"sha256": "0" * 64},
+        }
+        requirement = replace(requirement, artifacts=(replace(descriptor, **changes[field]),))
+    changed = replace(catalog, requirements=(requirement,))
+    fresh = _record_test_manager(tmp_path, changed, sources)
+    resolved = (
+        fresh.active_model_unit(requirement_id)
+        if models_only
+        else fresh.active_engine(requirement_id)
+    )
+    assert resolved is None
+
+
+def test_model_unit_upgrade_keeps_one_verification_record(tmp_path):
+    catalog, sources = _model_unit_catalog(tmp_path)
+    requirement_id = "vertical-japanese-reader"
+    for version in ("engine-1", "engine-2"):
+        requirement = catalog.requirements[0]
+        delivery = replace(requirement.model_delivery(), artifact_version=version)
+        delivery = replace(
+            delivery,
+            manifest_sha256=hashlib.sha256(
+                canonical_json_bytes(delivery.to_manifest_dict())
+            ).hexdigest(),
+        )
+        upgraded = replace(catalog, requirements=(replace(requirement, model_files=delivery),))
+        manager = _record_test_manager(tmp_path, upgraded, sources)
+        asyncio.run(
+            manager.install(
+                requirement_id, cancel_event=asyncio.Event(), report_progress=lambda _: None
+            )
+        )
+        records = list((tmp_path / "engines").rglob("verified-files.json"))
+        assert len(records) == 1
+        assert json.loads(records[0].read_text())["binding"]["artifactVersion"] == version
+        assert _record_test_manager(tmp_path, upgraded, sources).active_model_unit(requirement_id)
