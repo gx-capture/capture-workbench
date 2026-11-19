@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
 import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import Literal
 
 from capture_runtime.gpu_inventory import GpuAdapter, GpuAdapterClass, read_gpu_inventory
@@ -52,6 +54,7 @@ class OllamaDevicePolicy:
     pci_bus: str | None = None
     device_filter: str | None = None
     library_token: str | None = None
+    cuda_pin_reason: str | None = None
 
     def serve_environment(self, base: Mapping[str, str]) -> dict[str, str]:
         if self.target == "unmanaged":
@@ -91,10 +94,12 @@ def resolve_device_policy() -> OllamaDevicePolicy:
     if dedicated:
         selected = min(dedicated, key=_dedicated_sort_key)
         if selected.vendor_id == _NVIDIA_VENDOR_ID:
+            cuda_uuid, reason = _find_cuda_uuid(selected, inventory.adapters)
             return OllamaDevicePolicy(
                 "cuda",
-                cuda_uuid=_find_cuda_uuid(selected, inventory.adapters),
+                cuda_uuid=cuda_uuid,
                 adapter_name=selected.description,
+                cuda_pin_reason=reason,
             )
         if selected.vendor_id == _AMD_VENDOR_ID:
             return OllamaDevicePolicy("rocm", adapter_name=selected.description)
@@ -113,7 +118,9 @@ def _dedicated_sort_key(adapter: GpuAdapter) -> tuple[int, int, str]:
     return -adapter.dedicated_memory_bytes, vendor_rank, adapter.description
 
 
-def _find_cuda_uuid(selected: GpuAdapter, adapters: tuple[GpuAdapter, ...]) -> str | None:
+def _find_cuda_uuid(
+    selected: GpuAdapter, adapters: tuple[GpuAdapter, ...]
+) -> tuple[str | None, str | None]:
     # DXGI exposes the PCI model id. Identical boards cannot be distinguished
     # by that id, so require a unique match on each side of the join.
     native_matches = sum(
@@ -122,10 +129,14 @@ def _find_cuda_uuid(selected: GpuAdapter, adapters: tuple[GpuAdapter, ...]) -> s
         if adapter.adapter_class is not GpuAdapterClass.SOFTWARE
     )
     if native_matches != 1:
-        return None
+        return None, "no unique match"
     executable = shutil.which("nvidia-smi")
+    if executable is None and (system_root := os.environ.get("SystemRoot")):
+        fallback = Path(system_root) / "System32" / "nvidia-smi.exe"
+        if fallback.is_file():
+            executable = str(fallback)
     if executable is None:
-        return None
+        return None, "nvidia-smi not found"
     try:
         result = subprocess.run(
             [
@@ -138,22 +149,25 @@ def _find_cuda_uuid(selected: GpuAdapter, adapters: tuple[GpuAdapter, ...]) -> s
             encoding="utf-8",
             errors="replace",
             check=False,
-            timeout=2,
+            # A sleeping laptop GPU wakes during the first query.
+            timeout=15,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
-    except (OSError, subprocess.TimeoutExpired):
-        return None
+    except subprocess.TimeoutExpired:
+        return None, "timeout"
+    except OSError:
+        return None, "nvidia-smi could not start"
     if result.returncode != 0:
-        return None
+        return None, "non-zero exit"
     pci_id = f"0x{selected.device_id:04x}{selected.vendor_id:04x}"
     rows = [tuple(part.strip() for part in line.split(",")) for line in result.stdout.splitlines()]
     matches = [row[0] for row in rows if len(row) == 2 and row[1].casefold() == pci_id]
     if len(matches) != 1 or _GPU_UUID.fullmatch(matches[0]) is None:
-        return None
+        return None, "no unique match"
     uuid = matches[0]
     if sum(row[0].casefold() == uuid.casefold() for row in rows) != 1:
-        return None
-    return uuid
+        return None, "no unique match"
+    return uuid, None
 
 
 def normalize_device_name(name: str) -> str:

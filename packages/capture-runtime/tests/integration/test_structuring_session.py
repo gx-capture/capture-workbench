@@ -31,7 +31,9 @@ from capture_runtime.structuring.infrastructure.structuring_session_repository i
 from tests.conftest import TOKEN
 
 
-def _seed_host_capture(client: TestClient, *, segment_count: int = 2, pdf: bool = False) -> str:
+def _seed_host_capture(
+    client: TestClient, *, segment_count: int = 2, pdf: bool = False, text_chars: int = 0
+) -> str:
     repository = client.app.state.streaming_repository
     source = b"session-source"
     source_sha256 = hashlib.sha256(source).hexdigest()
@@ -77,7 +79,7 @@ def _seed_host_capture(client: TestClient, *, segment_count: int = 2, pdf: bool 
                 if pdf
                 else TimeLocator(start_ms=index * 1_000, end_ms=(index + 1) * 1_000)
             ),
-            text=f"source words {index}",
+            text=f"source words {index}" + "x" * (text_chars * (index + 1)),
         )
         for index in range(segment_count)
     ]
@@ -706,3 +708,20 @@ def test_pull_session_contract_models_are_strict_and_camel_case() -> None:
         OpenStructuringSession.model_validate(
             {**request.model_dump(by_alias=True), "rawSourceSha256": "a" * 64}
         )
+
+
+def test_pdf_session_uses_one_context_length_with_adaptive_output(client: TestClient) -> None:
+    capture_id = _seed_host_capture(client, segment_count=3, pdf=True, text_chars=500)
+    route = f"/v2/captures/{capture_id}/structure/session"
+    response = client.post(
+        route, json=_open_request(), headers={"X-Idempotency-Key": "pdf-context"}
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["batchCount"] == 3
+    batches = []
+    for index in range(3):
+        batch = client.get(f"{route}/batches/{index}")
+        assert batch.status_code == 200, batch.text
+        batches.append(batch.json())
+    assert {batch["numCtx"] for batch in batches} == {8_192}
+    assert len({batch["numPredict"] for batch in batches}) > 1

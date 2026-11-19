@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import codecs
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -31,6 +32,7 @@ from capture_runtime.structuring.infrastructure.ollama.listener_owner import (
 )
 from capture_runtime.structuring.infrastructure.ollama.server_log import OllamaLogParser
 
+_LOG = logging.getLogger(__name__)
 _LOG_READ_BYTES = 16 * 1024
 _LOG_POLL_SECONDS = 0.02
 
@@ -446,17 +448,38 @@ class IsolatedOllamaLifecycle:
                 raise RuntimeUnavailableError("Ollama executable is not installed")
             self.config.app_data_dir.mkdir(parents=True, exist_ok=True)
             self.config.models_dir.mkdir(parents=True, exist_ok=True)
+            # Every ordinary launch resolves the policy again, so a CUDA lookup
+            # that failed (a GPU still waking) is retried at the next launch. A
+            # corrective restart passes its corrected policy, which is kept.
             device_policy = policy or resolve_device_policy()
             output_path = self.config.app_data_dir / "ollama.log"
-            for _ in range(5):
+            for attempt in range(5):
                 try:
                     self._check_start_allowed(cancel_event)
+                    if (
+                        attempt
+                        and policy is None
+                        and device_policy.target == "cuda"
+                        and device_policy.cuda_uuid is None
+                    ):
+                        device_policy = resolve_device_policy()
                     try:
                         output_offset = output_path.stat().st_size
                     except FileNotFoundError:
                         output_offset = 0
                     port = self._port_selector()
                     self._host_url = f"http://127.0.0.1:{port}"
+                    pin_reason = device_policy.cuda_pin_reason or (
+                        "UUID unavailable"
+                        if device_policy.target == "cuda"
+                        else "target is not cuda"
+                    )
+                    _LOG.info(
+                        "Starting owned Ollama: target=%s cuda_uuid_pin=%s reason=%s",
+                        device_policy.target,
+                        device_policy.cuda_uuid is not None,
+                        "applied" if device_policy.cuda_uuid else pin_reason,
+                    )
                     owned = self._controller.spawn(
                         executable,
                         ["serve"],

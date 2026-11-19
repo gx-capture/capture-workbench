@@ -1559,7 +1559,7 @@ def test_pull_session_methods_use_routes_and_matching_idempotency() -> None:
         "sourceSegmentIds": ["segment-1"],
         "providerPrompt": {"rawSegments": []},
         "providerSchema": {"type": "object"},
-        "numCtx": 2048,
+        "numCtx": 8192,
         "numPredict": 256,
         "batchDigest": "d" * 64,
         "status": "ready",

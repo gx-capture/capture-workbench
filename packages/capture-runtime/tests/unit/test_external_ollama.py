@@ -151,7 +151,14 @@ def test_external_ollama_preserves_order_across_multiple_batches() -> None:
     )
 
     assert [block.order for block in document.blocks] == list(range(5))
-    assert len([request for request in requests if request.url.path == "/api/generate"]) == 3
+    options = [
+        json.loads(request.content)["options"]
+        for request in requests
+        if request.url.path == "/api/generate"
+    ]
+    assert len(options) == 3
+    assert {option["num_ctx"] for option in options} == {4_096}
+    assert len({option["num_predict"] for option in options}) > 1
 
 
 def test_external_ollama_cancels_in_flight_generation() -> None:

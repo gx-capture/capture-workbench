@@ -224,7 +224,7 @@ def test_isolated_ollama_structures_token_bounded_batches_and_releases_process(
         assert call["format"]["title"] == "CaptureBlockBatch"
         assert call["think"] is False
         assert call["keep_alive"] == -1
-        assert 0 < call["options"]["num_ctx"] <= 8_192
+        assert call["options"]["num_ctx"] == 8_192
         assert 0 < call["options"]["num_predict"] <= 4_096
     assert supplied_ids == [segment.segment_id for segment in raw.segments]
     assert [block.order for block in document.blocks] == list(range(5))
@@ -265,6 +265,8 @@ def test_isolated_ollama_preserves_order_across_multiple_batches(tmp_path: Path)
         segment.segment_id for segment in _raw(count=5, text_chars=1_200).segments
     ]
     assert len(generate_calls) == 3
+    assert {call["options"]["num_ctx"] for call in generate_calls} == {4_096}
+    assert len({call["options"]["num_predict"] for call in generate_calls}) > 1
 
 
 def test_isolated_ollama_serializes_owned_process_leases(tmp_path: Path) -> None:

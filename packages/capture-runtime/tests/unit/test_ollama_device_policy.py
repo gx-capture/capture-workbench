@@ -118,21 +118,24 @@ def test_exact_serve_environment(
         lifecycle.stop()
 
 
-@pytest.mark.parametrize("query", ["missing", "timeout", "wrong_pci", "ambiguous", "identical"])
+@pytest.mark.parametrize(
+    "query", ["missing", "timeout", "nonzero", "wrong_pci", "ambiguous", "identical"]
+)
 def test_cuda_pin_requires_a_unique_verified_match(
     monkeypatch: pytest.MonkeyPatch, query: str
 ) -> None:
     def run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         assert "--query-gpu=uuid,pci.device_id" in args
-        assert kwargs["timeout"] == 2
+        assert kwargs["timeout"] == 15
         assert query not in {"missing", "identical"}
         if query == "timeout":
-            raise subprocess.TimeoutExpired(args, 2)
+            raise subprocess.TimeoutExpired(args, 15)
         output = f"{_UUID}, 0x123410DE\n" * 2
         if query == "wrong_pci":
             output = f"{_UUID}, 0x567810DE\n"
-        return subprocess.CompletedProcess(args, 0, stdout=output)
+        return subprocess.CompletedProcess(args, 1 if query == "nonzero" else 0, stdout=output)
 
+    monkeypatch.delenv("SystemRoot", raising=False)
     adapters = (_NVIDIA, _NVIDIA) if query == "identical" else (_NVIDIA,)
     monkeypatch.setattr(device_policy, "sys", SimpleNamespace(platform="win32"))
     monkeypatch.setattr(device_policy, "read_gpu_inventory", lambda: GpuInventory(True, adapters))
@@ -147,6 +150,11 @@ def test_cuda_pin_requires_a_unique_verified_match(
 
     assert policy.target == "cuda"
     assert "CUDA_VISIBLE_DEVICES" not in policy.serve_environment(_OVERRIDES)
+    assert policy.cuda_pin_reason == {
+        "missing": "nvidia-smi not found",
+        "timeout": "timeout",
+        "nonzero": "non-zero exit",
+    }.get(query, "no unique match")
 
 
 def test_dedicated_memory_precedes_vendor_as_in_cert(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -157,3 +165,64 @@ def test_dedicated_memory_precedes_vendor_as_in_cert(monkeypatch: pytest.MonkeyP
     )
 
     assert device_policy.resolve_device_policy().target == "rocm"
+
+
+def test_cuda_pin_uses_system_root_when_path_lookup_misses(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    executable = tmp_path / "System32" / "nvidia-smi.exe"
+    executable.parent.mkdir()
+    executable.touch()
+    monkeypatch.setenv("SystemRoot", str(tmp_path))
+    monkeypatch.setattr(device_policy.shutil, "which", lambda name: None)
+
+    def run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        assert args[0] == str(executable)
+        assert kwargs["timeout"] == 15
+        return subprocess.CompletedProcess(args, 0, stdout=f"{_UUID}, 0x123410DE\n")
+
+    monkeypatch.setattr(device_policy.subprocess, "run", run)
+    assert device_policy._find_cuda_uuid(_NVIDIA, (_NVIDIA,)) == (_UUID, None)
+
+
+def test_cuda_pin_timeout_is_logged_and_next_start_resolves_again(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    queries = 0
+
+    def run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        nonlocal queries
+        queries += 1
+        if queries == 1:
+            raise subprocess.TimeoutExpired(args, 15)
+        return subprocess.CompletedProcess(args, 0, stdout=f"{_UUID}, 0x123410DE\n")
+
+    monkeypatch.setattr(device_policy, "sys", SimpleNamespace(platform="win32"))
+    monkeypatch.setattr(device_policy, "read_gpu_inventory", lambda: GpuInventory(True, (_NVIDIA,)))
+    monkeypatch.setattr(device_policy.shutil, "which", lambda name: "fake-nvidia-smi")
+    monkeypatch.setattr(device_policy.subprocess, "run", run)
+    controller = FakeProcessController()
+    lifecycle = IsolatedOllamaLifecycle(
+        _ollama_config(tmp_path),
+        clock=SystemClock(),
+        process_controller=controller,
+        executable_resolver=lambda: "fake-ollama",
+        port_selector=lambda: 12222,
+        listener_owner=SimpleNamespace(listener_pid=lambda port: 4242),
+    )
+    caplog.set_level("INFO")
+    try:
+        lifecycle.start()
+        previous = lifecycle.device_policy
+        assert previous is not None and previous.cuda_pin_reason == "timeout"
+        assert "CUDA_VISIBLE_DEVICES" not in controller.environments[0]
+        assert "target=cuda cuda_uuid_pin=False reason=timeout" in caplog.text
+        lifecycle.stop()
+        # The next ordinary launch resolves the policy again instead of reusing
+        # the failed lookup (a corrective restart passes its own policy instead).
+        lifecycle.start()
+        assert queries == 2
+        assert controller.environments[1]["CUDA_VISIBLE_DEVICES"] == _UUID
+        assert "target=cuda cuda_uuid_pin=True reason=applied" in caplog.text
+    finally:
+        lifecycle.stop()

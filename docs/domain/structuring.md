@@ -71,3 +71,16 @@ sequenceDiagram
 ## Ollama 的執行出處
 
 runtime 自己啟動的 Windows Ollama 供應者，把 `/api/tags` 回報的模型與摘要，和 runner 的執行證據合併。裝置不符的情形在允許的那一次修正重啟之後仍然存在，或無法導出修正時，結構化照常進行，並記錄實際執行的後端。未受管理（`unmanaged`）的執行，仍可回報觀察到的裝置證據。缺少證據時，兩個裝置欄位（`device`、`deviceName`）都是 null。外部 Ollama 回報模型與摘要，兩個裝置欄位是 null。runtime 在儲存完成的文件之前，會比對供應者身份與 `structuringEngine`。
+
+## Session context length
+
+Every batch uses the configured maximum `num_ctx` (default 8192) for the entire
+structuring session. Only `num_predict` adapts to each batch. Batch planning is
+unchanged. This applies to owned Ollama, external Ollama, and host providers.
+Ollama reloads its model when `num_ctx` changes; on Windows CUDA each reload can
+take tens of seconds.
+
+Owned CUDA launches query `nvidia-smi` on PATH, then SystemRoot/System32, with a
+15-second timeout so an idle laptop GPU can wake. An unresolved UUID is retried
+on the next owned launch. Each launch logs its target, UUID pin status, and a
+sanitary failure reason without command output, credentials, or local paths.

@@ -156,9 +156,9 @@ class StructuringCoordinator:
     ) -> tuple[StructuringGenerationRequest, ...]:
         """Prepare deterministic provider-ready requests without generating output.
 
-        Pull-session routes use this read-only projection so provider prompts,
-        schemas, and adaptive budgets are produced by the same coordinator as
-        the direct provider adapters.
+        Pull-session routes use this read-only projection to share provider prompts,
+        schemas, session context length, and adaptive output budgets with the
+        direct provider adapters.
         """
 
         requests: list[StructuringGenerationRequest] = []

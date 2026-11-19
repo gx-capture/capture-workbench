@@ -235,17 +235,14 @@ def structuring_batch_generation_options(
     max_num_ctx: int = DEFAULT_STRUCTURING_NUM_CTX,
     max_num_predict: int = DEFAULT_STRUCTURING_NUM_PREDICT,
 ) -> tuple[int, int]:
-    """Calculate adaptive provider budgets for one planned batch."""
+    """Use the session context length and adapt the output budget to one batch."""
 
     num_predict = min(
         max_num_predict,
         max(MIN_REQUEST_TOKENS, plan.output_tokens + OUTPUT_RESERVE_TOKENS),
     )
-    num_ctx = min(
-        max_num_ctx,
-        max(MIN_REQUEST_TOKENS, plan.input_tokens + num_predict + CONTEXT_RESERVE_TOKENS),
-    )
-    return num_ctx, num_predict
+    # Ollama reloads the model when num_ctx changes; on CUDA this takes tens of seconds.
+    return max_num_ctx, num_predict
 
 
 def _validation_issues(error: ValidationError) -> list[dict[str, object]]:

@@ -1822,7 +1822,7 @@ data: ${JSON.stringify(event)}
       sourceSegmentIds: ['segment-1'],
       providerPrompt: { rawSegments: [] },
       providerSchema: { type: 'object' },
-      numCtx: 2048,
+      numCtx: 8192,
       numPredict: 256,
       batchDigest: 'd'.repeat(64),
       status: 'ready',
