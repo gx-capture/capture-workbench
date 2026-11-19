@@ -4036,18 +4036,47 @@ def test_sync_ocr_runtime_initialization_failure_preserves_page_manifest(
     assert projection.provenance.status == "unavailable"
 
 
-def test_sync_malformed_paddle_result_remains_protocol_failure(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("cleanup_fails", [False, True], ids=["cleanup-success", "cleanup-failure"])
+def test_sync_malformed_paddle_result_preserves_diagnostics_and_public_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cleanup_fails: bool
 ) -> None:
-    class MalformedOcrAdapter(FakeOcrAdapter):
-        def extract_png(self, _image_png: bytes) -> OcrTextResult:
-            raise PaddleResultNormalizationError("malformed score")
-
-    extractor = StandaloneRuntimeCaptureExtractor(
-        SystemClock(), _config(tmp_path), ocr_adapter=MalformedOcrAdapter()
+    model_dir = tmp_path / "windowsml"
+    _write_windowsml_models(model_dir)
+    adapter = WindowsMLOcrAdapter(
+        model_dir,
+        execution_plan=_cpu_plan(),
+        pipeline_factory=lambda **_kwargs: object(),
+        provider_resolver=lambda: ["CPUExecutionProvider"],
+    )
+    monkeypatch.setattr(adapter, "_predict", lambda _pipeline, _image: None)
+    cleanup_failure = execution_evidence.OcrExecutionEvidenceFailure(code="profile_delete_failed")
+    cleanup_error = execution_evidence.OcrExecutionEvidenceError(
+        [cleanup_failure], cleanup_verified=False
+    )
+    monkeypatch.setattr(
+        adapter,
+        "_abort_provider_evidence",
+        lambda _pipeline: cleanup_error if cleanup_fails else None,
     )
     page_png = BytesIO()
     Image.new("RGB", (120, 80), "white").save(page_png, format="PNG")
+    error_type = (
+        execution_evidence.OcrInferenceCleanupError
+        if cleanup_fails
+        else PaddleResultNormalizationError
+    )
+    with pytest.raises(error_type) as error:
+        adapter.extract_png(page_png.getvalue())
+    assert error.value.primary_code == "ocr_normalization_failed"
+    if isinstance(error.value, execution_evidence.OcrInferenceCleanupError):
+        assert isinstance(error.value.__cause__, PaddleResultNormalizationError)
+        assert error.value.__cause__.primary_code == error.value.primary_code
+        assert error.value.cleanup_failures == (cleanup_failure,)
+        assert error.value.cleanup_verified is False
+
+    extractor = StandaloneRuntimeCaptureExtractor(
+        SystemClock(), _config(tmp_path), ocr_adapter=adapter
+    )
     monkeypatch.setattr(extractor, "_pdf_page_count", lambda _content: 1)
     monkeypatch.setattr(
         extractor,
@@ -4067,8 +4096,17 @@ def test_sync_malformed_paddle_result_remains_protocol_failure(
 
     projection = raised.value.projection
     assert projection.failure is not None
-    assert projection.failure.code == "ocr_worker_protocol"
-    assert projection.provenance.reason.value == "protocol_failure"
+    if cleanup_fails:
+        assert projection.failure.code == "ocr_runtime_unavailable"
+        assert (
+            projection.failure.message == "OCR runtime was unavailable before completing all pages."
+        )
+    else:
+        assert projection.failure.code == "ocr_worker_protocol"
+        assert projection.failure.message == "OCR worker returned an invalid response."
+        assert projection.provenance.reason.value == "protocol_failure"
+    assert projection.failure.retryable is cleanup_fails
+    assert projection.failure.stage == "extraction"
 
 
 def test_sync_provenance_mismatch_is_sanitized_by_public_pipeline(

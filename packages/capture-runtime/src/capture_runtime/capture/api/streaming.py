@@ -317,10 +317,6 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
             raise ApiProblem(
                 409, "raw_unavailable", "Raw extraction is not available yet."
             ) from error
-        except StructuringSessionRecordCorruptError as error:
-            raise ApiProblem(
-                500, "structuring_session_corrupt", "Structuring session state is corrupt."
-            ) from error
         except StreamingRecordNotFoundError as error:
             raise ApiProblem(
                 404, "capture_not_found", "Streaming capture was not found."

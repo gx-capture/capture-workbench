@@ -187,7 +187,14 @@ def test_pdf_page_progress_reaches_http_before_worker_terminal(
         assert (current["pagesDone"], current["pagesTotal"]) == (1, 2)
         assert current["durationMs"] is None and current["coveredUntilMs"] is None
         assert current["partialRevision"] == 0
-        assert client.get(f"/v2/captures/{capture_id}/raw").status_code == 409
+        unavailable = client.get(f"/v2/captures/{capture_id}/raw")
+        assert unavailable.status_code == 409
+        assert unavailable.json() == {
+            "error": {
+                "code": "raw_unavailable",
+                "message": "Raw extraction is not available yet.",
+            }
+        }
         checkpoints = [
             event
             for event in service.events_use_case.execute(capture_id, after_sequence=0)
@@ -562,8 +569,22 @@ def test_v2_raw_capture_route_returns_the_strict_runtime_payload(client: TestCli
     response = client.get(f"/v2/captures/{capture_id}/raw")
 
     assert response.status_code == 200, response.text
+    raw = client.app.state.streaming_repository.read_raw(capture_id)
+    assert response.json() == raw.model_dump(mode="json", by_alias=True)
     assert response.json()["sourceText"] == "host words"
     assert response.json()["segments"][0]["segmentId"] == "segment-1"
+
+
+def test_v2_raw_capture_route_returns_not_found_for_unknown_capture(client: TestClient) -> None:
+    response = client.get(f"/v2/captures/{uuid4()}/raw")
+
+    assert response.status_code == 404
+    assert response.json() == {
+        "error": {
+            "code": "capture_not_found",
+            "message": "Streaming capture was not found.",
+        }
+    }
 
 
 def test_pdf_page_scope_crosses_start_route_and_extractor_to_raw_route(
