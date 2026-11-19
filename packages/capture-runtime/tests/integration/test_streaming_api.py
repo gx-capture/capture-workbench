@@ -254,6 +254,7 @@ def _open(client: TestClient) -> tuple[str, str]:
     response = client.post(
         "/v2/ingestions",
         json={
+            "kind": "recording",
             "clientRequestId": "api-stream-open-1",
             "fileName": "sample.mp3",
             "mediaType": "audio/mpeg",
@@ -270,15 +271,18 @@ def _seed_host_capture(
     client: TestClient,
     *,
     structuring_mode: StructuringMode = StructuringMode.HOST,
+    kind: CaptureSourceKind = CaptureSourceKind.RECORDING,
 ) -> tuple[str, dict[str, object]]:
     repository = client.app.state.streaming_repository
     source = b"host-stream"
     source_sha256 = hashlib.sha256(source).hexdigest()
+    pdf = kind is CaptureSourceKind.PDF
     ingestion = repository.create_ingestion(
         OpenIngestion(
+            kind=kind,
             client_request_id=f"host-ingestion-{uuid4()}",
-            file_name="sample.mp3",
-            media_type="audio/mpeg",
+            file_name="sample.pdf" if pdf else "sample.mp3",
+            media_type="application/pdf" if pdf else "audio/mpeg",
             total_bytes=len(source),
             source_sha256=source_sha256,
         )
@@ -562,6 +566,7 @@ def test_open_ingestion_and_start_capture_require_matching_idempotency_headers(
 ) -> None:
     source = _source()
     request = {
+        "kind": "recording",
         "clientRequestId": "required-open-key",
         "fileName": "sample.mp3",
         "mediaType": "audio/mpeg",
@@ -1007,7 +1012,7 @@ def test_ocr_route_returns_conflict_while_projection_is_pending(client: TestClie
 
 
 def test_authenticated_ocr_route_returns_ordered_page_projection(client: TestClient) -> None:
-    capture_id, _candidate = _seed_host_capture(client)
+    capture_id, _candidate = _seed_host_capture(client, kind=CaptureSourceKind.PDF)
     repository = client.app.state.streaming_repository
     operation = repository.get_capture(capture_id)
     assert operation.source is not None
@@ -1062,7 +1067,7 @@ def test_authenticated_ocr_route_returns_ordered_page_projection(client: TestCli
 
 
 def test_failed_capture_exposes_readable_typed_ocr_projection(client: TestClient) -> None:
-    capture_id, _candidate = _seed_host_capture(client)
+    capture_id, _candidate = _seed_host_capture(client, kind=CaptureSourceKind.PDF)
     repository = client.app.state.streaming_repository
     repository.fail_capture(
         capture_id,
@@ -1081,6 +1086,112 @@ def test_failed_capture_exposes_readable_typed_ocr_projection(client: TestClient
     assert payload["status"] == "failed"
     assert payload["failure"]["code"] == "ocr_worker_failed"
     assert payload["pages"] == []
+
+
+def test_failed_recording_has_no_ocr_projection_and_keeps_an_old_one(
+    client: TestClient,
+) -> None:
+    capture_id, _candidate = _seed_host_capture(client)
+    repository = client.app.state.streaming_repository
+    service = client.app.state.streaming_capture_service
+    service._fail(capture_id, "extraction_failed", "Capture extraction failed.")
+    ocr_path = repository.root / "captures" / capture_id / "ocr.json"
+    assert not ocr_path.exists()
+
+    response = client.get(f"/v2/captures/{capture_id}/ocr")
+    assert response.status_code == 409, response.text
+    assert response.json()["error"]["code"] == "ocr_unavailable"
+    assert not ocr_path.exists()
+
+    # A 0.10.x runtime wrote a failed projection for a recording; it stays as it was.
+    operation = repository.get_capture(capture_id)
+    old = OcrPipeline().failed(
+        capture_id=capture_id,
+        source=operation.source,
+        failure=OperationFailure(code="progressive_failed", message="Old failure."),
+        created_at=operation.updated_at,
+    )
+    ocr_path.write_text(old.model_dump_json(by_alias=True), encoding="utf-8")
+    before = ocr_path.read_bytes()
+    response = client.get(f"/v2/captures/{capture_id}/ocr")
+    assert response.status_code == 409, response.text
+    assert ocr_path.read_bytes() == before
+
+
+def test_historical_document_failure_reads_its_current_code(client: TestClient) -> None:
+    capture_id, _candidate = _seed_host_capture(client, kind=CaptureSourceKind.PDF)
+    repository = client.app.state.streaming_repository
+    repository.fail_capture(
+        capture_id,
+        OperationFailure(code="extraction_failed", message="Capture extraction failed."),
+    )
+    directory = repository.root / "captures" / capture_id
+    operation = repository.get_capture(capture_id)
+    old = OcrPipeline().failed(
+        capture_id=capture_id,
+        source=operation.source,
+        failure=OperationFailure(code="extraction_failed", message="Capture extraction failed."),
+        created_at=operation.updated_at,
+    )
+    files = {
+        "metadata.json": directory / "metadata.json",
+        "events.jsonl": directory / "events.jsonl",
+    }
+    # Spell the stored failure the way a 0.10.x runtime did.
+    for path in files.values():
+        path.write_bytes(path.read_bytes().replace(b'"extraction_failed"', b'"progressive_failed"'))
+    (directory / "ocr.json").write_bytes(
+        old.model_dump_json(by_alias=True)
+        .replace('"extraction_failed"', '"streaming_source_unavailable"')
+        .encode()
+    )
+    files["ocr.json"] = directory / "ocr.json"
+    before = {name: path.read_bytes() for name, path in files.items()}
+    assert b"progressive_failed" in before["metadata.json"]
+
+    repository.initialize()
+    assert client.get(f"/v2/captures/{capture_id}").json()["error"]["code"] == "extraction_failed"
+    events = client.get(f"/v2/captures/{capture_id}/events")
+    assert '"extraction_failed"' in events.text and "progressive_failed" not in events.text
+    ocr = client.get(f"/v2/captures/{capture_id}/ocr")
+    assert ocr.status_code == 200, ocr.text
+    assert ocr.json()["failure"]["code"] == "ingestion_source_unavailable"
+    assert {name: path.read_bytes() for name, path in files.items()} == before
+
+
+@pytest.mark.parametrize(
+    ("kind", "expected"),
+    [(CaptureSourceKind.PDF, None), (CaptureSourceKind.RECORDING, 0)],
+)
+def test_a_0_10_document_partial_reads_without_media_time(
+    client: TestClient, kind: CaptureSourceKind, expected: int | None
+) -> None:
+    capture_id, _candidate = _seed_host_capture(client, kind=kind)
+    repository = client.app.state.streaming_repository
+    operation = repository.get_capture(capture_id)
+    path = repository.root / "captures" / capture_id / "partial.json"
+    # 0.10.x wrote 0 on every partial, documents included.
+    path.write_text(
+        json.dumps(
+            {
+                "protocolVersion": "2",
+                "captureId": capture_id,
+                "source": operation.source.model_dump(mode="json", by_alias=True),
+                "revision": 1,
+                "coveredUntilMs": 0,
+                "segments": [],
+                "sourceText": "",
+                "extractionEngine": None,
+                "updatedAt": operation.updated_at.isoformat(),
+            }
+        ),
+        encoding="utf-8",
+    )
+    before = path.read_bytes()
+    response = client.get(f"/v2/captures/{capture_id}/partial")
+    assert response.status_code == 200, response.text
+    assert response.json().get("coveredUntilMs") == expected
+    assert path.read_bytes() == before
 
 
 def test_historical_ocr_failure_metadata_and_events_remain_readable(client: TestClient) -> None:
@@ -1660,19 +1771,17 @@ def test_host_proof_pull_session_keeps_checkpoint_artifact_before_final_batch_co
     opened = client.post(
         f"/v2/captures/{capture_id}/structure/session",
         json={
-            "captureId": capture_id,
             "targetLanguage": "fr",
+            "profileId": "qwen3.5-0.8b-structure-v1",
             "providerCapability": {
                 "provider": {
                     "engine": "ollama",
                     "model": "qwen3.5-0.8b-structure-v1",
                     "digest": "sha256:" + "b" * 64,
                 },
-                "capability": "capture-structuring",
                 "schemaDialect": SCHEMA_DIALECT,
             },
             "schemaDialect": SCHEMA_DIALECT,
-            "clientRequestId": "host-pull-session-proof-request",
         },
         headers={"X-Idempotency-Key": "host-pull-session-proof-request"},
     )
@@ -1720,24 +1829,22 @@ def test_host_proof_pull_session_validation_failure_keeps_checkpoint_artifact(
     _wait_for_proof_artifact(root)
 
     request = {
-        "captureId": capture_id,
         "targetLanguage": "fr",
+        "profileId": "qwen3.5-0.8b-structure-v1",
         "providerCapability": {
             "provider": {
                 "engine": "ollama",
                 "model": "qwen3.5-0.8b-structure-v1",
                 "digest": "sha256:" + "b" * 64,
             },
-            "capability": "capture-structuring",
             "schemaDialect": SCHEMA_DIALECT,
         },
         "schemaDialect": SCHEMA_DIALECT,
-        "clientRequestId": "host-invalid-session-request",
     }
     opened = client.post(
         f"/v2/captures/{capture_id}/structure/session",
         json=request,
-        headers={"X-Idempotency-Key": request["clientRequestId"]},
+        headers={"X-Idempotency-Key": "host-invalid-session-request"},
     )
     assert opened.status_code == 201, opened.text
     batch = client.get(f"/v2/captures/{capture_id}/structure/session/batches/0")
@@ -1880,7 +1987,7 @@ def test_manifest_preflight_failure_is_typed_without_fabricated_pages(
 def test_streaming_service_persists_all_empty_ocr_projection_as_terminal_no_text(
     client: TestClient,
 ) -> None:
-    capture_id, _candidate = _seed_host_capture(client)
+    capture_id, _candidate = _seed_host_capture(client, kind=CaptureSourceKind.PDF)
     repository = client.app.state.streaming_repository
     operation = repository.get_capture(capture_id)
     assert operation.source is not None
@@ -2208,6 +2315,20 @@ def test_streaming_api_rejects_gap_checksum_and_invalid_cursor(client: TestClien
     )
     assert total_conflict.status_code == 409
     assert total_conflict.json()["error"]["code"] == "chunk_total_conflict"
+
+    # An end at or past the total is a malformed range, whatever its size.
+    for content_range, body in (("bytes 4-6/6", data), ("bytes 0-5/3", b"abcdef")):
+        out_of_range = client.put(
+            f"/v2/ingestions/{ingestion_id}/chunks/0",
+            content=body,
+            headers={
+                "Content-Range": content_range,
+                "Digest": f"sha-256={hashlib.sha256(body).hexdigest()}",
+                "X-Idempotency-Key": "api-stream-out-of-range",
+            },
+        )
+        assert out_of_range.status_code == 422, out_of_range.text
+        assert out_of_range.json()["error"]["code"] == "invalid_chunk_headers"
 
     gap = client.put(
         f"/v2/ingestions/{ingestion_id}/chunks/1",
@@ -2672,6 +2793,7 @@ def test_a_transcript_longer_than_one_event_is_published_in_several(client: Test
     digest = hashlib.sha256(content).hexdigest()
     ingestion = repository.create_ingestion(
         OpenIngestion(
+            kind="recording",
             client_request_id=f"long-ingestion-{uuid4()}",
             file_name="sample.mp3",
             media_type="audio/mpeg",

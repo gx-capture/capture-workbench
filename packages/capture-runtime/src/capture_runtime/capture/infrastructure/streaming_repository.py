@@ -66,6 +66,7 @@ from capture_runtime.contracts import (
 from capture_runtime.storage.common import (
     project_stored_capture,
     project_stored_capture_kind,
+    project_stored_failure_field,
 )
 
 
@@ -222,7 +223,7 @@ class StreamingRepository:
                                 self._fail_capture_locked(
                                     capture,
                                     OperationFailure(
-                                        code="streaming_source_unavailable",
+                                        code="ingestion_source_unavailable",
                                         message=(
                                             "Streaming source content is unavailable after restart."
                                         ),
@@ -547,7 +548,9 @@ class StreamingRepository:
                     payload = json.loads(line)
                     if isinstance(payload, dict) and "kind" not in payload:
                         payload["kind"] = record.operation.kind.value
-                    event = CaptureEvent.model_validate(project_stored_capture_kind(payload))
+                    event = CaptureEvent.model_validate(
+                        project_stored_failure_field(project_stored_capture_kind(payload), "error")
+                    )
                 except ValidationError as error:
                     raise RuntimeError("streaming event log is corrupted") from error
                 if event.sequence > after_sequence:
@@ -862,11 +865,23 @@ class StreamingRepository:
 
     def read_partial(self, capture_id: str) -> PartialCapture:
         with self._lock:
-            self._get_capture(capture_id)
+            record = self._get_capture(capture_id)
             try:
-                return _read_stored_capture(
-                    PartialCapture, self._capture_directory(capture_id) / "partial.json"
+                payload = json.loads(
+                    (self._capture_directory(capture_id) / "partial.json").read_text(
+                        encoding="utf-8"
+                    )
                 )
+                if (
+                    record.operation.kind is not CaptureSourceKind.RECORDING
+                    and isinstance(payload, dict)
+                    and payload.get("coveredUntilMs") == 0
+                ):
+                    # A 0.10.x document partial said 0; a document has no media time.
+                    payload = {
+                        key: value for key, value in payload.items() if key != "coveredUntilMs"
+                    }
+                return PartialCapture.model_validate(project_stored_capture(payload))
             except (OSError, ValueError) as error:
                 raise StreamingPartialNotFoundError(capture_id) from error
 

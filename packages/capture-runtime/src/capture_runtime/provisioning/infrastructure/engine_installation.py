@@ -86,6 +86,7 @@ from ._engine_installation_download import (
     smoke_worker_mirror_url as _smoke_worker_mirror_url_impl,
 )
 from ._engine_installation_errors import (
+    EngineFilesInUseError,
     EngineInstallationError,
     EngineInstallBusyError,
     EngineResolutionTimeoutError,
@@ -1039,6 +1040,7 @@ class EngineInstallationManager:
 
 
 __all__ = [
+    "EngineFilesInUseError",
     "EngineInstallBusyError",
     "EngineInstallationError",
     "EngineInstallationManager",

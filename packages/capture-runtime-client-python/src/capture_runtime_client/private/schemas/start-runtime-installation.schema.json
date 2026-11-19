@@ -7,8 +7,7 @@
         "speech-recognition",
         "speaker-diarization",
         "vertical-japanese-reader",
-        "structuring-runtime",
-        "structuring-model"
+        "structuring-runtime"
       ],
       "title": "Requirementid",
       "type": "string"

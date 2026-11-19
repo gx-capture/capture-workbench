@@ -270,9 +270,17 @@
       "type": "integer"
     },
     "coveredUntilMs": {
-      "minimum": 0,
-      "title": "Covereduntilms",
-      "type": "integer"
+      "anyOf": [
+        {
+          "minimum": 0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Covereduntilms"
     },
     "segments": {
       "items": {
@@ -309,7 +317,6 @@
     "captureId",
     "source",
     "revision",
-    "coveredUntilMs",
     "updatedAt"
   ],
   "title": "PartialCapture",

@@ -756,6 +756,7 @@ const completedOperation: CaptureOperation = {
   status: 'completed',
   protocolVersion: '2',
   ingestionId: 'ingestion-1',
+  kind: 'pdf',
   partialRevision: 0,
   lastEventSequence: 0,
   createdAt: '2026-07-20T00:00:00Z',

@@ -43,7 +43,7 @@ describe('what the runtime sends for speakers', () => {
       sourceSha256: 'a'.repeat(64), contractSetSha256: 'b'.repeat(64),
       providerCapability: {
         provider: { engine: 'host', model: 'test', digest: `sha256:${'a'.repeat(64)}`, ...timings },
-        capability: 'capture-structuring', schemaDialect: 'https://json-schema.org/draft/2020-12/schema',
+        schemaDialect: 'https://json-schema.org/draft/2020-12/schema',
       },
       schemaDialect: 'https://json-schema.org/draft/2020-12/schema', batchCount: 1,
       nextBatchIndex: 0, sessionDigest: 'c'.repeat(64), status: 'open',

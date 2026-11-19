@@ -66,11 +66,22 @@ def test_default_contract_set_is_deterministic_and_covers_v2() -> None:
         "requirement_disabled",
         "requirement_not_uninstallable",
         "requirement_in_use",
+        "uninstall_failed",
     } <= set(uninstall["problems"])
     structure = next(
         operation
         for operation in first.bundle["operations"]
         if operation["id"] == "v2.captures.structure"
+    )
+    result = next(
+        operation
+        for operation in first.bundle["operations"]
+        if operation["id"] == "v2.captures.result"
+    )
+    # POST /structure returns the document; GET /result returns the terminal envelope.
+    assert (structure["responseSchema"], result["responseSchema"]) == (
+        "CaptureDocument",
+        "CaptureResult",
     )
     assert list(structure["problems"]) == [
         "unauthorized",
@@ -90,6 +101,39 @@ def test_default_contract_set_is_deterministic_and_covers_v2() -> None:
     assert unauthorized["category"] == "authentication"
     assert unauthorized["retryable"] is False
     assert unauthorized["detailsSchema"] == "ErrorDetails"
+
+
+def test_http_problems_and_job_failure_codes_are_separate_catalogues() -> None:
+    bundle = load_contract_set().bundle
+    problems = {problem["code"] for problem in bundle["problems"]}
+    failures = {failure["code"] for failure in bundle["failureCodes"]}
+    # A code is in both only when an HTTP response and a failed job both use it.
+    assert problems & failures == {"requirement_unavailable", "structuring_invalid_output"}
+    assert {
+        "extraction_failed",
+        "capture_interrupted",
+        "extraction_output_invalid",
+        "extraction_no_text",
+        "ingestion_source_unavailable",
+        "extraction_runtime_unavailable",
+        "speech_recognition_worker_failed",
+        "speaker_identification_worker_failed",
+        "ocr_worker_failed",
+        "installation_timeout",
+        "installation_io_failed",
+        "runtime_restarted",
+    } <= failures
+    assert "uninstall_failed" in problems
+    for retired in (
+        "progressive_failed",
+        "progressive_interrupted",
+        "progressive_output_invalid",
+        "progressive_no_text_at_sample",
+        "streaming_source_unavailable",
+        "installation_filesystem",
+    ):
+        assert retired not in problems | failures
+    assert all(set(failure) == {"code", "message"} for failure in bundle["failureCodes"])
 
 
 def test_runtime_owned_schema_source_has_one_release_contract_identity() -> None:

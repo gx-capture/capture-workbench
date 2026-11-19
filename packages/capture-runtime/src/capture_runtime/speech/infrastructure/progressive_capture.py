@@ -121,7 +121,7 @@ class _ProgressiveState:
         if partial is None or not partial.segments:
             raise CaptureProcessingError(
                 "Progressive audio produced no non-empty content.",
-                code="progressive_no_text_at_sample",
+                code="extraction_no_text",
                 stage="checkpoint",
             )
         assert partial.extraction_engine is not None
@@ -250,8 +250,14 @@ class ProgressiveCaptureProcessor:
     ) -> RawCapture:
         try:
             engine = await self._resolve_engine()
-        except (ExtractionRuntimeUnavailableError, TimeoutError):
+        except ExtractionRuntimeUnavailableError:
             raise
+        except TimeoutError as error:
+            # The same report as the buffered path gives for a slow engine check.
+            raise ExtractionRuntimeUnavailableError(
+                f"Runtime requirement {SPEECH_RECOGNITION_REQUIREMENT_ID} could not be "
+                "resolved within the bounded timeout."
+            ) from error
         except Exception as error:
             raise CaptureProcessingError(
                 "Progressive speech recognition engine could not be prepared.",

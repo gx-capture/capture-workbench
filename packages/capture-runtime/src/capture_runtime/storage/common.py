@@ -47,8 +47,40 @@ def project_stored_requirement_id(value: Any) -> Any:
 
 
 def project_stored_capture_kind(payload: Any) -> Any:
-    if isinstance(payload, dict) and payload.get("kind") == "audio":
+    # A 0.10.x record may leave the kind out; its default was `audio`.
+    if isinstance(payload, dict) and payload.get("kind", "audio") == "audio":
         return {**payload, "kind": "recording"}
+    return payload
+
+
+# Failure codes a 0.10.x runtime wrote, each with the code a current reader sees.
+# An old filesystem failure did not say whether it timed out, so it reads as the
+# generic installation failure.
+RETIRED_FAILURE_CODES: dict[str, str] = {
+    "progressive_failed": "extraction_failed",
+    "progressive_interrupted": "capture_interrupted",
+    "progressive_output_invalid": "extraction_output_invalid",
+    "progressive_no_text_at_sample": "extraction_no_text",
+    "streaming_source_unavailable": "ingestion_source_unavailable",
+    "installation_filesystem": "installation_failed",
+}
+
+
+def project_stored_failure(failure: Any) -> Any:
+    """Project a stored failure object with a retired code; message and stage stay."""
+    if isinstance(failure, dict):
+        code = failure.get("code")
+        if isinstance(code, str) and code in RETIRED_FAILURE_CODES:
+            return {**failure, "code": RETIRED_FAILURE_CODES[code]}
+    return failure
+
+
+def project_stored_failure_field(payload: Any, field: str) -> Any:
+    """Project the failure object held in `field` of a stored record."""
+    if isinstance(payload, dict) and isinstance(payload.get(field), dict):
+        projected = project_stored_failure(payload[field])
+        if projected is not payload[field]:
+            return {**payload, field: projected}
     return payload
 
 
@@ -73,6 +105,8 @@ def project_stored_capture(payload: Any) -> Any:
             if identity.get("device") == "windowsml-dml":
                 identity["device"] = "directml"
             projected[key] = identity
+    if isinstance(projected.get("failure"), dict):
+        projected["failure"] = project_stored_failure(projected["failure"])
     if "suggestedUnits" in projected:
         historical = projected.pop("suggestedUnits")
         projected.setdefault("suggestedRequirementIds", historical)
@@ -103,8 +137,11 @@ __all__ = [
     "TransitionRejectedError",
     "atomic_json",
     "dump_model",
+    "RETIRED_FAILURE_CODES",
     "project_stored_capture",
     "project_stored_capture_kind",
+    "project_stored_failure",
+    "project_stored_failure_field",
     "project_stored_requirement_id",
     "record_identifier",
 ]

@@ -15,6 +15,8 @@
 2. **需求 (`requirement`)**：`RuntimeRequirement` 實體描述需求識別碼、顯示名稱與就緒狀態。
 3. **引擎目錄 (`catalog`)**：`EngineCatalog` 與 `EngineRequirementDescriptor` 描述需求的檔案規格與校驗雜湊。
 
+一般安裝（`POST /v2/runtime/installations`）不接受結構化模型：它由結構化模型安裝選擇與安裝，請求寫 `structuring-model` 是驗證錯誤並指向模型安裝；查詢與結果仍用完整的需求識別碼。安裝作業的檔案錯誤分成逾時 `installation_timeout` 與其他 I/O 錯誤 `installation_io_failed`（先判斷逾時，因為逾時也是 I/O 錯誤）；0.10.x 存下、分不出是否逾時的舊檔案錯誤代碼讀成一般的 `installation_failed`，保留原本的訊息與可重試旗標，檔案不改寫。模型安裝只在另一次嘗試可能成功時標為可重試：選項不在發布目錄、目錄的 profile 位元組不符，或拉下的模型摘要或大小與目錄不符時不可重試。卸載時，另一個行程正在安裝或檔案仍被開啟回答 409 `requirement_in_use`，其他失敗回答 500 `uninstall_failed`，訊息不含路徑。runtime 不管理結構化模型的模式（主機、外部或假供應者）下，安裝、卸載與模型路由都回答 422 `requirement_disabled`，訊息「Structuring model management is not available in this runtime's structuring mode.」。
+
 ```mermaid
 classDiagram
   class InstallationJob {

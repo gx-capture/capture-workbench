@@ -15,6 +15,7 @@ import {
 import { decodeJson, type RuntimeResponseModel } from './codec';
 import {
   CaptureAuthenticationError,
+  CaptureRemoteError,
   CaptureRuntimeCompatibilityError,
   CaptureRuntimeError,
   CaptureRuntimeProtocolError,
@@ -415,6 +416,7 @@ describe('CaptureRuntimeClient', () => {
         }),
       ],
       problems: [],
+      failureCodes: [],
       invariants: [],
     };
     const bytes = new TextEncoder().encode(JSON.stringify(bundle));
@@ -548,9 +550,11 @@ describe('CaptureRuntimeClient', () => {
 
   it.each([
     [401, 'unauthorized', CaptureAuthenticationError],
+    [403, 'origin_not_allowed', CaptureRemoteError],
+    [403, 'forbidden_by_proxy', CaptureRemoteError],
     [404, 'capture_not_found', CaptureRuntimeError],
     [409, 'ocr_unavailable', CaptureRuntimeError],
-  ] as const)('maps OCR HTTP %s to the stable error taxonomy', async (status, code, errorType) => {
+  ] as const)('maps OCR HTTP %s %s to the stable error taxonomy', async (status, code, errorType) => {
     const transport = new InMemoryRuntimeTransport(
       withDiscovery([
         {
@@ -575,6 +579,14 @@ describe('CaptureRuntimeClient', () => {
     await expect(
       new CaptureRuntimeClient({ baseUrl: 43123, transport }).getOcr('cap'),
     ).rejects.toBeInstanceOf(errorType);
+    if (status === 403) {
+      // A refused origin is an authorization error, never a bad token.
+      const refused = await new CaptureRuntimeClient({ baseUrl: 43123, transport })
+        .getOcr('cap')
+        .catch((error: unknown) => error);
+      expect(refused).not.toBeInstanceOf(CaptureAuthenticationError);
+      expect(refused).toMatchObject({ category: 'authorization' });
+    }
   });
 
   it('reads download bytes on an installation and rejects an inconsistent pair', async () => {
@@ -1019,6 +1031,7 @@ data: ${JSON.stringify(event)}
             received = request as RequestInit;
             const event = {
               captureId: 'cap',
+              kind: 'recording',
               sequence: 2,
               eventType: 'completed',
             };
@@ -1671,8 +1684,8 @@ data: ${JSON.stringify(event)}
             );
             const event =
               calls === 1
-                ? { captureId: 'cap', sequence: 1, eventType: 'checkpoint' }
-                : { captureId: 'cap', sequence: 2, eventType: 'completed' };
+                ? { captureId: 'cap', kind: 'recording', sequence: 1, eventType: 'checkpoint' }
+                : { captureId: 'cap', kind: 'recording', sequence: 2, eventType: 'completed' };
             return new Response(
               `id: ${event.sequence}\ndata: ${JSON.stringify(event)}\n\n`,
               { headers: { 'Content-Type': 'text/event-stream' } },
@@ -1705,7 +1718,6 @@ data: ${JSON.stringify(event)}
       contractSetSha256: CAPTURE_CONTRACT_SET_SHA256,
       providerCapability: {
         provider: { engine: 'ollama', model: 'model-1', digest: `sha256:${'b'.repeat(64)}`, ...timings },
-        capability: 'capture-structuring',
         schemaDialect: 'https://json-schema.org/draft/2020-12/schema',
       },
       schemaDialect: 'https://json-schema.org/draft/2020-12/schema',
@@ -1732,6 +1744,7 @@ data: ${JSON.stringify(event)}
       status: 'ready',
     };
     let openHeaders: Headers | undefined;
+    let openBody: Record<string, unknown> | undefined;
     let submitHeaders: Headers | undefined;
     const transport = new InMemoryRuntimeTransport(
       withDiscovery([
@@ -1740,6 +1753,7 @@ data: ${JSON.stringify(event)}
           path: '/v2/captures/cap/structure/session',
           handle: (request) => {
             openHeaders = new Headers(request.headers);
+            openBody = JSON.parse(String(request.body)) as Record<string, unknown>;
             return new Response(JSON.stringify(session), {
               status: 201,
               headers: { 'Content-Type': 'application/json' },
@@ -1769,14 +1783,20 @@ data: ${JSON.stringify(event)}
     const client = new CaptureRuntimeClient({ baseUrl: 43123, transport });
     const request = {
       protocolVersion: '2' as const,
-      captureId: 'cap',
+      profileId: 'qwen3.5-0.8b-structure-v1',
       providerCapability: session.providerCapability,
       schemaDialect: session.schemaDialect,
-      clientRequestId: 'session-key',
     };
-    await client.openStructuringSession('cap', request);
-    expect((await client.openStructuringSession('cap', request)).sessionId).toBe('session-1');
+    await client.openStructuringSession('cap', request, 'session-key');
+    expect((await client.openStructuringSession('cap', request, 'session-key')).sessionId).toBe('session-1');
     expect(openHeaders?.get('X-Idempotency-Key')).toBe('session-key');
+    // The route names the capture and the header names the request.
+    expect(Object.keys(openBody ?? {}).sort()).toEqual([
+      'profileId',
+      'protocolVersion',
+      'providerCapability',
+      'schemaDialect',
+    ]);
     expect((await client.getStructuringSession('cap')).sessionId).toBe('session-1');
     expect((await client.getStructuringSession('cap')).providerCapability.provider).toEqual(session.providerCapability.provider);
     expect((await client.getStructuringBatch('cap', 0)).batchDigest).toBe(batch.batchDigest);
@@ -1787,7 +1807,7 @@ data: ${JSON.stringify(event)}
     await client.submitStructuringBatch('cap', 0, submission, 'batch-key');
     await client.submitStructuringBatch('cap', 0, submission, 'batch-key');
     expect(submitHeaders?.get('X-Idempotency-Key')).toBe('batch-key');
-    expect(() => client.openStructuringSession('other', request)).toThrow(
+    expect(() => client.openStructuringSession('cap', request, '')).toThrow(
       CaptureRuntimeProtocolError,
     );
   });

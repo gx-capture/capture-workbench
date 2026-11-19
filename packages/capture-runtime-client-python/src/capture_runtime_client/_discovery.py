@@ -170,7 +170,9 @@ def validate_contract_bundle(bundle: Any, digest: str) -> str:
         or bundle.get("schemaDialect") != "https://json-schema.org/draft/2020-12/schema"
     ):
         raise CaptureRuntimeProtocolError("Capture Runtime contract bundle is invalid.")
-    for field in ("surfaces", "schemas", "operations", "problems", "invariants"):
+    # failureCodes lists the codes a failed job reports; a host's own failure
+    # report is not checked against it.
+    for field in ("surfaces", "schemas", "operations", "problems", "failureCodes", "invariants"):
         if not isinstance(bundle.get(field), list):
             raise CaptureRuntimeProtocolError(
                 f"Capture Runtime contract bundle {field} is invalid."

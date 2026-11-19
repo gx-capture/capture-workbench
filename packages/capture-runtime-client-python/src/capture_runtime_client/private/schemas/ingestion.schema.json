@@ -12,11 +12,9 @@
     "IngestionStatus": {
       "enum": [
         "open",
-        "finalizing",
         "ready",
         "cancelled",
-        "failed",
-        "expired"
+        "failed"
       ],
       "title": "IngestionStatus",
       "type": "string"
@@ -31,8 +29,7 @@
       "type": "string"
     },
     "kind": {
-      "$ref": "#/$defs/CaptureSourceKind",
-      "default": "recording"
+      "$ref": "#/$defs/CaptureSourceKind"
     },
     "ingestionId": {
       "minLength": 1,
@@ -111,6 +108,7 @@
     }
   },
   "required": [
+    "kind",
     "ingestionId",
     "status",
     "fileName",

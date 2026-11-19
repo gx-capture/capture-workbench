@@ -81,7 +81,10 @@ def contract_concept_values() -> dict[str, set[str]]:
     from typing import get_args
 
     from capture_runtime import contracts
-    from capture_runtime.problem_registry import DEFAULT_PROBLEM_REGISTRY
+    from capture_runtime.problem_registry import (
+        DEFAULT_FAILURE_CODE_REGISTRY,
+        DEFAULT_PROBLEM_REGISTRY,
+    )
 
     expected = {
         name: {str(member.value) for member in value}
@@ -99,4 +102,5 @@ def contract_concept_values() -> dict[str, set[str]]:
     expected["WorkerStage"] = set(policy["exactStages"])
     expected["WorkerStageFamily"] = set(policy["familyPatterns"])
     expected["ProblemCode"] = set(DEFAULT_PROBLEM_REGISTRY.definitions)
+    expected["FailureCode"] = set(DEFAULT_FAILURE_CODE_REGISTRY.definitions)
     return expected

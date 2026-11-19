@@ -29,9 +29,16 @@ from capture_runtime.provisioning.application.use_cases import (
     ListRequirements,
     UninstallRequirement,
 )
-from capture_runtime.provisioning.infrastructure.engine_installation import EngineInstallationError
+from capture_runtime.provisioning.infrastructure.engine_installation import (
+    EngineFilesInUseError,
+    EngineInstallBusyError,
+)
 from capture_runtime.release import CAPTURE_DOCUMENT_SCHEMA_RELEASE_SHA256
-from capture_runtime.routes.common import ApiProblem, request_fingerprint
+from capture_runtime.routes.common import (
+    STRUCTURING_MODEL_MANAGEMENT_UNAVAILABLE,
+    ApiProblem,
+    request_fingerprint,
+)
 from capture_runtime.storage.common import IdempotencyConflictError, RecordNotFoundError
 
 
@@ -96,7 +103,7 @@ def register_runtime_routes(
             raise ApiProblem(
                 422,
                 "requirement_disabled",
-                "This runtime process delegates structuring to its host provider.",
+                STRUCTURING_MODEL_MANAGEMENT_UNAVAILABLE,
             )
         fingerprint = request_fingerprint(payload.model_dump(mode="json", by_alias=True))
         try:
@@ -151,7 +158,7 @@ def register_runtime_routes(
             raise ApiProblem(
                 422,
                 "requirement_disabled",
-                "This runtime process delegates structuring to its host provider.",
+                STRUCTURING_MODEL_MANAGEMENT_UNAVAILABLE,
             )
         if await _requirement(requirement_id) is None:
             raise ApiProblem(404, "requirement_not_found", "Runtime requirement was not found.")
@@ -171,13 +178,19 @@ def register_runtime_routes(
                 "requirement_in_use",
                 "An installation or capture is active; try again when it has finished.",
             ) from error
-        except EngineInstallationError as error:
+        except (EngineInstallBusyError, EngineFilesInUseError) as error:
             # Another process installs the engine, or a file is still open. The
             # unit is already reported as not installed; a retry removes the rest.
             raise ApiProblem(
                 409,
                 "requirement_in_use",
                 "The engine files are in use; try again later.",
+            ) from error
+        except Exception as error:
+            raise ApiProblem(
+                500,
+                "uninstall_failed",
+                "The requirement could not be uninstalled.",
             ) from error
         requirement = await _requirement(requirement_id)
         if requirement is None:

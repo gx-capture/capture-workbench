@@ -6,8 +6,7 @@ import type { DesktopCaptureOperation } from './desktop-runtime-client.service';
 
 /** Identifies non-terminal one-shot capture operations. */
 export function isActiveOneShotOperation(operation: DesktopCaptureOperation): boolean {
-  return operation.status === 'created'
-    || operation.status === 'waiting_input'
+  return operation.status === 'waiting_input'
     || operation.status === 'extracting'
     || operation.status === 'awaiting_structuring'
     || operation.status === 'structuring';
@@ -20,8 +19,7 @@ export function isOcrCheckpoint(operation: DesktopCaptureOperation): boolean {
 
 /** Identifies non-terminal streaming operations. */
 export function isActiveStreaming(operation: CaptureOperation): boolean {
-  return operation.status === 'created'
-    || operation.status === 'waiting_input'
+  return operation.status === 'waiting_input'
     || operation.status === 'extracting'
     || operation.status === 'awaiting_structuring'
     || operation.status === 'structuring';

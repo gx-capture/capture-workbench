@@ -2020,7 +2020,7 @@ test('first-run OCR setup unchecks ASR and speakers, retries once on filesystem 
             ? [{
                 requirementId: 'text-recognition',
                 status: 'failed',
-                error: { code: 'installation_filesystem', message: 'Transient disk lock' },
+                error: { code: 'installation_io_failed', message: 'Transient disk lock' },
               }]
             : [],
         };

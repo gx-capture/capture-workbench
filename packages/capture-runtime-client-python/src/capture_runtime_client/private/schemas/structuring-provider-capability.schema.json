@@ -79,11 +79,6 @@
     "provider": {
       "$ref": "#/$defs/CaptureEngine"
     },
-    "capability": {
-      "minLength": 1,
-      "title": "Capability",
-      "type": "string"
-    },
     "schemaDialect": {
       "minLength": 1,
       "title": "Schemadialect",
@@ -92,7 +87,6 @@
   },
   "required": [
     "provider",
-    "capability",
     "schemaDialect"
   ],
   "title": "StructuringProviderCapability",

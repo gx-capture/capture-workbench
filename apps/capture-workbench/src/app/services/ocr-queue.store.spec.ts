@@ -504,6 +504,7 @@ function runningOperation(): DesktopCaptureOperation {
     protocolVersion: '2',
     captureId: 'capture-1',
     ingestionId: 'ingestion-1',
+    kind: 'pdf',
     status: 'extracting',
     progress: 0.75,
     pagesDone: 9,

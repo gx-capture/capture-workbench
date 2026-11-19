@@ -8,7 +8,7 @@ import shutil
 import stat
 from pathlib import Path, PurePosixPath
 
-from ._engine_installation_errors import EngineInstallationError
+from ._engine_installation_errors import EngineFilesInUseError, EngineInstallationError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -52,6 +52,11 @@ def remove_residue_path(path: Path) -> None:
             shutil.rmtree(path)
         else:
             path.unlink()
+    except PermissionError as error:
+        # Windows refuses to delete a file another process holds open.
+        raise EngineFilesInUseError(
+            f"engine file is in use and could not be removed: {path.name}"
+        ) from error
     except OSError as error:
         raise EngineInstallationError(
             f"stale engine install residue could not be removed: {path.name}"

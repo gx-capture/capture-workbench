@@ -437,6 +437,12 @@ impl FixtureState {
             ),
             ("POST", "structure") => Response::json(200, record.result.clone()),
             ("GET", "ocr") if record.kind != "recording" => Response::json(200, build_ocr(record)),
+            // A recording has no OCR projection, and asking writes nothing.
+            ("GET", "ocr") => api_error(
+                409,
+                "ocr_unavailable",
+                "Canonical OCR projection is not available.",
+            ),
             ("GET", "partial") if record.kind == "recording" => Response::json(
                 200,
                 json!({

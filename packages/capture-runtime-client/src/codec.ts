@@ -52,9 +52,9 @@ const MODEL_FIELDS: Record<RuntimeResponseModel, { readonly required: readonly s
   RawCapture: { required: ['schemaVersion', 'diagnosticOnly', 'source', 'segments', 'sourceText', 'extractionEngine', 'createdAt'], optional: ['diarizationEngine', 'speakers', 'suggestedRequirementIds', 'warnings', 'ocrPageScope'] },
   CaptureOcrProjection: { required: ['apiVersion', 'schemaVersion', 'captureId', 'status', 'pages', 'processedPageCount', 'runtimeVersion', 'contractSetSha256', 'provenance', 'createdAt'], optional: ['source', 'warnings', 'failure'] },
   CaptureDocument: { required: ['blocks', 'completedAt', 'createdAt', 'extractionEngine', 'rawSegments', 'schemaVersion', 'source', 'sourceText', 'structuringEngine', 'targetText'], optional: ['diarizationEngine', 'speakers', 'suggestedRequirementIds', 'warnings'] },
-  CaptureOperation: { required: ['protocolVersion', 'captureId', 'ingestionId', 'status', 'partialRevision', 'lastEventSequence', 'createdAt', 'updatedAt'], optional: ['kind', 'progress', 'source', 'error', 'completedAt', 'pagesTotal', 'pagesDone', 'durationMs', 'coveredUntilMs'] },
-  Ingestion: { required: ['protocolVersion', 'ingestionId', 'status', 'fileName', 'mediaType', 'totalBytes', 'receivedBytes', 'contiguousBytes', 'nextChunkIndex', 'nextOffset', 'expiresAt'], optional: ['kind', 'sourceSha256', 'finalizedSha256'] },
-  PartialCapture: { required: ['protocolVersion', 'captureId', 'source', 'revision', 'coveredUntilMs', 'updatedAt'], optional: ['segments', 'sourceText', 'extractionEngine'] },
+  CaptureOperation: { required: ['protocolVersion', 'captureId', 'ingestionId', 'kind', 'status', 'partialRevision', 'lastEventSequence', 'createdAt', 'updatedAt'], optional: ['progress', 'source', 'error', 'completedAt', 'pagesTotal', 'pagesDone', 'durationMs', 'coveredUntilMs'] },
+  Ingestion: { required: ['protocolVersion', 'kind', 'ingestionId', 'status', 'fileName', 'mediaType', 'totalBytes', 'receivedBytes', 'contiguousBytes', 'nextChunkIndex', 'nextOffset', 'expiresAt'], optional: ['sourceSha256', 'finalizedSha256'] },
+  PartialCapture: { required: ['protocolVersion', 'captureId', 'source', 'revision', 'updatedAt'], optional: ['coveredUntilMs', 'segments', 'sourceText', 'extractionEngine'] },
   CaptureResult: { required: ['operation', 'raw', 'result'], optional: [] },
   StructuringSession: { required: ['protocolVersion', 'sessionId', 'captureId', 'sourceSha256', 'contractSetSha256', 'providerCapability', 'schemaDialect', 'batchCount', 'nextBatchIndex', 'sessionDigest', 'status', 'createdAt', 'updatedAt'], optional: ['targetLanguage', 'completedAt'] },
   StructuringBatch: { required: ['protocolVersion', 'sessionId', 'captureId', 'batchIndex', 'batchCount', 'sourceSegmentIds', 'providerPrompt', 'providerSchema', 'numCtx', 'numPredict', 'batchDigest', 'status'], optional: [] },
@@ -667,7 +667,7 @@ function sameOcrProvenance(left: unknown, right: unknown): boolean {
  * for SSE capture events, which carry the same progress fields.
  */
 export function assertCaptureProgress(record: Record<string, unknown>, label: string): void {
-  const kind = record['kind'] ?? 'recording';
+  const kind = record['kind'];
   assertCaptureKind(kind, label);
   const done = record['pagesDone'] ?? null;
   const total = record['pagesTotal'] ?? null;
@@ -693,7 +693,7 @@ export function assertCaptureProgress(record: Record<string, unknown>, label: st
 }
 
 function assertCaptureKind(kind: unknown, label: string): void {
-  if (kind !== undefined && kind !== 'pdf' && kind !== 'image' && kind !== 'recording') {
+  if (kind !== 'pdf' && kind !== 'image' && kind !== 'recording') {
     throw new CaptureRuntimeProtocolError(`Capture Runtime returned invalid ${label} kind.`);
   }
 }
@@ -754,7 +754,7 @@ function validateStructuringSession(record: Record<string, unknown>): void {
   if (!provider || typeof provider !== 'object' || Array.isArray(provider)) {
     throw new CaptureRuntimeProtocolError('Capture Runtime returned invalid StructuringSession provider capability.');
   }
-  assertExactFields(provider as Record<string, unknown>, ['provider', 'capability', 'schemaDialect'], 'StructuringSession provider capability');
+  assertExactFields(provider as Record<string, unknown>, ['provider', 'schemaDialect'], 'StructuringSession provider capability');
   const engine = (provider as Record<string, unknown>)['provider'];
   if (!engine || typeof engine !== 'object' || Array.isArray(engine)) {
     throw new CaptureRuntimeProtocolError('Capture Runtime returned invalid StructuringSession provider.');
@@ -881,10 +881,16 @@ export async function decodeError(response: Response): Promise<CaptureRuntimeErr
   const status = response.status;
   const code = error?.code ?? `http_${status}`;
   const message = error?.message ?? `Capture Runtime request failed (${status}).`;
-  if (status === 401 || status === 403 || code === 'unauthorized' || code === 'authentication_failed') {
+  if (status === 401 || code === 'unauthorized') {
     return new CaptureAuthenticationError(message, status, details, requestId);
   }
-  return new CaptureRemoteError(status, code, message, details, { category, retryable, issues, requestId });
+  // A 403 (origin_not_allowed) is an authorization refusal, not a bad token.
+  return new CaptureRemoteError(status, code, message, details, {
+    category: category ?? (status === 403 ? 'authorization' : undefined),
+    retryable,
+    issues,
+    requestId,
+  });
 }
 
 export interface SseFrame {

@@ -262,15 +262,13 @@ def test_open_structuring_session_rejection_policies() -> None:
             model="test-model",
             digest=f"sha256:{'a' * 64}",
         ),
-        capability="capture-structuring",
         schema_dialect=SCHEMA_DIALECT,
     )
     request = OpenStructuringSessionRequest(
-        capture_id="cap-1",
         target_language="en",
+        profile_id="qwen3.5-0.8b-structure-v1",
         provider_capability=capability,
         schema_dialect=SCHEMA_DIALECT,
-        client_request_id="req-1",
     )
 
     mock_repo = MagicMock()
@@ -302,7 +300,7 @@ def test_open_structuring_session_rejection_policies() -> None:
         structuring_mode=StructuringMode.RUNTIME,
     )
     with pytest.raises(SessionTransitionError, match="pull structuring requires host capture mode"):
-        use_case.execute(request)
+        use_case.execute("cap-1", request, client_request_id="req-1")
 
     # Test rejection when operation status is not awaiting/active structuring
     mock_captures.get_capture.return_value = CaptureOperation(
@@ -321,7 +319,7 @@ def test_open_structuring_session_rejection_policies() -> None:
         structuring_mode=StructuringMode.HOST,
     )
     with pytest.raises(SessionTransitionError, match="capture is not awaiting pull structuring"):
-        use_case.execute(request)
+        use_case.execute("cap-1", request, client_request_id="req-1")
 
 
 @pytest.mark.parametrize("status", ["completed", "running"])

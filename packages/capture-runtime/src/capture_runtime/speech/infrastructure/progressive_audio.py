@@ -109,7 +109,7 @@ class ProgressiveAudioSession:
             # Only now, with the whole recording heard, does no text mean no
             # speech; transcribing it again would hear none either.
             self._fail(
-                code="progressive_no_text_at_sample",
+                code="extraction_no_text",
                 message="No speech was heard in the audio.",
                 retryable=False,
                 stage="checkpoint",

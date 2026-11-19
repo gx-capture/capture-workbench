@@ -18,7 +18,7 @@
 | 取得模型安裝 | `GetModelInstallation` | 讀取安裝狀態與進度。 |
 | 取得工作階段 | `GetStructuringSession` | 依擷取識別碼讀取主機工作階段。 |
 | 安裝模型 | `InstallModelOption` | 建立允許的模型作業，只對新作業排程。 |
-| 開啟工作階段 | `OpenStructuringSession` | 檢查來源與方言，建立批次計畫。 |
+| 開啟工作階段 | `OpenStructuringSession` | 擷取取自路由、請求識別取自 `X-Idempotency-Key`，本文只帶 `profileId`、供應者與方言；檢查來源與方言，依 `profileId` 建立批次計畫。0.10.x 存下的工作階段（本文帶 `captureId`、`clientRequestId`、`capability`）以原本的形式驗證指紋後照常讀取。 |
 | 提交批次 | `SubmitStructuringBatch` | 先檢查重播、摘要及順序，再驗證語意與持久化。 |
 
 ## 聚合與不變條件

@@ -626,6 +626,7 @@ def test_loopback_transport_and_handshake() -> None:
             ),
         ],
         "problems": [],
+        "failureCodes": [],
         "invariants": [],
     }
     bundle_bytes = json.dumps(bundle, separators=(",", ":"), sort_keys=True).encode()
@@ -657,6 +658,22 @@ def test_loopback_transport_and_handshake() -> None:
     ready = client.handshake()
     assert isinstance(ready, RuntimeReady)
     assert client.discover().capture_document_schema_sha256 == CAPTURE_DOCUMENT_SCHEMA_SHA256
+
+
+def test_contract_bundle_needs_its_job_failure_codes() -> None:
+    from capture_runtime_client._discovery import validate_contract_bundle
+
+    bundle = {
+        "contractSetVersion": "2",
+        "schemaDialect": "https://json-schema.org/draft/2020-12/schema",
+        "surfaces": [{"id": "v2"}],
+        "schemas": [],
+        "operations": [],
+        "problems": [],
+        "invariants": [],
+    }
+    with pytest.raises(CaptureProtocolError, match="failureCodes"):
+        validate_contract_bundle(bundle, "0" * 64)
 
 
 def test_compatibility_failure_is_machine_readable() -> None:
@@ -748,6 +765,8 @@ def test_get_ocr_maps_completed_and_failed_page_projections() -> None:
     ("status_code", "code", "error_type"),
     [
         (401, "unauthorized", CaptureAuthenticationError),
+        (403, "origin_not_allowed", CaptureRemoteError),
+        (403, "forbidden_by_proxy", CaptureRemoteError),
         (404, "capture_not_found", CaptureRemoteError),
         (409, "ocr_unavailable", CaptureRemoteError),
     ],
@@ -774,6 +793,10 @@ def test_get_ocr_maps_auth_not_found_and_pending_errors(
         CaptureRuntimeClient(transport=transport).get_ocr("cap")
     assert caught.value.status_code == status_code
     assert caught.value.code == code
+    if status_code == 403:
+        # A refused origin is an authorization error, never a bad token.
+        assert not isinstance(caught.value, CaptureAuthenticationError)
+        assert caught.value.category == "authorization"
 
 
 def test_generated_ocr_model_rejects_invalid_box_and_projection_state() -> None:
@@ -1195,6 +1218,7 @@ def test_model_installation_operations_and_failure_idempotency_header() -> None:
         "protocolVersion": "2",
         "captureId": "cap",
         "ingestionId": "ingestion-1",
+        "kind": "recording",
         "status": "failed",
         "progress": 1,
         "partialRevision": 0,
@@ -1384,6 +1408,7 @@ def test_retry_policy_retries_idempotent_requests_only() -> None:
                 "protocolVersion": "2",
                 "captureId": "cap",
                 "ingestionId": "ingestion",
+                "kind": "recording",
                 "status": "failed",
                 "partialRevision": 0,
                 "lastEventSequence": 0,
@@ -1467,7 +1492,6 @@ def test_pull_session_methods_use_routes_and_matching_idempotency() -> None:
         "contractSetSha256": CAPTURE_CONTRACT_SET_SHA256,
         "providerCapability": {
             "provider": {"engine": "ollama", "model": "model-1", "digest": "sha256:" + "b" * 64},
-            "capability": "capture-structuring",
             "schemaDialect": "https://json-schema.org/draft/2020-12/schema",
         },
         "schemaDialect": "https://json-schema.org/draft/2020-12/schema",
@@ -1493,10 +1517,11 @@ def test_pull_session_methods_use_routes_and_matching_idempotency() -> None:
         "batchDigest": "d" * 64,
         "status": "ready",
     }
-    seen: dict[str, str] = {}
+    seen: dict[str, object] = {}
 
     def open_route(request: httpx.Request) -> httpx.Response:
         seen["open-key"] = request.headers["x-idempotency-key"]
+        seen["open-body"] = json.loads(request.content)
         return httpx.Response(201, json=session, request=request)
 
     def submit_route(request: httpx.Request) -> httpx.Response:
@@ -1526,13 +1551,22 @@ def test_pull_session_methods_use_routes_and_matching_idempotency() -> None:
     )
     client = CaptureRuntimeClient(transport=transport)
     request = {
-        "captureId": "cap",
+        "profileId": "qwen3.5-0.8b-structure-v1",
         "providerCapability": session["providerCapability"],
         "schemaDialect": session["schemaDialect"],
-        "clientRequestId": "session-key",
     }
-    assert client.open_structuring_session("cap", request).session_id == "session-1"
-    assert client.open_structuring_session("cap", request).session_id == "session-1"
+    opened = client.open_structuring_session("cap", request, idempotency_key="session-key")
+    assert opened.session_id == "session-1"
+    replayed = client.open_structuring_session("cap", request, idempotency_key="session-key")
+    assert replayed.session_id == "session-1"
+    # The route names the capture and the header names the request.
+    assert set(seen["open-body"]) == {  # type: ignore[arg-type]
+        "protocolVersion",
+        "targetLanguage",
+        "profileId",
+        "providerCapability",
+        "schemaDialect",
+    }
     assert client.get_structuring_session("cap").session_id == "session-1"
     assert client.get_structuring_batch("cap", 0).batch_digest == batch["batchDigest"]
     client.submit_structuring_batch(
@@ -1553,9 +1587,11 @@ def test_pull_session_methods_use_routes_and_matching_idempotency() -> None:
         },
         idempotency_key="batch-key",
     )
-    assert seen == {"open-key": "session-key", "submit-key": "batch-key"}
+    assert (seen["open-key"], seen["submit-key"]) == ("session-key", "batch-key")
     with pytest.raises(CaptureProtocolError):
-        client.open_structuring_session("other", request)
+        client.open_structuring_session(
+            "cap", {**request, "clientRequestId": "session-key"}, idempotency_key="session-key"
+        )
     with pytest.raises(CaptureProtocolError):
         client.open_structuring_session("cap", request, idempotency_key="")
 

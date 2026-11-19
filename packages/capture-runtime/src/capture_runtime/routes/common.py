@@ -11,6 +11,12 @@ from fastapi.responses import JSONResponse
 
 from capture_runtime.contracts import ErrorBody, ErrorEnvelope
 
+# True for every structuring mode without runtime model management: a host
+# provider, an external provider, or the deterministic fake.
+STRUCTURING_MODEL_MANAGEMENT_UNAVAILABLE = (
+    "Structuring model management is not available in this runtime's structuring mode."
+)
+
 
 class ApiProblem(Exception):
     def __init__(

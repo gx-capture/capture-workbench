@@ -8,7 +8,7 @@ class CaptureProcessingError(RuntimeError):
         self,
         message: str,
         *,
-        code: str = "progressive_failed",
+        code: str = "extraction_failed",
         retryable: bool = True,
         stage: str = "extraction",
     ) -> None:

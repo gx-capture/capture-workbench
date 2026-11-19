@@ -122,7 +122,7 @@ import { defer } from 'rxjs';
 const provider: CaptureStructuringProvider = {
   structure({ raw, documentContract, signal, reportProgress }) {
     return defer(() =>
-      hostBackend.structureCapture(raw, {
+      hostBackend.structure(raw, {
         schemaVersion: documentContract.schemaVersion,
         jsonSchema: documentContract.jsonSchema,
         signal,

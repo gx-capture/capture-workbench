@@ -230,8 +230,7 @@
       "type": "string"
     },
     "kind": {
-      "$ref": "#/$defs/CaptureSourceKind",
-      "default": "recording"
+      "$ref": "#/$defs/CaptureSourceKind"
     },
     "eventType": {
       "$ref": "#/$defs/CaptureEventType"
@@ -349,6 +348,7 @@
     "eventId",
     "sequence",
     "captureId",
+    "kind",
     "eventType",
     "stage",
     "createdAt"

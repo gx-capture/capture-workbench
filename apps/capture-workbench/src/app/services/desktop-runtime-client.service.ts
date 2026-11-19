@@ -5,7 +5,6 @@ import {
   type CaptureOcrProjection,
 } from '@gx-capture/capture-runtime-client';
 import {
-  type CaptureDocument,
   type CaptureEvent,
   type CaptureOperation,
   type CaptureResult,
@@ -194,13 +193,6 @@ export class DesktopRuntimeClientService {
   /** The terminal capture state with its raw extraction and structured document. */
   getResult(captureId: string, signal?: AbortSignal): Observable<CaptureResult> {
     return this.commands.invoke('runtime_get_result', { input: { id: captureId } }, signal);
-  }
-
-  structureCapture(
-    captureId: string,
-    signal?: AbortSignal,
-  ): Observable<CaptureDocument> {
-    return this.commands.invoke('runtime_structure_capture', { input: { id: captureId } }, signal);
   }
 
   cancelCapture(captureId: string, signal?: AbortSignal): Observable<CaptureOperation> {

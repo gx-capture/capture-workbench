@@ -361,6 +361,20 @@ fn retired_capture_kind_is_rejected_on_open() {
 }
 
 #[test]
+fn an_ingestion_without_a_kind_is_rejected_on_open() {
+    let state = fixture();
+    let mut open = open_request("recording", "audio/wav", AUDIO);
+    let mut payload: Value = serde_json::from_slice(&open.body).unwrap();
+    payload.as_object_mut().unwrap().remove("kind");
+    open.body = serde_json::to_vec(&payload).unwrap();
+    let response = exchange(&state, open, 422);
+    assert_eq!(
+        response["error"]["details"]["issues"][0]["message"],
+        "Capture kind is required."
+    );
+}
+
+#[test]
 fn invalid_uploads_do_not_advance_or_finalize_the_ingestion() {
     let state = fixture();
     let opened = exchange(&state, open_request("pdf", "application/pdf", PDF), 201);
@@ -505,6 +519,10 @@ fn progressive_audio_host_requests_complete_with_events_partial_and_result() {
     let partial = get(&state, &format!("{path}/partial"), 200);
     assert_eq!(partial["segments"].as_array().unwrap().len(), 2);
     assert_eq!(partial["segments"][0]["locator"]["kind"], "time");
+    assert_eq!(partial["coveredUntilMs"], 2000);
+    // A recording has no OCR projection.
+    let ocr = get(&state, &format!("{path}/ocr"), 409);
+    assert_eq!(ocr["error"]["code"], "ocr_unavailable");
     assert_eq!(get(&state, &path, 200)["status"], "completed");
     assert_eq!(
         get(&state, &format!("{path}/result"), 200)["result"]["targetText"],

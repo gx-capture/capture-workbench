@@ -155,6 +155,42 @@ def test_installation_repository_reads_historical_requirement_id(
         assert after["requestFingerprint"] == historical["requestFingerprint"]
 
 
+def test_a_0_10_filesystem_failure_reads_as_a_generic_installation_failure(
+    tmp_path: Path,
+) -> None:
+    repository = InstallationRepository(tmp_path, clock=SystemClock(), retention_hours=24)
+    repository.initialize()
+    record, _ = repository.create_or_get(
+        idempotency_key="historical-filesystem",
+        request_fingerprint=request_fingerprint(
+            {"requirementId": "text-recognition", "consent": True}
+        ),
+        requirement_id="text-recognition",
+    )
+    path = tmp_path / record.job.installation_id / "metadata.json"
+    historical = json.loads(path.read_bytes())
+    historical["job"].update(
+        status="failed",
+        completedAt=historical["job"]["createdAt"],
+        error={
+            "code": "installation_filesystem",
+            "message": "Runtime requirement installation failed (OSError:5).",
+            "stage": None,
+            "retryable": True,
+        },
+    )
+    path.write_text(json.dumps(historical, indent=2), encoding="utf-8")
+    before = path.read_bytes()
+
+    repository.initialize()
+    job = repository.get(record.job.installation_id).job
+    # Whether it timed out is not recorded, so it reads as the generic failure.
+    assert job.error is not None
+    assert (job.error.code, job.error.retryable) == ("installation_failed", True)
+    assert job.error.message == "Runtime requirement installation failed (OSError:5)."
+    assert path.read_bytes() == before
+
+
 def test_engine_installation_failure_preserves_safe_runtime_message(tmp_path: Path) -> None:
     asyncio.run(_test_engine_installation_failure_preserves_safe_runtime_message(tmp_path))
 
@@ -206,8 +242,10 @@ def test_installation_failure_code_is_finite_and_path_free() -> None:
         == "engine_probe_failed"
     )
     assert (
-        installation_failure_code(OSError("private filesystem detail")) == "installation_filesystem"
+        installation_failure_code(OSError("private filesystem detail")) == "installation_io_failed"
     )
+    # TimeoutError is an OSError; it is told apart before the I/O class.
+    assert installation_failure_code(TimeoutError("private detail")) == "installation_timeout"
 
 
 def test_dependency_installations_are_serialized_in_submission_order(tmp_path: Path) -> None:

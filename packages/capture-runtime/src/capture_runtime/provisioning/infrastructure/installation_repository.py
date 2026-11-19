@@ -26,6 +26,7 @@ from capture_runtime.storage.common import (
     RecordNotFoundError,
     atomic_json,
     dump_model,
+    project_stored_failure,
     project_stored_requirement_id,
     record_identifier,
 )
@@ -43,11 +44,17 @@ class InstallationRecord:
     idempotency_key: str
     request_fingerprint: str
     historical_requirement_id: str | None = None
+    # A failure as a 0.10.x runtime stored it, while the job still reports it.
+    historical_error: dict[str, Any] | None = None
 
     def dump(self) -> dict[str, object]:
         job = dump_model(self.job)
         if self.historical_requirement_id is not None:
             job["requirementId"] = self.historical_requirement_id
+        if self.historical_error is not None and job.get("error") == project_stored_failure(
+            self.historical_error
+        ):
+            job["error"] = self.historical_error
         return {
             "job": job,
             "idempotencyKey": self.idempotency_key,
@@ -58,17 +65,24 @@ class InstallationRecord:
     def load(cls, payload: dict[str, Any]) -> InstallationRecord:
         job = payload["job"]
         historical_requirement_id = None
+        historical_error = None
         if isinstance(job, dict):
             stored_id = job.get("requirementId")
             current_id = project_stored_requirement_id(stored_id)
             if current_id != stored_id:
                 historical_requirement_id = stored_id
                 job = {**job, "requirementId": current_id}
+            stored_error = job.get("error")
+            current_error = project_stored_failure(stored_error)
+            if current_error is not stored_error:
+                historical_error = stored_error
+                job = {**job, "error": current_error}
         return cls(
             job=RuntimeInstallation.model_validate(job),
             idempotency_key=str(payload["idempotencyKey"]),
             request_fingerprint=str(payload["requestFingerprint"]),
             historical_requirement_id=historical_requirement_id,
+            historical_error=historical_error,
         )
 
 

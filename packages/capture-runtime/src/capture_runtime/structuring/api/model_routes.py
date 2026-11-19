@@ -15,7 +15,11 @@ from capture_runtime.contracts import (
     StructuringModelOptionStatus,
 )
 from capture_runtime.dependencies import RuntimeDependencies
-from capture_runtime.routes.common import ApiProblem, request_fingerprint
+from capture_runtime.routes.common import (
+    STRUCTURING_MODEL_MANAGEMENT_UNAVAILABLE,
+    ApiProblem,
+    request_fingerprint,
+)
 from capture_runtime.storage.common import IdempotencyConflictError, RecordNotFoundError
 from capture_runtime.structuring.infrastructure.model_catalog import (
     MODEL_OPTIONS,
@@ -40,7 +44,7 @@ def register_model_routes(
             raise ApiProblem(
                 422,
                 "requirement_disabled",
-                "This runtime delegates structuring to its host provider.",
+                STRUCTURING_MODEL_MANAGEMENT_UNAVAILABLE,
             )
         active = ActiveModelSelectionStore(dependencies.lifecycle.config.app_data_dir).load()
         active_option_id = active.get("optionId") if active is not None else None
@@ -78,7 +82,7 @@ def register_model_routes(
             raise ApiProblem(
                 422,
                 "requirement_disabled",
-                "This runtime delegates structuring to its host provider.",
+                STRUCTURING_MODEL_MANAGEMENT_UNAVAILABLE,
             )
         if payload.option_id not in {option.option_id for option in MODEL_OPTIONS}:
             raise ApiProblem(422, "model_option_unknown", "The model option is not allowlisted.")

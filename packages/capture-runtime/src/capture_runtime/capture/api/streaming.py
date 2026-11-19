@@ -122,10 +122,16 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
                 "Content-Range and Digest headers are invalid.",
             )
         byte_offset, end_offset, total_bytes = (int(value) for value in match.groups())
+        if total_bytes <= 0:
+            raise ApiProblem(422, "invalid_chunk_headers", "Content-Range total is invalid.")
+        if end_offset >= total_bytes:
+            raise ApiProblem(
+                422,
+                "invalid_chunk_headers",
+                "Content-Range end must be less than its total.",
+            )
         if end_offset < byte_offset or end_offset - byte_offset + 1 > service.max_chunk_bytes:
             raise ApiProblem(413, "chunk_too_large", "Chunk exceeds the configured size limit.")
-        if int(total_bytes) <= 0:
-            raise ApiProblem(422, "invalid_chunk_headers", "Content-Range total is invalid.")
         try:
             ingestion = service.get_ingestion(ingestion_id)
         except StreamingRecordNotFoundError as error:
@@ -375,11 +381,8 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
             str, Header(alias="X-Idempotency-Key", min_length=1, max_length=128)
         ],
     ) -> StructuringSession:
-        if request.capture_id != capture_id:
-            raise ApiProblem(422, "validation_error", "captureId must match the route capture.")
-        _require_matching_idempotency_key(idempotency_key, request.client_request_id)
         try:
-            return open_session.execute(request)
+            return open_session.execute(capture_id, request, client_request_id=idempotency_key)
         except StructuringSessionIdempotencyConflictError as error:
             raise ApiProblem(
                 409,
@@ -613,8 +616,6 @@ def _chunk_error_code(message: str) -> str:
         return "chunk_conflict"
     if "contiguous" in lowered or "ordered" in lowered:
         return "chunk_out_of_order"
-    if "exceed" in lowered:
-        return "chunk_too_large"
     return "chunk_rejected"
 
 

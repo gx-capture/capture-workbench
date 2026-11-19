@@ -393,13 +393,6 @@ pub(crate) fn capture_partial(
     )
 }
 
-pub(crate) fn structure_capture(
-    state: &DesktopState,
-    input: RuntimeIdInput,
-) -> Result<Value, String> {
-    capture_value(state, "POST", &input.id, "/structure", None)
-}
-
 /// Reads the capture's events after `lastEventId` from the runtime's SSE stream.
 pub(crate) fn capture_events(
     state: &DesktopState,
@@ -1451,7 +1444,7 @@ mod tests {
         let (ingestion_key, capture_key) = server.join().expect("server thread");
 
         assert_eq!(result["captureId"], "capture-stream-1");
-        assert_eq!(result["status"], "created");
+        assert_eq!(result["status"], "extracting");
         assert_eq!(ingestion_key, "test-client-req-ingestion");
         assert_eq!(capture_key, "test-client-req");
     }
@@ -1577,7 +1570,7 @@ mod tests {
             "captureId": capture_id,
             "ingestionId": ingestion_id,
             "kind": "recording",
-            "status": "created",
+            "status": "extracting",
             "progress": 0.0,
             "partialRevision": 0,
             "lastEventSequence": 0,

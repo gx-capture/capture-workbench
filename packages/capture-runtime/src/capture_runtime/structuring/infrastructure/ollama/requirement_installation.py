@@ -19,7 +19,10 @@ from capture_runtime.constants import (
     STRUCTURING_RUNTIME_REQUIREMENT_ID,
 )
 from capture_runtime.contracts import RuntimeRequirement, RuntimeRequirementStatus
-from capture_runtime.provisioning.application.requirement_installer import ManualActionRequiredError
+from capture_runtime.provisioning.application.requirement_installer import (
+    ManualActionRequiredError,
+    ModelOptionRejectedError,
+)
 from capture_runtime.provisioning.infrastructure.engine_installation import sha256_file
 from capture_runtime.structuring.infrastructure.model_catalog import (
     ActiveModelSelectionStore,
@@ -141,7 +144,12 @@ class OllamaRequirementInstaller:
         cancel_event: asyncio.Event,
         report_progress: Callable[[float], None],
     ) -> None:
-        option = model_option(option_id)
+        try:
+            option = model_option(option_id)
+        except KeyError as error:
+            raise ModelOptionRejectedError(
+                "The model option is not in the release catalog"
+            ) from error
         executable = self._lifecycle.executable()
         if executable is None:
             raise ManualActionRequiredError("Install the Ollama application first")
@@ -168,7 +176,7 @@ class OllamaRequirementInstaller:
             modelfile = self._lifecycle.config.app_data_dir / "Capture.Modelfile"
             modelfile_bytes = option.profile_spec_bytes
             if hashlib.sha256(modelfile_bytes).hexdigest() != option.profile_spec_sha256:
-                raise RuntimeError("Ollama profile specification digest is invalid")
+                raise ModelOptionRejectedError("Ollama profile specification digest is invalid")
             modelfile.write_bytes(modelfile_bytes)
             environment = self._lifecycle.process_environment()
             self._require_lease(f"http://{environment['OLLAMA_HOST']}")
@@ -264,11 +272,17 @@ class OllamaRequirementInstaller:
             digest = str(model.get("digest") or "").removeprefix("sha256:")
             size = model.get("size")
             if not re.fullmatch(r"[0-9a-f]{64}", digest) or not isinstance(size, int) or size <= 0:
-                raise RuntimeError("Ollama model verification returned invalid digest or size")
+                raise ModelOptionRejectedError(
+                    "Ollama model verification returned invalid digest or size"
+                )
             if option.expected_digest is not None and digest != option.expected_digest:
-                raise RuntimeError("Ollama model digest does not match the release catalog")
+                raise ModelOptionRejectedError(
+                    "Ollama model digest does not match the release catalog"
+                )
             if option.download_bytes is not None and size != option.download_bytes:
-                raise RuntimeError("Ollama model size does not match the release catalog")
+                raise ModelOptionRejectedError(
+                    "Ollama model size does not match the release catalog"
+                )
             return digest, size
         raise RuntimeError("Ollama did not report the selected model after pull")
 

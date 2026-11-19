@@ -25,6 +25,7 @@ import capture_runtime.contracts as contracts
 from capture_runtime import _contract_set_bundle as _bundle_support
 from capture_runtime.constants import RUNTIME_VERSION
 from capture_runtime.problem_registry import (
+    DEFAULT_FAILURE_CODE_REGISTRY,
     DEFAULT_PROBLEM_REGISTRY,
     ProblemDefinition,
     ProblemRegistry,
@@ -150,6 +151,7 @@ def load_contract_bundle(source: object) -> dict[str, Any]:
         "schemas",
         "operations",
         "problems",
+        "failureCodes",
         "invariants",
     }
     missing = required.difference(bundle)
@@ -159,7 +161,7 @@ def load_contract_bundle(source: object) -> dict[str, Any]:
         raise ContractSetError("unsupported contractSetVersion")
     if bundle.get("schemaDialect") != SCHEMA_DIALECT:
         raise ContractSetError("unsupported JSON Schema dialect")
-    for field in ("surfaces", "schemas", "operations", "problems", "invariants"):
+    for field in ("surfaces", "schemas", "operations", "problems", "failureCodes", "invariants"):
         if not isinstance(bundle[field], list):
             raise ContractSetError(f"contract bundle {field} must be an array")
     _validate_bundle_entries(bundle)
@@ -494,7 +496,7 @@ def _operation_definitions() -> list[dict[str, Any]]:
             "v2",
             "POST",
             f"{v2}/captures/{{capture_id}}/structure",
-            response_schema="CaptureResult",
+            response_schema="CaptureDocument",
             problems=_COMMON_PROBLEMS
             + (
                 "capture_not_found",
@@ -600,7 +602,7 @@ def _operation_definitions() -> list[dict[str, Any]]:
             "v2",
             "GET",
             f"{v2}/captures/{{capture_id}}/result",
-            response_schema="CaptureDocument",
+            response_schema="CaptureResult",
             problems=_COMMON_PROBLEMS + ("capture_not_found", "result_unavailable"),
         ),
         _operation(
@@ -681,6 +683,7 @@ def _operation_definitions() -> list[dict[str, Any]]:
                     "requirement_disabled",
                     "requirement_not_uninstallable",
                     "requirement_in_use",
+                    "uninstall_failed",
                 ),
             ),
             _operation(
@@ -719,9 +722,15 @@ def _operation_definitions() -> list[dict[str, Any]]:
 
 
 def _problem_definitions() -> list[dict[str, Any]]:
-    """Serialize the single centralized v2 problem catalog."""
+    """Serialize the HTTP problem catalog."""
 
     return DEFAULT_PROBLEM_REGISTRY.as_dicts()
+
+
+def _failure_code_definitions() -> list[dict[str, Any]]:
+    """Serialize the job failure code catalog."""
+
+    return DEFAULT_FAILURE_CODE_REGISTRY.as_dicts()
 
 
 def default_contract_bundle() -> dict[str, Any]:
@@ -743,6 +752,7 @@ def default_contract_bundle() -> dict[str, Any]:
         "schemas": schemas,
         "operations": _operation_definitions(),
         "problems": _problem_definitions(),
+        "failureCodes": _failure_code_definitions(),
         "invariants": invariants,
     }
 

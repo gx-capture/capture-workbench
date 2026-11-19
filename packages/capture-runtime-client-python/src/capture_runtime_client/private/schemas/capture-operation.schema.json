@@ -45,7 +45,6 @@
     },
     "CaptureStatus": {
       "enum": [
-        "created",
         "waiting_input",
         "extracting",
         "awaiting_structuring",
@@ -117,8 +116,7 @@
       "type": "string"
     },
     "kind": {
-      "$ref": "#/$defs/CaptureSourceKind",
-      "default": "recording"
+      "$ref": "#/$defs/CaptureSourceKind"
     },
     "status": {
       "$ref": "#/$defs/CaptureStatus"
@@ -248,6 +246,7 @@
   "required": [
     "captureId",
     "ingestionId",
+    "kind",
     "status",
     "partialRevision",
     "lastEventSequence",

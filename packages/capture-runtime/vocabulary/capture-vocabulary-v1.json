@@ -315,7 +315,7 @@
       "label": "匯入校驗中",
       "codeName": "IngestionStatus.FINALIZING",
       "enum": { "enumId": "IngestionStatus", "value": "finalizing" },
-      "retired": false
+      "retired": true
     },
     {
       "id": "capture.ingestion-status.ready",
@@ -343,14 +343,14 @@
       "label": "匯入已過期",
       "codeName": "IngestionStatus.EXPIRED",
       "enum": { "enumId": "IngestionStatus", "value": "expired" },
-      "retired": false
+      "retired": true
     },
     {
       "id": "capture.status.created",
       "label": "擷取已建立",
       "codeName": "CaptureStatus.CREATED",
       "enum": { "enumId": "CaptureStatus", "value": "created" },
-      "retired": false
+      "retired": true
     },
     {
       "id": "capture.status.waiting-input",
@@ -630,28 +630,28 @@
       "label": "問題代碼：direct_model_checksum",
       "codeName": "ProblemCode.direct_model_checksum",
       "enum": { "enumId": "ProblemCode", "value": "direct_model_checksum" },
-      "retired": false
+      "retired": true
     },
     {
       "id": "ProblemCode.direct_model_retries_exhausted",
       "label": "問題代碼：direct_model_retries_exhausted",
       "codeName": "ProblemCode.direct_model_retries_exhausted",
       "enum": { "enumId": "ProblemCode", "value": "direct_model_retries_exhausted" },
-      "retired": false
+      "retired": true
     },
     {
       "id": "ProblemCode.engine_probe_failed",
       "label": "問題代碼：engine_probe_failed",
       "codeName": "ProblemCode.engine_probe_failed",
       "enum": { "enumId": "ProblemCode", "value": "engine_probe_failed" },
-      "retired": false
+      "retired": true
     },
     {
       "id": "ProblemCode.extraction_runtime_unavailable",
       "label": "問題代碼：extraction_runtime_unavailable",
       "codeName": "ProblemCode.extraction_runtime_unavailable",
       "enum": { "enumId": "ProblemCode", "value": "extraction_runtime_unavailable" },
-      "retired": false
+      "retired": true
     },
     {
       "id": "ProblemCode.http_400",
@@ -721,14 +721,14 @@
       "label": "問題代碼：installation_cancelled",
       "codeName": "ProblemCode.installation_cancelled",
       "enum": { "enumId": "ProblemCode", "value": "installation_cancelled" },
-      "retired": false
+      "retired": true
     },
     {
       "id": "ProblemCode.installation_filesystem",
       "label": "問題代碼：installation_filesystem",
       "codeName": "ProblemCode.installation_filesystem",
       "enum": { "enumId": "ProblemCode", "value": "installation_filesystem" },
-      "retired": false
+      "retired": true
     },
     {
       "id": "ProblemCode.installation_not_found",
@@ -742,7 +742,7 @@
       "label": "問題代碼：installation_unexpected",
       "codeName": "ProblemCode.installation_unexpected",
       "enum": { "enumId": "ProblemCode", "value": "installation_unexpected" },
-      "retired": false
+      "retired": true
     },
     {
       "id": "ProblemCode.invalid_capture_state",
@@ -791,7 +791,7 @@
       "label": "問題代碼：manual_action_required",
       "codeName": "ProblemCode.manual_action_required",
       "enum": { "enumId": "ProblemCode", "value": "manual_action_required" },
-      "retired": false
+      "retired": true
     },
     {
       "id": "ProblemCode.model_option_unknown",
@@ -833,7 +833,7 @@
       "label": "問題代碼：progressive_no_text_at_sample",
       "codeName": "ProblemCode.progressive_no_text_at_sample",
       "enum": { "enumId": "ProblemCode", "value": "progressive_no_text_at_sample" },
-      "retired": false
+      "retired": true
     },
     {
       "id": "ProblemCode.raw_unavailable",
@@ -889,21 +889,21 @@
       "label": "問題代碼：runtime_restarted",
       "codeName": "ProblemCode.runtime_restarted",
       "enum": { "enumId": "ProblemCode", "value": "runtime_restarted" },
-      "retired": false
+      "retired": true
     },
     {
       "id": "ProblemCode.source_kind_mismatch",
       "label": "問題代碼：source_kind_mismatch",
       "codeName": "ProblemCode.source_kind_mismatch",
       "enum": { "enumId": "ProblemCode", "value": "source_kind_mismatch" },
-      "retired": false
+      "retired": true
     },
     {
       "id": "ProblemCode.streaming_source_unavailable",
       "label": "問題代碼：streaming_source_unavailable",
       "codeName": "ProblemCode.streaming_source_unavailable",
       "enum": { "enumId": "ProblemCode", "value": "streaming_source_unavailable" },
-      "retired": false
+      "retired": true
     },
     {
       "id": "ProblemCode.structuring_batch_digest_conflict",
@@ -952,7 +952,7 @@
       "label": "問題代碼：unsupported_media_type",
       "codeName": "ProblemCode.unsupported_media_type",
       "enum": { "enumId": "ProblemCode", "value": "unsupported_media_type" },
-      "retired": false
+      "retired": true
     },
     {
       "id": "ProblemCode.validation_error",
@@ -973,7 +973,7 @@
       "label": "模型選項狀態：installed",
       "codeName": "StructuringModelOptionStatus.installed",
       "enum": { "enumId": "StructuringModelOptionStatus", "value": "installed" },
-      "retired": false
+      "retired": true
     },
     {
       "id": "StructuringModelOptionStatus.not-installed",
@@ -1890,6 +1890,440 @@
       "label": "工作階段族群：Worker 啟動器失敗",
       "codeName": "WorkerStageFamily.worker-process-(?:timeout|exit-before-response|no-response|response-error|exit-nonzero)-bootloader",
       "enum": { "enumId": "WorkerStageFamily", "value": "worker-process-(?:timeout|exit-before-response|no-response|response-error|exit-nonzero)-bootloader" },
+      "retired": false
+    },
+    {
+      "id": "ProblemCode.uninstall_failed",
+      "label": "問題代碼：uninstall_failed",
+      "codeName": "ProblemCode.uninstall_failed",
+      "enum": { "enumId": "ProblemCode", "value": "uninstall_failed" },
+      "retired": false
+    },
+    {
+      "id": "FailureCode.capture_interrupted",
+      "label": "失敗代碼：capture_interrupted",
+      "codeName": "FailureCode.capture_interrupted",
+      "enum": { "enumId": "FailureCode", "value": "capture_interrupted" },
+      "retired": false
+    },
+    {
+      "id": "FailureCode.direct_model_checksum",
+      "label": "失敗代碼：direct_model_checksum",
+      "codeName": "FailureCode.direct_model_checksum",
+      "enum": { "enumId": "FailureCode", "value": "direct_model_checksum" },
+      "retired": false
+    },
+    {
+      "id": "FailureCode.direct_model_retries_exhausted",
+      "label": "失敗代碼：direct_model_retries_exhausted",
+      "codeName": "FailureCode.direct_model_retries_exhausted",
+      "enum": { "enumId": "FailureCode", "value": "direct_model_retries_exhausted" },
+      "retired": false
+    },
+    {
+      "id": "FailureCode.engine_probe_failed",
+      "label": "失敗代碼：engine_probe_failed",
+      "codeName": "FailureCode.engine_probe_failed",
+      "enum": { "enumId": "FailureCode", "value": "engine_probe_failed" },
+      "retired": false
+    },
+    {
+      "id": "FailureCode.extraction_failed",
+      "label": "失敗代碼：extraction_failed",
+      "codeName": "FailureCode.extraction_failed",
+      "enum": { "enumId": "FailureCode", "value": "extraction_failed" },
+      "retired": false
+    },
+    {
+      "id": "FailureCode.extraction_no_text",
+      "label": "失敗代碼：extraction_no_text",
+      "codeName": "FailureCode.extraction_no_text",
+      "enum": { "enumId": "FailureCode", "value": "extraction_no_text" },
+      "retired": false
+    },
+    {
+      "id": "FailureCode.extraction_output_invalid",
+      "label": "失敗代碼：extraction_output_invalid",
+      "codeName": "FailureCode.extraction_output_invalid",
+      "enum": { "enumId": "FailureCode", "value": "extraction_output_invalid" },
+      "retired": false
+    },
+    {
+      "id": "FailureCode.extraction_runtime_unavailable",
+      "label": "失敗代碼：extraction_runtime_unavailable",
+      "codeName": "FailureCode.extraction_runtime_unavailable",
+      "enum": { "enumId": "FailureCode", "value": "extraction_runtime_unavailable" },
+      "retired": false
+    },
+    {
+      "id": "FailureCode.ingestion_source_unavailable",
+      "label": "失敗代碼：ingestion_source_unavailable",
+      "codeName": "FailureCode.ingestion_source_unavailable",
+      "enum": { "enumId": "FailureCode", "value": "ingestion_source_unavailable" },
+      "retired": false
+    },
+    {
+      "id": "FailureCode.installation_cancelled",
+      "label": "失敗代碼：installation_cancelled",
+      "codeName": "FailureCode.installation_cancelled",
+      "enum": { "enumId": "FailureCode", "value": "installation_cancelled" },
+      "retired": false
+    },
+    {
+      "id": "FailureCode.installation_failed",
+      "label": "失敗代碼：installation_failed",
+      "codeName": "FailureCode.installation_failed",
+      "enum": { "enumId": "FailureCode", "value": "installation_failed" },
+      "retired": false
+    },
+    {
+      "id": "FailureCode.installation_io_failed",
+      "label": "失敗代碼：installation_io_failed",
+      "codeName": "FailureCode.installation_io_failed",
+      "enum": { "enumId": "FailureCode", "value": "installation_io_failed" },
+      "retired": false
+    },
+    {
+      "id": "FailureCode.installation_timeout",
+      "label": "失敗代碼：installation_timeout",
+      "codeName": "FailureCode.installation_timeout",
+      "enum": { "enumId": "FailureCode", "value": "installation_timeout" },
+      "retired": false
+    },
+    {
+      "id": "FailureCode.installation_unexpected",
+      "label": "失敗代碼：installation_unexpected",
+      "codeName": "FailureCode.installation_unexpected",
+      "enum": { "enumId": "FailureCode", "value": "installation_unexpected" },
+      "retired": false
+    },
+    {
+      "id": "FailureCode.invalid_pdf_page_selection",
+      "label": "失敗代碼：invalid_pdf_page_selection",
+      "codeName": "FailureCode.invalid_pdf_page_selection",
+      "enum": { "enumId": "FailureCode", "value": "invalid_pdf_page_selection" },
+      "retired": false
+    },
+    {
+      "id": "FailureCode.invalid_speaker_identification",
+      "label": "失敗代碼：invalid_speaker_identification",
+      "codeName": "FailureCode.invalid_speaker_identification",
+      "enum": { "enumId": "FailureCode", "value": "invalid_speaker_identification" },
+      "retired": false
+    },
+    {
+      "id": "FailureCode.invalid_spoken_language",
+      "label": "失敗代碼：invalid_spoken_language",
+      "codeName": "FailureCode.invalid_spoken_language",
+      "enum": { "enumId": "FailureCode", "value": "invalid_spoken_language" },
+      "retired": false
+    },
+    {
+      "id": "FailureCode.manual_action_required",
+      "label": "失敗代碼：manual_action_required",
+      "codeName": "FailureCode.manual_action_required",
+      "enum": { "enumId": "FailureCode", "value": "manual_action_required" },
+      "retired": false
+    },
+    {
+      "id": "FailureCode.ocr_no_text",
+      "label": "失敗代碼：ocr_no_text",
+      "codeName": "FailureCode.ocr_no_text",
+      "enum": { "enumId": "FailureCode", "value": "ocr_no_text" },
+      "retired": false
+    },
+    {
+      "id": "FailureCode.ocr_page_failed",
+      "label": "失敗代碼：ocr_page_failed",
+      "codeName": "FailureCode.ocr_page_failed",
+      "enum": { "enumId": "FailureCode", "value": "ocr_page_failed" },
+      "retired": false
+    },
+    {
+      "id": "FailureCode.ocr_runtime_unavailable",
+      "label": "失敗代碼：ocr_runtime_unavailable",
+      "codeName": "FailureCode.ocr_runtime_unavailable",
+      "enum": { "enumId": "FailureCode", "value": "ocr_runtime_unavailable" },
+      "retired": false
+    },
+    {
+      "id": "FailureCode.ocr_source_preflight_failed",
+      "label": "失敗代碼：ocr_source_preflight_failed",
+      "codeName": "FailureCode.ocr_source_preflight_failed",
+      "enum": { "enumId": "FailureCode", "value": "ocr_source_preflight_failed" },
+      "retired": false
+    },
+    {
+      "id": "FailureCode.ocr_worker_failed",
+      "label": "失敗代碼：ocr_worker_failed",
+      "codeName": "FailureCode.ocr_worker_failed",
+      "enum": { "enumId": "FailureCode", "value": "ocr_worker_failed" },
+      "retired": false
+    },
+    {
+      "id": "FailureCode.ocr_worker_protocol",
+      "label": "失敗代碼：ocr_worker_protocol",
+      "codeName": "FailureCode.ocr_worker_protocol",
+      "enum": { "enumId": "FailureCode", "value": "ocr_worker_protocol" },
+      "retired": false
+    },
+    {
+      "id": "FailureCode.ocr_worker_timeout",
+      "label": "失敗代碼：ocr_worker_timeout",
+      "codeName": "FailureCode.ocr_worker_timeout",
+      "enum": { "enumId": "FailureCode", "value": "ocr_worker_timeout" },
+      "retired": false
+    },
+    {
+      "id": "FailureCode.progressive_decode_failed",
+      "label": "失敗代碼：progressive_decode_failed",
+      "codeName": "FailureCode.progressive_decode_failed",
+      "enum": { "enumId": "FailureCode", "value": "progressive_decode_failed" },
+      "retired": false
+    },
+    {
+      "id": "FailureCode.progressive_decoder_init_failed",
+      "label": "失敗代碼：progressive_decoder_init_failed",
+      "codeName": "FailureCode.progressive_decoder_init_failed",
+      "enum": { "enumId": "FailureCode", "value": "progressive_decoder_init_failed" },
+      "retired": false
+    },
+    {
+      "id": "FailureCode.progressive_engine_resolution_failed",
+      "label": "失敗代碼：progressive_engine_resolution_failed",
+      "codeName": "FailureCode.progressive_engine_resolution_failed",
+      "enum": { "enumId": "FailureCode", "value": "progressive_engine_resolution_failed" },
+      "retired": false
+    },
+    {
+      "id": "FailureCode.progressive_event_persist_failed",
+      "label": "失敗代碼：progressive_event_persist_failed",
+      "codeName": "FailureCode.progressive_event_persist_failed",
+      "enum": { "enumId": "FailureCode", "value": "progressive_event_persist_failed" },
+      "retired": false
+    },
+    {
+      "id": "FailureCode.progressive_partial_invalid",
+      "label": "失敗代碼：progressive_partial_invalid",
+      "codeName": "FailureCode.progressive_partial_invalid",
+      "enum": { "enumId": "FailureCode", "value": "progressive_partial_invalid" },
+      "retired": false
+    },
+    {
+      "id": "FailureCode.progressive_session_failed",
+      "label": "失敗代碼：progressive_session_failed",
+      "codeName": "FailureCode.progressive_session_failed",
+      "enum": { "enumId": "FailureCode", "value": "progressive_session_failed" },
+      "retired": false
+    },
+    {
+      "id": "FailureCode.progressive_stall",
+      "label": "失敗代碼：progressive_stall",
+      "codeName": "FailureCode.progressive_stall",
+      "enum": { "enumId": "FailureCode", "value": "progressive_stall" },
+      "retired": false
+    },
+    {
+      "id": "FailureCode.progressive_worker_event_invalid",
+      "label": "失敗代碼：progressive_worker_event_invalid",
+      "codeName": "FailureCode.progressive_worker_event_invalid",
+      "enum": { "enumId": "FailureCode", "value": "progressive_worker_event_invalid" },
+      "retired": false
+    },
+    {
+      "id": "FailureCode.progressive_worker_exit",
+      "label": "失敗代碼：progressive_worker_exit",
+      "codeName": "FailureCode.progressive_worker_exit",
+      "enum": { "enumId": "FailureCode", "value": "progressive_worker_exit" },
+      "retired": false
+    },
+    {
+      "id": "FailureCode.progressive_worker_finish_failed",
+      "label": "失敗代碼：progressive_worker_finish_failed",
+      "codeName": "FailureCode.progressive_worker_finish_failed",
+      "enum": { "enumId": "FailureCode", "value": "progressive_worker_finish_failed" },
+      "retired": false
+    },
+    {
+      "id": "FailureCode.progressive_worker_frame_read_failed",
+      "label": "失敗代碼：progressive_worker_frame_read_failed",
+      "codeName": "FailureCode.progressive_worker_frame_read_failed",
+      "enum": { "enumId": "FailureCode", "value": "progressive_worker_frame_read_failed" },
+      "retired": false
+    },
+    {
+      "id": "FailureCode.progressive_worker_input_failed",
+      "label": "失敗代碼：progressive_worker_input_failed",
+      "codeName": "FailureCode.progressive_worker_input_failed",
+      "enum": { "enumId": "FailureCode", "value": "progressive_worker_input_failed" },
+      "retired": false
+    },
+    {
+      "id": "FailureCode.progressive_worker_start_failed",
+      "label": "失敗代碼：progressive_worker_start_failed",
+      "codeName": "FailureCode.progressive_worker_start_failed",
+      "enum": { "enumId": "FailureCode", "value": "progressive_worker_start_failed" },
+      "retired": false
+    },
+    {
+      "id": "FailureCode.requirement_unavailable",
+      "label": "失敗代碼：requirement_unavailable",
+      "codeName": "FailureCode.requirement_unavailable",
+      "enum": { "enumId": "FailureCode", "value": "requirement_unavailable" },
+      "retired": false
+    },
+    {
+      "id": "FailureCode.runtime_restarted",
+      "label": "失敗代碼：runtime_restarted",
+      "codeName": "FailureCode.runtime_restarted",
+      "enum": { "enumId": "FailureCode", "value": "runtime_restarted" },
+      "retired": false
+    },
+    {
+      "id": "FailureCode.session_backpressure",
+      "label": "失敗代碼：session_backpressure",
+      "codeName": "FailureCode.session_backpressure",
+      "enum": { "enumId": "FailureCode", "value": "session_backpressure" },
+      "retired": false
+    },
+    {
+      "id": "FailureCode.session_cancelled",
+      "label": "失敗代碼：session_cancelled",
+      "codeName": "FailureCode.session_cancelled",
+      "enum": { "enumId": "FailureCode", "value": "session_cancelled" },
+      "retired": false
+    },
+    {
+      "id": "FailureCode.session_closed",
+      "label": "失敗代碼：session_closed",
+      "codeName": "FailureCode.session_closed",
+      "enum": { "enumId": "FailureCode", "value": "session_closed" },
+      "retired": false
+    },
+    {
+      "id": "FailureCode.session_conflict",
+      "label": "失敗代碼：session_conflict",
+      "codeName": "FailureCode.session_conflict",
+      "enum": { "enumId": "FailureCode", "value": "session_conflict" },
+      "retired": false
+    },
+    {
+      "id": "FailureCode.session_credit_invalid",
+      "label": "失敗代碼：session_credit_invalid",
+      "codeName": "FailureCode.session_credit_invalid",
+      "enum": { "enumId": "FailureCode", "value": "session_credit_invalid" },
+      "retired": false
+    },
+    {
+      "id": "FailureCode.session_credit_required",
+      "label": "失敗代碼：session_credit_required",
+      "codeName": "FailureCode.session_credit_required",
+      "enum": { "enumId": "FailureCode", "value": "session_credit_required" },
+      "retired": false
+    },
+    {
+      "id": "FailureCode.session_failed",
+      "label": "失敗代碼：session_failed",
+      "codeName": "FailureCode.session_failed",
+      "enum": { "enumId": "FailureCode", "value": "session_failed" },
+      "retired": false
+    },
+    {
+      "id": "FailureCode.session_frame_invalid",
+      "label": "失敗代碼：session_frame_invalid",
+      "codeName": "FailureCode.session_frame_invalid",
+      "enum": { "enumId": "FailureCode", "value": "session_frame_invalid" },
+      "retired": false
+    },
+    {
+      "id": "FailureCode.session_frame_too_large",
+      "label": "失敗代碼：session_frame_too_large",
+      "codeName": "FailureCode.session_frame_too_large",
+      "enum": { "enumId": "FailureCode", "value": "session_frame_too_large" },
+      "retired": false
+    },
+    {
+      "id": "FailureCode.session_input_invalid",
+      "label": "失敗代碼：session_input_invalid",
+      "codeName": "FailureCode.session_input_invalid",
+      "enum": { "enumId": "FailureCode", "value": "session_input_invalid" },
+      "retired": false
+    },
+    {
+      "id": "FailureCode.session_json_invalid",
+      "label": "失敗代碼：session_json_invalid",
+      "codeName": "FailureCode.session_json_invalid",
+      "enum": { "enumId": "FailureCode", "value": "session_json_invalid" },
+      "retired": false
+    },
+    {
+      "id": "FailureCode.session_not_started",
+      "label": "失敗代碼：session_not_started",
+      "codeName": "FailureCode.session_not_started",
+      "enum": { "enumId": "FailureCode", "value": "session_not_started" },
+      "retired": false
+    },
+    {
+      "id": "FailureCode.session_start_invalid",
+      "label": "失敗代碼：session_start_invalid",
+      "codeName": "FailureCode.session_start_invalid",
+      "enum": { "enumId": "FailureCode", "value": "session_start_invalid" },
+      "retired": false
+    },
+    {
+      "id": "FailureCode.source_kind_mismatch",
+      "label": "失敗代碼：source_kind_mismatch",
+      "codeName": "FailureCode.source_kind_mismatch",
+      "enum": { "enumId": "FailureCode", "value": "source_kind_mismatch" },
+      "retired": false
+    },
+    {
+      "id": "FailureCode.speaker_identification_worker_failed",
+      "label": "失敗代碼：speaker_identification_worker_failed",
+      "codeName": "FailureCode.speaker_identification_worker_failed",
+      "enum": { "enumId": "FailureCode", "value": "speaker_identification_worker_failed" },
+      "retired": false
+    },
+    {
+      "id": "FailureCode.speech_recognition_worker_failed",
+      "label": "失敗代碼：speech_recognition_worker_failed",
+      "codeName": "FailureCode.speech_recognition_worker_failed",
+      "enum": { "enumId": "FailureCode", "value": "speech_recognition_worker_failed" },
+      "retired": false
+    },
+    {
+      "id": "FailureCode.structuring_failed",
+      "label": "失敗代碼：structuring_failed",
+      "codeName": "FailureCode.structuring_failed",
+      "enum": { "enumId": "FailureCode", "value": "structuring_failed" },
+      "retired": false
+    },
+    {
+      "id": "FailureCode.structuring_invalid_output",
+      "label": "失敗代碼：structuring_invalid_output",
+      "codeName": "FailureCode.structuring_invalid_output",
+      "enum": { "enumId": "FailureCode", "value": "structuring_invalid_output" },
+      "retired": false
+    },
+    {
+      "id": "FailureCode.unsupported_media_type",
+      "label": "失敗代碼：unsupported_media_type",
+      "codeName": "FailureCode.unsupported_media_type",
+      "enum": { "enumId": "FailureCode", "value": "unsupported_media_type" },
+      "retired": false
+    },
+    {
+      "id": "FailureCode.worker_archive_integrity",
+      "label": "失敗代碼：worker_archive_integrity",
+      "codeName": "FailureCode.worker_archive_integrity",
+      "enum": { "enumId": "FailureCode", "value": "worker_archive_integrity" },
+      "retired": false
+    },
+    {
+      "id": "FailureCode.worker_failed",
+      "label": "失敗代碼：worker_failed",
+      "codeName": "FailureCode.worker_failed",
+      "enum": { "enumId": "FailureCode", "value": "worker_failed" },
       "retired": false
     }
   ]

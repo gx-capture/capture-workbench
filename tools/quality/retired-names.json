@@ -1634,7 +1634,7 @@
   {
     "name": "structureStreamingCapture",
     "match": "word",
-    "replacement": "structureCapture",
+    "replacement": "deleted",
     "allowed": []
   },
   {
@@ -1796,7 +1796,7 @@
   {
     "name": "runtime_structure_streaming_capture",
     "match": "word",
-    "replacement": "runtime_structure_capture",
+    "replacement": "deleted",
     "allowed": []
   },
   {
@@ -1821,6 +1821,136 @@
     "name": "RuntimeStreamingEventsInput",
     "match": "word",
     "replacement": "RuntimeCaptureEventsInput",
+    "allowed": []
+  },
+  {
+    "name": "progressive_failed",
+    "match": "word",
+    "replacement": "extraction_failed",
+    "allowed": [
+      {
+        "glob": "packages/capture-runtime/src/capture_runtime/storage/common.py",
+        "reason": "Reads failure codes stored by 0.10.x runtimes under their current names."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_contract_set.py",
+        "reason": "Proves the retired code is in neither published catalogue."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/unit/test_streaming_repository.py",
+        "reason": "Fixture of a capture failure stored by 0.10.x."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_streaming_api.py",
+        "reason": "Fixtures of failures stored by 0.10.x."
+      }
+    ]
+  },
+  {
+    "name": "progressive_interrupted",
+    "match": "word",
+    "replacement": "capture_interrupted",
+    "allowed": [
+      {
+        "glob": "packages/capture-runtime/src/capture_runtime/storage/common.py",
+        "reason": "Reads failure codes stored by 0.10.x runtimes under their current names."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_contract_set.py",
+        "reason": "Proves the retired code is in neither published catalogue."
+      }
+    ]
+  },
+  {
+    "name": "progressive_output_invalid",
+    "match": "word",
+    "replacement": "extraction_output_invalid",
+    "allowed": [
+      {
+        "glob": "packages/capture-runtime/src/capture_runtime/storage/common.py",
+        "reason": "Reads failure codes stored by 0.10.x runtimes under their current names."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_contract_set.py",
+        "reason": "Proves the retired code is in neither published catalogue."
+      }
+    ]
+  },
+  {
+    "name": "progressive_no_text_at_sample",
+    "match": "word",
+    "replacement": "extraction_no_text",
+    "allowed": [
+      {
+        "glob": "packages/capture-runtime/src/capture_runtime/storage/common.py",
+        "reason": "Reads failure codes stored by 0.10.x runtimes under their current names."
+      },
+      {
+        "glob": "packages/capture-runtime/vocabulary/capture-vocabulary-v1.json",
+        "reason": "Keeps the retired problem-code concept; concepts are retired, never deleted."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_contract_set.py",
+        "reason": "Proves the retired code is in neither published catalogue."
+      }
+    ]
+  },
+  {
+    "name": "streaming_source_unavailable",
+    "match": "word",
+    "replacement": "ingestion_source_unavailable",
+    "allowed": [
+      {
+        "glob": "packages/capture-runtime/src/capture_runtime/storage/common.py",
+        "reason": "Reads failure codes stored by 0.10.x runtimes under their current names."
+      },
+      {
+        "glob": "packages/capture-runtime/vocabulary/capture-vocabulary-v1.json",
+        "reason": "Keeps the retired problem-code concept; concepts are retired, never deleted."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_contract_set.py",
+        "reason": "Proves the retired code is in neither published catalogue."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_streaming_api.py",
+        "reason": "Fixtures of failures stored by 0.10.x."
+      }
+    ]
+  },
+  {
+    "name": "installation_filesystem",
+    "match": "word",
+    "replacement": "installation_timeout or installation_io_failed",
+    "allowed": [
+      {
+        "glob": "packages/capture-runtime/src/capture_runtime/storage/common.py",
+        "reason": "Reads failure codes stored by 0.10.x runtimes under their current names."
+      },
+      {
+        "glob": "packages/capture-runtime/vocabulary/capture-vocabulary-v1.json",
+        "reason": "Keeps the retired problem-code concept; concepts are retired, never deleted."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_contract_set.py",
+        "reason": "Proves the retired code is in neither published catalogue."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_installation_service.py",
+        "reason": "Fixture of an installation failure stored by 0.10.x."
+      }
+    ]
+  },
+  {
+    "name": "structureCapture",
+    "match": "word",
+    "replacement": "deleted",
+    "allowed": []
+  },
+  {
+    "name": "runtime_structure_capture",
+    "match": "word",
+    "replacement": "deleted",
     "allowed": []
   }
 ]

@@ -38,6 +38,7 @@ NOW = datetime(2026, 1, 1, tzinfo=UTC)
 
 def _request() -> OpenIngestion:
     return OpenIngestion(
+        kind="recording",
         client_request_id="stream-request-1",
         file_name=SOURCE.file_name,
         media_type=SOURCE.media_type,
@@ -69,6 +70,7 @@ def test_v2_contracts_use_camel_case_and_preserve_sealed_segment_projection() ->
         updated_at=NOW,
     )
     event = CaptureEvent(
+        kind="recording",
         event_id="capture-1/1",
         sequence=1,
         capture_id="capture-1",

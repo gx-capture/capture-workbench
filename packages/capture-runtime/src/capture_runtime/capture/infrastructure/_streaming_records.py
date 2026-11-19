@@ -16,7 +16,11 @@ from capture_runtime.contracts import (
     StartCapture,
 )
 from capture_runtime.contracts import Ingestion as IngestionContract
-from capture_runtime.storage.common import project_stored_capture_kind
+from capture_runtime.storage.common import (
+    RETIRED_FAILURE_CODES,
+    project_stored_capture_kind,
+    project_stored_failure_field,
+)
 
 
 def _stored_kind(payload: dict[str, Any]) -> str | None:
@@ -31,6 +35,25 @@ def _preserve_stored_kind(payload: dict[str, Any], kind: str | None) -> dict[str
         payload.pop("kind", None)
     elif kind:
         payload["kind"] = kind
+    return payload
+
+
+def _stored_failure_code(payload: dict[str, Any]) -> str | None:
+    """A retired failure code as stored, kept so a rewrite leaves it as it was."""
+    error = payload.get("error")
+    if isinstance(error, dict) and error.get("code") in RETIRED_FAILURE_CODES:
+        return str(error["code"])
+    return None
+
+
+def _preserve_stored_failure_code(payload: dict[str, Any], code: str | None) -> dict[str, Any]:
+    error = payload.get("error")
+    if (
+        code is not None
+        and isinstance(error, dict)
+        and error.get("code") == RETIRED_FAILURE_CODES[code]
+    ):
+        payload["error"] = {**error, "code": code}
     return payload
 
 
@@ -127,12 +150,17 @@ class _CaptureRecord:
     failure_fingerprint: str | None = None
     # An empty value writes the current kind. None preserves an omitted kind.
     stored_kind: str | None = ""
+    # A failure code a 0.10.x runtime stored, read under its current name.
+    stored_failure_code: str | None = None
 
     def dump(self) -> dict[str, object]:
         return {
             "request": self.request.model_dump(mode="json", by_alias=True),
-            "operation": _preserve_stored_kind(
-                self.operation.model_dump(mode="json", by_alias=True), self.stored_kind
+            "operation": _preserve_stored_failure_code(
+                _preserve_stored_kind(
+                    self.operation.model_dump(mode="json", by_alias=True), self.stored_kind
+                ),
+                self.stored_failure_code,
             ),
             "commitIdempotencyKey": self.commit_idempotency_key,
             "commitFingerprint": self.commit_fingerprint,
@@ -156,10 +184,17 @@ class _CaptureRecord:
                 kind = kind_for_ingestion(ingestion_id)
                 if kind is not None:
                     projected_operation = {**operation_payload, "kind": kind.value}
-        operation = CaptureOperation.model_validate(projected_operation)
+        operation = CaptureOperation.model_validate(
+            project_stored_failure_field(projected_operation, "error")
+        )
         return cls(
             operation=operation,
             stored_kind=_stored_kind(operation_payload),
+            stored_failure_code=(
+                _stored_failure_code(operation_payload)
+                if isinstance(operation_payload, dict)
+                else None
+            ),
             request=request,
             commit_idempotency_key=payload.get("commitIdempotencyKey"),
             commit_fingerprint=payload.get("commitFingerprint"),

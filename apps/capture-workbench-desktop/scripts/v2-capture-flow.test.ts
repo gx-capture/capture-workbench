@@ -30,7 +30,6 @@ test('isTerminalCaptureStatus distinguishes every v2 terminal and non-terminal s
     assert.equal(isTerminalCaptureStatus(terminal), true, `expected ${terminal} to be terminal`);
   }
   for (const nonTerminal of [
-    'created',
     'waiting_input',
     'extracting',
     'awaiting_structuring',
@@ -114,7 +113,7 @@ test('startV2Capture executes open, chunked PUTs, finalize, and capture start in
         return { ingestionId: 'ing-42', status: 'ready' } as T;
       }
       if (path === '/v2/captures') {
-        return { captureId: 'cap-99', status: 'created' } as T;
+        return { captureId: 'cap-99', status: 'extracting' } as T;
       }
       return undefined as T;
     },
@@ -126,7 +125,7 @@ test('startV2Capture executes open, chunked PUTs, finalize, and capture start in
     chunkBytes: 10,
   });
 
-  assert.deepEqual(operation, { captureId: 'cap-99', status: 'created' });
+  assert.deepEqual(operation, { captureId: 'cap-99', status: 'extracting' });
   assert.deepEqual(
     calls.map((call) => `${call.method ?? 'GET'} ${call.path}`),
     [

@@ -3,7 +3,6 @@
     "StructuringModelOptionStatus": {
       "enum": [
         "not-installed",
-        "installed",
         "active"
       ],
       "title": "StructuringModelOptionStatus",

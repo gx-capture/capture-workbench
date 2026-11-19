@@ -197,5 +197,5 @@ def test_progressive_session_fails_audio_without_speech_once_it_is_all_heard() -
 
     assert events[-1].event_type is CaptureEventType.FAILED
     assert events[-1].error is not None
-    assert events[-1].error.code == "progressive_no_text_at_sample"
+    assert events[-1].error.code == "extraction_no_text"
     assert events[-1].error.retryable is False

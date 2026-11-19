@@ -402,9 +402,13 @@ class CaptureRuntimeClient:
         capture_id: str,
         request: OpenStructuringSession | Mapping[str, Any],
         *,
-        idempotency_key: UUID | str | None = None,
+        idempotency_key: UUID | str,
     ) -> StructuringSession:
-        """Open a pull-based structuring session with a matching idempotency key."""
+        """Open a pull-based structuring session for the route's capture.
+
+        The idempotency key identifies the request: repeating it with the same
+        body returns the same session.
+        """
         try:
             payload = (
                 request
@@ -415,14 +419,10 @@ class CaptureRuntimeClient:
             raise CaptureRuntimeProtocolError(
                 "Structuring session request is invalid.", error.errors(include_url=False)
             ) from error
-        if payload.capture_id != capture_id:
+        key = str(idempotency_key)
+        if not key:
             raise CaptureRuntimeProtocolError(
-                "Structuring session captureId must match the route capture."
-            )
-        key = payload.client_request_id if idempotency_key is None else str(idempotency_key)
-        if not key or key != payload.client_request_id:
-            raise CaptureRuntimeProtocolError(
-                "X-Idempotency-Key must match structuring session clientRequestId."
+                "Opening a structuring session needs an X-Idempotency-Key."
             )
         return decode_model(
             self._request(

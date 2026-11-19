@@ -44,7 +44,6 @@ test('isTerminalCaptureStatus distinguishes every v2 terminal and non-terminal s
     assert.equal(isTerminalCaptureStatus(terminal), true, `expected ${terminal} to be terminal`);
   }
   for (const nonTerminal of [
-    'created',
     'waiting_input',
     'extracting',
     'awaiting_structuring',

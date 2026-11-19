@@ -26,8 +26,7 @@
       "type": "string"
     },
     "kind": {
-      "$ref": "#/$defs/CaptureSourceKind",
-      "default": "recording"
+      "$ref": "#/$defs/CaptureSourceKind"
     },
     "mode": {
       "$ref": "#/$defs/IngestionMode",
@@ -69,6 +68,7 @@
     }
   },
   "required": [
+    "kind",
     "clientRequestId",
     "fileName",
     "mediaType",

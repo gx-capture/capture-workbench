@@ -3012,7 +3012,7 @@ async function waitForOcrInstallOnEnginesPage(
         const errorCode = installation?.errorCode && safeDesktopDocumentErrorCodePattern.test(installation.errorCode)
           ? installation.errorCode
           : 'unknown';
-        if (status === 'failed' && errorCode === 'installation_filesystem' && filesystemRetryCount < 1) {
+        if (status === 'failed' && errorCode === 'installation_io_failed' && filesystemRetryCount < 1) {
           filesystemRetryCount += 1;
           const retry = ocrRow.getByTestId('engine-row-retry');
           await waitUntil(

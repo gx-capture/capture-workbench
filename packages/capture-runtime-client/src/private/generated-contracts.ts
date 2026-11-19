@@ -16,13 +16,13 @@ export type CaptureEventType = "accepted" | "input_checkpoint" | "heartbeat" | "
 export type CaptureSourceKind = "pdf" | "image" | "recording";
 
 /** Wire enum. */
-export type CaptureStatus = "created" | "waiting_input" | "extracting" | "awaiting_structuring" | "structuring" | "completed" | "failed" | "cancelled";
+export type CaptureStatus = "waiting_input" | "extracting" | "awaiting_structuring" | "structuring" | "completed" | "failed" | "cancelled";
 
 /** Wire enum. */
 export type IngestionMode = "file";
 
 /** Wire enum. */
-export type IngestionStatus = "open" | "finalizing" | "ready" | "cancelled" | "failed" | "expired";
+export type IngestionStatus = "open" | "ready" | "cancelled" | "failed";
 
 /** Wire enum. */
 export type OcrAdapterClass = "dedicated" | "integrated" | "unknown";
@@ -61,7 +61,7 @@ export type StructuringBatchStatus = "ready" | "accepted" | "failed";
 export type StructuringMode = "runtime" | "host";
 
 /** Wire enum. */
-export type StructuringModelOptionStatus = "not-installed" | "installed" | "active";
+export type StructuringModelOptionStatus = "not-installed" | "active";
 
 /** Wire enum. */
 export type StructuringSessionStatus = "open" | "completed" | "failed" | "cancelled";
@@ -111,7 +111,7 @@ export interface CaptureEvent {
   readonly eventId: string;
   readonly sequence: number;
   readonly captureId: string;
-  readonly kind?: CaptureSourceKind;
+  readonly kind: CaptureSourceKind;
   readonly eventType: CaptureEventType;
   readonly stage: string;
   readonly progress?: number | null;
@@ -145,7 +145,7 @@ export interface CaptureOperation {
   readonly protocolVersion: "2";
   readonly captureId: string;
   readonly ingestionId: string;
-  readonly kind?: CaptureSourceKind;
+  readonly kind: CaptureSourceKind;
   readonly status: CaptureStatus;
   readonly progress?: number | null;
   readonly partialRevision: number;
@@ -198,7 +198,7 @@ export interface FinalizeIngestion {
 
 export interface Ingestion {
   readonly protocolVersion: "2";
-  readonly kind?: CaptureSourceKind;
+  readonly kind: CaptureSourceKind;
   readonly ingestionId: string;
   readonly status: IngestionStatus;
   readonly fileName: string;
@@ -284,7 +284,7 @@ export interface OcrRaster {
 
 export interface OpenIngestion {
   readonly protocolVersion: "2";
-  readonly kind?: CaptureSourceKind;
+  readonly kind: CaptureSourceKind;
   readonly mode?: IngestionMode;
   readonly clientRequestId: string;
   readonly fileName: string;
@@ -295,11 +295,10 @@ export interface OpenIngestion {
 
 export interface OpenStructuringSession {
   readonly protocolVersion: "2";
-  readonly captureId: string;
   readonly targetLanguage?: string | null;
+  readonly profileId: string;
   readonly providerCapability: StructuringProviderCapability;
   readonly schemaDialect: string;
-  readonly clientRequestId: string;
 }
 
 export interface OperationFailure {
@@ -320,7 +319,7 @@ export interface PartialCapture {
   readonly captureId: string;
   readonly source: CaptureSource;
   readonly revision: number;
-  readonly coveredUntilMs: number;
+  readonly coveredUntilMs?: number | null;
   readonly segments?: readonly (RawCaptureSegment)[];
   readonly sourceText?: string;
   readonly extractionEngine?: CaptureEngine | null;
@@ -438,7 +437,7 @@ export interface StartCapture {
 }
 
 export interface StartRuntimeInstallation {
-  readonly requirementId: "text-recognition" | "speech-recognition" | "speaker-diarization" | "vertical-japanese-reader" | "structuring-runtime" | "structuring-model";
+  readonly requirementId: "text-recognition" | "speech-recognition" | "speaker-diarization" | "vertical-japanese-reader" | "structuring-runtime";
   readonly consent: true;
 }
 
@@ -495,7 +494,6 @@ export interface StructuringModelOptions {
 
 export interface StructuringProviderCapability {
   readonly provider: CaptureEngine;
-  readonly capability: string;
   readonly schemaDialect: string;
 }
 

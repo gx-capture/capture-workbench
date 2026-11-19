@@ -674,12 +674,12 @@ fn command_list_cannot_drift() {
     );
     // Commands registered with Tauri that the dev host intentionally does not serve.
     assert_eq!(COMMAND_GROUPS.not_served, &["desktop_close_window"]);
-    // Default Tauri command count: 34 shared + 2 replaced + 1 not served = 37.
+    // Default Tauri command count: 33 shared + 2 replaced + 1 not served = 36.
     assert_eq!(
         COMMAND_GROUPS.served.len()
             + COMMAND_GROUPS.replaced.len()
             + COMMAND_GROUPS.not_served.len(),
-        37
+        36
     );
 
     let mut seen = HashSet::new();

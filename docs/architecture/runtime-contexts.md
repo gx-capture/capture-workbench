@@ -81,6 +81,7 @@ flowchart LR
   n_capture_runtime_capture --> n_capture_runtime_worker_client
   n_capture_runtime_capture --> n_capture_runtime_worker_probe
   n_capture_runtime_capture --> n_capture_runtime_worker_process
+  n_capture_runtime_capture --> n_capture_runtime_worker_stage_policy
   n_capture_runtime_config --> n_capture_runtime_constants
   n_capture_runtime_contract_set --> n_capture_runtime_contract_set_bundle
   n_capture_runtime_contract_set --> n_capture_runtime_constants

@@ -14,6 +14,13 @@ class ManualActionRequiredError(RuntimeError):
     pass
 
 
+class ModelOptionRejectedError(RuntimeError):
+    """The release catalogue, the option or the pulled model does not verify.
+
+    The same inputs fail the same way, so the installation is not retryable.
+    """
+
+
 class RequirementInstaller(Protocol):
     def requirements(
         self,

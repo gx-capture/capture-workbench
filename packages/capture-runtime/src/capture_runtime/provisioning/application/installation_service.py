@@ -46,8 +46,11 @@ def installation_failure_code(error: BaseException) -> str:
 
     if isinstance(error, WorkerExecutionError):
         return "engine_probe_failed"
-    if isinstance(error, (TimeoutError, OSError)):
-        return "installation_filesystem"
+    # TimeoutError is an OSError, so it is told apart first.
+    if isinstance(error, TimeoutError):
+        return "installation_timeout"
+    if isinstance(error, OSError):
+        return "installation_io_failed"
     if not isinstance(error, EngineInstallationError):
         return "installation_unexpected"
     message = str(error).casefold()
@@ -292,7 +295,7 @@ class InstallationService:
             self._fail(
                 installation_id,
                 status=RuntimeInstallationStatus.FAILED,
-                code="installation_filesystem",
+                code=installation_failure_code(error),
                 message=f"Runtime requirement installation failed{detail}.",
                 retryable=True,
             )

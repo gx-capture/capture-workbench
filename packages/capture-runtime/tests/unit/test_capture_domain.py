@@ -92,7 +92,7 @@ def test_capture_operation_invariants() -> None:
         capture_id="cap-1",
         ingestion_id="ing-1",
         kind=CaptureSourceKind.IMAGE,
-        status=CaptureStatus.CREATED,
+        status=CaptureStatus.WAITING_INPUT,
         progress=0.5,
         partial_revision=1,
         last_event_sequence=2,
@@ -186,6 +186,7 @@ def test_capture_use_cases_run_upload_schedule_replay_and_cancel(tmp_path, monke
     digest = hashlib.sha256(content).hexdigest()
     ingestion = service.open_ingestion_use_case.execute(
         OpenIngestion(
+            kind="recording",
             client_request_id="upload",
             file_name="test.wav",
             media_type="audio/wav",

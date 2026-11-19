@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 from collections.abc import Coroutine
 from contextlib import suppress
 from pathlib import Path
@@ -28,6 +29,7 @@ from capture_runtime.capture.infrastructure.capture_extraction import (
     OcrExtractionFailure,
     OcrSourcePreflightError,
     PdfPageSelectionError,
+    RecordingWorkerFailure,
 )
 from capture_runtime.capture.infrastructure.source_sniffing import (
     SNIFF_BYTES,
@@ -90,6 +92,9 @@ from capture_runtime.structuring.infrastructure.structuring_provider import (
     CaptureStructuringProvider,
 )
 from capture_runtime.worker_process import complete_worker_cleanup
+from capture_runtime.worker_stage_policy import sanitize_worker_stage
+
+_LOGGER = logging.getLogger(__name__)
 
 MAX_EVENT_SEGMENTS = 1_000
 # Advertised in the readiness capabilities: the event stream sends a heartbeat
@@ -107,6 +112,11 @@ _SESSION_END_EVENTS = frozenset(
 
 
 _CAPTURE_CANCELLED = "The capture was cancelled."
+_EXTRACTION_FAILED = "Capture extraction failed."
+_RECORDING_WORKER_FAILED = {
+    "speech_recognition_worker_failed": "The speech recognition worker failed.",
+    "speaker_identification_worker_failed": "The speaker identification worker failed.",
+}
 
 
 class StructuringProviderUnavailableError(RuntimeUnavailableError):
@@ -228,6 +238,10 @@ class StreamingCaptureService:
         return self.repository.read_raw(capture_id)
 
     def ocr(self, capture_id: str) -> CaptureOcrProjection:
+        # A recording has no OCR projection. One a 0.10.x runtime wrote for a
+        # failed recording stays on disk and is not served.
+        if self.repository.get_capture(capture_id).kind is CaptureSourceKind.RECORDING:
+            raise StreamingPartialNotFoundError(capture_id)
         try:
             return self.repository.read_ocr_projection(capture_id)
         except StreamingPartialNotFoundError:
@@ -541,10 +555,11 @@ class StreamingCaptureService:
                     cancellation,
                 )
             else:
+                # No extractor for this kind is configured, so a retry fails too.
                 raise CaptureProcessingError(
                     "The selected capture kind is unavailable in this runtime.",
-                    code="requirement_unavailable",
-                    retryable=True,
+                    code="extraction_runtime_unavailable",
+                    retryable=False,
                 )
             raw = extraction.raw
             self.repository.write_raw(capture_id, raw)
@@ -574,8 +589,8 @@ class StreamingCaptureService:
             if not cancellation.is_set() and not self._shutting_down:
                 self._fail(
                     capture_id,
-                    "progressive_interrupted",
-                    "Progressive capture was interrupted.",
+                    "capture_interrupted",
+                    "The capture was interrupted.",
                 )
         except CaptureProcessingError as error:
             self._fail(
@@ -603,6 +618,27 @@ class StreamingCaptureService:
                 stage="extraction",
                 retryable=False,
             )
+        except RecordingWorkerFailure as error:
+            diagnostics = error.diagnostics
+            # Allowlisted names only: never paths, source text or tokens.
+            _LOGGER.warning(
+                "Recording worker failed: code=%s class=%s cause=%s stages=%s",
+                error.code,
+                diagnostics.failure_class,
+                type(error.__cause__).__name__,
+                ">".join(
+                    stage
+                    for stage in diagnostics.stage_sequence
+                    if sanitize_worker_stage(stage) is not None
+                ),
+            )
+            self._fail(
+                capture_id,
+                error.code,
+                _RECORDING_WORKER_FAILED[error.code],
+                stage="extraction",
+                retryable=False,
+            )
         except PdfPageSelectionError as error:
             # The source and the page limit decide this, so a retry fails the same way.
             self._fail(
@@ -615,11 +651,11 @@ class StreamingCaptureService:
         except StructuringValidationError:
             self._fail(
                 capture_id,
-                "structuring_invalid_output" if raw_written else "progressive_failed",
+                "structuring_invalid_output" if raw_written else "extraction_failed",
                 (
                     "Structuring output failed strict schema or provenance validation."
                     if raw_written
-                    else "Progressive audio processing failed."
+                    else _EXTRACTION_FAILED
                 ),
                 stage="structuring" if raw_written else "extraction",
             )
@@ -649,11 +685,11 @@ class StreamingCaptureService:
         except ValidationError:
             self._fail(
                 capture_id,
-                "structuring_invalid_output" if raw_written else "progressive_output_invalid",
+                "structuring_invalid_output" if raw_written else "extraction_output_invalid",
                 (
                     "Structuring output failed strict schema or provenance validation."
                     if raw_written
-                    else "Progressive audio output failed strict schema validation."
+                    else "Extraction output failed strict schema validation."
                 ),
                 stage="structuring" if raw_written else "extraction",
             )
@@ -667,19 +703,20 @@ class StreamingCaptureService:
         except StreamingTransitionError as error:
             self._fail(
                 capture_id,
-                "structuring_failed" if raw_written else "progressive_failed",
+                "structuring_failed" if raw_written else "extraction_failed",
                 _safe_failure_message(error),
                 stage="structuring" if raw_written else "extraction",
             )
-        except Exception:
+        except Exception as error:
+            _LOGGER.warning(
+                "Capture %s failed: class=%s",
+                "structuring" if raw_written else "extraction",
+                type(error).__name__,
+            )
             self._fail(
                 capture_id,
-                "structuring_failed" if raw_written else "progressive_failed",
-                (
-                    "Capture structuring failed."
-                    if raw_written
-                    else "Progressive audio processing failed."
-                ),
+                "structuring_failed" if raw_written else "extraction_failed",
+                "Capture structuring failed." if raw_written else _EXTRACTION_FAILED,
                 stage="structuring" if raw_written else "extraction",
             )
 
@@ -719,8 +756,8 @@ class StreamingCaptureService:
             ) from error
         except OSError as error:
             raise CaptureProcessingError(
-                "Streaming source content could not be opened.",
-                code="streaming_source_unavailable",
+                "Ingested source content could not be opened.",
+                code="ingestion_source_unavailable",
             ) from error
         if sniffed.kind is not declared_kind:
             raise CaptureProcessingError(
@@ -805,14 +842,20 @@ class StreamingCaptureService:
         if not raw.segments:
             raise CaptureProcessingError(
                 "Extraction produced no non-empty content.",
-                code="progressive_no_text_at_sample",
+                code="extraction_no_text",
                 retryable=False,
             )
         partial = PartialCapture(
             capture_id=capture_id,
             source=raw.source,
             revision=1,
-            covered_until_ms=0,
+            # A document has no media time. A recording extracted in one pass
+            # covers its measured length, when the runtime measured it.
+            covered_until_ms=(
+                self.repository.get_capture(capture_id).duration_ms
+                if declared_kind is CaptureSourceKind.RECORDING
+                else None
+            ),
             segments=raw.segments,
             source_text=raw.source_text,
             extraction_engine=raw.extraction_engine,
@@ -942,21 +985,32 @@ class StreamingCaptureService:
                 retryable=retryable,
             )
             operation = self.repository.get_capture(capture_id)
-            try:
-                self.repository.read_ocr_projection(capture_id)
-            except StreamingPartialNotFoundError:
-                projection = ocr_projection
-                if projection is None:
-                    projection = self._ocr_pipeline.failed(
-                        capture_id=capture_id,
-                        source=operation.source,
-                        failure=failure,
-                        created_at=operation.updated_at,
-                    )
-                else:
-                    projection = projection.model_copy(update={"capture_id": capture_id})
-                self.repository.write_ocr_projection(capture_id, projection)
+            if operation.kind is not CaptureSourceKind.RECORDING:
+                self._keep_failed_ocr_projection(capture_id, operation, failure, ocr_projection)
             self.repository.fail_capture(capture_id, failure)
+
+    def _keep_failed_ocr_projection(
+        self,
+        capture_id: str,
+        operation: CaptureOperation,
+        failure: OperationFailure,
+        ocr_projection: CaptureOcrProjection | None,
+    ) -> None:
+        """A failed document keeps a readable OCR projection; a recording has none."""
+        try:
+            self.repository.read_ocr_projection(capture_id)
+        except StreamingPartialNotFoundError:
+            projection = ocr_projection
+            if projection is None:
+                projection = self._ocr_pipeline.failed(
+                    capture_id=capture_id,
+                    source=operation.source,
+                    failure=failure,
+                    created_at=operation.updated_at,
+                )
+            else:
+                projection = projection.model_copy(update={"capture_id": capture_id})
+            self.repository.write_ocr_projection(capture_id, projection)
 
 
 class _SpokenLanguageArgument(TypedDict, total=False):
@@ -987,10 +1041,10 @@ def _safe_failure_message(error: BaseException) -> str:
     if isinstance(error, RuntimeUnavailableError):
         return "Structuring failed at a bounded runtime boundary."
     if isinstance(error, CaptureProcessingError):
-        return str(error)[:500] or "Progressive audio processing failed."
+        return str(error)[:500] or _EXTRACTION_FAILED
     if isinstance(error, SpeechModelNotInstalledError):
         return str(error)[:500]
-    return "Progressive audio processing failed at a bounded runtime boundary."
+    return "Capture extraction failed at a bounded runtime boundary."
 
 
 def _failure_fingerprint(code: str, message: str) -> str:

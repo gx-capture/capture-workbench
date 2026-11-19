@@ -386,21 +386,20 @@ export class CaptureRuntimeClient {
     });
   }
 
-  /** Open an authenticated pull-based structuring session for one capture. */
+  /**
+   * Open an authenticated pull-based structuring session for one capture. The
+   * route names the capture and the idempotency key identifies the request;
+   * repeating the key with the same body returns the same session.
+   */
   openStructuringSession(
     captureId: string,
     request: OpenStructuringSession,
-    idempotencyKey = request.clientRequestId,
+    idempotencyKey: string,
     signal?: AbortSignal,
   ): Promise<StructuringSession> {
-    if (request.captureId !== captureId) {
+    if (!idempotencyKey) {
       throw new CaptureRuntimeProtocolError(
-        'Structuring session captureId must match the route capture.',
-      );
-    }
-    if (!idempotencyKey || idempotencyKey !== request.clientRequestId) {
-      throw new CaptureRuntimeProtocolError(
-        'X-Idempotency-Key must match structuring session clientRequestId.',
+        'Opening a structuring session needs an X-Idempotency-Key.',
       );
     }
     return this.json(

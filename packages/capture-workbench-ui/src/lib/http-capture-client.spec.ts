@@ -218,6 +218,7 @@ describe('HttpCaptureClient', () => {
       protocolVersion: '2',
       captureId: 'capture-1',
       ingestionId: 'ingestion-1',
+      kind: 'pdf',
       status: 'extracting',
       partialRevision: 0,
       lastEventSequence: 0,
@@ -322,7 +323,6 @@ describe('HttpCaptureClient', () => {
           captureId: 'capture-1',
           source,
           revision: 1,
-          coveredUntilMs: 0,
           updatedAt: '2026-08-11T00:00:00Z',
         }),
       )
@@ -564,6 +564,7 @@ function jsonResponse(value: unknown, status = 200): Response {
 function ingestion(receivedBytes: number) {
   return {
     protocolVersion: '2',
+    kind: 'pdf',
     ingestionId: 'ingestion-1',
     status: 'open',
     fileName: 'scan.pdf',
@@ -582,6 +583,7 @@ function captureOperation() {
     protocolVersion: '2',
     captureId: 'capture-1',
     ingestionId: 'ingestion-1',
+    kind: 'pdf',
     status: 'extracting',
     partialRevision: 0,
     lastEventSequence: 0,
@@ -599,6 +601,7 @@ function captureEvent(
     eventId: `event-${sequence}`,
     sequence,
     captureId: 'capture-1',
+    kind: 'recording',
     eventType,
     stage: eventType === 'accepted' ? 'extracting' : eventType,
     createdAt: '2026-08-11T00:00:00Z',

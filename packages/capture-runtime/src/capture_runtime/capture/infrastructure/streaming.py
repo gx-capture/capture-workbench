@@ -183,10 +183,7 @@ class InMemoryStreamingIngestionAdapter:
 
     async def cancel(self, ingestion_id: str) -> Ingestion:
         record = self._record(ingestion_id)
-        if record.status in {
-            IngestionStatus.CANCELLED,
-            IngestionStatus.EXPIRED,
-        }:
+        if record.status is IngestionStatus.CANCELLED:
             return self._snapshot(record)
         if record.status is IngestionStatus.READY:
             raise StreamingIngestionError(
@@ -207,6 +204,7 @@ class InMemoryStreamingIngestionAdapter:
     def _snapshot(record: _MemoryIngestion) -> Ingestion:
         return Ingestion(
             ingestion_id=record.ingestion_id,
+            kind=record.request.kind,
             status=record.status,
             file_name=record.request.file_name,
             media_type=record.request.media_type,

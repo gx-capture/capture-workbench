@@ -79,11 +79,6 @@
         "provider": {
           "$ref": "#/$defs/CaptureEngine"
         },
-        "capability": {
-          "minLength": 1,
-          "title": "Capability",
-          "type": "string"
-        },
         "schemaDialect": {
           "minLength": 1,
           "title": "Schemadialect",
@@ -92,7 +87,6 @@
       },
       "required": [
         "provider",
-        "capability",
         "schemaDialect"
       ],
       "title": "StructuringProviderCapability",
@@ -100,17 +94,12 @@
     }
   },
   "additionalProperties": false,
-  "description": "Authenticated request to open or replay a pull structuring session.",
+  "description": "Authenticated request to open or replay a pull structuring session.\n\nThe capture comes from the route and the idempotency key from the\nX-Idempotency-Key header; the body names neither.",
   "properties": {
     "protocolVersion": {
       "const": "2",
       "default": "2",
       "title": "Protocolversion",
-      "type": "string"
-    },
-    "captureId": {
-      "minLength": 1,
-      "title": "Captureid",
       "type": "string"
     },
     "targetLanguage": {
@@ -125,6 +114,11 @@
       "default": null,
       "title": "Targetlanguage"
     },
+    "profileId": {
+      "minLength": 1,
+      "title": "Profileid",
+      "type": "string"
+    },
     "providerCapability": {
       "$ref": "#/$defs/StructuringProviderCapability"
     },
@@ -132,18 +126,12 @@
       "minLength": 1,
       "title": "Schemadialect",
       "type": "string"
-    },
-    "clientRequestId": {
-      "minLength": 1,
-      "title": "Clientrequestid",
-      "type": "string"
     }
   },
   "required": [
-    "captureId",
+    "profileId",
     "providerCapability",
-    "schemaDialect",
-    "clientRequestId"
+    "schemaDialect"
   ],
   "title": "OpenStructuringSession",
   "type": "object"

@@ -13,7 +13,10 @@ from capture_runtime.contracts import (
     RuntimeInstallationStatus,
     StructuringModelInstallation,
 )
-from capture_runtime.provisioning.application.requirement_installer import ManualActionRequiredError
+from capture_runtime.provisioning.application.requirement_installer import (
+    ManualActionRequiredError,
+    ModelOptionRejectedError,
+)
 from capture_runtime.structuring.application.use_cases import (
     CancelModelInstallation,
     GetModelInstallation,
@@ -170,7 +173,16 @@ class ModelInstallationService:
                 "Select a model option after the Ollama runtime is ready.",
                 False,
             )
+        except ModelOptionRejectedError:
+            self._fail(
+                installation_id,
+                RuntimeInstallationStatus.FAILED,
+                "installation_failed",
+                "The model option does not verify against the release catalog.",
+                False,
+            )
         except Exception:
+            # A download, process or connection failure can pass on another try.
             self._fail(
                 installation_id,
                 RuntimeInstallationStatus.FAILED,

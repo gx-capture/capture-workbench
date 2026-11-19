@@ -100,6 +100,7 @@ from capture_runtime.ocr.infrastructure.ocr_worker_result import (
     WorkerOcrProgress,
 )
 from capture_runtime.pdf_page_selection import is_ascending_page_numbers
+from capture_runtime.processing_error import CaptureProcessingError
 from capture_runtime.provisioning.infrastructure.engine_catalog import EngineCatalogError
 from capture_runtime.provisioning.infrastructure.engine_content_selection import (
     speech_model_not_installed_message,
@@ -115,6 +116,8 @@ from capture_runtime.worker_probe import EngineRuntimeUnavailableError
 from capture_runtime.worker_process import (
     DEFAULT_RUN_TIMEOUT_SECONDS,
     WorkerCancelledError,
+    WorkerExecutionError,
+    WorkerFailureDiagnostics,
     complete_worker_cleanup,
 )
 
@@ -179,6 +182,38 @@ class OcrSourcePreflightError(RuntimeError):
 
     def __init__(self) -> None:
         super().__init__("OCR source preflight failed.")
+
+
+RecordingWorkerFailureCode = Literal[
+    "speech_recognition_worker_failed",
+    "speaker_identification_worker_failed",
+]
+
+
+class RecordingWorkerFailure(RuntimeError):
+    """A speech recognition or speaker identification worker produced no result.
+
+    The code names the worker. Its failure class and stages are diagnostics for
+    the runtime log; the capture failure carries neither.
+    """
+
+    def __init__(
+        self,
+        code: RecordingWorkerFailureCode,
+        diagnostics: WorkerFailureDiagnostics,
+    ) -> None:
+        super().__init__(code)
+        self.code: RecordingWorkerFailureCode = code
+        self.diagnostics = diagnostics
+
+
+def _no_extracted_content() -> CaptureProcessingError:
+    # The source decides this, so a retry produces no text either.
+    return CaptureProcessingError(
+        "Extraction produced no non-empty content.",
+        code="extraction_no_text",
+        retryable=False,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -616,7 +651,7 @@ class StandaloneRuntimeCaptureExtractor:
             else:
                 if pdf_page_numbers is not None:
                     raise ValueError("PDF page selection is only valid for PDF sources.")
-                speech_result = await self._run_worker(
+                speech_result = await self._run_speech_recognition_worker(
                     SPEECH_RECOGNITION_REQUIREMENT_ID,
                     content,
                     sniffed.media_type,
@@ -675,7 +710,7 @@ class StandaloneRuntimeCaptureExtractor:
             ) from error
         self._checkpoint(cancel_event)
         if not segments:
-            raise ValueError("Extraction produced no non-empty content.")
+            raise _no_extracted_content()
         raw = RawCapture(
             source=source,
             segments=segments,
@@ -853,6 +888,32 @@ class StandaloneRuntimeCaptureExtractor:
         finally:
             path.unlink(missing_ok=True)
 
+    async def _run_speech_recognition_worker(
+        self,
+        requirement_id: str,
+        content: bytes | Path,
+        media_type: str,
+        options: dict[str, object],
+        cancel_event: asyncio.Event,
+        *,
+        progress: Callable[[int], None] | None = None,
+        timeout_seconds: float = DEFAULT_RUN_TIMEOUT_SECONDS,
+    ) -> WorkerRunResult:
+        try:
+            return await self._run_worker(
+                requirement_id,
+                content,
+                media_type,
+                options,
+                cancel_event,
+                progress=progress,
+                timeout_seconds=timeout_seconds,
+            )
+        except WorkerExecutionError as error:
+            raise RecordingWorkerFailure(
+                "speech_recognition_worker_failed", error.diagnostics
+            ) from error
+
     async def _run_worker(
         self,
         requirement_id: str,
@@ -922,6 +983,17 @@ class StandaloneRuntimeCaptureExtractor:
             finally:
                 raise cancelled
 
+    @classmethod
+    async def _await_speaker_identification(
+        cls, pending: asyncio.Task[WorkerDiarizationResult], cancellation: asyncio.Event
+    ) -> WorkerDiarizationResult:
+        try:
+            return await cls._await_worker(pending, cancellation)
+        except WorkerExecutionError as error:
+            raise RecordingWorkerFailure(
+                "speaker_identification_worker_failed", error.diagnostics
+            ) from error
+
     @staticmethod
     def _source_prefix(content: bytes | Path) -> bytes:
         if isinstance(content, Path):
@@ -977,7 +1049,7 @@ class StandaloneRuntimeCaptureExtractor:
         path = content if isinstance(content, Path) else self._worker_source(content, media_type)
         try:
             worker_client = cast(_EngineWorkerClient, self.engine_manager.worker_client)
-            return await self._await_worker(
+            return await self._await_speaker_identification(
                 asyncio.create_task(
                     DiarizeAudio(worker_client).execute(
                         engine,
@@ -1287,7 +1359,7 @@ class StandaloneRuntimeCaptureExtractor:
             ocr_projection = None
         self._checkpoint(cancel_event)
         if not segments:
-            raise ValueError("Extraction produced no non-empty content.")
+            raise _no_extracted_content()
         raw = RawCapture(
             source=source,
             segments=segments,

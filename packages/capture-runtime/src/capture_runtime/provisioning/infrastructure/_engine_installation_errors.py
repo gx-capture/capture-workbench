@@ -11,6 +11,10 @@ class EngineInstallBusyError(EngineInstallationError):
     """Raised when another process owns the same requirement install lock."""
 
 
+class EngineFilesInUseError(EngineInstallationError):
+    """Raised when an installed file cannot be removed because a process holds it open."""
+
+
 class EngineResolutionTimeoutError(TimeoutError):
     """Raised when active-engine verification does not finish within its deadline."""
 
@@ -31,6 +35,7 @@ EngineInstallationError.__module__ = (
 EngineInstallBusyError.__module__ = (
     "capture_runtime.provisioning.infrastructure.engine_installation"
 )
+EngineFilesInUseError.__module__ = "capture_runtime.provisioning.infrastructure.engine_installation"
 EngineResolutionTimeoutError.__module__ = (
     "capture_runtime.provisioning.infrastructure.engine_installation"
 )

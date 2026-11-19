@@ -17,13 +17,19 @@ class SessionRepository(Protocol):
         self,
         request: OpenStructuringSession,
         *,
+        capture_id: str,
+        client_request_id: str,
         source_sha256: str,
         contract_set_sha256: str,
         batches: list[StructuringBatch],
     ) -> tuple[StructuringSession, bool]: ...
     def get(self, session_id: str) -> StructuringSession: ...
     def get_by_client_request(
-        self, request: OpenStructuringSession
+        self,
+        request: OpenStructuringSession,
+        *,
+        capture_id: str,
+        client_request_id: str,
     ) -> StructuringSession | None: ...
     def for_capture(self, capture_id: str) -> StructuringSession: ...
     def batch(self, session_id: str, batch_index: int) -> StructuringBatch: ...

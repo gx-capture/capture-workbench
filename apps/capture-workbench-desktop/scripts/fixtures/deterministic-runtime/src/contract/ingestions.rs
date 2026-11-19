@@ -35,12 +35,12 @@ impl FixtureState {
             Ok(payload) => payload,
             Err(response) => return response,
         };
-        let kind = match payload.get("kind") {
-            None => "recording",
-            Some(kind) => match kind.as_str() {
-                Some(kind @ ("pdf" | "image" | "recording")) => kind,
-                _ => return validation_error("Capture kind must be pdf, image, or recording."),
-            },
+        let kind = match payload.get("kind").and_then(Value::as_str) {
+            Some(kind @ ("pdf" | "image" | "recording")) => kind,
+            None if payload.get("kind").is_none() => {
+                return validation_error("Capture kind is required.")
+            }
+            _ => return validation_error("Capture kind must be pdf, image, or recording."),
         };
         let key = match matching_request_key(request, &payload, kind == "recording") {
             Ok(key) => key,

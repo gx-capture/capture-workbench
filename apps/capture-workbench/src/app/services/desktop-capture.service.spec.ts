@@ -395,7 +395,7 @@ describe('DesktopCaptureService', () => {
 
   it('stops polling at awaiting_structuring and durably commits OCR before runtime cleanup', async () => {
     const captureId = 'capture-ocr-first';
-    const created = operation({ captureId, status: 'created' });
+    const created = operation({ captureId, status: 'waiting_input' });
     const extracting = operation({ captureId, status: 'extracting' });
     const awaitingStructuring = operation({
       captureId,
@@ -517,7 +517,7 @@ describe('DesktopCaptureService', () => {
 
   it('retains the runtime operation when awaiting OCR durability fails before cleanup', async () => {
     const captureId = 'capture-ocr-first-durable-failure';
-    const created = operation({ captureId, status: 'created' });
+    const created = operation({ captureId, status: 'waiting_input' });
     const extracting = operation({ captureId, status: 'extracting' });
     const awaitingStructuring = operation({
       captureId,
@@ -612,7 +612,7 @@ describe('DesktopCaptureService', () => {
     'fails closed at the OCR checkpoint for %s',
     async (_case, projectionFactory) => {
       const captureId = `capture-ocr-checkpoint-${_case.replace(/ /g, '-')}`;
-      const created = operation({ captureId, status: 'created' });
+      const created = operation({ captureId, status: 'waiting_input' });
       const extracting = operation({ captureId, status: 'extracting' });
       const awaitingStructuring = operation({
         captureId,
@@ -1627,6 +1627,7 @@ function operation(
   return {
     protocolVersion: '2',
     ingestionId: 'ingestion-1',
+    kind: 'pdf',
     partialRevision: 0,
     lastEventSequence: 0,
     createdAt: '2026-07-20T00:00:00Z',

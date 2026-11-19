@@ -73,7 +73,7 @@ class CaptureOperation:
     capture_id: str
     ingestion_id: str
     kind: CaptureSourceKind
-    status: CaptureStatus = CaptureStatus.CREATED
+    status: CaptureStatus = CaptureStatus.WAITING_INPUT
     progress: float = 0.0
     partial_revision: int = 0
     last_event_sequence: int = 0
@@ -136,10 +136,6 @@ class CaptureOperation:
         if self.is_terminal:
             raise CaptureTransitionError(f"cannot move capture from {self.status} to {status}")
         allowed = {
-            CaptureStatus.CREATED: {
-                CaptureStatus.WAITING_INPUT,
-                CaptureStatus.EXTRACTING,
-            },
             CaptureStatus.WAITING_INPUT: {CaptureStatus.EXTRACTING},
             CaptureStatus.EXTRACTING: {
                 CaptureStatus.AWAITING_STRUCTURING,

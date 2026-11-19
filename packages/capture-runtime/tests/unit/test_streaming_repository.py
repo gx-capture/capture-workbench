@@ -45,6 +45,7 @@ class MutableClock(Clock):
 def _open(repository: StreamingRepository, source: bytes) -> tuple[str, str]:
     ingestion = repository.create_ingestion(
         OpenIngestionRequest(
+            kind="recording",
             client_request_id="repository-open-1",
             file_name="sample.mp3",
             media_type="audio/mpeg",
@@ -153,6 +154,7 @@ def _ready_ingestion(
 ) -> str:
     ingestion = repository.create_ingestion(
         OpenIngestionRequest(
+            kind="recording",
             client_request_id=client_request_id,
             file_name="sample.pdf",
             media_type="application/pdf",
@@ -968,7 +970,7 @@ def test_startup_fails_incomplete_source_and_prunes_unowned_ingestion(
     repository.initialize()
     failed = repository.get_capture(capture)
     assert failed.status is CaptureStatus.FAILED
-    assert failed.error.code == "streaming_source_unavailable"
+    assert failed.error.code == "ingestion_source_unavailable"
     events = repository.read_events(capture, after_sequence=-1)
     assert events[-1].event_type is CaptureEventType.FAILED
     assert not path.parent.exists()
@@ -1552,9 +1554,13 @@ def test_repository_replays_historical_recording_kind(
     assert repository.get_ingestion(ingestion_id).kind is CaptureSourceKind.RECORDING
     assert _open(repository, source)[0] == ingestion_id
     assert repository.create_capture(request).capture_id == capture.capture_id
-    assert repository.get_capture(capture.capture_id).kind is CaptureSourceKind.RECORDING
+    historical = repository.get_capture(capture.capture_id)
+    assert historical.kind is CaptureSourceKind.RECORDING
+    # The 0.10.x failure code reads under its current name.
+    assert historical.error is not None and historical.error.code == "extraction_failed"
     replay = repository.read_events(capture.capture_id, after_sequence=-1)
     assert replay and all(event.kind is CaptureSourceKind.RECORDING for event in replay)
+    assert replay[-1].error is not None and replay[-1].error.code == "extraction_failed"
     assert {path: path.read_bytes() for path in before} == before
 
 

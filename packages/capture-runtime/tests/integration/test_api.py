@@ -22,6 +22,11 @@ from capture_runtime.ocr.infrastructure.ocr_preflight import (
     OcrGpuAdapter,
     OcrGpuCapabilitySnapshot,
 )
+from capture_runtime.provisioning.infrastructure.engine_installation import (
+    EngineFilesInUseError,
+    EngineInstallationError,
+    EngineInstallBusyError,
+)
 from capture_runtime.provisioning.infrastructure.system_requirement_installer import (
     SystemRequirementInstaller,
 )
@@ -106,21 +111,31 @@ def test_v2_runtime_requirements_and_installation_lifecycle(settings_factory) ->
         created = client.post(
             "/v2/runtime/installations",
             headers=headers,
-            json={"requirementId": "structuring-model", "consent": True},
+            json={"requirementId": "structuring-runtime", "consent": True},
         )
         assert created.status_code == 202, created.text
         installation_id = created.json()["installationId"]
         replay = client.post(
             "/v2/runtime/installations",
             headers=headers,
-            json={"requirementId": "structuring-model", "consent": True},
+            json={"requirementId": "structuring-runtime", "consent": True},
         )
         assert replay.status_code == 202
         assert replay.json()["installationId"] == installation_id
 
         detail = client.get(f"/v2/runtime/installations/{installation_id}")
         assert detail.status_code == 200
-        assert detail.json()["requirementId"] == "structuring-model"
+        assert detail.json()["requirementId"] == "structuring-runtime"
+
+        # The structuring model is chosen and installed through model installation.
+        model = client.post(
+            "/v2/runtime/installations",
+            headers=idempotency_headers(),
+            json={"requirementId": "structuring-model", "consent": True},
+        )
+        assert model.status_code == 422, model.text
+        assert model.json()["error"]["code"] == "validation_error"
+        assert "installed through structuring model installation" in model.text
 
 
 def test_v2_runtime_ready_reports_authenticated_ocr_compute_decision(settings_factory) -> None:
@@ -266,6 +281,62 @@ def test_v2_uninstall_rejects_unknown_disabled_and_non_engine_requirements(
     )
 
 
+@pytest.mark.parametrize(
+    ("error", "status", "code"),
+    [
+        (RuntimeError("private detail"), 500, "uninstall_failed"),
+        (OSError("private detail"), 500, "uninstall_failed"),
+        (EngineInstallationError("private detail"), 500, "uninstall_failed"),
+        (EngineInstallBusyError("busy"), 409, "requirement_in_use"),
+        (EngineFilesInUseError("in use"), 409, "requirement_in_use"),
+    ],
+)
+def test_v2_uninstall_tells_a_busy_engine_from_a_failed_uninstall(
+    settings_factory, error: Exception, status: int, code: str
+) -> None:
+    settings = settings_factory()
+    installer = FakeRequirementInstaller(initially_ready={"text-recognition"})
+
+    async def failing_uninstall(requirement_id: str) -> None:
+        raise error
+
+    installer.uninstall = failing_uninstall  # type: ignore[method-assign]
+    with TestClient(
+        create_app(settings, installer=installer),
+        base_url=f"http://127.0.0.1:{settings.port}",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+    ) as client:
+        response = _uninstall(client, "text-recognition")
+
+    assert (response.status_code, response.json()["error"]["code"]) == (status, code)
+    assert "private detail" not in response.text
+
+
+def test_disabled_structuring_model_management_says_so_in_every_branch(
+    settings_factory,
+) -> None:
+    settings = settings_factory(CAPTURE_STRUCTURING_PROVIDER="host")
+    with TestClient(
+        create_app(settings, installer=FakeRequirementInstaller()),
+        base_url=f"http://127.0.0.1:{settings.port}",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+    ) as client:
+        responses = [
+            _uninstall(client, "structuring-model"),
+            client.get("/v2/runtime/structuring-model-options"),
+            client.post(
+                "/v2/runtime/structuring-model-installations",
+                headers=idempotency_headers(),
+                json={"optionId": "qwen3.5-4b-v1", "consent": True},
+            ),
+        ]
+    expected = "Structuring model management is not available in this runtime's structuring mode."
+    for response in responses:
+        assert response.status_code == 422, response.text
+        assert response.json()["error"]["code"] == "requirement_disabled"
+        assert response.json()["error"]["message"] == expected
+
+
 def test_v2_uninstall_conflicts_while_its_installation_runs(settings_factory) -> None:
     settings = settings_factory()
     installer = FakeRequirementInstaller(initially_ready={"text-recognition"}, delay_seconds=30)
@@ -303,6 +374,7 @@ def test_v2_uninstall_conflicts_while_a_capture_is_active(settings_factory) -> N
         ingestion = client.post(
             "/v2/ingestions",
             json={
+                "kind": "recording",
                 "clientRequestId": "uninstall-ingestion",
                 "fileName": "sample.mp3",
                 "mediaType": "audio/mpeg",
@@ -377,6 +449,7 @@ def test_startup_reports_failed_waiting_capture_to_host(settings_factory):
     repository.initialize()
     ingestion = repository.create_ingestion(
         OpenIngestion(
+            kind="recording",
             client_request_id="restart-ingestion",
             file_name="sample.mp3",
             media_type="audio/mpeg",
@@ -399,7 +472,7 @@ def test_startup_reports_failed_waiting_capture_to_host(settings_factory):
         response = client.get(f"/v2/captures/{capture.capture_id}")
         assert response.status_code == 200, response.text
         assert response.json()["status"] == "failed"
-        assert response.json()["error"]["code"] == "streaming_source_unavailable"
+        assert response.json()["error"]["code"] == "ingestion_source_unavailable"
 
 
 @pytest.mark.parametrize(
@@ -419,7 +492,11 @@ def test_retired_requirement_ids_are_rejected(
     )
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "validation_error"
-    assert f"{retired_id} is retired; use {current_id}" in response.text
+    if current_id == "structuring-model":
+        # The model is installed through structuring model installation.
+        assert "installed through structuring model installation" in response.text
+    else:
+        assert f"{retired_id} is retired; use {current_id}" in response.text
 
     response = client.delete(f"/v2/runtime/requirements/{retired_id}/installation")
     assert response.status_code == 422

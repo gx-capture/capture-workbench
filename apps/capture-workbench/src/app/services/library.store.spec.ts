@@ -47,6 +47,7 @@ describe('LibraryStore', () => {
       protocolVersion: '2',
       captureId: 'capture-1',
       ingestionId: 'ingestion-1',
+      kind: 'pdf',
       status: 'cancelled',
       partialRevision: 0,
       lastEventSequence: 0,

@@ -109,18 +109,19 @@ class StructuringSessionService:
         self,
         raw: RawCapture,
         request: OpenStructuringSessionRequest,
+        capture_id: str,
     ) -> list[StructuringBatch]:
         plans = self._coordinator.plan_requests(
             raw,
             target_language=request.target_language,
-            profile_id=request.provider_capability.provider.model,
+            profile_id=request.profile_id,
         )
         batches: list[StructuringBatch] = []
         batch_count = len(plans)
         for index, planned in enumerate(plans):
             batch = StructuringBatch(
                 session_id="pending",
-                capture_id=request.capture_id,
+                capture_id=capture_id,
                 batch_index=index,
                 batch_count=batch_count,
                 source_segment_ids=[

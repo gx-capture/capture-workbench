@@ -185,6 +185,7 @@ function validateContractBundle(bundle: ContractBundle): string {
     'schemas',
     'operations',
     'problems',
+    'failureCodes',
     'invariants',
   ] as const;
   if (
@@ -368,6 +369,9 @@ type ContractBundle = {
   readonly schemas: readonly unknown[];
   readonly operations: readonly unknown[];
   readonly problems: readonly unknown[];
+  // Codes a failed job reports. A host's own failure report is not checked
+  // against this list.
+  readonly failureCodes: readonly unknown[];
   readonly invariants: readonly unknown[];
   readonly [key: string]: unknown;
 };

@@ -745,7 +745,8 @@ def test_streaming_runtime_fails_when_audio_processor_is_unavailable(
         failed = service.get_capture(operation.capture_id)
         assert failed.status.value == "failed"
         assert failed.error is not None
-        assert failed.error.code == "requirement_unavailable"
+        assert failed.error.code == "extraction_runtime_unavailable"
+        assert failed.error.retryable is False
         assert failed.error.stage == "extraction"
         await service.shutdown()
 

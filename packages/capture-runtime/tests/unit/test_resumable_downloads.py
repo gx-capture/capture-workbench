@@ -701,7 +701,7 @@ def test_finished_partial_replacement_retries(tmp_path, monkeypatch, persistent)
         with pytest.raises(PermissionError) as caught:
             _run(downloader, _artifact(payload), destination)
         assert caught.value is error
-        assert installation_failure_code(caught.value) == "installation_filesystem"
+        assert installation_failure_code(caught.value) == "installation_io_failed"
         assert len(calls) == 8
     else:
         _run(downloader, _artifact(payload), destination)

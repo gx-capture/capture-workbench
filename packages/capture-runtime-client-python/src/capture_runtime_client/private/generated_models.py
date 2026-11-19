@@ -109,7 +109,6 @@ class RuntimeInstallationStatus(StrEnum):
 
 class StructuringModelOptionStatus(StrEnum):
     NOT_INSTALLED = "not-installed"
-    INSTALLED = "installed"
     ACTIVE = "active"
 
 
@@ -211,19 +210,23 @@ class StructuringProviderCapability(StrictModel):
     """Provider identity and schema dialect negotiated for one session."""
 
     provider: CaptureEngine
-    capability: NonEmptyString
     schema_dialect: NonEmptyString
 
 
 class OpenStructuringSession(StrictModel):
-    """Authenticated request to open or replay a pull structuring session."""
+    """Authenticated request to open or replay a pull structuring session.
+
+    The capture comes from the route and the idempotency key from the
+    X-Idempotency-Key header; the body names neither.
+    """
 
     protocol_version: Literal["2"] = "2"
-    capture_id: NonEmptyString
     target_language: str | None = None
+    # The structuring profile the batches are planned for. The provider's model
+    # is its own name and does not select the profile.
+    profile_id: NonEmptyString
     provider_capability: StructuringProviderCapability
     schema_dialect: NonEmptyString
-    client_request_id: NonEmptyString
 
     @field_validator("target_language")
     @classmethod
@@ -533,14 +536,31 @@ _RETIRED_REQUIREMENT_IDS: Final = {
 }
 
 
+# The requirements a general installation installs: every requirement id except
+# the structuring model, which is chosen and installed through structuring model
+# installation. Queries and results keep the full CaptureRequirementId.
+InstallableRequirementId = Literal[
+    "text-recognition",
+    "speech-recognition",
+    "speaker-diarization",
+    "vertical-japanese-reader",
+    "structuring-runtime",
+]
+
+
 class StartRuntimeInstallation(StrictModel):
-    requirement_id: CaptureRequirementId
+    requirement_id: InstallableRequirementId
     consent: Literal[True]
 
     @field_validator("requirement_id", mode="before")
     @classmethod
     def reject_retired_requirement(cls, value: object) -> object:
         replacement = _RETIRED_REQUIREMENT_IDS.get(value) if isinstance(value, str) else None
+        if value == "structuring-model" or replacement == "structuring-model":
+            raise ValueError(
+                f"{value} is installed through structuring model installation, "
+                "not general installation"
+            )
         if replacement is not None:
             raise ValueError(f"{value} is retired; use {replacement}")
         return value
@@ -627,15 +647,12 @@ class IngestionMode(StrEnum):
 
 class IngestionStatus(StrEnum):
     OPEN = "open"
-    FINALIZING = "finalizing"
     READY = "ready"
     CANCELLED = "cancelled"
     FAILED = "failed"
-    EXPIRED = "expired"
 
 
 class CaptureStatus(StrEnum):
-    CREATED = "created"
     WAITING_INPUT = "waiting_input"
     EXTRACTING = "extracting"
     AWAITING_STRUCTURING = "awaiting_structuring"
@@ -659,7 +676,7 @@ class CaptureEventType(StrEnum):
 
 class OpenIngestion(StrictModel):
     protocol_version: Literal["2"] = "2"
-    kind: CaptureSourceKind = CaptureSourceKind.RECORDING
+    kind: CaptureSourceKind
     mode: IngestionMode = IngestionMode.FILE
     client_request_id: NonEmptyString
     file_name: Annotated[
@@ -672,7 +689,7 @@ class OpenIngestion(StrictModel):
 
 class Ingestion(StrictModel):
     protocol_version: Literal["2"] = "2"
-    kind: CaptureSourceKind = CaptureSourceKind.RECORDING
+    kind: CaptureSourceKind
     ingestion_id: NonEmptyString
     status: IngestionStatus
     file_name: Annotated[
@@ -1067,7 +1084,7 @@ class CaptureOperation(StrictModel):
     protocol_version: Literal["2"] = "2"
     capture_id: NonEmptyString
     ingestion_id: NonEmptyString
-    kind: CaptureSourceKind = CaptureSourceKind.RECORDING
+    kind: CaptureSourceKind
     status: CaptureStatus
     progress: float | None = Field(default=None, ge=0, le=1)
     partial_revision: int = Field(ge=0)
@@ -1128,7 +1145,9 @@ class PartialCapture(StrictModel):
     capture_id: NonEmptyString
     source: CaptureSource
     revision: int = Field(ge=0)
-    covered_until_ms: int = Field(ge=0)
+    # Recordings only: how far transcription has got. Absent for a document,
+    # and for a recording whose coverage is unknown.
+    covered_until_ms: int | None = Field(default=None, ge=0)
     segments: list[RawCaptureSegment] = Field(default_factory=list, max_length=10_000)
     source_text: Annotated[str, StringConstraints(max_length=8_000_000)] = ""
     extraction_engine: CaptureEngine | None = None
@@ -1151,7 +1170,7 @@ class CaptureEvent(StrictModel):
     event_id: NonEmptyString
     sequence: int = Field(ge=0)
     capture_id: NonEmptyString
-    kind: CaptureSourceKind = CaptureSourceKind.RECORDING
+    kind: CaptureSourceKind
     event_type: CaptureEventType
     stage: NonEmptyString
     progress: float | None = Field(default=None, ge=0, le=1)

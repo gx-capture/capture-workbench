@@ -47,7 +47,9 @@ class OpenStructuringSession:
         repository: SessionRepository,
         captures: CaptureRepository,
         *,
-        plan_batches: Callable[[RawCapture, OpenStructuringSessionRequest], list[StructuringBatch]],
+        plan_batches: Callable[
+            [RawCapture, OpenStructuringSessionRequest, str], list[StructuringBatch]
+        ],
         contract_set_sha256: str,
     ) -> None:
         self._repository = repository
@@ -55,24 +57,36 @@ class OpenStructuringSession:
         self._plan_batches = plan_batches
         self._contract_set_sha256 = contract_set_sha256
 
-    def execute(self, request: OpenStructuringSessionRequest) -> StructuringSessionContract:
+    def execute(
+        self,
+        capture_id: str,
+        request: OpenStructuringSessionRequest,
+        *,
+        client_request_id: str,
+    ) -> StructuringSessionContract:
+        """Open for the route's capture; the idempotency key identifies the request."""
+
         if request.schema_dialect != SCHEMA_DIALECT:
             raise SessionTransitionError("unsupported structuring schema dialect")
-        existing = self._repository.get_by_client_request(request)
+        existing = self._repository.get_by_client_request(
+            request, capture_id=capture_id, client_request_id=client_request_id
+        )
         if existing is not None:
             return existing
-        operation = self._captures.get_capture(request.capture_id)
-        capture_request = self._captures.capture_request(request.capture_id)
+        operation = self._captures.get_capture(capture_id)
+        capture_request = self._captures.capture_request(capture_id)
         try:
             CaptureOperation.from_contract(operation).require_pull_structuring(
                 capture_request.structuring_mode
             )
         except CaptureTransitionError as error:
             raise SessionTransitionError(str(error)) from error
-        raw = self._captures.read_raw(request.capture_id)
-        planned = self._plan_batches(raw, request)
+        raw = self._captures.read_raw(capture_id)
+        planned = self._plan_batches(raw, request, capture_id)
         return self._repository.create_or_get(
             request,
+            capture_id=capture_id,
+            client_request_id=client_request_id,
             source_sha256=raw.source.sha256,
             contract_set_sha256=self._contract_set_sha256,
             batches=planned,

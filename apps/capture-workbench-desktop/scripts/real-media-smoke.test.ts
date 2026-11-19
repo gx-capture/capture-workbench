@@ -265,7 +265,7 @@ test('isAwaitingStructuringOrTerminal recognizes v2 awaiting_structuring and ter
   for (const ready of ['awaiting_structuring', 'completed', 'failed', 'cancelled']) {
     assert.equal(isAwaitingStructuringOrTerminal(ready), true, `expected ${ready} to stop polling`);
   }
-  for (const active of ['created', 'waiting_input', 'extracting', 'structuring']) {
+  for (const active of ['waiting_input', 'extracting', 'structuring']) {
     assert.equal(isAwaitingStructuringOrTerminal(active), false, `expected ${active} to keep polling`);
   }
 });
