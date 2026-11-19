@@ -62,7 +62,7 @@ async function observeInstallProgress(progressContainer: Locator): Promise<void>
   expect(sawInstalling).toBe(true);
 }
 
-test('lists the three preview scenarios on /__preview', async ({ page }) => {
+test('links the ready, first-run and no-gpu scenarios on /__preview', async ({ page }) => {
   await page.goto('/__preview');
 
   await expect(page.locator('a[href="/?scenario=ready"]')).toBeVisible();

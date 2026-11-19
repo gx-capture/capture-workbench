@@ -42,10 +42,34 @@ async def _file_operation[**P, T](
 ) -> T:
     # A cancelled coroutine must finish its file IO before its caller releases
     # the cache lock or cleans up the partial download.
-    task = asyncio.create_task(asyncio.to_thread(operation, *args, **kwargs))
+    return await _drained(asyncio.create_task(asyncio.to_thread(operation, *args, **kwargs)))
+
+
+async def _cancellable_file_operation[**P, T](
+    stop: asyncio.Event,
+    operation: Callable[P, T],
+    /,
+    *args: P.args,
+    **kwargs: P.kwargs,
+) -> T:
+    """A file operation that stops at its next check of the given event.
+
+    A cancelled task sets the event before draining the thread, so a shutdown
+    during an extraction waits for one chunk instead of the whole archive.
+    """
+
+    return await _drained(
+        asyncio.create_task(asyncio.to_thread(operation, *args, **kwargs)),
+        on_cancel=stop.set,
+    )
+
+
+async def _drained[T](task: asyncio.Task[T], *, on_cancel: Callable[[], None] | None = None) -> T:
     try:
         return await asyncio.shield(task)
     except asyncio.CancelledError:
+        if on_cancel is not None:
+            on_cancel()
         while not task.done():
             with suppress(asyncio.CancelledError, Exception):
                 await asyncio.shield(task)

@@ -888,12 +888,15 @@ def test_installation_status_is_answered_while_the_install_extracts_or_verifies(
         loop = asyncio.get_running_loop()
         original = getattr(module, step)
         held: list[bool] = []
+        loop_blocked: list[str] = []
 
         def hold_first_call(*args: object, **kwargs: object) -> object:
             if not held:
                 held.append(True)
                 loop.call_soon_threadsafe(started.set)
-                assert release.wait(timeout=5), "the step held the event loop"
+                # On the event loop nothing can release it: record that and go on.
+                if not release.wait(timeout=5):
+                    loop_blocked.append(f"{step} held the event loop")
             return original(*args, **kwargs)
 
         monkeypatch.setattr(module, step, hold_first_call)
@@ -909,7 +912,8 @@ def test_installation_status_is_answered_while_the_install_extracts_or_verifies(
         )
         task = service._tasks[job.installation_id]
         try:
-            await asyncio.wait_for(started.wait(), 5)
+            await asyncio.wait_for(started.wait(), 10)
+            assert not loop_blocked, loop_blocked[0]
             # The loop runs this while the step is still working.
             assert service.get(job.installation_id).status.value == "running"
             release.set()
@@ -919,6 +923,62 @@ def test_installation_status_is_answered_while_the_install_extracts_or_verifies(
         finally:
             release.set()
             await asyncio.wait_for(service.shutdown(), 5)
+
+    asyncio.run(scenario())
+
+
+def test_a_shutdown_during_extraction_stops_it_at_its_next_cancel_check(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Shutdown cancels the task without the job's cancel event; extraction must still stop."""
+
+    from capture_runtime.provisioning.application.installation_service import InstallationService
+    from capture_runtime.provisioning.infrastructure.installation_repository import (
+        InstallationRepository,
+    )
+
+    async def scenario() -> None:
+        catalog, sources = _catalog(tmp_path)
+        manager = EngineInstallationManager(
+            tmp_path / "engines",
+            catalog,
+            worker_client=FakeWorkerClient(),  # type: ignore[arg-type]
+            downloader=CopyDownloader(sources),
+            model_downloader=CopyModelDownloader(sources),
+        )
+        started = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        stopped_by_event: list[bool] = []
+
+        def extract_until_cancelled(
+            *_args: object, cancel_event: asyncio.Event, **_kwargs: object
+        ) -> None:
+            loop.call_soon_threadsafe(started.set)
+            for _ in range(500):
+                if cancel_event.is_set():
+                    stopped_by_event.append(True)
+                    raise asyncio.CancelledError
+                threading.Event().wait(0.01)
+            stopped_by_event.append(False)
+
+        monkeypatch.setattr(
+            engine_installation_module, "safe_extract_artifact", extract_until_cancelled
+        )
+        repository = InstallationRepository(
+            tmp_path / "jobs", clock=SystemClock(), retention_hours=24
+        )
+        repository.initialize()
+        service = InstallationService(repository, installer=manager, clock=SystemClock())
+        service.create(
+            idempotency_key="shutdown-while-extracting",
+            request_fingerprint="shutdown-while-extracting",
+            requirement_id="text-recognition",
+        )
+        await asyncio.wait_for(started.wait(), 5)
+        await asyncio.wait_for(service.shutdown(), 10)
+        assert stopped_by_event == [True]
+        assert manager.active_engine("text-recognition") is None
 
     asyncio.run(scenario())
 

@@ -73,6 +73,7 @@ from ._engine_installation_download import (
     HttpModelFileDownloader,
     LocalModelFileDownloader,
     ModelFileDownloader,
+    _cancellable_file_operation,
     _commit_operation,
     _file_operation,
 )
@@ -800,7 +801,8 @@ class EngineInstallationManager:
                 cancel_event=cancel_event,
                 progress=worker_progress,
             )
-            await _file_operation(
+            await _cancellable_file_operation(
+                cancel_event,
                 safe_extract_artifact,
                 worker_archive,
                 new_version / "worker",

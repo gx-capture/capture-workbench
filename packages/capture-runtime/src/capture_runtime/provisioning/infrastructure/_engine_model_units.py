@@ -166,7 +166,10 @@ async def install_model_unit(
         # The state file makes the unit active; a cancel after it is too late.
         report_progress(1)
     finally:
-        shutil.rmtree(staging, ignore_errors=True)
+        # Left behind only by a cancel or a failure: the files it holds can be
+        # gigabytes. The drain finishes the removal before a cancel propagates.
+        if staging.exists():
+            await _file_operation(shutil.rmtree, staging, ignore_errors=True)
 
 
 __all__ = [
