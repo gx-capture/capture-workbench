@@ -491,7 +491,7 @@ From 0.10.0, a full release publishes 19 assets:
 - Runtime: `capture-runtime-x86_64-pc-windows-msvc.exe`, `capture-runtime-manifest.json`, `capture-document-v2.schema.json`.
 - Engines: `capture-engine-catalog.json`; each worker archive (the CUDA speech recognition worker is `capture-engine-speech-recognition-<version>-windows-x64.zip.001` and `.zip.002`, the CPU one is the single `capture-engine-speech-recognition-cpu-<version>-windows-x64.zip`); and the four `*-files.json` manifests (OCR, speech recognition, CPU speech recognition, diarization).
 - Desktop: `Capture.Workbench_<version>_x64-setup.exe`.
-- Evidence: `candidate-manifest.json`, `capture-runtime-candidate-manifest.json` (the Route A seed), `capture-contract-snapshot.json`, `capture-release-manifest-v1.json`, and `capture-release-manifest-v1.json.sha256`.
+- Evidence: `candidate-manifest.json`, `capture-runtime-candidate-manifest.json` (the Route A seed), `capture-contract-snapshot.json`, `capture-release-manifest-v2.json`, and `capture-release-manifest-v2.json.sha256`.
 
 GitHub also attaches the source zip and tarball. A release keeps the assets it was published with. `tools/resolve-capture-release.ts` checks the release-manifest bytes against `release-index/stable.json` `manifestSha256` and the attestation. That check holds whether or not the release also carries per-asset `.sha256` files.
 
@@ -519,6 +519,15 @@ Check a new release like this:
     installed check and the real-media smoke read both shapes, and the tag
     audit (`audit-release-tag.ts`), `resolve-capture-release.ts` and
     `verify-release-candidate.ts` do not read the speech requirement's shape.
+  - When the full local model check (`pnpm nx run
+    capture-runtime:verify-release-model-candidate`) is required: whenever
+    `release-model-source-lock.json`, an engine worker or a model delivery
+    differs from the last published release (compare those files and the
+    engine catalogue against the last release tag). 0.11.0 is such a release:
+    the text recognition sources were re-committed and re-pinned. Otherwise
+    the check is an optional diagnostic. Record its evidence file
+    (`dist/candidate/model-probe-evidence.json`: hashes and counts only)
+    beside the manual CPU transcription below.
   - `verify_release_model_candidate.py` compares model deliveries with the
     source lock: `cuda` must carry the lock's full speech files, and `cpu`
     exactly the subset that `cpu_speech_model_delivery` in `model_source_lock.py` derives,
@@ -536,8 +545,8 @@ Check a new release like this:
     `CAPTURE_SPEECH_RECOGNITION_VARIANT=cuda`. The ambient-environment
     check in `release-candidate.yml` rejects any
     `CAPTURE_SPEECH_RECOGNITION_*` variable.
-- Every runtime and desktop asset matches `runtimeAssets` in `capture-release-manifest-v1.json` (size and sha256).
-- That manifest's digest is `capture-release-manifest-v1.json.sha256` and `release-index/stable.json` `manifestSha256`.
+- Every runtime, engine, and desktop asset matches `releaseAssets` in `capture-release-manifest-v2.json` (size and SHA-256). Published v1 releases keep their original asset list and bytes.
+- That manifest's digest is recorded in `capture-release-manifest-v2.json.sha256` and `release-index/stable.json` `manifestSha256`.
 
 For local checks, the application-level journey with real engines is
 `pnpm nx run capture-workbench-e2e:smoke-real-engines` on the dev server; a
@@ -568,8 +577,8 @@ Candidate checksums stay inside the candidate artifact and are not release asset
    (Python `zipfile` over a range-reading file object, on the blob URL that
    `GET /repos/{repo}/actions/artifacts/{id}/zip` redirects to). Then run the
    manual `cpu` speech pack transcription against this runtime candidate and
-   record it (see "Two speech recognition packs" under
-   "Published through Route A: 0.10.0").
+   record the runtime candidate ID and digest, installed `cpu` content, `tea-asr-1.1-mini` / `cpu` provenance, non-empty output, ordered segment count and elapsed time (see "Two speech recognition packs" under
+   "Published through Route A: 0.10.0"). Record this manual evidence for every release that ships the CPU speech pack. When the full local model check is required, record its evidence as well.
 3. Route A: dispatch `package-promote.yml`, then `runtime-promote.yml`. The
    runtime promotion requires a successful `workflow_dispatch` package promotion
    on `main` whose commit contains the candidate source.
@@ -603,7 +612,7 @@ manifest.
   classification: the output is `no-impact` when `current-contract-set-sha256`
   matches, else `manual-review`.
 - `mode: stable` (gate before an app release): the tag `stable.json` names. It
-  checks `capture-release-manifest-v1.json` against `stable.json`'s
+  checks the v1 or v2 full release manifest named by `stable.json`'s `manifestAssetName` against its
   `manifestSha256`, verifies it against `_publish-github-release.yml`, and takes
   `contract_classification` from the manifest's
   `contractClassification.classification` and `contract_set_sha256` from the

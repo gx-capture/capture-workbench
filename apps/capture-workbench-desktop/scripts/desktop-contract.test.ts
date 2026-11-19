@@ -699,7 +699,7 @@ test('promotion is candidate-only and creates the tag after registry verificatio
   assert.match(cratesWorkflow, /publish-crate-candidate\.ts/u);
   assert.match(releaseWorkflow, /create-github-release\.ts/u);
   assert.match(releaseWorkflow, /create-release-manifest\.ts/u);
-  assert.match(releaseWorkflow, /capture-release-manifest-v1\.json/u);
+  assert.match(releaseWorkflow, /capture-release-manifest-v2\.json/u);
   assert.match(releaseWorkflow, /capture-contract-snapshot\.json/u);
   assert.match(releaseWorkflow, /actions\/attest@[0-9a-f]{40}/u);
   assert.match(releaseWorkflow, /gh attestation verify/u);

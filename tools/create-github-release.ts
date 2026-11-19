@@ -9,6 +9,7 @@ import {
 import { basename, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
+import { FULL_RELEASE_MANIFEST_V2 } from './release/full-release-manifest.ts';
 import {
   assertPublishableRuntimeReleaseFile,
   parseReleaseArguments,
@@ -28,7 +29,7 @@ async function assetPaths(candidate: string): Promise<string[]> {
     .map((name) => join(desktop, name));
   const manifest = join(candidate, 'candidate-manifest.json');
   const contractSnapshot = join(candidate, 'capture-contract-snapshot.json');
-  const releaseManifest = join(candidate, 'capture-release-manifest-v1.json');
+  const releaseManifest = join(candidate, FULL_RELEASE_MANIFEST_V2);
   const releaseManifestSha256 = `${releaseManifest}.sha256`;
   if (desktopFiles.length !== 1)
     throw new Error('Candidate must contain exactly one desktop installer.');

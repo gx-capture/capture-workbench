@@ -3,6 +3,10 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
+import {
+  isFullReleaseManifestName,
+  parseFullReleaseManifest,
+} from './release/full-release-manifest.ts';
 
 const NPM_PACKAGES = [
   '@gx-capture/capture-workbench-ui',
@@ -90,18 +94,20 @@ async function main(): Promise<void> {
   };
   if (release.isDraft !== false || !Array.isArray(release.assets))
     throw new Error('Public GitHub Release audit failed.');
+  const manifestNames = release.assets
+    .map((asset) => asset.name)
+    .filter(isFullReleaseManifestName);
   if (
-    !release.assets.some(
-      (asset) => asset.name === 'capture-release-manifest-v1.json',
-    ) ||
+    manifestNames.length !== 1 ||
     !release.assets.some(
       (asset) => asset.name === 'capture-contract-snapshot.json',
     )
   ) {
     throw new Error(
-      'Public GitHub Release is missing the immutable manifest or contract snapshot.',
+      'Public GitHub Release must have one immutable manifest and a contract snapshot.',
     );
   }
+  const manifestName = manifestNames[0]!;
   const temporary = await mkdtemp(join(tmpdir(), 'capture-release-audit-'));
   try {
     run('gh', [
@@ -111,30 +117,26 @@ async function main(): Promise<void> {
       '--repo',
       repository,
       '--pattern',
-      'capture-release-manifest-v1.json',
+      manifestName,
       '--dir',
       temporary,
     ]);
     run('gh', [
       'attestation',
       'verify',
-      join(temporary, 'capture-release-manifest-v1.json'),
+      join(temporary, manifestName),
       '--repo',
       repository,
       '--signer-workflow',
       `${repository}/.github/workflows/_publish-github-release.yml`,
     ]);
-    const manifest = JSON.parse(
-      await readFile(
-        join(temporary, 'capture-release-manifest-v1.json'),
-        'utf8',
-      ),
-    ) as {
-      candidateId?: unknown;
-      sourceCommit?: unknown;
-      releaseVersion?: unknown;
-    };
+    const manifest = parseFullReleaseManifest(
+      await readFile(join(temporary, manifestName)),
+      manifestName,
+    );
     if (
+      manifest.status !== 'released' ||
+      manifest.releaseTag !== tag ||
       typeof manifest.candidateId !== 'string' ||
       !/^[0-9a-f]{64}$/u.test(manifest.candidateId) ||
       manifest.sourceCommit !== tagged ||

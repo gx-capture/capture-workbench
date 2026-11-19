@@ -12,6 +12,7 @@ import {
   type ConsumerGateResult,
 } from './consumer-gate.ts';
 import { verifyContractImpact } from './classify-release-contract.ts';
+import { verifyCandidateVerificationSummary } from './release/candidate-verification-summary.ts';
 
 type GateConfig = {
   readonly name: string;
@@ -243,12 +244,17 @@ async function main(): Promise<void> {
   const output = resolve(required(values, '--output'));
   if (!Number.isSafeInteger(producerRunId) || producerRunId < 1)
     throw new Error('Producer run ID is invalid.');
-  await verifyCandidateManifest(candidate, {
+  const manifest = await verifyCandidateManifest(candidate, {
     candidateId,
     candidateManifestSha256,
     sourceCommit,
     releaseVersion,
   });
+  verifyCandidateVerificationSummary(
+    candidate,
+    manifest,
+    candidateManifestSha256,
+  );
   const contractSnapshotPath = join(
     candidate,
     'contracts',

@@ -607,7 +607,7 @@
         "{projectRoot}/dist/candidate/model-probe-evidence.json"
       ],
       "metadata": {
-        "description": "Opt-in local release gate that performs checksum-pinned direct model downloads and real OCR/speech recognition worker runs."
+        "description": "Required local check when the model source lock, an engine worker, or a model delivery differs from the last published release. Otherwise an optional diagnostic. Verifies checksum-pinned model downloads and runs real OCR and speech recognition workers."
       },
       "options": {
         "cwd": "packages/capture-runtime",

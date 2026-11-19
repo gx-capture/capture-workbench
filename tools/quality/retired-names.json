@@ -623,6 +623,76 @@
     "allowed": []
   },
   {
+    "name": "runtimeAssets",
+    "match": "word",
+    "replacement": "releaseAssets",
+    "allowed": [
+      {
+        "glob": "tools/release/full-release-manifest.ts",
+        "reason": "Reads immutable full release manifest v1."
+      },
+      {
+        "glob": "tools/resolve-capture-release.test.ts",
+        "reason": "Fixtures for immutable full release manifest v1."
+      },
+      {
+        "glob": "CHANGELOG.md",
+        "reason": "Historical release notes."
+      },
+      {
+        "glob": "naming-audit/contract-plan.md",
+        "reason": "Records the compatibility migration."
+      },
+      {
+        "glob": ".agents/PLANS/speech-recognition-s7.md",
+        "reason": "Records the historical v1 release layout."
+      },
+      {
+        "glob": ".agents/SPECS/capture-runtime-installer-size-reduction.md",
+        "reason": "Describes historical release assets."
+      }
+    ]
+  },
+  {
+    "name": "release-ledger.json",
+    "match": "word",
+    "replacement": "candidate-verification-summary.json",
+    "allowed": [
+      {
+        "glob": "tools/release/candidate-verification-summary.ts",
+        "reason": "Reads immutable pre-cutover candidate evidence."
+      },
+      {
+        "glob": "tools/consumer-gate.test.ts",
+        "reason": "Fixture for immutable pre-cutover candidate evidence."
+      },
+      {
+        "glob": "CHANGELOG.md",
+        "reason": "Historical release notes."
+      },
+      {
+        "glob": "naming-audit/contract-plan.md",
+        "reason": "Records the compatibility migration."
+      },
+      {
+        "glob": "naming-audit/addendum.md",
+        "reason": "Records the compatibility migration decision."
+      },
+      {
+        "glob": ".github/workflows/_publish-github-release.yml",
+        "reason": "GitHub release publication ledger is a different artifact."
+      },
+      {
+        "glob": ".github/workflows/_publish-runtime-github-release.yml",
+        "reason": "Runtime GitHub release publication ledger is a different artifact."
+      },
+      {
+        "glob": ".github/workflows/_publish-promotion-ledger.yml",
+        "reason": "Consumes the separate GitHub release publication ledger."
+      }
+    ]
+  },
+  {
     "name": "windowsml-ocr",
     "match": "word",
     "replacement": "text-recognition",

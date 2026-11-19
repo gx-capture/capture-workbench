@@ -46,32 +46,35 @@ jobs:
           REPLACEMENT_TAG: ${{ inputs.replacement_tag }}
         run: |
           set -euo pipefail
-          for tag in "$DEFECTIVE_TAG" "$REPLACEMENT_TAG"; do
+          for role in DEFECTIVE REPLACEMENT; do
+            tag_variable="${role}_TAG"
+            tag="${!tag_variable}"
             if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
               echo "Invalid release tag: $tag" >&2
               exit 1
             fi
-            directory="$RUNNER_TEMP/release-$tag"
-            mkdir -p "$directory"
-            gh release download "$tag" \
-              --repo "$GITHUB_REPOSITORY" \
-              --pattern capture-release-manifest-v1.json \
-              --dir "$directory"
-            gh attestation verify \
-              "$directory/capture-release-manifest-v1.json" \
+            directory="$RUNNER_TEMP/release-$role"
+            manifest_name="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets \
+              | jq -er '[.assets[].name | select(test("^capture-release-manifest-v[12]\\.json$"))] | select(length == 1) | .[0]')"
+            gh release download "$tag" --repo "$GITHUB_REPOSITORY" --pattern "$manifest_name" --dir "$directory"
+            manifest="$directory/$manifest_name"
+            gh attestation verify "$manifest" \
               --repo "$GITHUB_REPOSITORY" \
               --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/_publish-github-release.yml"
-            test "$(jq -r '.status' "$directory/capture-release-manifest-v1.json")" = 'released'
-            test "$(jq -r '.releaseTag' "$directory/capture-release-manifest-v1.json")" = "$tag"
+            node tools/release/full-release-manifest.ts "$manifest" "$tag"
+            echo "${role}_MANIFEST_SHA256=$(sha256sum "$manifest" | cut -d ' ' -f1)" >> "$GITHUB_ENV"
+            if [[ "$role" == REPLACEMENT ]]; then
+              echo "REPLACEMENT_MANIFEST_ASSET_NAME=$manifest_name" >> "$GITHUB_ENV"
+            fi
           done
-          echo "DEFECTIVE_MANIFEST_SHA256=$(sha256sum "$RUNNER_TEMP/release-$DEFECTIVE_TAG/capture-release-manifest-v1.json" | cut -d ' ' -f1)" >> "$GITHUB_ENV"
-          echo "REPLACEMENT_MANIFEST_SHA256=$(sha256sum "$RUNNER_TEMP/release-$REPLACEMENT_TAG/capture-release-manifest-v1.json" | cut -d ' ' -f1)" >> "$GITHUB_ENV"
 
       - name: Check out the protected release-index branch
         shell: bash
         run: |
           set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/release"
           cp tools/update-release-index.ts "$RUNNER_TEMP/update-release-index.ts"
+          cp tools/release/full-release-manifest.ts "$RUNNER_TEMP/release/"
           git fetch --no-tags origin refs/heads/release-index:refs/remotes/origin/release-index
           git checkout -B release-index refs/remotes/origin/release-index
 
@@ -90,6 +93,7 @@ jobs:
             --replacement-tag "$REPLACEMENT_TAG" \
             --defective-manifest-sha256 "$DEFECTIVE_MANIFEST_SHA256" \
             --replacement-manifest-sha256 "$REPLACEMENT_MANIFEST_SHA256" \
+            --replacement-manifest-asset-name "$REPLACEMENT_MANIFEST_ASSET_NAME" \
             --reason "$SUPERSESSION_REASON"
 
       - name: Add a warning to the affected GitHub Release

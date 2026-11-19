@@ -2,6 +2,11 @@ import { createHash } from 'node:crypto';
 import { readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import { basename, join, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import {
+  CANDIDATE_VERIFICATION_SUMMARY,
+  verifyCandidateVerificationSummary,
+  type CandidateVerificationSummary,
+} from './release/candidate-verification-summary.ts';
 
 const EXPECTED_SCHEMA_SHA256 =
   '17994c88485ef2257518a788ca2eec3dca3a9f3aae1de1bd37dc454219a3f833';
@@ -13,6 +18,7 @@ const EXPECTED_NPM_PACKAGES = new Set([
 function parseArguments(args: readonly string[]): {
   candidate: string;
   version: string;
+  assemble: boolean;
   sourceCommit?: string;
   releaseMode?: 'core-only' | 'model-enabled';
   packageCandidateId?: string;
@@ -26,6 +32,7 @@ function parseArguments(args: readonly string[]): {
     if (
       ![
         '--candidate',
+        '--evidence-mode',
         '--version',
         '--source-commit',
         '--release-mode',
@@ -37,7 +44,7 @@ function parseArguments(args: readonly string[]): {
       values.has(name)
     ) {
       throw new Error(
-        'Use --candidate <directory> --version <semver> [--source-commit <sha>] [--release-mode <mode>] [--package-candidate-id <sha>] [--runtime-candidate-id <sha>] [--contract-set-sha256 <sha>].',
+        'Use --candidate <directory> --version <semver> [--evidence-mode assemble] [--source-commit <sha>] [--release-mode <mode>] [--package-candidate-id <sha>] [--runtime-candidate-id <sha>] [--contract-set-sha256 <sha>].',
       );
     }
     values.set(name, value);
@@ -50,6 +57,8 @@ function parseArguments(args: readonly string[]): {
   const contractSetSha256 = values.get('--contract-set-sha256');
   if (
     !values.has('--candidate') ||
+    (values.has('--evidence-mode') &&
+      values.get('--evidence-mode') !== 'assemble') ||
     !version ||
     !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u.test(version) ||
     (sourceCommit !== undefined &&
@@ -64,12 +73,13 @@ function parseArguments(args: readonly string[]): {
       !/^[0-9a-f]{64}$/iu.test(contractSetSha256))
   ) {
     throw new Error(
-      'Use --candidate <directory> --version <semver> [--source-commit <sha>] [--release-mode <mode>] [--package-candidate-id <sha>] [--runtime-candidate-id <sha>] [--contract-set-sha256 <sha>].',
+      'Use --candidate <directory> --version <semver> [--evidence-mode assemble] [--source-commit <sha>] [--release-mode <mode>] [--package-candidate-id <sha>] [--runtime-candidate-id <sha>] [--contract-set-sha256 <sha>].',
     );
   }
   return {
     candidate: resolve(values.get('--candidate')!),
     version,
+    assemble: values.get('--evidence-mode') === 'assemble',
     sourceCommit,
     releaseMode: releaseMode as 'core-only' | 'model-enabled' | undefined,
     packageCandidateId,
@@ -184,9 +194,8 @@ async function requireChecksums(
   candidate: string,
   directories: readonly string[],
   artifacts: readonly string[],
-): Promise<Map<string, string>> {
+): Promise<void> {
   const checksumsDirectory = join(candidate, 'checksums');
-  const checksums = new Map<string, string>();
   for (const artifact of artifacts) {
     const checksumPath = join(checksumsDirectory, `${artifact}.sha256`);
     const checksumText = (await readFile(checksumPath, 'utf8')).trim();
@@ -214,9 +223,7 @@ async function requireChecksums(
     if (actualDigest !== match[1]) {
       throw new Error(`Checksum mismatch for ${artifact}.`);
     }
-    checksums.set(artifact, actualDigest);
   }
-  return checksums;
 }
 
 async function main(): Promise<void> {
@@ -294,7 +301,7 @@ async function main(): Promise<void> {
     );
   }
   const artifactNames = [...npmPackages, ...pythonArtifacts, ...crateArtifacts];
-  const artifactDigests = await requireChecksums(
+  await requireChecksums(
     candidate,
     [packages, python, crate],
     artifactNames,
@@ -303,12 +310,15 @@ async function main(): Promise<void> {
   const existingManifestPath = join(candidate, 'candidate-manifest.json');
   let existingManifest: Record<string, unknown> | undefined;
   try {
-    existingManifest = JSON.parse(
+    const value: unknown = JSON.parse(
       await readFile(existingManifestPath, 'utf8'),
-    ) as Record<string, unknown>;
+    );
+    if (!value || typeof value !== 'object' || Array.isArray(value))
+      throw new Error('Reused candidate manifest must be a JSON object.');
+    existingManifest = value as Record<string, unknown>;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-    // A first candidate has no prior manifest. Reused candidates are checked below.
+    if (!parsed.assemble || (error as NodeJS.ErrnoException).code !== 'ENOENT')
+      throw error;
   }
   const sourceCommit =
     parsed.sourceCommit ??
@@ -454,51 +464,45 @@ async function main(): Promise<void> {
       'Reused candidate source commit differs from the requested source commit.',
     );
   }
-  await writeFile(
-    existingManifestPath,
-    `${JSON.stringify(candidateManifest, null, 2)}\n`,
-    'utf8',
-  );
-  const candidateManifestSha256 = await sha256(existingManifestPath);
-  await writeFile(
-    join(candidate, 'candidate-manifest.json.sha256'),
-    `${candidateManifestSha256}  candidate-manifest.json\n`,
-    'utf8',
-  );
-
-  const ledger = {
-    candidateId,
-    sourceCommit,
-    releaseMode,
+  const manifestBytes = `${JSON.stringify(candidateManifest, null, 2)}\n`;
+  const candidateManifestSha256 = createHash('sha256')
+    .update(manifestBytes)
+    .digest('hex');
+  const checksumPath = join(candidate, 'candidate-manifest.json.sha256');
+  const checksum = `${candidateManifestSha256}  candidate-manifest.json\n`;
+  if (existingManifest) {
+    if (
+      (await sha256(existingManifestPath)) !== candidateManifestSha256 ||
+      (await readFile(checksumPath, 'utf8')) !== checksum
+    ) {
+      throw new Error(
+        'Reused candidate manifest or checksum bytes do not match verification.',
+      );
+    }
+  } else {
+    const summary: CandidateVerificationSummary = {
+      schemaVersion: '1',
+      candidateId,
+      sourceCommit,
+      candidateManifestSha256,
+      contractSetSha256,
+      captureDocumentSchemaSha256: schemaDigest,
+    };
+    await writeFile(checksumPath, checksum, 'utf8');
+    await writeFile(
+      join(candidate, CANDIDATE_VERIFICATION_SUMMARY),
+      `${JSON.stringify(summary, null, 2)}\n`,
+      'utf8',
+    );
+    await writeFile(existingManifestPath, manifestBytes, 'utf8');
+  }
+  verifyCandidateVerificationSummary(
+    candidate,
+    candidateManifest,
     candidateManifestSha256,
-    version,
-    schemaSha256: schemaDigest,
-    artifacts: [
-      ...npmPackages.map((name) => ({
-        registry: 'npm',
-        name,
-        sha256: artifactDigests.get(name),
-      })),
-      ...pythonArtifacts.map((name) => ({
-        registry: 'pypi',
-        name,
-        sha256: artifactDigests.get(name),
-      })),
-      ...crateArtifacts.map((name) => ({
-        registry: 'crates.io',
-        name,
-        sha256: artifactDigests.get(name),
-      })),
-    ],
-    status: 'candidate-verified',
-  };
-  await writeFile(
-    join(candidate, 'release-ledger.json'),
-    `${JSON.stringify(ledger, null, 2)}\n`,
-    'utf8',
   );
   process.stdout.write(
-    `Release candidate ${version} verified: ${ledger.artifacts.length} registry artifacts; candidate ${candidateId}.\n`,
+    `Release candidate ${version} verified: ${artifactNames.length} registry artifacts; candidate ${candidateId}.\n`,
   );
 }
 

@@ -235,6 +235,7 @@ jobs:
             --contract-set-sha256 '${{ inputs.contract_set_sha256 }}'
           $sourceCommit = (git rev-parse HEAD).Trim()
           node tools/verify-release-candidate.ts `
+            --evidence-mode assemble `
             --candidate "$candidate" `
             --version "$env:RELEASE_VERSION" `
             --source-commit "$sourceCommit" `
@@ -277,7 +278,7 @@ jobs:
             --output (Join-Path $env:RUNNER_TEMP 'contract-impact.json')
           Copy-Item (Join-Path $env:RUNNER_TEMP 'contract-impact.json') (Join-Path $candidate 'contract-impact.json')
 
-      - name: Upload immutable candidate
+      - name: Upload verified immutable candidate and verification summary
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: capture-candidate-${{ inputs.version }}-${{ github.run_id }}

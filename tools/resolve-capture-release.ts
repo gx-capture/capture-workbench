@@ -15,6 +15,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { parseFullReleaseManifest } from './release/full-release-manifest.ts';
 import {
   assertIndexes,
   type ReleaseIndex,
@@ -22,7 +23,6 @@ import {
 } from './update-release-index.ts';
 
 const CAPTURE_REPOSITORY = 'gx-capture/capture-workbench';
-const RELEASE_MANIFEST_ASSET = 'capture-release-manifest-v1.json';
 const RUNTIME_MANIFEST_ASSET = 'capture-runtime-candidate-manifest.json';
 const CANDIDATE_MANIFEST_ASSET = 'candidate-manifest.json';
 const SIGNER_WORKFLOWS = {
@@ -184,22 +184,22 @@ function verifyStableManifest(
   stable: StableIndex,
   releases: ReleaseIndex,
 ): VerifiedManifest {
-  const path = source.downloadAsset(tag, RELEASE_MANIFEST_ASSET);
+  const assetName = stable.manifestAssetName;
+  const path = source.downloadAsset(tag, assetName);
   const bytes = readFileSync(path);
   const manifestSha256 = sha256(bytes);
   if (manifestSha256 !== stable.manifestSha256)
     throw new Error(
-      `${RELEASE_MANIFEST_ASSET} digest does not match release-index/stable.json.`,
+      `${assetName} digest does not match release-index/stable.json.`,
     );
   source.verifyAttestation(path, SIGNER_WORKFLOWS.stable);
-  const manifest = parseJson(bytes.toString('utf8'), RELEASE_MANIFEST_ASSET);
+  const manifest = parseFullReleaseManifest(bytes, assetName);
   const components = manifest.components as Record<string, unknown> | undefined;
   const contract = manifest.contractClassification as
     | Record<string, unknown>
     | undefined;
   const classification = contract?.classification;
   if (
-    manifest.schemaVersion !== '1' ||
     manifest.status !== 'released' ||
     manifest.releaseTag !== tag ||
     manifest.releaseVersion !== tag.slice(1) ||
@@ -207,7 +207,7 @@ function verifyStableManifest(
     !components ||
     !CLASSIFICATIONS.includes(classification as ContractClassification)
   ) {
-    throw new Error(`${RELEASE_MANIFEST_ASSET} does not describe ${tag}.`);
+    throw new Error(`${assetName} does not describe ${tag}.`);
   }
   // The release manifest records the candidate manifest's digest, and only the
   // candidate manifest records the contract-set digest.

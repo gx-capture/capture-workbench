@@ -25,10 +25,10 @@ jobs:
     runs-on: ubuntu-latest
     environment: capture-release-index
     steps:
-      - name: Check out the candidate source commit
+      - name: Check out the pinned promotion tooling
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          ref: ${{ inputs.source_commit }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: true
 
@@ -38,24 +38,27 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh release download '${{ inputs.tag }}' \
-            --repo "$GITHUB_REPOSITORY" \
-            --pattern capture-release-manifest-v1.json \
-            --dir "$RUNNER_TEMP/release-manifest"
-          test -f "$RUNNER_TEMP/release-manifest/capture-release-manifest-v1.json"
-          test "$(jq -r '.status' "$RUNNER_TEMP/release-manifest/capture-release-manifest-v1.json")" = 'released'
-          test "$(jq -r '.releaseTag' "$RUNNER_TEMP/release-manifest/capture-release-manifest-v1.json")" = '${{ inputs.tag }}'
-          test "$(jq -r '.candidateId' "$RUNNER_TEMP/release-manifest/capture-release-manifest-v1.json")" = '${{ inputs.candidate_id }}'
-          gh attestation verify \
-            "$RUNNER_TEMP/release-manifest/capture-release-manifest-v1.json" \
+          tag='${{ inputs.tag }}'
+          directory="$RUNNER_TEMP/release-manifest"
+          manifest_name="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets \
+            | jq -er '[.assets[].name | select(test("^capture-release-manifest-v[12]\\.json$"))] | select(length == 1) | .[0]')"
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" --pattern "$manifest_name" --dir "$directory"
+          manifest="$directory/$manifest_name"
+          gh attestation verify "$manifest" \
             --repo "$GITHUB_REPOSITORY" \
             --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/_publish-github-release.yml"
-          manifest_sha256="$(sha256sum "$RUNNER_TEMP/release-manifest/capture-release-manifest-v1.json" | cut -d ' ' -f1)"
-          echo "MANIFEST_SHA256=$manifest_sha256" >> "$GITHUB_ENV"
+          node tools/release/full-release-manifest.ts "$manifest" "$tag" '${{ inputs.candidate_id }}'
+          test "$(jq -r '.sourceCommit' "$manifest")" = '${{ inputs.source_commit }}'
+          echo "MANIFEST_SHA256=$(sha256sum "$manifest" | cut -d ' ' -f1)" >> "$GITHUB_ENV"
+          echo "MANIFEST_ASSET_NAME=$manifest_name" >> "$GITHUB_ENV"
 
       - name: Preserve the tested release-index updater
         shell: bash
-        run: cp tools/update-release-index.ts "$RUNNER_TEMP/update-release-index.ts"
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/release"
+          cp tools/update-release-index.ts "$RUNNER_TEMP/update-release-index.ts"
+          cp tools/release/full-release-manifest.ts "$RUNNER_TEMP/release/"
 
       - name: Check out the protected release-index branch
         shell: bash
@@ -76,6 +79,7 @@ jobs:
             --operation promote \
             --tag "$RELEASE_TAG" \
             --candidate-id "$CANDIDATE_ID" \
+            --manifest-asset-name "$MANIFEST_ASSET_NAME" \
             --manifest-sha256 "$MANIFEST_SHA256"
 
       - name: Push only the promotion-owned release-index update

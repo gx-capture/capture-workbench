@@ -1,6 +1,10 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import {
+  isFullReleaseManifestName,
+  type FullReleaseManifestName,
+} from './release/full-release-manifest.ts';
 
 type ReleaseStatus = 'released' | 'superseded';
 
@@ -17,7 +21,7 @@ export type StableIndex = {
   readonly channel: 'stable';
   readonly releaseTag: string | null;
   readonly manifestSha256: string | null;
-  readonly manifestAssetName: 'capture-release-manifest-v1.json';
+  readonly manifestAssetName: FullReleaseManifestName;
   readonly updatedAt: string | null;
 };
 
@@ -29,6 +33,7 @@ export type ReleaseIndex = {
 type UpdateInput =
   | {
       readonly operation: 'promote';
+      readonly manifestAssetName: string;
       readonly tag: string;
       readonly candidateId: string;
       readonly manifestSha256: string;
@@ -36,6 +41,7 @@ type UpdateInput =
     }
   | {
       readonly operation: 'supersede';
+      readonly replacementManifestAssetName: string;
       readonly defectiveTag: string;
       readonly replacementTag: string;
       readonly defectiveManifestSha256: string;
@@ -62,7 +68,7 @@ export function assertIndexes(stable: StableIndex, releases: ReleaseIndex): void
   if (
     stable.schemaVersion !== '1' ||
     stable.channel !== 'stable' ||
-    stable.manifestAssetName !== 'capture-release-manifest-v1.json' ||
+    !isFullReleaseManifestName(stable.manifestAssetName) ||
     releases.schemaVersion !== '1' ||
     !releases.releases ||
     typeof releases.releases !== 'object'
@@ -95,6 +101,8 @@ export function updateReleaseIndex(
   const nextReleases = { ...releases.releases };
   if (input.operation === 'promote') {
     assertTag(input.tag, 'Release tag');
+    if (!isFullReleaseManifestName(input.manifestAssetName))
+      throw new Error('Promotion manifest filename is unsupported.');
     assertCandidateId(input.candidateId);
     assertSha(input.manifestSha256, 'Manifest digest');
     const existing = nextReleases[input.tag];
@@ -121,7 +129,7 @@ export function updateReleaseIndex(
         channel: 'stable',
         releaseTag: input.tag,
         manifestSha256: input.manifestSha256,
-        manifestAssetName: 'capture-release-manifest-v1.json',
+        manifestAssetName: input.manifestAssetName,
         updatedAt: input.updatedAt,
       },
       releases: { schemaVersion: '1', releases: nextReleases },
@@ -130,6 +138,8 @@ export function updateReleaseIndex(
 
   assertTag(input.defectiveTag, 'Defective release tag');
   assertTag(input.replacementTag, 'Replacement release tag');
+  if (!isFullReleaseManifestName(input.replacementManifestAssetName))
+    throw new Error('Replacement manifest filename is unsupported.');
   if (input.defectiveTag === input.replacementTag)
     throw new Error('Defective and replacement releases must differ.');
   if (!input.reason.trim()) throw new Error('Supersession reason is required.');
@@ -161,7 +171,7 @@ export function updateReleaseIndex(
       channel: 'stable',
       releaseTag: input.replacementTag,
       manifestSha256: replacement.manifestSha256,
-      manifestAssetName: 'capture-release-manifest-v1.json',
+      manifestAssetName: input.replacementManifestAssetName,
       updatedAt: input.updatedAt,
     },
     releases: { schemaVersion: '1', releases: nextReleases },
@@ -186,6 +196,8 @@ function parseArguments(args: readonly string[]): Map<string, string> {
         '--tag',
         '--candidate-id',
         '--manifest-sha256',
+        '--manifest-asset-name',
+        '--replacement-manifest-asset-name',
         '--defective-tag',
         '--replacement-tag',
         '--reason',
@@ -217,6 +229,7 @@ async function main(): Promise<void> {
     operation === 'promote'
       ? updateReleaseIndex(stable, releases, {
           operation: 'promote',
+          manifestAssetName: required(values, '--manifest-asset-name'),
           tag: required(values, '--tag'),
           candidateId: required(values, '--candidate-id'),
           manifestSha256: required(values, '--manifest-sha256'),
@@ -225,6 +238,10 @@ async function main(): Promise<void> {
       : operation === 'supersede'
         ? updateReleaseIndex(stable, releases, {
             operation: 'supersede',
+            replacementManifestAssetName: required(
+              values,
+              '--replacement-manifest-asset-name',
+            ),
             defectiveTag: required(values, '--defective-tag'),
             replacementTag: required(values, '--replacement-tag'),
             defectiveManifestSha256: required(

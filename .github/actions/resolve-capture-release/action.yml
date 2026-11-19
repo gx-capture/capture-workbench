@@ -34,7 +34,7 @@ outputs:
     value: ${{ steps.resolve.outputs.version }}
   manifest_sha256:
     description: >-
-      SHA-256 of the verified manifest (capture-release-manifest-v1.json in
+      SHA-256 of the verified manifest (the v1 or v2 full release manifest in
       stable mode, capture-runtime-candidate-manifest.json in route-a mode).
     value: ${{ steps.resolve.outputs.manifest_sha256 }}
   contract_classification:

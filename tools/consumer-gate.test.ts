@@ -9,9 +9,13 @@ import {
   verifyCandidateManifest,
 } from './consumer-gate.ts';
 import { createHash } from 'node:crypto';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import {
+  CANDIDATE_VERIFICATION_SUMMARY,
+  verifyCandidateVerificationSummary,
+} from './release/candidate-verification-summary.ts';
 
 const candidateId = 'a'.repeat(64);
 const manifestSha256 = 'b'.repeat(64);
@@ -123,6 +127,85 @@ test('downloaded candidate manifest is verified by exact digest and identity', a
         releaseVersion: RELEASE_VERSION,
       }),
       /digest/u,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('candidate verification evidence is versioned, bound to its bytes, and read-only', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'capture-candidate-summary-'));
+  const digest = (value: string) =>
+    createHash('sha256').update(value).digest('hex');
+  const schemaPath = 'runtime/capture-document-v2.schema.json';
+  const schema = '{"title":"Fixture schema"}\n';
+  const contracts = '{"contracts":[]}\n';
+  const captureDocumentSchemaSha256 = digest(schema);
+  const contractSetSha256 = digest(contracts);
+  const common = {
+    candidateId,
+    sourceCommit: consumerCommit,
+    releaseMode: 'model-enabled',
+    contractSetSha256,
+    artifacts: [{ path: schemaPath, sha256: captureDocumentSchemaSha256 }],
+  };
+  const previous = { ...common, releaseVersion: '0.9.9' };
+  const current = { ...common, releaseVersion: '99.0.0' };
+  const summaryPath = join(root, CANDIDATE_VERIFICATION_SUMMARY);
+  const legacyPath = join(root, 'release-ledger.json');
+  try {
+    await mkdir(join(root, 'runtime'));
+    await mkdir(join(root, 'contracts'));
+    await writeFile(join(root, schemaPath), schema);
+    await writeFile(join(root, 'contracts', 'contract-set.json'), contracts);
+    const legacyDigest = digest(JSON.stringify(previous));
+    const legacy = JSON.stringify({
+      candidateId,
+      sourceCommit: consumerCommit,
+      releaseMode: previous.releaseMode,
+      candidateManifestSha256: legacyDigest,
+      version: previous.releaseVersion,
+      schemaSha256: captureDocumentSchemaSha256,
+      artifacts: [],
+      status: 'candidate-verified',
+    });
+    await writeFile(legacyPath, legacy);
+    verifyCandidateVerificationSummary(root, previous, legacyDigest);
+    assert.equal(await readFile(legacyPath, 'utf8'), legacy);
+
+    const candidateManifestSha256 = digest(JSON.stringify(current));
+    assert.throws(
+      () => verifyCandidateVerificationSummary(root, current, candidateManifestSha256),
+      { code: 'ENOENT' },
+    );
+    const summary = {
+      schemaVersion: '1',
+      candidateId,
+      sourceCommit: consumerCommit,
+      candidateManifestSha256,
+      contractSetSha256,
+      captureDocumentSchemaSha256,
+    };
+    for (const field of Object.keys(summary)) {
+      await writeFile(summaryPath, JSON.stringify({ ...summary, [field]: 'wrong' }));
+      assert.throws(
+        () => verifyCandidateVerificationSummary(root, current, candidateManifestSha256),
+        /does not match the candidate manifest/u,
+      );
+    }
+    const summaryBytes = JSON.stringify(summary);
+    await writeFile(summaryPath, summaryBytes);
+    verifyCandidateVerificationSummary(root, current, candidateManifestSha256);
+    assert.equal(await readFile(summaryPath, 'utf8'), summaryBytes);
+    assert.equal(await readFile(join(root, schemaPath), 'utf8'), schema);
+    assert.equal(
+      await readFile(join(root, 'contracts', 'contract-set.json'), 'utf8'),
+      contracts,
+    );
+    await writeFile(join(root, schemaPath), 'changed schema');
+    assert.throws(
+      () => verifyCandidateVerificationSummary(root, current, candidateManifestSha256),
+      /digest mismatch for runtime/u,
     );
   } finally {
     await rm(root, { recursive: true, force: true });
