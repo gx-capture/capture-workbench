@@ -9,7 +9,7 @@ the OCR compute mode.
 
 ## Contract
 
-`RuntimeReady.ocrCompute` is an additive `OcrComputePreflightV2` value with
+`RuntimeReady.ocrCompute` is an additive `OcrComputePreflight` value with
 `apiVersion: "2.0"`, `schemaVersion: "1"`, the runtime's `runtimeVersion`,
 `contractSetVersion: "2"`, and the exact authenticated contract-set digest.
 Its stable decision fields are:

@@ -31,6 +31,7 @@ export type RuntimeResponseModel =
   | 'RuntimeInstallations'
   | 'StructuringModelInstallation'
   | 'StructuringModelOptions'
+  | 'StructuringModelOption'
   | 'RawCapture'
   | 'CaptureOcrProjection'
   | 'CaptureDocument'
@@ -49,6 +50,7 @@ const MODEL_FIELDS: Record<RuntimeResponseModel, { readonly required: readonly s
   RuntimeInstallations: { required: ['items'], optional: [] },
   StructuringModelInstallation: { required: ['installationId', 'optionId', 'status', 'progress', 'createdAt', 'updatedAt'], optional: ['error', 'completedAt'] },
   StructuringModelOptions: { required: ['catalogSha256', 'items'], optional: [] },
+  StructuringModelOption: { required: ['optionId', 'displayName', 'modelReference', 'profileId', 'profileSpecSha256', 'status'], optional: ['expectedDigest', 'downloadBytes'] },
   RawCapture: { required: ['schemaVersion', 'diagnosticOnly', 'source', 'segments', 'sourceText', 'extractionEngine', 'createdAt'], optional: ['diarizationEngine', 'speakers', 'suggestedRequirementIds', 'warnings', 'ocrPageScope'] },
   CaptureOcrProjection: { required: ['apiVersion', 'schemaVersion', 'captureId', 'status', 'pages', 'processedPageCount', 'runtimeVersion', 'contractSetSha256', 'provenance', 'createdAt'], optional: ['source', 'warnings', 'failure'] },
   CaptureDocument: { required: ['blocks', 'completedAt', 'createdAt', 'extractionEngine', 'rawSegments', 'schemaVersion', 'source', 'sourceText', 'structuringEngine', 'targetText'], optional: ['diarizationEngine', 'speakers', 'suggestedRequirementIds', 'warnings'] },
@@ -111,6 +113,12 @@ function validateModelShape(value: unknown, model: RuntimeResponseModel): void {
       throw new CaptureRuntimeProtocolError('Capture Runtime returned invalid RuntimeInstallations items.');
     }
     for (const item of record['items']) validateModelShape(item, 'RuntimeInstallation');
+  }
+  if (model === 'StructuringModelOptions') {
+    if (!Array.isArray(record['items'])) {
+      throw new CaptureRuntimeProtocolError('Capture Runtime returned invalid StructuringModelOptions items.');
+    }
+    for (const item of record['items']) validateModelShape(item, 'StructuringModelOption');
   }
   if (model === 'CaptureOperation') assertCaptureProgress(record, 'CaptureOperation');
   if (model === 'Ingestion') assertCaptureKind(record['kind'], model);
@@ -699,6 +707,8 @@ function assertCaptureKind(kind: unknown, label: string): void {
 }
 
 /** The readiness capabilities: what the runtime accepts and its upload and event limits. */
+const MAX_READINESS_CHUNK_BYTES = 4 * 1024 * 1024;
+
 function validateRuntimeCapabilities(record: Record<string, unknown>): void {
   assertExactFields(
     record,
@@ -722,13 +732,21 @@ function validateRuntimeCapabilities(record: Record<string, unknown>): void {
   }
   for (const kind of kinds) assertCaptureKind(kind, 'readiness capability');
   const modes = record['structuringModes'];
-  if (!Array.isArray(modes) || modes.some((mode) => mode !== 'runtime' && mode !== 'host')) {
+  if (
+    !Array.isArray(modes) ||
+    modes.length < 1 ||
+    modes.some((mode) => mode !== 'runtime' && mode !== 'host')
+  ) {
     throw new CaptureRuntimeProtocolError('Capture Runtime returned invalid readiness structuring modes.');
   }
   for (const field of ['maxUploadBytes', 'maxChunkBytes', 'checkpointIntervalMs', 'heartbeatIntervalMs', 'stallTimeoutMs']) {
     if (!isSafeIntegerAtLeast(record[field], 1)) {
       throw new CaptureRuntimeProtocolError(`Capture Runtime returned invalid readiness ${field}.`);
     }
+  }
+  // The runtime schema bounds a chunk at 4 MiB.
+  if ((record['maxChunkBytes'] as number) > MAX_READINESS_CHUNK_BYTES) {
+    throw new CaptureRuntimeProtocolError('Capture Runtime returned invalid readiness maxChunkBytes.');
   }
   for (const field of ['supportsCancellation', 'supportsRawDiagnostics', 'supportsProgressiveRecording']) {
     if (typeof record[field] !== 'boolean') {
@@ -881,12 +899,21 @@ export async function decodeError(response: Response): Promise<CaptureRuntimeErr
   const status = response.status;
   const code = error?.code ?? `http_${status}`;
   const message = error?.message ?? `Capture Runtime request failed (${status}).`;
+  // A 403 (origin_not_allowed) is an authorization refusal, not a bad token,
+  // whatever code or category its body names.
+  if (status === 403) {
+    return new CaptureRemoteError(status, code, message, details, {
+      category: 'authorization',
+      retryable,
+      issues,
+      requestId,
+    });
+  }
   if (status === 401 || code === 'unauthorized') {
     return new CaptureAuthenticationError(message, status, details, requestId);
   }
-  // A 403 (origin_not_allowed) is an authorization refusal, not a bad token.
   return new CaptureRemoteError(status, code, message, details, {
-    category: category ?? (status === 403 ? 'authorization' : undefined),
+    category,
     retryable,
     issues,
     requestId,

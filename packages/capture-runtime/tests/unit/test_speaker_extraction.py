@@ -9,6 +9,7 @@ import pytest
 
 from capture_runtime._worker_payloads import WorkerRunResult, WorkerSegment, WorkerWord
 from capture_runtime.capture.infrastructure.capture_extraction import (
+    CaptureExtractionOutcome,
     StandaloneRuntimeCaptureExtractor,
 )
 from capture_runtime.clock import SystemClock
@@ -27,6 +28,7 @@ from capture_runtime.diarization.infrastructure.speaker_worker_result import (
 )
 from capture_runtime.provisioning.infrastructure.engine_catalog import EngineCatalogError
 from capture_runtime.provisioning.infrastructure.engine_installation import (
+    EngineResolutionTimeoutError,
     ExtractionRuntimeUnavailableError,
 )
 from capture_runtime.structuring.infrastructure.structuring_provider import (
@@ -107,6 +109,8 @@ def _extract(
     speech_recognition_model: str = "auto",
     content_id: str | None = None,
     speech_recognition_variant: str = "auto",
+    outcomes: list[CaptureExtractionOutcome] | None = None,
+    diarization_times_out: bool = False,
 ) -> tuple[RawCapture, _WorkerClient]:
     worker_client = _WorkerClient()
 
@@ -114,6 +118,8 @@ def _extract(
         async def resolve_active_engine(self, requirement_id: str) -> InstalledEngine | None:
             if requirement_id == "speaker-diarization" and not in_catalog:
                 raise EngineCatalogError("unknown requirement")
+            if requirement_id == "speaker-diarization" and diarization_times_out:
+                raise EngineResolutionTimeoutError("active engine resolution timed out")
             if requirement_id not in installed:
                 return None
             return InstalledEngine(
@@ -161,6 +167,8 @@ def _extract(
             staged_progress=staged_progress,
         )
     )
+    if outcomes is not None:
+        outcomes.append(outcome)
     return outcome.raw, worker_client
 
 
@@ -217,6 +225,25 @@ def test_identified_speakers_split_the_transcript_and_get_a_listening_sample(
     ]
     assert worker_client.calls[0][1]["wordTimestamps"] is True
     assert not any(path.exists() for path in worker_client.sources)
+
+
+def test_the_speaker_worker_measurement_is_the_recording_length(tmp_path: Path) -> None:
+    outcomes: list[CaptureExtractionOutcome] = []
+    _extract(
+        tmp_path / "speakers",
+        installed={"speech-recognition", "speaker-diarization"},
+        identify_speakers=True,
+        outcomes=outcomes,
+    )
+    _extract(
+        tmp_path / "transcript",
+        installed={"speech-recognition", "speaker-diarization"},
+        identify_speakers=False,
+        outcomes=outcomes,
+    )
+
+    # Only the speaker worker decodes the whole recording and measures it.
+    assert [outcome.duration_ms for outcome in outcomes] == [2_000, None]
 
 
 def test_without_the_request_the_transcript_has_no_speakers(tmp_path: Path) -> None:

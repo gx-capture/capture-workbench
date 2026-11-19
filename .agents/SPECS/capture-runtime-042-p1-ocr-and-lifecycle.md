@@ -127,7 +127,7 @@ failure; the runtime never fabricates a page count.
 ## API and wire interface
 
 `GET /v2/captures/{capture_id}/ocr` is Bearer-authenticated and returns
-`CaptureOcrProjectionV3`:
+`CaptureOcrProjection`:
 
 - `apiVersion: "2.0"` and `schemaVersion: "3"`;
 - capture identity, source identity when known, `status` (`completed` or

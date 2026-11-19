@@ -1213,8 +1213,8 @@ class RuntimeCapabilities(StrictModel):
     checkpoint_interval_ms: int = Field(gt=0)
     heartbeat_interval_ms: int = Field(gt=0)
     stall_timeout_ms: int = Field(gt=0)
-    # Whether the packaged decoder that transcribes a recording while it is
-    # still uploading can load in this runtime.
+    # Whether the packaged decoder that transcribes a finalized recording window
+    # by window, publishing partial results as it goes, can load in this runtime.
     supports_progressive_recording: bool
 
 

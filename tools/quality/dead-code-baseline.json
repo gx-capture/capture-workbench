@@ -8,7 +8,6 @@
   "default|exports|tools/generated-worker-stage-policy.ts|WORKER_STAGE_POLICY_SCHEMA_VERSION",
   "default|types|packages/capture-runtime-client/src/private/generated-contracts.ts|OcrProvenanceStatus",
   "default|types|packages/capture-runtime-client/src/private/generated-contracts.ts|RuntimeReady",
-  "default|types|packages/capture-runtime-client/src/private/generated-contracts.ts|StartRuntimeInstallation",
   "default|types|packages/capture-runtime-client/src/private/generated-contracts.ts|StartStructuringModelInstallation",
   "default|types|tools/python-candidate-index.ts|PythonCandidateIndexManifest",
   "production|dependencies|package.json|@angular-devkit/build-angular",

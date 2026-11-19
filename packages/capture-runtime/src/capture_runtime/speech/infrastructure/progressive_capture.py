@@ -36,6 +36,7 @@ from capture_runtime.provisioning.infrastructure.engine_content_selection import
 from capture_runtime.provisioning.infrastructure.engine_installation import (
     EngineInstallationManager,
     ExtractionRuntimeUnavailableError,
+    RequirementResolutionTimeoutError,
     SpeechModelNotInstalledError,
 )
 from capture_runtime.speech.infrastructure.progressive_audio import (
@@ -254,10 +255,7 @@ class ProgressiveCaptureProcessor:
             raise
         except TimeoutError as error:
             # The same report as the buffered path gives for a slow engine check.
-            raise ExtractionRuntimeUnavailableError(
-                f"Runtime requirement {SPEECH_RECOGNITION_REQUIREMENT_ID} could not be "
-                "resolved within the bounded timeout."
-            ) from error
+            raise RequirementResolutionTimeoutError(SPEECH_RECOGNITION_REQUIREMENT_ID) from error
         except Exception as error:
             raise CaptureProcessingError(
                 "Progressive speech recognition engine could not be prepared.",

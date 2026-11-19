@@ -28,7 +28,10 @@ import type {
 import type { RuntimeRequest } from './internal-contracts';
 import { DEFAULT_CAPTURE_WORKBENCH_CONFIG } from '../constants';
 import { CaptureHelpersService } from '../capture-helpers';
-import { CaptureRuntimeInstallationService } from '../installation/capture-runtime-installation.service';
+import {
+  CaptureRuntimeInstallationService,
+  isGeneralInstallation,
+} from '../installation/capture-runtime-installation.service';
 import { CaptureWorkflowService } from './capture-workflow.service';
 import { CaptureWorkbenchStoreHelpers } from './capture-workbench-store-helpers';
 import { resolveCaptureWorkbenchMessages } from '../i18n/messages';
@@ -242,7 +245,9 @@ export class CaptureWorkbenchStore {
   );
   readonly installableRequirements = computed(() =>
     this.requiredRequirements().filter(
-      (requirement) => requirement.status === 'installable',
+      (requirement) =>
+        requirement.status === 'installable' &&
+        isGeneralInstallation(requirement.requirementId),
     ),
   );
   readonly captureDisabled = computed(
@@ -290,7 +295,8 @@ export class CaptureWorkbenchStore {
     return this.runtime().requirements.filter(
       (requirement) =>
         suggested.includes(requirement.requirementId) &&
-        requirement.status === 'installable',
+        requirement.status === 'installable' &&
+        isGeneralInstallation(requirement.requirementId),
     );
   }
 

@@ -84,16 +84,27 @@ def project_stored_failure_field(payload: Any, field: str) -> Any:
     return payload
 
 
+_OLD_OCR_PROJECTION_KEYS: dict[str, str] = {
+    "pageCount": "processedPageCount",
+    "contractSha256": "contractSetSha256",
+}
+
+
 def project_stored_capture(payload: Any) -> Any:
     """Project renamed fields in a decoded runtime capture, leaving digests and text intact."""
     if not isinstance(payload, dict):
         return payload
     projected = payload.copy()
-    if "captureId" in projected and isinstance(projected.get("pages"), list):
-        if "pageCount" in projected and "processedPageCount" not in projected:
-            projected["processedPageCount"] = projected.pop("pageCount")
-        if "contractSha256" in projected and "contractSetSha256" not in projected:
-            projected["contractSetSha256"] = projected.pop("contractSha256")
+    # A 0.10.x OCR projection wrote both old keys; a record with only one of
+    # them, or with an old and a current key, is left as is and fails validation.
+    if (
+        "captureId" in projected
+        and isinstance(projected.get("pages"), list)
+        and projected.keys() >= _OLD_OCR_PROJECTION_KEYS.keys()
+        and not set(_OLD_OCR_PROJECTION_KEYS.values()) & projected.keys()
+    ):
+        for old_key, current_key in _OLD_OCR_PROJECTION_KEYS.items():
+            projected[current_key] = projected.pop(old_key)
     for key in ("extractionEngine", "provenance"):
         identity = payload.get(key)
         if isinstance(identity, dict) and identity.get("engine") == "windowsml-ocr":

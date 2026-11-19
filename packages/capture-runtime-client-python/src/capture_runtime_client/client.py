@@ -7,7 +7,7 @@ import json
 from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 from uuid import UUID
 
 import httpx
@@ -43,6 +43,7 @@ from .contracts import (
     CaptureRequirementId,
     CaptureSourceKind,
     Ingestion,
+    InstallableRequirementId,
     OpenStructuringSession,
     PartialCapture,
     RawCapture,
@@ -160,9 +161,17 @@ class CaptureRuntimeClient:
         return decode_model(self._request("GET", "/v2/runtime/requirements"), RuntimeRequirements)
 
     def start_installation(
-        self, requirement_id: CaptureRequirementId, *, idempotency_key: UUID | str
+        self, requirement_id: InstallableRequirementId, *, idempotency_key: UUID | str
     ) -> RuntimeInstallation:
-        """Start installing a requirement with user consent; the key makes retries idempotent."""
+        """Start installing a requirement with user consent; the key makes retries idempotent.
+
+        The structuring model is installed with `start_model_installation`.
+        """
+        if requirement_id not in get_args(InstallableRequirementId):
+            raise ValueError(
+                f"{requirement_id} is not installed by a general installation; "
+                "install the structuring model with start_model_installation."
+            )
         return decode_model(
             self._request(
                 "POST",

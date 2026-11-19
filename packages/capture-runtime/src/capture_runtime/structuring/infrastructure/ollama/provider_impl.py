@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+from pathlib import Path
 
 import httpx
 
@@ -18,7 +19,11 @@ from capture_runtime.structuring.infrastructure.coordinator import (
     StructuringCoordinator,
     StructuringGenerationRequest,
 )
-from capture_runtime.structuring.infrastructure.model_catalog import model_option
+from capture_runtime.structuring.infrastructure.model_catalog import (
+    MODEL_OPTIONS,
+    legacy_profile_id,
+    model_option,
+)
 from capture_runtime.structuring.infrastructure.ollama.lifecycle_impl import (
     IsolatedOllamaLifecycle,
     RuntimeUnavailableError,
@@ -79,10 +84,11 @@ class OllamaCaptureStructuringProvider:
         target_language: str | None,
         cancel_event: asyncio.Event,
     ) -> object:
-        profile_id = self._selected_profile_id()
+        model_name = self._selected_model_name()
+        profile_id = _planning_profile_id(model_name)
         self._lifecycle.start()
         try:
-            engine_identity = await self._wait_until_ready(cancel_event, profile_id)
+            engine_identity = await self._wait_until_ready(cancel_event, model_name)
             self._engine_identity = engine_identity
             async with httpx.AsyncClient(
                 base_url=self._lifecycle.host_url,
@@ -97,7 +103,7 @@ class OllamaCaptureStructuringProvider:
                         client,
                         request,
                         cancel_event=cancel_event,
-                        profile_id=profile_id,
+                        model_name=model_name,
                     )
 
                 return await self._coordinator.structure(
@@ -121,14 +127,14 @@ class OllamaCaptureStructuringProvider:
         generation_request: StructuringGenerationRequest,
         *,
         cancel_event: asyncio.Event,
-        profile_id: str,
+        model_name: str,
     ) -> str:
         self._require_owned_process(str(client.base_url).rstrip("/"))
         request = asyncio.create_task(
             client.post(
                 "/api/generate",
                 json={
-                    "model": profile_id,
+                    "model": model_name,
                     "stream": False,
                     "think": False,
                     # Keep the selected model resident for the bounded
@@ -176,7 +182,7 @@ class OllamaCaptureStructuringProvider:
                 await asyncio.gather(request, return_exceptions=True)
 
     async def _wait_until_ready(
-        self, cancel_event: asyncio.Event, profile_id: str
+        self, cancel_event: asyncio.Event, model_name: str
     ) -> CaptureEngine:
         deadline = asyncio.get_running_loop().time() + 30
         async with httpx.AsyncClient(
@@ -198,8 +204,8 @@ class OllamaCaptureStructuringProvider:
                         for model in models:
                             name = str(model.get("name") or model.get("model") or "")
                             if name not in {
-                                profile_id,
-                                f"{profile_id}:latest",
+                                model_name,
+                                f"{model_name}:latest",
                             }:
                                 continue
                             digest = str(model.get("digest") or "")
@@ -211,7 +217,7 @@ class OllamaCaptureStructuringProvider:
                                 )
                             return CaptureEngine(
                                 engine="ollama",
-                                model=profile_id,
+                                model=model_name,
                                 digest=digest,
                                 device="local",
                             )
@@ -220,7 +226,14 @@ class OllamaCaptureStructuringProvider:
                 await asyncio.sleep(0.2)
         raise RuntimeUnavailableError("isolated Ollama profile did not become ready")
 
-    def _selected_profile_id(self) -> str:
+    def _selected_model_name(self) -> str:
+        """Return the Ollama model the verified selection or install marker names.
+
+        A selection or marker written before profile ids lost their consumer
+        prefix names the model under its old name; it is used only when it
+        matches the expected option and its digests.
+        """
+
         selection_reader = getattr(self._lifecycle, "active_model_selection", None)
         if not callable(selection_reader):
             return self._lifecycle.config.profile_id
@@ -233,15 +246,11 @@ class OllamaCaptureStructuringProvider:
             self._lifecycle.config.app_data_dir / "requirements" / "capture-ollama-model.ready.json"
         )
         if legacy_marker.is_file():
-            try:
-                marker_payload = json.loads(legacy_marker.read_text(encoding="utf-8"))
-            except (OSError, ValueError, TypeError, json.JSONDecodeError):
-                marker_payload = None
-            if isinstance(marker_payload, dict):
-                marker_profile = marker_payload.get("profileId")
-                if isinstance(marker_profile, str) and marker_profile:
-                    return marker_profile
-            return self._lifecycle.config.profile_id
+            marker_profile = _verified_marker_profile_id(
+                legacy_marker, self._lifecycle.config.profile_id
+            )
+            if marker_profile is not None:
+                return marker_profile
         raise RuntimeUnavailableError("model_selection_required")
 
     def _require_owned_process(self, expected_url: str) -> None:
@@ -251,3 +260,37 @@ class OllamaCaptureStructuringProvider:
             raise RuntimeUnavailableError(
                 "isolated Ollama process stopped before provider response validation"
             )
+
+
+def _planning_profile_id(model_name: str) -> str:
+    """Plan batches for the option's current profile, also under its old model name."""
+
+    for option in MODEL_OPTIONS:
+        if model_name in {option.profile_id, legacy_profile_id(option)}:
+            return option.profile_id
+    return model_name
+
+
+def _verified_marker_profile_id(marker: Path, expected_profile_id: str) -> str | None:
+    """Return the marker's profile only when it records the expected option's digests."""
+
+    option = next(
+        (option for option in MODEL_OPTIONS if option.profile_id == expected_profile_id),
+        None,
+    )
+    if option is None:
+        return None
+    try:
+        payload = json.loads(marker.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    profile_id = payload.get("profileId")
+    if (
+        profile_id in {option.profile_id, legacy_profile_id(option)}
+        and payload.get("baseModel") == option.model_reference
+        and payload.get("modelfileSha256") == option.profile_spec_sha256
+    ):
+        return str(profile_id)
+    return None

@@ -323,7 +323,7 @@ describe('CaptureWorkbenchComponent', () => {
     ).toEqual(['text-recognition', 'speech-recognition']);
   });
 
-  it('retries an uncertain installation once and installs a newly unlocked model', async () => {
+  it('retries an uncertain installation once and leaves the model to model installation', async () => {
     const ollamaRuntime: RuntimeRequirement = {
       requirementId: 'structuring-runtime',
       kind: 'structuring-runtime',
@@ -346,7 +346,8 @@ describe('CaptureWorkbenchComponent', () => {
     ];
     const modelInstallable: readonly RuntimeRequirement[] = [
       // A stale runtime probe must not cause the already-completed ID to be
-      // repeated; the newly unlocked model should still be selected.
+      // repeated. The structuring model is installed with a chosen option
+      // through model installation, never through a general installation.
       ollamaRuntime,
       { ...captureModel, status: 'installable' },
     ];
@@ -384,18 +385,13 @@ describe('CaptureWorkbenchComponent', () => {
     fixture.componentInstance.store.installMissingRequirements();
     await fixture.whenStable();
 
-    expect(startInstallation).toHaveBeenCalledTimes(3);
+    expect(startInstallation).toHaveBeenCalledTimes(2);
     const firstRequest = startInstallation.mock.calls[0]?.[0];
     const retryRequest = startInstallation.mock.calls[1]?.[0];
-    const modelRequest = startInstallation.mock.calls[2]?.[0];
     expect(firstRequest).toBe(retryRequest);
     expect(retryRequest?.clientRequestId).toBe(firstRequest?.clientRequestId);
     expect(firstRequest?.requirementId).toBe('structuring-runtime');
-    expect(modelRequest?.requirementId).toBe('structuring-model');
-    expect(modelRequest?.clientRequestId).not.toBe(
-      firstRequest?.clientRequestId,
-    );
-    expect(getRequirements).toHaveBeenCalledTimes(3);
+    expect(getRequirements).toHaveBeenCalledTimes(2);
     expect(fixture.componentInstance.installation()).toBeNull();
   });
 

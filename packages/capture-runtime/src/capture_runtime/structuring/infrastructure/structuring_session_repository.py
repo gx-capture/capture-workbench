@@ -194,14 +194,22 @@ def _historical_request_fingerprint(
     )
 
 
-def _historical_session_digest(
+def _historical_session_payload(
     session: StructuringSessionContract, historical: _HistoricalForm
-) -> str:
-    payload = session.model_dump(mode="json", by_alias=True, exclude={"session_digest"})
+) -> dict[str, object]:
+    payload = session.model_dump(mode="json", by_alias=True)
     payload[historical.source_key] = payload.pop("sourceSha256")
     capability = dict(payload["providerCapability"])
     capability["capability"] = historical.capability
     payload["providerCapability"] = capability
+    return payload
+
+
+def _historical_session_digest(
+    session: StructuringSessionContract, historical: _HistoricalForm
+) -> str:
+    payload = _historical_session_payload(session, historical)
+    payload.pop("sessionDigest")
     return _digest(payload)
 
 
@@ -249,6 +257,14 @@ def _uuid(value: str) -> str:
     return normalized
 
 
+def _stored_session_payload(
+    session: StructuringSessionContract, historical: _HistoricalForm | None
+) -> dict[str, object]:
+    if historical is None:
+        return session.model_dump(mode="json", by_alias=True)
+    return _historical_session_payload(session, historical)
+
+
 @dataclass(slots=True)
 class StructuringBatchRecord:
     batch: StructuringBatchContract
@@ -257,7 +273,7 @@ class StructuringBatchRecord:
     submission_fingerprint: str | None = None
     response: StructuringSessionContract | None = None
 
-    def dump(self) -> dict[str, object]:
+    def dump(self, historical: _HistoricalForm | None = None) -> dict[str, object]:
         return {
             "batch": self.batch.model_dump(mode="json", by_alias=True),
             "acceptedBlocks": (
@@ -270,7 +286,7 @@ class StructuringBatchRecord:
             "response": (
                 None
                 if self.response is None
-                else self.response.model_dump(mode="json", by_alias=True)
+                else _stored_session_payload(self.response, historical)
             ),
         }
 
@@ -285,8 +301,11 @@ class StructuringSessionRecord:
     batches: list[StructuringBatchRecord]
     request_fingerprint: str
     completed_document: CaptureDocument | None = None
-    # Set for a record read in its 0.10.x form. Reads never rewrite it; the
-    # next accepted batch saves the record in the current form.
+    # Set for a record a 0.10.x runtime wrote. Reads never rewrite it. An
+    # accepted batch keeps the record in that form: its request, request
+    # fingerprint and earlier replay responses stay as written, and the new
+    # checkpoint is digested the way the record's other checkpoints are (the
+    # source digest key of a 0.10.x record is recorded only in its checkpoints).
     historical: _HistoricalForm | None = None
 
     def current_fingerprint(self) -> str:
@@ -303,15 +322,27 @@ class StructuringSessionRecord:
             batches=[entry.batch for entry in self.batches],
         )
 
+    def checkpoint_digest(self, session: StructuringSessionContract) -> str:
+        """The digest of a new checkpoint, in the form of the record's other checkpoints."""
+
+        if self.historical is None:
+            return _session_digest(session)
+        return _historical_session_digest(session, self.historical)
+
     def dump(self) -> dict[str, object]:
-        if self.historical is not None:
-            raise RuntimeError("a historical structuring session record is never rewritten as is")
+        transport: dict[str, object] = (
+            {
+                "request": self.request.model_dump(mode="json", by_alias=True),
+                "captureId": self.capture_id,
+                "clientRequestId": self.client_request_id,
+            }
+            if self.historical is None
+            else {"request": self.historical.request_payload}
+        )
         return {
-            "request": self.request.model_dump(mode="json", by_alias=True),
-            "captureId": self.capture_id,
-            "clientRequestId": self.client_request_id,
-            "session": self.session.model_dump(mode="json", by_alias=True),
-            "batches": [batch.dump() for batch in self.batches],
+            **transport,
+            "session": _stored_session_payload(self.session, self.historical),
+            "batches": [batch.dump(self.historical) for batch in self.batches],
             "requestFingerprint": self.request_fingerprint,
             "completedDocument": (
                 None
@@ -593,26 +624,9 @@ class StructuringSessionRepository:
                 }
             )
             updated_session = updated_session.model_copy(
-                update={"session_digest": _session_digest(updated_session)}
+                update={"session_digest": record.checkpoint_digest(updated_session)}
             )
             updated_batches = list(record.batches)
-            if record.historical is not None:
-                updated_batches = [
-                    StructuringBatchRecord(
-                        batch=entry.batch,
-                        accepted_blocks=entry.accepted_blocks,
-                        idempotency_key=entry.idempotency_key,
-                        submission_fingerprint=entry.submission_fingerprint,
-                        response=(
-                            None
-                            if entry.response is None
-                            else entry.response.model_copy(
-                                update={"session_digest": _session_digest(entry.response)}
-                            )
-                        ),
-                    )
-                    for entry in updated_batches
-                ]
             updated_batches[batch_index] = StructuringBatchRecord(
                 batch=updated_batch,
                 accepted_blocks=blocks,
@@ -626,8 +640,9 @@ class StructuringSessionRepository:
                 client_request_id=record.client_request_id,
                 session=updated_session,
                 batches=updated_batches,
-                request_fingerprint=record.current_fingerprint(),
+                request_fingerprint=record.request_fingerprint,
                 completed_document=completed_document if is_final else record.completed_document,
+                historical=record.historical,
             )
             # Persist the accepted body/checkpoint before mutating in-memory
             # state or advancing nextBatchIndex.

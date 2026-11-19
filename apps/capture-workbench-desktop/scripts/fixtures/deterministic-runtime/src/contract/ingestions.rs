@@ -1,6 +1,7 @@
 use super::*;
 
-const MAX_CHUNK_BYTES: usize = 1024 * 1024;
+/// The runtime's chunk limit. Readiness advertises it and uploads enforce it.
+pub(super) const MAX_CHUNK_BYTES: usize = 4 * 1024 * 1024;
 
 #[derive(Clone)]
 pub(super) struct IngestionRecord {
@@ -181,6 +182,15 @@ fn append_chunk(record: &mut IngestionRecord, request: &Request, index: usize) -
             "Content-Range and Digest headers are invalid.",
         );
     };
+    // As in the runtime, a range that ends at or past its total is malformed,
+    // before any size or ingestion-state check.
+    if total == 0 || end >= total {
+        return api_error(
+            422,
+            "invalid_chunk_headers",
+            "Content-Range end must be less than its total.",
+        );
+    }
     let length = end
         .checked_sub(start)
         .and_then(|value| value.checked_add(1));
@@ -231,13 +241,6 @@ fn append_chunk(record: &mut IngestionRecord, request: &Request, index: usize) -
             409,
             "chunk_out_of_order",
             "Chunks must be contiguous and ordered.",
-        );
-    }
-    if end >= record.total_bytes {
-        return api_error(
-            409,
-            "chunk_too_large",
-            "Chunks exceed declared source size.",
         );
     }
     record.chunks.push((start, request.body.len()));

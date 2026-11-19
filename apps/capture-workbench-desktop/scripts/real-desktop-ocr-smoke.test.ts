@@ -957,7 +957,7 @@ test('Phase 1 OCR-only acceptance keeps OCR semantic, projection, GPU, and clean
       sourceSha256: 'd'.repeat(64),
       runtimeSha256: 'e'.repeat(64),
       workerSha256: 'f'.repeat(64),
-      contractSha256: '3'.repeat(64),
+      contractSetSha256: '3'.repeat(64),
       sourceKind: 'pdf',
     });
     for (const item of [
@@ -973,7 +973,7 @@ test('Phase 1 OCR-only acceptance keeps OCR semantic, projection, GPU, and clean
           sourceSha256: 'd'.repeat(64),
           runtimeSha256: 'e'.repeat(64),
           workerSha256: 'f'.repeat(64),
-          contractSha256: '3'.repeat(64),
+          contractSetSha256: '3'.repeat(64),
           sourceKind: 'pdf',
         }),
         item[2],
@@ -1223,7 +1223,7 @@ test('Phase 1 installed acceptance wires OCR proof validation before deferred st
       sourceSha256: 'd'.repeat(64),
       runtimeSha256: 'e'.repeat(64),
       workerSha256: 'f'.repeat(64),
-      contractSha256: '3'.repeat(64),
+      contractSetSha256: '3'.repeat(64),
     };
     const verified = await verifyInstalledOcrExecutionProof({
       artifactRoot: proofRoot,
@@ -1900,148 +1900,150 @@ test('real desktop OCR provenance requires the PaddleOCR engine', () => {
   );
 });
 
-test('first-run OCR setup unchecks ASR and speakers, retries once on filesystem failure, and returns to /ocr', async () => {
-  let route: 'ocr' | 'settings-engines' = 'ocr';
-  let ocrChecked = false;
-  let asrChecked = true;
-  let speakersChecked = true;
-  let installClicks = 0;
-  let retryClicks = 0;
-  let detailsExpanded = false;
-  let ocrEngineStatus: 'installable' | 'running' | 'failed' | 'ready' = 'installable';
-  let pollCount = 0;
-  const events: string[] = [];
+for (const retriedCode of ['installation_io_failed', 'installation_timeout'] as const) {
+  test(`first-run OCR setup unchecks ASR and speakers, retries once on ${retriedCode}, and returns to /ocr`, async () => {
+    let route: 'ocr' | 'settings-engines' = 'ocr';
+    let ocrChecked = false;
+    let asrChecked = true;
+    let speakersChecked = true;
+    let installClicks = 0;
+    let retryClicks = 0;
+    let detailsExpanded = false;
+    let ocrEngineStatus: 'installable' | 'running' | 'failed' | 'ready' = 'installable';
+    let pollCount = 0;
+    const events: string[] = [];
 
-  const testIdLocator = (testId: string) => ({
-    waitFor: async () => undefined,
-    isVisible: async () => {
-      if (testId === 'page-ocr') return route === 'ocr';
-      if (testId === 'page-settings-engines') return route === 'settings-engines';
-      if (testId === 'first-run-card') return route === 'ocr' && ocrEngineStatus === 'installable';
-      if (testId === 'first-run-checkbox-ocr' || testId === 'first-run-checkbox-asr' || testId === 'first-run-checkbox-speakers') {
-        return route === 'ocr' && ocrEngineStatus === 'installable';
-      }
-      if (testId === 'diagnostics-runtime-error') return false;
-      return route === 'ocr';
-    },
-    isEnabled: async () => {
-      if (testId === 'first-run-install') return ocrChecked && !asrChecked && !speakersChecked;
-      return true;
-    },
-    count: async () => (testId.startsWith('first-run-checkbox-') && ocrEngineStatus !== 'installable' ? 0 : 1),
-    isChecked: async () => {
-      if (testId === 'first-run-checkbox-ocr') return ocrChecked;
-      if (testId === 'first-run-checkbox-asr') return asrChecked;
-      if (testId === 'first-run-checkbox-speakers') return speakersChecked;
-      return false;
-    },
-    check: async () => {
-      if (testId === 'first-run-checkbox-ocr') ocrChecked = true;
-    },
-    uncheck: async () => {
-      if (testId === 'first-run-checkbox-asr') asrChecked = false;
-      if (testId === 'first-run-checkbox-speakers') speakersChecked = false;
-    },
-    click: async () => {
-      if (testId === 'first-run-install') {
-        assert.equal(ocrChecked, true);
-        assert.equal(asrChecked, false);
-        assert.equal(speakersChecked, false);
-        installClicks += 1;
-        ocrEngineStatus = 'failed';
-      } else if (testId === 'nav-settings') {
-        route = 'settings-engines';
-      } else if (testId === 'nav-ocr') {
-        route = 'ocr';
-      }
-    },
-    getAttribute: async (name: string) => {
-      if (testId === 'runtime-status' && name === 'data-state') return 'ready';
-      return null;
-    },
-    textContent: async () => null,
-    evaluateAll: async () => (testId === 'engine-row'
-      ? [{ id: 'text-recognition', status: ocrEngineStatus, text: 'OCR' }]
-      : []),
+    const testIdLocator = (testId: string) => ({
+      waitFor: async () => undefined,
+      isVisible: async () => {
+        if (testId === 'page-ocr') return route === 'ocr';
+        if (testId === 'page-settings-engines') return route === 'settings-engines';
+        if (testId === 'first-run-card') return route === 'ocr' && ocrEngineStatus === 'installable';
+        if (testId === 'first-run-checkbox-ocr' || testId === 'first-run-checkbox-asr' || testId === 'first-run-checkbox-speakers') {
+          return route === 'ocr' && ocrEngineStatus === 'installable';
+        }
+        if (testId === 'diagnostics-runtime-error') return false;
+        return route === 'ocr';
+      },
+      isEnabled: async () => {
+        if (testId === 'first-run-install') return ocrChecked && !asrChecked && !speakersChecked;
+        return true;
+      },
+      count: async () => (testId.startsWith('first-run-checkbox-') && ocrEngineStatus !== 'installable' ? 0 : 1),
+      isChecked: async () => {
+        if (testId === 'first-run-checkbox-ocr') return ocrChecked;
+        if (testId === 'first-run-checkbox-asr') return asrChecked;
+        if (testId === 'first-run-checkbox-speakers') return speakersChecked;
+        return false;
+      },
+      check: async () => {
+        if (testId === 'first-run-checkbox-ocr') ocrChecked = true;
+      },
+      uncheck: async () => {
+        if (testId === 'first-run-checkbox-asr') asrChecked = false;
+        if (testId === 'first-run-checkbox-speakers') speakersChecked = false;
+      },
+      click: async () => {
+        if (testId === 'first-run-install') {
+          assert.equal(ocrChecked, true);
+          assert.equal(asrChecked, false);
+          assert.equal(speakersChecked, false);
+          installClicks += 1;
+          ocrEngineStatus = 'failed';
+        } else if (testId === 'nav-settings') {
+          route = 'settings-engines';
+        } else if (testId === 'nav-ocr') {
+          route = 'ocr';
+        }
+      },
+      getAttribute: async (name: string) => {
+        if (testId === 'runtime-status' && name === 'data-state') return 'ready';
+        return null;
+      },
+      textContent: async () => null,
+      evaluateAll: async () => (testId === 'engine-row'
+        ? [{ id: 'text-recognition', status: ocrEngineStatus, text: 'OCR' }]
+        : []),
+    });
+
+    const engineRowLocator = {
+      waitFor: async () => undefined,
+      getAttribute: async (name: string) => {
+        if (name !== 'data-status') return null;
+        pollCount += 1;
+        if (pollCount >= 2 && retryClicks === 1) ocrEngineStatus = 'ready';
+        return ocrEngineStatus;
+      },
+      textContent: async () => 'OCR engine',
+      getByTestId: (childId: string) => {
+        if (childId === 'engine-row-toggle') {
+          return {
+            click: async () => {
+              detailsExpanded = true;
+            },
+          };
+        }
+        if (childId === 'engine-row-retry') {
+          return {
+            isEnabled: async () => true,
+            click: async () => {
+              retryClicks += 1;
+              ocrEngineStatus = 'running';
+            },
+          };
+        }
+        return {};
+      },
+    };
+
+    const engineDetailsLocator = {
+      isVisible: async () => detailsExpanded && ocrEngineStatus === 'failed',
+      getByTestId: (childId: string) => ({
+        textContent: async () => (childId === 'engine-row-error' ? 'Transient disk lock' : ''),
+      }),
+    };
+
+    const fakePage = {
+      url: () => (route === 'ocr' ? 'http://tauri.localhost/ocr' : 'http://tauri.localhost/settings/engines'),
+      getByTestId: testIdLocator,
+      locator: (selector: string) => {
+        if (selector === '[data-testid="engine-row"][data-requirement-id="text-recognition"]') return engineRowLocator;
+        if (selector === '[data-testid="engine-row-details"][data-requirement-id="text-recognition"]') return engineDetailsLocator;
+        return {};
+      },
+      evaluate: async (_fn: unknown, payload: { readonly commandName?: string }) => {
+        if (payload?.commandName === 'runtime_requirements') {
+          return { items: [{ requirementId: 'text-recognition', status: 'installable' }] };
+        }
+        if (payload?.commandName === 'runtime_list_installations') {
+          return {
+            items: ocrEngineStatus === 'failed'
+              ? [{
+                  requirementId: 'text-recognition',
+                  status: 'failed',
+                  error: { code: retriedCode, message: 'Transient disk lock' },
+                }]
+              : [],
+          };
+        }
+        return {};
+      },
+    } as unknown as Page;
+
+    const result = await runOcrFirstRunSetup(fakePage, {
+      onConsentRequired: async () => { events.push('consent'); },
+      onInstallStarted: () => { events.push('install-started'); },
+      onInstallProgress: async () => { events.push('install-progress'); },
+      onInstallRetry: async () => { events.push('install-retry'); },
+    });
+
+    assert.deepEqual(result, { installRequired: true });
+    assert.equal(installClicks, 1);
+    assert.equal(retryClicks, 1);
+    assert.equal(route, 'ocr');
+    assert.deepEqual(events, ['consent', 'install-started', 'install-progress', 'install-started', 'install-retry']);
   });
-
-  const engineRowLocator = {
-    waitFor: async () => undefined,
-    getAttribute: async (name: string) => {
-      if (name !== 'data-status') return null;
-      pollCount += 1;
-      if (pollCount >= 2 && retryClicks === 1) ocrEngineStatus = 'ready';
-      return ocrEngineStatus;
-    },
-    textContent: async () => 'OCR engine',
-    getByTestId: (childId: string) => {
-      if (childId === 'engine-row-toggle') {
-        return {
-          click: async () => {
-            detailsExpanded = true;
-          },
-        };
-      }
-      if (childId === 'engine-row-retry') {
-        return {
-          isEnabled: async () => true,
-          click: async () => {
-            retryClicks += 1;
-            ocrEngineStatus = 'running';
-          },
-        };
-      }
-      return {};
-    },
-  };
-
-  const engineDetailsLocator = {
-    isVisible: async () => detailsExpanded && ocrEngineStatus === 'failed',
-    getByTestId: (childId: string) => ({
-      textContent: async () => (childId === 'engine-row-error' ? 'Transient disk lock' : ''),
-    }),
-  };
-
-  const fakePage = {
-    url: () => (route === 'ocr' ? 'http://tauri.localhost/ocr' : 'http://tauri.localhost/settings/engines'),
-    getByTestId: testIdLocator,
-    locator: (selector: string) => {
-      if (selector === '[data-testid="engine-row"][data-requirement-id="text-recognition"]') return engineRowLocator;
-      if (selector === '[data-testid="engine-row-details"][data-requirement-id="text-recognition"]') return engineDetailsLocator;
-      return {};
-    },
-    evaluate: async (_fn: unknown, payload: { readonly commandName?: string }) => {
-      if (payload?.commandName === 'runtime_requirements') {
-        return { items: [{ requirementId: 'text-recognition', status: 'installable' }] };
-      }
-      if (payload?.commandName === 'runtime_list_installations') {
-        return {
-          items: ocrEngineStatus === 'failed'
-            ? [{
-                requirementId: 'text-recognition',
-                status: 'failed',
-                error: { code: 'installation_io_failed', message: 'Transient disk lock' },
-              }]
-            : [],
-        };
-      }
-      return {};
-    },
-  } as unknown as Page;
-
-  const result = await runOcrFirstRunSetup(fakePage, {
-    onConsentRequired: async () => { events.push('consent'); },
-    onInstallStarted: () => { events.push('install-started'); },
-    onInstallProgress: async () => { events.push('install-progress'); },
-    onInstallRetry: async () => { events.push('install-retry'); },
-  });
-
-  assert.deepEqual(result, { installRequired: true });
-  assert.equal(installClicks, 1);
-  assert.equal(retryClicks, 1);
-  assert.equal(route, 'ocr');
-  assert.deepEqual(events, ['consent', 'install-started', 'install-progress', 'install-started', 'install-retry']);
-});
+}
 
 test('first-run OCR setup handles already-ready, active-installation, dismissed-card, and non-filesystem failure paths', async () => {
   const readyPage = {

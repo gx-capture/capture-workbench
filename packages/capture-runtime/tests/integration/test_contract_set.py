@@ -19,6 +19,7 @@ from capture_runtime.contract_set import (
     validate_route_inventory,
 )
 from capture_runtime.release import CAPTURE_DOCUMENT_SCHEMA_RELEASE_SHA256
+from capture_runtime.storage.common import RETIRED_FAILURE_CODES
 from tests.conftest import TOKEN
 
 
@@ -124,14 +125,9 @@ def test_http_problems_and_job_failure_codes_are_separate_catalogues() -> None:
         "runtime_restarted",
     } <= failures
     assert "uninstall_failed" in problems
-    for retired in (
-        "progressive_failed",
-        "progressive_interrupted",
-        "progressive_output_invalid",
-        "progressive_no_text_at_sample",
-        "streaming_source_unavailable",
-        "installation_filesystem",
-    ):
+    # Codes only 0.10.x runtimes wrote are read under their current names and
+    # are in neither published catalogue.
+    for retired in RETIRED_FAILURE_CODES:
         assert retired not in problems | failures
     assert all(set(failure) == {"code", "message"} for failure in bundle["failureCodes"])
 

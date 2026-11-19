@@ -189,10 +189,7 @@ class StructuringCoordinator:
     def _is_single_segment_profile(self, profile_id: str) -> bool:
         if self._single_segment_profile_id is None:
             return False
-        return profile_id in {
-            self._single_segment_profile_id,
-            f"capture-workbench-{self._single_segment_profile_id}",
-        }
+        return profile_id == self._single_segment_profile_id
 
     def _plans(
         self,

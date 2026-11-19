@@ -55,16 +55,17 @@ def decode_json(response: httpx.Response) -> Any:
             or response.headers.get("x-correlation-id")
             or _optional_text(error_map.get("requestId", details_map.get("requestId")))
         )
-        if response.status_code == 401 or code == "unauthorized":
+        if response.status_code == 403:
+            # origin_not_allowed: an authorization refusal, not a bad token,
+            # whatever code or category the body names.
+            category = "authorization"
+        elif response.status_code == 401 or code == "unauthorized":
             raise CaptureAuthenticationError(
                 message,
                 status_code=response.status_code,
                 details=details,
                 request_id=request_id,
             )
-        if category is None and response.status_code == 403:
-            # origin_not_allowed: an authorization refusal, not a bad token.
-            category = "authorization"
         raise CaptureRemoteError(
             status_code=response.status_code,
             code=code,

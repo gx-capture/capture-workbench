@@ -27,6 +27,16 @@ class SpeechModelNotInstalledError(ExtractionRuntimeUnavailableError):
     """Raised when the requested speech model is not in the installed content."""
 
 
+class RequirementResolutionTimeoutError(ExtractionRuntimeUnavailableError):
+    """Raised when an extraction's engine is not resolved within the bounded timeout."""
+
+    def __init__(self, requirement_id: str) -> None:
+        super().__init__(
+            f"Runtime requirement {requirement_id} could not be resolved "
+            "within the bounded timeout."
+        )
+
+
 # Preserve the established public module path for tracebacks, reprs, and
 # consumers that inspect these exception types.
 EngineInstallationError.__module__ = (
@@ -45,6 +55,9 @@ ExtractionRuntimeUnavailableError.__module__ = (
 SpeechModelNotInstalledError.__module__ = (
     "capture_runtime.provisioning.infrastructure.engine_installation"
 )
+RequirementResolutionTimeoutError.__module__ = (
+    "capture_runtime.provisioning.infrastructure.engine_installation"
+)
 
 
 __all__ = [
@@ -52,5 +65,6 @@ __all__ = [
     "EngineInstallationError",
     "EngineResolutionTimeoutError",
     "ExtractionRuntimeUnavailableError",
+    "RequirementResolutionTimeoutError",
     "SpeechModelNotInstalledError",
 ]

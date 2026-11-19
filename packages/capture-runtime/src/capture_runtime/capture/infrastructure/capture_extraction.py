@@ -108,6 +108,7 @@ from capture_runtime.provisioning.infrastructure.engine_content_selection import
 from capture_runtime.provisioning.infrastructure.engine_installation import (
     EngineInstallationManager,
     ExtractionRuntimeUnavailableError,
+    RequirementResolutionTimeoutError,
     SpeechModelNotInstalledError,
 )
 from capture_runtime.speech.application.use_cases import TranscribeAudio
@@ -224,6 +225,9 @@ class CaptureExtractionOutcome:
     ocr_projection: CaptureOcrProjection | None = None
     # Private worker receipt retained until the owning capture reaches success.
     _execution_proof: OcrExecutionDeviceProofV1 | None = None
+    # The recording's length as a worker measured it from the decoded audio;
+    # None for a document or when no worker measured it.
+    duration_ms: int | None = None
 
 
 class CaptureExtractor(Protocol):
@@ -544,6 +548,7 @@ class StandaloneRuntimeCaptureExtractor:
         execution_proof: OcrExecutionDeviceProofV1 | None = None
         diarization_engine: CaptureEngine | None = None
         speakers: list[CaptureSpeaker] = []
+        duration_ms: int | None = None
         suggested_requirement_ids: set[str] = set()
         try:
             if sniffed.kind is CaptureSourceKind.PDF:
@@ -686,6 +691,7 @@ class StandaloneRuntimeCaptureExtractor:
                         ),
                     )
                     segments, speakers = _speaker_capture_segments(speech_result, diarization)
+                    duration_ms = diarization.duration_ms
                     diarization_engine = CaptureEngine(
                         engine=diarization.engine,
                         model=diarization.model,
@@ -729,6 +735,7 @@ class StandaloneRuntimeCaptureExtractor:
             raw=raw,
             ocr_projection=ocr_projection,
             _execution_proof=execution_proof,
+            duration_ms=duration_ms,
         )
 
     async def _extract_pdf_with_worker(
@@ -796,10 +803,7 @@ class StandaloneRuntimeCaptureExtractor:
             async with asyncio.timeout(self.config.engine_resolution_timeout_seconds):
                 engine = await self.engine_manager.resolve_active_engine(requirement_id)
         except TimeoutError as error:
-            raise ExtractionRuntimeUnavailableError(
-                f"Runtime requirement {requirement_id} could not be resolved "
-                "within the bounded timeout."
-            ) from error
+            raise RequirementResolutionTimeoutError(requirement_id) from error
         if engine is None:
             raise ExtractionRuntimeUnavailableError(
                 f"Runtime requirement {requirement_id} is not installed and ready."
@@ -1040,7 +1044,9 @@ class StandaloneRuntimeCaptureExtractor:
         try:
             async with asyncio.timeout(self.config.engine_resolution_timeout_seconds):
                 engine = await self.engine_manager.resolve_active_engine(DIARIZATION_REQUIREMENT_ID)
-        except (TimeoutError, EngineCatalogError):
+        except TimeoutError as error:
+            raise RequirementResolutionTimeoutError(DIARIZATION_REQUIREMENT_ID) from error
+        except EngineCatalogError:
             engine = None
         if engine is None:
             raise ExtractionRuntimeUnavailableError(

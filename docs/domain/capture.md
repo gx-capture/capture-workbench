@@ -32,9 +32,9 @@
 
 ingestion 的 metadata 只有在遺失或內容無法解析時才視為損毀；暫時讀不到（鎖定、權限）時目錄保留，下次啟動再讀。任何一個擷取無法載入時，無法得知它引用哪個 ingestion，這次啟動就不刪除任何損毀的 ingestion 目錄。啟動時把擷取改為失敗若無法寫入磁碟，記憶體還原為原狀態；延後處理的 ingestion 在這個行程內持續受保護，不會被之後的清理刪除。載入擷取時，事件序號以事件記錄中最後一筆完整的事件為準，寫入事件後、更新 metadata 前中斷時，下一個事件不會重複序號；記錄最後一行若寫到一半，是完整事件就補上換行，否則截掉，無法解碼的行略過。
 
-分塊的 `Content-Range` 結尾必須小於總長，否則回答 422 `invalid_chunk_headers`；大小超過上限仍是 413 `chunk_too_large`。新的擷取從 `extracting`（來源已就緒）或 `waiting_input` 開始。部分結果的 `coveredUntilMs` 只屬於錄音：文件不帶，整段轉錄的錄音在量得長度時才帶；0.10.x 文件部分結果存下的 0 讀成沒有。錄音沒有 OCR 投影：`GET /v2/captures/{id}/ocr` 對錄音回答 409 `ocr_unavailable`，不寫任何檔案，0.10.x 為失敗錄音寫下的 `ocr.json` 留在原處。
+分塊的 `Content-Range` 結尾必須小於總長，否則回答 422 `invalid_chunk_headers`；大小超過上限仍是 413 `chunk_too_large`。新的擷取從 `extracting`（來源已就緒）或 `waiting_input` 開始。部分結果的 `coveredUntilMs` 只屬於錄音：文件不帶，整段轉錄的錄音在 worker 量得長度時（辨識說話者時，說話者辨識 worker 解碼整段錄音）才帶；沒有值時回應與 `partial.json` 都不寫這個鍵，不寫 null；0.10.x 文件部分結果存下的 0 讀成沒有。錄音沒有 OCR 投影：`GET /v2/captures/{id}/ocr` 對錄音回答 409 `ocr_unavailable`，不寫任何檔案，0.10.x 為失敗錄音寫下的 `ocr.json` 留在原處。
 
-失敗的擷取以功能命名失敗代碼：一般的擷取失敗是 `extraction_failed`，被中斷的擷取是 `capture_interrupted`，擷取輸出通不過驗證是 `extraction_output_invalid`，沒有聽到或讀到任何文字是 `extraction_no_text`（不可重試），匯入的來源讀不到是 `ingestion_source_unavailable`，runtime 沒有這種來源的擷取器是 `extraction_runtime_unavailable`（不可重試）。整段轉錄或辨識說話者時，語音辨識 worker 或說話者辨識 worker 執行失敗分別回報 `speech_recognition_worker_failed`、`speaker_identification_worker_failed`，階段 `extraction`，一律不可重試；worker 的失敗類別與 allowlist 內的階段名稱只寫進 runtime 記錄，不放進失敗內容，也不記路徑、原文或 token。引擎在期限內未完成驗證時，漸進式與整段轉錄都回報 `requirement_unavailable`。0.10.x 存下的舊失敗代碼（`progressive_*`、來源不可用）讀取時換成現行代碼，metadata、事件與 OCR 投影的位元組不變。
+失敗的擷取以功能命名失敗代碼：一般的擷取失敗是 `extraction_failed`，被中斷的擷取是 `capture_interrupted`，擷取輸出通不過驗證是 `extraction_output_invalid`，沒有聽到或讀到任何文字是 `extraction_no_text`（不可重試），匯入的來源讀不到是 `ingestion_source_unavailable`，runtime 沒有這種來源的擷取器是 `extraction_runtime_unavailable`（不可重試）。整段轉錄或辨識說話者時，語音辨識 worker 或說話者辨識 worker 執行失敗分別回報 `speech_recognition_worker_failed`、`speaker_identification_worker_failed`，階段 `extraction`，一律不可重試；worker 的失敗類別與 allowlist 內的階段名稱只寫進 runtime 記錄，不放進失敗內容，也不記路徑、原文或 token。引擎在期限內未完成驗證時，漸進式與整段轉錄（包括說話者辨識）都回報 `requirement_unavailable`，存下的訊息是「Runtime requirement <id> could not be resolved within the bounded timeout.」。0.10.x 存下的舊失敗代碼（`progressive_*`、來源不可用）讀取時換成現行代碼，metadata、事件與 OCR 投影的位元組不變；主機回報的失敗代碼由主機決定，即使與舊代碼相同也原樣保留，即時事件與重啟後都不換。
 
 ```mermaid
 classDiagram

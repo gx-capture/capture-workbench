@@ -274,6 +274,40 @@ describe('HttpCaptureClient', () => {
     });
   });
 
+  it('sends PDF page numbers only for a PDF source', async () => {
+    const image = {
+      kind: 'image',
+      fileName: 'photo.png',
+      mediaType: 'image/png',
+    };
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse({ ...ingestion(0), ...image }, 201))
+      .mockResolvedValueOnce(jsonResponse({ ...ingestion(3), ...image }))
+      .mockResolvedValueOnce(
+        jsonResponse({ ...ingestion(3), ...image, status: 'finalized' }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({ ...captureOperation(), kind: 'image' }, 202),
+      );
+    const client = configureClient(fetchMock) as HttpCaptureClient;
+    let received: unknown;
+
+    client
+      .startCapture({
+        clientRequestId: 'request-image',
+        file: new File(['abc'], 'photo.png', { type: 'image/png' }),
+        sourceKind: 'image',
+        structuringMode: 'runtime',
+        pdfPageNumbers: [3, 7],
+      })
+      .subscribe({ next: (value) => (received = value) });
+
+    await vi.waitFor(() => expect(received).toBeDefined());
+    const start = JSON.parse(String(fetchMock.mock.calls[3]?.[1]?.body));
+    expect(start).not.toHaveProperty('pdfPageNumbers');
+  });
+
   it('uses v2 operation, partial, result, control, and delete routes', async () => {
     const source = {
       sha256: 'a'.repeat(64),

@@ -1190,7 +1190,10 @@ def test_a_0_10_document_partial_reads_without_media_time(
     before = path.read_bytes()
     response = client.get(f"/v2/captures/{capture_id}/partial")
     assert response.status_code == 200, response.text
-    assert response.json().get("coveredUntilMs") == expected
+    if expected is None:
+        assert "coveredUntilMs" not in response.json()
+    else:
+        assert response.json()["coveredUntilMs"] == expected
     assert path.read_bytes() == before
 
 
@@ -2201,6 +2204,14 @@ def test_streaming_api_processes_pdf_ocr_through_the_same_v2_sse_lifecycle(
     assert result.status_code == 200, result.text
     assert result.json()["raw"]["sourceText"] == "ocr text from a PDF page"
     if not historical:
+        # A document has no media time: the partial leaves the key out.
+        partial = client.get(f"/v2/captures/{capture_id}/partial")
+        assert partial.status_code == 200, partial.text
+        assert "coveredUntilMs" not in partial.json()
+        stored_partial = (
+            client.app.state.streaming_repository.root / "captures" / capture_id / "partial.json"
+        )
+        assert "coveredUntilMs" not in json.loads(stored_partial.read_bytes())
         return
 
     repository = client.app.state.streaming_repository
@@ -2299,6 +2310,22 @@ def test_streaming_api_processes_pdf_ocr_through_the_same_v2_sse_lifecycle(
                 documents[-1]["extractionEngine"]["digest"] == stored["extractionEngine"]["digest"]
             )
     assert {path: path.read_bytes() for path in before} == before
+
+    # Neither schema wrote an old key beside a current one, or one old key alone.
+    ocr_path = directory / "ocr.json"
+    historical_ocr = json.loads(before[ocr_path])
+    for mixed in (
+        {**historical_ocr, "processedPageCount": historical_ocr["pageCount"]},
+        {key: value for key, value in historical_ocr.items() if key != "contractSha256"}
+        | {"contractSetSha256": historical_ocr["contractSha256"]},
+        {key: value for key, value in historical_ocr.items() if key != "contractSha256"},
+    ):
+        ocr_path.write_text(json.dumps(mixed, indent=2), encoding="utf-8")
+        mixed_bytes = ocr_path.read_bytes()
+        rejected = client.get(f"/v2/captures/{capture_id}/ocr")
+        assert rejected.status_code != 200, rejected.text
+        assert ocr_path.read_bytes() == mixed_bytes
+    ocr_path.write_bytes(before[ocr_path])
 
 
 def test_streaming_api_rejects_gap_checksum_and_invalid_cursor(client: TestClient) -> None:
@@ -2441,6 +2468,40 @@ def test_v2_host_commit_and_failure_routes_preserve_terminal_semantics(
         "retryable": False,
     }
     assert client.get(f"/v2/captures/{failed_id}/result").status_code == 409
+
+
+def test_a_host_reported_failure_keeps_its_code_even_a_retired_runtime_code(
+    client: TestClient,
+) -> None:
+    capture_id, _ = _seed_host_capture(client)
+    # The host chooses its codes; one may equal a code the runtime retired.
+    reported = client.post(
+        f"/v2/captures/{capture_id}/structure/failure",
+        headers={"X-Idempotency-Key": "host-failure-retired-code"},
+        json={"code": "progressive_failed", "message": "Host model stopped."},
+    )
+    assert reported.status_code == 200, reported.text
+
+    def failure_codes() -> tuple[str, list[str]]:
+        capture = client.get(f"/v2/captures/{capture_id}").json()
+        events = client.get(f"/v2/captures/{capture_id}/events").text
+        failed = [
+            json.loads(line.removeprefix("data: "))
+            for line in events.splitlines()
+            if line.startswith("data: ") and '"error"' in line
+        ]
+        return capture["error"]["code"], [
+            event["error"]["code"] for event in failed if event["error"]
+        ]
+
+    assert failure_codes() == ("progressive_failed", ["progressive_failed"])
+    metadata = (
+        client.app.state.streaming_repository.root / "captures" / capture_id / "metadata.json"
+    )
+    before = metadata.read_bytes()
+    client.app.state.streaming_repository.initialize()
+    assert failure_codes() == ("progressive_failed", ["progressive_failed"])
+    assert metadata.read_bytes() == before
 
 
 def test_historical_host_commit_replays_with_new_recommendation_field(client: TestClient) -> None:
@@ -2852,7 +2913,9 @@ def test_a_transcript_longer_than_one_event_is_published_in_several(client: Test
 
         async def extract(self, *_args: object, **options: object) -> SimpleNamespace:
             requested.append(options.get("identify_speakers") is True)
-            return SimpleNamespace(raw=raw, ocr_projection=None, _execution_proof=None)
+            return SimpleNamespace(
+                raw=raw, ocr_projection=None, _execution_proof=None, duration_ms=23_000
+            )
 
     service._extractor = Extractor()
 
@@ -2873,7 +2936,12 @@ def test_a_transcript_longer_than_one_event_is_published_in_several(client: Test
         if event.event_type is CaptureEventType.SEGMENT
     ]
     assert counts == [1_000, 1_000, 300]
-    assert len(repository.read_partial(operation.capture_id).segments) == 2_300
+    partial = repository.read_partial(operation.capture_id)
+    assert len(partial.segments) == 2_300
+    # The completed batch recording covers the length the worker measured.
+    assert partial.covered_until_ms == 23_000
+    stored = repository.root / "captures" / operation.capture_id / "partial.json"
+    assert json.loads(stored.read_bytes())["coveredUntilMs"] == 23_000
 
 
 def test_streaming_api_source_size_policy_open_boundaries_and_rejection(

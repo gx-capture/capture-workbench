@@ -19,11 +19,13 @@ from capture_runtime.structuring.infrastructure.constants import (
     ollama_structuring_batch_schema,
 )
 from capture_runtime.structuring.infrastructure.contracts import StructuringValidationError
+from capture_runtime.structuring.infrastructure.model_catalog import legacy_profile_id, model_option
 from capture_runtime.structuring.infrastructure.ollama import (
     OllamaCaptureStructuringProvider,
     RuntimeUnavailableError,
 )
 from capture_runtime.structuring.infrastructure.structuring import validate_structuring_candidate
+from tests.support.ollama_legacy import legacy_readiness_marker
 
 NOW = datetime(2026, 7, 20, 8, 0, tzinfo=UTC)
 COMPLETED_AT = datetime(2026, 7, 20, 8, 5, tzinfo=UTC)
@@ -527,3 +529,97 @@ def test_isolated_ollama_cancels_in_flight_batch_request(tmp_path: Path) -> None
         assert request_cancelled.is_set()
 
     asyncio.run(scenario())
+
+
+def _model_named_provider(
+    tmp_path: Path, model_name: str
+) -> tuple[OllamaCaptureStructuringProvider, FakeLifecycle, list[dict[str, object]]]:
+    """A provider without a current selection, serving one model under `model_name`."""
+    config = _config(tmp_path)
+    lifecycle = FakeLifecycle(config)
+    lifecycle.active_model_selection = lambda: None  # type: ignore[attr-defined]
+    generate_calls: list[dict[str, object]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/tags":
+            return httpx.Response(200, json={"models": [{"name": model_name, "digest": "c" * 64}]})
+        payload = json.loads(request.content)
+        generate_calls.append(payload)
+        return httpx.Response(200, json={"response": _valid_candidate(payload)})
+
+    provider = OllamaCaptureStructuringProvider(
+        lifecycle,  # type: ignore[arg-type]
+        clock=FixedClock(),
+        transport=httpx.MockTransport(handler),
+    )
+    return provider, lifecycle, generate_calls
+
+
+def _write_install_marker(config: OllamaRuntimeConfig, **overrides: object) -> None:
+    option = model_option("qwen3.5-4b-v1")
+    marker = {
+        "profileId": legacy_profile_id(option),
+        "baseModel": option.model_reference,
+        "modelfileSha256": option.profile_spec_sha256,
+        "installedAt": NOW.isoformat(),
+        **overrides,
+    }
+    path = legacy_readiness_marker(config.app_data_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(marker), encoding="utf-8")
+
+
+def test_install_marker_from_before_the_selection_names_the_model_it_verified(
+    tmp_path: Path,
+) -> None:
+    option = model_option("qwen3.5-4b-v1")
+    provider, lifecycle, generate_calls = _model_named_provider(tmp_path, legacy_profile_id(option))
+    _write_install_marker(lifecycle.config)
+
+    document = asyncio.run(
+        provider.structure(_raw(), target_language=None, cancel_event=asyncio.Event())
+    )
+
+    assert isinstance(document, CaptureDocument)
+    assert [call["model"] for call in generate_calls] == [legacy_profile_id(option)]
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"profileId": "attacker-chosen-model"},
+        {"profileId": legacy_profile_id(model_option("qwen3.5-0.8b-v1"))},
+        {"baseModel": "qwen3.5:0.8b"},
+        {"modelfileSha256": "0" * 64},
+    ],
+)
+def test_install_marker_that_does_not_match_the_expected_option_is_rejected(
+    tmp_path: Path,
+    overrides: dict[str, object],
+) -> None:
+    provider, lifecycle, generate_calls = _model_named_provider(
+        tmp_path, str(overrides.get("profileId", "unused"))
+    )
+    _write_install_marker(lifecycle.config, **overrides)
+
+    with pytest.raises(RuntimeUnavailableError, match="model_selection_required"):
+        asyncio.run(provider.structure(_raw(), target_language=None, cancel_event=asyncio.Event()))
+    assert generate_calls == []
+    assert lifecycle.starts == 0
+
+
+def test_verified_selection_under_the_old_model_name_plans_for_the_current_profile(
+    tmp_path: Path,
+) -> None:
+    option = model_option("qwen3.5-0.8b-v1")
+    provider, lifecycle, generate_calls = _model_named_provider(tmp_path, legacy_profile_id(option))
+    lifecycle.active_model_selection = lambda: {  # type: ignore[attr-defined]
+        "profileId": legacy_profile_id(option)
+    }
+
+    asyncio.run(
+        provider.structure(_raw(count=3), target_language=None, cancel_event=asyncio.Event())
+    )
+
+    # The 0.8B profile structures one segment per request under either name.
+    assert [call["model"] for call in generate_calls] == [legacy_profile_id(option)] * 3

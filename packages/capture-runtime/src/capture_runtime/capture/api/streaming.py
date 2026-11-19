@@ -10,7 +10,7 @@ from collections.abc import AsyncIterator
 from typing import Annotated
 
 from fastapi import APIRouter, Header, Path, Request, Response, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from capture_runtime.capture.application.streaming_capture_service import (
     StructuringProviderUnavailableError,
@@ -24,6 +24,7 @@ from capture_runtime.capture.infrastructure.streaming_repository import (
     StreamingPartialNotFoundError,
     StreamingRecordNotFoundError,
     StreamingTransitionError,
+    partial_wire_payload,
 )
 from capture_runtime.contracts import (
     CaptureDocument,
@@ -44,6 +45,7 @@ from capture_runtime.contracts import (
 )
 from capture_runtime.dependencies import RuntimeDependencies
 from capture_runtime.routes.common import ApiProblem
+from capture_runtime.structuring.domain.session.models import RetiredStructuringProfileError
 from capture_runtime.structuring.infrastructure.contracts import StructuringValidationError
 from capture_runtime.structuring.infrastructure.structuring_session_repository import (
     StructuringSessionDigestConflictError,
@@ -292,9 +294,9 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
         )
 
     @router.get("/captures/{capture_id}/partial", response_model=PartialCapture)
-    async def capture_partial(capture_id: str) -> PartialCapture:
+    async def capture_partial(capture_id: str) -> Response:
         try:
-            return service.partial(capture_id)
+            return JSONResponse(partial_wire_payload(service.partial(capture_id)))
         except StreamingPartialNotFoundError as error:
             raise ApiProblem(
                 409,
@@ -381,8 +383,14 @@ def register_streaming_routes(router: APIRouter, dependencies: RuntimeDependenci
             str, Header(alias="X-Idempotency-Key", min_length=1, max_length=128)
         ],
     ) -> StructuringSession:
+        # The key is stored beside the session, and a stored blank key fails
+        # the record's recovery check, so a blank key is rejected here.
+        if not idempotency_key.strip():
+            raise ApiProblem(422, "validation_error", "X-Idempotency-Key must not be blank.")
         try:
             return open_session.execute(capture_id, request, client_request_id=idempotency_key)
+        except RetiredStructuringProfileError as error:
+            raise ApiProblem(422, "validation_error", str(error)) from error
         except StructuringSessionIdempotencyConflictError as error:
             raise ApiProblem(
                 409,

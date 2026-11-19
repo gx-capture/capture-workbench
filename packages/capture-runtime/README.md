@@ -107,8 +107,10 @@ Speech recognition and speaker diarization engine provenance records the result 
 
 All runtime endpoints require the configured Bearer token. `GET /v2/health/ready`
 returns one readiness document whose `capabilities` list the capture kinds,
-structuring modes, upload and chunk limits, event timing, and whether a recording
-can be transcribed while it uploads (`supportsProgressiveRecording`).
+structuring modes, upload and chunk limits, event timing, and whether a finalized
+recording is transcribed window by window, with partial results as each window
+completes (`supportsProgressiveRecording`). Transcription starts after the upload
+is finalized.
 The capture lifecycle uses `/v2/ingestions` and `/v2/captures`; runtime
 requirements, model options, and installations use `/v2/runtime/*`.
 

@@ -1833,16 +1833,12 @@
         "reason": "Reads failure codes stored by 0.10.x runtimes under their current names."
       },
       {
-        "glob": "packages/capture-runtime/tests/integration/test_contract_set.py",
-        "reason": "Proves the retired code is in neither published catalogue."
-      },
-      {
         "glob": "packages/capture-runtime/tests/unit/test_streaming_repository.py",
         "reason": "Fixture of a capture failure stored by 0.10.x."
       },
       {
         "glob": "packages/capture-runtime/tests/integration/test_streaming_api.py",
-        "reason": "Fixtures of failures stored by 0.10.x."
+        "reason": "Fixtures of failures stored by 0.10.x, and a host-reported code that equals a retired one."
       }
     ]
   },
@@ -1854,10 +1850,6 @@
       {
         "glob": "packages/capture-runtime/src/capture_runtime/storage/common.py",
         "reason": "Reads failure codes stored by 0.10.x runtimes under their current names."
-      },
-      {
-        "glob": "packages/capture-runtime/tests/integration/test_contract_set.py",
-        "reason": "Proves the retired code is in neither published catalogue."
       }
     ]
   },
@@ -1869,10 +1861,6 @@
       {
         "glob": "packages/capture-runtime/src/capture_runtime/storage/common.py",
         "reason": "Reads failure codes stored by 0.10.x runtimes under their current names."
-      },
-      {
-        "glob": "packages/capture-runtime/tests/integration/test_contract_set.py",
-        "reason": "Proves the retired code is in neither published catalogue."
       }
     ]
   },
@@ -1888,10 +1876,6 @@
       {
         "glob": "packages/capture-runtime/vocabulary/capture-vocabulary-v1.json",
         "reason": "Keeps the retired problem-code concept; concepts are retired, never deleted."
-      },
-      {
-        "glob": "packages/capture-runtime/tests/integration/test_contract_set.py",
-        "reason": "Proves the retired code is in neither published catalogue."
       }
     ]
   },
@@ -1907,10 +1891,6 @@
       {
         "glob": "packages/capture-runtime/vocabulary/capture-vocabulary-v1.json",
         "reason": "Keeps the retired problem-code concept; concepts are retired, never deleted."
-      },
-      {
-        "glob": "packages/capture-runtime/tests/integration/test_contract_set.py",
-        "reason": "Proves the retired code is in neither published catalogue."
       },
       {
         "glob": "packages/capture-runtime/tests/integration/test_streaming_api.py",
@@ -1930,10 +1910,6 @@
       {
         "glob": "packages/capture-runtime/vocabulary/capture-vocabulary-v1.json",
         "reason": "Keeps the retired problem-code concept; concepts are retired, never deleted."
-      },
-      {
-        "glob": "packages/capture-runtime/tests/integration/test_contract_set.py",
-        "reason": "Proves the retired code is in neither published catalogue."
       },
       {
         "glob": "packages/capture-runtime/tests/integration/test_installation_service.py",

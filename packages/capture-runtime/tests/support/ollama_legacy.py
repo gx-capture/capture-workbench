@@ -3,12 +3,18 @@ from __future__ import annotations
 import asyncio
 import hashlib
 from collections.abc import Callable
+from pathlib import Path
 
 from capture_runtime.provisioning.application.requirement_installer import ManualActionRequiredError
 from capture_runtime.structuring.infrastructure.ollama.lifecycle_impl import _atomic_json
 from capture_runtime.structuring.infrastructure.ollama.requirement_installation import (
     OllamaRequirementInstaller,
 )
+
+
+def legacy_readiness_marker(app_data_dir: Path) -> Path:
+    """Where a 0.10.x model install wrote its readiness marker."""
+    return app_data_dir / "requirements" / "capture-ollama-model.ready.json"
 
 
 async def install_legacy_model(

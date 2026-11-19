@@ -70,6 +70,11 @@ export type CaptureLocator = Generated.CaptureLocator;
 export type PageLocator = Generated.PageLocator;
 export type TimeLocator = Generated.TimeLocator;
 export type CaptureRequirementId = Generated.CaptureRequirementId;
+/**
+ * The requirements a general installation installs. The structuring model is
+ * installed through `startModelInstallation` with a chosen option.
+ */
+export type InstallableRequirementId = Generated.StartRuntimeInstallation['requirementId'];
 export type CaptureSourceKind = Generated.CaptureSourceKind;
 export type StructuringMode = Generated.StructuringMode;
 export type SpokenLanguage = NonNullable<Generated.StartCapture['spokenLanguage']>;

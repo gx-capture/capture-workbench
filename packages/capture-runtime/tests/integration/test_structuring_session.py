@@ -99,14 +99,18 @@ def _seed_host_capture(client: TestClient, *, segment_count: int = 2, pdf: bool 
 
 
 def _open_request(profile_id: str = "qwen3.5-0.8b-structure-v1") -> dict:
-    """An open-session body: the route names the capture, the header the request."""
+    """An open-session body: the route names the capture, the header the request.
+
+    The provider's model is its own name, unlike any profile id, so a planner
+    that selected by the model would plan other batches.
+    """
     return {
         "targetLanguage": "fr",
         "profileId": profile_id,
         "providerCapability": {
             "provider": {
                 "engine": "ollama",
-                "model": profile_id,
+                "model": "host-provider-model",
                 "digest": f"sha256:{'b' * 64}",
             },
             "schemaDialect": SCHEMA_DIALECT,
@@ -375,6 +379,32 @@ def test_pull_session_open_replays_after_runtime_restart(settings_factory) -> No
         assert accepted.status_code == 200
 
 
+def test_pull_session_open_rejects_a_blank_idempotency_key(settings_factory) -> None:
+    settings = settings_factory()
+    with TestClient(
+        create_app(settings),
+        base_url=f"http://127.0.0.1:{settings.port}",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+    ) as first_client:
+        capture_id = _seed_host_capture(first_client, segment_count=1)
+        route = f"/v2/captures/{capture_id}/structure/session"
+        blank = first_client.post(route, json=_open_request(), headers={"X-Idempotency-Key": "   "})
+        assert blank.status_code == 422, blank.text
+        assert blank.json()["error"]["code"] == "validation_error"
+        assert first_client.get(route).status_code == 404
+
+    # Nothing was stored, so the runtime restarts and the capture can still open.
+    with TestClient(
+        create_app(settings),
+        base_url=f"http://127.0.0.1:{settings.port}",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+    ) as restarted_client:
+        opened = restarted_client.post(
+            route, json=_open_request(), headers={"X-Idempotency-Key": "after-blank"}
+        )
+        assert opened.status_code == 201, opened.text
+
+
 def test_pull_session_repository_fails_closed_on_malformed_record(tmp_path: Path) -> None:
     root = tmp_path / "structuring-sessions"
     root.mkdir()
@@ -414,15 +444,42 @@ def test_pull_session_repository_rejects_tampered_request_fingerprint(
         repository.initialize()
 
 
-def _rewrite_as_0_10_record(path: Path, capture_id: str, client_request_id: str) -> dict:
-    """Rewrite a stored session the way a 0.10.x runtime wrote it, with its digests."""
+def _as_0_10_session(session_payload: dict, capability: dict) -> dict:
+    """A session checkpoint the way 0.10.x stored it, with its digest in that form."""
+    historical = dict(session_payload)
+    historical["rawSourceSha256"] = historical.pop("sourceSha256")
+    historical["providerCapability"] = capability
+    digest_input = {key: value for key, value in historical.items() if key != "sessionDigest"}
+    historical["sessionDigest"] = hashlib.sha256(canonical_json_bytes(digest_input)).hexdigest()
+    return historical
+
+
+def _rewrite_as_0_10_record(
+    path: Path,
+    capture_id: str,
+    client_request_id: str,
+    *,
+    provider_model: str | None = None,
+) -> dict:
+    """Rewrite a stored session the way a 0.10.x runtime wrote it, with its digests.
+
+    0.10.x had no profile id: it planned for the profile its provider's model
+    named, which carried the consumer prefix.
+    """
     record = json.loads(path.read_bytes())
     assert (record.pop("captureId"), record.pop("clientRequestId")) == (
         capture_id,
         client_request_id,
     )
     body = record["request"]
-    capability = {**body["providerCapability"], "capability": "capture-structuring"}
+    provider = dict(body["providerCapability"]["provider"])
+    if provider_model is not None:
+        provider["model"] = provider_model
+    capability = {
+        **body["providerCapability"],
+        "provider": provider,
+        "capability": "capture-structuring",
+    }
     record["request"] = {
         "protocolVersion": body["protocolVersion"],
         "captureId": capture_id,
@@ -431,20 +488,17 @@ def _rewrite_as_0_10_record(path: Path, capture_id: str, client_request_id: str)
         "schemaDialect": body["schemaDialect"],
         "clientRequestId": client_request_id,
     }
-    session_payload = record["session"]
-    source_sha256 = session_payload.pop("sourceSha256")
-    session_payload["rawSourceSha256"] = source_sha256
-    session_payload["providerCapability"] = capability
-    digest_input = {key: value for key, value in session_payload.items() if key != "sessionDigest"}
-    session_payload["sessionDigest"] = hashlib.sha256(
-        canonical_json_bytes(digest_input)
-    ).hexdigest()
+    source_sha256 = record["session"]["sourceSha256"]
+    record["session"] = _as_0_10_session(record["session"], capability)
+    for entry in record["batches"]:
+        if entry["response"] is not None:
+            entry["response"] = _as_0_10_session(entry["response"], capability)
     record["requestFingerprint"] = hashlib.sha256(
         canonical_json_bytes(
             {
                 "request": record["request"],
                 "rawSourceSha256": source_sha256,
-                "contractSetSha256": session_payload["contractSetSha256"],
+                "contractSetSha256": record["session"]["contractSetSha256"],
                 "batches": [
                     {
                         key: value
@@ -460,21 +514,65 @@ def _rewrite_as_0_10_record(path: Path, capture_id: str, client_request_id: str)
     return record
 
 
+_OLD_PROFILE_ID = "capture-workbench-qwen3.5-0.8b-structure-v1"
+
+
+def _seed_0_10_session(
+    client: TestClient, *, segment_count: int, accepted: int = 0
+) -> tuple[str, Path, dict, list[dict]]:
+    """Store a session the way 0.10.x wrote it, with `accepted` batches already accepted.
+
+    The batches are planned and accepted by this runtime, then the record is
+    rewritten in the 0.10.x form; a fresh request cannot name the old profile id.
+    """
+    capture_id = _seed_host_capture(client, segment_count=segment_count)
+    route = f"/v2/captures/{capture_id}/structure/session"
+    opened = client.post(
+        route, json=_open_request(), headers={"X-Idempotency-Key": "legacy-open-1"}
+    )
+    assert opened.status_code == 201, opened.text
+    submissions = []
+    for index in range(accepted):
+        batch = client.get(f"{route}/batches/{index}").json()
+        submission = _submit_payload(batch, f"historical {index}")
+        response = client.put(
+            f"{route}/batches/{index}",
+            json=submission,
+            headers={"X-Idempotency-Key": f"legacy-batch-{index}"},
+        )
+        assert response.status_code == 200, response.text
+        submissions.append(submission)
+    repository = client.app.state.structuring_session_service.repository
+    path = repository.root / opened.json()["sessionId"] / "metadata.json"
+    historical = _rewrite_as_0_10_record(
+        path, capture_id, "legacy-open-1", provider_model=_OLD_PROFILE_ID
+    )
+    repository.initialize()
+    return capture_id, path, historical, submissions
+
+
+def test_fresh_pull_session_rejects_the_retired_profile_id(client: TestClient) -> None:
+    capture_id = _seed_host_capture(client, segment_count=2)
+    rejected = client.post(
+        f"/v2/captures/{capture_id}/structure/session",
+        json=_open_request(_OLD_PROFILE_ID),
+        headers={"X-Idempotency-Key": "fresh-old-profile"},
+    )
+    assert rejected.status_code == 422, rejected.text
+    assert rejected.json()["error"]["code"] == "validation_error"
+    assert client.get(f"/v2/captures/{capture_id}/structure/session").status_code == 404
+
+
 def test_historical_pull_session_metadata_stays_readable_and_preserves_bytes(
     client: TestClient,
 ) -> None:
-    capture_id = _seed_host_capture(client, segment_count=2)
+    capture_id, path, historical, _submissions = _seed_0_10_session(client, segment_count=2)
     route = f"/v2/captures/{capture_id}/structure/session"
-    # 0.10.x planned for the profile its provider model named, with the old prefix.
-    request = _open_request("capture-workbench-qwen3.5-0.8b-structure-v1")
-    opened = client.post(route, json=request, headers={"X-Idempotency-Key": "legacy-open-1"})
-    assert opened.status_code == 201, opened.text
-    assert opened.json()["batchCount"] == 2
-    session_id = opened.json()["sessionId"]
-
     repository = client.app.state.structuring_session_service.repository
-    path = repository.root / session_id / "metadata.json"
-    historical = _rewrite_as_0_10_record(path, capture_id, "legacy-open-1")
+    # A current client repeats the open with the header and the profile the record
+    # names: 0.10.x named it through the provider's model.
+    request = _open_request(_OLD_PROFILE_ID)
+    request["providerCapability"]["provider"]["model"] = _OLD_PROFILE_ID
     session_payload = historical["session"]
     before = path.read_bytes()
 
@@ -485,14 +583,11 @@ def test_historical_pull_session_metadata_stays_readable_and_preserves_bytes(
     assert view["sourceSha256"] == session_payload["rawSourceSha256"]
     assert "rawSourceSha256" not in view
     assert "capability" not in view["providerCapability"]
-    assert (
-        view["providerCapability"]["provider"]["model"]
-        == "capture-workbench-qwen3.5-0.8b-structure-v1"
-    )
+    assert view["providerCapability"]["provider"]["model"] == _OLD_PROFILE_ID
     assert view["sessionDigest"] == session_payload["sessionDigest"]
+    assert view["batchCount"] == 2
     assert path.read_bytes() == before
 
-    # A current client repeats the open with the header and an explicit profile.
     replay_response = client.post(
         route, json=request, headers={"X-Idempotency-Key": "legacy-open-1"}
     )
@@ -522,7 +617,8 @@ def test_historical_pull_session_metadata_stays_readable_and_preserves_bytes(
     path.write_bytes(before)
     repository.initialize()
 
-    # Accepting a batch saves the record in the current form.
+    # Accepting a batch keeps the record in its form: the request and its
+    # fingerprint as written, the new checkpoint digested like the others.
     batch = client.get(f"{route}/batches/0").json()
     accepted = client.put(
         f"{route}/batches/0",
@@ -531,11 +627,57 @@ def test_historical_pull_session_metadata_stays_readable_and_preserves_bytes(
     )
     assert accepted.status_code == 200, accepted.text
     rewritten = json.loads(path.read_bytes())
-    assert (rewritten["captureId"], rewritten["clientRequestId"]) == (capture_id, "legacy-open-1")
-    assert rewritten["request"]["profileId"] == "capture-workbench-qwen3.5-0.8b-structure-v1"
-    assert "clientRequestId" not in rewritten["request"]
+    assert rewritten["request"] == historical["request"]
+    assert rewritten["requestFingerprint"] == historical["requestFingerprint"]
+    assert "captureId" not in rewritten
+    assert "rawSourceSha256" in rewritten["batches"][0]["response"]
+    assert rewritten["session"]["providerCapability"]["capability"] == "capture-structuring"
     repository.initialize()
     assert client.get(route).json() == accepted.json()
+
+
+def test_historical_replay_digest_survives_advancing_and_reopening(
+    client: TestClient,
+) -> None:
+    capture_id, path, historical, submissions = _seed_0_10_session(
+        client, segment_count=3, accepted=1
+    )
+    route = f"/v2/captures/{capture_id}/structure/session"
+    repository = client.app.state.structuring_session_service.repository
+    stored_response = historical["batches"][0]["response"]
+
+    def replay_first_batch() -> dict:
+        replayed = client.put(
+            f"{route}/batches/0",
+            json=submissions[0],
+            headers={"X-Idempotency-Key": "legacy-batch-0"},
+        )
+        assert replayed.status_code == 200, replayed.text
+        return replayed.json()
+
+    # 0.10.x returned this digest when it accepted the batch.
+    before = replay_first_batch()
+    assert before["sessionDigest"] == stored_response["sessionDigest"]
+    assert before["sourceSha256"] == stored_response["rawSourceSha256"]
+
+    batch = client.get(f"{route}/batches/1").json()
+    advanced = client.put(
+        f"{route}/batches/1",
+        json=_submit_payload(batch, "after upgrade"),
+        headers={"X-Idempotency-Key": "current-batch-1"},
+    )
+    assert advanced.status_code == 200, advanced.text
+    assert advanced.json()["nextBatchIndex"] == 2
+    assert replay_first_batch() == before
+    rewritten = json.loads(path.read_bytes())
+    assert rewritten["batches"][0]["response"] == stored_response
+    assert rewritten["request"] == historical["request"]
+    assert rewritten["requestFingerprint"] == historical["requestFingerprint"]
+
+    repository.initialize()
+    assert replay_first_batch() == before
+    assert client.get(route).json() == advanced.json()
+    assert json.loads(path.read_bytes()) == rewritten
 
 
 def test_pull_session_contract_models_are_strict_and_camel_case() -> None:

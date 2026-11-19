@@ -19,6 +19,7 @@ from capture_runtime.contracts import OperationFailure, StartCapture, Structurin
 from capture_runtime.provisioning.infrastructure.engine_installation import (
     EngineResolutionTimeoutError,
     ExtractionRuntimeUnavailableError,
+    RequirementResolutionTimeoutError,
 )
 from capture_runtime.speech.infrastructure.progressive_capture import ProgressiveCaptureProcessor
 from capture_runtime.worker_process import WorkerExecutionError, WorkerFailureDiagnostics
@@ -216,9 +217,39 @@ def test_progressive_engine_resolution_timeout_reads_like_the_buffered_path(
         "Runtime requirement speech-recognition could not be resolved within the bounded timeout."
     )
 
+    error = _persisted_failure(tmp_path / "progressive", caught.value)
+    assert (error.code, error.stage, error.retryable) == (
+        "requirement_unavailable",
+        "extraction",
+        True,
+    )
+    # The persisted failure keeps the sentence, not a generic boundary message.
+    assert error.message == str(caught.value)
+
+
+def test_a_slow_speaker_identification_engine_check_is_a_timeout_not_a_missing_unit(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(RequirementResolutionTimeoutError) as caught:
+        _extract(
+            tmp_path,
+            installed={"speech-recognition", "speaker-diarization"},
+            identify_speakers=True,
+            diarization_times_out=True,
+        )
+    assert str(caught.value) == (
+        "Runtime requirement speaker-diarization could not be resolved within the bounded timeout."
+    )
+    error = _persisted_failure(tmp_path / "persisted", caught.value)
+    assert (error.code, error.message) == ("requirement_unavailable", str(caught.value))
+
+
+def _persisted_failure(tmp_path: Path, failure: BaseException) -> OperationFailure:
+    """The failure a recording capture persists when extraction raises `failure`."""
+
     class Processor:
         async def process(self, **_kwargs: Any) -> Any:
-            raise caught.value
+            raise failure
 
     async def scenario() -> OperationFailure:
         clock = FixedClock()
@@ -247,9 +278,4 @@ def test_progressive_engine_resolution_timeout_reads_like_the_buffered_path(
         assert failed.error is not None
         return failed.error
 
-    error = asyncio.run(scenario())
-    assert (error.code, error.stage, error.retryable) == (
-        "requirement_unavailable",
-        "extraction",
-        True,
-    )
+    return asyncio.run(scenario())

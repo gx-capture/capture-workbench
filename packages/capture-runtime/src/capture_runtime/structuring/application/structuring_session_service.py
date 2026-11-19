@@ -25,7 +25,12 @@ from capture_runtime.structuring.application.use_cases import (
     OpenStructuringSession,
     SubmitStructuringBatch,
 )
+from capture_runtime.structuring.domain.session.models import RetiredStructuringProfileError
 from capture_runtime.structuring.infrastructure.coordinator import StructuringCoordinator
+from capture_runtime.structuring.infrastructure.model_catalog import (
+    MODEL_OPTIONS,
+    legacy_profile_id,
+)
 from capture_runtime.structuring.infrastructure.structuring import (
     assemble_structuring_document,
     validate_structuring_batch,
@@ -111,6 +116,12 @@ class StructuringSessionService:
         request: OpenStructuringSessionRequest,
         capture_id: str,
     ) -> list[StructuringBatch]:
+        # Only fresh sessions are planned: a stored session that named the old
+        # profile id replays from its record and never reaches this point.
+        if request.profile_id in {legacy_profile_id(option) for option in MODEL_OPTIONS}:
+            raise RetiredStructuringProfileError(
+                "profileId names a retired structuring profile id; use the current profile id"
+            )
         plans = self._coordinator.plan_requests(
             raw,
             target_language=request.target_language,

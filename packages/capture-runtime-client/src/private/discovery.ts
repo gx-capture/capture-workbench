@@ -153,6 +153,13 @@ function validateContractIndex(index: ContractIndex): void {
     throw new CaptureRuntimeProtocolError(
       'Capture Runtime contract index is missing required fields.',
     );
+  // The index has no other fields: a retired one such as `catalogVersion`
+  // means the runtime serves an older contract index.
+  const known = new Set([...required, 'mediaType']);
+  if (Object.keys(index).some((field) => !known.has(field)))
+    throw new CaptureRuntimeProtocolError(
+      'Capture Runtime contract index has fields outside the contract index.',
+    );
   if (
     index['contractSetVersion'] !== '2' ||
     typeof index['runtimeVersion'] !== 'string'

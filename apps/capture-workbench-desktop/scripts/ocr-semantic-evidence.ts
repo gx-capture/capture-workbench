@@ -34,7 +34,7 @@ export interface OcrSemanticEvidenceExpectedIdentity {
   readonly sourceSha256: string;
   readonly runtimeVersion: string;
   readonly runtimeSha256: string;
-  readonly contractSha256: string;
+  readonly contractSetSha256: string;
   readonly workerSha256: string;
   readonly ocrEngine: string;
   readonly ocrModel: string;
@@ -222,7 +222,7 @@ function validateExpectedIdentity(value: unknown): OcrSemanticEvidenceExpectedId
   const expected = record(value, 'expected identity');
   exactKeys(expected, [
     'anchors',
-    'contractSha256',
+    'contractSetSha256',
     'fixtureName',
     'ocrEngine',
     'ocrModel',
@@ -242,7 +242,7 @@ function validateExpectedIdentity(value: unknown): OcrSemanticEvidenceExpectedId
   sha(expected.sourceSha256, 'expected sourceSha256');
   safeString(expected.runtimeVersion, 'expected runtimeVersion', 64);
   sha(expected.runtimeSha256, 'expected runtimeSha256');
-  sha(expected.contractSha256, 'expected contractSha256');
+  sha(expected.contractSetSha256, 'expected contractSetSha256');
   sha(expected.workerSha256, 'expected workerSha256');
   safeString(expected.ocrEngine, 'expected ocrEngine', 256);
   safeString(expected.ocrModel, 'expected ocrModel', 256);
@@ -291,7 +291,7 @@ function validateExecutionProofIdentity(
   if (proof.sourceSha256 !== expected.sourceSha256) invalid('expected OCR proof sourceSha256 mismatch');
   if (proof.runtimeSha256 !== expected.runtimeSha256) invalid('expected OCR proof runtimeSha256 mismatch');
   if (proof.workerSha256 !== expected.workerSha256) invalid('expected OCR proof workerSha256 mismatch');
-  if (proof.contractSetSha256 !== expected.contractSha256) invalid('expected OCR proof contractSetSha256 mismatch');
+  if (proof.contractSetSha256 !== expected.contractSetSha256) invalid('expected OCR proof contractSetSha256 mismatch');
   if (proof.device !== expected.ocrDevice) invalid('expected OCR proof device mismatch');
 }
 
@@ -410,7 +410,8 @@ function validateDurableProvenance(value: unknown, expected: OcrSemanticEvidence
   exactKeys(provenance, ['contractSha256', 'device', 'engine', 'model', 'modelDigest', 'profileId', 'profileSpecSha256', 'runtimeVersion', 'status', 'workerSha256'], 'durable provenance');
   if (provenance.runtimeVersion !== expected.runtimeVersion) invalid('runtimeVersion mismatch');
   sha(provenance.contractSha256, 'durable contractSha256');
-  if (provenance.contractSha256 !== expected.contractSha256) invalid('contractSha256 mismatch');
+  // Durable v1 OCR evidence keeps its original key.
+  if (provenance.contractSha256 !== expected.contractSetSha256) invalid('contractSha256 mismatch');
   sha(provenance.profileSpecSha256, 'durable profileSpecSha256');
   sha(provenance.workerSha256, 'durable workerSha256');
   if (provenance.workerSha256 !== expected.workerSha256) invalid('workerSha256 mismatch');

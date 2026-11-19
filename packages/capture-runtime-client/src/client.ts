@@ -4,6 +4,7 @@ import {
   type CaptureOperation,
   type CaptureOcrProjection,
   type CaptureRequirementId,
+  type InstallableRequirementId,
   type CaptureResult,
   type PartialCapture,
   type RawCapture,
@@ -55,6 +56,13 @@ export class CaptureRuntimeClient {
     this.options = isTransport(options)
       ? { baseUrl: 'http://127.0.0.1:1' }
       : options;
+    // An untyped caller that still passes the renamed option would otherwise
+    // be checked silently against the bundled schema digest.
+    if (!isTransport(options) && 'expectedSchemaSha256' in options) {
+      throw new TypeError(
+        'expectedSchemaSha256 was renamed; pass expectedCaptureDocumentSchemaSha256.',
+      );
+    }
     if (
       (this.options.maxRetries ?? 2) < 0 ||
       !Number.isInteger(this.options.maxRetries ?? 2)
@@ -127,12 +135,22 @@ export class CaptureRuntimeClient {
     return response.items;
   }
 
-  /** Start installing a requirement with user consent; the idempotency key makes retries safe. */
+  /**
+   * Start installing a requirement with user consent; the idempotency key makes
+   * retries safe. The structuring model is installed with `startModelInstallation`.
+   */
   startInstallation(
-    requirementId: CaptureRequirementId,
+    requirementId: InstallableRequirementId,
     idempotencyKey: string,
     signal?: AbortSignal,
   ): Promise<RuntimeInstallation> {
+    if ((requirementId as CaptureRequirementId) === 'structuring-model') {
+      return Promise.reject(
+        new TypeError(
+          'The structuring model is installed with startModelInstallation, not startInstallation.',
+        ),
+      );
+    }
     return this.json(
       {
         path: '/v2/runtime/installations',
@@ -402,6 +420,7 @@ export class CaptureRuntimeClient {
         'Opening a structuring session needs an X-Idempotency-Key.',
       );
     }
+    assertOpenStructuringSessionFields(request);
     return this.json(
       {
         path: `/v2/captures/${encodeURIComponent(captureId)}/structure/session`,
@@ -529,4 +548,38 @@ function isTransport(
   value: CaptureRuntimeClientOptions | RuntimeTransport,
 ): value is RuntimeTransport {
   return typeof (value as RuntimeTransport).request === 'function';
+}
+
+const OPEN_STRUCTURING_SESSION_FIELDS: ReadonlySet<string> = new Set([
+  'protocolVersion',
+  'targetLanguage',
+  'profileId',
+  'providerCapability',
+  'schemaDialect',
+]);
+const PROVIDER_CAPABILITY_FIELDS: ReadonlySet<string> = new Set([
+  'provider',
+  'schemaDialect',
+]);
+
+/**
+ * A variable can satisfy the request type and still carry fields the runtime
+ * rejects, such as the retired `captureId`, `clientRequestId` and
+ * `capability`: the route and the idempotency key now carry the first two.
+ */
+function assertOpenStructuringSessionFields(request: OpenStructuringSession): void {
+  const capability = (request as { providerCapability?: unknown }).providerCapability;
+  const unknown = [
+    ...Object.keys(request).filter((field) => !OPEN_STRUCTURING_SESSION_FIELDS.has(field)),
+    ...(capability !== null && typeof capability === 'object'
+      ? Object.keys(capability)
+          .filter((field) => !PROVIDER_CAPABILITY_FIELDS.has(field))
+          .map((field) => `providerCapability.${field}`)
+      : []),
+  ];
+  if (unknown.length > 0) {
+    throw new CaptureRuntimeProtocolError(
+      `Structuring session request has fields outside the contract: ${unknown.join(', ')}.`,
+    );
+  }
 }

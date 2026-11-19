@@ -153,6 +153,11 @@ class _CaptureRecord:
     # A failure code a 0.10.x runtime stored, read under its current name.
     stored_failure_code: str | None = None
 
+    @property
+    def host_reported_failure(self) -> bool:
+        """Whether the host reported the failure; its code is the host's own."""
+        return self.failure_idempotency_key is not None
+
     def dump(self) -> dict[str, object]:
         return {
             "request": self.request.model_dump(mode="json", by_alias=True),
@@ -184,15 +189,20 @@ class _CaptureRecord:
                 kind = kind_for_ingestion(ingestion_id)
                 if kind is not None:
                     projected_operation = {**operation_payload, "kind": kind.value}
+        # A host-reported failure keeps the code the host chose, even one that
+        # is also a retired runtime code; only runtime failures are projected.
+        host_reported_failure = payload.get("failureIdempotencyKey") is not None
         operation = CaptureOperation.model_validate(
-            project_stored_failure_field(projected_operation, "error")
+            projected_operation
+            if host_reported_failure
+            else project_stored_failure_field(projected_operation, "error")
         )
         return cls(
             operation=operation,
             stored_kind=_stored_kind(operation_payload),
             stored_failure_code=(
                 _stored_failure_code(operation_payload)
-                if isinstance(operation_payload, dict)
+                if isinstance(operation_payload, dict) and not host_reported_failure
                 else None
             ),
             request=request,

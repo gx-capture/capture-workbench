@@ -159,6 +159,18 @@ def _progress_update(operation: CaptureOperation, event: CaptureEvent) -> dict[s
     return update
 
 
+def partial_wire_payload(partial: PartialCapture) -> dict[str, object]:
+    """The partial's JSON body, without `coveredUntilMs` when coverage is unknown.
+
+    A document has no media time and a recording may not know its coverage yet;
+    the key is then left out rather than sent or stored as null.
+    """
+    payload: dict[str, object] = partial.model_dump(mode="json", by_alias=True)
+    if payload["coveredUntilMs"] is None:
+        del payload["coveredUntilMs"]
+    return payload
+
+
 class StreamingRepository:
     """A bounded, recoverable repository behind the streaming service seam."""
 
@@ -548,9 +560,12 @@ class StreamingRepository:
                     payload = json.loads(line)
                     if isinstance(payload, dict) and "kind" not in payload:
                         payload["kind"] = record.operation.kind.value
-                    event = CaptureEvent.model_validate(
-                        project_stored_failure_field(project_stored_capture_kind(payload), "error")
-                    )
+                    projected = project_stored_capture_kind(payload)
+                    # A host-reported failure keeps the code the host chose,
+                    # even one that is also a retired runtime code.
+                    if not record.host_reported_failure:
+                        projected = project_stored_failure_field(projected, "error")
+                    event = CaptureEvent.model_validate(projected)
                 except ValidationError as error:
                     raise RuntimeError("streaming event log is corrupted") from error
                 if event.sequence > after_sequence:
@@ -583,7 +598,7 @@ class StreamingRepository:
                 raise StreamingTransitionError("partial revision regressed")
             _atomic_json(
                 self._capture_directory(partial.capture_id) / "partial.json",
-                partial.model_dump(mode="json", by_alias=True),
+                partial_wire_payload(partial),
             )
             record.operation = record.operation.model_copy(
                 update={

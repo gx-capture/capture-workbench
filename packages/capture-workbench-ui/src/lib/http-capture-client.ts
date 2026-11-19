@@ -153,7 +153,10 @@ export class HttpCaptureClient implements CaptureClient {
         sourceKind: request.sourceKind,
         structuringMode: request.structuringMode,
         targetLanguage: request.targetLanguage,
-        pdfPageNumbers: request.pdfPageNumbers,
+        // Page selection applies to a PDF only; the runtime rejects it for
+        // any other kind, after the upload.
+        pdfPageNumbers:
+          request.sourceKind === 'pdf' ? request.pdfPageNumbers : undefined,
         identifySpeakers: request.identifySpeakers,
         spokenLanguage: request.spokenLanguage,
         signal: request.signal,

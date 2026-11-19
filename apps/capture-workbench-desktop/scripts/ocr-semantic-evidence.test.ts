@@ -94,7 +94,7 @@ test('OCR-only semantic evidence fails closed for durable and execution-proof dr
     ['model mismatch', () => buildOcrOnlySemanticEvidence(base, { ...expectedIdentity(), ocrModel: 'wrong-model' }), /durable model mismatch/u],
     ['profile mismatch', () => buildOcrOnlySemanticEvidence(base, { ...expectedIdentity(), executionProof: { ...expectedIdentity().executionProof, profileId: 'wrong-profile' } }), /profileId does not match execution proof/u],
     ['worker mismatch', () => buildOcrOnlySemanticEvidence(base, { ...expectedIdentity(), workerSha256: '0'.repeat(64) }), /expected OCR proof workerSha256 mismatch/u],
-    ['contract mismatch', () => buildOcrOnlySemanticEvidence(base, { ...expectedIdentity(), contractSha256: '0'.repeat(64) }), /expected OCR proof contractSetSha256 mismatch/u],
+    ['contract mismatch', () => buildOcrOnlySemanticEvidence(base, { ...expectedIdentity(), contractSetSha256: '0'.repeat(64) }), /expected OCR proof contractSetSha256 mismatch/u],
     ['device mismatch', () => buildOcrOnlySemanticEvidence(base, { ...expectedIdentity(), ocrDevice: 'cpu' }), /expected OCR proof device mismatch/u],
     ['proof mismatch', () => buildOcrOnlySemanticEvidence(base, { ...expectedIdentity(), executionProof: { ...expectedIdentity().executionProof, modelSha256: '0'.repeat(64) } }), /modelDigest does not match execution proof/u],
     ['anchor miss', () => buildOcrOnlySemanticEvidence(base, { ...expectedIdentity(), anchors: ['missing anchor'] }), /critical OCR anchor/u],
@@ -120,7 +120,7 @@ test('fails closed when durable evidence or identity is missing or tampered', ()
   const cases: Array<[string, () => unknown, RegExp]> = [
     ['missing evidence', () => buildOcrOnlySemanticEvidence({ ...ocrOnlyDetail(), ocrEvidence: undefined }, expectedIdentity()), /durable OCR evidence/u],
     ['source mismatch', () => buildOcrOnlySemanticEvidence(ocrOnlyDetail(), { ...expectedIdentity(), sourceSha256: 'b'.repeat(64) }), /sourceSha256 mismatch/u],
-    ['contract mismatch', () => buildOcrOnlySemanticEvidence(ocrOnlyDetail(), { ...expectedIdentity(), contractSha256: 'b'.repeat(64) }), /contract(?:Set)?Sha256 mismatch/u],
+    ['contract mismatch', () => buildOcrOnlySemanticEvidence(ocrOnlyDetail(), { ...expectedIdentity(), contractSetSha256: 'b'.repeat(64) }), /contract(?:Set)?Sha256 mismatch/u],
     ['worker mismatch', () => buildOcrOnlySemanticEvidence(ocrOnlyDetail(), { ...expectedIdentity(), workerSha256: 'b'.repeat(64) }), /workerSha256 mismatch/u],
     ['capture mismatch', () => buildOcrOnlySemanticEvidence(ocrOnlyDetail(), { ...expectedIdentity(), captureId: 'different-capture' }), /captureId mismatch/u],
     ['digest mismatch', () => buildOcrOnlySemanticEvidence({ ...ocrOnlyDetail(), ocrEvidence: { ...ocrOnlyDetail().ocrEvidence, digest: '0'.repeat(64) } }, expectedIdentity()), /digest mismatch/u],
@@ -263,7 +263,7 @@ function expectedIdentity(): {
   sourceSha256: string;
   runtimeVersion: string;
   runtimeSha256: string;
-  contractSha256: string;
+  contractSetSha256: string;
   workerSha256: string;
   ocrEngine: string;
   ocrModel: string;
@@ -288,7 +288,7 @@ function expectedIdentity(): {
     sourceSha256: SOURCE_SHA,
     runtimeVersion: RELEASE_VERSION,
     runtimeSha256: RUNTIME_SHA,
-    contractSha256: CONTRACT_SHA,
+    contractSetSha256: CONTRACT_SHA,
     workerSha256: WORKER_SHA,
     ocrEngine: 'text-recognition',
     ocrModel: 'pp-ocrv6-medium',

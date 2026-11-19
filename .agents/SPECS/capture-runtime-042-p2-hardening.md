@@ -50,7 +50,7 @@ Tauri may request a semantic operation but never owns or mutates a native Job.
 ## Public contract floor and identity
 
 Phase 2 preserves API `2.0`, raw and structured document schema `2`,
-`CaptureOcrProjectionV3` schema `3`, and one contract-set SHA-256
+`CaptureOcrProjection` schema `3`, and one contract-set SHA-256
 (`packages/capture-runtime/src/capture_runtime/assets/contract-set.sha256`). The
 authenticated `GET /v2/captures/{capture_id}/ocr` route remains the typed
 projection seam. No private process, device, path, bearer token, model, or
@@ -91,7 +91,7 @@ Interface shape:
 ```text
 OcrPipeline.extract(request: OcrRequest, engine: OcrEnginePort)
   -> OcrTerminalOutcome
-OcrTerminalOutcome = Projection(CaptureOcrProjectionV3)
+OcrTerminalOutcome = Projection(CaptureOcrProjection)
                    | Failure(SanitizedOcrFailure)
 ```
 

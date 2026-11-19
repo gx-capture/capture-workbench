@@ -18,12 +18,12 @@
 | 取得模型安裝 | `GetModelInstallation` | 讀取安裝狀態與進度。 |
 | 取得工作階段 | `GetStructuringSession` | 依擷取識別碼讀取主機工作階段。 |
 | 安裝模型 | `InstallModelOption` | 建立允許的模型作業，只對新作業排程。 |
-| 開啟工作階段 | `OpenStructuringSession` | 擷取取自路由、請求識別取自 `X-Idempotency-Key`，本文只帶 `profileId`、供應者與方言；檢查來源與方言，依 `profileId` 建立批次計畫。0.10.x 存下的工作階段（本文帶 `captureId`、`clientRequestId`、`capability`）以原本的形式驗證指紋後照常讀取。 |
+| 開啟工作階段 | `OpenStructuringSession` | 擷取取自路由、請求識別取自 `X-Idempotency-Key`，本文只帶 `profileId`、供應者與方言；檢查來源與方言，依 `profileId` 建立批次計畫；新請求帶有消費者前綴的舊 profile 識別碼回答 422 `validation_error`。0.10.x 存下的工作階段（本文帶 `captureId`、`clientRequestId`、`capability`）以原本的形式驗證指紋後照常讀取；之後接受的批次讓紀錄維持原本的形式：請求、請求指紋與先前批次的重播回應不變，新的檢查點以同一形式計算摘要。 |
 | 提交批次 | `SubmitStructuringBatch` | 先檢查重播、摘要及順序，再驗證語意與持久化。 |
 
 ## 聚合與不變條件
 
-`StructuringSession.require_next_batch/accept_batch` 守住開放狀態與批次順序；`StructuringBatch.verify_digest/accept` 守住摘要及接受狀態。`BatchPlanningPolicy` 計算輸入、輸出與保留 token 的限制。`ModelInstallation` 管理模型安裝的執行、進度、完成、失敗與取消，終態不可覆寫。領域錯誤包含 `SessionTransitionError`、`StructuringValidationError` 與 `StructuringSessionDigestConflictError`。
+`StructuringSession.require_next_batch/accept_batch` 守住開放狀態與批次順序；`StructuringBatch.verify_digest/accept` 守住摘要及接受狀態。`BatchPlanningPolicy` 計算輸入、輸出與保留 token 的限制。`ModelInstallation` 管理模型安裝的執行、進度、完成、失敗與取消，終態不可覆寫。領域錯誤包含 `SessionTransitionError`、`RetiredStructuringProfileError`、`StructuringValidationError` 與 `StructuringSessionDigestConflictError`。
 
 ```mermaid
 classDiagram

@@ -225,7 +225,7 @@ impl FixtureState {
                     "supportsCancellation": true,
                     "supportsRawDiagnostics": true,
                     "maxUploadBytes": self.settings.max_upload_bytes,
-                    "maxChunkBytes": 4_194_304,
+                    "maxChunkBytes": ingestions::MAX_CHUNK_BYTES,
                     "checkpointIntervalMs": 300_000,
                     "heartbeatIntervalMs": 5_000,
                     "stallTimeoutMs": 90_000,
@@ -522,6 +522,12 @@ impl FixtureState {
             Err(_) => return validation_error("Request body must be valid JSON."),
         };
         let requirement_id = payload.get("requirementId").and_then(Value::as_str);
+        // As in the runtime: the model is installed through model installation.
+        if requirement_id == Some("structuring-model") {
+            return validation_error(
+                "structuring-model is installed through structuring model installation.",
+            );
+        }
         if !requirement_id.is_some_and(valid_requirement_id)
             || payload.get("consent").and_then(Value::as_bool) != Some(true)
         {

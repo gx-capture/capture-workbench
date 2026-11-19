@@ -107,7 +107,6 @@ describe('CaptureWorkbenchComponent', () => {
           captureId: 'capture-1',
           source: raw.source,
           revision: 1,
-          coveredUntilMs: 0,
           segments: raw.segments,
           sourceText: raw.sourceText,
           extractionEngine: raw.extractionEngine,

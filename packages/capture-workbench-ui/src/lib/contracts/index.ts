@@ -5,10 +5,10 @@ import type {
   CaptureEvent,
   CaptureDocument,
   CaptureOperation,
-  CaptureRequirementId,
   CaptureResult,
   CaptureStatus,
   CaptureSourceKind,
+  InstallableRequirementId,
   OperationFailure,
   PageLocator,
   PartialCapture,
@@ -53,6 +53,7 @@ export type {
   CaptureLocator,
   CaptureRequirementId,
   CaptureSourceKind,
+  InstallableRequirementId,
   OcrAdapterClass,
   OcrComputeMode,
   OcrComputeNoticeCode,
@@ -134,7 +135,8 @@ export type CaptureTaskStage =
 
 export interface StartRuntimeInstallationRequest {
   readonly clientRequestId: string;
-  readonly requirementId: CaptureRequirementId;
+  /** The structuring model is not installed here; a host installs a chosen model option. */
+  readonly requirementId: InstallableRequirementId;
   /** Must only be set after an explicit user action. */
   readonly consent: true;
 }

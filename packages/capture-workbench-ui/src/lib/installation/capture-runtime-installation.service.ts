@@ -15,6 +15,8 @@ import {
 } from 'rxjs';
 import {
   type CaptureClient,
+  type CaptureRequirementId,
+  type InstallableRequirementId,
   type RuntimeInstallation,
   type RuntimeRequirement,
 } from '../contracts';
@@ -27,14 +29,23 @@ import {
   throwIfAborted,
 } from '../capture-client-errors';
 
-const INSTALLATION_ORDER = new Map([
+const INSTALLATION_ORDER = new Map<InstallableRequirementId, number>([
   ['text-recognition', 0],
   ['speech-recognition', 1],
   ['speaker-diarization', 2],
   ['vertical-japanese-reader', 3],
   ['structuring-runtime', 4],
-  ['structuring-model', 5],
 ]);
+
+/**
+ * A general installation installs every requirement but the structuring model,
+ * which is installed through model installation with a chosen option.
+ */
+export function isGeneralInstallation(
+  requirementId: CaptureRequirementId,
+): requirementId is InstallableRequirementId {
+  return INSTALLATION_ORDER.has(requirementId as InstallableRequirementId);
+}
 
 @Injectable()
 export class CaptureRuntimeInstallationService {
@@ -66,14 +77,19 @@ export class CaptureRuntimeInstallationService {
     const installable = () =>
       options
         .requirements()
-        .filter((requirement) => requirement.status === 'installable')
-        .slice()
+        .filter(
+          (
+            requirement,
+          ): requirement is RuntimeRequirement & {
+            readonly requirementId: InstallableRequirementId;
+          } =>
+            requirement.status === 'installable' &&
+            isGeneralInstallation(requirement.requirementId),
+        )
         .sort(
           (left, right) =>
-            (INSTALLATION_ORDER.get(left.requirementId) ??
-              Number.MAX_SAFE_INTEGER) -
-            (INSTALLATION_ORDER.get(right.requirementId) ??
-              Number.MAX_SAFE_INTEGER),
+            (INSTALLATION_ORDER.get(left.requirementId) ?? 0) -
+            (INSTALLATION_ORDER.get(right.requirementId) ?? 0),
         );
     if (installable().length === 0) return;
 

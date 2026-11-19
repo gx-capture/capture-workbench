@@ -50,7 +50,6 @@ describe('HttpCaptureClient SDK delegation', () => {
         }
         if (request.path === '/meta/v2/contracts') {
           return jsonResponse({
-            catalogVersion: '2',
             runtimeVersion: RUNTIME_VERSION,
             contractSetVersion: '2',
             surfaces: [{ id: 'v2' }],

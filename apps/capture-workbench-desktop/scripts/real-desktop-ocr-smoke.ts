@@ -1396,7 +1396,7 @@ export async function main(options: {
           sourceSha256,
           runtimeSha256: localInstalledRuntime.runtimeSha256,
           workerSha256: authenticatedOcrPreflight.workerSha256,
-          contractSha256: authenticatedOcrPreflight.contractSetSha256,
+          contractSetSha256: authenticatedOcrPreflight.contractSetSha256,
         },
       });
       ocrExecutionProof = proof;
@@ -1426,7 +1426,7 @@ export async function main(options: {
           sourceSha256,
           runtimeVersion: localInstalledRuntime.runtimeVersion,
           runtimeSha256: localInstalledRuntime.runtimeSha256,
-          contractSha256: authenticatedOcrPreflight.contractSetSha256,
+          contractSetSha256: authenticatedOcrPreflight.contractSetSha256,
           workerSha256: authenticatedOcrPreflight.workerSha256,
           ocrEngine: ocr.engine,
           ocrModel: ocr.model,
@@ -2225,7 +2225,7 @@ export interface InstalledJourneyOcrProofExpectation {
   readonly sourceSha256: string;
   readonly runtimeSha256: string;
   readonly workerSha256: string;
-  readonly contractSha256: string;
+  readonly contractSetSha256: string;
 }
 
 export async function verifyInstalledOcrExecutionProof(options: {
@@ -2283,7 +2283,7 @@ export function assertOcrExecutionProofMatchesInstalledJourney(
   );
   assert.equal(
     proof.contractSetSha256,
-    expected.contractSha256,
+    expected.contractSetSha256,
     'OCR execution proof contract digest did not match authenticated preflight.',
   );
   assert.deepEqual(
@@ -2988,6 +2988,11 @@ async function ensureCheckboxState(checkbox: Locator, checked: boolean, label: s
   }
 }
 
+const RETRIED_INSTALLATION_CODES: ReadonlySet<string> = new Set([
+  'installation_io_failed',
+  'installation_timeout',
+]);
+
 async function waitForOcrInstallOnEnginesPage(
   page: Page,
   installTimeoutMs: number,
@@ -3000,7 +3005,7 @@ async function waitForOcrInstallOnEnginesPage(
   const ocrRow = page.locator('[data-testid="engine-row"][data-requirement-id="text-recognition"]');
   await ocrRow.waitFor({ state: 'visible', timeout: 30_000 });
   await options.onInstallProgress?.(page);
-  let filesystemRetryCount = 0;
+  let transientRetryCount = 0;
   await waitUntil(
     async () => {
       const runtimeError = await visibleRuntimeError(page);
@@ -3012,13 +3017,15 @@ async function waitForOcrInstallOnEnginesPage(
         const errorCode = installation?.errorCode && safeDesktopDocumentErrorCodePattern.test(installation.errorCode)
           ? installation.errorCode
           : 'unknown';
-        if (status === 'failed' && errorCode === 'installation_io_failed' && filesystemRetryCount < 1) {
-          filesystemRetryCount += 1;
+        // Both codes replace the former filesystem failure, which the smoke
+        // retried once; a timeout is as transient as a disk error.
+        if (status === 'failed' && RETRIED_INSTALLATION_CODES.has(errorCode) && transientRetryCount < 1) {
+          transientRetryCount += 1;
           const retry = ocrRow.getByTestId('engine-row-retry');
           await waitUntil(
             () => retry.isEnabled().then((enabled) => enabled || undefined),
             10_000,
-            'Capture Workbench did not enable text recognition retry after a filesystem failure.',
+            'Capture Workbench did not enable text recognition retry after a transient installation failure.',
           );
           await retry.click();
           options.onInstallStarted?.();

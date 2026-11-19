@@ -331,6 +331,22 @@ describe('CaptureRuntimeClient', () => {
     expect(Object.keys(publicSdk)).not.toContain('CaptureFailure');
   });
 
+  it('exports no type under a retired or moved name', () => {
+    // Object.keys sees only values. Each entry fails the type check when the
+    // package exports that type again. The suffixed schema name is guarded by
+    // the retired-names gate, which rejects it anywhere in the source.
+    type RetiredOrMovedTypes = [
+      // @ts-expect-error -- retired: the async failure object is OperationFailure.
+      import('./index').CaptureFailure,
+      // @ts-expect-error -- moved: the Workbench UI package owns the review types.
+      import('./index').CaptureReview,
+      // @ts-expect-error -- moved: the Workbench UI package owns the review types.
+      import('./index').CaptureReviewEdit,
+    ];
+    const retired: RetiredOrMovedTypes | undefined = undefined;
+    expect(retired).toBeUndefined();
+  });
+
   it('publishes the canonical value-level OCR projection parser', () => {
     expect(publicSdk.parseCaptureOcrProjection(completedOcr)).toBe(completedOcr);
     expect(() => publicSdk.parseCaptureOcrProjection({
@@ -552,6 +568,8 @@ describe('CaptureRuntimeClient', () => {
     [401, 'unauthorized', CaptureAuthenticationError],
     [403, 'origin_not_allowed', CaptureRemoteError],
     [403, 'forbidden_by_proxy', CaptureRemoteError],
+    // The status decides: a 403 naming `unauthorized` is still a refusal.
+    [403, 'unauthorized', CaptureRemoteError],
     [404, 'capture_not_found', CaptureRuntimeError],
     [409, 'ocr_unavailable', CaptureRuntimeError],
   ] as const)('maps OCR HTTP %s %s to the stable error taxonomy', async (status, code, errorType) => {
@@ -565,7 +583,10 @@ describe('CaptureRuntimeClient', () => {
                 error: {
                   code,
                   message: code === 'ocr_unavailable' ? 'OCR is pending.' : 'OCR request failed.',
-                  details: { retryable: status === 409 },
+                  details: {
+                    retryable: status === 409,
+                    ...(status === 403 ? { category: 'authentication' } : {}),
+                  },
                 },
               }),
               { status, headers: { 'Content-Type': 'application/json' } },
@@ -1097,6 +1118,36 @@ data: ${JSON.stringify(event)}
     );
   });
 
+  it('rejects the renamed schema digest option instead of ignoring it', () => {
+    const options = {
+      baseUrl: 43123,
+      transport: new InMemoryRuntimeTransport([]),
+      expectedSchemaSha256: 'a'.repeat(64),
+    };
+    expect(() => new CaptureRuntimeClient(options)).toThrow(
+      'expectedCaptureDocumentSchemaSha256',
+    );
+  });
+
+  it('installs the structuring model only through model installation', async () => {
+    const requested: string[] = [];
+    const client = new CaptureRuntimeClient({
+      baseUrl: 43123,
+      transport: {
+        request: (request) => {
+          requested.push(request.path);
+          return Promise.resolve(Response.json({}));
+        },
+      },
+    });
+    // @ts-expect-error -- a general installation does not take the structuring model.
+    const modelId: Parameters<CaptureRuntimeClient['startInstallation']>[0] = 'structuring-model';
+    await expect(client.startInstallation(modelId, 'model-request')).rejects.toThrow(
+      'startModelInstallation',
+    );
+    expect(requested).toEqual([]);
+  });
+
   it('uninstalls a requirement and checks the requirement it returns', async () => {
     const requirement = {
       requirementId: 'speech-recognition',
@@ -1398,6 +1449,13 @@ data: ${JSON.stringify(event)}
     );
     body = { ...ready, capabilities: { ...ready.capabilities, maxChunkBytes: 0 } };
     await expect(client.getReady()).rejects.toThrow('invalid readiness maxChunkBytes');
+    // The runtime schema bounds both: at least one mode, at most 4 MiB a chunk.
+    body = { ...ready, capabilities: { ...ready.capabilities, maxChunkBytes: 4 * 1024 * 1024 } };
+    expect((await client.getReady()).capabilities.maxChunkBytes).toBe(4 * 1024 * 1024);
+    body = { ...ready, capabilities: { ...ready.capabilities, maxChunkBytes: 4 * 1024 * 1024 + 1 } };
+    await expect(client.getReady()).rejects.toThrow('invalid readiness maxChunkBytes');
+    body = { ...ready, capabilities: { ...ready.capabilities, structuringModes: [] } };
+    await expect(client.getReady()).rejects.toThrow('invalid readiness structuring modes');
   });
 
   it('names the spoken language of an audio capture only when given', async () => {
@@ -1505,6 +1563,30 @@ data: ${JSON.stringify(event)}
         expectedContractSetSha256: digest,
       }).discover(),
     ).rejects.toBeInstanceOf(CaptureRuntimeProtocolError);
+  });
+
+  it('rejects a contract index that carries the retired catalogVersion', async () => {
+    const digest = 'a'.repeat(64);
+    const index = {
+      catalogVersion: '2',
+      runtimeVersion: RUNTIME_VERSION,
+      contractSetVersion: '2',
+      surfaces: [{ id: 'v2' }],
+      sha256: digest,
+      href: `/meta/v2/contracts/sha256/${digest}`,
+      mediaType: 'application/json',
+    };
+    const transport = new InMemoryRuntimeTransport([
+      { path: '/v2/health/ready', handle: () => Response.json(ready) },
+      { path: '/meta/v2/contracts', handle: () => Response.json(index) },
+    ]);
+    await expect(
+      new CaptureRuntimeClient({
+        baseUrl: 43123,
+        transport,
+        expectedContractSetSha256: digest,
+      }).discover(),
+    ).rejects.toThrow(/fields outside the contract index/u);
   });
 
   it('rejects a content-addressed contract href whose terminal digest differs', async () => {
@@ -1810,6 +1892,19 @@ data: ${JSON.stringify(event)}
     expect(() => client.openStructuringSession('cap', request, '')).toThrow(
       CaptureRuntimeProtocolError,
     );
+
+    // A variable that satisfies the type can still carry the retired fields.
+    openBody = undefined;
+    const legacy = {
+      ...request,
+      captureId: 'cap',
+      clientRequestId: 'session-key',
+      providerCapability: { ...request.providerCapability, capability: 'capture-structuring' },
+    };
+    expect(() => client.openStructuringSession('cap', legacy, 'legacy-key')).toThrow(
+      'captureId, clientRequestId, providerCapability.capability',
+    );
+    expect(openBody).toBeUndefined();
   });
 
   it('rejects extra semantic batch fields before transport and maps keyed conflicts', async () => {
@@ -1891,6 +1986,41 @@ data: ${JSON.stringify(event)}
   });
 });
 
+describe('structuring model options', () => {
+  const option = {
+    optionId: 'qwen3.5-0.8b-v1',
+    displayName: 'Qwen 3.5 0.8B',
+    modelReference: 'qwen3.5:0.8b',
+    downloadBytes: 1024,
+    profileId: 'qwen3.5-0.8b-structure-v1',
+    profileSpecSha256: 'b'.repeat(64),
+    status: 'not-installed',
+  };
+
+  it('decodes each option in its current shape', async () => {
+    const decoded = await decodeJson<{ items: unknown[] }>(
+      Response.json({ catalogSha256: 'a'.repeat(64), items: [option] }),
+      undefined,
+      'StructuringModelOptions',
+    );
+    expect(decoded.items).toEqual([option]);
+  });
+
+  it('rejects an option that carries the retired expectedBytes', async () => {
+    const { downloadBytes, ...rest } = option;
+    await expect(
+      decodeJson(
+        Response.json({
+          catalogSha256: 'a'.repeat(64),
+          items: [{ ...rest, expectedBytes: downloadBytes }],
+        }),
+        undefined,
+        'StructuringModelOptions',
+      ),
+    ).rejects.toThrow('unknown StructuringModelOption field: expectedBytes');
+  });
+});
+
 describe('response field lists follow the contract set', () => {
   // The codec rejects unknown top-level fields, so a field the runtime adds to
   // a response model must reach the codec's list in the same change.
@@ -1909,6 +2039,7 @@ describe('response field lists follow the contract set', () => {
     RuntimeInstallations: 'RuntimeInstallations',
     StructuringModelInstallation: 'StructuringModelInstallation',
     StructuringModelOptions: 'StructuringModelOptions',
+    StructuringModelOption: 'StructuringModelOption',
     RawCapture: 'RawCapture',
     CaptureOcrProjection: 'CaptureOcrProjection',
     CaptureDocument: 'CaptureDocument',

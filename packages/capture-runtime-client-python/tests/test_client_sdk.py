@@ -720,8 +720,7 @@ def test_handshake_requires_current_ocr_compute_names(
     if accepted:
         ocr_compute = client.handshake().ocr_compute
         assert ocr_compute is not None
-        assert ocr_compute.mode.value == mode
-        assert (ocr_compute.reason_code and ocr_compute.reason_code.value) == reason
+        assert ocr_compute.model_dump(mode="json", by_alias=True, exclude_unset=True) == compute
     else:
         with pytest.raises(CaptureProtocolError):
             client.handshake()
@@ -767,6 +766,8 @@ def test_get_ocr_maps_completed_and_failed_page_projections() -> None:
         (401, "unauthorized", CaptureAuthenticationError),
         (403, "origin_not_allowed", CaptureRemoteError),
         (403, "forbidden_by_proxy", CaptureRemoteError),
+        # The status decides: a 403 naming `unauthorized` is still a refusal.
+        (403, "unauthorized", CaptureRemoteError),
         (404, "capture_not_found", CaptureRemoteError),
         (409, "ocr_unavailable", CaptureRemoteError),
     ],
@@ -782,7 +783,10 @@ def test_get_ocr_maps_auth_not_found_and_pending_errors(
                     "error": {
                         "code": code,
                         "message": "OCR is pending." if status_code == 409 else "OCR failed.",
-                        "details": {"retryable": status_code == 409},
+                        "details": {
+                            "retryable": status_code == 409,
+                            **({"category": "authentication"} if status_code == 403 else {}),
+                        },
                     }
                 },
                 request=request,
@@ -1112,6 +1116,31 @@ def test_discovery_rejects_unknown_contract_set_hash() -> None:
         CaptureRuntimeClient(transport=transport).discover()
 
 
+def test_discovery_rejects_a_contract_index_with_the_retired_catalog_version() -> None:
+    digest = "a" * 64
+    index = {
+        "catalogVersion": "2",
+        "runtimeVersion": CAPTURE_RUNTIME_VERSION,
+        "contractSetVersion": "2",
+        "surfaces": [{"id": "v2"}],
+        "sha256": digest,
+        "href": f"/meta/v2/contracts/sha256/{digest}",
+        "mediaType": "application/json",
+    }
+    transport = InMemoryRuntimeTransport(
+        {
+            ("GET", "/v2/health/ready"): lambda request: httpx.Response(
+                200, json=_ready(), request=request
+            ),
+            ("GET", "/meta/v2/contracts"): lambda request: httpx.Response(
+                200, json=index, request=request
+            ),
+        }
+    )
+    with pytest.raises(CaptureProtocolError, match="outside the contract index"):
+        CaptureRuntimeClient(transport=transport, allowed_contract_set_sha256=[digest]).discover()
+
+
 def test_discovery_rejects_wrong_content_addressed_href() -> None:
     digest = "a" * 64
     index = {
@@ -1267,6 +1296,24 @@ def test_model_installation_operations_and_failure_idempotency_header() -> None:
         "cap", code="invalid", message="unable to structure", idempotency_key="failure-1"
     )
     assert captured_headers["x-idempotency-key"] == "failure-1"
+
+
+def test_general_installation_does_not_take_the_structuring_model() -> None:
+    requested: list[str] = []
+
+    def start(request: httpx.Request) -> httpx.Response:
+        requested.append(request.url.path)
+        return httpx.Response(500, request=request)
+
+    client = CaptureRuntimeClient(
+        transport=_transport({("POST", "/v2/runtime/installations"): start})
+    )
+    with pytest.raises(ValueError, match="start_model_installation"):
+        client.start_installation(
+            "structuring-model",  # type: ignore[arg-type]
+            idempotency_key="model-request",
+        )
+    assert requested == []
 
 
 def test_uninstall_requirement_deletes_its_installation_and_checks_the_reply() -> None:

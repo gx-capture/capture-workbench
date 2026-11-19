@@ -261,6 +261,9 @@ OcrPageStatus = _generated.OcrPageStatus
 OcrProvenanceStatus = _generated.OcrProvenanceStatus
 OcrProvenanceUnavailableReason = _generated.OcrProvenanceUnavailableReason
 CaptureRequirementId = _generated.CaptureRequirementId
+# The requirements a general installation installs; the structuring model is
+# installed through `start_model_installation` with a chosen option.
+InstallableRequirementId = _generated.InstallableRequirementId
 project_source_text = _generated.project_source_text
 
 
@@ -363,5 +366,6 @@ __all__ = [
     "OcrProvenanceStatus",
     "OcrProvenanceUnavailableReason",
     "CaptureRequirementId",
+    "InstallableRequirementId",
     "project_source_text",
 ]

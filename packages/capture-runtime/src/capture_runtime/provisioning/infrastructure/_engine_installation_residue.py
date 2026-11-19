@@ -12,6 +12,10 @@ from ._engine_installation_errors import EngineFilesInUseError, EngineInstallati
 
 _LOGGER = logging.getLogger(__name__)
 
+# ERROR_SHARING_VIOLATION and ERROR_LOCK_VIOLATION: another process holds the
+# file open or locked. Other permission errors (an ACL, a read-only file) are not.
+_FILE_IN_USE_WINERRORS = frozenset({32, 33})
+
 
 def resolved_child(root: Path, relative: str) -> Path:
     candidate = root.joinpath(*PurePosixPath(relative).parts).resolve()
@@ -52,12 +56,12 @@ def remove_residue_path(path: Path) -> None:
             shutil.rmtree(path)
         else:
             path.unlink()
-    except PermissionError as error:
-        # Windows refuses to delete a file another process holds open.
-        raise EngineFilesInUseError(
-            f"engine file is in use and could not be removed: {path.name}"
-        ) from error
     except OSError as error:
+        if getattr(error, "winerror", None) in _FILE_IN_USE_WINERRORS:
+            # Windows refuses to delete a file another process holds open.
+            raise EngineFilesInUseError(
+                f"engine file is in use and could not be removed: {path.name}"
+            ) from error
         raise EngineInstallationError(
             f"stale engine install residue could not be removed: {path.name}"
         ) from error

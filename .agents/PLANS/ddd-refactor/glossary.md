@@ -88,6 +88,7 @@
 | 來源大小政策 | `SourceSizePolicy` | 依來源種類判定允許的位元組上限及錄音特徵檢查需求。 |
 | 擷取轉換錯誤 | `CaptureTransitionError` | 擷取狀態不允許所要求的操作。 |
 | 工作階段轉換錯誤 | `SessionTransitionError` | 批次順序或工作階段狀態不允許提交。 |
+| 已退役的 profile 錯誤 | `RetiredStructuringProfileError` | 新開的工作階段帶有消費者前綴的舊 profile 識別碼；只有 0.10.x 存下的工作階段保留它。 |
 | 結構化驗證錯誤 | `StructuringValidationError` | 語意輸出無法安全投影。 |
 | 批次摘要衝突 | `StructuringSessionDigestConflictError` | 提交與已規劃的批次摘要不同。 |
 | 運算候選 | `ComputeCandidate` | 已排名且帶有證據 assessment 的裝置候選。 |

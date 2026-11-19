@@ -69,6 +69,7 @@ from capture_runtime.ocr.infrastructure.ocr_worker_result import OcrWorkerFailur
 from capture_runtime.processing_error import CaptureProcessingError
 from capture_runtime.provisioning.infrastructure.engine_installation import (
     ExtractionRuntimeUnavailableError,
+    RequirementResolutionTimeoutError,
     SpeechModelNotInstalledError,
 )
 from capture_runtime.speech.infrastructure.progressive_audio import (
@@ -177,7 +178,7 @@ class StreamingCaptureService:
         )
 
     def supports_progressive_recording(self) -> bool:
-        """Whether a recording can be transcribed while it is still uploading."""
+        """Whether a finalized recording is transcribed in windows with partial results."""
         return progressive_decoder_ready()
 
     def _cancel_task(self, capture_id: str) -> None:
@@ -850,11 +851,9 @@ class StreamingCaptureService:
             source=raw.source,
             revision=1,
             # A document has no media time. A recording extracted in one pass
-            # covers its measured length, when the runtime measured it.
+            # covers its measured length, when a worker measured it.
             covered_until_ms=(
-                self.repository.get_capture(capture_id).duration_ms
-                if declared_kind is CaptureSourceKind.RECORDING
-                else None
+                extraction.duration_ms if declared_kind is CaptureSourceKind.RECORDING else None
             ),
             segments=raw.segments,
             source_text=raw.source_text,
@@ -1042,7 +1041,8 @@ def _safe_failure_message(error: BaseException) -> str:
         return "Structuring failed at a bounded runtime boundary."
     if isinstance(error, CaptureProcessingError):
         return str(error)[:500] or _EXTRACTION_FAILED
-    if isinstance(error, SpeechModelNotInstalledError):
+    # Fixed runtime sentences that name only a requirement id.
+    if isinstance(error, (SpeechModelNotInstalledError, RequirementResolutionTimeoutError)):
         return str(error)[:500]
     return "Capture extraction failed at a bounded runtime boundary."
 

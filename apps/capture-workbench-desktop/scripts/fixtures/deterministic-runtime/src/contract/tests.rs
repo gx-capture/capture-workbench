@@ -429,6 +429,50 @@ fn invalid_uploads_do_not_advance_or_finalize_the_ingestion() {
 }
 
 #[test]
+fn chunks_follow_the_advertised_limit_and_the_runtime_header_order() {
+    let state = fixture();
+    let ready = get(&state, "/v2/health/ready", 200);
+    let limit = ingestions::MAX_CHUNK_BYTES;
+    assert_eq!(ready["capabilities"]["maxChunkBytes"], limit);
+    let content = vec![b'a'; limit + 1];
+    let opened = exchange(
+        &state,
+        open_request("pdf", "application/pdf", &content),
+        201,
+    );
+    let id = opened["ingestionId"].as_str().unwrap();
+    let past_end = |start: usize, body: &[u8]| {
+        let mut request = chunk_request(id, 0, start, content.len(), body);
+        request.headers.insert(
+            "content-range".into(),
+            format!("bytes {start}-{}/{}", content.len(), content.len()),
+        );
+        request
+    };
+    // An end at or past the total is malformed before the size and state checks.
+    for request in [past_end(0, &content), past_end(5, b"ab")] {
+        assert_eq!(
+            exchange(&state, request, 422)["error"]["code"],
+            "invalid_chunk_headers"
+        );
+    }
+    assert_eq!(
+        exchange(
+            &state,
+            chunk_request(id, 0, 0, content.len(), &content),
+            413
+        )["error"]["code"],
+        "chunk_too_large"
+    );
+    let at_limit = exchange(
+        &state,
+        chunk_request(id, 0, 0, content.len(), &content[..limit]),
+        200,
+    );
+    assert_eq!(at_limit["nextOffset"], limit);
+}
+
+#[test]
 fn document_idempotency_headers_must_match_and_abandoned_uploads_can_be_deleted() {
     let state = fixture();
     let mut missing = open_request("pdf", "application/pdf", PDF);
@@ -558,6 +602,30 @@ fn desktop_pdf_ingestion_opens_with_the_host_request() {
     assert_eq!(status, 201, "PDF ingestion must be accepted");
     assert_eq!(body["status"], "open");
     assert_eq!(body["receivedBytes"], 0);
+}
+
+#[test]
+fn general_installation_rejects_the_structuring_model() {
+    let state = fixture();
+    let install = |requirement_id: &str, key: &str| {
+        json_request(
+            "POST",
+            "/v2/runtime/installations",
+            Some(key),
+            json!({ "requirementId": requirement_id, "consent": true }),
+        )
+    };
+    let rejected = exchange(&state, install("structuring-model", "model-install"), 422);
+    assert_eq!(rejected["error"]["code"], "validation_error");
+    assert!(rejected["error"]["details"]["issues"][0]["message"]
+        .as_str()
+        .unwrap()
+        .contains("structuring model installation"));
+    exchange(
+        &state,
+        install("structuring-runtime", "runtime-install"),
+        202,
+    );
 }
 
 #[test]

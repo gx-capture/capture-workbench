@@ -142,6 +142,12 @@ def validate_contract_index(index: Mapping[str, Any], ready: RuntimeReady) -> No
         raise CaptureRuntimeProtocolError(
             "Capture Runtime contract index is missing required fields."
         )
+    # The index has no other fields: a retired one such as `catalogVersion`
+    # means the runtime serves an older contract index.
+    if not set(index).issubset(required | {"mediaType"}):
+        raise CaptureRuntimeProtocolError(
+            "Capture Runtime contract index has fields outside the contract index."
+        )
     if index.get("contractSetVersion") != "2":
         raise CaptureRuntimeCompatibilityError(
             "Capture Runtime contract catalog version is unsupported."
