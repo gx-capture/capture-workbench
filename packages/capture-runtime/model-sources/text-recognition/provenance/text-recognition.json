@@ -1,5 +1,5 @@
 {
-  "algorithm": "capture-workbench-commit-a-fixtures-v1",
+  "algorithm": "capture-workbench-ocr-fixtures-v1",
   "files": [
     {
       "bytes": 1087,
@@ -13,20 +13,20 @@
       "kind": "notice",
       "mediaType": "text/plain",
       "path": "licenses/NOTICE.txt",
-      "sha256": "ed058ee2e3acfc55e61adc58a5876977037b8dbd68471627f5eccd633a8b3359"
+      "sha256": "e8d7eab24c7f7ee0f93daf8945f649933e024071473d6506d8af6656a4ad2b2d"
     },
     {
-      "bytes": 5361,
+      "bytes": 5346,
       "kind": "derived",
       "mediaType": "application/json",
       "path": "model/pipeline.json",
-      "sha256": "8530e3130b89f10b3b0ce8906430c8629037163667b3ac0fbfdf4c00114bef19"
+      "sha256": "b91467a65bf3aee2b2c3eea222bba890beb42ded3fd1593eba2439d2e8561926"
     },
     {
       "bytes": 2157,
-      "expectedDevice": "windowsml-dml",
-      "expectedEngine": "windowsml-ocr",
-      "expectedModel": "pp-ocrv6-medium-windowsml",
+      "expectedDevice": "directml",
+      "expectedEngine": "text-recognition",
+      "expectedModel": "pp-ocrv6-medium",
       "expectedText": "CAPTURE OCR FIXTURE",
       "kind": "ocr-fixture",
       "licensePath": "licenses/LICENSE.txt",
@@ -55,7 +55,7 @@
     "whisperFallback": "536b0662742c02347bc0e980a01041f333bce120",
     "whisperPrimary": "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf"
   },
-  "generator": "packages/capture-runtime/scripts/generate_commit_a_fixtures.py",
+  "generator": "packages/capture-runtime/scripts/generate_text_recognition_sources.py",
   "licensePath": "licenses/LICENSE.txt",
   "noticePath": "licenses/NOTICE.txt",
   "releaseVersion": "0.10.0",
@@ -64,5 +64,5 @@
     "paddleocrDetection": "PaddlePaddle/PP-OCRv6_medium_det_onnx",
     "paddleocrRecognition": "PaddlePaddle/PP-OCRv6_medium_rec_onnx"
   },
-  "stage": "commit-a"
+  "stage": "text-recognition"
 }
