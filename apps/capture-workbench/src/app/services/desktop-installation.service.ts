@@ -99,9 +99,14 @@ export class DesktopInstallationService {
   readonly modelProgressUnavailable = signal(false);
   readonly selectedModelOptionId = signal<string | null>(null);
 
+  /** A re-attach is listing or following installations; another one would follow them twice. */
+  readonly reattaching = signal(false);
+
   private readonly runtime = inject(DesktopRuntimeClientService);
-  /** Stops the running install queue when the user cancels. */
-  private readonly cancelled$ = new Subject<void>();
+  /** Each installation the runtime confirmed as cancelled; it stops that installation's poll only. */
+  private readonly cancelled$ = new Subject<RuntimeInstallation>();
+  /** Installation ids being polled now, so a re-attach never polls one twice. */
+  private readonly followedIds = new Set<string>();
 
   /** True while this requirement's installation status requests fail and are being retried. */
   isProgressUnavailable(requirementId: CaptureRequirementId): boolean {
@@ -133,7 +138,6 @@ export class DesktopInstallationService {
       concatMap((requirement) => this.installRequirement$(requirement)),
       // A cancelled requirement ends the queue: the user chose to stop, not to skip one requirement.
       takeWhile((installation) => installation.status !== 'cancelled', true),
-      takeUntil(this.cancelled$),
       finalize(() => {
         this.startingRequirementId.set(null);
         this.installing.set(false);
@@ -141,33 +145,45 @@ export class DesktopInstallationService {
     );
   }
 
-  /** Cancels a running installation and stops its polling loop. */
+  /**
+   * Cancels a running installation. Its poll stops once the runtime confirms
+   * the cancel; other installations keep being polled, and a failed cancel
+   * leaves the poll running.
+   */
   cancelInstallation$(installationId?: string): Observable<RuntimeInstallation> {
     const targetId = installationId ?? this.activeInstallation()?.installationId;
     if (!targetId) {
       return EMPTY;
     }
-    this.cancelled$.next();
     return this.runtime.cancelInstallation(targetId).pipe(
-      tap((installation) => this.recordInstallation(installation)),
+      tap((installation) => {
+        this.recordInstallation(installation);
+        this.cancelled$.next(installation);
+      }),
     );
   }
 
   /**
    * Lists existing runtime installations on startup or reload and resumes
-   * polling any installation that is still queued or running. Each one is
-   * polled on its own, so one that keeps failing does not hold up the others;
-   * the first failed installation is reported once all of them have ended.
+   * polling any installation that is still queued or running and not polled
+   * already. A failed listing is retried like a status request, so it never
+   * reads as "nothing is running". Each installation is polled on its own, so
+   * one that keeps failing does not hold up the others; the first failed
+   * installation is reported once all of them have ended.
    */
   reattachInstallations$(): Observable<RuntimeInstallation | null> {
-    return this.runtime.listInstallations().pipe(
-      catchError(() => of<readonly RuntimeInstallation[]>([])),
+    return defer(() => {
+      this.reattaching.set(true);
+      return statusRequest$(() => this.runtime.listInstallations(), () => undefined);
+    }).pipe(
       switchMap((items) => {
         // The runtime lists the newest first; record oldest first so the newest wins.
         for (const item of [...items].reverse()) {
-          this.recordInstallation(item, false);
+          if (!this.followedIds.has(item.installationId)) this.recordInstallation(item, false);
         }
-        const activeItems = items.filter((item) => isActiveStatus(item.status));
+        const activeItems = items.filter(
+          (item) => isActiveStatus(item.status) && !this.followedIds.has(item.installationId),
+        );
         if (activeItems.length === 0) {
           return of(null);
         }
@@ -187,12 +203,12 @@ export class DesktopInstallationService {
             const failure = firstFailure;
             return failure === null ? EMPTY : throwError(() => failure);
           })),
-          takeUntil(this.cancelled$),
           finalize(() => {
             this.installing.set(false);
           }),
         );
       }),
+      finalize(() => this.reattaching.set(false)),
     );
   }
 
@@ -295,12 +311,27 @@ export class DesktopInstallationService {
    */
   private followInstallation$(initial: RuntimeInstallation): Observable<RuntimeInstallation> {
     const requirementId = initial.requirementId;
-    return pollUntilTerminal$(
-      initial,
-      (current) => this.runtime.getInstallation(current.installationId),
-      (failing) => this.setProgressUnavailable(requirementId, failing),
-    ).pipe(
+    const installationId = initial.installationId;
+    let confirmedCancel: RuntimeInstallation | null = null;
+    const cancelConfirmed$ = this.cancelled$.pipe(
+      filter((cancelled) => cancelled.installationId === installationId),
+      tap((cancelled) => {
+        confirmedCancel = cancelled;
+      }),
+    );
+    return defer(() => {
+      this.followedIds.add(installationId);
+      return pollUntilTerminal$(
+        initial,
+        (current) => this.runtime.getInstallation(current.installationId),
+        (failing) => this.setProgressUnavailable(requirementId, failing),
+      );
+    }).pipe(
       tap((installation) => this.recordInstallation(installation)),
+      // The confirmed cancel ends this poll as its last status.
+      takeUntil(cancelConfirmed$),
+      concatWith(defer(() => (confirmedCancel ? of(confirmedCancel) : EMPTY))),
+      finalize(() => this.followedIds.delete(installationId)),
       catchError((error: unknown) => {
         if (!isRuntimeNotFound(error)) return throwError(() => error);
         return statusRequest$(
@@ -331,10 +362,6 @@ export class DesktopInstallationService {
 
   /** The runtime no longer knows this requirement's running installation: forget it. */
   private dropRunningInstallation(requirementId: CaptureRequirementId): void {
-    const active = this.activeInstallation();
-    if (active?.requirementId === requirementId && isActiveStatus(active.status)) {
-      this.activeInstallation.set(null);
-    }
     this.installationsByRequirement.update((current) => {
       const existing = current.get(requirementId);
       if (!existing || !isActiveStatus(existing.status)) return current;
@@ -342,6 +369,19 @@ export class DesktopInstallationService {
       next.delete(requirementId);
       return next;
     });
+    const active = this.activeInstallation();
+    if (active?.requirementId === requirementId && isActiveStatus(active.status)) {
+      this.activeInstallation.set(null);
+      this.promoteFollowedInstallation();
+    }
+  }
+
+  /** Another installation still being polled takes the progress card, if there is one. */
+  private promoteFollowedInstallation(): void {
+    const next = [...this.installationsByRequirement().values()].find(
+      (item) => isActiveStatus(item.status) && this.followedIds.has(item.installationId),
+    );
+    if (next) this.activeInstallation.set(next);
   }
 
   /**
@@ -367,5 +407,12 @@ export class DesktopInstallationService {
       next.set(installation.requirementId, installation);
       return next;
     });
+    // The card's installation ended while another one is still polled: show that one.
+    if (
+      this.activeInstallation()?.installationId === installation.installationId &&
+      !isActiveStatus(installation.status)
+    ) {
+      this.promoteFollowedInstallation();
+    }
   }
 }

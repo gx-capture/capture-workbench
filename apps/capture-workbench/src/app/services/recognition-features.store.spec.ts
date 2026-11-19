@@ -876,6 +876,177 @@ describe('RecognitionFeaturesStore installation', () => {
     }
   });
 
+  it('keeps polling and reports the error when a cancel fails during an outage', () => {
+    const running = runningInstallation('running');
+    const getInstallation = vi.fn((): Observable<RuntimeInstallation> => unreadable());
+    const store = initializeFeatures(
+      runtimeStub({
+        getRequirements: vi.fn(() => of([requirement('text-recognition', 'installable', 144_000_000)])),
+        startInstallation: vi.fn(() => of(running)),
+        getInstallation,
+        cancelInstallation: vi.fn(() => unreadable()),
+      }),
+    );
+
+    vi.useFakeTimers();
+    try {
+      store.installRequirement('text-recognition');
+      vi.advanceTimersByTime(750 + 1_000);
+      store.cancelInstallation('inst-ocr-1');
+      expect(store.message()).toBe('Capture Runtime response could not be read.');
+
+      const callsAtCancel = getInstallation.mock.calls.length;
+      vi.advanceTimersByTime(2_000 + 4_000);
+      TestBed.tick();
+
+      expect(getInstallation.mock.calls.length).toBe(callsAtCancel + 2);
+      expect(store.installing()).toBe(true);
+      expect(store.installationFor('text-recognition')?.status).toBe('running');
+      expect(store.isProgressUnavailable('text-recognition')).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('cancels one of two followed installations and keeps polling the other', () => {
+    const textRunning = runningInstallation('running');
+    const speechRunning: RuntimeInstallation = {
+      ...textRunning,
+      installationId: 'inst-speech-1',
+      requirementId: 'speech-recognition',
+    };
+    let speechCompletes = false;
+    const getInstallation = vi.fn((installationId: string): Observable<RuntimeInstallation> =>
+      installationId === 'inst-speech-1'
+        ? of(speechCompletes ? { ...speechRunning, status: 'completed', progress: 1 } : speechRunning)
+        : of(textRunning));
+    const cancelInstallation = vi.fn(() => of(runningInstallation('cancelled')));
+
+    vi.useFakeTimers();
+    try {
+      const store = initializeFeatures(
+        runtimeStub({
+          listInstallations: vi.fn(() => of([textRunning, speechRunning])),
+          getInstallation,
+          cancelInstallation,
+        }),
+      );
+      vi.advanceTimersByTime(750);
+      store.cancelInstallation('inst-ocr-1');
+      TestBed.tick();
+
+      expect(store.installationFor('text-recognition')?.status).toBe('cancelled');
+      // The card moves to the installation still running.
+      expect(store.activeInstallation()?.installationId).toBe('inst-speech-1');
+      expect(store.installing()).toBe(true);
+
+      const textCalls = () => getInstallation.mock.calls.filter(([id]) => id === 'inst-ocr-1').length;
+      const speechCalls = () => getInstallation.mock.calls.filter(([id]) => id === 'inst-speech-1').length;
+      const textAtCancel = textCalls();
+      const speechAtCancel = speechCalls();
+      vi.advanceTimersByTime(750 * 2);
+      expect(textCalls()).toBe(textAtCancel);
+      expect(speechCalls()).toBe(speechAtCancel + 2);
+
+      speechCompletes = true;
+      vi.advanceTimersByTime(750);
+      TestBed.tick();
+      expect(store.installationFor('speech-recognition')?.status).toBe('completed');
+      expect(store.installing()).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('retries a failed listing instead of reading it as nothing running', () => {
+    const running = runningInstallation('running');
+    const listInstallations = vi.fn()
+      .mockReturnValueOnce(unreadable())
+      .mockReturnValueOnce(unreadable())
+      .mockReturnValueOnce(of([running]));
+    const getInstallation = vi.fn(() => of(runningInstallation('completed')));
+
+    vi.useFakeTimers();
+    try {
+      const store = initializeFeatures(runtimeStub({ listInstallations, getInstallation }));
+      expect(listInstallations).toHaveBeenCalledTimes(1);
+
+      vi.advanceTimersByTime(1_000 + 2_000);
+      expect(listInstallations).toHaveBeenCalledTimes(3);
+      expect(store.installationFor('text-recognition')?.status).toBe('running');
+      expect(store.installing()).toBe(true);
+
+      vi.advanceTimersByTime(750);
+      TestBed.tick();
+      expect(store.installationFor('text-recognition')?.status).toBe('completed');
+      expect(store.installing()).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('starts one re-attach at a time and never polls an installation twice', () => {
+    const running = runningInstallation('running');
+    const listing = new Subject<readonly RuntimeInstallation[]>();
+    const listInstallations = vi.fn((): Observable<readonly RuntimeInstallation[]> => listing);
+    const getInstallation = vi.fn(() => of(running));
+
+    vi.useFakeTimers();
+    try {
+      const store = initializeFeatures(runtimeStub({ listInstallations, getInstallation }));
+      // The startup re-attach is still waiting for the listing.
+      store.reattachInstallations();
+      store.reattachInstallations();
+      expect(listInstallations).toHaveBeenCalledOnce();
+
+      listing.next([running]);
+      listing.complete();
+      vi.advanceTimersByTime(750);
+      expect(getInstallation).toHaveBeenCalledOnce();
+
+      // A re-attach asked for directly while the installation is polled lists it again but does not poll it twice.
+      listInstallations.mockImplementation(() => of([running]));
+      TestBed.inject(DesktopInstallationService).reattachInstallations$().subscribe();
+      vi.advanceTimersByTime(750);
+      expect(getInstallation).toHaveBeenCalledTimes(2);
+      expect(store.installing()).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('moves the progress card to an installation still polled when the shown one ends', () => {
+    const textRunning = runningInstallation('running');
+    const speechRunning: RuntimeInstallation = {
+      ...textRunning,
+      installationId: 'inst-speech-1',
+      requirementId: 'speech-recognition',
+    };
+    const getInstallation = vi.fn((installationId: string): Observable<RuntimeInstallation> =>
+      installationId === 'inst-speech-1' ? unreadable() : of(runningInstallation('completed')));
+
+    vi.useFakeTimers();
+    try {
+      const store = initializeFeatures(
+        runtimeStub({
+          listInstallations: vi.fn(() => of([textRunning, speechRunning])),
+          getInstallation,
+        }),
+      );
+      expect(store.activeInstallation()?.installationId).toBe('inst-ocr-1');
+
+      vi.advanceTimersByTime(750);
+      TestBed.tick();
+
+      expect(store.installationFor('text-recognition')?.status).toBe('completed');
+      expect(store.activeInstallation()?.installationId).toBe('inst-speech-1');
+      expect(store.activeInstallation()?.status).toBe('running');
+      expect(store.isProgressUnavailable('speech-recognition')).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('keeps polling a model installation through failures with the hint, and clears it on recovery', () => {
     const runningModel = {
       installationId: 'model-inst-1',

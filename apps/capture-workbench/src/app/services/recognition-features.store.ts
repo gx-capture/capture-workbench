@@ -331,18 +331,16 @@ export class RecognitionFeaturesStore {
 
   /** Cancels a running installation and stops the rest of its install queue. */
   cancelInstallation(installationId?: string): void {
-    this.installation.cancelInstallation$(installationId).subscribe({
-      next: () => {
-        this.requirementsResource.reload();
-        // The cancel stopped every poll; resume the other installations still running.
-        this.reattachInstallations();
-      },
-      error: (error: unknown) => {
-        this.message.set(errorMessage(error));
-        // Polling stopped with the cancel; pick the installation up again.
-        this.reattachInstallations();
-      },
-    });
+    this.installation
+      .cancelInstallation$(installationId)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: () => {
+          this.requirementsResource.reload();
+        },
+        // The installation is still being polled: only the cancel request failed.
+        error: (error: unknown) => this.message.set(errorMessage(error)),
+      });
   }
 
   /** Remembers that the user dismissed the first-run setup card. */
@@ -386,6 +384,7 @@ export class RecognitionFeaturesStore {
           this.modelOptionsResource.reload();
           this.requirementsResource.reload();
         }),
+        takeUntilDestroyed(this.destroyRef),
       )
       .subscribe({
         error: (error: unknown) => this.message.set(errorMessage(error)),
@@ -394,8 +393,8 @@ export class RecognitionFeaturesStore {
 
   /** Re-attaches to any running installation reported by the runtime. */
   reattachInstallations(): void {
-    if (!this.runtimeStarted() || this.installing()) return;
-    this.installation.reattachInstallations$().subscribe({
+    if (!this.runtimeStarted() || this.installing() || this.installation.reattaching()) return;
+    this.installation.reattachInstallations$().pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (terminal) => {
         if (terminal) {
           this.runtime.reload();
@@ -418,7 +417,7 @@ export class RecognitionFeaturesStore {
     if (!this.runtimeStarted() || this.installing()) return;
     if (installable.length === 0) return;
     const ids = installable.map((item) => item.requirementId);
-    this.installation.installRequirements$(installable).subscribe({
+    this.installation.installRequirements$(installable).pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
       next: (installation) => {
         this.forgetUninstalled([installation.requirementId]);
       },

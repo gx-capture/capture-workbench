@@ -206,7 +206,7 @@ describe('AsrPage', () => {
   });
 
   it('renders drop zone, language selector, optional speaker install vs checkbox, and speaker note', () => {
-    const { fixture: withoutSpeakers, queue: withoutSpeakersQueue } = setup({
+    const { fixture: withoutSpeakers, queue: withoutSpeakersQueue, features: withoutSpeakersFeatures } = setup({
       speechReady: true,
       speakersReady: false,
     });
@@ -234,6 +234,12 @@ describe('AsrPage', () => {
     });
     withoutSpeakers.detectChanges();
     expect(el1.querySelector('[data-testid="asr-optional-speakers"]')?.textContent).toContain('正在安裝說話者辨識 50%');
+    expect(el1.querySelector('[data-testid="asr-speakers-progress-retrying"]')).toBeNull();
+    withoutSpeakersFeatures.progressUnavailable.set(new Set(['speaker-diarization']));
+    withoutSpeakers.detectChanges();
+    expect(el1.querySelector('[data-testid="asr-speakers-progress-retrying"]')?.textContent).toContain(
+      desktopMessages().installProgressRetrying,
+    );
     expect(el1.querySelector('[data-testid="engine-card-cancel"]')).toBeNull();
 
     TestBed.resetTestingModule();

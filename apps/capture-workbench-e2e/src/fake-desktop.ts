@@ -477,8 +477,9 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
             syncTimelineInstallation(item);
           }
         }
+        // Newest first, like the runtime.
         return Promise.resolve({
-          items: [...installations.values()].map((item) => ({ ...item })),
+          items: [...installations.values()].reverse().map((item) => ({ ...item })),
         });
       }
       if (command === 'runtime_start_installation') {
@@ -525,7 +526,7 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
         const id = String(args.input?.id ?? args.input?.installationId ?? '');
         const record = installations.get(id);
         if (!record) {
-          return Promise.reject(new Error(`Unknown installation: ${id}`));
+          return Promise.reject(new Error('Capture Runtime request was rejected with HTTP 404.'));
         }
         const failure = statusRequestFailure(id);
         if (failure) return Promise.reject(failure);

@@ -116,6 +116,11 @@
               <span class="text-xs text-muted-foreground" aria-live="polite">
                 {{ speakerInstall.label }}
               </span>
+              @if (features.isProgressUnavailable('speaker-diarization')) {
+                <span class="ml-3 text-xs text-muted-foreground" data-testid="asr-speakers-progress-retrying">
+                  {{ m().installProgressRetrying }}
+                </span>
+              }
             } @else {
               <button
                 hlmBtn
