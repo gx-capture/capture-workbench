@@ -8,7 +8,6 @@ duplicate platform policy and tests do not need a GPU, DirectML, or OCR model.
 from __future__ import annotations
 
 import asyncio
-import ctypes
 import hashlib
 import json
 import re
@@ -16,7 +15,7 @@ import sys
 import unicodedata
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from typing import Any, Literal, Protocol, cast
+from typing import Literal, Protocol, cast
 
 from capture_runtime.contracts import (
     OcrAdapterClass,
@@ -27,22 +26,9 @@ from capture_runtime.contracts import (
 from capture_runtime.contracts import (
     OcrComputePreflight as OcrComputePreflightContract,
 )
+from capture_runtime.gpu_inventory import DxgiAdapterLease, GpuAdapter, GpuAdapterClass
 from capture_runtime.ocr.application.use_cases import SelectComputePlan
 from capture_runtime.ocr.domain.compute_plan.models import ComputeCandidate
-
-_DXGI_ADAPTER_FLAG_SOFTWARE = 0x2
-_DXGI_ERROR_NOT_FOUND = 0x887A0002
-_DXGI_FACTORY1_VTABLE_ENUM_ADAPTERS1 = 12
-_DXGI_FACTORY1_VTABLE_IS_CURRENT = 13
-_DXGI_FACTORY_VTABLE_QUERY_INTERFACE = 0
-_DXGI_FACTORY6_VTABLE_ENUM_ADAPTER_BY_GPU_PREFERENCE = 29
-_DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE = 2
-_DXGI_ADAPTER_VTABLE_GET_DESC1 = 10
-_D3D12_FEATURE_ARCHITECTURE = 1
-_D3D12_FEATURE_LEVEL_11_0 = 0xB000
-_D3D12_DEVICE_VTABLE_CHECK_FEATURE_SUPPORT = 13
-_COM_VTABLE_RELEASE = 2
-
 
 _ASSESSMENTS = frozenset({"positive-usable", "positive-unavailable", "indeterminate"})
 ORT_DIRECTML_MAPPING_CONTRACT = "ort-directml-1.24.4-enumadapters1-v1"
@@ -1034,364 +1020,44 @@ def _ort_version_resolver() -> str | None:
     return value if isinstance(value, str) else None
 
 
-class _Guid(ctypes.Structure):
-    _fields_ = [
-        ("data1", ctypes.c_uint32),
-        ("data2", ctypes.c_uint16),
-        ("data3", ctypes.c_uint16),
-        ("data4", ctypes.c_ubyte * 8),
-    ]
-
-
-class _Luid(ctypes.Structure):
-    _fields_ = [("low_part", ctypes.c_uint32), ("high_part", ctypes.c_int32)]
-
-
-class _DxgiAdapterDesc1(ctypes.Structure):
-    _fields_ = [
-        ("description", ctypes.c_wchar * 128),
-        ("vendor_id", ctypes.c_uint32),
-        ("device_id", ctypes.c_uint32),
-        ("subsystem_id", ctypes.c_uint32),
-        ("revision", ctypes.c_uint32),
-        ("dedicated_video_memory", ctypes.c_size_t),
-        ("dedicated_system_memory", ctypes.c_size_t),
-        ("shared_system_memory", ctypes.c_size_t),
-        ("adapter_luid", _Luid),
-        ("flags", ctypes.c_uint32),
-        ("graphics_preemption_granularity", ctypes.c_uint32),
-    ]
-
-
-class _D3d12FeatureDataArchitecture(ctypes.Structure):
-    _fields_ = [
-        ("node_index", ctypes.c_uint32),
-        ("tile_based_renderer", ctypes.c_int32),
-        ("uma", ctypes.c_int32),
-        ("cache_coherent_uma", ctypes.c_int32),
-    ]
-
-
-_IID_IDXGIFACTORY1 = _Guid(
-    0x770AAE78,
-    0xF26F,
-    0x4DBA,
-    (0xA8, 0x29, 0x25, 0x3C, 0x83, 0xD1, 0xB3, 0x87),
-)
-
-
-_IID_IDXGIFACTORY6 = _Guid(
-    0xC1B6694F,
-    0xFF09,
-    0x44A9,
-    (0xB0, 0x3C, 0x77, 0x90, 0x0A, 0x0A, 0x1D, 0x17),
-)
-
-
-_IID_IDXGIADAPTER1 = _Guid(
-    0x29038F61,
-    0x3839,
-    0x4626,
-    (0x91, 0xFD, 0x08, 0x68, 0x79, 0x01, 0x1A, 0x05),
-)
-
-
-_IID_ID3D12DEVICE = _Guid(
-    0x189819F1,
-    0x1DB6,
-    0x4B57,
-    (0xBE, 0x54, 0x18, 0x21, 0x33, 0x9B, 0x85, 0xF7),
-)
-
-
-def _com_method(
-    pointer: ctypes.c_void_p,
-    index: int,
-    result_type: Any,
-    *argument_types: Any,
-) -> Any:
-    vtable = ctypes.cast(
-        pointer,
-        ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p)),
-    ).contents
-    return ctypes.CFUNCTYPE(result_type, ctypes.c_void_p, *argument_types)(vtable[index])
-
-
-def _release_com(pointer: ctypes.c_void_p) -> None:
-    if pointer.value:
-        release = _com_method(pointer, _COM_VTABLE_RELEASE, ctypes.c_ulong)
-        release(pointer)
-
-
-def _classify_native_adapter(*, is_software: bool, uma: bool | None) -> OcrAdapterClass:
-    """Classify hardware only from the native D3D12 architecture property."""
-
-    if is_software or uma is None:
-        return OcrAdapterClass.UNKNOWN
-    return OcrAdapterClass.INTEGRATED if uma else OcrAdapterClass.DEDICATED
-
-
-def _native_adapter_uma(adapter: ctypes.c_void_p) -> bool | None:
-    """Read the adapter's native UMA architecture flag without loading OCR."""
-
-    if sys.platform != "win32":
-        return None
-    device = ctypes.c_void_p()
-    try:
-        d3d12 = ctypes.WinDLL("d3d12.dll")
-        create_device = d3d12.D3D12CreateDevice
-        create_device.argtypes = [
-            ctypes.c_void_p,
-            ctypes.c_uint32,
-            ctypes.POINTER(_Guid),
-            ctypes.POINTER(ctypes.c_void_p),
-        ]
-        create_device.restype = ctypes.c_long
-        if (
-            create_device(
-                adapter,
-                _D3D12_FEATURE_LEVEL_11_0,
-                ctypes.byref(_IID_ID3D12DEVICE),
-                ctypes.byref(device),
-            )
-            != 0
-            or not device.value
-        ):
-            return None
-
-        architecture = _D3d12FeatureDataArchitecture(node_index=0)
-        check_feature_support = _com_method(
-            device,
-            _D3D12_DEVICE_VTABLE_CHECK_FEATURE_SUPPORT,
-            ctypes.c_long,
-            ctypes.c_uint32,
-            ctypes.c_void_p,
-            ctypes.c_uint32,
-        )
-        if (
-            check_feature_support(
-                device,
-                _D3D12_FEATURE_ARCHITECTURE,
-                ctypes.byref(architecture),
-                ctypes.sizeof(architecture),
-            )
-            != 0
-        ):
-            return None
-        return bool(architecture.uma)
-    except (AttributeError, OSError, TypeError, ValueError):
-        return None
-    finally:
-        _release_com(device)
-
-
-def _native_adapter_luid(description: _DxgiAdapterDesc1) -> str:
-    """Canonicalize a DXGI LUID as the high DWORD followed by the low DWORD."""
-
-    high = description.adapter_luid.high_part & 0xFFFFFFFF
-    low = description.adapter_luid.low_part
-    return f"{high:08x}{low:08x}"
-
-
-def _native_adapter_record(
-    adapter: ctypes.c_void_p,
-    *,
-    index: int,
-    high_performance_rank: int | None,
-) -> OcrGpuAdapter | None:
-    description = _DxgiAdapterDesc1()
-    get_desc = _com_method(
-        adapter,
-        _DXGI_ADAPTER_VTABLE_GET_DESC1,
-        ctypes.c_long,
-        ctypes.POINTER(_DxgiAdapterDesc1),
-    )
-    if get_desc(adapter, ctypes.byref(description)) != 0:
-        return None
-    software = bool(description.flags & _DXGI_ADAPTER_FLAG_SOFTWARE)
-    adapter_class = _classify_native_adapter(
-        is_software=software,
-        uma=None if software else _native_adapter_uma(adapter),
-    )
-    return OcrGpuAdapter(
-        index=index,
-        adapter_class=adapter_class,
-        is_software=software,
-        luid=_native_adapter_luid(description),
-        high_performance_rank=high_performance_rank,
-        vendor_id=description.vendor_id,
-        pci_device_id=description.device_id,
-        subsystem_id=description.subsystem_id,
-        revision=description.revision,
-        description=description.description,
-    )
-
-
-def _native_create_factory() -> ctypes.c_void_p:
-    """Create one DXGI factory for a complete, bracketed adapter observation."""
-
-    if sys.platform != "win32":
-        raise RuntimeError("DXGI factory is unavailable")
-    try:
-        dxgi = ctypes.WinDLL("dxgi.dll")
-        create_factory = dxgi.CreateDXGIFactory1
-        create_factory.argtypes = [ctypes.POINTER(_Guid), ctypes.POINTER(ctypes.c_void_p)]
-        create_factory.restype = ctypes.c_long
-        factory = ctypes.c_void_p()
-        if create_factory(ctypes.byref(_IID_IDXGIFACTORY1), ctypes.byref(factory)) != 0:
-            raise RuntimeError("CreateDXGIFactory1 failed")
-        return factory
-    except (AttributeError, OSError):
-        raise RuntimeError("DXGI factory is unavailable") from None
-
-
-def _native_query_factory6(factory: ctypes.c_void_p) -> ctypes.c_void_p:
-    factory6 = ctypes.c_void_p()
-    query_interface = _com_method(
-        factory,
-        _DXGI_FACTORY_VTABLE_QUERY_INTERFACE,
-        ctypes.c_long,
-        ctypes.POINTER(_Guid),
-        ctypes.POINTER(ctypes.c_void_p),
-    )
-    if (
-        query_interface(
-            factory,
-            ctypes.byref(_IID_IDXGIFACTORY6),
-            ctypes.byref(factory6),
-        )
-        != 0
-        or not factory6.value
-    ):
-        raise RuntimeError("IDXGIFactory6 is unavailable")
-    return factory6
-
-
-def _native_enumerate_adapters(
-    *,
-    high_performance: bool,
-    factory: ctypes.c_void_p | None = None,
-    factory6: ctypes.c_void_p | None = None,
+def _ocr_adapter_table(
+    adapters: tuple[GpuAdapter, ...], *, high_performance: bool
 ) -> tuple[OcrGpuAdapter, ...]:
-    """Enumerate one DXGI table without invoking a shell or management provider."""
-
-    if sys.platform != "win32":
-        return ()
-    owns_factory = factory is None
-    owns_factory6 = factory6 is None
-    adapters: list[OcrGpuAdapter] = []
-    if owns_factory:
-        factory = _native_create_factory()
-    if high_performance and owns_factory6:
-        try:
-            assert factory is not None
-            factory6 = _native_query_factory6(factory)
-        except Exception:
-            if owns_factory and factory is not None:
-                _release_com(factory)
-            raise
-    try:
-        assert factory is not None
-        if high_performance:
-            assert factory6 is not None and factory6.value
-            enumerate_adapter = _com_method(
-                factory6,
-                _DXGI_FACTORY6_VTABLE_ENUM_ADAPTER_BY_GPU_PREFERENCE,
-                ctypes.c_long,
-                ctypes.c_uint32,
-                ctypes.c_uint32,
-                ctypes.POINTER(_Guid),
-                ctypes.POINTER(ctypes.c_void_p),
-            )
-        else:
-            enumerate_adapter = _com_method(
-                factory,
-                _DXGI_FACTORY1_VTABLE_ENUM_ADAPTERS1,
-                ctypes.c_long,
-                ctypes.c_uint32,
-                ctypes.POINTER(ctypes.c_void_p),
-            )
-        for index in range(256):
-            adapter = ctypes.c_void_p()
-            if high_performance:
-                result = enumerate_adapter(
-                    factory6,
-                    index,
-                    _DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE,
-                    ctypes.byref(_IID_IDXGIADAPTER1),
-                    ctypes.byref(adapter),
-                )
-            else:
-                result = enumerate_adapter(factory, index, ctypes.byref(adapter))
-            if ctypes.c_ulong(result).value == _DXGI_ERROR_NOT_FOUND:
-                break
-            if result != 0 or not adapter.value:
-                raise RuntimeError("DXGI adapter enumeration was incomplete")
-            try:
-                record = _native_adapter_record(
-                    adapter,
-                    index=index,
-                    high_performance_rank=index if high_performance else None,
-                )
-                if record is not None:
-                    adapters.append(record)
-                else:
-                    raise RuntimeError("DXGI adapter description was unavailable")
-            finally:
-                _release_com(adapter)
-    except (AttributeError, OSError, TypeError, ValueError):
-        raise RuntimeError("DXGI adapter enumeration failed") from None
-    finally:
-        if owns_factory6 and factory6 is not None:
-            _release_com(factory6)
-        if owns_factory and factory is not None:
-            _release_com(factory)
-    return tuple(adapters)
+    return tuple(
+        OcrGpuAdapter(
+            index=index,
+            adapter_class=(
+                OcrAdapterClass.UNKNOWN
+                if adapter.adapter_class is GpuAdapterClass.SOFTWARE
+                else OcrAdapterClass(adapter.adapter_class.value)
+            ),
+            is_software=adapter.adapter_class is GpuAdapterClass.SOFTWARE,
+            luid=adapter.luid,
+            high_performance_rank=index if high_performance else None,
+            vendor_id=adapter.vendor_id,
+            pci_device_id=adapter.device_id,
+            subsystem_id=adapter.subsystem_id,
+            revision=adapter.revision,
+            description=adapter.description,
+        )
+        for index, adapter in enumerate(adapters)
+    )
 
 
-class NativeOcrAdapterMapLease:
-    """Own one DXGI factory across a complete map/construction bracket."""
+class NativeOcrAdapterMapLease(DxgiAdapterLease):
+    """Map the native tables to DirectML ordinals within one factory lease."""
 
     def __init__(self) -> None:
-        self._factory = _native_create_factory()
-        self._factory6: ctypes.c_void_p | None = None
-        try:
-            self._factory6 = _native_query_factory6(self._factory)
-        except Exception:
-            _release_com(self._factory)
-            raise
-
-    def is_current(self) -> bool:
-        """Read ``IDXGIFactory1::IsCurrent``; failures are never treated as current."""
-
-        if not self._factory.value:
-            raise RuntimeError("DXGI factory lease is closed")
-        try:
-            is_current = _com_method(
-                self._factory,
-                _DXGI_FACTORY1_VTABLE_IS_CURRENT,
-                ctypes.c_int,
-            )
-            return bool(is_current(self._factory))
-        except Exception as error:
-            raise RuntimeError("DXGI factory current-state query failed") from error
+        super().__init__(include_high_performance=True)
 
     def enumerate_tables(self) -> tuple[tuple[OcrGpuAdapter, ...], tuple[OcrGpuAdapter, ...]]:
-        """Read HIGH_PERFORMANCE and ordinary tables using this same factory."""
+        ordinary = self.enumerate_adapters()
+        high = self.enumerate_adapters(high_performance=True)
+        return (
+            _ocr_adapter_table(high, high_performance=True),
+            _ocr_adapter_table(ordinary, high_performance=False),
+        )
 
-        if not self._factory.value or self._factory6 is None or not self._factory6.value:
-            raise RuntimeError("DXGI factory lease is closed")
-        ordinary = _native_enumerate_adapters(
-            high_performance=False,
-            factory=self._factory,
-            factory6=self._factory6,
-        )
-        high = _native_enumerate_adapters(
-            high_performance=True,
-            factory=self._factory,
-            factory6=self._factory6,
-        )
-        return high, ordinary
 
     def adapter_map(self) -> tuple[str, tuple[OcrGpuAdapter, ...]]:
         """Return the joined map digest and ordinary-ordinal map from this lease."""
@@ -1407,14 +1073,6 @@ class NativeOcrAdapterMapLease:
         if joined is None:
             raise RuntimeError("native OCR adapter map is incomplete")
         return _adapter_map_digest(joined), joined
-
-    def close(self) -> None:
-        factory6, self._factory6 = self._factory6, None
-        factory, self._factory = self._factory, ctypes.c_void_p()
-        if factory6 is not None:
-            _release_com(factory6)
-        _release_com(factory)
-
 
 def _native_adapter_tables() -> tuple[tuple[OcrGpuAdapter, ...], tuple[OcrGpuAdapter, ...]]:
     """Enumerate ordinary and HIGH_PERFORMANCE tables for one capability probe."""

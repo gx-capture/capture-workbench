@@ -15,13 +15,12 @@ from capture_runtime.contracts import (
 from capture_runtime.contracts import (
     OcrComputePreflight as OcrComputePreflightContract,
 )
+from capture_runtime.gpu_inventory import _DXGI_FACTORY1_VTABLE_IS_CURRENT
 from capture_runtime.ocr.infrastructure.ocr_preflight import (
-    _DXGI_FACTORY1_VTABLE_IS_CURRENT,
     NativeOcrAdapterMapLease,
     OcrComputePreflight,
     OcrGpuAdapter,
     OcrGpuCapabilitySnapshot,
-    _classify_native_adapter,
 )
 
 CONTRACT_SHA256 = "a" * 64
@@ -98,25 +97,6 @@ def test_no_adapter_reports_no_compatible_gpu_even_if_dml_is_registered() -> Non
     assert decision.mode is OcrComputeMode.CPU_FALLBACK
     assert decision.adapter_class is OcrAdapterClass.UNKNOWN
     assert decision.reason_code is OcrComputeReasonCode.NO_COMPATIBLE_GPU
-
-
-@pytest.mark.parametrize(
-    ("uma", "expected"),
-    [
-        (True, OcrAdapterClass.INTEGRATED),
-        (False, OcrAdapterClass.DEDICATED),
-        (None, OcrAdapterClass.UNKNOWN),
-    ],
-)
-def test_native_hardware_classification_uses_architecture_uma_evidence(
-    uma: bool | None,
-    expected: OcrAdapterClass,
-) -> None:
-    assert _classify_native_adapter(is_software=False, uma=uma) is expected
-
-
-def test_native_hardware_classification_never_uses_software_memory_as_gpu_class() -> None:
-    assert _classify_native_adapter(is_software=True, uma=False) is OcrAdapterClass.UNKNOWN
 
 
 @pytest.mark.parametrize("native_value", [0, 1])

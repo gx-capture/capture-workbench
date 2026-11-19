@@ -15,6 +15,7 @@ source_modules = [
   "capture_runtime.constants",
   "capture_runtime.clock",
   "capture_runtime.file_lock",
+  "capture_runtime.gpu_inventory",
   "capture_runtime.pdf_page_selection",
 ]
 forbidden_modules = [
@@ -734,6 +735,7 @@ source_modules = [
   "capture_runtime.constants",
   "capture_runtime.clock",
   "capture_runtime.file_lock",
+  "capture_runtime.gpu_inventory",
   "capture_runtime.pdf_page_selection",
   "capture_runtime.contracts",
   "capture_runtime.contract_set",
@@ -840,6 +842,7 @@ source_modules = [
   "capture_runtime.constants",
   "capture_runtime.clock",
   "capture_runtime.file_lock",
+  "capture_runtime.gpu_inventory",
   "capture_runtime.pdf_page_selection",
   "capture_runtime.contracts",
   "capture_runtime.contract_set",
