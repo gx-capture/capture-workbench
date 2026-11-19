@@ -11,10 +11,13 @@ export interface FakeDesktopOptions {
   readonly failInstallStatusChecks?: number;
   /**
    * Answer the first status request of each runtime or model installation
-   * with HTTP 404, as a restarted runtime would; the installation list still
-   * holds a runtime installation, while a model installation is gone.
+   * with HTTP 404, as a restarted runtime would. A runtime installation stays
+   * in the installation list (its next status request answers again); a model
+   * installation is gone, so every later read of it answers 404 too.
    */
   readonly answerInstallStatusNotFoundOnce?: boolean;
+  /** Once a status request was answered 404, answer each installation listing this much later. */
+  readonly slowListingAfterNotFoundMs?: number;
   readonly initialRunningInstallations?: readonly Record<string, unknown>[];
   /** Script capture commands so one OCR file can reach raw text. */
   readonly ocrJourney?: boolean;
@@ -97,6 +100,8 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
   };
   const modelInstallations = new Map<string, Record<string, unknown>>();
   let nextModelInstallSeq = 1;
+  /** The model option a completed model installation made active. */
+  let activeModelOptionId = 'qwen3.5-0.8b-v1';
   const installStartedAtMs = new Map<string, number>();
   const installDownloadBytes = new Map<string, number>();
   const syncTimelineInstallation = (record: Record<string, unknown>): void => {
@@ -472,15 +477,22 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
         return Promise.resolve({ items: mutableRequirements.map((item) => ({ ...item })) });
       }
       if (command === 'runtime_list_installations') {
-        if (installOptions.installTimeline) {
-          for (const item of installations.values()) {
-            syncTimelineInstallation(item);
+        const listing = () => {
+          if (installOptions.installTimeline) {
+            for (const item of installations.values()) {
+              syncTimelineInstallation(item);
+            }
           }
+          // Newest first, like the runtime.
+          return { items: [...installations.values()].reverse().map((item) => ({ ...item })) };
+        };
+        const slowMs = installOptions.slowListingAfterNotFoundMs ?? 0;
+        if (slowMs > 0 && statusNotFoundAnswered.size > 0) {
+          return new Promise((resolve) => {
+            setTimeout(() => resolve(listing()), slowMs);
+          });
         }
-        // Newest first, like the runtime.
-        return Promise.resolve({
-          items: [...installations.values()].reverse().map((item) => ({ ...item })),
-        });
+        return Promise.resolve(listing());
       }
       if (command === 'runtime_start_installation') {
         const requirementId = String(args.input?.requirementId ?? 'speech-recognition');
@@ -610,12 +622,19 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
           return Promise.reject(new Error('Capture Runtime request was rejected with HTTP 404.'));
         }
         const failure = statusRequestFailure(id);
-        if (failure) return Promise.reject(failure);
+        if (failure) {
+          // A restarted runtime no longer has the model installation: later reads agree.
+          if (failure.message.includes('HTTP 404')) modelInstallations.delete(id);
+          return Promise.reject(failure);
+        }
         // Each answered status request moves the download on by a tenth.
         if (record['status'] === 'running') {
           const progress = Math.min(1, Math.round((Number(record['progress'] ?? 0) + 0.1) * 10) / 10);
           record['progress'] = progress;
-          if (progress >= 1) record['status'] = 'completed';
+          if (progress >= 1) {
+            record['status'] = 'completed';
+            activeModelOptionId = String(record['optionId'] ?? activeModelOptionId);
+          }
         }
         return Promise.resolve({ ...record });
       }
@@ -631,7 +650,7 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
               downloadBytes: null,
               profileId: 'qwen3.5-0.8b-structure-v1',
               profileSpecSha256: 'b'.repeat(64),
-              status: 'active',
+              status: activeModelOptionId === 'qwen3.5-0.8b-v1' ? 'active' : 'not-installed',
             },
             {
               optionId: 'qwen3.5-2b-v1',
@@ -641,7 +660,7 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
               downloadBytes: null,
               profileId: 'qwen3.5-2b-structure-v1',
               profileSpecSha256: 'c'.repeat(64),
-              status: 'not-installed',
+              status: activeModelOptionId === 'qwen3.5-2b-v1' ? 'active' : 'not-installed',
             },
             {
               optionId: 'qwen3.5-4b-v1',
@@ -651,7 +670,7 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
               downloadBytes: null,
               profileId: 'qwen3.5-4b-structure-v1',
               profileSpecSha256: 'd'.repeat(64),
-              status: 'not-installed',
+              status: activeModelOptionId === 'qwen3.5-4b-v1' ? 'active' : 'not-installed',
             },
           ],
         });

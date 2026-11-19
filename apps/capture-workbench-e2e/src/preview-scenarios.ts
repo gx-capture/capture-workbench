@@ -100,6 +100,19 @@ export const PREVIEW_SCENARIOS: Readonly<Record<string, PreviewScenario>> = {
       answerInstallStatusNotFoundOnce: true,
     },
   },
+  'install-status-not-found-slow-listing': {
+    label: '安裝進度查無此安裝（清單回覆緩慢）',
+    description: '三個辨識功能尚未安裝；每筆安裝的第一次進度查詢回覆查無此安裝，之後的安裝清單要 15 秒才回覆，可在接回期間取消安裝。',
+    requirements: scenarioRequirements('installable'),
+    options: {
+      cudaAvailable: true,
+      persistLibrary: true,
+      ocrJourney: true,
+      installTimeline: DEFAULT_INSTALL_TIMELINE,
+      answerInstallStatusNotFoundOnce: true,
+      slowListingAfterNotFoundMs: 15_000,
+    },
+  },
 };
 
 export function previewScenarioConfig(

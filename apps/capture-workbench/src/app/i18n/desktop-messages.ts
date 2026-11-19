@@ -74,6 +74,7 @@ export interface DesktopMessages {
   readonly manualRequirement: (name: string, detail: string) => string;
   readonly finishInstallThenRetry: string;
   readonly requirementFailed: (name: string) => string;
+  readonly installationInterrupted: (name: string) => string;
   readonly recheck: string;
   readonly cancelBeforeDelete: string;
   readonly waitBeforeDelete: string;
@@ -356,6 +357,7 @@ const ZH_TW: DesktopMessages = {
   manualRequirement: (name, detail) => `${name} 需要手動處理：${detail}`,
   finishInstallThenRetry: '請完成安裝後再試。',
   requirementFailed: (name) => `${name} 安裝失敗。`,
+  installationInterrupted: (name) => `${name} 的安裝已中斷，請重新檢查這項功能。`,
   recheck: '安裝完成，正在重新檢查。',
   cancelBeforeDelete: '請先取消處理，再刪除文件。',
   waitBeforeDelete: '處理尚未結束，請稍候再刪除。',
@@ -683,6 +685,7 @@ const EN: DesktopMessages = {
   manualRequirement: (name, detail) => `${name} needs a manual step: ${detail}`,
   finishInstallThenRetry: 'Finish the installation, then try again.',
   requirementFailed: (name) => `${name} could not be installed.`,
+  installationInterrupted: (name) => `${name}: the installation was interrupted. Check the requirement again.`,
   recheck: 'Installed. Checking again.',
   cancelBeforeDelete: 'Cancel processing before deleting the document.',
   waitBeforeDelete: 'Processing has not finished. Delete the document later.',

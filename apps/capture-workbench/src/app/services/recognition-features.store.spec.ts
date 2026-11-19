@@ -4,7 +4,7 @@ import type {
   RuntimeInstallation,
   RuntimeRequirement,
 } from '@gx-capture/capture-workbench-ui';
-import { type Observable, of, Subject, throwError } from 'rxjs';
+import { NEVER, type Observable, of, Subject, throwError } from 'rxjs';
 import { desktopMessages, setDesktopLocale } from '../i18n/desktop-messages';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
 import { DesktopInstallationService } from './desktop-installation.service';
@@ -44,10 +44,11 @@ describe('RecognitionFeaturesStore removeRequirement', () => {
   });
 
   it('does not call the runtime while that requirement is installing', () => {
-    const { store, runtime, installation } = createHarness();
-    installation.installationsByRequirement.set(
-      new Map([['text-recognition', runningInstallation('running')]]),
-    );
+    const { store, runtime } = createHarness({
+      listInstallations: vi.fn(() => of([runningInstallation('running')])),
+      getInstallation: vi.fn(() => NEVER),
+    });
+    expect(store.installationFor('text-recognition')?.status).toBe('running');
 
     store.removeRequirement('text-recognition');
 
@@ -121,6 +122,8 @@ function createHarness(
   runtimeOverrides: Partial<{
     getRequirements: ReturnType<typeof vi.fn>;
     getModelOptions: ReturnType<typeof vi.fn>;
+    listInstallations: ReturnType<typeof vi.fn>;
+    getInstallation: ReturnType<typeof vi.fn>;
   }> = {},
 ) {
   const listed = signal<readonly RuntimeRequirement[]>([
@@ -146,9 +149,8 @@ function createHarness(
     ],
   });
   const store = TestBed.inject(RecognitionFeaturesStore);
-  const installation = TestBed.inject(DesktopInstallationService);
   TestBed.tick();
-  return { store, runtime, pending, listed, installation };
+  return { store, runtime, pending, listed };
 }
 
 function requirementStatus(store: RecognitionFeaturesStore): string | undefined {
@@ -711,91 +713,6 @@ describe('RecognitionFeaturesStore installation', () => {
     }
   });
 
-  it('keeps polling through failures without giving up, with delays capped at 8 s', () => {
-    const getInstallation = vi.fn((): Observable<RuntimeInstallation> => unreadable());
-    const store = initializeFeatures(
-      runtimeStub({
-        getRequirements: vi.fn(() => of([requirement('text-recognition', 'installable', 144_000_000)])),
-        startInstallation: vi.fn(() => of(runningInstallation('running'))),
-        getInstallation,
-      }),
-    );
-
-    vi.useFakeTimers();
-    try {
-      store.installRequirement('text-recognition');
-      // The first request, retries after 1, 2 and 4 s, then one every 8 s from then on.
-      vi.advanceTimersByTime(750 + 1_000 + 2_000 + 4_000 + 8_000 * 20);
-      TestBed.tick();
-
-      expect(getInstallation).toHaveBeenCalledTimes(1 + 3 + 20);
-      expect(store.installing()).toBe(true);
-      expect(store.message()).toBe('');
-      expect(store.isProgressUnavailable('text-recognition')).toBe(true);
-      expect(store.activeInstallation()?.status).toBe('running');
-
-      getInstallation.mockImplementation(() => of(runningInstallation('completed')));
-      vi.advanceTimersByTime(8_000);
-      TestBed.tick();
-
-      expect(store.isProgressUnavailable('text-recognition')).toBe(false);
-      expect(store.activeInstallation()?.status).toBe('completed');
-      expect(store.installing()).toBe(false);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it.each([
-    ['still running', 'running', 'completed'],
-    ['ended', 'completed', 'completed'],
-    ['no longer listed', null, null],
-  ] as const)('re-attaches through the list when the runtime no longer knows the installation id (%s)', (_case, listed, final) => {
-    const lost = runningInstallation('running');
-    const found: RuntimeInstallation = {
-      ...runningInstallation(listed ?? 'running'),
-      installationId: 'inst-ocr-2',
-    };
-    const listInstallations = vi.fn()
-      .mockReturnValueOnce(of([]))
-      .mockReturnValueOnce(of(listed === null ? [] : [found]));
-    const getInstallation = vi.fn((installationId: string): Observable<RuntimeInstallation> =>
-      installationId === 'inst-ocr-2'
-        ? of({ ...found, status: 'completed', progress: 1 })
-        : throwError(() => new Error('Capture Runtime request was rejected with HTTP 404.')));
-    const store = initializeFeatures(
-      runtimeStub({
-        getRequirements: vi.fn(() => of([requirement('text-recognition', 'installable', 144_000_000)])),
-        startInstallation: vi.fn(() => of(lost)),
-        getInstallation,
-        listInstallations,
-      }),
-    );
-
-    vi.useFakeTimers();
-    try {
-      store.installRequirement('text-recognition');
-      vi.advanceTimersByTime(750);
-      TestBed.tick();
-
-      expect(listInstallations).toHaveBeenCalledTimes(2);
-      if (listed === 'running') {
-        expect(store.activeInstallation()?.installationId).toBe('inst-ocr-2');
-        expect(store.installing()).toBe(true);
-        vi.advanceTimersByTime(750);
-        TestBed.tick();
-        expect(getInstallation).toHaveBeenLastCalledWith('inst-ocr-2');
-      }
-
-      expect(store.installing()).toBe(false);
-      expect(store.isProgressUnavailable('text-recognition')).toBe(false);
-      expect(store.installationFor('text-recognition')?.status ?? null).toBe(final);
-      expect(store.message()).toBe(final === 'completed' ? desktopMessages().recheck : '');
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
   it('stops polling a failing installation when the user cancels', () => {
     const running = runningInstallation('running');
     const getInstallation = vi.fn((): Observable<RuntimeInstallation> => unreadable());
@@ -1042,6 +959,145 @@ describe('RecognitionFeaturesStore installation', () => {
       expect(store.activeInstallation()?.installationId).toBe('inst-speech-1');
       expect(store.activeInstallation()?.status).toBe('running');
       expect(store.isProgressUnavailable('speech-recognition')).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each(['listing first', 'start first'] as const)(
+    'stays installing while a startup listing and a user install overlap (%s answers first)',
+    (first) => {
+      const listing = new Subject<readonly RuntimeInstallation[]>();
+      const started = new Subject<RuntimeInstallation>();
+      const store = initializeFeatures(
+        runtimeStub({
+          listInstallations: vi.fn(() => listing),
+          startInstallation: vi.fn(() => started),
+        }),
+      );
+      expect(store.installing()).toBe(true);
+
+      TestBed.inject(DesktopInstallationService)
+        .installRequirements$([requirement('text-recognition', 'installable', 144_000_000)])
+        .subscribe({ error: () => undefined });
+      expect(store.installing()).toBe(true);
+
+      const answerListing = () => {
+        listing.next([]);
+        listing.complete();
+      };
+      const answerStart = () => {
+        started.next(runningInstallation('completed'));
+        started.complete();
+      };
+      if (first === 'listing first') answerListing();
+      else answerStart();
+      expect(store.installing()).toBe(true);
+
+      if (first === 'listing first') answerStart();
+      else answerListing();
+      expect(store.installing()).toBe(false);
+    },
+  );
+
+  it('stops the queue on a cancel confirmed while a lost installation is being resolved', () => {
+    const startInstallation = vi.fn((request: { requirementId: string }) =>
+      of({ ...runningInstallation('running'), installationId: `install-${request.requirementId}`, requirementId: request.requirementId }),
+    );
+    const listing = new Subject<readonly RuntimeInstallation[]>();
+    const listInstallations = vi.fn()
+      .mockReturnValueOnce(of([]))
+      .mockReturnValueOnce(listing);
+    const store = initializeFeatures(
+      runtimeStub({
+        getRequirements: vi.fn(() => of([
+          requirement('text-recognition', 'installable', 144_000_000),
+          requirement('speech-recognition', 'installable', 2_800_000_000),
+        ])),
+        startInstallation,
+        listInstallations,
+        getInstallation: vi.fn(() =>
+          throwError(() => new Error('Capture Runtime request was rejected with HTTP 404.'))),
+        cancelInstallation: vi.fn((installationId: string) =>
+          of({ ...runningInstallation('cancelled'), installationId })),
+      }),
+    );
+
+    vi.useFakeTimers();
+    try {
+      store.installRequirements(['text-recognition', 'speech-recognition']);
+      vi.advanceTimersByTime(750);
+      expect(listInstallations).toHaveBeenCalledTimes(2);
+      expect(listing.observed).toBe(true);
+
+      store.cancelInstallation('install-text-recognition');
+      TestBed.tick();
+
+      expect(listing.observed).toBe(false);
+      expect(store.installationFor('text-recognition')?.status).toBe('cancelled');
+      expect(startInstallation.mock.calls.map(([request]) => request.requirementId)).toEqual(['text-recognition']);
+      expect(store.installing()).toBe(false);
+      vi.advanceTimersByTime(60_000);
+      expect(startInstallation).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('shows a failed installation\'s message when it ends while another keeps failing its checks', () => {
+    const textRunning = runningInstallation('running');
+    const speechRunning: RuntimeInstallation = {
+      ...textRunning,
+      installationId: 'inst-speech-1',
+      requirementId: 'speech-recognition',
+    };
+    const getInstallation = vi.fn((installationId: string): Observable<RuntimeInstallation> =>
+      installationId === 'inst-speech-1'
+        ? of({
+          ...speechRunning,
+          status: 'failed',
+          error: { code: 'disk_full', message: 'The disk is full.', stage: 'runtime' },
+        } as RuntimeInstallation)
+        : unreadable());
+
+    vi.useFakeTimers();
+    try {
+      const store = initializeFeatures(
+        runtimeStub({
+          listInstallations: vi.fn(() => of([textRunning, speechRunning])),
+          getInstallation,
+        }),
+      );
+      vi.advanceTimersByTime(750);
+      TestBed.tick();
+
+      expect(store.message()).toBe('The disk is full.');
+      expect(store.installationFor('speech-recognition')?.status).toBe('failed');
+      expect(store.isProgressUnavailable('text-recognition')).toBe(true);
+      expect(store.installing()).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops every poll when the service is destroyed', () => {
+    const getInstallation = vi.fn(() => of(runningInstallation('running')));
+
+    vi.useFakeTimers();
+    try {
+      initializeFeatures(
+        runtimeStub({
+          listInstallations: vi.fn(() => of([runningInstallation('running')])),
+          getInstallation,
+        }),
+      );
+      vi.advanceTimersByTime(750);
+      expect(getInstallation).toHaveBeenCalledOnce();
+
+      TestBed.resetTestingModule();
+      vi.advanceTimersByTime(60_000);
+
+      expect(getInstallation).toHaveBeenCalledOnce();
     } finally {
       vi.useRealTimers();
     }

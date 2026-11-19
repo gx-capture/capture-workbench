@@ -65,7 +65,6 @@ export class RecognitionFeaturesStore {
   readonly installing = this.installation.installing;
   readonly activeInstallation = this.installation.activeInstallation;
   readonly startingRequirementId = this.installation.startingRequirementId;
-  readonly progressUnavailableRequirements = this.installation.progressUnavailableRequirements;
   readonly activeModelInstallation = this.installation.activeModelInstallation;
   readonly modelProgressUnavailable = this.installation.modelProgressUnavailable;
   readonly selectedModelOptionId = this.installation.selectedModelOptionId;
@@ -193,6 +192,33 @@ export class RecognitionFeaturesStore {
     if (stale.length === 0) return;
     this.forgetUninstalled(stale);
   });
+
+  /**
+   * Every installation end refreshes what depends on it, when it happens: a
+   * failed requirement installation shows its own message, a completed one the
+   * re-check notice, while other installations keep being polled.
+   */
+  private readonly requirementEnds = this.installation.requirementEnded$
+    .pipe(takeUntilDestroyed(this.destroyRef))
+    .subscribe((end) => {
+      this.runtime.reload();
+      this.requirementsResource.reload();
+      if (end.outcome === 'completed') {
+        this.message.set(desktopMessages().recheck);
+      } else if (end.outcome === 'failed' && end.record) {
+        const requirementId = end.record.requirementId;
+        const name = this.requirements().find((item) => item.requirementId === requirementId)?.displayName
+          ?? requirementId;
+        this.message.set(errorMessage(end.record.error?.message ?? desktopMessages().requirementFailed(name)));
+      }
+    });
+
+  private readonly modelEnds = this.installation.modelEnded$
+    .pipe(takeUntilDestroyed(this.destroyRef))
+    .subscribe(() => {
+      this.modelOptionsResource.reload();
+      this.requirementsResource.reload();
+    });
 
   private readonly reattachEffect = effect(() => {
     const started = this.runtimeStarted();
@@ -391,19 +417,14 @@ export class RecognitionFeaturesStore {
       });
   }
 
-  /** Re-attaches to any running installation reported by the runtime. */
+  /**
+   * Re-attaches to the installations the runtime reports: each running one is
+   * followed (never twice); a call while a listing is pending joins it. Their
+   * ends arrive through the installation end subscriptions.
+   */
   reattachInstallations(): void {
-    if (!this.runtimeStarted() || this.installing() || this.installation.reattaching()) return;
+    if (!this.runtimeStarted()) return;
     this.installation.reattachInstallations$().pipe(takeUntilDestroyed(this.destroyRef)).subscribe({
-      next: (terminal) => {
-        if (terminal) {
-          this.runtime.reload();
-          this.requirementsResource.reload();
-          if (terminal.status === 'completed') {
-            this.message.set(desktopMessages().recheck);
-          }
-        }
-      },
       error: (error: unknown) => {
         this.requirementsResource.reload();
         this.message.set(errorMessage(error));
