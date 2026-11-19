@@ -6,15 +6,28 @@ import re
 import shutil
 import subprocess
 import sys
-from collections.abc import Mapping
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, replace
 from typing import Literal
 
 from capture_runtime.gpu_inventory import GpuAdapter, GpuAdapterClass, read_gpu_inventory
+from capture_runtime.structuring.infrastructure.ollama.server_log import DiscoveredDevice
+
+type DeviceTarget = Literal["cuda", "rocm", "vulkan", "cpu", "unmanaged"]
 
 _NVIDIA_VENDOR_ID = 0x10DE
 _AMD_VENDOR_ID = 0x1002
 _GPU_UUID = re.compile(r"GPU-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", re.IGNORECASE)
+_DEVICE_FILTERS = {
+    "cuda": "CUDA_VISIBLE_DEVICES",
+    "rocm": "HIP_VISIBLE_DEVICES",
+    "vulkan": "GGML_VK_VISIBLE_DEVICES",
+}
+_FILTER_ORDINAL = re.compile(r"[0-9]{1,10}")
+_PCI_BUS = re.compile(
+    r"(?:([0-9a-f]{1,8}):)?([0-9a-f]{1,2}):([0-9a-f]{1,2})\.([0-7])", re.IGNORECASE
+)
+_LIBRARY_TOKEN = re.compile(r"[a-zA-Z0-9_-]{1,64}")
 _GPU_OVERRIDES = frozenset(
     {
         "CUDA_VISIBLE_DEVICES",
@@ -32,9 +45,13 @@ _GPU_OVERRIDES = frozenset(
 
 @dataclass(frozen=True, slots=True)
 class OllamaDevicePolicy:
-    target: Literal["cuda", "rocm", "vulkan", "cpu", "unmanaged"]
+    target: DeviceTarget
     integrated_gpu: bool = False
     cuda_uuid: str | None = None
+    adapter_name: str | None = None
+    pci_bus: str | None = None
+    device_filter: str | None = None
+    library_token: str | None = None
 
     def serve_environment(self, base: Mapping[str, str]) -> dict[str, str]:
         if self.target == "unmanaged":
@@ -50,6 +67,10 @@ class OllamaDevicePolicy:
             child["HIP_VISIBLE_DEVICES"] = "-1"
         if self.target != "vulkan":
             child["GGML_VK_VISIBLE_DEVICES"] = "-1"
+        if self.device_filter is not None and self.target in _DEVICE_FILTERS:
+            child[_DEVICE_FILTERS[self.target]] = self.cuda_uuid or self.device_filter
+        if self.library_token is not None:
+            child["OLLAMA_LLM_LIBRARY"] = self.library_token
         return child
 
 
@@ -71,11 +92,13 @@ def resolve_device_policy() -> OllamaDevicePolicy:
         selected = min(dedicated, key=_dedicated_sort_key)
         if selected.vendor_id == _NVIDIA_VENDOR_ID:
             return OllamaDevicePolicy(
-                "cuda", cuda_uuid=_find_cuda_uuid(selected, inventory.adapters)
+                "cuda",
+                cuda_uuid=_find_cuda_uuid(selected, inventory.adapters),
+                adapter_name=selected.description,
             )
         if selected.vendor_id == _AMD_VENDOR_ID:
-            return OllamaDevicePolicy("rocm")
-        return OllamaDevicePolicy("vulkan")
+            return OllamaDevicePolicy("rocm", adapter_name=selected.description)
+        return OllamaDevicePolicy("vulkan", adapter_name=selected.description)
 
     classes = {adapter.adapter_class for adapter in inventory.adapters}
     if GpuAdapterClass.UNKNOWN in classes:
@@ -131,3 +154,78 @@ def _find_cuda_uuid(selected: GpuAdapter, adapters: tuple[GpuAdapter, ...]) -> s
     if sum(row[0].casefold() == uuid.casefold() for row in rows) != 1:
         return None
     return uuid
+
+
+def normalize_device_name(name: str) -> str:
+    cleaned = re.sub(r"\((?:tm|r)\)", "", name, flags=re.IGNORECASE)
+    return " ".join(cleaned.split()).casefold()
+
+
+def same_pci_bus(left: str, right: str) -> bool:
+    left_match = _PCI_BUS.fullmatch(left.strip())
+    right_match = _PCI_BUS.fullmatch(right.strip())
+    if left_match is None or right_match is None:
+        return left.casefold() == right.casefold()
+    return tuple(int(part or "0", 16) for part in left_match.groups()) == tuple(
+        int(part or "0", 16) for part in right_match.groups()
+    )
+
+
+def matching_discovered_devices(
+    policy: OllamaDevicePolicy, discovered: Sequence[DiscoveredDevice]
+) -> tuple[DiscoveredDevice, ...]:
+    """Match the target by backend and available inventory identity."""
+    matches: dict[tuple[str, str | None, str, str | None], DiscoveredDevice] = {}
+    if policy.target == "unmanaged":
+        return ()
+    for device in discovered:
+        description = normalize_device_name(device.description)
+        if device.library.casefold() != policy.target or not description:
+            continue
+        if policy.adapter_name and description != normalize_device_name(policy.adapter_name):
+            continue
+        if policy.integrated_gpu and device.type.casefold() != "igpu":
+            continue
+        if policy.pci_bus and (
+            not device.pci_id or not same_pci_bus(policy.pci_bus, device.pci_id)
+        ):
+            continue
+        if policy.cuda_uuid and _GPU_UUID.fullmatch(device.id):
+            if device.id.casefold() != policy.cuda_uuid.casefold():
+                continue
+        matches[(device.id, device.filter_id, description, device.pci_id)] = device
+    return tuple(matches.values())
+
+
+def corrected_device_policy(
+    policy: OllamaDevicePolicy, discovered: Sequence[DiscoveredDevice]
+) -> OllamaDevicePolicy | None:
+    """Pin a unique discovered target for a corrective launch."""
+    if policy.target not in _DEVICE_FILTERS:
+        return None
+    candidates = matching_discovered_devices(policy, discovered)
+    if len(candidates) != 1:
+        return None
+    device = candidates[0]
+    filter_id = policy.cuda_uuid or device.filter_id or device.id
+    if not (
+        _FILTER_ORDINAL.fullmatch(filter_id)
+        or (policy.target == "cuda" and _GPU_UUID.fullmatch(filter_id))
+    ):
+        return None
+    library = next(
+        (
+            token
+            for token in device.libdirs
+            if token.casefold() != "ollama" and _LIBRARY_TOKEN.fullmatch(token)
+        ),
+        policy.target,
+    )
+    corrected = replace(
+        policy,
+        adapter_name=device.description,
+        pci_bus=device.pci_id or policy.pci_bus,
+        device_filter=filter_id,
+        library_token=library,
+    )
+    return corrected if corrected.serve_environment({}) != policy.serve_environment({}) else None

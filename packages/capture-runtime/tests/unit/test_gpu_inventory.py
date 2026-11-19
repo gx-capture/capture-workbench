@@ -41,6 +41,7 @@ def _fake_native(
         description.device_id = adapter.value
         description.subsystem_id = 0x5678
         description.revision = 2
+        description.dedicated_video_memory = 2**30
         description.adapter_luid.low_part = adapter.value
         description.adapter_luid.high_part = -2
         description.flags = 2 if software else 0
@@ -104,6 +105,7 @@ def test_inventory_classifies_native_adapters_and_preserves_identity(
                 device_id=4,
                 luid="fffffffe00000004",
                 adapter_class=expected,
+                dedicated_memory_bytes=2**30,
                 subsystem_id=0x5678,
                 revision=2,
             ),

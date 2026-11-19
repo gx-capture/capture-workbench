@@ -58,8 +58,8 @@ def test_structuring_safe_message_is_specific() -> None:
     )
 
 
-def test_cancelled_lease_waiter_does_not_interrupt_or_keep_lease() -> None:
-    lifecycle = IsolatedOllamaLifecycle(_ollama_config(Path("tmp")), clock=SystemClock())
+def test_cancelled_lease_waiter_does_not_interrupt_or_keep_lease(tmp_path: Path) -> None:
+    lifecycle = IsolatedOllamaLifecycle(_ollama_config(tmp_path), clock=SystemClock())
 
     async def exercise() -> None:
         attempted = asyncio.Event()
