@@ -447,6 +447,7 @@ def test_acceptance_opt_in_does_not_construct_a_worker_sink(
     executable = tmp_path / "loaded-runtime.exe"
     executable.write_bytes(b"loaded-runtime")
     runtime_sha256 = hashlib.sha256(executable.read_bytes()).hexdigest()
+    monkeypatch.setattr(ocr_execution_proof.sys, "frozen", True, raising=False)
     monkeypatch.setattr(ocr_execution_proof.sys, "executable", str(executable))
     monkeypatch.setenv("CAPTURE_OCR_EXECUTION_EVIDENCE_OPT_IN", "1")
     monkeypatch.setenv("CAPTURE_OCR_EXECUTION_EVIDENCE_ROOT", str(root))
@@ -455,7 +456,6 @@ def test_acceptance_opt_in_does_not_construct_a_worker_sink(
     sink = acceptance_ocr_execution_evidence_sink_from_environment()
     assert isinstance(sink, AcceptanceOcrExecutionEvidenceSink)
     assert acceptance_ocr_execution_runtime_sha256_from_environment() == runtime_sha256
-    assert runtime_sha256 == hashlib.sha256(executable.read_bytes()).hexdigest()
     assert list(root.iterdir()) == []
 
 
@@ -465,15 +465,39 @@ def test_acceptance_runtime_identity_is_hashed_from_loaded_executable(
     executable = tmp_path / "loaded-runtime.exe"
     executable.write_bytes(b"loaded-runtime")
     actual = hashlib.sha256(executable.read_bytes()).hexdigest()
+    monkeypatch.setattr(ocr_execution_proof.sys, "frozen", True, raising=False)
     monkeypatch.setattr(ocr_execution_proof.sys, "executable", str(executable))
     monkeypatch.setenv("CAPTURE_OCR_EXECUTION_EVIDENCE_OPT_IN", "1")
-    monkeypatch.setenv("CAPTURE_OCR_EXECUTION_RUNTIME_SHA256", actual)
+    monkeypatch.delenv("CAPTURE_OCR_EXECUTION_RUNTIME_SHA256", raising=False)
 
+    assert acceptance_ocr_execution_runtime_sha256_from_environment() == actual
+
+    monkeypatch.setenv("CAPTURE_OCR_EXECUTION_RUNTIME_SHA256", actual)
     assert acceptance_ocr_execution_runtime_sha256_from_environment() == actual
 
     monkeypatch.setenv("CAPTURE_OCR_EXECUTION_RUNTIME_SHA256", "0" * 64)
     with pytest.raises(ValueError, match="does not match the loaded runtime"):
         acceptance_ocr_execution_runtime_sha256_from_environment()
+
+
+def test_acceptance_evidence_refuses_source_runtime(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    executable = tmp_path / "python.exe"
+    executable.write_bytes(b"python-interpreter")
+    evidence_root = tmp_path / "acceptance-run"
+    evidence_root.mkdir()
+    monkeypatch.delattr(ocr_execution_proof.sys, "frozen", raising=False)
+    monkeypatch.setattr(ocr_execution_proof.sys, "executable", str(executable))
+    monkeypatch.setenv("CAPTURE_OCR_EXECUTION_EVIDENCE_OPT_IN", "1")
+    monkeypatch.setenv("CAPTURE_OCR_EXECUTION_EVIDENCE_ROOT", str(evidence_root))
+    monkeypatch.setenv(
+        "CAPTURE_OCR_EXECUTION_RUNTIME_SHA256", hashlib.sha256(executable.read_bytes()).hexdigest()
+    )
+
+    with pytest.raises(ValueError, match="OCR execution evidence requires the packaged runtime"):
+        acceptance_ocr_execution_evidence_sink_from_environment()
+    assert list(evidence_root.iterdir()) == []
 
 
 def test_ordinary_worker_construction_has_no_acceptance_sink(

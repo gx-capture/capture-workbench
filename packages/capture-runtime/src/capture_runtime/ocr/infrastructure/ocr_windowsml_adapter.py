@@ -711,7 +711,7 @@ class WindowsMLOcrAdapter:
             cleanup_error = self._abort_provider_evidence(pipeline)
             if cleanup_error is not None:
                 raise OcrInferenceCleanupError(
-                    primary_code="ocr_normalization_failed",
+                    primary_code=error.primary_code,
                     cleanup_error=cleanup_error,
                 ) from error
             raise

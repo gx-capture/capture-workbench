@@ -12,6 +12,7 @@ from threading import Lock
 from uuid import uuid4
 
 from capture_runtime._worker_payloads import WorkerProbeResult
+from capture_runtime.constants.requirements import WINDOWSML_REQUIREMENT_ID
 from capture_runtime.contracts import OcrComputePreflightV2
 from capture_runtime.install_progress import DownloadedBytes, DownloadProgress
 from capture_runtime.ocr.infrastructure.ocr_preflight import OcrComputeSelection
@@ -320,10 +321,15 @@ class EngineInstallationManager:
         # every host and every fresh app-data directory downloads once.
         self.downloader = downloader or with_shared_cache(HttpArtifactDownloader())
         local_model_root = _pdf_ocr_e2e_local_model_root()
-        self.model_downloader = model_downloader or (
+        self._model_downloader = (
+            with_shared_cache(HttpModelFileDownloader())
+            if model_downloader is None
+            else model_downloader
+        )
+        self._local_ocr_model_downloader = (
             LocalModelFileDownloader(local_model_root)
-            if local_model_root is not None
-            else with_shared_cache(HttpModelFileDownloader())
+            if model_downloader is None and local_model_root is not None
+            else None
         )
         # Uninstall frees the cached downloads of the unit. Only the cache the
         # default downloaders use is touched on its own; an injected downloader
@@ -346,6 +352,16 @@ class EngineInstallationManager:
         ] = {}
         self._ocr_compute_preflight_lock = asyncio.Lock()
         self._active_engine_resolution_timeout_seconds = active_engine_resolution_timeout_seconds
+
+    def _model_downloader_for(
+        self, requirement: EngineRequirementDescriptor
+    ) -> ModelFileDownloader:
+        if (
+            requirement.requirement_id == WINDOWSML_REQUIREMENT_ID
+            and self._local_ocr_model_downloader is not None
+        ):
+            return self._local_ocr_model_downloader
+        return self._model_downloader
 
     def requirement(self, requirement_id: str) -> EngineRequirementDescriptor:
         return self.catalog.requirement(requirement_id)
@@ -682,7 +698,7 @@ class EngineInstallationManager:
                 await install_model_unit(
                     requirement_root,
                     requirement,
-                    self.model_downloader,
+                    self._model_downloader_for(requirement),
                     cancel_event=cancel_event,
                     report_progress=report_progress,
                     report_download=report_download,
@@ -819,6 +835,7 @@ class EngineInstallationManager:
 
             model_root = new_version / "model"
             model_root.mkdir()
+            model_downloader = self._model_downloader_for(requirement)
             completed_model_bytes = 0
             for file_descriptor in model_descriptor.files:
                 if cancel_event.is_set():
@@ -840,7 +857,7 @@ class EngineInstallationManager:
                     )
                     downloaded(worker_descriptor.bytes + completed + copied)
 
-                await self.model_downloader.download(
+                await model_downloader.download(
                     file_descriptor,
                     destination,
                     cancel_event=cancel_event,
