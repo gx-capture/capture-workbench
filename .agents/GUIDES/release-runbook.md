@@ -540,6 +540,13 @@ Check a new release like this:
     segments; no transcript is frozen for this pack, and the evidence keeps
     only hashes and counts. On the CPU this pass can take far longer than
     the CUDA one (its run timeout is 3 hours).
+  - Run locally, the verifier and its speech preflight keep their work
+    directory (the OCR, `cuda` and `cpu` installs and a copy of the private
+    recording) as a fresh `model-candidate-<time>` / `model-preflight-<time>`
+    tree under `.kept-run-trees` beside the checkout and print its path;
+    remove it when the machine is idle with
+    `corepack pnpm run kept-run-trees -- --remove <path>`. On a GitHub runner
+    it is a temporary directory, deleted at the end.
   - Smokes whose oracle is `tea-asr-1.1` / `cuda` force that pack: the
     real-media smoke and the progressive audio oracle set
     `CAPTURE_SPEECH_RECOGNITION_VARIANT=cuda`. The ambient-environment

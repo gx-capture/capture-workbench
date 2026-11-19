@@ -7,7 +7,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import { lstat, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { join, resolve } from 'node:path';
 
 import { firstValueFrom } from 'rxjs';
@@ -40,11 +40,16 @@ const outputPath = process.env.CAPTURE_PROGRESSIVE_AUDIO_ORACLE_OUTPUT?.trim();
 const ORACLE_MAX_SOURCE_BYTES = 2 * 1024 * 1024 * 1024;
 // Keep the frozen worker extraction tree short. Windows can reject a valid
 // catalog archive before the worker probe when the owned app-data root is
-// deeply nested under the workspace.
-const runRoot = resolve(workspaceRoot, '..', '.cw-audio-oracle');
+// deeply nested under the workspace. A local run keeps its app data (the
+// installed speech worker and model, gigabytes of small files) in a fresh
+// kept run tree for the person to remove when the machine is idle; a GitHub
+// runner uses this root and deletes it.
+const deletedRunRoot = resolve(workspaceRoot, '..', '.cw-audio-oracle');
 // Generate the process-local credential at launch. It is never written to an
 // artifact or included in diagnostics.
 const token = randomUUID().replaceAll('-', '');
+// Local verify scripts set CI=true, so only GITHUB_ACTIONS marks a runner.
+const keepAppData = process.env.GITHUB_ACTIONS !== 'true';
 const origin = 'http://127.0.0.1';
 
 type JsonRecord = Record<string, unknown>;
@@ -260,6 +265,19 @@ async function installSpeechRecognition(
   throw new Error('Progressive audio oracle speech recognition installation timed out.');
 }
 
+// Workspace tooling is another Nx project, so the oracle uses its command
+// line rather than importing it.
+function createKeptAppData(): string {
+  const created = spawnSync(
+    process.execPath,
+    [join(workspaceRoot, 'tools', 'kept-run-trees.ts'), '--create', 'progressive-audio-oracle', 'audio-oracle'],
+    { encoding: 'utf8', windowsHide: true },
+  );
+  const path = created.status === 0 ? created.stdout.trim() : '';
+  if (!path) throw new Error(`Progressive audio oracle could not create its kept run tree: ${String(created.stderr || created.error || '').trim()}`);
+  return path;
+}
+
 async function run(): Promise<void> {
   if (process.platform !== 'win32') throw new Error('Progressive audio oracle requires Windows x64.');
   if (!sourcePath || !outputPath) {
@@ -274,8 +292,9 @@ async function run(): Promise<void> {
   const port = await firstValueFrom(reserveLoopbackPort());
   const workerMirrorPort = await firstValueFrom(reserveLoopbackPort());
   const baseUrl = `http://127.0.0.1:${port}`;
-  const appData = join(runRoot, 'app-data');
-  await rm(runRoot, { recursive: true, force: true });
+  const runRoot = keepAppData ? createKeptAppData() : deletedRunRoot;
+  const appData = keepAppData ? runRoot : join(runRoot, 'app-data');
+  if (!keepAppData) await rm(runRoot, { recursive: true, force: true });
   await mkdir(appData, { recursive: true });
   const child = spawn(runtimeExecutable, ['serve', '--host', '127.0.0.1', '--port', String(port)], {
     cwd: resolve(runtimeExecutable, '..'),
@@ -413,7 +432,13 @@ async function run(): Promise<void> {
       });
       await firstValueFrom(terminate(child, 'progressive audio oracle runtime')).catch(() => undefined);
     }
-    await rm(runRoot, { recursive: true, force: true });
+    if (keepAppData) {
+      process.stdout.write(
+        `Kept the oracle app data at ${runRoot}; remove it with pnpm run kept-run-trees -- --remove ${runRoot}\n`,
+      );
+    } else {
+      await rm(runRoot, { recursive: true, force: true });
+    }
   }
   process.stdout.write('Progressive audio non-Tauri oracle completed.\n');
 }

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import importlib.util
+import json
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -664,3 +665,68 @@ def test_candidate_pin_does_not_change_a_legacy_speech_install(
         == _first_worker_download(unpinned, monkeypatch)
         == "capture-engine-speech-recognition.zip"
     )
+
+
+def test_run_trees_are_kept_everywhere_but_on_a_github_runner(monkeypatch) -> None:
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    monkeypatch.setenv("CI", "true")
+    assert candidate.keeps_run_trees() is True
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    assert candidate.keeps_run_trees() is False
+
+
+def test_kept_run_tree_is_fresh_and_marked_under_the_configured_root(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    root = tmp_path / "kept"
+    monkeypatch.setenv("CAPTURE_KEPT_RUN_TREES_ROOT", str(root))
+    first = candidate.create_kept_run_tree("synthetic-script", "synthetic")
+    second = candidate.create_kept_run_tree("synthetic-script", "synthetic")
+    assert first != second
+    assert first.parent == root and second.parent == root
+    assert first.name.startswith("synthetic-") and len(first.name) == len("synthetic-") + 14
+    marker = json.loads((first / "kept-run-tree.json").read_text(encoding="utf-8"))
+    assert marker["script"] == "synthetic-script"
+    assert marker["createdAt"].endswith("Z")
+    assert marker["reason"] == "Kept by a local run; safe to delete when no run uses it."
+    assert marker["remove"] == f"pnpm run kept-run-trees -- --remove {first}"
+
+
+def test_kept_run_tree_root_must_be_absolute(monkeypatch) -> None:
+    monkeypatch.setenv("CAPTURE_KEPT_RUN_TREES_ROOT", "relative/root")
+    with pytest.raises(ValueError, match="absolute"):
+        candidate.create_kept_run_tree("synthetic-script", "synthetic")
+
+
+@pytest.mark.parametrize("prefix", ["", "../escape", "Upper", "-leading", "with space"])
+def test_kept_run_tree_rejects_an_unsafe_prefix(tmp_path: Path, monkeypatch, prefix: str) -> None:
+    root = tmp_path / "kept"
+    monkeypatch.setenv("CAPTURE_KEPT_RUN_TREES_ROOT", str(root))
+    with pytest.raises(ValueError, match="prefix"):
+        candidate.create_kept_run_tree("synthetic-script", prefix)
+    assert not root.exists()
+
+
+def test_local_work_directory_is_kept_and_reported(tmp_path: Path, monkeypatch, capsys) -> None:
+    root = tmp_path / "kept"
+    monkeypatch.setenv("CAPTURE_KEPT_RUN_TREES_ROOT", str(root))
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    with candidate._work_directory("synthetic-script", "synthetic") as work:
+        (work / "engines").mkdir()
+    assert work.parent == root
+    assert (work / "engines").is_dir()
+    assert (work / "kept-run-tree.json").is_file()
+    assert str(work) in capsys.readouterr().out
+
+
+def test_runner_work_directory_is_temporary_and_deleted(tmp_path: Path, monkeypatch) -> None:
+    root = tmp_path / "kept"
+    monkeypatch.setenv("CAPTURE_KEPT_RUN_TREES_ROOT", str(root))
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    monkeypatch.setattr(candidate.tempfile, "tempdir", str(tmp_path))
+    with candidate._work_directory("synthetic-script", "synthetic") as work:
+        (work / "engines").mkdir()
+        assert work.parent == tmp_path
+    assert not work.exists()
+    assert not root.exists()

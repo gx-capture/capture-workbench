@@ -2,9 +2,14 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import hashlib
+import json
 import os
+import re
 import tempfile
+from collections.abc import Iterator
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +47,74 @@ SPEECH_CANDIDATE_TIMEOUT_SECONDS = 60 * 60
 # the CPU, which is several times slower than the CUDA pass.
 CPU_SPEECH_CANDIDATE_TIMEOUT_SECONDS = 3 * 60 * 60
 CPU_SPEECH_CONTENT_MODEL = "tea-asr-1.1-mini"
+# Local runs keep their work directory (the OCR, cuda and cpu speech installs,
+# gigabytes of small files) instead of deleting it: the delete stalls a
+# Windows development machine and is not what the verifier checks. The format
+# matches tools/kept-run-trees.ts, which lists and removes these trees.
+KEPT_RUN_TREE_MARKER = "kept-run-tree.json"
+KEPT_RUN_TREES_ROOT_VARIABLE = "CAPTURE_KEPT_RUN_TREES_ROOT"
+REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
+
+
+def keeps_run_trees() -> bool:
+    """Whether this run keeps its work directory: everywhere but a GitHub runner.
+
+    Local verify scripts set ``CI=true``, so only ``GITHUB_ACTIONS`` tells a
+    GitHub runner apart from a development machine.
+    """
+    return os.environ.get("GITHUB_ACTIONS") != "true"
+
+
+def create_kept_run_tree(script: str, directory_prefix: str) -> Path:
+    """Create a fresh, marked ``<prefix>-<yyyyMMddHHmmss>`` directory under the kept-trees root."""
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", directory_prefix):
+        raise ValueError("A kept run tree prefix must be lowercase letters, digits and hyphens.")
+    configured = os.environ.get(KEPT_RUN_TREES_ROOT_VARIABLE, "").strip()
+    if configured and not Path(configured).is_absolute():
+        raise ValueError(f"{KEPT_RUN_TREES_ROOT_VARIABLE} must be an absolute path.")
+    root = (
+        Path(os.path.abspath(configured))
+        if configured
+        else REPOSITORY_ROOT.parent / ".kept-run-trees"
+    )
+    root.mkdir(parents=True, exist_ok=True)
+    now = datetime.now(UTC)
+    base = f"{directory_prefix}-{now.astimezone().strftime('%Y%m%d%H%M%S')}"
+    for attempt in range(1, 1000):
+        path = root / (base if attempt == 1 else f"{base}-{attempt}")
+        try:
+            path.mkdir()
+        except FileExistsError:
+            continue
+        marker = {
+            "script": script,
+            "createdAt": now.isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+            "reason": "Kept by a local run; safe to delete when no run uses it.",
+            "remove": f"pnpm run kept-run-trees -- --remove {path}",
+        }
+        (path / KEPT_RUN_TREE_MARKER).write_bytes(
+            (json.dumps(marker, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
+        )
+        return path
+    raise RuntimeError(f"could not create a fresh kept run tree for {base}")
+
+
+@contextlib.contextmanager
+def _work_directory(script: str, directory_prefix: str) -> Iterator[Path]:
+    """A kept run tree locally; a deleted temporary directory on a GitHub runner."""
+    if not keeps_run_trees():
+        with tempfile.TemporaryDirectory(prefix=f"capture-{directory_prefix}-") as temporary:
+            yield Path(temporary)
+        return
+    path = create_kept_run_tree(script, directory_prefix)
+    try:
+        yield path
+    finally:
+        print(
+            f"Kept the work directory at {path}; "
+            f"remove it with pnpm run kept-run-trees -- --remove {path}",
+            flush=True,
+        )
 
 
 def _speech_run_options(fixture: dict[str, Any]) -> dict[str, object]:
@@ -380,8 +453,9 @@ async def _verify_speech_preflight(
     )
     if speech_fixture is None:
         raise EngineInstallationError("private speech fixture is missing")
-    with tempfile.TemporaryDirectory(prefix="capture-model-preflight-") as temporary:
-        root = Path(temporary)
+    with _work_directory(
+        "capture-runtime:verify-speech-recognition-preflight", "model-preflight"
+    ) as root:
         fixture_path = root / "speech-recognition"
         await _copy_private_fixture(private_fixture, fixture_path, speech_fixture)
         worker_client = WorkerClient()
@@ -490,8 +564,9 @@ async def verify_candidate(
         )
         return
 
-    with tempfile.TemporaryDirectory(prefix="capture-model-candidate-") as temporary:
-        root = Path(temporary)
+    with _work_directory(
+        "capture-runtime:verify-release-model-candidate", "model-candidate"
+    ) as root:
         fixture_root = root / "fixtures"
         fixture_root.mkdir()
         contract_set_sha256 = load_contract_set().sha256
