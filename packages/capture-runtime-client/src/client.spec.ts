@@ -35,7 +35,7 @@ const ready = {
     service: 'capture-runtime',
     runtimeVersion: RUNTIME_VERSION,
     contractSetVersion: '2',
-    contractSha256: CAPTURE_CONTRACT_SET_SHA256,
+    contractSetSha256: CAPTURE_CONTRACT_SET_SHA256,
     mode: 'gpu',
     adapterClass: 'dedicated',
     reasonCode: null,
@@ -60,7 +60,6 @@ const canonicalBundleBytes = Uint8Array.from(
   ),
 );
 const canonicalContractIndex = {
-  catalogVersion: '2',
   runtimeVersion: RUNTIME_VERSION,
   contractSetVersion: '2',
   surfaces: [{ id: 'v2' }],
@@ -74,7 +73,7 @@ const ocrEngine = {
   model: 'pp-ocrv6-medium',
   modelDigest: `sha256:${'a'.repeat(64)}`,
   device: 'directml',
-  profileId: 'capture-workbench-ocr-pipeline-v1',
+  profileId: 'ocr-pipeline-v1',
   profileSpecSha256: 'b'.repeat(64),
 };
 
@@ -91,9 +90,9 @@ const completedOcr = {
   captureId: 'cap',
   status: 'completed',
   source: ocrSource,
-  pageCount: 1,
+  processedPageCount: 1,
   runtimeVersion: RUNTIME_VERSION,
-  contractSha256: CAPTURE_CONTRACT_SET_SHA256,
+  contractSetSha256: CAPTURE_CONTRACT_SET_SHA256,
   pages: [
     {
       page: 1,
@@ -129,9 +128,9 @@ const failedOcr = {
   captureId: 'cap',
   status: 'failed',
   pages: [],
-  pageCount: 0,
+  processedPageCount: 0,
   runtimeVersion: RUNTIME_VERSION,
-  contractSha256: CAPTURE_CONTRACT_SET_SHA256,
+  contractSetSha256: CAPTURE_CONTRACT_SET_SHA256,
   source: null,
   provenance: ocrEngine,
   warnings: [],
@@ -154,7 +153,7 @@ function sharedPerspectiveOcrFixture(): Record<string, unknown> {
       'utf8',
     ),
   ) as Record<string, unknown>;
-  fixture['contractSha256'] = CAPTURE_CONTRACT_SET_SHA256;
+  fixture['contractSetSha256'] = CAPTURE_CONTRACT_SET_SHA256;
   fixture['runtimeVersion'] = RUNTIME_VERSION;
   return fixture;
 }
@@ -176,7 +175,7 @@ function sharedPageSelectionFixture(): SharedPageSelectionFixture {
       'utf8',
     ),
   ) as SharedPageSelectionFixture;
-  fixture.projection['contractSha256'] = CAPTURE_CONTRACT_SET_SHA256;
+  fixture.projection['contractSetSha256'] = CAPTURE_CONTRACT_SET_SHA256;
   fixture.projection['runtimeVersion'] = RUNTIME_VERSION;
   return fixture;
 }
@@ -304,7 +303,7 @@ describe('CaptureRuntimeClient', () => {
           handle: () => Response.json({ items: [] }),
         },
         {
-          path: '/v2/runtime/model-options',
+          path: '/v2/runtime/structuring-model-options',
           handle: () => Response.json({ catalogSha256: 'a'.repeat(64), items: [] }),
         },
       ]),
@@ -336,7 +335,7 @@ describe('CaptureRuntimeClient', () => {
     expect(Object.keys(publicSdk)).not.toContain('CaptureJobV1');
     expect(Object.keys(publicSdk)).not.toContain('CaptureJobV2');
     expect(Object.keys(publicSdk)).not.toContain('CaptureFailureV1');
-    expect(Object.keys(publicSdk)).not.toContain('CaptureFailureV2');
+    expect(Object.keys(publicSdk)).not.toContain('CaptureFailure');
   });
 
   it('publishes the canonical value-level OCR projection parser', () => {
@@ -386,8 +385,8 @@ describe('CaptureRuntimeClient', () => {
           requiredHeaders: ['X-Idempotency-Key'],
           idempotency: { mode: 'required', header: 'X-Idempotency-Key' },
         }),
-        operation('/v2/runtime/model-options'),
-        operation('/v2/runtime/model-installations', {
+        operation('/v2/runtime/structuring-model-options'),
+        operation('/v2/runtime/structuring-model-installations', {
           method: 'POST',
           requiredHeaders: ['X-Idempotency-Key'],
           idempotency: { mode: 'required', header: 'X-Idempotency-Key' },
@@ -405,7 +404,7 @@ describe('CaptureRuntimeClient', () => {
         }),
         operation('/v2/captures/{capture_id}/raw'),
         operation('/v2/captures/{capture_id}/ocr', {
-          responseSchema: 'CaptureOcrProjectionV3',
+          responseSchema: 'CaptureOcrProjection',
         }),
         operation('/v2/captures/{capture_id}/result'),
         operation('/v2/captures/{capture_id}/structure/session', {
@@ -433,7 +432,6 @@ describe('CaptureRuntimeClient', () => {
       byte.toString(16).padStart(2, '0'),
     ).join('');
     const index = {
-      catalogVersion: '2',
       runtimeVersion: RUNTIME_VERSION,
       contractSetVersion: '2',
       surfaces: [{ id: 'v2' }],
@@ -471,7 +469,7 @@ describe('CaptureRuntimeClient', () => {
       transport,
       expectedContractSetSha256: digest,
     }).discover();
-    expect(discovery.schemaSha256).toBe(CAPTURE_DOCUMENT_SCHEMA_SHA256);
+    expect(discovery.captureDocumentSchemaSha256).toBe(CAPTURE_DOCUMENT_SCHEMA_SHA256);
   });
 
   it('fails closed on an incompatible schema hash', async () => {
@@ -823,13 +821,13 @@ data: ${JSON.stringify(event)}
 
     const unavailableProvenance = {
       status: 'unavailable',
-      profileId: 'capture-workbench-ocr-pipeline-v1',
+      profileId: 'ocr-pipeline-v1',
       profileSpecSha256: 'b'.repeat(64),
       reason: 'model_unavailable',
     };
     const failedWithUnavailableProvenance = {
       ...failedOcr,
-      pageCount: 1,
+      processedPageCount: 1,
       pages: [
         {
           page: 1,
@@ -1066,7 +1064,7 @@ data: ${JSON.stringify(event)}
           },
         },
         {
-          path: '/v2/runtime/model-installations/model-1',
+          path: '/v2/runtime/structuring-model-installations/model-1',
           handle: () =>
             Response.json({
               installationId: 'model-1',
@@ -1079,7 +1077,7 @@ data: ${JSON.stringify(event)}
         },
         {
           method: 'POST',
-          path: '/v2/runtime/model-installations/model-1/cancel',
+          path: '/v2/runtime/structuring-model-installations/model-1/cancel',
           handle: () =>
             Response.json({
               installationId: 'model-1',
@@ -1175,8 +1173,8 @@ data: ${JSON.stringify(event)}
       new Response(JSON.stringify(fixture.projection)),
       undefined,
       'CaptureOcrProjection',
-    )) as { pageCount: number; pages: { page: number }[] };
-    expect(decoded.pageCount).toBe(4);
+    )) as { processedPageCount: number; pages: { page: number }[] };
+    expect(decoded.processedPageCount).toBe(4);
     expect(decoded.pages.map((item) => item.page)).toEqual(fixture.pdfPageNumbers);
 
     for (const order of fixture.invalidProjectionPageOrders) {
@@ -1370,7 +1368,6 @@ data: ${JSON.stringify(event)}
       (byte) => byte.toString(16).padStart(2, '0'),
     ).join('');
     const index = {
-      catalogVersion: '2',
       runtimeVersion: RUNTIME_VERSION,
       contractSetVersion: '2',
       surfaces: [{ id: 'v2' }],
@@ -1398,7 +1395,6 @@ data: ${JSON.stringify(event)}
   it('rejects a content-addressed contract href whose terminal digest differs', async () => {
     const digest = 'a'.repeat(64);
     const index = {
-      catalogVersion: '2',
       runtimeVersion: RUNTIME_VERSION,
       contractSetVersion: '2',
       surfaces: [{ id: 'v2' }],
@@ -1431,7 +1427,7 @@ data: ${JSON.stringify(event)}
           }),
         ),
         undefined,
-        'RuntimeModelInstallation',
+        'StructuringModelInstallation',
       ),
     ).rejects.toBeInstanceOf(CaptureRuntimeProtocolError);
   });
@@ -1603,7 +1599,7 @@ data: ${JSON.stringify(event)}
       protocolVersion: '2',
       sessionId: 'session-1',
       captureId: 'cap',
-      rawSourceSha256: 'a'.repeat(64),
+      sourceSha256: 'a'.repeat(64),
       contractSetSha256: CAPTURE_CONTRACT_SET_SHA256,
       providerCapability: {
         provider: { engine: 'ollama', model: 'model-1', digest: `sha256:${'b'.repeat(64)}`, ...timings },
@@ -1785,22 +1781,22 @@ describe('response field lists follow the contract set', () => {
   );
   const contractNames: Record<RuntimeResponseModel, string> = {
     RuntimeReady: 'RuntimeReady',
-    RuntimeStreamingCapabilities: 'RuntimeStreamingCapabilitiesV2',
-    RuntimeRequirement: 'RuntimeRequirementV2',
-    RuntimeRequirements: 'RuntimeRequirementsV2',
-    RuntimeInstallation: 'RuntimeInstallationV2',
-    RuntimeInstallations: 'RuntimeInstallationsV2',
-    RuntimeModelInstallation: 'RuntimeModelInstallationV2',
-    RuntimeModelOptions: 'RuntimeModelOptionsV2',
+    RuntimeStreamingCapabilities: 'RuntimeStreamingCapabilities',
+    RuntimeRequirement: 'RuntimeRequirement',
+    RuntimeRequirements: 'RuntimeRequirements',
+    RuntimeInstallation: 'RuntimeInstallation',
+    RuntimeInstallations: 'RuntimeInstallations',
+    StructuringModelInstallation: 'StructuringModelInstallation',
+    StructuringModelOptions: 'StructuringModelOptions',
     RawCapture: 'RawCapture',
-    CaptureOcrProjection: 'CaptureOcrProjectionV3',
+    CaptureOcrProjection: 'CaptureOcrProjection',
     CaptureDocument: 'CaptureDocument',
-    CaptureOperation: 'CaptureOperationV2',
-    Ingestion: 'IngestionV2',
-    PartialCapture: 'PartialCaptureV2',
-    StreamingResult: 'CaptureStreamingResult',
-    StructuringSession: 'StructuringSessionV2',
-    StructuringBatch: 'StructuringBatchV2',
+    CaptureOperation: 'CaptureOperation',
+    Ingestion: 'Ingestion',
+    PartialCapture: 'PartialCapture',
+    CaptureResult: 'CaptureResult',
+    StructuringSession: 'StructuringSession',
+    StructuringBatch: 'StructuringBatch',
   };
 
   it.each(Object.entries(contractNames) as [RuntimeResponseModel, string][])(

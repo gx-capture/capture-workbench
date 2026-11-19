@@ -21,7 +21,7 @@ def handle(
 ) -> dict[str, object]:
     if request.operation == "preflight":
         return {
-            "contractSha256": request.payload["contractSha256"],
+            "contractSetSha256": request.payload["contractSetSha256"],
             "mode": "gpu",
             "adapterClass": "dedicated",
             "userNoticeRequired": False,

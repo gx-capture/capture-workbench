@@ -8,11 +8,11 @@ from uuid import UUID
 from fastapi import APIRouter, Header, status
 
 from capture_runtime.contracts import (
-    RuntimeModelInstallationV2,
-    RuntimeModelOptionStatus,
-    RuntimeModelOptionsV2,
-    RuntimeModelOptionV2,
-    StartRuntimeModelInstallationV2,
+    StartStructuringModelInstallation,
+    StructuringModelInstallation,
+    StructuringModelOption,
+    StructuringModelOptions,
+    StructuringModelOptionStatus,
 )
 from capture_runtime.dependencies import RuntimeDependencies
 from capture_runtime.routes.common import ApiProblem, request_fingerprint
@@ -34,8 +34,8 @@ def register_model_routes(
     get_model_job = dependencies.model_installation_service.get_use_case
     cancel_model_job = dependencies.model_installation_service.cancel_use_case
 
-    @router.get("/runtime/model-options", response_model=RuntimeModelOptionsV2)
-    async def model_options() -> RuntimeModelOptionsV2:
+    @router.get("/runtime/structuring-model-options", response_model=StructuringModelOptions)
+    async def model_options() -> StructuringModelOptions:
         if dependencies.settings.structuring_provider != "ollama":
             raise ApiProblem(
                 422,
@@ -44,21 +44,21 @@ def register_model_routes(
             )
         active = ActiveModelSelectionStore(dependencies.lifecycle.config.app_data_dir).load()
         active_option_id = active.get("optionId") if active is not None else None
-        return RuntimeModelOptionsV2(
+        return StructuringModelOptions(
             catalog_sha256=catalog_sha256(),
             items=[
-                RuntimeModelOptionV2(
+                StructuringModelOption(
                     option_id=option.option_id,
                     display_name=option.display_name,
                     model_reference=option.model_reference,
                     expected_digest=option.expected_digest,
-                    expected_bytes=option.expected_bytes,
+                    download_bytes=option.download_bytes,
                     profile_id=option.profile_id,
                     profile_spec_sha256=option.profile_spec_sha256,
                     status=(
-                        RuntimeModelOptionStatus.ACTIVE
+                        StructuringModelOptionStatus.ACTIVE
                         if option.option_id == active_option_id
-                        else RuntimeModelOptionStatus.NOT_INSTALLED
+                        else StructuringModelOptionStatus.NOT_INSTALLED
                     ),
                 )
                 for option in MODEL_OPTIONS
@@ -66,14 +66,14 @@ def register_model_routes(
         )
 
     @router.post(
-        "/runtime/model-installations",
-        response_model=RuntimeModelInstallationV2,
+        "/runtime/structuring-model-installations",
+        response_model=StructuringModelInstallation,
         status_code=status.HTTP_202_ACCEPTED,
     )
     async def create_model_installation(
-        payload: StartRuntimeModelInstallationV2,
+        payload: StartStructuringModelInstallation,
         idempotency_key: Annotated[UUID, Header(alias="X-Idempotency-Key")],
-    ) -> RuntimeModelInstallationV2:
+    ) -> StructuringModelInstallation:
         if dependencies.settings.structuring_provider != "ollama":
             raise ApiProblem(
                 422,
@@ -97,10 +97,10 @@ def register_model_routes(
             ) from error
 
     @router.get(
-        "/runtime/model-installations/{installation_id}",
-        response_model=RuntimeModelInstallationV2,
+        "/runtime/structuring-model-installations/{installation_id}",
+        response_model=StructuringModelInstallation,
     )
-    async def get_model_installation(installation_id: str) -> RuntimeModelInstallationV2:
+    async def get_model_installation(installation_id: str) -> StructuringModelInstallation:
         try:
             return get_model_job.execute(installation_id)
         except RecordNotFoundError as error:
@@ -109,10 +109,10 @@ def register_model_routes(
             ) from error
 
     @router.post(
-        "/runtime/model-installations/{installation_id}/cancel",
-        response_model=RuntimeModelInstallationV2,
+        "/runtime/structuring-model-installations/{installation_id}/cancel",
+        response_model=StructuringModelInstallation,
     )
-    async def cancel_model_installation(installation_id: str) -> RuntimeModelInstallationV2:
+    async def cancel_model_installation(installation_id: str) -> StructuringModelInstallation:
         try:
             return await cancel_model_job.execute(installation_id)
         except RecordNotFoundError as error:

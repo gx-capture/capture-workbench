@@ -21,7 +21,7 @@ from capture_runtime.capture.infrastructure.streaming_repository import (
     StreamingRepository,
     StreamingTransitionError,
 )
-from capture_runtime.contracts import StartCaptureV2, StructuringMode
+from capture_runtime.contracts import StartCapture, StructuringMode
 from capture_runtime.diarization.infrastructure.speaker_diarization import decode_mono_16k
 from capture_runtime.structuring.infrastructure.structuring_provider import (
     FakeCaptureStructuringProvider,
@@ -165,7 +165,7 @@ def test_service_keeps_ingestion_until_extraction_stops(
             structurer=FakeCaptureStructuringProvider(clock),
         )
         operation = service.start_capture_use_case.execute(
-            StartCaptureV2(
+            StartCapture(
                 client_request_id="speaker-capture",
                 ingestion_id=ingestion_id,
                 identify_speakers=True,

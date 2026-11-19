@@ -10,7 +10,7 @@ agree on the same contract-set digest.
 
 ## Runtime discovery and bundle
 
-- `GET /meta/v2/contracts` is bearer-authenticated and returns `catalogVersion: 2`,
+- `GET /meta/v2/contracts` is bearer-authenticated and returns
   runtime and surface versions, `contractSetVersion`, the bundle SHA-256, an
   `ETag`, and an immutable download location.
 - `GET /meta/v2/contracts/sha256/{digest}` is bearer-authenticated and returns
@@ -60,7 +60,7 @@ TypeScript client SDKs, with these frozen semantics:
 
 ## Compatibility identity and security
 
-- `catalogVersion: 2` identifies the discovery interface major.
+- `contractSetVersion` (string `"2"`) identifies the discovery contract-set version.
 - `contractSetVersion` plus the bundle SHA-256 is the compatibility identity;
   runtime semver is diagnostic metadata.
 - Before an operation, clients validate the catalog, required operations and

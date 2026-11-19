@@ -22,8 +22,8 @@ from capture_runtime.capture.infrastructure.streaming_repository import (
 )
 from capture_runtime.contracts import (
     CaptureSource,
-    StartCaptureV2,
-    StreamingCaptureStatus,
+    CaptureStatus,
+    StartCapture,
     StructuringMode,
 )
 from capture_runtime.dependencies import RuntimeDependencies
@@ -93,7 +93,7 @@ class Harness:
             structurer=FakeCaptureStructuringProvider(self.clock),
         )
         operation = self.service.start_capture_use_case.execute(
-            StartCaptureV2(
+            StartCapture(
                 client_request_id="ownership",
                 ingestion_id=self.ingestion_id,
                 identify_speakers=True,
@@ -487,7 +487,7 @@ def test_an_abandoned_delete_leaves_a_cancelled_capture_that_can_be_deleted(
             await deleting
 
         # Nothing was deleted, and the capture is terminal, not stuck in progress.
-        assert h.repository.get_capture(h.capture_id).status is StreamingCaptureStatus.CANCELLED
+        assert h.repository.get_capture(h.capture_id).status is CaptureStatus.CANCELLED
         assert h.source.exists()
 
         h.extractor.allow_stop.set()

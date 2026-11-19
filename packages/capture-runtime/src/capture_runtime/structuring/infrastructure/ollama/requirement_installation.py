@@ -18,12 +18,13 @@ from capture_runtime.constants import (
     STRUCTURING_MODEL_REQUIREMENT_ID,
     STRUCTURING_RUNTIME_REQUIREMENT_ID,
 )
-from capture_runtime.contracts import RuntimeRequirementStatus, RuntimeRequirementV2
+from capture_runtime.contracts import RuntimeRequirement, RuntimeRequirementStatus
 from capture_runtime.provisioning.application.requirement_installer import ManualActionRequiredError
 from capture_runtime.provisioning.infrastructure.engine_installation import sha256_file
 from capture_runtime.structuring.infrastructure.model_catalog import (
     ActiveModelSelectionStore,
-    RuntimeModelOption,
+    StructuringModelOption,
+    legacy_profile_id,
     model_option,
 )
 from capture_runtime.structuring.infrastructure.ollama.installation_commands import (
@@ -58,11 +59,11 @@ class OllamaRequirementInstaller:
     def requirements(
         self,
         enabled_requirement_ids: Collection[str] | None = None,
-    ) -> list[RuntimeRequirementV2]:
+    ) -> list[RuntimeRequirement]:
         def is_enabled(requirement_id: str) -> bool:
             return enabled_requirement_ids is None or requirement_id in enabled_requirement_ids
 
-        requirements: list[RuntimeRequirementV2] = []
+        requirements: list[RuntimeRequirement] = []
         ollama_runtime_enabled = is_enabled(STRUCTURING_RUNTIME_REQUIREMENT_ID)
         ollama_model_enabled = is_enabled(STRUCTURING_MODEL_REQUIREMENT_ID)
         ollama_available = (
@@ -72,7 +73,7 @@ class OllamaRequirementInstaller:
         )
         if ollama_runtime_enabled:
             requirements.append(
-                RuntimeRequirementV2(
+                RuntimeRequirement(
                     requirement_id=STRUCTURING_RUNTIME_REQUIREMENT_ID,
                     kind=STRUCTURING_RUNTIME_REQUIREMENT_ID,
                     display_name="Ollama application",
@@ -95,7 +96,7 @@ class OllamaRequirementInstaller:
             # when it actually needs the process.
             model_ready = self._recorded_model_profile_matches()
             requirements.append(
-                RuntimeRequirementV2(
+                RuntimeRequirement(
                     requirement_id=STRUCTURING_MODEL_REQUIREMENT_ID,
                     kind=STRUCTURING_MODEL_REQUIREMENT_ID,
                     display_name="Capture structuring model",
@@ -237,7 +238,7 @@ class OllamaRequirementInstaller:
             raise RuntimeUnavailableError("isolated Ollama lease changed during installation")
 
     def _verify_pulled_model(
-        self, option: RuntimeModelOption, lease_url: str | None = None
+        self, option: StructuringModelOption, lease_url: str | None = None
     ) -> tuple[str, int]:
         if lease_url is None:
             lease_url = self._lifecycle.host_url
@@ -266,7 +267,7 @@ class OllamaRequirementInstaller:
                 raise RuntimeError("Ollama model verification returned invalid digest or size")
             if option.expected_digest is not None and digest != option.expected_digest:
                 raise RuntimeError("Ollama model digest does not match the release catalog")
-            if option.expected_bytes is not None and size != option.expected_bytes:
+            if option.download_bytes is not None and size != option.download_bytes:
                 raise RuntimeError("Ollama model size does not match the release catalog")
             return digest, size
         raise RuntimeError("Ollama did not report the selected model after pull")
@@ -315,11 +316,12 @@ class OllamaRequirementInstaller:
             payload = json.loads(source)
             modelfile_digest = str(payload["modelfileSha256"])
             modelfile = self._lifecycle.config.app_data_dir / "Capture.Modelfile"
+            selection_profile_id = selection["profileId"]
             return (
-                selection["profileId"] == option.profile_id
+                selection_profile_id in {option.profile_id, legacy_profile_id(option)}
                 and selection["modelReference"] == option.model_reference
                 and selection["profileSpecSha256"] == option.profile_spec_sha256
-                and payload["profileId"] == option.profile_id
+                and payload["profileId"] == selection_profile_id
                 and payload["baseModel"] == option.model_reference
                 and bool(re.fullmatch(r"[0-9a-f]{64}", modelfile_digest))
                 and modelfile_digest == option.profile_spec_sha256

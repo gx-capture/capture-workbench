@@ -367,7 +367,7 @@ interface RealDesktopSmokeEvidence {
 }
 
 export interface AuthenticatedOcrPreflightObservation {
-  readonly contractSha256: string;
+  readonly contractSetSha256: string;
   readonly workerSha256: string;
   readonly mode: 'gpu' | 'cpu-fallback';
 }
@@ -1199,7 +1199,7 @@ export async function main(options: {
       }
       const readyPayload = await invokeTauriCommand(page, 'runtime_ready', {});
       authenticatedOcrPreflight = parseAuthenticatedOcrPreflight(readyPayload);
-      if (localInstalledRuntime && authenticatedOcrPreflight.contractSha256 !== localInstalledRuntime.contractSetSha256) {
+      if (localInstalledRuntime && authenticatedOcrPreflight.contractSetSha256 !== localInstalledRuntime.contractSetSha256) {
         throw new Error('Authenticated Capture Runtime contract identity differs from the local candidate.');
       }
       if (authenticatedOcrPreflight.mode !== 'gpu') {
@@ -1224,7 +1224,7 @@ export async function main(options: {
         releaseGateSatisfied: false,
         sourceSha256,
         runtimeArtifactSha256: expectedRuntimeSha256,
-        contractSetSha256: authenticatedOcrPreflight.contractSha256,
+        contractSetSha256: authenticatedOcrPreflight.contractSetSha256,
         workerArchiveSha256,
         workerExecutableSha256: authenticatedOcrPreflight.workerSha256,
         candidateId: localCandidateModelIdentity?.candidateId,
@@ -1396,7 +1396,7 @@ export async function main(options: {
           sourceSha256,
           runtimeSha256: localInstalledRuntime.runtimeSha256,
           workerSha256: authenticatedOcrPreflight.workerSha256,
-          contractSha256: authenticatedOcrPreflight.contractSha256,
+          contractSha256: authenticatedOcrPreflight.contractSetSha256,
         },
       });
       ocrExecutionProof = proof;
@@ -1426,7 +1426,7 @@ export async function main(options: {
           sourceSha256,
           runtimeVersion: localInstalledRuntime.runtimeVersion,
           runtimeSha256: localInstalledRuntime.runtimeSha256,
-          contractSha256: authenticatedOcrPreflight.contractSha256,
+          contractSha256: authenticatedOcrPreflight.contractSetSha256,
           workerSha256: authenticatedOcrPreflight.workerSha256,
           ocrEngine: ocr.engine,
           ocrModel: ocr.model,
@@ -2308,13 +2308,13 @@ export function parseAuthenticatedOcrPreflight(value: unknown): AuthenticatedOcr
     throw new Error('Authenticated Capture Runtime readiness omitted OCR compute evidence.');
   }
   const compute = ready.ocrCompute as {
-    readonly contractSha256?: unknown;
+    readonly contractSetSha256?: unknown;
     readonly workerSha256?: unknown;
     readonly mode?: unknown;
   };
   if (
-    typeof compute.contractSha256 !== 'string' ||
-    !/^[a-f0-9]{64}$/u.test(compute.contractSha256) ||
+    typeof compute.contractSetSha256 !== 'string' ||
+    !/^[a-f0-9]{64}$/u.test(compute.contractSetSha256) ||
     typeof compute.workerSha256 !== 'string' ||
     !/^[a-f0-9]{64}$/u.test(compute.workerSha256) ||
     (compute.mode !== 'gpu' && compute.mode !== 'cpu-fallback')
@@ -2322,7 +2322,7 @@ export function parseAuthenticatedOcrPreflight(value: unknown): AuthenticatedOcr
     throw new Error('Authenticated Capture Runtime OCR compute evidence was invalid.');
   }
   return {
-    contractSha256: compute.contractSha256,
+    contractSetSha256: compute.contractSetSha256,
     workerSha256: compute.workerSha256,
     mode: compute.mode,
   };

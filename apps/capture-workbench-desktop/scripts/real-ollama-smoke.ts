@@ -23,7 +23,7 @@ const coreRequirementIds = [
   'structuring-runtime',
 ] as const;
 const expectedStructuringEngine = 'ollama';
-const expectedStructuringModel = 'capture-workbench-qwen3.5-0.8b-structure-v1';
+const expectedStructuringModel = 'qwen3.5-0.8b-structure-v1';
 const sha256DigestPattern = /^sha256:[a-f0-9]{64}$/u;
 
 interface RuntimeRequirement {
@@ -40,7 +40,7 @@ interface RuntimeInstallation {
   readonly error?: { readonly message?: string } | null;
 }
 
-interface RuntimeModelInstallation {
+interface StructuringModelInstallation {
   readonly installationId: string;
   readonly optionId: string;
   readonly status: string;
@@ -254,15 +254,15 @@ async function prepareSelectedModel(
 ): Promise<void> {
   const options = await request<{
     readonly items: readonly { readonly optionId: string; readonly status: string }[];
-  }>(port, origin, token, '/v2/runtime/model-options');
+  }>(port, origin, token, '/v2/runtime/structuring-model-options');
   const option = options.items.find((item) => item.optionId === 'qwen3.5-0.8b-v1');
   if (!option) throw new Error('Real runtime did not expose the qwen3.5 0.8B model option.');
   if (option.status === 'active') return;
-  const installation = await request<RuntimeModelInstallation>(
+  const installation = await request<StructuringModelInstallation>(
     port,
     origin,
     token,
-    '/v2/runtime/model-installations',
+    '/v2/runtime/structuring-model-installations',
     {
       method: 'POST',
       headers: {
@@ -390,15 +390,15 @@ async function waitForModelInstallation(
   port: number,
   origin: string,
   token: string,
-  installation: RuntimeModelInstallation,
+  installation: StructuringModelInstallation,
 ): Promise<void> {
   const deadline = Date.now() + maxInstallationWaitMs;
   while (Date.now() < deadline) {
-    const current = await request<RuntimeModelInstallation>(
+    const current = await request<StructuringModelInstallation>(
       port,
       origin,
       token,
-      `/v2/runtime/model-installations/${installation.installationId}`,
+      `/v2/runtime/structuring-model-installations/${installation.installationId}`,
     );
     if (current.status === 'completed') return;
     if (!['queued', 'running'].includes(current.status)) {

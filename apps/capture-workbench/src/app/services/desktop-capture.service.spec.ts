@@ -203,7 +203,7 @@ describe('DesktopCaptureService', () => {
     const zeroPage: CaptureOcrProjection = {
       ...base,
       source: null,
-      pageCount: 0,
+      processedPageCount: 0,
       pages: [],
       provenance: unavailableProvenance,
       failure: { code: 'ocr_worker_failed', message: 'OCR failed' },
@@ -243,7 +243,7 @@ describe('DesktopCaptureService', () => {
     ['getOcr error', () => throwError(() => new Error('OCR transport failed'))],
     ['identity mismatch', () => of({
       ...ocrProjection('capture-identity-mismatch', 'completed'),
-      contractSha256: 'b'.repeat(64),
+      contractSetSha256: 'b'.repeat(64),
     })],
     ['malformed projection', () => of({
       ...ocrProjection('capture-malformed', 'completed'),
@@ -293,7 +293,7 @@ describe('DesktopCaptureService', () => {
           service: 'capture-runtime',
           runtimeVersion: RUNTIME_VERSION,
           contractSetVersion: '2',
-          contractSha256: 'a'.repeat(64),
+          contractSetSha256: 'a'.repeat(64),
           workerSha256: undefined,
           mode: 'gpu',
           adapterClass: 'dedicated',
@@ -1569,7 +1569,7 @@ function runtimeStub(overrides: Record<string, unknown> = {}) {
       service: 'capture-runtime',
       runtimeVersion: RUNTIME_VERSION,
       contractSetVersion: '2',
-      contractSha256: 'a'.repeat(64),
+      contractSetSha256: 'a'.repeat(64),
       workerSha256: 'f'.repeat(64),
       mode: 'gpu',
       adapterClass: 'dedicated',
@@ -1692,9 +1692,9 @@ function ocrProjection(
       bytes: 12,
     },
     pages: [page],
-    pageCount: 1,
+    processedPageCount: 1,
     runtimeVersion: RUNTIME_VERSION,
-    contractSha256: 'a'.repeat(64),
+    contractSetSha256: 'a'.repeat(64),
     provenance,
     ...(status === 'failed'
       ? { failure: { code: 'ocr_worker_failed', message: 'worker failed' } }

@@ -24,7 +24,7 @@
       "title": "OcrComputeNoticeCode",
       "type": "string"
     },
-    "OcrComputePreflightV2": {
+    "OcrComputePreflight": {
       "additionalProperties": false,
       "description": "Runtime-owned pre-OCR compute selection and user-notice contract.",
       "properties": {
@@ -58,9 +58,9 @@
           "title": "Contractsetversion",
           "type": "string"
         },
-        "contractSha256": {
+        "contractSetSha256": {
           "pattern": "^[0-9a-f]{64}$",
-          "title": "Contractsha256",
+          "title": "Contractsetsha256",
           "type": "string"
         },
         "workerSha256": {
@@ -110,13 +110,13 @@
         }
       },
       "required": [
-        "contractSha256",
+        "contractSetSha256",
         "mode",
         "adapterClass",
         "userNoticeRequired",
         "runtimeVersion"
       ],
-      "title": "OcrComputePreflightV2",
+      "title": "OcrComputePreflight",
       "type": "object"
     },
     "OcrComputeReasonCode": {
@@ -172,19 +172,6 @@
       "default": null,
       "title": "Capturedocumentschemasha256"
     },
-    "schemaSha256": {
-      "anyOf": [
-        {
-          "pattern": "^[0-9a-f]{64}$",
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Schemasha256"
-    },
     "contractSetVersion": {
       "const": "2",
       "default": "2",
@@ -199,7 +186,7 @@
     "ocrCompute": {
       "anyOf": [
         {
-          "$ref": "#/$defs/OcrComputePreflightV2"
+          "$ref": "#/$defs/OcrComputePreflight"
         },
         {
           "type": "null"

@@ -8,15 +8,16 @@ import {
   type CaptureDocument,
   type CaptureEvent,
   type CaptureOperation,
+  type CaptureResult,
   type PartialCapture,
   type CaptureRequirementId,
   type OcrComputePreflight,
   type RawCapture,
   type RuntimeInstallation,
-  type RuntimeModelInstallation,
-  type RuntimeModelOption,
   type RuntimeRequirement,
   type RuntimeReady,
+  type StructuringModelInstallation,
+  type StructuringModelOption,
 } from '@gx-capture/capture-workbench-ui';
 import {
   EMPTY,
@@ -40,11 +41,6 @@ const startingStatus = (): DesktopRuntimeStatus => ({
   status: 'starting',
   detail: desktopMessages().starting,
 });
-export interface StreamingTerminalResultV2 {
-  readonly operation: CaptureOperation;
-  readonly raw: RawCapture;
-  readonly result: CaptureDocument;
-}
 
 /** v2 operation envelope returned by the desktop one-shot bridge. */
 export type DesktopCaptureOperation = CaptureOperation;
@@ -123,9 +119,9 @@ export class DesktopRuntimeClientService {
     );
   }
 
-  getModelOptions(signal?: AbortSignal): Observable<readonly RuntimeModelOption[]> {
+  getModelOptions(signal?: AbortSignal): Observable<readonly StructuringModelOption[]> {
     return this.commands
-      .invoke<{ readonly items: readonly RuntimeModelOption[] }>('runtime_model_options', {}, signal)
+      .invoke<{ readonly items: readonly StructuringModelOption[] }>('runtime_structuring_model_options', {}, signal)
       .pipe(map((response) => response.items));
   }
 
@@ -133,8 +129,8 @@ export class DesktopRuntimeClientService {
     readonly clientRequestId: string;
     readonly optionId: string;
     readonly consent: true;
-  }, signal?: AbortSignal): Observable<RuntimeModelInstallation> {
-    return this.commands.invoke('runtime_start_model_installation', {
+  }, signal?: AbortSignal): Observable<StructuringModelInstallation> {
+    return this.commands.invoke('runtime_start_structuring_model_installation', {
       input: { clientRequestId: input.clientRequestId, optionId: input.optionId },
     }, signal);
   }
@@ -142,8 +138,8 @@ export class DesktopRuntimeClientService {
   getModelInstallation(
     installationId: string,
     signal?: AbortSignal,
-  ): Observable<RuntimeModelInstallation> {
-    return this.commands.invoke('runtime_get_model_installation', { input: { id: installationId } }, signal);
+  ): Observable<StructuringModelInstallation> {
+    return this.commands.invoke('runtime_get_structuring_model_installation', { input: { id: installationId } }, signal);
   }
 
   cancelUpload(clientRequestId: string): Observable<void> {
@@ -198,7 +194,7 @@ export class DesktopRuntimeClientService {
   getStreamingResult(
     captureId: string,
     signal?: AbortSignal,
-  ): Observable<StreamingTerminalResultV2> {
+  ): Observable<CaptureResult> {
     return this.commands.invoke('runtime_get_streaming_result', { input: { id: captureId } }, signal);
   }
 
@@ -239,7 +235,7 @@ export class DesktopRuntimeClientService {
 
   getResult(captureId: string, signal?: AbortSignal): Observable<CaptureDocument> {
     return this.commands
-      .invoke<StreamingTerminalResultV2>('runtime_get_result', { input: { id: captureId } }, signal)
+      .invoke<CaptureResult>('runtime_get_result', { input: { id: captureId } }, signal)
       .pipe(map(({ result }) => result));
   }
 

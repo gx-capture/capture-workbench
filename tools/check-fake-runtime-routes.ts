@@ -107,7 +107,7 @@ export function fakeRoutes(sources: readonly string[]): Set<string> {
     routes.add(normalizeRoute(match[1], match[2]));
   }
   // Only traverse handlers actually dispatched by the top-level route table.
-  for (const dispatch of root.matchAll(/request\.path\.starts_with\("([^"\n]+)"\)\s*=>\s*\{?\s*self\.(\w+)\(&request\)/gu)) {
+  for (const dispatch of root.matchAll(/request\s*\.path\s*\.starts_with\("([^"\n]+)"\)\s*=>\s*\{?\s*self\.(\w+)\(&request\)/gu)) {
     const body = bodies.get(dispatch[2]);
     if (!body) throw new Error(`Missing deterministic route handler ${dispatch[2]}.`);
     const prefix = `${dispatch[1]}{}`;

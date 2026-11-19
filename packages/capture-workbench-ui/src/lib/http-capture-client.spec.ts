@@ -472,7 +472,6 @@ const contractBundle = Uint8Array.from(
   ),
 );
 const contractIndex = {
-  catalogVersion: '2',
   runtimeVersion: RUNTIME_VERSION,
   contractSetVersion: '2',
   surfaces: [{ id: 'v2' }],

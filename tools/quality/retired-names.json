@@ -640,10 +640,6 @@
         "reason": "Historical release notes."
       },
       {
-        "glob": "naming-audit/contract-plan.md",
-        "reason": "Records the compatibility migration."
-      },
-      {
         "glob": ".agents/PLANS/speech-recognition-s7.md",
         "reason": "Records the historical v1 release layout."
       },
@@ -669,14 +665,6 @@
       {
         "glob": "CHANGELOG.md",
         "reason": "Historical release notes."
-      },
-      {
-        "glob": "naming-audit/contract-plan.md",
-        "reason": "Records the compatibility migration."
-      },
-      {
-        "glob": "naming-audit/addendum.md",
-        "reason": "Records the compatibility migration decision."
       },
       {
         "glob": ".github/workflows/_publish-github-release.yml",
@@ -1057,6 +1045,10 @@
       {
         "glob": "packages/capture-runtime-client-python/src/capture_runtime_client/private/generated_models.py",
         "reason": "Generated from the runtime contracts module, which rejects retired requirement IDs."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_model_selection.py",
+        "reason": "Writes a 0.10 model selection marker at its original file name to prove it stays readable."
       }
     ]
   },
@@ -1119,6 +1111,423 @@
     "name": "audioCaptureOperation",
     "match": "word",
     "replacement": "recordingCaptureOperation",
+    "allowed": []
+  },
+  {
+    "name": "StreamingCaptureStatus",
+    "match": "word",
+    "replacement": "CaptureStatus",
+    "allowed": []
+  },
+  {
+    "name": "StreamingIngestionStatus",
+    "match": "word",
+    "replacement": "IngestionStatus",
+    "allowed": []
+  },
+  {
+    "name": "StreamingIngestionMode",
+    "match": "word",
+    "replacement": "IngestionMode",
+    "allowed": []
+  },
+  {
+    "name": "StreamingEventType",
+    "match": "word",
+    "replacement": "CaptureEventType",
+    "allowed": []
+  },
+  {
+    "name": "CaptureStreamingResult",
+    "match": "word",
+    "replacement": "CaptureResult",
+    "allowed": []
+  },
+  {
+    "name": "CaptureFailure",
+    "match": "word",
+    "replacement": "OperationFailure",
+    "allowed": [
+      {
+        "glob": "packages/capture-runtime-client/src/client.spec.ts",
+        "reason": "Asserts the SDK no longer exports the retired name."
+      }
+    ]
+  },
+  {
+    "name": "CaptureFailureV2",
+    "match": "word",
+    "replacement": "OperationFailure",
+    "allowed": []
+  },
+  {
+    "name": "ErrorDetailsV2",
+    "match": "word",
+    "replacement": "ErrorDetails",
+    "allowed": []
+  },
+  {
+    "name": "RuntimeModelOption",
+    "match": "word",
+    "replacement": "StructuringModelOption",
+    "allowed": []
+  },
+  {
+    "name": "/v2/runtime/model-options",
+    "match": "substring",
+    "replacement": "/v2/runtime/structuring-model-options",
+    "allowed": [
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_model_selection.py",
+        "reason": "Asserts the retired model route is not registered."
+      }
+    ]
+  },
+  {
+    "name": "/v2/runtime/model-installations",
+    "match": "substring",
+    "replacement": "/v2/runtime/structuring-model-installations",
+    "allowed": [
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_model_selection.py",
+        "reason": "Asserts the retired model route is not registered."
+      }
+    ]
+  },
+  {
+    "name": "rawSourceSha256",
+    "match": "word",
+    "replacement": "sourceSha256",
+    "allowed": [
+      {
+        "glob": "packages/capture-runtime/src/capture_runtime/structuring/infrastructure/structuring_session_repository.py",
+        "reason": "Reads historical pull-session metadata without rewriting it."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_structuring_session.py",
+        "reason": "Historical pull-session bytes and fresh-request rejection."
+      }
+    ]
+  },
+  {
+    "name": "CAPTURE_OLLAMA_PROFILE_ID",
+    "match": "word",
+    "replacement": "remove the setting",
+    "allowed": [
+      {
+        "glob": "packages/capture-runtime/src/capture_runtime/config.py",
+        "reason": "Rejects the removed environment variable at startup."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/unit/test_engine_adapters.py",
+        "reason": "Retired environment-variable rejection fixture."
+      }
+    ]
+  },
+  {
+    "name": "capture-workbench-ocr-",
+    "match": "substring",
+    "replacement": "ocr-",
+    "allowed": [
+      {
+        "glob": "packages/capture-runtime/src/capture_runtime/ocr/infrastructure/ocr_profile.py",
+        "reason": "Packaged OCR profile algorithm id. Changing it republishes the profile digest."
+      },
+      {
+        "glob": "packages/capture-runtime/src/capture_runtime/assets/ocr-profile.json",
+        "reason": "Packaged OCR profile algorithm id. Changing it republishes the profile digest."
+      },
+      {
+        "glob": "packages/capture-runtime/model-sources/release-model-source-lock.json",
+        "reason": "Packaged OCR profile algorithm id. Changing it republishes the profile digest."
+      },
+      {
+        "glob": "packages/capture-runtime/model-sources/text-recognition/provenance/text-recognition.json",
+        "reason": "Packaged OCR fixture algorithm id. Changing it republishes the profile digest."
+      },
+      {
+        "glob": "packages/capture-runtime/model-sources/text-recognition/model/pipeline.json",
+        "reason": "Packaged OCR profile algorithm id. Changing it republishes the profile digest."
+      },
+      {
+        "glob": "packages/capture-runtime/scripts/generate_text_recognition_sources.py",
+        "reason": "Writes the packaged OCR profile algorithm id."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/unit/test_text_recognition_sources.py",
+        "reason": "Asserts the packaged OCR profile algorithm id."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/fixtures/vertical-ocr/reading-order-bunka-composite.json",
+        "reason": "Vertical OCR gold embeds the packaged profile algorithm id."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_streaming_api.py",
+        "reason": "Historical OCR projection bytes keep the prefixed profile id."
+      },
+      {
+        "glob": ".agents/GUIDES/release-runbook.md",
+        "reason": "Records profile ids published before the prefix was dropped."
+      },
+      {
+        "glob": ".agents/SPECS/vertical-japanese-ocr.md",
+        "reason": "Names the packaged OCR profile algorithm id."
+      },
+      {
+        "glob": ".agents/DECISIONS/vertical-japanese-ocr.md",
+        "reason": "Names the packaged OCR profile algorithm id."
+      }
+    ]
+  },
+  {
+    "name": "capture-workbench-qwen",
+    "match": "substring",
+    "replacement": "qwen",
+    "allowed": [
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_structuring_session.py",
+        "reason": "Historical pull-session metadata keeps the prefixed structuring profile id; the test proves it stays readable."
+      }
+    ]
+  },
+  {
+    "name": "capture-event-v2.schema.json",
+    "match": "substring",
+    "replacement": "capture-event.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "capture-failure-v2.schema.json",
+    "match": "substring",
+    "replacement": "operation-failure.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "capture-ocr-projection-v3.schema.json",
+    "match": "substring",
+    "replacement": "capture-ocr-projection.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "capture-operation-v2.schema.json",
+    "match": "substring",
+    "replacement": "capture-operation.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "capture-streaming-result.schema.json",
+    "match": "substring",
+    "replacement": "capture-result.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "error-body-v2.schema.json",
+    "match": "substring",
+    "replacement": "error-body.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "error-envelope-v2.schema.json",
+    "match": "substring",
+    "replacement": "error-envelope.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "finalize-ingestion-v2.schema.json",
+    "match": "substring",
+    "replacement": "finalize-ingestion.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "ingestion-v2.schema.json",
+    "match": "substring",
+    "replacement": "ingestion.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "ocr-box-v3.schema.json",
+    "match": "substring",
+    "replacement": "ocr-box.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "ocr-compute-preflight-v2.schema.json",
+    "match": "substring",
+    "replacement": "ocr-compute-preflight.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "ocr-page-projection-v3.schema.json",
+    "match": "substring",
+    "replacement": "ocr-page-projection.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "ocr-page-scope-v2.schema.json",
+    "match": "substring",
+    "replacement": "ocr-page-scope.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "ocr-point-v3.schema.json",
+    "match": "substring",
+    "replacement": "ocr-point.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "ocr-provenance-resolved-v3.schema.json",
+    "match": "substring",
+    "replacement": "ocr-provenance-resolved.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "ocr-provenance-unavailable-v3.schema.json",
+    "match": "substring",
+    "replacement": "ocr-provenance-unavailable.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "ocr-provenance-v3.schema.json",
+    "match": "substring",
+    "replacement": "ocr-provenance.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "ocr-raster-v3.schema.json",
+    "match": "substring",
+    "replacement": "ocr-raster.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "open-ingestion-v2.schema.json",
+    "match": "substring",
+    "replacement": "open-ingestion.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "open-structuring-session-v2.schema.json",
+    "match": "substring",
+    "replacement": "open-structuring-session.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "partial-capture-v2.schema.json",
+    "match": "substring",
+    "replacement": "partial-capture.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "report-structuring-failure-v2.schema.json",
+    "match": "substring",
+    "replacement": "report-structuring-failure.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "runtime-artifact-descriptor-v2.schema.json",
+    "match": "substring",
+    "replacement": "runtime-artifact-descriptor.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "runtime-installation-v2.schema.json",
+    "match": "substring",
+    "replacement": "runtime-installation.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "runtime-installations-v2.schema.json",
+    "match": "substring",
+    "replacement": "runtime-installations.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "runtime-model-installation-v2.schema.json",
+    "match": "substring",
+    "replacement": "structuring-model-installation.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "runtime-model-installations-v2.schema.json",
+    "match": "substring",
+    "replacement": "structuring-model-installations.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "runtime-model-option-v2.schema.json",
+    "match": "substring",
+    "replacement": "structuring-model-option.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "runtime-model-options-v2.schema.json",
+    "match": "substring",
+    "replacement": "structuring-model-options.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "runtime-requirement-v2.schema.json",
+    "match": "substring",
+    "replacement": "runtime-requirement.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "runtime-requirements-v2.schema.json",
+    "match": "substring",
+    "replacement": "runtime-requirements.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "runtime-streaming-capabilities-v2.schema.json",
+    "match": "substring",
+    "replacement": "runtime-streaming-capabilities.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "start-capture-v2.schema.json",
+    "match": "substring",
+    "replacement": "start-capture.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "start-runtime-installation-v2.schema.json",
+    "match": "substring",
+    "replacement": "start-runtime-installation.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "start-runtime-model-installation-v2.schema.json",
+    "match": "substring",
+    "replacement": "start-structuring-model-installation.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "structuring-batch-v2.schema.json",
+    "match": "substring",
+    "replacement": "structuring-batch.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "structuring-provider-capability-v2.schema.json",
+    "match": "substring",
+    "replacement": "structuring-provider-capability.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "structuring-semantic-block-v2.schema.json",
+    "match": "substring",
+    "replacement": "structuring-semantic-block.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "structuring-session-v2.schema.json",
+    "match": "substring",
+    "replacement": "structuring-session.schema.json",
+    "allowed": []
+  },
+  {
+    "name": "submit-structuring-batch-v2.schema.json",
+    "match": "substring",
+    "replacement": "submit-structuring-batch.schema.json",
     "allowed": []
   }
 ]

@@ -33,7 +33,7 @@ from capture_runtime._worker_payloads import (
 from capture_runtime._worker_payloads import (
     parse_words as _parse_words,
 )
-from capture_runtime.contracts import OcrComputePreflightV2
+from capture_runtime.contracts import OcrComputePreflight
 from capture_runtime.ocr.infrastructure.ocr_execution_proof import OcrExecutionDeviceProofV1
 from capture_runtime.ocr.infrastructure.ocr_preflight import OcrComputeSelection, OcrExecutionPlan
 from capture_runtime.ocr.infrastructure.ocr_worker_result import (
@@ -67,11 +67,11 @@ class _ProcessClient(Protocol):
     ocr_idle_seconds: float
 
 
-def parse_ocr_compute_preflight(payload: dict[str, Any]) -> OcrComputePreflightV2:
+def parse_ocr_compute_preflight(payload: dict[str, Any]) -> OcrComputePreflight:
     """Validate the typed compute decision returned by the OCR worker."""
 
     try:
-        return OcrComputePreflightV2.model_validate(payload)
+        return OcrComputePreflight.model_validate(payload)
     except Exception:
         # The worker owns one retained plan and projects readiness from that
         # same result.  Keep this legacy public readiness seam usable while
@@ -197,16 +197,16 @@ class OcrWorkerMethods:
         self: _ProcessClient,
         engine: InstalledEngine,
         *,
-        contract_sha256: str,
+        contract_set_sha256: str,
         timeout_seconds: float = DEFAULT_PROBE_TIMEOUT_SECONDS,
-    ) -> OcrComputePreflightV2:
+    ) -> OcrComputePreflight:
         """Run one model-free compute probe in the installed OCR worker."""
 
         payload: dict[str, object] = {
             "requirementId": engine.requirement_id,
             "artifactVersion": engine.artifact_version,
             "modelPath": None,
-            "contractSha256": contract_sha256,
+            "contractSetSha256": contract_set_sha256,
             "options": {},
         }
         if engine.worker_sha256 is not None:
@@ -224,7 +224,7 @@ class OcrWorkerMethods:
         self: _ProcessClient,
         engine: InstalledEngine,
         *,
-        contract_sha256: str,
+        contract_set_sha256: str,
         timeout_seconds: float = DEFAULT_PROBE_TIMEOUT_SECONDS,
     ) -> OcrComputeSelection:
         """Run one worker-owned selection and retain its private plan."""
@@ -233,7 +233,7 @@ class OcrWorkerMethods:
             "requirementId": engine.requirement_id,
             "artifactVersion": engine.artifact_version,
             "modelPath": None,
-            "contractSha256": contract_sha256,
+            "contractSetSha256": contract_set_sha256,
             "options": {},
         }
         if engine.worker_sha256 is not None:

@@ -27,7 +27,7 @@ from capture_runtime.capture.infrastructure.capture_extraction import (
 from capture_runtime.clock import SystemClock
 from capture_runtime.config import ExtractionRuntimeConfig, OllamaRuntimeConfig, RuntimeSettings
 from capture_runtime.constants import RUNTIME_VERSION
-from capture_runtime.contracts import CaptureSource, OcrAdapterClass, OcrProvenanceV3
+from capture_runtime.contracts import CaptureSource, OcrAdapterClass, OcrProvenance
 from capture_runtime.ocr.infrastructure.image_normalization import normalize_image_png
 from capture_runtime.ocr.infrastructure.ocr_execution_evidence import OcrExecutionEvidence
 from capture_runtime.ocr.infrastructure.ocr_offline_stubs import install_offline_huggingface_stubs
@@ -99,7 +99,7 @@ class _StaticGpuProbe:
 
 def _cpu_plan() -> OcrExecutionPlan:
     selection = OcrComputePlan(
-        contract_sha256="a" * 64,
+        contract_set_sha256="a" * 64,
         worker_sha256="b" * 64,
         capability_probe=_StaticGpuProbe(OcrGpuCapabilitySnapshot()),
     ).select()
@@ -122,7 +122,7 @@ def _gpu_plan_kwargs() -> dict[str, object]:
         assessment="positive-usable",
     )
     selection = OcrComputePlan(
-        contract_sha256="a" * 64,
+        contract_set_sha256="a" * 64,
         worker_sha256="b" * 64,
         capability_probe=_StaticGpuProbe(
             OcrGpuCapabilitySnapshot(
@@ -150,14 +150,14 @@ def _worker_ocr_plan_selection() -> SimpleNamespace:
     )
 
 
-def _resolved_ocr_provenance() -> OcrProvenanceV3:
-    return OcrProvenanceV3(
+def _resolved_ocr_provenance() -> OcrProvenance:
+    return OcrProvenance(
         status="resolved",
         engine="text-recognition",
         model="pp-ocrv6-medium",
         model_digest="sha256:" + "1" * 64,
         device="directml",
-        profile_id="capture-workbench-ocr-pipeline-v1",
+        profile_id="ocr-pipeline-v1",
         profile_spec_sha256="c" * 64,
     )
 
@@ -3015,6 +3015,13 @@ def test_runtime_settings_rejects_removed_ocr_model_directory() -> None:
         RuntimeSettings.from_env({"CAPTURE_WINDOWSML_MODEL_DIR": ""})
 
 
+def test_runtime_settings_rejects_removed_ollama_profile_id() -> None:
+    with pytest.raises(ValueError, match="CAPTURE_OLLAMA_PROFILE_ID is no longer supported"):
+        RuntimeSettings.from_env(
+            {"CAPTURE_API_TOKEN": "a" * 32, "CAPTURE_OLLAMA_PROFILE_ID": "qwen3.5-4b-structure-v1"}
+        )
+
+
 def test_runtime_settings_rejects_retired_ocr_device_override() -> None:
     with pytest.raises(ValueError, match="CAPTURE_WINDOWSML_DEVICE_ID is retired"):
         RuntimeSettings.from_env(
@@ -3828,8 +3835,8 @@ def test_worker_backed_audio_forwards_strict_cuda_fallback_policy(tmp_path: Path
     worker_client = RecordingWorkerClient()
 
     class EngineManager:
-        async def ocr_compute_selection(self, *, contract_sha256: str) -> object:
-            del contract_sha256
+        async def ocr_compute_selection(self, *, contract_set_sha256: str) -> object:
+            del contract_set_sha256
             return _worker_ocr_plan_selection()
 
         async def resolve_active_engine(self, _requirement_id: str) -> InstalledEngine:
@@ -3929,7 +3936,7 @@ def test_worker_runtime_unavailable_preserves_complete_pdf_manifest(
         )
 
     projection = raised.value.projection
-    assert projection.page_count == 3
+    assert projection.processed_page_count == 3
     assert [page.page for page in projection.pages] == [1, 2, 3]
     assert [page.status.value for page in projection.pages] == ["failed"] * 3
     assert all(page.text == "" and page.boxes == [] for page in projection.pages)
@@ -3972,7 +3979,7 @@ def test_worker_runtime_unavailable_preserves_image_manifest(
         )
 
     projection = raised.value.projection
-    assert projection.page_count == 1
+    assert projection.processed_page_count == 1
     assert projection.pages[0].status.value == "failed"
     assert projection.pages[0].raster.width == 24
     assert projection.pages[0].raster.height == 16
@@ -4010,7 +4017,7 @@ def test_sync_runtime_unavailable_preserves_pdf_manifest_without_adapter(
         )
 
     projection = raised.value.projection
-    assert projection.page_count == 3
+    assert projection.processed_page_count == 3
     assert [page.status.value for page in projection.pages] == ["failed"] * 3
     assert projection.failure is not None
     assert projection.failure.code == "ocr_runtime_unavailable"
@@ -4047,7 +4054,7 @@ def test_sync_ocr_runtime_initialization_failure_preserves_page_manifest(
         )
 
     projection = raised.value.projection
-    assert projection.page_count == 2
+    assert projection.processed_page_count == 2
     assert [page.status.value for page in projection.pages] == ["failed"] * 2
     assert projection.failure is not None
     assert projection.failure.code == "ocr_runtime_unavailable"
@@ -4234,8 +4241,8 @@ def test_worker_backed_image_is_enlarged_as_its_manifest_says(
     worker_client = RecordingWorkerClient()
 
     class EngineManager:
-        async def ocr_compute_selection(self, *, contract_sha256: str) -> object:
-            del contract_sha256
+        async def ocr_compute_selection(self, *, contract_set_sha256: str) -> object:
+            del contract_set_sha256
             return _worker_ocr_plan_selection()
 
         async def resolve_active_engine(self, _requirement_id: str) -> InstalledEngine:
@@ -4310,8 +4317,8 @@ def test_worker_backed_pdf_dispatches_every_page_to_ocr(tmp_path: Path) -> None:
     worker_client = RecordingWorkerClient()
 
     class EngineManager:
-        async def ocr_compute_selection(self, *, contract_sha256: str) -> object:
-            del contract_sha256
+        async def ocr_compute_selection(self, *, contract_set_sha256: str) -> object:
+            del contract_set_sha256
             return _worker_ocr_plan_selection()
 
         async def resolve_active_engine(self, _requirement_id: str) -> InstalledEngine:
@@ -4416,8 +4423,8 @@ def test_worker_backed_pdf_page_scope_dispatches_only_page_one_and_records_scope
     worker_client = RecordingWorkerClient()
 
     class EngineManager:
-        async def ocr_compute_selection(self, *, contract_sha256: str) -> object:
-            del contract_sha256
+        async def ocr_compute_selection(self, *, contract_set_sha256: str) -> object:
+            del contract_set_sha256
             return _worker_ocr_plan_selection()
 
         async def resolve_active_engine(self, _requirement_id: str) -> InstalledEngine:
@@ -4534,8 +4541,8 @@ def test_worker_ocr_segments_must_match_canonical_projection(
     class EngineManager:
         worker_client = DivergingWorkerClient()
 
-        async def ocr_compute_selection(self, *, contract_sha256: str) -> object:
-            del contract_sha256
+        async def ocr_compute_selection(self, *, contract_set_sha256: str) -> object:
+            del contract_set_sha256
             return _worker_ocr_plan_selection()
 
         async def resolve_active_engine(self, _requirement_id: str) -> InstalledEngine:
@@ -4609,8 +4616,8 @@ def test_worker_ocr_projection_drives_raw_segments_for_perspective_boxes(
     class EngineManager:
         worker_client = PerspectiveWorkerClient()
 
-        async def ocr_compute_selection(self, *, contract_sha256: str) -> object:
-            del contract_sha256
+        async def ocr_compute_selection(self, *, contract_set_sha256: str) -> object:
+            del contract_set_sha256
             return _worker_ocr_plan_selection()
 
         async def resolve_active_engine(self, _requirement_id: str) -> InstalledEngine:
@@ -4737,8 +4744,8 @@ def test_worker_terminal_cardinality_is_rejected_before_raw_segments(
     class EngineManager:
         worker_client = MalformedWorkerClient()
 
-        async def ocr_compute_selection(self, *, contract_sha256: str) -> object:
-            del contract_sha256
+        async def ocr_compute_selection(self, *, contract_set_sha256: str) -> object:
+            del contract_set_sha256
             return _worker_ocr_plan_selection()
 
         async def resolve_active_engine(self, _requirement_id: str) -> InstalledEngine:
@@ -4822,8 +4829,8 @@ def test_worker_projection_cancellation_does_not_become_success_or_protocol(
     class EngineManager:
         worker_client = ValidWorkerClient()
 
-        async def ocr_compute_selection(self, *, contract_sha256: str) -> object:
-            del contract_sha256
+        async def ocr_compute_selection(self, *, contract_set_sha256: str) -> object:
+            del contract_set_sha256
             return _worker_ocr_plan_selection()
 
         async def resolve_active_engine(self, _requirement_id: str) -> InstalledEngine:
@@ -4887,8 +4894,8 @@ def test_worker_all_empty_terminal_is_failed_with_readable_no_text_projection(
     class EngineManager:
         worker_client = EmptyWorkerClient()
 
-        async def ocr_compute_selection(self, *, contract_sha256: str) -> object:
-            del contract_sha256
+        async def ocr_compute_selection(self, *, contract_set_sha256: str) -> object:
+            del contract_set_sha256
             return _worker_ocr_plan_selection()
 
         async def resolve_active_engine(self, _requirement_id: str) -> InstalledEngine:
@@ -4969,8 +4976,8 @@ def test_worker_provenance_mismatch_discards_untrusted_progress_prefix(
     class EngineManager:
         worker_client = MismatchedWorkerClient()
 
-        async def ocr_compute_selection(self, *, contract_sha256: str) -> object:
-            del contract_sha256
+        async def ocr_compute_selection(self, *, contract_set_sha256: str) -> object:
+            del contract_set_sha256
             return _worker_ocr_plan_selection()
 
         async def resolve_active_engine(self, _requirement_id: str) -> InstalledEngine:
@@ -5078,8 +5085,8 @@ def test_worker_failure_projection_is_page_complete_and_sanitized(
     class EngineManager:
         worker_client = FailingWorkerClient()
 
-        async def ocr_compute_selection(self, *, contract_sha256: str) -> object:
-            del contract_sha256
+        async def ocr_compute_selection(self, *, contract_set_sha256: str) -> object:
+            del contract_set_sha256
             return _worker_ocr_plan_selection()
 
         async def resolve_active_engine(self, _requirement_id: str) -> InstalledEngine:
@@ -5136,8 +5143,8 @@ def test_worker_failure_preserves_cancellation_priority(tmp_path: Path) -> None:
     class EngineManager:
         worker_client = FailingWorkerClient()
 
-        async def ocr_compute_selection(self, *, contract_sha256: str) -> object:
-            del contract_sha256
+        async def ocr_compute_selection(self, *, contract_set_sha256: str) -> object:
+            del contract_set_sha256
             return _worker_ocr_plan_selection()
 
         async def resolve_active_engine(self, _requirement_id: str) -> InstalledEngine:
@@ -5303,8 +5310,8 @@ def test_worker_ocr_manifest_dimensions_remain_strict(
     class EngineManager:
         worker_client = MismatchedWorkerClient()
 
-        async def ocr_compute_selection(self, *, contract_sha256: str) -> object:
-            del contract_sha256
+        async def ocr_compute_selection(self, *, contract_set_sha256: str) -> object:
+            del contract_set_sha256
             return _worker_ocr_plan_selection()
 
         async def resolve_active_engine(self, _requirement_id: str) -> InstalledEngine:
@@ -5423,8 +5430,8 @@ def test_worker_backed_ocr_uses_the_reader_unit_and_reports_when_it_is_missed(
             )
 
     class EngineManager:
-        async def ocr_compute_selection(self, *, contract_sha256: str) -> object:
-            del contract_sha256
+        async def ocr_compute_selection(self, *, contract_set_sha256: str) -> object:
+            del contract_set_sha256
             return _worker_ocr_plan_selection()
 
         async def resolve_active_engine(self, _requirement_id: str) -> InstalledEngine:

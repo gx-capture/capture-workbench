@@ -1,5 +1,5 @@
 {
-  "description": "Shared golden case for a non-contiguous PDF page selection: pages 3, 7, 8 and 20 of a 46-page source. Every SDK accepts it with the source page numbers intact and rejects the invalid cases. Tests replace contractSha256 and runtimeVersion.",
+  "description": "Shared golden case for a non-contiguous PDF page selection: pages 3, 7, 8 and 20 of a 46-page source. Every SDK accepts it with the source page numbers intact and rejects the invalid cases. Tests replace contractSetSha256 and runtimeVersion.",
   "pdfPageNumbers": [
     3,
     7,
@@ -74,7 +74,7 @@
           "model": "pp-ocrv6-medium",
           "modelDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
           "device": "directml",
-          "profileId": "capture-workbench-ocr-pipeline-v1",
+          "profileId": "ocr-pipeline-v1",
           "profileSpecSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
         },
         "failure": null
@@ -120,7 +120,7 @@
           "model": "pp-ocrv6-medium",
           "modelDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
           "device": "directml",
-          "profileId": "capture-workbench-ocr-pipeline-v1",
+          "profileId": "ocr-pipeline-v1",
           "profileSpecSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
         },
         "failure": null
@@ -143,7 +143,7 @@
           "model": "pp-ocrv6-medium",
           "modelDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
           "device": "directml",
-          "profileId": "capture-workbench-ocr-pipeline-v1",
+          "profileId": "ocr-pipeline-v1",
           "profileSpecSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
         },
         "failure": null
@@ -189,22 +189,22 @@
           "model": "pp-ocrv6-medium",
           "modelDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
           "device": "directml",
-          "profileId": "capture-workbench-ocr-pipeline-v1",
+          "profileId": "ocr-pipeline-v1",
           "profileSpecSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
         },
         "failure": null
       }
     ],
-    "pageCount": 4,
+    "processedPageCount": 4,
     "runtimeVersion": "0.0.0",
-    "contractSha256": "__CONTRACT_SET_SHA256__",
+    "contractSetSha256": "__CONTRACT_SET_SHA256__",
     "provenance": {
       "status": "resolved",
       "engine": "text-recognition",
       "model": "pp-ocrv6-medium",
       "modelDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       "device": "directml",
-      "profileId": "capture-workbench-ocr-pipeline-v1",
+      "profileId": "ocr-pipeline-v1",
       "profileSpecSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
     },
     "warnings": [],

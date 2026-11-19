@@ -95,7 +95,7 @@ def test_structuring_session_invariants() -> None:
     session = StructuringSession(
         session_id="sess-1",
         capture_id="cap-1",
-        raw_source_sha256="raw_sha",
+        source_sha256="raw_sha",
         contract_set_sha256="contract_sha",
         schema_dialect="v2",
         batch_count=2,
@@ -111,7 +111,7 @@ def test_structuring_session_invariants() -> None:
         StructuringSession(
             session_id="sess-1",
             capture_id="cap-1",
-            raw_source_sha256="raw_sha",
+            source_sha256="raw_sha",
             contract_set_sha256="contract_sha",
             schema_dialect="v2",
             batch_count=0,
@@ -122,7 +122,7 @@ def test_structuring_session_invariants() -> None:
         StructuringSession(
             session_id="sess-1",
             capture_id="cap-1",
-            raw_source_sha256="raw_sha",
+            source_sha256="raw_sha",
             contract_set_sha256="contract_sha",
             schema_dialect="v2",
             batch_count=2,
@@ -134,7 +134,7 @@ def test_structuring_session_invariants() -> None:
         StructuringSession(
             session_id="",
             capture_id="cap-1",
-            raw_source_sha256="raw_sha",
+            source_sha256="raw_sha",
             contract_set_sha256="contract_sha",
             schema_dialect="v2",
             batch_count=1,
@@ -145,7 +145,7 @@ def test_structuring_session_invariants() -> None:
         StructuringSession(
             session_id="sess-1",
             capture_id="",
-            raw_source_sha256="raw_sha",
+            source_sha256="raw_sha",
             contract_set_sha256="contract_sha",
             schema_dialect="v2",
             batch_count=1,
@@ -220,7 +220,7 @@ def test_session_aggregate_accepts_batches_only_in_order_and_stops_at_completion
     session = StructuringSession(
         session_id="s",
         capture_id="c",
-        raw_source_sha256="a" * 64,
+        source_sha256="a" * 64,
         contract_set_sha256="b" * 64,
         schema_dialect="v2",
         batch_count=2,
@@ -245,18 +245,18 @@ def test_open_structuring_session_rejection_policies() -> None:
     from capture_runtime.contract_set import SCHEMA_DIALECT
     from capture_runtime.contracts import (
         CaptureEngine,
-        CaptureOperationV2,
+        CaptureOperation,
         CaptureSourceKind,
-        OpenStructuringSessionV2,
-        StartCaptureV2,
-        StreamingCaptureStatus,
+        CaptureStatus,
+        StartCapture,
         StructuringMode,
-        StructuringProviderCapabilityV2,
+        StructuringProviderCapability,
     )
+    from capture_runtime.contracts import OpenStructuringSession as OpenStructuringSessionRequest
     from capture_runtime.structuring.application.use_cases import OpenStructuringSession
     from capture_runtime.structuring.domain.session.models import SessionTransitionError
 
-    capability = StructuringProviderCapabilityV2(
+    capability = StructuringProviderCapability(
         provider=CaptureEngine(
             engine="ollama",
             model="test-model",
@@ -265,7 +265,7 @@ def test_open_structuring_session_rejection_policies() -> None:
         capability="capture-structuring",
         schema_dialect=SCHEMA_DIALECT,
     )
-    request = OpenStructuringSessionV2(
+    request = OpenStructuringSessionRequest(
         capture_id="cap-1",
         target_language="en",
         provider_capability=capability,
@@ -286,17 +286,17 @@ def test_open_structuring_session_rejection_policies() -> None:
 
     now = datetime.now(UTC)
     # Test rejection when structuring_mode is not HOST
-    mock_captures.get_capture.return_value = CaptureOperationV2(
+    mock_captures.get_capture.return_value = CaptureOperation(
         capture_id="cap-1",
         ingestion_id="ing-1",
         kind=CaptureSourceKind.IMAGE,
-        status=StreamingCaptureStatus.AWAITING_STRUCTURING,
+        status=CaptureStatus.AWAITING_STRUCTURING,
         partial_revision=0,
         last_event_sequence=0,
         created_at=now,
         updated_at=now,
     )
-    mock_captures.capture_request.return_value = StartCaptureV2(
+    mock_captures.capture_request.return_value = StartCapture(
         client_request_id="start-1",
         ingestion_id="ing-1",
         structuring_mode=StructuringMode.RUNTIME,
@@ -305,17 +305,17 @@ def test_open_structuring_session_rejection_policies() -> None:
         use_case.execute(request)
 
     # Test rejection when operation status is not awaiting/active structuring
-    mock_captures.get_capture.return_value = CaptureOperationV2(
+    mock_captures.get_capture.return_value = CaptureOperation(
         capture_id="cap-1",
         ingestion_id="ing-1",
         kind=CaptureSourceKind.IMAGE,
-        status=StreamingCaptureStatus.EXTRACTING,
+        status=CaptureStatus.EXTRACTING,
         partial_revision=0,
         last_event_sequence=0,
         created_at=now,
         updated_at=now,
     )
-    mock_captures.capture_request.return_value = StartCaptureV2(
+    mock_captures.capture_request.return_value = StartCapture(
         client_request_id="start-1",
         ingestion_id="ing-1",
         structuring_mode=StructuringMode.HOST,

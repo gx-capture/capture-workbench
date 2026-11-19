@@ -278,7 +278,7 @@ export function validateReady(response) {
   });
   const compute = response.body.ocrCompute;
   assert.deepEqual(Object.keys(compute).sort(), [
-    'adapterClass', 'apiVersion', 'contractSetVersion', 'contractSha256', 'mode',
+    'adapterClass', 'apiVersion', 'contractSetSha256', 'contractSetVersion', 'mode',
     'noticeCode', 'reasonCode', 'runtimeVersion', 'schemaVersion', 'service',
     'userNoticeRequired', 'workerSha256',
   ]);
@@ -287,7 +287,7 @@ export function validateReady(response) {
   assert.equal(compute.service, 'capture-runtime');
   assert.equal(compute.runtimeVersion, response.body.runtimeVersion);
   assert.equal(compute.contractSetVersion, '2');
-  assert.match(compute.contractSha256, /^[0-9a-f]{64}$/u);
+  assert.match(compute.contractSetSha256, /^[0-9a-f]{64}$/u);
   assert.match(compute.workerSha256, /^[0-9a-f]{64}$/u);
   assert.equal(compute.mode, 'cpu-fallback');
   assert.equal(compute.adapterClass, 'unknown');

@@ -17,7 +17,7 @@ describe('diagnostics pure functions', () => {
       service: 'capture-runtime',
       runtimeVersion: '0.0.0-test',
       contractSetVersion: '2',
-      contractSha256: 'a'.repeat(64),
+      contractSetSha256: 'a'.repeat(64),
       workerSha256: 'b'.repeat(64),
       mode: 'gpu',
       adapterClass: 'dedicated',
@@ -49,7 +49,7 @@ describe('diagnostics pure functions', () => {
       runtimeVersion: '0.0.0-test',
       apiVersion: '2.0',
       contractSetVersion: '2',
-      contractSha256: 'a'.repeat(64),
+      contractSetSha256: 'a'.repeat(64),
     });
 
     expect(
@@ -67,7 +67,7 @@ describe('diagnostics pure functions', () => {
       runtimeVersion: null,
       apiVersion: null,
       contractSetVersion: null,
-      contractSha256: null,
+      contractSetSha256: null,
     });
 
     expect(
@@ -85,7 +85,7 @@ describe('diagnostics pure functions', () => {
       runtimeVersion: null,
       apiVersion: null,
       contractSetVersion: null,
-      contractSha256: null,
+      contractSetSha256: null,
     });
 
     // The readiness check itself failed: there is no status object at all.
@@ -104,7 +104,7 @@ describe('diagnostics pure functions', () => {
       runtimeVersion: null,
       apiVersion: null,
       contractSetVersion: null,
-      contractSha256: null,
+      contractSetSha256: null,
     });
   });
 

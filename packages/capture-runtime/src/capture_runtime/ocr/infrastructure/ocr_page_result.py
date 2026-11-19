@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
-from capture_runtime.contracts import OcrProvenanceV3
+from capture_runtime.contracts import OcrProvenance
 from capture_runtime.ocr.domain import PageRegion
 from capture_runtime.ocr.infrastructure.ocr_composite_regions import CompositeSplit
 from capture_runtime.ocr.infrastructure.ocr_reading_order import ReadingPlan
@@ -33,7 +33,7 @@ class OcrTextResult:
     region_confidences: tuple[float, ...] = ()
     profile_id: str | None = None
     profile_spec_sha256: str | None = None
-    provenance: OcrProvenanceV3 | None = None
+    provenance: OcrProvenance | None = None
     # Internal source/span audit only; worker/projection public schemas are unchanged.
     layout_evidence: OcrLayoutEvidence | None = None
     # Internal: which reader produced the page and why. Absent when no reader is installed.

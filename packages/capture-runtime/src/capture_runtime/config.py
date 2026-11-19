@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from capture_runtime.constants import CAPTURE_OLLAMA_BASE_MODEL, CAPTURE_OLLAMA_PROFILE_ID
+from capture_runtime.constants import CAPTURE_OLLAMA_BASE_MODEL, DEFAULT_OLLAMA_PROFILE_ID
 
 _CHILD_PROCESS_ENVIRONMENT_ALLOWLIST = frozenset(
     {
@@ -100,7 +100,7 @@ class OllamaRuntimeConfig:
     pid_file: Path
     models_dir: Path
     base_model: str = CAPTURE_OLLAMA_BASE_MODEL
-    profile_id: str = CAPTURE_OLLAMA_PROFILE_ID
+    profile_id: str = DEFAULT_OLLAMA_PROFILE_ID
 
     def process_environment(
         self, host_address: str, base: Mapping[str, str] | None = None
@@ -243,9 +243,8 @@ class RuntimeSettings:
         extraction_provider = env.get("CAPTURE_EXTRACTION_PROVIDER", "runtime").strip().lower()
         if extraction_provider not in {"runtime", "fake"}:
             raise ValueError("CAPTURE_EXTRACTION_PROVIDER must be runtime or fake")
-        profile_id = env.get("CAPTURE_OLLAMA_PROFILE_ID", CAPTURE_OLLAMA_PROFILE_ID)
-        if profile_id != CAPTURE_OLLAMA_PROFILE_ID:
-            raise ValueError(f"CAPTURE_OLLAMA_PROFILE_ID must be {CAPTURE_OLLAMA_PROFILE_ID}")
+        if "CAPTURE_OLLAMA_PROFILE_ID" in env:
+            raise ValueError("CAPTURE_OLLAMA_PROFILE_ID is no longer supported; remove it")
         retention_hours = int(env.get("CAPTURE_RETENTION_HOURS", "24"))
         if retention_hours <= 0:
             raise ValueError("CAPTURE_RETENTION_HOURS must be positive")
@@ -337,7 +336,7 @@ class RuntimeSettings:
             ),
             models_dir=Path(env.get("CAPTURE_OLLAMA_MODELS_DIR") or ollama_app_data / "models"),
             base_model=env.get("CAPTURE_OLLAMA_MODEL", CAPTURE_OLLAMA_BASE_MODEL),
-            profile_id=profile_id,
+            profile_id=DEFAULT_OLLAMA_PROFILE_ID,
         )
         return cls(
             host=host,

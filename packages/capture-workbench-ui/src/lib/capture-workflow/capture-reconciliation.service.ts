@@ -21,7 +21,7 @@ import {
 import {
   type CaptureClient,
   type CaptureCompletedEvent,
-  type CaptureFailure,
+  type OperationFailure,
   type CaptureOperation,
   type CaptureEvent,
   type CaptureStructuringCandidate,
@@ -78,7 +78,7 @@ export class CaptureReconciliationService {
 
   private requireReconciliation(
     taskId: string,
-    error: CaptureFailure,
+    error: OperationFailure,
     raw?: RawCapture,
   ): void {
     this.context?.requireReconciliation(taskId, error, raw);
@@ -87,7 +87,7 @@ export class CaptureReconciliationService {
   private failTask(
     taskId: string,
     fileName: string,
-    error: CaptureFailure,
+    error: OperationFailure,
     raw?: RawCapture,
     stage?: CaptureTaskView['stage'],
   ): void {
@@ -415,7 +415,7 @@ export class CaptureReconciliationService {
     return this.settleConfirmedOperation(task, client, operation);
   }
 
-  private unknownTerminalState(operation: CaptureOperation): CaptureFailure {
+  private unknownTerminalState(operation: CaptureOperation): OperationFailure {
     return {
       code: HOST_RECONCILIATION_FAILURE_CODE,
       message: `Capture runtime is still ${operation.status}; check again or cancel it.`,

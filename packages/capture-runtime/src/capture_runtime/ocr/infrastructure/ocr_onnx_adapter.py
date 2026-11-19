@@ -19,7 +19,7 @@ from threading import Lock
 from typing import Any
 from uuid import uuid4
 
-from capture_runtime.contracts import OcrProvenanceV3
+from capture_runtime.contracts import OcrProvenance
 from capture_runtime.ocr.application.use_cases import OrderPageRegions, VerifyExecutionEvidence
 from capture_runtime.ocr.domain.page.reading_order import ReadingPlan
 from capture_runtime.ocr.infrastructure.ocr_alignment import (
@@ -360,7 +360,7 @@ class OnnxOcrAdapter:
             vertical_reader=self._vertical_reader,
         )
 
-    def provenance(self) -> OcrProvenanceV3:
+    def provenance(self) -> OcrProvenance:
         """Return identity only after the selected provider is evidenced.
 
         A DML provider list is configuration, not execution evidence.  The
@@ -386,7 +386,7 @@ class OnnxOcrAdapter:
             self._model_digest = directory_digest(
                 self.model_dir, TEXT_RECOGNITION_REQUIRED_MODEL_FILES
             )
-        return OcrProvenanceV3(
+        return OcrProvenance(
             status="resolved",
             engine="text-recognition",
             model=self._profile.model,
@@ -698,7 +698,7 @@ class OnnxOcrAdapter:
                 profile_spec_sha256=self._profile.profile_spec_sha256,
                 layout_evidence=layout_evidence,
                 page_route=page_route,
-                provenance=OcrProvenanceV3(
+                provenance=OcrProvenance(
                     status="resolved",
                     engine="text-recognition",
                     model=self._profile.model,
@@ -1015,9 +1015,7 @@ class OnnxOcrAdapter:
 
     @staticmethod
     def _predict(pipeline: Any, image_png: bytes) -> Any:
-        with tempfile.NamedTemporaryFile(
-            prefix="capture-workbench-ocr-", suffix=".png", delete=False
-        ) as temporary:
+        with tempfile.NamedTemporaryFile(prefix="ocr-", suffix=".png", delete=False) as temporary:
             temporary.write(image_png)
             path = Path(temporary.name)
         try:

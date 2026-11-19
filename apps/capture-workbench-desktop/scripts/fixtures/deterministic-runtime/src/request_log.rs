@@ -162,15 +162,19 @@ fn route_template(path: &str) -> &'static str {
         ["", "v2", "runtime", "requirements", _, "installation"] => {
             "/v2/runtime/requirements/{requirementId}/installation"
         }
-        ["", "v2", "runtime", "model-options"] => "/v2/runtime/model-options",
+        ["", "v2", "runtime", "structuring-model-options"] => {
+            "/v2/runtime/structuring-model-options"
+        }
         ["", "v2", "runtime", "installations"] => "/v2/runtime/installations",
         ["", "v2", "runtime", "installations", _] => "/v2/runtime/installations/{installationId}",
         ["", "v2", "runtime", "installations", _, "cancel"] => {
             "/v2/runtime/installations/{installationId}/cancel"
         }
-        ["", "v2", "runtime", "model-installations"] => "/v2/runtime/model-installations",
-        ["", "v2", "runtime", "model-installations", _] => {
-            "/v2/runtime/model-installations/{installationId}"
+        ["", "v2", "runtime", "structuring-model-installations"] => {
+            "/v2/runtime/structuring-model-installations"
+        }
+        ["", "v2", "runtime", "structuring-model-installations", _] => {
+            "/v2/runtime/structuring-model-installations/{installationId}"
         }
         ["", "v2", "ingestions"] => "/v2/ingestions",
         ["", "v2", "ingestions", _] => "/v2/ingestions/{ingestionId}",

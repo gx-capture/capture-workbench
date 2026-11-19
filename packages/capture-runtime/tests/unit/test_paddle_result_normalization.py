@@ -62,7 +62,7 @@ class _EmptyProbe:
 
 def _cpu_plan():
     selection = OcrComputePlan(
-        contract_sha256="a" * 64,
+        contract_set_sha256="a" * 64,
         worker_sha256="b" * 64,
         capability_probe=_EmptyProbe(),
     ).select()

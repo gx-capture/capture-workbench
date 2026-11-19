@@ -10,7 +10,19 @@ export const CAPTURE_DOCUMENT_SCHEMA_ID = "https://github.com/gx-capture/capture
 export const CAPTURE_DOCUMENT_SCHEMA_SHA256 = "e3a68a577acc740fb79abcd8a0ca59cfc93c7bffd8eec3fc154aec50b9fc4b01" as const;
 
 /** Wire enum. */
+export type CaptureEventType = "accepted" | "input_checkpoint" | "heartbeat" | "segment" | "checkpoint" | "resync_required" | "completed" | "failed" | "cancelled";
+
+/** Wire enum. */
 export type CaptureSourceKind = "pdf" | "image" | "recording";
+
+/** Wire enum. */
+export type CaptureStatus = "created" | "waiting_input" | "extracting" | "awaiting_structuring" | "structuring" | "completed" | "failed" | "cancelled";
+
+/** Wire enum. */
+export type IngestionMode = "file";
+
+/** Wire enum. */
+export type IngestionStatus = "open" | "finalizing" | "ready" | "cancelled" | "failed" | "expired";
 
 /** Wire enum. */
 export type OcrAdapterClass = "dedicated" | "integrated" | "unknown";
@@ -40,28 +52,16 @@ export type OcrProvenanceUnavailableReason = "model_unavailable" | "worker_crash
 export type RuntimeInstallationStatus = "queued" | "running" | "completed" | "failed" | "cancelled" | "manual_action_required";
 
 /** Wire enum. */
-export type RuntimeModelOptionStatus = "not-installed" | "installed" | "active";
-
-/** Wire enum. */
 export type RuntimeRequirementStatus = "ready" | "missing" | "installable" | "manual_action_required" | "unavailable";
-
-/** Wire enum. */
-export type StreamingCaptureStatus = "created" | "waiting_input" | "extracting" | "awaiting_structuring" | "structuring" | "completed" | "failed" | "cancelled";
-
-/** Wire enum. */
-export type StreamingEventType = "accepted" | "input_checkpoint" | "heartbeat" | "segment" | "checkpoint" | "resync_required" | "completed" | "failed" | "cancelled";
-
-/** Wire enum. */
-export type StreamingIngestionMode = "file";
-
-/** Wire enum. */
-export type StreamingIngestionStatus = "open" | "finalizing" | "ready" | "cancelled" | "failed" | "expired";
 
 /** Wire enum. */
 export type StructuringBatchStatus = "ready" | "accepted" | "failed";
 
 /** Wire enum. */
 export type StructuringMode = "runtime" | "host";
+
+/** Wire enum. */
+export type StructuringModelOptionStatus = "not-installed" | "installed" | "active";
 
 /** Wire enum. */
 export type StructuringSessionStatus = "open" | "completed" | "failed" | "cancelled";
@@ -106,59 +106,52 @@ export interface CaptureEngine {
   readonly stageMs?: Record<string, number> | null;
 }
 
-export interface CaptureEventV2 {
+export interface CaptureEvent {
   readonly protocolVersion: "2";
   readonly eventId: string;
   readonly sequence: number;
   readonly captureId: string;
   readonly kind?: CaptureSourceKind;
-  readonly eventType: StreamingEventType;
+  readonly eventType: CaptureEventType;
   readonly stage: string;
   readonly progress?: number | null;
   readonly partialRevision?: number | null;
   readonly coveredUntilMs?: number | null;
   readonly segments?: readonly (RawCaptureSegment)[];
-  readonly error?: CaptureFailureV2 | null;
+  readonly error?: OperationFailure | null;
   readonly createdAt: string;
   readonly pagesDone?: number | null;
   readonly pagesTotal?: number | null;
   readonly durationMs?: number | null;
 }
 
-export interface CaptureFailureV2 {
-  readonly code: string;
-  readonly message: string;
-  readonly stage?: string | null;
-  readonly retryable?: boolean;
-}
-
-export interface CaptureOcrProjectionV3 {
+export interface CaptureOcrProjection {
   readonly apiVersion: "2.0";
   readonly schemaVersion: "3";
   readonly captureId: string;
   readonly status: OcrProjectionStatus;
   readonly source?: CaptureSource | null;
-  readonly pages: readonly (OcrPageProjectionV3)[];
-  readonly pageCount: number;
+  readonly pages: readonly (OcrPageProjection)[];
+  readonly processedPageCount: number;
   readonly runtimeVersion: string;
-  readonly contractSha256: string;
-  readonly provenance: OcrProvenanceV3;
+  readonly contractSetSha256: string;
+  readonly provenance: OcrProvenance;
   readonly warnings?: readonly (string)[];
-  readonly failure?: CaptureFailureV2 | null;
+  readonly failure?: OperationFailure | null;
   readonly createdAt: string;
 }
 
-export interface CaptureOperationV2 {
+export interface CaptureOperation {
   readonly protocolVersion: "2";
   readonly captureId: string;
   readonly ingestionId: string;
   readonly kind?: CaptureSourceKind;
-  readonly status: StreamingCaptureStatus;
+  readonly status: CaptureStatus;
   readonly progress?: number | null;
   readonly partialRevision: number;
   readonly lastEventSequence: number;
   readonly source?: CaptureSource | null;
-  readonly error?: CaptureFailureV2 | null;
+  readonly error?: OperationFailure | null;
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly completedAt?: string | null;
@@ -166,6 +159,12 @@ export interface CaptureOperationV2 {
   readonly pagesDone?: number | null;
   readonly durationMs?: number | null;
   readonly coveredUntilMs?: number | null;
+}
+
+export interface CaptureResult {
+  readonly operation: CaptureOperation;
+  readonly raw: RawCapture;
+  readonly result: CaptureDocument;
 }
 
 export interface CaptureSource {
@@ -181,33 +180,27 @@ export interface CaptureSpeaker {
   readonly displayName?: string | null;
 }
 
-export interface CaptureStreamingResult {
-  readonly operation: CaptureOperationV2;
-  readonly raw: RawCapture;
-  readonly result: CaptureDocument;
-}
-
-export interface ErrorBodyV2 {
+export interface ErrorBody {
   readonly code: string;
   readonly message: string;
   readonly details?: Record<string, unknown> | null;
 }
 
-export interface ErrorEnvelopeV2 {
-  readonly error: ErrorBodyV2;
+export interface ErrorEnvelope {
+  readonly error: ErrorBody;
 }
 
-export interface FinalizeIngestionV2 {
+export interface FinalizeIngestion {
   readonly protocolVersion: "2";
   readonly totalBytes: number;
   readonly sha256: string;
 }
 
-export interface IngestionV2 {
+export interface Ingestion {
   readonly protocolVersion: "2";
   readonly kind?: CaptureSourceKind;
   readonly ingestionId: string;
-  readonly status: StreamingIngestionStatus;
+  readonly status: IngestionStatus;
   readonly fileName: string;
   readonly mediaType: string;
   readonly totalBytes: number;
@@ -220,19 +213,19 @@ export interface IngestionV2 {
   readonly expiresAt: string;
 }
 
-export interface OcrBoxV3 {
-  readonly polygon: readonly (OcrPointV3)[];
+export interface OcrBox {
+  readonly polygon: readonly (OcrPoint)[];
   readonly text: string;
   readonly confidence: number | null;
 }
 
-export interface OcrComputePreflightV2 {
+export interface OcrComputePreflight {
   readonly apiVersion: "2.0";
   readonly schemaVersion: "1";
   readonly service: "capture-runtime";
   readonly runtimeVersion: string;
   readonly contractSetVersion: "2";
-  readonly contractSha256: string;
+  readonly contractSetSha256: string;
   readonly workerSha256?: string | null;
   readonly mode: OcrComputeMode;
   readonly adapterClass: OcrAdapterClass;
@@ -241,29 +234,31 @@ export interface OcrComputePreflightV2 {
   readonly noticeCode?: OcrComputeNoticeCode | null;
 }
 
-export interface OcrPageProjectionV3 {
+export interface OcrPageProjection {
   readonly page: number;
   readonly status: OcrPageStatus;
-  readonly raster: OcrRasterV3;
+  readonly raster: OcrRaster;
   readonly text?: string;
-  readonly boxes?: readonly (OcrBoxV3)[];
+  readonly boxes?: readonly (OcrBox)[];
   readonly confidence?: number | null;
-  readonly provenance: OcrProvenanceV3;
-  readonly failure?: CaptureFailureV2 | null;
+  readonly provenance: OcrProvenance;
+  readonly failure?: OperationFailure | null;
 }
 
-export interface OcrPageScopeV2 {
+export interface OcrPageScope {
   readonly sourcePageCount: number;
   readonly requestedPageNumbers: readonly (number)[];
   readonly processedPageNumbers: readonly (number)[];
 }
 
-export interface OcrPointV3 {
+export interface OcrPoint {
   readonly x: number;
   readonly y: number;
 }
 
-export interface OcrProvenanceResolvedV3 {
+export type OcrProvenance = OcrProvenanceResolved | OcrProvenanceUnavailable;
+
+export interface OcrProvenanceResolved {
   readonly status: "resolved";
   readonly engine: "text-recognition";
   readonly model: string;
@@ -273,26 +268,24 @@ export interface OcrProvenanceResolvedV3 {
   readonly profileSpecSha256: string;
 }
 
-export interface OcrProvenanceUnavailableV3 {
+export interface OcrProvenanceUnavailable {
   readonly status: "unavailable";
   readonly profileId: string;
   readonly profileSpecSha256: string;
   readonly reason: OcrProvenanceUnavailableReason;
 }
 
-export type OcrProvenanceV3 = OcrProvenanceResolvedV3 | OcrProvenanceUnavailableV3;
-
-export interface OcrRasterV3 {
+export interface OcrRaster {
   readonly width: number;
   readonly height: number;
   readonly scale: number;
   readonly coordinateSystem: "pixel";
 }
 
-export interface OpenIngestionV2 {
+export interface OpenIngestion {
   readonly protocolVersion: "2";
   readonly kind?: CaptureSourceKind;
-  readonly mode?: StreamingIngestionMode;
+  readonly mode?: IngestionMode;
   readonly clientRequestId: string;
   readonly fileName: string;
   readonly mediaType: string;
@@ -300,13 +293,20 @@ export interface OpenIngestionV2 {
   readonly sourceSha256?: string | null;
 }
 
-export interface OpenStructuringSessionV2 {
+export interface OpenStructuringSession {
   readonly protocolVersion: "2";
   readonly captureId: string;
   readonly targetLanguage?: string | null;
-  readonly providerCapability: StructuringProviderCapabilityV2;
+  readonly providerCapability: StructuringProviderCapability;
   readonly schemaDialect: string;
   readonly clientRequestId: string;
+}
+
+export interface OperationFailure {
+  readonly code: string;
+  readonly message: string;
+  readonly stage?: string | null;
+  readonly retryable?: boolean;
 }
 
 export interface PageLocator {
@@ -315,7 +315,7 @@ export interface PageLocator {
   readonly boundingBox?: readonly [number, number, number, number] | null;
 }
 
-export interface PartialCaptureV2 {
+export interface PartialCapture {
   readonly protocolVersion: "2";
   readonly captureId: string;
   readonly source: CaptureSource;
@@ -338,7 +338,7 @@ export interface RawCapture {
   readonly speakers?: readonly (CaptureSpeaker)[];
   readonly suggestedRequirementIds?: readonly ("text-recognition" | "speech-recognition" | "speaker-diarization" | "vertical-japanese-reader" | "structuring-runtime" | "structuring-model")[];
   readonly warnings?: readonly (string)[];
-  readonly ocrPageScope?: OcrPageScopeV2 | null;
+  readonly ocrPageScope?: OcrPageScope | null;
   readonly createdAt: string;
 }
 
@@ -351,25 +351,25 @@ export interface RawCaptureSegment {
   readonly speakerOverlap?: boolean;
 }
 
-export interface ReportStructuringFailureV2 {
+export interface ReportStructuringFailure {
   readonly protocolVersion: "2";
   readonly code: string;
   readonly message: string;
 }
 
-export interface RuntimeArtifactDescriptorV2 {
+export interface RuntimeArtifactDescriptor {
   readonly artifactUrl: string;
   readonly artifactFileName: string;
   readonly bytes: number;
   readonly sha256: string;
 }
 
-export interface RuntimeInstallationV2 {
+export interface RuntimeInstallation {
   readonly installationId: string;
   readonly requirementId: "text-recognition" | "speech-recognition" | "speaker-diarization" | "vertical-japanese-reader" | "structuring-runtime" | "structuring-model";
   readonly status: RuntimeInstallationStatus;
   readonly progress: number;
-  readonly error?: CaptureFailureV2 | null;
+  readonly error?: OperationFailure | null;
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly completedAt?: string | null;
@@ -377,39 +377,8 @@ export interface RuntimeInstallationV2 {
   readonly downloadedBytes?: number | null;
 }
 
-export interface RuntimeInstallationsV2 {
-  readonly items: readonly (RuntimeInstallationV2)[];
-}
-
-export interface RuntimeModelInstallationV2 {
-  readonly installationId: string;
-  readonly optionId: string;
-  readonly status: RuntimeInstallationStatus;
-  readonly progress: number;
-  readonly error?: CaptureFailureV2 | null;
-  readonly createdAt: string;
-  readonly updatedAt: string;
-  readonly completedAt?: string | null;
-}
-
-export interface RuntimeModelInstallationsV2 {
-  readonly items: readonly (RuntimeModelInstallationV2)[];
-}
-
-export interface RuntimeModelOptionV2 {
-  readonly optionId: string;
-  readonly displayName: string;
-  readonly modelReference: string;
-  readonly expectedDigest?: string | null;
-  readonly expectedBytes?: number | null;
-  readonly profileId: string;
-  readonly profileSpecSha256: string;
-  readonly status: RuntimeModelOptionStatus;
-}
-
-export interface RuntimeModelOptionsV2 {
-  readonly catalogSha256: string;
-  readonly items: readonly (RuntimeModelOptionV2)[];
+export interface RuntimeInstallations {
+  readonly items: readonly (RuntimeInstallation)[];
 }
 
 export interface RuntimeReady {
@@ -419,14 +388,13 @@ export interface RuntimeReady {
   readonly runtimeVersion: string;
   readonly captureDocumentSchemaVersion: "2";
   readonly captureDocumentSchemaSha256?: string | null;
-  readonly schemaSha256?: string | null;
   readonly contractSetVersion: "2";
   readonly capabilities?: Record<string, unknown>;
-  readonly ocrCompute?: OcrComputePreflightV2 | null;
+  readonly ocrCompute?: OcrComputePreflight | null;
   readonly message?: string | null;
 }
 
-export interface RuntimeRequirementV2 {
+export interface RuntimeRequirement {
   readonly requirementId: "text-recognition" | "speech-recognition" | "speaker-diarization" | "vertical-japanese-reader" | "structuring-runtime" | "structuring-model";
   readonly kind: "text-recognition" | "speech-recognition" | "speaker-diarization" | "vertical-japanese-reader" | "structuring-runtime" | "structuring-model";
   readonly displayName: string;
@@ -435,15 +403,15 @@ export interface RuntimeRequirementV2 {
   readonly installStrategy: string;
   readonly optional?: boolean;
   readonly detail?: string | null;
-  readonly artifact?: RuntimeArtifactDescriptorV2 | null;
+  readonly artifact?: RuntimeArtifactDescriptor | null;
   readonly downloadBytes?: number | null;
 }
 
-export interface RuntimeRequirementsV2 {
-  readonly items: readonly (RuntimeRequirementV2)[];
+export interface RuntimeRequirements {
+  readonly items: readonly (RuntimeRequirement)[];
 }
 
-export interface RuntimeStreamingCapabilitiesV2 {
+export interface RuntimeStreamingCapabilities {
   readonly protocolVersion: "2";
   readonly captureKinds?: readonly (CaptureSourceKind)[];
   readonly supportsProgressiveAudio?: boolean;
@@ -453,7 +421,7 @@ export interface RuntimeStreamingCapabilitiesV2 {
   readonly stallTimeoutMs: number;
 }
 
-export interface StartCaptureV2 {
+export interface StartCapture {
   readonly protocolVersion: "2";
   readonly clientRequestId: string;
   readonly ingestionId: string;
@@ -466,17 +434,17 @@ export interface StartCaptureV2 {
   readonly spokenLanguage?: "zh" | "yue" | "en" | "ja" | "ko" | "fr" | "de" | "it" | "pt" | "ru" | "es" | null;
 }
 
-export interface StartRuntimeInstallationV2 {
+export interface StartRuntimeInstallation {
   readonly requirementId: "text-recognition" | "speech-recognition" | "speaker-diarization" | "vertical-japanese-reader" | "structuring-runtime" | "structuring-model";
   readonly consent: true;
 }
 
-export interface StartRuntimeModelInstallationV2 {
+export interface StartStructuringModelInstallation {
   readonly optionId: string;
   readonly consent: true;
 }
 
-export interface StructuringBatchV2 {
+export interface StructuringBatch {
   readonly protocolVersion: "2";
   readonly sessionId: string;
   readonly captureId: string;
@@ -491,26 +459,57 @@ export interface StructuringBatchV2 {
   readonly status: StructuringBatchStatus;
 }
 
-export interface StructuringProviderCapabilityV2 {
+export interface StructuringModelInstallation {
+  readonly installationId: string;
+  readonly optionId: string;
+  readonly status: RuntimeInstallationStatus;
+  readonly progress: number;
+  readonly error?: OperationFailure | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly completedAt?: string | null;
+}
+
+export interface StructuringModelInstallations {
+  readonly items: readonly (StructuringModelInstallation)[];
+}
+
+export interface StructuringModelOption {
+  readonly optionId: string;
+  readonly displayName: string;
+  readonly modelReference: string;
+  readonly expectedDigest?: string | null;
+  readonly downloadBytes?: number | null;
+  readonly profileId: string;
+  readonly profileSpecSha256: string;
+  readonly status: StructuringModelOptionStatus;
+}
+
+export interface StructuringModelOptions {
+  readonly catalogSha256: string;
+  readonly items: readonly (StructuringModelOption)[];
+}
+
+export interface StructuringProviderCapability {
   readonly provider: CaptureEngine;
   readonly capability: string;
   readonly schemaDialect: string;
 }
 
-export interface StructuringSemanticBlockV2 {
+export interface StructuringSemanticBlock {
   readonly sourceSegmentId: string;
   readonly type: "heading" | "paragraph" | "list-item" | "table" | "quote" | "transcript";
   readonly targetText?: string | null;
 }
 
-export interface StructuringSessionV2 {
+export interface StructuringSession {
   readonly protocolVersion: "2";
   readonly sessionId: string;
   readonly captureId: string;
-  readonly rawSourceSha256: string;
+  readonly sourceSha256: string;
   readonly contractSetSha256: string;
   readonly targetLanguage?: string | null;
-  readonly providerCapability: StructuringProviderCapabilityV2;
+  readonly providerCapability: StructuringProviderCapability;
   readonly schemaDialect: string;
   readonly batchCount: number;
   readonly nextBatchIndex: number;
@@ -521,10 +520,10 @@ export interface StructuringSessionV2 {
   readonly completedAt?: string | null;
 }
 
-export interface SubmitStructuringBatchV2 {
+export interface SubmitStructuringBatch {
   readonly protocolVersion: "2";
   readonly batchDigest: string;
-  readonly blocks: readonly (StructuringSemanticBlockV2)[];
+  readonly blocks: readonly (StructuringSemanticBlock)[];
 }
 
 export interface TimeLocator {
@@ -533,7 +532,7 @@ export interface TimeLocator {
   readonly endMs: number;
 }
 
-export type CaptureContractName = "CaptureBlock" | "CaptureDocument" | "CaptureEngine" | "CaptureEventV2" | "CaptureFailureV2" | "CaptureOcrProjectionV3" | "CaptureOperationV2" | "CaptureSource" | "CaptureSpeaker" | "CaptureStreamingResult" | "ErrorBodyV2" | "ErrorEnvelopeV2" | "FinalizeIngestionV2" | "IngestionV2" | "OcrBoxV3" | "OcrComputePreflightV2" | "OcrPageProjectionV3" | "OcrPageScopeV2" | "OcrPointV3" | "OcrProvenanceResolvedV3" | "OcrProvenanceUnavailableV3" | "OcrProvenanceV3" | "OcrRasterV3" | "OpenIngestionV2" | "OpenStructuringSessionV2" | "PageLocator" | "PartialCaptureV2" | "RawCapture" | "RawCaptureSegment" | "ReportStructuringFailureV2" | "RuntimeArtifactDescriptorV2" | "RuntimeInstallationV2" | "RuntimeInstallationsV2" | "RuntimeModelInstallationV2" | "RuntimeModelInstallationsV2" | "RuntimeModelOptionV2" | "RuntimeModelOptionsV2" | "RuntimeReady" | "RuntimeRequirementV2" | "RuntimeRequirementsV2" | "RuntimeStreamingCapabilitiesV2" | "StartCaptureV2" | "StartRuntimeInstallationV2" | "StartRuntimeModelInstallationV2" | "StructuringBatchV2" | "StructuringProviderCapabilityV2" | "StructuringSemanticBlockV2" | "StructuringSessionV2" | "SubmitStructuringBatchV2" | "TimeLocator";
+export type CaptureContractName = "CaptureBlock" | "CaptureDocument" | "CaptureEngine" | "CaptureEvent" | "CaptureOcrProjection" | "CaptureOperation" | "CaptureResult" | "CaptureSource" | "CaptureSpeaker" | "ErrorBody" | "ErrorEnvelope" | "FinalizeIngestion" | "Ingestion" | "OcrBox" | "OcrComputePreflight" | "OcrPageProjection" | "OcrPageScope" | "OcrPoint" | "OcrProvenance" | "OcrProvenanceResolved" | "OcrProvenanceUnavailable" | "OcrRaster" | "OpenIngestion" | "OpenStructuringSession" | "OperationFailure" | "PageLocator" | "PartialCapture" | "RawCapture" | "RawCaptureSegment" | "ReportStructuringFailure" | "RuntimeArtifactDescriptor" | "RuntimeInstallation" | "RuntimeInstallations" | "RuntimeReady" | "RuntimeRequirement" | "RuntimeRequirements" | "RuntimeStreamingCapabilities" | "StartCapture" | "StartRuntimeInstallation" | "StartStructuringModelInstallation" | "StructuringBatch" | "StructuringModelInstallation" | "StructuringModelInstallations" | "StructuringModelOption" | "StructuringModelOptions" | "StructuringProviderCapability" | "StructuringSemanticBlock" | "StructuringSession" | "SubmitStructuringBatch" | "TimeLocator";
 
 export type CaptureContractInvariant = {
   readonly id: string;
@@ -584,7 +583,7 @@ export const CAPTURE_CONTRACT_INVARIANTS = [
   },
   {
     id: "terminal-jobs-have-completion-time",
-    models: "CaptureOperationV2",
+    models: "CaptureOperation",
     description: "terminal capture operations must carry completedAt.",
   },
   {
@@ -594,42 +593,42 @@ export const CAPTURE_CONTRACT_INVARIANTS = [
   },
   {
     id: "ocr-compute-preflight-mode",
-    models: "OcrComputePreflightV2",
+    models: "OcrComputePreflight",
     description: "gpu carries no fallback reason or notice; cpu-fallback carries a stable reason and user notice.",
   },
   {
     id: "ocr-compute-preflight-identity",
-    models: "OcrComputePreflightV2",
+    models: "OcrComputePreflight",
     description: "pre-OCR compute decisions carry API, schema, runtime, contract-set, and exact contract digest identity.",
   },
   {
     id: "pdf-page-selection-ascending",
-    models: "StartCaptureV2, OcrPageScopeV2",
+    models: "StartCapture, OcrPageScope",
     description: "pdfPageNumbers and requestedPageNumbers list one-based source pages in ascending order without duplicates; processedPageNumbers equals requestedPageNumbers and every page exists in the source.",
   },
   {
     id: "ocr-pages-keep-source-page-numbers",
-    models: "CaptureOcrProjectionV3, RawCapture",
+    models: "CaptureOcrProjection, RawCapture",
     description: "OCR pages and page locators carry source page numbers in ascending order: every page of the source, or exactly the selected pdfPageNumbers.",
   },
   {
     id: "timestamps-timezone-aware",
-    models: "RawCapture, CaptureDocument, CaptureOperationV2, RuntimeInstallationV2",
+    models: "RawCapture, CaptureDocument, CaptureOperation, RuntimeInstallation",
     description: "timestamp fields must include a timezone.",
   },
   {
     id: "installation-download-bytes-paired",
-    models: "RuntimeInstallationV2",
+    models: "RuntimeInstallation",
     description: "downloadBytes and downloadedBytes are both present or both absent, and downloadedBytes never exceeds downloadBytes.",
   },
   {
     id: "capture-pages-paired-for-documents",
-    models: "CaptureOperationV2, CaptureEventV2",
+    models: "CaptureOperation, CaptureEvent",
     description: "pagesDone and pagesTotal are both present or both absent, only for pdf and image captures, and pagesDone never exceeds pagesTotal.",
   },
   {
     id: "capture-media-time-for-recording",
-    models: "CaptureOperationV2, CaptureEventV2",
+    models: "CaptureOperation, CaptureEvent",
     description: "durationMs, and coveredUntilMs on a capture operation, are only for recordings.",
   },
 ] as const satisfies readonly CaptureContractInvariant[];
@@ -640,51 +639,51 @@ export const CAPTURE_CONTRACT_EXTRA_POLICIES = {
   "CaptureBlock": "forbid",
   "CaptureDocument": "forbid",
   "CaptureEngine": "forbid",
-  "CaptureEventV2": "forbid",
-  "CaptureFailureV2": "forbid",
-  "CaptureOcrProjectionV3": "forbid",
-  "CaptureOperationV2": "forbid",
+  "CaptureEvent": "forbid",
+  "CaptureOcrProjection": "forbid",
+  "CaptureOperation": "forbid",
+  "CaptureResult": "forbid",
   "CaptureSource": "forbid",
   "CaptureSpeaker": "forbid",
-  "CaptureStreamingResult": "forbid",
-  "ErrorBodyV2": "forbid",
-  "ErrorEnvelopeV2": "forbid",
-  "FinalizeIngestionV2": "forbid",
-  "IngestionV2": "forbid",
-  "OcrBoxV3": "forbid",
-  "OcrComputePreflightV2": "forbid",
-  "OcrPageProjectionV3": "forbid",
-  "OcrPageScopeV2": "forbid",
-  "OcrPointV3": "forbid",
-  "OcrProvenanceResolvedV3": "forbid",
-  "OcrProvenanceUnavailableV3": "forbid",
-  "OcrProvenanceV3": "allow",
-  "OcrRasterV3": "forbid",
-  "OpenIngestionV2": "forbid",
-  "OpenStructuringSessionV2": "forbid",
+  "ErrorBody": "forbid",
+  "ErrorEnvelope": "forbid",
+  "FinalizeIngestion": "forbid",
+  "Ingestion": "forbid",
+  "OcrBox": "forbid",
+  "OcrComputePreflight": "forbid",
+  "OcrPageProjection": "forbid",
+  "OcrPageScope": "forbid",
+  "OcrPoint": "forbid",
+  "OcrProvenance": "allow",
+  "OcrProvenanceResolved": "forbid",
+  "OcrProvenanceUnavailable": "forbid",
+  "OcrRaster": "forbid",
+  "OpenIngestion": "forbid",
+  "OpenStructuringSession": "forbid",
+  "OperationFailure": "forbid",
   "PageLocator": "forbid",
-  "PartialCaptureV2": "forbid",
+  "PartialCapture": "forbid",
   "RawCapture": "forbid",
   "RawCaptureSegment": "forbid",
-  "ReportStructuringFailureV2": "forbid",
-  "RuntimeArtifactDescriptorV2": "forbid",
-  "RuntimeInstallationV2": "forbid",
-  "RuntimeInstallationsV2": "forbid",
-  "RuntimeModelInstallationV2": "forbid",
-  "RuntimeModelInstallationsV2": "forbid",
-  "RuntimeModelOptionV2": "forbid",
-  "RuntimeModelOptionsV2": "forbid",
+  "ReportStructuringFailure": "forbid",
+  "RuntimeArtifactDescriptor": "forbid",
+  "RuntimeInstallation": "forbid",
+  "RuntimeInstallations": "forbid",
   "RuntimeReady": "forbid",
-  "RuntimeRequirementV2": "forbid",
-  "RuntimeRequirementsV2": "forbid",
-  "RuntimeStreamingCapabilitiesV2": "forbid",
-  "StartCaptureV2": "forbid",
-  "StartRuntimeInstallationV2": "forbid",
-  "StartRuntimeModelInstallationV2": "forbid",
-  "StructuringBatchV2": "forbid",
-  "StructuringProviderCapabilityV2": "forbid",
-  "StructuringSemanticBlockV2": "forbid",
-  "StructuringSessionV2": "forbid",
-  "SubmitStructuringBatchV2": "forbid",
+  "RuntimeRequirement": "forbid",
+  "RuntimeRequirements": "forbid",
+  "RuntimeStreamingCapabilities": "forbid",
+  "StartCapture": "forbid",
+  "StartRuntimeInstallation": "forbid",
+  "StartStructuringModelInstallation": "forbid",
+  "StructuringBatch": "forbid",
+  "StructuringModelInstallation": "forbid",
+  "StructuringModelInstallations": "forbid",
+  "StructuringModelOption": "forbid",
+  "StructuringModelOptions": "forbid",
+  "StructuringProviderCapability": "forbid",
+  "StructuringSemanticBlock": "forbid",
+  "StructuringSession": "forbid",
+  "SubmitStructuringBatch": "forbid",
   "TimeLocator": "forbid",
 } as const satisfies Readonly<Record<CaptureContractName, CaptureContractExtraPolicy>>;

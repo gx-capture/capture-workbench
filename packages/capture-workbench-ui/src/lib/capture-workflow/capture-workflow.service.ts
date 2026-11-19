@@ -25,7 +25,7 @@ import {
   type CaptureDocument,
   type CaptureEvent,
   type CaptureFailedEvent,
-  type CaptureFailure,
+  type OperationFailure,
   type CaptureOperation,
   type PartialCapture,
   type CapturePreprocessor,
@@ -882,7 +882,7 @@ export class CaptureWorkflowService {
     sourceKind: CaptureTaskView['sourceKind'],
   ): void {
     const id = crypto.randomUUID();
-    const error: CaptureFailure = {
+    const error: OperationFailure = {
       code: 'unsupported_source',
       message: `Unsupported capture source: ${file.name}`,
       stage: 'input',
@@ -903,7 +903,7 @@ export class CaptureWorkflowService {
   private failTask(
     taskId: string,
     fileName: string,
-    error: CaptureFailure,
+    error: OperationFailure,
     raw?: RawCapture,
     stage?: CaptureTaskView['stage'],
   ): void {
@@ -925,7 +925,7 @@ export class CaptureWorkflowService {
 
   private requireReconciliation(
     taskId: string,
-    error: CaptureFailure,
+    error: OperationFailure,
     raw?: RawCapture,
   ): void {
     this.updateTask(taskId, {

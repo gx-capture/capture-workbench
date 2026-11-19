@@ -12,10 +12,10 @@ runtime model store.
 Model selection is a first-class v2 runtime surface with explicit setup and
 installation semantics:
 
-- `GET /v2/runtime/model-options`
-- `POST /v2/runtime/model-installations`
-- `GET /v2/runtime/model-installations/{id}`
-- `POST /v2/runtime/model-installations/{id}/cancel`
+- `GET /v2/runtime/structuring-model-options`
+- `POST /v2/runtime/structuring-model-installations`
+- `GET /v2/runtime/structuring-model-installations/{id}`
+- `POST /v2/runtime/structuring-model-installations/{id}/cancel`
 
 The renderer submits only a stable `optionId` and `consent: true`. Model
 references, profile IDs, profile specifications, and verification metadata are

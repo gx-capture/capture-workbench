@@ -11,7 +11,7 @@ import { finalize } from 'rxjs';
 import type {
   CaptureRequirementId,
   RuntimeInstallation,
-  RuntimeModelOption,
+  StructuringModelOption,
   RuntimeRequirement,
 } from '@gx-capture/capture-workbench-ui';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
@@ -108,7 +108,7 @@ export class RecognitionFeaturesStore {
   });
 
   readonly modelOptionsResource = rxResource<
-    readonly RuntimeModelOption[],
+    readonly StructuringModelOption[],
     { readonly ready: true } | undefined
   >({
     defaultValue: [],
@@ -129,7 +129,7 @@ export class RecognitionFeaturesStore {
     });
   });
 
-  readonly modelOptions = computed<readonly RuntimeModelOption[]>(() =>
+  readonly modelOptions = computed<readonly StructuringModelOption[]>(() =>
     this.modelOptionsResource.hasValue()
       ? this.modelOptionsResource.value()
       : [],

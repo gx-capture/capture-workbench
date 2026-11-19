@@ -43,21 +43,21 @@ from capture_runtime.capture.infrastructure.streaming_repository import (
 from capture_runtime.clock import Clock
 from capture_runtime.contracts import (
     CaptureDocument,
-    CaptureFailureV2,
-    CaptureOcrProjectionV3,
-    CaptureOperationV2,
+    CaptureEventType,
+    CaptureOcrProjection,
+    CaptureOperation,
+    CaptureResult,
     CaptureSource,
     CaptureSourceKind,
-    CaptureStreamingResult,
-    IngestionV2,
+    CaptureStatus,
+    Ingestion,
     OcrProjectionStatus,
-    PartialCaptureV2,
+    OperationFailure,
+    PartialCapture,
     RawCapture,
-    StartCaptureV2,
-    StreamingCaptureStatus,
-    StreamingEventType,
     StructuringMode,
 )
+from capture_runtime.contracts import StartCapture as StartCaptureRequest
 from capture_runtime.ocr.infrastructure.ocr_execution_proof import (
     OcrExecutionEvidenceSink,
     acceptance_ocr_execution_evidence_sink_from_environment,
@@ -93,7 +93,7 @@ MAX_EVENT_SEGMENTS = 1_000
 # has moved. Forwarding the session's end let hosts read `completed` while the
 # capture was still extracting.
 _SESSION_END_EVENTS = frozenset(
-    {StreamingEventType.COMPLETED, StreamingEventType.FAILED, StreamingEventType.CANCELLED}
+    {CaptureEventType.COMPLETED, CaptureEventType.FAILED, CaptureEventType.CANCELLED}
 )
 
 
@@ -165,7 +165,7 @@ class StreamingCaptureService:
         normalized = self.repository.get_capture(capture_id).capture_id
         self._cancel_task(normalized)
 
-    def get_ingestion(self, ingestion_id: str) -> IngestionV2:
+    def get_ingestion(self, ingestion_id: str) -> Ingestion:
         return self.repository.get_ingestion(ingestion_id)
 
     async def delete_ingestion(self, ingestion_id: str) -> None:
@@ -176,9 +176,9 @@ class StreamingCaptureService:
             if operation.ingestion_id != normalized:
                 continue
             if operation.status not in {
-                StreamingCaptureStatus.COMPLETED,
-                StreamingCaptureStatus.FAILED,
-                StreamingCaptureStatus.CANCELLED,
+                CaptureStatus.COMPLETED,
+                CaptureStatus.FAILED,
+                CaptureStatus.CANCELLED,
             }:
                 # The repository maps a live, non-terminal capture to the
                 # existing ingestion_delete_rejected problem without mutation.
@@ -189,34 +189,34 @@ class StreamingCaptureService:
             await asyncio.wait(tasks)
         self.repository.delete_ingestion(normalized)
 
-    def get_capture(self, capture_id: str) -> CaptureOperationV2:
+    def get_capture(self, capture_id: str) -> CaptureOperation:
         return self.repository.get_capture(capture_id)
 
     def event_stream_should_close(self, capture_id: str) -> bool:
         operation = self.repository.get_capture(capture_id)
         if operation.status in {
-            StreamingCaptureStatus.COMPLETED,
-            StreamingCaptureStatus.FAILED,
-            StreamingCaptureStatus.CANCELLED,
+            CaptureStatus.COMPLETED,
+            CaptureStatus.FAILED,
+            CaptureStatus.CANCELLED,
         }:
             return True
         return (
-            operation.status is StreamingCaptureStatus.AWAITING_STRUCTURING
+            operation.status is CaptureStatus.AWAITING_STRUCTURING
             and self.repository.capture_request(capture_id).structuring_mode is StructuringMode.HOST
         )
 
-    def partial(self, capture_id: str) -> PartialCaptureV2:
+    def partial(self, capture_id: str) -> PartialCapture:
         return self.repository.read_partial(capture_id)
 
     def raw(self, capture_id: str) -> RawCapture:
         return self.repository.read_raw(capture_id)
 
-    def ocr(self, capture_id: str) -> CaptureOcrProjectionV3:
+    def ocr(self, capture_id: str) -> CaptureOcrProjection:
         try:
             return self.repository.read_ocr_projection(capture_id)
         except StreamingPartialNotFoundError:
             operation = self.repository.get_capture(capture_id)
-            if operation.status is not StreamingCaptureStatus.FAILED or operation.error is None:
+            if operation.status is not CaptureStatus.FAILED or operation.error is None:
                 raise
             projection = self._ocr_pipeline.failed(
                 capture_id=capture_id,
@@ -227,11 +227,11 @@ class StreamingCaptureService:
             self.repository.write_ocr_projection(capture_id, projection)
             return projection
 
-    def terminal_result(self, capture_id: str) -> CaptureStreamingResult:
+    def terminal_result(self, capture_id: str) -> CaptureResult:
         operation = self.repository.get_capture(capture_id)
-        if operation.status is not StreamingCaptureStatus.COMPLETED:
+        if operation.status is not CaptureStatus.COMPLETED:
             raise StreamingPartialNotFoundError(capture_id)
-        return CaptureStreamingResult(
+        return CaptureResult(
             operation=operation,
             raw=self.repository.read_raw(capture_id),
             result=self.repository.read_result(capture_id),
@@ -239,7 +239,7 @@ class StreamingCaptureService:
 
     async def structure(self, capture_id: str) -> CaptureDocument:
         operation = self.repository.get_capture(capture_id)
-        if operation.status is StreamingCaptureStatus.COMPLETED:
+        if operation.status is CaptureStatus.COMPLETED:
             return self.repository.read_result(capture_id)
         request = self.repository.capture_request(capture_id)
         if request.structuring_mode is not StructuringMode.RUNTIME:
@@ -254,7 +254,7 @@ class StreamingCaptureService:
             return await self._structure_marked(capture_id, raw, request.target_language)
         try:
             completed = await self._structure_marked(capture_id, raw, request.target_language)
-            if self.repository.get_capture(capture_id).status is StreamingCaptureStatus.CANCELLED:
+            if self.repository.get_capture(capture_id).status is CaptureStatus.CANCELLED:
                 raise StreamingTransitionError(_CAPTURE_CANCELLED)
             return completed
         except RuntimeUnavailableError as error:
@@ -331,7 +331,7 @@ class StreamingCaptureService:
         return False
 
     def _finish_cancelled_structuring(self, capture_id: str) -> None:
-        if self.repository.get_capture(capture_id).status is StreamingCaptureStatus.STRUCTURING:
+        if self.repository.get_capture(capture_id).status is CaptureStatus.STRUCTURING:
             self.repository.cancel_capture(capture_id)
 
     def report_host_failure(
@@ -341,19 +341,19 @@ class StreamingCaptureService:
         code: str,
         message: str,
         idempotency_key: str,
-    ) -> CaptureOperationV2:
+    ) -> CaptureOperation:
         operation = self.repository.get_capture(capture_id)
         request = self.repository.capture_request(capture_id)
         if (
             request.structuring_mode is not StructuringMode.HOST
-            or operation.status is not StreamingCaptureStatus.AWAITING_STRUCTURING
+            or operation.status is not CaptureStatus.AWAITING_STRUCTURING
         ):
             raise StreamingTransitionError("capture is not awaiting host structuring")
         return self.repository.fail_host_structure(
             capture_id,
             idempotency_key=idempotency_key,
             fingerprint=_failure_fingerprint(code, message),
-            failure=CaptureFailureV2(
+            failure=OperationFailure(
                 code=code,
                 message=message,
                 stage="structuring",
@@ -363,7 +363,7 @@ class StreamingCaptureService:
 
     def fail_invalid_host_structure(
         self, capture_id: str, *, idempotency_key: str
-    ) -> CaptureOperationV2:
+    ) -> CaptureOperation:
         return self.report_host_failure(
             capture_id,
             code="structuring_invalid_output",
@@ -470,7 +470,7 @@ class StreamingCaptureService:
         try:
             await self._engines_available.wait()
             operation = self.repository.get_capture(capture_id)
-            if operation.status is StreamingCaptureStatus.CANCELLED:
+            if operation.status is CaptureStatus.CANCELLED:
                 return
             if operation.source is None:
                 raise CaptureProcessingError("finalized streaming source is unavailable")
@@ -726,7 +726,7 @@ class StreamingCaptureService:
             if cancellation.is_set() or self._shutting_down:
                 return
             operation = self.repository.get_capture(capture_id)
-            if operation.status is not StreamingCaptureStatus.EXTRACTING:
+            if operation.status is not CaptureStatus.EXTRACTING:
                 return
             # Reserve the existing final 10% for structuring. A page checkpoint
             # says nothing about the validity of the eventual terminal envelope.
@@ -741,7 +741,7 @@ class StreamingCaptureService:
             try:
                 self.repository.append_event(
                     capture_id,
-                    event_type=StreamingEventType.CHECKPOINT,
+                    event_type=CaptureEventType.CHECKPOINT,
                     stage=stage,
                     progress=progress if moved else None,
                     pages=pages,
@@ -792,7 +792,7 @@ class StreamingCaptureService:
                 code="progressive_no_text_at_sample",
                 retryable=False,
             )
-        partial = PartialCaptureV2(
+        partial = PartialCapture(
             capture_id=capture_id,
             source=raw.source,
             revision=1,
@@ -816,7 +816,7 @@ class StreamingCaptureService:
         for start in range(0, len(segments), MAX_EVENT_SEGMENTS):
             self.repository.append_event(
                 capture_id,
-                event_type=StreamingEventType.SEGMENT,
+                event_type=CaptureEventType.SEGMENT,
                 stage="extracting",
                 partial_revision=partial.revision,
                 segments=segments[start : start + MAX_EVENT_SEGMENTS],
@@ -837,8 +837,8 @@ class StreamingCaptureService:
         """
         if kind is CaptureSourceKind.RECORDING:
             return None
-        if extraction.ocr_projection is not None and extraction.ocr_projection.page_count:
-            return extraction.ocr_projection.page_count
+        if extraction.ocr_projection is not None and extraction.ocr_projection.processed_page_count:
+            return extraction.ocr_projection.processed_page_count
         scope = extraction.raw.ocr_page_scope
         if scope is not None:
             return len(scope.requested_page_numbers)
@@ -859,7 +859,7 @@ class StreamingCaptureService:
 
     def _publish_ocr_failure_evidence(
         self,
-        operation: CaptureOperationV2,
+        operation: CaptureOperation,
         error: OcrExtractionFailure,
     ) -> None:
         """Best-effort private evidence; never changes the public failure path."""
@@ -889,7 +889,7 @@ class StreamingCaptureService:
         self,
         capture_id: str,
         events: tuple[ProgressiveSessionEvent, ...],
-        partial: PartialCaptureV2 | None,
+        partial: PartialCapture | None,
     ) -> None:
         if partial is not None:
             self.repository.write_partial(partial)
@@ -916,10 +916,10 @@ class StreamingCaptureService:
         *,
         stage: str = "extraction",
         retryable: bool = True,
-        ocr_projection: CaptureOcrProjectionV3 | None = None,
+        ocr_projection: CaptureOcrProjection | None = None,
     ) -> None:
         with suppress(StreamingRecordNotFoundError):
-            failure = CaptureFailureV2(
+            failure = OperationFailure(
                 code=code,
                 message=message,
                 stage=stage,
@@ -947,7 +947,7 @@ class _SpokenLanguageArgument(TypedDict, total=False):
     spoken_language: str
 
 
-def _spoken_language(request: StartCaptureV2) -> _SpokenLanguageArgument:
+def _spoken_language(request: StartCaptureRequest) -> _SpokenLanguageArgument:
     """The spoken-language argument, only when the host named one."""
     if request.spoken_language is None:
         return {}

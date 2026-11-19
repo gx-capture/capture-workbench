@@ -57,6 +57,11 @@ def project_stored_capture(payload: Any) -> Any:
     if not isinstance(payload, dict):
         return payload
     projected = payload.copy()
+    if "captureId" in projected and isinstance(projected.get("pages"), list):
+        if "pageCount" in projected and "processedPageCount" not in projected:
+            projected["processedPageCount"] = projected.pop("pageCount")
+        if "contractSha256" in projected and "contractSetSha256" not in projected:
+            projected["contractSetSha256"] = projected.pop("contractSha256")
     for key in ("extractionEngine", "provenance"):
         identity = payload.get(key)
         if isinstance(identity, dict) and identity.get("engine") == "windowsml-ocr":

@@ -110,7 +110,7 @@ describe('CaptureWorkbenchComponent', () => {
         service: 'capture-runtime',
         runtimeVersion: RUNTIME_VERSION,
         contractSetVersion: '2',
-        contractSha256: 'a'.repeat(64),
+        contractSetSha256: 'a'.repeat(64),
         mode: 'cpu-fallback',
         adapterClass: 'unknown',
         reasonCode: 'no_compatible_gpu',

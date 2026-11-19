@@ -23,7 +23,7 @@ import {
 import type {
   CaptureRequirementId,
   RuntimeInstallation,
-  RuntimeModelInstallation,
+  StructuringModelInstallation,
   RuntimeRequirement,
 } from '@gx-capture/capture-workbench-ui';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
@@ -40,7 +40,7 @@ export class DesktopInstallationService {
   readonly installationsByRequirement = signal<
     ReadonlyMap<CaptureRequirementId, RuntimeInstallation>
   >(new Map());
-  readonly activeModelInstallation = signal<RuntimeModelInstallation | null>(null);
+  readonly activeModelInstallation = signal<StructuringModelInstallation | null>(null);
   readonly selectedModelOptionId = signal<string | null>(null);
 
   private readonly runtime = inject(DesktopRuntimeClientService);
@@ -126,7 +126,7 @@ export class DesktopInstallationService {
   }
 
   /** Starts and polls one model installation until it reaches a terminal state. */
-  installSelectedModel$(optionId: string): Observable<RuntimeModelInstallation> {
+  installSelectedModel$(optionId: string): Observable<StructuringModelInstallation> {
     this.activeModelInstallation.set(null);
     this.installing.set(true);
     return this.runtime.startModelInstallation({

@@ -11,8 +11,9 @@ use crate::{
         DesktopLibraryDetail, DesktopLibrarySummary, LibraryCaptureUpdate, LibraryDocumentRequest,
         LibraryEdits, LibraryExportPayload, LibraryExportRequest, LibraryListRequest,
         LibrarySaveEditsRequest, RuntimeCancelUploadInput, RuntimeCreateCaptureInput,
-        RuntimeIdInput, RuntimeInstallationStartInput, RuntimeModelInstallationStartInput,
-        RuntimeRequirementInput, RuntimeStreamingCaptureInput, RuntimeStreamingEventsInput,
+        RuntimeIdInput, RuntimeInstallationStartInput, RuntimeRequirementInput,
+        RuntimeStreamingCaptureInput, RuntimeStreamingEventsInput,
+        StructuringModelInstallationStartInput,
     },
     host_api,
     library::LibraryStore,
@@ -330,29 +331,30 @@ pub(crate) async fn runtime_uninstall_requirement(
 }
 
 #[tauri::command]
-pub(crate) async fn runtime_model_options(
+pub(crate) async fn runtime_structuring_model_options(
     state: tauri::State<'_, DesktopState>,
 ) -> Result<serde_json::Value, String> {
     let state = state.inner().clone();
-    run_blocking(move || host_api::runtime_model_options(&state)).await
+    run_blocking(move || host_api::runtime_structuring_model_options(&state)).await
 }
 
 #[tauri::command]
-pub(crate) async fn runtime_start_model_installation(
+pub(crate) async fn runtime_start_structuring_model_installation(
     state: tauri::State<'_, DesktopState>,
-    input: RuntimeModelInstallationStartInput,
+    input: StructuringModelInstallationStartInput,
 ) -> Result<serde_json::Value, String> {
     let state = state.inner().clone();
-    run_blocking(move || host_api::runtime_start_model_installation(&state, input)).await
+    run_blocking(move || host_api::runtime_start_structuring_model_installation(&state, input))
+        .await
 }
 
 #[tauri::command]
-pub(crate) async fn runtime_get_model_installation(
+pub(crate) async fn runtime_get_structuring_model_installation(
     state: tauri::State<'_, DesktopState>,
     input: RuntimeIdInput,
 ) -> Result<serde_json::Value, String> {
     let state = state.inner().clone();
-    run_blocking(move || host_api::runtime_get_model_installation(&state, input)).await
+    run_blocking(move || host_api::runtime_get_structuring_model_installation(&state, input)).await
 }
 
 #[tauri::command]

@@ -2,7 +2,7 @@
 
 from typing import Final
 
-CAPTURE_OLLAMA_PROFILE_ID: Final = "capture-workbench-qwen3.5-4b-structure-v1"
+DEFAULT_OLLAMA_PROFILE_ID: Final = "qwen3.5-4b-structure-v1"
 CAPTURE_OLLAMA_BASE_MODEL: Final = "qwen3.5:4b"
 
 TEXT_RECOGNITION_REQUIREMENT_ID: Final = "text-recognition"

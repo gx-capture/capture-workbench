@@ -4,12 +4,12 @@ import type {
   CaptureBlock,
   CaptureEvent,
   CaptureDocument,
-  CaptureFailure,
   CaptureOperation,
-  StreamingCaptureStatus,
-  CaptureReview,
   CaptureRequirementId,
+  CaptureResult,
+  CaptureStatus,
   CaptureSourceKind,
+  OperationFailure,
   PageLocator,
   PartialCapture,
   RawCapture,
@@ -35,18 +35,21 @@ export {
 export type {
   CaptureBlock,
   CaptureEvent,
+  CaptureEventType,
   CaptureContractExtraPolicy,
   CaptureContractInvariant,
   CaptureContractName,
   CaptureDocument,
   CaptureEngine,
-  CaptureFailure,
   CaptureOperation,
+  CaptureResult,
+  CaptureStatus,
   FinalizeIngestion,
   Ingestion,
+  IngestionMode,
+  IngestionStatus,
   OpenIngestion,
-  CaptureReviewEdit,
-  CaptureReview,
+  OperationFailure,
   CaptureLocator,
   CaptureRequirementId,
   CaptureSourceKind,
@@ -66,16 +69,26 @@ export type {
   RuntimeInstallationStatus,
   RuntimeInstallation,
   RuntimeInstallations,
-  RuntimeModelInstallation,
-  RuntimeModelOption,
-  RuntimeModelOptionStatus,
-  RuntimeModelOptions,
+  StructuringModelInstallation,
+  StructuringModelOption,
+  StructuringModelOptionStatus,
+  StructuringModelOptions,
   RuntimeRequirementStatus,
   RuntimeRequirement,
   RuntimeRequirements,
   StructuringMode,
   TimeLocator,
 } from '@gx-capture/capture-runtime-client';
+
+export interface CaptureReviewEdit {
+  readonly segmentId: string;
+  readonly reviewedText: string;
+}
+
+export interface CaptureReview {
+  readonly reviewVersion: number;
+  readonly edits: readonly CaptureReviewEdit[];
+}
 
 /** Angular's API naming remains stable while the wire owner is generated. */
 export type CaptureStructuringMode = StructuringMode;
@@ -110,7 +123,7 @@ export type CaptureTaskStatus =
   | 'canceled';
 
 export type CaptureTaskStage =
-  | StreamingCaptureStatus
+  | CaptureStatus
   | 'queued'
   | 'uploading'
   | 'preprocessing'
@@ -146,12 +159,6 @@ export interface StartStreamingCaptureRequest {
   /** Audio only: the language spoken in the recording. */
   readonly spokenLanguage?: SpokenLanguage;
   readonly signal?: AbortSignal;
-}
-
-export interface CaptureStreamingResult {
-  readonly operation: CaptureOperation;
-  readonly raw: RawCapture;
-  readonly result: CaptureDocument;
 }
 
 export interface CommitStreamingStructuredResultRequest {
@@ -238,7 +245,7 @@ export interface CaptureClient {
   getStreamingResult(
     id: string,
     signal?: AbortSignal,
-  ): Observable<CaptureStreamingResult>;
+  ): Observable<CaptureResult>;
   commitStreamingStructuredResult(
     id: string,
     request: CommitStreamingStructuredResultRequest,
@@ -385,7 +392,7 @@ export interface CaptureTaskView {
   readonly result?: CaptureDocument;
   readonly raw?: RawCapture;
   readonly review?: CaptureReview;
-  readonly error?: CaptureFailure;
+  readonly error?: OperationFailure;
 }
 
 export interface CaptureCompletedEvent {
@@ -398,7 +405,7 @@ export interface CaptureFailedEvent {
   readonly taskId: string;
   readonly captureId?: string;
   readonly fileName: string;
-  readonly error: CaptureFailure;
+  readonly error: OperationFailure;
   readonly raw?: RawCapture;
 }
 

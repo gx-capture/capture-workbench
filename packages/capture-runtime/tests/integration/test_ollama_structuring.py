@@ -326,9 +326,7 @@ def test_qwen_0_8b_structures_large_identity_capture_as_exact_single_segment_bat
 ) -> None:
     config = _config(tmp_path)
     lifecycle = FakeLifecycle(config)
-    lifecycle.active_model_selection = lambda: {
-        "profileId": "capture-workbench-qwen3.5-0.8b-structure-v1"
-    }
+    lifecycle.active_model_selection = lambda: {"profileId": "qwen3.5-0.8b-structure-v1"}
     generate_calls: list[dict[str, object]] = []
 
     async def handler(request: httpx.Request) -> httpx.Response:
@@ -338,7 +336,7 @@ def test_qwen_0_8b_structures_large_identity_capture_as_exact_single_segment_bat
                 json={
                     "models": [
                         {
-                            "name": "capture-workbench-qwen3.5-0.8b-structure-v1",
+                            "name": "qwen3.5-0.8b-structure-v1",
                             "digest": "c" * 64,
                         }
                     ]

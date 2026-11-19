@@ -43,14 +43,14 @@ from capture_runtime.constants import (
 )
 from capture_runtime.contracts import (
     CaptureEngine,
-    CaptureOcrProjectionV3,
+    CaptureOcrProjection,
     CaptureRequirementId,
     CaptureSource,
     CaptureSourceKind,
     CaptureSpeaker,
-    OcrPageScopeV2,
+    OcrPageScope,
     OcrPageStatus,
-    OcrProvenanceV3,
+    OcrProvenance,
     PageLocator,
     RawCapture,
     RawCaptureSegment,
@@ -186,7 +186,7 @@ class CaptureExtractionOutcome:
     """Typed extraction result carrying raw data and optional OCR projection."""
 
     raw: RawCapture
-    ocr_projection: CaptureOcrProjectionV3 | None = None
+    ocr_projection: CaptureOcrProjection | None = None
     # Private worker receipt retained until the owning capture reaches success.
     _execution_proof: OcrExecutionDeviceProofV1 | None = None
 
@@ -230,7 +230,7 @@ class _SyncOcrEngineAdapter:
         extract_page = ExtractPageText(adapter)
         pages: list[OcrPageInput] = []
         warnings: list[str] = []
-        provenance: OcrProvenanceV3 | None = None
+        provenance: OcrProvenance | None = None
         for expected in request.manifest:
             self._check_cancelled(request)
             image_png: bytes | None = None
@@ -281,7 +281,7 @@ class _SyncOcrEngineAdapter:
             warnings=tuple(_unique_warnings(warnings)),
         )
 
-    def _provenance(self, result: object) -> OcrProvenanceV3:
+    def _provenance(self, result: object) -> OcrProvenance:
         return self._extractor.ocr_pipeline.observation_provenance(result)
 
     @staticmethod
@@ -296,7 +296,7 @@ class _WorkerResultOcrEngine:
     def __init__(
         self,
         result: _OcrRunResult,
-        engine: OcrProvenanceV3,
+        engine: OcrProvenance,
     ) -> None:
         self._result = result
         self._engine = engine
@@ -376,7 +376,7 @@ class _OcrWorkerFailureEngineAdapter:
         *,
         kind: Literal["timeout", "protocol", "worker", "unavailable"],
         completed_pages: tuple[OcrPageInput, ...],
-        provenance: OcrProvenanceV3 | None,
+        provenance: OcrProvenance | None,
     ) -> None:
         self._kind = kind
         self._completed_pages = completed_pages
@@ -429,14 +429,14 @@ class StandaloneRuntimeCaptureExtractor:
         ocr_adapter: OcrAdapter | None = None,
         speech_recognition_adapter: SpeechRecognitionAdapter | None = None,
         engine_manager: EngineInstallationManager | None = None,
-        contract_sha256: str | None = None,
+        contract_set_sha256: str | None = None,
     ) -> None:
         self._clock = clock
         self.config = config
         self.ocr_adapter = ocr_adapter
         self.speech_recognition_adapter = speech_recognition_adapter
         self.engine_manager = engine_manager
-        self._contract_sha256 = contract_sha256
+        self._contract_set_sha256 = contract_set_sha256
         self.ocr_pipeline = OcrPipeline()
 
     async def release_warm_workers(self) -> None:
@@ -505,7 +505,7 @@ class StandaloneRuntimeCaptureExtractor:
         self._checkpoint(cancel_event)
         ocr_projection = None
         expected_ocr_pages: tuple[OcrPageManifest, ...] | None = None
-        ocr_page_scope: OcrPageScopeV2 | None = None
+        ocr_page_scope: OcrPageScope | None = None
         execution_proof: OcrExecutionDeviceProofV1 | None = None
         diarization_engine: CaptureEngine | None = None
         speakers: list[CaptureSpeaker] = []
@@ -559,7 +559,7 @@ class StandaloneRuntimeCaptureExtractor:
                     ) from error
                 self._validate_worker_segments_against_projection(result, ocr_projection)
                 segments = _projection_segments(ocr_projection)
-                ocr_page_scope = OcrPageScopeV2(
+                ocr_page_scope = OcrPageScope(
                     source_page_count=source_page_count,
                     requested_page_numbers=[page.page for page in expected_ocr_pages],
                     processed_page_numbers=[page.page for page in result.pages],
@@ -724,11 +724,11 @@ class StandaloneRuntimeCaptureExtractor:
         self,
         source: CaptureSource,
         result: _OcrRunResult,
-        engine: OcrProvenanceV3,
+        engine: OcrProvenance,
         *,
         cancel_event: asyncio.Event,
         expected_pages: tuple[OcrPageManifest, ...],
-    ) -> CaptureOcrProjectionV3:
+    ) -> CaptureOcrProjection:
         request = OcrRequest(
             capture_id=source.sha256,
             source=source,
@@ -778,7 +778,7 @@ class StandaloneRuntimeCaptureExtractor:
                     "OCR deviceId overrides are not accepted; use the retained compute plan."
                 )
             selection = await selection_resolver(
-                contract_sha256=self._contract_sha256 or "",
+                contract_set_sha256=self._contract_set_sha256 or "",
             )
             if selection is None:
                 raise ExtractionRuntimeUnavailableError(
@@ -1172,13 +1172,13 @@ class StandaloneRuntimeCaptureExtractor:
             stage_ms=result.stage_ms if expected_engine == "speech-recognition" else None,
         )
 
-    def _capture_ocr_provenance(self, result: WorkerRunResult) -> OcrProvenanceV3:
+    def _capture_ocr_provenance(self, result: WorkerRunResult) -> OcrProvenance:
         provenance = result.ocr_provenance
         if provenance is None:
             # In-memory test adapters predate the profile-bearing worker wire;
             # production WorkerClient always supplies this field.
             fallback = self.ocr_pipeline.default_provenance
-            provenance = OcrProvenanceV3(
+            provenance = OcrProvenance(
                 status="resolved",
                 engine="text-recognition",
                 model=result.model,
@@ -1198,7 +1198,7 @@ class StandaloneRuntimeCaptureExtractor:
     @staticmethod
     def _validate_worker_segments_against_projection(
         result: _OcrRunResult,
-        projection: CaptureOcrProjectionV3,
+        projection: CaptureOcrProjection,
     ) -> None:
         """Reject a legacy segment envelope that diverges from OCR pages.
 
@@ -1245,7 +1245,7 @@ class StandaloneRuntimeCaptureExtractor:
     ) -> CaptureExtractionOutcome:
         sniffed = self.sniff(content)
         self._checkpoint(cancel_event)
-        ocr_page_scope: OcrPageScopeV2 | None = None
+        ocr_page_scope: OcrPageScope | None = None
         if sniffed.kind is CaptureSourceKind.PDF:
             segments, ocr_projection = self._extract_pdf(
                 content,
@@ -1261,7 +1261,7 @@ class StandaloneRuntimeCaptureExtractor:
                 device=ocr_projection.provenance.device,
             )
             warnings = list(ocr_projection.warnings)
-            ocr_page_scope = OcrPageScopeV2(
+            ocr_page_scope = OcrPageScope(
                 source_page_count=self._pdf_page_count(content),
                 requested_page_numbers=[page.page for page in ocr_projection.pages],
                 processed_page_numbers=[page.page for page in ocr_projection.pages],
@@ -1306,7 +1306,7 @@ class StandaloneRuntimeCaptureExtractor:
         cancel_event: asyncio.Event,
         *,
         page_numbers: tuple[int, ...] | None = None,
-    ) -> tuple[list[RawCaptureSegment], CaptureOcrProjectionV3]:
+    ) -> tuple[list[RawCaptureSegment], CaptureOcrProjection]:
         manifest = self._preflight_pdf_manifest(
             content,
             cancel_event,
@@ -1347,7 +1347,7 @@ class StandaloneRuntimeCaptureExtractor:
         content: bytes,
         source: CaptureSource,
         cancel_event: asyncio.Event,
-    ) -> tuple[list[RawCaptureSegment], CaptureOcrProjectionV3]:
+    ) -> tuple[list[RawCaptureSegment], CaptureOcrProjection]:
         raster_pages: list[bytes] = []
         manifest = self._preflight_image_manifest(
             content,
@@ -1509,7 +1509,7 @@ def _unique_warnings(warnings: list[str]) -> list[str]:
     return list(dict.fromkeys(warning[:500] for warning in warnings if warning.strip()))
 
 
-def _projection_segments(projection: CaptureOcrProjectionV3) -> list[RawCaptureSegment]:
+def _projection_segments(projection: CaptureOcrProjection) -> list[RawCaptureSegment]:
     return [
         RawCaptureSegment(
             segment_id=f"page-{page.page}",

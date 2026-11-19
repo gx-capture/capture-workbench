@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from capture_runtime.contracts import (
     CaptureEngine,
-    StreamingEventType,
+    CaptureEventType,
 )
 from capture_runtime.speech.domain.window.models import (
     WindowTranscript,
@@ -70,11 +70,11 @@ def test_progressive_session_merges_overlap_and_emits_checkpoint() -> None:
         events.extend(session.consume_window(window))
 
     assert [event.event_type for event in events] == [
-        StreamingEventType.SEGMENT,
-        StreamingEventType.SEGMENT,
-        StreamingEventType.CHECKPOINT,
-        StreamingEventType.SEGMENT,
-        StreamingEventType.CHECKPOINT,
+        CaptureEventType.SEGMENT,
+        CaptureEventType.SEGMENT,
+        CaptureEventType.CHECKPOINT,
+        CaptureEventType.SEGMENT,
+        CaptureEventType.CHECKPOINT,
     ]
     assert [segment.text for event in events for segment in event.segments] == [
         "same words",
@@ -150,7 +150,7 @@ def test_progressive_session_keeps_the_last_window_text_at_the_end() -> None:
     session.consume_window(windows[0])
     events = session.finish()
 
-    assert events[-1].event_type is StreamingEventType.COMPLETED
+    assert events[-1].event_type is CaptureEventType.COMPLETED
     assert [segment.text for event in events for segment in event.segments] == ["goodbye"]
 
 
@@ -177,9 +177,9 @@ def test_progressive_session_keeps_listening_past_a_silent_opening() -> None:
         *session.finish(),
     ]
 
-    assert events[0].event_type is StreamingEventType.CHECKPOINT
+    assert events[0].event_type is CaptureEventType.CHECKPOINT
     assert events[0].covered_until_ms == 300_000
-    assert events[-1].event_type is StreamingEventType.COMPLETED
+    assert events[-1].event_type is CaptureEventType.COMPLETED
     segments = [segment for event in events for segment in event.segments]
     assert [segment.text for segment in segments] == ["Please state your name."]
     assert segments[0].locator.start_ms == 310_000
@@ -192,10 +192,10 @@ def test_progressive_session_fails_audio_without_speech_once_it_is_all_heard() -
         transcriber=transcriber,
     )
 
-    assert session.consume_window(windows[0])[-1].event_type is StreamingEventType.CHECKPOINT
+    assert session.consume_window(windows[0])[-1].event_type is CaptureEventType.CHECKPOINT
     events = session.finish()
 
-    assert events[-1].event_type is StreamingEventType.FAILED
+    assert events[-1].event_type is CaptureEventType.FAILED
     assert events[-1].error is not None
     assert events[-1].error.code == "progressive_no_text_at_sample"
     assert events[-1].error.retryable is False

@@ -52,7 +52,7 @@ reimplement OCR policy.
 `model-sources/text-recognition/model/pipeline.json` is the packaged canonical profile
 spec and is copied byte-for-byte to the worker model root and runtime asset.
 Its canonical UTF-8 JSON bytes derive both `profileSpecSha256` and the stable
-profile ID (`capture-workbench-ocr-<hash-prefix>`).  The spec includes the
+profile ID (`ocr-<hash-prefix>`).  The spec includes the
 PP-OCRv6 detector/recognizer names and model revisions, the final
 Traditional-Chinese/multilingual dictionary path/revision/SHA, the three
 PaddleX orientation switches, DirectML provider policy, and preprocessing
@@ -136,7 +136,7 @@ failure; the runtime never fabricates a page count.
 - each page has `page`, `status` (`recognized`, `empty`, `failed`), raster
   metadata (`width`, `height`, `scale`, `coordinateSystem: "pixel"`), exact
   OCR `text`, normalized polygon `boxes`, aggregate confidence, per-page provenance,
-  and an optional `CaptureFailureV2`.
+  and an optional `OperationFailure`.
 
 Boxes use a typed object `{polygon, text, confidence}`. `polygon` preserves the
 Paddle predictor-input polygon as an ordered list of at least four `{x, y}`

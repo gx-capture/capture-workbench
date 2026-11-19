@@ -222,7 +222,7 @@
         <dt class="font-medium text-muted-foreground">{{ m().diagnosticsContractSetVersion }}</dt>
         <dd class="tabular-nums" data-testid="diagnostics-contract-set-version">{{ contractSetVersion }}</dd>
       }
-      @if (runtime.contractSha256; as contractSha256) {
+      @if (runtime.contractSetSha256; as contractSetSha256) {
         <dt class="font-medium text-muted-foreground">{{ m().diagnosticsContractDigest }}</dt>
         <dd class="min-w-0">
           <div class="flex items-start justify-between gap-3">
@@ -230,7 +230,7 @@
               class="select-all break-all font-mono text-xs tabular-nums"
               data-testid="diagnostics-contract-digest"
             >
-              {{ contractSha256 }}
+              {{ contractSetSha256 }}
             </span>
             <button
               hlmBtn
@@ -239,7 +239,7 @@
               type="button"
               data-testid="diagnostics-copy-contract-digest"
               [attr.aria-label]="m().diagnosticsCopyDigestNamed(m().diagnosticsContractDigest)"
-              (click)="store.copyDigest(contractSha256)"
+              (click)="store.copyDigest(contractSetSha256)"
             >
               {{ m().diagnosticsCopy }}
             </button>
@@ -314,7 +314,7 @@
               <strong class="font-medium">{{ option.displayName }}</strong>
               <small class="text-xs text-muted-foreground">{{ option.modelReference }}</small>
             </span>
-            @if (modelSizeLabel(option.expectedBytes); as size) {
+            @if (modelSizeLabel(option.downloadBytes); as size) {
               <span
                 class="text-xs text-muted-foreground tabular-nums"
                 data-testid="diagnostics-model-size"

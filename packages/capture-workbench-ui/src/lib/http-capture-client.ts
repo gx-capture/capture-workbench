@@ -18,7 +18,7 @@ import {
   type CaptureEvent,
   type CaptureEventStreamOptions,
   type CaptureOperation,
-  type CaptureStreamingResult,
+  type CaptureResult,
   type CommitStreamingStructuredResultRequest,
   type PartialCapture,
   type RawCapture,
@@ -190,7 +190,7 @@ export class HttpCaptureClient implements CaptureClient {
   getStreamingResult(
     id: string,
     signal?: AbortSignal,
-  ): Observable<CaptureStreamingResult> {
+  ): Observable<CaptureResult> {
     return this.fromRuntime(() => this.runtime.getStreamingResult(id, signal));
   }
 

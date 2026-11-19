@@ -10,8 +10,10 @@ from capture_runtime.contracts import (
     OcrAdapterClass,
     OcrComputeMode,
     OcrComputeNoticeCode,
-    OcrComputePreflightV2,
     OcrComputeReasonCode,
+)
+from capture_runtime.contracts import (
+    OcrComputePreflight as OcrComputePreflightContract,
 )
 from capture_runtime.ocr.infrastructure.ocr_preflight import (
     _DXGI_FACTORY1_VTABLE_IS_CURRENT,
@@ -37,9 +39,9 @@ def _decision(
     adapters: tuple[OcrGpuAdapter, ...],
     *,
     dml_provider_available: bool,
-) -> OcrComputePreflightV2:
+) -> OcrComputePreflightContract:
     return OcrComputePreflight(
-        contract_sha256=CONTRACT_SHA256,
+        contract_set_sha256=CONTRACT_SHA256,
         capability_probe=StaticCapabilityProbe(
             OcrGpuCapabilitySnapshot(
                 adapters=adapters,
@@ -61,7 +63,7 @@ def test_hardware_gpu_and_dml_select_gpu_mode(adapter_class: OcrAdapterClass) ->
     assert decision.reason_code is None
     assert decision.user_notice_required is False
     assert decision.notice_code is None
-    assert decision.contract_sha256 == CONTRACT_SHA256
+    assert decision.contract_set_sha256 == CONTRACT_SHA256
 
 
 def test_software_only_adapters_are_not_compatible_gpu() -> None:
@@ -143,8 +145,8 @@ def test_native_map_lease_reads_dxgi_factory_is_current_vtable_method(native_val
 
 def test_preflight_contract_rejects_inconsistent_gpu_notice() -> None:
     with pytest.raises(ValidationError):
-        OcrComputePreflightV2(
-            contract_sha256=CONTRACT_SHA256,
+        OcrComputePreflightContract(
+            contract_set_sha256=CONTRACT_SHA256,
             mode=OcrComputeMode.GPU,
             adapter_class=OcrAdapterClass.DEDICATED,
             reason_code=OcrComputeReasonCode.GPU_PROVIDER_UNAVAILABLE,
@@ -154,8 +156,8 @@ def test_preflight_contract_rejects_inconsistent_gpu_notice() -> None:
 
 
 def test_async_preflight_normalizes_worker_decision_and_rejects_contract_drift() -> None:
-    decision = OcrComputePreflightV2(
-        contract_sha256=CONTRACT_SHA256,
+    decision = OcrComputePreflightContract(
+        contract_set_sha256=CONTRACT_SHA256,
         mode=OcrComputeMode.GPU,
         adapter_class=OcrAdapterClass.DEDICATED,
         user_notice_required=False,
@@ -168,17 +170,17 @@ def test_async_preflight_normalizes_worker_decision_and_rejects_contract_drift()
         return decision.model_dump(mode="json", by_alias=True)
 
     preflight = OcrComputePreflight(
-        contract_sha256=CONTRACT_SHA256,
+        contract_set_sha256=CONTRACT_SHA256,
         worker_probe=worker_probe,
     )
     assert asyncio.run(preflight.decide_async()) == decision
     assert calls == 1
 
     async def wrong_worker_probe() -> object:
-        return decision.model_copy(update={"contract_sha256": "b" * 64})
+        return decision.model_copy(update={"contract_set_sha256": "b" * 64})
 
     unavailable = OcrComputePreflight(
-        contract_sha256=CONTRACT_SHA256,
+        contract_set_sha256=CONTRACT_SHA256,
         worker_probe=wrong_worker_probe,
     )
     assert asyncio.run(unavailable.decide_async()) is None

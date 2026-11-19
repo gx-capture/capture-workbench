@@ -20,12 +20,12 @@ from capture_runtime.config import ExtractionRuntimeConfig, worker_child_environ
 from capture_runtime.constants import SPEECH_RECOGNITION_REQUIREMENT_ID
 from capture_runtime.contracts import (
     CaptureEngine,
-    CaptureFailureV2,
+    CaptureEventType,
     CaptureSource,
-    PartialCaptureV2,
+    OperationFailure,
+    PartialCapture,
     RawCapture,
     RawCaptureSegment,
-    StreamingEventType,
     TimeLocator,
     project_source_text,
 )
@@ -66,9 +66,7 @@ from capture_runtime.worker_stage_policy import (
     sanitize_worker_stage_sequence,
 )
 
-EventSink = Callable[
-    [tuple[ProgressiveSessionEvent, ...], PartialCaptureV2 | None], Awaitable[None]
-]
+EventSink = Callable[[tuple[ProgressiveSessionEvent, ...], PartialCapture | None], Awaitable[None]]
 
 
 @dataclass(slots=True)
@@ -82,10 +80,10 @@ class _ProgressiveState:
     segments: list[RawCaptureSegment] = field(default_factory=list)
 
     @property
-    def partial(self) -> PartialCaptureV2 | None:
+    def partial(self) -> PartialCapture | None:
         if self.extraction_engine is None:
             return None
-        return PartialCaptureV2(
+        return PartialCapture(
             capture_id=self.capture_id,
             source=self.source,
             revision=self.revision,
@@ -282,8 +280,7 @@ class ProgressiveCaptureProcessor:
             try:
                 partial = (
                     state.partial
-                    if event.event_type
-                    in {StreamingEventType.SEGMENT, StreamingEventType.CHECKPOINT}
+                    if event.event_type in {CaptureEventType.SEGMENT, CaptureEventType.CHECKPOINT}
                     else None
                 )
             except Exception as error:
@@ -382,7 +379,7 @@ class ProgressiveCaptureProcessor:
                     retryable=failure.retryable,
                     stage=failure.stage or "extraction",
                 )
-            if not any(event.event_type is StreamingEventType.COMPLETED for event in events):
+            if not any(event.event_type is CaptureEventType.COMPLETED for event in events):
                 raise CaptureProcessingError("Progressive audio worker ended without completion.")
             raw = state.raw()
             reusable = not cancellation.is_set()
@@ -571,7 +568,7 @@ class _SessionWorker:
                             code="progressive_stall",
                             stage="watchdog",
                         )
-                    heartbeat = ProgressiveSessionEvent(StreamingEventType.HEARTBEAT, self._stage)
+                    heartbeat = ProgressiveSessionEvent(CaptureEventType.HEARTBEAT, self._stage)
                     events.append(heartbeat)
                     await on_event(heartbeat)
                     continue
@@ -599,7 +596,7 @@ class _SessionWorker:
                         return events
                     if payload_object.get("stage") not in (None, "", "input_ack"):
                         self._stage = str(payload_object["stage"])
-                    heartbeat = ProgressiveSessionEvent(StreamingEventType.HEARTBEAT, self._stage)
+                    heartbeat = ProgressiveSessionEvent(CaptureEventType.HEARTBEAT, self._stage)
                     events.append(heartbeat)
                     await on_event(heartbeat)
                     continue
@@ -659,7 +656,7 @@ class _SessionWorker:
                     await on_event(event)
                     return events
                 if frame_type is SessionFrameType.COMPLETED:
-                    event = ProgressiveSessionEvent(StreamingEventType.COMPLETED, "completed")
+                    event = ProgressiveSessionEvent(CaptureEventType.COMPLETED, "completed")
                     events.append(event)
                     await on_event(event)
                     return events
@@ -741,7 +738,7 @@ async def _drain_stderr(stream: asyncio.StreamReader) -> str:
 def _segment_event(payload: bytes) -> ProgressiveSessionEvent:
     value = _json_object(payload)
     return ProgressiveSessionEvent(
-        StreamingEventType.SEGMENT,
+        CaptureEventType.SEGMENT,
         "extracting",
         partial_revision=int(value["partialRevision"]),
         covered_until_ms=int(value["coveredUntilMs"]),
@@ -757,7 +754,7 @@ def _segment_event(payload: bytes) -> ProgressiveSessionEvent:
 def _checkpoint_event(payload: bytes) -> ProgressiveSessionEvent:
     value = _json_object(payload)
     return ProgressiveSessionEvent(
-        StreamingEventType.CHECKPOINT,
+        CaptureEventType.CHECKPOINT,
         "checkpoint",
         partial_revision=int(value["partialRevision"]),
         covered_until_ms=int(value["coveredUntilMs"]),
@@ -767,9 +764,9 @@ def _checkpoint_event(payload: bytes) -> ProgressiveSessionEvent:
 def _failure_event(payload: bytes) -> ProgressiveSessionEvent:
     value = _json_object(payload)
     return ProgressiveSessionEvent(
-        StreamingEventType.FAILED,
+        CaptureEventType.FAILED,
         str(value.get("stage") or "extraction"),
-        error=CaptureFailureV2.model_validate(value),
+        error=OperationFailure.model_validate(value),
     )
 
 
@@ -779,9 +776,9 @@ def _terminal_event(
     return any(
         event.event_type
         in {
-            StreamingEventType.FAILED,
-            StreamingEventType.CANCELLED,
-            StreamingEventType.COMPLETED,
+            CaptureEventType.FAILED,
+            CaptureEventType.CANCELLED,
+            CaptureEventType.COMPLETED,
         }
         for event in events
     )

@@ -11,8 +11,8 @@ pub(crate) use library::{
 };
 pub(crate) use runtime::{
     RuntimeCancelUploadInput, RuntimeCreateCaptureInput, RuntimeIdInput,
-    RuntimeInstallationStartInput, RuntimeModelInstallationStartInput, RuntimeRequirementInput,
-    RuntimeStreamingCaptureInput, RuntimeStreamingEventsInput,
+    RuntimeInstallationStartInput, RuntimeRequirementInput, RuntimeStreamingCaptureInput,
+    RuntimeStreamingEventsInput, StructuringModelInstallationStartInput,
 };
 
 mod selection;

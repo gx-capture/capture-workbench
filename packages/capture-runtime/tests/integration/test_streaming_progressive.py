@@ -20,14 +20,14 @@ from capture_runtime.clock import Clock
 from capture_runtime.config import ExtractionRuntimeConfig
 from capture_runtime.contracts import (
     CaptureEngine,
+    CaptureEventType,
     CaptureSource,
     CaptureSourceKind,
-    OpenIngestionV2,
-    PartialCaptureV2,
+    OpenIngestion,
+    PartialCapture,
     RawCapture,
     RawCaptureSegment,
-    StartCaptureV2,
-    StreamingEventType,
+    StartCapture,
     StructuringMode,
     TimeLocator,
 )
@@ -69,13 +69,13 @@ def test_progressive_worker_launch_strips_windows_extended_path_prefix(
 def test_streaming_progress_follows_the_covered_time() -> None:
     # 0.7.1 left a streaming capture's progress unchanged until it ended.
     checkpoint = ProgressiveSessionEvent(
-        StreamingEventType.CHECKPOINT, "checkpoint", covered_until_ms=60_000
+        CaptureEventType.CHECKPOINT, "checkpoint", covered_until_ms=60_000
     )
 
     assert _with_progress(checkpoint, 120_000).progress == 0.475
     assert _with_progress(checkpoint, 30_000).progress == 0.9
     assert _with_progress(checkpoint, None).progress is None
-    heartbeat = ProgressiveSessionEvent(StreamingEventType.HEARTBEAT, "transcribing")
+    heartbeat = ProgressiveSessionEvent(CaptureEventType.HEARTBEAT, "transcribing")
     assert _with_progress(heartbeat, 120_000).progress is None
 
 
@@ -338,7 +338,7 @@ def test_progressive_state_reorders_segments_from_overlapping_worker_events() ->
     )
     state.apply(
         ProgressiveSessionEvent(
-            StreamingEventType.SEGMENT,
+            CaptureEventType.SEGMENT,
             "extracting",
             partial_revision=1,
             covered_until_ms=120_000,
@@ -355,7 +355,7 @@ def test_progressive_state_reorders_segments_from_overlapping_worker_events() ->
     )
     state.apply(
         ProgressiveSessionEvent(
-            StreamingEventType.SEGMENT,
+            CaptureEventType.SEGMENT,
             "extracting",
             partial_revision=2,
             covered_until_ms=210_000,
@@ -402,7 +402,7 @@ class FakeProgressiveProcessor:
             locator=TimeLocator(start_ms=0, end_ms=1_000),
             text="hello streaming",
         )
-        partial = PartialCaptureV2(
+        partial = PartialCapture(
             capture_id=capture_id,
             source=source,
             revision=1,
@@ -415,7 +415,7 @@ class FakeProgressiveProcessor:
         await sink(
             (
                 ProgressiveSessionEvent(
-                    StreamingEventType.SEGMENT,
+                    CaptureEventType.SEGMENT,
                     "extracting",
                     partial_revision=1,
                     covered_until_ms=1_000,
@@ -445,7 +445,7 @@ class SessionEndingProcessor(FakeProgressiveProcessor):
             cancellation=cancellation,
             sink=sink,
         )
-        await sink((ProgressiveSessionEvent(StreamingEventType.COMPLETED, "completed"),), None)
+        await sink((ProgressiveSessionEvent(CaptureEventType.COMPLETED, "completed"),), None)
         return raw
 
 
@@ -469,7 +469,7 @@ def _open(
 ) -> tuple[str, str]:
     digest = hashlib.sha256(source).hexdigest()
     ingestion = repository.create_ingestion(
-        OpenIngestionV2(
+        OpenIngestion(
             client_request_id="progressive-ingestion",
             kind=kind,
             file_name="sample.mp3" if kind is CaptureSourceKind.RECORDING else "sample.png",
@@ -512,7 +512,7 @@ def test_progressive_runtime_materializes_partial_raw_result_and_terminal_events
             structurer=FakeCaptureStructuringProvider(clock),
         )
         operation = service.start_capture_use_case.execute(
-            StartCaptureV2(
+            StartCapture(
                 client_request_id="progressive-capture",
                 ingestion_id=ingestion_id,
                 structuring_mode=StructuringMode.RUNTIME,
@@ -531,8 +531,8 @@ def test_progressive_runtime_materializes_partial_raw_result_and_terminal_events
             event.event_type
             for event in repository.read_events(operation.capture_id, after_sequence=-1)
         ]
-        assert StreamingEventType.SEGMENT in event_types
-        assert StreamingEventType.COMPLETED in event_types
+        assert CaptureEventType.SEGMENT in event_types
+        assert CaptureEventType.COMPLETED in event_types
         await service.shutdown()
 
     asyncio.run(scenario())
@@ -565,7 +565,7 @@ def test_an_audio_capture_first_releases_a_warm_ocr_worker(tmp_path: Path) -> No
             structurer=FakeCaptureStructuringProvider(clock),
         )
         operation = service.start_capture_use_case.execute(
-            StartCaptureV2(
+            StartCapture(
                 client_request_id="audio-after-ocr",
                 ingestion_id=ingestion_id,
                 structuring_mode=StructuringMode.RUNTIME,
@@ -605,7 +605,7 @@ def test_progressive_runtime_does_not_publish_the_session_end_as_the_capture_end
             structurer=FakeCaptureStructuringProvider(clock),
         )
         operation = service.start_capture_use_case.execute(
-            StartCaptureV2(
+            StartCapture(
                 client_request_id="progressive-host-capture",
                 ingestion_id=ingestion_id,
                 structuring_mode=StructuringMode.HOST,
@@ -617,9 +617,9 @@ def test_progressive_runtime_does_not_publish_the_session_end_as_the_capture_end
             await asyncio.sleep(0.01)
         assert service.get_capture(operation.capture_id).status.value == "awaiting_structuring"
         events = repository.read_events(operation.capture_id, after_sequence=-1)
-        assert StreamingEventType.COMPLETED not in [event.event_type for event in events]
+        assert CaptureEventType.COMPLETED not in [event.event_type for event in events]
         assert (events[-1].event_type, events[-1].stage) == (
-            StreamingEventType.CHECKPOINT,
+            CaptureEventType.CHECKPOINT,
             "awaiting_structuring",
         )
         await service.shutdown()
@@ -648,7 +648,7 @@ def test_progressive_runtime_preserves_structuring_phase_failure_after_raw_mater
             structurer=FailingStructurer(),  # type: ignore[arg-type]
         )
         operation = service.start_capture_use_case.execute(
-            StartCaptureV2(
+            StartCapture(
                 client_request_id="progressive-structuring-failure",
                 ingestion_id=ingestion_id,
                 structuring_mode=StructuringMode.RUNTIME,
@@ -690,7 +690,7 @@ def test_progressive_runtime_exposes_bounded_decoder_failure(
             structurer=FakeCaptureStructuringProvider(clock),
         )
         operation = service.start_capture_use_case.execute(
-            StartCaptureV2(
+            StartCapture(
                 client_request_id="progressive-decoder-failure",
                 ingestion_id=ingestion_id,
                 structuring_mode=StructuringMode.RUNTIME,
@@ -732,7 +732,7 @@ def test_streaming_runtime_fails_when_audio_processor_is_unavailable(
             structurer=FakeCaptureStructuringProvider(clock),
         )
         operation = service.start_capture_use_case.execute(
-            StartCaptureV2(
+            StartCapture(
                 client_request_id="missing-audio-processor",
                 ingestion_id=ingestion_id,
                 structuring_mode=StructuringMode.RUNTIME,
@@ -794,7 +794,7 @@ def test_an_audio_capture_hands_its_spoken_language_to_recognition(
             structurer=FakeCaptureStructuringProvider(clock),
         )
         operation = service.start_capture_use_case.execute(
-            StartCaptureV2(
+            StartCapture(
                 client_request_id="spoken-language",
                 ingestion_id=ingestion_id,
                 structuring_mode=StructuringMode.RUNTIME,
@@ -828,7 +828,7 @@ def test_a_spoken_language_on_a_non_audio_capture_fails_it(tmp_path: Path) -> No
             structurer=FakeCaptureStructuringProvider(clock),
         )
         operation = service.start_capture_use_case.execute(
-            StartCaptureV2(
+            StartCapture(
                 client_request_id="spoken-language-image",
                 ingestion_id=ingestion_id,
                 structuring_mode=StructuringMode.RUNTIME,
@@ -847,7 +847,7 @@ def test_a_spoken_language_on_a_non_audio_capture_fails_it(tmp_path: Path) -> No
 def test_start_capture_accepts_only_listed_spoken_languages() -> None:
     for language in ("jp", "JA", "japanese", ""):
         with pytest.raises(ValueError):
-            StartCaptureV2(
+            StartCapture(
                 client_request_id="spoken-language-invalid",
                 ingestion_id="ingestion",
                 structuring_mode=StructuringMode.RUNTIME,
@@ -977,7 +977,7 @@ def test_a_capture_started_while_an_engine_is_uninstalled_waits_for_it(tmp_path:
         )
         assert service.hold_new_captures()
         operation = service.start_capture_use_case.execute(
-            StartCaptureV2(
+            StartCapture(
                 client_request_id="capture-during-uninstall",
                 ingestion_id=ingestion_id,
                 structuring_mode=StructuringMode.RUNTIME,
@@ -1020,7 +1020,7 @@ class _ScriptedSessionWorker:
             text=f"words until {window.end_ms}",
         )
         event = ProgressiveSessionEvent(
-            StreamingEventType.SEGMENT,
+            CaptureEventType.SEGMENT,
             "extracting",
             partial_revision=window.end_ms // 1_000,
             covered_until_ms=window.end_ms,
@@ -1031,7 +1031,7 @@ class _ScriptedSessionWorker:
         return [event]
 
     async def finish(self, cancellation, on_event):
-        events = [ProgressiveSessionEvent(StreamingEventType.COMPLETED, "completed")]
+        events = [ProgressiveSessionEvent(CaptureEventType.COMPLETED, "completed")]
         await on_event(events[0])
         return events
 
@@ -1088,7 +1088,7 @@ def test_an_audio_capture_reports_its_duration_and_covered_time(
             processor=processor,
         )
         operation = service.start_capture_use_case.execute(
-            StartCaptureV2(
+            StartCapture(
                 client_request_id="duration-capture",
                 ingestion_id=ingestion_id,
                 structuring_mode=StructuringMode.HOST,
@@ -1191,7 +1191,7 @@ def test_finalized_ingestion_decodes_without_spool_and_maps_duration_overflow(
             processor=processor,
         )
         operation = service.start_capture_use_case.execute(
-            StartCaptureV2(
+            StartCapture(
                 client_request_id="finalized-recording",
                 ingestion_id=ingestion_id,
                 structuring_mode=StructuringMode.HOST,

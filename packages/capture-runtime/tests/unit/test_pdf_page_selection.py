@@ -18,11 +18,11 @@ from pydantic import ValidationError
 
 from capture_runtime.constants import RUNTIME_VERSION
 from capture_runtime.contracts import (
-    CaptureOcrProjectionV3,
+    CaptureOcrProjection,
     CaptureSource,
-    OcrPageScopeV2,
-    OcrProvenanceV3,
-    StartCaptureV2,
+    OcrPageScope,
+    OcrProvenance,
+    StartCapture,
     StructuringMode,
 )
 from capture_runtime.ocr.infrastructure.ocr_projection import OcrBoxInput, OcrPageInput, OcrPipeline
@@ -39,7 +39,7 @@ CONTRACT_SHA256 = "d" * 64
 def _fixture() -> dict[str, Any]:
     fixture = json.loads(FIXTURE.read_text(encoding="utf-8"))
     projection = fixture["projection"]
-    projection["contractSha256"] = CONTRACT_SHA256
+    projection["contractSetSha256"] = CONTRACT_SHA256
     projection["runtimeVersion"] = RUNTIME_VERSION
     return fixture
 
@@ -69,7 +69,7 @@ def test_the_selection_limit_and_the_ascending_rule() -> None:
 def test_golden_selection_is_what_the_producer_builds() -> None:
     fixture = _fixture()
     expected = fixture["projection"]
-    provenance = OcrProvenanceV3.model_validate(expected["provenance"])
+    provenance = OcrProvenance.model_validate(expected["provenance"])
     pages = [
         OcrPageInput(
             page=page["page"],
@@ -91,7 +91,7 @@ def test_golden_selection_is_what_the_producer_builds() -> None:
         for page in expected["pages"]
     ]
 
-    built = OcrPipeline(contract_sha256=CONTRACT_SHA256).build(
+    built = OcrPipeline(contract_set_sha256=CONTRACT_SHA256).build(
         capture_id=expected["captureId"],
         source=CaptureSource.model_validate(expected["source"]),
         pages=pages,
@@ -106,19 +106,19 @@ def test_golden_selection_is_what_the_producer_builds() -> None:
 def test_golden_selection_crosses_the_wire_models_with_its_page_numbers() -> None:
     fixture = _fixture()
 
-    request = StartCaptureV2(
+    request = StartCapture(
         client_request_id="golden-selection",
         ingestion_id="ingestion-1",
         structuring_mode=StructuringMode.HOST,
         pdf_page_numbers=fixture["pdfPageNumbers"],
     )
-    scope = OcrPageScopeV2.model_validate(fixture["ocrPageScope"])
-    projection = CaptureOcrProjectionV3.model_validate(fixture["projection"])
+    scope = OcrPageScope.model_validate(fixture["ocrPageScope"])
+    projection = CaptureOcrProjection.model_validate(fixture["projection"])
 
     assert request.model_dump(by_alias=True)["pdfPageNumbers"] == [3, 7, 8, 20]
     assert scope.requested_page_numbers == scope.processed_page_numbers == [3, 7, 8, 20]
     assert scope.source_page_count == 46
-    assert projection.page_count == 4
+    assert projection.processed_page_count == 4
     assert [page.page for page in projection.pages] == [3, 7, 8, 20]
     assert [page.status.value for page in projection.pages] == [
         "recognized",
@@ -134,7 +134,7 @@ def test_golden_invalid_selections_are_rejected() -> None:
     for pages in fixture["invalidPdfPageNumbers"]:
         assert not is_pdf_page_selection(pages)
         with pytest.raises(ValidationError):
-            StartCaptureV2(
+            StartCapture(
                 client_request_id="golden-invalid-selection",
                 ingestion_id="ingestion-1",
                 structuring_mode=StructuringMode.HOST,
@@ -145,4 +145,4 @@ def test_golden_invalid_selections_are_rejected() -> None:
         for page, number in zip(projection["pages"], order, strict=True):
             page["page"] = number
         with pytest.raises(ValidationError, match="ascending source page order"):
-            CaptureOcrProjectionV3.model_validate(projection)
+            CaptureOcrProjection.model_validate(projection)

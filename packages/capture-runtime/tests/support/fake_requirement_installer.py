@@ -11,7 +11,7 @@ from capture_runtime.constants import (
     STRUCTURING_RUNTIME_REQUIREMENT_ID,
     TEXT_RECOGNITION_REQUIREMENT_ID,
 )
-from capture_runtime.contracts import RuntimeRequirementStatus, RuntimeRequirementV2
+from capture_runtime.contracts import RuntimeRequirement, RuntimeRequirementStatus
 from capture_runtime.install_progress import DownloadProgress
 from capture_runtime.provisioning.application.requirement_installer import ManualActionRequiredError
 
@@ -31,7 +31,7 @@ class FakeRequirementInstaller:
     def requirements(
         self,
         enabled_requirement_ids: Collection[str] | None = None,
-    ) -> list[RuntimeRequirementV2]:
+    ) -> list[RuntimeRequirement]:
         descriptions = {
             TEXT_RECOGNITION_REQUIREMENT_ID: ("Text recognition", ["pdf", "image"]),
             SPEECH_RECOGNITION_REQUIREMENT_ID: (
@@ -51,7 +51,7 @@ class FakeRequirementInstaller:
             set(descriptions) if enabled_requirement_ids is None else set(enabled_requirement_ids)
         )
         return [
-            RuntimeRequirementV2(
+            RuntimeRequirement(
                 requirement_id=requirement_id,
                 kind=requirement_id,
                 display_name=name,

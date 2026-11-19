@@ -123,7 +123,7 @@ function gpuPreflight(): OcrComputePreflight {
     service: 'capture-runtime',
     runtimeVersion: RUNTIME_VERSION,
     contractSetVersion: '2',
-    contractSha256: 'a'.repeat(64),
+    contractSetSha256: 'a'.repeat(64),
     workerSha256: 'f'.repeat(64),
     mode: 'gpu',
     adapterClass: 'dedicated',

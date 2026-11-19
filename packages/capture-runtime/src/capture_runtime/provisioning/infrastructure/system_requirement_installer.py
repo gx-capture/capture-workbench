@@ -17,9 +17,9 @@ from capture_runtime.constants import (
 )
 from capture_runtime.constants.requirements import RETIRED_STRUCTURING_REQUIREMENT_IDS
 from capture_runtime.contracts import (
-    RuntimeArtifactDescriptorV2,
+    RuntimeArtifactDescriptor,
+    RuntimeRequirement,
     RuntimeRequirementStatus,
-    RuntimeRequirementV2,
 )
 from capture_runtime.install_progress import DownloadProgress
 from capture_runtime.provisioning.application.requirement_installer import (
@@ -39,7 +39,7 @@ from capture_runtime.provisioning.infrastructure.engine_installation import (
 )
 
 
-def _artifact_descriptor(worker: EngineArtifactDescriptor) -> RuntimeArtifactDescriptorV2 | None:
+def _artifact_descriptor(worker: EngineArtifactDescriptor) -> RuntimeArtifactDescriptor | None:
     """Describe a worker in the public contract, which names one download of at most 512 MiB.
 
     A larger worker, such as the speech recognition worker published as parts, installs the
@@ -48,7 +48,7 @@ def _artifact_descriptor(worker: EngineArtifactDescriptor) -> RuntimeArtifactDes
     """
     if worker.url is None or worker.bytes > MAX_RUNTIME_ARTIFACT_BYTES:
         return None
-    return RuntimeArtifactDescriptorV2(
+    return RuntimeArtifactDescriptor(
         artifact_url=worker.url,
         artifact_file_name=worker.file_name,
         bytes=worker.bytes,
@@ -97,7 +97,7 @@ class SystemRequirementInstaller:
     def requirements(
         self,
         enabled_requirement_ids: Collection[str] | None = None,
-    ) -> list[RuntimeRequirementV2]:
+    ) -> list[RuntimeRequirement]:
         _validate_enabled_requirements(enabled_requirement_ids)
         effective_requirement_ids = (
             self._enabled_requirement_ids
@@ -110,7 +110,7 @@ class SystemRequirementInstaller:
         def is_enabled(requirement_id: str) -> bool:
             return effective_requirement_ids is None or requirement_id in effective_requirement_ids
 
-        requirements: list[RuntimeRequirementV2] = []
+        requirements: list[RuntimeRequirement] = []
         for requirement_id, display_name, required_for, optional in (
             (TEXT_RECOGNITION_REQUIREMENT_ID, "Text recognition", ["pdf", "image"], False),
             (
@@ -171,7 +171,7 @@ class SystemRequirementInstaller:
                 download_bytes = None
                 detail = "No downloadable model is published for this runtime release."
             requirements.append(
-                RuntimeRequirementV2(
+                RuntimeRequirement(
                     requirement_id=requirement_id,
                     kind=requirement_id,
                     display_name=display_name,
@@ -195,7 +195,7 @@ class SystemRequirementInstaller:
         descriptor: EngineRequirementDescriptor,
     ) -> tuple[
         RuntimeRequirementStatus,
-        RuntimeArtifactDescriptorV2 | None,
+        RuntimeArtifactDescriptor | None,
         int | None,
         str | None,
     ]:

@@ -12,18 +12,18 @@ from capture_runtime.capture.infrastructure.streaming import (
 )
 from capture_runtime.contracts import (
     CaptureEngine,
-    CaptureEventV2,
-    CaptureOperationV2,
+    CaptureEvent,
+    CaptureEventType,
+    CaptureOperation,
     CaptureSource,
     CaptureSourceKind,
-    OcrPageScopeV2,
-    OpenIngestionV2,
-    PartialCaptureV2,
+    CaptureStatus,
+    OcrPageScope,
+    OpenIngestion,
+    PartialCapture,
     RawCaptureSegment,
-    ReportStructuringFailureV2,
-    StartCaptureV2,
-    StreamingCaptureStatus,
-    StreamingEventType,
+    ReportStructuringFailure,
+    StartCapture,
     StructuringMode,
 )
 
@@ -36,8 +36,8 @@ SOURCE = CaptureSource(
 NOW = datetime(2026, 1, 1, tzinfo=UTC)
 
 
-def _request() -> OpenIngestionV2:
-    return OpenIngestionV2(
+def _request() -> OpenIngestion:
+    return OpenIngestion(
         client_request_id="stream-request-1",
         file_name=SOURCE.file_name,
         media_type=SOURCE.media_type,
@@ -53,7 +53,7 @@ def test_v2_contracts_use_camel_case_and_preserve_sealed_segment_projection() ->
         locator={"kind": "time", "startMs": 0, "endMs": 1000},
         text="first sentence",
     )
-    partial = PartialCaptureV2(
+    partial = PartialCapture(
         capture_id="capture-1",
         source=SOURCE,
         revision=1,
@@ -68,11 +68,11 @@ def test_v2_contracts_use_camel_case_and_preserve_sealed_segment_projection() ->
         ),
         updated_at=NOW,
     )
-    event = CaptureEventV2(
+    event = CaptureEvent(
         event_id="capture-1/1",
         sequence=1,
         capture_id="capture-1",
-        event_type=StreamingEventType.SEGMENT,
+        event_type=CaptureEventType.SEGMENT,
         stage="extracting",
         partial_revision=1,
         covered_until_ms=600_000,
@@ -86,13 +86,13 @@ def test_v2_contracts_use_camel_case_and_preserve_sealed_segment_projection() ->
 
 
 def test_pdf_page_scope_keeps_source_page_numbers_and_survives_wire_aliases() -> None:
-    request = StartCaptureV2(
+    request = StartCapture(
         client_request_id="capture-request-1",
         ingestion_id="ingestion-1",
         structuring_mode=StructuringMode.RUNTIME,
         pdf_page_numbers=[3, 7, 8, 20],
     )
-    scope = OcrPageScopeV2(
+    scope = OcrPageScope(
         source_page_count=46,
         requested_page_numbers=[3, 7, 8, 20],
         processed_page_numbers=[3, 7, 8, 20],
@@ -105,7 +105,7 @@ def test_pdf_page_scope_keeps_source_page_numbers_and_survives_wire_aliases() ->
         "processedPageNumbers": [3, 7, 8, 20],
     }
     # The prefix callers already send keeps working.
-    prefix = StartCaptureV2(
+    prefix = StartCapture(
         client_request_id="capture-request-2",
         ingestion_id="ingestion-1",
         structuring_mode=StructuringMode.RUNTIME,
@@ -113,14 +113,14 @@ def test_pdf_page_scope_keeps_source_page_numbers_and_survives_wire_aliases() ->
     )
     assert prefix.pdf_page_numbers == [1]
     # A selection reads only some pages of a source longer than the page limit.
-    long_source = OcrPageScopeV2(
+    long_source = OcrPageScope(
         source_page_count=1_200,
         requested_page_numbers=[2, 1_199],
         processed_page_numbers=[2, 1_199],
     )
     assert long_source.source_page_count == 1_200
 
-    legacy_request = StartCaptureV2(
+    legacy_request = StartCapture(
         client_request_id="legacy-capture-request-1",
         ingestion_id="ingestion-1",
         structuring_mode=StructuringMode.RUNTIME,
@@ -129,19 +129,19 @@ def test_pdf_page_scope_keeps_source_page_numbers_and_survives_wire_aliases() ->
     assert "pdfPageNumbers" not in legacy_request.model_dump(by_alias=True, exclude_none=True)
 
     with pytest.raises(ValueError, match="processed PDF pages"):
-        OcrPageScopeV2(
+        OcrPageScope(
             source_page_count=46,
             requested_page_numbers=[1],
             processed_page_numbers=[1, 2],
         )
     with pytest.raises(ValueError, match="must exist in the source"):
-        OcrPageScopeV2(
+        OcrPageScope(
             source_page_count=19,
             requested_page_numbers=[3, 20],
             processed_page_numbers=[3, 20],
         )
     with pytest.raises(ValueError, match="ascending without duplicates"):
-        OcrPageScopeV2(
+        OcrPageScope(
             source_page_count=46,
             requested_page_numbers=[7, 3],
             processed_page_numbers=[7, 3],
@@ -156,7 +156,7 @@ def test_pdf_page_selection_rejects_pages_that_are_not_ascending_source_pages(
     pages: list[int],
 ) -> None:
     with pytest.raises(ValueError):
-        StartCaptureV2(
+        StartCapture(
             client_request_id="capture-request-1",
             ingestion_id="ingestion-1",
             structuring_mode=StructuringMode.RUNTIME,
@@ -166,7 +166,7 @@ def test_pdf_page_selection_rejects_pages_that_are_not_ascending_source_pages(
 
 def test_pdf_page_selection_accepts_500_pages_spread_over_a_longer_source() -> None:
     pages = list(range(2, 1_001, 2))
-    request = StartCaptureV2.model_validate(
+    request = StartCapture.model_validate(
         {
             "clientRequestId": "capture-request-1",
             "ingestionId": "ingestion-1",
@@ -180,7 +180,7 @@ def test_pdf_page_selection_accepts_500_pages_spread_over_a_longer_source() -> N
 
 def test_partial_capture_rejects_non_projection_text() -> None:
     with pytest.raises(ValueError, match="exact partial segment projection"):
-        PartialCaptureV2(
+        PartialCapture(
             capture_id="capture-1",
             source=SOURCE,
             revision=1,
@@ -199,7 +199,7 @@ def test_partial_capture_rejects_non_projection_text() -> None:
 
 
 def test_v2_host_failure_contract_defaults_protocol_and_rejects_runtime_fields() -> None:
-    failure = ReportStructuringFailureV2(
+    failure = ReportStructuringFailure(
         code="host_model_failed",
         message="Host model did not respond.",
     )
@@ -210,7 +210,7 @@ def test_v2_host_failure_contract_defaults_protocol_and_rejects_runtime_fields()
         "message": "Host model did not respond.",
     }
     with pytest.raises(ValueError):
-        ReportStructuringFailureV2(
+        ReportStructuringFailure(
             code="host_model_failed",
             message="Host model did not respond.",
             retryable=True,
@@ -306,8 +306,8 @@ def test_memory_ingestion_rejects_gap_checksum_and_conflicting_retry() -> None:
     asyncio.run(scenario())
 
 
-def _operation(kind: CaptureSourceKind, **progress: int) -> CaptureOperationV2:
-    return CaptureOperationV2.model_validate(
+def _operation(kind: CaptureSourceKind, **progress: int) -> CaptureOperation:
+    return CaptureOperation.model_validate(
         {
             "captureId": "capture-1",
             "ingestionId": "ingestion-1",
@@ -322,8 +322,8 @@ def _operation(kind: CaptureSourceKind, **progress: int) -> CaptureOperationV2:
     )
 
 
-def _event(kind: CaptureSourceKind, **progress: int) -> CaptureEventV2:
-    return CaptureEventV2.model_validate(
+def _event(kind: CaptureSourceKind, **progress: int) -> CaptureEvent:
+    return CaptureEvent.model_validate(
         {
             "eventId": "capture-1/1",
             "sequence": 1,
@@ -385,11 +385,11 @@ def test_audio_events_report_duration_beside_covered_time() -> None:
 
 def test_terminal_operation_rules_still_hold_with_progress_fields() -> None:
     with pytest.raises(ValueError, match="completedAt"):
-        CaptureOperationV2(
+        CaptureOperation(
             capture_id="capture-1",
             ingestion_id="ingestion-1",
             kind=CaptureSourceKind.PDF,
-            status=StreamingCaptureStatus.COMPLETED,
+            status=CaptureStatus.COMPLETED,
             partial_revision=1,
             last_event_sequence=3,
             created_at=NOW,

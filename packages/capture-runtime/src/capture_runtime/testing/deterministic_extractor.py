@@ -19,7 +19,7 @@ from capture_runtime.contracts import (
     CaptureEngine,
     CaptureSource,
     CaptureSourceKind,
-    OcrPageScopeV2,
+    OcrPageScope,
     PageLocator,
     RawCapture,
     RawCaptureSegment,
@@ -72,7 +72,7 @@ class DeterministicCaptureExtractor:
             raise asyncio.CancelledError
 
         text = self._fixture_text(content, sniffed.kind, source.sha256)
-        scope: OcrPageScopeV2 | None = None
+        scope: OcrPageScope | None = None
         if sniffed.kind is CaptureSourceKind.RECORDING:
             parts = [part.strip() for part in text.split("|") if part.strip()]
             segments = [
@@ -130,7 +130,7 @@ class DeterministicCaptureExtractor:
                 device="fake",
             )
             scope = (
-                OcrPageScopeV2(
+                OcrPageScope(
                     source_page_count=len(text.split("\f")),
                     requested_page_numbers=list(pdf_page_numbers),
                     processed_page_numbers=list(pdf_page_numbers),

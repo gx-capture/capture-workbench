@@ -18,7 +18,7 @@
    including an `empty` page. Raw schema 2 continues to contain only non-empty
    `RawCaptureSegment` values; the projection is the page-complete typed seam.
 5. **Failure readability.** A failed terminal capture returns a projection with
-   `status: "failed"` and a sanitized `CaptureFailureV2`; consumers need not
+   `status: "failed"` and a sanitized `OperationFailure`; consumers need not
    infer failure from a missing body. No partial successful raw document is
    emitted as a substitute for an OCR failure.
 6. **Ownership.** Windows Job Object ownership is implemented in one Rust

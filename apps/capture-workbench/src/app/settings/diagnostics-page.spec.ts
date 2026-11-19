@@ -2,8 +2,8 @@ import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 import type {
-  RuntimeModelInstallation,
-  RuntimeModelOption,
+  StructuringModelInstallation,
+  StructuringModelOption,
 } from '@gx-capture/capture-workbench-ui';
 import { setDesktopLocale } from '../i18n/desktop-messages';
 import type {
@@ -33,7 +33,7 @@ describe('DiagnosticsPage', () => {
           runtimeVersion: '0.0.0-test',
           apiVersion: '2.0',
           contractSetVersion: '2',
-          contractSha256: 'a'.repeat(64),
+          contractSetSha256: 'a'.repeat(64),
         },
       ),
       documentId: signal<string | null>(options.documentId ?? null),
@@ -50,30 +50,30 @@ describe('DiagnosticsPage', () => {
     };
 
     const features = {
-      modelOptions: signal<readonly RuntimeModelOption[]>([
+      modelOptions: signal<readonly StructuringModelOption[]>([
         {
           optionId: 'qwen-test',
           displayName: 'Qwen Test',
           modelReference: 'qwen:test',
           expectedDigest: null,
-          expectedBytes: null,
+          downloadBytes: null,
           profileId: 'p1',
           profileSpecSha256: 'b'.repeat(64),
           status: 'active',
         },
       ]),
       selectedModelOptionId: signal<string | null>('qwen-test'),
-      activeModelOption: signal<RuntimeModelOption | null>({
+      activeModelOption: signal<StructuringModelOption | null>({
         optionId: 'qwen-test',
         displayName: 'Qwen Test',
         modelReference: 'qwen:test',
         expectedDigest: null,
-        expectedBytes: null,
+        downloadBytes: null,
         profileId: 'p1',
         profileSpecSha256: 'b'.repeat(64),
         status: 'active',
       }),
-      activeModelInstallation: signal<RuntimeModelInstallation | null>(null),
+      activeModelInstallation: signal<StructuringModelInstallation | null>(null),
       modelInstallationPercent: signal(0),
       modelInstallationPhase: signal(''),
       installing: signal(false),
@@ -124,7 +124,7 @@ describe('DiagnosticsPage', () => {
         runtimeVersion: null,
         apiVersion: null,
         contractSetVersion: null,
-        contractSha256: null,
+        contractSetSha256: null,
       },
     });
 

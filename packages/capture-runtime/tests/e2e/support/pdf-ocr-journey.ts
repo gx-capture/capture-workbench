@@ -90,7 +90,7 @@ type RuntimeReady = {
 type OcrProjectionIdentity = {
   readonly apiVersion?: unknown;
   readonly schemaVersion?: unknown;
-  readonly contractSha256?: unknown;
+  readonly contractSetSha256?: unknown;
 };
 
 type ContractIndexIdentity = {
@@ -789,7 +789,7 @@ export async function runPdfOcrE2e(
         ? { ocrWorkerSha256: sha256(workerArchiveBytes) }
         : {}),
     };
-    const expectedContractSha256 = (
+    const expectedContractSetSha256 = (
       await readFile(
         join(
           workspaceRoot,
@@ -858,7 +858,7 @@ export async function runPdfOcrE2e(
       token,
       '/meta/v2/contracts',
     );
-    if (contractIndex.sha256 !== ocrProjection.contractSha256) {
+    if (contractIndex.sha256 !== ocrProjection.contractSetSha256) {
       throw new Error(
         'Runtime contract index and OCR projection hashes differ.',
       );
@@ -869,12 +869,12 @@ export async function runPdfOcrE2e(
         packageRoot: releaseRoot,
         runtimeExecutablePath: executable,
         ocrWorkerArchivePath: workerArchivePath,
-        expectedContractSha256,
+        expectedContractSetSha256,
         probe,
         observed: {
           apiVersion: ocrProjection.apiVersion ?? readiness.apiVersion,
           ocrSchemaVersion: ocrProjection.schemaVersion,
-          contractSha256: ocrProjection.contractSha256,
+          contractSetSha256: ocrProjection.contractSetSha256,
           loadedRuntimeSha256: sha256(executableBytes),
           loadedOcrWorkerSha256:
             workerMirror?.observations.successfulDownloads === 1 &&

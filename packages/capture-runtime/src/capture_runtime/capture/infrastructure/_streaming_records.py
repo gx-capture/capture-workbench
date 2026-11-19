@@ -9,13 +9,13 @@ from typing import Any
 
 from capture_runtime.capture.domain.ingestion.models import Ingestion
 from capture_runtime.contracts import (
-    CaptureOperationV2,
+    CaptureOperation,
     CaptureSourceKind,
-    IngestionV2,
-    OpenIngestionV2,
-    StartCaptureV2,
-    StreamingIngestionStatus,
+    IngestionStatus,
+    OpenIngestion,
+    StartCapture,
 )
+from capture_runtime.contracts import Ingestion as IngestionContract
 from capture_runtime.storage.common import project_stored_capture_kind
 
 
@@ -36,9 +36,9 @@ def _preserve_stored_kind(payload: dict[str, Any], kind: str | None) -> dict[str
 
 @dataclass(slots=True)
 class _IngestionRecord:
-    request: OpenIngestionV2
+    request: OpenIngestion
     ingestion_id: str
-    status: StreamingIngestionStatus
+    status: IngestionStatus
     expires_at: datetime
     next_chunk_index: int = 0
     next_offset: int = 0
@@ -60,8 +60,8 @@ class _IngestionRecord:
             finalized_sha256=self.finalized_sha256,
         )
 
-    def snapshot(self) -> IngestionV2:
-        return IngestionV2(
+    def snapshot(self) -> IngestionContract:
+        return IngestionContract(
             ingestion_id=self.ingestion_id,
             kind=self.request.kind,
             status=self.status,
@@ -102,10 +102,10 @@ class _IngestionRecord:
         datetime_from_text: Callable[[str], datetime],
     ) -> _IngestionRecord:
         return cls(
-            request=OpenIngestionV2.model_validate(project_stored_capture_kind(payload["request"])),
+            request=OpenIngestion.model_validate(project_stored_capture_kind(payload["request"])),
             stored_kind=_stored_kind(payload["request"]),
             ingestion_id=ingestion_id,
-            status=StreamingIngestionStatus(payload["status"]),
+            status=IngestionStatus(payload["status"]),
             expires_at=datetime_from_text(str(payload["expiresAt"])),
             next_chunk_index=int(payload["nextChunkIndex"]),
             next_offset=int(payload["nextOffset"]),
@@ -119,8 +119,8 @@ class _IngestionRecord:
 
 @dataclass(slots=True)
 class _CaptureRecord:
-    operation: CaptureOperationV2
-    request: StartCaptureV2
+    operation: CaptureOperation
+    request: StartCapture
     commit_idempotency_key: str | None = None
     commit_fingerprint: str | None = None
     failure_idempotency_key: str | None = None
@@ -147,7 +147,7 @@ class _CaptureRecord:
         *,
         kind_for_ingestion: Callable[[str], CaptureSourceKind | None],
     ) -> _CaptureRecord:
-        request = StartCaptureV2.model_validate(payload["request"])
+        request = StartCapture.model_validate(payload["request"])
         operation_payload = payload["operation"]
         projected_operation = project_stored_capture_kind(operation_payload)
         if isinstance(operation_payload, dict) and "kind" not in operation_payload:
@@ -156,7 +156,7 @@ class _CaptureRecord:
                 kind = kind_for_ingestion(ingestion_id)
                 if kind is not None:
                     projected_operation = {**operation_payload, "kind": kind.value}
-        operation = CaptureOperationV2.model_validate(projected_operation)
+        operation = CaptureOperation.model_validate(projected_operation)
         return cls(
             operation=operation,
             stored_kind=_stored_kind(operation_payload),

@@ -47,14 +47,14 @@ from .contracts import (
     PartialCapture,
     RawCapture,
     RuntimeInstallation,
-    RuntimeModelInstallation,
-    RuntimeModelOptions,
     RuntimeReady,
     RuntimeRequirement,
     RuntimeRequirements,
     RuntimeStreamingCapabilities,
     StructuringBatch,
     StructuringMode,
+    StructuringModelInstallation,
+    StructuringModelOptions,
     StructuringSession,
     SubmitStructuringBatch,
 )
@@ -89,7 +89,7 @@ class CaptureUpload:
 
 
 @dataclass(frozen=True, slots=True)
-class CaptureStreamingResult:
+class CaptureResult:
     """Terminal capture state with its raw extraction and structured document."""
 
     operation: CaptureOperation
@@ -212,28 +212,34 @@ class CaptureRuntimeClient:
             RuntimeRequirement,
         )
 
-    def get_model_options(self) -> RuntimeModelOptions:
+    def get_model_options(self) -> StructuringModelOptions:
         """List the structuring model options the runtime allows."""
-        return decode_model(self._request("GET", "/v2/runtime/model-options"), RuntimeModelOptions)
-
-    def get_model_installation(self, installation_id: str) -> RuntimeModelInstallation:
-        """Read one structuring model installation's status."""
         return decode_model(
-            self._request("GET", f"/v2/runtime/model-installations/{_safe_id(installation_id)}"),
-            RuntimeModelInstallation,
+            self._request("GET", "/v2/runtime/structuring-model-options"),
+            StructuringModelOptions,
         )
 
-    def get_model_installation_status(self, installation_id: str) -> RuntimeModelInstallation:
+    def get_model_installation(self, installation_id: str) -> StructuringModelInstallation:
+        """Read one structuring model installation's status."""
+        return decode_model(
+            self._request(
+                "GET", f"/v2/runtime/structuring-model-installations/{_safe_id(installation_id)}"
+            ),
+            StructuringModelInstallation,
+        )
+
+    def get_model_installation_status(self, installation_id: str) -> StructuringModelInstallation:
         """Status-oriented alias for :meth:`get_model_installation`."""
         return self.get_model_installation(installation_id)
 
-    def cancel_model_installation(self, installation_id: str) -> RuntimeModelInstallation:
+    def cancel_model_installation(self, installation_id: str) -> StructuringModelInstallation:
         """Cancel a structuring model installation."""
         return decode_model(
             self._request(
-                "POST", f"/v2/runtime/model-installations/{_safe_id(installation_id)}/cancel"
+                "POST",
+                f"/v2/runtime/structuring-model-installations/{_safe_id(installation_id)}/cancel",
             ),
-            RuntimeModelInstallation,
+            StructuringModelInstallation,
         )
 
     def start_capture(self, upload: CaptureUpload, *, client_request_id: str) -> CaptureOperation:
@@ -288,7 +294,7 @@ class CaptureRuntimeClient:
             CaptureOcrProjection,
         )
 
-    def get_result(self, capture_id: str) -> CaptureStreamingResult:
+    def get_result(self, capture_id: str) -> CaptureResult:
         """Read the terminal capture state, raw extraction, and structured document."""
         return self.get_streaming_result(capture_id)
 
@@ -531,13 +537,13 @@ class CaptureRuntimeClient:
             )
         return partial
 
-    def get_streaming_result(self, capture_id: str) -> CaptureStreamingResult:
+    def get_streaming_result(self, capture_id: str) -> CaptureResult:
         """Read the terminal capture state, raw extraction, and structured document."""
         operation, raw, result = decode_streaming_result(
             self._request("GET", f"/v2/captures/{_safe_id(capture_id)}/result"),
             capture_id,
         )
-        return CaptureStreamingResult(operation=operation, raw=raw, result=result)
+        return CaptureResult(operation=operation, raw=raw, result=result)
 
     def capture_events(
         self,
@@ -768,4 +774,4 @@ def _safe_batch_index(value: int) -> int:
     return value
 
 
-__all__ = ["CaptureRuntimeClient", "CaptureUpload", "CaptureStreamingResult", "RuntimeDiscovery"]
+__all__ = ["CaptureResult", "CaptureRuntimeClient", "CaptureUpload", "RuntimeDiscovery"]

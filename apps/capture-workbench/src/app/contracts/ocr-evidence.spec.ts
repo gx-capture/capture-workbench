@@ -82,7 +82,7 @@ describe('buildOcrEvidence', () => {
     ['captureId', { captureId: 'other-capture' }],
     ['sourceSha256', { sourceSha256: 'b'.repeat(64) }],
     ['runtimeVersion', { runtimeVersion: '0.4.1' }],
-    ['contractSha256', { contractSha256: 'b'.repeat(64) }],
+    ['contractSetSha256', { contractSetSha256: 'b'.repeat(64) }],
   ])('fails closed when expected %s identity does not match', async (_field, change) => {
     await expect(buildOcrEvidence({
       projection: projection(),
@@ -141,9 +141,9 @@ describe('buildOcrEvidence', () => {
       requestedPages: null,
     })).rejects.toThrow(/requested pages/u);
 
-    const countMismatch = { ...projection(), pageCount: 2 };
+    const countMismatch = { ...projection(), processedPageCount: 2 };
     await expect(buildOcrEvidence({ projection: countMismatch, expected: expectedIdentity() }))
-      .rejects.toThrow(/pages\/pageCount/u);
+      .rejects.toThrow(/pages\/processedPageCount/u);
   });
 
   it('preserves empty-page semantics without inventing text or confidence', async () => {
@@ -329,7 +329,7 @@ describe('buildOcrEvidence', () => {
       ...projection(),
       status: 'failed',
       source: null,
-      pageCount: 0,
+      processedPageCount: 0,
       pages: [],
       provenance: unavailableProvenance(),
       failure: {
@@ -472,7 +472,7 @@ function expectedIdentity(terminalStatus: 'completed' | 'failed' = 'completed') 
     captureId: 'capture-1',
     sourceSha256: 'a'.repeat(64),
     runtimeVersion: RUNTIME_VERSION,
-    contractSha256: 'c'.repeat(64),
+    contractSetSha256: 'c'.repeat(64),
     terminalStatus,
     workerSha256: 'f'.repeat(64),
   };
@@ -502,7 +502,7 @@ function projection(): CaptureOcrProjection {
       mediaType: 'image/jpeg',
       bytes: 45_494,
     },
-    pageCount: 1,
+    processedPageCount: 1,
     pages: [
       {
         page: 1,
@@ -526,7 +526,7 @@ function projection(): CaptureOcrProjection {
       },
     ],
     runtimeVersion: RUNTIME_VERSION,
-    contractSha256: 'c'.repeat(64),
+    contractSetSha256: 'c'.repeat(64),
     provenance: resolvedProvenance(),
     createdAt: '2026-08-29T00:00:00Z',
   };
@@ -547,7 +547,7 @@ function projectionWithPages(
   const base = projection();
   return {
     ...base,
-    pageCount: 2,
+    processedPageCount: 2,
     pages: [
       { ...base.pages[0], page: 1, ...firstOverrides },
       { ...base.pages[0], page: 2, ...secondOverrides },
@@ -573,7 +573,7 @@ function goldenProjection(): CaptureOcrProjection {
       { ...base.pages[0], page: 3, text: '丙', boxes: [box(0.9)], confidence: 0.9, provenance },
       { ...base.pages[0], page: 4, text: '丁', boxes: [box(0.0001)], confidence: 0.0001, provenance },
     ],
-    pageCount: 4,
+    processedPageCount: 4,
     provenance,
   };
 }

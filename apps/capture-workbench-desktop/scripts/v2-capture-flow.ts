@@ -3,7 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 const defaultIngestionChunkBytes = 1024 * 1024;
 const terminalCaptureStatuses = new Set(['completed', 'failed', 'cancelled']);
 
-interface CaptureFailure {
+interface OperationFailure {
   readonly code?: string;
   readonly message?: string;
   readonly stage?: string | null;
@@ -12,7 +12,7 @@ interface CaptureFailure {
 export interface CaptureOperation {
   readonly captureId: string;
   readonly status: string;
-  readonly error?: CaptureFailure | null;
+  readonly error?: OperationFailure | null;
 }
 
 interface IngestionResponse {

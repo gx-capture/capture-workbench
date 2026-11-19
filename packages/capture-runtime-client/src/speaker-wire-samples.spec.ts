@@ -40,7 +40,7 @@ describe('what the runtime sends for speakers', () => {
   ])('rejects invalid engine timings in a provider %j', async (timings) => {
     const session = {
       protocolVersion: '2', sessionId: 'session', captureId: 'capture',
-      rawSourceSha256: 'a'.repeat(64), contractSetSha256: 'b'.repeat(64),
+      sourceSha256: 'a'.repeat(64), contractSetSha256: 'b'.repeat(64),
       providerCapability: {
         provider: { engine: 'host', model: 'test', digest: `sha256:${'a'.repeat(64)}`, ...timings },
         capability: 'capture-structuring', schemaDialect: 'https://json-schema.org/draft/2020-12/schema',

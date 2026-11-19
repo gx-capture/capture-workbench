@@ -15,12 +15,18 @@ from capture_runtime.clock import Clock
 from capture_runtime.contract_set import SCHEMA_DIALECT, canonical_json_bytes
 from capture_runtime.contracts import (
     CaptureDocument,
-    OpenStructuringSessionV2,
     RawCapture,
-    RuntimeModelInstallationV2,
-    StructuringBatchV2,
-    StructuringSessionV2,
-    SubmitStructuringBatchV2,
+    StructuringBatch,
+    StructuringModelInstallation,
+)
+from capture_runtime.contracts import (
+    OpenStructuringSession as OpenStructuringSessionRequest,
+)
+from capture_runtime.contracts import (
+    StructuringSession as StructuringSessionContract,
+)
+from capture_runtime.contracts import (
+    SubmitStructuringBatch as SubmitStructuringBatchRequest,
 )
 from capture_runtime.structuring.application.ports import ModelInstallationJobs, SessionRepository
 from capture_runtime.structuring.domain.installation.models import TERMINAL_STATUSES
@@ -41,7 +47,7 @@ class OpenStructuringSession:
         repository: SessionRepository,
         captures: CaptureRepository,
         *,
-        plan_batches: Callable[[RawCapture, OpenStructuringSessionV2], list[StructuringBatchV2]],
+        plan_batches: Callable[[RawCapture, OpenStructuringSessionRequest], list[StructuringBatch]],
         contract_set_sha256: str,
     ) -> None:
         self._repository = repository
@@ -49,7 +55,7 @@ class OpenStructuringSession:
         self._plan_batches = plan_batches
         self._contract_set_sha256 = contract_set_sha256
 
-    def execute(self, request: OpenStructuringSessionV2) -> StructuringSessionV2:
+    def execute(self, request: OpenStructuringSessionRequest) -> StructuringSessionContract:
         if request.schema_dialect != SCHEMA_DIALECT:
             raise SessionTransitionError("unsupported structuring schema dialect")
         existing = self._repository.get_by_client_request(request)
@@ -67,7 +73,7 @@ class OpenStructuringSession:
         planned = self._plan_batches(raw, request)
         return self._repository.create_or_get(
             request,
-            raw_source_sha256=raw.source.sha256,
+            source_sha256=raw.source.sha256,
             contract_set_sha256=self._contract_set_sha256,
             batches=planned,
         )[0]
@@ -99,10 +105,10 @@ class SubmitStructuringBatch:
         self,
         session_id: str,
         batch_index: int,
-        payload: SubmitStructuringBatchV2,
+        payload: SubmitStructuringBatchRequest,
         *,
         idempotency_key: str,
-    ) -> StructuringSessionV2:
+    ) -> StructuringSessionContract:
         session = self._repository.get(session_id)
         return self._submit_session(
             session,
@@ -113,12 +119,12 @@ class SubmitStructuringBatch:
 
     def _submit_session(
         self,
-        session: StructuringSessionV2,
+        session: StructuringSessionContract,
         batch_index: int,
-        payload: SubmitStructuringBatchV2,
+        payload: SubmitStructuringBatchRequest,
         *,
         idempotency_key: str,
-    ) -> StructuringSessionV2:
+    ) -> StructuringSessionContract:
         session_id = session.session_id
         batch = self._repository.batch(session_id, batch_index)
         submission_fingerprint = hashlib.sha256(
@@ -193,7 +199,7 @@ class SubmitStructuringBatch:
 
     def _assemble_final_document(
         self,
-        session: StructuringSessionV2,
+        session: StructuringSessionContract,
         raw: RawCapture,
         *,
         current_blocks: list[StructuringSemanticBlock],
@@ -248,7 +254,7 @@ class GetStructuringSession:
     def __init__(self, repository: SessionRepository) -> None:
         self._repository = repository
 
-    def execute(self, capture_id: str) -> StructuringSessionV2:
+    def execute(self, capture_id: str) -> StructuringSessionContract:
         return self._repository.for_capture(capture_id)
 
 
@@ -263,7 +269,7 @@ class InstallModelOption:
 
     def execute(
         self, *, idempotency_key: str, request_fingerprint: str, option_id: str
-    ) -> RuntimeModelInstallationV2:
+    ) -> StructuringModelInstallation:
         record, created = self._repository.create_or_get(
             idempotency_key=idempotency_key,
             request_fingerprint=request_fingerprint,
@@ -282,13 +288,13 @@ class CancelModelInstallation:
         repository: ModelInstallationJobs,
         *,
         stop: Callable[[str], Awaitable[None]],
-        cancelled: Callable[[RuntimeModelInstallationV2], RuntimeModelInstallationV2],
+        cancelled: Callable[[StructuringModelInstallation], StructuringModelInstallation],
     ) -> None:
         self._repository = repository
         self._stop = stop
         self._cancelled = cancelled
 
-    async def execute(self, installation_id: str) -> RuntimeModelInstallationV2:
+    async def execute(self, installation_id: str) -> StructuringModelInstallation:
         job = self._repository.get(installation_id).job
         if job.status in TERMINAL_STATUSES:
             return job
@@ -303,7 +309,7 @@ class GetModelInstallation:
     def __init__(self, repository: ModelInstallationJobs) -> None:
         self._repository = repository
 
-    def execute(self, installation_id: str) -> RuntimeModelInstallationV2:
+    def execute(self, installation_id: str) -> StructuringModelInstallation:
         return self._repository.get(installation_id).job
 
 

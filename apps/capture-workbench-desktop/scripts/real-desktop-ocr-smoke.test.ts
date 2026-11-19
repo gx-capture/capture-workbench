@@ -123,7 +123,7 @@ function executionProofFixture(): Record<string, unknown> {
     runtimeSha256: 'e'.repeat(64),
     workerSha256: 'f'.repeat(64),
     modelSha256: '1'.repeat(64),
-    profileId: 'capture-workbench-ocr-pipeline-v1',
+    profileId: 'ocr-pipeline-v1',
     profileSpecSha256: '2'.repeat(64),
     contractSetSha256: '3'.repeat(64),
   };
@@ -166,7 +166,7 @@ function phase1PageOnePdfSemanticFixture(): OcrSemanticEvidenceV1 {
       model: 'pp-ocrv6-medium',
       modelDigest: `sha256:${'6'.repeat(64)}`,
       device: 'directml',
-      profileId: 'capture-workbench-ocr-pipeline-v1',
+      profileId: 'ocr-pipeline-v1',
       profileSpecSha256: '7'.repeat(64),
       workerSha256: '8'.repeat(64),
     },

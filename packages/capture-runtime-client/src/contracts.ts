@@ -5,60 +5,52 @@ import type * as Generated from './private/generated-contracts.js';
 export interface CaptureBlock extends Generated.CaptureBlock {}
 export interface CaptureDocument extends Generated.CaptureDocument {}
 export interface CaptureEngine extends Generated.CaptureEngine {}
-export interface CaptureEvent extends Generated.CaptureEventV2 {}
-export interface CaptureFailure extends Generated.CaptureFailureV2 {}
-export interface OcrRaster extends Generated.OcrRasterV3 {}
-export interface OcrPoint extends Generated.OcrPointV3 {}
-export interface OcrBox extends Generated.OcrBoxV3 {}
-export type OcrProvenance = Generated.OcrProvenanceV3;
-export type OcrProvenanceResolved = Generated.OcrProvenanceResolvedV3;
-export type OcrProvenanceUnavailable = Generated.OcrProvenanceUnavailableV3;
-export interface OcrPageProjection extends Generated.OcrPageProjectionV3 {}
-export interface CaptureOcrProjection extends Generated.CaptureOcrProjectionV3 {}
-export interface OcrComputePreflight extends Generated.OcrComputePreflightV2 {}
-export interface CaptureOperation extends Generated.CaptureOperationV2 {}
-export interface CaptureReviewEdit {
-  readonly segmentId: string;
-  readonly reviewedText: string;
-}
-export interface CaptureReview {
-  readonly reviewVersion: number;
-  readonly edits: readonly CaptureReviewEdit[];
-}
+export interface CaptureEvent extends Generated.CaptureEvent {}
+export interface OperationFailure extends Generated.OperationFailure {}
+export interface OcrRaster extends Generated.OcrRaster {}
+export interface OcrPoint extends Generated.OcrPoint {}
+export interface OcrBox extends Generated.OcrBox {}
+export type OcrProvenance = Generated.OcrProvenance;
+export type OcrProvenanceResolved = Generated.OcrProvenanceResolved;
+export type OcrProvenanceUnavailable = Generated.OcrProvenanceUnavailable;
+export interface OcrPageProjection extends Generated.OcrPageProjection {}
+export interface CaptureOcrProjection extends Generated.CaptureOcrProjection {}
+export interface OcrComputePreflight extends Generated.OcrComputePreflight {}
+export interface CaptureOperation extends Generated.CaptureOperation {}
 export interface CaptureSource extends Generated.CaptureSource {}
-export interface ErrorBody extends Generated.ErrorBodyV2 {}
-export interface ErrorEnvelope extends Generated.ErrorEnvelopeV2 {}
-export interface FinalizeIngestion extends Generated.FinalizeIngestionV2 {}
-export interface Ingestion extends Generated.IngestionV2 {}
-export interface OpenIngestion extends Generated.OpenIngestionV2 {}
-export interface PartialCapture extends Generated.PartialCaptureV2 {}
+export interface ErrorBody extends Generated.ErrorBody {}
+export interface ErrorEnvelope extends Generated.ErrorEnvelope {}
+export interface FinalizeIngestion extends Generated.FinalizeIngestion {}
+export interface Ingestion extends Generated.Ingestion {}
+export interface OpenIngestion extends Generated.OpenIngestion {}
+export interface PartialCapture extends Generated.PartialCapture {}
 export interface RawCaptureSegment extends Generated.RawCaptureSegment {}
 export interface RawCapture extends Generated.RawCapture {}
-export interface ReportStructuringFailure extends Generated.ReportStructuringFailureV2 {}
-export interface RuntimeArtifactDescriptor extends Generated.RuntimeArtifactDescriptorV2 {}
-export interface RuntimeInstallation extends Generated.RuntimeInstallationV2 {}
-export interface RuntimeInstallations extends Generated.RuntimeInstallationsV2 {}
-export interface RuntimeModelInstallation extends Generated.RuntimeModelInstallationV2 {}
-export interface RuntimeModelInstallations extends Generated.RuntimeModelInstallationsV2 {}
-export interface RuntimeModelOption extends Generated.RuntimeModelOptionV2 {}
-export interface RuntimeModelOptions extends Generated.RuntimeModelOptionsV2 {}
-export interface RuntimeRequirement extends Generated.RuntimeRequirementV2 {}
-export interface RuntimeRequirements extends Generated.RuntimeRequirementsV2 {}
-export interface StartCapture extends Generated.StartCaptureV2 {}
+export interface ReportStructuringFailure extends Generated.ReportStructuringFailure {}
+export interface RuntimeArtifactDescriptor extends Generated.RuntimeArtifactDescriptor {}
+export interface RuntimeInstallation extends Generated.RuntimeInstallation {}
+export interface RuntimeInstallations extends Generated.RuntimeInstallations {}
+export interface StructuringModelInstallation extends Generated.StructuringModelInstallation {}
+export interface StructuringModelInstallations extends Generated.StructuringModelInstallations {}
+export interface StructuringModelOption extends Generated.StructuringModelOption {}
+export interface StructuringModelOptions extends Generated.StructuringModelOptions {}
+export interface RuntimeRequirement extends Generated.RuntimeRequirement {}
+export interface RuntimeRequirements extends Generated.RuntimeRequirements {}
+export interface StartCapture extends Generated.StartCapture {}
 export interface StructuringProviderCapability
-  extends Generated.StructuringProviderCapabilityV2 {}
-export interface OpenStructuringSession extends Generated.OpenStructuringSessionV2 {}
-export interface StructuringSession extends Generated.StructuringSessionV2 {}
-export interface StructuringBatch extends Generated.StructuringBatchV2 {}
+  extends Generated.StructuringProviderCapability {}
+export interface OpenStructuringSession extends Generated.OpenStructuringSession {}
+export interface StructuringSession extends Generated.StructuringSession {}
+export interface StructuringBatch extends Generated.StructuringBatch {}
 export interface StructuringSemanticBlock
-  extends Generated.StructuringSemanticBlockV2 {}
+  extends Generated.StructuringSemanticBlock {}
 /**
  * A host may leave `protocolVersion` out: the schema lists it as optional and
  * the client writes it on the wire. The generated type marks it required only
  * because the generator treats `const` fields as always present.
  */
 export interface SubmitStructuringBatch
-  extends Omit<Generated.SubmitStructuringBatchV2, 'protocolVersion'> {
+  extends Omit<Generated.SubmitStructuringBatch, 'protocolVersion'> {
   readonly protocolVersion?: '2';
 }
 export interface RuntimeReady {
@@ -68,35 +60,34 @@ export interface RuntimeReady {
   readonly runtimeVersion: string;
   readonly captureDocumentSchemaVersion: string;
   readonly captureDocumentSchemaSha256?: string;
-  readonly schemaSha256?: string;
   readonly contractSetVersion?: string;
   readonly capabilities: Readonly<Record<string, unknown>>;
   readonly ocrCompute?: OcrComputePreflight | null;
   readonly message?: string | null;
 }
-export interface RuntimeStreamingCapabilities extends Generated.RuntimeStreamingCapabilitiesV2 {}
+export interface RuntimeStreamingCapabilities extends Generated.RuntimeStreamingCapabilities {}
 export type CaptureLocator = Generated.CaptureLocator;
 export type PageLocator = Generated.PageLocator;
 export type TimeLocator = Generated.TimeLocator;
 export type CaptureRequirementId = Generated.CaptureRequirementId;
 export type CaptureSourceKind = Generated.CaptureSourceKind;
 export type StructuringMode = Generated.StructuringMode;
-export type SpokenLanguage = NonNullable<Generated.StartCaptureV2['spokenLanguage']>;
+export type SpokenLanguage = NonNullable<Generated.StartCapture['spokenLanguage']>;
 export type StructuringSessionStatus = Generated.StructuringSessionStatus;
 export type StructuringBatchStatus = Generated.StructuringBatchStatus;
-export type StreamingCaptureStatus = Generated.StreamingCaptureStatus;
-export type StreamingEventType = Generated.StreamingEventType;
+export type CaptureStatus = Generated.CaptureStatus;
+export type CaptureEventType = Generated.CaptureEventType;
 export type OcrProjectionStatus = Generated.OcrProjectionStatus;
 export type OcrPageStatus = Generated.OcrPageStatus;
 export type OcrAdapterClass = Generated.OcrAdapterClass;
 export type OcrComputeMode = Generated.OcrComputeMode;
 export type OcrComputeNoticeCode = Generated.OcrComputeNoticeCode;
 export type OcrComputeReasonCode = Generated.OcrComputeReasonCode;
-export type StreamingIngestionStatus = Generated.StreamingIngestionStatus;
+export type IngestionStatus = Generated.IngestionStatus;
 export type RuntimeInstallationStatus = Generated.RuntimeInstallationStatus;
-export type RuntimeModelOptionStatus = Generated.RuntimeModelOptionStatus;
+export type StructuringModelOptionStatus = Generated.StructuringModelOptionStatus;
 export type RuntimeRequirementStatus = Generated.RuntimeRequirementStatus;
-export type StreamingIngestionMode = Generated.StreamingIngestionMode;
+export type IngestionMode = Generated.IngestionMode;
 export type CaptureContractName = Generated.CaptureContractName;
 export type CaptureContractInvariant = Generated.CaptureContractInvariant;
 export type CaptureContractExtraPolicy = Generated.CaptureContractExtraPolicy;
@@ -114,12 +105,12 @@ export {
 
 /** Approved current runtime contract-set identity; update only with a release. */
 export const CAPTURE_CONTRACT_SET_SHA256 =
-  '955256187db07518d1687028bf790e750156f74cfb28e9a66c94cc9a7a92f50a';
+  'b3ba2f5387bd1c043299d436f74ce64748ffbebfa63a34eaed1a453918423671';
 
 export interface RuntimeDiscovery {
   readonly ready: RuntimeReady;
   readonly streaming?: RuntimeStreamingCapabilities;
-  readonly schemaSha256: string;
+  readonly captureDocumentSchemaSha256: string;
   readonly contractIndex: Readonly<Record<string, unknown>>;
   readonly contractBundle: Readonly<Record<string, unknown>>;
 }
@@ -151,7 +142,7 @@ export interface CaptureUpload {
   readonly signal?: AbortSignal;
 }
 
-export interface CaptureStreamingResult extends Generated.CaptureStreamingResult {}
+export interface CaptureResult extends Generated.CaptureResult {}
 
 export interface CaptureRuntimeClientOptions {
   readonly baseUrl: string | number;
@@ -161,7 +152,7 @@ export interface CaptureRuntimeClientOptions {
   readonly expectedRuntimeVersion?: string;
   readonly expectedApiVersion?: string;
   readonly expectedSchemaVersion?: string;
-  readonly expectedSchemaSha256?: string;
+  readonly expectedCaptureDocumentSchemaSha256?: string;
   /** Current approved contract-set identity; unknown runtime bundles fail closed. */
   readonly expectedContractSetSha256?: string;
   /** Explicit release-train allowlist for rolling contract-set identities. */
@@ -190,9 +181,9 @@ export interface RuntimeInMemoryRoute {
   readonly handle: (request: RuntimeTransportRequest) => Response | Promise<Response>;
 }
 
-export type RuntimeModelSummary = readonly RuntimeModelOption[];
+export type StructuringModelSummary = readonly StructuringModelOption[];
 export type RuntimeRequirementSummary = readonly RuntimeRequirement[];
-export type RuntimeInstallationSummary = RuntimeInstallation | RuntimeModelInstallation;
+export type RuntimeInstallationSummary = RuntimeInstallation | StructuringModelInstallation;
 export type RuntimeIngestion = Ingestion;
 export type RuntimePartial = PartialCapture;
 export type RuntimeEvent = CaptureEvent;

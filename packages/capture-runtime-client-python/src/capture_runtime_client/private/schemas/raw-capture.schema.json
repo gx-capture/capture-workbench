@@ -147,7 +147,7 @@
       "title": "CaptureSpeaker",
       "type": "object"
     },
-    "OcrPageScopeV2": {
+    "OcrPageScope": {
       "additionalProperties": false,
       "description": "Public evidence describing which PDF pages entered OCR.\n\nPage numbers are the source PDF's, in ascending order. A selection may\nleave pages out, so the source can have more pages than were read.",
       "properties": {
@@ -182,7 +182,7 @@
         "requestedPageNumbers",
         "processedPageNumbers"
       ],
-      "title": "OcrPageScopeV2",
+      "title": "OcrPageScope",
       "type": "object"
     },
     "PageLocator": {
@@ -409,7 +409,7 @@
     "ocrPageScope": {
       "anyOf": [
         {
-          "$ref": "#/$defs/OcrPageScopeV2"
+          "$ref": "#/$defs/OcrPageScope"
         },
         {
           "type": "null"

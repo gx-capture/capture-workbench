@@ -24,11 +24,11 @@ from capture_runtime.capture.infrastructure.streaming_repository import Streamin
 from capture_runtime.clock import Clock
 from capture_runtime.config import ExtractionRuntimeConfig
 from capture_runtime.contracts import (
-    CaptureFailureV2,
     CaptureSourceKind,
-    OpenIngestionV2,
-    StartCaptureV2,
-    StreamingCaptureStatus,
+    CaptureStatus,
+    OpenIngestion,
+    OperationFailure,
+    StartCapture,
     StructuringMode,
 )
 from capture_runtime.ocr.infrastructure.ocr_execution_proof import (
@@ -64,7 +64,7 @@ def test_streaming_ocr_failure_records_private_artifact_before_public_projection
         content = b"%PDF-1.7 failure evidence fixture"
         digest = hashlib.sha256(content).hexdigest()
         ingestion = repository.create_ingestion(
-            OpenIngestionV2(
+            OpenIngestion(
                 kind=CaptureSourceKind.PDF,
                 client_request_id="failure-evidence-ingestion",
                 file_name="source.pdf",
@@ -104,7 +104,7 @@ def test_streaming_ocr_failure_records_private_artifact_before_public_projection
                 ocr_progress=None,
             ) -> CaptureExtractionOutcome:
                 del pdf_page_numbers
-                public_failure = CaptureFailureV2(
+                public_failure = OperationFailure(
                     code="ocr_worker_failed",
                     message="OCR worker failed before completing all pages.",
                     stage="extraction",
@@ -149,19 +149,19 @@ def test_streaming_ocr_failure_records_private_artifact_before_public_projection
             ),
         )
         operation = service.start_capture_use_case.execute(
-            StartCaptureV2(
+            StartCapture(
                 client_request_id="failure-evidence-capture",
                 ingestion_id=ingestion.ingestion_id,
                 structuring_mode=StructuringMode.HOST,
             )
         )
         for _ in range(100):
-            if service.get_capture(operation.capture_id).status is StreamingCaptureStatus.FAILED:
+            if service.get_capture(operation.capture_id).status is CaptureStatus.FAILED:
                 break
             await asyncio.sleep(0.01)
 
         failed = service.get_capture(operation.capture_id)
-        assert failed.status is StreamingCaptureStatus.FAILED
+        assert failed.status is CaptureStatus.FAILED
         public_projection = repository.read_ocr_projection(operation.capture_id)
         assert public_projection.failure is not None
         assert public_projection.failure.code == "ocr_worker_failed"
@@ -223,8 +223,8 @@ os._exit(7)
                     worker_sha256=hashlib.sha256(worker.read_bytes()).hexdigest(),
                 )
 
-            async def ocr_compute_selection(self, *, contract_sha256: str) -> object:
-                del contract_sha256
+            async def ocr_compute_selection(self, *, contract_set_sha256: str) -> object:
+                del contract_set_sha256
                 return SimpleNamespace(
                     execution_plan=SimpleNamespace(
                         to_dict=lambda: {"mode": "cpu-fallback"},
@@ -239,7 +239,7 @@ os._exit(7)
         )
         repository.initialize()
         ingestion = repository.create_ingestion(
-            OpenIngestionV2(
+            OpenIngestion(
                 kind=CaptureSourceKind.IMAGE,
                 client_request_id="real-worker-failure-ingestion",
                 file_name="source.jpg",
@@ -288,19 +288,19 @@ os._exit(7)
             ),
         )
         operation = service.start_capture_use_case.execute(
-            StartCaptureV2(
+            StartCapture(
                 client_request_id="real-worker-failure-capture",
                 ingestion_id=ingestion.ingestion_id,
                 structuring_mode=StructuringMode.HOST,
             )
         )
         for _ in range(100):
-            if service.get_capture(operation.capture_id).status is StreamingCaptureStatus.FAILED:
+            if service.get_capture(operation.capture_id).status is CaptureStatus.FAILED:
                 break
             await asyncio.sleep(0.01)
 
         failed = service.get_capture(operation.capture_id)
-        assert failed.status is StreamingCaptureStatus.FAILED
+        assert failed.status is CaptureStatus.FAILED
         public_projection = repository.read_ocr_projection(operation.capture_id)
         assert public_projection.failure is not None
         assert public_projection.failure.code == "ocr_worker_failed"

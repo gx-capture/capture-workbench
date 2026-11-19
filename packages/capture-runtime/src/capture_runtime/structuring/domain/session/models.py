@@ -75,7 +75,7 @@ class StructuringSession:
 
     session_id: str
     capture_id: str
-    raw_source_sha256: str
+    source_sha256: str
     contract_set_sha256: str
     schema_dialect: str
     batch_count: int

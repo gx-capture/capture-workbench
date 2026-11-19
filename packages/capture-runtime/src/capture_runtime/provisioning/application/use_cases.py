@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol
 
-from capture_runtime.contracts import RuntimeInstallationV2, RuntimeRequirementV2
+from capture_runtime.contracts import RuntimeInstallation, RuntimeRequirement
 
 if TYPE_CHECKING:
     from capture_runtime.provisioning.application.installation_service import InstallationService
@@ -37,7 +37,7 @@ class InstallRequirement:
         idempotency_key: str,
         request_fingerprint: str,
         requirement_id: str,
-    ) -> RuntimeInstallationV2:
+    ) -> RuntimeInstallation:
         return self._service.create(
             idempotency_key=idempotency_key,
             request_fingerprint=request_fingerprint,
@@ -51,7 +51,7 @@ class CancelInstallation:
     def __init__(self, service: InstallationService) -> None:
         self._service = service
 
-    async def execute(self, installation_id: str) -> RuntimeInstallationV2:
+    async def execute(self, installation_id: str) -> RuntimeInstallation:
         return await self._service.cancel(installation_id)
 
 
@@ -61,7 +61,7 @@ class GetInstallation:
     def __init__(self, service: InstallationService) -> None:
         self._service = service
 
-    def execute(self, installation_id: str) -> RuntimeInstallationV2:
+    def execute(self, installation_id: str) -> RuntimeInstallation:
         return self._service.get(installation_id)
 
 
@@ -71,7 +71,7 @@ class ListInstallations:
     def __init__(self, service: InstallationService) -> None:
         self._service = service
 
-    def execute(self) -> list[RuntimeInstallationV2]:
+    def execute(self) -> list[RuntimeInstallation]:
         return self._service.list()
 
 
@@ -96,7 +96,7 @@ class ListRequirements:
         *,
         enabled_requirement_ids: set[str] | None = None,
         disabled_requirement_ids: set[str] | None = None,
-    ) -> list[RuntimeRequirementV2]:
+    ) -> list[RuntimeRequirement]:
         items = self._installer.requirements(enabled_requirement_ids)
         if disabled_requirement_ids:
             items = [item for item in items if item.requirement_id not in disabled_requirement_ids]

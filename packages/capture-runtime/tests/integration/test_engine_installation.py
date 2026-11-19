@@ -36,17 +36,17 @@ from capture_runtime.constants.requirements import (
 )
 from capture_runtime.contracts import (
     CaptureEngine,
+    CaptureEventType,
     CaptureSourceKind,
     OcrAdapterClass,
     OcrComputeMode,
-    OcrComputePreflightV2,
-    OpenIngestionV2,
+    OcrComputePreflight,
+    OpenIngestion,
     RawCaptureSegment,
+    RuntimeRequirement,
+    RuntimeRequirements,
     RuntimeRequirementStatus,
-    RuntimeRequirementsV2,
-    RuntimeRequirementV2,
-    StartCaptureV2,
-    StreamingEventType,
+    StartCapture,
     StructuringMode,
     TimeLocator,
 )
@@ -341,11 +341,11 @@ class ComputePreflightWorkerClient(FakeWorkerClient):
         self,
         engine: InstalledEngine,
         *,
-        contract_sha256: str,
+        contract_set_sha256: str,
         timeout_seconds: float = 30,
     ) -> object:
         del timeout_seconds
-        self.compute_preflight_calls.append((engine, contract_sha256))
+        self.compute_preflight_calls.append((engine, contract_set_sha256))
         return self.decision
 
 
@@ -354,10 +354,10 @@ class TimeoutComputePreflightWorkerClient(ComputePreflightWorkerClient):
         self,
         engine: InstalledEngine,
         *,
-        contract_sha256: str,
+        contract_set_sha256: str,
         timeout_seconds: float = 30,
     ) -> object:
-        del engine, contract_sha256, timeout_seconds
+        del engine, contract_set_sha256, timeout_seconds
         raise WorkerTimeoutError("worker request timed out at stage worker-process-timeout")
 
 
@@ -583,13 +583,13 @@ def test_ocr_compute_preflight_uses_one_cached_worker_probe_after_install(
     tmp_path: Path,
 ) -> None:
     catalog, sources = _catalog(tmp_path)
-    contract_sha256 = "a" * 64
+    contract_set_sha256 = "a" * 64
     # The archive digest in the catalog is not the executable digest reported
     # by the worker.  The manager binds worker-owned preflight to the
     # extracted executable after archive verification.
     worker_executable_sha256 = hashlib.sha256(b"worker-engine-1").hexdigest()
-    decision = OcrComputePreflightV2(
-        contract_sha256=contract_sha256,
+    decision = OcrComputePreflight(
+        contract_set_sha256=contract_set_sha256,
         worker_sha256=worker_executable_sha256,
         mode=OcrComputeMode.GPU,
         adapter_class=OcrAdapterClass.DEDICATED,
@@ -611,8 +611,8 @@ def test_ocr_compute_preflight_uses_one_cached_worker_probe_after_install(
         )
     )
 
-    first = asyncio.run(manager.ocr_compute_preflight(contract_sha256=contract_sha256))
-    second = asyncio.run(manager.ocr_compute_preflight(contract_sha256=contract_sha256))
+    first = asyncio.run(manager.ocr_compute_preflight(contract_set_sha256=contract_set_sha256))
+    second = asyncio.run(manager.ocr_compute_preflight(contract_set_sha256=contract_set_sha256))
 
     assert first == decision
     assert second == decision
@@ -624,9 +624,9 @@ def test_ocr_compute_preflight_is_unavailable_when_worker_identity_mismatches_ca
     tmp_path: Path,
 ) -> None:
     catalog, sources = _catalog(tmp_path)
-    contract_sha256 = "a" * 64
-    decision = OcrComputePreflightV2(
-        contract_sha256=contract_sha256,
+    contract_set_sha256 = "a" * 64
+    decision = OcrComputePreflight(
+        contract_set_sha256=contract_set_sha256,
         worker_sha256="b" * 64,
         mode=OcrComputeMode.GPU,
         adapter_class=OcrAdapterClass.DEDICATED,
@@ -648,7 +648,9 @@ def test_ocr_compute_preflight_is_unavailable_when_worker_identity_mismatches_ca
         )
     )
 
-    assert asyncio.run(manager.ocr_compute_preflight(contract_sha256=contract_sha256)) is None
+    assert (
+        asyncio.run(manager.ocr_compute_preflight(contract_set_sha256=contract_set_sha256)) is None
+    )
 
 
 def test_ocr_compute_preflight_is_unavailable_when_worker_is_missing(
@@ -662,7 +664,7 @@ def test_ocr_compute_preflight_is_unavailable_when_worker_is_missing(
         worker_client=worker,  # type: ignore[arg-type]
     )
 
-    assert asyncio.run(manager.ocr_compute_preflight(contract_sha256="a" * 64)) is None
+    assert asyncio.run(manager.ocr_compute_preflight(contract_set_sha256="a" * 64)) is None
     assert worker.compute_preflight_calls == []
 
 
@@ -686,7 +688,7 @@ def test_ocr_compute_preflight_is_unavailable_when_worker_protocol_is_malformed(
         )
     )
 
-    assert asyncio.run(manager.ocr_compute_preflight(contract_sha256="a" * 64)) is None
+    assert asyncio.run(manager.ocr_compute_preflight(contract_set_sha256="a" * 64)) is None
 
 
 def test_ocr_compute_preflight_is_unavailable_when_worker_times_out(
@@ -709,7 +711,7 @@ def test_ocr_compute_preflight_is_unavailable_when_worker_times_out(
         )
     )
 
-    assert asyncio.run(manager.ocr_compute_preflight(contract_sha256="a" * 64)) is None
+    assert asyncio.run(manager.ocr_compute_preflight(contract_set_sha256="a" * 64)) is None
 
 
 def test_successful_activation_does_not_rehash_the_model_before_worker_launch(
@@ -1152,7 +1154,7 @@ def test_separate_process_install_lock_blocks_then_releases(tmp_path: Path) -> N
 
 
 class FakeStructuringRequirementInstaller:
-    def __init__(self, rows: tuple[RuntimeRequirementV2, ...] = ()) -> None:
+    def __init__(self, rows: tuple[RuntimeRequirement, ...] = ()) -> None:
         self.rows = rows
         self.filters: list[Collection[str] | None] = []
         self.install_calls: list[tuple[str, asyncio.Event]] = []
@@ -1161,7 +1163,7 @@ class FakeStructuringRequirementInstaller:
 
     def requirements(
         self, enabled_requirement_ids: Collection[str] | None = None
-    ) -> list[RuntimeRequirementV2]:
+    ) -> list[RuntimeRequirement]:
         self.filters.append(enabled_requirement_ids)
         return [
             row
@@ -1193,7 +1195,7 @@ def test_structuring_requirement_installation_persists_progress_and_completion(
     async def scenario() -> None:
         structuring = FakeStructuringRequirementInstaller(
             (
-                RuntimeRequirementV2(
+                RuntimeRequirement(
                     requirement_id="structuring-runtime",
                     kind="structuring-runtime",
                     display_name="Ollama application",
@@ -1201,7 +1203,7 @@ def test_structuring_requirement_installation_persists_progress_and_completion(
                     required_for=["runtime-structuring"],
                     install_strategy="winget",
                 ),
-                RuntimeRequirementV2(
+                RuntimeRequirement(
                     requirement_id="structuring-model",
                     kind="structuring-model",
                     display_name="Capture structuring model",
@@ -1344,7 +1346,7 @@ def test_requirements_list_a_worker_the_contract_cannot_describe_without_an_arti
     assert requirements["text-recognition"].status.value == "installable"
     assert requirements["text-recognition"].artifact is None
     assert requirements["speech-recognition"].status.value == "unavailable"
-    RuntimeRequirementsV2(items=items)
+    RuntimeRequirements(items=items)
 
 
 def test_requirement_installer_forwards_nonzero_directml_device_to_model_probe(
@@ -3087,14 +3089,14 @@ def _patch_streaming_session(
                 device="cpu",
             )
             event = ProgressiveSessionEvent(
-                StreamingEventType.SEGMENT,
+                CaptureEventType.SEGMENT,
                 "extracting",
                 partial_revision=1,
                 covered_until_ms=1_000,
                 segments=(segment,),
                 extraction_engine=engine,
             )
-            completed = ProgressiveSessionEvent(StreamingEventType.COMPLETED, "completed")
+            completed = ProgressiveSessionEvent(CaptureEventType.COMPLETED, "completed")
             await on_event(event)
             await on_event(completed)
             return [event, completed]
@@ -3116,7 +3118,7 @@ def _patch_streaming_session(
 def _open_wav(repository: StreamingRepository) -> str:
     digest = hashlib.sha256(_WAV).hexdigest()
     ingestion = repository.create_ingestion(
-        OpenIngestionV2(
+        OpenIngestion(
             client_request_id="speech-model-content",
             kind=CaptureSourceKind.RECORDING,
             file_name="sample.wav",
@@ -3216,7 +3218,7 @@ def test_a_missing_cpu_model_fails_before_the_worker_starts(
             extractor=StandaloneRuntimeCaptureExtractor(clock, config, engine_manager=manager),
         )
         operation = service.start_capture_use_case.execute(
-            StartCaptureV2(
+            StartCapture(
                 client_request_id="speech-model-content",
                 ingestion_id=ingestion_id,
                 structuring_mode=StructuringMode.HOST,

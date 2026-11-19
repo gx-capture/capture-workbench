@@ -247,7 +247,7 @@ def test_installer_tags_and_cli_use_verified_lease(
                     {
                         "name": option.model_reference,
                         "digest": option.expected_digest or "a" * 64,
-                        "size": option.expected_bytes or 123,
+                        "size": option.download_bytes or 123,
                     }
                 ]
             },

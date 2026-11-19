@@ -120,13 +120,13 @@ def test_consumer_sdk_outputs_are_reproducible_and_pages_are_required(tmp_path: 
     ts_source = (
         ROOT / "packages/capture-runtime-client/src/private/generated-contracts.ts"
     ).read_text(encoding="utf-8")
-    assert "readonly pages: readonly (OcrPageProjectionV3)[];" in ts_source
+    assert "readonly pages: readonly (OcrPageProjection)[];" in ts_source
     assert "readonly pages?:" not in ts_source
     python_source = (
         ROOT / "packages/capture-runtime-client-python/src/capture_runtime_client/private/"
         "generated_models.py"
     ).read_text(encoding="utf-8")
-    assert "pages: list[OcrPageProjectionV3] = Field(..., max_length=500)" in python_source
+    assert "pages: list[OcrPageProjection] = Field(..., max_length=500)" in python_source
 
 
 def test_default_and_consumer_only_generation_share_one_canonical_contract_bundle(
@@ -221,13 +221,75 @@ def test_consumer_only_cannot_be_silently_combined_with_no_consumer_output() -> 
 def test_runtime_asset_matches_contract_set_and_exact_digest() -> None:
     asset = CONTRACT_ASSET_PATH.read_bytes()
     contract_set = load_contract_set()
-    legacy_schema_suffix = "V" + "1"
+    legacy_schema_suffixes = ("V" + "1", "V" + "2", "V" + "3")
     assert contract_set.bundle_bytes == asset
     assert hashlib.sha256(asset).hexdigest() == contract_set.sha256
+    assert "catalogVersion" not in contract_set.index
     assert all(
-        not schema["name"].endswith(legacy_schema_suffix)
+        not schema["name"].endswith(legacy_schema_suffixes)
         for schema in contract_set.bundle["schemas"]
     )
+    ready_schema = next(
+        schema for schema in contract_set.bundle["schemas"] if schema["name"] == "RuntimeReady"
+    )["schema"]
+    assert "schemaSha256" not in ready_schema["properties"]
+
+
+def test_generator_prunes_and_flags_stale_schema_files(tmp_path: Path) -> None:
+    consumer_root = tmp_path / "consumer-only"
+    stale_schema = (
+        consumer_root
+        / "packages/capture-runtime-client-python/src/capture_runtime_client/private/schemas"
+        / "obsolete-contract.schema.json"
+    )
+    stale_schema.parent.mkdir(parents=True, exist_ok=True)
+    stale_schema.write_text("{}\n", encoding="utf-8")
+
+    check_before = subprocess.run(
+        [
+            sys.executable,
+            str(GENERATOR),
+            "--consumer-only",
+            "--consumer-output",
+            str(consumer_root),
+            "--check",
+        ],
+        cwd=ROOT / "packages/capture-runtime",
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert check_before.returncode != 0
+    assert "obsolete-contract.schema.json (stale)" in check_before.stderr
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(GENERATOR),
+            "--consumer-only",
+            "--consumer-output",
+            str(consumer_root),
+        ],
+        cwd=ROOT / "packages/capture-runtime",
+        check=True,
+    )
+    assert not stale_schema.exists()
+
+    check_after = subprocess.run(
+        [
+            sys.executable,
+            str(GENERATOR),
+            "--consumer-only",
+            "--consumer-output",
+            str(consumer_root),
+            "--check",
+        ],
+        cwd=ROOT / "packages/capture-runtime",
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert check_after.returncode == 0, check_after.stdout + check_after.stderr
 
 
 def test_document_schema_release_is_pinned_and_v2() -> None:

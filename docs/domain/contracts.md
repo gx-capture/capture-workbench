@@ -8,7 +8,7 @@
 
 ## 用語
 
-用語見 [glossary](../../.agents/PLANS/ddd-refactor/glossary.md) 的「執行環境合約」。合約裡的名稱（`*V2`、`*V3`）不隨重構改名。
+用語見 [glossary](../../.agents/PLANS/ddd-refactor/glossary.md) 的「執行環境合約」。單版型別不再帶 `V2` 或 `V3` 字尾；`/v2` 路由、payload `schemaVersion` 與 `capture-document-v2.schema.json` 保持不變。合約改名只發生在合約發布。
 
 ## 組成
 

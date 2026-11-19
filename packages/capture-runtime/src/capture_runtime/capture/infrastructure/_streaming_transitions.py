@@ -9,27 +9,27 @@ from capture_runtime.capture.domain.operation.models import (
     CaptureOperation,
 )
 from capture_runtime.capture.infrastructure._streaming_records import _IngestionRecord
+from capture_runtime.contracts import CaptureOperation as CaptureOperationContract
 from capture_runtime.contracts import (
-    CaptureFailureV2,
-    CaptureOperationV2,
     CaptureSource,
-    StartCaptureV2,
-    StreamingCaptureStatus,
+    CaptureStatus,
+    OperationFailure,
+    StartCapture,
 )
 
 _TERMINAL_CAPTURE_STATUSES = TERMINAL_CAPTURE_STATUSES
 
 
-def operation_domain(operation: CaptureOperationV2) -> CaptureOperation:
+def operation_domain(operation: CaptureOperationContract) -> CaptureOperation:
     return CaptureOperation.from_contract(operation)
 
 
 def transition_operation(
-    operation: CaptureOperationV2,
-    status: StreamingCaptureStatus,
+    operation: CaptureOperationContract,
+    status: CaptureStatus,
     *,
     now: datetime,
-) -> CaptureOperationV2:
+) -> CaptureOperationContract:
     domain = operation_domain(operation).transition(status)
     if domain.status == operation.status and domain.is_terminal:
         return operation
@@ -45,21 +45,17 @@ def transition_operation(
 
 def _create_capture_operation(
     capture_id: str,
-    request: StartCaptureV2,
+    request: StartCapture,
     ingestion: _IngestionRecord,
     *,
     source: CaptureSource | None,
     now: datetime,
-) -> CaptureOperationV2:
-    return CaptureOperationV2(
+) -> CaptureOperationContract:
+    return CaptureOperationContract(
         capture_id=capture_id,
         ingestion_id=request.ingestion_id,
         kind=ingestion.request.kind,
-        status=(
-            StreamingCaptureStatus.EXTRACTING
-            if source is not None
-            else StreamingCaptureStatus.WAITING_INPUT
-        ),
+        status=(CaptureStatus.EXTRACTING if source is not None else CaptureStatus.WAITING_INPUT),
         progress=0,
         partial_revision=0,
         last_event_sequence=0,
@@ -70,15 +66,15 @@ def _create_capture_operation(
 
 
 def _mark_ingestion_ready(
-    operation: CaptureOperationV2,
+    operation: CaptureOperationContract,
     ingestion: _IngestionRecord,
     *,
     source: CaptureSource,
     now: datetime,
-) -> CaptureOperationV2:
-    return transition_operation(operation, StreamingCaptureStatus.EXTRACTING, now=now).model_copy(
+) -> CaptureOperationContract:
+    return transition_operation(operation, CaptureStatus.EXTRACTING, now=now).model_copy(
         update={
-            "status": StreamingCaptureStatus.EXTRACTING,
+            "status": CaptureStatus.EXTRACTING,
             "kind": ingestion.request.kind,
             "source": source,
             "progress": 0.1,
@@ -88,38 +84,54 @@ def _mark_ingestion_ready(
 
 
 def _mark_awaiting_structuring(
-    operation: CaptureOperationV2,
+    operation: CaptureOperationContract,
     *,
     now: datetime,
-) -> CaptureOperationV2:
-    return transition_operation(operation, StreamingCaptureStatus.AWAITING_STRUCTURING, now=now)
+) -> CaptureOperationContract:
+    return transition_operation(operation, CaptureStatus.AWAITING_STRUCTURING, now=now)
 
 
-def _mark_structuring(operation: CaptureOperationV2, *, now: datetime) -> CaptureOperationV2:
-    return transition_operation(operation, StreamingCaptureStatus.STRUCTURING, now=now)
+def _mark_structuring(
+    operation: CaptureOperationContract,
+    *,
+    now: datetime,
+) -> CaptureOperationContract:
+    return transition_operation(operation, CaptureStatus.STRUCTURING, now=now)
 
 
-def _release_structuring(operation: CaptureOperationV2, *, now: datetime) -> CaptureOperationV2:
-    return transition_operation(operation, StreamingCaptureStatus.AWAITING_STRUCTURING, now=now)
+def _release_structuring(
+    operation: CaptureOperationContract,
+    *,
+    now: datetime,
+) -> CaptureOperationContract:
+    return transition_operation(operation, CaptureStatus.AWAITING_STRUCTURING, now=now)
 
 
-def _complete_capture(operation: CaptureOperationV2, *, now: datetime) -> CaptureOperationV2:
-    return transition_operation(operation, StreamingCaptureStatus.COMPLETED, now=now)
+def _complete_capture(
+    operation: CaptureOperationContract,
+    *,
+    now: datetime,
+) -> CaptureOperationContract:
+    return transition_operation(operation, CaptureStatus.COMPLETED, now=now)
 
 
 def _fail_capture(
-    operation: CaptureOperationV2,
-    failure: CaptureFailureV2,
+    operation: CaptureOperationContract,
+    failure: OperationFailure,
     *,
     now: datetime,
-) -> CaptureOperationV2:
-    return transition_operation(operation, StreamingCaptureStatus.FAILED, now=now).model_copy(
+) -> CaptureOperationContract:
+    return transition_operation(operation, CaptureStatus.FAILED, now=now).model_copy(
         update={"error": failure}
     )
 
 
-def _cancel_capture(operation: CaptureOperationV2, *, now: datetime) -> CaptureOperationV2:
-    return transition_operation(operation, StreamingCaptureStatus.CANCELLED, now=now)
+def _cancel_capture(
+    operation: CaptureOperationContract,
+    *,
+    now: datetime,
+) -> CaptureOperationContract:
+    return transition_operation(operation, CaptureStatus.CANCELLED, now=now)
 
 
 __all__ = [

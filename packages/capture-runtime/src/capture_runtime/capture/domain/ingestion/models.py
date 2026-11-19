@@ -6,8 +6,8 @@ from dataclasses import dataclass, replace
 
 from capture_runtime.contracts import (
     CaptureSourceKind,
-    StreamingIngestionMode,
-    StreamingIngestionStatus,
+    IngestionMode,
+    IngestionStatus,
 )
 
 
@@ -41,8 +41,8 @@ class Ingestion:
 
     ingestion_id: str
     kind: CaptureSourceKind
-    mode: StreamingIngestionMode = StreamingIngestionMode.FILE
-    status: StreamingIngestionStatus = StreamingIngestionStatus.OPEN
+    mode: IngestionMode = IngestionMode.FILE
+    status: IngestionStatus = IngestionStatus.OPEN
     received_bytes: int = 0
     expected_total_bytes: int | None = None
     expected_sha256: str | None = None
@@ -58,7 +58,7 @@ class Ingestion:
         max_chunk_bytes: int,
         accepted_chunk: IngestionChunk | None = None,
     ) -> Ingestion:
-        if self.status is not StreamingIngestionStatus.OPEN:
+        if self.status is not IngestionStatus.OPEN:
             raise IngestionTransitionError("ingestion is not open")
         if chunk.byte_length > max_chunk_bytes:
             raise IngestionTransitionError("chunk exceeds the configured limit")
@@ -84,11 +84,11 @@ class Ingestion:
         )
 
     def finalize(self, *, total_bytes: int, sha256: str, actual_sha256: str) -> Ingestion:
-        if self.status is StreamingIngestionStatus.READY:
+        if self.status is IngestionStatus.READY:
             if self.finalized_sha256 == sha256 and total_bytes == self.received_bytes:
                 return self
             raise IngestionTransitionError("finalize conflicts with existing source")
-        if self.status is not StreamingIngestionStatus.OPEN:
+        if self.status is not IngestionStatus.OPEN:
             raise IngestionTransitionError("ingestion is not open")
         if total_bytes != self.expected_total_bytes or total_bytes != self.received_bytes:
             raise IngestionTransitionError("final byte count does not match upload")
@@ -96,7 +96,7 @@ class Ingestion:
             self.expected_sha256 is not None and self.expected_sha256 != sha256
         ):
             raise IngestionTransitionError("final source checksum does not match upload")
-        return replace(self, status=StreamingIngestionStatus.READY, finalized_sha256=sha256)
+        return replace(self, status=IngestionStatus.READY, finalized_sha256=sha256)
 
     def __post_init__(self) -> None:
         if not self.ingestion_id:

@@ -46,7 +46,7 @@ export async function negotiateRuntime(
   const expectedSchema =
     context.options.expectedSchemaVersion ?? CAPTURE_DOCUMENT_SCHEMA_VERSION;
   const expectedHash =
-    context.options.expectedSchemaSha256 ?? CAPTURE_DOCUMENT_SCHEMA_SHA256;
+    context.options.expectedCaptureDocumentSchemaSha256 ?? CAPTURE_DOCUMENT_SCHEMA_SHA256;
   if (ready.service !== 'capture-runtime')
     failures.push(`service ${ready.service} is not Capture Runtime`);
   if (!ready.ready) failures.push('runtime is not ready');
@@ -56,7 +56,7 @@ export async function negotiateRuntime(
     failures.push(
       `document schema version ${ready.captureDocumentSchemaVersion} is unsupported`,
     );
-  const remoteHash = ready.captureDocumentSchemaSha256 ?? ready.schemaSha256;
+  const remoteHash = ready.captureDocumentSchemaSha256;
   if (remoteHash && remoteHash !== expectedHash)
     failures.push('document schema hash is incompatible');
   const structuringModes = ready.capabilities['structuringModes'];
@@ -144,7 +144,7 @@ export async function negotiateRuntime(
   return {
     ready,
     streaming,
-    schemaSha256: bundleSchemaHash,
+    captureDocumentSchemaSha256: bundleSchemaHash,
     contractIndex,
     contractBundle,
   };
@@ -152,7 +152,6 @@ export async function negotiateRuntime(
 
 function validateContractIndex(index: ContractIndex): void {
   const required = [
-    'catalogVersion',
     'runtimeVersion',
     'contractSetVersion',
     'surfaces',
@@ -164,7 +163,6 @@ function validateContractIndex(index: ContractIndex): void {
       'Capture Runtime contract index is missing required fields.',
     );
   if (
-    index['catalogVersion'] !== '2' ||
     index['contractSetVersion'] !== '2' ||
     typeof index['runtimeVersion'] !== 'string'
   )
@@ -332,7 +330,7 @@ function validateContractBundle(bundle: ContractBundle): string {
   }
   if (
     ocr?.body?.kind !== 'none' ||
-    ocr?.responseSchema !== 'CaptureOcrProjectionV3' ||
+    ocr?.responseSchema !== 'CaptureOcrProjection' ||
     !ocr.responseStatusCodes?.includes(200)
   ) {
     throw new CaptureRuntimeCompatibilityError(
@@ -366,7 +364,6 @@ function validateContractBundle(bundle: ContractBundle): string {
 }
 
 type ContractIndex = {
-  readonly catalogVersion?: unknown;
   readonly runtimeVersion?: unknown;
   readonly contractSetVersion?: unknown;
   readonly surfaces?: unknown;

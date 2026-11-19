@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from capture_runtime.constants import VERTICAL_READER_REQUIREMENT_ID
-from capture_runtime.contracts import OcrProvenanceV3
+from capture_runtime.contracts import OcrProvenance
 
 SHA256_PROVENANCE = re.compile(r"^sha256:[a-f0-9]{64}$")
 SUGGESTABLE_REQUIREMENT_IDS = frozenset({VERTICAL_READER_REQUIREMENT_ID})
@@ -58,7 +58,7 @@ class WorkerRunResult:
     digest: str
     device: str
     warnings: tuple[str, ...]
-    ocr_provenance: OcrProvenanceV3 | None = None
+    ocr_provenance: OcrProvenance | None = None
     # Optional units that are not installed and would have read part of the source.
     suggested_requirement_ids: tuple[str, ...] = ()
     elapsed_ms: int | None = None

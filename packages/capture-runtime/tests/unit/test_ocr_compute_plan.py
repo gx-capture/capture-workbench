@@ -69,7 +69,7 @@ def _snapshot(
 
 def _plan(snapshot: OcrGpuCapabilitySnapshot, **kwargs: object):
     return OcrComputePlan(
-        contract_sha256=CONTRACT_SHA256,
+        contract_set_sha256=CONTRACT_SHA256,
         worker_sha256=WORKER_SHA256,
         capability_probe=StaticProbe(snapshot),
         **kwargs,
@@ -259,7 +259,7 @@ def test_ordinal_override_is_rejected_at_the_canonical_plan_boundary() -> None:
     )
     with pytest.raises(TypeError):
         OcrComputePlan(
-            contract_sha256=CONTRACT_SHA256,
+            contract_set_sha256=CONTRACT_SHA256,
             capability_probe=StaticProbe(
                 _snapshot(high=(gpu, integrated), ordinary=(integrated, gpu))
             ),

@@ -16,16 +16,16 @@ from capture_runtime.capture.domain.size_policy import (
 from capture_runtime.clock import Clock
 from capture_runtime.contracts import (
     CaptureDocument,
-    CaptureEventV2,
-    CaptureOperationV2,
-    FinalizeIngestionV2,
-    IngestionV2,
-    OpenIngestionV2,
+    CaptureEvent,
+    CaptureEventType,
+    CaptureStatus,
+    Ingestion,
     RawCapture,
-    StartCaptureV2,
-    StreamingCaptureStatus,
-    StreamingEventType,
 )
+from capture_runtime.contracts import CaptureOperation as CaptureOperationContract
+from capture_runtime.contracts import FinalizeIngestion as FinalizeIngestionRequest
+from capture_runtime.contracts import OpenIngestion as OpenIngestionRequest
+from capture_runtime.contracts import StartCapture as StartCaptureRequest
 
 
 class OpenIngestion:
@@ -39,7 +39,7 @@ class OpenIngestion:
         self._repository = repository
         self._policy = policy
 
-    def execute(self, request: OpenIngestionV2) -> IngestionV2:
+    def execute(self, request: OpenIngestionRequest) -> Ingestion:
         if not self._policy.is_allowed(request.kind, request.total_bytes):
             raise IngestionSourceSizeExceededError(SOURCE_SIZE_EXCEEDED_MESSAGE)
         return self._repository.create_ingestion(request)
@@ -61,7 +61,7 @@ class AppendChunk:
         data: bytes,
         sha256: str,
         declared_total_bytes: int,
-    ) -> IngestionV2:
+    ) -> Ingestion:
         before = self._repository.get_ingestion(ingestion_id)
         snapshot = self._repository.append_chunk(
             ingestion_id,
@@ -76,12 +76,12 @@ class AppendChunk:
             for capture_id in self._repository.capture_ids_for_ingestion(ingestion_id):
                 operation = self._repository.get_capture(capture_id)
                 if operation.status in {
-                    StreamingCaptureStatus.WAITING_INPUT,
-                    StreamingCaptureStatus.EXTRACTING,
+                    CaptureStatus.WAITING_INPUT,
+                    CaptureStatus.EXTRACTING,
                 }:
                     self._repository.append_event(
                         operation.capture_id,
-                        event_type=StreamingEventType.INPUT_CHECKPOINT,
+                        event_type=CaptureEventType.INPUT_CHECKPOINT,
                         stage="extracting",
                     )
         return snapshot
@@ -97,8 +97,8 @@ class FinalizeIngestion:
     def execute(
         self,
         ingestion_id: str,
-        request: FinalizeIngestionV2,
-    ) -> IngestionV2:
+        request: FinalizeIngestionRequest,
+    ) -> Ingestion:
         snapshot = self._repository.finalize_ingestion(
             ingestion_id,
             total_bytes=request.total_bytes,
@@ -117,9 +117,9 @@ class StartCapture:
         self._repository = repository
         self._schedule = schedule
 
-    def execute(self, request: StartCaptureV2) -> CaptureOperationV2:
+    def execute(self, request: StartCaptureRequest) -> CaptureOperationContract:
         operation = self._repository.create_capture(request)
-        if operation.status is StreamingCaptureStatus.EXTRACTING:
+        if operation.status is CaptureStatus.EXTRACTING:
             self._schedule(operation.capture_id)
         return operation
 
@@ -133,7 +133,7 @@ class CancelCapture:
         self._repository = repository
         self._request_cancel = request_cancel
 
-    def execute(self, capture_id: str) -> CaptureOperationV2:
+    def execute(self, capture_id: str) -> CaptureOperationContract:
         self._request_cancel(capture_id)
         return self._repository.cancel_capture(capture_id)
 
@@ -144,7 +144,7 @@ class PollCaptureEvents:
     def __init__(self, repository: CaptureRepository) -> None:
         self._repository = repository
 
-    def execute(self, capture_id: str, *, after_sequence: int = -1) -> list[CaptureEventV2]:
+    def execute(self, capture_id: str, *, after_sequence: int = -1) -> list[CaptureEvent]:
         return self._repository.read_events(capture_id, after_sequence=after_sequence)
 
 
@@ -168,10 +168,10 @@ class CommitHostStructuring:
         document: CaptureDocument,
         *,
         idempotency_key: str,
-    ) -> CaptureOperationV2:
+    ) -> CaptureOperationContract:
         operation = self._repository.get_capture(capture_id)
         fingerprint = _candidate_fingerprint(document)
-        if operation.status is StreamingCaptureStatus.COMPLETED:
+        if operation.status is CaptureStatus.COMPLETED:
             committed = self._repository.commit_host_result(
                 capture_id,
                 idempotency_key=idempotency_key,

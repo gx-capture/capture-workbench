@@ -14,14 +14,14 @@ from capture_runtime.clock import SystemClock
 from capture_runtime.contract_set import SCHEMA_DIALECT, canonical_json_bytes
 from capture_runtime.contracts import (
     CaptureEngine,
-    OpenIngestionV2,
-    OpenStructuringSessionV2,
+    OpenIngestion,
+    OpenStructuringSession,
     PageLocator,
     RawCapture,
     RawCaptureSegment,
-    StartCaptureV2,
+    StartCapture,
     StructuringMode,
-    StructuringProviderCapabilityV2,
+    StructuringProviderCapability,
     TimeLocator,
 )
 from capture_runtime.structuring.infrastructure.structuring_session_repository import (
@@ -36,7 +36,7 @@ def _seed_host_capture(client: TestClient, *, segment_count: int = 2, pdf: bool 
     source = b"session-source"
     source_sha256 = hashlib.sha256(source).hexdigest()
     ingestion = repository.create_ingestion(
-        OpenIngestionV2(
+        OpenIngestion(
             client_request_id=f"session-ingestion-{uuid4()}",
             kind="pdf" if pdf else "recording",
             file_name="sample.pdf" if pdf else "sample.mp3",
@@ -60,7 +60,7 @@ def _seed_host_capture(client: TestClient, *, segment_count: int = 2, pdf: bool 
         sha256=source_sha256,
     )
     operation = repository.create_capture(
-        StartCaptureV2(
+        StartCapture(
             client_request_id=f"session-capture-{uuid4()}",
             ingestion_id=ingestion.ingestion_id,
             structuring_mode=StructuringMode.HOST,
@@ -105,7 +105,7 @@ def _open_request(capture_id: str, *, client_request_id: str = "session-request-
         "providerCapability": {
             "provider": {
                 "engine": "ollama",
-                "model": "capture-workbench-qwen3.5-0.8b-structure-v1",
+                "model": "qwen3.5-0.8b-structure-v1",
                 "digest": f"sha256:{'b' * 64}",
             },
             "capability": "capture-structuring",
@@ -145,7 +145,8 @@ def test_pull_session_plans_tiny_profile_batches_and_reconstructs_result(
     assert session["batchCount"] == 2
     assert session["nextBatchIndex"] == 0
     assert session["status"] == "open"
-    assert session["rawSourceSha256"]
+    assert session["sourceSha256"]
+    assert "rawSourceSha256" not in session
     assert session["contractSetSha256"]
 
     first_batch_response = client.get(f"/v2/captures/{capture_id}/structure/session/batches/0")
@@ -370,8 +371,86 @@ def test_pull_session_repository_rejects_tampered_request_fingerprint(
         repository.initialize()
 
 
+def test_historical_pull_session_metadata_stays_readable_and_preserves_bytes(
+    client: TestClient,
+) -> None:
+    capture_id = _seed_host_capture(client, segment_count=2)
+    route = f"/v2/captures/{capture_id}/structure/session"
+    legacy_request = _open_request(capture_id, client_request_id="legacy-open-1")
+    legacy_request["providerCapability"]["provider"]["model"] = (
+        "capture-workbench-qwen3.5-0.8b-structure-v1"
+    )
+    opened = client.post(
+        route,
+        json=legacy_request,
+        headers={"X-Idempotency-Key": "legacy-open-1"},
+    )
+    assert opened.status_code == 201, opened.text
+    expected_session = opened.json()
+    assert expected_session["batchCount"] == 2
+    session_id = expected_session["sessionId"]
+
+    repository = client.app.state.structuring_session_service.repository
+    path = repository.root / session_id / "metadata.json"
+    historical = json.loads(path.read_bytes())
+    session_payload = historical["session"]
+    source_sha256 = session_payload.pop("sourceSha256")
+    session_payload["rawSourceSha256"] = source_sha256
+    digest_input = {key: value for key, value in session_payload.items() if key != "sessionDigest"}
+    session_payload["sessionDigest"] = hashlib.sha256(
+        canonical_json_bytes(digest_input)
+    ).hexdigest()
+    historical["requestFingerprint"] = hashlib.sha256(
+        canonical_json_bytes(
+            {
+                "request": historical["request"],
+                "rawSourceSha256": source_sha256,
+                "contractSetSha256": session_payload["contractSetSha256"],
+                "batches": [
+                    {
+                        key: value
+                        for key, value in batch.items()
+                        if key not in {"sessionId", "batchDigest", "status"}
+                    }
+                    for batch in (entry["batch"] for entry in historical["batches"])
+                ],
+            }
+        )
+    ).hexdigest()
+    path.write_text(json.dumps(historical, indent=2), encoding="utf-8")
+    before = path.read_bytes()
+
+    repository.initialize()
+    read_response = client.get(route)
+    assert read_response.status_code == 200, read_response.text
+    assert read_response.json()["sourceSha256"] == source_sha256
+    assert "rawSourceSha256" not in read_response.json()
+    assert (
+        read_response.json()["providerCapability"]["provider"]["model"]
+        == "capture-workbench-qwen3.5-0.8b-structure-v1"
+    )
+    assert read_response.json()["sessionDigest"] == session_payload["sessionDigest"]
+    assert path.read_bytes() == before
+
+    replay_response = client.post(
+        route,
+        json=legacy_request,
+        headers={"X-Idempotency-Key": "legacy-open-1"},
+    )
+    assert replay_response.status_code == 201, replay_response.text
+    assert replay_response.json() == read_response.json()
+    assert path.read_bytes() == before
+
+    # Mixed old and new keys on disk must fail closed without rewriting bytes.
+    corrupt = json.loads(before)
+    corrupt["session"]["sourceSha256"] = source_sha256
+    path.write_text(json.dumps(corrupt, indent=2), encoding="utf-8")
+    with pytest.raises(StructuringSessionRecordCorruptError):
+        repository.initialize()
+
+
 def test_pull_session_contract_models_are_strict_and_camel_case() -> None:
-    capability = StructuringProviderCapabilityV2(
+    capability = StructuringProviderCapability(
         provider=CaptureEngine(
             engine="ollama",
             model="test-model",
@@ -380,7 +459,7 @@ def test_pull_session_contract_models_are_strict_and_camel_case() -> None:
         capability="capture-structuring",
         schema_dialect=SCHEMA_DIALECT,
     )
-    request = OpenStructuringSessionV2(
+    request = OpenStructuringSession(
         capture_id="capture-1",
         target_language="fr",
         provider_capability=capability,
@@ -391,6 +470,10 @@ def test_pull_session_contract_models_are_strict_and_camel_case() -> None:
         request.model_dump(by_alias=True)["providerCapability"]["schemaDialect"] == SCHEMA_DIALECT
     )
     with pytest.raises(ValueError):
-        OpenStructuringSessionV2.model_validate(
+        OpenStructuringSession.model_validate(
             {**request.model_dump(by_alias=True), "unexpected": True}
+        )
+    with pytest.raises(ValueError):
+        OpenStructuringSession.model_validate(
+            {**request.model_dump(by_alias=True), "rawSourceSha256": "a" * 64}
         )

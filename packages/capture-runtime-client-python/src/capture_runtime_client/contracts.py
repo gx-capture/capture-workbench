@@ -17,21 +17,21 @@ from pydantic import Field, field_validator
 from .private import generated_models as _generated
 
 for _generated_name in (
-    "RuntimeModelInstallationV2",
-    "RuntimeModelInstallationsV2",
-    "RuntimeInstallationV2",
-    "RuntimeInstallationsV2",
-    "CaptureOperationV2",
-    "PartialCaptureV2",
-    "CaptureEventV2",
-    "OcrPageProjectionV3",
-    "CaptureOcrProjectionV3",
-    "StructuringProviderCapabilityV2",
-    "OpenStructuringSessionV2",
-    "StructuringSessionV2",
-    "StructuringBatchV2",
-    "StructuringSemanticBlockV2",
-    "SubmitStructuringBatchV2",
+    "StructuringModelInstallation",
+    "StructuringModelInstallations",
+    "RuntimeInstallation",
+    "RuntimeInstallations",
+    "CaptureOperation",
+    "PartialCapture",
+    "CaptureEvent",
+    "OcrPageProjection",
+    "CaptureOcrProjection",
+    "StructuringProviderCapability",
+    "OpenStructuringSession",
+    "StructuringSession",
+    "StructuringBatch",
+    "StructuringSemanticBlock",
+    "SubmitStructuringBatch",
 ):
     getattr(_generated, _generated_name).model_rebuild(
         force=True,
@@ -76,39 +76,39 @@ class CaptureBlock(_generated.CaptureBlock):
     pass
 
 
-class CaptureFailure(_generated.CaptureFailureV2):
+class OperationFailure(_generated.OperationFailure):
     pass
 
 
-class OcrRaster(_generated.OcrRasterV3):
+class OcrRaster(_generated.OcrRaster):
     pass
 
 
-class OcrPoint(_generated.OcrPointV3):
+class OcrPoint(_generated.OcrPoint):
     pass
 
 
-class OcrBox(_generated.OcrBoxV3):
+class OcrBox(_generated.OcrBox):
     pass
 
 
-class OcrProvenance(_generated.OcrProvenanceV3):
+class OcrProvenance(_generated.OcrProvenance):
     pass
 
 
-class OcrProvenanceResolved(_generated.OcrProvenanceResolvedV3):
+class OcrProvenanceResolved(_generated.OcrProvenanceResolved):
     pass
 
 
-class OcrProvenanceUnavailable(_generated.OcrProvenanceUnavailableV3):
+class OcrProvenanceUnavailable(_generated.OcrProvenanceUnavailable):
     pass
 
 
-class OcrPageProjection(_generated.OcrPageProjectionV3):
+class OcrPageProjection(_generated.OcrPageProjection):
     pass
 
 
-class CaptureOcrProjection(_generated.CaptureOcrProjectionV3):
+class CaptureOcrProjection(_generated.CaptureOcrProjection):
     pass
 
 
@@ -120,95 +120,95 @@ class RawCapture(_generated.RawCapture):
     pass
 
 
-class RuntimeArtifactDescriptor(_generated.RuntimeArtifactDescriptorV2):
+class RuntimeArtifactDescriptor(_generated.RuntimeArtifactDescriptor):
     pass
 
 
-class RuntimeRequirement(_generated.RuntimeRequirementV2):
+class RuntimeRequirement(_generated.RuntimeRequirement):
     pass
 
 
-class RuntimeRequirements(_generated.RuntimeRequirementsV2):
+class RuntimeRequirements(_generated.RuntimeRequirements):
     pass
 
 
-class RuntimeModelOption(_generated.RuntimeModelOptionV2):
+class StructuringModelOption(_generated.StructuringModelOption):
     pass
 
 
-class RuntimeModelOptions(_generated.RuntimeModelOptionsV2):
+class StructuringModelOptions(_generated.StructuringModelOptions):
     pass
 
 
-class RuntimeModelInstallation(_generated.RuntimeModelInstallationV2):
+class StructuringModelInstallation(_generated.StructuringModelInstallation):
     pass
 
 
-class RuntimeModelInstallations(_generated.RuntimeModelInstallationsV2):
+class StructuringModelInstallations(_generated.StructuringModelInstallations):
     pass
 
 
-class RuntimeInstallation(_generated.RuntimeInstallationV2):
+class RuntimeInstallation(_generated.RuntimeInstallation):
     pass
 
 
-class RuntimeInstallations(_generated.RuntimeInstallationsV2):
+class RuntimeInstallations(_generated.RuntimeInstallations):
     pass
 
 
-class OpenIngestion(_generated.OpenIngestionV2):
+class OpenIngestion(_generated.OpenIngestion):
     pass
 
 
-class Ingestion(_generated.IngestionV2):
+class Ingestion(_generated.Ingestion):
     pass
 
 
-class StartCapture(_generated.StartCaptureV2):
+class StartCapture(_generated.StartCapture):
     pass
 
 
-class FinalizeIngestion(_generated.FinalizeIngestionV2):
+class FinalizeIngestion(_generated.FinalizeIngestion):
     pass
 
 
-class CaptureOperation(_generated.CaptureOperationV2):
+class CaptureOperation(_generated.CaptureOperation):
     pass
 
 
-class PartialCapture(_generated.PartialCaptureV2):
+class PartialCapture(_generated.PartialCapture):
     pass
 
 
-class CaptureEvent(_generated.CaptureEventV2):
+class CaptureEvent(_generated.CaptureEvent):
     pass
 
 
-class StructuringProviderCapability(_generated.StructuringProviderCapabilityV2):
+class StructuringProviderCapability(_generated.StructuringProviderCapability):
     pass
 
 
-class OpenStructuringSession(_generated.OpenStructuringSessionV2):
+class OpenStructuringSession(_generated.OpenStructuringSession):
     pass
 
 
-class StructuringSession(_generated.StructuringSessionV2):
+class StructuringSession(_generated.StructuringSession):
     pass
 
 
-class StructuringBatch(_generated.StructuringBatchV2):
+class StructuringBatch(_generated.StructuringBatch):
     pass
 
 
-class StructuringSemanticBlock(_generated.StructuringSemanticBlockV2):
+class StructuringSemanticBlock(_generated.StructuringSemanticBlock):
     pass
 
 
-class SubmitStructuringBatch(_generated.SubmitStructuringBatchV2):
+class SubmitStructuringBatch(_generated.SubmitStructuringBatch):
     pass
 
 
-class RuntimeStreamingCapabilities(_generated.RuntimeStreamingCapabilitiesV2):
+class RuntimeStreamingCapabilities(_generated.RuntimeStreamingCapabilities):
     pass
 
 
@@ -221,7 +221,6 @@ class RuntimeReady(_generated.StrictModel):
     runtime_version: str
     capture_document_schema_version: str
     capture_document_schema_sha256: str | None = None
-    schema_sha256: str | None = None
     contract_set_version: str = "2"
     capabilities: dict[str, Any] = Field(default_factory=dict)
     ocr_compute: dict[str, Any] | None = None
@@ -231,19 +230,19 @@ class RuntimeReady(_generated.StrictModel):
     @classmethod
     def validate_ocr_compute(_cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
         if value is not None:
-            _generated.OcrComputePreflightV2.model_validate(value)
+            _generated.OcrComputePreflight.model_validate(value)
         return value
 
 
-class ReportStructuringFailure(_generated.ReportStructuringFailureV2):
+class ReportStructuringFailure(_generated.ReportStructuringFailure):
     pass
 
 
-class ErrorBody(_generated.ErrorBodyV2):
+class ErrorBody(_generated.ErrorBody):
     pass
 
 
-class ErrorEnvelope(_generated.ErrorEnvelopeV2):
+class ErrorEnvelope(_generated.ErrorEnvelope):
     pass
 
 
@@ -256,12 +255,12 @@ StructuringMode = _generated.StructuringMode
 StructuringSessionStatus = _generated.StructuringSessionStatus
 StructuringBatchStatus = _generated.StructuringBatchStatus
 RuntimeInstallationStatus = _generated.RuntimeInstallationStatus
-RuntimeModelOptionStatus = _generated.RuntimeModelOptionStatus
+StructuringModelOptionStatus = _generated.StructuringModelOptionStatus
 RuntimeRequirementStatus = _generated.RuntimeRequirementStatus
-StreamingIngestionMode = _generated.StreamingIngestionMode
-StreamingIngestionStatus = _generated.StreamingIngestionStatus
-StreamingCaptureStatus = _generated.StreamingCaptureStatus
-StreamingEventType = _generated.StreamingEventType
+IngestionMode = _generated.IngestionMode
+IngestionStatus = _generated.IngestionStatus
+CaptureStatus = _generated.CaptureStatus
+CaptureEventType = _generated.CaptureEventType
 OcrProjectionStatus = _generated.OcrProjectionStatus
 OcrPageStatus = _generated.OcrPageStatus
 OcrProvenanceStatus = _generated.OcrProvenanceStatus
@@ -274,7 +273,7 @@ def _load_contract_schema(name: str) -> dict[str, Any]:
     filename = {
         "RawCapture": "raw-capture.schema.json",
         "CaptureDocument": "capture-document.schema.json",
-        "CaptureOcrProjection": "capture-ocr-projection-v3.schema.json",
+        "CaptureOcrProjection": "capture-ocr-projection.schema.json",
     }.get(name)
     if filename is None:
         raise ValueError(f"Unknown generated contract schema: {name}")
@@ -314,7 +313,7 @@ __all__ = [
     "CaptureEngine",
     "RawCaptureSegment",
     "CaptureBlock",
-    "CaptureFailure",
+    "OperationFailure",
     "OcrRaster",
     "OcrPoint",
     "OcrBox",
@@ -328,10 +327,10 @@ __all__ = [
     "RuntimeArtifactDescriptor",
     "RuntimeRequirement",
     "RuntimeRequirements",
-    "RuntimeModelOption",
-    "RuntimeModelOptions",
-    "RuntimeModelInstallation",
-    "RuntimeModelInstallations",
+    "StructuringModelOption",
+    "StructuringModelOptions",
+    "StructuringModelInstallation",
+    "StructuringModelInstallations",
     "RuntimeInstallation",
     "RuntimeInstallations",
     "OpenIngestion",
@@ -357,12 +356,12 @@ __all__ = [
     "StructuringSessionStatus",
     "StructuringBatchStatus",
     "RuntimeInstallationStatus",
-    "RuntimeModelOptionStatus",
+    "StructuringModelOptionStatus",
     "RuntimeRequirementStatus",
-    "StreamingIngestionMode",
-    "StreamingIngestionStatus",
-    "StreamingCaptureStatus",
-    "StreamingEventType",
+    "IngestionMode",
+    "IngestionStatus",
+    "CaptureStatus",
+    "CaptureEventType",
     "OcrProjectionStatus",
     "OcrPageStatus",
     "OcrProvenanceStatus",

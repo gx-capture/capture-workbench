@@ -91,7 +91,7 @@ def contract_concept_values() -> dict[str, set[str]]:
         and value.__module__ == contracts.__name__
     }
     expected["CaptureRequirementId"] = set(get_args(contracts.CaptureRequirementId))
-    for model in (contracts.CaptureBlock, contracts.StructuringSemanticBlockV2):
+    for model in (contracts.CaptureBlock, contracts.StructuringSemanticBlock):
         expected[f"{model.__name__}.type"] = set(get_args(model.model_fields["type"].annotation))
     policy = json.loads(
         (SOURCE_ROOT / "assets" / "worker-stage-policy.json").read_text(encoding="utf-8")

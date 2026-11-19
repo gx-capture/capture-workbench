@@ -21,7 +21,7 @@ import {
   verifyRuntimePackageIdentity,
 } from '../e2e/support/runtime-identity.ts';
 
-const contractSha256 = 'c'.repeat(64);
+const contractSetSha256 = 'c'.repeat(64);
 
 function digest(value: string): string {
   return createHash('sha256').update(value).digest('hex');
@@ -86,7 +86,7 @@ function localInput(paths: { root: string; runtime: string; worker: string }) {
     packageRoot: paths.root,
     runtimeExecutablePath: paths.runtime,
     ocrWorkerArchivePath: paths.worker,
-    expectedContractSha256: contractSha256,
+    expectedContractSetSha256: contractSetSha256,
     probe: {
       runtimeExecutableSha256: digest('runtime bytes'),
       ocrWorkerSha256: digest('worker bytes'),
@@ -94,7 +94,7 @@ function localInput(paths: { root: string; runtime: string; worker: string }) {
     observed: {
       apiVersion: '2.0',
       ocrSchemaVersion: '3',
-      contractSha256,
+      contractSetSha256,
       loadedRuntimeSha256: digest('runtime bytes'),
       loadedOcrWorkerSha256: digest('worker bytes'),
     },

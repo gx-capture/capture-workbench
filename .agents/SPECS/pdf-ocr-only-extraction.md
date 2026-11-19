@@ -16,7 +16,7 @@ PaddleOCR 3.7 ONNX worker. Embedded PDF text is never read or returned.
 
 ## Interfaces
 
-- `StartCaptureV2` accepts optional `pdfPageNumbers`: one-based source pages in
+- `StartCapture` accepts optional `pdfPageNumbers`: one-based source pages in
   ascending order without duplicates, at most 500, each within the PDF. OCR
   pages, page locators and `ocrPageScope` keep those source page numbers. The
   page limit counts the selected pages; a page past the end of the PDF or more

@@ -258,7 +258,7 @@ def _preflight(request: WorkerRequest) -> dict[str, Any]:
         "requirementId",
         "artifactVersion",
         "modelPath",
-        "contractSha256",
+        "contractSetSha256",
         "options",
     }
     payload = request.payload
@@ -269,10 +269,10 @@ def _preflight(request: WorkerRequest) -> dict[str, Any]:
         raise ValueError("OCR compute preflight payload fields are invalid")
     if payload["requirementId"] != "text-recognition" or payload["modelPath"] is not None:
         raise ValueError("OCR compute preflight worker identity is invalid")
-    contract_sha256 = payload["contractSha256"]
+    contract_set_sha256 = payload["contractSetSha256"]
     if (
-        not isinstance(contract_sha256, str)
-        or re.fullmatch(r"[0-9a-f]{64}", contract_sha256) is None
+        not isinstance(contract_set_sha256, str)
+        or re.fullmatch(r"[0-9a-f]{64}", contract_set_sha256) is None
     ):
         raise ValueError("OCR compute preflight contract SHA-256 is invalid")
     options = payload["options"]
@@ -289,7 +289,7 @@ def _preflight(request: WorkerRequest) -> dict[str, Any]:
         raise ValueError("OCR compute preflight worker executable identity mismatch")
     capability_probe = NativeOcrGpuCapabilityProbe()
     selection = OcrComputePlan(
-        contract_sha256=contract_sha256,
+        contract_set_sha256=contract_set_sha256,
         worker_sha256=worker_sha256,
         capability_probe=capability_probe,
     ).select()

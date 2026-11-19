@@ -20,7 +20,7 @@ function readyResponse() {
     },
     ocrCompute: {
       apiVersion: '2.0', schemaVersion: '1', service: 'capture-runtime', runtimeVersion: SYNTHETIC_RUNTIME_VERSION,
-      contractSetVersion: '2', contractSha256: 'a'.repeat(64), workerSha256: 'b'.repeat(64),
+      contractSetVersion: '2', contractSetSha256: 'a'.repeat(64), workerSha256: 'b'.repeat(64),
       mode: 'cpu-fallback', adapterClass: 'unknown', reasonCode: 'no_compatible_gpu',
       userNoticeRequired: true, noticeCode: 'ocr_cpu_fallback',
     },

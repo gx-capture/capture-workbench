@@ -22,8 +22,10 @@ from capture_runtime.contracts import (
     OcrAdapterClass,
     OcrComputeMode,
     OcrComputeNoticeCode,
-    OcrComputePreflightV2,
     OcrComputeReasonCode,
+)
+from capture_runtime.contracts import (
+    OcrComputePreflight as OcrComputePreflightContract,
 )
 from capture_runtime.ocr.application.use_cases import SelectComputePlan
 from capture_runtime.ocr.domain.compute_plan.models import ComputeCandidate
@@ -496,12 +498,12 @@ class OcrComputeSelection:
     """The one decision projected to readiness, execution, and private proof."""
 
     execution_plan: OcrExecutionPlan
-    readiness: OcrComputePreflightV2
+    readiness: OcrComputePreflightContract
     selection_proof: OcrSelectionDeviceProofV1
 
     def __post_init__(self) -> None:
         plan = self.execution_plan
-        if self.readiness.contract_sha256 != plan.contract_set_sha256:
+        if self.readiness.contract_set_sha256 != plan.contract_set_sha256:
             raise ValueError("OCR readiness contract does not match execution plan")
         if self.readiness.worker_sha256 != plan.worker_sha256:
             raise ValueError("OCR readiness worker does not match execution plan")
@@ -546,7 +548,7 @@ class OcrComputeSelection:
             raise ValueError("OCR compute selection is invalid")
         try:
             plan = OcrExecutionPlan.from_dict(value["executionPlan"])
-            readiness = OcrComputePreflightV2.model_validate(value["readiness"])
+            readiness = OcrComputePreflightContract.model_validate(value["readiness"])
             proof_value = value["selectionProof"]
             if not isinstance(proof_value, dict):
                 raise ValueError("selection proof is invalid")
@@ -585,15 +587,15 @@ class OcrComputePlan:
     def __init__(
         self,
         *,
-        contract_sha256: str,
+        contract_set_sha256: str,
         worker_sha256: str | None = None,
         capability_probe: OcrGpuCapabilityProbe | None = None,
     ) -> None:
-        if not _SHA256_RE.fullmatch(contract_sha256):
+        if not _SHA256_RE.fullmatch(contract_set_sha256):
             raise ValueError("contract set digest is invalid")
         if worker_sha256 is not None and not _SHA256_RE.fullmatch(worker_sha256):
             raise ValueError("worker digest is invalid")
-        self._contract_sha256 = contract_sha256
+        self._contract_set_sha256 = contract_set_sha256
         self._worker_sha256 = worker_sha256
         self._capability_probe = capability_probe or NativeOcrGpuCapabilityProbe()
 
@@ -726,7 +728,7 @@ class OcrComputePlan:
             "adapterMapSha256": adapter_map_sha256,
             "ortMappingContract": ORT_DIRECTML_MAPPING_CONTRACT,
             "workerSha256": self._worker_sha256,
-            "contractSetSha256": self._contract_sha256,
+            "contractSetSha256": self._contract_set_sha256,
         }
         plan = OcrExecutionPlan(
             mode=OcrComputeMode.GPU,
@@ -738,11 +740,11 @@ class OcrComputePlan:
             adapter_map_sha256=adapter_map_sha256,
             ort_mapping_contract=ORT_DIRECTML_MAPPING_CONTRACT,
             worker_sha256=self._worker_sha256,
-            contract_set_sha256=self._contract_sha256,
+            contract_set_sha256=self._contract_set_sha256,
             plan_sha256=_digest(plan_values),
         )
-        readiness = OcrComputePreflightV2(
-            contract_sha256=self._contract_sha256,
+        readiness = OcrComputePreflightContract(
+            contract_set_sha256=self._contract_set_sha256,
             worker_sha256=self._worker_sha256,
             mode=OcrComputeMode.GPU,
             adapter_class=adapter.adapter_class,
@@ -776,7 +778,7 @@ class OcrComputePlan:
             "adapterMapSha256": None,
             "ortMappingContract": ORT_DIRECTML_MAPPING_CONTRACT,
             "workerSha256": self._worker_sha256,
-            "contractSetSha256": self._contract_sha256,
+            "contractSetSha256": self._contract_set_sha256,
         }
         plan = OcrExecutionPlan(
             mode=OcrComputeMode.CPU_FALLBACK,
@@ -788,11 +790,11 @@ class OcrComputePlan:
             adapter_map_sha256=None,
             ort_mapping_contract=ORT_DIRECTML_MAPPING_CONTRACT,
             worker_sha256=self._worker_sha256,
-            contract_set_sha256=self._contract_sha256,
+            contract_set_sha256=self._contract_set_sha256,
             plan_sha256=_digest(plan_values),
         )
-        readiness = OcrComputePreflightV2(
-            contract_sha256=self._contract_sha256,
+        readiness = OcrComputePreflightContract(
+            contract_set_sha256=self._contract_set_sha256,
             worker_sha256=self._worker_sha256,
             mode=OcrComputeMode.CPU_FALLBACK,
             adapter_class=adapter_class,
@@ -957,24 +959,24 @@ class OcrComputePreflight:
     def __init__(
         self,
         *,
-        contract_sha256: str,
+        contract_set_sha256: str,
         capability_probe: OcrGpuCapabilityProbe | None = None,
         worker_probe: Callable[[], Awaitable[object]] | None = None,
     ) -> None:
-        self._contract_sha256 = contract_sha256
+        self._contract_set_sha256 = contract_set_sha256
         self._capability_probe = capability_probe or NativeOcrGpuCapabilityProbe()
         self._worker_probe = worker_probe
 
-    def decide(self) -> OcrComputePreflightV2 | None:
+    def decide(self) -> OcrComputePreflightContract | None:
         """Return the public projection of one immutable runtime selection."""
 
         selection = OcrComputePlan(
-            contract_sha256=self._contract_sha256,
+            contract_set_sha256=self._contract_set_sha256,
             capability_probe=self._capability_probe,
         ).select()
         return None if selection is None else selection.readiness
 
-    async def decide_async(self) -> OcrComputePreflightV2 | None:
+    async def decide_async(self) -> OcrComputePreflightContract | None:
         """Resolve production capability through the installed worker boundary.
 
         The synchronous decision remains available for hermetic capability
@@ -990,20 +992,20 @@ class OcrComputePreflight:
             value = await self._worker_probe()
             if isinstance(value, OcrComputeSelection):
                 decision = value.readiness
-            elif isinstance(value, OcrComputePreflightV2):
-                decision = OcrComputePreflightV2.model_validate(
+            elif isinstance(value, OcrComputePreflightContract):
+                decision = OcrComputePreflightContract.model_validate(
                     value.model_dump(mode="json", by_alias=True)
                 )
             elif isinstance(value, dict):
                 if "readiness" in value and "executionPlan" in value:
                     decision = OcrComputeSelection.from_dict(value).readiness
                 else:
-                    decision = OcrComputePreflightV2.model_validate(value)
+                    decision = OcrComputePreflightContract.model_validate(value)
             else:
                 return None
         except Exception:
             return None
-        if decision.contract_sha256 != self._contract_sha256:
+        if decision.contract_set_sha256 != self._contract_set_sha256:
             return None
         return decision
 

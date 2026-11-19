@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from capture_runtime.contracts import RuntimeInstallationV2, RuntimeRequirementV2
+from capture_runtime.contracts import RuntimeInstallation, RuntimeRequirement
 from capture_runtime.provisioning.application.use_cases import (
     CancelInstallation,
     GetInstallation,
@@ -20,7 +20,7 @@ from capture_runtime.provisioning.application.use_cases import (
 @pytest.mark.anyio
 async def test_install_requirement_use_case() -> None:
     mock_service = MagicMock()
-    mock_job = MagicMock(spec=RuntimeInstallationV2)
+    mock_job = MagicMock(spec=RuntimeInstallation)
     mock_service.create.return_value = mock_job
 
     use_case = InstallRequirement(mock_service)
@@ -41,7 +41,7 @@ async def test_install_requirement_use_case() -> None:
 @pytest.mark.anyio
 async def test_get_and_list_installations_use_cases() -> None:
     mock_service = MagicMock()
-    mock_job = MagicMock(spec=RuntimeInstallationV2)
+    mock_job = MagicMock(spec=RuntimeInstallation)
     mock_service.get.return_value = mock_job
     mock_service.list.return_value = [mock_job]
 
@@ -55,7 +55,7 @@ async def test_get_and_list_installations_use_cases() -> None:
 @pytest.mark.anyio
 async def test_cancel_installation_use_case() -> None:
     mock_service = MagicMock()
-    mock_job = MagicMock(spec=RuntimeInstallationV2)
+    mock_job = MagicMock(spec=RuntimeInstallation)
     mock_service.cancel = AsyncMock(return_value=mock_job)
 
     use_case = CancelInstallation(mock_service)
@@ -79,8 +79,8 @@ async def test_uninstall_requirement_use_case() -> None:
 
 def test_list_requirements_use_case() -> None:
     mock_installer = MagicMock()
-    req1 = MagicMock(spec=RuntimeRequirementV2, requirement_id="req-1")
-    req2 = MagicMock(spec=RuntimeRequirementV2, requirement_id="req-2")
+    req1 = MagicMock(spec=RuntimeRequirement, requirement_id="req-1")
+    req2 = MagicMock(spec=RuntimeRequirement, requirement_id="req-2")
     mock_installer.requirements.return_value = [req1, req2]
 
     use_case = ListRequirements(mock_installer)

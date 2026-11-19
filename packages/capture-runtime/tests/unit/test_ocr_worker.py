@@ -21,8 +21,8 @@ from capture_runtime.constants import RUNTIME_VERSION
 from capture_runtime.contracts import (
     OcrAdapterClass,
     OcrComputeMode,
-    OcrComputePreflightV2,
-    OcrProvenanceV3,
+    OcrComputePreflight,
+    OcrProvenance,
 )
 from capture_runtime.ocr.infrastructure.ocr_onnx_adapter import OnnxOcrAdapter
 from capture_runtime.ocr.infrastructure.ocr_page_result import OcrRegion, OcrTextResult
@@ -83,7 +83,7 @@ def _gpu_plan_dict() -> dict[str, object]:
         assessment="positive-usable",
     )
     selection = OcrComputePlan(
-        contract_sha256="a" * 64,
+        contract_set_sha256="a" * 64,
         worker_sha256="b" * 64,
         capability_probe=_StaticProbe(
             OcrGpuCapabilitySnapshot(
@@ -99,14 +99,14 @@ def _gpu_plan_dict() -> dict[str, object]:
     return selection.execution_plan.to_dict()
 
 
-def _resolved_test_provenance() -> OcrProvenanceV3:
-    return OcrProvenanceV3(
+def _resolved_test_provenance() -> OcrProvenance:
+    return OcrProvenance(
         status="resolved",
         engine="text-recognition",
         model="test-model",
         model_digest="sha256:" + "1" * 64,
         device="directml",
-        profile_id="capture-workbench-ocr-pipeline-v1",
+        profile_id="ocr-pipeline-v1",
         profile_spec_sha256="c" * 64,
     )
 
@@ -273,7 +273,7 @@ def test_ocr_progress_rejects_unavailable_header_before_recognized_page() -> Non
         "pageCount": 1,
         "provenance": {
             "status": "unavailable",
-            "profileId": "capture-workbench-ocr-pipeline-v1",
+            "profileId": "ocr-pipeline-v1",
             "profileSpecSha256": "c" * 64,
             "reason": "protocol_failure",
         },
@@ -514,7 +514,7 @@ def test_ocr_compute_preflight_uses_worker_capability_probe_without_model_initia
                 "requirementId": "text-recognition",
                 "artifactVersion": RUNTIME_VERSION,
                 "modelPath": None,
-                "contractSha256": "a" * 64,
+                "contractSetSha256": "a" * 64,
                 "options": {},
             },
         ),
@@ -522,8 +522,8 @@ def test_ocr_compute_preflight_uses_worker_capability_probe_without_model_initia
     )
 
     expected_worker_sha256 = hashlib.sha256(Path(ocr_main.__file__).read_bytes()).hexdigest()
-    expected_readiness = OcrComputePreflightV2(
-        contract_sha256="a" * 64,
+    expected_readiness = OcrComputePreflight(
+        contract_set_sha256="a" * 64,
         worker_sha256=expected_worker_sha256,
         mode=OcrComputeMode.GPU,
         adapter_class=OcrAdapterClass.DEDICATED,
@@ -575,7 +575,7 @@ def test_ocr_compute_preflight_worker_reports_typed_cpu_reason(
                 "requirementId": "text-recognition",
                 "artifactVersion": RUNTIME_VERSION,
                 "modelPath": None,
-                "contractSha256": "a" * 64,
+                "contractSetSha256": "a" * 64,
                 "options": {},
             },
         ),
@@ -592,7 +592,7 @@ def test_ocr_compute_preflight_parser_rejects_malformed_worker_result() -> None:
     with pytest.raises(WorkerResultError, match="OCR compute preflight"):
         parse_ocr_compute_preflight(
             {
-                "contractSha256": "a" * 64,
+                "contractSetSha256": "a" * 64,
                 "mode": "cpu-fallback",
                 "adapterClass": "unknown",
                 "userNoticeRequired": False,
@@ -610,7 +610,7 @@ def test_ocr_compute_preflight_rejects_a_catalog_worker_digest_mismatch() -> Non
                     "requirementId": "text-recognition",
                     "artifactVersion": RUNTIME_VERSION,
                     "modelPath": None,
-                    "contractSha256": "a" * 64,
+                    "contractSetSha256": "a" * 64,
                     "options": {},
                     "expectedWorkerSha256": "0" * 64,
                 },
@@ -629,7 +629,7 @@ def test_ocr_compute_preflight_rejects_retired_device_id_only_request() -> None:
                     "requirementId": "text-recognition",
                     "artifactVersion": RUNTIME_VERSION,
                     "modelPath": None,
-                    "contractSha256": "a" * 64,
+                    "contractSetSha256": "a" * 64,
                     "options": {"deviceId": 0},
                 },
             ),
@@ -850,7 +850,7 @@ def test_ocr_worker_cancellation_after_page_one_prevents_second_recognition(
 def _engine_request_for_worker_adapter(
     manifest: tuple[OcrPageManifest, ...],
     cancellation: Event,
-    observe: Callable[[OcrPageManifest, object, OcrProvenanceV3], OcrPageInput],
+    observe: Callable[[OcrPageManifest, object, OcrProvenance], OcrPageInput],
 ) -> OcrEngineRequest:
     return OcrEngineRequest(
         manifest=manifest,
@@ -907,7 +907,7 @@ def test_worker_engine_checks_cancellation_before_advancing_the_image_iterator()
     def observe(
         expected: OcrPageManifest,
         _result: object,
-        page_provenance: OcrProvenanceV3,
+        page_provenance: OcrProvenance,
     ) -> OcrPageInput:
         observed.append(expected.page)
         cancellation.set()
@@ -966,7 +966,7 @@ def test_worker_engine_rejects_cancellation_after_iterator_exhaustion_before_ter
     def observe(
         expected: OcrPageManifest,
         _result: object,
-        page_provenance: OcrProvenanceV3,
+        page_provenance: OcrProvenance,
     ) -> OcrPageInput:
         return OcrPageInput(
             page=expected.page,
@@ -1008,7 +1008,7 @@ def test_worker_engine_rejects_cancellation_after_inference_before_observation()
     def observe(
         expected: OcrPageManifest,
         _result: object,
-        page_provenance: OcrProvenanceV3,
+        page_provenance: OcrProvenance,
     ) -> OcrPageInput:
         observed.append(expected.page)
         return OcrPageInput(
@@ -1086,13 +1086,13 @@ def test_ocr_worker_provenance_change_emits_failed_page_without_success(
     source = tmp_path / "public-fixture.pdf"
     source.write_bytes(b"public test fixture")
     progress: list[dict[str, object]] = []
-    changed = OcrProvenanceV3(
+    changed = OcrProvenance(
         status="resolved",
         engine="text-recognition",
         model="different-model",
         model_digest="sha256:" + "2" * 64,
         device="directml",
-        profile_id="capture-workbench-ocr-pipeline-v1",
+        profile_id="ocr-pipeline-v1",
         profile_spec_sha256="c" * 64,
     )
 
@@ -1233,7 +1233,7 @@ def test_ocr_worker_round_trips_reading_plan_without_changing_region_contract(
                 profile["dictionary"]["sha256"] = artifact["sha256"]
         (model_path / "pipeline.json").write_bytes(canonical_json_bytes(profile))
         selection = OcrComputePlan(
-            contract_sha256="a" * 64,
+            contract_set_sha256="a" * 64,
             worker_sha256="b" * 64,
             capability_probe=_StaticProbe(OcrGpuCapabilitySnapshot()),
         ).select()

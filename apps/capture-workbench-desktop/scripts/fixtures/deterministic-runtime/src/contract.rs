@@ -169,17 +169,22 @@ impl FixtureState {
         match (request.method.as_str(), request.path.as_str()) {
             ("GET", "/v2/health/ready") => self.ready(),
             ("GET", "/v2/runtime/requirements") => self.requirements(),
-            ("GET", "/v2/runtime/model-options") => self.model_options(),
+            ("GET", "/v2/runtime/structuring-model-options") => self.model_options(),
             ("GET", "/v2/runtime/installations") => self.list_installations(),
             ("POST", "/v2/runtime/installations") => self.create_installation(&request),
-            ("POST", "/v2/runtime/model-installations") => self.create_model_installation(&request),
+            ("POST", "/v2/runtime/structuring-model-installations") => {
+                self.create_model_installation(&request)
+            }
             ("POST", "/v2/captures") => self.create_capture(&request),
             ("POST", "/v2/ingestions") => self.open_ingestion(&request),
             _ if request.path.starts_with("/v2/ingestions/") => self.route_ingestion(&request),
             _ if request.path.starts_with("/v2/runtime/installations/") => {
                 self.route_installation(&request)
             }
-            _ if request.path.starts_with("/v2/runtime/model-installations/") => {
+            _ if request
+                .path
+                .starts_with("/v2/runtime/structuring-model-installations/") =>
+            {
                 self.route_model_installation(&request)
             }
             _ if request.path.starts_with("/v2/runtime/requirements/") => {
@@ -206,7 +211,7 @@ impl FixtureState {
                     "service": "capture-runtime",
                     "runtimeVersion": RUNTIME_VERSION,
                     "contractSetVersion": "2",
-                    "contractSha256": sha256_hex(b"deterministic-ocr-contract"),
+                    "contractSetSha256": sha256_hex(b"deterministic-ocr-contract"),
                     "workerSha256": sha256_hex(b"deterministic-ocr-worker"),
                     "mode": "cpu-fallback",
                     "adapterClass": "unknown",
@@ -426,9 +431,7 @@ impl FixtureState {
                 }),
             ),
             ("POST", "structure") => Response::json(200, record.result.clone()),
-            ("GET", "ocr") if record.kind != "recording" => {
-                Response::json(200, build_ocr(record))
-            }
+            ("GET", "ocr") if record.kind != "recording" => Response::json(200, build_ocr(record)),
             ("GET", "partial") if record.kind == "recording" => Response::json(
                 200,
                 json!({
@@ -647,7 +650,7 @@ impl FixtureState {
     fn route_model_installation(&self, request: &Request) -> Response {
         let installation_id = request
             .path
-            .trim_start_matches("/v2/runtime/model-installations/");
+            .trim_start_matches("/v2/runtime/structuring-model-installations/");
         if request.method == "GET" && !installation_id.contains('/') {
             return self.model_installation_response(installation_id, 200);
         }
@@ -763,8 +766,8 @@ fn build_ocr(record: &CaptureRecord) -> Value {
         .collect::<Vec<_>>();
     json!({
         "apiVersion": API_VERSION, "schemaVersion": "3", "captureId": record.capture_id,
-        "status": "completed", "source": record.source, "pageCount": pages.len(), "pages": pages,
-        "runtimeVersion": RUNTIME_VERSION, "contractSha256": sha256_hex(b"deterministic-ocr-contract"),
+        "status": "completed", "source": record.source, "processedPageCount": pages.len(), "pages": pages,
+        "runtimeVersion": RUNTIME_VERSION, "contractSetSha256": sha256_hex(b"deterministic-ocr-contract"),
         "provenance": provenance, "warnings": [], "failure": null, "createdAt": CREATED_AT,
     })
 }
@@ -917,12 +920,9 @@ fn known_requirement(requirement_id: &str, status: &str) -> Option<Value> {
             &["pdf", "image"],
             status,
         ),
-        "structuring-runtime" => requirement(
-            "structuring-runtime",
-            "Ollama",
-            &["structuring"],
-            status,
-        ),
+        "structuring-runtime" => {
+            requirement("structuring-runtime", "Ollama", &["structuring"], status)
+        }
         "structuring-model" => requirement(
             "structuring-model",
             "Capture structuring model",
@@ -944,14 +944,19 @@ fn model_option(option_id: &str, display_name: &str, model_reference: &str, stat
         "displayName": display_name,
         "modelReference": model_reference,
         "expectedDigest": null,
-        "expectedBytes": null,
-        "profileId": format!("capture-workbench-{base_id}-structure-v1"),
+        "downloadBytes": null,
+        "profileId": format!("{base_id}-structure-v1"),
         "profileSpecSha256": "b".repeat(64),
         "status": status,
     })
 }
 
-fn requirement(requirement_id: &str, display_name: &str, required_for: &[&str], status: &str) -> Value {
+fn requirement(
+    requirement_id: &str,
+    display_name: &str,
+    required_for: &[&str],
+    status: &str,
+) -> Value {
     json!({
         "requirementId": requirement_id,
         "kind": requirement_id,

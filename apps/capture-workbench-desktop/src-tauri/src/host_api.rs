@@ -10,8 +10,8 @@ use crate::{
         LibraryExportPayload, LibraryExportRequest, LibraryImportSelectionRequest,
         LibraryListRequest, LibrarySaveEditsRequest, LibrarySourceSelectionBatch,
         RuntimeCancelUploadInput, RuntimeCreateCaptureInput, RuntimeIdInput,
-        RuntimeInstallationStartInput, RuntimeModelInstallationStartInput, RuntimeRequirementInput,
-        RuntimeStreamingCaptureInput, RuntimeStreamingEventsInput, SourceSelectionKind,
+        RuntimeInstallationStartInput, RuntimeRequirementInput, RuntimeStreamingCaptureInput,
+        RuntimeStreamingEventsInput, SourceSelectionKind, StructuringModelInstallationStartInput,
     },
     library::LibraryStore,
     resources::RuntimeExecutablePaths,
@@ -158,22 +158,22 @@ pub(crate) fn runtime_uninstall_requirement(
     runtime_client::uninstall_requirement(state, input)
 }
 
-pub(crate) fn runtime_model_options(state: &DesktopState) -> Result<Value, String> {
-    runtime_client::model_options(state)
+pub(crate) fn runtime_structuring_model_options(state: &DesktopState) -> Result<Value, String> {
+    runtime_client::structuring_model_options(state)
 }
 
-pub(crate) fn runtime_start_model_installation(
+pub(crate) fn runtime_start_structuring_model_installation(
     state: &DesktopState,
-    input: RuntimeModelInstallationStartInput,
+    input: StructuringModelInstallationStartInput,
 ) -> Result<Value, String> {
-    runtime_client::start_model_installation(state, input)
+    runtime_client::start_structuring_model_installation(state, input)
 }
 
-pub(crate) fn runtime_get_model_installation(
+pub(crate) fn runtime_get_structuring_model_installation(
     state: &DesktopState,
     input: RuntimeIdInput,
 ) -> Result<Value, String> {
-    runtime_client::model_installation(state, input)
+    runtime_client::structuring_model_installation(state, input)
 }
 
 pub(crate) fn runtime_cancel_upload(

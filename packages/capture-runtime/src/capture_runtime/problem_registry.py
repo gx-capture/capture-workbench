@@ -27,7 +27,7 @@ class ProblemDefinition:
     message: str
     category: str
     retryable: bool = False
-    details_schema: str | None = "ErrorDetailsV2"
+    details_schema: str | None = "ErrorDetails"
 
     def __post_init__(self) -> None:
         if not self.code or self.code != self.code.strip():

@@ -233,6 +233,14 @@ class OllamaCaptureStructuringProvider:
             self._lifecycle.config.app_data_dir / "requirements" / "capture-ollama-model.ready.json"
         )
         if legacy_marker.is_file():
+            try:
+                marker_payload = json.loads(legacy_marker.read_text(encoding="utf-8"))
+            except (OSError, ValueError, TypeError, json.JSONDecodeError):
+                marker_payload = None
+            if isinstance(marker_payload, dict):
+                marker_profile = marker_payload.get("profileId")
+                if isinstance(marker_profile, str) and marker_profile:
+                    return marker_profile
             return self._lifecycle.config.profile_id
         raise RuntimeUnavailableError("model_selection_required")
 

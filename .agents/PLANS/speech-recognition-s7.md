@@ -82,7 +82,7 @@ How each piece reacts to a `contents` requirement and to two extra assets:
 - Plain audio → `ProgressiveSpeechProcessor.process` → `_resolve_engine` (`progressive_capture.py:443-449`) → `_acquire` (`:337-343`).
 
 **Existing codes and fields.**
-- `CaptureFailureV2.code` is a pattern string, not an enum (`contracts/__init__.py:720-724`).
+- `OperationFailure.code` is a pattern string, not an enum (`contracts/__init__.py:720-724`).
 - `requirement_unavailable` already exists in the problem registry (`problem_registry.py:198-203`) and is already used as a capture failure (`streaming_capture_service.py:409`, `490-495`).
 - `RuntimeRequirementV2.detail` (string or null) already exists. It is `None` for installed contents (`system_requirement_installer.py:234-253`).
 - The worker's own errors become generic `worker_failed`, retryable (`workers/server.py:166, 214, 313, 337`).

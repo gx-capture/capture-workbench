@@ -6,7 +6,7 @@ import asyncio
 from collections.abc import Callable, Collection
 from typing import Protocol
 
-from capture_runtime.contracts import RuntimeRequirementV2
+from capture_runtime.contracts import RuntimeRequirement
 from capture_runtime.install_progress import DownloadProgress
 
 
@@ -18,7 +18,7 @@ class RequirementInstaller(Protocol):
     def requirements(
         self,
         enabled_requirement_ids: Collection[str] | None = None,
-    ) -> list[RuntimeRequirementV2]: ...
+    ) -> list[RuntimeRequirement]: ...
 
     async def install(
         self,
@@ -42,7 +42,7 @@ class StructuringRequirementInstaller(Protocol):
     def requirements(
         self,
         enabled_requirement_ids: Collection[str] | None = None,
-    ) -> list[RuntimeRequirementV2]: ...
+    ) -> list[RuntimeRequirement]: ...
 
     async def install(
         self,

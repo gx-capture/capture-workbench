@@ -3,7 +3,7 @@ import { Observable } from 'rxjs';
 import type {
   CaptureEvent,
   CaptureReview,
-  CaptureFailure,
+  OperationFailure,
   CaptureOperation,
   PartialCapture,
   RawCapture,
@@ -129,7 +129,7 @@ export function normalizeHostFailureMessage(message: string): string {
   return (normalized || 'Host structuring failed.').slice(0, 500);
 }
 
-export function hostReconciliationFailure(error: unknown): CaptureFailure {
+export function hostReconciliationFailure(error: unknown): OperationFailure {
   return {
     code: HOST_RECONCILIATION_FAILURE_CODE,
     message: errorMessage(
@@ -160,9 +160,9 @@ export function runtimeProgressPercent(progress: number): number {
 
 export function failureFrom(
   error: unknown,
-  stage: CaptureFailure['stage'],
+  stage: OperationFailure['stage'],
   fallback: string,
-): CaptureFailure {
+): OperationFailure {
   const candidate = error as {
     readonly code?: unknown;
     readonly message?: unknown;
@@ -274,7 +274,7 @@ export class CaptureWorkbenchStoreHelpers {
     return normalizeHostFailureMessage(message);
   }
 
-  hostReconciliationFailure(error: unknown): CaptureFailure {
+  hostReconciliationFailure(error: unknown): OperationFailure {
     return hostReconciliationFailure(error);
   }
 
@@ -296,13 +296,13 @@ export class CaptureWorkbenchStoreHelpers {
 
   failureFrom(
     error: unknown,
-    stage: CaptureFailure['stage'],
+    stage: OperationFailure['stage'],
     fallback: string,
-  ): CaptureFailure {
+  ): OperationFailure {
     return failureFrom(error, stage, fallback);
   }
 
-  redactFailure(error: CaptureFailure): CaptureFailure {
+  redactFailure(error: OperationFailure): OperationFailure {
     return redactFailure(error);
   }
 

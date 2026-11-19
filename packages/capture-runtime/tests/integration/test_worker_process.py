@@ -33,7 +33,7 @@ OCR_PROVENANCE = {
     "model": "pp-ocrv6-medium",
     "modelDigest": "sha256:" + "a" * 64,
     "device": "directml",
-    "profileId": "capture-workbench-ocr-pipeline-v1",
+    "profileId": "ocr-pipeline-v1",
     "profileSpecSha256": "b" * 64,
 }
 
@@ -612,7 +612,7 @@ def test_worker_client_runs_model_free_preflight_in_one_owned_worker_process(
 ) -> None:
     owner = WorkerProcess()
     client = WorkerClient(process=owner)
-    contract_sha256 = "a" * 64
+    contract_set_sha256 = "a" * 64
 
     async def run() -> None:
         decision = await client.ocr_compute_preflight(
@@ -622,9 +622,9 @@ def test_worker_client_runs_model_free_preflight_in_one_owned_worker_process(
                 executable=SERVER_WORKER,
                 model_dir=tmp_path,
             ),
-            contract_sha256=contract_sha256,
+            contract_set_sha256=contract_set_sha256,
         )
-        assert decision.contract_sha256 == contract_sha256
+        assert decision.contract_set_sha256 == contract_set_sha256
         assert decision.mode is OcrComputeMode.GPU
         assert decision.adapter_class is OcrAdapterClass.DEDICATED
 
@@ -934,7 +934,7 @@ def test_ocr_worker_unavailable_header_is_protocol_failure_without_trusted_progr
                     "pageCount": 1,
                     "provenance": {
                         "status": "unavailable",
-                        "profileId": "capture-workbench-ocr-pipeline-v1",
+                        "profileId": "ocr-pipeline-v1",
                         "profileSpecSha256": "b" * 64,
                         "reason": "protocol_failure",
                     },

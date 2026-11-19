@@ -18,12 +18,18 @@ from capture_runtime.clock import Clock
 from capture_runtime.contract_set import canonical_json_bytes
 from capture_runtime.contracts import (
     CaptureDocument,
-    OpenStructuringSessionV2,
+    OpenStructuringSession,
     StructuringBatchStatus,
-    StructuringBatchV2,
-    StructuringSemanticBlockV2,
     StructuringSessionStatus,
-    StructuringSessionV2,
+)
+from capture_runtime.contracts import (
+    StructuringBatch as StructuringBatchContract,
+)
+from capture_runtime.contracts import (
+    StructuringSemanticBlock as StructuringSemanticBlockContract,
+)
+from capture_runtime.contracts import (
+    StructuringSession as StructuringSessionContract,
 )
 from capture_runtime.storage.common import atomic_json, project_stored_capture
 from capture_runtime.structuring.domain.session import StructuringSemanticBlock
@@ -54,11 +60,17 @@ def _digest(value: object) -> str:
     return hashlib.sha256(canonical_json_bytes(value)).hexdigest()
 
 
-def _session_digest(session: StructuringSessionV2) -> str:
+def _session_digest(session: StructuringSessionContract) -> str:
     return _digest(session.model_dump(mode="json", by_alias=True, exclude={"session_digest"}))
 
 
-def _batch_digest(batch: StructuringBatchV2) -> str:
+def _legacy_session_digest(session: StructuringSessionContract) -> str:
+    payload = session.model_dump(mode="json", by_alias=True, exclude={"session_digest"})
+    payload["rawSourceSha256"] = payload.pop("sourceSha256")
+    return _digest(payload)
+
+
+def _batch_digest(batch: StructuringBatchContract) -> str:
     return _digest(
         batch.model_dump(
             mode="json",
@@ -69,18 +81,18 @@ def _batch_digest(batch: StructuringBatchV2) -> str:
 
 
 def _request_fingerprint(
-    request: OpenStructuringSessionV2,
+    request: OpenStructuringSession,
     *,
-    raw_source_sha256: str,
+    source_sha256: str,
     contract_set_sha256: str,
-    batches: list[StructuringBatchV2],
+    batches: list[StructuringBatchContract],
 ) -> str:
     """Hash stable open-session inputs without session-assigned state."""
 
     return _digest(
         {
             "request": request.model_dump(mode="json", by_alias=True),
-            "rawSourceSha256": raw_source_sha256,
+            "sourceSha256": source_sha256,
             "contractSetSha256": contract_set_sha256,
             "batches": [
                 batch.model_dump(
@@ -92,6 +104,59 @@ def _request_fingerprint(
             ],
         }
     )
+
+
+def _legacy_request_fingerprint(
+    request: OpenStructuringSession,
+    *,
+    source_sha256: str,
+    contract_set_sha256: str,
+    batches: list[StructuringBatchContract],
+) -> str:
+    """Hash open-session inputs in the pre-0.11.0 key form for stored records."""
+
+    return _digest(
+        {
+            "request": request.model_dump(mode="json", by_alias=True),
+            "rawSourceSha256": source_sha256,
+            "contractSetSha256": contract_set_sha256,
+            "batches": [
+                batch.model_dump(
+                    mode="json",
+                    by_alias=True,
+                    exclude={"session_id", "batch_digest", "status"},
+                )
+                for batch in batches
+            ],
+        }
+    )
+
+
+def _decode_stored_session(
+    raw_payload: object,
+    *,
+    expect_legacy: bool,
+    record_name: str,
+) -> StructuringSessionContract:
+    if not isinstance(raw_payload, dict):
+        raise StructuringSessionRecordCorruptError(record_name)
+    has_legacy = "rawSourceSha256" in raw_payload
+    has_current = "sourceSha256" in raw_payload
+    if has_legacy and has_current:
+        raise StructuringSessionRecordCorruptError(record_name)
+    if expect_legacy:
+        if not has_legacy:
+            raise StructuringSessionRecordCorruptError(record_name)
+        normalized = dict(raw_payload)
+        normalized["sourceSha256"] = normalized.pop("rawSourceSha256")
+        session = StructuringSessionContract.model_validate(normalized)
+        if _legacy_session_digest(session) != session.session_digest:
+            raise StructuringSessionRecordCorruptError(record_name)
+        return session
+    session = StructuringSessionContract.model_validate(raw_payload)
+    if _session_digest(session) != session.session_digest:
+        raise StructuringSessionRecordCorruptError(record_name)
+    return session
 
 
 def _uuid(value: str) -> str:
@@ -107,11 +172,11 @@ def _uuid(value: str) -> str:
 
 @dataclass(slots=True)
 class StructuringBatchRecord:
-    batch: StructuringBatchV2
+    batch: StructuringBatchContract
     accepted_blocks: list[StructuringSemanticBlock] | None = None
     idempotency_key: str | None = None
     submission_fingerprint: str | None = None
-    response: StructuringSessionV2 | None = None
+    response: StructuringSessionContract | None = None
 
     def dump(self) -> dict[str, object]:
         return {
@@ -133,11 +198,12 @@ class StructuringBatchRecord:
 
 @dataclass(slots=True)
 class StructuringSessionRecord:
-    request: OpenStructuringSessionV2
-    session: StructuringSessionV2
+    request: OpenStructuringSession
+    session: StructuringSessionContract
     batches: list[StructuringBatchRecord]
     request_fingerprint: str
     completed_document: CaptureDocument | None = None
+    legacy_source_key: bool = False
 
     def dump(self) -> dict[str, object]:
         return {
@@ -210,23 +276,33 @@ class StructuringSessionRepository:
 
     def create_or_get(
         self,
-        request: OpenStructuringSessionV2,
+        request: OpenStructuringSession,
         *,
-        raw_source_sha256: str,
+        source_sha256: str,
         contract_set_sha256: str,
-        batches: list[StructuringBatchV2],
-    ) -> tuple[StructuringSessionV2, bool]:
+        batches: list[StructuringBatchContract],
+    ) -> tuple[StructuringSessionContract, bool]:
         with self._lock:
             request_fingerprint = _request_fingerprint(
                 request,
-                raw_source_sha256=raw_source_sha256,
+                source_sha256=source_sha256,
                 contract_set_sha256=contract_set_sha256,
                 batches=batches,
             )
             existing_id = self._idempotency.get(request.client_request_id)
             if existing_id is not None:
                 existing = self._records[existing_id]
-                if existing.request_fingerprint != request_fingerprint:
+                expected_fingerprint = (
+                    _legacy_request_fingerprint(
+                        request,
+                        source_sha256=source_sha256,
+                        contract_set_sha256=contract_set_sha256,
+                        batches=batches,
+                    )
+                    if existing.legacy_source_key
+                    else request_fingerprint
+                )
+                if existing.request_fingerprint != expected_fingerprint:
                     raise StructuringSessionIdempotencyConflictError(request.client_request_id)
                 return existing.session, False
             for existing in self._records.values():
@@ -236,10 +312,10 @@ class StructuringSessionRepository:
                 raise StructuringSessionTransitionError("structuring session has no batches")
             now = self._clock.now()
             session_id = str(uuid4())
-            session = StructuringSessionV2(
+            session = StructuringSessionContract(
                 session_id=session_id,
                 capture_id=request.capture_id,
-                raw_source_sha256=raw_source_sha256,
+                source_sha256=source_sha256,
                 contract_set_sha256=contract_set_sha256,
                 target_language=request.target_language,
                 provider_capability=request.provider_capability,
@@ -268,13 +344,13 @@ class StructuringSessionRepository:
             self._idempotency[request.client_request_id] = session_id
             return session, True
 
-    def get(self, session_id: str) -> StructuringSessionV2:
+    def get(self, session_id: str) -> StructuringSessionContract:
         with self._lock:
             return self._record(session_id).session
 
     def get_by_client_request(
-        self, request: OpenStructuringSessionV2
-    ) -> StructuringSessionV2 | None:
+        self, request: OpenStructuringSession
+    ) -> StructuringSessionContract | None:
         """Return an idempotent open response, or reject key reuse with new input."""
 
         with self._lock:
@@ -290,18 +366,18 @@ class StructuringSessionRepository:
                 raise StructuringSessionIdempotencyConflictError(request.client_request_id)
             return record.session
 
-    def for_capture(self, capture_id: str) -> StructuringSessionV2:
+    def for_capture(self, capture_id: str) -> StructuringSessionContract:
         with self._lock:
             for record in self._records.values():
                 if record.session.capture_id == capture_id:
                     return record.session
         raise StructuringSessionRecordNotFoundError(capture_id)
 
-    def list_sessions(self) -> list[StructuringSessionV2]:
+    def list_sessions(self) -> list[StructuringSessionContract]:
         with self._lock:
             return [record.session for record in self._records.values()]
 
-    def batch(self, session_id: str, batch_index: int) -> StructuringBatchV2:
+    def batch(self, session_id: str, batch_index: int) -> StructuringBatchContract:
         with self._lock:
             record = self._record(session_id)
             if batch_index < 0 or batch_index >= len(record.batches):
@@ -329,7 +405,7 @@ class StructuringSessionRepository:
         batch_index: int,
         idempotency_key: str,
         submission_fingerprint: str,
-    ) -> StructuringSessionV2 | None:
+    ) -> StructuringSessionContract | None:
         """Return an identical accepted response before semantic revalidation."""
 
         with self._lock:
@@ -360,7 +436,7 @@ class StructuringSessionRepository:
         submission_fingerprint: str,
         blocks: list[StructuringSemanticBlock],
         completed_document: CaptureDocument | None = None,
-    ) -> tuple[StructuringSessionV2, bool]:
+    ) -> tuple[StructuringSessionContract, bool]:
         with self._lock:
             record = self._record(session_id)
             if batch_index < 0 or batch_index >= len(record.batches):
@@ -396,7 +472,7 @@ class StructuringSessionRepository:
             domain = StructuringSession(
                 session_id=current.session_id,
                 capture_id=current.capture_id,
-                raw_source_sha256=current.raw_source_sha256,
+                source_sha256=current.source_sha256,
                 contract_set_sha256=current.contract_set_sha256,
                 schema_dialect=current.schema_dialect,
                 batch_count=current.batch_count,
@@ -420,6 +496,23 @@ class StructuringSessionRepository:
                 update={"session_digest": _session_digest(updated_session)}
             )
             updated_batches = list(record.batches)
+            if record.legacy_source_key:
+                updated_batches = [
+                    StructuringBatchRecord(
+                        batch=entry.batch,
+                        accepted_blocks=entry.accepted_blocks,
+                        idempotency_key=entry.idempotency_key,
+                        submission_fingerprint=entry.submission_fingerprint,
+                        response=(
+                            None
+                            if entry.response is None
+                            else entry.response.model_copy(
+                                update={"session_digest": _session_digest(entry.response)}
+                            )
+                        ),
+                    )
+                    for entry in updated_batches
+                ]
             updated_batches[batch_index] = StructuringBatchRecord(
                 batch=updated_batch,
                 accepted_blocks=blocks,
@@ -427,11 +520,21 @@ class StructuringSessionRepository:
                 submission_fingerprint=submission_fingerprint,
                 response=updated_session,
             )
+            updated_request_fingerprint = (
+                _request_fingerprint(
+                    record.request,
+                    source_sha256=updated_session.source_sha256,
+                    contract_set_sha256=updated_session.contract_set_sha256,
+                    batches=[entry.batch for entry in updated_batches],
+                )
+                if record.legacy_source_key
+                else record.request_fingerprint
+            )
             updated_record = StructuringSessionRecord(
                 request=record.request,
                 session=updated_session,
                 batches=updated_batches,
-                request_fingerprint=record.request_fingerprint,
+                request_fingerprint=updated_request_fingerprint,
                 completed_document=completed_document if is_final else record.completed_document,
             )
             # Persist the accepted body/checkpoint before mutating in-memory
@@ -485,15 +588,22 @@ class StructuringSessionRepository:
     def _load(self, directory: Path) -> StructuringSessionRecord:
         session_id = _uuid(directory.name)
         payload = json.loads((directory / "metadata.json").read_text(encoding="utf-8"))
-        request = OpenStructuringSessionV2.model_validate(payload["request"])
-        session = StructuringSessionV2.model_validate(payload["session"])
+        request = OpenStructuringSession.model_validate(payload["request"])
+        session_payload = payload["session"]
+        legacy_source_key = isinstance(session_payload, dict) and (
+            "rawSourceSha256" in session_payload
+        )
+        session = _decode_stored_session(
+            session_payload,
+            expect_legacy=legacy_source_key,
+            record_name=directory.name,
+        )
         if (
             session.session_id != session_id
             or session.capture_id != request.capture_id
             or session.target_language != request.target_language
             or session.provider_capability != request.provider_capability
             or session.schema_dialect != request.schema_dialect
-            or _session_digest(session) != session.session_digest
         ):
             raise StructuringSessionRecordCorruptError(directory.name)
         batches_payload = payload["batches"]
@@ -503,7 +613,7 @@ class StructuringSessionRepository:
         for expected_index, entry in enumerate(batches_payload):
             if not isinstance(entry, dict):
                 raise StructuringSessionRecordCorruptError(directory.name)
-            batch = StructuringBatchV2.model_validate(entry["batch"])
+            batch = StructuringBatchContract.model_validate(entry["batch"])
             if (
                 batch.session_id != session.session_id
                 or batch.capture_id != session.capture_id
@@ -524,13 +634,17 @@ class StructuringSessionRepository:
                         target_text=block_model.target_text,
                     )
                     for item in accepted
-                    for block_model in [StructuringSemanticBlockV2.model_validate(item)]
+                    for block_model in [StructuringSemanticBlockContract.model_validate(item)]
                 ]
             response_payload = entry.get("response")
             response = (
                 None
                 if response_payload is None
-                else StructuringSessionV2.model_validate(response_payload)
+                else _decode_stored_session(
+                    response_payload,
+                    expect_legacy=legacy_source_key,
+                    record_name=directory.name,
+                )
             )
             idempotency_key = entry.get("idempotencyKey")
             submission_fingerprint = entry.get("submissionFingerprint")
@@ -553,7 +667,6 @@ class StructuringSessionRepository:
                     or response.session_id != session.session_id
                     or response.capture_id != session.capture_id
                     or response.next_batch_index != expected_index + 1
-                    or _session_digest(response) != response.session_digest
                 ):
                     raise StructuringSessionRecordCorruptError(directory.name)
             if accepted_blocks is None and batch.status is not StructuringBatchStatus.READY:
@@ -573,12 +686,22 @@ class StructuringSessionRepository:
             or re.fullmatch(r"[0-9a-f]{64}", request_fingerprint) is None
         ):
             raise StructuringSessionRecordCorruptError(directory.name)
-        if request_fingerprint != _request_fingerprint(
-            request,
-            raw_source_sha256=session.raw_source_sha256,
-            contract_set_sha256=session.contract_set_sha256,
-            batches=[entry.batch for entry in batches],
-        ):
+        expected_fingerprint = (
+            _legacy_request_fingerprint(
+                request,
+                source_sha256=session.source_sha256,
+                contract_set_sha256=session.contract_set_sha256,
+                batches=[entry.batch for entry in batches],
+            )
+            if legacy_source_key
+            else _request_fingerprint(
+                request,
+                source_sha256=session.source_sha256,
+                contract_set_sha256=session.contract_set_sha256,
+                batches=[entry.batch for entry in batches],
+            )
+        )
+        if request_fingerprint != expected_fingerprint:
             raise StructuringSessionRecordCorruptError(directory.name)
         accepted_count = sum(batch.accepted_blocks is not None for batch in batches)
         if accepted_count != session.next_batch_index:
@@ -612,6 +735,7 @@ class StructuringSessionRepository:
             batches=batches,
             request_fingerprint=request_fingerprint,
             completed_document=completed_document,
+            legacy_source_key=legacy_source_key,
         )
 
 

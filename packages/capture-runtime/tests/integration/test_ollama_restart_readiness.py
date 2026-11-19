@@ -422,7 +422,7 @@ def test_model_install_waits_for_owned_ollama_server_before_pull(
     assert runner.calls[0][1:] == ["pull", "qwen3.5:0.8b"]
     assert runner.calls[1][1:] == [
         "create",
-        "capture-workbench-qwen3.5-0.8b-structure-v1",
+        "qwen3.5-0.8b-structure-v1",
         "-f",
         str(lifecycle.config.app_data_dir / "Capture.Modelfile"),
     ]

@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Protocol
 
-from capture_runtime.contracts import SPOKEN_LANGUAGES, StreamingEventType
+from capture_runtime.contracts import SPOKEN_LANGUAGES, CaptureEventType
 from capture_runtime.speech.infrastructure.progressive_audio import (
     DecodedAudioWindow,
     ProgressiveSessionEvent,
@@ -341,9 +341,9 @@ def _safe_stage(value: str) -> bool:
 
 
 def _event_frame(event: ProgressiveSessionEvent) -> bytes:
-    if event.event_type is StreamingEventType.HEARTBEAT:
+    if event.event_type is CaptureEventType.HEARTBEAT:
         return _frame(SessionFrameType.HEARTBEAT, _json_bytes({"stage": event.stage}))
-    if event.event_type is StreamingEventType.SEGMENT:
+    if event.event_type is CaptureEventType.SEGMENT:
         payload: dict[str, Any] = {
             "partialRevision": event.partial_revision,
             "coveredUntilMs": event.covered_until_ms,
@@ -356,7 +356,7 @@ def _event_frame(event: ProgressiveSessionEvent) -> bytes:
                 mode="json", by_alias=True
             )
         return _frame(SessionFrameType.SEALED_SEGMENT, _json_bytes(payload))
-    if event.event_type is StreamingEventType.CHECKPOINT:
+    if event.event_type is CaptureEventType.CHECKPOINT:
         return _frame(
             SessionFrameType.CHECKPOINT,
             _json_bytes(
@@ -366,9 +366,9 @@ def _event_frame(event: ProgressiveSessionEvent) -> bytes:
                 }
             ),
         )
-    if event.event_type is StreamingEventType.COMPLETED:
+    if event.event_type is CaptureEventType.COMPLETED:
         return _frame(SessionFrameType.COMPLETED, _json_bytes({"stage": event.stage}))
-    if event.event_type is StreamingEventType.FAILED:
+    if event.event_type is CaptureEventType.FAILED:
         assert event.error is not None
         return _frame(
             SessionFrameType.ERROR,

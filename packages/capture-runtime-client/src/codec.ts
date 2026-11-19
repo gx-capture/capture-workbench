@@ -30,35 +30,35 @@ export type RuntimeResponseModel =
   | 'RuntimeRequirements'
   | 'RuntimeInstallation'
   | 'RuntimeInstallations'
-  | 'RuntimeModelInstallation'
-  | 'RuntimeModelOptions'
+  | 'StructuringModelInstallation'
+  | 'StructuringModelOptions'
   | 'RawCapture'
   | 'CaptureOcrProjection'
   | 'CaptureDocument'
   | 'CaptureOperation'
   | 'Ingestion'
   | 'PartialCapture'
-  | 'StreamingResult'
+  | 'CaptureResult'
   | 'StructuringSession'
   | 'StructuringBatch';
 
 const MODEL_FIELDS: Record<RuntimeResponseModel, { readonly required: readonly string[]; readonly optional: readonly string[] }> = {
-  RuntimeReady: { required: ['ready', 'service', 'apiVersion', 'runtimeVersion', 'captureDocumentSchemaVersion', 'capabilities'], optional: ['message', 'captureDocumentSchemaSha256', 'schemaSha256', 'contractSetVersion', 'ocrCompute'] },
+  RuntimeReady: { required: ['ready', 'service', 'apiVersion', 'runtimeVersion', 'captureDocumentSchemaVersion', 'capabilities'], optional: ['message', 'captureDocumentSchemaSha256', 'contractSetVersion', 'ocrCompute'] },
   RuntimeStreamingCapabilities: { required: ['protocolVersion', 'maxChunkBytes', 'checkpointIntervalMs', 'heartbeatIntervalMs', 'stallTimeoutMs'], optional: ['captureKinds', 'supportsProgressiveAudio'] },
   RuntimeRequirement: { required: ['requirementId', 'kind', 'displayName', 'status', 'requiredFor', 'installStrategy'], optional: ['optional', 'detail', 'artifact', 'downloadBytes'] },
   RuntimeRequirements: { required: ['items'], optional: [] },
   RuntimeInstallation: { required: ['installationId', 'requirementId', 'status', 'progress', 'createdAt', 'updatedAt'], optional: ['error', 'completedAt', 'downloadBytes', 'downloadedBytes'] },
   RuntimeInstallations: { required: ['items'], optional: [] },
-  RuntimeModelInstallation: { required: ['installationId', 'optionId', 'status', 'progress', 'createdAt', 'updatedAt'], optional: ['error', 'completedAt'] },
-  RuntimeModelOptions: { required: ['catalogSha256', 'items'], optional: [] },
+  StructuringModelInstallation: { required: ['installationId', 'optionId', 'status', 'progress', 'createdAt', 'updatedAt'], optional: ['error', 'completedAt'] },
+  StructuringModelOptions: { required: ['catalogSha256', 'items'], optional: [] },
   RawCapture: { required: ['schemaVersion', 'diagnosticOnly', 'source', 'segments', 'sourceText', 'extractionEngine', 'createdAt'], optional: ['diarizationEngine', 'speakers', 'suggestedRequirementIds', 'warnings', 'ocrPageScope'] },
-  CaptureOcrProjection: { required: ['apiVersion', 'schemaVersion', 'captureId', 'status', 'pages', 'pageCount', 'runtimeVersion', 'contractSha256', 'provenance', 'createdAt'], optional: ['source', 'warnings', 'failure'] },
+  CaptureOcrProjection: { required: ['apiVersion', 'schemaVersion', 'captureId', 'status', 'pages', 'processedPageCount', 'runtimeVersion', 'contractSetSha256', 'provenance', 'createdAt'], optional: ['source', 'warnings', 'failure'] },
   CaptureDocument: { required: ['blocks', 'completedAt', 'createdAt', 'extractionEngine', 'rawSegments', 'schemaVersion', 'source', 'sourceText', 'structuringEngine', 'targetText'], optional: ['diarizationEngine', 'speakers', 'suggestedRequirementIds', 'warnings'] },
   CaptureOperation: { required: ['protocolVersion', 'captureId', 'ingestionId', 'status', 'partialRevision', 'lastEventSequence', 'createdAt', 'updatedAt'], optional: ['kind', 'progress', 'source', 'error', 'completedAt', 'pagesTotal', 'pagesDone', 'durationMs', 'coveredUntilMs'] },
   Ingestion: { required: ['protocolVersion', 'ingestionId', 'status', 'fileName', 'mediaType', 'totalBytes', 'receivedBytes', 'contiguousBytes', 'nextChunkIndex', 'nextOffset', 'expiresAt'], optional: ['kind', 'sourceSha256', 'finalizedSha256'] },
   PartialCapture: { required: ['protocolVersion', 'captureId', 'source', 'revision', 'coveredUntilMs', 'updatedAt'], optional: ['segments', 'sourceText', 'extractionEngine'] },
-  StreamingResult: { required: ['operation', 'raw', 'result'], optional: [] },
-  StructuringSession: { required: ['protocolVersion', 'sessionId', 'captureId', 'rawSourceSha256', 'contractSetSha256', 'providerCapability', 'schemaDialect', 'batchCount', 'nextBatchIndex', 'sessionDigest', 'status', 'createdAt', 'updatedAt'], optional: ['targetLanguage', 'completedAt'] },
+  CaptureResult: { required: ['operation', 'raw', 'result'], optional: [] },
+  StructuringSession: { required: ['protocolVersion', 'sessionId', 'captureId', 'sourceSha256', 'contractSetSha256', 'providerCapability', 'schemaDialect', 'batchCount', 'nextBatchIndex', 'sessionDigest', 'status', 'createdAt', 'updatedAt'], optional: ['targetLanguage', 'completedAt'] },
   StructuringBatch: { required: ['protocolVersion', 'sessionId', 'captureId', 'batchIndex', 'batchCount', 'sourceSegmentIds', 'providerPrompt', 'providerSchema', 'numCtx', 'numPredict', 'batchDigest', 'status'], optional: [] },
 };
 
@@ -134,7 +134,7 @@ function validateModelShape(value: unknown, model: RuntimeResponseModel): void {
       throw new CaptureRuntimeProtocolError(`Capture Runtime returned invalid ${model} recommendations.`);
     }
   }
-  if (model === 'StreamingResult') {
+  if (model === 'CaptureResult') {
     validateModelShape(record['operation'], 'CaptureOperation');
     validateModelShape(record['raw'], 'RawCapture');
     validateModelShape(record['result'], 'CaptureDocument');
@@ -156,7 +156,7 @@ function validateRuntimeReady(record: Record<string, unknown>): void {
       'service',
       'runtimeVersion',
       'contractSetVersion',
-      'contractSha256',
+      'contractSetSha256',
       'mode',
       'adapterClass',
       'userNoticeRequired',
@@ -170,8 +170,8 @@ function validateRuntimeReady(record: Record<string, unknown>): void {
     compute['service'] !== 'capture-runtime' ||
     compute['runtimeVersion'] !== RUNTIME_VERSION ||
     compute['contractSetVersion'] !== '2' ||
-    typeof compute['contractSha256'] !== 'string' ||
-    !/^[0-9a-f]{64}$/u.test(compute['contractSha256']) ||
+    typeof compute['contractSetSha256'] !== 'string' ||
+    !/^[0-9a-f]{64}$/u.test(compute['contractSetSha256']) ||
     (compute['workerSha256'] !== undefined &&
       compute['workerSha256'] !== null &&
       (typeof compute['workerSha256'] !== 'string' ||
@@ -250,12 +250,12 @@ function validateCaptureOcrProjection(record: Record<string, unknown>): void {
     );
   }
   if (
-    !isSafeIntegerAtLeast(record['pageCount'], 0) ||
-    (record['pageCount'] as number) > 500 ||
-    record['pageCount'] !== (Array.isArray(record['pages']) ? record['pages'].length : -1)
+    !isSafeIntegerAtLeast(record['processedPageCount'], 0) ||
+    (record['processedPageCount'] as number) > 500 ||
+    record['processedPageCount'] !== (Array.isArray(record['pages']) ? record['pages'].length : -1)
   ) {
     throw new CaptureRuntimeProtocolError(
-      'Capture Runtime returned an OCR projection with an invalid pageCount.',
+      'Capture Runtime returned an OCR projection with an invalid processedPageCount.',
     );
   }
   if (record['runtimeVersion'] !== RUNTIME_VERSION) {
@@ -264,11 +264,11 @@ function validateCaptureOcrProjection(record: Record<string, unknown>): void {
     );
   }
   if (
-    typeof record['contractSha256'] !== 'string' ||
-    !/^[0-9a-f]{64}$/u.test(record['contractSha256'])
+    typeof record['contractSetSha256'] !== 'string' ||
+    !/^[0-9a-f]{64}$/u.test(record['contractSetSha256'])
   ) {
     throw new CaptureRuntimeProtocolError(
-      'Capture Runtime returned an OCR projection with an invalid contractSha256.',
+      'Capture Runtime returned an OCR projection with an invalid contractSetSha256.',
     );
   }
 
@@ -283,7 +283,7 @@ function validateCaptureOcrProjection(record: Record<string, unknown>): void {
   }
   const failure = record['failure'];
   if (failure !== undefined && failure !== null)
-    validateCaptureFailure(failure, 'OCR projection failure');
+    validateOperationFailure(failure, 'OCR projection failure');
   const warnings = record['warnings'];
   if (warnings !== undefined) {
     if (!Array.isArray(warnings) || warnings.length > 1_000) {
@@ -418,7 +418,7 @@ function validateOcrPage(
   }
   const failure = page['failure'];
   if (failure !== undefined && failure !== null)
-    validateCaptureFailure(failure, 'OCR page failure');
+    validateOperationFailure(failure, 'OCR page failure');
 
   const textValue = typeof text === 'string' ? text : '';
   const boxValues = Array.isArray(boxes) ? boxes : [];
@@ -538,7 +538,7 @@ function validateCaptureSource(value: unknown): void {
   }
 }
 
-function validateCaptureFailure(value: unknown, label: string): void {
+function validateOperationFailure(value: unknown, label: string): void {
   const failure = asRecord(value, label);
   assertExactFields(failure, ['code', 'message'], label, ['stage', 'retryable']);
   if (

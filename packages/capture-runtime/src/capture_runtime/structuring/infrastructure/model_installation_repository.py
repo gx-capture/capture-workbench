@@ -17,9 +17,9 @@ from capture_runtime.clock import Clock
 from capture_runtime.constants import STRUCTURING_MODEL_REQUIREMENT_ID
 from capture_runtime.constants.requirements import RETIRED_STRUCTURING_REQUIREMENT_IDS
 from capture_runtime.contracts import (
-    CaptureFailureV2,
+    OperationFailure,
     RuntimeInstallationStatus,
-    RuntimeModelInstallationV2,
+    StructuringModelInstallation,
 )
 from capture_runtime.storage.common import (
     IdempotencyConflictError,
@@ -32,7 +32,7 @@ from capture_runtime.storage.common import (
 
 @dataclass(slots=True)
 class ModelInstallationRecord:
-    job: RuntimeModelInstallationV2
+    job: StructuringModelInstallation
     idempotency_key: str
     request_fingerprint: str
     historical_requirement_id: str | None = None
@@ -63,7 +63,7 @@ class ModelInstallationRecord:
                 historical_requirement_id = stored_id
                 job = {key: value for key, value in job.items() if key != "requirementId"}
         return cls(
-            job=RuntimeModelInstallationV2.model_validate(job),
+            job=StructuringModelInstallation.model_validate(job),
             historical_requirement_id=historical_requirement_id,
             idempotency_key=str(payload["idempotencyKey"]),
             request_fingerprint=str(payload["requestFingerprint"]),
@@ -123,7 +123,7 @@ class ModelInstallationRepository:
                 return existing, False
             now = self._clock.now()
             installation_id = str(uuid4())
-            job = RuntimeModelInstallationV2(
+            job = StructuringModelInstallation(
                 installation_id=installation_id,
                 option_id=option_id,
                 status=RuntimeInstallationStatus.QUEUED,
@@ -145,7 +145,7 @@ class ModelInstallationRepository:
             except KeyError as error:
                 raise RecordNotFoundError(installation_id) from error
 
-    def list(self) -> list[RuntimeModelInstallationV2]:
+    def list(self) -> list[StructuringModelInstallation]:
         with self._lock:
             return sorted(
                 (record.job for record in self._records.values()),
@@ -154,7 +154,7 @@ class ModelInstallationRepository:
             )
 
     def update_job(
-        self, installation_id: str, job: RuntimeModelInstallationV2
+        self, installation_id: str, job: StructuringModelInstallation
     ) -> ModelInstallationRecord:
         with self._lock:
             record = self.get(installation_id)
@@ -174,7 +174,7 @@ class ModelInstallationRepository:
                 record.job = record.job.model_copy(
                     update={
                         "status": RuntimeInstallationStatus.FAILED,
-                        "error": CaptureFailureV2(
+                        "error": OperationFailure(
                             code="runtime_restarted",
                             message=(
                                 "Capture Runtime restarted before model installation completed."

@@ -13,7 +13,7 @@ from uuid import uuid4
 
 from capture_runtime._worker_payloads import WorkerProbeResult
 from capture_runtime.constants.requirements import TEXT_RECOGNITION_REQUIREMENT_ID
-from capture_runtime.contracts import OcrComputePreflightV2
+from capture_runtime.contracts import OcrComputePreflight
 from capture_runtime.install_progress import DownloadedBytes, DownloadProgress
 from capture_runtime.ocr.infrastructure.ocr_preflight import OcrComputeSelection
 from capture_runtime.provisioning.infrastructure.engine_catalog import (
@@ -345,7 +345,7 @@ class EngineInstallationManager:
         self._verified_model_units: dict[str, tuple[ModelUnitSnapshot, str]] = {}
         self._verified_active_engines_lock = Lock()
         self._ocr_compute_preflight_cache: dict[
-            tuple[InstalledEngine, str], OcrComputePreflightV2
+            tuple[InstalledEngine, str], OcrComputePreflight
         ] = {}
         self._ocr_compute_selection_cache: dict[
             tuple[InstalledEngine, str], OcrComputeSelection
@@ -563,7 +563,7 @@ class EngineInstallationManager:
     async def ocr_compute_selection(
         self,
         *,
-        contract_sha256: str,
+        contract_set_sha256: str,
     ) -> OcrComputeSelection | None:
         """Resolve and retain the worker-owned immutable OCR compute plan."""
 
@@ -574,7 +574,7 @@ class EngineInstallationManager:
                 return None
             if engine is None:
                 return None
-            cache_key = (engine, contract_sha256)
+            cache_key = (engine, contract_set_sha256)
             cached = self._ocr_compute_selection_cache.get(cache_key)
             if cached is not None:
                 return cached
@@ -584,7 +584,7 @@ class EngineInstallationManager:
             try:
                 value = await worker_probe(
                     engine,
-                    contract_sha256=contract_sha256,
+                    contract_set_sha256=contract_set_sha256,
                 )
                 selection = (
                     value
@@ -593,7 +593,7 @@ class EngineInstallationManager:
                 )
             except Exception:
                 return None
-            if selection.readiness.contract_sha256 != contract_sha256:
+            if selection.readiness.contract_set_sha256 != contract_set_sha256:
                 return None
             if engine.worker_sha256 is not None and (
                 selection.execution_plan.worker_sha256 != engine.worker_sha256
@@ -605,8 +605,8 @@ class EngineInstallationManager:
     async def ocr_compute_preflight(
         self,
         *,
-        contract_sha256: str,
-    ) -> OcrComputePreflightV2 | None:
+        contract_set_sha256: str,
+    ) -> OcrComputePreflight | None:
         """Probe OCR compute in the installed worker and cache valid evidence.
 
         The core runtime intentionally does not carry ONNX Runtime.  The
@@ -617,7 +617,7 @@ class EngineInstallationManager:
 
         if callable(getattr(self.worker_client, "ocr_compute_selection", None)):
             selection = await self.ocr_compute_selection(
-                contract_sha256=contract_sha256,
+                contract_set_sha256=contract_set_sha256,
             )
             return None if selection is None else selection.readiness
 
@@ -628,7 +628,7 @@ class EngineInstallationManager:
                 return None
             if engine is None:
                 return None
-            cache_key = (engine, contract_sha256)
+            cache_key = (engine, contract_set_sha256)
             cached = self._ocr_compute_preflight_cache.get(cache_key)
             if cached is not None:
                 return cached
@@ -638,18 +638,18 @@ class EngineInstallationManager:
             try:
                 value = await worker_probe(
                     engine,
-                    contract_sha256=contract_sha256,
+                    contract_set_sha256=contract_set_sha256,
                 )
-                if isinstance(value, OcrComputePreflightV2):
+                if isinstance(value, OcrComputePreflight):
                     payload = value.model_dump(mode="json", by_alias=True)
                 elif isinstance(value, dict):
                     payload = value
                 else:
                     return None
-                decision = OcrComputePreflightV2.model_validate(payload)
+                decision = OcrComputePreflight.model_validate(payload)
             except Exception:
                 return None
-            if decision.contract_sha256 != contract_sha256:
+            if decision.contract_set_sha256 != contract_set_sha256:
                 return None
             if engine.worker_sha256 is not None and decision.worker_sha256 != engine.worker_sha256:
                 return None

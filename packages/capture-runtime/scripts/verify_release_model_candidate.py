@@ -494,7 +494,7 @@ async def verify_candidate(
         root = Path(temporary)
         fixture_root = root / "fixtures"
         fixture_root.mkdir()
-        contract_sha256 = load_contract_set().sha256
+        contract_set_sha256 = load_contract_set().sha256
         ocr_fixture = fixtures["ocr"]
         await _download_exact_url(
             url=ocr_fixture["licenseUrl"],
@@ -550,7 +550,7 @@ async def verify_candidate(
                 fixture = fixtures[fixture_kind]
                 if fixture_kind == "ocr":
                     selection = await manager.ocr_compute_selection(
-                        contract_sha256=contract_sha256,
+                        contract_set_sha256=contract_set_sha256,
                     )
                     if selection is None:
                         raise EngineInstallationError("candidate OCR compute plan was unavailable")

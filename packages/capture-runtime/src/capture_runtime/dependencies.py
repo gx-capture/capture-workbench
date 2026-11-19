@@ -138,16 +138,16 @@ def build_runtime_dependencies(
         speech_variant=settings.extraction.speech_recognition_variant,
     )
     active_ocr_preflight = ocr_preflight or OcrComputePreflight(
-        contract_sha256=runtime_contract_set.sha256,
+        contract_set_sha256=runtime_contract_set.sha256,
         worker_probe=lambda: engine_manager.ocr_compute_preflight(
-            contract_sha256=runtime_contract_set.sha256,
+            contract_set_sha256=runtime_contract_set.sha256,
         ),
     )
     standalone_extractor = StandaloneRuntimeCaptureExtractor(
         runtime_clock,
         settings.extraction,
         engine_manager=engine_manager,
-        contract_sha256=runtime_contract_set.sha256,
+        contract_set_sha256=runtime_contract_set.sha256,
     )
     active_extractor = extractor
     if active_extractor is None:

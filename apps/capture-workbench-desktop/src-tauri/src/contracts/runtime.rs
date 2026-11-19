@@ -9,7 +9,7 @@ pub(crate) struct RuntimeInstallationStartInput {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct RuntimeModelInstallationStartInput {
+pub(crate) struct StructuringModelInstallationStartInput {
     pub client_request_id: String,
     pub option_id: String,
 }

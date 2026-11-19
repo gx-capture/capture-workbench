@@ -21,6 +21,7 @@ def test_packaged_profile_identity_is_derived_from_canonical_bytes() -> None:
 
     assert profile.profile_spec_sha256 == digest
     assert profile.profile_id == derive_profile_id(profile.document["algorithm"], digest)
+    assert profile.profile_id.startswith("ocr-")
     assert profile.document["orientation"] == {
         "useDocOrientationClassify": False,
         "useDocUnwarping": False,

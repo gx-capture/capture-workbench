@@ -8,9 +8,9 @@ from typing import Protocol
 
 from capture_runtime.clock import Clock
 from capture_runtime.contracts import (
-    CaptureFailureV2,
+    OperationFailure,
+    RuntimeInstallation,
     RuntimeInstallationStatus,
-    RuntimeInstallationV2,
 )
 from capture_runtime.install_progress import DownloadedBytes
 from capture_runtime.provisioning.application.requirement_installer import (
@@ -64,7 +64,7 @@ def installation_failure_code(error: BaseException) -> str:
     return "installation_failed"
 
 
-def _to_domain(job: RuntimeInstallationV2) -> InstallationJob:
+def _to_domain(job: RuntimeInstallation) -> InstallationJob:
     return InstallationJob(
         installation_id=job.installation_id,
         requirement_id=job.requirement_id,
@@ -81,16 +81,16 @@ def _to_domain(job: RuntimeInstallationV2) -> InstallationJob:
     )
 
 
-def _to_contract(job: InstallationJob) -> RuntimeInstallationV2:
+def _to_contract(job: InstallationJob) -> RuntimeInstallation:
     error = None
     if job.failure_code and job.failure_message:
-        error = CaptureFailureV2(
+        error = OperationFailure(
             code=job.failure_code,
             message=job.failure_message,
             stage="runtime",
             retryable=job.retryable,
         )
-    return RuntimeInstallationV2(
+    return RuntimeInstallation(
         installation_id=job.installation_id,
         requirement_id=job.requirement_id,
         status=RuntimeInstallationStatus(job.status.value),
@@ -143,7 +143,7 @@ class InstallationService:
 
     def create(
         self, *, idempotency_key: str, request_fingerprint: str, requirement_id: str
-    ) -> RuntimeInstallationV2:
+    ) -> RuntimeInstallation:
         record, created = self.repository.create_or_get(
             idempotency_key=idempotency_key,
             request_fingerprint=request_fingerprint,
@@ -160,10 +160,10 @@ class InstallationService:
             task.add_done_callback(self._installation_done)
         return record.job
 
-    def get(self, installation_id: str) -> RuntimeInstallationV2:
+    def get(self, installation_id: str) -> RuntimeInstallation:
         return self.repository.get(installation_id).job
 
-    def list(self) -> list[RuntimeInstallationV2]:
+    def list(self) -> list[RuntimeInstallation]:
         return self.repository.list()
 
     async def uninstall(self, requirement_id: str, *, captures: CaptureGate) -> None:
@@ -195,7 +195,7 @@ class InstallationService:
             for job in self.repository.list()
         )
 
-    async def cancel(self, installation_id: str) -> RuntimeInstallationV2:
+    async def cancel(self, installation_id: str) -> RuntimeInstallation:
         job = self.get(installation_id)
         if job.status in TERMINAL_INSTALLATION_STATUSES:
             return job
@@ -324,7 +324,7 @@ class InstallationService:
         )
         self.repository.update_job(installation_id, _to_contract(domain_job))
 
-    def _cancelled_job(self, job: RuntimeInstallationV2) -> RuntimeInstallationV2:
+    def _cancelled_job(self, job: RuntimeInstallation) -> RuntimeInstallation:
         domain_job = _to_domain(job)
         domain_job.mark_cancelled(self._clock.now())
         return _to_contract(domain_job)

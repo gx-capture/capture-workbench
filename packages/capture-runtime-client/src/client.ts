@@ -4,13 +4,13 @@ import {
   type CaptureOperation,
   type CaptureOcrProjection,
   type CaptureRequirementId,
-  type CaptureStreamingResult,
+  type CaptureResult,
   type PartialCapture,
   type RawCapture,
   type RuntimeDiscovery,
   type RuntimeInstallation,
-  type RuntimeModelInstallation,
-  type RuntimeModelOptions,
+  type StructuringModelInstallation,
+  type StructuringModelOptions,
   type RuntimeReady,
   type RuntimeRequirement,
   type RuntimeRequirements,
@@ -212,10 +212,10 @@ export class CaptureRuntimeClient {
   }
 
   /** List the structuring model options the runtime allows. */
-  getModelOptions(signal?: AbortSignal): Promise<RuntimeModelOptions> {
+  getModelOptions(signal?: AbortSignal): Promise<StructuringModelOptions> {
     return this.json(
-      { path: '/v2/runtime/model-options', signal },
-      'RuntimeModelOptions',
+      { path: '/v2/runtime/structuring-model-options', signal },
+      'StructuringModelOptions',
     );
   }
 
@@ -224,10 +224,10 @@ export class CaptureRuntimeClient {
     optionId: string,
     idempotencyKey: string,
     signal?: AbortSignal,
-  ): Promise<RuntimeModelInstallation> {
+  ): Promise<StructuringModelInstallation> {
     return this.json(
       {
-        path: '/v2/runtime/model-installations',
+        path: '/v2/runtime/structuring-model-installations',
         method: 'POST',
         signal,
         headers: {
@@ -236,7 +236,7 @@ export class CaptureRuntimeClient {
         },
         body: JSON.stringify({ optionId, consent: true }),
       },
-      'RuntimeModelInstallation',
+      'StructuringModelInstallation',
     );
   }
 
@@ -244,13 +244,13 @@ export class CaptureRuntimeClient {
   getModelInstallation(
     id: string,
     signal?: AbortSignal,
-  ): Promise<RuntimeModelInstallation> {
+  ): Promise<StructuringModelInstallation> {
     return this.json(
       {
-        path: `/v2/runtime/model-installations/${encodeURIComponent(id)}`,
+        path: `/v2/runtime/structuring-model-installations/${encodeURIComponent(id)}`,
         signal,
       },
-      'RuntimeModelInstallation',
+      'StructuringModelInstallation',
     );
   }
 
@@ -258,7 +258,7 @@ export class CaptureRuntimeClient {
   getModelInstallationStatus(
     id: string,
     signal?: AbortSignal,
-  ): Promise<RuntimeModelInstallation> {
+  ): Promise<StructuringModelInstallation> {
     return this.getModelInstallation(id, signal);
   }
 
@@ -266,14 +266,14 @@ export class CaptureRuntimeClient {
   cancelModelInstallation(
     id: string,
     signal?: AbortSignal,
-  ): Promise<RuntimeModelInstallation> {
+  ): Promise<StructuringModelInstallation> {
     return this.json(
       {
-        path: `/v2/runtime/model-installations/${encodeURIComponent(id)}/cancel`,
+        path: `/v2/runtime/structuring-model-installations/${encodeURIComponent(id)}/cancel`,
         method: 'POST',
         signal,
       },
-      'RuntimeModelInstallation',
+      'StructuringModelInstallation',
     );
   }
 
@@ -309,7 +309,7 @@ export class CaptureRuntimeClient {
   }
 
   /** Read the terminal capture state, raw extraction, and structured document. */
-  getResult(id: string, signal?: AbortSignal): Promise<CaptureStreamingResult> {
+  getResult(id: string, signal?: AbortSignal): Promise<CaptureResult> {
     return this.getStreamingResult(id, signal);
   }
 
@@ -492,10 +492,10 @@ export class CaptureRuntimeClient {
   getStreamingResult(
     id: string,
     signal?: AbortSignal,
-  ): Promise<CaptureStreamingResult> {
+  ): Promise<CaptureResult> {
     return this.json(
       { path: `/v2/captures/${encodeURIComponent(id)}/result`, signal },
-      'StreamingResult',
+      'CaptureResult',
     );
   }
   /** Request cancellation of a capture operation. */

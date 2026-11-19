@@ -5,7 +5,7 @@ import type {
   CaptureDocument,
   CaptureEvent,
   CaptureOperation,
-  CaptureStreamingResult,
+  CaptureResult,
   PartialCapture,
   RawCapture,
   RuntimeReady,
@@ -28,7 +28,7 @@ export const READY: RuntimeReady = {
     service: 'capture-runtime',
     runtimeVersion: RUNTIME_VERSION,
     contractSetVersion: '2',
-    contractSha256: 'a'.repeat(64),
+    contractSetSha256: 'a'.repeat(64),
     mode: 'gpu',
     adapterClass: 'dedicated',
     reasonCode: null,
@@ -148,7 +148,7 @@ export const PARTIAL: PartialCapture = {
 
 export function streamingResult(
   operation = streamingOperation('completed'),
-): CaptureStreamingResult {
+): CaptureResult {
   return { operation, raw: RAW, result: DOCUMENT };
 }
 

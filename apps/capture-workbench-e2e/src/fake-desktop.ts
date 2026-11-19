@@ -300,9 +300,9 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
         confidence: 0.875,
         provenance: ocrProvenance,
       })),
-      pageCount: pageNumbers.length,
+      processedPageCount: pageNumbers.length,
       runtimeVersion,
-      contractSha256: 'a'.repeat(64),
+      contractSetSha256: 'a'.repeat(64),
       provenance: ocrProvenance,
       createdAt: '2026-07-20T00:00:00Z',
     };
@@ -419,7 +419,7 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
             service: 'capture-runtime',
             runtimeVersion,
             contractSetVersion: '2',
-            contractSha256: 'a'.repeat(64),
+            contractSetSha256: 'a'.repeat(64),
             workerSha256: 'b'.repeat(64),
             mode: 'gpu',
             adapterClass: 'dedicated',
@@ -548,7 +548,7 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
           }, 1500);
         });
       }
-      if (command === 'runtime_model_options') {
+      if (command === 'runtime_structuring_model_options') {
         return Promise.resolve({
           catalogSha256: 'a'.repeat(64),
           items: [
@@ -557,8 +557,8 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
               displayName: 'Qwen 3.5 0.8B',
               modelReference: 'qwen3.5:0.8b',
               expectedDigest: null,
-              expectedBytes: null,
-              profileId: 'capture-workbench-qwen3.5-0.8b-structure-v1',
+              downloadBytes: null,
+              profileId: 'qwen3.5-0.8b-structure-v1',
               profileSpecSha256: 'b'.repeat(64),
               status: 'active',
             },
@@ -567,8 +567,8 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
               displayName: 'Qwen 3.5 2B',
               modelReference: 'qwen3.5:2b',
               expectedDigest: null,
-              expectedBytes: null,
-              profileId: 'capture-workbench-qwen3.5-2b-structure-v1',
+              downloadBytes: null,
+              profileId: 'qwen3.5-2b-structure-v1',
               profileSpecSha256: 'c'.repeat(64),
               status: 'not-installed',
             },
@@ -577,8 +577,8 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
               displayName: 'Qwen 3.5 4B',
               modelReference: 'qwen3.5:4b',
               expectedDigest: null,
-              expectedBytes: null,
-              profileId: 'capture-workbench-qwen3.5-4b-structure-v1',
+              downloadBytes: null,
+              profileId: 'qwen3.5-4b-structure-v1',
               profileSpecSha256: 'd'.repeat(64),
               status: 'not-installed',
             },

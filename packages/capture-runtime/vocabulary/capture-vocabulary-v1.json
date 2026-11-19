@@ -299,169 +299,169 @@
     {
       "id": "capture.ingestion-mode.file",
       "label": "檔案匯入",
-      "codeName": "StreamingIngestionMode.FILE",
-      "enum": { "enumId": "StreamingIngestionMode", "value": "file" },
+      "codeName": "IngestionMode.FILE",
+      "enum": { "enumId": "IngestionMode", "value": "file" },
       "retired": false
     },
     {
       "id": "capture.ingestion-status.open",
       "label": "匯入進行中",
-      "codeName": "StreamingIngestionStatus.OPEN",
-      "enum": { "enumId": "StreamingIngestionStatus", "value": "open" },
+      "codeName": "IngestionStatus.OPEN",
+      "enum": { "enumId": "IngestionStatus", "value": "open" },
       "retired": false
     },
     {
       "id": "capture.ingestion-status.finalizing",
       "label": "匯入校驗中",
-      "codeName": "StreamingIngestionStatus.FINALIZING",
-      "enum": { "enumId": "StreamingIngestionStatus", "value": "finalizing" },
+      "codeName": "IngestionStatus.FINALIZING",
+      "enum": { "enumId": "IngestionStatus", "value": "finalizing" },
       "retired": false
     },
     {
       "id": "capture.ingestion-status.ready",
       "label": "匯入就緒",
-      "codeName": "StreamingIngestionStatus.READY",
-      "enum": { "enumId": "StreamingIngestionStatus", "value": "ready" },
+      "codeName": "IngestionStatus.READY",
+      "enum": { "enumId": "IngestionStatus", "value": "ready" },
       "retired": false
     },
     {
       "id": "capture.ingestion-status.cancelled",
       "label": "匯入已取消",
-      "codeName": "StreamingIngestionStatus.CANCELLED",
-      "enum": { "enumId": "StreamingIngestionStatus", "value": "cancelled" },
+      "codeName": "IngestionStatus.CANCELLED",
+      "enum": { "enumId": "IngestionStatus", "value": "cancelled" },
       "retired": false
     },
     {
       "id": "capture.ingestion-status.failed",
       "label": "匯入失敗",
-      "codeName": "StreamingIngestionStatus.FAILED",
-      "enum": { "enumId": "StreamingIngestionStatus", "value": "failed" },
+      "codeName": "IngestionStatus.FAILED",
+      "enum": { "enumId": "IngestionStatus", "value": "failed" },
       "retired": false
     },
     {
       "id": "capture.ingestion-status.expired",
       "label": "匯入已過期",
-      "codeName": "StreamingIngestionStatus.EXPIRED",
-      "enum": { "enumId": "StreamingIngestionStatus", "value": "expired" },
+      "codeName": "IngestionStatus.EXPIRED",
+      "enum": { "enumId": "IngestionStatus", "value": "expired" },
       "retired": false
     },
     {
       "id": "capture.status.created",
       "label": "擷取已建立",
-      "codeName": "StreamingCaptureStatus.CREATED",
-      "enum": { "enumId": "StreamingCaptureStatus", "value": "created" },
+      "codeName": "CaptureStatus.CREATED",
+      "enum": { "enumId": "CaptureStatus", "value": "created" },
       "retired": false
     },
     {
       "id": "capture.status.waiting-input",
       "label": "等待輸入完成",
-      "codeName": "StreamingCaptureStatus.WAITING_INPUT",
-      "enum": { "enumId": "StreamingCaptureStatus", "value": "waiting_input" },
+      "codeName": "CaptureStatus.WAITING_INPUT",
+      "enum": { "enumId": "CaptureStatus", "value": "waiting_input" },
       "retired": false
     },
     {
       "id": "capture.status.extracting",
       "label": "媒體特徵擷取中",
-      "codeName": "StreamingCaptureStatus.EXTRACTING",
-      "enum": { "enumId": "StreamingCaptureStatus", "value": "extracting" },
+      "codeName": "CaptureStatus.EXTRACTING",
+      "enum": { "enumId": "CaptureStatus", "value": "extracting" },
       "retired": false
     },
     {
       "id": "capture.status.awaiting-structuring",
       "label": "等待結構化",
-      "codeName": "StreamingCaptureStatus.AWAITING_STRUCTURING",
-      "enum": { "enumId": "StreamingCaptureStatus", "value": "awaiting_structuring" },
+      "codeName": "CaptureStatus.AWAITING_STRUCTURING",
+      "enum": { "enumId": "CaptureStatus", "value": "awaiting_structuring" },
       "retired": false
     },
     {
       "id": "capture.status.structuring",
       "label": "結構化中",
-      "codeName": "StreamingCaptureStatus.STRUCTURING",
-      "enum": { "enumId": "StreamingCaptureStatus", "value": "structuring" },
+      "codeName": "CaptureStatus.STRUCTURING",
+      "enum": { "enumId": "CaptureStatus", "value": "structuring" },
       "retired": false
     },
     {
       "id": "capture.status.completed",
       "label": "擷取完成",
-      "codeName": "StreamingCaptureStatus.COMPLETED",
-      "enum": { "enumId": "StreamingCaptureStatus", "value": "completed" },
+      "codeName": "CaptureStatus.COMPLETED",
+      "enum": { "enumId": "CaptureStatus", "value": "completed" },
       "retired": false
     },
     {
       "id": "capture.status.failed",
       "label": "擷取失敗",
-      "codeName": "StreamingCaptureStatus.FAILED",
-      "enum": { "enumId": "StreamingCaptureStatus", "value": "failed" },
+      "codeName": "CaptureStatus.FAILED",
+      "enum": { "enumId": "CaptureStatus", "value": "failed" },
       "retired": false
     },
     {
       "id": "capture.status.cancelled",
       "label": "擷取已取消",
-      "codeName": "StreamingCaptureStatus.CANCELLED",
-      "enum": { "enumId": "StreamingCaptureStatus", "value": "cancelled" },
+      "codeName": "CaptureStatus.CANCELLED",
+      "enum": { "enumId": "CaptureStatus", "value": "cancelled" },
       "retired": false
     },
     {
       "id": "capture.event-type.accepted",
       "label": "請求已接受",
-      "codeName": "StreamingEventType.ACCEPTED",
-      "enum": { "enumId": "StreamingEventType", "value": "accepted" },
+      "codeName": "CaptureEventType.ACCEPTED",
+      "enum": { "enumId": "CaptureEventType", "value": "accepted" },
       "retired": false
     },
     {
       "id": "capture.event-type.input-checkpoint",
       "label": "輸入檢查點",
-      "codeName": "StreamingEventType.INPUT_CHECKPOINT",
-      "enum": { "enumId": "StreamingEventType", "value": "input_checkpoint" },
+      "codeName": "CaptureEventType.INPUT_CHECKPOINT",
+      "enum": { "enumId": "CaptureEventType", "value": "input_checkpoint" },
       "retired": false
     },
     {
       "id": "capture.event-type.heartbeat",
       "label": "心跳保活",
-      "codeName": "StreamingEventType.HEARTBEAT",
-      "enum": { "enumId": "StreamingEventType", "value": "heartbeat" },
+      "codeName": "CaptureEventType.HEARTBEAT",
+      "enum": { "enumId": "CaptureEventType", "value": "heartbeat" },
       "retired": false
     },
     {
       "id": "capture.event-type.segment",
       "label": "擷取片段",
-      "codeName": "StreamingEventType.SEGMENT",
-      "enum": { "enumId": "StreamingEventType", "value": "segment" },
+      "codeName": "CaptureEventType.SEGMENT",
+      "enum": { "enumId": "CaptureEventType", "value": "segment" },
       "retired": false
     },
     {
       "id": "capture.event-type.checkpoint",
       "label": "進度檢查點",
-      "codeName": "StreamingEventType.CHECKPOINT",
-      "enum": { "enumId": "StreamingEventType", "value": "checkpoint" },
+      "codeName": "CaptureEventType.CHECKPOINT",
+      "enum": { "enumId": "CaptureEventType", "value": "checkpoint" },
       "retired": false
     },
     {
       "id": "capture.event-type.resync-required",
       "label": "需重新同步",
-      "codeName": "StreamingEventType.RESYNC_REQUIRED",
-      "enum": { "enumId": "StreamingEventType", "value": "resync_required" },
+      "codeName": "CaptureEventType.RESYNC_REQUIRED",
+      "enum": { "enumId": "CaptureEventType", "value": "resync_required" },
       "retired": false
     },
     {
       "id": "capture.event-type.completed",
       "label": "作業完成",
-      "codeName": "StreamingEventType.COMPLETED",
-      "enum": { "enumId": "StreamingEventType", "value": "completed" },
+      "codeName": "CaptureEventType.COMPLETED",
+      "enum": { "enumId": "CaptureEventType", "value": "completed" },
       "retired": false
     },
     {
       "id": "capture.event-type.failed",
       "label": "作業失敗",
-      "codeName": "StreamingEventType.FAILED",
-      "enum": { "enumId": "StreamingEventType", "value": "failed" },
+      "codeName": "CaptureEventType.FAILED",
+      "enum": { "enumId": "CaptureEventType", "value": "failed" },
       "retired": false
     },
     {
       "id": "capture.event-type.cancelled",
       "label": "作業取消",
-      "codeName": "StreamingEventType.CANCELLED",
-      "enum": { "enumId": "StreamingEventType", "value": "cancelled" },
+      "codeName": "CaptureEventType.CANCELLED",
+      "enum": { "enumId": "CaptureEventType", "value": "cancelled" },
       "retired": false
     },
     {
@@ -962,66 +962,66 @@
       "retired": false
     },
     {
-      "id": "RuntimeModelOptionStatus.active",
+      "id": "StructuringModelOptionStatus.active",
       "label": "模型選項狀態：active",
-      "codeName": "RuntimeModelOptionStatus.active",
-      "enum": { "enumId": "RuntimeModelOptionStatus", "value": "active" },
+      "codeName": "StructuringModelOptionStatus.active",
+      "enum": { "enumId": "StructuringModelOptionStatus", "value": "active" },
       "retired": false
     },
     {
-      "id": "RuntimeModelOptionStatus.installed",
+      "id": "StructuringModelOptionStatus.installed",
       "label": "模型選項狀態：installed",
-      "codeName": "RuntimeModelOptionStatus.installed",
-      "enum": { "enumId": "RuntimeModelOptionStatus", "value": "installed" },
+      "codeName": "StructuringModelOptionStatus.installed",
+      "enum": { "enumId": "StructuringModelOptionStatus", "value": "installed" },
       "retired": false
     },
     {
-      "id": "RuntimeModelOptionStatus.not-installed",
+      "id": "StructuringModelOptionStatus.not-installed",
       "label": "模型選項狀態：not-installed",
-      "codeName": "RuntimeModelOptionStatus.not-installed",
-      "enum": { "enumId": "RuntimeModelOptionStatus", "value": "not-installed" },
+      "codeName": "StructuringModelOptionStatus.not-installed",
+      "enum": { "enumId": "StructuringModelOptionStatus", "value": "not-installed" },
       "retired": false
     },
     {
-      "id": "StructuringSemanticBlockV2.type.heading",
+      "id": "StructuringSemanticBlock.type.heading",
       "label": "語意區塊：標題",
-      "codeName": "StructuringSemanticBlockV2.type.heading",
-      "enum": { "enumId": "StructuringSemanticBlockV2.type", "value": "heading" },
+      "codeName": "StructuringSemanticBlock.type.heading",
+      "enum": { "enumId": "StructuringSemanticBlock.type", "value": "heading" },
       "retired": false
     },
     {
-      "id": "StructuringSemanticBlockV2.type.list-item",
+      "id": "StructuringSemanticBlock.type.list-item",
       "label": "語意區塊：清單項目",
-      "codeName": "StructuringSemanticBlockV2.type.list-item",
-      "enum": { "enumId": "StructuringSemanticBlockV2.type", "value": "list-item" },
+      "codeName": "StructuringSemanticBlock.type.list-item",
+      "enum": { "enumId": "StructuringSemanticBlock.type", "value": "list-item" },
       "retired": false
     },
     {
-      "id": "StructuringSemanticBlockV2.type.paragraph",
+      "id": "StructuringSemanticBlock.type.paragraph",
       "label": "語意區塊：段落",
-      "codeName": "StructuringSemanticBlockV2.type.paragraph",
-      "enum": { "enumId": "StructuringSemanticBlockV2.type", "value": "paragraph" },
+      "codeName": "StructuringSemanticBlock.type.paragraph",
+      "enum": { "enumId": "StructuringSemanticBlock.type", "value": "paragraph" },
       "retired": false
     },
     {
-      "id": "StructuringSemanticBlockV2.type.quote",
+      "id": "StructuringSemanticBlock.type.quote",
       "label": "語意區塊：引文",
-      "codeName": "StructuringSemanticBlockV2.type.quote",
-      "enum": { "enumId": "StructuringSemanticBlockV2.type", "value": "quote" },
+      "codeName": "StructuringSemanticBlock.type.quote",
+      "enum": { "enumId": "StructuringSemanticBlock.type", "value": "quote" },
       "retired": false
     },
     {
-      "id": "StructuringSemanticBlockV2.type.table",
+      "id": "StructuringSemanticBlock.type.table",
       "label": "語意區塊：表格",
-      "codeName": "StructuringSemanticBlockV2.type.table",
-      "enum": { "enumId": "StructuringSemanticBlockV2.type", "value": "table" },
+      "codeName": "StructuringSemanticBlock.type.table",
+      "enum": { "enumId": "StructuringSemanticBlock.type", "value": "table" },
       "retired": false
     },
     {
-      "id": "StructuringSemanticBlockV2.type.transcript",
+      "id": "StructuringSemanticBlock.type.transcript",
       "label": "語意區塊：逐字稿",
-      "codeName": "StructuringSemanticBlockV2.type.transcript",
-      "enum": { "enumId": "StructuringSemanticBlockV2.type", "value": "transcript" },
+      "codeName": "StructuringSemanticBlock.type.transcript",
+      "enum": { "enumId": "StructuringSemanticBlock.type", "value": "transcript" },
       "retired": false
     },
     {

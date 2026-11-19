@@ -39,22 +39,22 @@
         "model": "pp-ocrv6-medium",
         "modelDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         "device": "directml",
-        "profileId": "capture-workbench-ocr-pipeline-v1",
+        "profileId": "ocr-pipeline-v1",
         "profileSpecSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
       },
       "failure": null
     }
   ],
-  "pageCount": 1,
+  "processedPageCount": 1,
   "runtimeVersion": "0.4.4",
-  "contractSha256": "__CONTRACT_SET_SHA256__",
+  "contractSetSha256": "__CONTRACT_SET_SHA256__",
   "provenance": {
     "status": "resolved",
     "engine": "text-recognition",
     "model": "pp-ocrv6-medium",
     "modelDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
     "device": "directml",
-    "profileId": "capture-workbench-ocr-pipeline-v1",
+    "profileId": "ocr-pipeline-v1",
     "profileSpecSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
   },
   "warnings": [],

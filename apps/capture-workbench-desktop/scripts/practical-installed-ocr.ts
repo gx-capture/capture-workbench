@@ -496,7 +496,7 @@ export async function runPracticalInstalledOcr(args: PracticalRunArguments): Pro
       fixture: { kind: sourceKind, sha256: args.inputSha256, bytes: sourceBytes.length },
       importedSourceSha256,
       runtime: {
-        contractSetSha256: preflight.contractSha256,
+        contractSetSha256: preflight.contractSetSha256,
         workerExecutableSha256: preflight.workerSha256,
         computeMode: preflight.mode,
       },

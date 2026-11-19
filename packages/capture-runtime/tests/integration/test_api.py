@@ -9,10 +9,12 @@ from capture_runtime.contract_set import load_contract_set
 from capture_runtime.contracts import (
     OcrAdapterClass,
     OcrComputeMode,
-    OcrComputePreflightV2,
-    OpenIngestionV2,
-    StartCaptureV2,
+    OpenIngestion,
+    StartCapture,
     StructuringMode,
+)
+from capture_runtime.contracts import (
+    OcrComputePreflight as OcrComputePreflightContract,
 )
 from capture_runtime.dependencies import build_runtime_dependencies
 from capture_runtime.ocr.infrastructure.ocr_preflight import (
@@ -65,6 +67,7 @@ def test_v2_health_auth_host_origin_and_version_handshake(client: TestClient) ->
     assert runtime_payload["apiVersion"] == "2.0"
     assert runtime_payload["captureDocumentSchemaVersion"] == "2"
     assert runtime_payload["captureDocumentSchemaSha256"]
+    assert "schemaSha256" not in runtime_payload
     assert runtime_payload["contractSetVersion"] == "2"
 
 
@@ -130,7 +133,7 @@ def test_v2_runtime_ready_reports_authenticated_ocr_compute_decision(settings_fa
     settings = settings_factory()
     contract_set = load_contract_set()
     preflight = OcrComputePreflight(
-        contract_sha256=contract_set.sha256,
+        contract_set_sha256=contract_set.sha256,
         capability_probe=StaticCapabilityProbe(),
     )
     with TestClient(
@@ -148,7 +151,7 @@ def test_v2_runtime_ready_reports_authenticated_ocr_compute_decision(settings_fa
         "service": "capture-runtime",
         "runtimeVersion": RUNTIME_VERSION,
         "contractSetVersion": "2",
-        "contractSha256": contract_set.sha256,
+        "contractSetSha256": contract_set.sha256,
         "workerSha256": None,
         "mode": "gpu",
         "adapterClass": "dedicated",
@@ -164,8 +167,8 @@ def test_v2_runtime_ready_uses_worker_owned_compute_preflight(
 ) -> None:
     settings = settings_factory()
     contract_set = load_contract_set()
-    decision = OcrComputePreflightV2(
-        contract_sha256=contract_set.sha256,
+    decision = OcrComputePreflightContract(
+        contract_set_sha256=contract_set.sha256,
         mode=OcrComputeMode.GPU,
         adapter_class=OcrAdapterClass.INTEGRATED,
         user_notice_required=False,
@@ -173,8 +176,8 @@ def test_v2_runtime_ready_uses_worker_owned_compute_preflight(
     dependencies = build_runtime_dependencies(settings)
     calls: list[str] = []
 
-    async def worker_probe(*, contract_sha256: str) -> object:
-        calls.append(contract_sha256)
+    async def worker_probe(*, contract_set_sha256: str) -> object:
+        calls.append(contract_set_sha256)
         return decision.model_dump(mode="json", by_alias=True)
 
     monkeypatch.setattr(dependencies.engine_manager, "ocr_compute_preflight", worker_probe)
@@ -203,6 +206,7 @@ def test_v2_contract_discovery_is_immutable_and_authenticated(client: TestClient
     index = client.get("/meta/v2/contracts")
     assert index.status_code == 200
     assert index.headers["cache-control"].endswith("immutable")
+    assert "catalogVersion" not in index.json()
     href = index.json()["href"]
     bundle = client.get(href)
     assert bundle.status_code == 200
@@ -378,7 +382,7 @@ def test_startup_reports_failed_waiting_capture_to_host(settings_factory):
     repository = app.state.streaming_repository
     repository.initialize()
     ingestion = repository.create_ingestion(
-        OpenIngestionV2(
+        OpenIngestion(
             client_request_id="restart-ingestion",
             file_name="sample.mp3",
             media_type="audio/mpeg",
@@ -386,7 +390,7 @@ def test_startup_reports_failed_waiting_capture_to_host(settings_factory):
         )
     )
     capture = repository.create_capture(
-        StartCaptureV2(
+        StartCapture(
             client_request_id="restart-capture",
             ingestion_id=ingestion.ingestion_id,
             structuring_mode=StructuringMode.HOST,

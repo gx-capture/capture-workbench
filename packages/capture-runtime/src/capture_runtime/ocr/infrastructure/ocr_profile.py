@@ -21,7 +21,7 @@ from capture_runtime.worker_probe import EngineRuntimeUnavailableError
 
 CANONICAL_PROFILE_PATH = Path(__file__).resolve().parents[2] / "assets" / "ocr-profile.json"
 PROFILE_ALGORITHM = "capture-workbench-ocr-profile-v3"
-PROFILE_ID_PREFIX = "capture-workbench-ocr"
+PROFILE_ID_PREFIX = "ocr"
 MODEL_ARTIFACT_PATHS = (
     "det/inference.onnx",
     "det/inference.yml",

@@ -110,7 +110,7 @@ test('extractOllamaStructuringProvenance reads nested v2 provenance and rejects 
       schemaVersion: '2',
       structuringEngine: {
         engine: 'ollama',
-        model: 'capture-workbench-qwen3.5-0.8b-structure-v1',
+        model: 'qwen3.5-0.8b-structure-v1',
         digest: validDigest,
         device: 'gpu',
       },
@@ -121,7 +121,7 @@ test('extractOllamaStructuringProvenance reads nested v2 provenance and rejects 
     schemaVersion: '2',
     structuringEngine: {
       engine: 'ollama',
-      model: 'capture-workbench-qwen3.5-0.8b-structure-v1',
+      model: 'qwen3.5-0.8b-structure-v1',
       digest: validDigest,
     },
   });
@@ -135,7 +135,7 @@ test('extractOllamaStructuringProvenance reads nested v2 provenance and rejects 
     schemaVersion: '2',
     structuringEngine: {
       engine: 'ollama',
-      model: 'capture-workbench-qwen3.5-0.8b-structure-v1',
+      model: 'qwen3.5-0.8b-structure-v1',
       digest: validDigest,
     },
   };
@@ -146,7 +146,7 @@ test('extractOllamaStructuringProvenance reads nested v2 provenance and rejects 
       schemaVersion: '2',
       structuringEngine: {
         engine: 'host',
-        model: 'capture-workbench-qwen3.5-0.8b-structure-v1',
+        model: 'qwen3.5-0.8b-structure-v1',
         digest: validDigest,
       },
     },
@@ -166,7 +166,7 @@ test('extractOllamaStructuringProvenance reads nested v2 provenance and rejects 
             schemaVersion: '2',
             structuringEngine: {
               engine: 'ollama',
-              model: 'capture-workbench-qwen3.5-0.8b-structure-v1',
+              model: 'qwen3.5-0.8b-structure-v1',
               digest: badDigest,
             },
           },
@@ -179,7 +179,7 @@ test('extractOllamaStructuringProvenance reads nested v2 provenance and rejects 
 test('buildRealOllamaSmokeEvidence builds the redacted evidence object with workerMirrorUsed', () => {
   const provenance = {
     engine: 'ollama' as const,
-    model: 'capture-workbench-qwen3.5-0.8b-structure-v1' as const,
+    model: 'qwen3.5-0.8b-structure-v1' as const,
     digest: validDigest,
   };
 

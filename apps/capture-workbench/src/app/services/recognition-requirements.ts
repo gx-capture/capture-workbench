@@ -1,5 +1,5 @@
 // Selects recognition requirements and model options for the desktop app.
-import type { CaptureRequirementId, RuntimeModelOption, RuntimeRequirement } from '@gx-capture/capture-workbench-ui';
+import type { CaptureRequirementId, StructuringModelOption, RuntimeRequirement } from '@gx-capture/capture-workbench-ui';
 import type { DesktopLibrarySummary } from '../contracts';
 import { isRecordingMediaType } from './capture-media-types';
 
@@ -118,15 +118,15 @@ export function selectInstallableRequirements(
 
 /** Indicates whether an active model option must be selected by the user. */
 export function modelSelectionRequired(
-  options: readonly RuntimeModelOption[],
+  options: readonly StructuringModelOption[],
 ): boolean {
   return options.length > 0 && !options.some((option) => option.status === 'active');
 }
 
 /** Returns the active model option, if the catalog has one. */
 export function activeModelOption(
-  options: readonly RuntimeModelOption[],
-): RuntimeModelOption | null {
+  options: readonly StructuringModelOption[],
+): StructuringModelOption | null {
   return options.find((option) => option.status === 'active') ?? null;
 }
 

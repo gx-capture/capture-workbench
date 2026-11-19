@@ -1,6 +1,6 @@
 """Public Capture Runtime client SDK."""
 
-from .client import CaptureRuntimeClient, CaptureStreamingResult, CaptureUpload, RuntimeDiscovery
+from .client import CaptureResult, CaptureRuntimeClient, CaptureUpload, RuntimeDiscovery
 from .contracts import *  # noqa: F401,F403
 from .contracts import __all__ as _contract_names
 from .errors import (
@@ -30,7 +30,7 @@ __all__ = [
     "CaptureRuntimeCompatibilityError",
     "CaptureRuntimeError",
     "CaptureRuntimeProtocolError",
-    "CaptureStreamingResult",
+    "CaptureResult",
     "CaptureUpload",
     "HttpRuntimeTransport",
     "InMemoryRoute",

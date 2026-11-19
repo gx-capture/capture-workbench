@@ -90,7 +90,7 @@ function proofFixture(): Record<string, unknown> {
     runtimeSha256: 'e'.repeat(64),
     workerSha256: 'f'.repeat(64),
     modelSha256: '1'.repeat(64),
-    profileId: 'capture-workbench-ocr-pipeline-v1',
+    profileId: 'ocr-pipeline-v1',
     profileSpecSha256: '2'.repeat(64),
     contractSetSha256: '3'.repeat(64),
   };
@@ -142,7 +142,7 @@ test('acceptance proof remains immutable and binds a bounded GPU summary to the 
     runtimeSha256: 'e'.repeat(64),
     workerSha256: 'f'.repeat(64),
     modelSha256: '1'.repeat(64),
-    profileId: 'capture-workbench-ocr-pipeline-v1',
+    profileId: 'ocr-pipeline-v1',
     profileSpecSha256: '2'.repeat(64),
     contractSetSha256: '3'.repeat(64),
     requestedPageScope: [1],
@@ -425,7 +425,7 @@ test('manifest evidence keeps only hashes, counts, CER, provenance, and cleanup-
         ocrModel: 'pp-ocrv6-medium',
         ocrDevice: 'directml',
         structuringEngine: 'ollama',
-        structuringModel: 'capture-workbench-qwen3.5-4b-structure-v1',
+        structuringModel: 'qwen3.5-4b-structure-v1',
       },
     },
   });
@@ -458,7 +458,7 @@ test('manifest evidence keeps only hashes, counts, CER, provenance, and cleanup-
       ocrModel: 'pp-ocrv6-medium',
       ocrDevice: 'directml',
       structuringEngine: 'ollama',
-      structuringModel: 'capture-workbench-qwen3.5-4b-structure-v1',
+      structuringModel: 'qwen3.5-4b-structure-v1',
     },
   });
   assert.deepEqual(manifest.fixture, { name: 'fixture.pdf', sha256: 'a'.repeat(64) });

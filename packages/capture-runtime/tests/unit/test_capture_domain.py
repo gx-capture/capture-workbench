@@ -23,22 +23,22 @@ from capture_runtime.capture.domain.size_policy import (
 )
 from capture_runtime.contracts import (
     CaptureSourceKind,
-    FinalizeIngestionV2,
-    OpenIngestionV2,
-    StartCaptureV2,
-    StreamingCaptureStatus,
-    StreamingIngestionMode,
-    StreamingIngestionStatus,
+    CaptureStatus,
+    IngestionMode,
+    IngestionStatus,
+    OpenIngestion,
     StructuringMode,
 )
+from capture_runtime.contracts import FinalizeIngestion as FinalizeIngestionRequest
+from capture_runtime.contracts import StartCapture as StartCaptureRequest
 
 
 def test_ingestion_invariants() -> None:
     ingestion = Ingestion(
         ingestion_id="ing-1",
         kind=CaptureSourceKind.PDF,
-        mode=StreamingIngestionMode.FILE,
-        status=StreamingIngestionStatus.OPEN,
+        mode=IngestionMode.FILE,
+        status=IngestionStatus.OPEN,
         received_bytes=100,
         expected_total_bytes=200,
         expected_sha256="abc",
@@ -92,7 +92,7 @@ def test_capture_operation_invariants() -> None:
         capture_id="cap-1",
         ingestion_id="ing-1",
         kind=CaptureSourceKind.IMAGE,
-        status=StreamingCaptureStatus.CREATED,
+        status=CaptureStatus.CREATED,
         progress=0.5,
         partial_revision=1,
         last_event_sequence=2,
@@ -169,7 +169,7 @@ def test_capture_use_cases_run_upload_schedule_replay_and_cancel(tmp_path, monke
         StreamingTransitionError,
     )
     from capture_runtime.clock import SystemClock
-    from capture_runtime.contracts import StreamingEventType
+    from capture_runtime.contracts import CaptureEventType
 
     clock = SystemClock()
     repository = StreamingRepository(
@@ -185,7 +185,7 @@ def test_capture_use_cases_run_upload_schedule_replay_and_cancel(tmp_path, monke
     content = b"abcdef"
     digest = hashlib.sha256(content).hexdigest()
     ingestion = service.open_ingestion_use_case.execute(
-        OpenIngestionV2(
+        OpenIngestion(
             client_request_id="upload",
             file_name="test.wav",
             media_type="audio/wav",
@@ -194,7 +194,7 @@ def test_capture_use_cases_run_upload_schedule_replay_and_cancel(tmp_path, monke
         )
     )
     operation = service.start_capture_use_case.execute(
-        StartCaptureV2(
+        StartCaptureRequest(
             ingestion_id=ingestion.ingestion_id,
             client_request_id="capture",
             structuring_mode=StructuringMode.HOST,
@@ -209,26 +209,27 @@ def test_capture_use_cases_run_upload_schedule_replay_and_cancel(tmp_path, monke
     assert service.append_chunk_use_case.execute(ingestion.ingestion_id, **arguments) == uploaded
     assert service.events_use_case.execute(operation.capture_id, after_sequence=0) == events
     finalized = service.finalize_ingestion_use_case.execute(
-        ingestion.ingestion_id, FinalizeIngestionV2(total_bytes=len(content), sha256=digest)
+        ingestion.ingestion_id, FinalizeIngestionRequest(total_bytes=len(content), sha256=digest)
     )
     assert (
         service.finalize_ingestion_use_case.execute(
-            ingestion.ingestion_id, FinalizeIngestionV2(total_bytes=len(content), sha256=digest)
+            ingestion.ingestion_id,
+            FinalizeIngestionRequest(total_bytes=len(content), sha256=digest),
         )
         == finalized
     )
     assert scheduled == [operation.capture_id]
     cancelled = service.cancel_capture_use_case.execute(operation.capture_id)
     assert service._cancellations[operation.capture_id].is_set()
-    assert cancelled.status is StreamingCaptureStatus.CANCELLED
+    assert cancelled.status is CaptureStatus.CANCELLED
     assert service.cancel_capture_use_case.execute(operation.capture_id) == cancelled
     assert (
         service.events_use_case.execute(operation.capture_id)[-1].event_type
-        is StreamingEventType.CANCELLED
+        is CaptureEventType.CANCELLED
     )
     with pytest.raises(StreamingTransitionError, match="no longer accepts events"):
         repository.append_event(
-            operation.capture_id, event_type=StreamingEventType.HEARTBEAT, stage="late"
+            operation.capture_id, event_type=CaptureEventType.HEARTBEAT, stage="late"
         )
     restarted = StreamingRepository(
         tmp_path, clock=clock, retention_hours=4, policy=SourceSizePolicy(DOCUMENT_MAX_UPLOAD_BYTES)
@@ -237,7 +238,7 @@ def test_capture_use_cases_run_upload_schedule_replay_and_cancel(tmp_path, monke
     assert restarted.get_capture(operation.capture_id) == cancelled
     with pytest.raises(StreamingTransitionError):
         restarted.append_event(
-            operation.capture_id, event_type=StreamingEventType.SEGMENT, stage="late"
+            operation.capture_id, event_type=CaptureEventType.SEGMENT, stage="late"
         )
     assert restarted.read_events(
         operation.capture_id, after_sequence=0
@@ -246,43 +247,43 @@ def test_capture_use_cases_run_upload_schedule_replay_and_cancel(tmp_path, monke
 
 def test_capture_aggregate_rejects_skipped_states_and_keeps_terminal_state() -> None:
     from capture_runtime.capture.domain.operation.models import CaptureTransitionError
-    from capture_runtime.contracts import StreamingEventType
+    from capture_runtime.contracts import CaptureEventType
 
     operation = CaptureOperation(capture_id="c", ingestion_id="i", kind=CaptureSourceKind.RECORDING)
     with pytest.raises(CaptureTransitionError):
-        operation.transition(StreamingCaptureStatus.STRUCTURING)
-    extracting = operation.transition(StreamingCaptureStatus.EXTRACTING)
+        operation.transition(CaptureStatus.STRUCTURING)
+    extracting = operation.transition(CaptureStatus.EXTRACTING)
     progressed = extracting.record_event(
-        StreamingEventType.CHECKPOINT, progress=0.5, partial_revision=2
+        CaptureEventType.CHECKPOINT, progress=0.5, partial_revision=2
     )
     assert (
         progressed.record_event(
-            StreamingEventType.HEARTBEAT, progress=0.2, partial_revision=1
+            CaptureEventType.HEARTBEAT, progress=0.2, partial_revision=1
         ).progress
         == 0.5
     )
-    completed = progressed.transition(StreamingCaptureStatus.AWAITING_STRUCTURING).transition(
-        StreamingCaptureStatus.COMPLETED
+    completed = progressed.transition(CaptureStatus.AWAITING_STRUCTURING).transition(
+        CaptureStatus.COMPLETED
     )
-    assert completed.transition(StreamingCaptureStatus.COMPLETED) is completed
+    assert completed.transition(CaptureStatus.COMPLETED) is completed
     with pytest.raises(CaptureTransitionError):
-        completed.transition(StreamingCaptureStatus.FAILED)
+        completed.transition(CaptureStatus.FAILED)
     with pytest.raises(CaptureTransitionError):
-        completed.transition(StreamingCaptureStatus.STRUCTURING)
+        completed.transition(CaptureStatus.STRUCTURING)
     with pytest.raises(CaptureTransitionError):
-        completed.record_event(StreamingEventType.CHECKPOINT)
+        completed.record_event(CaptureEventType.CHECKPOINT)
 
 
 def test_capture_operation_from_contract_and_require_pull_structuring() -> None:
     from capture_runtime.capture.domain.operation.models import CaptureTransitionError
-    from capture_runtime.contracts import CaptureOperationV2
+    from capture_runtime.contracts import CaptureOperation as CaptureOperationContract
 
     now = datetime.now(UTC)
-    contract_op = CaptureOperationV2(
+    contract_op = CaptureOperationContract(
         capture_id="cap-1",
         ingestion_id="ing-1",
         kind=CaptureSourceKind.IMAGE,
-        status=StreamingCaptureStatus.AWAITING_STRUCTURING,
+        status=CaptureStatus.AWAITING_STRUCTURING,
         progress=0.75,
         partial_revision=1,
         last_event_sequence=3,
@@ -292,7 +293,7 @@ def test_capture_operation_from_contract_and_require_pull_structuring() -> None:
     domain_op = CaptureOperation.from_contract(contract_op)
     assert domain_op.capture_id == "cap-1"
     assert domain_op.ingestion_id == "ing-1"
-    assert domain_op.status is StreamingCaptureStatus.AWAITING_STRUCTURING
+    assert domain_op.status is CaptureStatus.AWAITING_STRUCTURING
     assert domain_op.progress == 0.75
     assert domain_op.partial_revision == 1
     assert domain_op.last_event_sequence == 3
@@ -300,7 +301,7 @@ def test_capture_operation_from_contract_and_require_pull_structuring() -> None:
     # require_pull_structuring succeeds for AWAITING_STRUCTURING and STRUCTURING with HOST mode
     domain_op.require_pull_structuring(StructuringMode.HOST)
 
-    structuring_op = domain_op.transition(StreamingCaptureStatus.STRUCTURING)
+    structuring_op = domain_op.transition(CaptureStatus.STRUCTURING)
     structuring_op.require_pull_structuring(StructuringMode.HOST)
 
     # Rejects non-HOST mode
@@ -312,7 +313,7 @@ def test_capture_operation_from_contract_and_require_pull_structuring() -> None:
         capture_id="cap-2",
         ingestion_id="ing-2",
         kind=CaptureSourceKind.IMAGE,
-        status=StreamingCaptureStatus.EXTRACTING,
+        status=CaptureStatus.EXTRACTING,
     )
     with pytest.raises(CaptureTransitionError, match="capture is not awaiting pull structuring"):
         extracting_op.require_pull_structuring(StructuringMode.HOST)

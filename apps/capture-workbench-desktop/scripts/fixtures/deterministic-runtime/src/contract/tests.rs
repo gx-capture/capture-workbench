@@ -218,9 +218,12 @@ fn desktop_pdf_and_image_complete_with_raw_ocr_result_and_cleanup() {
         assert_eq!(ocr["captureId"], capture_id);
         assert_eq!(ocr["status"], "completed");
         assert_eq!(ocr["source"], raw["source"]);
-        assert_eq!(ocr["pageCount"], expected_pages);
+        assert_eq!(ocr["processedPageCount"], expected_pages);
         assert_eq!(ocr["runtimeVersion"], ready["ocrCompute"]["runtimeVersion"]);
-        assert_eq!(ocr["contractSha256"], ready["ocrCompute"]["contractSha256"]);
+        assert_eq!(
+            ocr["contractSetSha256"],
+            ready["ocrCompute"]["contractSetSha256"]
+        );
         assert_eq!(
             ready["ocrCompute"]["workerSha256"].as_str().unwrap().len(),
             64
@@ -615,7 +618,7 @@ fn uninstall_requirement_returns_installable_and_rejects_an_unknown_id() {
 #[test]
 fn model_options_match_catalog_profile_ids_and_active_scenario() {
     let state = fixture();
-    let options = get(&state, "/v2/runtime/model-options", 200);
+    let options = get(&state, "/v2/runtime/structuring-model-options", 200);
     let items = options["items"].as_array().unwrap();
     let summary: Vec<(&str, &str, &str, &str)> = items
         .iter()
@@ -634,19 +637,19 @@ fn model_options_match_catalog_profile_ids_and_active_scenario() {
             (
                 "qwen3.5-0.8b-v1",
                 "qwen3.5:0.8b",
-                "capture-workbench-qwen3.5-0.8b-structure-v1",
+                "qwen3.5-0.8b-structure-v1",
                 "active",
             ),
             (
                 "qwen3.5-2b-v1",
                 "qwen3.5:2b",
-                "capture-workbench-qwen3.5-2b-structure-v1",
+                "qwen3.5-2b-structure-v1",
                 "not-installed",
             ),
             (
                 "qwen3.5-4b-v1",
                 "qwen3.5:4b",
-                "capture-workbench-qwen3.5-4b-structure-v1",
+                "qwen3.5-4b-structure-v1",
                 "not-installed",
             ),
         ]

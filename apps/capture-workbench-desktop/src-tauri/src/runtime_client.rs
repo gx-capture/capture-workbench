@@ -7,8 +7,8 @@ use crate::{
     config::BackendConfig,
     contracts::{
         RuntimeCancelUploadInput, RuntimeCreateCaptureInput, RuntimeIdInput,
-        RuntimeInstallationStartInput, RuntimeModelInstallationStartInput, RuntimeRequirementInput,
-        RuntimeStreamingCaptureInput, RuntimeStreamingEventsInput,
+        RuntimeInstallationStartInput, RuntimeRequirementInput, RuntimeStreamingCaptureInput,
+        RuntimeStreamingEventsInput, StructuringModelInstallationStartInput,
     },
     library::{validate_spoken_language, LibraryStore, RuntimeSourceFile, RECORDING_MEDIA_TYPES},
     state::DesktopState,
@@ -108,13 +108,19 @@ pub(crate) fn uninstall_requirement(
     )
 }
 
-pub(crate) fn model_options(state: &DesktopState) -> Result<Value, String> {
-    request_json(state, "GET", "/v2/runtime/model-options", None, None)
+pub(crate) fn structuring_model_options(state: &DesktopState) -> Result<Value, String> {
+    request_json(
+        state,
+        "GET",
+        "/v2/runtime/structuring-model-options",
+        None,
+        None,
+    )
 }
 
-pub(crate) fn start_model_installation(
+pub(crate) fn start_structuring_model_installation(
     state: &DesktopState,
-    input: RuntimeModelInstallationStartInput,
+    input: StructuringModelInstallationStartInput,
 ) -> Result<Value, String> {
     validate_client_request_id(&input.client_request_id)?;
     validate_model_option_id(&input.option_id)?;
@@ -126,7 +132,7 @@ pub(crate) fn start_model_installation(
     request_json(
         state,
         "POST",
-        "/v2/runtime/model-installations",
+        "/v2/runtime/structuring-model-installations",
         Some(RequestBody {
             bytes: body,
             content_type: "application/json".into(),
@@ -135,7 +141,7 @@ pub(crate) fn start_model_installation(
     )
 }
 
-pub(crate) fn model_installation(
+pub(crate) fn structuring_model_installation(
     state: &DesktopState,
     input: RuntimeIdInput,
 ) -> Result<Value, String> {
@@ -143,7 +149,7 @@ pub(crate) fn model_installation(
     request_json(
         state,
         "GET",
-        &format!("/v2/runtime/model-installations/{}", input.id),
+        &format!("/v2/runtime/structuring-model-installations/{}", input.id),
         None,
         None,
     )
@@ -696,13 +702,13 @@ mod tests {
                 "captureId":"capture-1",
                 "status":"completed",
                 "source":{"sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","fileName":"scan.pdf","mediaType":"application/pdf","bytes":1024},
-                "pages":[{"page":1,"status":"recognized","raster":{"width":120,"height":80,"scale":1,"coordinateSystem":"pixel"},"text":"OCR","boxes":[{"polygon":[{"x":1,"y":1},{"x":20,"y":1},{"x":20,"y":20},{"x":1,"y":20}],"text":"OCR","confidence":0.9}],"confidence":0.9,"provenance":{"status":"resolved","engine":"text-recognition","model":"pp-ocrv6-medium","modelDigest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","device":"directml","profileId":"capture-workbench-ocr-pipeline-v1","profileSpecSha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}}],
-                "pageCount":1,
+                "pages":[{"page":1,"status":"recognized","raster":{"width":120,"height":80,"scale":1,"coordinateSystem":"pixel"},"text":"OCR","boxes":[{"polygon":[{"x":1,"y":1},{"x":20,"y":1},{"x":20,"y":20},{"x":1,"y":20}],"text":"OCR","confidence":0.9}],"confidence":0.9,"provenance":{"status":"resolved","engine":"text-recognition","model":"pp-ocrv6-medium","modelDigest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","device":"directml","profileId":"ocr-pipeline-v1","profileSpecSha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}}],
+                "processedPageCount":1,
                 "runtimeVersion":""#,
                 env!("CARGO_PKG_VERSION"),
                 r#"",
-                "contractSha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                "provenance":{"status":"resolved","engine":"text-recognition","model":"pp-ocrv6-medium","modelDigest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","device":"directml","profileId":"capture-workbench-ocr-pipeline-v1","profileSpecSha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},
+                "contractSetSha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "provenance":{"status":"resolved","engine":"text-recognition","model":"pp-ocrv6-medium","modelDigest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","device":"directml","profileId":"ocr-pipeline-v1","profileSpecSha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},
                 "createdAt":"2026-08-14T00:00:00Z"
             }"#
             );

@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from capture_runtime.capture.infrastructure.capture_worker_client import WorkerClient
-from capture_runtime.contracts import OcrProvenanceV3
+from capture_runtime.contracts import OcrProvenance
 from capture_runtime.ocr.infrastructure.ocr_execution_proof import (
     AcceptanceOcrExecutionEvidenceSink,
     NoopOcrExecutionEvidenceSink,
@@ -264,13 +264,13 @@ def test_failure_artifact_is_bounded_private_and_atomic(tmp_path: Path) -> None:
         source_role="pdf",
         diagnostics=diagnostics,
         worker_sha256="b" * 64,
-        provenance=OcrProvenanceV3(
+        provenance=OcrProvenance(
             status="resolved",
             engine="text-recognition",
             model="pp-ocrv6-medium",
             model_digest="sha256:" + "c" * 64,
             device="directml",
-            profile_id="capture-workbench-ocr-pipeline-v1",
+            profile_id="ocr-pipeline-v1",
             profile_spec_sha256="d" * 64,
         ),
     )

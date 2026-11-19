@@ -19,7 +19,7 @@ export class DiagnosticsPage {
   protected readonly features = inject(RecognitionFeaturesStore);
   protected readonly m = desktopMessages;
 
-  protected modelSizeLabel(expectedBytes: number | null | undefined): string | null {
-    return formatApproximateBytes(expectedBytes);
+  protected modelSizeLabel(downloadBytes: number | null | undefined): string | null {
+    return formatApproximateBytes(downloadBytes);
   }
 }

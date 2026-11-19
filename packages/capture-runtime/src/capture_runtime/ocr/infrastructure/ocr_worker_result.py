@@ -12,7 +12,7 @@ from dataclasses import dataclass, replace
 from typing import Literal, cast
 
 from capture_runtime._worker_payloads import SHA256_PROVENANCE, WorkerResultError, WorkerRunResult
-from capture_runtime.contracts import CaptureFailureV2, OcrProvenanceV3
+from capture_runtime.contracts import OcrProvenance, OperationFailure
 from capture_runtime.ocr.infrastructure.ocr_projection import OcrBoxInput
 from capture_runtime.worker_process import WorkerExecutionError, WorkerFailureDiagnostics
 
@@ -36,7 +36,7 @@ class WorkerOcrPage:
     raster_height: int
     raster_scale: float
     region_confidences: tuple[float, ...] = ()
-    failure: CaptureFailureV2 | None = None
+    failure: OperationFailure | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,7 +45,7 @@ class WorkerOcrProgress:
 
     page_count: int
     page_manifest: tuple[WorkerOcrPage, ...]
-    provenance: OcrProvenanceV3 | None = None
+    provenance: OcrProvenance | None = None
     pages: tuple[WorkerOcrPage, ...] = ()
 
 
@@ -79,7 +79,7 @@ class OcrWorkerFailure(WorkerExecutionError):
         *,
         kind: Literal["timeout", "protocol", "worker", "unavailable"],
         progress: WorkerOcrProgress | None,
-        provenance: OcrProvenanceV3 | None = None,
+        provenance: OcrProvenance | None = None,
         diagnostics: WorkerFailureDiagnostics | None = None,
         worker_sha256: str | None = None,
     ) -> None:
@@ -123,7 +123,7 @@ def _parse_ocr_confidence(
     return normalized
 
 
-def _parse_ocr_provenance(value: object) -> OcrProvenanceV3:
+def _parse_ocr_provenance(value: object) -> OcrProvenance:
     if not isinstance(value, dict):
         raise WorkerResultError("worker OCR provenance has unexpected fields")
     status = value.get("status")
@@ -145,7 +145,7 @@ def _parse_ocr_provenance(value: object) -> OcrProvenanceV3:
     if expected_fields is None or set(value) != expected_fields:
         raise WorkerResultError("worker OCR provenance has unexpected fields")
     try:
-        return OcrProvenanceV3.model_validate(value)
+        return OcrProvenance.model_validate(value)
     except Exception as error:
         raise WorkerResultError("worker OCR provenance is invalid") from error
 
@@ -306,7 +306,7 @@ def _parse_ocr_page(value: object, *, expected_page: int) -> WorkerOcrPage:
         if not isinstance(failure, dict):
             raise WorkerResultError("worker OCR page failure is invalid")
         try:
-            parsed_failure = CaptureFailureV2.model_validate(failure)
+            parsed_failure = OperationFailure.model_validate(failure)
         except Exception as error:
             raise WorkerResultError("worker OCR page failure is invalid") from error
     if status == "recognized" and (not text.strip() or parsed_failure is not None):
@@ -454,11 +454,11 @@ def _canonical_number(value: int | float) -> float:
     return 0.0 if normalized == 0 else normalized
 
 
-def _canonical_provenance(provenance: OcrProvenanceV3) -> dict[str, object]:
+def _canonical_provenance(provenance: OcrProvenance) -> dict[str, object]:
     return cast(dict[str, object], provenance.model_dump(mode="json", by_alias=True))
 
 
-def _canonical_failure(failure: CaptureFailureV2 | None) -> dict[str, object] | None:
+def _canonical_failure(failure: OperationFailure | None) -> dict[str, object] | None:
     return None if failure is None else failure.model_dump(mode="json", by_alias=True)
 
 

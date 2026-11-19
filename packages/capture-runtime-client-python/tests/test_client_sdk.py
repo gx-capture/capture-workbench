@@ -48,7 +48,7 @@ def _shared_page_selection() -> dict[str, object]:
     fixture = json.loads(SHARED_PAGE_SELECTION_FIXTURE.read_text(encoding="utf-8"))
     assert isinstance(fixture, dict)
     projection = fixture["projection"]
-    projection["contractSha256"] = CAPTURE_CONTRACT_SET_SHA256
+    projection["contractSetSha256"] = CAPTURE_CONTRACT_SET_SHA256
     projection["runtimeVersion"] = CAPTURE_RUNTIME_VERSION
     return fixture
 
@@ -56,7 +56,7 @@ def _shared_page_selection() -> dict[str, object]:
 def _shared_perspective_payload() -> dict[str, object]:
     payload = json.loads(SHARED_PERSPECTIVE_FIXTURE.read_text(encoding="utf-8"))
     assert isinstance(payload, dict)
-    payload["contractSha256"] = CAPTURE_CONTRACT_SET_SHA256
+    payload["contractSetSha256"] = CAPTURE_CONTRACT_SET_SHA256
     payload["runtimeVersion"] = CAPTURE_RUNTIME_VERSION
     return payload
 
@@ -142,7 +142,6 @@ def _discovery_routes() -> dict[tuple[str, str], Callable[[httpx.Request], httpx
     digest = hashlib.sha256(bundle).hexdigest()
     href = f"/meta/v2/contracts/sha256/{digest}"
     index = {
-        "catalogVersion": "2",
         "runtimeVersion": CAPTURE_RUNTIME_VERSION,
         "contractSetVersion": "2",
         "surfaces": [{"id": "v2"}],
@@ -393,7 +392,7 @@ def _ocr_projection(*, status: str = "completed") -> dict[str, object]:
         "model": "pp-ocrv6-medium",
         "modelDigest": f"sha256:{'a' * 64}",
         "device": "directml",
-        "profileId": "capture-workbench-ocr-pipeline-v1",
+        "profileId": "ocr-pipeline-v1",
         "profileSpecSha256": "b" * 64,
     }
     source = {
@@ -409,9 +408,9 @@ def _ocr_projection(*, status: str = "completed") -> dict[str, object]:
             "captureId": "cap",
             "status": "failed",
             "pages": [],
-            "pageCount": 0,
+            "processedPageCount": 0,
             "runtimeVersion": CAPTURE_RUNTIME_VERSION,
-            "contractSha256": CAPTURE_CONTRACT_SET_SHA256,
+            "contractSetSha256": CAPTURE_CONTRACT_SET_SHA256,
             "source": None,
             "provenance": engine,
             "warnings": [],
@@ -429,9 +428,9 @@ def _ocr_projection(*, status: str = "completed") -> dict[str, object]:
         "captureId": "cap",
         "status": "completed",
         "source": source,
-        "pageCount": 1,
+        "processedPageCount": 1,
         "runtimeVersion": CAPTURE_RUNTIME_VERSION,
-        "contractSha256": CAPTURE_CONTRACT_SET_SHA256,
+        "contractSetSha256": CAPTURE_CONTRACT_SET_SHA256,
         "pages": [
             {
                 "page": 1,
@@ -503,9 +502,9 @@ def test_loopback_transport_and_handshake() -> None:
                 requiredHeaders=["X-Idempotency-Key"],
                 idempotency={"mode": "required", "header": "X-Idempotency-Key"},
             ),
-            operation("/v2/runtime/model-options"),
+            operation("/v2/runtime/structuring-model-options"),
             operation(
-                "/v2/runtime/model-installations",
+                "/v2/runtime/structuring-model-installations",
                 method="POST",
                 requiredHeaders=["X-Idempotency-Key"],
                 idempotency={"mode": "required", "header": "X-Idempotency-Key"},
@@ -526,7 +525,7 @@ def test_loopback_transport_and_handshake() -> None:
             operation("/v2/captures/{capture_id}/raw"),
             operation(
                 "/v2/captures/{capture_id}/ocr",
-                responseSchema="CaptureOcrProjectionV3",
+                responseSchema="CaptureOcrProjection",
             ),
             operation("/v2/captures/{capture_id}/result"),
             operation(
@@ -554,7 +553,6 @@ def test_loopback_transport_and_handshake() -> None:
     bundle_bytes = json.dumps(bundle, separators=(",", ":"), sort_keys=True).encode()
     digest = hashlib.sha256(bundle_bytes).hexdigest()
     index = {
-        "catalogVersion": "2",
         "runtimeVersion": CAPTURE_RUNTIME_VERSION,
         "contractSetVersion": "2",
         "surfaces": [{"id": "v2"}],
@@ -591,7 +589,7 @@ def test_loopback_transport_and_handshake() -> None:
     client = CaptureRuntimeClient(transport=transport, allowed_contract_set_sha256=[digest])
     ready = client.handshake()
     assert isinstance(ready, RuntimeReady)
-    assert client.discover().schema_sha256 == CAPTURE_DOCUMENT_SCHEMA_SHA256
+    assert client.discover().capture_document_schema_sha256 == CAPTURE_DOCUMENT_SCHEMA_SHA256
 
 
 def test_compatibility_failure_is_machine_readable() -> None:
@@ -620,7 +618,7 @@ def test_handshake_requires_current_ocr_compute_names(
 ) -> None:
     compute = {
         "runtimeVersion": CAPTURE_RUNTIME_VERSION,
-        "contractSha256": CAPTURE_CONTRACT_SET_SHA256,
+        "contractSetSha256": CAPTURE_CONTRACT_SET_SHA256,
         "mode": mode,
         "adapterClass": "dedicated",
         "reasonCode": reason,
@@ -712,7 +710,7 @@ def test_generated_ocr_model_rejects_invalid_box_and_projection_state() -> None:
     assert CaptureOcrProjection.model_fields["pages"].is_required()
     unavailable = {
         "status": "unavailable",
-        "profileId": "capture-workbench-ocr-pipeline-v1",
+        "profileId": "ocr-pipeline-v1",
         "profileSpecSha256": "b" * 64,
         "reason": "model_unavailable",
     }
@@ -966,7 +964,7 @@ def test_shared_page_selection_keeps_source_page_numbers_like_typescript() -> No
         pdf_page_numbers=fixture["pdfPageNumbers"],  # type: ignore[arg-type]
     )
 
-    assert result.page_count == 4
+    assert result.processed_page_count == 4
     assert [page.page for page in result.pages] == [3, 7, 8, 20]
     assert upload.pdf_page_numbers == (3, 7, 8, 20)
     for pages in fixture["invalidPdfPageNumbers"]:  # type: ignore[attr-defined]
@@ -998,7 +996,6 @@ def test_discovery_rejects_unknown_contract_set_hash() -> None:
     bundle = b'{"contractSetVersion":"2","schemas":[],"operations":[]}'
     digest = hashlib.sha256(bundle).hexdigest()
     index = {
-        "catalogVersion": "2",
         "runtimeVersion": CAPTURE_RUNTIME_VERSION,
         "contractSetVersion": "2",
         "surfaces": [{"id": "v2"}],
@@ -1025,7 +1022,6 @@ def test_discovery_rejects_unknown_contract_set_hash() -> None:
 def test_discovery_rejects_wrong_content_addressed_href() -> None:
     digest = "a" * 64
     index = {
-        "catalogVersion": "2",
         "runtimeVersion": CAPTURE_RUNTIME_VERSION,
         "contractSetVersion": "2",
         "surfaces": [{"id": "v2"}],
@@ -1144,15 +1140,16 @@ def test_model_installation_operations_and_failure_idempotency_header() -> None:
 
     transport = _transport(
         {
-            ("GET", "/v2/runtime/model-installations/model-1"): lambda request: httpx.Response(
-                200, json=model_installation, request=request
+            ("GET", "/v2/runtime/structuring-model-installations/model-1"): lambda request: (
+                httpx.Response(200, json=model_installation, request=request)
             ),
-            ("POST", "/v2/runtime/model-installations/model-1/cancel"): lambda request: (
-                httpx.Response(
-                    200,
-                    json={**model_installation, "status": "cancelled"},
-                    request=request,
-                )
+            (
+                "POST",
+                "/v2/runtime/structuring-model-installations/model-1/cancel",
+            ): lambda request: httpx.Response(
+                200,
+                json={**model_installation, "status": "cancelled"},
+                request=request,
             ),
             ("POST", "/v2/captures/cap/structure/failure"): report,
         }
@@ -1385,7 +1382,7 @@ def test_pull_session_methods_use_routes_and_matching_idempotency() -> None:
         "protocolVersion": "2",
         "sessionId": "session-1",
         "captureId": "cap",
-        "rawSourceSha256": "a" * 64,
+        "sourceSha256": "a" * 64,
         "contractSetSha256": CAPTURE_CONTRACT_SET_SHA256,
         "providerCapability": {
             "provider": {"engine": "ollama", "model": "model-1", "digest": "sha256:" + "b" * 64},
@@ -1551,8 +1548,8 @@ def test_decodes_what_the_runtime_sends_for_speakers() -> None:
     from capture_runtime_client.private.generated_models import (
         CaptureDocument,
         RawCapture,
-        RuntimeInstallationV2,
-        RuntimeRequirementsV2,
+        RuntimeInstallation,
+        RuntimeRequirements,
     )
 
     samples = json.loads(
@@ -1574,10 +1571,10 @@ def test_decodes_what_the_runtime_sends_for_speakers() -> None:
     plain = RawCapture.model_validate(samples["rawCaptureWithoutSpeakers"])
     assert plain.speakers == []
     assert plain.diarization_engine is None
-    requirements = RuntimeRequirementsV2.model_validate(samples["runtimeRequirements"])
+    requirements = RuntimeRequirements.model_validate(samples["runtimeRequirements"])
     assert requirements.items[0].optional is True
     assert requirements.items[1].download_bytes == 10_480_000_000
-    installation = RuntimeInstallationV2.model_validate(samples["runtimeInstallation"])
+    installation = RuntimeInstallation.model_validate(samples["runtimeInstallation"])
     assert (installation.downloaded_bytes, installation.download_bytes) == (
         2_950_000_000,
         10_480_000_000,
@@ -1586,8 +1583,8 @@ def test_decodes_what_the_runtime_sends_for_speakers() -> None:
 
 def test_decodes_page_and_media_progress_the_runtime_sends() -> None:
     from capture_runtime_client.private.generated_models import (
-        CaptureEventV2,
-        CaptureOperationV2,
+        CaptureEvent,
+        CaptureOperation,
     )
 
     samples = json.loads(
@@ -1596,11 +1593,11 @@ def test_decodes_page_and_media_progress_the_runtime_sends() -> None:
             / "packages/capture-runtime/tests/fixtures/speaker-wire-samples.json"
         ).read_text(encoding="utf-8")
     )
-    document = CaptureOperationV2.model_validate(samples["documentCaptureOperation"])
+    document = CaptureOperation.model_validate(samples["documentCaptureOperation"])
     assert (document.pages_done, document.pages_total) == (9, 12)
-    recording = CaptureOperationV2.model_validate(samples["recordingCaptureOperation"])
+    recording = CaptureOperation.model_validate(samples["recordingCaptureOperation"])
     assert (recording.covered_until_ms, recording.duration_ms) == (724_000, 2_490_000)
-    event = CaptureEventV2.model_validate(samples["documentCaptureEvent"])
+    event = CaptureEvent.model_validate(samples["documentCaptureEvent"])
     assert (event.pages_done, event.pages_total) == (9, 12)
 
     for progress in (
@@ -1609,7 +1606,7 @@ def test_decodes_page_and_media_progress_the_runtime_sends() -> None:
         {"durationMs": 1_000},
     ):
         with pytest.raises(ValidationError):
-            CaptureOperationV2.model_validate({**samples["documentCaptureOperation"], **progress})
+            CaptureOperation.model_validate({**samples["documentCaptureOperation"], **progress})
 
 
 def test_capture_upload_asks_for_speakers_only_when_told() -> None:

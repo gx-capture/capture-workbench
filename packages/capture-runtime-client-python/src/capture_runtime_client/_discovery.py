@@ -33,7 +33,7 @@ class RuntimeDiscovery:
 
     ready: RuntimeReady
     streaming: RuntimeStreamingCapabilities | None
-    schema_sha256: str
+    capture_document_schema_sha256: str
     contract_index: Mapping[str, Any]
     contract_bundle: Mapping[str, Any]
 
@@ -92,14 +92,14 @@ def discover(
         raise CaptureRuntimeProtocolError(
             "Capture Runtime contract bundle is not valid JSON."
         ) from error
-    schema_sha256 = validate_contract_bundle(bundle, digest)
+    capture_document_schema_sha256 = validate_contract_bundle(bundle, digest)
     streaming = decode_model(
         request("GET", "/v2/streaming/health/ready"), RuntimeStreamingCapabilities
     )
     return RuntimeDiscovery(
         ready=ready,
         streaming=streaming,
-        schema_sha256=schema_sha256,
+        capture_document_schema_sha256=capture_document_schema_sha256,
         contract_index=index,
         contract_bundle=bundle,
     )
@@ -138,7 +138,6 @@ def assert_compatible_payload(payload: Mapping[str, Any]) -> None:
 
 def validate_contract_index(index: Mapping[str, Any], ready: RuntimeReady) -> None:
     required = {
-        "catalogVersion",
         "runtimeVersion",
         "contractSetVersion",
         "surfaces",
@@ -149,7 +148,7 @@ def validate_contract_index(index: Mapping[str, Any], ready: RuntimeReady) -> No
         raise CaptureRuntimeProtocolError(
             "Capture Runtime contract index is missing required fields."
         )
-    if index.get("catalogVersion") != "2" or index.get("contractSetVersion") != "2":
+    if index.get("contractSetVersion") != "2":
         raise CaptureRuntimeCompatibilityError(
             "Capture Runtime contract catalog version is unsupported."
         )
@@ -216,8 +215,8 @@ def validate_contract_bundle(bundle: Any, digest: str) -> str:
         "/v2/streaming/health/ready",
         "/v2/runtime/requirements",
         "/v2/runtime/installations",
-        "/v2/runtime/model-options",
-        "/v2/runtime/model-installations",
+        "/v2/runtime/structuring-model-options",
+        "/v2/runtime/structuring-model-installations",
         "/v2/captures",
         "/v2/captures/{capture_id}/events",
         "/v2/captures/{capture_id}/raw",
@@ -286,7 +285,7 @@ def validate_contract_bundle(bundle: Any, digest: str) -> str:
         ocr is None
         or not isinstance(ocr.get("body"), Mapping)
         or ocr["body"].get("kind") != "none"
-        or ocr.get("responseSchema") != "CaptureOcrProjectionV3"
+        or ocr.get("responseSchema") != "CaptureOcrProjection"
         or 200 not in ocr.get("responseStatusCodes", [])
     ):
         raise CaptureRuntimeCompatibilityError("Capture Runtime OCR metadata is incompatible.")

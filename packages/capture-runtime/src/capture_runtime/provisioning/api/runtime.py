@@ -10,12 +10,12 @@ from fastapi import APIRouter, Header, status
 
 from capture_runtime.constants.requirements import RETIRED_STRUCTURING_REQUIREMENT_IDS
 from capture_runtime.contracts import (
-    RuntimeInstallationsV2,
-    RuntimeInstallationV2,
+    RuntimeInstallation,
+    RuntimeInstallations,
     RuntimeReady,
-    RuntimeRequirementsV2,
-    RuntimeRequirementV2,
-    StartRuntimeInstallationV2,
+    RuntimeRequirement,
+    RuntimeRequirements,
+    StartRuntimeInstallation,
 )
 from capture_runtime.dependencies import RuntimeDependencies
 from capture_runtime.provisioning.application.installation_service import RequirementInUseError
@@ -64,24 +64,24 @@ def register_runtime_routes(
             ocr_compute=ocr_compute,
         )
 
-    @router.get("/runtime/requirements", response_model=RuntimeRequirementsV2)
-    async def requirements() -> RuntimeRequirementsV2:
+    @router.get("/runtime/requirements", response_model=RuntimeRequirements)
+    async def requirements() -> RuntimeRequirements:
         items = await asyncio.to_thread(
             list_requirements.execute,
             enabled_requirement_ids=dependencies.enabled_requirement_ids,
             disabled_requirement_ids=dependencies.disabled_requirement_ids,
         )
-        return RuntimeRequirementsV2(items=items)
+        return RuntimeRequirements(items=items)
 
     @router.post(
         "/runtime/installations",
-        response_model=RuntimeInstallationV2,
+        response_model=RuntimeInstallation,
         status_code=status.HTTP_202_ACCEPTED,
     )
     async def create_installation(
-        payload: StartRuntimeInstallationV2,
+        payload: StartRuntimeInstallation,
         idempotency_key: Annotated[UUID, Header(alias="X-Idempotency-Key")],
-    ) -> RuntimeInstallationV2:
+    ) -> RuntimeInstallation:
         if payload.requirement_id in dependencies.disabled_requirement_ids:
             raise ApiProblem(
                 422,
@@ -102,12 +102,12 @@ def register_runtime_routes(
                 "Idempotency key was already used with a different request.",
             ) from error
 
-    @router.get("/runtime/installations", response_model=RuntimeInstallationsV2)
-    async def list_installations() -> RuntimeInstallationsV2:
-        return RuntimeInstallationsV2(items=list_installations_uc.execute())
+    @router.get("/runtime/installations", response_model=RuntimeInstallations)
+    async def list_installations() -> RuntimeInstallations:
+        return RuntimeInstallations(items=list_installations_uc.execute())
 
-    @router.get("/runtime/installations/{installation_id}", response_model=RuntimeInstallationV2)
-    async def get_installation(installation_id: str) -> RuntimeInstallationV2:
+    @router.get("/runtime/installations/{installation_id}", response_model=RuntimeInstallation)
+    async def get_installation(installation_id: str) -> RuntimeInstallation:
         try:
             return get_installation_uc.execute(installation_id)
         except RecordNotFoundError as error:
@@ -117,9 +117,9 @@ def register_runtime_routes(
 
     @router.post(
         "/runtime/installations/{installation_id}/cancel",
-        response_model=RuntimeInstallationV2,
+        response_model=RuntimeInstallation,
     )
-    async def cancel_installation(installation_id: str) -> RuntimeInstallationV2:
+    async def cancel_installation(installation_id: str) -> RuntimeInstallation:
         try:
             return await cancel_installation_uc.execute(installation_id)
         except RecordNotFoundError as error:
@@ -129,9 +129,9 @@ def register_runtime_routes(
 
     @router.delete(
         "/runtime/requirements/{requirement_id}/installation",
-        response_model=RuntimeRequirementV2,
+        response_model=RuntimeRequirement,
     )
-    async def uninstall_requirement(requirement_id: str) -> RuntimeRequirementV2:
+    async def uninstall_requirement(requirement_id: str) -> RuntimeRequirement:
         replacement = RETIRED_STRUCTURING_REQUIREMENT_IDS.get(requirement_id)
         if replacement is not None:
             raise ApiProblem(
@@ -174,7 +174,7 @@ def register_runtime_routes(
             raise ApiProblem(404, "requirement_not_found", "Runtime requirement was not found.")
         return requirement
 
-    async def _requirement(requirement_id: str) -> RuntimeRequirementV2 | None:
+    async def _requirement(requirement_id: str) -> RuntimeRequirement | None:
         items = await asyncio.to_thread(
             dependencies.installer.requirements, dependencies.enabled_requirement_ids
         )

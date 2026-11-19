@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from capture_runtime.contracts import RuntimeArtifactDescriptorV2
+from capture_runtime.contracts import RuntimeArtifactDescriptor
 from capture_runtime.provisioning.infrastructure.engine_catalog import (
     EngineCatalog,
     canonical_json_bytes,
@@ -42,7 +42,7 @@ def test_angular_package_schema_is_the_runtime_generated_contract(tmp_path: Path
 
 
 def test_public_runtime_artifact_descriptor_v2_remains_exactly_compatible() -> None:
-    schema = RuntimeArtifactDescriptorV2.model_json_schema(by_alias=True)
+    schema = RuntimeArtifactDescriptor.model_json_schema(by_alias=True)
     assert set(schema["properties"]) == {
         "artifactUrl",
         "artifactFileName",

@@ -26,6 +26,7 @@ import type {
   CaptureEvent,
   CaptureOperation,
   CaptureRequirementId,
+  CaptureResult,
   OcrComputePreflight,
   PartialCapture,
   RuntimeRequirement,
@@ -43,7 +44,6 @@ import { DesktopLibraryService, type DesktopSourceSelection } from './desktop-li
 import {
   DesktopRuntimeClientService,
   type DesktopCaptureOperation,
-  type StreamingTerminalResultV2,
 } from './desktop-runtime-client.service';
 import {
   committedTerminalStatus,
@@ -436,7 +436,7 @@ export class DesktopCaptureService {
       : operation.status === 'cancelled' ? 'canceled' : 'failed';
     active.terminalErrorCode = operation.error?.code;
     active.terminalErrorMessage = operation.error?.message;
-    const terminalData$: Observable<StreamingTerminalResultV2 | null> = operation.status === 'completed'
+    const terminalData$: Observable<CaptureResult | null> = operation.status === 'completed'
       ? this.runtime.getStreamingResult(operation.captureId)
       : of(null);
     return terminalData$.pipe(
@@ -859,7 +859,7 @@ export class DesktopCaptureService {
       captureId: operation.captureId,
       sourceSha256,
       runtimeVersion: compute.runtimeVersion,
-      contractSha256: compute.contractSha256,
+      contractSetSha256: compute.contractSetSha256,
       terminalStatus,
       workerSha256: compute.workerSha256,
     };

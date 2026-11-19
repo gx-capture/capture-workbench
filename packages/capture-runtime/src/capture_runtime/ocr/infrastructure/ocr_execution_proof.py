@@ -32,7 +32,7 @@ from capture_runtime.pdf_page_selection import is_pdf_page_selection
 from capture_runtime.worker_process import WorkerFailureDiagnostics
 
 if TYPE_CHECKING:
-    from capture_runtime.contracts import OcrProvenanceV3
+    from capture_runtime.contracts import OcrProvenance
 
 
 SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
@@ -527,7 +527,7 @@ class OcrExecutionFailureEvidenceSink(Protocol):
         source_role: str,
         diagnostics: WorkerFailureDiagnostics,
         worker_sha256: str | None = None,
-        provenance: OcrProvenanceV3 | None = None,
+        provenance: OcrProvenance | None = None,
     ) -> OcrExecutionEvidenceArtifact | None: ...
 
 
@@ -550,7 +550,7 @@ class NoopOcrExecutionEvidenceSink:
         source_role: str,
         diagnostics: WorkerFailureDiagnostics,
         worker_sha256: str | None = None,
-        provenance: OcrProvenanceV3 | None = None,
+        provenance: OcrProvenance | None = None,
     ) -> None:
         del source_sha256, source_role, diagnostics, worker_sha256, provenance
         return None
@@ -582,7 +582,7 @@ class InMemoryOcrExecutionEvidenceSink:
         source_role: str,
         diagnostics: WorkerFailureDiagnostics,
         worker_sha256: str | None = None,
-        provenance: OcrProvenanceV3 | None = None,
+        provenance: OcrProvenance | None = None,
     ) -> None:
         _require_sha(source_sha256, "source_sha256")
         _require_source_role(source_role)
@@ -607,7 +607,7 @@ def _safe_identity_label(value: object, field: str, *, maximum: int = 256) -> st
     return label
 
 
-def _safe_ocr_provenance_payload(provenance: OcrProvenanceV3) -> dict[str, object]:
+def _safe_ocr_provenance_payload(provenance: OcrProvenance) -> dict[str, object]:
     model_dump = getattr(provenance, "model_dump", None)
     if not callable(model_dump):
         raise ValueError("OCR provenance is invalid")
@@ -763,7 +763,7 @@ class AcceptanceOcrExecutionEvidenceSink:
         source_role: str,
         diagnostics: WorkerFailureDiagnostics,
         worker_sha256: str | None = None,
-        provenance: OcrProvenanceV3 | None = None,
+        provenance: OcrProvenance | None = None,
     ) -> OcrExecutionEvidenceArtifact:
         _require_sha(source_sha256, "source_sha256")
         _require_source_role(source_role)

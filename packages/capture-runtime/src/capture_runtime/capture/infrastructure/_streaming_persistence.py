@@ -18,7 +18,7 @@ from capture_runtime.capture.infrastructure._streaming_records import (
     _CaptureRecord,
     _IngestionRecord,
 )
-from capture_runtime.contracts import CaptureEventV2
+from capture_runtime.contracts import CaptureEvent
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -104,7 +104,7 @@ class _StreamingRepositoryPersistence:
             os.fsync(source.fileno())
 
     @staticmethod
-    def append_event(path: Path, event: CaptureEventV2) -> None:
+    def append_event(path: Path, event: CaptureEvent) -> None:
         with path.open("a", encoding="utf-8") as events:
             events.write(json.dumps(event.model_dump(mode="json", by_alias=True)) + "\n")
             events.flush()

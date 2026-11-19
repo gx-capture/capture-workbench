@@ -20,16 +20,16 @@ from capture_runtime.capture.infrastructure.streaming_repository import (
 )
 from capture_runtime.clock import Clock
 from capture_runtime.contracts import (
-    CaptureFailureV2,
+    CaptureEventType,
     CaptureSourceKind,
-    IngestionV2,
-    OpenIngestionV2,
-    StartCaptureV2,
-    StreamingCaptureStatus,
-    StreamingEventType,
-    StreamingIngestionStatus,
+    CaptureStatus,
+    Ingestion,
+    IngestionStatus,
+    OperationFailure,
+    StartCapture,
     StructuringMode,
 )
+from capture_runtime.contracts import OpenIngestion as OpenIngestionRequest
 
 _DEFAULT_POLICY = SourceSizePolicy(DOCUMENT_MAX_UPLOAD_BYTES)
 
@@ -44,7 +44,7 @@ class MutableClock(Clock):
 
 def _open(repository: StreamingRepository, source: bytes) -> tuple[str, str]:
     ingestion = repository.create_ingestion(
-        OpenIngestionV2(
+        OpenIngestionRequest(
             client_request_id="repository-open-1",
             file_name="sample.mp3",
             media_type="audio/mpeg",
@@ -84,13 +84,13 @@ def test_streaming_repository_recovers_ordered_upload_and_event_log(tmp_path: Pa
     )
     first.finalize_ingestion(ingestion_id, total_bytes=len(source), sha256=source_sha256)
     capture = first.create_capture(
-        StartCaptureV2(
+        StartCapture(
             client_request_id="repository-capture-1",
             ingestion_id=ingestion_id,
             structuring_mode=StructuringMode.HOST,
         )
     )
-    assert capture.status is StreamingCaptureStatus.EXTRACTING
+    assert capture.status is CaptureStatus.EXTRACTING
     assert capture.kind is CaptureSourceKind.RECORDING
     metadata = json.loads(
         (tmp_path / "streaming" / "captures" / capture.capture_id / "metadata.json").read_text(
@@ -104,7 +104,7 @@ def test_streaming_repository_recovers_ordered_upload_and_event_log(tmp_path: Pa
     )
     restarted.initialize()
 
-    assert restarted.get_ingestion(ingestion_id).status is StreamingIngestionStatus.READY
+    assert restarted.get_ingestion(ingestion_id).status is IngestionStatus.READY
     recovered = restarted.get_capture(capture.capture_id)
     assert recovered.last_event_sequence == 1
     assert recovered.kind is CaptureSourceKind.RECORDING
@@ -133,7 +133,7 @@ def test_streaming_repository_prunes_expired_terminal_capture_and_ingestion(
     )
     repository.finalize_ingestion(ingestion_id, total_bytes=len(source), sha256=source_sha256)
     capture = repository.create_capture(
-        StartCaptureV2(
+        StartCapture(
             client_request_id="repository-capture-prune",
             ingestion_id=ingestion_id,
             structuring_mode=StructuringMode.HOST,
@@ -152,7 +152,7 @@ def _ready_ingestion(
     repository: StreamingRepository, source: bytes, *, client_request_id: str
 ) -> str:
     ingestion = repository.create_ingestion(
-        OpenIngestionV2(
+        OpenIngestionRequest(
             client_request_id=client_request_id,
             file_name="sample.pdf",
             media_type="application/pdf",
@@ -179,7 +179,7 @@ def _ready_ingestion(
 
 def _start(repository: StreamingRepository, ingestion_id: str, client_request_id: str) -> str:
     return repository.create_capture(
-        StartCaptureV2(
+        StartCapture(
             client_request_id=client_request_id,
             ingestion_id=ingestion_id,
             structuring_mode=StructuringMode.HOST,
@@ -251,9 +251,7 @@ def test_an_abandoned_unfinished_capture_expires_with_its_source(tmp_path: Path)
 
     clock.current += timedelta(minutes=59)
     repository.prune_expired()
-    assert repository.get_capture(capture_id).status is (
-        StreamingCaptureStatus.AWAITING_STRUCTURING
-    )
+    assert repository.get_capture(capture_id).status is (CaptureStatus.AWAITING_STRUCTURING)
     assert source_directory.exists()
 
     clock.current += timedelta(minutes=2)
@@ -285,13 +283,13 @@ def test_activity_keeps_an_unfinished_capture_and_its_source(tmp_path: Path) -> 
         clock.current += timedelta(minutes=50)
         repository.append_event(
             capture_id,
-            event_type=StreamingEventType.HEARTBEAT,
+            event_type=CaptureEventType.HEARTBEAT,
             stage="extracting",
             progress=0.5,
         )
         repository.prune_expired()
 
-    assert repository.get_capture(capture_id).status is StreamingCaptureStatus.EXTRACTING
+    assert repository.get_capture(capture_id).status is CaptureStatus.EXTRACTING
     assert repository.source_path(ingestion_id).read_bytes() == b"working"
 
 
@@ -314,7 +312,7 @@ def test_streaming_repository_returns_resync_when_replay_is_too_large(tmp_path: 
     )
     repository.finalize_ingestion(ingestion_id, total_bytes=len(source), sha256=source_sha256)
     capture = repository.create_capture(
-        StartCaptureV2(
+        StartCapture(
             client_request_id="repository-capture-resync",
             ingestion_id=ingestion_id,
             structuring_mode=StructuringMode.HOST,
@@ -323,14 +321,14 @@ def test_streaming_repository_returns_resync_when_replay_is_too_large(tmp_path: 
     for _ in range(1_024):
         repository.append_event(
             capture.capture_id,
-            event_type=StreamingEventType.HEARTBEAT,
+            event_type=CaptureEventType.HEARTBEAT,
             stage="extracting",
         )
 
     events = repository.read_events(capture.capture_id, after_sequence=-1)
 
     assert len(events) == 1
-    assert events[0].event_type is StreamingEventType.RESYNC_REQUIRED
+    assert events[0].event_type is CaptureEventType.RESYNC_REQUIRED
     assert events[0].sequence == repository.get_capture(capture.capture_id).last_event_sequence
 
 
@@ -338,7 +336,7 @@ def _ready_pdf_capture(repository: StreamingRepository) -> str:
     source = b"%PDF-1.7 three pages"
     digest = hashlib.sha256(source).hexdigest()
     ingestion = repository.create_ingestion(
-        OpenIngestionV2(
+        OpenIngestionRequest(
             client_request_id="repository-pdf-open",
             kind=CaptureSourceKind.PDF,
             file_name="sample.pdf",
@@ -358,7 +356,7 @@ def _ready_pdf_capture(repository: StreamingRepository) -> str:
     )
     repository.finalize_ingestion(ingestion.ingestion_id, total_bytes=len(source), sha256=digest)
     return repository.create_capture(
-        StartCaptureV2(
+        StartCapture(
             client_request_id="repository-pdf-capture",
             ingestion_id=ingestion.ingestion_id,
             structuring_mode=StructuringMode.HOST,
@@ -377,7 +375,7 @@ def test_page_progress_survives_reading_the_operation_back(tmp_path: Path) -> No
     for done in (0, 2, 1):
         repository.append_event(
             capture_id,
-            event_type=StreamingEventType.CHECKPOINT,
+            event_type=CaptureEventType.CHECKPOINT,
             stage="extracting",
             pages=(done, 3),
         )
@@ -409,7 +407,7 @@ def test_progress_that_does_not_fit_the_capture_kind_is_never_written(tmp_path: 
     with pytest.raises(ValueError, match="recordings"):
         repository.append_event(
             capture_id,
-            event_type=StreamingEventType.CHECKPOINT,
+            event_type=CaptureEventType.CHECKPOINT,
             stage="extracting",
             duration_ms=60_000,
         )
@@ -440,7 +438,7 @@ def test_completion_event_retains_exact_domain_time_and_replays_once(tmp_path: P
     )
     repository.finalize_ingestion(ingestion_id, total_bytes=len(source), sha256=digest)
     operation = repository.create_capture(
-        StartCaptureV2(
+        StartCapture(
             ingestion_id=ingestion_id,
             client_request_id="complete-once",
             structuring_mode=StructuringMode.HOST,
@@ -448,7 +446,7 @@ def test_completion_event_retains_exact_domain_time_and_replays_once(tmp_path: P
     )
     completed = repository.complete_capture(operation.capture_id)
     events = repository.read_events(operation.capture_id, after_sequence=0)
-    assert events[-1].event_type is StreamingEventType.COMPLETED
+    assert events[-1].event_type is CaptureEventType.COMPLETED
     assert events[-1].created_at == completed.completed_at == clock.current
     assert repository.complete_capture(operation.capture_id) == completed
     assert repository.read_events(operation.capture_id, after_sequence=0) == events
@@ -467,11 +465,11 @@ def test_release_structuring_returns_a_structuring_capture_to_awaiting(tmp_path:
     repository.mark_awaiting_structuring(capture_id)
 
     structuring = repository.mark_structuring(capture_id)
-    assert structuring.status is StreamingCaptureStatus.STRUCTURING
+    assert structuring.status is CaptureStatus.STRUCTURING
     assert structuring.progress == pytest.approx(0.95)
 
     released = repository.release_structuring(capture_id)
-    assert released.status is StreamingCaptureStatus.AWAITING_STRUCTURING
+    assert released.status is CaptureStatus.AWAITING_STRUCTURING
     assert released.progress == pytest.approx(0.9)
     assert repository.release_structuring(capture_id) == released
 
@@ -480,7 +478,7 @@ def test_release_structuring_returns_a_structuring_capture_to_awaiting(tmp_path:
     )
     restarted.initialize()
     recovered = restarted.get_capture(capture_id)
-    assert recovered.status is StreamingCaptureStatus.AWAITING_STRUCTURING
+    assert recovered.status is CaptureStatus.AWAITING_STRUCTURING
     assert recovered.progress == pytest.approx(0.9)
 
 
@@ -500,7 +498,7 @@ def test_open_ingestion_rejects_oversized_source_before_creating_records(
         match="Source exceeds the size limit for its kind.",
     ):
         use_case.execute(
-            OpenIngestionV2(
+            OpenIngestionRequest(
                 client_request_id="oversized-req-1",
                 file_name="toolarge.pdf",
                 media_type="application/pdf",
@@ -515,7 +513,7 @@ def test_open_ingestion_rejects_oversized_source_before_creating_records(
 
     # Same client_request_id with valid size succeeds
     valid = use_case.execute(
-        OpenIngestionV2(
+        OpenIngestionRequest(
             client_request_id="oversized-req-1",
             file_name="valid.pdf",
             media_type="application/pdf",
@@ -537,7 +535,7 @@ def test_streaming_repository_prunes_recovered_oversized_ingestion_without_activ
     )
     first.initialize()
     ingestion = first.create_ingestion(
-        OpenIngestionV2(
+        OpenIngestionRequest(
             client_request_id="recover-oversized-1",
             file_name="large.mp3",
             media_type="audio/mpeg",
@@ -579,7 +577,7 @@ def test_streaming_repository_preserves_recovered_oversized_ingestion_with_activ
     digest = hashlib.sha256(wav_header).hexdigest()
     total_bytes = 60 * 1024 * 1024
     ingestion = first.create_ingestion(
-        OpenIngestionV2(
+        OpenIngestionRequest(
             client_request_id="recover-active-1",
             file_name="sample.wav",
             media_type="audio/wav",
@@ -599,14 +597,14 @@ def test_streaming_repository_preserves_recovered_oversized_ingestion_with_activ
         declared_total_bytes=total_bytes,
     )
     capture = first.create_capture(
-        StartCaptureV2(
+        StartCapture(
             client_request_id="active-capture-1",
             ingestion_id=ingestion_id,
             structuring_mode=StructuringMode.HOST,
             start_policy="eager",
         )
     )
-    assert capture.status is StreamingCaptureStatus.WAITING_INPUT
+    assert capture.status is CaptureStatus.WAITING_INPUT
 
     # Step 2: Restart with standard policy
     standard_policy = SourceSizePolicy(max_upload_bytes=DOCUMENT_MAX_UPLOAD_BYTES)
@@ -617,7 +615,7 @@ def test_streaming_repository_preserves_recovered_oversized_ingestion_with_activ
 
     # Active capture must NOT be deleted, and its ingestion record is preserved
     recovered_capture = restarted.get_capture(capture.capture_id)
-    assert recovered_capture.status is StreamingCaptureStatus.WAITING_INPUT
+    assert recovered_capture.status is CaptureStatus.WAITING_INPUT
     recovered_ingestion = restarted.get_ingestion(ingestion_id)
     assert recovered_ingestion.ingestion_id == ingestion_id
 
@@ -634,7 +632,7 @@ def test_streaming_repository_chunk_zero_audio_sniffing_rejects_non_audio_and_cl
 
     declared_total = DOCUMENT_MAX_UPLOAD_BYTES + 10_000
     ingestion = repository.create_ingestion(
-        OpenIngestionV2(
+        OpenIngestionRequest(
             client_request_id="audio-fake-pdf-chunk",
             file_name="fake.wav",
             media_type="audio/wav",
@@ -666,7 +664,7 @@ def test_streaming_repository_chunk_zero_audio_sniffing_rejects_non_audio_and_cl
         b"\x88\x58\x01\x00\x02\x00\x10\x00data\x00\x00\x00\x00"
     )
     valid_ingestion = repository.create_ingestion(
-        OpenIngestionV2(
+        OpenIngestionRequest(
             client_request_id="audio-real-wav-chunk",
             file_name="real.wav",
             media_type="audio/wav",
@@ -695,7 +693,7 @@ def _open_large_recording(
     repository: StreamingRepository, client_request_id: str, total_bytes: int
 ) -> str:
     return repository.create_ingestion(
-        OpenIngestionV2(
+        OpenIngestionRequest(
             client_request_id=client_request_id,
             file_name="large.wav",
             media_type="audio/wav",
@@ -713,7 +711,7 @@ def _append(
     byte_offset: int,
     data: bytes,
     total_bytes: int,
-) -> IngestionV2:
+) -> Ingestion:
     return repository.append_chunk(
         ingestion_id,
         chunk_index=chunk_index,
@@ -866,7 +864,7 @@ def test_startup_removes_an_expired_capture_whose_source_exceeds_a_lowered_limit
         total_bytes=total_bytes,
     )
     capture = first.create_capture(
-        StartCaptureV2(
+        StartCapture(
             client_request_id="expired-oversized-capture",
             ingestion_id=ingestion_id,
             structuring_mode=StructuringMode.HOST,
@@ -938,7 +936,7 @@ def test_uncommitted_source_tail_is_replaced(tmp_path: Path, restart: bool) -> N
     )
     assert (
         repository.finalize_ingestion(ingestion_id, total_bytes=6, sha256=digest).status
-        is StreamingIngestionStatus.READY
+        is IngestionStatus.READY
     )
     assert path.read_bytes() == source
 
@@ -969,21 +967,17 @@ def test_startup_fails_incomplete_source_and_prunes_unowned_ingestion(
         path.write_bytes(b"ab")
     repository.initialize()
     failed = repository.get_capture(capture)
-    assert failed.status is StreamingCaptureStatus.FAILED
+    assert failed.status is CaptureStatus.FAILED
     assert failed.error.code == "streaming_source_unavailable"
     events = repository.read_events(capture, after_sequence=-1)
-    assert events[-1].event_type is StreamingEventType.FAILED
+    assert events[-1].event_type is CaptureEventType.FAILED
     assert not path.parent.exists()
     repository.initialize()
-    assert repository.get_capture(capture).status is StreamingCaptureStatus.FAILED
+    assert repository.get_capture(capture).status is CaptureStatus.FAILED
 
 
-@pytest.mark.parametrize(
-    "status", [status for status in StreamingIngestionStatus if status.value != "open"]
-)
-def test_startup_does_not_reconcile_other_statuses(
-    tmp_path: Path, status: StreamingIngestionStatus
-) -> None:
+@pytest.mark.parametrize("status", [status for status in IngestionStatus if status.value != "open"])
+def test_startup_does_not_reconcile_other_statuses(tmp_path: Path, status: IngestionStatus) -> None:
     repository = StreamingRepository(
         tmp_path, clock=MutableClock(), retention_hours=24, policy=_DEFAULT_POLICY
     )
@@ -1024,7 +1018,7 @@ def test_startup_deletes_only_unreferenced_invalid_ingestion_directories(tmp_pat
     assert not invalid.exists()
     assert protected.is_dir()
     assert stray.read_bytes() == b"keep"
-    assert repository.get_ingestion(valid_id).status is StreamingIngestionStatus.READY
+    assert repository.get_ingestion(valid_id).status is IngestionStatus.READY
 
 
 @pytest.mark.parametrize("uppercase_reference", [False, True])
@@ -1046,7 +1040,7 @@ def test_startup_protects_case_variant_orphan_reference(tmp_path, uppercase_refe
         directory = directory.rename(directory.with_name(ingestion_id.upper()))
     repository.initialize()
     assert (directory / "source.bin").exists()
-    assert repository.get_capture(capture).status is StreamingCaptureStatus.WAITING_INPUT
+    assert repository.get_capture(capture).status is CaptureStatus.WAITING_INPUT
 
 
 @pytest.mark.parametrize("failure_point", ["persist", "resolve", "read"])
@@ -1091,18 +1085,18 @@ def test_startup_defers_io_failure_without_pruning(tmp_path, monkeypatch, caplog
 
         monkeypatch.setattr(Path, "open", guarded_open)
     repository.initialize()
-    assert repository.get_ingestion(ingestion_id).status is StreamingIngestionStatus.OPEN
+    assert repository.get_ingestion(ingestion_id).status is IngestionStatus.OPEN
     assert metadata_path.read_bytes() == before
     assert source.exists()
     assert capture_path.read_bytes() == capture_before
-    assert repository.get_capture(capture).status is StreamingCaptureStatus.WAITING_INPUT
+    assert repository.get_capture(capture).status is CaptureStatus.WAITING_INPUT
     assert "recovery deferred" in caplog.text
     assert "private-user-path" not in caplog.text
     assert "bearer-secret" not in caplog.text
     # The first request prunes again; the deferral protects for the life of the process.
     repository.prune_expired()
-    assert repository.get_ingestion(ingestion_id).status is StreamingIngestionStatus.OPEN
-    assert repository.get_capture(capture).status is StreamingCaptureStatus.WAITING_INPUT
+    assert repository.get_ingestion(ingestion_id).status is IngestionStatus.OPEN
+    assert repository.get_capture(capture).status is CaptureStatus.WAITING_INPUT
     assert source.exists()
 
 
@@ -1135,10 +1129,10 @@ def test_startup_keeps_memory_and_disk_equal_when_failing_a_capture_cannot_be_sa
     monkeypatch.setattr(repository, "_persist_capture", denied)
     repository.initialize()
     # Saving the failed capture was refused, so memory keeps what disk still says.
-    assert repository.get_capture(capture).status is StreamingCaptureStatus.WAITING_INPUT
+    assert repository.get_capture(capture).status is CaptureStatus.WAITING_INPUT
     assert capture_path.read_bytes() == capture_before
     repository.prune_expired()
-    assert repository.get_capture(capture).status is StreamingCaptureStatus.WAITING_INPUT
+    assert repository.get_capture(capture).status is CaptureStatus.WAITING_INPUT
     assert source.exists()
 
 
@@ -1242,7 +1236,7 @@ def test_startup_keeps_an_ingestion_whose_metadata_is_unreadable(tmp_path, monke
     assert "private-user-path" not in caplog.text
     monkeypatch.setattr(Path, "read_bytes", original_read_bytes)
     repository.initialize()
-    assert repository.get_ingestion(ingestion_id).status is StreamingIngestionStatus.READY
+    assert repository.get_ingestion(ingestion_id).status is IngestionStatus.READY
 
 
 def test_startup_failed_source_remains_protected_by_active_capture(tmp_path):
@@ -1259,8 +1253,8 @@ def test_startup_failed_source_remains_protected_by_active_capture(tmp_path):
     metadata_path.write_text(json.dumps(payload), encoding="utf-8")
     path.write_bytes(b"ab")
     repository.initialize()
-    assert repository.get_ingestion(ingestion_id).status is StreamingIngestionStatus.FAILED
-    assert repository.get_capture(capture).status is StreamingCaptureStatus.EXTRACTING
+    assert repository.get_ingestion(ingestion_id).status is IngestionStatus.FAILED
+    assert repository.get_capture(capture).status is CaptureStatus.EXTRACTING
     assert path.read_bytes() == b"ab"
 
 
@@ -1290,7 +1284,7 @@ def test_terminal_event_repair(tmp_path, monkeypatch, status, recovery):
             repository.complete_capture(capture)
         elif status == "failed":
             repository.fail_capture(
-                capture, CaptureFailureV2(code="test_failure", message="failure", stage="ocr")
+                capture, OperationFailure(code="test_failure", message="failure", stage="ocr")
             )
         else:
             repository.cancel_capture(capture)
@@ -1334,7 +1328,7 @@ def test_startup_leaves_existing_terminal_event_unchanged(tmp_path, status):
     repository.initialize()
     capture = _ready_pdf_capture(repository)
     if status == "failed":
-        repository.fail_capture(capture, CaptureFailureV2(code="test_failure", message="failure"))
+        repository.fail_capture(capture, OperationFailure(code="test_failure", message="failure"))
     else:
         if status == "completed":
             repository.complete_capture(capture)
@@ -1368,7 +1362,7 @@ def test_startup_defers_terminal_event_io_failure_without_disclosing_content(
     assert "private-path-and-content" not in caplog.text
     repository.initialize()
     events = repository.read_events(capture, after_sequence=0)
-    assert events[-1].event_type is StreamingEventType.CANCELLED
+    assert events[-1].event_type is CaptureEventType.CANCELLED
 
 
 def test_terminal_event_repair_does_not_duplicate_a_write_that_raised(tmp_path, monkeypatch):
@@ -1390,7 +1384,7 @@ def test_terminal_event_repair_does_not_duplicate_a_write_that_raised(tmp_path, 
             repository.cancel_capture(capture)
     repository.initialize()
     events = repository.read_events(capture, after_sequence=0)
-    assert len([event for event in events if event.event_type is StreamingEventType.CANCELLED]) == 1
+    assert len([event for event in events if event.event_type is CaptureEventType.CANCELLED]) == 1
     assert repository.get_capture(capture).last_event_sequence == previous + 1
     metadata = tmp_path / "captures" / capture / "metadata.json"
     saved = json.loads(metadata.read_text(encoding="utf-8"))["operation"]
@@ -1418,7 +1412,7 @@ def test_unsaved_terminal_status_is_not_repaired_as_terminal(tmp_path, monkeypat
                 repository.complete_capture(capture)
             elif status == "failed":
                 repository.fail_capture(
-                    capture, CaptureFailureV2(code="test_failure", message="failure")
+                    capture, OperationFailure(code="test_failure", message="failure")
                 )
             else:
                 repository.cancel_capture(capture)
@@ -1435,7 +1429,7 @@ def test_complete_terminal_log_reads_do_not_run_recovery(tmp_path, monkeypatch, 
     repository.initialize()
     capture = _ready_pdf_capture(repository)
     if status == "failed":
-        repository.fail_capture(capture, CaptureFailureV2(code="test_failure", message="failure"))
+        repository.fail_capture(capture, OperationFailure(code="test_failure", message="failure"))
     elif status == "completed":
         repository.complete_capture(capture)
     else:
@@ -1471,9 +1465,9 @@ def test_pending_terminal_repair_failure_never_blocks_reads_or_deletion(tmp_path
         with pytest.raises(OSError):
             repository.cancel_capture(capture)
         # Reads return what is saved and keep the repair pending.
-        assert repository.get_capture(capture).status is StreamingCaptureStatus.CANCELLED
+        assert repository.get_capture(capture).status is CaptureStatus.CANCELLED
         events = repository.read_events(capture, after_sequence=-1)
-        assert StreamingEventType.CANCELLED not in [event.event_type for event in events]
+        assert CaptureEventType.CANCELLED not in [event.event_type for event in events]
         assert capture in repository._terminal_event_pending
         # Deleting the capture, which frees the space, still works.
         repository.delete_capture(capture)
@@ -1521,7 +1515,7 @@ def test_repository_replays_historical_recording_kind(
         declared_total_bytes=len(source),
     )
     repository.finalize_ingestion(ingestion_id, total_bytes=len(source), sha256=digest)
-    request = StartCaptureV2(
+    request = StartCapture(
         client_request_id="historical-capture",
         ingestion_id=ingestion_id,
         structuring_mode=StructuringMode.HOST,
@@ -1529,7 +1523,7 @@ def test_repository_replays_historical_recording_kind(
     capture = repository.create_capture(request)
     repository.fail_capture(
         capture.capture_id,
-        CaptureFailureV2(code="progressive_failed", message="Fixture failure."),
+        OperationFailure(code="progressive_failed", message="Fixture failure."),
     )
     capture_dir = tmp_path / "captures" / capture.capture_id
     ingestion_metadata = tmp_path / "ingestions" / ingestion_id / "metadata.json"
@@ -1598,7 +1592,7 @@ def test_interrupted_ingestion_preserves_historical_kind(
     repository.initialize()
 
     ingestion = repository.get_ingestion(ingestion_id)
-    assert ingestion.status is StreamingIngestionStatus.FAILED
+    assert ingestion.status is IngestionStatus.FAILED
     assert ingestion.kind is CaptureSourceKind.RECORDING
     after = json.loads(path.read_bytes())
     assert after.pop("status") == "failed"

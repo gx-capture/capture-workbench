@@ -196,8 +196,8 @@ mod handlers {
             LibraryExportRequest, LibraryImportSelectionRequest, LibraryListRequest,
             LibrarySaveEditsRequest, LibrarySelectSourcesRequest, RuntimeCancelUploadInput,
             RuntimeCreateCaptureInput, RuntimeIdInput, RuntimeInstallationStartInput,
-            RuntimeModelInstallationStartInput, RuntimeRequirementInput,
-            RuntimeStreamingCaptureInput, RuntimeStreamingEventsInput,
+            RuntimeRequirementInput, RuntimeStreamingCaptureInput, RuntimeStreamingEventsInput,
+            StructuringModelInstallationStartInput,
         },
         host_api,
     };
@@ -403,31 +403,32 @@ mod handlers {
         ))
     }
 
-    pub(super) fn runtime_model_options(
+    pub(super) fn runtime_structuring_model_options(
         args: Value,
         context: &HostContext,
     ) -> Result<HostResponse, HostError> {
         let EmptyArgs {} = parse_args(args)?;
-        json_result(host_api::runtime_model_options(&context.state))
+        json_result(host_api::runtime_structuring_model_options(&context.state))
     }
 
-    pub(super) fn runtime_start_model_installation(
+    pub(super) fn runtime_start_structuring_model_installation(
         args: Value,
         context: &HostContext,
     ) -> Result<HostResponse, HostError> {
-        let InputArgs { input }: InputArgs<RuntimeModelInstallationStartInput> = parse_args(args)?;
-        json_result(host_api::runtime_start_model_installation(
+        let InputArgs { input }: InputArgs<StructuringModelInstallationStartInput> =
+            parse_args(args)?;
+        json_result(host_api::runtime_start_structuring_model_installation(
             &context.state,
             input,
         ))
     }
 
-    pub(super) fn runtime_get_model_installation(
+    pub(super) fn runtime_get_structuring_model_installation(
         args: Value,
         context: &HostContext,
     ) -> Result<HostResponse, HostError> {
         let InputArgs { input }: InputArgs<RuntimeIdInput> = parse_args(args)?;
-        json_result(host_api::runtime_get_model_installation(
+        json_result(host_api::runtime_get_structuring_model_installation(
             &context.state,
             input,
         ))
