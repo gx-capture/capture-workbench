@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 import pytest
 from pydantic import ValidationError
 
-from capture_runtime.contracts import CaptureDocument, RawCapture
+from capture_runtime.contracts import CaptureDocument, CaptureEngine, RawCapture
 from capture_runtime.structuring.infrastructure.contracts import StructuringValidationError
 from capture_runtime.structuring.infrastructure.structuring import validate_structuring_candidate
 
@@ -120,3 +120,21 @@ def test_candidate_cannot_omit_raw_provenance_even_if_internally_valid() -> None
     internally_valid = CaptureDocument.model_validate(candidate)
     with pytest.raises(StructuringValidationError):
         validate_structuring_candidate(internally_valid, raw)
+
+
+@pytest.mark.parametrize("legacy_device", ["local", "remote"])
+def test_historical_ollama_document_keeps_legacy_device(legacy_device: str) -> None:
+    payload = _document_payload()
+    payload["structuringEngine"] = {**_engine("ollama"), "device": legacy_device}
+    document = CaptureDocument.model_validate(payload)
+    assert document.structuring_engine.device == legacy_device
+    assert document.structuring_engine.device_name is None
+    assert CaptureDocument.model_validate_json(document.model_dump_json(by_alias=True)) == document
+
+
+def test_device_name_is_optional_nullable_and_nonempty() -> None:
+    engine = _engine("ollama")
+    assert CaptureEngine.model_validate(engine).device_name is None
+    assert CaptureEngine.model_validate({**engine, "deviceName": None}).device_name is None
+    with pytest.raises(ValidationError, match="deviceName"):
+        CaptureEngine.model_validate({**engine, "deviceName": " "})

@@ -179,6 +179,8 @@ describe('diagnostics pure functions', () => {
         structuringEngine: {
           engine: 'ollama',
           model: 'qwen-test',
+          device: 'cuda',
+          deviceName: 'GPU example',
           digest: `sha256:${'2'.repeat(64)}`,
         },
       } as unknown as DesktopLibraryDetail['result'],
@@ -223,12 +225,14 @@ describe('diagnostics pure functions', () => {
         engine: 'text-recognition',
         model: 'ocr-v1',
         device: 'dml',
+        deviceName: null,
         digest: `sha256:${'1'.repeat(64)}`,
       },
       structuring: {
         engine: 'ollama',
         model: 'qwen-test',
-        device: null,
+        device: 'cuda',
+        deviceName: 'GPU example',
         digest: `sha256:${'2'.repeat(64)}`,
       },
       evidence: {

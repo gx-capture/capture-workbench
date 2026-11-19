@@ -707,7 +707,6 @@ function hostCandidate(raw: RawCapture): Record<string, unknown> {
       engine: 'host',
       model: 'real-media-smoke-identity-host-v1',
       digest: `sha256:${'1'.repeat(64)}`,
-      device: 'local',
     },
     warnings: [],
     createdAt: raw.createdAt,

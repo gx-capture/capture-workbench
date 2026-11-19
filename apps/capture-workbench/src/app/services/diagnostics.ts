@@ -23,6 +23,7 @@ export interface EngineProvenanceView {
   readonly engine: string;
   readonly model: string;
   readonly device: string | null;
+  readonly deviceName: string | null;
   readonly digest: string;
 }
 
@@ -120,6 +121,7 @@ function toEngineProvenance(source: CaptureEngine): EngineProvenanceView {
     engine: source.engine,
     model: source.model,
     device: nonEmpty(source.device),
+    deviceName: nonEmpty(source.deviceName),
     digest: source.digest,
   };
 }

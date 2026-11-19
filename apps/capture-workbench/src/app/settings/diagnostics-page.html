@@ -109,11 +109,21 @@
               [attr.data-engine]="str.engine"
               [attr.data-model]="str.model"
               [attr.data-digest]="str.digest"
+              [attr.data-device]="str.device"
             >
               <dt class="font-medium text-muted-foreground">{{ m().diagnosticsProvenanceEngine }}</dt>
               <dd>{{ str.engine }}</dd>
               <dt class="font-medium text-muted-foreground">{{ m().diagnosticsProvenanceModel }}</dt>
               <dd>{{ str.model }}</dd>
+              @if (str.device; as device) {
+                <dt class="font-medium text-muted-foreground">{{ m().diagnosticsProvenanceDevice }}</dt>
+                <dd>
+                  {{ device }}
+                  @if (str.deviceName; as deviceName) {
+                    <span>({{ deviceName }})</span>
+                  }
+                </dd>
+              }
               <dt class="font-medium text-muted-foreground">{{ m().diagnosticsProvenanceDigest }}</dt>
               <dd class="min-w-0">
                 <div class="flex items-start justify-between gap-3">

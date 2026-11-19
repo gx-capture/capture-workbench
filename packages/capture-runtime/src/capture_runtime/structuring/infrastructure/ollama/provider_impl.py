@@ -12,7 +12,7 @@ from pathlib import Path
 import httpx
 
 from capture_runtime.clock import Clock
-from capture_runtime.contracts import CaptureEngine, RawCapture
+from capture_runtime.contracts import CaptureDocument, CaptureEngine, RawCapture
 from capture_runtime.structuring.infrastructure.constants import (
     DEFAULT_STRUCTURING_NUM_CTX,
     DEFAULT_STRUCTURING_NUM_PREDICT,
@@ -82,11 +82,14 @@ class OllamaCaptureStructuringProvider:
         cancel_event: asyncio.Event,
     ) -> object:
         async with self._lifecycle.lease(cancel_event):
-            return await self._structure_exclusive(
+            document = await self._structure_exclusive(
                 raw,
                 target_language=target_language,
                 cancel_event=cancel_event,
             )
+
+        self._engine_identity = document.structuring_engine
+        return document
 
     async def _structure_exclusive(
         self,
@@ -94,7 +97,7 @@ class OllamaCaptureStructuringProvider:
         *,
         target_language: str | None,
         cancel_event: asyncio.Event,
-    ) -> object:
+    ) -> CaptureDocument:
         model_name = self._selected_model_name()
         profile_id = _planning_profile_id(model_name)
         self.device_execution = None
@@ -102,7 +105,6 @@ class OllamaCaptureStructuringProvider:
         self._lifecycle.start()
         try:
             engine_identity = await self._wait_until_ready(cancel_event, model_name)
-            self._engine_identity = engine_identity
             async with AsyncExitStack() as clients:
                 client = await clients.enter_async_context(self._generation_client())
                 first_batch = True
@@ -148,7 +150,7 @@ class OllamaCaptureStructuringProvider:
                     self._require_owned_process(str(client.base_url).rstrip("/"))
                     return candidate
 
-                return await self._coordinator.structure(
+                document = await self._coordinator.structure(
                     raw,
                     target_language=target_language,
                     cancel_event=cancel_event,
@@ -157,6 +159,17 @@ class OllamaCaptureStructuringProvider:
                     profile_id=profile_id,
                     generate=generate,
                 )
+                execution = self.device_execution
+                if execution is not None and execution.observed_backend is not None:
+                    observed_identity = CaptureEngine(
+                        engine=engine_identity.engine,
+                        model=engine_identity.model,
+                        digest=engine_identity.digest,
+                        device=execution.observed_backend,
+                        device_name=(execution.observed_description or "").strip() or None,
+                    )
+                    document = document.model_copy(update={"structuring_engine": observed_identity})
+                return document
         finally:
             # The process owns native model allocations beyond one request.
             # End the bounded per-document lease before another extractor,
@@ -319,7 +332,6 @@ class OllamaCaptureStructuringProvider:
                                 engine="ollama",
                                 model=model_name,
                                 digest=digest,
-                                device="local",
                             )
                 except httpx.HTTPError:
                     pass

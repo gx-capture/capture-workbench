@@ -170,12 +170,14 @@ describe('DiagnosticsPage', () => {
           engine: 'text-recognition',
           model: 'ocr-v1',
           device: 'dml',
+          deviceName: null,
           digest: `sha256:${'d'.repeat(64)}`,
         },
         structuring: {
           engine: 'ollama',
           model: 'qwen-test',
-          device: null,
+          device: 'cuda',
+          deviceName: 'GPU example',
           digest: `sha256:${'e'.repeat(64)}`,
         },
         evidence: {
@@ -200,6 +202,8 @@ describe('DiagnosticsPage', () => {
     const str = el.querySelector('[data-testid="diagnostics-structuring-provenance"]');
     expect(str?.getAttribute('data-engine')).toBe('ollama');
     expect(str?.getAttribute('data-model')).toBe('qwen-test');
+    expect(str?.getAttribute('data-device')).toBe('cuda');
+    expect(str?.textContent).toContain('GPU example');
     expect(str?.getAttribute('data-digest')).toBe(`sha256:${'e'.repeat(64)}`);
 
     expect(el.querySelector('[data-testid="diagnostics-evidence-pages"]')?.textContent?.trim()).toBe('2');

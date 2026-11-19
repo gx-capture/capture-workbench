@@ -87,6 +87,7 @@
  *   titles, console logs, errors, and the evidence JSON.
  */
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, rmSync, statSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
@@ -192,6 +193,7 @@ interface EngineProvenance {
   readonly engine: string;
   readonly model: string;
   readonly device?: string | null;
+  readonly deviceName?: string | null;
   readonly digest: string;
 }
 
@@ -249,6 +251,7 @@ interface ProvenanceSummary {
   readonly engine: string;
   readonly model: string;
   readonly device: string | null;
+  readonly deviceName: string | null;
   readonly digest: string;
 }
 
@@ -728,6 +731,7 @@ function toProvenanceSummary(provenance: EngineProvenance): ProvenanceSummary {
     engine: provenance.engine,
     model: provenance.model,
     device: provenance.device ?? null,
+    deviceName: provenance.deviceName ?? null,
     digest: provenance.digest,
   };
 }
@@ -912,6 +916,13 @@ async function verifyDiagnosticsProvenance(
     await expect(structuringEl).toHaveAttribute('data-engine', expectedStructuring.engine);
     await expect(structuringEl).toHaveAttribute('data-model', expectedStructuring.model);
     await expect(structuringEl).toHaveAttribute('data-digest', expectedStructuring.digest);
+    if (expectedStructuring.device) {
+      await expect(structuringEl).toHaveAttribute('data-device', expectedStructuring.device);
+      await expect(structuringEl).toContainText(expectedStructuring.device);
+    }
+    if (expectedStructuring.deviceName) {
+      await expect(structuringEl).toContainText(expectedStructuring.deviceName);
+    }
   }
 }
 
@@ -1367,6 +1378,19 @@ test('runs full real-engine capture, editing, export, and restart journey on loc
       assert.equal(audioStructuring.engine, 'ollama');
       assert.ok(audioStructuring.model.trim().length > 0, 'Structuring model must be recorded.');
       assert.match(audioStructuring.digest, SHA256_DIGEST_PATTERN);
+      const structuringDevice = audioStructuring.device ?? null;
+      assert.ok([null, 'cuda', 'rocm', 'vulkan', 'cpu'].includes(structuringDevice));
+      const nvidia = spawnSync('nvidia-smi', ['--list-gpus'], {
+        encoding: 'utf8',
+        timeout: 2_000,
+        windowsHide: true,
+      });
+      if (nvidia.status === 0 && nvidia.stdout.trim() !== '') {
+        assert.equal(structuringDevice, 'cuda', 'Owned Ollama must use the NVIDIA GPU.');
+      }
+      if (structuringDevice === null || structuringDevice === 'cpu') {
+        assert.equal(audioStructuring.deviceName ?? null, null);
+      }
 
       const audioExtractionSummary = toProvenanceSummary(audioExtraction);
       const audioStructuringSummary = toProvenanceSummary(audioStructuring);

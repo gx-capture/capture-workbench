@@ -69,6 +69,8 @@ const candidate: CaptureDocument = {
   structuringEngine: {
     engine: 'ollama',
     model: 'capture-v1',
+    device: 'cuda',
+    deviceName: 'GPU example',
     digest: `sha256:${'c'.repeat(64)}`,
   },
   warnings: [],
@@ -232,7 +234,17 @@ describe('capture helpers', () => {
   });
 
   it('accepts a complete candidate that preserves evidence order', () => {
-    expect(validateStructuringCandidate(candidate, raw)).toEqual([]);
+    const roundTrip: CaptureDocument = JSON.parse(JSON.stringify(candidate));
+    expect(validateStructuringCandidate(roundTrip, raw)).toEqual([]);
+    expect(roundTrip.structuringEngine).toMatchObject({
+      device: 'cuda',
+      deviceName: 'GPU example',
+    });
+    const { engine, model, digest } = candidate.structuringEngine;
+    expect(validateStructuringCandidate({
+      ...candidate,
+      structuringEngine: { engine, model, digest, device: 'local' },
+    }, raw)).toEqual([]);
   });
 
   it('rejects empty target text and reordered locators', () => {

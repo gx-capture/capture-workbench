@@ -1820,3 +1820,20 @@ def test_delete_ingestion_deletes_the_uploaded_source() -> None:
     CaptureRuntimeClient(transport=transport).delete_ingestion("ingestion-1")
 
     assert deleted == ["/v2/ingestions/ingestion-1"]
+
+
+def test_ollama_device_name_round_trips_through_public_client_model() -> None:
+    from capture_runtime_client import CaptureEngine
+
+    engine = CaptureEngine.model_validate(
+        {
+            "engine": "ollama",
+            "model": "example",
+            "digest": "sha256:" + "a" * 64,
+            "device": "cuda",
+            "deviceName": "GPU example",
+        }
+    )
+    assert engine.device == "cuda"
+    assert engine.device_name == "GPU example"
+    assert CaptureEngine.model_validate_json(engine.model_dump_json(by_alias=True)) == engine

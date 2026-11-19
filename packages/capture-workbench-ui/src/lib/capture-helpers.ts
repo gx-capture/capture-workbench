@@ -453,6 +453,7 @@ function sameEngine(
     left.engine === right.engine &&
     left.model === right.model &&
     left.digest === right.digest &&
-    left.device === right.device
+    left.device === right.device &&
+    left.deviceName === right.deviceName
   );
 }

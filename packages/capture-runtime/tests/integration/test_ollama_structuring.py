@@ -650,6 +650,7 @@ def test_verified_selection_under_the_old_model_name_plans_for_the_current_profi
     ("mode", "expected_calls", "expected_backend", "expected_state"),
     [
         ("verified", 1, "cuda", "verified"),
+        ("cpu", 1, "cpu", "verified"),
         ("corrected", 2, "cuda", "verified"),
         ("repeated_mismatch", 2, "rocm", "mismatch"),
         ("no_target", 1, "rocm", "mismatch"),
@@ -678,11 +679,11 @@ def test_owned_document_verifies_and_replays_only_once(
     fixtures = Path(__file__).parents[1] / "fixtures/ollama_0_40_13"
     cuda = (fixtures / "cuda-dgpu-hip-hidden.log").read_text(encoding="utf-8")
     rocm = (fixtures / "rocm-igpu-selected-with-cuda-present.log").read_text(encoding="utf-8")
+    cpu = (fixtures / "cpu-all-gpus-hidden.log").read_text(encoding="utf-8")
     log_path.write_text(rocm, encoding="utf-8")
     adapter = "Unavailable adapter" if mode == "no_target" else "NVIDIA GeForce RTX 4060 Laptop GPU"
-    policy = device_policy.OllamaDevicePolicy(
-        "unmanaged" if mode == "unmanaged" else "cuda", adapter_name=adapter
-    )
+    target = "unmanaged" if mode == "unmanaged" else "cpu" if mode == "cpu" else "cuda"
+    policy = device_policy.OllamaDevicePolicy(target, adapter_name=adapter)
     monkeypatch.setattr(
         "capture_runtime.structuring.infrastructure.ollama.lifecycle_impl.resolve_device_policy",
         lambda: policy,
@@ -728,10 +729,13 @@ def test_owned_document_verifies_and_replays_only_once(
                 or ((mode == "corrected" and len(calls) == 2) or (multi_batch and len(calls) == 1))
                 else rocm
             )
+            if mode == "cpu":
+                log = cpu
             if mode == "zero_offload":
                 log = log.replace("offloaded 34/34", "offloaded 0/34")
             with log_path.open("a", encoding="utf-8") as stream:
-                split = log.index("using device") + 7
+                marker = "model buffer" if mode == "cpu" else "using device"
+                split = log.index(marker) + 7
                 stream.write(log[:split])
                 stream.flush()
                 await asyncio.sleep(0.04)
@@ -773,6 +777,16 @@ def test_owned_document_verifies_and_replays_only_once(
     assert provider.device_execution is not None
     assert provider.device_execution.observed_backend == expected_backend
     assert provider.device_execution.state == expected_state
+    assert result.structuring_engine == provider.engine_identity
+    assert result.structuring_engine.device == expected_backend
+    expected_name = {
+        "cuda": "NVIDIA GeForce RTX 4060 Laptop GPU",
+        "rocm": "AMD Radeon(TM) 880M Graphics",
+    }.get(expected_backend or "")
+    assert result.structuring_engine.device_name == expected_name
+    wire_engine = result.model_dump(mode="json", by_alias=True)["structuringEngine"]
+    assert wire_engine["device"] == expected_backend
+    assert wire_engine["deviceName"] == expected_name
     if expected_processes == 2:
         assert tags == [12001, 12002]
         assert [call.url.port for call in calls] == tags

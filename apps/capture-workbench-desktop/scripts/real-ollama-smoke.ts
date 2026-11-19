@@ -51,6 +51,8 @@ export interface StructuringProvenance {
   readonly engine: typeof expectedStructuringEngine;
   readonly model: typeof expectedStructuringModel;
   readonly digest: string;
+  readonly device: string | null;
+  readonly deviceName: string | null;
 }
 
 export interface ExtractedOllamaResult {
@@ -81,12 +83,25 @@ export function extractOllamaStructuringProvenance(payload: unknown): ExtractedO
   ) {
     throw new Error('Real capture result does not contain isolated Ollama profile provenance.');
   }
+  const device = structuring['device'] ?? null;
+  const deviceName = structuring['deviceName'] ?? null;
+  if (
+    (device !== null &&
+      device !== 'cuda' && device !== 'rocm' && device !== 'vulkan' && device !== 'cpu') ||
+    (deviceName !== null &&
+      (typeof deviceName !== 'string' || deviceName.trim() === '' ||
+        device === null || device === 'cpu'))
+  ) {
+    throw new Error('Real capture result contains invalid Ollama device provenance.');
+  }
   return {
     schemaVersion: document['schemaVersion'],
     structuringEngine: {
       engine: expectedStructuringEngine,
       model: expectedStructuringModel,
       digest: structuring['digest'],
+      device,
+      deviceName,
     },
   };
 }
@@ -101,11 +116,7 @@ export function buildRealOllamaSmokeEvidence(input: {
     releaseGateSatisfied: false,
     sourceKind: 'pdf',
     schemaVersion: input.schemaVersion,
-    structuringEngine: {
-      engine: input.structuringEngine.engine,
-      model: input.structuringEngine.model,
-      digest: input.structuringEngine.digest,
-    },
+    structuringEngine: { ...input.structuringEngine },
     workerMirrorUsed: input.workerMirrorUsed,
   };
 }

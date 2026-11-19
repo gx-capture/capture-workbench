@@ -7,6 +7,7 @@ import {
   CAPTURE_CONTRACT_SET_SHA256,
   CAPTURE_DOCUMENT_SCHEMA_SHA256,
   RUNTIME_VERSION,
+  type CaptureDocument,
   type CaptureEvent,
   type CaptureOperation,
   type RuntimeInstallation,
@@ -2070,4 +2071,31 @@ describe('response field lists follow the contract set', () => {
       ).rejects.toThrow(`unknown ${model} field: notInContract`);
     },
   );
+});
+
+
+it('preserves observed Ollama device provenance while decoding a document', async () => {
+  const engine = {
+    engine: 'ollama',
+    model: 'example',
+    digest: `sha256:${'a'.repeat(64)}`,
+  };
+  const document = {
+    schemaVersion: '2',
+    source: { fileName: 'example.pdf', mediaType: 'application/pdf', bytes: 1, sha256: 'b'.repeat(64) },
+    rawSegments: [],
+    blocks: [],
+    sourceText: '',
+    targetText: '',
+    extractionEngine: engine,
+    structuringEngine: { ...engine, device: 'cuda', deviceName: 'GPU example' },
+    createdAt: '2026-01-01T00:00:00Z',
+    completedAt: '2026-01-01T00:00:01Z',
+  } satisfies CaptureDocument;
+  const decoded = await decodeJson<CaptureDocument>(
+    Response.json(document),
+    undefined,
+    'CaptureDocument',
+  );
+  expect(decoded.structuringEngine).toEqual(document.structuringEngine);
 });

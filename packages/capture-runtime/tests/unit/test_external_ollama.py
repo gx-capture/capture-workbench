@@ -107,7 +107,9 @@ def test_external_ollama_structures_with_bearer_auth() -> None:
     assert isinstance(document, CaptureDocument)
     assert document.target_text == "translated text"
     assert document.structuring_engine.model == "qwen3.5:4b"
-    assert document.structuring_engine.device == "remote"
+    assert document.structuring_engine == provider.engine_identity
+    assert document.structuring_engine.device is None
+    assert document.structuring_engine.device_name is None
     assert all(request.headers["authorization"] == "Bearer secret-key" for request in requests)
     generate = next(request for request in requests if request.url.path == "/api/generate")
     assert json.loads(generate.content)["model"] == "qwen3.5:4b"

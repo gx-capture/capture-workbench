@@ -67,3 +67,7 @@ sequenceDiagram
 - 操作的問題代碼清單屬於合約集：增減任一操作的問題代碼都會改變合約集雜湊，該次發布需經消費端關卡。
 - 新的錯誤種類先登記到問題代碼，再在 HTTP 層使用；作業的新失敗原因先登記到失敗代碼。同一個代碼只有在 HTTP 回應與失敗的作業都會用到時，才同時列在兩份清單。
 - 0.10.x 存下的失敗代碼（`storage.common.RETIRED_FAILURE_CODES`）在讀取時換成現行代碼，檔案位元組不變。
+
+## Capture engine device provenance
+
+CaptureEngine.device and CaptureEngine.deviceName are optional nullable non-empty strings. The shared device field records an execution backend and remains open to OCR, speech, and host-defined values. Owned Windows Ollama records cuda, rocm, vulkan, or cpu from observed execution. A GPU description, when observed, goes in deviceName. CPU, unknown execution, and external Ollama have a null deviceName. Unknown execution and external Ollama also have a null device. Historical documents with local, remote, or absent fields remain readable in schema version 2.
