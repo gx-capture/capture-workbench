@@ -74,7 +74,7 @@ source of truth for inputs.
   capture document schema unchanged (`5452631c…`). Clients require the same
   runtime minor, so 0.9.x clients refuse a 0.10.0 runtime at the handshake.
   `capture-sidecar-launcher` 0.10.0 removes public API (see the changelog).
-- Model-source source snapshot `3834db2` (annotated tag
+- Model-source snapshot `3834db2` (annotated tag
   `capture-runtime-model-sources-v0.10.0`, pushed before the candidates). The
   lock pins the same models as 0.9.0, with the same approval record. OCR
   profile `capture-workbench-ocr-8530e3130b89f10b`.
@@ -166,7 +166,7 @@ source of truth for inputs.
   and `downloadedBytes`, `CaptureOperationV2.pagesTotal`, `pagesDone`,
   `durationMs` and `coveredUntilMs`), besides the handshake's minor and
   contract-set checks. Capture document schema unchanged (`5452631c…`).
-- Model-source source snapshot `e2c41ae` (annotated tag
+- Model-source snapshot `e2c41ae` (annotated tag
   `capture-runtime-model-sources-v0.9.0`, pushed before the candidates). The
   lock pins the same models as 0.8.0, with the same approval record. OCR
   profile `capture-workbench-ocr-8a80b428fa4968ac`.
@@ -188,7 +188,7 @@ source of truth for inputs.
   the speech worker with `ja` covered 87.2% of the official script in order,
   against 77.9% with the default Chinese, in 350 s instead of 385 s.
 - Breaking for clients: contract-set SHA-256 `664b2b32…` (0.7.x: `60c62267…`).
-  Capture document schema unchanged (`5452631c…`). Model-source source snapshot
+  Capture document schema unchanged (`5452631c…`). Model-source snapshot
   `b4b62e3` (annotated tag `capture-runtime-model-sources-v0.8.0`). The lock
   pins the same models as 0.7.2, with the same approval record. OCR profile
   `capture-workbench-ocr-cea24c3eb2bcce57`.
@@ -215,7 +215,7 @@ source of truth for inputs.
   The desktop app writes `speech-gpu-settings.json` and passes
   `CAPTURE_WHISPER_PREFER_GPU`.
 - Compatible with 0.7.x clients. Contract-set SHA-256 unchanged (`60c62267…`);
-  capture document schema unchanged (`5452631c…`). Model-source source snapshot
+  capture document schema unchanged (`5452631c…`). Model-source snapshot
   `954f19f` (annotated tag `capture-runtime-model-sources-v0.7.2`). The lock
   pins the same models as 0.7.1; its approval record is the owner's of
   2026-10-25 for the M4A private fixture (PR #108). OCR profile
@@ -254,7 +254,7 @@ source of truth for inputs.
   - Locally built 0.7.1 workers, run through the runtime's `WorkerClient` as a
     capture with speakers does, load and transcribe instead of hanging.
 - Compatible with 0.7.x clients. Contract-set SHA-256 unchanged (`60c62267…`);
-  capture document schema unchanged (`5452631c…`). Model-source source snapshot
+  capture document schema unchanged (`5452631c…`). Model-source snapshot
   `61c7ecd` (annotated tag `capture-runtime-model-sources-v0.7.1`). The lock
   pins the same models as 0.7.0, and its approval record is unchanged. OCR
   profile `capture-workbench-ocr-e012547f1f9da4da`.
@@ -286,7 +286,7 @@ source of truth for inputs.
 - Breaking: contract-set SHA-256 `60c62267…` (0.6.3: `fc8a994e…`). Consumers
   (Cert Prep; LAW's Java engine and AI service) change `whisper-primary` to
   `speech-recognition` with the version bump.
-- Model-source source snapshot `d4b95bf` (annotated tag
+- Model-source snapshot `d4b95bf` (annotated tag
   `capture-runtime-model-sources-v0.7.0`). The lock (34 files, about 7.5 GB)
   was approved by the owner on 2026-10-25. OCR profile
   `capture-workbench-ocr-7680a930bb89b381`.
@@ -302,7 +302,7 @@ source of truth for inputs.
   The filter now ignores sounds shorter than 250 ms. Verified before release
   in a packaged Whisper engine installed through the runtime's install path.
 - Compatible with 0.6.x clients. Contract-set SHA-256 unchanged
-  (`fc8a994e…`). Model-source source snapshot `d16effb` (annotated tag
+  (`fc8a994e…`). Model-source snapshot `d16effb` (annotated tag
   `capture-runtime-model-sources-v0.6.3`). OCR profile
   `capture-workbench-ocr-1f5dcb0f58337c71`. Source commit `2a117cc` (merge
   of PR #97).
@@ -360,7 +360,7 @@ source of truth for inputs.
   - The window merging and the checkpoint rule run in the Whisper worker,
     so the runtime candidate rebuilt `capture-engine-whisper`.
 - Compatible with 0.6.x clients. Contract-set SHA-256 unchanged
-  (`fc8a994e…`). Model-source source snapshot `abe8b55` (annotated tag
+  (`fc8a994e…`). Model-source snapshot `abe8b55` (annotated tag
   `capture-runtime-model-sources-v0.6.2`). OCR profile
   `capture-workbench-ocr-5b63d123f524e4b1`. Source commit `251cdb9` (merge
   of PR #94).
@@ -420,11 +420,11 @@ source of truth for inputs.
 - Incompatible with 0.5.x. Contract-set SHA-256
   `fc8a994e5a2a822376821da277e949eb203df9223977da4db4cdc7ab29724523`; the set no
   longer carries the release version, so the version bump did not change it.
-- Model-source source snapshot `99bfd21` (annotated tag
+- Model-source snapshot `99bfd21` (annotated tag
   `capture-runtime-model-sources-v0.6.0`). OCR profile
   `capture-workbench-ocr-09c2568f8a130abe`: the profile still carries the
   release version, so its id changes with every release.
-- The lock has four units: `text-recognition`, `speech-recognition` (until 0.6.3:
+- The lock has four units: the OCR unit, `speech-recognition` (until 0.6.3:
   `whisper-primary`), and the optional
   `speaker-diarization` (worker archive about 272 MB, models from
   `gx-capture/capture-model-sources`) and `vertical-japanese-reader` (models
@@ -693,8 +693,8 @@ candidate with `node tools/install-capture-workbench-dependencies.mts
   only `model-sources/text-recognition/` (source snapshot), push it with the annotated tag
   `capture-runtime-model-sources-v<version>`, then put its SHA in
   `TEXT_RECOGNITION_SOURCE_COMMIT`, then run `scripts/model_source_lock.py repin-text-recognition` to recompute the digests and byte counts of the
-  first-party files from the committed bytes (the NOTICE names the version, so
-  its size follows the version string's length), and copy `text-recognition/model/pipeline.json` to
+  first-party files from the committed bytes (`pipeline.json` and the
+  provenance record the release version), and copy `text-recognition/model/pipeline.json` to
   `src/capture_runtime/assets/ocr-profile.json`. The lock's approval record
   changes only with the owner's consent.
 - Version management has two stages: ordinary source/tests reference a scoped

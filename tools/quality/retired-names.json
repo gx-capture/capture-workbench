@@ -736,6 +736,30 @@
       {
         "glob": "packages/capture-runtime/tests/unit/test_app_data_lock.py",
         "reason": "Historical installed directory and link fixtures."
+      },
+      {
+        "glob": "apps/capture-workbench-desktop/src-tauri/src/contracts/library.rs",
+        "reason": "Reads historical OCR evidence stored in the desktop library."
+      },
+      {
+        "glob": "apps/capture-workbench-desktop/src-tauri/src/runtime_client.rs",
+        "reason": "Rejects the historical requirement ID (test)."
+      },
+      {
+        "glob": "apps/capture-workbench/src/app/contracts/ocr-evidence.spec.ts",
+        "reason": "Historical OCR evidence fixtures."
+      },
+      {
+        "glob": "apps/capture-workbench/src/app/services/diagnostics.spec.ts",
+        "reason": "Shows historical OCR evidence as recorded."
+      },
+      {
+        "glob": "packages/capture-runtime-client-python/src/capture_runtime_client/private/generated_models.py",
+        "reason": "Generated from the runtime contract, which rejects the historical ID."
+      },
+      {
+        "glob": "test-fixtures/ocr-evidence-v1-golden.json",
+        "reason": "Frozen golden of the version 1 OCR evidence format."
       }
     ]
   },
@@ -751,6 +775,26 @@
       {
         "glob": "packages/capture-runtime/tests/integration/test_streaming_api.py",
         "reason": "Historical capture records and replay fixtures."
+      },
+      {
+        "glob": "apps/capture-workbench-desktop/src-tauri/src/contracts/library.rs",
+        "reason": "Reads historical OCR evidence stored in the desktop library."
+      },
+      {
+        "glob": "apps/capture-workbench-desktop/src-tauri/src/library/store.rs",
+        "reason": "Historical library records preserved byte for byte (tests)."
+      },
+      {
+        "glob": "apps/capture-workbench/src/app/contracts/ocr-evidence.spec.ts",
+        "reason": "Historical OCR evidence fixtures."
+      },
+      {
+        "glob": "apps/capture-workbench/src/app/contracts/ocr-evidence.ts",
+        "reason": "Reads historical OCR evidence stored in the desktop library."
+      },
+      {
+        "glob": "apps/capture-workbench/src/app/services/diagnostics.spec.ts",
+        "reason": "Shows historical OCR evidence as recorded."
       }
     ]
   },
@@ -766,6 +810,26 @@
       {
         "glob": "packages/capture-runtime/tests/integration/test_streaming_api.py",
         "reason": "Historical capture records and replay fixtures."
+      },
+      {
+        "glob": "apps/capture-workbench-desktop/src-tauri/src/contracts/library.rs",
+        "reason": "Reads historical OCR evidence stored in the desktop library."
+      },
+      {
+        "glob": "apps/capture-workbench-desktop/src-tauri/src/library/store.rs",
+        "reason": "Historical library records preserved byte for byte (tests)."
+      },
+      {
+        "glob": "apps/capture-workbench/src/app/contracts/ocr-evidence.spec.ts",
+        "reason": "Historical OCR evidence fixtures."
+      },
+      {
+        "glob": "apps/capture-workbench/src/app/contracts/ocr-evidence.ts",
+        "reason": "Reads historical OCR evidence stored in the desktop library."
+      },
+      {
+        "glob": "apps/capture-workbench/src/app/services/diagnostics.spec.ts",
+        "reason": "Shows historical OCR evidence as recorded."
       }
     ]
   },
@@ -796,6 +860,18 @@
       {
         "glob": "packages/capture-runtime/tests/integration/test_structuring_session.py",
         "reason": "Historical completed session fixture."
+      },
+      {
+        "glob": "apps/capture-workbench-desktop/src-tauri/src/contracts/library.rs",
+        "reason": "Reads historical OCR evidence stored in the desktop library."
+      },
+      {
+        "glob": "apps/capture-workbench/src/app/contracts/ocr-evidence.spec.ts",
+        "reason": "Historical OCR evidence fixtures."
+      },
+      {
+        "glob": "apps/capture-workbench/src/app/contracts/ocr-evidence.ts",
+        "reason": "Reads historical OCR evidence stored in the desktop library."
       }
     ]
   },
@@ -803,7 +879,16 @@
     "name": "gpu-dml",
     "match": "word",
     "replacement": "gpu",
-    "allowed": []
+    "allowed": [
+      {
+        "glob": "apps/capture-workbench-desktop/src-tauri/src/library/store.rs",
+        "reason": "Historical library records preserved byte for byte (tests)."
+      },
+      {
+        "glob": "packages/capture-runtime-client-python/tests/test_client_sdk.py",
+        "reason": "Rejects historical compute values (test)."
+      }
+    ]
   },
   {
     "name": "dml_provider_unavailable",
@@ -813,6 +898,14 @@
       {
         "glob": "packages/capture-runtime/tests/integration/test_streaming_api.py",
         "reason": "Historical capture records and replay fixtures."
+      },
+      {
+        "glob": "apps/capture-workbench-desktop/src-tauri/src/library/store.rs",
+        "reason": "Historical library records preserved byte for byte (tests)."
+      },
+      {
+        "glob": "packages/capture-runtime-client-python/tests/test_client_sdk.py",
+        "reason": "Rejects historical compute values (test)."
       }
     ]
   },

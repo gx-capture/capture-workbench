@@ -27,7 +27,7 @@
 
 ## 產品現在怎麼跑 OCR
 
-`paddleocr==3.7.0`。Runtime 建立 `PaddleOCR(**kwargs)`，再 `pipeline.predict`。Profile 拒絕任何不是 `pp-ocrv6-medium-windowsml` 的設定，偵測與辨識必須是 `PP-OCRv6_medium_det` 與 `PP-OCRv6_medium_rec`，字典是 `rec/ppocrv6_dict.txt`。三個方向開關必須全是 false：`useDocOrientationClassify`、`useDocUnwarping`、`useTextlineOrientation`。呼叫端不能用 `targetLanguage` 換模型。
+`paddleocr==3.7.0`。Runtime 建立 `PaddleOCR(**kwargs)`，再 `pipeline.predict`。Profile 拒絕任何不是 `pp-ocrv6-medium` 的設定，偵測與辨識必須是 `PP-OCRv6_medium_det` 與 `PP-OCRv6_medium_rec`，字典是 `rec/ppocrv6_dict.txt`。三個方向開關必須全是 false：`useDocOrientationClassify`、`useDocUnwarping`、`useTextlineOrientation`。呼叫端不能用 `targetLanguage` 換模型。
 
 辨識結果在 `normalize_paddle_results` 依 Paddle 回傳順序接成頁面文字，中間用換行。空字串會先驗證多邊形再略過，不再讓整頁失敗。`CHANGELOG.md` 的 0.4.4 寫明：2024-07 這份 44 頁 PDF 的直排第 16 頁在 0.4.2 與 0.4.3 會整頁失敗，0.4.4 可以跑完；已知限制是直排日文辨得出來，但欄序不對，而且辨識錯誤比橫排多。本輪沒有重跑 OCR，所以沒有新的錯字數。
 

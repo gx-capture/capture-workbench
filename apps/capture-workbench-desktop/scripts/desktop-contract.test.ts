@@ -730,7 +730,8 @@ test('stable discovery points only to the immutable release manifest on the prot
     readFile(join(workspaceRoot, 'release-index', 'releases.json'), 'utf8'),
   ]);
   assert.match(workflow, /release-index:[\s\S]*update-release-index\.ts/u);
-  assert.match(workflow, /capture-release-manifest-v1\.json/u);
+  // The pointer accepts exactly one full release manifest, v1 or v2.
+  assert.match(workflow, /capture-release-manifest-v\[12\]/u);
   assert.match(workflow, /refs\/heads\/release-index/u);
   assert.match(workflow, /manifestSha256|MANIFEST_SHA256/u);
   assert.match(workflow, /gh attestation verify/u);

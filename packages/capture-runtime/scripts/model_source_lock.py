@@ -419,8 +419,8 @@ def _validate_ocr_fixture(value: object) -> dict[str, Any]:
         raise ModelSourceLockError("OCR fixture must bind the text recognition source commit")
     for key in ("sha256", "licenseSha256", "noticeSha256", "pdfSha256"):
         _sha256(fixture[key], f"ocr fixture {key}")
-    # The NOTICE names the release version, so its length changes with the
-    # version; the Text recognition blob check below binds its bytes and SHA instead.
+    # The NOTICE's byte count is not fixed here; the text recognition blob check
+    # below binds its bytes and SHA.
     if fixture["licenseBytes"] != 1087:
         raise ModelSourceLockError("OCR fixture license bytes drifted")
     _first_party_url(fixture["url"], "fixtures/ocr-reference.png", "OCR fixture url")

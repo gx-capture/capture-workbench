@@ -41,7 +41,7 @@ are ephemeral and are deleted after the host has copied the data it needs.
 
    | Unit | What it does |
    | --- | --- |
-   | `windowsml-ocr` | OCR for PDFs and images (PP-OCRv6 models on DirectML or the CPU) |
+   | `text-recognition` | OCR for PDFs and images (PP-OCRv6 models on DirectML or the CPU) |
    | `speech-recognition` | ASR: the CUDA pack (TEA-ASR 1.1 on an NVIDIA GPU) or, on a machine without the NVIDIA driver, the CPU pack (TEA-ASR 1.1 mini) |
    | `speaker-diarization` (optional) | Who spoke when, with NVIDIA Nemotron-3-Diarization on the CPU |
    | `vertical-japanese-reader` (optional) | NDLOCR-Lite models for vertical Japanese pages; without it the regular OCR reads every page |
@@ -210,7 +210,7 @@ corepack pnpm dev:deterministic
 ```
 
 The deterministic lane is for repeatable development and diagnostics. It does
-not prove that WindowsML, TEA-ASR, Ollama, or a packaged release is working.
+not prove that text recognition, TEA-ASR, Ollama, or a packaged release is working.
 
 To run the runtime directly for backend development, set a private
 `CAPTURE_API_TOKEN` with at least 32 characters and start the runtime target:

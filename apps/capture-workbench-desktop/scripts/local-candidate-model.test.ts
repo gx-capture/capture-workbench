@@ -29,7 +29,7 @@ const MODEL_FILES = [
   ['model/rec/inference.onnx', 'rec onnx'],
   ['model/rec/inference.yml', 'rec yml'],
   ['model/rec/ppocrv6_dict.txt', 'dict'],
-  ['provenance/commit-a.json', '{}'],
+  ['provenance/text-recognition.json', '{}'],
 ] as const;
 
 function descriptorForFixture(): LocalCandidateModelDescriptor {

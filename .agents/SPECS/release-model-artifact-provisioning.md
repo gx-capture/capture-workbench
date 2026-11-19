@@ -89,8 +89,9 @@ explicitly approved and contains:
 First-party `pipeline.json`, license, NOTICE, and fixture bytes have a
 two-commit repository/commit binding contract:
 
-1. source snapshot in `gx-capture/capture-workbench` adds the reviewed bytes only.
-2. A later Commit B adds/approves the source lock and references immutable raw
+1. The source snapshot commit in `gx-capture/capture-workbench` adds the reviewed
+   bytes only.
+2. A later source-lock commit adds or approves the source lock and references immutable raw
    URLs containing the exact full source snapshot SHA and repository identity.
 
 source-lock commit must follow source snapshot. The source lock must not self-reference source-lock commit

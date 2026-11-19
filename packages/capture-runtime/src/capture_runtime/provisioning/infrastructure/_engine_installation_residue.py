@@ -139,6 +139,7 @@ __all__ = [
     "is_reparse_point",
     "is_temporary_version_name",
     "remove_inactive_versions",
+    "remove_retired_ocr_installation",
     "remove_residue_path",
     "remove_stale_install_residue",
     "resolved_child",
