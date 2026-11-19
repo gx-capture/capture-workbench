@@ -167,6 +167,10 @@ To also check progressive audio, first record a reference with
 `node apps/capture-workbench-desktop/scripts/progressive-audio-oracle.ts`
 (`CAPTURE_PROGRESSIVE_AUDIO_ORACLE_SOURCE` and `_OUTPUT`), then pass the output
 file as `CAPTURE_REAL_ENGINES_AUDIO_EXPECTATIONS` (or `CAPTURE_REAL_MEDIA_MODEL_AUDIO_ORACLE`).
+The oracle installs the speech worker and model into a fresh kept run tree
+(`.kept-run-trees/audio-oracle-<time>` beside the checkout) and leaves it there;
+remove it when the machine is idle with
+`corepack pnpm run kept-run-trees -- --remove <path>` (`-- --list` shows them).
 
 ## Installed QA fixture smoke
 

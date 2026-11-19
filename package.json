@@ -23,6 +23,7 @@
     "architecture:check": "node tools/architecture-graph.ts --check",
     "architecture-exceptions:check": "node tools/architecture-exceptions-gate.ts",
     "architecture-exceptions:update": "node tools/architecture-exceptions-gate.ts --update",
+    "kept-run-trees": "node tools/kept-run-trees.ts",
     "lint": "corepack pnpm nx run-many -t lint",
     "verify": "corepack pnpm run verify:workspace && corepack pnpm run verify:package && corepack pnpm run verify:smoke",
     "verify:workspace": "corepack pnpm nx run-many -t lint,typecheck,test,build,production-bundle-check,cargo-fmt-check,cargo-check,cargo-test,test-scripts --parallel=false",

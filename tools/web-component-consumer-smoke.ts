@@ -15,6 +15,7 @@ import { chromium } from '@playwright/test';
 import { Observable, concatMap, defer, finalize, from, map, of } from 'rxjs';
 import { resolveNode24Corepack } from './node24-corepack.ts';
 import { readPackageManagerPolicy } from './package-manager.ts';
+import { createKeptRunTree, keepsRunTrees } from './kept-run-trees.ts';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const sourcePackage = JSON.parse(
@@ -37,8 +38,20 @@ const runtimeClientArchivePath = join(
 );
 // Keep the isolated virtual store path short enough for Windows package paths.
 const fixtureBase = resolve(repoRoot, '..', '.cw-clean');
-mkdirSync(fixtureBase, { recursive: true });
-const fixtureRoot = mkdtempSync(join(fixtureBase, 'c-'));
+// A local run keeps the installed consumer project (tens of thousands of
+// files) for the person to remove when the machine is idle; GitHub runners
+// delete it.
+const keepFixture = keepsRunTrees();
+const fixtureRoot = keepFixture
+  ? createKeptRunTree({
+      script: 'capture-workbench-ui:clean-consumer-smoke',
+      directoryPrefix: 'c',
+    })
+  : createDeletedFixtureRoot();
+function createDeletedFixtureRoot() {
+  mkdirSync(fixtureBase, { recursive: true });
+  return mkdtempSync(join(fixtureBase, 'c-'));
+}
 const corepackCli = resolveNode24Corepack();
 function write(relativePath, contents) {
   const target = join(fixtureRoot, relativePath);
@@ -91,6 +104,12 @@ function runPnpm(args, relativeCwd = '') {
 }
 
 function cleanup() {
+  if (keepFixture) {
+    process.stdout.write(
+      `Kept the consumer project at ${fixtureRoot}; remove it with pnpm run kept-run-trees -- --remove ${fixtureRoot}\n`,
+    );
+    return;
+  }
   const resolvedFixture = resolve(fixtureRoot);
   const relativeFixture = relative(resolve(fixtureBase), resolvedFixture);
   if (
