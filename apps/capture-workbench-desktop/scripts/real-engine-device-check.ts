@@ -165,11 +165,15 @@ async function main(): Promise<void> {
       throw new Error(`${name} is missing in ${releaseDirectory}; build it with capture-runtime:build-release-artifacts.`);
     }
   }
-  const ownsScratch = !values['run-tree'] && process.env['GITHUB_ACTIONS'] === 'true';
-  const scratchRoot = await realpath(workspaceRoot);
+  let scratchRoot: string | undefined;
+  if (!values['run-tree'] && process.env['GITHUB_ACTIONS'] === 'true') {
+    const scratchDirectory = join(workspaceRoot, 'tmp');
+    await mkdir(scratchDirectory, { recursive: true });
+    scratchRoot = await checkedChild(scratchDirectory, workspaceRoot);
+  }
   const runTree = values['run-tree'] ? await validateRunTree(values['run-tree'])
-    : ownsScratch ? await mkdtemp(join(scratchRoot, '.devices-')) : await validateRunTree(createRunTree());
-  const scratchIdentity = ownsScratch ? await lstat(runTree) : undefined;
+    : scratchRoot ? await mkdtemp(join(scratchRoot, '.devices-')) : await validateRunTree(createRunTree());
+  const scratchIdentity = scratchRoot ? await lstat(runTree) : undefined;
   const nvidiaPresent = spawnSync('nvidia-smi', ['-L'], { windowsHide: true, stdio: 'ignore' }).status === 0;
   try {
     await run({
@@ -183,7 +187,7 @@ async function main(): Promise<void> {
       driverPresent,
     });
   } finally {
-    if (!ownsScratch) {
+    if (!scratchRoot) {
       process.stdout.write(`Kept the run tree at ${runTree}; remove it with pnpm run kept-run-trees -- --remove ${runTree}\n`);
     } else if (scratchIdentity && dirname(runTree) === scratchRoot) {
       const current = await lstat(runTree);
@@ -709,8 +713,12 @@ function keptRoot(): string {
 }
 
 async function checkedChild(path: string, parent: string): Promise<string> {
+  const metadata = await lstat(path);
+  if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
+    throw new Error('Expected a real, direct child directory.');
+  }
   const actual = await realpath(path);
-  if (actual.toLowerCase() !== resolve(path).toLowerCase() || dirname(actual).toLowerCase() !== parent.toLowerCase()) {
+  if (dirname(actual).toLowerCase() !== (await realpath(parent)).toLowerCase()) {
     throw new Error('Expected a real, direct child directory.');
   }
   return actual;

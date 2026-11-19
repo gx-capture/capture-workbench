@@ -78,6 +78,35 @@ test('a single post-baseline worker burst survives worker exit', () => {
   assert.equal(observed.ownedCpuSeconds, 1.25);
 });
 
+test('seven-field utilization rows classify the integrated GPU and expose dual-GPU activity', () => {
+  const integratedRows = [
+    `gpu,t1,owned,${integrated},Compute,20,${speech}`,
+    `gpu,t2,owned,${integrated},Compute,25,${speech}`,
+  ];
+  assert.deepEqual(parseWindowsSamples(integratedRows[0]).gpu, [
+    { time: 't1', owned: true, luid: integrated, engineType: 'Compute', utilization: 20, worker: speech },
+  ]);
+  const single = observe(speech, worker(speech), poll, ...integratedRows);
+  assert.equal(single.observedDevice, 'integrated-gpu');
+  assert.equal(single.ownedAdapterUse[0].activeSamples, 2);
+  const dual = observe(speech, worker(speech), poll, ...integratedRows,
+    `gpu,t1,owned,${discrete},Compute,30,${speech}`,
+    `gpu,t2,owned,${discrete},Compute,35,${speech}`);
+  assert.equal(dual.conflictingAdapters, true);
+  assert.equal(dual.observedDevice, null);
+});
+
+test('NVIDIA summary reports peak utilization and memory increase from the first sample', () => {
+  const nvidia = parseNvidiaSamples([
+    '2026/01/01 00:00:00.000, 5, 1024',
+    '2026/01/01 00:00:01.000, 37, 2048',
+    '2026/01/01 00:00:02.000, 10, 1536',
+  ].join('\n'));
+  const observed = summarizeObservation({ ...parseWindowsSamples(baseline), adapters, nvidia });
+  assert.equal(observed.nvidiaMaxUtilization, 37);
+  assert.equal(observed.nvidiaMemoryRiseMiB, 1024);
+});
+
 test('existing worker cumulative time is subtracted; an uncompleted tick is ignored', () => {
   const observed = observe(speech, 'worker,t0,40:100,speech-recognition,1.25', worker(speech),
     burst(speech).replace(',t1,', ',t0,'), burst(speech), poll, burst(speech, integrated).replace(',t1,', ',incomplete,'));

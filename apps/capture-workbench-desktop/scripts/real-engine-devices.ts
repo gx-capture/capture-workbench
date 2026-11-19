@@ -196,10 +196,10 @@ export interface GpuBusySample {
 
 /**
  * Reads the Windows sampler's lines:
- * `gpu,<time>,<owned|other>,<luid>,<engine type>,<utilization %>`,
- * `busy,<time>,<pid>,<luid>,<engine index>,<engine type>,<running time>` (the
- * runtime's own engines only) and
- * `cpu,<time>,<owned CPU seconds>,<total CPU %>,<owned process count>`.
+ * `gpu,<time>,<owned|other>,<luid>,<engine type>,<utilization %>,<worker>`,
+ * `busy,<time>,<pid:ticks>,<luid>,<engine index>,<engine type>,<running time>,<worker>`
+ * (owned engines only), `worker,<time>,<pid:ticks>,<worker>,<CPU seconds>`,
+ * and `cpu,<time>,<owned CPU seconds>,<total CPU %>,<owned process count>,<gpuOk>`.
  */
 export function parseWindowsSamples(text: string): {
   readonly gpu: readonly GpuSample[];
