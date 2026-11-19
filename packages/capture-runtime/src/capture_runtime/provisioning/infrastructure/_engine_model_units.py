@@ -131,7 +131,9 @@ async def install_model_unit(
                 descriptor, destination, cancel_event=cancel_event, progress=progress
             )
             completed += descriptor.bytes
-        verify_direct_model_files(model_root, delivery)
+        # Hashing and deleting gigabytes run in a worker thread so that the
+        # event loop keeps answering requests, installation status included.
+        await _file_operation(verify_direct_model_files, model_root, delivery)
         if cancel_event.is_set():
             raise asyncio.CancelledError
         state_path = root / STATE_FILE_NAME
@@ -139,7 +141,7 @@ async def install_model_unit(
         # be replaced; the new copy becomes active only once its state is written.
         state_path.unlink(missing_ok=True)
         if final.exists():
-            shutil.rmtree(final)
+            await _file_operation(shutil.rmtree, final)
         await _file_operation(replace_with_retry, staging, final)
         if cancel_event.is_set():
             raise asyncio.CancelledError

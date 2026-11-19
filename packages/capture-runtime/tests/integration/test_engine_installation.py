@@ -840,6 +840,89 @@ def test_active_engine_resolution_times_out_when_verification_never_returns(
     asyncio.run(run())
 
 
+@pytest.mark.parametrize(
+    ("unit", "step"),
+    [
+        ("engine", "safe_extract_artifact"),
+        ("engine", "verify_direct_model_files"),
+        ("model", "verify_direct_model_files"),
+    ],
+)
+def test_installation_status_is_answered_while_the_install_extracts_or_verifies(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    unit: str,
+    step: str,
+) -> None:
+    """Hashing and extracting gigabytes must leave the event loop free.
+
+    The speech worker archive is about 3 GB and extracts to about 4.5 GB.
+    Done on the event loop, it held every request, the installation status
+    included, past the desktop host's 60 s read timeout.
+    """
+
+    from capture_runtime.provisioning.application.installation_service import InstallationService
+    from capture_runtime.provisioning.infrastructure import _engine_model_units as models
+    from capture_runtime.provisioning.infrastructure.installation_repository import (
+        InstallationRepository,
+    )
+
+    async def scenario() -> None:
+        if unit == "engine":
+            catalog, sources = _catalog(tmp_path)
+            requirement_id = "text-recognition"
+            module: object = engine_installation_module
+        else:
+            catalog, sources = _model_unit_catalog(tmp_path)
+            requirement_id = "vertical-japanese-reader"
+            module = models
+        manager = EngineInstallationManager(
+            tmp_path / "engines",
+            catalog,
+            worker_client=FakeWorkerClient(),  # type: ignore[arg-type]
+            downloader=CopyDownloader(sources),
+            model_downloader=CopyModelDownloader(sources),
+        )
+        started = asyncio.Event()
+        release = threading.Event()
+        loop = asyncio.get_running_loop()
+        original = getattr(module, step)
+        held: list[bool] = []
+
+        def hold_first_call(*args: object, **kwargs: object) -> object:
+            if not held:
+                held.append(True)
+                loop.call_soon_threadsafe(started.set)
+                assert release.wait(timeout=5), "the step held the event loop"
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(module, step, hold_first_call)
+        repository = InstallationRepository(
+            tmp_path / "jobs", clock=SystemClock(), retention_hours=24
+        )
+        repository.initialize()
+        service = InstallationService(repository, installer=manager, clock=SystemClock())
+        job = service.create(
+            idempotency_key="status-while-busy",
+            request_fingerprint="status-while-busy",
+            requirement_id=requirement_id,
+        )
+        task = service._tasks[job.installation_id]
+        try:
+            await asyncio.wait_for(started.wait(), 5)
+            # The loop runs this while the step is still working.
+            assert service.get(job.installation_id).status.value == "running"
+            release.set()
+            await asyncio.wait_for(task, 5)
+            assert service.get(job.installation_id).status.value == "completed"
+            assert manager.is_installed(requirement_id)
+        finally:
+            release.set()
+            await asyncio.wait_for(service.shutdown(), 5)
+
+    asyncio.run(scenario())
+
+
 def test_failed_upgrade_keeps_previous_active_state(tmp_path: Path) -> None:
     catalog_v1, sources_v1 = _catalog(tmp_path, version="engine-1")
     root = tmp_path / "engines"

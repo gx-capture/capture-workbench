@@ -694,9 +694,13 @@ class EngineInstallationManager:
         report_download: DownloadProgress | None,
     ) -> None:
         requirement_root = self._requirement_root(requirement.requirement_id)
-        self._remove_stale_install_residue(requirement_root)
+        # Every step that walks, hashes, extracts or deletes installed files runs
+        # in a worker thread: a speech worker archive is gigabytes, and on the
+        # event loop it held every request, installation status included, for
+        # minutes.
+        await _file_operation(self._remove_stale_install_residue, requirement_root)
         if requirement.model_only:
-            if self.active_model_unit(requirement.requirement_id) is None:
+            if await _file_operation(self.active_model_unit, requirement.requirement_id) is None:
                 await install_model_unit(
                     requirement_root,
                     requirement,
@@ -708,7 +712,7 @@ class EngineInstallationManager:
             else:
                 report_progress(1)
             return
-        if self.active_engine(requirement.requirement_id) is not None:
+        if await _file_operation(self.active_engine, requirement.requirement_id) is not None:
             report_progress(1)
             return
         # The content is fixed for this install. A later launch reads contentId
@@ -796,14 +800,15 @@ class EngineInstallationManager:
                 cancel_event=cancel_event,
                 progress=worker_progress,
             )
-            safe_extract_artifact(
+            await _file_operation(
+                safe_extract_artifact,
                 worker_archive,
                 new_version / "worker",
                 worker_descriptor,
                 cancel_event=cancel_event,
             )
             # Fail before the model download rather than at the model probe.
-            _check_worker_path_lengths(new_version / "worker")
+            await _file_operation(_check_worker_path_lengths, new_version / "worker")
             probe_executable = self._resolved_child(
                 new_version / "worker", worker_descriptor.entry_point
             )
@@ -812,7 +817,7 @@ class EngineInstallationManager:
                 artifact_version=artifact_version,
                 executable=probe_executable,
                 model_dir=new_version / "model" / model_descriptor.entry_point,
-                worker_sha256=sha256_file(probe_executable),
+                worker_sha256=await _file_operation(sha256_file, probe_executable),
                 content_id=content_id,
             )
             try:
@@ -866,7 +871,7 @@ class EngineInstallationManager:
                     progress=model_progress,
                 )
                 completed_model_bytes += file_descriptor.bytes
-            verify_direct_model_files(model_root, model_descriptor)
+            await _file_operation(verify_direct_model_files, model_root, model_descriptor)
             report_progress(0.85)
             engine_executable = self._resolved_child(
                 new_version / "worker", worker_descriptor.entry_point
@@ -876,7 +881,7 @@ class EngineInstallationManager:
                 artifact_version=artifact_version,
                 executable=engine_executable,
                 model_dir=self._resolved_child(model_root, model_descriptor.entry_point),
-                worker_sha256=sha256_file(engine_executable),
+                worker_sha256=await _file_operation(sha256_file, engine_executable),
                 content_id=content_id,
             )
             try:
@@ -947,15 +952,18 @@ class EngineInstallationManager:
             active_executable = self._resolved_child(
                 version / "worker", worker_descriptor.entry_point
             )
+            # Committed operations: a cancel that arrives during them is too late.
             active_engine = InstalledEngine(
                 requirement_id=requirement.requirement_id,
                 artifact_version=artifact_version,
                 executable=active_executable,
                 model_dir=self._resolved_child(version / "model", model_descriptor.entry_point),
-                worker_sha256=sha256_file(active_executable),
+                worker_sha256=await _commit_operation(sha256_file, active_executable),
                 content_id=content_id,
             )
-            installed_files = _installed_engine_snapshot(version / "worker", version / "model")
+            installed_files = await _commit_operation(
+                _installed_engine_snapshot, version / "worker", version / "model"
+            )
             if installed_files is not None:
                 with self._verified_active_engines_lock:
                     self._verified_active_engines[requirement.requirement_id] = (
@@ -966,7 +974,9 @@ class EngineInstallationManager:
                         )
                     )
             report_progress(1)
-            self._remove_inactive_versions(requirement_root, artifact_version)
+            await _commit_operation(
+                self._remove_inactive_versions, requirement_root, artifact_version
+            )
         finally:
             cleanup_operation = _commit_operation if activated else _file_operation
             await cleanup_operation(

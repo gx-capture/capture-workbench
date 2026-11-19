@@ -1,5 +1,5 @@
 use std::{
-    io::{Read, Write},
+    io::{ErrorKind, Read, Write},
     net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream},
     time::Duration,
 };
@@ -168,10 +168,9 @@ fn request_classified(
     stream
         .take(MAX_RUNTIME_RESPONSE_BYTES + 1)
         .read_to_end(&mut response)
-        .map_err(|_| {
-            response_rejection(&response).unwrap_or_else(|| {
-                RequestError::transient("Capture Runtime response could not be read.".to_string())
-            })
+        .map_err(|error| {
+            response_rejection(&response)
+                .unwrap_or_else(|| RequestError::transient(read_failure_message(&error)))
         })?;
     if response.len() as u64 > MAX_RUNTIME_RESPONSE_BYTES {
         return Err(
@@ -181,6 +180,19 @@ fn request_classified(
         );
     }
     parse_response(&response, &config.token)
+}
+
+/// A read that outlives the socket timeout is a runtime that has not answered,
+/// not a response that arrived broken: say which, so that a busy runtime is
+/// not mistaken for a dropped connection.
+fn read_failure_message(error: &std::io::Error) -> String {
+    match error.kind() {
+        ErrorKind::TimedOut | ErrorKind::WouldBlock => format!(
+            "Capture Runtime did not answer within {} seconds.",
+            REQUEST_TIMEOUT.as_secs()
+        ),
+        _ => "Capture Runtime response could not be read.".to_string(),
+    }
 }
 
 pub(super) fn request_sse(
@@ -213,7 +225,7 @@ pub(super) fn request_sse(
     stream
         .take(MAX_RUNTIME_RESPONSE_BYTES + 1)
         .read_to_end(&mut response)
-        .map_err(|_| "Capture Runtime response could not be read.".to_string())?;
+        .map_err(|error| read_failure_message(&error))?;
     if response.len() as u64 > MAX_RUNTIME_RESPONSE_BYTES {
         return Err("Capture Runtime response exceeded the desktop safety limit.".into());
     }
@@ -354,7 +366,9 @@ fn response_diagnostic(response: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{decode_body, response_diagnostic};
+    use std::io::ErrorKind;
+
+    use super::{decode_body, read_failure_message, response_diagnostic};
 
     #[test]
     fn retry_budget_and_delays_are_bounded() {
@@ -437,6 +451,23 @@ mod tests {
                 format!("Capture Runtime request was rejected with HTTP {status}.")
             );
         }
+    }
+
+    #[test]
+    fn a_read_timeout_says_the_runtime_did_not_answer() {
+        for kind in [ErrorKind::TimedOut, ErrorKind::WouldBlock] {
+            assert_eq!(
+                read_failure_message(&std::io::Error::from(kind)),
+                format!(
+                    "Capture Runtime did not answer within {} seconds.",
+                    super::REQUEST_TIMEOUT.as_secs()
+                )
+            );
+        }
+        assert_eq!(
+            read_failure_message(&std::io::Error::from(ErrorKind::ConnectionReset)),
+            "Capture Runtime response could not be read."
+        );
     }
 
     #[test]
