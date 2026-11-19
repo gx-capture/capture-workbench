@@ -68,6 +68,6 @@ sequenceDiagram
 
 隔離的 Ollama 程序在 PID 檔寫下程序識別碼，以及作業系統回報的原始建立時間（`processCreationTime`：Windows `GetProcessTimes` 的 FILETIME 整數，或 Linux `/proc/<pid>/stat` 的 starttime；該平台讀不到時不寫此欄）。下次啟動時：識別碼已結束就刪除檔案並繼續；識別碼仍在且建立時間相同就拒絕再啟動；建立時間不同表示該識別碼已交給別的程序，刪除過期檔案並繼續。舊檔沒有建立時間，或當時讀不到建立時間，仍拒絕。程序映像名稱與命令列不用來判斷。
 
-## Ollama execution provenance
+## Ollama 的執行出處
 
-The owned Windows Ollama provider combines the model and digest from /api/tags with runner execution evidence. When a device mismatch persists after the allowed corrective restart, or when a correction cannot be derived, structuring continues and records the backend that actually ran. Unmanaged execution can still report observed device evidence. Missing evidence leaves both device fields null. External Ollama reports its model and digest with null device fields. The runtime compares the provider identity with structuringEngine before storing the completed document.
+runtime 自己啟動的 Windows Ollama 供應者，把 `/api/tags` 回報的模型與摘要，和 runner 的執行證據合併。裝置不符的情形在允許的那一次修正重啟之後仍然存在，或無法導出修正時，結構化照常進行，並記錄實際執行的後端。未受管理（`unmanaged`）的執行，仍可回報觀察到的裝置證據。缺少證據時，兩個裝置欄位（`device`、`deviceName`）都是 null。外部 Ollama 回報模型與摘要，兩個裝置欄位是 null。runtime 在儲存完成的文件之前，會比對供應者身份與 `structuringEngine`。

@@ -40,6 +40,7 @@
       "model": "tea-asr-1.1",
       "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       "device": "cuda",
+      "deviceName": null,
       "elapsedMs": null,
       "stageMs": null
     },
@@ -48,6 +49,7 @@
       "model": "nvidia-nemotron-3-diarization",
       "digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
       "device": "cpu",
+      "deviceName": null,
       "elapsedMs": null,
       "stageMs": null
     },
@@ -113,6 +115,7 @@
       "model": "tea-asr-1.1",
       "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       "device": "cuda",
+      "deviceName": null,
       "elapsedMs": null,
       "stageMs": null
     },
@@ -194,6 +197,7 @@
       "model": "tea-asr-1.1",
       "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       "device": "cuda",
+      "deviceName": null,
       "elapsedMs": null,
       "stageMs": null
     },
@@ -202,6 +206,7 @@
       "model": "nvidia-nemotron-3-diarization",
       "digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
       "device": "cpu",
+      "deviceName": null,
       "elapsedMs": null,
       "stageMs": null
     },
@@ -227,6 +232,7 @@
       "model": "deterministic",
       "digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
       "device": "cpu",
+      "deviceName": null,
       "elapsedMs": null,
       "stageMs": null
     },

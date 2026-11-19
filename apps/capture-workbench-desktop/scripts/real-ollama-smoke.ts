@@ -83,8 +83,10 @@ export function extractOllamaStructuringProvenance(payload: unknown): ExtractedO
   ) {
     throw new Error('Real capture result does not contain isolated Ollama profile provenance.');
   }
-  const device = structuring['device'] ?? null;
-  const deviceName = structuring['deviceName'] ?? null;
+  // The check below accepts only these shapes. This project is not strict, so
+  // its comparisons do not narrow the unknown fields on their own.
+  const device = (structuring['device'] ?? null) as string | null;
+  const deviceName = (structuring['deviceName'] ?? null) as string | null;
   if (
     (device !== null &&
       device !== 'cuda' && device !== 'rocm' && device !== 'vulkan' && device !== 'cpu') ||

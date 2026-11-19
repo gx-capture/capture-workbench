@@ -781,17 +781,19 @@ function validateStructuringSession(record: Record<string, unknown>): void {
     engine as Record<string, unknown>,
     ['engine', 'model', 'digest'],
     'StructuringSession provider',
-    ['device', 'elapsedMs', 'stageMs'],
+    ['device', 'deviceName', 'elapsedMs', 'stageMs'],
   );
-  const device = (engine as Record<string, unknown>)['device'];
-  if (
-    device !== undefined &&
-    device !== null &&
-    (typeof device !== 'string' || device.length < 1)
-  ) {
-    throw new CaptureRuntimeProtocolError(
-      'Capture Runtime returned invalid StructuringSession provider device.',
-    );
+  for (const field of ['device', 'deviceName']) {
+    const value = (engine as Record<string, unknown>)[field];
+    if (
+      value !== undefined &&
+      value !== null &&
+      (typeof value !== 'string' || value.length < 1)
+    ) {
+      throw new CaptureRuntimeProtocolError(
+        `Capture Runtime returned invalid StructuringSession provider ${field}.`,
+      );
+    }
   }
   const elapsedMs = (engine as Record<string, unknown>)['elapsedMs'];
   const stageMs = (engine as Record<string, unknown>)['stageMs'];

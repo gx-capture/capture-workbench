@@ -145,14 +145,16 @@ describe('diagnostics pure functions', () => {
       } as unknown as DesktopLibraryDetail['raw'],
     };
 
+    // The recorded engine names no device name, and the view says so.
+    const extractionView = { ...extraction, deviceName: null };
     expect(buildDocumentProvenance(detail)).toEqual({
-      extraction,
+      extraction: extractionView,
       structuring: null,
     });
     expect(buildDiagnosticsDocumentView(detail)).toEqual({
       documentId: 'c'.repeat(32),
       fileName: 'scan.pdf',
-      extraction,
+      extraction: extractionView,
       structuring: null,
       evidence: null,
       canExportJson: true,

@@ -101,8 +101,8 @@ test('v2 request builders produce the expected ingestion, finalize, and start pa
   );
 });
 
-test('extractOllamaStructuringProvenance reads nested v2 provenance and rejects invalid payloads', () => {
-  const validPayload = {
+function ollamaPayload(provenance: Record<string, unknown>) {
+  return {
     operation: { captureId: 'cap-1', status: 'completed' },
     raw: { schemaVersion: '2' },
     result: {
@@ -111,10 +111,14 @@ test('extractOllamaStructuringProvenance reads nested v2 provenance and rejects 
         engine: 'ollama',
         model: 'qwen3.5-0.8b-structure-v1',
         digest: validDigest,
-        device: 'gpu',
+        ...provenance,
       },
     },
   };
+}
+
+test('extractOllamaStructuringProvenance reads nested v2 provenance and rejects invalid payloads', () => {
+  const validPayload = ollamaPayload({ device: 'cuda', deviceName: 'GPU example' });
 
   assert.deepEqual(extractOllamaStructuringProvenance(validPayload), {
     schemaVersion: '2',
@@ -122,6 +126,8 @@ test('extractOllamaStructuringProvenance reads nested v2 provenance and rejects 
       engine: 'ollama',
       model: 'qwen3.5-0.8b-structure-v1',
       digest: validDigest,
+      device: 'cuda',
+      deviceName: 'GPU example',
     },
   });
 
@@ -175,11 +181,62 @@ test('extractOllamaStructuringProvenance reads nested v2 provenance and rejects 
   }
 });
 
+test('extractOllamaStructuringProvenance reads the device the owned Ollama ran on', () => {
+  for (const { reported, device, deviceName } of [
+    { reported: { device: 'cuda', deviceName: 'GPU example' }, device: 'cuda', deviceName: 'GPU example' },
+    { reported: { device: 'rocm', deviceName: 'GPU example' }, device: 'rocm', deviceName: 'GPU example' },
+    { reported: { device: 'vulkan', deviceName: 'GPU example' }, device: 'vulkan', deviceName: 'GPU example' },
+    { reported: { device: 'cpu', deviceName: null }, device: 'cpu', deviceName: null },
+    { reported: { device: 'cpu' }, device: 'cpu', deviceName: null },
+    { reported: { device: null, deviceName: null }, device: null, deviceName: null },
+    // An external Ollama or an unobserved device reports neither field.
+    { reported: {}, device: null, deviceName: null },
+  ]) {
+    assert.deepEqual(
+      extractOllamaStructuringProvenance(ollamaPayload(reported)).structuringEngine,
+      {
+        engine: 'ollama',
+        model: 'qwen3.5-0.8b-structure-v1',
+        digest: validDigest,
+        device,
+        deviceName,
+      },
+      JSON.stringify(reported),
+    );
+  }
+});
+
+test('extractOllamaStructuringProvenance rejects device provenance the runtime does not report', () => {
+  for (const reported of [
+    // Not a backend.
+    { device: 'gpu' },
+    { device: 'local' },
+    { device: 'remote' },
+    { device: 5 },
+    // A name belongs to a GPU backend only.
+    { device: 'cpu', deviceName: 'GPU example' },
+    { device: null, deviceName: 'GPU example' },
+    { deviceName: 'GPU example' },
+    // A name is a non-empty string.
+    { device: 'cuda', deviceName: '' },
+    { device: 'cuda', deviceName: '   ' },
+    { device: 'cuda', deviceName: 5 },
+  ]) {
+    assert.throws(
+      () => extractOllamaStructuringProvenance(ollamaPayload(reported)),
+      /invalid Ollama device provenance/u,
+      JSON.stringify(reported),
+    );
+  }
+});
+
 test('buildRealOllamaSmokeEvidence builds the redacted evidence object with workerMirrorUsed', () => {
   const provenance = {
     engine: 'ollama' as const,
     model: 'qwen3.5-0.8b-structure-v1' as const,
     digest: validDigest,
+    device: 'cuda',
+    deviceName: 'GPU example',
   };
 
   assert.deepEqual(

@@ -11,6 +11,7 @@ import {
   type CaptureEvent,
   type CaptureOperation,
   type RuntimeInstallation,
+  type StructuringSession,
   type SubmitStructuringBatch,
 } from './contracts';
 import { decodeJson, type RuntimeResponseModel } from './codec';
@@ -2098,4 +2099,55 @@ it('preserves observed Ollama device provenance while decoding a document', asyn
     'CaptureDocument',
   );
   expect(decoded.structuringEngine).toEqual(document.structuringEngine);
+});
+
+describe('a pull session names the device its provider ran on', () => {
+  const provider = {
+    engine: 'ollama',
+    model: 'model-1',
+    digest: `sha256:${'b'.repeat(64)}`,
+  };
+  const decode = (extra: Record<string, unknown>) =>
+    decodeJson<StructuringSession>(
+      Response.json({
+        protocolVersion: '2',
+        sessionId: 'session-1',
+        captureId: 'cap',
+        sourceSha256: 'a'.repeat(64),
+        contractSetSha256: CAPTURE_CONTRACT_SET_SHA256,
+        providerCapability: {
+          provider: { ...provider, ...extra },
+          schemaDialect: 'https://json-schema.org/draft/2020-12/schema',
+        },
+        schemaDialect: 'https://json-schema.org/draft/2020-12/schema',
+        batchCount: 1,
+        nextBatchIndex: 0,
+        sessionDigest: 'c'.repeat(64),
+        status: 'open',
+        createdAt: '2026-01-01T00:00:00Z',
+        updatedAt: '2026-01-01T00:00:00Z',
+        completedAt: null,
+      }),
+      undefined,
+      'StructuringSession',
+    );
+
+  it.each([
+    { device: null, deviceName: null },
+    { device: 'cuda', deviceName: 'GPU example' },
+    { device: 'cpu', deviceName: null },
+    {},
+  ])('keeps the provider device fields %j', async (extra) => {
+    const decoded = await decode(extra);
+    expect(decoded.providerCapability.provider).toEqual({ ...provider, ...extra });
+  });
+
+  it.each([{ deviceName: '' }, { deviceName: 5 }, { deviceName: ['GPU example'] }])(
+    'rejects an invalid provider device name %j',
+    async (extra) => {
+      await expect(decode(extra)).rejects.toThrow(
+        'invalid StructuringSession provider deviceName',
+      );
+    },
+  );
 });

@@ -68,6 +68,6 @@ sequenceDiagram
 - 新的錯誤種類先登記到問題代碼，再在 HTTP 層使用；作業的新失敗原因先登記到失敗代碼。同一個代碼只有在 HTTP 回應與失敗的作業都會用到時，才同時列在兩份清單。
 - 0.10.x 存下的失敗代碼（`storage.common.RETIRED_FAILURE_CODES`）在讀取時換成現行代碼，檔案位元組不變。
 
-## Capture engine device provenance
+## 擷取引擎的裝置出處
 
-CaptureEngine.device and CaptureEngine.deviceName are optional nullable non-empty strings. The shared device field records an execution backend and remains open to OCR, speech, and host-defined values. Owned Windows Ollama records cuda, rocm, vulkan, or cpu from observed execution. A GPU description, when observed, goes in deviceName. CPU, unknown execution, and external Ollama have a null deviceName. Unknown execution and external Ollama also have a null device. Historical documents with local, remote, or absent fields remain readable in schema version 2.
+`CaptureEngine.device` 與 `CaptureEngine.deviceName` 都是可省略、可為 null 的非空字串。共用的 `device` 欄位記錄執行的後端，對 OCR、語音與主機自訂的值保持開放。runtime 自己啟動的 Windows Ollama 依觀察到的實際執行，記錄 `cuda`、`rocm`、`vulkan` 或 `cpu`；觀察到 GPU 時，把 GPU 的描述寫在 `deviceName`。`cpu`、無法確認執行裝置與外部 Ollama 的 `deviceName` 是 null；無法確認執行裝置與外部 Ollama 的 `device` 也是 null。舊文件的 `device` 為 `local` 或 `remote`，或兩個欄位都沒有，在 `schemaVersion` `"2"` 下仍可讀取。
