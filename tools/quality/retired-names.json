@@ -519,5 +519,41 @@
     "match": "substring",
     "replacement": "cim-process (the owned-process observer reads a Win32_Process snapshot)",
     "allowed": []
+  },
+  {
+    "name": "SystemRuntimeInstaller",
+    "match": "word",
+    "replacement": "SystemRequirementInstaller",
+    "allowed": []
+  },
+  {
+    "name": "RuntimeInstaller",
+    "match": "word",
+    "replacement": "RequirementInstaller",
+    "allowed": []
+  },
+  {
+    "name": "structuring.infrastructure.ollama.system_installer",
+    "match": "substring",
+    "replacement": "provisioning.infrastructure.system_requirement_installer and structuring.infrastructure.ollama.requirement_installation",
+    "allowed": []
+  },
+  {
+    "name": "structuring.infrastructure.ollama.installer_runtime",
+    "match": "substring",
+    "replacement": "structuring.infrastructure.ollama.installation_commands and provisioning.application.requirement_installer",
+    "allowed": []
+  },
+  {
+    "name": "structuring.infrastructure.ollama.installer_impl",
+    "match": "substring",
+    "replacement": "structuring.infrastructure.ollama.requirement_installation and provisioning.infrastructure.system_requirement_installer",
+    "allowed": []
+  },
+  {
+    "name": "structuring.infrastructure.ollama.installer",
+    "match": "substring",
+    "replacement": "structuring.infrastructure.ollama.requirement_installation and provisioning.application.requirement_installer",
+    "allowed": []
   }
 ]

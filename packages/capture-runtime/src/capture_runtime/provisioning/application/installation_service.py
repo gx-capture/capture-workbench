@@ -13,6 +13,10 @@ from capture_runtime.contracts import (
     RuntimeInstallationV2,
 )
 from capture_runtime.install_progress import DownloadedBytes
+from capture_runtime.provisioning.application.requirement_installer import (
+    ManualActionRequiredError,
+    RequirementInstaller,
+)
 from capture_runtime.provisioning.domain.installation import (
     InstallationJob,
     InstallationStatus,
@@ -20,10 +24,6 @@ from capture_runtime.provisioning.domain.installation import (
 from capture_runtime.provisioning.infrastructure.engine_installation import EngineInstallationError
 from capture_runtime.provisioning.infrastructure.installation_repository import (
     InstallationRepository,
-)
-from capture_runtime.structuring.infrastructure.ollama import (
-    ManualActionRequiredError,
-    RuntimeInstaller,
 )
 from capture_runtime.worker_process import WorkerExecutionError
 
@@ -127,7 +127,7 @@ class InstallationService:
         self,
         repository: InstallationRepository,
         *,
-        installer: RuntimeInstaller,
+        installer: RequirementInstaller,
         clock: Clock,
     ) -> None:
         self.repository = repository
@@ -330,4 +330,4 @@ class InstallationService:
         return _to_contract(domain_job)
 
 
-__all__ = ["CaptureGate", "InstallationService", "RequirementInUseError", "RuntimeInstaller"]
+__all__ = ["CaptureGate", "InstallationService", "RequirementInUseError"]

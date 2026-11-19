@@ -5,17 +5,15 @@ import hashlib
 from collections.abc import Callable
 
 from capture_runtime.constants import OLLAMA_MODEL_REQUIREMENT_ID
-from capture_runtime.structuring.infrastructure.ollama.installer_runtime import _atomic_json
-from capture_runtime.structuring.infrastructure.ollama.lifecycle_impl import (
-    ManualActionRequiredError,
-)
-from capture_runtime.structuring.infrastructure.ollama.system_installer import (
-    SystemRuntimeInstaller,
+from capture_runtime.provisioning.application.requirement_installer import ManualActionRequiredError
+from capture_runtime.structuring.infrastructure.ollama.lifecycle_impl import _atomic_json
+from capture_runtime.structuring.infrastructure.ollama.requirement_installation import (
+    OllamaRequirementInstaller,
 )
 
 
 async def install_legacy_model(
-    installer: SystemRuntimeInstaller,
+    installer: OllamaRequirementInstaller,
     cancel_event: asyncio.Event,
     report_progress: Callable[[float], None],
 ) -> None:

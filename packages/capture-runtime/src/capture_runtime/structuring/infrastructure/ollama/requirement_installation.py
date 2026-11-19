@@ -1,8 +1,4 @@
-"""System-backed runtime requirement installer.
-
-Optional OCR/speech recognition artifacts are delegated to the engine installation owner;
-this module retains the existing app-managed Ollama lifecycle.
-"""
+"""Ollama requirement discovery and installation for structuring."""
 
 from __future__ import annotations
 
@@ -17,206 +13,53 @@ from pathlib import Path
 import httpx
 
 from capture_runtime.clock import Clock
-from capture_runtime.config import ExtractionRuntimeConfig, sanitized_child_environment
-from capture_runtime.constants import (
-    DIARIZATION_REQUIREMENT_ID,
-    MAX_RUNTIME_ARTIFACT_BYTES,
-    OLLAMA_MODEL_REQUIREMENT_ID,
-    OLLAMA_RUNTIME_REQUIREMENT_ID,
-    SPEECH_RECOGNITION_REQUIREMENT_ID,
-    VERTICAL_READER_REQUIREMENT_ID,
-    WINDOWSML_REQUIREMENT_ID,
-)
-from capture_runtime.contracts import (
-    RuntimeArtifactDescriptorV2,
-    RuntimeRequirementStatus,
-    RuntimeRequirementV2,
-)
-from capture_runtime.install_progress import DownloadProgress
-from capture_runtime.provisioning.infrastructure.engine_catalog import (
-    EngineArtifactDescriptor,
-    EngineCatalogError,
-    EngineContentDescriptor,
-    EngineRequirementDescriptor,
-)
-from capture_runtime.provisioning.infrastructure.engine_content_selection import (
-    speech_model_not_installed_message,
-)
-from capture_runtime.provisioning.infrastructure.engine_installation import (
-    EngineInstallationManager,
-    sha256_file,
-)
+from capture_runtime.config import sanitized_child_environment
+from capture_runtime.constants import OLLAMA_MODEL_REQUIREMENT_ID, OLLAMA_RUNTIME_REQUIREMENT_ID
+from capture_runtime.contracts import RuntimeRequirementStatus, RuntimeRequirementV2
+from capture_runtime.provisioning.application.requirement_installer import ManualActionRequiredError
+from capture_runtime.provisioning.infrastructure.engine_installation import sha256_file
 from capture_runtime.structuring.infrastructure.model_catalog import (
     ActiveModelSelectionStore,
     RuntimeModelOption,
     model_option,
 )
-from capture_runtime.structuring.infrastructure.ollama.installer_runtime import (
+from capture_runtime.structuring.infrastructure.ollama.installation_commands import (
     AsyncSubprocessCommandRunner,
     CommandRunner,
-    _atomic_json,
 )
 from capture_runtime.structuring.infrastructure.ollama.lifecycle_impl import (
     IsolatedOllamaLifecycle,
-    ManualActionRequiredError,
     RuntimeUnavailableError,
+    _atomic_json,
 )
 
 
-def _artifact_descriptor(worker: EngineArtifactDescriptor) -> RuntimeArtifactDescriptorV2 | None:
-    """Describe a worker in the public contract, which names one download of at most 512 MiB.
-
-    A larger worker, such as the speech recognition worker published as parts, installs the
-    same way from the engine catalog; its requirement then carries no artifact, like a
-    models-only unit.
-    """
-    if worker.url is None or worker.bytes > MAX_RUNTIME_ARTIFACT_BYTES:
-        return None
-    return RuntimeArtifactDescriptorV2(
-        artifact_url=worker.url,
-        artifact_file_name=worker.file_name,
-        bytes=worker.bytes,
-        sha256=worker.sha256,
-    )
-
-
-_ENGINE_UNIT_IDS = frozenset(
-    {
-        WINDOWSML_REQUIREMENT_ID,
-        SPEECH_RECOGNITION_REQUIREMENT_ID,
-        DIARIZATION_REQUIREMENT_ID,
-        VERTICAL_READER_REQUIREMENT_ID,
-    }
-)
-
-
-class SystemRuntimeInstaller:
-    """Probe/install product requirements without dynamic package installation."""
+class OllamaRequirementInstaller:
+    """Install the Ollama application and selected structuring models."""
 
     def __init__(
         self,
         lifecycle: IsolatedOllamaLifecycle,
         *,
-        engine_manager: EngineInstallationManager | None = None,
         clock: Clock,
         command_runner: CommandRunner | None = None,
         winget_resolver: Callable[[], str | None] | None = None,
-        enabled_requirement_ids: Collection[str] | None = None,
-        model_readiness_timeout_seconds: float = 10,
-        model_readiness_poll_interval_seconds: float = 0.2,
-        extraction_config: ExtractionRuntimeConfig | None = None,
     ) -> None:
-        if model_readiness_timeout_seconds < 0:
-            raise ValueError("model_readiness_timeout_seconds must be non-negative")
-        if model_readiness_poll_interval_seconds < 0:
-            raise ValueError("model_readiness_poll_interval_seconds must be non-negative")
         self._lifecycle = lifecycle
-        self._engine_manager = engine_manager
-        self._extraction_config = extraction_config
         self._runner = command_runner or AsyncSubprocessCommandRunner()
         self._resolve_winget = winget_resolver or (lambda: shutil.which("winget"))
         self._clock = clock
         self._markers = lifecycle.config.app_data_dir / "requirements"
         self._model_selection = ActiveModelSelectionStore(lifecycle.config.app_data_dir)
-        self._enabled_requirement_ids = (
-            None if enabled_requirement_ids is None else frozenset(enabled_requirement_ids)
-        )
-        self._model_readiness_timeout_seconds = model_readiness_timeout_seconds
-        self._model_readiness_poll_interval_seconds = model_readiness_poll_interval_seconds
 
     def requirements(
         self,
         enabled_requirement_ids: Collection[str] | None = None,
     ) -> list[RuntimeRequirementV2]:
-        effective_requirement_ids = (
-            self._enabled_requirement_ids
-            if enabled_requirement_ids is None
-            else frozenset(enabled_requirement_ids)
-            if self._enabled_requirement_ids is None
-            else self._enabled_requirement_ids.intersection(enabled_requirement_ids)
-        )
-
         def is_enabled(requirement_id: str) -> bool:
-            return effective_requirement_ids is None or requirement_id in effective_requirement_ids
+            return enabled_requirement_ids is None or requirement_id in enabled_requirement_ids
 
         requirements: list[RuntimeRequirementV2] = []
-        for requirement_id, kind, display_name, required_for, optional in (
-            (WINDOWSML_REQUIREMENT_ID, "OCR", "WindowsML OCR", ["pdf", "image"], False),
-            (
-                SPEECH_RECOGNITION_REQUIREMENT_ID,
-                "transcription",
-                "Speech recognition",
-                ["audio"],
-                True,
-            ),
-            (
-                DIARIZATION_REQUIREMENT_ID,
-                "speaker-identification",
-                "Speaker identification",
-                ["audio"],
-                True,
-            ),
-            (
-                VERTICAL_READER_REQUIREMENT_ID,
-                "vertical-reader",
-                "Vertical Japanese reader",
-                ["pdf", "image"],
-                True,
-            ),
-        ):
-            if not is_enabled(requirement_id):
-                continue
-            try:
-                if self._engine_manager is None:
-                    raise EngineCatalogError("engine manager is unavailable")
-                descriptor = self._engine_manager.requirement(requirement_id)
-                if descriptor.contents:
-                    status, artifact, download_bytes, detail = self._listed_content_requirement(
-                        self._engine_manager, requirement_id, descriptor
-                    )
-                else:
-                    active = self._engine_manager.is_installed(requirement_id) or None
-                    worker = (
-                        descriptor.worker_artifact()
-                        if descriptor.complete and not descriptor.model_only
-                        else None
-                    )
-                    artifact = _artifact_descriptor(worker) if worker is not None else None
-                    download_bytes = descriptor.download_bytes
-                    status = (
-                        RuntimeRequirementStatus.READY
-                        if active is not None
-                        else RuntimeRequirementStatus.INSTALLABLE
-                        if descriptor.complete
-                        else RuntimeRequirementStatus.UNAVAILABLE
-                    )
-                    detail = (
-                        None
-                        if active is not None
-                        else descriptor.unavailable_reason
-                        if not descriptor.complete
-                        else "Pinned worker and direct model files are available for installation."
-                    )
-            except EngineCatalogError:
-                status = RuntimeRequirementStatus.UNAVAILABLE
-                artifact = None
-                download_bytes = None
-                detail = "No downloadable model is published for this runtime release."
-            requirements.append(
-                RuntimeRequirementV2(
-                    requirement_id=requirement_id,
-                    kind=kind,
-                    display_name=display_name,
-                    status=status,
-                    required_for=required_for,
-                    install_strategy="runtime-catalog",
-                    optional=optional,
-                    detail=detail,
-                    artifact=artifact,
-                    download_bytes=download_bytes,
-                )
-            )
-
         ollama_runtime_enabled = is_enabled(OLLAMA_RUNTIME_REQUIREMENT_ID)
         ollama_model_enabled = is_enabled(OLLAMA_MODEL_REQUIREMENT_ID)
         ollama_available = (
@@ -271,97 +114,13 @@ class SystemRuntimeInstaller:
             )
         return requirements
 
-    def _listed_content_requirement(
-        self,
-        manager: EngineInstallationManager,
-        requirement_id: str,
-        descriptor: EngineRequirementDescriptor,
-    ) -> tuple[
-        RuntimeRequirementStatus,
-        RuntimeArtifactDescriptorV2 | None,
-        int | None,
-        str | None,
-    ]:
-        """Status and size for a requirement that publishes cuda and cpu contents.
-
-        Not installed: the content this machine would download. Installed: the
-        content recorded at install time, so a removal dialog shows what is on
-        disk. Speech stays ``artifact: null`` for every content. A single-file
-        CPU archive can be under the 512 MiB public cap while the parted CUDA
-        archive is not, and hosts must not start that download themselves on
-        only some machines.
-        """
-
-        installed = manager.is_installed(requirement_id)
-        delivery: EngineContentDescriptor | None
-        if installed:
-            delivery = manager.installed_content(requirement_id)
-            content_id = None if delivery is None else delivery.content_id
-            if delivery is None:
-                installed = False
-                content_id, delivery = manager.choose_content(descriptor)
-        else:
-            content_id, delivery = manager.choose_content(descriptor)
-        if delivery is None:
-            return (
-                RuntimeRequirementStatus.UNAVAILABLE,
-                None,
-                None,
-                f"No {content_id} content is published for this runtime release.",
-            )
-        worker = (
-            delivery.worker_artifact() if delivery.complete and not delivery.model_only else None
-        )
-        if requirement_id == SPEECH_RECOGNITION_REQUIREMENT_ID:
-            artifact = None
-        else:
-            artifact = _artifact_descriptor(worker) if worker is not None else None
-        status = (
-            RuntimeRequirementStatus.READY
-            if installed
-            else RuntimeRequirementStatus.INSTALLABLE
-            if delivery.complete
-            else RuntimeRequirementStatus.UNAVAILABLE
-        )
-        detail = (
-            None
-            if installed
-            else delivery.unavailable_reason
-            if not delivery.complete
-            else "Pinned worker and direct model files are available for installation."
-        )
-        # auto and mini still run on a cpu install, so the status stays ready.
-        # Hosts treat any other status as unavailable.
-        if (
-            installed
-            and requirement_id == SPEECH_RECOGNITION_REQUIREMENT_ID
-            and self._extraction_config is not None
-        ):
-            missing_model = speech_model_not_installed_message(
-                content_id, self._extraction_config.speech_recognition_model
-            )
-            if missing_model is not None:
-                detail = missing_model
-        return status, artifact, delivery.download_bytes, detail
-
     async def install(
         self,
         requirement_id: str,
         *,
         cancel_event: asyncio.Event,
         report_progress: Callable[[float], None],
-        report_download: DownloadProgress | None = None,
     ) -> None:
-        if requirement_id in _ENGINE_UNIT_IDS:
-            if self._engine_manager is None:
-                raise RuntimeError("runtime-owned engine catalog is unavailable")
-            await self._engine_manager.install(
-                requirement_id,
-                cancel_event=cancel_event,
-                report_progress=report_progress,
-                report_download=report_download,
-            )
-            return
         if requirement_id == OLLAMA_RUNTIME_REQUIREMENT_ID:
             await self._install_ollama(cancel_event, report_progress)
             return
@@ -370,14 +129,6 @@ class SystemRuntimeInstaller:
                 "Select a model option through the model-installation API."
             )
         raise ValueError(f"unknown requirementId: {requirement_id}")
-
-    def is_uninstallable(self, requirement_id: str) -> bool:
-        return self._engine_manager is not None and requirement_id in _ENGINE_UNIT_IDS
-
-    async def uninstall(self, requirement_id: str) -> None:
-        if self._engine_manager is None or requirement_id not in _ENGINE_UNIT_IDS:
-            raise ValueError(f"requirement is not an engine install unit: {requirement_id}")
-        await self._engine_manager.uninstall(requirement_id)
 
     async def install_model_option(
         self,

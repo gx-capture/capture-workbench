@@ -3,32 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import json
 import os
 import subprocess
-from collections.abc import Callable, Collection, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
-
-from capture_runtime.contracts import RuntimeRequirementV2
-from capture_runtime.install_progress import DownloadProgress
-
-
-def _atomic_json(path: Path, payload: object) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    os.replace(temporary, path)
-
-
-def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as source:
-        while chunk := source.read(1024 * 1024):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,35 +98,3 @@ class AsyncSubprocessCommandRunner:
         except TimeoutError:
             process.kill()
             await process.wait()
-
-
-class RuntimeInstaller(Protocol):
-    def requirements(
-        self,
-        enabled_requirement_ids: Collection[str] | None = None,
-    ) -> list[RuntimeRequirementV2]: ...
-
-    async def install(
-        self,
-        requirement_id: str,
-        *,
-        cancel_event: asyncio.Event,
-        report_progress: Callable[[float], None],
-        report_download: DownloadProgress | None = None,
-    ) -> None: ...
-
-    async def install_model_option(
-        self,
-        option_id: str,
-        *,
-        cancel_event: asyncio.Event,
-        report_progress: Callable[[float], None],
-    ) -> None: ...
-
-    def is_uninstallable(self, requirement_id: str) -> bool:
-        """Whether the requirement is an engine install unit this installer can remove."""
-        ...
-
-    async def uninstall(self, requirement_id: str) -> None:
-        """Remove an installed engine unit; a unit that is not installed is a no-op."""
-        ...

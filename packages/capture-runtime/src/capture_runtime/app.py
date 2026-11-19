@@ -29,7 +29,11 @@ from capture_runtime.contract_set import (
     load_contract_set,
     validate_route_inventory,
 )
-from capture_runtime.dependencies import RuntimeDependencies, build_runtime_dependencies
+from capture_runtime.dependencies import (
+    RuntimeDependencies,
+    RuntimeInstallationOverride,
+    build_runtime_dependencies,
+)
 from capture_runtime.ocr.infrastructure.ocr_preflight import OcrComputePreflight
 from capture_runtime.provisioning.api.runtime import register_runtime_routes
 from capture_runtime.provisioning.infrastructure.installation_repository import (
@@ -41,7 +45,7 @@ from capture_runtime.structuring.api.model_routes import register_model_routes
 from capture_runtime.structuring.infrastructure.model_installation_repository import (
     ModelInstallationRepository,
 )
-from capture_runtime.structuring.infrastructure.ollama import ProcessController, RuntimeInstaller
+from capture_runtime.structuring.infrastructure.ollama import ProcessController
 from capture_runtime.structuring.infrastructure.structuring_provider import (
     CaptureStructuringProvider,
 )
@@ -144,7 +148,7 @@ def create_app(
     clock: Clock | None = None,
     extractor: CaptureExtractor | None = None,
     structurer: CaptureStructuringProvider | None = None,
-    installer: RuntimeInstaller | None = None,
+    installer: RuntimeInstallationOverride | None = None,
     process_controller: ProcessController | None = None,
     dependencies: RuntimeDependencies | None = None,
     installation_repository: InstallationRepository | None = None,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Protocol
 
 from capture_runtime.capture.application.streaming_capture_service import StreamingCaptureService
 from capture_runtime.capture.domain.size_policy import SourceSizePolicy
@@ -27,6 +28,7 @@ from capture_runtime.contract_set import ContractSet, load_contract_set
 from capture_runtime.contracts import StructuringMode
 from capture_runtime.ocr.infrastructure.ocr_preflight import OcrComputePreflight
 from capture_runtime.provisioning.application.installation_service import InstallationService
+from capture_runtime.provisioning.application.requirement_installer import RequirementInstaller
 from capture_runtime.provisioning.infrastructure.engine_catalog import load_engine_catalog
 from capture_runtime.provisioning.infrastructure.engine_installation import (
     EngineInstallationManager,
@@ -34,9 +36,13 @@ from capture_runtime.provisioning.infrastructure.engine_installation import (
 from capture_runtime.provisioning.infrastructure.installation_repository import (
     InstallationRepository,
 )
+from capture_runtime.provisioning.infrastructure.system_requirement_installer import (
+    SystemRequirementInstaller,
+)
 from capture_runtime.speech.infrastructure.progressive_capture import ProgressiveCaptureProcessor
 from capture_runtime.structuring.application.model_installation_service import (
     ModelInstallationService,
+    ModelOptionInstaller,
 )
 from capture_runtime.structuring.application.structuring_session_service import (
     StructuringSessionService,
@@ -50,8 +56,9 @@ from capture_runtime.structuring.infrastructure.ollama import (
     IsolatedOllamaLifecycle,
     OllamaCaptureStructuringProvider,
     ProcessController,
-    RuntimeInstaller,
-    SystemRuntimeInstaller,
+)
+from capture_runtime.structuring.infrastructure.ollama.requirement_installation import (
+    OllamaRequirementInstaller,
 )
 from capture_runtime.structuring.infrastructure.structuring_provider import (
     CaptureStructuringProvider,
@@ -65,6 +72,10 @@ from capture_runtime.testing.deterministic_extractor import DeterministicCapture
 from capture_runtime.worker_process import WorkerProcess
 
 
+class RuntimeInstallationOverride(RequirementInstaller, ModelOptionInstaller, Protocol):
+    """Override both installation services with the same implementation."""
+
+
 @dataclass(slots=True)
 class RuntimeDependencies:
     """All process-local dependencies for one runtime app instance."""
@@ -74,7 +85,7 @@ class RuntimeDependencies:
     lifecycle: IsolatedOllamaLifecycle
     extractor: CaptureExtractor
     structurer: CaptureStructuringProvider
-    installer: RuntimeInstaller
+    installer: RequirementInstaller
     installation_repository: InstallationRepository
     streaming_repository: StreamingRepository
     streaming_capture_service: StreamingCaptureService
@@ -96,7 +107,7 @@ def build_runtime_dependencies(
     clock: Clock | None = None,
     extractor: CaptureExtractor | None = None,
     structurer: CaptureStructuringProvider | None = None,
-    installer: RuntimeInstaller | None = None,
+    installer: RuntimeInstallationOverride | None = None,
     process_controller: ProcessController | None = None,
     installation_repository: InstallationRepository | None = None,
     model_installation_repository: ModelInstallationRepository | None = None,
@@ -182,13 +193,20 @@ def build_runtime_dependencies(
         if settings.structuring_provider in {"host", "external-ollama"}
         else None
     )
-    active_installer = installer or SystemRuntimeInstaller(
-        lifecycle,
-        engine_manager=engine_manager,
-        clock=runtime_clock,
-        enabled_requirement_ids=enabled_requirement_ids,
-        extraction_config=settings.extraction,
-    )
+    active_installer: RequirementInstaller
+    model_installer: ModelOptionInstaller
+    if installer is None:
+        ollama_installer = OllamaRequirementInstaller(lifecycle, clock=runtime_clock)
+        active_installer = SystemRequirementInstaller(
+            ollama_installer,
+            engine_manager=engine_manager,
+            enabled_requirement_ids=enabled_requirement_ids,
+            extraction_config=settings.extraction,
+        )
+        model_installer = ollama_installer
+    else:
+        active_installer = installer
+        model_installer = installer
 
     active_installation_repository = installation_repository or InstallationRepository(
         settings.app_data_dir / "jobs" / "installations",
@@ -248,7 +266,7 @@ def build_runtime_dependencies(
     )
     model_installation_service = ModelInstallationService(
         active_model_installation_repository,
-        installer=active_installer,
+        installer=model_installer,
         clock=runtime_clock,
     )
     return RuntimeDependencies(
@@ -274,4 +292,4 @@ def build_runtime_dependencies(
     )
 
 
-__all__ = ["RuntimeDependencies", "build_runtime_dependencies"]
+__all__ = ["RuntimeDependencies", "RuntimeInstallationOverride", "build_runtime_dependencies"]

@@ -85,6 +85,8 @@ sequenceDiagram
 
 文件 OCR、語音轉寫與說話者分離使用本上下文供應的引擎與模型；結構化使用供應的 Ollama runtime。worker 的推論與結果解析由各引擎上下文負責。
 
+引擎供應定義 `RequirementInstaller`、`StructuringRequirementInstaller` 與 `ManualActionRequiredError`。`SystemRequirementInstaller` 依目錄列出並安裝引擎，並透過 `StructuringRequirementInstaller` 委派結構化需求的查詢與安裝。
+
 ## 規則與資料來源
 
 領域模型位於 `capture_runtime.provisioning.domain`。用例位於 `capture_runtime.provisioning.application.use_cases`。目錄載入、檔案下載、快取與安裝儲存庫位於 `capture_runtime.provisioning.infrastructure`。HTTP 就緒檢查、需求及需求安裝路由位於 `capture_runtime.provisioning.api.runtime`。公開型別由 `capture_runtime.contracts` 定義，在 API 與 application 邊界與領域物件互轉。

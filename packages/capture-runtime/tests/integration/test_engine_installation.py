@@ -9,7 +9,7 @@ import subprocess
 import sys
 import threading
 import zipfile
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -38,7 +38,9 @@ from capture_runtime.contracts import (
     OcrComputePreflightV2,
     OpenIngestionV2,
     RawCaptureSegment,
+    RuntimeRequirementStatus,
     RuntimeRequirementsV2,
+    RuntimeRequirementV2,
     StartCaptureV2,
     StreamingEventType,
     StructuringMode,
@@ -68,12 +70,14 @@ from capture_runtime.provisioning.infrastructure.engine_installation import (
     EngineInstallBusyError,
     ModelFileDownloader,
 )
+from capture_runtime.provisioning.infrastructure.system_requirement_installer import (
+    SystemRequirementInstaller,
+)
 from capture_runtime.speech.infrastructure.progressive_audio import (
     DecodedAudioWindow,
     ProgressiveSessionEvent,
 )
 from capture_runtime.speech.infrastructure.progressive_capture import ProgressiveCaptureProcessor
-from capture_runtime.structuring.infrastructure.ollama import SystemRuntimeInstaller
 from capture_runtime.worker_client import InstalledEngine, WorkerProbeResult
 from capture_runtime.worker_process import WorkerExecutionError, WorkerTimeoutError
 
@@ -1143,14 +1147,106 @@ def test_separate_process_install_lock_blocks_then_releases(tmp_path: Path) -> N
     assert lock_path.is_file()
 
 
-@dataclass
-class _LifecycleConfig:
-    app_data_dir: Path
+class FakeStructuringRequirementInstaller:
+    def __init__(self, rows: tuple[RuntimeRequirementV2, ...] = ()) -> None:
+        self.rows = rows
+        self.filters: list[Collection[str] | None] = []
+        self.install_calls: list[tuple[str, asyncio.Event]] = []
+        self.started = asyncio.Event()
+        self.finish = asyncio.Event()
+
+    def requirements(
+        self, enabled_requirement_ids: Collection[str] | None = None
+    ) -> list[RuntimeRequirementV2]:
+        self.filters.append(enabled_requirement_ids)
+        return [
+            row
+            for row in self.rows
+            if enabled_requirement_ids is None or row.requirement_id in enabled_requirement_ids
+        ]
+
+    async def install(
+        self,
+        requirement_id: str,
+        *,
+        cancel_event: asyncio.Event,
+        report_progress: Callable[[float], None],
+    ) -> None:
+        self.install_calls.append((requirement_id, cancel_event))
+        report_progress(0.25)
+        self.started.set()
+        await self.finish.wait()
 
 
-@dataclass
-class _Lifecycle:
-    config: _LifecycleConfig
+def test_structuring_requirement_installation_persists_progress_and_completion(
+    tmp_path: Path,
+) -> None:
+    from capture_runtime.provisioning.application.installation_service import InstallationService
+    from capture_runtime.provisioning.infrastructure.installation_repository import (
+        InstallationRepository,
+    )
+
+    async def scenario() -> None:
+        structuring = FakeStructuringRequirementInstaller(
+            (
+                RuntimeRequirementV2(
+                    requirement_id="ollama-runtime",
+                    kind="runtime",
+                    display_name="Ollama application",
+                    status=RuntimeRequirementStatus.INSTALLABLE,
+                    required_for=["runtime-structuring"],
+                    install_strategy="winget",
+                ),
+                RuntimeRequirementV2(
+                    requirement_id="capture-ollama-model",
+                    kind="model",
+                    display_name="Capture structuring model",
+                    status=RuntimeRequirementStatus.MISSING,
+                    required_for=["runtime-structuring"],
+                    install_strategy="ollama",
+                ),
+            )
+        )
+        installer = SystemRequirementInstaller(
+            structuring,
+            enabled_requirement_ids={"windowsml-ocr", "speech-recognition", "ollama-runtime"},
+        )
+        requirements = installer.requirements(
+            {"windowsml-ocr", "ollama-runtime", "capture-ollama-model"}
+        )
+        assert [row.requirement_id for row in requirements] == ["windowsml-ocr", "ollama-runtime"]
+        assert structuring.filters == [frozenset({"windowsml-ocr", "ollama-runtime"})]
+
+        clock = SystemClock()
+        repository = InstallationRepository(tmp_path / "jobs", clock=clock, retention_hours=24)
+        repository.initialize()
+        service = InstallationService(repository, installer=installer, clock=clock)
+        job = service.create(
+            idempotency_key="install-structuring",
+            request_fingerprint="install-structuring",
+            requirement_id=requirements[1].requirement_id,
+        )
+        installation_id = job.installation_id
+        metadata = repository.root / installation_id / "metadata.json"
+        try:
+            await asyncio.wait_for(structuring.started.wait(), 5)
+            assert structuring.install_calls == [
+                ("ollama-runtime", service._cancellations[installation_id])
+            ]
+            running = json.loads(metadata.read_text(encoding="utf-8"))["job"]
+            assert running["status"] == "running"
+            assert running["progress"] == 0.25
+
+            task = service._tasks[installation_id]
+            structuring.finish.set()
+            await asyncio.wait_for(task, 5)
+            completed = json.loads(metadata.read_text(encoding="utf-8"))["job"]
+            assert completed["status"] == "completed"
+            assert completed["progress"] == 1
+        finally:
+            await service.shutdown()
+
+    asyncio.run(scenario())
 
 
 def test_core_only_catalog_reports_models_unavailable_without_downloading(
@@ -1172,10 +1268,9 @@ def test_core_only_catalog_reports_models_unavailable_without_downloading(
         downloader=worker_downloader,
         model_downloader=model_downloader,
     )
-    installer = SystemRuntimeInstaller(
-        _Lifecycle(_LifecycleConfig(tmp_path / "app-data")),  # type: ignore[arg-type]
+    installer = SystemRequirementInstaller(
+        FakeStructuringRequirementInstaller(),
         engine_manager=manager,
-        clock=SystemClock(),
         enabled_requirement_ids={"windowsml-ocr", "speech-recognition"},
     )
 
@@ -1226,10 +1321,9 @@ def test_requirements_list_a_worker_the_contract_cannot_describe_without_an_arti
         downloader=CopyDownloader({}, fail=True),
         model_downloader=CopyModelDownloader({}),
     )
-    installer = SystemRuntimeInstaller(
-        _Lifecycle(_LifecycleConfig(tmp_path / "app-data")),  # type: ignore[arg-type]
+    installer = SystemRequirementInstaller(
+        FakeStructuringRequirementInstaller(),
         engine_manager=manager,
-        clock=SystemClock(),
         enabled_requirement_ids={"windowsml-ocr", "speech-recognition"},
     )
 
@@ -1242,7 +1336,9 @@ def test_requirements_list_a_worker_the_contract_cannot_describe_without_an_arti
     RuntimeRequirementsV2(items=items)
 
 
-def test_system_installer_passes_nonzero_directml_device_to_model_probe(tmp_path: Path) -> None:
+def test_requirement_installer_forwards_nonzero_directml_device_to_model_probe(
+    tmp_path: Path,
+) -> None:
     catalog, sources = _catalog(tmp_path)
     worker = FakeWorkerClient()
     manager = EngineInstallationManager(
@@ -1261,11 +1357,10 @@ def test_system_installer_passes_nonzero_directml_device_to_model_probe(tmp_path
         max_audio_duration_ms=60_000,
         speech_prefer_gpu=False,
     )
-    installer = SystemRuntimeInstaller(
-        _Lifecycle(_LifecycleConfig(tmp_path / "app-data")),  # type: ignore[arg-type]
+    installer = SystemRequirementInstaller(
+        FakeStructuringRequirementInstaller(),
         engine_manager=manager,
         extraction_config=extraction,
-        clock=SystemClock(),
     )
 
     asyncio.run(
@@ -1460,10 +1555,9 @@ def test_speaker_identification_is_listed_as_an_optional_unit(tmp_path: Path) ->
         downloader=CopyDownloader({}, fail=True),
         model_downloader=CopyModelDownloader({}),
     )
-    installer = SystemRuntimeInstaller(
-        _Lifecycle(_LifecycleConfig(tmp_path / "app-data")),  # type: ignore[arg-type]
+    installer = SystemRequirementInstaller(
+        FakeStructuringRequirementInstaller(),
         engine_manager=manager,
-        clock=SystemClock(),
         enabled_requirement_ids={"windowsml-ocr", "speech-recognition", "speaker-diarization"},
     )
 
@@ -1625,10 +1719,9 @@ def test_catalog_keeps_workers_and_models_only_units_apart(tmp_path: Path) -> No
 def test_installed_models_only_unit_is_listed_as_a_ready_optional_unit(tmp_path: Path) -> None:
     _catalog_value, sources = _model_unit_catalog(tmp_path)
     manager = _model_unit_manager(tmp_path, CopyModelDownloader(sources))
-    installer = SystemRuntimeInstaller(
-        _Lifecycle(_LifecycleConfig(tmp_path / "app-data")),  # type: ignore[arg-type]
+    installer = SystemRequirementInstaller(
+        FakeStructuringRequirementInstaller(),
         engine_manager=manager,
-        clock=SystemClock(),
         enabled_requirement_ids={"windowsml-ocr", "vertical-japanese-reader"},
     )
 
@@ -1663,10 +1756,9 @@ def test_install_counts_downloaded_bytes_up_to_the_size_it_lists(tmp_path: Path)
         downloader=CopyDownloader(sources),
         model_downloader=CopyModelDownloader(sources),
     )
-    installer = SystemRuntimeInstaller(
-        _Lifecycle(_LifecycleConfig(tmp_path / "app-data")),  # type: ignore[arg-type]
+    installer = SystemRequirementInstaller(
+        FakeStructuringRequirementInstaller(),
         engine_manager=manager,
-        clock=SystemClock(),
         enabled_requirement_ids={"windowsml-ocr"},
     )
     requirement = catalog.requirement("windowsml-ocr")
@@ -1741,10 +1833,9 @@ def test_uninstall_removes_the_installed_engine_and_repeating_it_changes_nothing
 ) -> None:
     catalog, sources = _catalog(tmp_path)
     manager, _cache, _downloader = _cached_manager(tmp_path, catalog, sources)
-    installer = SystemRuntimeInstaller(
-        _Lifecycle(_LifecycleConfig(tmp_path / "app-data")),  # type: ignore[arg-type]
+    installer = SystemRequirementInstaller(
+        FakeStructuringRequirementInstaller(),
         engine_manager=manager,
-        clock=SystemClock(),
         enabled_requirement_ids={"windowsml-ocr"},
     )
     asyncio.run(
@@ -1883,17 +1974,16 @@ class _Driver:
 
 
 def _requirements_installer(
-    tmp_path: Path, manager: EngineInstallationManager, *requirement_ids: str
-) -> SystemRuntimeInstaller:
-    return SystemRuntimeInstaller(
-        _Lifecycle(_LifecycleConfig(tmp_path / "app-data")),  # type: ignore[arg-type]
+    manager: EngineInstallationManager, *requirement_ids: str
+) -> SystemRequirementInstaller:
+    return SystemRequirementInstaller(
+        FakeStructuringRequirementInstaller(),
         engine_manager=manager,
-        clock=SystemClock(),
         enabled_requirement_ids=set(requirement_ids),
     )
 
 
-def _listed(installer: SystemRuntimeInstaller, requirement_id: str):
+def _listed(installer: SystemRequirementInstaller, requirement_id: str):
     return next(item for item in installer.requirements() if item.requirement_id == requirement_id)
 
 
@@ -2090,7 +2180,7 @@ def test_a_requirement_without_contents_ignores_the_variant(tmp_path: Path) -> N
         speech_variant="cpu",
         nvidia_driver_present=_reject_driver,
     )
-    installer = _requirements_installer(tmp_path, manager, "windowsml-ocr")
+    installer = _requirements_installer(manager, "windowsml-ocr")
     expected = catalog.requirement("windowsml-ocr").download_bytes
 
     listed = _listed(installer, "windowsml-ocr")
@@ -2132,7 +2222,7 @@ def test_an_installed_content_stays_when_the_driver_or_override_changes(tmp_path
     manager, _cache, downloader = _cached_manager(
         tmp_path, catalog, sources, nvidia_driver_present=driver
     )
-    installer = _requirements_installer(tmp_path, manager, "speech-recognition")
+    installer = _requirements_installer(manager, "speech-recognition")
 
     listed = _listed(installer, "speech-recognition")
     assert listed.status.value == "installable"
@@ -2194,7 +2284,7 @@ def test_an_installed_content_stays_when_the_driver_or_override_changes(tmp_path
     assert fresh_engine.content_id == "cpu"
     assert fresh_engine.executable.read_bytes() == b"cpu-worker"
     fresh_listed = _listed(
-        _requirements_installer(tmp_path, fresh, "speech-recognition"), "speech-recognition"
+        _requirements_installer(fresh, "speech-recognition"), "speech-recognition"
     )
     assert fresh_listed.status.value == "ready"
     assert fresh_listed.download_bytes == cpu.download_bytes
@@ -2241,7 +2331,7 @@ def test_a_forced_cuda_variant_installs_cuda_without_a_driver(tmp_path: Path) ->
         speech_variant="cuda",
         nvidia_driver_present=_reject_driver,
     )
-    installer = _requirements_installer(tmp_path, manager, "speech-recognition")
+    installer = _requirements_installer(manager, "speech-recognition")
 
     listed = _listed(installer, "speech-recognition")
     assert listed.status.value == "installable"
@@ -2266,9 +2356,7 @@ def test_a_forced_variant_whose_content_is_missing_is_unavailable(tmp_path: Path
         speech_variant="cpu",
         nvidia_driver_present=_reject_driver,
     )
-    listed = _listed(
-        _requirements_installer(tmp_path, manager, "speech-recognition"), "speech-recognition"
-    )
+    listed = _listed(_requirements_installer(manager, "speech-recognition"), "speech-recognition")
 
     assert listed.status.value == "unavailable"
     assert listed.download_bytes is None
@@ -2310,9 +2398,7 @@ def test_an_incomplete_content_lists_its_reason_and_no_size(tmp_path: Path) -> N
         speech_variant="cpu",
         nvidia_driver_present=_reject_driver,
     )
-    listed = _listed(
-        _requirements_installer(tmp_path, manager, "speech-recognition"), "speech-recognition"
-    )
+    listed = _listed(_requirements_installer(manager, "speech-recognition"), "speech-recognition")
 
     assert listed.status.value == "unavailable"
     assert listed.download_bytes is None
@@ -2400,7 +2486,7 @@ def test_auto_without_a_driver_installs_the_only_cuda_content(tmp_path: Path) ->
     manager, _cache, _downloader = _cached_manager(
         tmp_path, catalog, sources, nvidia_driver_present=driver
     )
-    installer = _requirements_installer(tmp_path, manager, "speech-recognition")
+    installer = _requirements_installer(manager, "speech-recognition")
 
     listed = _listed(installer, "speech-recognition")
     assert listed.status.value == "installable"
@@ -2428,7 +2514,7 @@ def test_auto_with_a_driver_installs_the_only_cpu_content(tmp_path: Path) -> Non
     manager, _cache, _downloader = _cached_manager(
         tmp_path, catalog, sources, nvidia_driver_present=driver
     )
-    installer = _requirements_installer(tmp_path, manager, "speech-recognition")
+    installer = _requirements_installer(manager, "speech-recognition")
 
     listed = _listed(installer, "speech-recognition")
     assert listed.status.value == "installable"
@@ -2455,9 +2541,7 @@ def test_a_forced_cuda_variant_whose_content_is_missing_is_unavailable(tmp_path:
         speech_variant="cuda",
         nvidia_driver_present=_reject_driver,
     )
-    listed = _listed(
-        _requirements_installer(tmp_path, manager, "speech-recognition"), "speech-recognition"
-    )
+    listed = _listed(_requirements_installer(manager, "speech-recognition"), "speech-recognition")
 
     assert listed.status.value == "unavailable"
     assert listed.download_bytes is None
@@ -2481,9 +2565,7 @@ def test_auto_with_a_driver_lists_the_cuda_size_before_install(tmp_path: Path) -
         tmp_path, catalog, sources, nvidia_driver_present=driver
     )
 
-    listed = _listed(
-        _requirements_installer(tmp_path, manager, "speech-recognition"), "speech-recognition"
-    )
+    listed = _listed(_requirements_installer(manager, "speech-recognition"), "speech-recognition")
 
     assert listed.status.value == "installable"
     assert listed.artifact is None
@@ -2515,7 +2597,7 @@ def test_a_version_2_state_on_a_requirement_without_contents_is_not_ready(tmp_pa
 
     assert manager.active_engine("windowsml-ocr") is None
     assert _tree_bytes(root) == before
-    listed = _listed(_requirements_installer(tmp_path, manager, "windowsml-ocr"), "windowsml-ocr")
+    listed = _listed(_requirements_installer(manager, "windowsml-ocr"), "windowsml-ocr")
     assert listed.status.value == "installable"
 
 
@@ -2773,12 +2855,11 @@ def _model_installer(
     *,
     model: str | None,
     variant: str,
-) -> SystemRuntimeInstaller:
+) -> SystemRequirementInstaller:
     config = None if model is None else _speech_config(tmp_path, model=model, variant=variant)
-    return SystemRuntimeInstaller(
-        _Lifecycle(_LifecycleConfig(tmp_path / "app-data")),  # type: ignore[arg-type]
+    return SystemRequirementInstaller(
+        FakeStructuringRequirementInstaller(),
         engine_manager=manager,
-        clock=SystemClock(),
         enabled_requirement_ids={"speech-recognition"},
         extraction_config=config,
     )
@@ -3105,7 +3186,7 @@ def test_a_ready_cpu_install_omits_detail_when_no_model_is_configured(tmp_path: 
         tmp_path, catalog, sources, nvidia_driver_present=_Driver(False)
     )
     _install(manager, "speech-recognition")
-    installer = _requirements_installer(tmp_path, manager, "speech-recognition")
+    installer = _requirements_installer(manager, "speech-recognition")
 
     listed = _listed(installer, "speech-recognition")
 

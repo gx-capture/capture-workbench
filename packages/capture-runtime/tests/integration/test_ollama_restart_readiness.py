@@ -15,17 +15,24 @@ from fastapi.testclient import TestClient
 
 from capture_runtime.app import create_app
 from capture_runtime.clock import SystemClock
-from capture_runtime.config import ExtractionRuntimeConfig, OllamaRuntimeConfig, RuntimeSettings
+from capture_runtime.config import OllamaRuntimeConfig, RuntimeSettings
+from capture_runtime.constants import OLLAMA_MODEL_REQUIREMENT_ID, OLLAMA_RUNTIME_REQUIREMENT_ID
 from capture_runtime.contracts import RuntimeRequirementStatus
+from capture_runtime.provisioning.application.requirement_installer import (
+    ManualActionRequiredError,
+    StructuringRequirementInstaller,
+)
 from capture_runtime.structuring.infrastructure.model_catalog import (
     ActiveModelSelectionStore,
     model_option,
 )
 from capture_runtime.structuring.infrastructure.ollama import (
-    CommandResult,
     IsolatedOllamaLifecycle,
     OwnedProcess,
-    SystemRuntimeInstaller,
+)
+from capture_runtime.structuring.infrastructure.ollama.installation_commands import CommandResult
+from capture_runtime.structuring.infrastructure.ollama.requirement_installation import (
+    OllamaRequirementInstaller,
 )
 from tests.conftest import TOKEN
 from tests.support.fake_requirement_installer import FakeRequirementInstaller
@@ -114,9 +121,7 @@ def _record_installed_profile(
 def _installer(
     tmp_path: Path,
     controller: FakeProcessController,
-    *,
-    readiness_timeout_seconds: float = 0.1,
-) -> tuple[SystemRuntimeInstaller, IsolatedOllamaLifecycle]:
+) -> tuple[OllamaRequirementInstaller, IsolatedOllamaLifecycle]:
     config = _ollama_config(tmp_path)
     lifecycle = IsolatedOllamaLifecycle(
         config,
@@ -125,24 +130,74 @@ def _installer(
         executable_resolver=lambda: "C:/Program Files/Ollama/ollama.exe",
         clock=SystemClock(),
     )
-    extraction = ExtractionRuntimeConfig(
-        windowsml_model_dir=tmp_path / "windowsml",
-        temp_dir=tmp_path / "temp",
-        max_pdf_pages=10,
-        max_image_pixels=100_000,
-        ocr_render_scale=2,
-        max_audio_duration_ms=60_000,
-        speech_prefer_gpu=False,
-    )
-    installer = SystemRuntimeInstaller(
+    installer = OllamaRequirementInstaller(
         lifecycle,
         winget_resolver=lambda: None,
-        extraction_config=extraction,
         clock=SystemClock(),
-        model_readiness_timeout_seconds=readiness_timeout_seconds,
-        model_readiness_poll_interval_seconds=0,
     )
     return installer, lifecycle
+
+
+def test_requirement_installer_runs_winget_for_the_runtime(tmp_path: Path) -> None:
+    calls: list[tuple[list[str], object]] = []
+
+    class Runner:
+        async def run(self, arguments: list[str], **kwargs: object) -> CommandResult:
+            calls.append((arguments, kwargs["cancel_event"]))
+            assert kwargs["cwd"] is None
+            assert kwargs["timeout_seconds"] == 900
+            return CommandResult(0, "")
+
+    clock = SystemClock()
+    lifecycle = IsolatedOllamaLifecycle(_ollama_config(tmp_path), clock=clock)
+    installer: StructuringRequirementInstaller = OllamaRequirementInstaller(
+        lifecycle, clock=clock, command_runner=Runner(), winget_resolver=lambda: "fixture-winget"
+    )
+    cancel_event = asyncio.Event()
+    progress: list[float] = []
+    asyncio.run(
+        installer.install(
+            OLLAMA_RUNTIME_REQUIREMENT_ID,
+            cancel_event=cancel_event,
+            report_progress=progress.append,
+        )
+    )
+
+    assert calls == [
+        (
+            [
+                "fixture-winget",
+                "install",
+                "--id",
+                "Ollama.Ollama",
+                "--exact",
+                "--silent",
+                "--accept-package-agreements",
+                "--accept-source-agreements",
+            ],
+            cancel_event,
+        )
+    ]
+    assert progress == [0.1, 1]
+
+
+def test_requirement_installer_requires_model_option_selection(tmp_path: Path) -> None:
+    installer, _ = _installer(tmp_path, FakeProcessController())
+    progress: list[float] = []
+
+    with pytest.raises(
+        ManualActionRequiredError,
+        match=r"^Select a model option through the model-installation API\.$",
+    ):
+        asyncio.run(
+            installer.install(
+                OLLAMA_MODEL_REQUIREMENT_ID,
+                cancel_event=asyncio.Event(),
+                report_progress=progress.append,
+            )
+        )
+
+    assert progress == []
 
 
 def _tags_response(config: OllamaRuntimeConfig, models: list[dict[str, str]]) -> httpx.Response:
@@ -150,7 +205,7 @@ def _tags_response(config: OllamaRuntimeConfig, models: list[dict[str, str]]) ->
     return httpx.Response(200, request=request, json={"models": models})
 
 
-def _model_status(installer: SystemRuntimeInstaller) -> RuntimeRequirementStatus:
+def _model_status(installer: OllamaRequirementInstaller) -> RuntimeRequirementStatus:
     return next(
         item.status
         for item in installer.requirements()
@@ -412,7 +467,7 @@ def test_requirements_api_recovers_installed_profile_after_process_restart(
     )
     _record_installed_profile(settings.ollama)
     monkeypatch.setattr(
-        "capture_runtime.structuring.infrastructure.ollama.shutil.which",
+        "capture_runtime.structuring.infrastructure.ollama.lifecycle_impl.shutil.which",
         lambda executable: "C:/Program Files/Ollama/ollama.exe" if executable == "ollama" else None,
     )
 
