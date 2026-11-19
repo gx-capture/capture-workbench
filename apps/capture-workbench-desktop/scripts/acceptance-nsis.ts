@@ -4,7 +4,6 @@ import {
   lstat,
   link,
   mkdir,
-  mkdtemp,
   readFile,
   readdir,
   rename,
@@ -18,6 +17,9 @@ import { join, relative, resolve, sep } from 'node:path';
 export const ACCEPTANCE_NSIS_TARGET_TRIPLE = 'x86_64-pc-windows-msvc';
 export const ACCEPTANCE_NSIS_FEATURE = 'acceptance-harness';
 const ACCEPTANCE_NSIS_PROVENANCE_NAME = 'capture-workbench-acceptance-nsis.provenance.json';
+// Every build reuses this Cargo target directory below the target parent, so
+// Cargo builds incrementally and no run leaves a new multi-gigabyte target.
+export const ACCEPTANCE_NSIS_TARGET_NAME = 'capture-workbench-acceptance-nsis';
 
 export interface AcceptanceNsisBuildCommand {
   readonly cargoTargetDir: string;
@@ -68,11 +70,25 @@ export async function buildAcceptanceNsis(
     throw new Error('Acceptance NSIS target parent must be a regular directory.');
   }
   const releaseSnapshot = await snapshotTree(formalBundleRoot);
-  const targetDir = await mkdtemp(join(targetParent, 'capture-workbench-acceptance-nsis-'));
+  const targetDir = join(targetParent, ACCEPTANCE_NSIS_TARGET_NAME);
+  await mkdir(targetDir, { recursive: true });
+  const targetMetadata = await lstat(targetDir);
+  if (!targetMetadata.isDirectory() || targetMetadata.isSymbolicLink()) {
+    throw new Error('Acceptance NSIS target must be a regular directory.');
+  }
+  // The compiled crates stay. Only an unaccepted Tauri bundle of an earlier
+  // run goes; the last accepted installer stays until a new one replaces it.
+  const bundle = bundlePaths(targetDir);
+  await removeDirectory(bundle.release);
+  // An interrupted run may have left the accepted output set aside.
+  if (await pathExists(bundle.accepted)) await removeDirectory(bundle.previous);
+  else if (await pathExists(bundle.previous)) await rename(bundle.previous, bundle.accepted);
   let result: AcceptanceNsisResult | undefined;
   let buildFailure: unknown;
   try {
     await options.runTauriBuild({ cargoTargetDir: targetDir });
+    await requireOneInstaller(bundle.release);
+    if (await pathExists(bundle.accepted)) await rename(bundle.accepted, bundle.previous);
     result = await finalizeAcceptanceNsis({
       targetDir,
       sourceHead: options.sourceHead,
@@ -87,21 +103,22 @@ export async function buildAcceptanceNsis(
   try {
     releaseAfter = await snapshotTree(formalBundleRoot);
   } catch (error) {
-    await removeOwnedTarget(targetDir);
+    await restorePreviousAcceptance(bundle, result !== undefined);
     throw error;
   }
   if (JSON.stringify(releaseSnapshot) !== JSON.stringify(releaseAfter)) {
-    await removeOwnedTarget(targetDir);
+    await restorePreviousAcceptance(bundle, result !== undefined);
     throw new Error('Formal release NSIS bundle changed during acceptance packaging.');
   }
   if (buildFailure !== undefined) {
-    await removeOwnedTarget(targetDir);
+    await restorePreviousAcceptance(bundle, result !== undefined);
     throw buildFailure;
   }
   if (result === undefined) {
-    await removeOwnedTarget(targetDir);
+    await restorePreviousAcceptance(bundle, result !== undefined);
     throw new Error('Acceptance NSIS packaging produced no result.');
   }
+  await removeDirectory(bundle.previous);
   return result;
 }
 
@@ -130,14 +147,7 @@ export async function finalizeAcceptanceNsis(options: {
   if (acceptanceMetadata !== undefined) {
     throw new Error('Acceptance NSIS output directory already exists; refusing to overwrite it.');
   }
-  const bundleEntries = await readdir(releaseBundle, { withFileTypes: true });
-  const installers = bundleEntries.filter(
-    (entry) => entry.isFile() && !entry.isSymbolicLink() && entry.name.toLowerCase().endsWith('.exe'),
-  );
-  if (installers.length !== 1) {
-    throw new Error('Acceptance NSIS bundle must contain exactly one installer executable.');
-  }
-  const installerFileName = installers[0].name;
+  const installerFileName = await requireOneInstaller(releaseBundle);
   const installerPath = join(releaseBundle, installerFileName);
   const installerMetadata = await stat(installerPath);
   if (!installerMetadata.isFile() || installerMetadata.size < 1) {
@@ -251,9 +261,55 @@ function isWithin(parent: string, child: string): boolean {
   return relativePath === '' || (!relativePath.startsWith(`..${sep}`) && relativePath !== '..');
 }
 
-async function removeOwnedTarget(targetDir: string): Promise<void> {
-  await rm(targetDir, { recursive: true, force: true });
-  if (await lstat(targetDir).then(() => true).catch(() => false)) {
-    throw new Error('Acceptance NSIS isolated target cleanup did not complete.');
+async function requireOneInstaller(releaseBundle: string): Promise<string> {
+  const bundleEntries = await readdir(releaseBundle, { withFileTypes: true });
+  const installers = bundleEntries.filter(
+    (entry) => entry.isFile() && !entry.isSymbolicLink() && entry.name.toLowerCase().endsWith('.exe'),
+  );
+  if (installers.length !== 1) {
+    throw new Error('Acceptance NSIS bundle must contain exactly one installer executable.');
   }
+  return installers[0].name;
+}
+
+interface AcceptanceNsisBundlePaths {
+  // Tauri's output of the current build, not yet accepted.
+  readonly release: string;
+  // The last accepted installer and its provenance.
+  readonly accepted: string;
+  // The accepted output set aside while a new build is finalized.
+  readonly previous: string;
+}
+
+function bundlePaths(targetDir: string): AcceptanceNsisBundlePaths {
+  const bundleRoot = join(targetDir, ACCEPTANCE_NSIS_TARGET_TRIPLE, 'release', 'bundle');
+  return {
+    release: join(bundleRoot, 'nsis'),
+    accepted: join(bundleRoot, 'nsis-acceptance'),
+    previous: join(bundleRoot, 'nsis-acceptance-previous'),
+  };
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  return lstat(path).then(() => true).catch(() => false);
+}
+
+// Each of these directories holds a few installer files, not a build tree.
+async function removeDirectory(path: string): Promise<void> {
+  await rm(path, { recursive: true, force: true });
+  if (await pathExists(path)) {
+    throw new Error('Acceptance NSIS bundle output cleanup did not complete.');
+  }
+}
+
+// A failed run accepts nothing new: its Tauri bundle and any output it
+// finalized go, and the installer accepted before it comes back.
+async function restorePreviousAcceptance(
+  bundle: AcceptanceNsisBundlePaths,
+  finalized: boolean,
+): Promise<void> {
+  await removeDirectory(bundle.release);
+  const previous = await pathExists(bundle.previous);
+  if (finalized || previous) await removeDirectory(bundle.accepted);
+  if (previous) await rename(bundle.previous, bundle.accepted);
 }

@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import {
+  ACCEPTANCE_NSIS_TARGET_NAME,
   buildAcceptanceNsis,
   finalizeAcceptanceNsis,
 } from './acceptance-nsis.ts';
@@ -144,14 +145,140 @@ test('acceptance NSIS build failure leaves no accepted output', async () => {
         sourceHead: HEAD,
         stagedRuntimeSha256: RUNTIME_SHA,
         runtimeManifestSha256: RUNTIME_MANIFEST_SHA,
-        runTauriBuild: async () => {
+        runTauriBuild: async ({ cargoTargetDir }) => {
+          await createBundle(cargoTargetDir);
+          await writeFile(join(cargoTargetDir, 'compiled-crate.rlib'), 'cache', 'utf8');
           throw new Error('synthetic tauri failure');
         },
       }),
       /synthetic tauri failure/u,
     );
-    assert.deepEqual(await readdirNames(targetParent), []);
+    const targetDir = join(targetParent, ACCEPTANCE_NSIS_TARGET_NAME);
+    assert.deepEqual(await readdirNames(targetParent), [ACCEPTANCE_NSIS_TARGET_NAME]);
+    const bundleRoot = join(targetDir, TARGET_TRIPLE, 'release', 'bundle');
+    assert.deepEqual(await readdirNames(bundleRoot).catch(() => []), []);
+    assert.equal(await readFile(join(targetDir, 'compiled-crate.rlib'), 'utf8'), 'cache');
     assert.equal(await lstat(formalBundle).then(() => true), true);
+
+    await assert.rejects(
+      buildAcceptanceNsis({
+        formalBundleRoot: formalBundle,
+        targetParent,
+        sourceHead: HEAD,
+        stagedRuntimeSha256: RUNTIME_SHA,
+        runtimeManifestSha256: RUNTIME_MANIFEST_SHA,
+        runTauriBuild: async ({ cargoTargetDir }) => {
+          await createBundle(cargoTargetDir);
+          await writeFile(join(formalBundle, 'release.exe'), 'changed during the build', 'utf8');
+        },
+      }),
+      /Formal release NSIS bundle changed/u,
+    );
+    assert.deepEqual(await readdirNames(bundleRoot), []);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('acceptance NSIS builds reuse one Cargo target and replace the earlier bundle', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'capture-acceptance-nsis-reuse-'));
+  try {
+    const formalBundle = join(root, 'formal', 'nsis');
+    await mkdir(formalBundle, { recursive: true });
+    const targetParent = join(root, 'acceptance-runs');
+    const targets: string[] = [];
+    const build = (installerName: string) =>
+      buildAcceptanceNsis({
+        formalBundleRoot: formalBundle,
+        targetParent,
+        sourceHead: HEAD,
+        stagedRuntimeSha256: RUNTIME_SHA,
+        runtimeManifestSha256: RUNTIME_MANIFEST_SHA,
+        runTauriBuild: async ({ cargoTargetDir }) => {
+          targets.push(cargoTargetDir);
+          await writeFile(join(cargoTargetDir, 'compiled-crate.rlib'), installerName, { flag: 'a' });
+          await createBundle(cargoTargetDir, [installerName]);
+        },
+      });
+    const first = await build('first-setup.exe');
+    const second = await build('second-setup.exe');
+    assert.equal(targets.length, 2);
+    assert.equal(targets[0], targets[1]);
+    assert.equal(targets[0], join(targetParent, ACCEPTANCE_NSIS_TARGET_NAME));
+    assert.deepEqual(await readdirNames(targetParent), [ACCEPTANCE_NSIS_TARGET_NAME]);
+    assert.equal(second.outputDirectory, first.outputDirectory);
+    assert.equal(second.installerFileName, 'second-setup.exe');
+    assert.deepEqual((await readdirNames(second.outputDirectory)).sort(), [
+      'capture-workbench-acceptance-nsis.provenance.json',
+      'second-setup.exe',
+    ]);
+    assert.deepEqual(await readdirNames(join(targets[0], TARGET_TRIPLE, 'release', 'bundle')), [
+      'nsis-acceptance',
+    ]);
+    assert.equal(
+      await readFile(join(targets[0], 'compiled-crate.rlib'), 'utf8'),
+      'first-setup.exesecond-setup.exe',
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('a failed later build keeps the installer accepted before it', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'capture-acceptance-nsis-keep-accepted-'));
+  try {
+    const formalBundle = join(root, 'formal', 'nsis');
+    await mkdir(formalBundle, { recursive: true });
+    const targetParent = join(root, 'acceptance-runs');
+    const build = (runTauriBuild: (cargoTargetDir: string) => Promise<void>) =>
+      buildAcceptanceNsis({
+        formalBundleRoot: formalBundle,
+        targetParent,
+        sourceHead: HEAD,
+        stagedRuntimeSha256: RUNTIME_SHA,
+        runtimeManifestSha256: RUNTIME_MANIFEST_SHA,
+        runTauriBuild: ({ cargoTargetDir }) => runTauriBuild(cargoTargetDir),
+      });
+    const first = await build(async (cargoTargetDir) => {
+      await createBundle(cargoTargetDir, ['first-setup.exe']);
+    });
+    const firstProvenance = await readFile(first.provenancePath, 'utf8');
+    const assertFirstAccepted = async () => {
+      assert.deepEqual((await readdirNames(first.outputDirectory)).sort(), [
+        'capture-workbench-acceptance-nsis.provenance.json',
+        'first-setup.exe',
+      ]);
+      assert.equal(await readFile(first.provenancePath, 'utf8'), firstProvenance);
+      assert.deepEqual(await readdirNames(join(first.targetDir, TARGET_TRIPLE, 'release', 'bundle')), [
+        'nsis-acceptance',
+      ]);
+    };
+
+    await assert.rejects(
+      build(async (cargoTargetDir) => {
+        await createBundle(cargoTargetDir, ['second-setup.exe']);
+        throw new Error('synthetic tauri failure');
+      }),
+      /synthetic tauri failure/u,
+    );
+    await assertFirstAccepted();
+
+    await assert.rejects(
+      build(async (cargoTargetDir) => {
+        await createBundle(cargoTargetDir, ['second-setup.exe', 'third-setup.exe']);
+      }),
+      /exactly one installer/u,
+    );
+    await assertFirstAccepted();
+
+    await assert.rejects(
+      build(async (cargoTargetDir) => {
+        await createBundle(cargoTargetDir, ['second-setup.exe']);
+        await writeFile(join(formalBundle, 'release.exe'), 'changed during the build', 'utf8');
+      }),
+      /Formal release NSIS bundle changed/u,
+    );
+    await assertFirstAccepted();
   } finally {
     await rm(root, { recursive: true, force: true });
   }

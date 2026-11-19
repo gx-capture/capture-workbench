@@ -16,6 +16,8 @@
     "./windows-built-in-process-resolver.ts",
     "./windows-built-in-process-resolver.test.ts",
     "./resolve-capture-release.ts",
-    "./resolve-capture-release.test.ts"
+    "./resolve-capture-release.test.ts",
+    "./kept-run-trees.ts",
+    "./kept-run-trees.test.ts"
   ]
 }
