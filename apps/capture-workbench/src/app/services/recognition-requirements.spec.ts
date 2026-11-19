@@ -124,7 +124,7 @@ describe('captureNeedsRequirement', () => {
     expect(captureNeedsRequirement('speech-recognition', [audio])).toBe(true);
     expect(captureNeedsRequirement('speaker-diarization', [video])).toBe(true);
     expect(captureNeedsRequirement('text-recognition', [audio])).toBe(false);
-    expect(captureNeedsRequirement('ollama-runtime', [pdf])).toBe(true);
+    expect(captureNeedsRequirement('structuring-runtime', [pdf])).toBe(true);
     expect(captureNeedsRequirement('text-recognition', [])).toBe(false);
     expect(
       captureNeedsRequirement('text-recognition', [

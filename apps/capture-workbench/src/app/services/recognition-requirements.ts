@@ -27,7 +27,8 @@ export const INSTALLATION_ORDER = new Map<CaptureRequirementId, number>([
   ['speech-recognition', 1],
   ['speaker-diarization', 2],
   ['vertical-japanese-reader', 3],
-  ['ollama-runtime', 4],
+  ['structuring-runtime', 4],
+  ['structuring-model', 5],
 ]);
 
 /**

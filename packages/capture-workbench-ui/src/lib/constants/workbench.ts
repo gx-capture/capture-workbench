@@ -2,7 +2,7 @@ import { CAPTURE_RUNTIME_MAJOR, CAPTURE_RUNTIME_MINOR } from './runtime';
 import type { ResolvedCaptureWorkbenchConfig } from '../contracts';
 
 export const DEFAULT_CAPTURE_WORKBENCH_CONFIG: ResolvedCaptureWorkbenchConfig = {
-  enabledSources: ['pdf', 'image', 'audio'],
+  enabledSources: ['pdf', 'image', 'recording'],
   structuringMode: 'runtime',
   outputMode: 'json',
   multiple: true,

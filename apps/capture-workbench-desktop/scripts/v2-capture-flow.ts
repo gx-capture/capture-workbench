@@ -52,14 +52,14 @@ export function isTerminalCaptureStatus(status: string): boolean {
 
 export function buildOpenIngestionRequest(input: {
   readonly clientRequestId: string;
-  readonly kind?: 'pdf' | 'image' | 'audio';
+  readonly kind?: 'pdf' | 'image' | 'recording';
   readonly fileName: string;
   readonly mediaType?: string;
   readonly totalBytes: number;
   readonly sourceSha256: string;
 }): {
   readonly protocolVersion: '2';
-  readonly kind: 'pdf' | 'image' | 'audio';
+  readonly kind: 'pdf' | 'image' | 'recording';
   readonly mode: 'file';
   readonly clientRequestId: string;
   readonly fileName: string;
@@ -152,7 +152,7 @@ async function uploadIngestionChunks(input: {
 export async function startV2Capture(input: {
   readonly request: V2RequestFn;
   readonly fileName: string;
-  readonly kind?: 'pdf' | 'image' | 'audio';
+  readonly kind?: 'pdf' | 'image' | 'recording';
   readonly mediaType?: string;
   readonly sourceBytes: Uint8Array;
   readonly sourceSha256?: string;

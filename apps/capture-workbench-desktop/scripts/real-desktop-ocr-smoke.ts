@@ -336,7 +336,7 @@ export async function requestDesktopTeardown(
 }
 
 type OcrDevice = 'directml' | 'cpu';
-type SourceKind = 'pdf' | 'image' | 'audio' | 'unknown';
+type SourceKind = 'pdf' | 'image' | 'recording' | 'unknown';
 type DesktopOcrAcceptanceMode = 'ocr-only';
 type CdpBrowser = Awaited<ReturnType<typeof chromium.connectOverCDP>>;
 
@@ -855,7 +855,7 @@ export function assertRealDesktopSmokeEvidence(
     assert.equal(report?.ocrExecutionProof, undefined);
   }
   assert.equal(report?.realEnginesExercised, true);
-  assert.ok(report?.sourceKind === 'pdf' || report?.sourceKind === 'image' || report?.sourceKind === 'audio' || report?.sourceKind === 'unknown');
+  assert.ok(report?.sourceKind === 'pdf' || report?.sourceKind === 'image' || report?.sourceKind === 'recording' || report?.sourceKind === 'unknown');
   assert.equal(report?.rawOcrVisible, true);
   assert.equal(report?.ocrResultVerified, true);
   assert.ok(Number.isInteger(report?.rawOcrSegmentCount) && Number(report?.rawOcrSegmentCount) > 0);
@@ -1502,7 +1502,8 @@ export async function main(options: {
         verifiedOcrExecutionFailure = await readOcrExecutionFailure(
           acceptance.artifactRoot,
           {
-            sourceRole: sourceKind,
+            // Acceptance evidence keeps its own role name for recordings.
+            sourceRole: sourceKind === 'recording' ? 'audio' : sourceKind,
             sourceSha256,
             runtimeSha256: expectedRuntimeSha256,
             workerSha256: authenticatedOcrPreflight.workerSha256,
@@ -3350,7 +3351,7 @@ function resolveSourceKind(sourcePath: string): SourceKind {
   const extension = extname(sourcePath).toLowerCase();
   if (extension === '.pdf') return 'pdf';
   if (['.jpg', '.jpeg', '.png', '.webp', '.bmp', '.tif', '.tiff'].includes(extension)) return 'image';
-  if (['.wav', '.mp3', '.m4a', '.aac', '.flac', '.ogg'].includes(extension)) return 'audio';
+  if (['.wav', '.mp3', '.m4a', '.aac', '.flac', '.ogg'].includes(extension)) return 'recording';
   return 'unknown';
 }
 

@@ -478,20 +478,20 @@ class StreamingCaptureService:
             processor = self._processor
             request = self.repository.capture_request(capture_id)
             identify_speakers = request.identify_speakers
-            if identify_speakers and operation.kind is not CaptureSourceKind.AUDIO:
+            if identify_speakers and operation.kind is not CaptureSourceKind.RECORDING:
                 raise CaptureProcessingError(
-                    "Speaker identification is only valid for audio sources.",
+                    "Speaker identification is only valid for recordings.",
                     code="invalid_speaker_identification",
                     retryable=False,
                 )
             spoken_language = request.spoken_language
-            if spoken_language is not None and operation.kind is not CaptureSourceKind.AUDIO:
+            if spoken_language is not None and operation.kind is not CaptureSourceKind.RECORDING:
                 raise CaptureProcessingError(
-                    "A spoken language is only valid for audio sources.",
+                    "A spoken language is only valid for recordings.",
                     code="invalid_spoken_language",
                     retryable=False,
                 )
-            if operation.kind is CaptureSourceKind.AUDIO:
+            if operation.kind is CaptureSourceKind.RECORDING:
                 await self._retire(self._release_warm_ocr_worker())
             if identify_speakers and self._extractor is not None:
                 # Speakers are decided over the whole recording, so this path
@@ -503,7 +503,7 @@ class StreamingCaptureService:
                     source_path,
                     cancellation,
                 )
-            elif operation.kind is CaptureSourceKind.AUDIO and processor is not None:
+            elif operation.kind is CaptureSourceKind.RECORDING and processor is not None:
                 extraction = CaptureExtractionOutcome(
                     raw=await processor.process(
                         capture_id=capture_id,
@@ -516,7 +516,7 @@ class StreamingCaptureService:
                         **_spoken_language(request),
                     )
                 )
-            elif operation.kind is not CaptureSourceKind.AUDIO and self._extractor is not None:
+            elif operation.kind is not CaptureSourceKind.RECORDING and self._extractor is not None:
                 extraction = await self._extract_finalized_source(
                     capture_id,
                     operation.source,
@@ -687,7 +687,7 @@ class StreamingCaptureService:
         await self._retire(self._release_warm_speech_worker())
         try:
             content: bytes | Path
-            if declared_kind is CaptureSourceKind.AUDIO:
+            if declared_kind is CaptureSourceKind.RECORDING:
                 content = source_path
                 with source_path.open("rb") as recording:
                     prefix = recording.read(SNIFF_BYTES)
@@ -835,7 +835,7 @@ class StreamingCaptureService:
         The OCR projection holds one page per processed page; an extractor
         without one still reports its page selection, and an image is one page.
         """
-        if kind is CaptureSourceKind.AUDIO:
+        if kind is CaptureSourceKind.RECORDING:
             return None
         if extraction.ocr_projection is not None and extraction.ocr_projection.page_count:
             return extraction.ocr_projection.page_count

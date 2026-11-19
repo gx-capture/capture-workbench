@@ -8,6 +8,7 @@ import type {
   CaptureOperation,
   StreamingCaptureStatus,
   CaptureReview,
+  CaptureRequirementId,
   CaptureSourceKind,
   PageLocator,
   PartialCapture,
@@ -47,6 +48,7 @@ export type {
   CaptureReviewEdit,
   CaptureReview,
   CaptureLocator,
+  CaptureRequirementId,
   CaptureSourceKind,
   OcrAdapterClass,
   OcrComputeMode,
@@ -77,7 +79,6 @@ export type {
 
 /** Angular's API naming remains stable while the wire owner is generated. */
 export type CaptureStructuringMode = StructuringMode;
-export type CaptureRequirementId = RuntimeRequirement['requirementId'];
 export type CapturePageLocator = PageLocator;
 export type CaptureTimeLocator = TimeLocator;
 export type CaptureBlockType = CaptureBlock['type'];

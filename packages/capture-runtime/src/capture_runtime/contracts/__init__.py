@@ -85,7 +85,7 @@ def _require_aware(value: datetime) -> datetime:
 class CaptureSourceKind(StrEnum):
     PDF = "pdf"
     IMAGE = "image"
-    AUDIO = "audio"
+    RECORDING = "recording"
 
 
 class StructuringMode(StrEnum):
@@ -141,8 +141,8 @@ CaptureRequirementId = Literal[
     "speech-recognition",
     "speaker-diarization",
     "vertical-japanese-reader",
-    "ollama-runtime",
-    "capture-ollama-model",
+    "structuring-runtime",
+    "structuring-model",
 ]
 
 
@@ -375,7 +375,9 @@ class RawCapture(StrictModel):
     speakers: list[CaptureSpeaker] = Field(default_factory=list, max_length=64)
     # Optional units that are not installed and would have read part of this
     # source better; the host may offer to install them and capture again.
-    suggested_units: list[CaptureRequirementId] = Field(default_factory=list, max_length=8)
+    suggested_requirement_ids: list[CaptureRequirementId] = Field(
+        default_factory=list, max_length=8
+    )
     warnings: list[WarningText] = Field(default_factory=list, max_length=1_000)
     ocr_page_scope: OcrPageScopeV2 | None = None
     created_at: datetime
@@ -425,7 +427,9 @@ class CaptureDocument(StrictModel):
     extraction_engine: CaptureEngine
     diarization_engine: CaptureEngine | None = None
     speakers: list[CaptureSpeaker] = Field(default_factory=list, max_length=64)
-    suggested_units: list[CaptureRequirementId] = Field(default_factory=list, max_length=8)
+    suggested_requirement_ids: list[CaptureRequirementId] = Field(
+        default_factory=list, max_length=8
+    )
     structuring_engine: CaptureEngine
     warnings: list[WarningText] = Field(default_factory=list, max_length=1_000)
     created_at: datetime
@@ -489,7 +493,7 @@ class RuntimeArtifactDescriptorV2(StrictModel):
 
 class RuntimeRequirementV2(StrictModel):
     requirement_id: CaptureRequirementId
-    kind: NonEmptyString
+    kind: CaptureRequirementId
     display_name: NonEmptyString
     status: RuntimeRequirementStatus
     required_for: list[str]
@@ -504,9 +508,24 @@ class RuntimeRequirementV2(StrictModel):
     # strategy has no size the runtime knows, such as winget or a manual step.
     download_bytes: int | None = Field(default=None, ge=1)
 
+    @model_validator(mode="after")
+    def _validate_kind(self) -> Self:
+        if self.kind != self.requirement_id:
+            raise ValueError("kind must equal requirementId")
+        return self
+
 
 class RuntimeRequirementsV2(StrictModel):
     items: list[RuntimeRequirementV2]
+
+
+# Requirement IDs a 0.10.x host may still send, each with the ID that replaced
+# it. Spelled out here because the generated SDK models copy this module.
+_RETIRED_REQUIREMENT_IDS: Final = {
+    "windowsml-ocr": "text-recognition",
+    "ollama-runtime": "structuring-runtime",
+    "capture-ollama-model": "structuring-model",
+}
 
 
 class StartRuntimeInstallationV2(StrictModel):
@@ -515,9 +534,10 @@ class StartRuntimeInstallationV2(StrictModel):
 
     @field_validator("requirement_id", mode="before")
     @classmethod
-    def reject_retired_ocr_requirement(cls, value: object) -> object:
-        if value == "windowsml-ocr":
-            raise ValueError("windowsml-ocr is retired; use text-recognition")
+    def reject_retired_requirement(cls, value: object) -> object:
+        replacement = _RETIRED_REQUIREMENT_IDS.get(value) if isinstance(value, str) else None
+        if replacement is not None:
+            raise ValueError(f"{value} is retired; use {replacement}")
         return value
 
 
@@ -634,7 +654,7 @@ class StreamingEventType(StrEnum):
 
 class OpenIngestionV2(StrictModel):
     protocol_version: Literal["2"] = "2"
-    kind: CaptureSourceKind = CaptureSourceKind.AUDIO
+    kind: CaptureSourceKind = CaptureSourceKind.RECORDING
     mode: StreamingIngestionMode = StreamingIngestionMode.FILE
     client_request_id: NonEmptyString
     file_name: Annotated[
@@ -647,7 +667,7 @@ class OpenIngestionV2(StrictModel):
 
 class IngestionV2(StrictModel):
     protocol_version: Literal["2"] = "2"
-    kind: CaptureSourceKind = CaptureSourceKind.AUDIO
+    kind: CaptureSourceKind = CaptureSourceKind.RECORDING
     ingestion_id: NonEmptyString
     status: StreamingIngestionStatus
     file_name: Annotated[
@@ -696,10 +716,10 @@ class StartCaptureV2(StrictModel):
             "numbers. Omit it to read every page."
         ),
     )
-    # Audio only: label who speaks each segment. Needs the speaker-diarization
+    # Recordings only: label who speaks each segment. Needs the speaker-diarization
     # unit, and the capture reports no partial transcript while it runs.
     identify_speakers: bool = False
-    # Audio only: the language spoken in the recording. Omit it for Chinese, the
+    # Recordings only: the language spoken in the recording. Omit it for Chinese, the
     # speech model's default.
     spoken_language: SpokenLanguage | None = None
 
@@ -1033,16 +1053,16 @@ def _validate_capture_progress(
         if pages_done is not None and pages_done > pages_total:
             raise ValueError("pagesDone cannot exceed pagesTotal")
     if (duration_ms is not None or covered_until_ms is not None) and (
-        kind is not CaptureSourceKind.AUDIO
+        kind is not CaptureSourceKind.RECORDING
     ):
-        raise ValueError("durationMs and coveredUntilMs are only for audio captures")
+        raise ValueError("durationMs and coveredUntilMs are only for recordings")
 
 
 class CaptureOperationV2(StrictModel):
     protocol_version: Literal["2"] = "2"
     capture_id: NonEmptyString
     ingestion_id: NonEmptyString
-    kind: CaptureSourceKind = CaptureSourceKind.AUDIO
+    kind: CaptureSourceKind = CaptureSourceKind.RECORDING
     status: StreamingCaptureStatus
     progress: float | None = Field(default=None, ge=0, le=1)
     partial_revision: int = Field(ge=0)
@@ -1126,7 +1146,7 @@ class CaptureEventV2(StrictModel):
     event_id: NonEmptyString
     sequence: int = Field(ge=0)
     capture_id: NonEmptyString
-    kind: CaptureSourceKind = CaptureSourceKind.AUDIO
+    kind: CaptureSourceKind = CaptureSourceKind.RECORDING
     event_type: StreamingEventType
     stage: NonEmptyString
     progress: float | None = Field(default=None, ge=0, le=1)
@@ -1168,7 +1188,7 @@ class RuntimeStreamingCapabilitiesV2(StrictModel):
         default_factory=lambda: [
             CaptureSourceKind.PDF,
             CaptureSourceKind.IMAGE,
-            CaptureSourceKind.AUDIO,
+            CaptureSourceKind.RECORDING,
         ],
         min_length=1,
     )

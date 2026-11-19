@@ -14,7 +14,10 @@ import httpx
 
 from capture_runtime.clock import Clock
 from capture_runtime.config import sanitized_child_environment
-from capture_runtime.constants import OLLAMA_MODEL_REQUIREMENT_ID, OLLAMA_RUNTIME_REQUIREMENT_ID
+from capture_runtime.constants import (
+    STRUCTURING_MODEL_REQUIREMENT_ID,
+    STRUCTURING_RUNTIME_REQUIREMENT_ID,
+)
 from capture_runtime.contracts import RuntimeRequirementStatus, RuntimeRequirementV2
 from capture_runtime.provisioning.application.requirement_installer import ManualActionRequiredError
 from capture_runtime.provisioning.infrastructure.engine_installation import sha256_file
@@ -60,8 +63,8 @@ class OllamaRequirementInstaller:
             return enabled_requirement_ids is None or requirement_id in enabled_requirement_ids
 
         requirements: list[RuntimeRequirementV2] = []
-        ollama_runtime_enabled = is_enabled(OLLAMA_RUNTIME_REQUIREMENT_ID)
-        ollama_model_enabled = is_enabled(OLLAMA_MODEL_REQUIREMENT_ID)
+        ollama_runtime_enabled = is_enabled(STRUCTURING_RUNTIME_REQUIREMENT_ID)
+        ollama_model_enabled = is_enabled(STRUCTURING_MODEL_REQUIREMENT_ID)
         ollama_available = (
             self._lifecycle.executable() is not None
             if ollama_runtime_enabled or ollama_model_enabled
@@ -70,8 +73,8 @@ class OllamaRequirementInstaller:
         if ollama_runtime_enabled:
             requirements.append(
                 RuntimeRequirementV2(
-                    requirement_id=OLLAMA_RUNTIME_REQUIREMENT_ID,
-                    kind="runtime",
+                    requirement_id=STRUCTURING_RUNTIME_REQUIREMENT_ID,
+                    kind=STRUCTURING_RUNTIME_REQUIREMENT_ID,
                     display_name="Ollama application",
                     status=(
                         RuntimeRequirementStatus.READY
@@ -93,8 +96,8 @@ class OllamaRequirementInstaller:
             model_ready = self._recorded_model_profile_matches()
             requirements.append(
                 RuntimeRequirementV2(
-                    requirement_id=OLLAMA_MODEL_REQUIREMENT_ID,
-                    kind="model",
+                    requirement_id=STRUCTURING_MODEL_REQUIREMENT_ID,
+                    kind=STRUCTURING_MODEL_REQUIREMENT_ID,
                     display_name="Capture structuring model",
                     status=(
                         RuntimeRequirementStatus.READY
@@ -121,10 +124,10 @@ class OllamaRequirementInstaller:
         cancel_event: asyncio.Event,
         report_progress: Callable[[float], None],
     ) -> None:
-        if requirement_id == OLLAMA_RUNTIME_REQUIREMENT_ID:
+        if requirement_id == STRUCTURING_RUNTIME_REQUIREMENT_ID:
             await self._install_ollama(cancel_event, report_progress)
             return
-        if requirement_id == OLLAMA_MODEL_REQUIREMENT_ID:
+        if requirement_id == STRUCTURING_MODEL_REQUIREMENT_ID:
             raise ManualActionRequiredError(
                 "Select a model option through the model-installation API."
             )
@@ -185,7 +188,7 @@ class OllamaRequirementInstaller:
             if create.return_code != 0:
                 raise RuntimeError(f"Ollama capture profile creation failed ({create.return_code})")
             _atomic_json(
-                self._marker(OLLAMA_MODEL_REQUIREMENT_ID),
+                self._marker(STRUCTURING_MODEL_REQUIREMENT_ID),
                 {
                     "profileId": option.profile_id,
                     "baseModel": option.model_reference,
@@ -303,9 +306,13 @@ class OllamaRequirementInstaller:
             return False
         try:
             option = model_option(str(selection["optionId"]))
-            payload = json.loads(
-                self._marker(OLLAMA_MODEL_REQUIREMENT_ID).read_text(encoding="utf-8")
-            )
+            try:
+                source = self._marker(STRUCTURING_MODEL_REQUIREMENT_ID).read_text(encoding="utf-8")
+            except FileNotFoundError:
+                source = (self._markers / "capture-ollama-model.ready.json").read_text(
+                    encoding="utf-8"
+                )
+            payload = json.loads(source)
             modelfile_digest = str(payload["modelfileSha256"])
             modelfile = self._lifecycle.config.app_data_dir / "Capture.Modelfile"
             return (

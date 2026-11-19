@@ -526,7 +526,7 @@ def test_streaming_capability_is_strictly_advertised(client: TestClient) -> None
     assert response.status_code == 200
     assert response.json() == {
         "protocolVersion": "2",
-        "captureKinds": ["pdf", "image", "audio"],
+        "captureKinds": ["pdf", "image", "recording"],
         "supportsProgressiveAudio": True,
         "maxChunkBytes": 4 * 1024 * 1024,
         "checkpointIntervalMs": 300_000,
@@ -545,7 +545,7 @@ def test_streaming_capability_keeps_ocr_available_without_progressive_decoder(
     response = client.get("/v2/streaming/health/ready")
 
     assert response.status_code == 200
-    assert response.json()["captureKinds"] == ["pdf", "image", "audio"]
+    assert response.json()["captureKinds"] == ["pdf", "image", "recording"]
     assert response.json()["supportsProgressiveAudio"] is False
 
 
@@ -1986,12 +1986,12 @@ def test_streaming_api_accepts_ordered_chunks_replays_sse_and_rejects_partial_be
     )
     assert finalized.status_code == 200, finalized.text
     assert finalized.json()["status"] == "ready"
-    assert finalized.json()["kind"] == "audio"
+    assert finalized.json()["kind"] == "recording"
 
     capture = client.get(f"/v2/captures/{capture_id}")
     assert capture.status_code == 200
     assert capture.json()["status"] == "failed"
-    assert capture.json()["kind"] == "audio"
+    assert capture.json()["kind"] == "recording"
     assert capture.json()["source"]["sha256"] == source_sha256
 
     events = client.get(f"/v2/captures/{capture_id}/events")
@@ -2131,7 +2131,12 @@ def test_streaming_api_processes_pdf_ocr_through_the_same_v2_sse_lifecycle(
                 engine="windowsml-ocr", model="deterministic-windowsml-v1"
             )
             if filename != "partial.json":
-                payload["suggestedUnits"] = ["windowsml-ocr"]
+                payload.pop("suggestedRequirementIds", None)
+                payload["suggestedUnits"] = [
+                    "windowsml-ocr",
+                    "ollama-runtime",
+                    "capture-ollama-model",
+                ]
         path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
     before = {path: path.read_bytes() for path in directory.iterdir() if path.is_file()}
@@ -2162,8 +2167,13 @@ def test_streaming_api_processes_pdf_ocr_through_the_same_v2_sse_lifecycle(
                     "deterministic-ocr-v1",
                     "fake",
                 )
+                assert "suggestedUnits" not in document
                 if route != "partial":
-                    assert document["suggestedUnits"] == ["text-recognition"]
+                    assert document["suggestedRequirementIds"] == [
+                        "text-recognition",
+                        "structuring-runtime",
+                        "structuring-model",
+                    ]
             assert (
                 documents[-1]["extractionEngine"]["digest"] == stored["extractionEngine"]["digest"]
             )
@@ -2296,6 +2306,65 @@ def test_v2_host_commit_and_failure_routes_preserve_terminal_semantics(
         "retryable": False,
     }
     assert client.get(f"/v2/captures/{failed_id}/result").status_code == 409
+
+
+def test_historical_host_commit_replays_with_new_recommendation_field(client: TestClient) -> None:
+    capture_id, candidate = _seed_host_capture(client)
+    headers = {"X-Idempotency-Key": "historical-host-commit"}
+    route = f"/v2/captures/{capture_id}/structure/commit"
+    committed = client.post(route, headers=headers, json=candidate)
+    assert committed.status_code == 200, committed.text
+
+    repository = client.app.state.streaming_repository
+    directory = repository.root / "captures" / capture_id
+    metadata_path = directory / "metadata.json"
+    result_path = directory / "result.json"
+    metadata = json.loads(metadata_path.read_bytes())
+    result = json.loads(result_path.read_bytes())
+    old_candidate = CaptureDocument.model_validate(candidate).model_dump(mode="json", by_alias=True)
+    for payload in (result, old_candidate):
+        payload["suggestedUnits"] = payload.pop("suggestedRequirementIds")
+    metadata["commitFingerprint"] = hashlib.sha256(
+        json.dumps(
+            old_candidate, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode()
+    ).hexdigest()
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    result_path.write_text(json.dumps(result), encoding="utf-8")
+    before = {path: path.read_bytes() for path in (metadata_path, result_path)}
+
+    repository.initialize()
+    replay = client.post(route, headers=headers, json=candidate)
+    assert replay.status_code == 200, replay.text
+    assert replay.json() == committed.json()
+    invalid = client.post(
+        route,
+        headers=headers,
+        json={**candidate, "suggestedRequirementIds": ["structuring-model"]},
+    )
+    assert invalid.status_code == 409
+    assert {path: path.read_bytes() for path in before} == before
+
+
+def test_interrupted_host_commit_preserves_historical_result(client: TestClient) -> None:
+    capture_id, candidate = _seed_host_capture(client)
+    repository = client.app.state.streaming_repository
+    directory = repository.root / "captures" / capture_id
+    result_path = directory / "result.json"
+    result = CaptureDocument.model_validate(candidate).model_dump(mode="json", by_alias=True)
+    result["suggestedUnits"] = result.pop("suggestedRequirementIds")
+    result_path.write_text(json.dumps(result), encoding="utf-8")
+    before = result_path.read_bytes()
+
+    repository.initialize()
+    committed = client.post(
+        f"/v2/captures/{capture_id}/structure/commit",
+        headers={"X-Idempotency-Key": "interrupted-host-commit"},
+        json=candidate,
+    )
+    assert committed.status_code == 200, committed.text
+    assert committed.json()["status"] == "completed"
+    assert result_path.read_bytes() == before
 
 
 def test_v2_host_commit_invalid_candidate_fails_the_capture(client: TestClient) -> None:
@@ -2643,7 +2712,7 @@ def test_a_transcript_longer_than_one_event_is_published_in_several(client: Test
 
     class Extractor:
         def sniff(self, _content: bytes) -> SimpleNamespace:
-            return SimpleNamespace(kind=CaptureSourceKind.AUDIO, media_type="audio/mpeg")
+            return SimpleNamespace(kind=CaptureSourceKind.RECORDING, media_type="audio/mpeg")
 
         async def extract(self, *_args: object, **options: object) -> SimpleNamespace:
             requested.append(options.get("identify_speakers") is True)
@@ -2655,7 +2724,7 @@ def test_a_transcript_longer_than_one_event_is_published_in_several(client: Test
         service._extract_finalized_source(
             operation.capture_id,
             operation.source,
-            CaptureSourceKind.AUDIO,
+            CaptureSourceKind.RECORDING,
             repository.source_path(operation.ingestion_id),
             asyncio.Event(),
         )
@@ -2692,7 +2761,7 @@ def test_streaming_api_source_size_policy_open_boundaries_and_rejection(
                 "clientRequestId": "open-audio-limit-ok",
                 "fileName": "audio.mp3",
                 "mediaType": "audio/mpeg",
-                "kind": "audio",
+                "kind": "recording",
                 "totalBytes": sixty_mib,
             },
             headers={"X-Idempotency-Key": "open-audio-limit-ok"},
@@ -2705,7 +2774,7 @@ def test_streaming_api_source_size_policy_open_boundaries_and_rejection(
                 "clientRequestId": "open-audio-limit-exceeded",
                 "fileName": "audio.mp3",
                 "mediaType": "audio/mpeg",
-                "kind": "audio",
+                "kind": "recording",
                 "totalBytes": sixty_mib + 1,
             },
             headers={"X-Idempotency-Key": "open-audio-limit-exceeded"},
@@ -2726,7 +2795,7 @@ def test_streaming_api_source_size_policy_open_boundaries_and_rejection(
                 "clientRequestId": "open-audio-limit-exceeded",
                 "fileName": "audio.mp3",
                 "mediaType": "audio/mpeg",
-                "kind": "audio",
+                "kind": "recording",
                 "totalBytes": sixty_mib,
             },
             headers={"X-Idempotency-Key": "open-audio-limit-exceeded"},
@@ -2846,7 +2915,7 @@ def test_streaming_api_chunk_zero_audio_sniffing_and_cleanup(
                 "clientRequestId": "audio-forged-pdf-open",
                 "fileName": "memo.wav",
                 "mediaType": "audio/wav",
-                "kind": "audio",
+                "kind": "recording",
                 "totalBytes": declared_total,
             },
             headers={"X-Idempotency-Key": "audio-forged-pdf-open"},
@@ -2880,7 +2949,7 @@ def test_streaming_api_chunk_zero_audio_sniffing_and_cleanup(
                 "clientRequestId": "audio-genuine-wav-open",
                 "fileName": "real.wav",
                 "mediaType": "audio/wav",
-                "kind": "audio",
+                "kind": "recording",
                 "totalBytes": declared_total,
             },
             headers={"X-Idempotency-Key": "audio-genuine-wav-open"},

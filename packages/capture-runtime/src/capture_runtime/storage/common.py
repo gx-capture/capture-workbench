@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
+from capture_runtime.constants.requirements import RETIRED_STRUCTURING_REQUIREMENT_IDS
+
 
 class RecordNotFoundError(KeyError):
     """A durable runtime record does not exist."""
@@ -35,8 +37,23 @@ def dump_model(model: Any) -> Any:
     return model.model_dump(mode="json", by_alias=True)
 
 
-def project_stored_ocr_identity(payload: Any) -> Any:
-    """Project OCR fields in a decoded runtime record, leaving digests and text intact."""
+def project_stored_requirement_id(value: Any) -> Any:
+    if isinstance(value, str):
+        return {
+            "windowsml-ocr": "text-recognition",
+            **RETIRED_STRUCTURING_REQUIREMENT_IDS,
+        }.get(value, value)
+    return value
+
+
+def project_stored_capture_kind(payload: Any) -> Any:
+    if isinstance(payload, dict) and payload.get("kind") == "audio":
+        return {**payload, "kind": "recording"}
+    return payload
+
+
+def project_stored_capture(payload: Any) -> Any:
+    """Project renamed fields in a decoded runtime capture, leaving digests and text intact."""
     if not isinstance(payload, dict):
         return payload
     projected = payload.copy()
@@ -51,14 +68,17 @@ def project_stored_ocr_identity(payload: Any) -> Any:
             if identity.get("device") == "windowsml-dml":
                 identity["device"] = "directml"
             projected[key] = identity
-    suggested = payload.get("suggestedUnits")
+    if "suggestedUnits" in projected:
+        historical = projected.pop("suggestedUnits")
+        projected.setdefault("suggestedRequirementIds", historical)
+    suggested = projected.get("suggestedRequirementIds")
     if isinstance(suggested, list):
-        projected["suggestedUnits"] = [
-            "text-recognition" if value == "windowsml-ocr" else value for value in suggested
+        projected["suggestedRequirementIds"] = [
+            project_stored_requirement_id(value) for value in suggested
         ]
     pages = payload.get("pages")
     if isinstance(pages, list):
-        projected["pages"] = [project_stored_ocr_identity(page) for page in pages]
+        projected["pages"] = [project_stored_capture(page) for page in pages]
     return projected
 
 
@@ -78,6 +98,8 @@ __all__ = [
     "TransitionRejectedError",
     "atomic_json",
     "dump_model",
-    "project_stored_ocr_identity",
+    "project_stored_capture",
+    "project_stored_capture_kind",
+    "project_stored_requirement_id",
     "record_identifier",
 ]

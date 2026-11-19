@@ -45,6 +45,7 @@ from capture_runtime.capture.infrastructure.source_sniffing import (
     recording_prefix_verdict,
 )
 from capture_runtime.clock import Clock
+from capture_runtime.contract_set import canonical_json_bytes
 from capture_runtime.contracts import (
     CaptureDocument,
     CaptureEventV2,
@@ -62,7 +63,10 @@ from capture_runtime.contracts import (
     StreamingEventType,
     StreamingIngestionStatus,
 )
-from capture_runtime.storage.common import project_stored_ocr_identity
+from capture_runtime.storage.common import (
+    project_stored_capture,
+    project_stored_capture_kind,
+)
 
 
 class StreamingRecordNotFoundError(KeyError):
@@ -85,9 +89,42 @@ _MAX_EVENT_REPLAY = 1_024
 _LOGGER = logging.getLogger(__name__)
 
 
+def _historical_result(path: Path) -> dict[str, Any] | None:
+    try:
+        payload = json.loads(path.read_bytes())
+    except (FileNotFoundError, ValueError):
+        return None
+    if isinstance(payload, dict) and "suggestedUnits" in payload:
+        return payload
+    return None
+
+
+def _matches_historical_commit(
+    path: Path, candidate: CaptureDocument, fingerprint: str | None
+) -> bool:
+    """Verify a retry against the original spelling covered by its fingerprint."""
+    if fingerprint is None:
+        return False
+    try:
+        historical = _historical_result(path)
+    except OSError:
+        return False
+    if historical is None:
+        return False
+    projected = project_stored_capture(historical)
+    payload = candidate.model_dump(mode="json", by_alias=True)
+    for key in ("extractionEngine", "suggestedRequirementIds"):
+        if payload[key] != projected.get(key):
+            return False
+    payload["extractionEngine"] = historical["extractionEngine"]
+    del payload["suggestedRequirementIds"]
+    payload["suggestedUnits"] = historical["suggestedUnits"]
+    return hashlib.sha256(canonical_json_bytes(payload)).hexdigest() == fingerprint
+
+
 def _read_stored_capture[ModelT: BaseModel](model: type[ModelT], path: Path) -> ModelT:
     payload = json.loads(path.read_text(encoding="utf-8"))
-    return model.model_validate(project_stored_ocr_identity(payload))
+    return model.model_validate(project_stored_capture(payload))
 
 
 def _identifier(value: str) -> str:
@@ -116,7 +153,7 @@ def _progress_update(operation: CaptureOperationV2, event: CaptureEventV2) -> di
         update["pages_done"] = done
     if event.duration_ms is not None:
         update["duration_ms"] = event.duration_ms
-    if event.covered_until_ms is not None and operation.kind is CaptureSourceKind.AUDIO:
+    if event.covered_until_ms is not None and operation.kind is CaptureSourceKind.RECORDING:
         update["covered_until_ms"] = max(operation.covered_until_ms or 0, event.covered_until_ms)
     return update
 
@@ -442,7 +479,7 @@ class StreamingRepository:
         """Append an event and fold its progress into the operation.
 
         `pages` is (pagesDone, pagesTotal) for a document; `duration_ms` and
-        `covered_until_ms` describe an audio source. The event validates them
+        `covered_until_ms` describe a recording. The event validates them
         against the capture kind before anything is written.
         """
         with self._lock:
@@ -510,9 +547,9 @@ class StreamingRepository:
                     continue
                 try:
                     payload = json.loads(line)
-                    event = CaptureEventV2.model_validate(payload)
-                    if "kind" not in payload:
-                        event = event.model_copy(update={"kind": record.operation.kind})
+                    if isinstance(payload, dict) and "kind" not in payload:
+                        payload["kind"] = record.operation.kind.value
+                    event = CaptureEventV2.model_validate(project_stored_capture_kind(payload))
                 except ValidationError as error:
                     raise RuntimeError("streaming event log is corrupted") from error
                 if event.sequence > after_sequence:
@@ -609,20 +646,31 @@ class StreamingRepository:
     ) -> CaptureOperationV2:
         with self._lock:
             record = self._get_capture(capture_id)
+            result_path = self._capture_directory(capture_id) / "result.json"
             if record.operation.status is StreamingCaptureStatus.COMPLETED:
-                if (
-                    record.commit_idempotency_key == idempotency_key
-                    and record.commit_fingerprint == fingerprint
+                if record.commit_idempotency_key == idempotency_key and (
+                    record.commit_fingerprint == fingerprint
+                    or _matches_historical_commit(
+                        result_path,
+                        result,
+                        record.commit_fingerprint,
+                    )
                 ):
                     return record.operation
                 raise StreamingIdempotencyConflictError(idempotency_key)
             operation_domain(record.operation).require_host_structuring(
                 record.request.structuring_mode
             )
-            _atomic_json(
-                self._capture_directory(capture_id) / "result.json",
-                result.model_dump(mode="json", by_alias=True),
-            )
+            historical = _historical_result(result_path)
+            if historical is None:
+                _atomic_json(result_path, result.model_dump(mode="json", by_alias=True))
+            else:
+                # The previous runtime can stop between writing the document and saving
+                # terminal metadata. Finish that transition using the original document.
+                stored = CaptureDocument.model_validate(project_stored_capture(historical))
+                if stored.model_copy(update={"completed_at": result.completed_at}) != result:
+                    raise StreamingIdempotencyConflictError(idempotency_key)
+                result = stored
             record.commit_idempotency_key = idempotency_key
             record.commit_fingerprint = fingerprint
             return self._complete_capture_locked(record, now=result.completed_at)

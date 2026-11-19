@@ -47,7 +47,7 @@ are ephemeral and are deleted after the host has copied the data it needs.
    | `vertical-japanese-reader` (optional) | NDLOCR-Lite models for vertical Japanese pages; without it the regular OCR reads every page |
 
    A result can name an optional unit that would have helped
-   (`suggestedUnits`), so the host can offer it.
+   (`suggestedRequirementIds`), so the host can offer it.
 5. Structuring can be owned by the runtime's isolated Ollama process or by the
    host's provider. The runtime validates the resulting `CaptureDocument`,
    including schema, ordering, and raw provenance, before reporting completion.

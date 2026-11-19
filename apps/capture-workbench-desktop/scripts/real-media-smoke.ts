@@ -487,7 +487,7 @@ async function main(): Promise<void> {
       runtimePort,
       token,
       audioBytes,
-      'audio',
+      'recording',
       basename(audioPath),
       captureIds,
       expectedProvenance,
@@ -556,7 +556,7 @@ async function captureAndVerify(
   port: number,
   token: string,
   bytes: Uint8Array,
-  sourceKind: 'pdf' | 'image' | 'audio',
+  sourceKind: 'pdf' | 'image' | 'recording',
   fileName: string,
   captureIds: string[],
   expectedProvenance: ExpectedProvenance,
@@ -638,7 +638,7 @@ async function captureAndVerify(
 }
 
 function fixtureMediaType(
-  sourceKind: 'pdf' | 'image' | 'audio',
+  sourceKind: 'pdf' | 'image' | 'recording',
   fileName: string,
 ): string {
   const normalized = fileName.toLowerCase();

@@ -15,7 +15,7 @@ from capture_runtime.constants import VERTICAL_READER_REQUIREMENT_ID
 from capture_runtime.contracts import OcrProvenanceV3
 
 SHA256_PROVENANCE = re.compile(r"^sha256:[a-f0-9]{64}$")
-SUGGESTABLE_UNITS = frozenset({VERTICAL_READER_REQUIREMENT_ID})
+SUGGESTABLE_REQUIREMENT_IDS = frozenset({VERTICAL_READER_REQUIREMENT_ID})
 
 
 class WorkerResultError(ValueError):
@@ -60,7 +60,7 @@ class WorkerRunResult:
     warnings: tuple[str, ...]
     ocr_provenance: OcrProvenanceV3 | None = None
     # Optional units that are not installed and would have read part of the source.
-    suggested_units: tuple[str, ...] = ()
+    suggested_requirement_ids: tuple[str, ...] = ()
     elapsed_ms: int | None = None
     stage_ms: dict[str, int] | None = None
 
@@ -109,18 +109,20 @@ def parse_words(value: object, *, time_locator: bool) -> tuple[WorkerWord, ...]:
     return tuple(words)
 
 
-def parse_suggested_units(value: object) -> tuple[str, ...]:
-    """Optional units the worker says would have improved this result."""
+def parse_suggested_requirement_ids(value: object) -> tuple[str, ...]:
+    """Optional requirement IDs the worker recommends for this result."""
 
     if value is None:
         return ()
     if (
         not isinstance(value, list)
         or not value
+        or any(
+            not isinstance(item, str) or item not in SUGGESTABLE_REQUIREMENT_IDS for item in value
+        )
         or len(set(value)) != len(value)
-        or any(item not in SUGGESTABLE_UNITS for item in value)
     ):
-        raise WorkerResultError("worker suggested units are invalid")
+        raise WorkerResultError("worker suggested requirement IDs are invalid")
     return tuple(value)
 
 

@@ -98,7 +98,7 @@ smoke installs the `text-recognition` engine and the `qwen3.5-0.8b-v1` model
 through the runtime; a directory the desktop app has already prepared needs no
 download. Ollama itself must already be installed on `PATH` unless
 `CAPTURE_REAL_SMOKE_ALLOW_OLLAMA_INSTALL=1` is set, in which case the runtime
-installs `ollama-runtime` system-wide with `winget`:
+installs `structuring-runtime` system-wide with `winget`:
 
 ```powershell
 $env:CAPTURE_REAL_SMOKE_PDF = 'C:\path\to\user-provided.pdf'

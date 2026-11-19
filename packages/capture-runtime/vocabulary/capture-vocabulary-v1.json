@@ -290,10 +290,10 @@
       "retired": false
     },
     {
-      "id": "capture.source-kind.audio",
+      "id": "capture.source-kind.recording",
       "label": "音訊",
-      "codeName": "CaptureSourceKind.AUDIO",
-      "enum": { "enumId": "CaptureSourceKind", "value": "audio" },
+      "codeName": "CaptureSourceKind.RECORDING",
+      "enum": { "enumId": "CaptureSourceKind", "value": "recording" },
       "retired": false
     },
     {
@@ -507,17 +507,17 @@
       "retired": false
     },
     {
-      "id": "CaptureRequirementId.capture-ollama-model",
+      "id": "CaptureRequirementId.structuring-model",
       "label": "引擎需求：結構化模型",
-      "codeName": "CaptureRequirementId.capture-ollama-model",
-      "enum": { "enumId": "CaptureRequirementId", "value": "capture-ollama-model" },
+      "codeName": "CaptureRequirementId.structuring-model",
+      "enum": { "enumId": "CaptureRequirementId", "value": "structuring-model" },
       "retired": false
     },
     {
-      "id": "CaptureRequirementId.ollama-runtime",
-      "label": "引擎需求：ollama-runtime",
-      "codeName": "CaptureRequirementId.ollama-runtime",
-      "enum": { "enumId": "CaptureRequirementId", "value": "ollama-runtime" },
+      "id": "CaptureRequirementId.structuring-runtime",
+      "label": "引擎需求：structuring-runtime",
+      "codeName": "CaptureRequirementId.structuring-runtime",
+      "enum": { "enumId": "CaptureRequirementId", "value": "structuring-runtime" },
       "retired": false
     },
     {

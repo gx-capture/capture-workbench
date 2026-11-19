@@ -137,20 +137,20 @@
           "title": "Speakers",
           "type": "array"
         },
-        "suggestedUnits": {
+        "suggestedRequirementIds": {
           "items": {
             "enum": [
               "text-recognition",
               "speech-recognition",
               "speaker-diarization",
               "vertical-japanese-reader",
-              "ollama-runtime",
-              "capture-ollama-model"
+              "structuring-runtime",
+              "structuring-model"
             ],
             "type": "string"
           },
           "maxItems": 8,
-          "title": "Suggestedunits",
+          "title": "Suggestedrequirementids",
           "type": "array"
         },
         "structuringEngine": {
@@ -323,7 +323,7 @@
         },
         "kind": {
           "$ref": "#/$defs/CaptureSourceKind",
-          "default": "audio"
+          "default": "recording"
         },
         "status": {
           "$ref": "#/$defs/StreamingCaptureStatus"
@@ -500,7 +500,7 @@
       "enum": [
         "pdf",
         "image",
-        "audio"
+        "recording"
       ],
       "title": "CaptureSourceKind",
       "type": "string"
@@ -688,20 +688,20 @@
           "title": "Speakers",
           "type": "array"
         },
-        "suggestedUnits": {
+        "suggestedRequirementIds": {
           "items": {
             "enum": [
               "text-recognition",
               "speech-recognition",
               "speaker-diarization",
               "vertical-japanese-reader",
-              "ollama-runtime",
-              "capture-ollama-model"
+              "structuring-runtime",
+              "structuring-model"
             ],
             "type": "string"
           },
           "maxItems": 8,
-          "title": "Suggestedunits",
+          "title": "Suggestedrequirementids",
           "type": "array"
         },
         "warnings": {

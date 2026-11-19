@@ -65,8 +65,8 @@
         "speech-recognition",
         "speaker-diarization",
         "vertical-japanese-reader",
-        "ollama-runtime",
-        "capture-ollama-model"
+        "structuring-runtime",
+        "structuring-model"
       ],
       "title": "Requirementid",
       "type": "string"

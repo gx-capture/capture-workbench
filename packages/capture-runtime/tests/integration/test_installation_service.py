@@ -20,6 +20,7 @@ from capture_runtime.provisioning.infrastructure.engine_installation import Engi
 from capture_runtime.provisioning.infrastructure.installation_repository import (
     InstallationRepository,
 )
+from capture_runtime.routes.common import request_fingerprint
 from capture_runtime.worker_process import WorkerExecutionError
 
 
@@ -104,18 +105,31 @@ async def _wait_for_terminal(service: InstallationService, installation_id: str)
 
 
 @pytest.mark.parametrize("status", ["completed", "running"])
-def test_installation_repository_reads_historical_ocr_id(tmp_path: Path, status: str) -> None:
+@pytest.mark.parametrize(
+    ("retired_id", "current_id"),
+    [
+        ("windowsml-ocr", "text-recognition"),
+        ("ollama-runtime", "structuring-runtime"),
+        ("capture-ollama-model", "structuring-model"),
+    ],
+)
+def test_installation_repository_reads_historical_requirement_id(
+    tmp_path: Path, status: str, retired_id: str, current_id: str
+) -> None:
     repository = InstallationRepository(tmp_path, clock=SystemClock(), retention_hours=24)
     repository.initialize()
     record, _ = repository.create_or_get(
         idempotency_key="historical-install",
-        request_fingerprint="a" * 64,
-        requirement_id="text-recognition",
+        request_fingerprint=request_fingerprint({"requirementId": current_id, "consent": True}),
+        requirement_id=current_id,
     )
     installation_id = record.job.installation_id
     path = tmp_path / installation_id / "metadata.json"
     historical = json.loads(path.read_bytes())
-    historical["job"]["requirementId"] = "windowsml-ocr"
+    historical["job"]["requirementId"] = retired_id
+    historical["requestFingerprint"] = request_fingerprint(
+        {"requirementId": retired_id, "consent": True}
+    )
     historical["job"]["status"] = status
     path.write_text(json.dumps(historical, indent=2), encoding="utf-8")
     before = path.read_bytes()
@@ -123,7 +137,13 @@ def test_installation_repository_reads_historical_ocr_id(tmp_path: Path, status:
     repository.initialize()
     job = repository.get(installation_id).job
     assert repository.list() == [job]
-    assert job.requirement_id == "text-recognition"
+    assert job.requirement_id == current_id
+    replay, created = repository.create_or_get(
+        idempotency_key="historical-install",
+        request_fingerprint=request_fingerprint({"requirementId": current_id, "consent": True}),
+        requirement_id=current_id,
+    )
+    assert not created and replay.job == job
     if status == "completed":
         assert job.status is RuntimeInstallationStatus.COMPLETED
         assert path.read_bytes() == before
@@ -131,7 +151,7 @@ def test_installation_repository_reads_historical_ocr_id(tmp_path: Path, status:
         assert job.status is RuntimeInstallationStatus.FAILED
         assert job.error is not None and job.error.code == "runtime_restarted"
         after = json.loads(path.read_bytes())
-        assert after["job"]["requirementId"] == "windowsml-ocr"
+        assert after["job"]["requirementId"] == retired_id
         assert after["requestFingerprint"] == historical["requestFingerprint"]
 
 

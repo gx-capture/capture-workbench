@@ -15,7 +15,7 @@ function readyResponse() {
     ready: true, service: 'capture-runtime', apiVersion: '2.0', runtimeVersion: SYNTHETIC_RUNTIME_VERSION,
     captureDocumentSchemaVersion: '2', contractSetVersion: '2', message: null,
     capabilities: {
-      captureKinds: ['pdf', 'image', 'audio'], structuringModes: ['runtime', 'host'],
+      captureKinds: ['pdf', 'image', 'recording'], structuringModes: ['runtime', 'host'],
       supportsCancellation: true, supportsRawDiagnostics: true, maxUploadBytes: DETERMINISTIC_MAX_UPLOAD_BYTES,
     },
     ocrCompute: {
@@ -148,7 +148,7 @@ test('capture helpers consume operation/raw/result envelopes for every fixture a
           capturePayload = JSON.stringify(body);
           operation = {
             protocolVersion: '2', captureId: 'capture', ingestionId: 'upload',
-            kind: fixture.mediaType === 'application/pdf' ? 'pdf' : fixture.locatorKind === 'time' ? 'audio' : 'image',
+            kind: fixture.mediaType === 'application/pdf' ? 'pdf' : fixture.locatorKind === 'time' ? 'recording' : 'image',
             status: 'completed', progress: 1, partialRevision: 0, lastEventSequence: 1,
             source: raw.source, error: null, createdAt: raw.createdAt,
             updatedAt: result.completedAt, completedAt: result.completedAt,

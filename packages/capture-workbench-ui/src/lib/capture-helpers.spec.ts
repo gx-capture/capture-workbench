@@ -127,7 +127,7 @@ describe('capture helpers', () => {
       apiVersion: '2.0',
       captureDocumentSchemaVersion: '2',
       capabilities: {
-        captureKinds: ['pdf', 'image', 'audio'],
+        captureKinds: ['pdf', 'image', 'recording'],
         structuringModes: ['host'],
         supportsCancellation: true,
         supportsRawDiagnostics: true,
@@ -307,7 +307,7 @@ describe('capture helpers', () => {
 describe('capture file kinds', () => {
   const helpers = new CaptureHelpersService();
 
-  it('takes audio and video recordings as audio to transcribe', () => {
+  it('takes audio and video sources as recordings', () => {
     for (const name of [
       'interview.m4a',
       'memo.AMR',
@@ -317,14 +317,14 @@ describe('capture file kinds', () => {
       'call.webm',
       'camera.mkv',
     ]) {
-      expect(helpers.classifyCaptureFile({ name })).toBe('audio');
+      expect(helpers.classifyCaptureFile({ name })).toBe('recording');
     }
     expect(helpers.classifyCaptureFile({ name: 'lease.pdf' })).toBe('pdf');
     expect(helpers.classifyCaptureFile({ name: 'notes.txt' })).toBeNull();
   });
 
-  it('offers recordings in the file picker only when audio is enabled', () => {
-    expect(helpers.captureAccept(['audio']).split(',')).toEqual(
+  it('offers recordings in the file picker only when recording is enabled', () => {
+    expect(helpers.captureAccept(['recording']).split(',')).toEqual(
       expect.arrayContaining(['.m4a', '.wma', '.mp4', '.webm', 'audio/*', 'video/*']),
     );
     expect(helpers.captureAccept(['pdf', 'image'])).not.toContain('audio');

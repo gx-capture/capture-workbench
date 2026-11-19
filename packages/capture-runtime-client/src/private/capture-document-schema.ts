@@ -436,20 +436,20 @@ export const GENERATED_CAPTURE_DOCUMENT_JSON_SCHEMA = {
     "structuringEngine": {
       "$ref": "#/$defs/CaptureEngine"
     },
-    "suggestedUnits": {
+    "suggestedRequirementIds": {
       "items": {
         "enum": [
           "text-recognition",
           "speech-recognition",
           "speaker-diarization",
           "vertical-japanese-reader",
-          "ollama-runtime",
-          "capture-ollama-model"
+          "structuring-runtime",
+          "structuring-model"
         ],
         "type": "string"
       },
       "maxItems": 8,
-      "title": "Suggestedunits",
+      "title": "Suggestedrequirementids",
       "type": "array"
     },
     "targetText": {

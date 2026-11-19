@@ -26,7 +26,7 @@ _MP4_BOX_TYPES = frozenset({b"ftyp", b"moov", b"mdat", b"wide", b"free", b"skip"
 def sniff_source(content: bytes) -> SniffedSource:
     """The kind of a source and its media type, from the signature of its first bytes.
 
-    Audio is whatever FFmpeg decodes: recordings arrive as phone memos (M4A,
+    Recordings can arrive as phone memos (M4A,
     3GP, AMR), dictaphone files (WMA, MP3), and meetings or hearings recorded
     as video (MP4, MOV, MKV, WebM, AVI, MPEG-TS), whose audio track is
     transcribed.
@@ -39,15 +39,15 @@ def sniff_source(content: bytes) -> SniffedSource:
         return SniffedSource(CaptureSourceKind.IMAGE, "image/jpeg")
     if len(content) >= 12 and content[:4] == b"RIFF" and content[8:12] == b"WEBP":
         return SniffedSource(CaptureSourceKind.IMAGE, "image/webp")
-    media_type = _audio_media_type(content)
+    media_type = _recording_media_type(content)
     if media_type is not None:
-        return SniffedSource(CaptureSourceKind.AUDIO, media_type)
+        return SniffedSource(CaptureSourceKind.RECORDING, media_type)
     raise UnsupportedMediaError(
         "Only PDF, PNG, JPEG, WebP, and audio or video recordings are supported"
     )
 
 
-def _audio_media_type(content: bytes) -> str | None:
+def _recording_media_type(content: bytes) -> str | None:
     if len(content) >= 12 and content[:4] == b"RIFF":
         return {b"WAVE": "audio/wav", b"AVI ": "video/x-msvideo"}.get(content[8:12])
     if content.startswith(b"ID3"):
@@ -89,7 +89,7 @@ def recording_prefix_verdict(prefix: bytes) -> bool | None:
     matches yet: a host may split the first bytes over several chunks.
     """
     try:
-        return sniff_source(prefix).kind is CaptureSourceKind.AUDIO
+        return sniff_source(prefix).kind is CaptureSourceKind.RECORDING
     except UnsupportedMediaError:
         return False if len(prefix) >= SNIFF_BYTES else None
 

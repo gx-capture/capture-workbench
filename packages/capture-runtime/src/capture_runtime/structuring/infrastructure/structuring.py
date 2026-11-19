@@ -356,9 +356,9 @@ def validate_structuring_candidate(
             raw_wire.get("diarizationEngine"),
         ),
         "speakers": (document.get("speakers", []), raw_wire.get("speakers", [])),
-        "suggestedUnits": (
-            document.get("suggestedUnits", []),
-            raw_wire.get("suggestedUnits", []),
+        "suggestedRequirementIds": (
+            document.get("suggestedRequirementIds", []),
+            raw_wire.get("suggestedRequirementIds", []),
         ),
         "createdAt": (document.get("createdAt"), raw_wire.get("createdAt")),
     }
@@ -481,7 +481,7 @@ def assemble_structuring_document(
         "extractionEngine": raw_wire.get("extractionEngine"),
         "diarizationEngine": raw_wire.get("diarizationEngine"),
         "speakers": raw_wire.get("speakers", []),
-        "suggestedUnits": raw_wire.get("suggestedUnits", []),
+        "suggestedRequirementIds": raw_wire.get("suggestedRequirementIds", []),
         "structuringEngine": _wire(engine_identity),
         "warnings": raw_wire.get("warnings", []),
         "createdAt": raw_wire.get("createdAt"),

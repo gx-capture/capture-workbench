@@ -21,15 +21,15 @@ def test_document_max_upload_bytes_constant_matches_fifty_mib() -> None:
     ("max_upload_bytes", "kind", "expected_limit"),
     [
         # Below 50 MiB
-        (TWENTY_MIB, CaptureSourceKind.AUDIO, TWENTY_MIB),
+        (TWENTY_MIB, CaptureSourceKind.RECORDING, TWENTY_MIB),
         (TWENTY_MIB, CaptureSourceKind.PDF, TWENTY_MIB),
         (TWENTY_MIB, CaptureSourceKind.IMAGE, TWENTY_MIB),
         # Exactly 50 MiB
-        (FIFTY_MIB, CaptureSourceKind.AUDIO, FIFTY_MIB),
+        (FIFTY_MIB, CaptureSourceKind.RECORDING, FIFTY_MIB),
         (FIFTY_MIB, CaptureSourceKind.PDF, FIFTY_MIB),
         (FIFTY_MIB, CaptureSourceKind.IMAGE, FIFTY_MIB),
         # Above 50 MiB
-        (ONE_HUNDRED_MIB, CaptureSourceKind.AUDIO, ONE_HUNDRED_MIB),
+        (ONE_HUNDRED_MIB, CaptureSourceKind.RECORDING, ONE_HUNDRED_MIB),
         (ONE_HUNDRED_MIB, CaptureSourceKind.PDF, FIFTY_MIB),
         (ONE_HUNDRED_MIB, CaptureSourceKind.IMAGE, FIFTY_MIB),
     ],
@@ -59,9 +59,9 @@ def test_source_size_policy_limits_and_boundaries_by_kind_and_configured_ceiling
 @pytest.mark.parametrize(
     ("kind", "declared_total_bytes", "expected"),
     [
-        (CaptureSourceKind.AUDIO, FIFTY_MIB, False),
-        (CaptureSourceKind.AUDIO, FIFTY_MIB + 1, True),
-        (CaptureSourceKind.AUDIO, ONE_HUNDRED_MIB, True),
+        (CaptureSourceKind.RECORDING, FIFTY_MIB, False),
+        (CaptureSourceKind.RECORDING, FIFTY_MIB + 1, True),
+        (CaptureSourceKind.RECORDING, ONE_HUNDRED_MIB, True),
         (CaptureSourceKind.PDF, FIFTY_MIB + 1, False),
         (CaptureSourceKind.PDF, ONE_HUNDRED_MIB, False),
         (CaptureSourceKind.IMAGE, FIFTY_MIB + 1, False),

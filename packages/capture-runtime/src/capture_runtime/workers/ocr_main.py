@@ -641,7 +641,7 @@ def _run(
     if worker_engine.execution_proof is not None:
         final_payload["executionProof"] = worker_engine.execution_proof.to_dict()
     if getattr(adapter, "vertical_reader_wanted", False):
-        final_payload["suggestedUnits"] = [VERTICAL_READER_REQUIREMENT_ID]
+        final_payload["suggestedRequirementIds"] = [VERTICAL_READER_REQUIREMENT_ID]
     reusable_session = getattr(adapter, "reusable_session", None)
     _reusable_session = reusable_session() if callable(reusable_session) else None
     return final_payload

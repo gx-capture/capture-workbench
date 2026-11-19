@@ -286,7 +286,7 @@ export class CaptureWorkbenchStore {
 
   /** The optional units a finished capture missed and the runtime can install now. */
   installableSuggestions(task: CaptureTaskView): readonly RuntimeRequirement[] {
-    const suggested = task.result?.suggestedUnits ?? task.raw?.suggestedUnits ?? [];
+    const suggested = task.result?.suggestedRequirementIds ?? task.raw?.suggestedRequirementIds ?? [];
     return this.runtime().requirements.filter(
       (requirement) =>
         suggested.includes(requirement.requirementId) &&
@@ -437,10 +437,10 @@ export class CaptureWorkbenchStore {
       return enabled.includes('pdf') || enabled.includes('image');
     }
     if (requirement.requirementId === 'speech-recognition')
-      return enabled.includes('audio');
+      return enabled.includes('recording');
     // An optional unit is needed only by a host that asked for what it adds.
     if (requirement.requirementId === 'speaker-diarization') {
-      return this.resolvedConfig().identifySpeakers && enabled.includes('audio');
+      return this.resolvedConfig().identifySpeakers && enabled.includes('recording');
     }
     // Any other optional unit is offered when a result says it was missed;
     // it never stands between the user and a capture.

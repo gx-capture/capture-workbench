@@ -16,7 +16,10 @@ from fastapi.testclient import TestClient
 from capture_runtime.app import create_app
 from capture_runtime.clock import SystemClock
 from capture_runtime.config import OllamaRuntimeConfig, RuntimeSettings
-from capture_runtime.constants import OLLAMA_MODEL_REQUIREMENT_ID, OLLAMA_RUNTIME_REQUIREMENT_ID
+from capture_runtime.constants import (
+    STRUCTURING_MODEL_REQUIREMENT_ID,
+    STRUCTURING_RUNTIME_REQUIREMENT_ID,
+)
 from capture_runtime.contracts import RuntimeRequirementStatus
 from capture_runtime.provisioning.application.requirement_installer import (
     ManualActionRequiredError,
@@ -98,7 +101,7 @@ def _record_installed_profile(
     modelfile = config.app_data_dir / "Capture.Modelfile"
     modelfile.parent.mkdir(parents=True, exist_ok=True)
     modelfile.write_bytes(option.profile_spec_bytes)
-    marker = config.app_data_dir / "requirements" / "capture-ollama-model.ready.json"
+    marker = config.app_data_dir / "requirements" / "structuring-model.ready.json"
     marker.parent.mkdir(parents=True, exist_ok=True)
     marker.write_text(
         json.dumps(
@@ -157,7 +160,7 @@ def test_requirement_installer_runs_winget_for_the_runtime(tmp_path: Path) -> No
     progress: list[float] = []
     asyncio.run(
         installer.install(
-            OLLAMA_RUNTIME_REQUIREMENT_ID,
+            STRUCTURING_RUNTIME_REQUIREMENT_ID,
             cancel_event=cancel_event,
             report_progress=progress.append,
         )
@@ -191,7 +194,7 @@ def test_requirement_installer_requires_model_option_selection(tmp_path: Path) -
     ):
         asyncio.run(
             installer.install(
-                OLLAMA_MODEL_REQUIREMENT_ID,
+                STRUCTURING_MODEL_REQUIREMENT_ID,
                 cancel_event=asyncio.Event(),
                 report_progress=progress.append,
             )
@@ -209,8 +212,27 @@ def _model_status(installer: OllamaRequirementInstaller) -> RuntimeRequirementSt
     return next(
         item.status
         for item in installer.requirements()
-        if item.requirement_id == "capture-ollama-model"
+        if item.requirement_id == "structuring-model"
     )
+
+
+def test_historical_model_markers_remain_readable(tmp_path: Path) -> None:
+    installer, lifecycle = _installer(tmp_path, FakeProcessController())
+    config = lifecycle.config
+    _record_installed_profile(config)
+    requirements = config.app_data_dir / "requirements"
+    marker = requirements / "capture-ollama-model.ready.json"
+    (requirements / "structuring-model.ready.json").rename(marker)
+    selection = requirements / "capture-ollama-model.active.json"
+    (requirements / "structuring-model.active.json").rename(selection)
+    before = {path: path.read_bytes() for path in (marker, selection)}
+
+    assert _model_status(installer) is RuntimeRequirementStatus.READY
+    assert {path: path.read_bytes() for path in before} == before
+    payload = json.loads(before[marker])
+    payload["modelfileSha256"] = "0" * 64
+    marker.write_text(json.dumps(payload), encoding="utf-8")
+    assert _model_status(installer) is not RuntimeRequirementStatus.READY
 
 
 def test_lifecycle_start_is_idempotent_and_uses_only_isolated_state(tmp_path: Path) -> None:
@@ -489,7 +511,7 @@ def test_requirements_api_recovers_installed_profile_after_process_restart(
             model = next(
                 item
                 for item in response.json()["items"]
-                if item["requirementId"] == "capture-ollama-model"
+                if item["requirementId"] == "structuring-model"
             )
             assert model["status"] == "ready"
 

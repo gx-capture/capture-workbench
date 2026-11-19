@@ -14,7 +14,10 @@ from uuid import uuid4
 from pydantic import ValidationError
 
 from capture_runtime.clock import Clock
+from capture_runtime.constants import STRUCTURING_MODEL_REQUIREMENT_ID
+from capture_runtime.constants.requirements import RETIRED_STRUCTURING_REQUIREMENT_IDS
 from capture_runtime.contracts import (
+    CaptureFailureV2,
     RuntimeInstallationStatus,
     RuntimeModelInstallationV2,
 )
@@ -32,18 +35,36 @@ class ModelInstallationRecord:
     job: RuntimeModelInstallationV2
     idempotency_key: str
     request_fingerprint: str
+    historical_requirement_id: str | None = None
 
     def dump(self) -> dict[str, object]:
+        job = dump_model(self.job)
+        if self.historical_requirement_id is not None:
+            job["requirementId"] = self.historical_requirement_id
         return {
-            "job": dump_model(self.job),
+            "job": job,
             "idempotencyKey": self.idempotency_key,
             "requestFingerprint": self.request_fingerprint,
         }
 
     @classmethod
     def load(cls, payload: dict[str, Any]) -> ModelInstallationRecord:
+        job = payload["job"]
+        historical_requirement_id = None
+        if isinstance(job, dict):
+            stored_id = job.get("requirementId")
+            # Only 0.10.x records carry the field, in its retired spelling; any
+            # other value must still fail strict validation.
+            if (
+                isinstance(stored_id, str)
+                and RETIRED_STRUCTURING_REQUIREMENT_IDS.get(stored_id)
+                == STRUCTURING_MODEL_REQUIREMENT_ID
+            ):
+                historical_requirement_id = stored_id
+                job = {key: value for key, value in job.items() if key != "requirementId"}
         return cls(
-            job=RuntimeModelInstallationV2.model_validate(payload["job"]),
+            job=RuntimeModelInstallationV2.model_validate(job),
+            historical_requirement_id=historical_requirement_id,
             idempotency_key=str(payload["idempotencyKey"]),
             request_fingerprint=str(payload["requestFingerprint"]),
         )
@@ -153,14 +174,14 @@ class ModelInstallationRepository:
                 record.job = record.job.model_copy(
                     update={
                         "status": RuntimeInstallationStatus.FAILED,
-                        "error": {
-                            "code": "runtime_restarted",
-                            "message": (
+                        "error": CaptureFailureV2(
+                            code="runtime_restarted",
+                            message=(
                                 "Capture Runtime restarted before model installation completed."
                             ),
-                            "stage": "runtime",
-                            "retryable": True,
-                        },
+                            stage="runtime",
+                            retryable=True,
+                        ),
                         "updated_at": now,
                         "completed_at": now,
                     }

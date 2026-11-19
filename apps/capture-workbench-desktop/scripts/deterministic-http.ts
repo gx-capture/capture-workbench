@@ -87,12 +87,17 @@ export function verifyRequirements(context) {
   return requestJson({ ...context, path: '/v2/runtime/requirements' }).pipe(
     concatMap((requirements) => {
       assert.equal(requirements.status, 200);
-      const requirementIds = requirements.body.items.map((item) => item.requirementId);
+      const requirementIds = requirements.body.items.map((item) => {
+        assert.equal(item.kind, item.requirementId);
+        return item.requirementId;
+      });
       assert.deepEqual(requirementIds, [
         'text-recognition',
         'speech-recognition',
-        'ollama-runtime',
-        'capture-ollama-model',
+        'speaker-diarization',
+        'vertical-japanese-reader',
+        'structuring-runtime',
+        'structuring-model',
       ]);
       const installationKey = randomUUID();
       const installationPayload = JSON.stringify({ requirementId: 'speech-recognition', consent: true });
@@ -243,7 +248,7 @@ export function verifyHostStructuring(context, fixture) {
 
 function fixtureKind(fixture) {
   return fixture.mediaType === 'application/pdf' ? 'pdf'
-    : fixture.mediaType.startsWith('audio/') ? 'audio' : 'image';
+    : fixture.locatorKind === 'time' ? 'recording' : 'image';
 }
 
 export function validateReady(response) {
@@ -267,7 +272,7 @@ export function validateReady(response) {
   assert.equal(typeof response.body.runtimeVersion, 'string');
   assert.equal(response.body.contractSetVersion, '2');
   assert.deepEqual(response.body.capabilities, {
-    captureKinds: ['pdf', 'image', 'audio'],
+    captureKinds: ['pdf', 'image', 'recording'],
     structuringModes: ['runtime', 'host'],
     supportsCancellation: true, supportsRawDiagnostics: true, maxUploadBytes,
   });

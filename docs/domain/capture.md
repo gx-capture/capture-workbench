@@ -8,6 +8,8 @@
 
 用語與公開領域類別見 [glossary](../../.agents/PLANS/ddd-refactor/glossary.md)。概念 ID 與合約值映射以 `capture-vocabulary-v1.json` 為準。
 
+擷取來源種類為 `pdf`、`image` 與 `recording`。`recording` 涵蓋音訊及含音軌的影片。擷取診斷和結果透過 `suggestedRequirementIds` 列出建議安裝的需求 ID。
+
 ## 用例
 
 | 操作 | 程式名稱 | 說明 |

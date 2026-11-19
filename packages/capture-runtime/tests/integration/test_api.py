@@ -55,7 +55,7 @@ def test_v2_health_auth_host_origin_and_version_handshake(client: TestClient) ->
     assert ready.status_code == 200
     payload = ready.json()
     assert payload["protocolVersion"] == "2"
-    assert payload["captureKinds"] == ["pdf", "image", "audio"]
+    assert payload["captureKinds"] == ["pdf", "image", "recording"]
     assert ready.headers["cache-control"] == "no-store"
 
     runtime_ready = client.get("/v2/health/ready")
@@ -109,21 +109,21 @@ def test_v2_runtime_requirements_and_installation_lifecycle(settings_factory) ->
         created = client.post(
             "/v2/runtime/installations",
             headers=headers,
-            json={"requirementId": "capture-ollama-model", "consent": True},
+            json={"requirementId": "structuring-model", "consent": True},
         )
         assert created.status_code == 202, created.text
         installation_id = created.json()["installationId"]
         replay = client.post(
             "/v2/runtime/installations",
             headers=headers,
-            json={"requirementId": "capture-ollama-model", "consent": True},
+            json={"requirementId": "structuring-model", "consent": True},
         )
         assert replay.status_code == 202
         assert replay.json()["installationId"] == installation_id
 
         detail = client.get(f"/v2/runtime/installations/{installation_id}")
         assert detail.status_code == 200
-        assert detail.json()["requirementId"] == "capture-ollama-model"
+        assert detail.json()["requirementId"] == "structuring-model"
 
 
 def test_v2_runtime_ready_reports_authenticated_ocr_compute_decision(settings_factory) -> None:
@@ -245,14 +245,14 @@ def test_v2_uninstall_rejects_unknown_disabled_and_non_engine_requirements(
         headers={"Authorization": f"Bearer {TOKEN}"},
     ) as client:
         unknown = _uninstall(client, "no-such-engine")
-        model = _uninstall(client, "capture-ollama-model")
+        model = _uninstall(client, "structuring-model")
     host_settings = settings_factory(CAPTURE_STRUCTURING_PROVIDER="host")
     with TestClient(
         create_app(host_settings, installer=FakeRequirementInstaller()),
         base_url=f"http://127.0.0.1:{host_settings.port}",
         headers={"Authorization": f"Bearer {TOKEN}"},
     ) as client:
-        disabled = _uninstall(client, "capture-ollama-model")
+        disabled = _uninstall(client, "structuring-model")
 
     assert (unknown.status_code, unknown.json()["error"]["code"]) == (
         404,
@@ -402,3 +402,46 @@ def test_startup_reports_failed_waiting_capture_to_host(settings_factory):
         assert response.status_code == 200, response.text
         assert response.json()["status"] == "failed"
         assert response.json()["error"]["code"] == "streaming_source_unavailable"
+
+
+@pytest.mark.parametrize(
+    ("retired_id", "current_id"),
+    [
+        ("ollama-runtime", "structuring-runtime"),
+        ("capture-ollama-model", "structuring-model"),
+    ],
+)
+def test_retired_requirement_ids_are_rejected(
+    client: TestClient, retired_id: str, current_id: str
+) -> None:
+    response = client.post(
+        "/v2/runtime/installations",
+        json={"requirementId": retired_id, "consent": True},
+        headers=idempotency_headers(),
+    )
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "validation_error"
+    assert f"{retired_id} is retired; use {current_id}" in response.text
+
+    response = client.delete(f"/v2/runtime/requirements/{retired_id}/installation")
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "validation_error"
+    assert f"{retired_id} is retired; use {current_id}" in response.text
+
+
+def test_open_ingestion_rejects_retired_recording_kind(client: TestClient) -> None:
+    response = client.post(
+        "/v2/ingestions",
+        headers={"X-Idempotency-Key": "retired-kind"},
+        json={
+            "clientRequestId": "retired-kind",
+            "kind": "audio",
+            "fileName": "recording.mp3",
+            "mediaType": "audio/mpeg",
+            "totalBytes": 1,
+            "sourceSha256": "0" * 64,
+        },
+    )
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "validation_error"
+    assert "recording" in response.text

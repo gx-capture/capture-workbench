@@ -8,6 +8,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Header, status
 
+from capture_runtime.constants.requirements import RETIRED_STRUCTURING_REQUIREMENT_IDS
 from capture_runtime.contracts import (
     RuntimeInstallationsV2,
     RuntimeInstallationV2,
@@ -52,7 +53,7 @@ def register_runtime_routes(
             ready=True,
             capture_document_schema_sha256=CAPTURE_DOCUMENT_SCHEMA_RELEASE_SHA256,
             capabilities={
-                "captureKinds": ["pdf", "image", "audio"],
+                "captureKinds": ["pdf", "image", "recording"],
                 "structuringModes": [
                     mode.value for mode in dependencies.supported_structuring_modes
                 ],
@@ -131,6 +132,11 @@ def register_runtime_routes(
         response_model=RuntimeRequirementV2,
     )
     async def uninstall_requirement(requirement_id: str) -> RuntimeRequirementV2:
+        replacement = RETIRED_STRUCTURING_REQUIREMENT_IDS.get(requirement_id)
+        if replacement is not None:
+            raise ApiProblem(
+                422, "validation_error", f"{requirement_id} is retired; use {replacement}"
+            )
         if requirement_id in dependencies.disabled_requirement_ids:
             raise ApiProblem(
                 422,

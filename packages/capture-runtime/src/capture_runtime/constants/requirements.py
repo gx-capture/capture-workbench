@@ -10,5 +10,11 @@ SPEECH_RECOGNITION_REQUIREMENT_ID: Final = "speech-recognition"
 DIARIZATION_REQUIREMENT_ID: Final = "speaker-diarization"
 # Models only: the reader runs inside the OCR worker.
 VERTICAL_READER_REQUIREMENT_ID: Final = "vertical-japanese-reader"
-OLLAMA_RUNTIME_REQUIREMENT_ID: Final = "ollama-runtime"
-OLLAMA_MODEL_REQUIREMENT_ID: Final = "capture-ollama-model"
+STRUCTURING_RUNTIME_REQUIREMENT_ID: Final = "structuring-runtime"
+STRUCTURING_MODEL_REQUIREMENT_ID: Final = "structuring-model"
+
+# Stored records and validation messages share the retired requirement spellings.
+RETIRED_STRUCTURING_REQUIREMENT_IDS: Final = {
+    "ollama-runtime": STRUCTURING_RUNTIME_REQUIREMENT_ID,
+    "capture-ollama-model": STRUCTURING_MODEL_REQUIREMENT_ID,
+}

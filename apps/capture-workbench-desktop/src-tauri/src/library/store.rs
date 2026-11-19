@@ -710,6 +710,7 @@ impl LibraryStore {
         &self,
         request: LibraryDocumentRequest,
     ) -> Result<DesktopLibraryDetail, String> {
+        // Stored diagnostics retain their original contract vocabulary.
         validate_document_id(&request.document_id)?;
         // Keep raw and edits from the same committed generation while reading.
         let directory = self.document_directory(&request.document_id)?;
@@ -1311,23 +1312,46 @@ mod tests {
     }
 
     #[test]
-    fn legacy_export_and_json_keep_using_the_stored_result() {
+    fn historical_recording_keeps_raw_and_result_vocabulary_after_reopen_and_export() {
         let directory = tempfile::tempdir().expect("app data");
         let library = LibraryStore::open(directory.path()).unwrap();
         let document = library
             .create_source(LibrarySourceInput {
-                file_name: "old.pdf".into(),
-                media_type: "application/pdf".into(),
+                file_name: "old.wav".into(),
+                media_type: "audio/wav".into(),
                 bytes: b"source".to_vec(),
             })
             .unwrap();
         let item = library.document_directory(&document.document_id).unwrap();
-        let result = json!({"targetText":"structured"});
-        fs::write(
-            item.join(RESULT_FILE_NAME),
-            serde_json::to_vec(&result).unwrap(),
-        )
-        .unwrap();
+        let raw_path = item.join(RAW_FILE_NAME);
+        let result_path = item.join(RESULT_FILE_NAME);
+        let index_path = library.root.join(INDEX_FILE_NAME);
+        let raw_bytes = br#"{
+  "kind": "audio",
+  "suggestedUnits": ["ollama-runtime"],
+  "segments": [{"segmentId": "line-1", "text": "recognized",
+                "locator": {"kind": "time", "startMs": 0, "endMs": 1000}}]
+}"#;
+        let result_bytes = br#"{
+  "kind": "audio",
+  "targetText": "structured",
+  "suggestedUnits": ["capture-ollama-model"]
+}"#;
+        fs::write(&raw_path, raw_bytes).unwrap();
+        fs::write(&result_path, result_bytes).unwrap();
+        let index_bytes = fs::read(&index_path).unwrap();
+        drop(library);
+
+        let library = LibraryStore::open(directory.path()).unwrap();
+        let detail = library
+            .get(LibraryDocumentRequest {
+                document_id: document.document_id.clone(),
+            })
+            .unwrap();
+        let raw = serde_json::from_slice::<serde_json::Value>(raw_bytes).unwrap();
+        let result = serde_json::from_slice::<serde_json::Value>(result_bytes).unwrap();
+        assert_eq!(detail.raw.as_ref(), Some(&raw));
+        assert_eq!(detail.result.as_ref(), Some(&result));
         let request = |format| LibraryExportRequest {
             document_id: document.document_id.clone(),
             format,
@@ -1338,7 +1362,7 @@ mod tests {
                 .export(request(LibraryExportFormat::Text))
                 .unwrap()
                 .content,
-            "structured"
+            "[00:00:00] recognized"
         );
         let payload = library.export(request(LibraryExportFormat::Json)).unwrap();
         assert_eq!(payload.file_name, "old.json");
@@ -1347,6 +1371,21 @@ mod tests {
             serde_json::from_str::<serde_json::Value>(&payload.content).unwrap(),
             result
         );
+        assert_eq!(fs::read(&raw_path).unwrap().as_slice(), &raw_bytes[..]);
+        assert_eq!(
+            fs::read(&result_path).unwrap().as_slice(),
+            &result_bytes[..]
+        );
+        assert_eq!(fs::read(&index_path).unwrap(), index_bytes);
+
+        // The same JSON export reads raw diagnostics when a result was never saved.
+        fs::remove_file(&result_path).unwrap();
+        let payload = library.export(request(LibraryExportFormat::Json)).unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&payload.content).unwrap(),
+            raw
+        );
+        assert_eq!(fs::read(&raw_path).unwrap().as_slice(), &raw_bytes[..]);
     }
 
     fn old_item(items: &Path, id: &str) -> PathBuf {

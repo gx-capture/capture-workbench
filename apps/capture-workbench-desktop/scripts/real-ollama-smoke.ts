@@ -20,7 +20,7 @@ const maxWaitMs = 10 * 60_000;
 const maxInstallationWaitMs = 75 * 60_000;
 const coreRequirementIds = [
   'text-recognition',
-  'ollama-runtime',
+  'structuring-runtime',
 ] as const;
 const expectedStructuringEngine = 'ollama';
 const expectedStructuringModel = 'capture-workbench-qwen3.5-0.8b-structure-v1';
@@ -28,6 +28,7 @@ const sha256DigestPattern = /^sha256:[a-f0-9]{64}$/u;
 
 interface RuntimeRequirement {
   readonly requirementId: string;
+  readonly kind: string;
   readonly status: string;
   readonly detail?: string | null;
 }
@@ -199,9 +200,12 @@ async function prepareCoreRequirements(
     if (!requirement) {
       throw new Error(`Real runtime did not expose required ${requirementId}.`);
     }
+    if (requirement.kind !== requirementId) {
+      throw new Error(`Real runtime returned the wrong requirement kind for ${requirementId}.`);
+    }
     if (requirement.status === 'ready') continue;
     if (
-      requirementId === 'ollama-runtime' &&
+      requirementId === 'structuring-runtime' &&
       process.env['CAPTURE_REAL_SMOKE_ALLOW_OLLAMA_INSTALL']?.trim() !== '1'
     ) {
       throw new Error(

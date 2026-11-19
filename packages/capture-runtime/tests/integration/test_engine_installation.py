@@ -1194,16 +1194,16 @@ def test_structuring_requirement_installation_persists_progress_and_completion(
         structuring = FakeStructuringRequirementInstaller(
             (
                 RuntimeRequirementV2(
-                    requirement_id="ollama-runtime",
-                    kind="runtime",
+                    requirement_id="structuring-runtime",
+                    kind="structuring-runtime",
                     display_name="Ollama application",
                     status=RuntimeRequirementStatus.INSTALLABLE,
                     required_for=["runtime-structuring"],
                     install_strategy="winget",
                 ),
                 RuntimeRequirementV2(
-                    requirement_id="capture-ollama-model",
-                    kind="model",
+                    requirement_id="structuring-model",
+                    kind="structuring-model",
                     display_name="Capture structuring model",
                     status=RuntimeRequirementStatus.MISSING,
                     required_for=["runtime-structuring"],
@@ -1213,16 +1213,20 @@ def test_structuring_requirement_installation_persists_progress_and_completion(
         )
         installer = SystemRequirementInstaller(
             structuring,
-            enabled_requirement_ids={"text-recognition", "speech-recognition", "ollama-runtime"},
+            enabled_requirement_ids={
+                "text-recognition",
+                "speech-recognition",
+                "structuring-runtime",
+            },
         )
         requirements = installer.requirements(
-            {"text-recognition", "ollama-runtime", "capture-ollama-model"}
+            {"text-recognition", "structuring-runtime", "structuring-model"}
         )
         assert [row.requirement_id for row in requirements] == [
             "text-recognition",
-            "ollama-runtime",
+            "structuring-runtime",
         ]
-        assert structuring.filters == [frozenset({"text-recognition", "ollama-runtime"})]
+        assert structuring.filters == [frozenset({"text-recognition", "structuring-runtime"})]
 
         clock = SystemClock()
         repository = InstallationRepository(tmp_path / "jobs", clock=clock, retention_hours=24)
@@ -1238,7 +1242,7 @@ def test_structuring_requirement_installation_persists_progress_and_completion(
         try:
             await asyncio.wait_for(structuring.started.wait(), 5)
             assert structuring.install_calls == [
-                ("ollama-runtime", service._cancellations[installation_id])
+                ("structuring-runtime", service._cancellations[installation_id])
             ]
             running = json.loads(metadata.read_text(encoding="utf-8"))["job"]
             assert running["status"] == "running"
@@ -1571,7 +1575,7 @@ def test_speaker_identification_is_listed_as_an_optional_unit(tmp_path: Path) ->
     requirements = {item.requirement_id: item for item in installer.requirements()}
 
     assert requirements["speaker-diarization"].optional is True
-    assert requirements["speaker-diarization"].required_for == ["audio"]
+    assert requirements["speaker-diarization"].required_for == ["recording"]
     assert requirements["speaker-diarization"].status.value == "unavailable"
     assert requirements["speaker-diarization"].download_bytes is None
     assert requirements["speech-recognition"].optional is True
@@ -3114,7 +3118,7 @@ def _open_wav(repository: StreamingRepository) -> str:
     ingestion = repository.create_ingestion(
         OpenIngestionV2(
             client_request_id="speech-model-content",
-            kind=CaptureSourceKind.AUDIO,
+            kind=CaptureSourceKind.RECORDING,
             file_name="sample.wav",
             media_type="audio/wav",
             total_bytes=len(_WAV),

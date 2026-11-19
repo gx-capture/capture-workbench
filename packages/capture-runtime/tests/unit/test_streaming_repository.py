@@ -91,13 +91,13 @@ def test_streaming_repository_recovers_ordered_upload_and_event_log(tmp_path: Pa
         )
     )
     assert capture.status is StreamingCaptureStatus.EXTRACTING
-    assert capture.kind is CaptureSourceKind.AUDIO
+    assert capture.kind is CaptureSourceKind.RECORDING
     metadata = json.loads(
         (tmp_path / "streaming" / "captures" / capture.capture_id / "metadata.json").read_text(
             encoding="utf-8"
         )
     )
-    assert metadata["operation"]["kind"] == "audio"
+    assert metadata["operation"]["kind"] == "recording"
 
     restarted = StreamingRepository(
         tmp_path / "streaming", clock=clock, retention_hours=4, policy=_DEFAULT_POLICY
@@ -107,7 +107,7 @@ def test_streaming_repository_recovers_ordered_upload_and_event_log(tmp_path: Pa
     assert restarted.get_ingestion(ingestion_id).status is StreamingIngestionStatus.READY
     recovered = restarted.get_capture(capture.capture_id)
     assert recovered.last_event_sequence == 1
-    assert recovered.kind is CaptureSourceKind.AUDIO
+    assert recovered.kind is CaptureSourceKind.RECORDING
     assert len(restarted.read_events(capture.capture_id, after_sequence=-1)) == 1
     assert restarted.source_path(ingestion_id).read_bytes() == source
 
@@ -406,7 +406,7 @@ def test_progress_that_does_not_fit_the_capture_kind_is_never_written(tmp_path: 
     capture_id = _ready_pdf_capture(repository)
     before = repository.get_capture(capture_id)
 
-    with pytest.raises(ValueError, match="audio captures"):
+    with pytest.raises(ValueError, match="recordings"):
         repository.append_event(
             capture_id,
             event_type=StreamingEventType.CHECKPOINT,
@@ -541,7 +541,7 @@ def test_streaming_repository_prunes_recovered_oversized_ingestion_without_activ
             client_request_id="recover-oversized-1",
             file_name="large.mp3",
             media_type="audio/mpeg",
-            kind=CaptureSourceKind.AUDIO,
+            kind=CaptureSourceKind.RECORDING,
             total_bytes=60 * 1024 * 1024,
         )
     )
@@ -583,7 +583,7 @@ def test_streaming_repository_preserves_recovered_oversized_ingestion_with_activ
             client_request_id="recover-active-1",
             file_name="sample.wav",
             media_type="audio/wav",
-            kind=CaptureSourceKind.AUDIO,
+            kind=CaptureSourceKind.RECORDING,
             total_bytes=total_bytes,
             source_sha256=digest,
         )
@@ -638,7 +638,7 @@ def test_streaming_repository_chunk_zero_audio_sniffing_rejects_non_audio_and_cl
             client_request_id="audio-fake-pdf-chunk",
             file_name="fake.wav",
             media_type="audio/wav",
-            kind=CaptureSourceKind.AUDIO,
+            kind=CaptureSourceKind.RECORDING,
             total_bytes=declared_total,
         )
     )
@@ -670,7 +670,7 @@ def test_streaming_repository_chunk_zero_audio_sniffing_rejects_non_audio_and_cl
             client_request_id="audio-real-wav-chunk",
             file_name="real.wav",
             media_type="audio/wav",
-            kind=CaptureSourceKind.AUDIO,
+            kind=CaptureSourceKind.RECORDING,
             total_bytes=declared_total,
         )
     )
@@ -699,7 +699,7 @@ def _open_large_recording(
             client_request_id=client_request_id,
             file_name="large.wav",
             media_type="audio/wav",
-            kind=CaptureSourceKind.AUDIO,
+            kind=CaptureSourceKind.RECORDING,
             total_bytes=total_bytes,
         )
     ).ingestion_id
@@ -1499,3 +1499,110 @@ def test_terminal_startup_repair_reads_log_once(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "read_bytes", counted)
     repository.initialize()
     assert reads == [log]
+
+
+@pytest.mark.parametrize("legacy_kind", ["audio", None])
+def test_repository_replays_historical_recording_kind(
+    tmp_path: Path, legacy_kind: str | None
+) -> None:
+    repository = StreamingRepository(
+        tmp_path, clock=MutableClock(), retention_hours=4, policy=_DEFAULT_POLICY
+    )
+    repository.initialize()
+    source = b"historical recording"
+    ingestion_id, digest = _open(repository, source)
+    repository.append_chunk(
+        ingestion_id,
+        chunk_index=0,
+        byte_offset=0,
+        data=source,
+        sha256=digest,
+        max_chunk_bytes=4 * 1024 * 1024,
+        declared_total_bytes=len(source),
+    )
+    repository.finalize_ingestion(ingestion_id, total_bytes=len(source), sha256=digest)
+    request = StartCaptureV2(
+        client_request_id="historical-capture",
+        ingestion_id=ingestion_id,
+        structuring_mode=StructuringMode.HOST,
+    )
+    capture = repository.create_capture(request)
+    repository.fail_capture(
+        capture.capture_id,
+        CaptureFailureV2(code="progressive_failed", message="Fixture failure."),
+    )
+    capture_dir = tmp_path / "captures" / capture.capture_id
+    ingestion_metadata = tmp_path / "ingestions" / ingestion_id / "metadata.json"
+    capture_metadata = capture_dir / "metadata.json"
+    event_path = capture_dir / "events.jsonl"
+
+    def set_historical_kind(payload: dict[str, object]) -> None:
+        if legacy_kind is None:
+            del payload["kind"]
+        else:
+            payload["kind"] = legacy_kind
+
+    for path, key in ((ingestion_metadata, "request"), (capture_metadata, "operation")):
+        payload = json.loads(path.read_bytes())
+        set_historical_kind(payload[key])
+        path.write_text(json.dumps(payload), encoding="utf-8")
+    events = [json.loads(line) for line in event_path.read_bytes().splitlines()]
+    for event in events:
+        set_historical_kind(event)
+    event_path.write_bytes(b"".join(json.dumps(event).encode() + b"\n" for event in events))
+    files = (ingestion_metadata, capture_metadata, event_path)
+    before = {path: path.read_bytes() for path in files}
+
+    repository.initialize()
+
+    assert repository.get_ingestion(ingestion_id).kind is CaptureSourceKind.RECORDING
+    assert _open(repository, source)[0] == ingestion_id
+    assert repository.create_capture(request).capture_id == capture.capture_id
+    assert repository.get_capture(capture.capture_id).kind is CaptureSourceKind.RECORDING
+    replay = repository.read_events(capture.capture_id, after_sequence=-1)
+    assert replay and all(event.kind is CaptureSourceKind.RECORDING for event in replay)
+    assert {path: path.read_bytes() for path in before} == before
+
+
+@pytest.mark.parametrize("legacy_kind", ["audio", None])
+def test_interrupted_ingestion_preserves_historical_kind(
+    tmp_path: Path, legacy_kind: str | None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repository = StreamingRepository(
+        tmp_path, clock=MutableClock(), retention_hours=4, policy=_DEFAULT_POLICY
+    )
+    repository.initialize()
+    source = b"historical recording"
+    ingestion_id, digest = _open(repository, source)
+    repository.append_chunk(
+        ingestion_id,
+        chunk_index=0,
+        byte_offset=0,
+        data=source,
+        sha256=digest,
+        max_chunk_bytes=4 * 1024 * 1024,
+        declared_total_bytes=len(source),
+    )
+    source_path = repository.source_path(ingestion_id)
+    path = tmp_path / "ingestions" / ingestion_id / "metadata.json"
+    historical = json.loads(path.read_bytes())
+    if legacy_kind is None:
+        del historical["request"]["kind"]
+    else:
+        historical["request"]["kind"] = legacy_kind
+    path.write_text(json.dumps(historical), encoding="utf-8")
+    source_path.write_bytes(b"")
+
+    # Inspect the recovery write before normal expiry removes the failed ingestion.
+    monkeypatch.setattr(repository, "prune_expired", lambda: None)
+    repository.initialize()
+
+    ingestion = repository.get_ingestion(ingestion_id)
+    assert ingestion.status is StreamingIngestionStatus.FAILED
+    assert ingestion.kind is CaptureSourceKind.RECORDING
+    after = json.loads(path.read_bytes())
+    assert after.pop("status") == "failed"
+    assert historical.pop("status") == "open"
+    after.pop("expiresAt")
+    historical.pop("expiresAt")
+    assert after == historical

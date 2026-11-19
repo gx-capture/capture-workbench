@@ -144,7 +144,7 @@ describe('what the runtime sends for speakers', () => {
     expect(document.durationMs).toBeNull();
 
     const recording = await decode<CaptureOperation>(
-      'audioCaptureOperation',
+      'recordingCaptureOperation',
       'CaptureOperation',
     );
     expect([recording.coveredUntilMs, recording.durationMs]).toEqual([

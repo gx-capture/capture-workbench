@@ -78,7 +78,7 @@
       "enum": [
         "pdf",
         "image",
-        "audio"
+        "recording"
       ],
       "title": "CaptureSourceKind",
       "type": "string"
@@ -118,7 +118,7 @@
     },
     "kind": {
       "$ref": "#/$defs/CaptureSourceKind",
-      "default": "audio"
+      "default": "recording"
     },
     "status": {
       "$ref": "#/$defs/StreamingCaptureStatus"

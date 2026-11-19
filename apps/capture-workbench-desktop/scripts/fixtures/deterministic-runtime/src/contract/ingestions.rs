@@ -35,17 +35,22 @@ impl FixtureState {
             Ok(payload) => payload,
             Err(response) => return response,
         };
-        let key = match matching_request_key(request, &payload, payload["kind"] == "audio") {
+        let kind = match payload.get("kind") {
+            None => "recording",
+            Some(kind) => match kind.as_str() {
+                Some(kind @ ("pdf" | "image" | "recording")) => kind,
+                _ => return validation_error("Capture kind must be pdf, image, or recording."),
+            },
+        };
+        let key = match matching_request_key(request, &payload, kind == "recording") {
             Ok(key) => key,
             Err(response) => return response,
         };
-        let kind = payload["kind"].as_str().unwrap_or("audio");
         let file_name = payload["fileName"].as_str().unwrap_or_default();
         let media_type = payload["mediaType"].as_str().unwrap_or_default();
         let total_bytes = payload["totalBytes"].as_u64().unwrap_or(0);
         let source_sha256 = payload.get("sourceSha256").filter(|value| !value.is_null());
-        if !matches!(kind, "pdf" | "image" | "audio")
-            || payload.get("mode").is_some_and(|value| value != "file")
+        if payload.get("mode").is_some_and(|value| value != "file")
             || file_name.trim().is_empty()
             || file_name.chars().count() > 255
             || media_type.trim().is_empty()

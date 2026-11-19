@@ -477,7 +477,7 @@ function requirement(status: RuntimeRequirement['status']): RuntimeRequirement {
     requirementId: 'text-recognition',
     displayName: '文字辨識',
     status,
-    kind: 'runtime',
+    kind: 'text-recognition',
     requiredFor: ['capture'],
     installStrategy: 'runtime-catalog',
     detail: null,

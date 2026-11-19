@@ -355,9 +355,9 @@ def test_document_captures_report_pages_done_out_of_pages_total(build, kind) -> 
         (CaptureSourceKind.PDF, {"pagesTotal": 3}, "set together"),
         (CaptureSourceKind.PDF, {"pagesDone": 4, "pagesTotal": 3}, "cannot exceed"),
         (CaptureSourceKind.PDF, {"pagesDone": 0, "pagesTotal": 0}, "greater than or equal to 1"),
-        (CaptureSourceKind.AUDIO, {"pagesDone": 1, "pagesTotal": 2}, "document captures"),
-        (CaptureSourceKind.PDF, {"durationMs": 1_000}, "audio captures"),
-        (CaptureSourceKind.IMAGE, {"durationMs": 1_000}, "audio captures"),
+        (CaptureSourceKind.RECORDING, {"pagesDone": 1, "pagesTotal": 2}, "document captures"),
+        (CaptureSourceKind.PDF, {"durationMs": 1_000}, "recordings"),
+        (CaptureSourceKind.IMAGE, {"durationMs": 1_000}, "recordings"),
     ],
 )
 def test_capture_progress_fields_are_paired_and_kind_bound(build, kind, progress, message) -> None:
@@ -366,17 +366,19 @@ def test_capture_progress_fields_are_paired_and_kind_bound(build, kind, progress
 
 
 def test_audio_operations_report_duration_and_covered_time() -> None:
-    operation = _operation(CaptureSourceKind.AUDIO, durationMs=2_490_000, coveredUntilMs=724_000)
+    operation = _operation(
+        CaptureSourceKind.RECORDING, durationMs=2_490_000, coveredUntilMs=724_000
+    )
 
     wire = operation.model_dump(mode="json", by_alias=True)
     assert (wire["durationMs"], wire["coveredUntilMs"]) == (2_490_000, 724_000)
     assert wire["pagesDone"] is None and wire["pagesTotal"] is None
-    with pytest.raises(ValueError, match="audio captures"):
+    with pytest.raises(ValueError, match="recordings"):
         _operation(CaptureSourceKind.PDF, coveredUntilMs=1_000)
 
 
 def test_audio_events_report_duration_beside_covered_time() -> None:
-    event = _event(CaptureSourceKind.AUDIO, durationMs=2_490_000, coveredUntilMs=724_000)
+    event = _event(CaptureSourceKind.RECORDING, durationMs=2_490_000, coveredUntilMs=724_000)
 
     assert (event.duration_ms, event.covered_until_ms) == (2_490_000, 724_000)
 

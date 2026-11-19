@@ -28,7 +28,7 @@ from capture_runtime._worker_payloads import (
     parse_engine_timings as _parse_engine_timings,
 )
 from capture_runtime._worker_payloads import (
-    parse_suggested_units as _parse_suggested_units,
+    parse_suggested_requirement_ids as _parse_suggested_requirement_ids,
 )
 from capture_runtime._worker_payloads import (
     parse_words as _parse_words,
@@ -94,7 +94,7 @@ def parse_ocr_compute_selection(payload: dict[str, Any]) -> OcrComputeSelection:
 def parse_run_result(payload: dict[str, Any]) -> OcrWorkerRunResult[OcrExecutionDeviceProofV1]:
     fields = set(payload)
     if not {"segments", "provenance", "warnings"}.issubset(fields) or not fields.issubset(
-        {"segments", "provenance", "warnings", "pages", "executionProof", "suggestedUnits"}
+        {"segments", "provenance", "warnings", "pages", "executionProof", "suggestedRequirementIds"}
     ):
         raise WorkerResultError("worker run result has unexpected fields")
     raw_segments = payload["segments"]
@@ -184,7 +184,9 @@ def parse_run_result(payload: dict[str, Any]) -> OcrWorkerRunResult[OcrExecution
         pages=pages,
         ocr_provenance=ocr_provenance,
         execution_proof=execution_proof,
-        suggested_units=_parse_suggested_units(payload.get("suggestedUnits")),
+        suggested_requirement_ids=_parse_suggested_requirement_ids(
+            payload.get("suggestedRequirementIds")
+        ),
         elapsed_ms=elapsed_ms,
         stage_ms=stage_ms,
     )

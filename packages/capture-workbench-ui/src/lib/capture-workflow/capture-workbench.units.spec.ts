@@ -16,7 +16,7 @@ import {
 
 const READER: RuntimeRequirement = {
   requirementId: 'vertical-japanese-reader',
-  kind: 'vertical-reader',
+  kind: 'vertical-japanese-reader',
   displayName: 'Vertical Japanese reader',
   status: 'installable',
   requiredFor: ['pdf', 'image'],
@@ -67,7 +67,7 @@ describe('CaptureWorkbenchComponent optional units', () => {
             raw: RAW,
             result: {
               ...DOCUMENT,
-              suggestedUnits: ['vertical-japanese-reader' as const],
+              suggestedRequirementIds: ['vertical-japanese-reader' as const],
             },
           }),
         ),
@@ -103,7 +103,7 @@ describe('CaptureWorkbenchComponent optional units', () => {
             { ...READER, optional: false, downloadBytes: 120_000_000 },
             {
               requirementId: 'text-recognition',
-              kind: 'ocr',
+              kind: 'text-recognition',
               displayName: 'Text recognition',
               status: 'installable',
               requiredFor: ['pdf', 'image'],

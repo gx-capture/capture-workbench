@@ -7,10 +7,20 @@ import {
 } from './errors.js';
 import type {
   CaptureOcrProjection,
+  CaptureRequirementId,
   ErrorEnvelope,
   RuntimeTransport,
   SubmitStructuringBatch,
 } from './contracts.js';
+
+const REQUIREMENT_IDS: ReadonlySet<unknown> = new Set<CaptureRequirementId>([
+  'text-recognition',
+  'speech-recognition',
+  'speaker-diarization',
+  'vertical-japanese-reader',
+  'structuring-runtime',
+  'structuring-model',
+]);
 
 /** Generated wire models whose top-level fields are checked before casting. */
 export type RuntimeResponseModel =
@@ -41,9 +51,9 @@ const MODEL_FIELDS: Record<RuntimeResponseModel, { readonly required: readonly s
   RuntimeInstallations: { required: ['items'], optional: [] },
   RuntimeModelInstallation: { required: ['installationId', 'optionId', 'status', 'progress', 'createdAt', 'updatedAt'], optional: ['error', 'completedAt'] },
   RuntimeModelOptions: { required: ['catalogSha256', 'items'], optional: [] },
-  RawCapture: { required: ['schemaVersion', 'diagnosticOnly', 'source', 'segments', 'sourceText', 'extractionEngine', 'createdAt'], optional: ['diarizationEngine', 'speakers', 'suggestedUnits', 'warnings', 'ocrPageScope'] },
+  RawCapture: { required: ['schemaVersion', 'diagnosticOnly', 'source', 'segments', 'sourceText', 'extractionEngine', 'createdAt'], optional: ['diarizationEngine', 'speakers', 'suggestedRequirementIds', 'warnings', 'ocrPageScope'] },
   CaptureOcrProjection: { required: ['apiVersion', 'schemaVersion', 'captureId', 'status', 'pages', 'pageCount', 'runtimeVersion', 'contractSha256', 'provenance', 'createdAt'], optional: ['source', 'warnings', 'failure'] },
-  CaptureDocument: { required: ['blocks', 'completedAt', 'createdAt', 'extractionEngine', 'rawSegments', 'schemaVersion', 'source', 'sourceText', 'structuringEngine', 'targetText'], optional: ['diarizationEngine', 'speakers', 'suggestedUnits', 'warnings'] },
+  CaptureDocument: { required: ['blocks', 'completedAt', 'createdAt', 'extractionEngine', 'rawSegments', 'schemaVersion', 'source', 'sourceText', 'structuringEngine', 'targetText'], optional: ['diarizationEngine', 'speakers', 'suggestedRequirementIds', 'warnings'] },
   CaptureOperation: { required: ['protocolVersion', 'captureId', 'ingestionId', 'status', 'partialRevision', 'lastEventSequence', 'createdAt', 'updatedAt'], optional: ['kind', 'progress', 'source', 'error', 'completedAt', 'pagesTotal', 'pagesDone', 'durationMs', 'coveredUntilMs'] },
   Ingestion: { required: ['protocolVersion', 'ingestionId', 'status', 'fileName', 'mediaType', 'totalBytes', 'receivedBytes', 'contiguousBytes', 'nextChunkIndex', 'nextOffset', 'expiresAt'], optional: ['kind', 'sourceSha256', 'finalizedSha256'] },
   PartialCapture: { required: ['protocolVersion', 'captureId', 'source', 'revision', 'coveredUntilMs', 'updatedAt'], optional: ['segments', 'sourceText', 'extractionEngine'] },
@@ -88,9 +98,47 @@ function validateModelShape(value: unknown, model: RuntimeResponseModel): void {
     throw new CaptureRuntimeProtocolError(`Capture Runtime returned ${model} without required field: ${missing}.`);
   }
   if (model === 'CaptureOcrProjection') validateCaptureOcrProjection(record);
-  if (model === 'RuntimeReady') validateRuntimeReady(record);
-  if (model === 'RuntimeInstallation') validateRuntimeInstallationDownload(record);
+  if (model === 'RuntimeReady') {
+    validateRuntimeReady(record);
+    validateCaptureKinds(asRecord(record['capabilities'], 'RuntimeReady capabilities')['captureKinds']);
+  }
+  if (model === 'RuntimeStreamingCapabilities') validateCaptureKinds(record['captureKinds']);
+  if (model === 'RuntimeInstallation') {
+    if (!REQUIREMENT_IDS.has(record['requirementId'])) {
+      throw new CaptureRuntimeProtocolError('Capture Runtime returned invalid RuntimeInstallation requirement identifier.');
+    }
+    validateRuntimeInstallationDownload(record);
+  }
+  if (model === 'RuntimeInstallations') {
+    if (!Array.isArray(record['items'])) {
+      throw new CaptureRuntimeProtocolError('Capture Runtime returned invalid RuntimeInstallations items.');
+    }
+    for (const item of record['items']) validateModelShape(item, 'RuntimeInstallation');
+  }
   if (model === 'CaptureOperation') assertCaptureProgress(record, 'CaptureOperation');
+  if (model === 'Ingestion') assertCaptureKind(record['kind'], model);
+  if (model === 'RuntimeRequirement' &&
+      (!REQUIREMENT_IDS.has(record['requirementId']) || record['kind'] !== record['requirementId'])) {
+    throw new CaptureRuntimeProtocolError('Capture Runtime returned invalid RuntimeRequirement identity.');
+  }
+  if (model === 'RuntimeRequirements') {
+    if (!Array.isArray(record['items'])) {
+      throw new CaptureRuntimeProtocolError('Capture Runtime returned invalid RuntimeRequirements items.');
+    }
+    for (const item of record['items']) validateModelShape(item, 'RuntimeRequirement');
+  }
+  if (model === 'RawCapture' || model === 'CaptureDocument') {
+    const suggested = record['suggestedRequirementIds'];
+    if (suggested !== undefined &&
+        (!Array.isArray(suggested) || suggested.some((id) => !REQUIREMENT_IDS.has(id)))) {
+      throw new CaptureRuntimeProtocolError(`Capture Runtime returned invalid ${model} recommendations.`);
+    }
+  }
+  if (model === 'StreamingResult') {
+    validateModelShape(record['operation'], 'CaptureOperation');
+    validateModelShape(record['raw'], 'RawCapture');
+    validateModelShape(record['result'], 'CaptureDocument');
+  }
   if (model === 'StructuringSession') validateStructuringSession(record);
   if (model === 'StructuringBatch') validateStructuringBatch(record);
 }
@@ -618,11 +666,12 @@ function sameOcrProvenance(left: unknown, right: unknown): boolean {
 
 /**
  * Page counts come as a pair for a document capture, and the count never passes
- * the total; media times belong to an audio capture. Used for operations and
+ * the total; media times belong to a recording. Used for operations and
  * for SSE capture events, which carry the same progress fields.
  */
 export function assertCaptureProgress(record: Record<string, unknown>, label: string): void {
-  const kind = record['kind'] ?? 'audio';
+  const kind = record['kind'] ?? 'recording';
+  assertCaptureKind(kind, label);
   const done = record['pagesDone'] ?? null;
   const total = record['pagesTotal'] ?? null;
   if (done !== null || total !== null) {
@@ -640,10 +689,24 @@ export function assertCaptureProgress(record: Record<string, unknown>, label: st
   for (const field of mediaFields) {
     const value = record[field] ?? null;
     if (value === null) continue;
-    if (kind !== 'audio' || !isSafeIntegerAtLeast(value, 0)) {
+    if (kind !== 'recording' || !isSafeIntegerAtLeast(value, 0)) {
       throw new CaptureRuntimeProtocolError(`Capture Runtime returned invalid ${label} ${field}.`);
     }
   }
+}
+
+function assertCaptureKind(kind: unknown, label: string): void {
+  if (kind !== undefined && kind !== 'pdf' && kind !== 'image' && kind !== 'recording') {
+    throw new CaptureRuntimeProtocolError(`Capture Runtime returned invalid ${label} kind.`);
+  }
+}
+
+function validateCaptureKinds(value: unknown): void {
+  if (value === undefined) return;
+  if (!Array.isArray(value)) {
+    throw new CaptureRuntimeProtocolError('Capture Runtime returned invalid readiness capture kinds.');
+  }
+  for (const kind of value) assertCaptureKind(kind, 'readiness capability');
 }
 
 /** Download bytes come as a pair, and the count never passes the total. */

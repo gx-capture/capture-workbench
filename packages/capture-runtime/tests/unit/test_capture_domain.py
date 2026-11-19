@@ -248,7 +248,7 @@ def test_capture_aggregate_rejects_skipped_states_and_keeps_terminal_state() -> 
     from capture_runtime.capture.domain.operation.models import CaptureTransitionError
     from capture_runtime.contracts import StreamingEventType
 
-    operation = CaptureOperation(capture_id="c", ingestion_id="i", kind=CaptureSourceKind.AUDIO)
+    operation = CaptureOperation(capture_id="c", ingestion_id="i", kind=CaptureSourceKind.RECORDING)
     with pytest.raises(CaptureTransitionError):
         operation.transition(StreamingCaptureStatus.STRUCTURING)
     extracting = operation.transition(StreamingCaptureStatus.EXTRACTING)

@@ -40,6 +40,7 @@ from .contracts import (
     CaptureEvent,
     CaptureOcrProjection,
     CaptureOperation,
+    CaptureRequirementId,
     CaptureSourceKind,
     Ingestion,
     OpenStructuringSession,
@@ -160,7 +161,7 @@ class CaptureRuntimeClient:
         return decode_model(self._request("GET", "/v2/runtime/requirements"), RuntimeRequirements)
 
     def start_installation(
-        self, requirement_id: str, *, idempotency_key: UUID | str
+        self, requirement_id: CaptureRequirementId, *, idempotency_key: UUID | str
     ) -> RuntimeInstallation:
         """Start installing a requirement with user consent; the key makes retries idempotent."""
         return decode_model(
@@ -199,7 +200,7 @@ class CaptureRuntimeClient:
             RuntimeInstallation,
         )
 
-    def uninstall_requirement(self, requirement_id: str) -> RuntimeRequirement:
+    def uninstall_requirement(self, requirement_id: CaptureRequirementId) -> RuntimeRequirement:
         """Remove an installed engine to free disk space; return the requirement, not installed.
 
         Uninstalling a requirement that is not installed returns it unchanged.

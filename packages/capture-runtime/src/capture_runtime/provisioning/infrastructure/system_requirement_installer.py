@@ -9,12 +9,13 @@ from capture_runtime.config import ExtractionRuntimeConfig
 from capture_runtime.constants import (
     DIARIZATION_REQUIREMENT_ID,
     MAX_RUNTIME_ARTIFACT_BYTES,
-    OLLAMA_MODEL_REQUIREMENT_ID,
-    OLLAMA_RUNTIME_REQUIREMENT_ID,
     SPEECH_RECOGNITION_REQUIREMENT_ID,
+    STRUCTURING_MODEL_REQUIREMENT_ID,
+    STRUCTURING_RUNTIME_REQUIREMENT_ID,
     TEXT_RECOGNITION_REQUIREMENT_ID,
     VERTICAL_READER_REQUIREMENT_ID,
 )
+from capture_runtime.constants.requirements import RETIRED_STRUCTURING_REQUIREMENT_IDS
 from capture_runtime.contracts import (
     RuntimeArtifactDescriptorV2,
     RuntimeRequirementStatus,
@@ -68,6 +69,10 @@ _ENGINE_UNIT_IDS = frozenset(
 def _validate_enabled_requirements(requirement_ids: Collection[str] | None) -> None:
     if requirement_ids is not None and "windowsml-ocr" in requirement_ids:
         raise ValueError("windowsml-ocr is retired; use text-recognition")
+    for requirement_id in requirement_ids or ():
+        replacement = RETIRED_STRUCTURING_REQUIREMENT_IDS.get(requirement_id)
+        if replacement is not None:
+            raise ValueError(f"{requirement_id} is retired; use {replacement}")
 
 
 class SystemRequirementInstaller:
@@ -106,25 +111,22 @@ class SystemRequirementInstaller:
             return effective_requirement_ids is None or requirement_id in effective_requirement_ids
 
         requirements: list[RuntimeRequirementV2] = []
-        for requirement_id, kind, display_name, required_for, optional in (
-            (TEXT_RECOGNITION_REQUIREMENT_ID, "OCR", "Text recognition", ["pdf", "image"], False),
+        for requirement_id, display_name, required_for, optional in (
+            (TEXT_RECOGNITION_REQUIREMENT_ID, "Text recognition", ["pdf", "image"], False),
             (
                 SPEECH_RECOGNITION_REQUIREMENT_ID,
-                "transcription",
                 "Speech recognition",
-                ["audio"],
+                ["recording"],
                 True,
             ),
             (
                 DIARIZATION_REQUIREMENT_ID,
-                "speaker-identification",
                 "Speaker identification",
-                ["audio"],
+                ["recording"],
                 True,
             ),
             (
                 VERTICAL_READER_REQUIREMENT_ID,
-                "vertical-reader",
                 "Vertical Japanese reader",
                 ["pdf", "image"],
                 True,
@@ -171,7 +173,7 @@ class SystemRequirementInstaller:
             requirements.append(
                 RuntimeRequirementV2(
                     requirement_id=requirement_id,
-                    kind=kind,
+                    kind=requirement_id,
                     display_name=display_name,
                     status=status,
                     required_for=required_for,
@@ -277,7 +279,7 @@ class SystemRequirementInstaller:
                 report_download=report_download,
             )
             return
-        if requirement_id in {OLLAMA_RUNTIME_REQUIREMENT_ID, OLLAMA_MODEL_REQUIREMENT_ID}:
+        if requirement_id in {STRUCTURING_RUNTIME_REQUIREMENT_ID, STRUCTURING_MODEL_REQUIREMENT_ID}:
             await self._structuring.install(
                 requirement_id,
                 cancel_event=cancel_event,

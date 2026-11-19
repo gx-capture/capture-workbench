@@ -36,7 +36,7 @@ export const READY: RuntimeReady = {
     noticeCode: null,
   },
   capabilities: {
-    captureKinds: ['pdf', 'image', 'audio'],
+    captureKinds: ['pdf', 'image', 'recording'],
     structuringModes: ['runtime', 'host'],
     supportsCancellation: true,
     supportsRawDiagnostics: true,
@@ -107,7 +107,7 @@ export function streamingOperation(
     protocolVersion: '2',
     captureId: 'capture-1',
     ingestionId: 'ingestion-1',
-    kind: 'audio',
+    kind: 'recording',
     status,
     progress,
     partialRevision: 1,

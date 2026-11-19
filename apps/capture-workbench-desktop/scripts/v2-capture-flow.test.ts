@@ -44,7 +44,7 @@ test('v2 request builders support pdf, image, and audio with runtime or host str
   assert.deepEqual(
     buildOpenIngestionRequest({
       clientRequestId: 'req-1',
-      kind: 'audio',
+      kind: 'recording',
       fileName: 'sample.mp3',
       mediaType: 'audio/mpeg',
       totalBytes: 4096,
@@ -52,7 +52,7 @@ test('v2 request builders support pdf, image, and audio with runtime or host str
     }),
     {
       protocolVersion: '2',
-      kind: 'audio',
+      kind: 'recording',
       mode: 'file',
       clientRequestId: 'req-1',
       fileName: 'sample.mp3',

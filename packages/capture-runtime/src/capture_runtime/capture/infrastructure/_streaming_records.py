@@ -16,6 +16,22 @@ from capture_runtime.contracts import (
     StartCaptureV2,
     StreamingIngestionStatus,
 )
+from capture_runtime.storage.common import project_stored_capture_kind
+
+
+def _stored_kind(payload: dict[str, Any]) -> str | None:
+    if "kind" not in payload:
+        return None
+    # Preserve the retired spelling only. Current kinds come from the model.
+    return "audio" if payload["kind"] == "audio" else ""
+
+
+def _preserve_stored_kind(payload: dict[str, Any], kind: str | None) -> dict[str, Any]:
+    if kind is None:
+        payload.pop("kind", None)
+    elif kind:
+        payload["kind"] = kind
+    return payload
 
 
 @dataclass(slots=True)
@@ -28,6 +44,8 @@ class _IngestionRecord:
     next_offset: int = 0
     accepted_chunks: dict[int, tuple[int, int, str]] = field(default_factory=dict)
     finalized_sha256: str | None = None
+    # An empty value writes the current kind. None preserves an omitted kind.
+    stored_kind: str | None = ""
 
     def domain(self) -> Ingestion:
         return Ingestion(
@@ -61,7 +79,9 @@ class _IngestionRecord:
 
     def dump(self) -> dict[str, object]:
         return {
-            "request": self.request.model_dump(mode="json", by_alias=True),
+            "request": _preserve_stored_kind(
+                self.request.model_dump(mode="json", by_alias=True), self.stored_kind
+            ),
             "ingestionId": self.ingestion_id,
             "status": self.status.value,
             "expiresAt": self.expires_at.isoformat(),
@@ -82,7 +102,8 @@ class _IngestionRecord:
         datetime_from_text: Callable[[str], datetime],
     ) -> _IngestionRecord:
         return cls(
-            request=OpenIngestionV2.model_validate(payload["request"]),
+            request=OpenIngestionV2.model_validate(project_stored_capture_kind(payload["request"])),
+            stored_kind=_stored_kind(payload["request"]),
             ingestion_id=ingestion_id,
             status=StreamingIngestionStatus(payload["status"]),
             expires_at=datetime_from_text(str(payload["expiresAt"])),
@@ -104,11 +125,15 @@ class _CaptureRecord:
     commit_fingerprint: str | None = None
     failure_idempotency_key: str | None = None
     failure_fingerprint: str | None = None
+    # An empty value writes the current kind. None preserves an omitted kind.
+    stored_kind: str | None = ""
 
     def dump(self) -> dict[str, object]:
         return {
             "request": self.request.model_dump(mode="json", by_alias=True),
-            "operation": self.operation.model_dump(mode="json", by_alias=True),
+            "operation": _preserve_stored_kind(
+                self.operation.model_dump(mode="json", by_alias=True), self.stored_kind
+            ),
             "commitIdempotencyKey": self.commit_idempotency_key,
             "commitFingerprint": self.commit_fingerprint,
             "failureIdempotencyKey": self.failure_idempotency_key,
@@ -124,13 +149,17 @@ class _CaptureRecord:
     ) -> _CaptureRecord:
         request = StartCaptureV2.model_validate(payload["request"])
         operation_payload = payload["operation"]
-        operation = CaptureOperationV2.model_validate(operation_payload)
-        if "kind" not in operation_payload:
-            kind = kind_for_ingestion(operation.ingestion_id)
-            if kind is not None:
-                operation = operation.model_copy(update={"kind": kind})
+        projected_operation = project_stored_capture_kind(operation_payload)
+        if isinstance(operation_payload, dict) and "kind" not in operation_payload:
+            ingestion_id = operation_payload.get("ingestionId")
+            if isinstance(ingestion_id, str):
+                kind = kind_for_ingestion(ingestion_id)
+                if kind is not None:
+                    projected_operation = {**operation_payload, "kind": kind.value}
+        operation = CaptureOperationV2.model_validate(projected_operation)
         return cls(
             operation=operation,
+            stored_kind=_stored_kind(operation_payload),
             request=request,
             commit_idempotency_key=payload.get("commitIdempotencyKey"),
             commit_fingerprint=payload.get("commitFingerprint"),

@@ -32,8 +32,8 @@ const INSTALLATION_ORDER = new Map([
   ['speech-recognition', 1],
   ['speaker-diarization', 2],
   ['vertical-japanese-reader', 3],
-  ['ollama-runtime', 4],
-  ['capture-ollama-model', 5],
+  ['structuring-runtime', 4],
+  ['structuring-model', 5],
 ]);
 
 @Injectable()

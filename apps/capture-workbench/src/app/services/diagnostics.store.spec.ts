@@ -25,17 +25,19 @@ describe('DiagnosticsStore', () => {
     expect(library.get).not.toHaveBeenCalled();
   });
 
-  it('loads the document from the query parameter and exports JSON', async () => {
+  it('loads a historical document and downloads its recorded JSON', async () => {
     vi.useFakeTimers();
     const detailSubject = new Subject<DesktopLibraryDetail>();
     const docId = 'a'.repeat(32);
+    const historicalFields = { kind: 'audio', suggestedUnits: ['capture-ollama-model'] };
+    const content = JSON.stringify(historicalFields);
     const { store, library, formatting } = setupStore(docId, {
       get: vi.fn(() => detailSubject),
       export: vi.fn(() =>
         of({
           fileName: 'doc.json',
           mediaType: 'application/json',
-          content: '{"ok":true}',
+          content,
         }),
       ),
     });
@@ -52,6 +54,7 @@ describe('DiagnosticsStore', () => {
       updatedAtMs: 2,
       status: 'completed',
       raw: {
+        ...historicalFields,
         schemaVersion: '2',
         diagnosticOnly: true,
         source: {
@@ -70,12 +73,13 @@ describe('DiagnosticsStore', () => {
     TestBed.tick();
 
     expect(store.document()?.fileName).toBe('doc.pdf');
+    expect(store.document()?.canExportJson).toBe(true);
 
     store.exportJson();
     expect(library.export).toHaveBeenCalledWith(docId, 'json');
     expect(formatting.downloadText).toHaveBeenCalledWith(
       'doc.json',
-      '{"ok":true}',
+      content,
       'application/json',
     );
     expect(store.exporting()).toBe(false);

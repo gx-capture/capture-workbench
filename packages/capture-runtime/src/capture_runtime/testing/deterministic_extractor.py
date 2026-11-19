@@ -73,7 +73,7 @@ class DeterministicCaptureExtractor:
 
         text = self._fixture_text(content, sniffed.kind, source.sha256)
         scope: OcrPageScopeV2 | None = None
-        if sniffed.kind is CaptureSourceKind.AUDIO:
+        if sniffed.kind is CaptureSourceKind.RECORDING:
             parts = [part.strip() for part in text.split("|") if part.strip()]
             segments = [
                 RawCaptureSegment(

@@ -809,7 +809,7 @@ test('release installed smoke verifies the packaged shell without auto-installin
 });
 
 function captureFixture(locatorKind: 'page' | 'time') {
-  const sourceKind: 'audio' | 'image' = locatorKind === 'time' ? 'audio' : 'image';
+  const sourceKind: 'recording' | 'image' = locatorKind === 'time' ? 'recording' : 'image';
   const fileName = locatorKind === 'time' ? 'fixture.wav' : 'fixture.png';
   const mimeType = locatorKind === 'time' ? 'audio/wav' : 'image/png';
   const expectedTexts = ['fixture words'];
@@ -849,8 +849,8 @@ function rawCapture(fixture) {
     segments,
     sourceText: fixture.expectedTexts.join('\n'),
     extractionEngine: {
-      engine: fixture.sourceKind === 'audio' ? 'speech-recognition' : 'text-recognition',
-      model: fixture.sourceKind === 'audio'
+      engine: fixture.sourceKind === 'recording' ? 'speech-recognition' : 'text-recognition',
+      model: fixture.sourceKind === 'recording'
         ? 'deterministic-speech-v1'
         : 'deterministic-ocr-v1',
       digest: `sha256:${'a'.repeat(64)}`,

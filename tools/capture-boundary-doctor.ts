@@ -37,7 +37,7 @@ const REQUIREMENT_STATUSES = new Set([
   'manual_action_required',
   'unavailable',
 ]);
-const CAPTURE_KINDS = new Set(['pdf', 'image', 'audio']);
+const CAPTURE_KINDS = new Set(['pdf', 'image', 'recording']);
 const STRUCTURING_MODES = new Set(['runtime', 'host']);
 const SAFE_IDENTIFIER = /^[a-z][a-z0-9-]{0,63}$/u;
 const SAFE_ERROR_CODE = /^[a-z][a-z0-9_]{1,63}$/u;

@@ -28,7 +28,7 @@ function requirement(
     requirementId,
     displayName: requirementId,
     status,
-    kind: 'runtime',
+    kind: requirementId,
     requiredFor: ['capture'],
     installStrategy: 'runtime-catalog',
     detail: null,

@@ -38,7 +38,7 @@ describe('HttpCaptureClient', () => {
   it('lists runtime installations from the canonical collection endpoint', async () => {
     const installation = {
       installationId: 'install-1',
-      requirementId: 'ollama-runtime' as const,
+      requirementId: 'structuring-runtime' as const,
       status: 'completed' as const,
       progress: 1,
       createdAt: '2026-07-20T00:00:00Z',

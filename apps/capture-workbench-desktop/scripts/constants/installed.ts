@@ -50,7 +50,7 @@ export const INSTALLED_FIXTURES = [
     expectedTexts: ['Installed image words'],
   },
   {
-    sourceKind: 'audio' as const,
+    sourceKind: 'recording' as const,
     fileName: 'installed-fixture.wav',
     mimeType: 'audio/wav',
     buffer: Buffer.concat([

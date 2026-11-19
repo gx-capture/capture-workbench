@@ -7,10 +7,10 @@ export const API_VERSION = "2.0" as const;
 export const CAPTURE_API_VERSION = API_VERSION;
 export const CAPTURE_DOCUMENT_SCHEMA_VERSION = "2" as const;
 export const CAPTURE_DOCUMENT_SCHEMA_ID = "https://github.com/gx-capture/capture-workbench/schema/capture-document-v2.schema.json" as const;
-export const CAPTURE_DOCUMENT_SCHEMA_SHA256 = "17994c88485ef2257518a788ca2eec3dca3a9f3aae1de1bd37dc454219a3f833" as const;
+export const CAPTURE_DOCUMENT_SCHEMA_SHA256 = "e3a68a577acc740fb79abcd8a0ca59cfc93c7bffd8eec3fc154aec50b9fc4b01" as const;
 
 /** Wire enum. */
-export type CaptureSourceKind = "pdf" | "image" | "audio";
+export type CaptureSourceKind = "pdf" | "image" | "recording";
 
 /** Wire enum. */
 export type OcrAdapterClass = "dedicated" | "integrated" | "unknown";
@@ -68,7 +68,7 @@ export type StructuringSessionStatus = "open" | "completed" | "failed" | "cancel
 
 export type CaptureLocator = PageLocator | TimeLocator;
 
-export type CaptureRequirementId = 'text-recognition' | 'speech-recognition' | 'ollama-runtime' | 'capture-ollama-model';
+export type CaptureRequirementId = 'text-recognition' | 'speech-recognition' | 'speaker-diarization' | 'vertical-japanese-reader' | 'structuring-runtime' | 'structuring-model';
 
 export interface CaptureBlock {
   readonly blockId: string;
@@ -92,7 +92,7 @@ export interface CaptureDocument {
   readonly sourceText: string;
   readonly speakers?: readonly (CaptureSpeaker)[];
   readonly structuringEngine: CaptureEngine;
-  readonly suggestedUnits?: readonly ("text-recognition" | "speech-recognition" | "speaker-diarization" | "vertical-japanese-reader" | "ollama-runtime" | "capture-ollama-model")[];
+  readonly suggestedRequirementIds?: readonly ("text-recognition" | "speech-recognition" | "speaker-diarization" | "vertical-japanese-reader" | "structuring-runtime" | "structuring-model")[];
   readonly targetText: string;
   readonly warnings?: readonly (string)[];
 }
@@ -336,7 +336,7 @@ export interface RawCapture {
   readonly extractionEngine: CaptureEngine;
   readonly diarizationEngine?: CaptureEngine | null;
   readonly speakers?: readonly (CaptureSpeaker)[];
-  readonly suggestedUnits?: readonly ("text-recognition" | "speech-recognition" | "speaker-diarization" | "vertical-japanese-reader" | "ollama-runtime" | "capture-ollama-model")[];
+  readonly suggestedRequirementIds?: readonly ("text-recognition" | "speech-recognition" | "speaker-diarization" | "vertical-japanese-reader" | "structuring-runtime" | "structuring-model")[];
   readonly warnings?: readonly (string)[];
   readonly ocrPageScope?: OcrPageScopeV2 | null;
   readonly createdAt: string;
@@ -366,7 +366,7 @@ export interface RuntimeArtifactDescriptorV2 {
 
 export interface RuntimeInstallationV2 {
   readonly installationId: string;
-  readonly requirementId: "text-recognition" | "speech-recognition" | "speaker-diarization" | "vertical-japanese-reader" | "ollama-runtime" | "capture-ollama-model";
+  readonly requirementId: "text-recognition" | "speech-recognition" | "speaker-diarization" | "vertical-japanese-reader" | "structuring-runtime" | "structuring-model";
   readonly status: RuntimeInstallationStatus;
   readonly progress: number;
   readonly error?: CaptureFailureV2 | null;
@@ -427,8 +427,8 @@ export interface RuntimeReady {
 }
 
 export interface RuntimeRequirementV2 {
-  readonly requirementId: "text-recognition" | "speech-recognition" | "speaker-diarization" | "vertical-japanese-reader" | "ollama-runtime" | "capture-ollama-model";
-  readonly kind: string;
+  readonly requirementId: "text-recognition" | "speech-recognition" | "speaker-diarization" | "vertical-japanese-reader" | "structuring-runtime" | "structuring-model";
+  readonly kind: "text-recognition" | "speech-recognition" | "speaker-diarization" | "vertical-japanese-reader" | "structuring-runtime" | "structuring-model";
   readonly displayName: string;
   readonly status: RuntimeRequirementStatus;
   readonly requiredFor: readonly (string)[];
@@ -467,7 +467,7 @@ export interface StartCaptureV2 {
 }
 
 export interface StartRuntimeInstallationV2 {
-  readonly requirementId: "text-recognition" | "speech-recognition" | "speaker-diarization" | "vertical-japanese-reader" | "ollama-runtime" | "capture-ollama-model";
+  readonly requirementId: "text-recognition" | "speech-recognition" | "speaker-diarization" | "vertical-japanese-reader" | "structuring-runtime" | "structuring-model";
   readonly consent: true;
 }
 
@@ -628,9 +628,9 @@ export const CAPTURE_CONTRACT_INVARIANTS = [
     description: "pagesDone and pagesTotal are both present or both absent, only for pdf and image captures, and pagesDone never exceeds pagesTotal.",
   },
   {
-    id: "capture-media-time-for-audio",
+    id: "capture-media-time-for-recording",
     models: "CaptureOperationV2, CaptureEventV2",
-    description: "durationMs, and coveredUntilMs on a capture operation, are only for audio captures.",
+    description: "durationMs, and coveredUntilMs on a capture operation, are only for recordings.",
   },
 ] as const satisfies readonly CaptureContractInvariant[];
 

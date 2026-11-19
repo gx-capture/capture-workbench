@@ -2406,7 +2406,8 @@ def test_ocr_worker_passes_the_reader_unit_on_and_reports_when_it_is_missed(
     )
 
     assert received == [reader_path if installed else None]
-    assert result.get("suggestedUnits") == (["vertical-japanese-reader"] if wanted else None)
+    expected = ["vertical-japanese-reader"] if wanted else None
+    assert result.get("suggestedRequirementIds") == expected
 
 
 def test_a_warm_ocr_worker_hands_each_runs_session_to_the_next(

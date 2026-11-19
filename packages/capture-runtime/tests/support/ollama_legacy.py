@@ -4,7 +4,6 @@ import asyncio
 import hashlib
 from collections.abc import Callable
 
-from capture_runtime.constants import OLLAMA_MODEL_REQUIREMENT_ID
 from capture_runtime.provisioning.application.requirement_installer import ManualActionRequiredError
 from capture_runtime.structuring.infrastructure.ollama.lifecycle_impl import _atomic_json
 from capture_runtime.structuring.infrastructure.ollama.requirement_installation import (
@@ -57,8 +56,9 @@ async def install_legacy_model(
     )
     if create.return_code != 0:
         raise RuntimeError(f"Ollama capture profile creation failed ({create.return_code})")
+    # A 0.10.x install named its readiness marker after the retired requirement id.
     _atomic_json(
-        installer._marker(OLLAMA_MODEL_REQUIREMENT_ID),
+        installer._marker("capture-ollama-model"),
         {
             "profileId": installer._lifecycle.config.profile_id,
             "baseModel": installer._lifecycle.config.base_model,

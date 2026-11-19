@@ -30,7 +30,7 @@ const EXTENSION_KINDS: Readonly<Record<string, CaptureSourceKind>> = {
   jpeg: 'image',
   webp: 'image',
   ...Object.fromEntries(
-    RECORDING_EXTENSIONS.map((extension) => [extension, 'audio' as const]),
+    RECORDING_EXTENSIONS.map((extension) => [extension, 'recording' as const]),
   ),
 };
 const SHA256_HEX_PATTERN = /^[0-9a-f]{64}$/;
@@ -67,7 +67,7 @@ export class CaptureHelpersService {
         'image/webp',
       );
     }
-    if (enabled.includes('audio')) {
+    if (enabled.includes('recording')) {
       values.push(
         ...RECORDING_EXTENSIONS.map((extension) => `.${extension}`),
         'audio/*',

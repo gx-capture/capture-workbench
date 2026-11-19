@@ -1,5 +1,7 @@
 # 結構化
 
+結構化使用 `structuring-runtime` 與 `structuring-model` 兩項需求。需求清單的 `kind` 與 `requirementId` 使用相同的 ID。
+
 ## 負責什麼、不負責什麼
 
 把原始擷取整理為擷取文件，支援 runtime 供應者及主機分批提交，並管理允許的模型安裝作業。不執行 OCR 或語音推論。

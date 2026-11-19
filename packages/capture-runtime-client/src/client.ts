@@ -3,6 +3,7 @@ import {
   type CaptureEvent,
   type CaptureOperation,
   type CaptureOcrProjection,
+  type CaptureRequirementId,
   type CaptureStreamingResult,
   type PartialCapture,
   type RawCapture,
@@ -137,7 +138,7 @@ export class CaptureRuntimeClient {
 
   /** Start installing a requirement with user consent; the idempotency key makes retries safe. */
   startInstallation(
-    requirementId: string,
+    requirementId: CaptureRequirementId,
     idempotencyKey: string,
     signal?: AbortSignal,
   ): Promise<RuntimeInstallation> {
@@ -197,7 +198,7 @@ export class CaptureRuntimeClient {
    * now not installed. Uninstalling one that is not installed returns it as is.
    */
   uninstallRequirement(
-    requirementId: string,
+    requirementId: CaptureRequirementId,
     signal?: AbortSignal,
   ): Promise<RuntimeRequirement> {
     return this.json(

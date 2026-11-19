@@ -5419,7 +5419,7 @@ def test_worker_backed_ocr_uses_the_reader_unit_and_reports_when_it_is_missed(
                         raster_scale=1,
                     ),
                 ),
-                suggested_units=() if installed else ("vertical-japanese-reader",),
+                suggested_requirement_ids=() if installed else ("vertical-japanese-reader",),
             )
 
     class EngineManager:
@@ -5459,4 +5459,4 @@ def test_worker_backed_ocr_uses_the_reader_unit_and_reports_when_it_is_missed(
     ).raw
 
     assert received == [unit_dir / "vertical" if installed else None]
-    assert raw.suggested_units == ([] if installed else ["vertical-japanese-reader"])
+    assert raw.suggested_requirement_ids == ([] if installed else ["vertical-japanese-reader"])

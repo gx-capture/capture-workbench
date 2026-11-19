@@ -26,7 +26,7 @@ The optional unit `vertical-japanese-reader` delivers the NDLOCR-Lite models
 `src/capture_runtime/ocr/infrastructure/_vendor/ndlocr_lite/`). A vertical page whose text has
 kana is read by it (`ocr_vertical_routing.py`, `ocr_vertical_reader.py`);
 without the unit the page keeps the regular result and the capture names the
-unit in `suggestedUnits`. See the
+requirement ID in `suggestedRequirementIds`. See the
 [decision record](../../.agents/DECISIONS/vertical-japanese-ocr.md).
 
 Routing (`ocr_vertical_routing.py`): every page gets the regular first pass. A
@@ -142,7 +142,7 @@ problems.
 
 ### Ingestion size limits
 
-Source ingestion (`POST /v2/ingestions`) enforces byte limits per declared source kind: recordings (`audio`) may reach the configured `CAPTURE_MAX_UPLOAD_BYTES` (default 50 MiB), while document sources (`pdf` and `image`) are capped at `min(CAPTURE_MAX_UPLOAD_BYTES, 50 MiB)`. A source declared `audio` and larger than 50 MiB must start with a recording signature: the chunk that shows otherwise is rejected with `chunk_rejected` and is not stored. Readiness (`GET /v2/health/ready`) reports the configured `CAPTURE_MAX_UPLOAD_BYTES` in `capabilities.maxUploadBytes`.
+Source ingestion (`POST /v2/ingestions`) enforces byte limits per declared source kind: recordings (`recording`) may reach the configured `CAPTURE_MAX_UPLOAD_BYTES` (default 50 MiB), while document sources (`pdf` and `image`) are capped at `min(CAPTURE_MAX_UPLOAD_BYTES, 50 MiB)`. A source declared `recording` and larger than 50 MiB must start with a recording signature: the chunk that shows otherwise is rejected with `chunk_rejected` and is not stored. Readiness (`GET /v2/health/ready`) reports the configured `CAPTURE_MAX_UPLOAD_BYTES` in `capabilities.maxUploadBytes`.
 
 The immutable contract catalog is authenticated separately at
 `GET /meta/v2/contracts`. The index points to a content-addressed bundle at

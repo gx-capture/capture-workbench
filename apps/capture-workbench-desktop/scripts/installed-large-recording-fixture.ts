@@ -27,7 +27,7 @@ export function generateLargeRecording(path: string, bytes = LARGE_RECORDING_BYT
     }
   }
   return pipeline(Readable.from(content()), createWriteStream(path, { flags: 'wx' })).then(() => ({
-    sourceKind: 'audio',
+    sourceKind: 'recording',
     fileName: 'installed-large-recording.wav',
     mimeType: 'audio/wav',
     bytes,

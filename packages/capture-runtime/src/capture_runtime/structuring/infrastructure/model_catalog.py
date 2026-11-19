@@ -97,11 +97,17 @@ class ActiveModelSelectionStore:
     """Persist the verified active selection in runtime-owned app data."""
 
     def __init__(self, app_data_dir: Path) -> None:
-        self.path = app_data_dir / "requirements" / "capture-ollama-model.active.json"
+        self.path = app_data_dir / "requirements" / "structuring-model.active.json"
 
     def load(self) -> dict[str, Any] | None:
         try:
-            payload = json.loads(self.path.read_text(encoding="utf-8"))
+            try:
+                source = self.path.read_text(encoding="utf-8")
+            except FileNotFoundError:
+                source = self.path.with_name("capture-ollama-model.active.json").read_text(
+                    encoding="utf-8"
+                )
+            payload = json.loads(source)
         except (OSError, ValueError, TypeError, json.JSONDecodeError):
             return None
         if not isinstance(payload, dict):

@@ -201,10 +201,10 @@ describe('CaptureWorkbenchComponent speakers', () => {
   it('needs the speaker unit only when the host asks for speakers', async () => {
     const unit = {
       requirementId: 'speaker-diarization' as const,
-      kind: 'speaker-identification',
+      kind: 'speaker-diarization' as const,
       displayName: 'Speaker identification',
       status: 'unavailable' as const,
-      requiredFor: ['audio'],
+      requiredFor: ['recording'],
       installStrategy: 'runtime-catalog',
       optional: true,
     };

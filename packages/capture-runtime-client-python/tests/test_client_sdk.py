@@ -166,7 +166,7 @@ def _discovery_routes() -> dict[tuple[str, str], Callable[[httpx.Request], httpx
             200,
             json={
                 "protocolVersion": "2",
-                "captureKinds": ["pdf", "image", "audio"],
+                "captureKinds": ["pdf", "image", "recording"],
                 "supportsProgressiveAudio": True,
                 "maxChunkBytes": 1_048_576,
                 "checkpointIntervalMs": 500,
@@ -319,7 +319,7 @@ def test_start_capture_names_the_spoken_language_only_when_given(
             201 if received == 0 else 200,
             json={
                 "protocolVersion": "2",
-                "kind": "audio",
+                "kind": "recording",
                 "ingestionId": "ingestion-1",
                 "status": status,
                 "fileName": "listening.mp3",
@@ -344,7 +344,7 @@ def test_start_capture_names_the_spoken_language_only_when_given(
                 "protocolVersion": "2",
                 "captureId": "capture-1",
                 "ingestionId": "ingestion-1",
-                "kind": "audio",
+                "kind": "recording",
                 "status": "extracting",
                 "progress": 0.0,
                 "partialRevision": 0,
@@ -375,7 +375,7 @@ def test_start_capture_names_the_spoken_language_only_when_given(
         CaptureUpload(
             "listening.mp3",
             content,
-            "audio",
+            "recording",
             media_type="audio/mpeg",
             spoken_language=spoken_language,
         ),
@@ -1095,7 +1095,7 @@ def test_malformed_json_and_sse_resume_are_protocol_safe() -> None:
         "eventId": "e1",
         "sequence": 2,
         "captureId": "cap",
-        "kind": "audio",
+        "kind": "recording",
         "eventType": "completed",
         "stage": "completed",
         "createdAt": "2026-01-01T00:00:00+00:00",
@@ -1170,10 +1170,10 @@ def test_model_installation_operations_and_failure_idempotency_header() -> None:
 def test_uninstall_requirement_deletes_its_installation_and_checks_the_reply() -> None:
     requirement = {
         "requirementId": "speech-recognition",
-        "kind": "transcription",
+        "kind": "speech-recognition",
         "displayName": "Speech recognition",
         "status": "installable",
-        "requiredFor": ["audio"],
+        "requiredFor": ["recording"],
         "installStrategy": "runtime-catalog",
         "downloadBytes": 1024,
     }
@@ -1331,7 +1331,7 @@ def test_sse_reconnects_with_last_event_id_cursor() -> None:
             "eventId": "e1",
             "sequence": 1,
             "captureId": "cap",
-            "kind": "audio",
+            "kind": "recording",
             "eventType": "checkpoint",
             "stage": "extracting",
             "partialRevision": 1,
@@ -1342,7 +1342,7 @@ def test_sse_reconnects_with_last_event_id_cursor() -> None:
             "eventId": "e2",
             "sequence": 2,
             "captureId": "cap",
-            "kind": "audio",
+            "kind": "recording",
             "eventType": "completed",
             "stage": "completed",
             "partialRevision": 1,
@@ -1598,7 +1598,7 @@ def test_decodes_page_and_media_progress_the_runtime_sends() -> None:
     )
     document = CaptureOperationV2.model_validate(samples["documentCaptureOperation"])
     assert (document.pages_done, document.pages_total) == (9, 12)
-    recording = CaptureOperationV2.model_validate(samples["audioCaptureOperation"])
+    recording = CaptureOperationV2.model_validate(samples["recordingCaptureOperation"])
     assert (recording.covered_until_ms, recording.duration_ms) == (724_000, 2_490_000)
     event = CaptureEventV2.model_validate(samples["documentCaptureEvent"])
     assert (event.pages_done, event.pages_total) == (9, 12)
@@ -1613,9 +1613,11 @@ def test_decodes_page_and_media_progress_the_runtime_sends() -> None:
 
 
 def test_capture_upload_asks_for_speakers_only_when_told() -> None:
-    assert CaptureUpload("meeting.wav", b"audio", "audio").identify_speakers is False
+    assert CaptureUpload("meeting.wav", b"audio", "recording").identify_speakers is False
     assert (
-        CaptureUpload("meeting.wav", b"audio", "audio", identify_speakers=True).identify_speakers
+        CaptureUpload(
+            "meeting.wav", b"audio", "recording", identify_speakers=True
+        ).identify_speakers
         is True
     )
 

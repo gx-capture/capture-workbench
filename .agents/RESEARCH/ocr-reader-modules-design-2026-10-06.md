@@ -59,7 +59,7 @@ two thresholds were set on the pages listed here.
   157 MB of models, no worker of its own). A host chooses to install it; this
   also limits the detector licence question to hosts that do.
 - A page the reader would take while the unit is missing keeps the first-pass
-  result, and the result names the unit in `suggestedUnits`
+  result, and the result names the unit in `suggestedRequirementIds`
   (`RuntimeRequirementV2.optional` marks such units).
 - The OCR profile id does not depend on whether the unit is installed.
 - There is one reader, and its interface stays inside the runtime: a page is

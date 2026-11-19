@@ -168,7 +168,7 @@ pub(crate) fn create_capture(
     let source_kind = match source.media_type.as_str() {
         "application/pdf" => "pdf",
         "image/png" | "image/jpeg" => "image",
-        media_type if RECORDING_MEDIA_TYPES.contains(&media_type) => "audio",
+        media_type if RECORDING_MEDIA_TYPES.contains(&media_type) => "recording",
         _ => return Err("Capture source media type is unsupported.".into()),
     };
     if let Some(page_numbers) = input.pdf_page_numbers.as_deref() {
@@ -258,7 +258,7 @@ fn start_streaming_capture_inner(
     let open_body = RequestBody {
         bytes: serde_json::to_vec(&json!({
             "clientRequestId": format!("{}-ingestion", input.client_request_id),
-            "kind": "audio",
+            "kind": "recording",
             "mode": "file",
             "fileName": source.file_name.clone(),
             "mediaType": source.media_type.clone(),
@@ -1056,7 +1056,7 @@ mod tests {
                 "DELETE /v2/runtime/requirements/text-recognition/installation HTTP/1.1"
             ));
             assert!(request.contains("Authorization: Bearer secret-token"));
-            let body = r#"{"requirementId":"text-recognition","kind":"runtime","displayName":"Text recognition","status":"installable","requiredFor":["capture"],"installStrategy":"automatic","downloadBytes":144000000}"#;
+            let body = r#"{"requirementId":"text-recognition","kind":"text-recognition","displayName":"Text recognition","status":"installable","requiredFor":["capture"],"installStrategy":"automatic","downloadBytes":144000000}"#;
             write!(
                 stream,
                 "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -1103,6 +1103,17 @@ mod tests {
             },
         )
         .is_err());
+
+        for retired_id in ["ollama-runtime", "capture-ollama-model"] {
+            let error = uninstall_requirement(
+                &state,
+                RuntimeRequirementInput {
+                    requirement_id: retired_id.into(),
+                },
+            )
+            .unwrap_err();
+            assert_eq!(error, "Capture Runtime requirement identifier is invalid.");
+        }
 
         let removed = uninstall_requirement(
             &state,
@@ -1609,7 +1620,7 @@ mod tests {
             "protocolVersion": "2",
             "captureId": capture_id,
             "ingestionId": ingestion_id,
-            "kind": "audio",
+            "kind": "recording",
             "status": "created",
             "progress": 0.0,
             "partialRevision": 0,

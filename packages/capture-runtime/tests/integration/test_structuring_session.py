@@ -38,7 +38,7 @@ def _seed_host_capture(client: TestClient, *, segment_count: int = 2, pdf: bool 
     ingestion = repository.create_ingestion(
         OpenIngestionV2(
             client_request_id=f"session-ingestion-{uuid4()}",
-            kind="pdf" if pdf else "audio",
+            kind="pdf" if pdf else "recording",
             file_name="sample.pdf" if pdf else "sample.mp3",
             media_type="application/pdf" if pdf else "audio/mpeg",
             total_bytes=len(source),
@@ -237,7 +237,8 @@ def test_completed_structuring_session_reads_historical_ocr_document(client: Tes
     historical["completedDocument"]["extractionEngine"].update(
         engine="windowsml-ocr", model="deterministic-windowsml-v1"
     )
-    historical["completedDocument"]["suggestedUnits"] = ["windowsml-ocr"]
+    del historical["completedDocument"]["suggestedRequirementIds"]
+    historical["completedDocument"]["suggestedUnits"] = ["windowsml-ocr", "capture-ollama-model"]
     path.write_text(json.dumps(historical, indent=2), encoding="utf-8")
     before = path.read_bytes()
 
@@ -248,7 +249,7 @@ def test_completed_structuring_session_reads_historical_ocr_document(client: Tes
     assert document is not None
     assert document.extraction_engine.engine == "text-recognition"
     assert document.extraction_engine.model == "deterministic-ocr-v1"
-    assert document.suggested_units == ["text-recognition"]
+    assert document.suggested_requirement_ids == ["text-recognition", "structuring-model"]
     assert path.read_bytes() == before
 
 

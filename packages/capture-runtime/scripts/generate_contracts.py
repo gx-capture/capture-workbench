@@ -15,7 +15,7 @@ import json
 import re
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 import pydantic
 import pydantic_core
@@ -514,11 +514,10 @@ def _invariants() -> list[dict[str, str]]:
             ),
         },
         {
-            "id": "capture-media-time-for-audio",
+            "id": "capture-media-time-for-recording",
             "models": "CaptureOperationV2, CaptureEventV2",
             "description": (
-                "durationMs, and coveredUntilMs on a capture operation, are only for "
-                "audio captures."
+                "durationMs, and coveredUntilMs on a capture operation, are only for recordings."
             ),
         },
     ]
@@ -560,9 +559,8 @@ def _manifest(models: dict[str, dict[str, Any]]) -> dict[str, Any]:
             {"name": "CaptureLocator", "type": "PageLocator | TimeLocator"},
             {
                 "name": "CaptureRequirementId",
-                "type": (
-                    "'text-recognition' | 'speech-recognition' | 'ollama-runtime' "
-                    "| 'capture-ollama-model'"
+                "type": " | ".join(
+                    repr(value) for value in get_args(contracts.CaptureRequirementId)
                 ),
             },
         ],

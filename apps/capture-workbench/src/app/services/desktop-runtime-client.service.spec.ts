@@ -392,7 +392,7 @@ describe('DesktopRuntimeClientService', () => {
       requirementId: 'text-recognition',
       displayName: 'Text recognition',
       status: 'installable',
-      kind: 'runtime',
+      kind: 'text-recognition',
       requiredFor: ['capture'],
       installStrategy: 'runtime-catalog',
       downloadBytes: 144_000_000,

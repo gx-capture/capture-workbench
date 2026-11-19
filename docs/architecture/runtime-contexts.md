@@ -66,6 +66,7 @@ flowchart LR
   n_capture_runtime_capture --> n_capture_runtime_clock
   n_capture_runtime_capture --> n_capture_runtime_config
   n_capture_runtime_capture --> n_capture_runtime_constants
+  n_capture_runtime_capture --> n_capture_runtime_contract_set
   n_capture_runtime_capture --> n_capture_runtime_contracts
   n_capture_runtime_capture --> n_capture_runtime_dependencies
   n_capture_runtime_capture --> n_capture_runtime_diarization
@@ -119,6 +120,7 @@ flowchart LR
   n_capture_runtime_provisioning --> n_capture_runtime_clock
   n_capture_runtime_provisioning --> n_capture_runtime_config
   n_capture_runtime_provisioning --> n_capture_runtime_constants
+  n_capture_runtime_provisioning --> n_capture_runtime_contract_set
   n_capture_runtime_provisioning --> n_capture_runtime_contracts
   n_capture_runtime_provisioning --> n_capture_runtime_dependencies
   n_capture_runtime_provisioning --> n_capture_runtime_file_lock
@@ -147,6 +149,7 @@ flowchart LR
   n_capture_runtime_speech --> n_capture_runtime_worker_probe
   n_capture_runtime_speech --> n_capture_runtime_worker_process
   n_capture_runtime_speech --> n_capture_runtime_worker_stage_policy
+  n_capture_runtime_storage --> n_capture_runtime_constants
   n_capture_runtime_storage --> n_capture_runtime_file_lock
   n_capture_runtime_structuring --> n_capture_runtime_windows_job
   n_capture_runtime_structuring --> n_capture_runtime_capture

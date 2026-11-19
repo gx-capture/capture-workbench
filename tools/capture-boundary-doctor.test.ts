@@ -25,7 +25,7 @@ const ready = {
   apiVersion: '2.0',
   captureDocumentSchemaVersion: '2',
   capabilities: {
-    captureKinds: ['audio', 'image', 'pdf'],
+    captureKinds: ['recording', 'image', 'pdf'],
     structuringModes: ['host', 'runtime'],
   },
 };

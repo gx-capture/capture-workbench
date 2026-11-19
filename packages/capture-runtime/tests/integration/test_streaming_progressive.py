@@ -463,7 +463,7 @@ class FailingDecoderProcessor:
 
 def _open(
     repository: StreamingRepository,
-    kind: CaptureSourceKind = CaptureSourceKind.AUDIO,
+    kind: CaptureSourceKind = CaptureSourceKind.RECORDING,
     *,
     source: bytes = b"audio-fixture",
 ) -> tuple[str, str]:
@@ -472,8 +472,8 @@ def _open(
         OpenIngestionV2(
             client_request_id="progressive-ingestion",
             kind=kind,
-            file_name="sample.mp3" if kind is CaptureSourceKind.AUDIO else "sample.png",
-            media_type="audio/mpeg" if kind is CaptureSourceKind.AUDIO else "image/png",
+            file_name="sample.mp3" if kind is CaptureSourceKind.RECORDING else "sample.png",
+            media_type="audio/mpeg" if kind is CaptureSourceKind.RECORDING else "image/png",
             total_bytes=len(source),
             source_sha256=digest,
         )

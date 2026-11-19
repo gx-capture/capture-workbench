@@ -351,10 +351,10 @@ function checkIfVisibleAndUnchecked(checkbox: Locator) {
   );
 }
 
-function ensureQueuePageReady(page: Page, isAudio: boolean) {
-  const pageTestId = isAudio ? 'page-asr' : 'page-ocr';
-  const navTestId = isAudio ? 'nav-asr' : 'nav-ocr';
-  const chooseTestId = isAudio ? 'asr-choose-files' : 'ocr-choose-files';
+function ensureQueuePageReady(page: Page, isRecording: boolean) {
+  const pageTestId = isRecording ? 'page-asr' : 'page-ocr';
+  const navTestId = isRecording ? 'nav-asr' : 'nav-ocr';
+  const chooseTestId = isRecording ? 'asr-choose-files' : 'ocr-choose-files';
   return defer(() => from(page.getByTestId(pageTestId).isVisible())).pipe(
     switchMap((visible) =>
       visible ? of(undefined) : defer(() => from(page.getByTestId(navTestId).click())),
@@ -366,7 +366,7 @@ function ensureQueuePageReady(page: Page, isAudio: boolean) {
       waitUntil(
         () =>
           forkJoin({
-            installPanelCount: isAudio
+            installPanelCount: isRecording
               ? defer(() => from(page.getByTestId('asr-install-panel').count()))
               : of(0),
             chooseVisible: defer(() => from(page.getByTestId(chooseTestId).isVisible())),
@@ -377,27 +377,27 @@ function ensureQueuePageReady(page: Page, isAudio: boolean) {
                 installPanelCount === 0 && chooseVisible && chooseEnabled,
             ),
           ),
-        isAudio ? 45_000 : 15_000,
-        `Installed ${isAudio ? 'ASR' : 'OCR'} page did not become ready.`,
+        isRecording ? 45_000 : 15_000,
+        `Installed ${isRecording ? 'ASR' : 'OCR'} page did not become ready.`,
       ),
     ),
   );
 }
 
 function captureFixture(page, fixture, appPid, fixtureDirectory, diagnostics) {
-  const isAudio = fixture.sourceKind === 'audio';
-  const rowTestId = isAudio ? 'asr-queue-row' : 'ocr-queue-row';
-  const statusTestId = isAudio ? 'asr-row-status' : 'ocr-row-status';
-  const viewTestId = isAudio ? 'asr-row-view' : 'ocr-row-view';
+  const isRecording = fixture.sourceKind === 'recording';
+  const rowTestId = isRecording ? 'asr-queue-row' : 'ocr-queue-row';
+  const statusTestId = isRecording ? 'asr-row-status' : 'ocr-row-status';
+  const viewTestId = isRecording ? 'asr-row-view' : 'ocr-row-view';
   const filePath = join(fixtureDirectory, fixture.fileName);
-  const chooseFiles = page.getByTestId(isAudio ? 'asr-choose-files' : 'ocr-choose-files');
+  const chooseFiles = page.getByTestId(isRecording ? 'asr-choose-files' : 'ocr-choose-files');
   let diagnosticRow = page.locator(`[data-testid="${rowTestId}"][data-document-id=""]`);
   let beforeIds: string[] = [];
   let documentId: string;
   let requestLogOffset = 0;
   const documentIds = (rows: Locator) => rows.evaluateAll((elements) =>
     elements.map((element) => element.getAttribute('data-document-id')).filter(Boolean));
-  return ensureQueuePageReady(page, isAudio).pipe(
+  return ensureQueuePageReady(page, isRecording).pipe(
     concatMap(() => (fixture.buffer ? defer(() => from(writeFile(filePath, fixture.buffer))) : of(undefined))),
     concatMap(() => fixture.bytes
       ? defer(() => from(readLargeRecordingRequests(join(fixtureDirectory, 'deterministic-requests.jsonl')))).pipe(
@@ -451,7 +451,7 @@ function captureFixture(page, fixture, appPid, fixtureDirectory, diagnostics) {
       )).pipe(map(() => diagnosticRow)),
     ),
     concatMap((row) => {
-      const visibleStatus = isAudio
+      const visibleStatus = isRecording
         ? row.getByTestId('asr-row-status').getByTestId('asr-row-chip')
         : row.getByTestId('ocr-row-status');
       return trackSmokeStep(diagnostics.timeline, 'completion wait', () => waitUntil(
@@ -499,7 +499,7 @@ function captureFixture(page, fixture, appPid, fixtureDirectory, diagnostics) {
       defer(() => from(page.getByTestId('page-result').waitFor({ state: 'visible', timeout: 15_000 }))),
     ),
     concatMap(() => {
-      if (!isAudio) {
+      if (!isRecording) {
         const resultTextArea = page.getByTestId('result-page-text');
         return defer(() =>
           from(resultTextArea.waitFor({ state: 'visible', timeout: 15_000 })),
@@ -526,7 +526,7 @@ function captureFixture(page, fixture, appPid, fixtureDirectory, diagnostics) {
           defer(() =>
             from(
               page
-                .getByTestId(isAudio ? 'page-asr' : 'page-ocr')
+                .getByTestId(isRecording ? 'page-asr' : 'page-ocr')
                 .waitFor({ state: 'visible', timeout: 15_000 }),
             ),
           ),

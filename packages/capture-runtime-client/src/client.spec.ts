@@ -659,7 +659,7 @@ describe('CaptureRuntimeClient', () => {
     expect([pdf.pagesDone, pdf.pagesTotal]).toEqual([9, 12]);
     const audio = await decode({
       ...operation,
-      kind: 'audio',
+      kind: 'recording',
       durationMs: 2_490_000,
       coveredUntilMs: 724_000,
       pagesDone: null,
@@ -674,11 +674,11 @@ describe('CaptureRuntimeClient', () => {
       { kind: 'pdf', pagesDone: 4, pagesTotal: 3 },
       { kind: 'pdf', pagesDone: 0, pagesTotal: 0 },
       { kind: 'image', pagesDone: 0.5, pagesTotal: 1 },
-      { kind: 'audio', pagesDone: 1, pagesTotal: 2 },
+      { kind: 'recording', pagesDone: 1, pagesTotal: 2 },
       { pagesDone: 1, pagesTotal: 2 },
       { kind: 'pdf', durationMs: 1000 },
       { kind: 'image', coveredUntilMs: 1000 },
-      { kind: 'audio', durationMs: -1 },
+      { kind: 'recording', durationMs: -1 },
     ]) {
       await expect(decode({ ...operation, ...progress })).rejects.toBeInstanceOf(
         CaptureRuntimeProtocolError,
@@ -723,8 +723,8 @@ data: ${JSON.stringify(event)}
     ]);
     expect(seen.map((item) => item.pagesDone ?? null)).toEqual([0, 1, null]);
     const audio = await read([
-      { ...event, kind: 'audio', sequence: 1, coveredUntilMs: 60_000, durationMs: 120_000 },
-      { ...event, kind: 'audio', sequence: 2, eventType: 'completed' },
+      { ...event, kind: 'recording', sequence: 1, coveredUntilMs: 60_000, durationMs: 120_000 },
+      { ...event, kind: 'recording', sequence: 2, eventType: 'completed' },
     ]);
     expect(audio[0]?.durationMs).toBe(120_000);
     await expect(
@@ -1057,7 +1057,7 @@ data: ${JSON.stringify(event)}
             received = request as RequestInit;
             return Response.json({
               installationId: 'i1',
-              requirementId: 'r1',
+              requirementId: 'speech-recognition',
               status: 'queued',
               progress: 0,
               createdAt: '2026-01-01T00:00:00Z',
@@ -1097,7 +1097,7 @@ data: ${JSON.stringify(event)}
     for await (const event of client.captureEvents('cap', { lastEventId: 1 }))
       events.push(event);
     expect(events).toHaveLength(1);
-    await client.startInstallation('r1', 'idempotency-1');
+    await client.startInstallation('speech-recognition', 'idempotency-1');
     expect(received).toBeDefined();
     expect((await client.getModelInstallation('model-1')).status).toBe(
       'running',
@@ -1113,10 +1113,10 @@ data: ${JSON.stringify(event)}
   it('uninstalls a requirement and checks the requirement it returns', async () => {
     const requirement = {
       requirementId: 'speech-recognition',
-      kind: 'transcription',
+      kind: 'speech-recognition',
       displayName: 'Speech recognition',
       status: 'installable',
-      requiredFor: ['audio'],
+      requiredFor: ['recording'],
       installStrategy: 'runtime-catalog',
       downloadBytes: 1024,
     };
@@ -1145,6 +1145,11 @@ data: ${JSON.stringify(event)}
       client.uninstallRequirement('speech-recognition'),
     ).resolves.toEqual(requirement);
     expect(methods).toEqual(['DELETE']);
+
+    body = { ...requirement, kind: 'stt' };
+    await expect(
+      client.uninstallRequirement('speech-recognition'),
+    ).rejects.toThrow('invalid RuntimeRequirement identity');
 
     body = { ...requirement, installedAt: '2026-01-01T00:00:00Z' };
     await expect(
@@ -1287,7 +1292,7 @@ data: ${JSON.stringify(event)}
     const digest = createHash('sha256').update(body).digest('hex');
     const ingestion = (received: number, nextChunkIndex: number, status = 'open') => ({
       protocolVersion: '2',
-      kind: 'audio',
+      kind: 'recording',
       ingestionId: 'ingestion-1',
       status,
       fileName: 'listening.mp3',
@@ -1329,7 +1334,7 @@ data: ${JSON.stringify(event)}
                 protocolVersion: '2',
                 captureId: 'capture-1',
                 ingestionId: 'ingestion-1',
-                kind: 'audio',
+                kind: 'recording',
                 status: 'extracting',
                 partialRevision: 0,
                 lastEventSequence: 0,
@@ -1347,7 +1352,7 @@ data: ${JSON.stringify(event)}
       fileName: 'listening.mp3',
       body,
       mediaType: 'audio/mpeg',
-      sourceKind: 'audio' as const,
+      sourceKind: 'recording' as const,
       clientRequestId: 'request-spoken-language',
     };
 
@@ -1536,7 +1541,7 @@ data: ${JSON.stringify(event)}
                 )
               : Response.json({
                   installationId: 'i1',
-                  requirementId: 'r1',
+                  requirementId: 'speech-recognition',
                   status: 'queued',
                   progress: 0,
                   createdAt: '2026-01-01T00:00:00Z',
@@ -1550,7 +1555,7 @@ data: ${JSON.stringify(event)}
       baseUrl: 43123,
       transport: keyedTransport,
       maxRetries: 1,
-    }).startInstallation('r1', 'request-1');
+    }).startInstallation('speech-recognition', 'request-1');
     expect(keyedAttempts).toBe(2);
   });
 

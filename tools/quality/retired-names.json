@@ -949,5 +949,176 @@
     "match": "substring",
     "replacement": "text-recognition source",
     "allowed": []
+  },
+  {
+    "name": "ollama-runtime",
+    "match": "word",
+    "replacement": "structuring-runtime",
+    "allowed": [
+      {
+        "glob": "packages/capture-runtime/src/capture_runtime/constants/requirements.py",
+        "reason": "Historical requirement IDs used by repository readers and migration errors."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_api.py",
+        "reason": "Verifies retired requirement IDs fail request and startup validation."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_installation_service.py",
+        "reason": "Historical installation records and fingerprint replay fixtures."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_streaming_api.py",
+        "reason": "Historical capture records containing retired recommendation IDs."
+      },
+      {
+        "glob": "apps/capture-workbench-desktop/src-tauri/src/runtime_client.rs",
+        "reason": "Verifies the desktop host rejects retired requirement IDs."
+      },
+      {
+        "glob": "apps/capture-workbench-desktop/src-tauri/src/library/store.rs",
+        "reason": "Historical library fixture kept unchanged after reopen and export."
+      },
+      {
+        "glob": "packages/capture-runtime/src/capture_runtime/contracts/__init__.py",
+        "reason": "Names the replacement when a request sends a retired requirement ID."
+      },
+      {
+        "glob": "packages/capture-runtime-client-python/src/capture_runtime_client/private/generated_models.py",
+        "reason": "Generated from the runtime contracts module, which rejects retired requirement IDs."
+      }
+    ]
+  },
+  {
+    "name": "capture-ollama-model",
+    "match": "word",
+    "replacement": "structuring-model",
+    "allowed": [
+      {
+        "glob": "packages/capture-runtime/src/capture_runtime/constants/requirements.py",
+        "reason": "Historical requirement IDs used by repository readers and migration errors."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_api.py",
+        "reason": "Verifies retired requirement IDs fail request and startup validation."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_installation_service.py",
+        "reason": "Historical installation records and fingerprint replay fixtures."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_streaming_api.py",
+        "reason": "Historical capture records containing retired recommendation IDs."
+      },
+      {
+        "glob": "packages/capture-runtime/src/capture_runtime/structuring/infrastructure/model_catalog.py",
+        "reason": "Read-only active selection marker fallback."
+      },
+      {
+        "glob": "packages/capture-runtime/src/capture_runtime/structuring/infrastructure/ollama/provider_impl.py",
+        "reason": "Reads the historical readiness marker."
+      },
+      {
+        "glob": "packages/capture-runtime/src/capture_runtime/structuring/infrastructure/ollama/requirement_installation.py",
+        "reason": "Validates the historical readiness marker."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_ollama_restart_readiness.py",
+        "reason": "Historical model marker fixtures."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_structuring_session.py",
+        "reason": "Historical completed session documents."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/unit/test_structuring_domain.py",
+        "reason": "Historical model-installation metadata fixtures."
+      },
+      {
+        "glob": "apps/capture-workbench-desktop/src-tauri/src/runtime_client.rs",
+        "reason": "Verifies the desktop host rejects retired requirement IDs."
+      },
+      {
+        "glob": "apps/capture-workbench-desktop/src-tauri/src/library/store.rs",
+        "reason": "Historical library fixture kept unchanged after reopen and export."
+      },
+      {
+        "glob": "apps/capture-workbench/src/app/services/diagnostics.store.spec.ts",
+        "reason": "Verifies diagnostics download keeps historical host JSON unchanged."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/support/ollama_legacy.py",
+        "reason": "Writes the readiness marker of a 0.10.x model install."
+      },
+      {
+        "glob": "packages/capture-runtime/src/capture_runtime/contracts/__init__.py",
+        "reason": "Names the replacement when a request sends a retired requirement ID."
+      },
+      {
+        "glob": "packages/capture-runtime-client-python/src/capture_runtime_client/private/generated_models.py",
+        "reason": "Generated from the runtime contracts module, which rejects retired requirement IDs."
+      }
+    ]
+  },
+  {
+    "name": "suggestedUnits",
+    "match": "word",
+    "replacement": "suggestedRequirementIds",
+    "allowed": [
+      {
+        "glob": "packages/capture-runtime/src/capture_runtime/capture/infrastructure/streaming_repository.py",
+        "reason": "Verifies historic host-commit fingerprints before replay."
+      },
+      {
+        "glob": "packages/capture-runtime/src/capture_runtime/storage/common.py",
+        "reason": "Projects historical stored capture documents."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_streaming_api.py",
+        "reason": "Historical raw capture and result fixtures."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_structuring_session.py",
+        "reason": "Historical completed session document fixtures."
+      },
+      {
+        "glob": "apps/capture-workbench-desktop/src-tauri/src/library/store.rs",
+        "reason": "Historical library fixture kept unchanged after reopen and export."
+      },
+      {
+        "glob": "apps/capture-workbench/src/app/services/diagnostics.store.spec.ts",
+        "reason": "Verifies diagnostics download keeps historical host JSON unchanged."
+      }
+    ]
+  },
+  {
+    "name": "suggested_units",
+    "match": "word",
+    "replacement": "suggested_requirement_ids",
+    "allowed": []
+  },
+  {
+    "name": "OLLAMA_RUNTIME_REQUIREMENT_ID",
+    "match": "word",
+    "replacement": "STRUCTURING_RUNTIME_REQUIREMENT_ID",
+    "allowed": []
+  },
+  {
+    "name": "OLLAMA_MODEL_REQUIREMENT_ID",
+    "match": "word",
+    "replacement": "STRUCTURING_MODEL_REQUIREMENT_ID",
+    "allowed": []
+  },
+  {
+    "name": "capture-media-time-for-audio",
+    "match": "word",
+    "replacement": "capture-media-time-for-recording",
+    "allowed": []
+  },
+  {
+    "name": "audioCaptureOperation",
+    "match": "word",
+    "replacement": "recordingCaptureOperation",
+    "allowed": []
   }
 ]

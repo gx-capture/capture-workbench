@@ -260,7 +260,7 @@ fn desktop_sized_recording_completes_over_fifty_two_tcp_chunks() {
         max_upload_bytes: 2 * 1024 * 1024 * 1024,
     });
     let total = 52 * 1024 * 1024;
-    let mut request = open_request("audio", "audio/wav", AUDIO);
+    let mut request = open_request("recording", "audio/wav", AUDIO);
     let mut metadata: Value = serde_json::from_slice(&request.body).unwrap();
     metadata["totalBytes"] = total.into();
     request.body = serde_json::to_vec(&metadata).unwrap();
@@ -343,6 +343,17 @@ fn retries_are_idempotent_and_conflicting_metadata_is_rejected() {
     assert_eq!(
         exchange(&state, start_request(id, "runtime"), 409)["error"]["code"],
         "idempotency_conflict"
+    );
+}
+
+#[test]
+fn retired_capture_kind_is_rejected_on_open() {
+    let state = fixture();
+    let response = exchange(&state, open_request("audio", "audio/wav", AUDIO), 422);
+    assert_eq!(response["error"]["code"], "validation_error");
+    assert_eq!(
+        response["error"]["details"]["issues"][0]["message"],
+        "Capture kind must be pdf, image, or recording."
     );
 }
 
@@ -447,7 +458,7 @@ fn pdf_page_selection_preserves_source_page_locators() {
 #[test]
 fn progressive_audio_host_requests_complete_with_events_partial_and_result() {
     let state = fixture();
-    let mut open = open_request("audio", "audio/wav", AUDIO);
+    let mut open = open_request("recording", "audio/wav", AUDIO);
     open.headers.remove("x-idempotency-key");
     let mut payload: Value = serde_json::from_slice(&open.body).unwrap();
     payload.as_object_mut().unwrap().remove("protocolVersion");
@@ -532,6 +543,9 @@ fn desktop_pdf_ingestion_opens_with_the_host_request() {
 fn uninstall_requirement_returns_installable_and_rejects_an_unknown_id() {
     let state = fixture();
     let before = get(&state, "/v2/runtime/requirements", 200);
+    for item in before["items"].as_array().unwrap() {
+        assert_eq!(item["kind"], item["requirementId"]);
+    }
     let installed = before["items"]
         .as_array()
         .unwrap()

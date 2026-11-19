@@ -264,10 +264,10 @@ uses the existing CSS variables `--capture-accent`, `--capture-background`,
 `CaptureDocument` schema handshake; element and runtime versions must remain
 compatible.
 
-## Speakers in audio captures
+## Speakers in recordings
 
-Set `identifySpeakers: true` in the configuration to label who speaks in audio
-captures. The runtime needs its optional `speaker-diarization` unit; without it
+Set `identifySpeakers: true` in the configuration to label who speaks in
+recordings. The runtime needs its optional `speaker-diarization` unit; without it
 the workbench asks the user to install it before capturing.
 
 A finished capture then lists its speakers under anonymous labels such as
@@ -280,10 +280,10 @@ values stay the anonymous labels; the names are in `speakers[].displayName`.
 While such a capture runs, the task shows two stages with progress, "transcribing"
 and "identifying speakers", and no partial transcript.
 
-## Spoken language of audio captures
+## Spoken language of recordings
 
 Speech recognition assumes Chinese. When the recordings are in another language,
 set `spokenLanguage` in the configuration to one of `zh`, `yue`, `en`, `ja`, `ko`,
 `fr`, `de`, `it`, `pt`, `ru` or `es`, for example `spokenLanguage: 'ja'` for
-Japanese listening tests. The workbench sends it only with audio files; PDFs and
+Japanese listening tests. The workbench sends it only with recordings; PDFs and
 images are captured as before. Omitting it keeps Chinese.

@@ -509,7 +509,7 @@ class StandaloneRuntimeCaptureExtractor:
         execution_proof: OcrExecutionDeviceProofV1 | None = None
         diarization_engine: CaptureEngine | None = None
         speakers: list[CaptureSpeaker] = []
-        suggested_units: set[str] = set()
+        suggested_requirement_ids: set[str] = set()
         try:
             if sniffed.kind is CaptureSourceKind.PDF:
                 if isinstance(content, Path):
@@ -534,7 +534,7 @@ class StandaloneRuntimeCaptureExtractor:
                 execution_proof = result.execution_proof
                 try:
                     engine = self._capture_engine(result, expected_engine="text-recognition")
-                    suggested_units.update(result.suggested_units)
+                    suggested_requirement_ids.update(result.suggested_requirement_ids)
                     ocr_provenance = self._capture_ocr_provenance(result)
                 except ValueError as error:
                     raise OcrWorkerFailure(
@@ -588,7 +588,7 @@ class StandaloneRuntimeCaptureExtractor:
                 execution_proof = result.execution_proof
                 try:
                     engine = self._capture_engine(result, expected_engine="text-recognition")
-                    suggested_units.update(result.suggested_units)
+                    suggested_requirement_ids.update(result.suggested_requirement_ids)
                     ocr_provenance = self._capture_ocr_provenance(result)
                 except ValueError as error:
                     raise OcrWorkerFailure(
@@ -683,7 +683,9 @@ class StandaloneRuntimeCaptureExtractor:
             extraction_engine=engine,
             diarization_engine=diarization_engine,
             speakers=speakers,
-            suggested_units=cast(list[CaptureRequirementId], sorted(suggested_units)),
+            suggested_requirement_ids=cast(
+                list[CaptureRequirementId], sorted(suggested_requirement_ids)
+            ),
             warnings=_unique_warnings(warnings),
             ocr_page_scope=ocr_page_scope,
             created_at=self._clock.now(),

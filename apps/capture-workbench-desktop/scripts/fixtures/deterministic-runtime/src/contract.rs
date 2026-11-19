@@ -215,7 +215,7 @@ impl FixtureState {
                     "noticeCode": "ocr_cpu_fallback",
                 },
                 "capabilities": {
-                    "captureKinds": ["pdf", "image", "audio"],
+                    "captureKinds": ["pdf", "image", "recording"],
                     "structuringModes": ["runtime", "host"],
                     "supportsCancellation": true,
                     "supportsRawDiagnostics": true,
@@ -231,8 +231,10 @@ impl FixtureState {
         let items = [
             "text-recognition",
             "speech-recognition",
-            "ollama-runtime",
-            "capture-ollama-model",
+            "speaker-diarization",
+            "vertical-japanese-reader",
+            "structuring-runtime",
+            "structuring-model",
         ]
         .into_iter()
         .filter_map(|requirement_id| {
@@ -307,7 +309,7 @@ impl FixtureState {
         let Some(ingestion) = ingestion else {
             return api_error(404, "ingestion_not_found", "Ingestion was not found.");
         };
-        let key = match matching_request_key(request, &payload, ingestion.kind == "audio") {
+        let key = match matching_request_key(request, &payload, ingestion.kind == "recording") {
             Ok(key) => key,
             Err(response) => return response,
         };
@@ -424,8 +426,10 @@ impl FixtureState {
                 }),
             ),
             ("POST", "structure") => Response::json(200, record.result.clone()),
-            ("GET", "ocr") if record.kind != "audio" => Response::json(200, build_ocr(record)),
-            ("GET", "partial") if record.kind == "audio" => Response::json(
+            ("GET", "ocr") if record.kind != "recording" => {
+                Response::json(200, build_ocr(record))
+            }
+            ("GET", "partial") if record.kind == "recording" => Response::json(
                 200,
                 json!({
                     "protocolVersion": "2", "captureId": capture_id, "source": record.source,
@@ -689,7 +693,7 @@ fn build_raw_capture(source: &Value, source_kind: &str, content: &[u8]) -> Value
         source_kind,
         source["sha256"].as_str().unwrap_or_default(),
     );
-    let parts = if source_kind == "audio" {
+    let parts = if source_kind == "recording" {
         text.split('|')
     } else {
         text.split('\x0c')
@@ -705,7 +709,7 @@ fn build_raw_capture(source: &Value, source_kind: &str, content: &[u8]) -> Value
             json!({
                 "segmentId": format!("segment-{}", index + 1),
                 "order": index,
-                "locator": if source_kind == "audio" {
+                "locator": if source_kind == "recording" {
                     json!({ "kind": "time", "startMs": index * 1000, "endMs": (index + 1) * 1000 })
                 } else {
                     json!({ "kind": "page", "page": index + 1 })
@@ -714,7 +718,7 @@ fn build_raw_capture(source: &Value, source_kind: &str, content: &[u8]) -> Value
             })
         })
         .collect::<Vec<_>>();
-    let (engine, model) = if source_kind == "audio" {
+    let (engine, model) = if source_kind == "recording" {
         ("speech-recognition", "deterministic-speech-v1")
     } else {
         ("text-recognition", "deterministic-ocr-v1")
@@ -891,28 +895,36 @@ fn known_requirement(requirement_id: &str, status: &str) -> Option<Value> {
     Some(match requirement_id {
         "text-recognition" => requirement(
             "text-recognition",
-            "ocr",
             "Text recognition",
             &["pdf", "image"],
             status,
         ),
         "speech-recognition" => requirement(
             "speech-recognition",
-            "stt",
             "Speech recognition",
-            &["audio"],
+            &["recording"],
             status,
         ),
-        "ollama-runtime" => requirement(
-            "ollama-runtime",
-            "llm-runtime",
+        "speaker-diarization" => requirement(
+            "speaker-diarization",
+            "Speaker diarization",
+            &["recording"],
+            status,
+        ),
+        "vertical-japanese-reader" => requirement(
+            "vertical-japanese-reader",
+            "Vertical Japanese reader",
+            &["pdf", "image"],
+            status,
+        ),
+        "structuring-runtime" => requirement(
+            "structuring-runtime",
             "Ollama",
             &["structuring"],
             status,
         ),
-        "capture-ollama-model" => requirement(
-            "capture-ollama-model",
-            "llm-model",
+        "structuring-model" => requirement(
+            "structuring-model",
             "Capture structuring model",
             &["structuring"],
             status,
@@ -939,16 +951,10 @@ fn model_option(option_id: &str, display_name: &str, model_reference: &str, stat
     })
 }
 
-fn requirement(
-    requirement_id: &str,
-    kind: &str,
-    display_name: &str,
-    required_for: &[&str],
-    status: &str,
-) -> Value {
+fn requirement(requirement_id: &str, display_name: &str, required_for: &[&str], status: &str) -> Value {
     json!({
         "requirementId": requirement_id,
-        "kind": kind,
+        "kind": requirement_id,
         "displayName": display_name,
         "status": status,
         "requiredFor": required_for,
@@ -967,19 +973,19 @@ fn sniff_source(content: &[u8]) -> Option<(&'static str, &'static str)> {
     } else if content.len() >= 12 && &content[..4] == b"RIFF" && &content[8..12] == b"WEBP" {
         Some(("image", "image/webp"))
     } else if content.len() >= 12 && &content[..4] == b"RIFF" && &content[8..12] == b"WAVE" {
-        Some(("audio", "audio/wav"))
+        Some(("recording", "audio/wav"))
     } else if content.starts_with(b"ID3")
         || content
             .get(..2)
             .is_some_and(|value| matches!(value, b"\xff\xfb" | b"\xff\xf3" | b"\xff\xf2"))
     {
-        Some(("audio", "audio/mpeg"))
+        Some(("recording", "audio/mpeg"))
     } else if content.starts_with(b"fLaC") {
-        Some(("audio", "audio/flac"))
+        Some(("recording", "audio/flac"))
     } else if content.starts_with(b"OggS") {
-        Some(("audio", "audio/ogg"))
+        Some(("recording", "audio/ogg"))
     } else if content.len() >= 12 && &content[4..8] == b"ftyp" {
-        Some(("audio", "audio/mp4"))
+        Some(("recording", "audio/mp4"))
     } else {
         None
     }

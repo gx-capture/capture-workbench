@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 import threading
@@ -14,6 +15,7 @@ from uuid import uuid4
 from pydantic import ValidationError
 
 from capture_runtime.clock import Clock
+from capture_runtime.contract_set import canonical_json_bytes
 from capture_runtime.contracts import (
     CaptureFailureV2,
     RuntimeInstallationStatus,
@@ -24,8 +26,15 @@ from capture_runtime.storage.common import (
     RecordNotFoundError,
     atomic_json,
     dump_model,
+    project_stored_requirement_id,
     record_identifier,
 )
+
+
+def _installation_fingerprint(requirement_id: str) -> str:
+    return hashlib.sha256(
+        canonical_json_bytes({"requirementId": requirement_id, "consent": True})
+    ).hexdigest()
 
 
 @dataclass(slots=True)
@@ -49,9 +58,12 @@ class InstallationRecord:
     def load(cls, payload: dict[str, Any]) -> InstallationRecord:
         job = payload["job"]
         historical_requirement_id = None
-        if isinstance(job, dict) and job.get("requirementId") == "windowsml-ocr":
-            historical_requirement_id = job["requirementId"]
-            job = {**job, "requirementId": "text-recognition"}
+        if isinstance(job, dict):
+            stored_id = job.get("requirementId")
+            current_id = project_stored_requirement_id(stored_id)
+            if current_id != stored_id:
+                historical_requirement_id = stored_id
+                job = {**job, "requirementId": current_id}
         return cls(
             job=RuntimeInstallationV2.model_validate(job),
             idempotency_key=str(payload["idempotencyKey"]),
@@ -107,7 +119,15 @@ class InstallationRepository:
             existing_id = self._idempotency.get(idempotency_key)
             if existing_id is not None:
                 existing = self._records[existing_id]
-                if existing.request_fingerprint != request_fingerprint:
+                if existing.job.requirement_id != requirement_id or not (
+                    existing.request_fingerprint == request_fingerprint
+                    or (
+                        existing.historical_requirement_id is not None
+                        and existing.request_fingerprint
+                        == _installation_fingerprint(existing.historical_requirement_id)
+                        and request_fingerprint == _installation_fingerprint(requirement_id)
+                    )
+                ):
                     raise IdempotencyConflictError(idempotency_key)
                 return existing, False
             now = self._clock.now()

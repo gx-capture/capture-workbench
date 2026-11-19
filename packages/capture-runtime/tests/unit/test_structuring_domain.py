@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 from capture_runtime.contracts import (
@@ -319,3 +322,77 @@ def test_open_structuring_session_rejection_policies() -> None:
     )
     with pytest.raises(SessionTransitionError, match="capture is not awaiting pull structuring"):
         use_case.execute(request)
+
+
+@pytest.mark.parametrize("status", ["completed", "running"])
+def test_historical_model_installation_retains_stored_requirement_id(
+    tmp_path: Path, status: str
+) -> None:
+    from capture_runtime.clock import SystemClock
+    from capture_runtime.contracts import RuntimeInstallationStatus
+    from capture_runtime.structuring.infrastructure.model_installation_repository import (
+        ModelInstallationRepository,
+    )
+
+    repository = ModelInstallationRepository(tmp_path, clock=SystemClock(), retention_hours=4)
+    repository.initialize()
+    record, _ = repository.create_or_get(
+        idempotency_key="historical-model",
+        request_fingerprint="a" * 64,
+        option_id="qwen3.5-4b-v1",
+    )
+    installation_id = record.job.installation_id
+    path = tmp_path / installation_id / "metadata.json"
+    historical = json.loads(path.read_bytes())
+    historical["job"].update(requirementId="capture-ollama-model", status=status)
+    path.write_text(json.dumps(historical), encoding="utf-8")
+    before = path.read_bytes()
+
+    repository.initialize()
+    job = repository.get(installation_id).job
+    assert repository.list() == [job]
+    assert job.option_id == "qwen3.5-4b-v1"
+    assert "requirementId" not in job.model_dump(by_alias=True)
+    replay, created = repository.create_or_get(
+        idempotency_key="historical-model",
+        request_fingerprint="a" * 64,
+        option_id=job.option_id,
+    )
+    assert not created and replay.job == job
+    if status == "completed":
+        assert job.status is RuntimeInstallationStatus.COMPLETED
+        assert path.read_bytes() == before
+    else:
+        assert job.status is RuntimeInstallationStatus.FAILED
+        assert job.error is not None and job.error.code == "runtime_restarted"
+        after = json.loads(path.read_bytes())
+        assert after["job"]["requirementId"] == historical["job"]["requirementId"]
+        assert after["requestFingerprint"] == historical["requestFingerprint"]
+
+
+def test_model_installation_with_current_requirement_id_field_is_not_loaded(
+    tmp_path: Path,
+) -> None:
+    from capture_runtime.clock import SystemClock
+    from capture_runtime.storage.common import RecordNotFoundError
+    from capture_runtime.structuring.infrastructure.model_installation_repository import (
+        ModelInstallationRepository,
+    )
+
+    repository = ModelInstallationRepository(tmp_path, clock=SystemClock(), retention_hours=4)
+    repository.initialize()
+    record, _ = repository.create_or_get(
+        idempotency_key="current-model",
+        request_fingerprint="a" * 64,
+        option_id="qwen3.5-4b-v1",
+    )
+    installation_id = record.job.installation_id
+    path = tmp_path / installation_id / "metadata.json"
+    stored = json.loads(path.read_bytes())
+    stored["job"]["requirementId"] = "structuring-model"
+    path.write_text(json.dumps(stored), encoding="utf-8")
+
+    repository.initialize()
+    assert repository.list() == []
+    with pytest.raises(RecordNotFoundError):
+        repository.get(installation_id)

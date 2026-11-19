@@ -54,14 +54,21 @@
             "speech-recognition",
             "speaker-diarization",
             "vertical-japanese-reader",
-            "ollama-runtime",
-            "capture-ollama-model"
+            "structuring-runtime",
+            "structuring-model"
           ],
           "title": "Requirementid",
           "type": "string"
         },
         "kind": {
-          "minLength": 1,
+          "enum": [
+            "text-recognition",
+            "speech-recognition",
+            "speaker-diarization",
+            "vertical-japanese-reader",
+            "structuring-runtime",
+            "structuring-model"
+          ],
           "title": "Kind",
           "type": "string"
         },
