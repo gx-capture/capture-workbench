@@ -119,6 +119,7 @@ from ._engine_uninstall import (
     remove_installed_markers,
     remove_unit_files,
 )
+from ._install_stop import InstallStop
 
 DEFAULT_ACTIVE_ENGINE_RESOLUTION_TIMEOUT_SECONDS = (
     _installation_limits.DEFAULT_ACTIVE_ENGINE_RESOLUTION_TIMEOUT_SECONDS
@@ -219,11 +220,14 @@ def _check_worker_path_lengths(root: Path) -> None:
 def verify_direct_model_files(
     root: Path,
     descriptor: EngineModelDeliveryDescriptor,
+    *,
+    cancel_event: asyncio.Event | None = None,
 ) -> None:
     _verify_direct_model_files_impl(
         root,
         descriptor,
         limits=_artifact_validation_limits(),
+        cancel_event=cancel_event,
     )
 
 
@@ -734,6 +738,9 @@ class EngineInstallationManager:
         artifact_version = delivery.artifact_version
         if artifact_version is None:
             raise EngineInstallationError("engine catalog entry is incomplete")
+        # Thread work polls this, never the job's cancel event: a shutdown must
+        # stop it without recording a user cancellation.
+        stop = InstallStop(cancel_event)
         staging = requirement_root / ".staging" / uuid4().hex
         version = requirement_root / "versions" / artifact_version
         # On a first install there is no active version to preserve. Probe the
@@ -802,12 +809,12 @@ class EngineInstallationManager:
                 progress=worker_progress,
             )
             await _cancellable_file_operation(
-                cancel_event,
+                stop,
                 safe_extract_artifact,
                 worker_archive,
                 new_version / "worker",
                 worker_descriptor,
-                cancel_event=cancel_event,
+                cancel_event=stop,
             )
             # Fail before the model download rather than at the model probe.
             await _file_operation(_check_worker_path_lengths, new_version / "worker")
@@ -873,7 +880,13 @@ class EngineInstallationManager:
                     progress=model_progress,
                 )
                 completed_model_bytes += file_descriptor.bytes
-            await _file_operation(verify_direct_model_files, model_root, model_descriptor)
+            await _cancellable_file_operation(
+                stop,
+                verify_direct_model_files,
+                model_root,
+                model_descriptor,
+                cancel_event=stop,
+            )
             report_progress(0.85)
             engine_executable = self._resolved_child(
                 new_version / "worker", worker_descriptor.entry_point

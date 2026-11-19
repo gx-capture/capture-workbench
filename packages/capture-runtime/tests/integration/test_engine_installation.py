@@ -722,10 +722,10 @@ def test_successful_activation_does_not_rehash_the_model_before_worker_launch(
     verification_calls = 0
     verify_model = engine_installation_module.verify_direct_model_files
 
-    def record_verification(root: Path, descriptor: object) -> None:
+    def record_verification(root: Path, descriptor: object, **options: object) -> None:
         nonlocal verification_calls
         verification_calls += 1
-        verify_model(root, descriptor)  # type: ignore[arg-type]
+        verify_model(root, descriptor, **options)  # type: ignore[arg-type]
 
     monkeypatch.setattr(
         engine_installation_module,
@@ -851,6 +851,7 @@ def test_active_engine_resolution_times_out_when_verification_never_returns(
 def test_installation_status_is_answered_while_the_install_extracts_or_verifies(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    settings_factory: Callable[..., RuntimeSettings],
     unit: str,
     step: str,
 ) -> None:
@@ -861,11 +862,11 @@ def test_installation_status_is_answered_while_the_install_extracts_or_verifies(
     included, past the desktop host's 60 s read timeout.
     """
 
-    from capture_runtime.provisioning.application.installation_service import InstallationService
+    import httpx
+
+    from capture_runtime.app import create_app
     from capture_runtime.provisioning.infrastructure import _engine_model_units as models
-    from capture_runtime.provisioning.infrastructure.installation_repository import (
-        InstallationRepository,
-    )
+    from tests.conftest import TOKEN
 
     async def scenario() -> None:
         if unit == "engine":
@@ -900,38 +901,76 @@ def test_installation_status_is_answered_while_the_install_extracts_or_verifies(
             return original(*args, **kwargs)
 
         monkeypatch.setattr(module, step, hold_first_call)
-        repository = InstallationRepository(
-            tmp_path / "jobs", clock=SystemClock(), retention_hours=24
-        )
-        repository.initialize()
-        service = InstallationService(repository, installer=manager, clock=SystemClock())
-        job = service.create(
-            idempotency_key="status-while-busy",
-            request_fingerprint="status-while-busy",
-            requirement_id=requirement_id,
-        )
-        task = service._tasks[job.installation_id]
-        try:
-            await asyncio.wait_for(started.wait(), 10)
-            assert not loop_blocked, loop_blocked[0]
-            # The loop runs this while the step is still working.
-            assert service.get(job.installation_id).status.value == "running"
-            release.set()
-            await asyncio.wait_for(task, 5)
-            assert service.get(job.installation_id).status.value == "completed"
-            assert manager.is_installed(requirement_id)
-        finally:
-            release.set()
-            await asyncio.wait_for(service.shutdown(), 5)
+        settings = settings_factory()
+        app = create_app(settings, installer=manager)  # type: ignore[arg-type]
+        async with (
+            app.router.lifespan_context(app),
+            httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app),
+                base_url=f"http://127.0.0.1:{settings.port}",
+                headers={"Authorization": f"Bearer {TOKEN}"},
+            ) as client,
+        ):
+            try:
+                created = await client.post(
+                    "/v2/runtime/installations",
+                    json={"requirementId": requirement_id, "consent": True},
+                    headers={"X-Idempotency-Key": "00000000-0000-4000-8000-000000000469"},
+                )
+                assert created.status_code == 202, created.text
+                status_path = f"/v2/runtime/installations/{created.json()['installationId']}"
+                await asyncio.wait_for(started.wait(), 10)
+                assert not loop_blocked, loop_blocked[0]
+                # The status route answers while the step is still working.
+                status = await asyncio.wait_for(client.get(status_path), 5)
+                assert status.status_code == 200, status.text
+                assert status.json()["status"] == "running"
+                release.set()
+                for _ in range(500):
+                    status = await client.get(status_path)
+                    if status.json()["status"] != "running":
+                        break
+                    await asyncio.sleep(0.01)
+                assert status.json()["status"] == "completed", status.text
+                assert manager.is_installed(requirement_id)
+            finally:
+                release.set()
 
     asyncio.run(scenario())
 
 
-def test_a_shutdown_during_extraction_stops_it_at_its_next_cancel_check(
+class _DownloadUntilStopped(ArtifactDownloader):
+    """A worker download that runs until it is told to stop."""
+
+    def __init__(self, started: Callable[[], None]) -> None:
+        self._started = started
+        self.stopped_by_event: list[bool] = []
+
+    async def download(self, descriptor, destination, *, cancel_event, progress) -> None:
+        self._started()
+        for _ in range(500):
+            if cancel_event.is_set():
+                self.stopped_by_event.append(True)
+                raise asyncio.CancelledError
+            await asyncio.sleep(0.01)
+        self.stopped_by_event.append(False)
+        raise AssertionError("the download was never told to stop")
+
+
+@pytest.mark.parametrize("held_step", ["extraction", "cached download"])
+@pytest.mark.parametrize("action", ["shutdown", "cancel"])
+def test_a_shutdown_stops_the_install_and_leaves_it_recoverable_a_cancel_records_it(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    held_step: str,
+    action: str,
 ) -> None:
-    """Shutdown cancels the task without the job's cancel event; extraction must still stop."""
+    """A runtime shutdown is not a user cancellation.
+
+    The step stops at its next check either way. Only the user's cancel is
+    recorded as cancelled; a shutdown leaves the job running, so the next
+    start records it as interrupted by the restart, which can be retried.
+    """
 
     from capture_runtime.provisioning.application.installation_service import InstallationService
     from capture_runtime.provisioning.infrastructure.installation_repository import (
@@ -940,47 +979,125 @@ def test_a_shutdown_during_extraction_stops_it_at_its_next_cancel_check(
 
     async def scenario() -> None:
         catalog, sources = _catalog(tmp_path)
+        started = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        stopped_by_event: list[bool] = []
+        downloader: ArtifactDownloader = CopyDownloader(sources)
+        if held_step == "cached download":
+            inner = _DownloadUntilStopped(started.set)
+            stopped_by_event = inner.stopped_by_event
+            downloader = CachingDownloader(inner, VerifiedDownloadCache(tmp_path / "cache"))
+        else:
+
+            def extract_until_stopped(
+                *_args: object, cancel_event: asyncio.Event, **_kwargs: object
+            ) -> None:
+                loop.call_soon_threadsafe(started.set)
+                for _ in range(500):
+                    if cancel_event.is_set():
+                        stopped_by_event.append(True)
+                        raise asyncio.CancelledError
+                    threading.Event().wait(0.01)
+                stopped_by_event.append(False)
+
+            monkeypatch.setattr(
+                engine_installation_module, "safe_extract_artifact", extract_until_stopped
+            )
         manager = EngineInstallationManager(
             tmp_path / "engines",
             catalog,
             worker_client=FakeWorkerClient(),  # type: ignore[arg-type]
-            downloader=CopyDownloader(sources),
+            downloader=downloader,
             model_downloader=CopyModelDownloader(sources),
-        )
-        started = asyncio.Event()
-        loop = asyncio.get_running_loop()
-        stopped_by_event: list[bool] = []
-
-        def extract_until_cancelled(
-            *_args: object, cancel_event: asyncio.Event, **_kwargs: object
-        ) -> None:
-            loop.call_soon_threadsafe(started.set)
-            for _ in range(500):
-                if cancel_event.is_set():
-                    stopped_by_event.append(True)
-                    raise asyncio.CancelledError
-                threading.Event().wait(0.01)
-            stopped_by_event.append(False)
-
-        monkeypatch.setattr(
-            engine_installation_module, "safe_extract_artifact", extract_until_cancelled
         )
         repository = InstallationRepository(
             tmp_path / "jobs", clock=SystemClock(), retention_hours=24
         )
         repository.initialize()
         service = InstallationService(repository, installer=manager, clock=SystemClock())
-        service.create(
-            idempotency_key="shutdown-while-extracting",
-            request_fingerprint="shutdown-while-extracting",
+        job = service.create(
+            idempotency_key="stop-while-busy",
+            request_fingerprint="stop-while-busy",
             requirement_id="text-recognition",
         )
         await asyncio.wait_for(started.wait(), 5)
-        await asyncio.wait_for(service.shutdown(), 10)
+        if action == "shutdown":
+            await asyncio.wait_for(service.shutdown(), 10)
+        else:
+            await asyncio.wait_for(service.cancel(job.installation_id), 10)
+            await asyncio.wait_for(service.shutdown(), 10)
         assert stopped_by_event == [True]
         assert manager.active_engine("text-recognition") is None
 
+        restarted = InstallationRepository(
+            tmp_path / "jobs", clock=SystemClock(), retention_hours=24
+        )
+        restarted.initialize()
+        restarted.recover_interrupted()
+        recorded = restarted.get(job.installation_id).job
+        if action == "shutdown":
+            assert recorded.status.value == "failed"
+            assert recorded.error is not None
+            assert recorded.error.code == "runtime_restarted"
+            assert recorded.error.retryable
+        else:
+            assert recorded.status.value == "cancelled"
+
     asyncio.run(scenario())
+
+
+def test_a_stop_during_archive_validation_ends_the_hash_early(tmp_path: Path) -> None:
+    """A cancel or shutdown does not wait for a multi-GB archive to be hashed."""
+
+    from dataclasses import replace as replace_fields
+
+    from capture_runtime.provisioning.infrastructure import (
+        _engine_installation_artifacts as artifacts,
+    )
+
+    catalog, sources = _catalog(tmp_path)
+    worker = catalog.requirement("text-recognition").worker_artifact()
+    # A wrong digest: a hash that runs to the end rejects the archive instead.
+    descriptor = replace_fields(worker, sha256="0" * 64)
+    checks: list[int] = []
+
+    class _StopAfterTwoChunks:
+        def is_set(self) -> bool:
+            checks.append(1)
+            return len(checks) > 2
+
+    with pytest.raises(asyncio.CancelledError):
+        artifacts.safe_extract_artifact(
+            sources[worker.file_name],
+            tmp_path / "worker",
+            descriptor,
+            cancel_event=_StopAfterTwoChunks(),  # type: ignore[arg-type]
+            limits=replace_fields(
+                artifacts.DEFAULT_ARTIFACT_VALIDATION_LIMITS, download_chunk_bytes=16
+            ),
+        )
+    assert len(checks) == 3
+    assert not (tmp_path / "worker").exists()
+
+
+def test_a_stop_during_model_verification_ends_the_hash_early(tmp_path: Path) -> None:
+    from capture_runtime.provisioning.infrastructure import (
+        _engine_installation_artifacts as artifacts,
+    )
+
+    catalog, sources = _catalog(tmp_path)
+    delivery = catalog.requirement("text-recognition").model_delivery()
+    model_root = tmp_path / "model"
+    for item in delivery.files:
+        target = model_root / item.path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(sources[item.path], target)
+    stop = asyncio.Event()
+    stop.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        artifacts.verify_direct_model_files(model_root, delivery, cancel_event=stop)
+    artifacts.verify_direct_model_files(model_root, delivery)
 
 
 def test_failed_upgrade_keeps_previous_active_state(tmp_path: Path) -> None:

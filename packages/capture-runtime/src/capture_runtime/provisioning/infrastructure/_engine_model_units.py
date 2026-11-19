@@ -23,8 +23,14 @@ from capture_runtime.provisioning.infrastructure.engine_catalog import (
 )
 
 from ._engine_installation_artifacts import verify_direct_model_files
-from ._engine_installation_download import ModelFileDownloader, _commit_operation, _file_operation
+from ._engine_installation_download import (
+    ModelFileDownloader,
+    _cancellable_file_operation,
+    _commit_operation,
+    _file_operation,
+)
 from ._engine_installation_errors import EngineInstallationError
+from ._install_stop import InstallStop
 
 STATE_FILE_NAME = "active-model.json"
 STATE_VERSION = "1"
@@ -133,7 +139,10 @@ async def install_model_unit(
             completed += descriptor.bytes
         # Hashing and deleting gigabytes run in a worker thread so that the
         # event loop keeps answering requests, installation status included.
-        await _file_operation(verify_direct_model_files, model_root, delivery)
+        stop = InstallStop(cancel_event)
+        await _cancellable_file_operation(
+            stop, verify_direct_model_files, model_root, delivery, cancel_event=stop
+        )
         if cancel_event.is_set():
             raise asyncio.CancelledError
         state_path = root / STATE_FILE_NAME

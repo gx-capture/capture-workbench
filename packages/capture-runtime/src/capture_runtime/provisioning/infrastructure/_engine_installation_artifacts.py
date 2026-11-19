@@ -50,10 +50,19 @@ class ArtifactValidationLimits:
 DEFAULT_ARTIFACT_VALIDATION_LIMITS = ArtifactValidationLimits()
 
 
-def sha256_file(path: Path, *, chunk_bytes: int = DOWNLOAD_CHUNK_BYTES) -> str:
+def sha256_file(
+    path: Path,
+    *,
+    chunk_bytes: int = DOWNLOAD_CHUNK_BYTES,
+    cancel_event: asyncio.Event | None = None,
+) -> str:
+    """Hash a file; a set ``cancel_event`` stops it between chunks."""
+
     digest = hashlib.sha256()
     with path.open("rb") as source:
         while chunk := source.read(chunk_bytes):
+            if cancel_event is not None and cancel_event.is_set():
+                raise asyncio.CancelledError
             digest.update(chunk)
     return digest.hexdigest()
 
@@ -161,7 +170,8 @@ def safe_extract_artifact(
 ) -> None:
     if (
         archive.stat().st_size != descriptor.bytes
-        or sha256_file(archive, chunk_bytes=limits.download_chunk_bytes) != descriptor.sha256
+        or sha256_file(archive, chunk_bytes=limits.download_chunk_bytes, cancel_event=cancel_event)
+        != descriptor.sha256
     ):
         raise EngineInstallationError("engine archive does not match its catalog descriptor")
     if destination.exists():
@@ -325,6 +335,7 @@ def verify_direct_model_files(
     descriptor: EngineModelDeliveryDescriptor,
     *,
     limits: ArtifactValidationLimits = DEFAULT_ARTIFACT_VALIDATION_LIMITS,
+    cancel_event: asyncio.Event | None = None,
 ) -> None:
     if not root.is_dir() or root.is_symlink():
         raise EngineInstallationError("installed direct model root is missing or unsafe")
@@ -344,7 +355,8 @@ def verify_direct_model_files(
             raise EngineInstallationError("installed direct model file is unsafe")
         if (
             path.stat().st_size != item.bytes
-            or sha256_file(path, chunk_bytes=limits.download_chunk_bytes) != item.sha256
+            or sha256_file(path, chunk_bytes=limits.download_chunk_bytes, cancel_event=cancel_event)
+            != item.sha256
         ):
             raise EngineInstallationError("installed direct model file checksum changed")
         if item.bytes > limits.max_single_model_file_bytes:

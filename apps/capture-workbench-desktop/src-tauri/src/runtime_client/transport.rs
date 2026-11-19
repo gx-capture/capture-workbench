@@ -182,13 +182,14 @@ fn request_classified(
     parse_response(&response, &config.token)
 }
 
-/// A read that outlives the socket timeout is a runtime that has not answered,
-/// not a response that arrived broken: say which, so that a busy runtime is
-/// not mistaken for a dropped connection.
+/// The socket timeout limits each read, so it fires whenever the runtime sends
+/// nothing for that long: before the headers, or partway through a body or an
+/// event stream. Say so, so that a busy runtime is not mistaken for a dropped
+/// connection.
 fn read_failure_message(error: &std::io::Error) -> String {
     match error.kind() {
         ErrorKind::TimedOut | ErrorKind::WouldBlock => format!(
-            "Capture Runtime did not answer within {} seconds.",
+            "Capture Runtime sent no data for {} seconds.",
             REQUEST_TIMEOUT.as_secs()
         ),
         _ => "Capture Runtime response could not be read.".to_string(),
@@ -454,12 +455,12 @@ mod tests {
     }
 
     #[test]
-    fn a_read_timeout_says_the_runtime_did_not_answer() {
+    fn a_read_timeout_says_the_runtime_sent_no_data() {
         for kind in [ErrorKind::TimedOut, ErrorKind::WouldBlock] {
             assert_eq!(
                 read_failure_message(&std::io::Error::from(kind)),
                 format!(
-                    "Capture Runtime did not answer within {} seconds.",
+                    "Capture Runtime sent no data for {} seconds.",
                     super::REQUEST_TIMEOUT.as_secs()
                 )
             );
