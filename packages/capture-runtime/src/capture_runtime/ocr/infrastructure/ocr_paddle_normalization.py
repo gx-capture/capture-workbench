@@ -38,6 +38,8 @@ class PaddleNormalizedResult:
 class PaddleResultNormalizationError(EngineRuntimeUnavailableError):
     """A Paddle result violated the runtime's strict OCR result contract."""
 
+    primary_code = "ocr_normalization_failed"
+
     def __init__(self, reason: str) -> None:
         super().__init__(f"Paddle OCR result normalization failed: {reason}")
 

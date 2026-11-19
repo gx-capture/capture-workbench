@@ -1,5 +1,17 @@
 [
   {
+    "name": "AcceptanceOcrExecutionEvidenceFileSink",
+    "match": "word",
+    "replacement": "AcceptanceOcrExecutionEvidenceSink",
+    "allowed": []
+  },
+  {
+    "name": "FileOcrExecutionEvidenceSink",
+    "match": "word",
+    "replacement": "AcceptanceOcrExecutionEvidenceSink",
+    "allowed": []
+  },
+  {
     "name": "e2e-real-backend",
     "match": "substring",
     "replacement": "e2e-dev-host",

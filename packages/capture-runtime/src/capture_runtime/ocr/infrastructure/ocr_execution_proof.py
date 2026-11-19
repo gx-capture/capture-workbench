@@ -858,6 +858,8 @@ def acceptance_ocr_execution_runtime_sha256_from_environment() -> str | None:
         return None
     if opt_in.strip() != "1":
         raise ValueError("OCR execution evidence opt-in is invalid")
+    if not getattr(sys, "frozen", False):
+        raise ValueError("OCR execution evidence requires the packaged runtime")
     loaded_runtime = Path(sys.executable)
     if not loaded_runtime.is_absolute() or loaded_runtime.is_symlink():
         raise ValueError("OCR execution evidence loaded runtime is invalid")
@@ -886,8 +888,6 @@ def acceptance_ocr_execution_runtime_sha256_from_environment() -> str | None:
 
 __all__ = [
     "AcceptanceOcrExecutionEvidenceSink",
-    "AcceptanceOcrExecutionEvidenceFileSink",
-    "FileOcrExecutionEvidenceSink",
     "FAILURE_PROOF_ARTIFACT_NAME",
     "FAILURE_PROOF_SCHEMA_VERSION",
     "InMemoryOcrExecutionEvidenceSink",
@@ -905,8 +905,4 @@ __all__ = [
     "acceptance_ocr_execution_runtime_sha256_from_environment",
 ]
 
-# Explicit alias used by acceptance callers that want the implementation role
-# in the name; both names expose the same fail-closed adapter.
-AcceptanceOcrExecutionEvidenceFileSink = AcceptanceOcrExecutionEvidenceSink
-FileOcrExecutionEvidenceSink = AcceptanceOcrExecutionEvidenceSink
 OcrExecutionProofContext = OcrExecutionProofContextV1
