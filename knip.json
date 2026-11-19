@@ -49,6 +49,7 @@
   },
   "ignoreBinaries": [
     "netstat",
+    "nvidia-smi",
     "taskkill.exe",
     "tasklist.exe",
     "uv",

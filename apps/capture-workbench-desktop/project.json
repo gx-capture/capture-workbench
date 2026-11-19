@@ -316,6 +316,19 @@
         "parallel": false
       }
     },
+    "check-real-engine-devices": {
+      "cache": false,
+      "executor": "nx:run-commands",
+      "metadata": {
+        "description": "Manual Windows check at the runtime API of the locally built release runtime (packages/capture-runtime/dist/release, from capture-runtime:build-release-artifacts) with real engines: OCR, speech recognition and speaker identification scenarios, each comparing the designed device with the reported one (provenance, ocrCompute) and the one observed in GPU engine and CPU samples. Pass --pdf, --image and --audio; --list shows the scenarios. Not a release gate; excluded from CI."
+      },
+      "outputs": [
+        "{workspaceRoot}/tmp/capture-workbench-desktop/real-engine-device-check"
+      ],
+      "options": {
+        "command": "node apps/capture-workbench-desktop/scripts/real-engine-device-check.ts"
+      }
+    },
     "smoke-real-desktop-ocr": {
       "cache": false,
       "executor": "nx:run-commands",

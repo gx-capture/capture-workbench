@@ -88,6 +88,14 @@ test('v2 request builders support pdf, image, and audio with runtime or host str
       startPolicy: 'eager',
     },
   );
+  assert.equal(
+    buildStartCaptureRequest({
+      clientRequestId: 'req-3',
+      ingestionId: 'ing-1',
+      identifySpeakers: true,
+    }).identifySpeakers,
+    true,
+  );
 });
 
 test('startV2Capture executes open, chunked PUTs, finalize, and capture start in order', async () => {

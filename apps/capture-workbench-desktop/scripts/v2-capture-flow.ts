@@ -99,6 +99,7 @@ export function buildStartCaptureRequest(input: {
   readonly ingestionId: string;
   readonly structuringMode?: 'runtime' | 'host';
   readonly targetLanguage?: string;
+  readonly identifySpeakers?: boolean;
 }): {
   readonly protocolVersion: '2';
   readonly clientRequestId: string;
@@ -106,6 +107,7 @@ export function buildStartCaptureRequest(input: {
   readonly structuringMode: 'runtime' | 'host';
   readonly targetLanguage: string;
   readonly startPolicy: 'eager';
+  readonly identifySpeakers?: true;
 } {
   return {
     protocolVersion: '2',
@@ -114,6 +116,7 @@ export function buildStartCaptureRequest(input: {
     structuringMode: input.structuringMode ?? 'runtime',
     targetLanguage: input.targetLanguage ?? 'zh-TW',
     startPolicy: 'eager',
+    ...(input.identifySpeakers ? { identifySpeakers: true as const } : {}),
   };
 }
 
@@ -158,6 +161,7 @@ export async function startV2Capture(input: {
   readonly sourceSha256?: string;
   readonly structuringMode?: 'runtime' | 'host';
   readonly targetLanguage?: string;
+  readonly identifySpeakers?: boolean;
   readonly chunkBytes?: number;
 }): Promise<CaptureOperation> {
   const sourceSha256 =
@@ -216,6 +220,7 @@ export async function startV2Capture(input: {
         ingestionId: ingestion.ingestionId,
         structuringMode: input.structuringMode,
         targetLanguage: input.targetLanguage,
+        identifySpeakers: input.identifySpeakers,
       }),
     ),
   });

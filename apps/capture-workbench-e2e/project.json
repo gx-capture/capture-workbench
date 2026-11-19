@@ -82,7 +82,7 @@
       "cache": false,
       "executor": "nx:run-commands",
       "metadata": {
-        "description": "Manual opt-in Layer 1 real-engine smoke on localhost (real-engines.spec.ts) driving the Workbench UI against capture-workbench-dev-host and the staged product runtime with real OCR, TEA-ASR 1.1 mini + diarization, and Ollama structuring; excluded from ordinary CI."
+        "description": "Manual opt-in Layer 1 real-engine smoke on localhost (real-engines.spec.ts) driving the Workbench UI against capture-workbench-dev-host and the staged product runtime with real OCR, speech recognition of the installed pack (tea-asr-1.1 on cuda with the NVIDIA driver, tea-asr-1.1-mini on cpu without) + speaker identification, and Ollama structuring; excluded from ordinary CI."
       },
       "dependsOn": [
         { "projects": ["capture-workbench-desktop"], "target": "build-dev-host" },
