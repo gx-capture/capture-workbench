@@ -264,7 +264,7 @@ export class DesktopCaptureService {
       && selectFeatureMissing(host.requirements(), 'ocr').length > 0
     ) {
       host.requestedRequirements.update(
-        (current) => new Set([...current, 'windowsml-ocr']),
+        (current) => new Set([...current, 'text-recognition']),
       );
       host.setMessage(desktopMessages().needsSetup);
       return EMPTY;

@@ -98,7 +98,7 @@ def _archive(
     descriptor = EngineArtifactDescriptor.from_dict(
         {
             "role": "worker",
-            "requirementId": "windowsml-ocr",
+            "requirementId": "text-recognition",
             "artifactVersion": RUNTIME_VERSION,
             "workerProtocolVersion": "1",
             "platform": "windows",

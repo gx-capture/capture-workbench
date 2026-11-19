@@ -513,17 +513,17 @@ async function installOcr(port: number, token: string): Promise<void> {
     }[];
   };
   const ocr = requirements.items?.find(
-    (item) => item.requirementId === 'windowsml-ocr',
+    (item) => item.requirementId === 'text-recognition',
   );
   if (!ocr || !ocr.status) {
     throw new Error(
-      'Packaged runtime did not expose the windowsml-ocr requirement.',
+      'Packaged runtime did not expose the text-recognition requirement.',
     );
   }
   if (ocr.status === 'ready') return;
   if (ocr.status !== 'installable') {
     throw new Error(
-      `Packaged runtime cannot install windowsml-ocr: ${ocr.status}${ocr.detail ? ` (${ocr.detail})` : ''}.`,
+      `Packaged runtime cannot install text-recognition: ${ocr.status}${ocr.detail ? ` (${ocr.detail})` : ''}.`,
     );
   }
   const installationResponse = await fetch(
@@ -535,7 +535,7 @@ async function installOcr(port: number, token: string): Promise<void> {
         'Content-Type': 'application/json',
         'X-Idempotency-Key': randomUUID(),
       },
-      body: JSON.stringify({ requirementId: 'windowsml-ocr', consent: true }),
+      body: JSON.stringify({ requirementId: 'text-recognition', consent: true }),
     },
   );
   if (!installationResponse.ok) {
@@ -999,8 +999,8 @@ window.__captureE2eReady = true;
       bubbles: window.__captureE2eBubbles,
       composed: window.__captureE2eComposed,
     }));
-    const expectedExtractionEngine = 'windowsml-ocr';
-    const expectedExtractionDevice = 'windowsml-dml';
+    const expectedExtractionEngine = 'text-recognition';
+    const expectedExtractionDevice = 'directml';
     const rawSegments = state.detail?.document?.rawSegments ?? [];
     const stateSummary = {
       defined: state.defined,

@@ -14,9 +14,9 @@ the OCR compute mode.
 `contractSetVersion: "2"`, and the exact authenticated contract-set digest.
 Its stable decision fields are:
 
-- `mode`: `gpu-dml` or `cpu-fallback`;
+- `mode`: `gpu` or `cpu-fallback`;
 - `adapterClass`: `dedicated`, `integrated`, or `unknown`;
-- `reasonCode`: `no_compatible_gpu`, `dml_provider_unavailable`, or `null`;
+- `reasonCode`: `no_compatible_gpu`, `gpu_provider_unavailable`, or `null`;
 - `userNoticeRequired`: `true` only for CPU fallback; and
 - `noticeCode`: `ocr_cpu_fallback` for CPU fallback, otherwise `null`; and
 - `workerSha256`: the SHA-256 digest self-reported by the OCR worker
@@ -59,7 +59,7 @@ authoritative provider-absent evidence, and never allows CPU for indeterminate
 evidence or a post-selection DML failure.
 
 This preflight only selects the allowed starting mode. If a DML-selected OCR
-pipeline or session fails to initialize or infer, the existing WindowsML
+pipeline or session fails to initialize or infer, the existing OCR
 adapter fails closed and never retries with another GPU or a separate CPU-only
 session for that operation.
 
@@ -74,7 +74,7 @@ ordered identity chain for packaged acceptance.
 Tests cross the probe/decision seam and the authenticated readiness route:
 dGPU-first then iGPU selection, all-positive-unavailable hardware, authoritative
 provider absence, inventory/provider indeterminate and structurally-invalid
-snapshots, contract identity, and auth. Existing WindowsML tests continue to
+snapshots, contract identity, and auth. Existing OCR tests continue to
 prove DML session initialization or inference failure has no retry. A
 read-only machine probe reports the current mode without loading PaddleOCR or
 model assets. Hosts never probe, rank or select a GPU themselves.

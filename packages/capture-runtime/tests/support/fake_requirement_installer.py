@@ -9,7 +9,7 @@ from capture_runtime.constants import (
     OLLAMA_MODEL_REQUIREMENT_ID,
     OLLAMA_RUNTIME_REQUIREMENT_ID,
     SPEECH_RECOGNITION_REQUIREMENT_ID,
-    WINDOWSML_REQUIREMENT_ID,
+    TEXT_RECOGNITION_REQUIREMENT_ID,
 )
 from capture_runtime.contracts import RuntimeRequirementStatus, RuntimeRequirementV2
 from capture_runtime.install_progress import DownloadProgress
@@ -33,7 +33,7 @@ class FakeRequirementInstaller:
         enabled_requirement_ids: Collection[str] | None = None,
     ) -> list[RuntimeRequirementV2]:
         descriptions = {
-            WINDOWSML_REQUIREMENT_ID: ("OCR", "WindowsML OCR", ["pdf", "image"]),
+            TEXT_RECOGNITION_REQUIREMENT_ID: ("OCR", "Text recognition", ["pdf", "image"]),
             SPEECH_RECOGNITION_REQUIREMENT_ID: (
                 "transcription",
                 "Speech recognition",
@@ -94,7 +94,10 @@ class FakeRequirementInstaller:
         report_progress(1)
 
     def is_uninstallable(self, requirement_id: str) -> bool:
-        return requirement_id in {WINDOWSML_REQUIREMENT_ID, SPEECH_RECOGNITION_REQUIREMENT_ID}
+        return requirement_id in {
+            TEXT_RECOGNITION_REQUIREMENT_ID,
+            SPEECH_RECOGNITION_REQUIREMENT_ID,
+        }
 
     async def uninstall(self, requirement_id: str) -> None:
         self.ready.discard(requirement_id)

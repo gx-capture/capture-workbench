@@ -5,13 +5,7 @@ from typing import Final
 CAPTURE_OLLAMA_PROFILE_ID: Final = "capture-workbench-qwen3.5-4b-structure-v1"
 CAPTURE_OLLAMA_BASE_MODEL: Final = "qwen3.5:4b"
 
-# The approved WindowsML bundle digest and size are runtime-release invariants.
-# Its source URL comes from an approved release catalog instead of a hard-coded
-# release asset path.
-WINDOWSML_BUNDLE_BYTES: Final = 138_837_175
-WINDOWSML_BUNDLE_SHA256: Final = "a88c9a3097771d07bd1d940db6acdcbb5336e7c6c85406f5c22655ed6930704a"
-
-WINDOWSML_REQUIREMENT_ID: Final = "windowsml-ocr"
+TEXT_RECOGNITION_REQUIREMENT_ID: Final = "text-recognition"
 SPEECH_RECOGNITION_REQUIREMENT_ID: Final = "speech-recognition"
 DIARIZATION_REQUIREMENT_ID: Final = "speaker-diarization"
 # Models only: the reader runs inside the OCR worker.

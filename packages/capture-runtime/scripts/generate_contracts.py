@@ -37,7 +37,13 @@ from capture_runtime.release import (
 ROOT = Path(__file__).resolve().parents[3]
 RUNTIME_ASSET_DIR = ROOT / "packages" / "capture-runtime" / "src" / "capture_runtime" / "assets"
 OCR_PROFILE_SOURCE = (
-    ROOT / "packages" / "capture-runtime" / "model-sources" / "commit-a" / "model" / "pipeline.json"
+    ROOT
+    / "packages"
+    / "capture-runtime"
+    / "model-sources"
+    / "text-recognition"
+    / "model"
+    / "pipeline.json"
 )
 OCR_PROFILE_ASSET_NAME = "ocr-profile.json"
 CONSUMER_ROOT = ROOT
@@ -457,7 +463,7 @@ def _invariants() -> list[dict[str, str]]:
             "id": "ocr-compute-preflight-mode",
             "models": "OcrComputePreflightV2",
             "description": (
-                "gpu-dml carries no fallback reason or notice; cpu-fallback carries "
+                "gpu carries no fallback reason or notice; cpu-fallback carries "
                 "a stable reason and user notice."
             ),
         },
@@ -555,7 +561,7 @@ def _manifest(models: dict[str, dict[str, Any]]) -> dict[str, Any]:
             {
                 "name": "CaptureRequirementId",
                 "type": (
-                    "'windowsml-ocr' | 'speech-recognition' | 'ollama-runtime' "
+                    "'text-recognition' | 'speech-recognition' | 'ollama-runtime' "
                     "| 'capture-ollama-model'"
                 ),
             },

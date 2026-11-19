@@ -295,7 +295,7 @@ describe('DesktopCaptureService', () => {
           contractSetVersion: '2',
           contractSha256: 'a'.repeat(64),
           workerSha256: undefined,
-          mode: 'gpu-dml',
+          mode: 'gpu',
           adapterClass: 'dedicated',
           reasonCode: null,
           userNoticeRequired: false,
@@ -1571,7 +1571,7 @@ function runtimeStub(overrides: Record<string, unknown> = {}) {
       contractSetVersion: '2',
       contractSha256: 'a'.repeat(64),
       workerSha256: 'f'.repeat(64),
-      mode: 'gpu-dml',
+      mode: 'gpu',
       adapterClass: 'dedicated',
       reasonCode: null,
       userNoticeRequired: false,
@@ -1647,7 +1647,7 @@ function ocrProjection(
 ): CaptureOcrProjection {
   const provenance = {
     status: 'resolved' as const,
-    engine: 'windowsml-ocr' as const,
+    engine: 'text-recognition' as const,
     model: 'ppocrv6-traditional-multilingual',
     modelDigest: `sha256:${'d'.repeat(64)}`,
     device: 'RTX4060',

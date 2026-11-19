@@ -351,7 +351,6 @@ def test_extraction_joins_worker_after_repeated_cancellation(
         extractor = StandaloneRuntimeCaptureExtractor(
             FixedClock(),
             ExtractionRuntimeConfig(
-                windowsml_model_dir=tmp_path / "ocr",
                 temp_dir=tmp_path / "temp",
                 max_pdf_pages=10,
                 max_image_pixels=100000,

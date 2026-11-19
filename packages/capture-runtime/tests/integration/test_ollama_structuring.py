@@ -86,7 +86,7 @@ def _raw(*, count: int = 1, text_chars: int = 40) -> RawCapture:
             "segments": segments,
             "sourceText": "\n".join(str(segment["text"]) for segment in segments),
             "extractionEngine": {
-                "engine": "windowsml-ocr",
+                "engine": "text-recognition",
                 "model": "capture-ocr-v1",
                 "digest": f"sha256:{'b' * 64}",
                 "device": "igpu",

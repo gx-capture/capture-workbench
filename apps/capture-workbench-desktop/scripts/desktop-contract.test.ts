@@ -226,7 +226,7 @@ test('Nx separates root verification build from release and deterministic NSIS l
   );
   assert.match(
     directmlSmoke.options.commands.at(-1),
-    /--expected-ocr-device windowsml-dml$/u,
+    /--expected-ocr-device directml$/u,
   );
 });
 

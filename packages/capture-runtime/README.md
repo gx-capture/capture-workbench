@@ -8,12 +8,18 @@ diarization run as separately packaged worker processes.
 
 ## OCR
 
-The `capture-engine-ocr` worker serves requirement `windowsml-ocr`: PP-OCRv6
+The `capture-engine-ocr` worker serves requirement `text-recognition`: PP-OCRv6
 medium detection and recognition (Traditional Chinese multilingual dictionary)
 on DirectML, or on the CPU when the compute plan selects it
 (`src/capture_runtime/assets/ocr-profile.json`). The runtime orders the regions
 of each page (`ocr_reading_order.py`), including furigana on horizontal pages
 and boxed vertical passages.
+
+When upgrading from 0.10, install Text recognition once after starting
+0.11. Startup removes the retired OCR installation under the app-data
+lock. The download cache reuses verified model bytes by SHA-256. The runtime
+reads historical capture records in place and exposes the current OCR
+identities in its API.
 
 The optional unit `vertical-japanese-reader` delivers the NDLOCR-Lite models
 (no worker of its own; vendored layout code in

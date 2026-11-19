@@ -84,7 +84,7 @@ def test_lock_accepts_the_optional_speaker_unit_after_the_required_ones() -> Non
     lock = module.validate_source_lock(_lock_with(_speaker_requirement()))
 
     assert [item["requirementId"] for item in lock["requirements"]] == [
-        "windowsml-ocr",
+        "text-recognition",
         "speech-recognition",
         "speaker-diarization",
         "vertical-japanese-reader",
@@ -232,7 +232,7 @@ def test_catalog_leaves_the_unit_out_when_the_lock_does_not_have_it(tmp_path: Pa
     assert completed.returncode == 0, completed.stderr
     catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
     assert [item["requirementId"] for item in catalog["requirements"]] == [
-        "windowsml-ocr",
+        "text-recognition",
         "speech-recognition",
         "vertical-japanese-reader",
     ]
@@ -253,7 +253,7 @@ def test_a_models_only_unit_enters_the_catalog_and_the_release_without_an_archiv
     # The OCR profile is derived from the reader's files, which this unit delivers.
     profile = next(
         item
-        for item in catalog.requirement("windowsml-ocr").model_delivery().files
+        for item in catalog.requirement("text-recognition").model_delivery().files
         if item.kind == "derived"
     )
     assert profile.derivation is not None
@@ -297,9 +297,9 @@ def test_the_ocr_profile_needs_the_reader_unit_in_the_same_lock_and_catalog() ->
         "runtimeVersion": RUNTIME_VERSION,
         "requirements": [
             {
-                "requirementId": "windowsml-ocr",
+                "requirementId": "text-recognition",
                 "artifacts": [],
-                "modelFiles": module.model_delivery(_lock_with(), "windowsml-ocr"),
+                "modelFiles": module.model_delivery(_lock_with(), "text-recognition"),
                 "unavailableReason": None,
             }
         ],

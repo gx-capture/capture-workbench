@@ -696,13 +696,13 @@ mod tests {
                 "captureId":"capture-1",
                 "status":"completed",
                 "source":{"sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","fileName":"scan.pdf","mediaType":"application/pdf","bytes":1024},
-                "pages":[{"page":1,"status":"recognized","raster":{"width":120,"height":80,"scale":1,"coordinateSystem":"pixel"},"text":"OCR","boxes":[{"polygon":[{"x":1,"y":1},{"x":20,"y":1},{"x":20,"y":20},{"x":1,"y":20}],"text":"OCR","confidence":0.9}],"confidence":0.9,"provenance":{"status":"resolved","engine":"windowsml-ocr","model":"pp-ocrv6-medium-windowsml","modelDigest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","device":"windowsml-dml","profileId":"capture-workbench-ocr-pipeline-v1","profileSpecSha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}}],
+                "pages":[{"page":1,"status":"recognized","raster":{"width":120,"height":80,"scale":1,"coordinateSystem":"pixel"},"text":"OCR","boxes":[{"polygon":[{"x":1,"y":1},{"x":20,"y":1},{"x":20,"y":20},{"x":1,"y":20}],"text":"OCR","confidence":0.9}],"confidence":0.9,"provenance":{"status":"resolved","engine":"text-recognition","model":"pp-ocrv6-medium","modelDigest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","device":"directml","profileId":"capture-workbench-ocr-pipeline-v1","profileSpecSha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}}],
                 "pageCount":1,
                 "runtimeVersion":""#,
                 env!("CARGO_PKG_VERSION"),
                 r#"",
                 "contractSha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                "provenance":{"status":"resolved","engine":"windowsml-ocr","model":"pp-ocrv6-medium-windowsml","modelDigest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","device":"windowsml-dml","profileId":"capture-workbench-ocr-pipeline-v1","profileSpecSha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},
+                "provenance":{"status":"resolved","engine":"text-recognition","model":"pp-ocrv6-medium","modelDigest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","device":"directml","profileId":"capture-workbench-ocr-pipeline-v1","profileSpecSha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},
                 "createdAt":"2026-08-14T00:00:00Z"
             }"#
             );
@@ -1053,10 +1053,10 @@ mod tests {
             let count = stream.read(&mut request).expect("request uninstall");
             let request = String::from_utf8_lossy(&request[..count]);
             assert!(request.starts_with(
-                "DELETE /v2/runtime/requirements/windowsml-ocr/installation HTTP/1.1"
+                "DELETE /v2/runtime/requirements/text-recognition/installation HTTP/1.1"
             ));
             assert!(request.contains("Authorization: Bearer secret-token"));
-            let body = r#"{"requirementId":"windowsml-ocr","kind":"runtime","displayName":"WindowsML OCR","status":"installable","requiredFor":["capture"],"installStrategy":"automatic","downloadBytes":144000000}"#;
+            let body = r#"{"requirementId":"text-recognition","kind":"runtime","displayName":"Text recognition","status":"installable","requiredFor":["capture"],"installStrategy":"automatic","downloadBytes":144000000}"#;
             write!(
                 stream,
                 "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -1091,7 +1091,15 @@ mod tests {
         assert!(uninstall_requirement(
             &state,
             RuntimeRequirementInput {
-                requirement_id: "../windowsml-ocr".into(),
+                requirement_id: "../text-recognition".into(),
+            },
+        )
+        .is_err());
+
+        assert!(uninstall_requirement(
+            &state,
+            RuntimeRequirementInput {
+                requirement_id: "windowsml-ocr".into(),
             },
         )
         .is_err());
@@ -1099,11 +1107,11 @@ mod tests {
         let removed = uninstall_requirement(
             &state,
             RuntimeRequirementInput {
-                requirement_id: "windowsml-ocr".into(),
+                requirement_id: "text-recognition".into(),
             },
         )
         .expect("uninstall");
-        assert_eq!(removed["requirementId"], "windowsml-ocr");
+        assert_eq!(removed["requirementId"], "text-recognition");
         assert_eq!(removed["status"], "installable");
 
         let conflict = uninstall_requirement(

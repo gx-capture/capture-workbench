@@ -11,7 +11,7 @@
     },
     "OcrComputeMode": {
       "enum": [
-        "gpu-dml",
+        "gpu",
         "cpu-fallback"
       ],
       "title": "OcrComputeMode",
@@ -122,7 +122,7 @@
     "OcrComputeReasonCode": {
       "enum": [
         "no_compatible_gpu",
-        "dml_provider_unavailable"
+        "gpu_provider_unavailable"
       ],
       "title": "OcrComputeReasonCode",
       "type": "string"

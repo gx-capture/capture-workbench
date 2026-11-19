@@ -34,7 +34,7 @@ Single content (OCR, diarization, vertical reader, and speech until the CPU arch
 
 ```json
 {
-  "requirementId": "windowsml-ocr",
+  "requirementId": "text-recognition",
   "artifacts": [{ "role": "worker", "fileName": "capture-engine-ocr-0.9.0-windows-x64.zip" }],
   "modelFiles": { "entryPoint": "model", "files": [] },
   "unavailableReason": null

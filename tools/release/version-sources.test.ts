@@ -42,7 +42,7 @@ const INVENTORY_FILES = [
   'apps/capture-workbench-desktop/src-tauri/tauri.conf.json',
   'packages/capture-runtime/src/capture_runtime/constants/versions.py',
   'packages/capture-runtime/scripts/model_source_lock.py',
-  'packages/capture-runtime/scripts/generate_commit_a_fixtures.py',
+  'packages/capture-runtime/scripts/generate_text_recognition_sources.py',
   'packages/capture-runtime/project.json',
   'packages/capture-runtime/model-sources/release-model-source-lock.json',
   'packages/capture-runtime/src/capture_runtime/assets/engine-catalog.json',

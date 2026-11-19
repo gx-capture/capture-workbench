@@ -4,7 +4,7 @@
 
 Make the rendered PDF page the only source of truth for PDF capture. Every
 selected PDF page is rendered by PDFium and recognized by the existing
-PaddleOCR 3.7 WindowsML worker. Embedded PDF text is never read or returned.
+PaddleOCR 3.7 ONNX worker. Embedded PDF text is never read or returned.
 
 ## Non-goals
 
@@ -31,8 +31,8 @@ PaddleOCR 3.7 WindowsML worker. Embedded PDF text is never read or returned.
 - The internal OCR worker PDF request receives `maxPages`, `renderScale`, and
   optional `pageNumbers` (the same selection); it renders only selected pages
   in source order and labels each with its source page number.
-- PDF capture requires the `windowsml-ocr` runtime requirement to be ready.
-- Successful PDF extraction reports the existing `windowsml-ocr` engine and
+- PDF capture requires the `text-recognition` runtime requirement to be ready.
+- Successful PDF extraction reports the existing `text-recognition` engine and
   PaddleOCR model/device provenance.
 - Validated, consecutive OCR worker pages update the existing V2 `progress`
   field and `checkpoint` events while capture remains `extracting`. Progress
@@ -48,7 +48,7 @@ PaddleOCR 3.7 WindowsML worker. Embedded PDF text is never read or returned.
 - Keep PDFium inside the separately packaged OCR worker; the core executable
   does not absorb PDF rendering or PaddleOCR dependencies.
 - Reuse the existing bounded, cancellable, one-page-at-a-time worker path.
-- Cert Prep rejects PDF capture before upload when WindowsML OCR is not ready,
+- Cert Prep rejects PDF capture before upload when text recognition is not ready,
   matching its existing image admission policy.
 
 ## Edge cases and failure modes
@@ -77,7 +77,7 @@ PaddleOCR 3.7 WindowsML worker. Embedded PDF text is never read or returned.
   contain no page 2 through 46.
 - The OCR worker enforces the configured PDF page limit and preserves page
   order while holding at most one rendered page image at a time.
-- Cert Prep blocks PDF and image capture when `windowsml-ocr` is not ready.
+- Cert Prep blocks PDF and image capture when `text-recognition` is not ready.
 - Separately collected Nx unit and integration targets pass without Nx cache.
 - One opt-in Nx E2E target launches the real local-package executable, installs
   the real OCR worker/model through runtime APIs, and never substitutes a fake
@@ -107,7 +107,7 @@ PaddleOCR 3.7 WindowsML worker. Embedded PDF text is never read or returned.
 ### Integration tests (`tests/integration`)
 
 - Installer/catalog/downloader/worker tests prove the local E2E worker URL maps
-  only `windowsml-ocr`, leaves Whisper and model URLs locked, and rejects a
+  only `text-recognition`, leaves Whisper and model URLs locked, and rejects a
   mismatched catalog filename.
 - A paused OCR transport drives the real worker client, extractor, service
   and HTTP routes: page progress is visible before terminal output, raw text

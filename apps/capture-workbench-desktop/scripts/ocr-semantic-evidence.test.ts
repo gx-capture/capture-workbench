@@ -46,7 +46,7 @@ test('projects the durable awaiting OCR checkpoint without inventing a structure
     sourceSha256: SOURCE_SHA,
     captureId: 'capture-1',
     status: 'completed',
-    ocrDevice: 'windowsml-dml',
+    ocrDevice: 'directml',
     pageCount: 1,
     pages: [{
       page: 1,
@@ -65,8 +65,8 @@ test('projects the durable awaiting OCR checkpoint without inventing a structure
     provenance: {
       runtimeVersion: RELEASE_VERSION,
       contractSha256: CONTRACT_SHA,
-      engine: 'windowsml-ocr',
-      model: 'pp-ocrv6-medium-windowsml',
+      engine: 'text-recognition',
+      model: 'pp-ocrv6-medium',
       modelDigest: `sha256:${'d'.repeat(64)}`,
       device: 'NVIDIA GeForce RTX 4060 Laptop GPU',
       profileId: 'profile-1',
@@ -267,7 +267,7 @@ function expectedIdentity(): {
   workerSha256: string;
   ocrEngine: string;
   ocrModel: string;
-  ocrDevice: 'windowsml-dml';
+  ocrDevice: 'directml';
   anchors: string[];
   executionProof: {
     sourceSha256: string;
@@ -278,7 +278,7 @@ function expectedIdentity(): {
     profileSpecSha256: string;
     contractSetSha256: string;
     requestedPageScope: null;
-    device: 'windowsml-dml';
+    device: 'directml';
   };
 } {
   const identity = {
@@ -290,9 +290,9 @@ function expectedIdentity(): {
     runtimeSha256: RUNTIME_SHA,
     contractSha256: CONTRACT_SHA,
     workerSha256: WORKER_SHA,
-    ocrEngine: 'windowsml-ocr',
-    ocrModel: 'pp-ocrv6-medium-windowsml',
-    ocrDevice: 'windowsml-dml' as const,
+    ocrEngine: 'text-recognition',
+    ocrModel: 'pp-ocrv6-medium',
+    ocrDevice: 'directml' as const,
     anchors: ['snow man'],
   };
   return {
@@ -306,7 +306,7 @@ function expectedIdentity(): {
       profileSpecSha256: 'e'.repeat(64),
       contractSetSha256: CONTRACT_SHA,
       requestedPageScope: null,
-      device: 'windowsml-dml' as const,
+      device: 'directml' as const,
     },
   };
 }
@@ -371,8 +371,8 @@ function completedDetail(): TestDetail {
       status: 'resolved',
       runtimeVersion: RELEASE_VERSION,
       contractSha256: CONTRACT_SHA,
-      engine: 'windowsml-ocr',
-      model: 'pp-ocrv6-medium-windowsml',
+      engine: 'text-recognition',
+      model: 'pp-ocrv6-medium',
       modelDigest: `sha256:${'d'.repeat(64)}`,
       device: 'NVIDIA GeForce RTX 4060 Laptop GPU',
       profileId: 'profile-1',

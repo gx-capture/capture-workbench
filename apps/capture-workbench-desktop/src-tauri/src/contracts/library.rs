@@ -450,6 +450,21 @@ impl OcrEvidenceV1 {
         Ok(())
     }
 
+    pub(crate) fn validate_current_provenance(&self) -> Result<(), String> {
+        let provenance = &self.provenance;
+        if provenance.status == "resolved"
+            && (provenance.engine.as_deref() != Some("text-recognition")
+                || matches!(
+                    provenance.model.as_deref(),
+                    Some("pp-ocrv6-medium-windowsml" | "deterministic-windowsml-v1")
+                )
+                || provenance.device.as_deref() == Some("windowsml-dml"))
+        {
+            return Err("New OCR evidence must use current provenance.".into());
+        }
+        Ok(())
+    }
+
     /// SHA-256 of the canonical JSON of the evidence without its `digest`
     /// field: the value `digest` must hold.
     pub(crate) fn content_digest(&self) -> Result<String, String> {
@@ -535,8 +550,10 @@ fn validate_provenance(provenance: &OcrEvidenceProvenanceV1) -> Result<(), Strin
     validate_sha256(&provenance.worker_sha256, "workerSha256")?;
     match provenance.status.as_str() {
         "resolved" => {
-            if provenance.engine.as_deref() != Some("windowsml-ocr")
-                || provenance.model.as_deref().is_none()
+            if !matches!(
+                provenance.engine.as_deref(),
+                Some("text-recognition" | "windowsml-ocr")
+            ) || provenance.model.as_deref().is_none()
                 || provenance.model_digest.as_deref().is_none()
                 || provenance.device.as_deref().is_none()
             {

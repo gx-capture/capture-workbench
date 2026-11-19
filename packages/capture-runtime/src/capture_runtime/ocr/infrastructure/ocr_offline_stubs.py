@@ -29,7 +29,7 @@ def install_offline_aistudio_stubs() -> None:
 
     def snapshot_download(*_args: object, **_kwargs: object) -> None:
         raise EngineRuntimeUnavailableError(
-            "Capture WindowsML OCR only uses checksum-verified local model assets."
+            "Capture Text recognition only uses checksum-verified local model assets."
         )
 
     errors.NotExistError = NotExistError  # type: ignore[attr-defined]
@@ -68,7 +68,7 @@ def install_offline_huggingface_stubs() -> None:
 
     def snapshot_download(*_args: object, **_kwargs: object) -> None:
         raise EngineRuntimeUnavailableError(
-            "Capture WindowsML OCR only uses checksum-verified local model assets."
+            "Capture Text recognition only uses checksum-verified local model assets."
         )
 
     logging.set_verbosity_error = set_verbosity_error  # type: ignore[attr-defined]

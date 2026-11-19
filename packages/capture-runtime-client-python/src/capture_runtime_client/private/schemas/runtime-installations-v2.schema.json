@@ -61,7 +61,7 @@
         },
         "requirementId": {
           "enum": [
-            "windowsml-ocr",
+            "text-recognition",
             "speech-recognition",
             "speaker-diarization",
             "vertical-japanese-reader",

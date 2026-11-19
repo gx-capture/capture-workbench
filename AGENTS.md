@@ -27,6 +27,7 @@
 - A name says what the thing is or does. It does not name a vendor, engine, model, or technology unless that is exactly what it denotes and it would be wrong for any other. Identifiers that leave the process (contract values, requirement ids, error codes, environment variables, stored fields, target names) are named by function.
 - No name of a past design, phase, slice, or plan label in an identifier, file name, target, evidence field, or environment variable.
 - One term per concept across runtime, contract, clients, hosts, UI, and documents. The terms are in `docs/domain/` and the glossary `.agents/PLANS/ddd-refactor/glossary.md`.
+- Use `text-recognition` for the OCR requirement and provenance engine, and `directml` for provenance from DirectML execution.
 - A name states its scope. Code that handles every capture kind is not named for one. A target says what it runs against (fixture runtime or real engines; dev server, packaged Desktop App, or installed application) and whether a release requires it.
 - When behaviour changes so that a name stops being true, rename it in the same change, including contract values while a contract-changing release is open. A misleading name is a defect, not a style matter.
 - Renamed or retired names do not come back: `pnpm run retired-names:check` rejects them. When a change retires a name, add it to `tools/quality/retired-names.json` in the same change; after removing remaining occurrences run `pnpm run retired-names:update` (CI runs the gate with `--ci`).

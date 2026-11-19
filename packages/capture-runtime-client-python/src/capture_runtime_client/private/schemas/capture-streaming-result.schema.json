@@ -140,7 +140,7 @@
         "suggestedUnits": {
           "items": {
             "enum": [
-              "windowsml-ocr",
+              "text-recognition",
               "speech-recognition",
               "speaker-diarization",
               "vertical-japanese-reader",
@@ -691,7 +691,7 @@
         "suggestedUnits": {
           "items": {
             "enum": [
-              "windowsml-ocr",
+              "text-recognition",
               "speech-recognition",
               "speaker-diarization",
               "vertical-japanese-reader",

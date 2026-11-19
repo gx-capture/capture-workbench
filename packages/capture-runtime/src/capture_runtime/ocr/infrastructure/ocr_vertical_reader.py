@@ -64,7 +64,7 @@ class VerticalLine:
 
 
 def _numpy() -> Any:
-    # Imported on use: the module itself stays importable without the WindowsML extras.
+    # Imported on use: the module itself stays importable without the OCR extras.
     return importlib.import_module("numpy")
 
 
@@ -308,7 +308,7 @@ class VerticalPageReader:
     ) -> None:
         import yaml
 
-        self.recognizer_device = "cpu" if dml_device_id is None else "windowsml-dml"
+        self.recognizer_device = "cpu" if dml_device_id is None else "directml"
         self._workers = None if dml_device_id is None else 1
 
         import onnxruntime

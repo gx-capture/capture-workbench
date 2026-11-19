@@ -4,7 +4,7 @@ import { basename, join, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const EXPECTED_SCHEMA_SHA256 =
-  '5452631ce9d8eea48851a819530d94920a39f41350d5575df0f8f97f82171774';
+  '17994c88485ef2257518a788ca2eec3dca3a9f3aae1de1bd37dc454219a3f833';
 const EXPECTED_NPM_PACKAGES = new Set([
   '@gx-capture/capture-workbench-ui',
   '@gx-capture/capture-runtime-client',

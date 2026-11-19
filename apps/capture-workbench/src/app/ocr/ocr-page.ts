@@ -50,7 +50,7 @@ export class OcrPage {
   }
 
   protected readonly ocrRequirement = computed(() =>
-    this.findInstallable('windowsml-ocr'),
+    this.findInstallable('text-recognition'),
   );
   protected readonly asrRequirement = computed(() =>
     this.findInstallable('speech-recognition'),
@@ -65,7 +65,7 @@ export class OcrPage {
     );
     const manual = this.manualSelection();
     if (manual === null) {
-      return available.has('windowsml-ocr') ? ['windowsml-ocr'] : [];
+      return available.has('text-recognition') ? ['text-recognition'] : [];
     }
     return [...manual].filter((id) => available.has(id));
   });

@@ -166,7 +166,7 @@ function resolveCaptureOnlyEnvironment(
     CAPTURE_REAL_DESKTOP_EXPECTED_OCR_DEVICE: captureOnlyRequiredExact(
       inheritedEnvironment,
       'CAPTURE_REAL_DESKTOP_EXPECTED_OCR_DEVICE',
-      'windowsml-dml',
+      'directml',
     ),
     CAPTURE_REAL_DESKTOP_TEARDOWN: captureOnlyRequiredExact(
       inheritedEnvironment,

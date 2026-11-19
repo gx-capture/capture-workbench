@@ -31,23 +31,23 @@ from capture_runtime.ocr.infrastructure.ocr_page_result import (
 
 def test_compute_plan_invariants_and_policy() -> None:
     plan = ComputePlanSelection(
-        compute_mode="gpu-dml",
+        compute_mode="gpu",
         adapter_class="dedicated",
         device_name="RTX 4090",
         device_id=0,
     )
-    assert plan.compute_mode == "gpu-dml"
+    assert plan.compute_mode == "gpu"
     assert plan.adapter_class == "dedicated"
 
     with pytest.raises(ValueError, match="invalid compute mode"):
         ComputePlanSelection(compute_mode="invalid", adapter_class="dedicated")
 
     with pytest.raises(ValueError, match="invalid adapter class"):
-        ComputePlanSelection(compute_mode="gpu-dml", adapter_class="invalid")
+        ComputePlanSelection(compute_mode="gpu", adapter_class="invalid")
 
     with pytest.raises(ValueError, match="device id must be non-negative"):
         ComputePlanSelection(
-            compute_mode="gpu-dml",
+            compute_mode="gpu",
             adapter_class="dedicated",
             device_id=-1,
         )
@@ -62,11 +62,11 @@ def test_compute_plan_invariants_and_policy() -> None:
     policy = ComputePlanPolicy()
     gpu = ComputeCandidate(0, "dedicated", "positive-usable", True)
     gpu_plan = policy.evaluate((gpu,), dml_available=True, require_identity=True)
-    assert gpu_plan.compute_mode == "gpu-dml"
+    assert gpu_plan.compute_mode == "gpu"
     assert gpu_plan.device_id == 0
     assert policy.evaluate((), dml_available=False).reason == "no_compatible_gpu"
     unavailable = ComputeCandidate(0, "dedicated", "positive-unavailable", True)
-    assert policy.evaluate((unavailable,), dml_available=False).reason == "dml_provider_unavailable"
+    assert policy.evaluate((unavailable,), dml_available=False).reason == "gpu_provider_unavailable"
     unknown = ComputeCandidate(1, "unknown", "indeterminate", False)
     assert policy.evaluate((unknown, gpu), dml_available=True) is None
     assert (
@@ -220,14 +220,14 @@ def test_use_cases() -> None:
     plan = uc_plan.execute(
         (ComputeCandidate(0, "dedicated", "positive-usable", True),), dml_available=True
     )
-    assert plan.compute_mode == "gpu-dml"
+    assert plan.compute_mode == "gpu"
 
     # 2. ExtractPageText
     mock_adapter = Mock()
     mock_adapter.extract_png.return_value = OcrTextResult(
         text="Extracted text",
         device="cuda",
-        model="windowsml",
+        model="ocr",
         digest="sha256-digest",
         regions=(
             OcrRegion(

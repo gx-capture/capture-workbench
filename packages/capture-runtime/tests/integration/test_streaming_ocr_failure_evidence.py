@@ -214,7 +214,7 @@ os._exit(7)
                 self.worker_client = WorkerClient(process=WorkerProcess())
 
             async def resolve_active_engine(self, requirement_id: str) -> InstalledEngine:
-                assert requirement_id == "windowsml-ocr"
+                assert requirement_id == "text-recognition"
                 return InstalledEngine(
                     requirement_id=requirement_id,
                     artifact_version="test-worker",
@@ -267,7 +267,6 @@ os._exit(7)
         extractor = StandaloneRuntimeCaptureExtractor(
             clock,
             ExtractionRuntimeConfig(
-                windowsml_model_dir=tmp_path / "models",
                 temp_dir=tmp_path / "temp",
                 max_pdf_pages=4,
                 max_image_pixels=1_000_000,

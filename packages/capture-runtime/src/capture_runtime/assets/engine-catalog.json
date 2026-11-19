@@ -4,7 +4,7 @@
     {
       "artifacts": [],
       "modelFiles": null,
-      "requirementId": "windowsml-ocr",
+      "requirementId": "text-recognition",
       "unavailableReason": "A release catalog with an exact OCR worker and approved direct model source lock was not injected."
     },
     {

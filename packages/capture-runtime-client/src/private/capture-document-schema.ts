@@ -439,7 +439,7 @@ export const GENERATED_CAPTURE_DOCUMENT_JSON_SCHEMA = {
     "suggestedUnits": {
       "items": {
         "enum": [
-          "windowsml-ocr",
+          "text-recognition",
           "speech-recognition",
           "speaker-diarization",
           "vertical-japanese-reader",

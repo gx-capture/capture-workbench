@@ -389,10 +389,10 @@ def test_start_capture_names_the_spoken_language_only_when_given(
 def _ocr_projection(*, status: str = "completed") -> dict[str, object]:
     engine = {
         "status": "resolved",
-        "engine": "windowsml-ocr",
-        "model": "pp-ocrv6-medium-windowsml",
+        "engine": "text-recognition",
+        "model": "pp-ocrv6-medium",
         "modelDigest": f"sha256:{'a' * 64}",
-        "device": "windowsml-dml",
+        "device": "directml",
         "profileId": "capture-workbench-ocr-pipeline-v1",
         "profileSpecSha256": "b" * 64,
     }
@@ -606,6 +606,42 @@ def test_compatibility_failure_is_machine_readable() -> None:
         CaptureRuntimeClient(transport=transport).handshake()
 
 
+@pytest.mark.parametrize(
+    ("mode", "reason", "accepted"),
+    [
+        ("gpu", None, True),
+        ("cpu-fallback", "gpu_provider_unavailable", True),
+        ("gpu-dml", None, False),
+        ("cpu-fallback", "dml_provider_unavailable", False),
+    ],
+)
+def test_handshake_requires_current_ocr_compute_names(
+    mode: str, reason: str | None, accepted: bool
+) -> None:
+    compute = {
+        "runtimeVersion": CAPTURE_RUNTIME_VERSION,
+        "contractSha256": CAPTURE_CONTRACT_SET_SHA256,
+        "mode": mode,
+        "adapterClass": "dedicated",
+        "reasonCode": reason,
+        "userNoticeRequired": reason is not None,
+        "noticeCode": "ocr_cpu_fallback" if reason else None,
+    }
+    transport = InMemoryRuntimeTransport(
+        {
+            ("GET", "/v2/health/ready"): lambda request: httpx.Response(
+                200, json=_ready(ocrCompute=compute), request=request
+            )
+        }
+    )
+    client = CaptureRuntimeClient(transport=transport)
+    if accepted:
+        assert client.handshake().ocr_compute == compute
+    else:
+        with pytest.raises(CaptureProtocolError):
+            client.handshake()
+
+
 def test_get_ocr_maps_completed_and_failed_page_projections() -> None:
     completed = _ocr_projection()
     failed = _ocr_projection(status="failed")
@@ -619,7 +655,7 @@ def test_get_ocr_maps_completed_and_failed_page_projections() -> None:
     result = CaptureRuntimeClient(transport=transport).get_ocr("cap")
     assert isinstance(result, CaptureOcrProjection)
     assert result.pages[0].provenance is not None
-    assert result.pages[0].provenance.engine == "windowsml-ocr"
+    assert result.pages[0].provenance.engine == "text-recognition"
     assert [(point.x, point.y) for point in result.pages[0].boxes[0].polygon] == [
         (10.5, 20.25),
         (310.75, 12.5),

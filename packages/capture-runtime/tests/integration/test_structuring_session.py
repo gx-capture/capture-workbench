@@ -16,6 +16,7 @@ from capture_runtime.contracts import (
     CaptureEngine,
     OpenIngestionV2,
     OpenStructuringSessionV2,
+    PageLocator,
     RawCapture,
     RawCaptureSegment,
     StartCaptureV2,
@@ -30,15 +31,16 @@ from capture_runtime.structuring.infrastructure.structuring_session_repository i
 from tests.conftest import TOKEN
 
 
-def _seed_host_capture(client: TestClient, *, segment_count: int = 2) -> str:
+def _seed_host_capture(client: TestClient, *, segment_count: int = 2, pdf: bool = False) -> str:
     repository = client.app.state.streaming_repository
     source = b"session-source"
     source_sha256 = hashlib.sha256(source).hexdigest()
     ingestion = repository.create_ingestion(
         OpenIngestionV2(
             client_request_id=f"session-ingestion-{uuid4()}",
-            file_name="sample.mp3",
-            media_type="audio/mpeg",
+            kind="pdf" if pdf else "audio",
+            file_name="sample.pdf" if pdf else "sample.mp3",
+            media_type="application/pdf" if pdf else "audio/mpeg",
             total_bytes=len(source),
             source_sha256=source_sha256,
         )
@@ -70,7 +72,11 @@ def _seed_host_capture(client: TestClient, *, segment_count: int = 2) -> str:
         RawCaptureSegment(
             segment_id=f"segment-{index}",
             order=index,
-            locator=TimeLocator(start_ms=index * 1_000, end_ms=(index + 1) * 1_000),
+            locator=(
+                PageLocator(page=index + 1)
+                if pdf
+                else TimeLocator(start_ms=index * 1_000, end_ms=(index + 1) * 1_000)
+            ),
             text=f"source words {index}",
         )
         for index in range(segment_count)
@@ -80,10 +86,10 @@ def _seed_host_capture(client: TestClient, *, segment_count: int = 2) -> str:
         segments=segments,
         source_text="\n".join(segment.text for segment in segments),
         extraction_engine=CaptureEngine(
-            engine="speech-recognition",
-            model="test-model",
+            engine="text-recognition" if pdf else "speech-recognition",
+            model="deterministic-ocr-v1" if pdf else "test-model",
             digest=f"sha256:{'a' * 64}",
-            device="cpu",
+            device="fake" if pdf else "cpu",
         ),
         created_at=created_at,
     )
@@ -205,6 +211,45 @@ def test_pull_session_plans_tiny_profile_batches_and_reconstructs_result(
         "segment-0",
         "segment-1",
     ]
+
+
+def test_completed_structuring_session_reads_historical_ocr_document(client: TestClient) -> None:
+    capture_id = _seed_host_capture(client, segment_count=1, pdf=True)
+    route = f"/v2/captures/{capture_id}/structure/session"
+    opened = client.post(
+        route,
+        json=_open_request(capture_id),
+        headers={"X-Idempotency-Key": "session-request-1"},
+    )
+    assert opened.status_code == 201, opened.text
+    session_id = opened.json()["sessionId"]
+    batch_route = f"{route}/batches/0"
+    batch = client.get(batch_route).json()
+    submission = _submit_payload(batch, "legacy")
+    submission["blocks"][0]["type"] = "paragraph"
+    headers = {"X-Idempotency-Key": "legacy-batch"}
+    completed = client.put(batch_route, json=submission, headers=headers)
+    assert completed.status_code == 200, completed.text
+
+    repository = client.app.state.structuring_session_service.repository
+    path = repository.root / session_id / "metadata.json"
+    historical = json.loads(path.read_bytes())
+    historical["completedDocument"]["extractionEngine"].update(
+        engine="windowsml-ocr", model="deterministic-windowsml-v1"
+    )
+    historical["completedDocument"]["suggestedUnits"] = ["windowsml-ocr"]
+    path.write_text(json.dumps(historical, indent=2), encoding="utf-8")
+    before = path.read_bytes()
+
+    repository.initialize()
+    assert client.get(route).json() == completed.json()
+    assert client.put(batch_route, json=submission, headers=headers).json() == completed.json()
+    document = repository.completed_document(session_id)
+    assert document is not None
+    assert document.extraction_engine.engine == "text-recognition"
+    assert document.extraction_engine.model == "deterministic-ocr-v1"
+    assert document.suggested_units == ["text-recognition"]
+    assert path.read_bytes() == before
 
 
 def test_pull_session_rejects_provenance_fields_and_digest_conflicts(client: TestClient) -> None:

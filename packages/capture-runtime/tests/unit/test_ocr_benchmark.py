@@ -565,7 +565,7 @@ def test_material_freeze_rejects_bytes_changed_during_copy(tmp_path, monkeypatch
     if kind == "document":
         source.write_bytes(
             (
-                MODULE_PATH.parents[1] / "model-sources/commit-a/fixtures/ocr-scanned.pdf"
+                MODULE_PATH.parents[1] / "model-sources/text-recognition/fixtures/ocr-scanned.pdf"
             ).read_bytes()
         )
     else:

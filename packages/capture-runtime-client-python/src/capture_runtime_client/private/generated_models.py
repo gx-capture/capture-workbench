@@ -122,7 +122,7 @@ class RuntimeRequirementStatus(StrEnum):
 
 
 class OcrComputeMode(StrEnum):
-    GPU_DML = "gpu-dml"
+    GPU = "gpu"
     CPU_FALLBACK = "cpu-fallback"
 
 
@@ -134,7 +134,7 @@ class OcrAdapterClass(StrEnum):
 
 class OcrComputeReasonCode(StrEnum):
     NO_COMPATIBLE_GPU = "no_compatible_gpu"
-    DML_PROVIDER_UNAVAILABLE = "dml_provider_unavailable"
+    GPU_PROVIDER_UNAVAILABLE = "gpu_provider_unavailable"
 
 
 class OcrComputeNoticeCode(StrEnum):
@@ -142,7 +142,7 @@ class OcrComputeNoticeCode(StrEnum):
 
 
 CaptureRequirementId = Literal[
-    "windowsml-ocr",
+    "text-recognition",
     "speech-recognition",
     "speaker-diarization",
     "vertical-japanese-reader",
@@ -518,6 +518,13 @@ class StartRuntimeInstallationV2(StrictModel):
     requirement_id: CaptureRequirementId
     consent: Literal[True]
 
+    @field_validator("requirement_id", mode="before")
+    @classmethod
+    def reject_retired_ocr_requirement(cls, value: object) -> object:
+        if value == "windowsml-ocr":
+            raise ValueError("windowsml-ocr is retired; use text-recognition")
+        return value
+
 
 class RuntimeModelOptionV2(StrictModel):
     option_id: NonEmptyString
@@ -756,7 +763,7 @@ class OcrProvenanceResolvedV3(StrictModel):
     """Concrete OCR identity available after model/provider resolution."""
 
     status: Literal["resolved"]
-    engine: Literal["windowsml-ocr"]
+    engine: Literal["text-recognition"]
     model: NonEmptyString
     model_digest: EngineDigest = Field(json_schema_extra={"not": {"const": "sha256:" + "0" * 64}})
     device: NonEmptyString
@@ -1200,13 +1207,13 @@ class OcrComputePreflightV2(StrictModel):
 
     @model_validator(mode="after")
     def validate_decision(self) -> Self:
-        if self.mode is OcrComputeMode.GPU_DML:
+        if self.mode is OcrComputeMode.GPU:
             if (
                 self.reason_code is not None
                 or self.user_notice_required
                 or self.notice_code is not None
             ):
-                raise ValueError("gpu-dml cannot carry a fallback reason or notice")
+                raise ValueError("gpu cannot carry a fallback reason or notice")
         elif (
             self.reason_code is None
             or not self.user_notice_required

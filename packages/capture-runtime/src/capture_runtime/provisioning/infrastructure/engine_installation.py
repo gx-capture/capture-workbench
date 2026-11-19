@@ -12,7 +12,7 @@ from threading import Lock
 from uuid import uuid4
 
 from capture_runtime._worker_payloads import WorkerProbeResult
-from capture_runtime.constants.requirements import WINDOWSML_REQUIREMENT_ID
+from capture_runtime.constants.requirements import TEXT_RECOGNITION_REQUIREMENT_ID
 from capture_runtime.contracts import OcrComputePreflightV2
 from capture_runtime.install_progress import DownloadedBytes, DownloadProgress
 from capture_runtime.ocr.infrastructure.ocr_preflight import OcrComputeSelection
@@ -357,7 +357,7 @@ class EngineInstallationManager:
         self, requirement: EngineRequirementDescriptor
     ) -> ModelFileDownloader:
         if (
-            requirement.requirement_id == WINDOWSML_REQUIREMENT_ID
+            requirement.requirement_id == TEXT_RECOGNITION_REQUIREMENT_ID
             and self._local_ocr_model_downloader is not None
         ):
             return self._local_ocr_model_downloader
@@ -569,7 +569,7 @@ class EngineInstallationManager:
 
         async with self._ocr_compute_preflight_lock:
             try:
-                engine = await self.resolve_active_engine("windowsml-ocr")
+                engine = await self.resolve_active_engine("text-recognition")
             except Exception:
                 return None
             if engine is None:
@@ -623,7 +623,7 @@ class EngineInstallationManager:
 
         async with self._ocr_compute_preflight_lock:
             try:
-                engine = await self.resolve_active_engine("windowsml-ocr")
+                engine = await self.resolve_active_engine("text-recognition")
             except Exception:
                 return None
             if engine is None:
@@ -764,7 +764,7 @@ class EngineInstallationManager:
             # Direct model delivery always uses its locked HTTPS URLs.
             download_descriptor = worker_descriptor
             if (
-                requirement.requirement_id == "windowsml-ocr"
+                requirement.requirement_id == "text-recognition"
                 and self._pdf_ocr_e2e_local_worker_url is not None
             ):
                 expected_suffix = f"/{worker_descriptor.file_name}"

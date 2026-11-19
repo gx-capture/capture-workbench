@@ -205,6 +205,14 @@ diarization = [
     { name = "torch", version = "2.11.0", source = { registry = "https://pypi.org/simple" } },
     { name = "transformers" },
 ]
+ocr = [
+    { name = "onnxruntime-directml", marker = "sys_platform == 'win32' or (extra == 'extra-15-capture-runtime-diarization' and extra == 'extra-15-capture-runtime-speech-recognition') or (extra == 'extra-15-capture-runtime-speech-recognition' and extra == 'extra-15-capture-runtime-speech-recognition-cpu')" },
+    { name = "paddleocr" },
+    { name = "paddlex", extra = ["ocr-core"] },
+    { name = "pillow" },
+    { name = "pypdfium2" },
+    { name = "pyyaml" },
+]
 speech-recognition = [
     { name = "librosa" },
     { name = "numpy" },
@@ -217,14 +225,6 @@ speech-recognition-cpu = [
     { name = "numpy" },
     { name = "torch", version = "2.11.0", source = { registry = "https://pypi.org/simple" } },
     { name = "transformers" },
-]
-windowsml = [
-    { name = "onnxruntime-directml", marker = "sys_platform == 'win32' or (extra == 'extra-15-capture-runtime-diarization' and extra == 'extra-15-capture-runtime-speech-recognition') or (extra == 'extra-15-capture-runtime-speech-recognition' and extra == 'extra-15-capture-runtime-speech-recognition-cpu')" },
-    { name = "paddleocr" },
-    { name = "paddlex", extra = ["ocr-core"] },
-    { name = "pillow" },
-    { name = "pypdfium2" },
-    { name = "pyyaml" },
 ]
 
 [package.dev-dependencies]
@@ -253,14 +253,14 @@ requires-dist = [
     { name = "numpy", marker = "extra == 'diarization'", specifier = ">=2.0.0,<3.0.0" },
     { name = "numpy", marker = "extra == 'speech-recognition'", specifier = ">=2.0.0,<3.0.0" },
     { name = "numpy", marker = "extra == 'speech-recognition-cpu'", specifier = ">=2.0.0,<3.0.0" },
-    { name = "onnxruntime-directml", marker = "sys_platform == 'win32' and extra == 'windowsml'", specifier = "==1.24.4" },
-    { name = "paddleocr", marker = "extra == 'windowsml'", specifier = "==3.7.0" },
-    { name = "paddlex", extras = ["ocr-core"], marker = "extra == 'windowsml'", specifier = "==3.7.1" },
-    { name = "pillow", marker = "extra == 'windowsml'", specifier = ">=11.0.0,<13.0.0" },
+    { name = "onnxruntime-directml", marker = "sys_platform == 'win32' and extra == 'ocr'", specifier = "==1.24.4" },
+    { name = "paddleocr", marker = "extra == 'ocr'", specifier = "==3.7.0" },
+    { name = "paddlex", extras = ["ocr-core"], marker = "extra == 'ocr'", specifier = "==3.7.1" },
+    { name = "pillow", marker = "extra == 'ocr'", specifier = ">=11.0.0,<13.0.0" },
     { name = "pydantic", specifier = ">=2.12.0,<3.0.0" },
-    { name = "pypdfium2", marker = "extra == 'windowsml'", specifier = ">=5.0.0,<6.0.0" },
+    { name = "pypdfium2", marker = "extra == 'ocr'", specifier = ">=5.0.0,<6.0.0" },
     { name = "python-multipart", specifier = ">=0.0.22,<1.0.0" },
-    { name = "pyyaml", marker = "extra == 'windowsml'", specifier = ">=6.0.0,<7.0.0" },
+    { name = "pyyaml", marker = "extra == 'ocr'", specifier = ">=6.0.0,<7.0.0" },
     { name = "torch", marker = "sys_platform == 'win32' and extra == 'speech-recognition'", specifier = "==2.11.0", index = "https://download.pytorch.org/whl/cu128", conflict = { package = "capture-runtime", extra = "speech-recognition" } },
     { name = "torch", marker = "sys_platform != 'win32' and extra == 'speech-recognition'", specifier = "==2.11.0" },
     { name = "torch", marker = "extra == 'diarization'", specifier = "==2.11.0" },
@@ -270,7 +270,7 @@ requires-dist = [
     { name = "transformers", marker = "extra == 'speech-recognition-cpu'", specifier = "==5.20.2" },
     { name = "uvicorn", specifier = ">=0.40.0,<1.0.0" },
 ]
-provides-extras = ["windowsml", "speech-recognition", "speech-recognition-cpu", "diarization"]
+provides-extras = ["ocr", "speech-recognition", "speech-recognition-cpu", "diarization"]
 
 [package.metadata.requires-dev]
 dev = [

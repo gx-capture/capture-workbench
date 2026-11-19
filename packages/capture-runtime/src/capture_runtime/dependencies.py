@@ -21,8 +21,8 @@ from capture_runtime.constants import (
     OLLAMA_MODEL_REQUIREMENT_ID,
     OLLAMA_RUNTIME_REQUIREMENT_ID,
     SPEECH_RECOGNITION_REQUIREMENT_ID,
+    TEXT_RECOGNITION_REQUIREMENT_ID,
     VERTICAL_READER_REQUIREMENT_ID,
-    WINDOWSML_REQUIREMENT_ID,
 )
 from capture_runtime.contract_set import ContractSet, load_contract_set
 from capture_runtime.contracts import StructuringMode
@@ -185,7 +185,7 @@ def build_runtime_dependencies(
     )
     enabled_requirement_ids = (
         {
-            WINDOWSML_REQUIREMENT_ID,
+            TEXT_RECOGNITION_REQUIREMENT_ID,
             SPEECH_RECOGNITION_REQUIREMENT_ID,
             DIARIZATION_REQUIREMENT_ID,
             VERTICAL_READER_REQUIREMENT_ID,

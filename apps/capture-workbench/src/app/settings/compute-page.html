@@ -15,7 +15,7 @@
     </h3>
     @if (compute.ocrCompute(); as ocr) {
       <div class="flex flex-col gap-1 text-sm text-muted-foreground">
-        @if (ocr.mode === 'gpu-dml') {
+        @if (ocr.mode === 'gpu') {
           <p data-testid="compute-ocr-gpu-detected">{{ m().computeOcrGpuDetected }}</p>
         }
         <gx-capture-runtime-compute-status

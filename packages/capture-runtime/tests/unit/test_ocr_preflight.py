@@ -56,7 +56,7 @@ def test_hardware_gpu_and_dml_select_gpu_mode(adapter_class: OcrAdapterClass) ->
         dml_provider_available=True,
     )
 
-    assert decision.mode is OcrComputeMode.GPU_DML
+    assert decision.mode is OcrComputeMode.GPU
     assert decision.adapter_class is adapter_class
     assert decision.reason_code is None
     assert decision.user_notice_required is False
@@ -85,7 +85,7 @@ def test_hardware_gpu_without_dml_reports_provider_reason() -> None:
 
     assert decision.mode is OcrComputeMode.CPU_FALLBACK
     assert decision.adapter_class is OcrAdapterClass.INTEGRATED
-    assert decision.reason_code is OcrComputeReasonCode.DML_PROVIDER_UNAVAILABLE
+    assert decision.reason_code is OcrComputeReasonCode.GPU_PROVIDER_UNAVAILABLE
     assert decision.user_notice_required is True
     assert decision.notice_code is OcrComputeNoticeCode.CPU_FALLBACK
 
@@ -145,9 +145,9 @@ def test_preflight_contract_rejects_inconsistent_gpu_notice() -> None:
     with pytest.raises(ValidationError):
         OcrComputePreflightV2(
             contract_sha256=CONTRACT_SHA256,
-            mode=OcrComputeMode.GPU_DML,
+            mode=OcrComputeMode.GPU,
             adapter_class=OcrAdapterClass.DEDICATED,
-            reason_code=OcrComputeReasonCode.DML_PROVIDER_UNAVAILABLE,
+            reason_code=OcrComputeReasonCode.GPU_PROVIDER_UNAVAILABLE,
             user_notice_required=True,
             notice_code=OcrComputeNoticeCode.CPU_FALLBACK,
         )
@@ -156,7 +156,7 @@ def test_preflight_contract_rejects_inconsistent_gpu_notice() -> None:
 def test_async_preflight_normalizes_worker_decision_and_rejects_contract_drift() -> None:
     decision = OcrComputePreflightV2(
         contract_sha256=CONTRACT_SHA256,
-        mode=OcrComputeMode.GPU_DML,
+        mode=OcrComputeMode.GPU,
         adapter_class=OcrAdapterClass.DEDICATED,
         user_notice_required=False,
     )

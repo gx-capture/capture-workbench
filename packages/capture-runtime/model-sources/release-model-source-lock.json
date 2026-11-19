@@ -8,30 +8,30 @@
   "fixtures": [
     {
       "bytes": 2157,
-      "expectedDevice": "windowsml-dml",
-      "expectedEngine": "windowsml-ocr",
-      "expectedModel": "pp-ocrv6-medium-windowsml",
+      "expectedDevice": "directml",
+      "expectedEngine": "text-recognition",
+      "expectedModel": "pp-ocrv6-medium",
       "expectedText": "CAPTURE OCR FIXTURE",
       "id": "ocr-reference",
       "kind": "ocr",
       "licenseBytes": 1087,
       "licensePath": "licenses/LICENSE.txt",
       "licenseSha256": "20d8153042f147e730a2265e35e3862f8d1ad67b5f6804d44fb81e7dfbc5818b",
-      "licenseUrl": "https://raw.githubusercontent.com/gx-capture/capture-workbench/3834db24e5d9bb321c17bd0b866d9bd38c780f0c/packages/capture-runtime/model-sources/commit-a/licenses/LICENSE.txt",
+      "licenseUrl": "https://raw.githubusercontent.com/gx-capture/capture-workbench/710cb3a8ec9c044b68ca1ee2060dbe3b3bcd0887/packages/capture-runtime/model-sources/text-recognition/licenses/LICENSE.txt",
       "mediaType": "image/png",
       "noticeBytes": 304,
       "noticePath": "licenses/NOTICE.txt",
-      "noticeSha256": "ed058ee2e3acfc55e61adc58a5876977037b8dbd68471627f5eccd633a8b3359",
-      "noticeUrl": "https://raw.githubusercontent.com/gx-capture/capture-workbench/3834db24e5d9bb321c17bd0b866d9bd38c780f0c/packages/capture-runtime/model-sources/commit-a/licenses/NOTICE.txt",
+      "noticeSha256": "e8d7eab24c7f7ee0f93daf8945f649933e024071473d6506d8af6656a4ad2b2d",
+      "noticeUrl": "https://raw.githubusercontent.com/gx-capture/capture-workbench/710cb3a8ec9c044b68ca1ee2060dbe3b3bcd0887/packages/capture-runtime/model-sources/text-recognition/licenses/NOTICE.txt",
       "owner": "gx-capture/capture-workbench",
       "pdfBytes": 2421,
       "pdfSha256": "5eec85d2b2e98e06577cb5310d1b3037ca26f03d06d85a292ae78b68d4c57f30",
-      "pdfUrl": "https://raw.githubusercontent.com/gx-capture/capture-workbench/3834db24e5d9bb321c17bd0b866d9bd38c780f0c/packages/capture-runtime/model-sources/commit-a/fixtures/ocr-scanned.pdf",
+      "pdfUrl": "https://raw.githubusercontent.com/gx-capture/capture-workbench/710cb3a8ec9c044b68ca1ee2060dbe3b3bcd0887/packages/capture-runtime/model-sources/text-recognition/fixtures/ocr-scanned.pdf",
       "redistributable": true,
-      "revision": "3834db24e5d9bb321c17bd0b866d9bd38c780f0c",
+      "revision": "710cb3a8ec9c044b68ca1ee2060dbe3b3bcd0887",
       "sha256": "7d61f4835837c4c387a0d46c4f21f7442fe22aab3f14f330b86f6857f5f3bc82",
       "spdx": "MIT",
-      "url": "https://raw.githubusercontent.com/gx-capture/capture-workbench/3834db24e5d9bb321c17bd0b866d9bd38c780f0c/packages/capture-runtime/model-sources/commit-a/fixtures/ocr-reference.png"
+      "url": "https://raw.githubusercontent.com/gx-capture/capture-workbench/710cb3a8ec9c044b68ca1ee2060dbe3b3bcd0887/packages/capture-runtime/model-sources/text-recognition/fixtures/ocr-reference.png"
     },
     {
       "bytes": 39199307,
@@ -131,10 +131,10 @@
           "url": "https://huggingface.co/PaddlePaddle/PP-OCRv6_medium_det_onnx/raw/61323801669c338b7891481ec7bac61ce31b576a/inference.yml"
         },
         {
-          "bytes": 5361,
+          "bytes": 5346,
           "derivation": {
             "algorithm": "capture-workbench-ocr-profile-v3",
-            "generator": "packages/capture-runtime/scripts/generate_commit_a_fixtures.py",
+            "generator": "packages/capture-runtime/scripts/generate_text_recognition_sources.py",
             "inputs": [
               "model/det/inference.onnx",
               "model/det/inference.yml",
@@ -148,10 +148,10 @@
               "model/vertical/parseq-ndl-24x384-50-tiny-300epoch-tegaki3-r8data-202604.onnx",
               "model/vertical/parseq-ndl-24x768-100-tiny-153epoch-tegaki3-r8data-202604.onnx"
             ],
-            "sourceCommit": "3834db24e5d9bb321c17bd0b866d9bd38c780f0c",
+            "sourceCommit": "710cb3a8ec9c044b68ca1ee2060dbe3b3bcd0887",
             "toolVersions": {
-              "generator": "commit-a-v2",
-              "python": "3.12.12"
+              "generator": "text-recognition-source-v2",
+              "python": "3.13.14"
             }
           },
           "kind": "derived",
@@ -160,10 +160,10 @@
           "owner": "gx-capture/capture-workbench",
           "path": "model/pipeline.json",
           "redirectHosts": [],
-          "revision": "3834db24e5d9bb321c17bd0b866d9bd38c780f0c",
-          "sha256": "8530e3130b89f10b3b0ce8906430c8629037163667b3ac0fbfdf4c00114bef19",
+          "revision": "710cb3a8ec9c044b68ca1ee2060dbe3b3bcd0887",
+          "sha256": "b91467a65bf3aee2b2c3eea222bba890beb42ded3fd1593eba2439d2e8561926",
           "spdx": "MIT",
-          "url": "https://raw.githubusercontent.com/gx-capture/capture-workbench/3834db24e5d9bb321c17bd0b866d9bd38c780f0c/packages/capture-runtime/model-sources/commit-a/model/pipeline.json"
+          "url": "https://raw.githubusercontent.com/gx-capture/capture-workbench/710cb3a8ec9c044b68ca1ee2060dbe3b3bcd0887/packages/capture-runtime/model-sources/text-recognition/model/pipeline.json"
         },
         {
           "bytes": 76554979,
@@ -210,21 +210,21 @@
           "url": "https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/b03f46425e8ff4442b268ce449e3eef758146cd4/ppocr/utils/dict/ppocrv6_dict.txt"
         },
         {
-          "bytes": 2439,
+          "bytes": 2437,
           "derivation": null,
           "kind": "provenance",
           "licensePath": "licenses/LICENSE-PaddleOCR.txt",
           "noticePath": "licenses/NOTICE-det.md",
           "owner": "gx-capture/capture-workbench",
-          "path": "provenance/commit-a.json",
+          "path": "provenance/text-recognition.json",
           "redirectHosts": [],
-          "revision": "3834db24e5d9bb321c17bd0b866d9bd38c780f0c",
-          "sha256": "f802fbc0018b7bff9edd536ccdd051e36c2d11c975783737ca14502c3ee27285",
+          "revision": "710cb3a8ec9c044b68ca1ee2060dbe3b3bcd0887",
+          "sha256": "6cb4414dc6ca0a1d4ae009d4b87af72db5b533f23415a3e41b76c47fdc6c73ba",
           "spdx": "MIT",
-          "url": "https://raw.githubusercontent.com/gx-capture/capture-workbench/3834db24e5d9bb321c17bd0b866d9bd38c780f0c/packages/capture-runtime/model-sources/commit-a/provenance/commit-a.json"
+          "url": "https://raw.githubusercontent.com/gx-capture/capture-workbench/710cb3a8ec9c044b68ca1ee2060dbe3b3bcd0887/packages/capture-runtime/model-sources/text-recognition/provenance/text-recognition.json"
         }
       ],
-      "requirementId": "windowsml-ocr"
+      "requirementId": "text-recognition"
     },
     {
       "artifactVersion": "0.10.0",

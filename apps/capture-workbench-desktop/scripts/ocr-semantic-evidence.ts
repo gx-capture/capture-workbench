@@ -12,7 +12,7 @@ const MAX_FAILURE_MESSAGE_LENGTH = 128;
 export const OCR_SEMANTIC_EVIDENCE_ARTIFACT = 'ocr-semantic-evidence-v1.json' as const;
 
 export type SemanticOcrSourceKind = 'image' | 'pdf';
-export type SemanticOcrDevice = 'windowsml-dml' | 'cpu';
+export type SemanticOcrDevice = 'directml' | 'cpu';
 
 /** Identity independently authenticated by the runtime execution-proof sink. */
 export interface OcrSemanticExecutionProofIdentity {
@@ -246,7 +246,7 @@ function validateExpectedIdentity(value: unknown): OcrSemanticEvidenceExpectedId
   sha(expected.workerSha256, 'expected workerSha256');
   safeString(expected.ocrEngine, 'expected ocrEngine', 256);
   safeString(expected.ocrModel, 'expected ocrModel', 256);
-  if (expected.ocrDevice !== 'windowsml-dml' && expected.ocrDevice !== 'cpu') invalid('expected ocrDevice');
+  if (expected.ocrDevice !== 'directml' && expected.ocrDevice !== 'cpu') invalid('expected ocrDevice');
   if (!Array.isArray(expected.anchors)) invalid('expected anchors');
   if (expected.anchors.some((anchor) => typeof anchor !== 'string' || !normalizeOcrText(anchor))) {
     invalid('expected anchors contain empty values');
@@ -281,7 +281,7 @@ function validateExecutionProofIdentity(
   safeString(proof.profileId, 'expected OCR proof profileId', 128);
   sha(proof.profileSpecSha256, 'expected OCR proof profileSpecSha256');
   sha(proof.contractSetSha256, 'expected OCR proof contractSetSha256');
-  if (proof.device !== 'windowsml-dml' && proof.device !== 'cpu') invalid('expected OCR proof device');
+  if (proof.device !== 'directml' && proof.device !== 'cpu') invalid('expected OCR proof device');
   if (proof.requestedPageScope !== null && (
     !Array.isArray(proof.requestedPageScope)
     || proof.requestedPageScope.length < 1
@@ -417,7 +417,7 @@ function validateDurableProvenance(value: unknown, expected: OcrSemanticEvidence
   safeString(provenance.profileId, 'durable profileId', 256);
   if (provenance.status === 'resolved') {
     safeString(provenance.engine, 'durable engine', 256);
-    if (provenance.engine !== 'windowsml-ocr') invalid('durable engine');
+    if (provenance.engine !== 'text-recognition') invalid('durable engine');
     safeString(provenance.model, 'durable model', 256);
     if (provenance.engine !== expected.ocrEngine) invalid('durable engine mismatch');
     if (provenance.model !== expected.ocrModel) invalid('durable model mismatch');
@@ -560,7 +560,7 @@ function validateSemanticEvidence(value: OcrSemanticEvidenceV1): void {
   sha(evidence.sourceSha256, 'semantic sourceSha256');
   safeString(evidence.captureId, 'semantic captureId', 256);
   if (evidence.status !== 'completed' && evidence.status !== 'failed') invalid('semantic status');
-  if (evidence.ocrDevice !== 'windowsml-dml' && evidence.ocrDevice !== 'cpu') invalid('semantic ocrDevice');
+  if (evidence.ocrDevice !== 'directml' && evidence.ocrDevice !== 'cpu') invalid('semantic ocrDevice');
   const pageCount = evidence.pageCount;
   nonNegativeInteger(pageCount, 'semantic pageCount');
   if (pageCount > MAX_PAGES) invalid('semantic pageCount');

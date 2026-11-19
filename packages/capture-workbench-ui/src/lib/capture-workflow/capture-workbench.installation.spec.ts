@@ -122,14 +122,14 @@ describe('CaptureWorkbenchComponent', () => {
       getReady: vi.fn(() => of({ ...READY, ready: false })),
       getRequirements: vi.fn(() =>
         of(
-          (['windowsml-ocr', 'speech-recognition'] as const).map(
+          (['text-recognition', 'speech-recognition'] as const).map(
             (requirementId): RuntimeRequirement => ({
               requirementId,
               kind: 'model',
               displayName: requirementId,
               status: 'unavailable',
               requiredFor:
-                requirementId === 'windowsml-ocr' ? ['pdf'] : ['audio'],
+                requirementId === 'text-recognition' ? ['pdf'] : ['audio'],
               installStrategy: 'runtime-catalog',
               detail,
             }),
@@ -220,9 +220,9 @@ describe('CaptureWorkbenchComponent', () => {
               downloadBytes: 0,
             },
             {
-              requirementId: 'windowsml-ocr',
+              requirementId: 'text-recognition',
               kind: 'ocr',
-              displayName: 'WindowsML OCR',
+              displayName: 'Text recognition',
               status: 'installable',
               requiredFor: ['pdf', 'image'],
               installStrategy: 'runtime-catalog',
@@ -250,10 +250,10 @@ describe('CaptureWorkbenchComponent', () => {
         `[data-requirement-id="${requirementId}"] [data-testid="capture-download-size"]`,
       );
     expect(sizeOf('speech-recognition')?.textContent).toBe('約 2.8 GB');
-    expect(sizeOf('windowsml-ocr')?.textContent).toBe('約 144 MB');
+    expect(sizeOf('text-recognition')?.textContent).toBe('約 144 MB');
     expect(
       root.querySelector(
-        '[data-requirement-id="windowsml-ocr"] [data-testid="capture-unit-guide"]',
+        '[data-requirement-id="text-recognition"] [data-testid="capture-unit-guide"]',
       ),
     ).toBeNull();
     expect(sizeOf('speaker-diarization')).toBeNull();
@@ -270,7 +270,7 @@ describe('CaptureWorkbenchComponent', () => {
     fixture.detectChanges();
 
     expect(sizeOf('speech-recognition')?.textContent).toBe('~2.8 GB');
-    expect(sizeOf('windowsml-ocr')?.textContent).toBe('~144 MB');
+    expect(sizeOf('text-recognition')?.textContent).toBe('~144 MB');
     expect(sizeOf('speaker-diarization')).toBeNull();
     expect(sizeOf('ollama-runtime')).toBeNull();
   });
@@ -286,9 +286,9 @@ describe('CaptureWorkbenchComponent', () => {
         installStrategy: 'runtime-catalog',
       },
       {
-        requirementId: 'windowsml-ocr',
+        requirementId: 'text-recognition',
         kind: 'ocr',
-        displayName: 'WindowsML OCR',
+        displayName: 'Text recognition',
         status: 'installable',
         requiredFor: ['pdf', 'image'],
         installStrategy: 'runtime-catalog',
@@ -320,7 +320,7 @@ describe('CaptureWorkbenchComponent', () => {
 
     expect(
       startInstallation.mock.calls.map(([request]) => request.requirementId),
-    ).toEqual(['windowsml-ocr', 'speech-recognition']);
+    ).toEqual(['text-recognition', 'speech-recognition']);
   });
 
   it('retries an uncertain installation once and installs a newly unlocked model', async () => {

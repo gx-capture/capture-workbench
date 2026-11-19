@@ -17,58 +17,58 @@ describe('RecognitionFeaturesStore removeRequirement', () => {
     const { store, runtime, pending, listed } = createHarness();
     expect(store.ocrReady()).toBe(true);
 
-    store.removeRequirement('windowsml-ocr');
-    store.removeRequirement('windowsml-ocr');
-    expect(store.isRemoving('windowsml-ocr')).toBe(true);
+    store.removeRequirement('text-recognition');
+    store.removeRequirement('text-recognition');
+    expect(store.isRemoving('text-recognition')).toBe(true);
     expect(runtime.uninstallRequirement).toHaveBeenCalledTimes(1);
-    expect(runtime.uninstallRequirement).toHaveBeenCalledWith('windowsml-ocr');
+    expect(runtime.uninstallRequirement).toHaveBeenCalledWith('text-recognition');
 
-    pending.next(requirement('windowsml-ocr', 'installable', 144_000_000));
+    pending.next(requirement('text-recognition', 'installable', 144_000_000));
     pending.complete();
     TestBed.tick();
 
-    expect(store.isRemoving('windowsml-ocr')).toBe(false);
-    expect(store.removalError('windowsml-ocr')).toBeNull();
+    expect(store.isRemoving('text-recognition')).toBe(false);
+    expect(store.removalError('text-recognition')).toBeNull();
     expect(requirementStatus(store)).toBe('installable');
     expect(store.ocrReady()).toBe(false);
     expect(runtime.reload).toHaveBeenCalled();
 
-    listed.set([requirement('windowsml-ocr', 'installable', 144_000_000)]);
+    listed.set([requirement('text-recognition', 'installable', 144_000_000)]);
     store.requirementsResource.reload();
     TestBed.tick();
     expect(requirementStatus(store)).toBe('installable');
     expect(store.ocrReady()).toBe(false);
 
-    store.removeRequirement('windowsml-ocr');
+    store.removeRequirement('text-recognition');
     expect(runtime.uninstallRequirement).toHaveBeenCalledTimes(1);
   });
 
   it('does not call the runtime while that requirement is installing', () => {
     const { store, runtime, installation } = createHarness();
     installation.installationsByRequirement.set(
-      new Map([['windowsml-ocr', runningInstallation('running')]]),
+      new Map([['text-recognition', runningInstallation('running')]]),
     );
 
-    store.removeRequirement('windowsml-ocr');
+    store.removeRequirement('text-recognition');
 
     expect(runtime.uninstallRequirement).not.toHaveBeenCalled();
-    expect(store.isRemoving('windowsml-ocr')).toBe(false);
+    expect(store.isRemoving('text-recognition')).toBe(false);
     expect(requirementStatus(store)).toBe('ready');
     expect(store.ocrReady()).toBe(true);
   });
 
   it('keeps the runtime status and shows a readable error when removal is refused', () => {
     const { store, runtime, pending } = createHarness();
-    store.removeRequirement('windowsml-ocr');
+    store.removeRequirement('text-recognition');
     pending.error(
       new Error('Capture Runtime request was rejected with HTTP 409.'),
     );
     TestBed.tick();
 
-    expect(store.isRemoving('windowsml-ocr')).toBe(false);
+    expect(store.isRemoving('text-recognition')).toBe(false);
     expect(requirementStatus(store)).toBe('ready');
     expect(store.ocrReady()).toBe(true);
-    expect(store.removalError('windowsml-ocr')).toBe(
+    expect(store.removalError('text-recognition')).toBe(
       '安裝或辨識還在進行，請稍後再移除',
     );
     expect(runtime.reload).not.toHaveBeenCalled();
@@ -76,13 +76,13 @@ describe('RecognitionFeaturesStore removeRequirement', () => {
 
   it('lets a finished reinstall leave the not-installed overlay', () => {
     const { store, runtime, pending } = createHarness();
-    store.removeRequirement('windowsml-ocr');
-    pending.next(requirement('windowsml-ocr', 'installable', 144_000_000));
+    store.removeRequirement('text-recognition');
+    pending.next(requirement('text-recognition', 'installable', 144_000_000));
     pending.complete();
     TestBed.tick();
     expect(requirementStatus(store)).toBe('installable');
 
-    store.installRequirement('windowsml-ocr');
+    store.installRequirement('text-recognition');
     TestBed.tick();
 
     expect(runtime.startInstallation).toHaveBeenCalled();
@@ -124,7 +124,7 @@ function createHarness(
   }> = {},
 ) {
   const listed = signal<readonly RuntimeRequirement[]>([
-    requirement('windowsml-ocr', 'ready', 144_000_000),
+    requirement('text-recognition', 'ready', 144_000_000),
   ]);
   const pending = new Subject<RuntimeRequirement>();
   const runtime = {
@@ -154,7 +154,7 @@ function createHarness(
 function requirementStatus(store: RecognitionFeaturesStore): string | undefined {
   return store
     .requirements()
-    .find((item) => item.requirementId === 'windowsml-ocr')?.status;
+    .find((item) => item.requirementId === 'text-recognition')?.status;
 }
 
 function requirement(
@@ -179,7 +179,7 @@ function runningInstallation(
 ): RuntimeInstallation {
   return {
     installationId: 'inst-ocr-1',
-    requirementId: 'windowsml-ocr',
+    requirementId: 'text-recognition',
     status,
     progress: status === 'completed' ? 1 : 0.4,
     createdAt: '2026-11-10T00:00:00Z',
@@ -230,8 +230,8 @@ describe('RecognitionFeaturesStore installation', () => {
       runtimeStub({
         getRequirements: vi.fn(() => of([
           {
-            requirementId: 'windowsml-ocr',
-            displayName: 'WindowsML OCR',
+            requirementId: 'text-recognition',
+            displayName: 'Text recognition',
             status: 'unavailable',
             kind: 'engine',
             requiredFor: ['capture'],
@@ -245,7 +245,7 @@ describe('RecognitionFeaturesStore installation', () => {
 
     expect(store.ocrReady()).toBe(false);
     expect(store.installableRequestedRequirements()).toEqual([]);
-    store.installRequirement('windowsml-ocr');
+    store.installRequirement('text-recognition');
 
     expect(startInstallation).not.toHaveBeenCalled();
   });
@@ -258,8 +258,8 @@ describe('RecognitionFeaturesStore installation', () => {
           getRequirements: vi.fn(() =>
             of([
               {
-                requirementId: 'windowsml-ocr',
-                displayName: 'WindowsML OCR',
+                requirementId: 'text-recognition',
+                displayName: 'Text recognition',
                 status: 'installable',
                 kind: 'engine',
                 requiredFor: ['capture'],
@@ -283,8 +283,8 @@ describe('RecognitionFeaturesStore installation', () => {
           getRequirements: vi.fn(() =>
             of([
               {
-                requirementId: 'windowsml-ocr',
-                displayName: 'WindowsML OCR',
+                requirementId: 'text-recognition',
+                displayName: 'Text recognition',
                 status: 'installable',
                 kind: 'engine',
                 requiredFor: ['capture'],
@@ -319,8 +319,8 @@ describe('RecognitionFeaturesStore installation', () => {
         ocrCompute: signal(null),
         getRequirements: vi.fn(() => of([
           {
-            requirementId: 'windowsml-ocr',
-            displayName: 'WindowsML OCR',
+            requirementId: 'text-recognition',
+            displayName: 'Text recognition',
             status: 'installable',
             kind: 'engine',
             requiredFor: ['capture'],
@@ -331,12 +331,12 @@ describe('RecognitionFeaturesStore installation', () => {
       }),
     );
 
-    store.installRequirement('windowsml-ocr');
+    store.installRequirement('text-recognition');
     TestBed.tick();
 
     expect(startInstallation).toHaveBeenCalledWith({
       clientRequestId: expect.any(String),
-      requirementId: 'windowsml-ocr',
+      requirementId: 'text-recognition',
       consent: true,
     });
   });
@@ -365,8 +365,8 @@ describe('RecognitionFeaturesStore installation', () => {
             installStrategy: 'runtime-catalog',
           },
           {
-            requirementId: 'windowsml-ocr',
-            displayName: 'WindowsML OCR',
+            requirementId: 'text-recognition',
+            displayName: 'Text recognition',
             status: 'installable',
             kind: 'engine',
             requiredFor: ['capture'],
@@ -376,11 +376,11 @@ describe('RecognitionFeaturesStore installation', () => {
         startInstallation,
       }),
     );
-    store.installRequirements(['speech-recognition', 'windowsml-ocr']);
+    store.installRequirements(['speech-recognition', 'text-recognition']);
     TestBed.tick();
 
     expect(startInstallation.mock.calls.map(([request]) => request.requirementId)).toEqual([
-      'windowsml-ocr',
+      'text-recognition',
       'speech-recognition',
     ]);
   });
@@ -409,7 +409,7 @@ describe('RecognitionFeaturesStore installation', () => {
     const store = initializeFeatures(
       runtimeStub({
         getRequirements: vi.fn(() => of([
-          requirement('windowsml-ocr', 'installable'),
+          requirement('text-recognition', 'installable'),
           requirement('speaker-diarization', 'installable'),
           requirement('speech-recognition', 'installable'),
         ])),
@@ -434,8 +434,8 @@ describe('RecognitionFeaturesStore installation', () => {
     const startInstallation = vi.fn(() => {
       observedStatuses.push('queued');
       return of({
-        installationId: 'install-windowsml-ocr',
-        requirementId: 'windowsml-ocr' as const,
+        installationId: 'install-text-recognition',
+        requirementId: 'text-recognition' as const,
         status: 'queued' as const,
         progress: 0,
         createdAt: '2026-07-20T00:00:00Z',
@@ -446,8 +446,8 @@ describe('RecognitionFeaturesStore installation', () => {
       const status = getInstallation.mock.calls.length === 1 ? 'running' : 'completed';
       observedStatuses.push(status);
       return of({
-        installationId: 'install-windowsml-ocr',
-        requirementId: 'windowsml-ocr' as const,
+        installationId: 'install-text-recognition',
+        requirementId: 'text-recognition' as const,
         status,
         progress: status === 'completed' ? 1 : 0.5,
         createdAt: '2026-07-20T00:00:00Z',
@@ -458,8 +458,8 @@ describe('RecognitionFeaturesStore installation', () => {
     const store = initializeFeatures(
       runtimeStub({
         getRequirements: vi.fn(() => of([{
-          requirementId: 'windowsml-ocr',
-          displayName: 'WindowsML OCR',
+          requirementId: 'text-recognition',
+          displayName: 'Text recognition',
           status: 'installable',
           kind: 'engine',
           requiredFor: ['capture'],
@@ -472,7 +472,7 @@ describe('RecognitionFeaturesStore installation', () => {
 
     vi.useFakeTimers();
     try {
-      store.installRequirement('windowsml-ocr');
+      store.installRequirement('text-recognition');
       expect(observedStatuses).toEqual(['queued']);
 
       vi.advanceTimersByTime(1_500);
@@ -577,7 +577,7 @@ describe('RecognitionFeaturesStore installation', () => {
     const cancelInstallation = vi.fn((installationId: string) =>
       of({
         installationId,
-        requirementId: 'windowsml-ocr' as const,
+        requirementId: 'text-recognition' as const,
         status: 'cancelled' as const,
         progress: 0.1,
         createdAt: '2026-11-01T00:00:00Z',
@@ -589,8 +589,8 @@ describe('RecognitionFeaturesStore installation', () => {
       runtimeStub({
         getRequirements: vi.fn(() => of([
           {
-            requirementId: 'windowsml-ocr',
-            displayName: 'WindowsML OCR',
+            requirementId: 'text-recognition',
+            displayName: 'Text recognition',
             status: 'installable',
             kind: 'engine',
             requiredFor: ['capture'],
@@ -613,13 +613,13 @@ describe('RecognitionFeaturesStore installation', () => {
 
     vi.useFakeTimers();
     try {
-      store.installRequirements(['windowsml-ocr', 'speech-recognition']);
-      store.cancelInstallation('install-windowsml-ocr');
+      store.installRequirements(['text-recognition', 'speech-recognition']);
+      store.cancelInstallation('install-text-recognition');
       vi.advanceTimersByTime(3_000);
       TestBed.tick();
 
       expect(startInstallation.mock.calls.map(([request]) => request.requirementId)).toEqual([
-        'windowsml-ocr',
+        'text-recognition',
       ]);
       expect(getInstallation).not.toHaveBeenCalled();
       expect(store.installing()).toBe(false);

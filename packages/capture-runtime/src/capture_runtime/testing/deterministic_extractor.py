@@ -124,9 +124,9 @@ class DeterministicCaptureExtractor:
                 for index, (page_number, part) in enumerate(page_texts)
             ]
             engine = CaptureEngine(
-                engine="windowsml-ocr",
-                model="deterministic-windowsml-v1",
-                digest=_engine_digest("windowsml-ocr", "deterministic-windowsml-v1"),
+                engine="text-recognition",
+                model="deterministic-ocr-v1",
+                digest=_engine_digest("text-recognition", "deterministic-ocr-v1"),
                 device="fake",
             )
             scope = (

@@ -81,7 +81,7 @@ def test_packaged_ocr_profile_is_the_canonical_model_lock_bytes() -> None:
         / "packages"
         / "capture-runtime"
         / "model-sources"
-        / "commit-a"
+        / "text-recognition"
         / "model"
         / "pipeline.json"
     )

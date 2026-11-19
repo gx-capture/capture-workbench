@@ -9,7 +9,7 @@ non-empty `pypdf.extract_text()` result, so corrupt text bypassed PaddleOCR.
 ## Decision
 
 Use PDFium rendering plus PaddleOCR for every PDF page. Remove the embedded-text
-fast path and the production `pypdf` dependency. Require `windowsml-ocr` before
+fast path and the production `pypdf` dependency. Require `text-recognition` before
 Cert Prep dispatches PDF capture.
 
 The v2 capture request may additionally carry `pdfPageNumbers`: any one-based

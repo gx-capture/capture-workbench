@@ -91,7 +91,7 @@ describe('App shell and recognition pages', () => {
   it('shows the first-run recognition card on /ocr with nested speaker option, combined download size, and dismiss action', async () => {
     const { fixture, features } = await renderShell('/ocr', {
       requirements: [
-        makeRequirement('windowsml-ocr', 'installable', 144_000_000),
+        makeRequirement('text-recognition', 'installable', 144_000_000),
         makeRequirement('speech-recognition', 'installable', 2_800_000_000),
         makeRequirement('speaker-diarization', 'installable', 300_000_000),
       ],
@@ -129,7 +129,7 @@ describe('App shell and recognition pages', () => {
     installBtn.click();
     expect(features.installFirstRunSelection).toHaveBeenCalledWith(
       expect.arrayContaining([
-        'windowsml-ocr',
+        'text-recognition',
         'speech-recognition',
         'speaker-diarization',
       ]),
@@ -194,7 +194,7 @@ describe('App shell and recognition pages', () => {
   it('redirects /settings to /settings/engines and renders expandable recognition engine rows with install, cancel, and retry actions', async () => {
     const { fixture, features } = await renderShell('/settings', {
       requirements: [
-        makeRequirement('windowsml-ocr', 'ready', 144_000_000),
+        makeRequirement('text-recognition', 'ready', 144_000_000),
         makeRequirement('speech-recognition', 'installable', 2_800_000_000),
         makeRequirement('speaker-diarization', 'installable', 300_000_000),
       ],
@@ -207,7 +207,7 @@ describe('App shell and recognition pages', () => {
     expect(page.querySelector('h1')?.textContent).toContain('設定');
     expect(page.querySelector('h2')?.textContent).toContain('辨識功能');
     const ocrRow = page.querySelector(
-      '[data-testid="engine-row"][data-requirement-id="windowsml-ocr"]',
+      '[data-testid="engine-row"][data-requirement-id="text-recognition"]',
     ) as HTMLElement;
     expect(
       ocrRow.querySelector('[data-testid="engine-row-remove"]')?.textContent?.trim(),
@@ -326,7 +326,7 @@ describe('App shell and recognition pages', () => {
 });
 
 const FIRST_RUN_REQUIREMENT_IDS: readonly CaptureRequirementId[] = [
-  'windowsml-ocr',
+  'text-recognition',
   'speech-recognition',
   'speaker-diarization',
 ];
@@ -354,7 +354,7 @@ async function renderShell(
 ) {
   const requirements = signal<readonly RuntimeRequirement[]>(
     options.requirements ?? [
-      makeRequirement('windowsml-ocr', 'ready', 144_000_000),
+      makeRequirement('text-recognition', 'ready', 144_000_000),
       makeRequirement('speech-recognition', 'ready', 2_800_000_000),
       makeRequirement('speaker-diarization', 'ready', 300_000_000),
     ],
@@ -455,8 +455,8 @@ describe('App native drops', () => {
         startModelInstallation,
         getRequirements: vi.fn(() => of([
           {
-            requirementId: 'windowsml-ocr',
-            displayName: 'WindowsML OCR',
+            requirementId: 'text-recognition',
+            displayName: 'Text recognition',
             status: 'ready',
             kind: 'engine',
             requiredFor: ['capture'],
@@ -553,8 +553,8 @@ describe('App native drops', () => {
       getRequirements: vi.fn(() =>
         of([
           {
-            requirementId: 'windowsml-ocr',
-            displayName: 'WindowsML OCR',
+            requirementId: 'text-recognition',
+            displayName: 'Text recognition',
             status: 'installable',
             kind: 'engine',
             requiredFor: ['capture'],
@@ -587,7 +587,7 @@ describe('App native drops', () => {
     TestBed.tick();
 
     expect(startInstallation).not.toHaveBeenCalled();
-    expect(TestBed.inject(RecognitionFeaturesStore).requestedRequirements().has('windowsml-ocr')).toBe(false);
+    expect(TestBed.inject(RecognitionFeaturesStore).requestedRequirements().has('text-recognition')).toBe(false);
     expect(startStreamingCapture).toHaveBeenCalledOnce();
     expect(getStreamingResult).toHaveBeenCalledWith(completedOperation.captureId);
   });
@@ -794,7 +794,7 @@ function runtimeStub(overrides: Record<string, unknown> = {}) {
       contractSetVersion: '2',
       contractSha256: 'a'.repeat(64),
       workerSha256: 'f'.repeat(64),
-      mode: 'gpu-dml',
+      mode: 'gpu',
       adapterClass: 'dedicated',
       reasonCode: null,
       userNoticeRequired: false,
@@ -821,7 +821,7 @@ function runtimeStub(overrides: Record<string, unknown> = {}) {
 function ocrProjection(captureId: string): CaptureOcrProjection {
   const provenance = {
     status: 'resolved' as const,
-    engine: 'windowsml-ocr' as const,
+    engine: 'text-recognition' as const,
     model: 'ppocrv6-traditional-multilingual',
     modelDigest: `sha256:${'d'.repeat(64)}`,
     device: 'RTX4060',

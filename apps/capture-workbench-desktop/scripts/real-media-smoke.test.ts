@@ -64,7 +64,7 @@ test('real-media preflight names every unavailable requirement', () => {
       );
       assert.match(
         error instanceof Error ? error.message : String(error),
-        /unavailable requirements: windowsml-ocr \([\s\S]*speech-recognition/u,
+        /unavailable requirements: text-recognition \([\s\S]*speech-recognition/u,
       );
       assert.match(
         error instanceof Error ? error.message : String(error),
@@ -102,8 +102,8 @@ function speechContentsCatalog(cpuUnavailable = false) {
     runtimeVersion: RELEASE_VERSION,
     requirements: [
       {
-        requirementId: 'windowsml-ocr',
-        artifacts: [{ fileName: 'windowsml-ocr.zip' }],
+        requirementId: 'text-recognition',
+        artifacts: [{ fileName: 'text-recognition.zip' }],
         modelFiles: { entryPoint: 'model' },
         unavailableReason: null,
       },
@@ -200,7 +200,7 @@ test('real-media runtime environment removes ambient provider and model override
     43123,
     't'.repeat(64),
     {
-      ocrModel: 'pp-ocrv6-medium-windowsml',
+      ocrModel: 'pp-ocrv6-medium',
       whisperModel: 'tea-asr-1.1-mini',
       whisperDevice: 'cpu',
       whisperPreferGpu: true,
@@ -208,7 +208,6 @@ test('real-media runtime environment removes ambient provider and model override
     {
       PATH: 'C:\\Windows\\System32',
       CAPTURE_EXTRACTION_PROVIDER: 'fake',
-      CAPTURE_WINDOWSML_MODEL_DIR: 'C:\\ambient-ocr',
       CAPTURE_WHISPER_MODELS_DIR: 'C:\\ambient-whisper',
       CAPTURE_REAL_MEDIA_PDF: 'C:\\secret-fixture.pdf',
       CAPTURE_SPEECH_RECOGNITION_VARIANT: 'cpu',
@@ -218,7 +217,6 @@ test('real-media runtime environment removes ambient provider and model override
 
   assert.equal(environment.PATH, 'C:\\Windows\\System32');
   assert.equal(environment.CAPTURE_EXTRACTION_PROVIDER, 'runtime');
-  assert.equal(environment.CAPTURE_WINDOWSML_MODEL_DIR, undefined);
   assert.equal(environment.CAPTURE_WHISPER_MODELS_DIR, undefined);
   assert.equal(environment.CAPTURE_REAL_MEDIA_PDF, undefined);
   assert.equal(environment.OLLAMA_MODELS, undefined);
@@ -236,7 +234,7 @@ test('real-media runtime environment forwards Windows cache/user variables and o
     43123,
     't'.repeat(64),
     {
-      ocrModel: 'pp-ocrv6-medium-windowsml',
+      ocrModel: 'pp-ocrv6-medium',
       whisperModel: 'tea-asr-1.1',
       whisperDevice: 'cuda',
       whisperPreferGpu: true,
@@ -277,15 +275,15 @@ test('extractHostCaptureResult reads nested v2 result and rejects invalid payloa
         raw: { schemaVersion: '2' },
         result: {
           schemaVersion: '2',
-          extractionEngine: { engine: 'windowsml-ocr' },
+          extractionEngine: { engine: 'text-recognition' },
           structuringEngine: { engine: 'host', digest: validDigest },
         },
       },
-      'windowsml-ocr',
+      'text-recognition',
     ),
     {
       schemaVersion: '2',
-      extractionEngine: { engine: 'windowsml-ocr' },
+      extractionEngine: { engine: 'text-recognition' },
       structuringEngine: { engine: 'host', digest: validDigest },
     },
   );
@@ -295,10 +293,10 @@ test('extractHostCaptureResult reads nested v2 result and rejects invalid payloa
       extractHostCaptureResult(
         {
           schemaVersion: '2',
-          extractionEngine: { engine: 'windowsml-ocr' },
+          extractionEngine: { engine: 'text-recognition' },
           structuringEngine: { engine: 'host', digest: validDigest },
         },
-        'windowsml-ocr',
+        'text-recognition',
       ),
     /v2 host structuring provenance/u,
   );
@@ -309,11 +307,11 @@ test('extractHostCaptureResult reads nested v2 result and rejects invalid payloa
         {
           result: {
             schemaVersion: '2',
-            extractionEngine: { engine: 'windowsml-ocr' },
+            extractionEngine: { engine: 'text-recognition' },
             structuringEngine: { engine: 'ollama', digest: validDigest },
           },
         },
-        'windowsml-ocr',
+        'text-recognition',
       ),
     /v2 host structuring provenance/u,
   );
@@ -324,9 +322,9 @@ test('source-lock Whisper role is the production worker model provenance', () =>
     fixtures: [
       {
         kind: 'ocr',
-        expectedEngine: 'windowsml-ocr',
-        expectedModel: 'pp-ocrv6-medium-windowsml',
-        expectedDevice: 'windowsml-dml',
+        expectedEngine: 'text-recognition',
+        expectedModel: 'pp-ocrv6-medium',
+        expectedDevice: 'directml',
       },
       {
         kind: 'whisper',
@@ -383,16 +381,16 @@ test('real-media diagnostic cannot claim release or consumer E2E acceptance', ()
       consumerE2e: false,
       dependencyOrder,
       pdf: {
-        extractionEngine: 'windowsml-ocr',
-        model: 'pp-ocrv6-medium-windowsml',
-        device: 'windowsml-dml',
+        extractionEngine: 'text-recognition',
+        model: 'pp-ocrv6-medium',
+        device: 'directml',
         segmentCount: 1,
         pageLocators: 1,
       },
       image: {
-        extractionEngine: 'windowsml-ocr',
-        model: 'pp-ocrv6-medium-windowsml',
-        device: 'windowsml-dml',
+        extractionEngine: 'text-recognition',
+        model: 'pp-ocrv6-medium',
+        device: 'directml',
         segmentCount: 1,
         pageLocators: 1,
       },

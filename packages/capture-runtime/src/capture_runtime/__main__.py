@@ -12,6 +12,9 @@ import uvicorn
 from capture_runtime._frozen_extraction_residue import start_stale_extraction_sweep
 from capture_runtime.app import create_app
 from capture_runtime.config import RuntimeSettings
+from capture_runtime.provisioning.infrastructure._engine_installation_residue import (
+    remove_retired_ocr_installation,
+)
 from capture_runtime.storage.app_data_lock import AppDataDirectoryLock, AppDataInUseError
 
 EXIT_APP_DATA_IN_USE = 10
@@ -51,6 +54,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         )
         raise SystemExit(EXIT_APP_DATA_IN_USE) from None
     with lock:
+        remove_retired_ocr_installation(settings.app_data_dir)
         start_stale_extraction_sweep()
         uvicorn.run(
             create_app(settings),

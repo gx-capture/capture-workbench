@@ -12,7 +12,7 @@ import json
 from importlib.resources import files
 from typing import Any, cast
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from .private import generated_models as _generated
 
@@ -44,7 +44,7 @@ CAPTURE_RUNTIME_VERSION = _generated.RUNTIME_VERSION
 CAPTURE_DOCUMENT_SCHEMA_ID = (
     "https://github.com/gx-capture/capture-workbench/schema/capture-document-v2.schema.json"
 )
-CAPTURE_DOCUMENT_SCHEMA_SHA256 = "5452631ce9d8eea48851a819530d94920a39f41350d5575df0f8f97f82171774"
+CAPTURE_DOCUMENT_SCHEMA_SHA256 = "17994c88485ef2257518a788ca2eec3dca3a9f3aae1de1bd37dc454219a3f833"
 _CONTRACT_SET_ASSETS = files("capture_runtime_client.private.assets")
 CAPTURE_CONTRACT_SET_SHA256 = (
     _CONTRACT_SET_ASSETS.joinpath("contract-set.sha256").read_text(encoding="ascii").strip()
@@ -226,6 +226,13 @@ class RuntimeReady(_generated.StrictModel):
     capabilities: dict[str, Any] = Field(default_factory=dict)
     ocr_compute: dict[str, Any] | None = None
     message: str | None = None
+
+    @field_validator("ocr_compute")
+    @classmethod
+    def validate_ocr_compute(_cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        if value is not None:
+            _generated.OcrComputePreflightV2.model_validate(value)
+        return value
 
 
 class ReportStructuringFailure(_generated.ReportStructuringFailureV2):

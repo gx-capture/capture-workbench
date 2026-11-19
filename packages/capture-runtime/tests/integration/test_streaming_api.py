@@ -97,10 +97,10 @@ def test_pdf_page_progress_reaches_http_before_worker_terminal(
     release = threading.Event()
     provenance = {
         "status": "resolved",
-        "engine": "windowsml-ocr",
-        "model": "pp-ocrv6-medium-windowsml",
+        "engine": "text-recognition",
+        "model": "pp-ocrv6-medium",
         "modelDigest": "sha256:" + "a" * 64,
-        "device": "windowsml-dml",
+        "device": "directml",
         "profileId": "capture-workbench-ocr-pipeline-v1",
         "profileSpecSha256": "b" * 64,
     }
@@ -455,10 +455,10 @@ class _HostProofExtractor:
             text=self._text,
         )
         engine = CaptureEngine(
-            engine="windowsml-ocr",
+            engine="text-recognition",
             model="test-ocr-model",
             digest="sha256:" + "1" * 64,
-            device="windowsml-dml",
+            device="directml",
         )
         projection = (
             OcrPipeline().build(
@@ -629,10 +629,10 @@ def test_pdf_page_scope_crosses_start_route_and_extractor_to_raw_route(
                     segments=[segment],
                     source_text=segment.text,
                     extraction_engine=CaptureEngine(
-                        engine="windowsml-ocr",
+                        engine="text-recognition",
                         model="test-model",
                         digest="sha256:" + "a" * 64,
-                        device="windowsml-dml",
+                        device="directml",
                     ),
                     ocr_page_scope=OcrPageScopeV2(
                         source_page_count=46,
@@ -699,10 +699,10 @@ def test_pdf_page_scope_omission_uses_legacy_all_page_extractor_path(
                     segments=segments,
                     source_text="\n".join(segment.text for segment in segments),
                     extraction_engine=CaptureEngine(
-                        engine="windowsml-ocr",
+                        engine="text-recognition",
                         model="test-model",
                         digest="sha256:" + "a" * 64,
-                        device="windowsml-dml",
+                        device="directml",
                     ),
                     ocr_page_scope=OcrPageScopeV2(
                         source_page_count=3,
@@ -735,10 +735,10 @@ def test_pdf_page_scope_omission_uses_legacy_all_page_extractor_path(
 
 _OCR_PROVENANCE = {
     "status": "resolved",
-    "engine": "windowsml-ocr",
-    "model": "pp-ocrv6-medium-windowsml",
+    "engine": "text-recognition",
+    "model": "pp-ocrv6-medium",
     "modelDigest": "sha256:" + "a" * 64,
-    "device": "windowsml-dml",
+    "device": "directml",
     "profileId": "capture-workbench-ocr-pipeline-v1",
     "profileSpecSha256": "b" * 64,
 }
@@ -1004,10 +1004,10 @@ def test_authenticated_ocr_route_returns_ordered_page_projection(client: TestCli
     operation = repository.get_capture(capture_id)
     assert operation.source is not None
     engine = CaptureEngine(
-        engine="windowsml-ocr",
-        model="pp-ocrv6-medium-windowsml",
+        engine="text-recognition",
+        model="pp-ocrv6-medium",
         digest="sha256:" + "c" * 64,
-        device="windowsml-dml",
+        device="directml",
     )
     projection = OcrPipeline().build(
         capture_id=capture_id,
@@ -1075,6 +1075,33 @@ def test_failed_capture_exposes_readable_typed_ocr_projection(client: TestClient
     assert payload["pages"] == []
 
 
+def test_historical_ocr_failure_metadata_and_events_remain_readable(client: TestClient) -> None:
+    capture_id, _ = _seed_host_capture(client)
+    repository = client.app.state.streaming_repository
+    repository.fail_capture(
+        capture_id,
+        CaptureFailureV2(
+            code="dml_provider_unavailable",
+            message="WindowsML OCR provider was unavailable.",
+            stage="ocr",
+        ),
+    )
+    directory = repository.root / "captures" / capture_id
+    before = {
+        path: path.read_bytes()
+        for path in (directory / "metadata.json", directory / "events.jsonl")
+    }
+    repository.initialize()
+    response = client.get(f"/v2/captures/{capture_id}")
+    assert response.status_code == 200, response.text
+    assert response.json()["error"]["code"] == "dml_provider_unavailable"
+    assert response.json()["error"]["message"] == "WindowsML OCR provider was unavailable."
+    events = client.get(f"/v2/captures/{capture_id}/events")
+    assert events.status_code == 200, events.text
+    assert "dml_provider_unavailable" in events.text
+    assert {path: path.read_bytes() for path in before} == before
+
+
 def test_worker_failure_persists_complete_ocr_projection_before_get_route(
     client: TestClient,
 ) -> None:
@@ -1099,10 +1126,10 @@ def test_worker_failure_persists_complete_ocr_projection_before_get_route(
                 capture_id=capture_source.sha256,
                 source=capture_source,
                 provenance=CaptureEngine(
-                    engine="windowsml-ocr",
-                    model="pp-ocrv6-medium-windowsml",
+                    engine="text-recognition",
+                    model="pp-ocrv6-medium",
                     digest="sha256:" + "c" * 64,
-                    device="windowsml-dml",
+                    device="directml",
                 ),
                 failure=failure,
                 created_at=datetime.now(UTC),
@@ -1263,10 +1290,10 @@ def test_runtime_completion_publishes_only_after_successful_completion(
                 text="proof-backed page",
             )
             engine = CaptureEngine(
-                engine="windowsml-ocr",
+                engine="text-recognition",
                 model="test-ocr-model",
                 digest="sha256:" + "1" * 64,
-                device="windowsml-dml",
+                device="directml",
             )
             raw = RawCapture(
                 source=source,
@@ -1452,10 +1479,10 @@ def test_failed_host_ocr_never_publishes_success_execution_proof(client: TestCli
                 capture_id=capture_source.sha256,
                 source=capture_source,
                 provenance=CaptureEngine(
-                    engine="windowsml-ocr",
+                    engine="text-recognition",
                     model="test-ocr-model",
                     digest="sha256:" + "1" * 64,
-                    device="windowsml-dml",
+                    device="directml",
                 ),
                 failure=failure,
                 created_at=datetime.now(UTC),
@@ -1853,10 +1880,10 @@ def test_streaming_service_persists_all_empty_ocr_projection_as_terminal_no_text
         capture_id=capture_id,
         source=operation.source,
         provenance=CaptureEngine(
-            engine="windowsml-ocr",
-            model="pp-ocrv6-medium-windowsml",
+            engine="text-recognition",
+            model="pp-ocrv6-medium",
             digest="sha256:" + "c" * 64,
-            device="windowsml-dml",
+            device="directml",
         ),
         created_at=datetime.now(UTC),
         pages=[
@@ -1996,8 +2023,10 @@ def test_streaming_api_accepts_ordered_chunks_replays_sse_and_rejects_partial_be
     assert partial.json()["error"]["code"] == "partial_unavailable"
 
 
+@pytest.mark.parametrize("historical", [False, True])
 def test_streaming_api_processes_pdf_ocr_through_the_same_v2_sse_lifecycle(
     client: TestClient,
+    historical: bool,
 ) -> None:
     source = b"%PDF-1.7\nCAPTURE_TEXT:ocr text from a PDF page"
     digest = hashlib.sha256(source).hexdigest()
@@ -2056,6 +2085,89 @@ def test_streaming_api_processes_pdf_ocr_through_the_same_v2_sse_lifecycle(
     result = client.get(f"/v2/captures/{capture_id}/result")
     assert result.status_code == 200, result.text
     assert result.json()["raw"]["sourceText"] == "ocr text from a PDF page"
+    if not historical:
+        return
+
+    repository = client.app.state.streaming_repository
+    directory = repository.root / "captures" / capture_id
+    raw = RawCapture.model_validate(result.json()["raw"])
+    repository.write_ocr_projection(
+        capture_id,
+        OcrPipeline().build(
+            capture_id=capture_id,
+            source=raw.source,
+            provenance=CaptureEngine(
+                engine="text-recognition",
+                model="pp-ocrv6-medium",
+                digest="sha256:" + "a" * 64,
+                device="directml",
+            ),
+            created_at=raw.created_at,
+            pages=[
+                OcrPageInput(
+                    page=1,
+                    text=raw.source_text,
+                    raster_width=100,
+                    raster_height=80,
+                    raster_scale=2,
+                    boxes=((4, 5, 20, 10),),
+                    region_confidences=(0.91,),
+                )
+            ],
+        ),
+    )
+    for filename in ("raw.json", "result.json", "partial.json", "ocr.json"):
+        path = directory / filename
+        payload = json.loads(path.read_bytes())
+        if filename == "ocr.json":
+            for projection in (payload, *payload["pages"]):
+                projection["provenance"].update(
+                    engine="windowsml-ocr",
+                    model="pp-ocrv6-medium-windowsml",
+                    device="windowsml-dml",
+                )
+        else:
+            payload["extractionEngine"].update(
+                engine="windowsml-ocr", model="deterministic-windowsml-v1"
+            )
+            if filename != "partial.json":
+                payload["suggestedUnits"] = ["windowsml-ocr"]
+        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    before = {path: path.read_bytes() for path in directory.iterdir() if path.is_file()}
+    repository.initialize()
+    assert client.get(f"/v2/captures/{capture_id}").json() == completed
+    assert "event: completed" in client.get(f"/v2/captures/{capture_id}/events").text
+    for route in ("raw", "partial", "ocr", "result"):
+        response = client.get(f"/v2/captures/{capture_id}/{route}")
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        stored = json.loads(before[directory / f"{route}.json"])
+        if route == "ocr":
+            for projection in (payload, *payload["pages"]):
+                identity = projection["provenance"]
+                assert (identity["engine"], identity["model"], identity["device"]) == (
+                    "text-recognition",
+                    "pp-ocrv6-medium",
+                    "directml",
+                )
+            assert payload["provenance"]["modelDigest"] == stored["provenance"]["modelDigest"]
+            assert payload["contractSha256"] == stored["contractSha256"]
+        else:
+            documents = (payload["raw"], payload["result"]) if route == "result" else (payload,)
+            for document in documents:
+                identity = document["extractionEngine"]
+                assert (identity["engine"], identity["model"], identity["device"]) == (
+                    "text-recognition",
+                    "deterministic-ocr-v1",
+                    "fake",
+                )
+                if route != "partial":
+                    assert document["suggestedUnits"] == ["text-recognition"]
+            assert (
+                documents[-1]["extractionEngine"]["digest"] == stored["extractionEngine"]["digest"]
+            )
+    assert {path: path.read_bytes() for path in before} == before
 
 
 def test_streaming_api_rejects_gap_checksum_and_invalid_cursor(client: TestClient) -> None:

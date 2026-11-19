@@ -81,11 +81,11 @@ the approved canonical host set; redirected bytes must still match the
 original locked length and SHA-256.
 
 First-party `pipeline.json`, license, NOTICE, and fixture bytes use a mandatory
-two-commit bootstrap in `gx-capture/capture-workbench`. Commit A adds the
+two-commit bootstrap in `gx-capture/capture-workbench`. source snapshot adds the
 reviewed bytes. A later commit B adds/approves the source lock, whose first-party
-URLs name the exact repository and full Commit A SHA (for example an immutable
-`raw.githubusercontent.com/gx-capture/capture-workbench/<commit-a>/...` URL).
-Commit B must be reachable after Commit A and the source lock may not reference
+URLs name the exact repository and full source snapshot SHA (for example an immutable
+`raw.githubusercontent.com/gx-capture/capture-workbench/<text-recognition>/...` URL).
+source-lock commit must be reachable after source snapshot and the source lock may not reference
 Commit B itself: a checked-in lock cannot truthfully self-reference bytes at its
 own not-yet-existing commit.
 

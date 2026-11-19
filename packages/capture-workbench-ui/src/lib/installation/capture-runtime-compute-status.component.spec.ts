@@ -45,7 +45,7 @@ describe('CaptureRuntimeComputeStatusComponent', () => {
       runtimeVersion: RUNTIME_VERSION,
       contractSetVersion: '2',
       contractSha256: 'a'.repeat(64),
-      mode: 'gpu-dml',
+      mode: 'gpu',
       adapterClass: 'dedicated',
       reasonCode: null,
       userNoticeRequired: false,

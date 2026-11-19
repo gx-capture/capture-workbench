@@ -47,7 +47,7 @@
 
 | 中文       | 程式名稱                                                      | 意思                                                               |
 | ---------- | ------------------------------------------------------------- | ------------------------------------------------------------------ |
-| 需求       | `RuntimeRequirement`、`RuntimeRequirementV2`                  | runtime 需要的一個元件，例如 `windowsml-ocr`、`speech-recognition` |
+| 需求       | `RuntimeRequirement`、`RuntimeRequirementV2`                  | runtime 需要的一個元件，例如 `text-recognition`、`speech-recognition` |
 | 安裝       | `InstallationJob`、`RuntimeInstallationV2`、`InstallationStatus` | 下載、驗證、啟用一個需求的過程與作業狀態機                         |
 | 引擎       | engine、worker                                                | 另外打包、以 JSON-lines 協定與 runtime 溝通的程式                  |
 | 引擎目錄   | `EngineCatalog`、`EngineRequirementDescriptor`                | 每個需求的 worker、模型檔、版本與雜湊                              |

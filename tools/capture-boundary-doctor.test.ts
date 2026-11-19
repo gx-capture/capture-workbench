@@ -33,7 +33,7 @@ const ready = {
 const requirements = {
   items: [
     {
-      requirementId: 'windowsml-ocr',
+      requirementId: 'text-recognition',
       status: 'ready',
       detail: 'must not be retained',
     },

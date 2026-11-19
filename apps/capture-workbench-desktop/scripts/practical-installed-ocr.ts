@@ -258,7 +258,7 @@ export async function runPracticalInstalledOcr(args: PracticalRunArguments): Pro
   }
 
   let workerMirror: { server: Server; origin: string } | undefined;
-  const ocrWorker = installerProvenance.runtime.workers.find((worker) => worker.requirementId === 'windowsml-ocr');
+  const ocrWorker = installerProvenance.runtime.workers.find((worker) => worker.requirementId === 'text-recognition');
   if (!ocrWorker) throw new Error('Installer provenance omits the OCR worker identity.');
   if (args.runtimeRelease) {
     const release = verifyRuntimeReleaseDirectory(
@@ -476,7 +476,7 @@ export async function runPracticalInstalledOcr(args: PracticalRunArguments): Pro
     const importedSourceSha256 = readImportedSourceSha256(detail);
     assertDurableOcrCheckpoint(detail, { sourceKind, sourceSha256: args.inputSha256, rawSegments: segments });
     const durable = await assertDiagnosticsMatchesDurableOcr(page, detail, documentId);
-    if ((durable.device === 'windowsml-dml') !== (preflight.mode === 'gpu-dml')) {
+    if ((durable.device === 'directml') !== (preflight.mode === 'gpu')) {
       throw new Error('Durable OCR device differs from the authenticated compute preflight.');
     }
     journey = {

@@ -121,7 +121,6 @@ class ExternalOllamaConfig:
 
 @dataclass(frozen=True, slots=True)
 class ExtractionRuntimeConfig:
-    windowsml_model_dir: Path
     temp_dir: Path
     max_pdf_pages: int
     max_image_pixels: int
@@ -260,6 +259,8 @@ class RuntimeSettings:
             raise ValueError(
                 "CAPTURE_WINDOWSML_DEVICE_ID is retired; use worker-owned OCR selection"
             )
+        if "CAPTURE_WINDOWSML_MODEL_DIR" in env:
+            raise ValueError("CAPTURE_WINDOWSML_MODEL_DIR is no longer supported; remove it")
         max_pdf_pages = int(env.get("CAPTURE_MAX_PDF_PAGES", "200"))
         max_image_pixels = int(env.get("CAPTURE_MAX_IMAGE_PIXELS", "50000000"))
         ocr_render_scale = float(env.get("CAPTURE_OCR_RENDER_SCALE", "2"))
@@ -281,10 +282,6 @@ class RuntimeSettings:
             raise ValueError("CAPTURE_OCR_RENDER_SCALE must be between 1 and 4")
 
         extraction = ExtractionRuntimeConfig(
-            windowsml_model_dir=Path(
-                env.get("CAPTURE_WINDOWSML_MODEL_DIR")
-                or app_data_dir / "runtime-assets" / "windowsml-ocr" / "models"
-            ),
             temp_dir=Path(env.get("CAPTURE_EXTRACTION_TEMP_DIR") or app_data_dir / "temp"),
             max_pdf_pages=max_pdf_pages,
             max_image_pixels=max_image_pixels,

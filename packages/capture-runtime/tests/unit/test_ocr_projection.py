@@ -48,10 +48,10 @@ def _source() -> CaptureSource:
 def _engine() -> OcrProvenanceV3:
     return OcrProvenanceV3(
         status="resolved",
-        engine="windowsml-ocr",
-        model="pp-ocrv6-medium-windowsml",
+        engine="text-recognition",
+        model="pp-ocrv6-medium",
         model_digest="sha256:" + "b" * 64,
-        device="windowsml-dml",
+        device="directml",
         profile_id="capture-workbench-ocr-pipeline-v1",
         profile_spec_sha256="c" * 64,
     )
@@ -159,17 +159,17 @@ def test_pre_inference_provenance_is_an_explicit_unavailable_variant() -> None:
             {
                 **unavailable,
                 "modelDigest": "sha256:" + "0" * 64,
-                "device": "windowsml-dml",
+                "device": "directml",
             }
         )
 
     with pytest.raises(ValidationError, match="resolved model"):
         OcrProvenanceV3(
             status="resolved",
-            engine="windowsml-ocr",
-            model="pp-ocrv6-medium-windowsml",
+            engine="text-recognition",
+            model="pp-ocrv6-medium",
             model_digest="sha256:" + "0" * 64,
-            device="windowsml-dml",
+            device="directml",
             profile_id="capture-workbench-ocr-pipeline-v1",
             profile_spec_sha256="c" * 64,
         )
@@ -267,7 +267,7 @@ def test_completed_projection_requires_recognized_pages_and_matching_page_proven
         confidence=0.5,
         provenance=OcrProvenanceV3(
             status="resolved",
-            engine="windowsml-ocr",
+            engine="text-recognition",
             model="other",
             model_digest="sha256:" + "e" * 64,
             device="cpu",
@@ -584,10 +584,10 @@ def test_canonical_execution_emits_failed_page_and_no_success_on_provenance_chan
     progress: list[dict[str, object]] = []
     changed = OcrProvenanceV3(
         status="resolved",
-        engine="windowsml-ocr",
+        engine="text-recognition",
         model="different-model",
         model_digest="sha256:" + "d" * 64,
-        device="windowsml-dml",
+        device="directml",
         profile_id="capture-workbench-ocr-pipeline-v1",
         profile_spec_sha256="c" * 64,
     )
@@ -761,7 +761,7 @@ def test_polygon_round_trip_preserves_each_predictor_point_in_wire_order() -> No
     observation = OcrTextResult(
         text="perspective",
         device="cpu",
-        model="pp-ocrv6-medium-windowsml",
+        model="pp-ocrv6-medium",
         digest="sha256:" + "b" * 64,
         regions=(OcrRegion(text="perspective", confidence=0.93, polygon=polygon),),
         raster_width=120,
@@ -807,7 +807,7 @@ def test_pipeline_rejects_polygon_outside_manifest_raster() -> None:
     observation = OcrTextResult(
         text="outside",
         device="cpu",
-        model="pp-ocrv6-medium-windowsml",
+        model="pp-ocrv6-medium",
         digest="sha256:" + "b" * 64,
         regions=(OcrRegion(text="outside", confidence=0.9, polygon=polygon),),
         raster_width=120,
@@ -887,10 +887,10 @@ def test_invalid_model_digest_fails_closed_with_unavailable_provenance() -> None
                     ),
                 ),
                 provenance=CaptureEngine(
-                    engine="windowsml-ocr",
-                    model="pp-ocrv6-medium-windowsml",
+                    engine="text-recognition",
+                    model="pp-ocrv6-medium",
                     digest="sha256:" + "0" * 64,
-                    device="windowsml-dml",
+                    device="directml",
                 ),
             )
 
@@ -1066,7 +1066,7 @@ def test_extraction_outcome_owns_projection_without_raw_capture_side_channel() -
         ],
         source_text="recognized",
         extraction_engine=CaptureEngine(
-            engine="windowsml-ocr",
+            engine="text-recognition",
             model="model",
             digest="sha256:" + "d" * 64,
             device="cpu",

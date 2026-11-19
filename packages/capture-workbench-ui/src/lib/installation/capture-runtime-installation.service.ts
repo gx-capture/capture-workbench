@@ -28,7 +28,7 @@ import {
 } from '../capture-client-errors';
 
 const INSTALLATION_ORDER = new Map([
-  ['windowsml-ocr', 0],
+  ['text-recognition', 0],
   ['speech-recognition', 1],
   ['speaker-diarization', 2],
   ['vertical-japanese-reader', 3],

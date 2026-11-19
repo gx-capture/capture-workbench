@@ -102,9 +102,9 @@ describe('CaptureWorkbenchComponent optional units', () => {
           of([
             { ...READER, optional: false, downloadBytes: 120_000_000 },
             {
-              requirementId: 'windowsml-ocr',
+              requirementId: 'text-recognition',
               kind: 'ocr',
-              displayName: 'WindowsML OCR',
+              displayName: 'Text recognition',
               status: 'installable',
               requiredFor: ['pdf', 'image'],
               installStrategy: 'runtime-catalog',
@@ -125,7 +125,7 @@ describe('CaptureWorkbenchComponent optional units', () => {
     ).toBe('約 120 MB');
     expect(
       root.querySelector(
-        '[data-requirement-id="windowsml-ocr"] [data-testid="capture-download-size"]',
+        '[data-requirement-id="text-recognition"] [data-testid="capture-download-size"]',
       ),
     ).toBeNull();
   });

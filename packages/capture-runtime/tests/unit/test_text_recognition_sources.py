@@ -12,12 +12,14 @@ import pypdfium2 as pdfium
 
 from capture_runtime.constants import RUNTIME_VERSION
 
-SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "generate_commit_a_fixtures.py"
-FIXTURE_ROOT = Path(__file__).resolve().parents[2] / "model-sources" / "commit-a"
+SCRIPT_PATH = (
+    Path(__file__).resolve().parents[2] / "scripts" / "generate_text_recognition_sources.py"
+)
+FIXTURE_ROOT = Path(__file__).resolve().parents[2] / "model-sources" / "text-recognition"
 
 
 def _load_generator() -> ModuleType:
-    spec = importlib.util.spec_from_file_location("generate_commit_a_fixtures", SCRIPT_PATH)
+    spec = importlib.util.spec_from_file_location("generate_text_recognition_sources", SCRIPT_PATH)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
@@ -34,7 +36,7 @@ def _sha256(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
 
 
-def test_commit_a_generator_reproduces_exact_tracked_bytes() -> None:
+def test_text_recognition_generator_reproduces_exact_tracked_bytes() -> None:
     expected = generator.build_files()
     actual_paths = {
         path.relative_to(FIXTURE_ROOT).as_posix()
@@ -46,11 +48,10 @@ def test_commit_a_generator_reproduces_exact_tracked_bytes() -> None:
         assert (FIXTURE_ROOT / relative).read_bytes() == content
 
 
-def test_commit_a_provenance_binds_bytes_and_fixed_revisions() -> None:
-    provenance = json.loads((FIXTURE_ROOT / "provenance/commit-a.json").read_text("utf-8"))
-    assert provenance == json.loads((FIXTURE_ROOT / "provenance/commit-a.json").read_text("utf-8"))
+def test_text_recognition_provenance_binds_bytes_and_fixed_revisions() -> None:
+    provenance = json.loads((FIXTURE_ROOT / "provenance/text-recognition.json").read_text("utf-8"))
     assert provenance["releaseVersion"] == RUNTIME_VERSION
-    assert provenance["stage"] == "commit-a"
+    assert provenance["stage"] == "text-recognition"
     assert provenance["licensePath"] == "licenses/LICENSE.txt"
     assert provenance["noticePath"] == "licenses/NOTICE.txt"
     assert provenance["fixedUpstreamRevisions"] == {
@@ -72,8 +73,8 @@ def test_commit_a_provenance_binds_bytes_and_fixed_revisions() -> None:
         assert item["sha256"] == _sha256(content)
 
     pipeline = json.loads((FIXTURE_ROOT / "model/pipeline.json").read_text("utf-8"))
-    assert pipeline["model"] == "pp-ocrv6-medium-windowsml"
-    assert pipeline["device"] == "windowsml-dml"
+    assert pipeline["model"] == "pp-ocrv6-medium"
+    assert pipeline["device"] == "directml"
     assert pipeline["cpuFallback"] == "provider-missing-only"
     assert pipeline["failClosedOnDmlError"] is True
     assert pipeline["algorithm"] == "capture-workbench-ocr-profile-v3"
@@ -99,9 +100,9 @@ def test_commit_a_provenance_binds_bytes_and_fixed_revisions() -> None:
 
     ocr = next(item for item in provenance["files"] if item["kind"] == "ocr-fixture")
     assert ocr["expectedText"] == "CAPTURE OCR FIXTURE"
-    assert ocr["expectedEngine"] == "windowsml-ocr"
-    assert ocr["expectedModel"] == "pp-ocrv6-medium-windowsml"
-    assert ocr["expectedDevice"] == "windowsml-dml"
+    assert ocr["expectedEngine"] == "text-recognition"
+    assert ocr["expectedModel"] == "pp-ocrv6-medium"
+    assert ocr["expectedDevice"] == "directml"
     assert "audio" not in json.dumps(provenance).lower()
 
 
@@ -146,7 +147,7 @@ def test_scanned_pdf_is_one_page_image_only_and_has_no_embedded_text() -> None:
     assert b"BT" not in data
 
 
-def test_commit_a_contains_only_project_owned_non_model_media() -> None:
+def test_text_recognition_contains_only_project_owned_non_model_media() -> None:
     files = sorted(
         path.relative_to(FIXTURE_ROOT).as_posix()
         for path in FIXTURE_ROOT.rglob("*")
@@ -158,7 +159,7 @@ def test_commit_a_contains_only_project_owned_non_model_media() -> None:
         "licenses/LICENSE.txt",
         "licenses/NOTICE.txt",
         "model/pipeline.json",
-        "provenance/commit-a.json",
+        "provenance/text-recognition.json",
     ]
     license_text = (FIXTURE_ROOT / "licenses/LICENSE.txt").read_text("utf-8")
     assert license_text.startswith("MIT License\n")

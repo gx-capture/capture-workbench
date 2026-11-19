@@ -49,7 +49,7 @@ reimplement OCR policy.
 
 ### Canonical Paddle profile
 
-`model-sources/commit-a/model/pipeline.json` is the packaged canonical profile
+`model-sources/text-recognition/model/pipeline.json` is the packaged canonical profile
 spec and is copied byte-for-byte to the worker model root and runtime asset.
 Its canonical UTF-8 JSON bytes derive both `profileSpecSha256` and the stable
 profile ID (`capture-workbench-ocr-<hash-prefix>`).  The spec includes the
@@ -72,7 +72,7 @@ policy mismatch fails closed.
 
 ### DirectML provider policy
 
-The canonical WindowsML OCR adapter makes one provider decision per pipeline
+The canonical ONNX OCR adapter makes one provider decision per pipeline
 creation. If `DmlExecutionProvider` is available, it creates one DML-first
 ONNX Runtime session with `CPUExecutionProvider` in the same session for
 unsupported kernels. It never catches a DML error to create a CPU-only
@@ -91,7 +91,7 @@ when exposed and recording is enabled by the installed ORT, while the
 profile's `Node` events are the fallback when that API is absent or reports
 that its recording option is unavailable. Missing or unreadable evidence, or zero
 assigned DML nodes, is a typed runtime failure; the result is never labelled
-`windowsml-dml` from the configured provider list alone. A proven assignment
+`directml` from the configured provider list alone. A proven assignment
 with at least one DML node remains valid even when other nodes are assigned to
 CPU. The profile is deleted after evidence is read and never becomes public OCR
 diagnostics.

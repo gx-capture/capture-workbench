@@ -365,7 +365,7 @@ class OcrExecutionPlan:
             raise ValueError("adapter map digest is invalid")
         if not _SHA256_RE.fullmatch(self.plan_sha256):
             raise ValueError("plan digest is invalid")
-        gpu = self.mode is OcrComputeMode.GPU_DML
+        gpu = self.mode is OcrComputeMode.GPU
         if gpu != (self.identity is not None):
             raise ValueError("GPU plan identity does not match mode")
         if (
@@ -451,7 +451,7 @@ class OcrExecutionPlan:
             )
         except (KeyError, TypeError, ValueError) as error:
             raise ValueError("OCR execution plan is invalid") from error
-        if plan.mode is OcrComputeMode.GPU_DML and plan.identity is not None:
+        if plan.mode is OcrComputeMode.GPU and plan.identity is not None:
             if plan.identity.identity_sha256 != value.get("identitySha256"):
                 raise ValueError("OCR execution plan identity digest is invalid")
         elif value.get("identitySha256") is not None:
@@ -638,7 +638,7 @@ class OcrComputePlan:
         )
         if decision is None:
             return None
-        if decision.compute_mode == "gpu-dml":
+        if decision.compute_mode == "gpu":
             candidate = next(item for item in hardware if item.index == decision.device_id)
             try:
                 return self._selection(
@@ -718,7 +718,7 @@ class OcrComputePlan:
         )
         plan_values: dict[str, object] = {
             "policyVersion": _PLAN_POLICY_VERSION,
-            "mode": OcrComputeMode.GPU_DML.value,
+            "mode": OcrComputeMode.GPU.value,
             "selectionSource": selection_source,
             "identitySha256": None if identity is None else identity.identity_sha256,
             "highPerformanceRank": effective_rank,
@@ -729,7 +729,7 @@ class OcrComputePlan:
             "contractSetSha256": self._contract_sha256,
         }
         plan = OcrExecutionPlan(
-            mode=OcrComputeMode.GPU_DML,
+            mode=OcrComputeMode.GPU,
             selection_source=selection_source,
             adapter_class=adapter.adapter_class,
             identity=identity,
@@ -744,7 +744,7 @@ class OcrComputePlan:
         readiness = OcrComputePreflightV2(
             contract_sha256=self._contract_sha256,
             worker_sha256=self._worker_sha256,
-            mode=OcrComputeMode.GPU_DML,
+            mode=OcrComputeMode.GPU,
             adapter_class=adapter.adapter_class,
             user_notice_required=False,
         )

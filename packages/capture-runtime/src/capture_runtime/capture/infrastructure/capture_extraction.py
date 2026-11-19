@@ -37,8 +37,8 @@ from capture_runtime.constants import (
     DIARIZATION_REQUIREMENT_ID,
     SPEECH_RECOGNITION_REQUIREMENT_ID,
     SPEECH_TEMP_PREFIX,
+    TEXT_RECOGNITION_REQUIREMENT_ID,
     VERTICAL_READER_REQUIREMENT_ID,
-    WINDOWSML_REQUIREMENT_ID,
     WORKER_SOURCE_TEMP_PREFIX,
 )
 from capture_runtime.contracts import (
@@ -209,7 +209,7 @@ class CaptureExtractor(Protocol):
 
 
 class _SyncOcrEngineAdapter:
-    """Local rasterizer + WindowsML adapter behind the OCR engine port."""
+    """Local rasterizer + ONNX OCR adapter behind the OCR engine port."""
 
     def __init__(
         self,
@@ -419,7 +419,7 @@ _SOURCE_SUFFIXES = {
 
 
 class StandaloneRuntimeCaptureExtractor:
-    """Production extractor using only package-owned WindowsML and speech recognition adapters."""
+    """Production extractor using only package-owned OCR and speech recognition adapters."""
 
     def __init__(
         self,
@@ -533,7 +533,7 @@ class StandaloneRuntimeCaptureExtractor:
                     raise OcrWorkerFailure(kind="unavailable", progress=None) from error
                 execution_proof = result.execution_proof
                 try:
-                    engine = self._capture_engine(result, expected_engine="windowsml-ocr")
+                    engine = self._capture_engine(result, expected_engine="text-recognition")
                     suggested_units.update(result.suggested_units)
                     ocr_provenance = self._capture_ocr_provenance(result)
                 except ValueError as error:
@@ -587,7 +587,7 @@ class StandaloneRuntimeCaptureExtractor:
                     raise OcrWorkerFailure(kind="unavailable", progress=None) from error
                 execution_proof = result.execution_proof
                 try:
-                    engine = self._capture_engine(result, expected_engine="windowsml-ocr")
+                    engine = self._capture_engine(result, expected_engine="text-recognition")
                     suggested_units.update(result.suggested_units)
                     ocr_provenance = self._capture_ocr_provenance(result)
                 except ValueError as error:
@@ -767,7 +767,7 @@ class StandaloneRuntimeCaptureExtractor:
             raise ExtractionRuntimeUnavailableError(
                 f"Runtime requirement {requirement_id} is not installed and ready."
             )
-        if requirement_id == WINDOWSML_REQUIREMENT_ID:
+        if requirement_id == TEXT_RECOGNITION_REQUIREMENT_ID:
             selection_resolver = getattr(self.engine_manager, "ocr_compute_selection", None)
             if not callable(selection_resolver):
                 raise ExtractionRuntimeUnavailableError("OCR compute plan is unavailable.")
@@ -802,7 +802,7 @@ class StandaloneRuntimeCaptureExtractor:
                     )
                 worker_options["runtimeSha256"] = acceptance_runtime_sha256
         vertical_reader_dir = None
-        if requirement_id == WINDOWSML_REQUIREMENT_ID:
+        if requirement_id == TEXT_RECOGNITION_REQUIREMENT_ID:
             vertical_reader_dir = await self._vertical_reader_dir()
         return (
             engine,
@@ -824,7 +824,7 @@ class StandaloneRuntimeCaptureExtractor:
         timeout_seconds: float = DEFAULT_RUN_TIMEOUT_SECONDS,
     ) -> _OcrRunResult:
         engine, path, worker_options, vertical_reader_dir = await self._prepare_worker_run(
-            WINDOWSML_REQUIREMENT_ID,
+            TEXT_RECOGNITION_REQUIREMENT_ID,
             content,
             media_type,
             options,
@@ -1156,8 +1156,8 @@ class StandaloneRuntimeCaptureExtractor:
     def _capture_engine(result: WorkerRunResult, *, expected_engine: str) -> CaptureEngine:
         if result.engine != expected_engine:
             raise ValueError("worker returned incompatible engine provenance")
-        if expected_engine == "windowsml-ocr" and result.device not in {
-            "windowsml-dml",
+        if expected_engine == "text-recognition" and result.device not in {
+            "directml",
             "cpu",
         }:
             raise ValueError("OCR worker returned incompatible device provenance")
@@ -1178,14 +1178,14 @@ class StandaloneRuntimeCaptureExtractor:
             fallback = self.ocr_pipeline.default_provenance
             provenance = OcrProvenanceV3(
                 status="resolved",
-                engine="windowsml-ocr",
+                engine="text-recognition",
                 model=result.model,
                 model_digest=result.digest,
                 device=result.device,
                 profile_id=fallback.profile_id,
                 profile_spec_sha256=fallback.profile_spec_sha256,
             )
-        if not provenance.is_resolved or provenance.engine != "windowsml-ocr":
+        if not provenance.is_resolved or provenance.engine != "text-recognition":
             raise ValueError("worker returned incomplete OCR profile provenance")
         if provenance.model != result.model or provenance.model_digest != result.digest:
             raise ValueError("worker OCR profile provenance does not match result identity")

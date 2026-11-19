@@ -140,7 +140,7 @@ def parse_run_result(payload: dict[str, Any]) -> OcrWorkerRunResult[OcrExecution
         raise WorkerResultError("worker provenance is invalid")
     ocr_provenance = (
         _parse_ocr_provenance(provenance)
-        if provenance.get("engine") == "windowsml-ocr"
+        if provenance.get("engine") == "text-recognition"
         or provenance.get("status") in ("resolved", "unavailable")
         else None
     )

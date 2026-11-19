@@ -82,7 +82,7 @@ def test_profile_application_is_exact_and_target_language_is_not_an_ocr_input() 
 
 def test_model_lock_and_packaged_profile_share_one_byte_identity() -> None:
     package_root = Path(__file__).resolve().parents[2]
-    source = package_root / "model-sources" / "commit-a" / "model" / "pipeline.json"
+    source = package_root / "model-sources" / "text-recognition" / "model" / "pipeline.json"
     lock = json.loads(
         (package_root / "model-sources" / "release-model-source-lock.json").read_text(
             encoding="utf-8"
@@ -93,7 +93,7 @@ def test_model_lock_and_packaged_profile_share_one_byte_identity() -> None:
         for item in next(
             requirement
             for requirement in lock["requirements"]
-            if requirement["requirementId"] == "windowsml-ocr"
+            if requirement["requirementId"] == "text-recognition"
         )["files"]
         if item["path"] == "model/pipeline.json"
     )

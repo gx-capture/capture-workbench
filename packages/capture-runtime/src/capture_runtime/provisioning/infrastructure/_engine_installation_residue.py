@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 import stat
 from pathlib import Path, PurePosixPath
 
 from ._engine_installation_errors import EngineInstallationError
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def resolved_child(root: Path, relative: str) -> Path:
@@ -53,6 +56,37 @@ def remove_residue_path(path: Path) -> None:
         raise EngineInstallationError(
             f"stale engine install residue could not be removed: {path.name}"
         ) from error
+
+
+def _remove_retired_engine_tree(path: Path) -> None:
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        return
+    if not is_reparse_point(path, metadata) and stat.S_ISDIR(metadata.st_mode):
+        for child in path.iterdir():
+            _remove_retired_engine_tree(child)
+        path.rmdir()
+    else:
+        remove_residue_path(path)
+
+
+def remove_retired_ocr_installation(app_data: Path) -> None:
+    """Remove legacy OCR storage while the caller holds the app-data lock."""
+    for directory_name in ("engines", "runtime-assets"):
+        parent = app_data / directory_name
+        try:
+            for directory in (app_data, parent):
+                try:
+                    metadata = directory.lstat()
+                except FileNotFoundError:
+                    break
+                if is_reparse_point(directory, metadata) or not stat.S_ISDIR(metadata.st_mode):
+                    raise EngineInstallationError("unsafe legacy OCR storage parent")
+            else:
+                _remove_retired_engine_tree(parent / "windowsml-ocr")
+        except (EngineInstallationError, OSError):
+            _LOGGER.warning("Retired OCR cleanup in %s will retry at startup", directory_name)
 
 
 def is_temporary_version_name(name: str) -> bool:

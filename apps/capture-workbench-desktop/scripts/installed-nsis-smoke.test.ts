@@ -849,10 +849,10 @@ function rawCapture(fixture) {
     segments,
     sourceText: fixture.expectedTexts.join('\n'),
     extractionEngine: {
-      engine: fixture.sourceKind === 'audio' ? 'speech-recognition' : 'windowsml-ocr',
+      engine: fixture.sourceKind === 'audio' ? 'speech-recognition' : 'text-recognition',
       model: fixture.sourceKind === 'audio'
         ? 'deterministic-speech-recognition-v1'
-        : 'deterministic-windowsml-v1',
+        : 'deterministic-ocr-v1',
       digest: `sha256:${'a'.repeat(64)}`,
       device: 'fake',
     },

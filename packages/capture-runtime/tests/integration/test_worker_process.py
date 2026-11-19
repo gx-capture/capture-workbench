@@ -29,10 +29,10 @@ SERVER_WORKER = Path(__file__).parents[1] / "fixtures" / "server_worker.py"
 PERSISTENT_WORKER = Path(__file__).parents[1] / "fixtures" / "persistent_server_worker.py"
 OCR_PROVENANCE = {
     "status": "resolved",
-    "engine": "windowsml-ocr",
-    "model": "pp-ocrv6-medium-windowsml",
+    "engine": "text-recognition",
+    "model": "pp-ocrv6-medium",
     "modelDigest": "sha256:" + "a" * 64,
-    "device": "windowsml-dml",
+    "device": "directml",
     "profileId": "capture-workbench-ocr-pipeline-v1",
     "profileSpecSha256": "b" * 64,
 }
@@ -325,7 +325,7 @@ def test_worker_client_keeps_ocr_probe_options_empty_without_changing_speech_rec
     async def probe() -> None:
         await client.probe(
             InstalledEngine(
-                requirement_id="windowsml-ocr",
+                requirement_id="text-recognition",
                 artifact_version="engine-1",
                 executable=tmp_path / "ocr.exe",
                 model_dir=model_dir,
@@ -388,7 +388,7 @@ def test_ocr_worker_rejects_final_content_equivocation_and_keeps_verified_prefix
         with pytest.raises(OcrWorkerFailure) as raised:
             await client.run(
                 InstalledEngine(
-                    requirement_id="windowsml-ocr",
+                    requirement_id="text-recognition",
                     artifact_version="engine-1",
                     executable=tmp_path / "ocr.exe",
                     model_dir=tmp_path,
@@ -425,7 +425,7 @@ def test_ocr_worker_rejects_header_final_provenance_equivocation_without_pages(
         with pytest.raises(OcrWorkerFailure) as raised:
             await client.run(
                 InstalledEngine(
-                    requirement_id="windowsml-ocr",
+                    requirement_id="text-recognition",
                     artifact_version="engine-1",
                     executable=tmp_path / "ocr.exe",
                     model_dir=tmp_path,
@@ -484,7 +484,7 @@ def test_worker_progress_reports_only_verified_page_counts(tmp_path, mutation, e
         try:
             await client.run(
                 InstalledEngine(
-                    requirement_id="windowsml-ocr",
+                    requirement_id="text-recognition",
                     artifact_version="test",
                     executable=tmp_path / "ocr.exe",
                     model_dir=tmp_path,
@@ -522,7 +522,7 @@ def test_ocr_worker_accepts_signed_zero_as_the_same_numeric_content(
     async def run() -> None:
         result = await client.run(
             InstalledEngine(
-                requirement_id="windowsml-ocr",
+                requirement_id="text-recognition",
                 artifact_version="engine-1",
                 executable=tmp_path / "ocr.exe",
                 model_dir=tmp_path,
@@ -563,7 +563,7 @@ def test_ocr_worker_rejects_final_page_omission_or_duplicate_with_only_trusted_p
         with pytest.raises(OcrWorkerFailure) as raised:
             await client.run(
                 InstalledEngine(
-                    requirement_id="windowsml-ocr",
+                    requirement_id="text-recognition",
                     artifact_version="engine-1",
                     executable=tmp_path / "ocr.exe",
                     model_dir=tmp_path,
@@ -617,7 +617,7 @@ def test_worker_client_runs_model_free_preflight_in_one_owned_worker_process(
     async def run() -> None:
         decision = await client.ocr_compute_preflight(
             InstalledEngine(
-                requirement_id="windowsml-ocr",
+                requirement_id="text-recognition",
                 artifact_version="engine-1",
                 executable=SERVER_WORKER,
                 model_dir=tmp_path,
@@ -625,7 +625,7 @@ def test_worker_client_runs_model_free_preflight_in_one_owned_worker_process(
             contract_sha256=contract_sha256,
         )
         assert decision.contract_sha256 == contract_sha256
-        assert decision.mode is OcrComputeMode.GPU_DML
+        assert decision.mode is OcrComputeMode.GPU
         assert decision.adapter_class is OcrAdapterClass.DEDICATED
 
     asyncio.run(run())
@@ -703,7 +703,7 @@ def test_ocr_worker_failure_preserves_validated_progress_pages(tmp_path: Path) -
         with pytest.raises(OcrWorkerFailure) as raised:
             await client.run(
                 InstalledEngine(
-                    requirement_id="windowsml-ocr",
+                    requirement_id="text-recognition",
                     artifact_version="engine-1",
                     executable=tmp_path / "ocr.exe",
                     model_dir=tmp_path,
@@ -790,7 +790,7 @@ def test_ocr_worker_malformed_progress_preserves_only_validated_prefix(tmp_path:
         with pytest.raises(OcrWorkerFailure) as raised:
             await client.run(
                 InstalledEngine(
-                    requirement_id="windowsml-ocr",
+                    requirement_id="text-recognition",
                     artifact_version="engine-1",
                     executable=tmp_path / "ocr.exe",
                     model_dir=tmp_path,
@@ -850,7 +850,7 @@ def test_ocr_worker_malformed_terminal_preserves_consecutive_progress_prefix(
         with pytest.raises(OcrWorkerFailure) as raised:
             await client.run(
                 InstalledEngine(
-                    requirement_id="windowsml-ocr",
+                    requirement_id="text-recognition",
                     artifact_version="engine-1",
                     executable=tmp_path / "ocr.exe",
                     model_dir=tmp_path,
@@ -894,7 +894,7 @@ def test_ocr_worker_invalid_terminal_json_preserves_all_validated_progress_pages
         with pytest.raises(OcrWorkerFailure) as raised:
             await client.run(
                 InstalledEngine(
-                    requirement_id="windowsml-ocr",
+                    requirement_id="text-recognition",
                     artifact_version="engine-1",
                     executable=tmp_path / "ocr.exe",
                     model_dir=tmp_path,
@@ -961,7 +961,7 @@ def test_ocr_worker_unavailable_header_is_protocol_failure_without_trusted_progr
         with pytest.raises(OcrWorkerFailure) as raised:
             await client.run(
                 InstalledEngine(
-                    requirement_id="windowsml-ocr",
+                    requirement_id="text-recognition",
                     artifact_version="engine-1",
                     executable=tmp_path / "ocr.exe",
                     model_dir=tmp_path,
@@ -1067,7 +1067,7 @@ def test_ocr_worker_accepts_complete_empty_terminal_pages_for_deep_outcome(
     async def run() -> None:
         result = await client.run(
             InstalledEngine(
-                requirement_id="windowsml-ocr",
+                requirement_id="text-recognition",
                 artifact_version="engine-1",
                 executable=tmp_path / "ocr.exe",
                 model_dir=tmp_path,
@@ -1820,12 +1820,12 @@ def _manifest(width: int, height: int) -> list[dict[str, object]]:
 @pytest.mark.parametrize(
     ("requirement_id", "idle_seconds", "options", "expected"),
     [
-        ("windowsml-ocr", 300.0, {"pageManifest": _manifest(1654, 2339)}, "request_warm"),
-        ("windowsml-ocr", 300.0, {"pageManifest": _manifest(4032, 3024)}, "request"),
-        ("windowsml-ocr", 300.0, {}, "request"),
-        ("windowsml-ocr", 0.0, {"pageManifest": _manifest(10, 10)}, "request"),
+        ("text-recognition", 300.0, {"pageManifest": _manifest(1654, 2339)}, "request_warm"),
+        ("text-recognition", 300.0, {"pageManifest": _manifest(4032, 3024)}, "request"),
+        ("text-recognition", 300.0, {}, "request"),
+        ("text-recognition", 0.0, {"pageManifest": _manifest(10, 10)}, "request"),
         (
-            "windowsml-ocr",
+            "text-recognition",
             300.0,
             {"pageManifest": _manifest(10, 10), "runtimeSha256": "a" * 64},
             "request",
@@ -1876,5 +1876,5 @@ def test_worker_client_keeps_only_a_small_ocr_run_warm_and_never_for_a_proof(
         )
     # A fresh OCR worker first gets the GPU memory a warm one holds.
     assert released == (
-        [True] if requirement_id == "windowsml-ocr" and expected == "request" else []
+        [True] if requirement_id == "text-recognition" and expected == "request" else []
     )

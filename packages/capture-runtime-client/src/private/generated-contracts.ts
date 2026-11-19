@@ -7,7 +7,7 @@ export const API_VERSION = "2.0" as const;
 export const CAPTURE_API_VERSION = API_VERSION;
 export const CAPTURE_DOCUMENT_SCHEMA_VERSION = "2" as const;
 export const CAPTURE_DOCUMENT_SCHEMA_ID = "https://github.com/gx-capture/capture-workbench/schema/capture-document-v2.schema.json" as const;
-export const CAPTURE_DOCUMENT_SCHEMA_SHA256 = "5452631ce9d8eea48851a819530d94920a39f41350d5575df0f8f97f82171774" as const;
+export const CAPTURE_DOCUMENT_SCHEMA_SHA256 = "17994c88485ef2257518a788ca2eec3dca3a9f3aae1de1bd37dc454219a3f833" as const;
 
 /** Wire enum. */
 export type CaptureSourceKind = "pdf" | "image" | "audio";
@@ -16,13 +16,13 @@ export type CaptureSourceKind = "pdf" | "image" | "audio";
 export type OcrAdapterClass = "dedicated" | "integrated" | "unknown";
 
 /** Wire enum. */
-export type OcrComputeMode = "gpu-dml" | "cpu-fallback";
+export type OcrComputeMode = "gpu" | "cpu-fallback";
 
 /** Wire enum. */
 export type OcrComputeNoticeCode = "ocr_cpu_fallback";
 
 /** Wire enum. */
-export type OcrComputeReasonCode = "no_compatible_gpu" | "dml_provider_unavailable";
+export type OcrComputeReasonCode = "no_compatible_gpu" | "gpu_provider_unavailable";
 
 /** Wire enum. */
 export type OcrPageStatus = "recognized" | "empty" | "failed";
@@ -68,7 +68,7 @@ export type StructuringSessionStatus = "open" | "completed" | "failed" | "cancel
 
 export type CaptureLocator = PageLocator | TimeLocator;
 
-export type CaptureRequirementId = 'windowsml-ocr' | 'speech-recognition' | 'ollama-runtime' | 'capture-ollama-model';
+export type CaptureRequirementId = 'text-recognition' | 'speech-recognition' | 'ollama-runtime' | 'capture-ollama-model';
 
 export interface CaptureBlock {
   readonly blockId: string;
@@ -92,7 +92,7 @@ export interface CaptureDocument {
   readonly sourceText: string;
   readonly speakers?: readonly (CaptureSpeaker)[];
   readonly structuringEngine: CaptureEngine;
-  readonly suggestedUnits?: readonly ("windowsml-ocr" | "speech-recognition" | "speaker-diarization" | "vertical-japanese-reader" | "ollama-runtime" | "capture-ollama-model")[];
+  readonly suggestedUnits?: readonly ("text-recognition" | "speech-recognition" | "speaker-diarization" | "vertical-japanese-reader" | "ollama-runtime" | "capture-ollama-model")[];
   readonly targetText: string;
   readonly warnings?: readonly (string)[];
 }
@@ -265,7 +265,7 @@ export interface OcrPointV3 {
 
 export interface OcrProvenanceResolvedV3 {
   readonly status: "resolved";
-  readonly engine: "windowsml-ocr";
+  readonly engine: "text-recognition";
   readonly model: string;
   readonly modelDigest: string;
   readonly device: string;
@@ -336,7 +336,7 @@ export interface RawCapture {
   readonly extractionEngine: CaptureEngine;
   readonly diarizationEngine?: CaptureEngine | null;
   readonly speakers?: readonly (CaptureSpeaker)[];
-  readonly suggestedUnits?: readonly ("windowsml-ocr" | "speech-recognition" | "speaker-diarization" | "vertical-japanese-reader" | "ollama-runtime" | "capture-ollama-model")[];
+  readonly suggestedUnits?: readonly ("text-recognition" | "speech-recognition" | "speaker-diarization" | "vertical-japanese-reader" | "ollama-runtime" | "capture-ollama-model")[];
   readonly warnings?: readonly (string)[];
   readonly ocrPageScope?: OcrPageScopeV2 | null;
   readonly createdAt: string;
@@ -366,7 +366,7 @@ export interface RuntimeArtifactDescriptorV2 {
 
 export interface RuntimeInstallationV2 {
   readonly installationId: string;
-  readonly requirementId: "windowsml-ocr" | "speech-recognition" | "speaker-diarization" | "vertical-japanese-reader" | "ollama-runtime" | "capture-ollama-model";
+  readonly requirementId: "text-recognition" | "speech-recognition" | "speaker-diarization" | "vertical-japanese-reader" | "ollama-runtime" | "capture-ollama-model";
   readonly status: RuntimeInstallationStatus;
   readonly progress: number;
   readonly error?: CaptureFailureV2 | null;
@@ -427,7 +427,7 @@ export interface RuntimeReady {
 }
 
 export interface RuntimeRequirementV2 {
-  readonly requirementId: "windowsml-ocr" | "speech-recognition" | "speaker-diarization" | "vertical-japanese-reader" | "ollama-runtime" | "capture-ollama-model";
+  readonly requirementId: "text-recognition" | "speech-recognition" | "speaker-diarization" | "vertical-japanese-reader" | "ollama-runtime" | "capture-ollama-model";
   readonly kind: string;
   readonly displayName: string;
   readonly status: RuntimeRequirementStatus;
@@ -467,7 +467,7 @@ export interface StartCaptureV2 {
 }
 
 export interface StartRuntimeInstallationV2 {
-  readonly requirementId: "windowsml-ocr" | "speech-recognition" | "speaker-diarization" | "vertical-japanese-reader" | "ollama-runtime" | "capture-ollama-model";
+  readonly requirementId: "text-recognition" | "speech-recognition" | "speaker-diarization" | "vertical-japanese-reader" | "ollama-runtime" | "capture-ollama-model";
   readonly consent: true;
 }
 
@@ -595,7 +595,7 @@ export const CAPTURE_CONTRACT_INVARIANTS = [
   {
     id: "ocr-compute-preflight-mode",
     models: "OcrComputePreflightV2",
-    description: "gpu-dml carries no fallback reason or notice; cpu-fallback carries a stable reason and user notice.",
+    description: "gpu carries no fallback reason or notice; cpu-fallback carries a stable reason and user notice.",
   },
   {
     id: "ocr-compute-preflight-identity",

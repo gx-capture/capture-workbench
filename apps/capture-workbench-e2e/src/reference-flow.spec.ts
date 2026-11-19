@@ -119,7 +119,7 @@ test('loads a nested result route directly, with its scripts and styles', async 
 test('drops a PDF without OCR, installs it, and exports the raw text', async ({ page }) => {
   await openDesktop(
     page,
-    [requirement('windowsml-ocr', 'WindowsML OCR', 'installable', 296_000_000)],
+    [requirement('text-recognition', 'Text recognition', 'installable', 296_000_000)],
     '/ocr',
     { completeInstallOnPoll: 2, ocrJourney: true, persistLibrary: true },
   );
@@ -180,7 +180,7 @@ test('drops a PDF without OCR, installs it, and exports the raw text', async ({ 
 test('accepts a non-prefix PDF page list on /ocr, binds the request, and rejects 5-1', async ({ page }) => {
   await openDesktop(
     page,
-    [requirement('windowsml-ocr', 'WindowsML OCR', 'ready', 296_000_000)],
+    [requirement('text-recognition', 'Text recognition', 'ready', 296_000_000)],
     '/ocr',
     { ocrJourney: true, persistLibrary: true },
   );
@@ -245,7 +245,7 @@ test('shows persisted page and transcript edits and speaker names on result page
 });
 
 test('imports an OCR selection through the native picker command', async ({ page }) => {
-  await openDesktop(page, [requirement('windowsml-ocr', 'WindowsML OCR', 'installable', 296_000_000)], '/ocr');
+  await openDesktop(page, [requirement('text-recognition', 'Text recognition', 'installable', 296_000_000)], '/ocr');
   await page.getByTestId('first-run-dismiss').click();
   await page.getByTestId('ocr-dropzone').getByRole('button').click();
   await expect(page.getByTestId('ocr-queue-row').filter({ hasText: 'charge.pdf' })).toHaveAttribute('data-user-status', 'waiting');
@@ -258,7 +258,7 @@ test('imports an OCR selection through the native picker command', async ({ page
 test('keeps a waiting OCR file after the window reloads', async ({ page }) => {
   await openDesktop(
     page,
-    [requirement('windowsml-ocr', 'WindowsML OCR', 'installable', 296_000_000)],
+    [requirement('text-recognition', 'Text recognition', 'installable', 296_000_000)],
     '/ocr',
     { persistLibrary: true },
   );
@@ -281,7 +281,7 @@ test('shows the first-run recognition card on /ocr and remembers dismissing it a
   await openDesktop(
     page,
     [
-      requirement('windowsml-ocr', 'WindowsML OCR', 'installable', 296_000_000),
+      requirement('text-recognition', 'Text recognition', 'installable', 296_000_000),
       requirement('speech-recognition', '本機語音轉文字', 'installable', 10_500_000_000),
       requirement('speaker-diarization', '說話者辨識', 'installable', 714_000_000),
     ],
@@ -308,7 +308,7 @@ test('lets an ASR-only user install speech recognition on /asr without ever requ
   await openDesktop(
     page,
     [
-      requirement('windowsml-ocr', 'WindowsML OCR', 'installable', 296_000_000),
+      requirement('text-recognition', 'Text recognition', 'installable', 296_000_000),
       requirement('speech-recognition', '本機語音轉文字', 'installable', 10_500_000_000),
       requirement('speaker-diarization', '說話者辨識', 'installable', 714_000_000),
     ],
@@ -320,7 +320,7 @@ test('lets an ASR-only user install speech recognition on /asr without ever requ
   const panel = page.getByTestId('asr-install-panel');
   await expect(panel).toBeVisible();
   await expect(page.getByTestId('asr-dropzone')).toHaveCount(0);
-  await expect(panel.getByText('WindowsML OCR')).toHaveCount(0);
+  await expect(panel.locator('[data-requirement-id="text-recognition"]')).toHaveCount(0);
 
   const speechCard = panel.locator('[data-testid="engine-card"][data-requirement-id="speech-recognition"]');
   await expect(speechCard.getByTestId('engine-card-install')).toHaveText('安裝（約 10.5 GB）');
@@ -342,7 +342,7 @@ test('shows the size, then progress, cancel and retry on /settings/engines', asy
   await openDesktop(
     page,
     [
-      requirement('windowsml-ocr', 'WindowsML OCR', 'ready', 296_000_000),
+      requirement('text-recognition', 'Text recognition', 'ready', 296_000_000),
       requirement('speech-recognition', '本機語音轉文字', 'installable', 10_500_000_000),
       requirement('speaker-diarization', '說話者辨識', 'installable', 714_000_000),
     ],
@@ -352,7 +352,7 @@ test('shows the size, then progress, cancel and retry on /settings/engines', asy
 
   const table = page.getByTestId('engines-table');
   await expect(table.locator('thead th')).toHaveText(['功能', '狀態', '大小', '動作']);
-  const ocrRow = table.locator('[data-testid="engine-row"][data-requirement-id="windowsml-ocr"]');
+  const ocrRow = table.locator('[data-testid="engine-row"][data-requirement-id="text-recognition"]');
   // The purpose is a second line under the feature name, not a column of its own.
   await expect(ocrRow.getByTestId('engine-row-purpose')).toHaveText('讀出掃描檔與照片的文字');
   await expect(ocrRow.getByTestId('engine-row-remove')).toHaveText('移除');
@@ -390,13 +390,13 @@ test('removes an installed engine after confirming its size and shows it on the 
   await openDesktop(
     page,
     [
-      requirement('windowsml-ocr', 'WindowsML OCR', 'ready', 296_000_000),
+      requirement('text-recognition', 'Text recognition', 'ready', 296_000_000),
       requirement('speech-recognition', '本機語音轉文字', 'installable', 10_500_000_000),
     ],
     '/settings/engines',
   );
 
-  const ocrRow = page.locator('[data-testid="engine-row"][data-requirement-id="windowsml-ocr"]');
+  const ocrRow = page.locator('[data-testid="engine-row"][data-requirement-id="text-recognition"]');
   await expect(ocrRow).toHaveAttribute('data-status', 'ready');
   await ocrRow.getByTestId('engine-row-remove').click();
 
@@ -426,7 +426,7 @@ test('removes an installed engine after confirming its size and shows it on the 
 
   await page.getByRole('navigation', { name: '主要功能' }).getByRole('link', { name: '文件轉文字' }).click();
   await expect(
-    page.locator('[data-testid="first-run-option"][data-requirement-id="windowsml-ocr"]'),
+    page.locator('[data-testid="first-run-option"][data-requirement-id="text-recognition"]'),
   ).toBeVisible();
 });
 
@@ -434,7 +434,7 @@ test('re-attaches to an in-progress installation returned by runtime_list_instal
   await openDesktop(
     page,
     [
-      requirement('windowsml-ocr', 'WindowsML OCR', 'installable', 296_000_000),
+      requirement('text-recognition', 'Text recognition', 'installable', 296_000_000),
       requirement('speech-recognition', '本機語音轉文字', 'installable', 10_500_000_000),
     ],
     '/settings/engines',
@@ -565,9 +565,9 @@ test('opens diagnostics from the status dot and from result details with provena
   await expect(docSection).toBeVisible();
   await expect(docSection).toHaveAttribute('data-document-id', docId);
   const ext = page.getByTestId('diagnostics-extraction-provenance');
-  await expect(ext).toHaveAttribute('data-engine', 'windowsml-ocr');
-  await expect(ext).toHaveAttribute('data-model', 'pp-ocrv6-medium-windowsml');
-  await expect(ext).toHaveAttribute('data-device', 'windowsml-dml');
+  await expect(ext).toHaveAttribute('data-engine', 'text-recognition');
+  await expect(ext).toHaveAttribute('data-model', 'pp-ocrv6-medium');
+  await expect(ext).toHaveAttribute('data-device', 'directml');
   await expect(ext).toHaveAttribute('data-digest', `sha256:${'d'.repeat(64)}`);
 
   const jsonDownloadPromise = page.waitForEvent('download');

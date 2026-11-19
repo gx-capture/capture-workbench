@@ -1,4 +1,4 @@
-"""Standalone WindowsML OCR engine adapter.
+"""Standalone Text recognition engine adapter.
 
 The adapter deliberately owns its dependency and model probes. It never imports a host
 application package, never downloads during extraction, and reports the exact missing runtime
@@ -62,7 +62,7 @@ from capture_runtime.ocr.infrastructure.ocr_preflight import (
     OcrSelectionDeviceProofV1,
 )
 from capture_runtime.ocr.infrastructure.ocr_profile import (
-    WINDOWSML_REQUIRED_MODEL_FILES,
+    TEXT_RECOGNITION_REQUIRED_MODEL_FILES,
     OcrProfileSpec,
     load_profile_spec,
     validate_model_artifacts,
@@ -195,7 +195,7 @@ def _native_selected_adapter_map(
 ) -> tuple[str, str]:
     """Resolve the retained plan against the map owned by one DXGI lease."""
 
-    if plan.mode.value != "gpu-dml" or plan.dml_device_id is None:
+    if plan.mode.value != "gpu" or plan.dml_device_id is None:
         raise EngineRuntimeUnavailableError("retained OCR plan is not a GPU plan")
     map_digest, joined = lease.adapter_map()
     selected = next((item for item in joined if item.index == plan.dml_device_id), None)
@@ -224,7 +224,7 @@ class ReusableOcrSession:
     vertical_reader: VerticalReader | None
 
 
-class WindowsMLOcrAdapter:
+class OnnxOcrAdapter:
     """PaddleOCR 3.7 DML-first session with no separate CPU-only retry."""
 
     def __init__(
@@ -274,7 +274,7 @@ class WindowsMLOcrAdapter:
         self._adapter_map_lease_factory = adapter_map_lease_factory or (
             (lambda: NativeOcrAdapterMapLease())
             if execution_plan is not None
-            and execution_plan.mode.value == "gpu-dml"
+            and execution_plan.mode.value == "gpu"
             and sys.platform == "win32"
             and adapter_map_resolver is None
             else None
@@ -295,7 +295,7 @@ class WindowsMLOcrAdapter:
                 raise ValueError("OCR execution proof requires a retained worker identity")
             if source_sha256 is None:
                 raise ValueError("OCR execution proof requires a source identity")
-            model_digest = directory_digest(model_dir, WINDOWSML_REQUIRED_MODEL_FILES)
+            model_digest = directory_digest(model_dir, TEXT_RECOGNITION_REQUIRED_MODEL_FILES)
             execution_proof_context = OcrExecutionProofContextV1(
                 source_sha256=source_sha256,
                 requested_page_scope=requested_page_scope,
@@ -307,7 +307,7 @@ class WindowsMLOcrAdapter:
                 contract_set_sha256=execution_plan.contract_set_sha256,
             )
         self._pipeline: Any | None = None
-        self._device = "windowsml-dml"
+        self._device = "directml"
         self._warning: str | None = None
         self._model_digest: str | None = None
         self._execution_evidence: OcrExecutionEvidence | None = None
@@ -379,14 +379,16 @@ class WindowsMLOcrAdapter:
                     "DML provenance is available only after OCR prediction and "
                     "execution evidence finalization."
                 )
-            device = "windowsml-dml"
+            device = "directml"
         else:
             device = "cpu"
         if self._model_digest is None:
-            self._model_digest = directory_digest(self.model_dir, WINDOWSML_REQUIRED_MODEL_FILES)
+            self._model_digest = directory_digest(
+                self.model_dir, TEXT_RECOGNITION_REQUIRED_MODEL_FILES
+            )
         return OcrProvenanceV3(
             status="resolved",
-            engine="windowsml-ocr",
+            engine="text-recognition",
             model=self._profile.model,
             model_digest=self._model_digest,
             device=device,
@@ -410,26 +412,26 @@ class WindowsMLOcrAdapter:
         self._report_stage(ocr_probe_readiness_stage("modules", len(missing_modules)))
         missing_files = [
             relative
-            for relative in WINDOWSML_REQUIRED_MODEL_FILES
+            for relative in TEXT_RECOGNITION_REQUIRED_MODEL_FILES
             if not (self.model_dir / relative).is_file()
         ]
         self._report_stage(ocr_probe_readiness_stage("assets", len(missing_files)))
         code_ready = not missing_modules
         assets_ready = not missing_files
         code_detail = (
-            "Missing WindowsML OCR dependencies: " + ", ".join(missing_modules)
+            "Missing Text recognition dependencies: " + ", ".join(missing_modules)
             if missing_modules
             else None
         )
         assets_detail = (
-            "Missing WindowsML OCR model assets: " + ", ".join(missing_files)
+            "Missing Text recognition model assets: " + ", ".join(missing_files)
             if missing_files
             else None
         )
         if missing_modules:
-            detail = code_detail or "WindowsML OCR dependencies are unavailable."
+            detail = code_detail or "Text recognition dependencies are unavailable."
         elif missing_files:
-            detail = assets_detail or "WindowsML OCR model assets are unavailable."
+            detail = assets_detail or "Text recognition model assets are unavailable."
         else:
             try:
                 providers = self._providers()
@@ -451,7 +453,7 @@ class WindowsMLOcrAdapter:
                     "CPUExecutionProvider is required for deterministic fallback.",
                 )
             detail = (
-                "WindowsML DML-first session with CPU execution-provider support is ready."
+                "OCR DML-first session with CPU execution-provider support is ready."
                 if "DmlExecutionProvider" in providers
                 else "DmlExecutionProvider is unavailable; CPU OCR fallback is ready."
             )
@@ -523,7 +525,7 @@ class WindowsMLOcrAdapter:
             raise EngineRuntimeUnavailableError(
                 "OCR execution proof is missing retained plan construction evidence."
             )
-        if plan.mode.value != "gpu-dml" or plan.identity is None:
+        if plan.mode.value != "gpu" or plan.identity is None:
             raise EngineRuntimeUnavailableError("OCR execution proof requires a retained GPU plan")
         selection_proof = self._selection_proof
         if selection_proof is None:
@@ -600,7 +602,7 @@ class WindowsMLOcrAdapter:
                 self._execution_evidence_finalized = True
                 if self._model_digest is None:
                     self._model_digest = directory_digest(
-                        self.model_dir, WINDOWSML_REQUIRED_MODEL_FILES
+                        self.model_dir, TEXT_RECOGNITION_REQUIRED_MODEL_FILES
                     )
                 self._finalize_execution_proof()
                 self._report_stage(
@@ -627,7 +629,7 @@ class WindowsMLOcrAdapter:
             if isinstance(error, OcrExecutionEvidenceError):
                 raise
             raise EngineRuntimeUnavailableError(
-                "WindowsML DirectML OCR execution failed while a GPU provider was available; "
+                "DirectML OCR execution failed while a GPU provider was available; "
                 "a separate CPU-only pipeline retry is disabled: "
                 f"{type(error).__name__}: {error}"
             ) from error
@@ -635,7 +637,7 @@ class WindowsMLOcrAdapter:
         try:
             if self._model_digest is None:
                 self._model_digest = directory_digest(
-                    self.model_dir, WINDOWSML_REQUIRED_MODEL_FILES
+                    self.model_dir, TEXT_RECOGNITION_REQUIRED_MODEL_FILES
                 )
             raster_width, raster_height = _png_dimensions(image_png)
             if alignment_records is not None:
@@ -698,7 +700,7 @@ class WindowsMLOcrAdapter:
                 page_route=page_route,
                 provenance=OcrProvenanceV3(
                     status="resolved",
-                    engine="windowsml-ocr",
+                    engine="text-recognition",
                     model=self._profile.model,
                     model_digest=self._model_digest,
                     device=self._device,
@@ -823,7 +825,7 @@ class WindowsMLOcrAdapter:
 
         plan = self.execution_plan
         resolver = self._adapter_map_resolver
-        if plan is None or plan.mode.value != "gpu-dml" or resolver is None:
+        if plan is None or plan.mode.value != "gpu" or resolver is None:
             return previous
         try:
             value = resolver()
@@ -857,7 +859,7 @@ class WindowsMLOcrAdapter:
         """Validate map identity and factory freshness on one native lease."""
 
         plan = self.execution_plan
-        if plan is None or plan.mode.value != "gpu-dml":
+        if plan is None or plan.mode.value != "gpu":
             return previous or ("", "")
         try:
             if not lease.is_current():
@@ -890,7 +892,7 @@ class WindowsMLOcrAdapter:
         use_dml = self._device != "cpu" and "DmlExecutionProvider" in providers
         if (
             self.execution_plan is not None
-            and self.execution_plan.mode.value == "gpu-dml"
+            and self.execution_plan.mode.value == "gpu"
             and not use_dml
         ):
             raise EngineRuntimeUnavailableError(
@@ -1014,7 +1016,7 @@ class WindowsMLOcrAdapter:
     @staticmethod
     def _predict(pipeline: Any, image_png: bytes) -> Any:
         with tempfile.NamedTemporaryFile(
-            prefix="capture-workbench-windowsml-", suffix=".png", delete=False
+            prefix="capture-workbench-ocr-", suffix=".png", delete=False
         ) as temporary:
             temporary.write(image_png)
             path = Path(temporary.name)
@@ -1026,5 +1028,5 @@ class WindowsMLOcrAdapter:
 
 __all__ = [
     "ReusableOcrSession",
-    "WindowsMLOcrAdapter",
+    "OnnxOcrAdapter",
 ]

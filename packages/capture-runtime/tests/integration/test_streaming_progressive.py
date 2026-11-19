@@ -142,7 +142,6 @@ def _warm_processor(
 
     monkeypatch.setattr(_SessionWorker, "start", start)
     config = ExtractionRuntimeConfig(
-        windowsml_model_dir=tmp_path / "windowsml",
         temp_dir=tmp_path / "temp",
         max_pdf_pages=10,
         max_image_pixels=100_000,
@@ -222,7 +221,6 @@ def test_a_session_worker_is_told_the_chosen_speech_model(
     )
     engine = replace(_engine(tmp_path), executable=script, model_dir=tmp_path)
     config = ExtractionRuntimeConfig(
-        windowsml_model_dir=tmp_path / "windowsml",
         temp_dir=tmp_path / "temp",
         max_pdf_pages=10,
         max_image_pixels=100_000,
@@ -261,7 +259,6 @@ def test_a_session_worker_is_told_the_installed_content_and_not_the_variant(
         _engine(tmp_path, content_id=content_id), executable=script, model_dir=tmp_path
     )
     config = ExtractionRuntimeConfig(
-        windowsml_model_dir=tmp_path / "windowsml",
         temp_dir=tmp_path / "temp",
         max_pdf_pages=10,
         max_image_pixels=100_000,

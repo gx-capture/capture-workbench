@@ -10,6 +10,7 @@ import pytest
 from PIL import Image
 
 import capture_runtime.ocr.domain.page.models as page_models
+from capture_runtime.ocr.infrastructure.ocr_onnx_adapter import OnnxOcrAdapter
 from capture_runtime.ocr.infrastructure.ocr_paddle_normalization import (
     PaddleResultNormalizationError,
     normalize_paddle_results,
@@ -22,11 +23,10 @@ from capture_runtime.ocr.infrastructure.ocr_profile import (
     CANONICAL_PROFILE_PATH,
     canonical_json_bytes,
 )
-from capture_runtime.ocr.infrastructure.ocr_windowsml_adapter import WindowsMLOcrAdapter
 from capture_runtime.worker_probe import EngineRuntimeUnavailableError
 
 
-def _write_windowsml_models(root: Path) -> None:
+def _write_ocr_models(root: Path) -> None:
     for relative in (
         "det/inference.onnx",
         "det/inference.yml",
@@ -71,8 +71,8 @@ def _cpu_plan():
 
 
 def _extract(tmp_path: Path, payload: object, *, results: object | None = None):
-    model_dir = tmp_path / "windowsml"
-    _write_windowsml_models(model_dir)
+    model_dir = tmp_path / "ocr"
+    _write_ocr_models(model_dir)
 
     class Result:
         json = payload
@@ -81,7 +81,7 @@ def _extract(tmp_path: Path, payload: object, *, results: object | None = None):
         def predict(self, _source: str) -> object:
             return [Result()] if results is None else results
 
-    adapter = WindowsMLOcrAdapter(
+    adapter = OnnxOcrAdapter(
         model_dir,
         execution_plan=_cpu_plan(),
         pipeline_factory=lambda **_kwargs: Pipeline(),
@@ -456,8 +456,8 @@ def test_paddle_normalizer_error_is_an_engine_failure_type(tmp_path: Path) -> No
 
 
 def test_normalization_failure_reports_its_worker_stage(tmp_path: Path) -> None:
-    model_dir = tmp_path / "windowsml"
-    _write_windowsml_models(model_dir)
+    model_dir = tmp_path / "ocr"
+    _write_ocr_models(model_dir)
     stages: list[str] = []
 
     class Result:
@@ -467,7 +467,7 @@ def test_normalization_failure_reports_its_worker_stage(tmp_path: Path) -> None:
         def predict(self, _source: str) -> object:
             return [Result()]
 
-    adapter = WindowsMLOcrAdapter(
+    adapter = OnnxOcrAdapter(
         model_dir,
         execution_plan=_cpu_plan(),
         pipeline_factory=lambda **_kwargs: Pipeline(),

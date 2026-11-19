@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 
 from capture_runtime.app import create_app
@@ -18,6 +19,9 @@ from capture_runtime.ocr.infrastructure.ocr_preflight import (
     OcrComputePreflight,
     OcrGpuAdapter,
     OcrGpuCapabilitySnapshot,
+)
+from capture_runtime.provisioning.infrastructure.system_requirement_installer import (
+    SystemRequirementInstaller,
 )
 from tests.conftest import TOKEN, idempotency_headers
 from tests.support.fake_requirement_installer import FakeRequirementInstaller
@@ -68,6 +72,26 @@ def test_legacy_runtime_paths_are_not_public(client: TestClient) -> None:
     legacy_prefix = "/v" + "1"
     assert client.get(f"{legacy_prefix}/health/ready").status_code == 404
     assert client.get(f"{legacy_prefix}/captures").status_code == 404
+
+
+def test_installation_request_rejects_retired_ocr_requirement(client: TestClient) -> None:
+    response = client.post(
+        "/v2/runtime/installations",
+        headers=idempotency_headers(),
+        json={"requirementId": "windowsml-ocr", "consent": True},
+    )
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "validation_error"
+    assert "text-recognition" in response.text
+
+
+def test_enabled_requirements_reject_retired_ocr_id() -> None:
+    structuring = FakeRequirementInstaller()
+    with pytest.raises(ValueError, match="use text-recognition"):
+        SystemRequirementInstaller(structuring, enabled_requirement_ids={"windowsml-ocr"})
+    installer = SystemRequirementInstaller(structuring)
+    with pytest.raises(ValueError, match="use text-recognition"):
+        installer.requirements({"windowsml-ocr"})
 
 
 def test_v2_runtime_requirements_and_installation_lifecycle(settings_factory) -> None:
@@ -126,7 +150,7 @@ def test_v2_runtime_ready_reports_authenticated_ocr_compute_decision(settings_fa
         "contractSetVersion": "2",
         "contractSha256": contract_set.sha256,
         "workerSha256": None,
-        "mode": "gpu-dml",
+        "mode": "gpu",
         "adapterClass": "dedicated",
         "reasonCode": None,
         "userNoticeRequired": False,
@@ -142,7 +166,7 @@ def test_v2_runtime_ready_uses_worker_owned_compute_preflight(
     contract_set = load_contract_set()
     decision = OcrComputePreflightV2(
         contract_sha256=contract_set.sha256,
-        mode=OcrComputeMode.GPU_DML,
+        mode=OcrComputeMode.GPU,
         adapter_class=OcrAdapterClass.INTEGRATED,
         user_notice_required=False,
     )
@@ -194,19 +218,19 @@ def test_v2_uninstall_returns_the_requirement_not_installed_and_repeats_safely(
     settings_factory,
 ) -> None:
     settings = settings_factory()
-    installer = FakeRequirementInstaller(initially_ready={"windowsml-ocr"})
+    installer = FakeRequirementInstaller(initially_ready={"text-recognition"})
     with TestClient(
         create_app(settings, installer=installer),
         base_url=f"http://127.0.0.1:{settings.port}",
         headers={"Authorization": f"Bearer {TOKEN}"},
     ) as client:
-        first = _uninstall(client, "windowsml-ocr")
-        second = _uninstall(client, "windowsml-ocr")
+        first = _uninstall(client, "text-recognition")
+        second = _uninstall(client, "text-recognition")
 
     assert first.status_code == 200, first.text
-    assert first.json()["requirementId"] == "windowsml-ocr"
+    assert first.json()["requirementId"] == "text-recognition"
     assert first.json()["status"] == "installable"
-    assert "windowsml-ocr" not in installer.ready
+    assert "text-recognition" not in installer.ready
     assert second.status_code == 200
     assert second.json() == first.json()
 
@@ -246,7 +270,7 @@ def test_v2_uninstall_rejects_unknown_disabled_and_non_engine_requirements(
 
 def test_v2_uninstall_conflicts_while_its_installation_runs(settings_factory) -> None:
     settings = settings_factory()
-    installer = FakeRequirementInstaller(initially_ready={"windowsml-ocr"}, delay_seconds=30)
+    installer = FakeRequirementInstaller(initially_ready={"text-recognition"}, delay_seconds=30)
     with TestClient(
         create_app(settings, installer=installer),
         base_url=f"http://127.0.0.1:{settings.port}",
@@ -255,15 +279,15 @@ def test_v2_uninstall_conflicts_while_its_installation_runs(settings_factory) ->
         created = client.post(
             "/v2/runtime/installations",
             headers=idempotency_headers(),
-            json={"requirementId": "windowsml-ocr", "consent": True},
+            json={"requirementId": "text-recognition", "consent": True},
         )
         assert created.status_code == 202, created.text
-        in_use = _uninstall(client, "windowsml-ocr")
+        in_use = _uninstall(client, "text-recognition")
         cancelled = client.post(
             f"/v2/runtime/installations/{created.json()['installationId']}/cancel"
         )
         assert cancelled.status_code == 200, cancelled.text
-        after = _uninstall(client, "windowsml-ocr")
+        after = _uninstall(client, "text-recognition")
 
     assert (in_use.status_code, in_use.json()["error"]["code"]) == (409, "requirement_in_use")
     assert after.status_code == 200, after.text

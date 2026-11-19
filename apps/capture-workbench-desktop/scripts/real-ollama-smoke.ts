@@ -19,7 +19,7 @@ const outputDirectory = join(workspaceRoot, 'tmp', 'capture-workbench-desktop', 
 const maxWaitMs = 10 * 60_000;
 const maxInstallationWaitMs = 75 * 60_000;
 const coreRequirementIds = [
-  'windowsml-ocr',
+  'text-recognition',
   'ollama-runtime',
 ] as const;
 const expectedStructuringEngine = 'ollama';

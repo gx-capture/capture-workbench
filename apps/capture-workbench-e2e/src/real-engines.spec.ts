@@ -52,7 +52,7 @@
  *   - CAPTURE_REAL_ENGINES_TEMP_DIR: explicit temp directory for host/runtime/exports
  *   - CAPTURE_REAL_ENGINES_MODEL_OPTION_ID: e.g. `qwen3.5-0.8b-v1`, `qwen3.5-2b-v1`, `qwen3.5-4b-v1`
  *   Optional overrides & checks:
- *   - CAPTURE_REAL_ENGINES_EXPECTED_OCR_DEVICE: `windowsml-dml` or `cpu`; when set,
+ *   - CAPTURE_REAL_ENGINES_EXPECTED_OCR_DEVICE: `directml` or `cpu`; when set,
  *     both PDF and image extraction provenance and diagnostics must match exactly.
  *   - CAPTURE_REAL_ENGINES_REUSE_INSTALLED=1: the app-data directory already holds the
  *     recognition features from an earlier run; stage 1 only checks they are ready
@@ -133,12 +133,12 @@ const ACTION_TIMEOUT_MS = 15_000;
 const RUNTIME_READY_TIMEOUT_MS = 200_000;
 
 const ALL_RECOGNITION_UNITS = [
-  'windowsml-ocr',
+  'text-recognition',
   'speech-recognition',
   'speaker-diarization',
 ] as const;
 
-type ExpectedOcrDevice = 'windowsml-dml' | 'cpu';
+type ExpectedOcrDevice = 'directml' | 'cpu';
 
 const SHA256_DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/u;
 
@@ -448,11 +448,11 @@ async function resolveSmokeConfig(): Promise<SmokeConfig> {
   const expectedOcrDeviceRaw = readEnvFirst(['CAPTURE_REAL_ENGINES_EXPECTED_OCR_DEVICE']);
   let expectedOcrDevice: ExpectedOcrDevice | undefined;
   if (expectedOcrDeviceRaw !== undefined) {
-    if (expectedOcrDeviceRaw === 'windowsml-dml' || expectedOcrDeviceRaw === 'cpu') {
+    if (expectedOcrDeviceRaw === 'directml' || expectedOcrDeviceRaw === 'cpu') {
       expectedOcrDevice = expectedOcrDeviceRaw;
     } else {
       missingOrInvalid.push(
-        'CAPTURE_REAL_ENGINES_EXPECTED_OCR_DEVICE must be "windowsml-dml" or "cpu"',
+        'CAPTURE_REAL_ENGINES_EXPECTED_OCR_DEVICE must be "directml" or "cpu"',
       );
     }
   }
@@ -735,9 +735,10 @@ function assertOcrExtractionProvenance(
 ): ProvenanceSummary {
   const extraction = detail.raw?.extractionEngine;
   assert.ok(extraction, `${label} record must include extractionEngine provenance.`);
-  assert.equal(extraction.engine, 'windowsml-ocr');
+  assert.equal(extraction.engine, 'text-recognition');
+  assert.equal(extraction.model, 'pp-ocrv6-medium');
   assert.ok(
-    extraction.device === 'windowsml-dml' || extraction.device === 'cpu',
+    extraction.device === 'directml' || extraction.device === 'cpu',
     `Unexpected OCR device: ${String(extraction.device)}`,
   );
   if (expectedOcrDevice !== undefined) {
@@ -1010,7 +1011,7 @@ test('runs full real-engine capture, editing, export, and restart journey on loc
       await expect(page.getByTestId('engines-table')).toBeVisible({ timeout: 15_000 });
 
       const ocrRow = page.locator(
-        '[data-testid="engine-row"][data-requirement-id="windowsml-ocr"]',
+        '[data-testid="engine-row"][data-requirement-id="text-recognition"]',
       );
       await expect(ocrRow).toBeVisible();
       await expect

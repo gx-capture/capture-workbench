@@ -60,7 +60,7 @@ describe('buildOcrEvidence', () => {
     expect(evidence.provenance).toMatchObject({
       runtimeVersion: RUNTIME_VERSION,
       contractSha256: 'c'.repeat(64),
-      engine: 'windowsml-ocr',
+      engine: 'text-recognition',
       model: 'ppocrv6-traditional-multilingual',
       modelDigest: `sha256:${'d'.repeat(64)}`,
       device: 'NVIDIA GeForce RTX 4060 Laptop GPU',
@@ -261,14 +261,33 @@ describe('buildOcrEvidence', () => {
     },
   );
 
-  it('produces the checked-in privacy-safe golden evidence through the real builder', async () => {
+  it('produces current evidence with the same privacy-safe shape as the historical golden', async () => {
     const evidence = await buildOcrEvidence({
       projection: goldenProjection(),
       expected: goldenExpectedIdentity(),
     });
-    expect(evidence).toEqual(goldenEvidence);
+    expect(evidence).toEqual({
+      ...goldenEvidence,
+      provenance: { ...goldenEvidence.provenance, engine: 'text-recognition' },
+      digest: expect.stringMatching(/^[a-f0-9]{64}$/u),
+    });
+    expect(evidence.digest).not.toBe(goldenEvidence.digest);
     const serialized = JSON.stringify(evidence);
     expect(serialized).not.toMatch(/raw|polygon|box-secret|Bearer|token|[A-Z]:\\/iu);
+  });
+
+  it.each([
+    { engine: 'windowsml-ocr' },
+    { device: 'windowsml-dml' },
+    { model: 'pp-ocrv6-medium-windowsml' },
+    { model: 'deterministic-windowsml-v1' },
+  ])('rejects retired provenance in a fresh projection (%j)', async (identity) => {
+    const base = projection();
+    const provenance = { ...resolvedProvenance(), ...identity } as OcrProvenance;
+    await expect(buildOcrEvidence({
+      projection: { ...base, provenance, pages: base.pages.map((page) => ({ ...page, provenance })) },
+      expected: expectedIdentity(),
+    })).rejects.toThrow(/OCR provenance/u);
   });
 
   it('rounds numeric confidence statistics to four decimals and aggregates by score count', async () => {
@@ -380,7 +399,7 @@ describe('buildOcrEvidence', () => {
       status: 'resolved',
       runtimeVersion: RUNTIME_VERSION,
       contractSha256: 'c'.repeat(64),
-      engine: 'windowsml-ocr',
+      engine: 'text-recognition',
       model: 'ppocrv6-traditional-multilingual',
       modelDigest: `sha256:${'d'.repeat(64)}`,
       device: 'NVIDIA GeForce RTX 4060 Laptop GPU',
@@ -627,7 +646,7 @@ function box(confidence: number | null): OcrBox {
 function resolvedProvenance() {
   return {
     status: 'resolved' as const,
-    engine: 'windowsml-ocr' as const,
+    engine: 'text-recognition' as const,
     model: 'ppocrv6-traditional-multilingual',
     modelDigest: `sha256:${'d'.repeat(64)}`,
     device: 'NVIDIA GeForce RTX 4060 Laptop GPU',

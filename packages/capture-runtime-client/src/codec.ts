@@ -160,10 +160,10 @@ function validateRuntimeReady(record: Record<string, unknown>): void {
 
   const hasFallbackReason = reasonCode !== undefined && reasonCode !== null;
   const hasNotice = noticeCode !== undefined && noticeCode !== null;
-  if (compute['mode'] === 'gpu-dml') {
+  if (compute['mode'] === 'gpu') {
     if (hasFallbackReason || compute['userNoticeRequired'] || hasNotice) {
       throw new CaptureRuntimeProtocolError(
-        'GPU-DML OCR compute preflight cannot carry a fallback reason or notice.',
+        'GPU OCR compute preflight cannot carry a fallback reason or notice.',
       );
     }
     return;
@@ -541,14 +541,14 @@ function isOcrAdapterClass(
   return value === 'dedicated' || value === 'integrated' || value === 'unknown';
 }
 
-function isOcrComputeMode(value: unknown): value is 'gpu-dml' | 'cpu-fallback' {
-  return value === 'gpu-dml' || value === 'cpu-fallback';
+function isOcrComputeMode(value: unknown): value is 'gpu' | 'cpu-fallback' {
+  return value === 'gpu' || value === 'cpu-fallback';
 }
 
 function isOcrComputeReasonCode(
   value: unknown,
-): value is 'no_compatible_gpu' | 'dml_provider_unavailable' {
-  return value === 'no_compatible_gpu' || value === 'dml_provider_unavailable';
+): value is 'no_compatible_gpu' | 'gpu_provider_unavailable' {
+  return value === 'no_compatible_gpu' || value === 'gpu_provider_unavailable';
 }
 
 function validateOcrProvenance(value: unknown, label: string): void {
@@ -561,7 +561,7 @@ function validateOcrProvenance(value: unknown, label: string): void {
       label,
     );
     if (
-      provenance['engine'] !== 'windowsml-ocr' ||
+      provenance['engine'] !== 'text-recognition' ||
       typeof provenance['model'] !== 'string' ||
       !provenance['model'].trim() ||
       typeof provenance['modelDigest'] !== 'string' ||

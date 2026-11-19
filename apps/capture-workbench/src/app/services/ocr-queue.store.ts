@@ -73,13 +73,13 @@ export class OcrQueueStore {
 
   readonly ocrSizeLabel = computed(() => {
     const requirement = this.features.requirements()
-      .find((item) => item.requirementId === 'windowsml-ocr');
+      .find((item) => item.requirementId === 'text-recognition');
     return formatApproximateBytes(requirement?.downloadBytes);
   });
 
   private readonly runningOcrInstallation = computed(() => {
     const active = this.features.activeInstallation();
-    if (!active || active.requirementId !== 'windowsml-ocr') return null;
+    if (!active || active.requirementId !== 'text-recognition') return null;
     if (active.status !== 'queued' && active.status !== 'running') return null;
     return active;
   });
@@ -115,7 +115,7 @@ export class OcrQueueStore {
   }
 
   install(): void {
-    this.features.installRequirement('windowsml-ocr');
+    this.features.installRequirement('text-recognition');
   }
 
   cancel(documentId: string): void {

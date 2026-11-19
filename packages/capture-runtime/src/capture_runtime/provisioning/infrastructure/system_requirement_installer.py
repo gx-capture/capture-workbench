@@ -12,8 +12,8 @@ from capture_runtime.constants import (
     OLLAMA_MODEL_REQUIREMENT_ID,
     OLLAMA_RUNTIME_REQUIREMENT_ID,
     SPEECH_RECOGNITION_REQUIREMENT_ID,
+    TEXT_RECOGNITION_REQUIREMENT_ID,
     VERTICAL_READER_REQUIREMENT_ID,
-    WINDOWSML_REQUIREMENT_ID,
 )
 from capture_runtime.contracts import (
     RuntimeArtifactDescriptorV2,
@@ -57,12 +57,17 @@ def _artifact_descriptor(worker: EngineArtifactDescriptor) -> RuntimeArtifactDes
 
 _ENGINE_UNIT_IDS = frozenset(
     {
-        WINDOWSML_REQUIREMENT_ID,
+        TEXT_RECOGNITION_REQUIREMENT_ID,
         SPEECH_RECOGNITION_REQUIREMENT_ID,
         DIARIZATION_REQUIREMENT_ID,
         VERTICAL_READER_REQUIREMENT_ID,
     }
 )
+
+
+def _validate_enabled_requirements(requirement_ids: Collection[str] | None) -> None:
+    if requirement_ids is not None and "windowsml-ocr" in requirement_ids:
+        raise ValueError("windowsml-ocr is retired; use text-recognition")
 
 
 class SystemRequirementInstaller:
@@ -76,6 +81,7 @@ class SystemRequirementInstaller:
         enabled_requirement_ids: Collection[str] | None = None,
         extraction_config: ExtractionRuntimeConfig | None = None,
     ) -> None:
+        _validate_enabled_requirements(enabled_requirement_ids)
         self._structuring = structuring
         self._engine_manager = engine_manager
         self._extraction_config = extraction_config
@@ -87,6 +93,7 @@ class SystemRequirementInstaller:
         self,
         enabled_requirement_ids: Collection[str] | None = None,
     ) -> list[RuntimeRequirementV2]:
+        _validate_enabled_requirements(enabled_requirement_ids)
         effective_requirement_ids = (
             self._enabled_requirement_ids
             if enabled_requirement_ids is None
@@ -100,7 +107,7 @@ class SystemRequirementInstaller:
 
         requirements: list[RuntimeRequirementV2] = []
         for requirement_id, kind, display_name, required_for, optional in (
-            (WINDOWSML_REQUIREMENT_ID, "OCR", "WindowsML OCR", ["pdf", "image"], False),
+            (TEXT_RECOGNITION_REQUIREMENT_ID, "OCR", "Text recognition", ["pdf", "image"], False),
             (
                 SPEECH_RECOGNITION_REQUIREMENT_ID,
                 "transcription",

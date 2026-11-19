@@ -536,14 +536,14 @@ fn uninstall_requirement_returns_installable_and_rejects_an_unknown_id() {
         .as_array()
         .unwrap()
         .iter()
-        .find(|item| item["requirementId"] == "windowsml-ocr")
+        .find(|item| item["requirementId"] == "text-recognition")
         .unwrap()
         .clone();
     assert_eq!(installed["status"], "ready");
 
     let remove = json_request(
         "DELETE",
-        "/v2/runtime/requirements/windowsml-ocr/installation",
+        "/v2/runtime/requirements/text-recognition/installation",
         None,
         Value::Null,
     );
@@ -556,7 +556,7 @@ fn uninstall_requirement_returns_installable_and_rejects_an_unknown_id() {
         &state,
         json_request(
             "DELETE",
-            "/v2/runtime/requirements/windowsml-ocr/installation",
+            "/v2/runtime/requirements/text-recognition/installation",
             None,
             Value::Null,
         ),
@@ -569,7 +569,7 @@ fn uninstall_requirement_returns_installable_and_rejects_an_unknown_id() {
     assert_eq!(
         items
             .iter()
-            .find(|item| item["requirementId"] == "windowsml-ocr")
+            .find(|item| item["requirementId"] == "text-recognition")
             .unwrap()["status"],
         "installable"
     );

@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from capture_runtime.capture.domain.ingestion.models import IngestionChunk, IngestionTransitionError
 from capture_runtime.capture.domain.operation.models import CaptureTransitionError
@@ -62,6 +62,7 @@ from capture_runtime.contracts import (
     StreamingEventType,
     StreamingIngestionStatus,
 )
+from capture_runtime.storage.common import project_stored_ocr_identity
 
 
 class StreamingRecordNotFoundError(KeyError):
@@ -82,6 +83,11 @@ class StreamingPartialNotFoundError(StreamingRecordNotFoundError):
 _SAFE_ID = re.compile(r"^[0-9a-f-]{36}$")
 _MAX_EVENT_REPLAY = 1_024
 _LOGGER = logging.getLogger(__name__)
+
+
+def _read_stored_capture[ModelT: BaseModel](model: type[ModelT], path: Path) -> ModelT:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    return model.model_validate(project_stored_ocr_identity(payload))
 
 
 def _identifier(value: str) -> str:
@@ -561,10 +567,10 @@ class StreamingRepository:
         with self._lock:
             self._get_capture(capture_id)
             try:
-                return RawCapture.model_validate_json(
-                    (self._capture_directory(capture_id) / "raw.json").read_text(encoding="utf-8")
+                return _read_stored_capture(
+                    RawCapture, self._capture_directory(capture_id) / "raw.json"
                 )
-            except (OSError, ValidationError) as error:
+            except (OSError, ValueError) as error:
                 raise StreamingPartialNotFoundError(capture_id) from error
 
     def write_ocr_projection(self, capture_id: str, projection: CaptureOcrProjectionV3) -> None:
@@ -579,10 +585,10 @@ class StreamingRepository:
         with self._lock:
             self._get_capture(capture_id)
             try:
-                return CaptureOcrProjectionV3.model_validate_json(
-                    (self._capture_directory(capture_id) / "ocr.json").read_text(encoding="utf-8")
+                return _read_stored_capture(
+                    CaptureOcrProjectionV3, self._capture_directory(capture_id) / "ocr.json"
                 )
-            except (OSError, ValidationError) as error:
+            except (OSError, ValueError) as error:
                 raise StreamingPartialNotFoundError(capture_id) from error
 
     def write_result(self, capture_id: str, result: CaptureDocument) -> None:
@@ -625,12 +631,10 @@ class StreamingRepository:
         with self._lock:
             self._get_capture(capture_id)
             try:
-                return CaptureDocument.model_validate_json(
-                    (self._capture_directory(capture_id) / "result.json").read_text(
-                        encoding="utf-8"
-                    )
+                return _read_stored_capture(
+                    CaptureDocument, self._capture_directory(capture_id) / "result.json"
                 )
-            except (OSError, ValidationError) as error:
+            except (OSError, ValueError) as error:
                 raise StreamingPartialNotFoundError(capture_id) from error
 
     def mark_awaiting_structuring(self, capture_id: str) -> CaptureOperationV2:
@@ -814,12 +818,10 @@ class StreamingRepository:
         with self._lock:
             self._get_capture(capture_id)
             try:
-                return PartialCaptureV2.model_validate_json(
-                    (self._capture_directory(capture_id) / "partial.json").read_text(
-                        encoding="utf-8"
-                    )
+                return _read_stored_capture(
+                    PartialCaptureV2, self._capture_directory(capture_id) / "partial.json"
                 )
-            except (OSError, ValidationError) as error:
+            except (OSError, ValueError) as error:
                 raise StreamingPartialNotFoundError(capture_id) from error
 
     def cancel_capture(self, capture_id: str) -> CaptureOperationV2:

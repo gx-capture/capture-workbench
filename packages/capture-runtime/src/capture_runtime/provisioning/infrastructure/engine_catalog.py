@@ -570,7 +570,7 @@ def _parse_delivery(
     if artifacts and model_files is not None:
         if artifacts[0].artifact_version != model_files.artifact_version:
             raise EngineCatalogError("worker and direct model files must share one artifactVersion")
-        if requirement_id == "windowsml-ocr" and not any(
+        if requirement_id == "text-recognition" and not any(
             item.path == "model/pipeline.json" and item.kind == "derived"
             for item in model_files.files
         ):

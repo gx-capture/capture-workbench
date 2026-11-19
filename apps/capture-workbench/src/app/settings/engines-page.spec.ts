@@ -24,7 +24,7 @@ describe('EnginesPage removal', () => {
 
   it('asks for confirmation with the size, and cancel leaves the engine installed', async () => {
     const { fixture, removeRequirement } = await renderEngines();
-    const row = engineRow(fixture.nativeElement, 'windowsml-ocr');
+    const row = engineRow(fixture.nativeElement, 'text-recognition');
     (row.querySelector('[data-testid="engine-row-remove"]') as HTMLButtonElement).click();
     fixture.detectChanges();
     await fixture.whenStable();
@@ -54,7 +54,7 @@ describe('EnginesPage removal', () => {
 
   it('removes the engine only after the user confirms', async () => {
     const { fixture, removeRequirement } = await renderEngines();
-    const row = engineRow(fixture.nativeElement, 'windowsml-ocr');
+    const row = engineRow(fixture.nativeElement, 'text-recognition');
     (row.querySelector('[data-testid="engine-row-remove"]') as HTMLButtonElement).click();
     fixture.detectChanges();
     await fixture.whenStable();
@@ -66,7 +66,7 @@ describe('EnginesPage removal', () => {
     await fixture.whenStable();
 
     expect(removeRequirement).toHaveBeenCalledTimes(1);
-    expect(removeRequirement).toHaveBeenCalledWith('windowsml-ocr');
+    expect(removeRequirement).toHaveBeenCalledWith('text-recognition');
     expect(document.querySelector('[role="alertdialog"]')).toBeNull();
   });
 
@@ -74,14 +74,14 @@ describe('EnginesPage removal', () => {
     const { fixture, removeRequirement } = await renderEngines({
       installation: {
         installationId: 'inst-ocr-1',
-        requirementId: 'windowsml-ocr',
+        requirementId: 'text-recognition',
         status: 'running',
         progress: 0.2,
         createdAt: '2026-11-10T00:00:00Z',
         updatedAt: '2026-11-10T00:00:00Z',
       },
     });
-    const row = engineRow(fixture.nativeElement, 'windowsml-ocr');
+    const row = engineRow(fixture.nativeElement, 'text-recognition');
     const button = row.querySelector(
       '[data-testid="engine-row-remove"]',
     ) as HTMLButtonElement;
@@ -101,7 +101,7 @@ describe('EnginesPage removal', () => {
     const { fixture, removeRequirement } = await renderEngines({
       documents: [libraryDocument('processing', 'application/pdf')],
     });
-    const row = engineRow(fixture.nativeElement, 'windowsml-ocr');
+    const row = engineRow(fixture.nativeElement, 'text-recognition');
     const button = row.querySelector(
       '[data-testid="engine-row-remove"]',
     ) as HTMLButtonElement;
@@ -117,8 +117,8 @@ describe('EnginesPage removal', () => {
   });
 
   it('shows removal in progress on the row', async () => {
-    const { fixture } = await renderEngines({ removingId: 'windowsml-ocr' });
-    const row = engineRow(fixture.nativeElement, 'windowsml-ocr');
+    const { fixture } = await renderEngines({ removingId: 'text-recognition' });
+    const row = engineRow(fixture.nativeElement, 'text-recognition');
     expect(row.querySelector('[data-testid="engine-row-removing"]')?.textContent).toContain(
       '正在移除',
     );
@@ -129,7 +129,7 @@ describe('EnginesPage removal', () => {
     const { fixture } = await renderEngines({
       removalError: '安裝或辨識還在進行，請稍後再移除',
     });
-    const alert = engineRow(fixture.nativeElement, 'windowsml-ocr').querySelector(
+    const alert = engineRow(fixture.nativeElement, 'text-recognition').querySelector(
       '[data-testid="engine-row-remove-error"]',
     );
     expect(alert?.getAttribute('role')).toBe('alert');
@@ -146,7 +146,7 @@ async function renderEngines(
   } = {},
 ) {
   const requirements = signal<readonly RuntimeRequirement[]>([
-    requirement('windowsml-ocr', 'ready', 144_000_000),
+    requirement('text-recognition', 'ready', 144_000_000),
     requirement('speech-recognition', 'installable', 2_800_000_000),
   ]);
   const removeRequirement = vi.fn();
@@ -167,7 +167,7 @@ async function renderEngines(
           isRemoving: (requirementId: CaptureRequirementId) =>
             options.removingId === requirementId,
           removalError: (requirementId: CaptureRequirementId) =>
-            requirementId === 'windowsml-ocr' ? (options.removalError ?? null) : null,
+            requirementId === 'text-recognition' ? (options.removalError ?? null) : null,
           removeRequirement,
           cancelInstallation: vi.fn(),
           retryInstallation: vi.fn(),

@@ -19,7 +19,7 @@ describe('OcrPage queue', () => {
 
   it('shows a waiting install prompt from downloadBytes and exports only when raw text exists', async () => {
     const requirements = signal<readonly RuntimeRequirement[]>([
-      requirement('windowsml-ocr', 'installable', 144_000_000),
+      requirement('text-recognition', 'installable', 144_000_000),
     ]);
     const installRequirement = vi.fn();
     const documents = [
@@ -93,7 +93,7 @@ describe('OcrPage queue', () => {
     expect(waiting.querySelector('[data-testid="ocr-row-install"]')).not.toBeNull();
 
     (waiting.querySelector('[data-testid="ocr-row-install"]') as HTMLButtonElement).click();
-    expect(installRequirement).toHaveBeenCalledWith('windowsml-ocr');
+    expect(installRequirement).toHaveBeenCalledWith('text-recognition');
 
     const doneExport = row(page, 'done.pdf').querySelector(
       '[data-testid="ocr-row-export-txt"]',
@@ -109,7 +109,7 @@ describe('OcrPage queue', () => {
 
   it('shows the install percentage on a waiting row and hides the install button', async () => {
     const requirements = signal<readonly RuntimeRequirement[]>([
-      requirement('windowsml-ocr', 'installable', 144_000_000),
+      requirement('text-recognition', 'installable', 144_000_000),
     ]);
     TestBed.configureTestingModule({
       imports: [OcrPage],
@@ -137,7 +137,7 @@ describe('OcrPage queue', () => {
             startingRequirementId: signal(null),
             activeInstallation: signal({
               installationId: 'inst-1',
-              requirementId: 'windowsml-ocr',
+              requirementId: 'text-recognition',
               status: 'running',
               progress: 0.4,
               createdAt: '2026-11-10T00:00:00Z',
@@ -179,7 +179,7 @@ describe('OcrPage queue', () => {
 
   it('shows the progress card as soon as an installation is requested, before the runtime has answered', async () => {
     const requirements = signal<readonly RuntimeRequirement[]>([
-      requirement('windowsml-ocr', 'installable', 144_000_000),
+      requirement('text-recognition', 'installable', 144_000_000),
     ]);
     TestBed.configureTestingModule({
       imports: [OcrPage],
@@ -204,7 +204,7 @@ describe('OcrPage queue', () => {
             firstRunDismissed: signal(true),
             firstRunInstallableRequirements: signal([]),
             showFirstRunCard: signal(false),
-            startingRequirementId: signal('windowsml-ocr'),
+            startingRequirementId: signal('text-recognition'),
             activeInstallation: signal<RuntimeInstallation | null>(null),
             isFeatureReady: (feature: RecognitionFeature) => isFeatureReady(requirements(), feature),
             installRequirement: vi.fn(),
@@ -232,7 +232,7 @@ describe('OcrPage queue', () => {
     fixture.detectChanges();
 
     const card = (fixture.nativeElement as HTMLElement).querySelector('[data-testid="ocr-install-progress"]');
-    expect(card?.getAttribute('data-requirement-id')).toBe('windowsml-ocr');
+    expect(card?.getAttribute('data-requirement-id')).toBe('text-recognition');
     expect(card?.querySelector('[data-testid="install-progress-label"]')?.textContent).toContain('正在準備安裝…');
     // Nothing to cancel until the runtime has answered with an installation.
     expect(card?.querySelector('[data-testid="ocr-install-cancel"]')).toBeNull();
@@ -240,7 +240,7 @@ describe('OcrPage queue', () => {
 
   it('renders header, drop zone, first-run card, and queue in the approved design', async () => {
     const requirements = signal<readonly RuntimeRequirement[]>([
-      requirement('windowsml-ocr', 'installable', 144_000_000),
+      requirement('text-recognition', 'installable', 144_000_000),
       requirement('speech-recognition', 'installable', 2_800_000_000),
       requirement('speaker-diarization', 'installable', 300_000_000),
     ]);

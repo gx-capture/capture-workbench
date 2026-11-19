@@ -31,8 +31,8 @@ from capture_runtime.clock import SystemClock
 from capture_runtime.config import ExtractionRuntimeConfig, RuntimeSettings
 from capture_runtime.constants import MAX_RUNTIME_ARTIFACT_BYTES, RUNTIME_VERSION
 from capture_runtime.constants.requirements import (
+    TEXT_RECOGNITION_REQUIREMENT_ID,
     VERTICAL_READER_REQUIREMENT_ID,
-    WINDOWSML_REQUIREMENT_ID,
 )
 from capture_runtime.contracts import (
     CaptureEngine,
@@ -146,7 +146,7 @@ def _catalog(root: Path, *, version: str = "engine-1") -> tuple[EngineCatalog, d
     sources: dict[str, Path] = {}
     worker, archive = _artifact(
         root,
-        requirement_id="windowsml-ocr",
+        requirement_id="text-recognition",
         version=version,
     )
     sources[archive.name] = archive
@@ -224,7 +224,7 @@ def _catalog(root: Path, *, version: str = "engine-1") -> tuple[EngineCatalog, d
                 "runtimeVersion": RUNTIME_VERSION,
                 "requirements": [
                     {
-                        "requirementId": "windowsml-ocr",
+                        "requirementId": "text-recognition",
                         "artifacts": [worker],
                         "modelFiles": model_delivery,
                         "unavailableReason": None,
@@ -324,7 +324,7 @@ class FakeWorkerClient:
             code_ready=True,
             assets_ready=ready,
             detail="ready" if ready else "model probe failed",
-            device="windowsml-dml" if ready else None,
+            device="directml" if ready else None,
         )
 
     async def shutdown(self) -> None:
@@ -418,7 +418,7 @@ def test_code_probe_worker_stage_is_projected(tmp_path: Path) -> None:
     ):
         asyncio.run(
             manager.install(
-                "windowsml-ocr",
+                "text-recognition",
                 cancel_event=asyncio.Event(),
                 report_progress=lambda _value: None,
             )
@@ -440,7 +440,7 @@ def test_code_probe_failure_is_wrapped_without_worker_details(tmp_path: Path) ->
     ) as failure:
         asyncio.run(
             manager.install(
-                "windowsml-ocr",
+                "text-recognition",
                 cancel_event=asyncio.Event(),
                 report_progress=lambda _value: None,
             )
@@ -484,12 +484,12 @@ def test_post_install_probe_failure_keeps_the_worker_reason(tmp_path: Path) -> N
     ):
         asyncio.run(
             manager.install(
-                "windowsml-ocr",
+                "text-recognition",
                 cancel_event=asyncio.Event(),
                 report_progress=lambda _value: None,
             )
         )
-    assert manager.active_engine("windowsml-ocr") is None
+    assert manager.active_engine("text-recognition") is None
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="MAX_PATH is a Windows limit")
@@ -509,7 +509,7 @@ def test_worker_beyond_max_path_fails_before_the_model_download(
         downloader=CopyDownloader(sources),
         model_downloader=model_downloader,
     )
-    installed = root / "windowsml-ocr" / "versions" / "engine-1" / "worker"
+    installed = root / "text-recognition" / "versions" / "engine-1" / "worker"
     installed /= "capture-engine-test.exe"
     monkeypatch.setattr(
         engine_installation_module, "MAX_WORKER_FILE_PATH_CHARACTERS", len(str(installed)) - 1
@@ -520,14 +520,14 @@ def test_worker_beyond_max_path_fails_before_the_model_download(
     ):
         asyncio.run(
             manager.install(
-                "windowsml-ocr",
+                "text-recognition",
                 cancel_event=asyncio.Event(),
                 report_progress=lambda _value: None,
             )
         )
     assert model_downloader.calls == 0
     assert worker.probes == []
-    assert manager.active_engine("windowsml-ocr") is None
+    assert manager.active_engine("text-recognition") is None
 
 
 def test_engine_installation_is_atomic_offline_ready_and_idempotent(
@@ -546,12 +546,12 @@ def test_engine_installation_is_atomic_offline_ready_and_idempotent(
     progress: list[float] = []
     asyncio.run(
         manager.install(
-            "windowsml-ocr",
+            "text-recognition",
             cancel_event=asyncio.Event(),
             report_progress=progress.append,
         )
     )
-    engine = manager.active_engine("windowsml-ocr")
+    engine = manager.active_engine("text-recognition")
     assert engine is not None
     assert engine.executable.read_bytes() == b"worker-engine-1"
     assert (engine.model_dir / "model.bin").read_bytes() == b"model-engine-1"
@@ -559,10 +559,10 @@ def test_engine_installation_is_atomic_offline_ready_and_idempotent(
     assert [include_model for _engine, include_model, _options in worker.probes] == [False, True]
     first_calls = downloader.calls
     active_state = json.loads(
-        (tmp_path / "engines" / "windowsml-ocr" / "active.json").read_text(encoding="utf-8")
+        (tmp_path / "engines" / "text-recognition" / "active.json").read_text(encoding="utf-8")
     )
     active_digests = {item["role"]: item["sha256"] for item in active_state["activatedArtifacts"]}
-    requirement = catalog.requirement("windowsml-ocr")
+    requirement = catalog.requirement("text-recognition")
     assert active_digests == {
         "worker": requirement.worker_artifact().sha256,
         "model": requirement.model_delivery().manifest_sha256,
@@ -570,13 +570,13 @@ def test_engine_installation_is_atomic_offline_ready_and_idempotent(
     downloader.fail = True
     asyncio.run(
         manager.install(
-            "windowsml-ocr",
+            "text-recognition",
             cancel_event=asyncio.Event(),
             report_progress=lambda _value: None,
         )
     )
     assert downloader.calls == first_calls
-    assert asyncio.run(manager.probe("windowsml-ocr")).ready is True  # type: ignore[union-attr]
+    assert asyncio.run(manager.probe("text-recognition")).ready is True  # type: ignore[union-attr]
 
 
 def test_ocr_compute_preflight_uses_one_cached_worker_probe_after_install(
@@ -591,7 +591,7 @@ def test_ocr_compute_preflight_uses_one_cached_worker_probe_after_install(
     decision = OcrComputePreflightV2(
         contract_sha256=contract_sha256,
         worker_sha256=worker_executable_sha256,
-        mode=OcrComputeMode.GPU_DML,
+        mode=OcrComputeMode.GPU,
         adapter_class=OcrAdapterClass.DEDICATED,
         user_notice_required=False,
     )
@@ -605,7 +605,7 @@ def test_ocr_compute_preflight_uses_one_cached_worker_probe_after_install(
     )
     asyncio.run(
         manager.install(
-            "windowsml-ocr",
+            "text-recognition",
             cancel_event=asyncio.Event(),
             report_progress=lambda _value: None,
         )
@@ -628,7 +628,7 @@ def test_ocr_compute_preflight_is_unavailable_when_worker_identity_mismatches_ca
     decision = OcrComputePreflightV2(
         contract_sha256=contract_sha256,
         worker_sha256="b" * 64,
-        mode=OcrComputeMode.GPU_DML,
+        mode=OcrComputeMode.GPU,
         adapter_class=OcrAdapterClass.DEDICATED,
         user_notice_required=False,
     )
@@ -642,7 +642,7 @@ def test_ocr_compute_preflight_is_unavailable_when_worker_identity_mismatches_ca
     )
     asyncio.run(
         manager.install(
-            "windowsml-ocr",
+            "text-recognition",
             cancel_event=asyncio.Event(),
             report_progress=lambda _value: None,
         )
@@ -680,7 +680,7 @@ def test_ocr_compute_preflight_is_unavailable_when_worker_protocol_is_malformed(
     )
     asyncio.run(
         manager.install(
-            "windowsml-ocr",
+            "text-recognition",
             cancel_event=asyncio.Event(),
             report_progress=lambda _value: None,
         )
@@ -703,7 +703,7 @@ def test_ocr_compute_preflight_is_unavailable_when_worker_times_out(
     )
     asyncio.run(
         manager.install(
-            "windowsml-ocr",
+            "text-recognition",
             cancel_event=asyncio.Event(),
             report_progress=lambda _value: None,
         )
@@ -740,14 +740,14 @@ def test_successful_activation_does_not_rehash_the_model_before_worker_launch(
 
     asyncio.run(
         manager.install(
-            "windowsml-ocr",
+            "text-recognition",
             cancel_event=asyncio.Event(),
             report_progress=lambda _value: None,
         )
     )
     assert verification_calls == 1
 
-    assert manager.active_engine("windowsml-ocr") is not None
+    assert manager.active_engine("text-recognition") is not None
     assert verification_calls == 1
 
 
@@ -762,18 +762,18 @@ def test_active_engine_cache_is_invalidated_when_installed_files_change(tmp_path
     )
     asyncio.run(
         manager.install(
-            "windowsml-ocr",
+            "text-recognition",
             cancel_event=asyncio.Event(),
             report_progress=lambda _value: None,
         )
     )
-    engine = manager.active_engine("windowsml-ocr")
+    engine = manager.active_engine("text-recognition")
     assert engine is not None
 
     model = engine.model_dir / "model.bin"
     model.write_bytes(b"wrong-engine-1")
 
-    assert manager.active_engine("windowsml-ocr") is None
+    assert manager.active_engine("text-recognition") is None
 
 
 def test_cold_active_engine_verification_does_not_block_the_event_loop(
@@ -797,7 +797,7 @@ def test_cold_active_engine_verification_does_not_block_the_event_loop(
     monkeypatch.setattr(manager, "active_engine", slow_active_engine)
 
     async def run() -> None:
-        resolution = asyncio.create_task(manager.resolve_active_engine("windowsml-ocr"))
+        resolution = asyncio.create_task(manager.resolve_active_engine("text-recognition"))
         while not started.is_set():
             await asyncio.sleep(0)
         heartbeat = asyncio.create_task(asyncio.sleep(0))
@@ -831,7 +831,7 @@ def test_active_engine_resolution_times_out_when_verification_never_returns(
     async def run() -> None:
         try:
             with pytest.raises(TimeoutError):
-                await manager.resolve_active_engine("windowsml-ocr")
+                await manager.resolve_active_engine("text-recognition")
         finally:
             release.set()
 
@@ -850,12 +850,12 @@ def test_failed_upgrade_keeps_previous_active_state(tmp_path: Path) -> None:
     )
     asyncio.run(
         manager_v1.install(
-            "windowsml-ocr",
+            "text-recognition",
             cancel_event=asyncio.Event(),
             report_progress=lambda _value: None,
         )
     )
-    active_before = (root / "windowsml-ocr" / "active.json").read_bytes()
+    active_before = (root / "text-recognition" / "active.json").read_bytes()
     catalog_v2, sources_v2 = _catalog(tmp_path, version="engine-2")
     manager_v2 = EngineInstallationManager(
         root,
@@ -867,14 +867,14 @@ def test_failed_upgrade_keeps_previous_active_state(tmp_path: Path) -> None:
     with pytest.raises(EngineInstallationError, match="post-install probe"):
         asyncio.run(
             manager_v2.install(
-                "windowsml-ocr",
+                "text-recognition",
                 cancel_event=asyncio.Event(),
                 report_progress=lambda _value: None,
             )
         )
-    assert (root / "windowsml-ocr" / "active.json").read_bytes() == active_before
-    assert manager_v1.active_engine("windowsml-ocr") is not None
-    assert not (root / "windowsml-ocr" / "versions" / "engine-2").exists()
+    assert (root / "text-recognition" / "active.json").read_bytes() == active_before
+    assert manager_v1.active_engine("text-recognition") is not None
+    assert not (root / "text-recognition" / "versions" / "engine-2").exists()
 
 
 def test_active_state_write_failure_restores_previous_version_atomically(
@@ -891,12 +891,12 @@ def test_active_state_write_failure_restores_previous_version_atomically(
     )
     asyncio.run(
         manager_v1.install(
-            "windowsml-ocr",
+            "text-recognition",
             cancel_event=asyncio.Event(),
             report_progress=lambda _value: None,
         )
     )
-    requirement_root = root / "windowsml-ocr"
+    requirement_root = root / "text-recognition"
     active_before = (requirement_root / "active.json").read_bytes()
     catalog_v2, sources_v2 = _catalog(tmp_path, version="engine-2")
     manager_v2 = EngineInstallationManager(
@@ -917,7 +917,7 @@ def test_active_state_write_failure_restores_previous_version_atomically(
     with pytest.raises(OSError, match="injected active state write failure"):
         asyncio.run(
             manager_v2.install(
-                "windowsml-ocr",
+                "text-recognition",
                 cancel_event=asyncio.Event(),
                 report_progress=lambda _value: None,
             )
@@ -943,12 +943,12 @@ def test_concurrent_install_observes_single_winning_activation(tmp_path: Path) -
     async def install_twice() -> None:
         await asyncio.gather(
             manager.install(
-                "windowsml-ocr",
+                "text-recognition",
                 cancel_event=asyncio.Event(),
                 report_progress=lambda _value: None,
             ),
             manager.install(
-                "windowsml-ocr",
+                "text-recognition",
                 cancel_event=asyncio.Event(),
                 report_progress=lambda _value: None,
             ),
@@ -956,8 +956,8 @@ def test_concurrent_install_observes_single_winning_activation(tmp_path: Path) -
 
     asyncio.run(install_twice())
     assert downloader.calls == 1
-    assert manager.active_engine("windowsml-ocr") is not None
-    versions = list((tmp_path / "engines" / "windowsml-ocr" / "versions").iterdir())
+    assert manager.active_engine("text-recognition") is not None
+    versions = list((tmp_path / "engines" / "text-recognition" / "versions").iterdir())
     assert [item.name for item in versions] == ["engine-1"]
 
 
@@ -975,12 +975,12 @@ def test_cancelled_install_leaves_no_active_or_staging_state(tmp_path: Path) -> 
     with pytest.raises(asyncio.CancelledError):
         asyncio.run(
             manager.install(
-                "windowsml-ocr",
+                "text-recognition",
                 cancel_event=cancelled,
                 report_progress=lambda _value: None,
             )
         )
-    requirement_root = tmp_path / "engines" / "windowsml-ocr"
+    requirement_root = tmp_path / "engines" / "text-recognition"
     assert not (requirement_root / "active.json").exists()
     assert not list((requirement_root / ".staging").glob("*"))
 
@@ -1001,12 +1001,12 @@ def test_cancellation_during_direct_model_download_rolls_back_partial_version(
     with pytest.raises(asyncio.CancelledError):
         asyncio.run(
             manager.install(
-                "windowsml-ocr",
+                "text-recognition",
                 cancel_event=cancelled,
                 report_progress=lambda _value: None,
             )
         )
-    requirement_root = root / "windowsml-ocr"
+    requirement_root = root / "text-recognition"
     assert not (requirement_root / "active.json").exists()
     assert not list((requirement_root / ".staging").glob("*"))
     assert not list((requirement_root / "versions").glob("*"))
@@ -1015,7 +1015,7 @@ def test_cancellation_during_direct_model_download_rolls_back_partial_version(
 def test_preexisting_unlocked_install_file_does_not_block_install(tmp_path: Path) -> None:
     catalog, sources = _catalog(tmp_path)
     root = tmp_path / "engines"
-    lock_path = root / "windowsml-ocr" / ".install.lock"
+    lock_path = root / "text-recognition" / ".install.lock"
     lock_path.parent.mkdir(parents=True)
     lock_path.write_bytes(b"left behind by an exited process")
     manager = EngineInstallationManager(
@@ -1028,13 +1028,13 @@ def test_preexisting_unlocked_install_file_does_not_block_install(tmp_path: Path
 
     asyncio.run(
         manager.install(
-            "windowsml-ocr",
+            "text-recognition",
             cancel_event=asyncio.Event(),
             report_progress=lambda _value: None,
         )
     )
 
-    assert manager.active_engine("windowsml-ocr") is not None
+    assert manager.active_engine("text-recognition") is not None
     assert lock_path.is_file()
 
 
@@ -1050,12 +1050,12 @@ def test_next_install_removes_only_validated_crash_residue(tmp_path: Path) -> No
     )
     asyncio.run(
         manager.install(
-            "windowsml-ocr",
+            "text-recognition",
             cancel_event=asyncio.Event(),
             report_progress=lambda _value: None,
         )
     )
-    requirement_root = root / "windowsml-ocr"
+    requirement_root = root / "text-recognition"
     staging_residue = requirement_root / ".staging" / ("a" * 32)
     version_residue = requirement_root / "versions" / f".crashed-{RUNTIME_VERSION}.{'b' * 32}"
     invalid_staging = requirement_root / ".staging" / "not-owned"
@@ -1069,12 +1069,12 @@ def test_next_install_removes_only_validated_crash_residue(tmp_path: Path) -> No
         path.mkdir(parents=True)
         (path / "partial.bin").write_bytes(b"partial")
 
-    active_before = manager.active_engine("windowsml-ocr")
+    active_before = manager.active_engine("text-recognition")
     assert active_before is not None
     active_root = requirement_root / "versions" / active_before.artifact_version
     asyncio.run(
         manager.install(
-            "windowsml-ocr",
+            "text-recognition",
             cancel_event=asyncio.Event(),
             report_progress=lambda _value: None,
         )
@@ -1085,13 +1085,13 @@ def test_next_install_removes_only_validated_crash_residue(tmp_path: Path) -> No
     assert invalid_staging.is_dir()
     assert invalid_version.is_dir()
     assert active_root.is_dir()
-    assert manager.active_engine("windowsml-ocr") is not None
+    assert manager.active_engine("text-recognition") is not None
 
 
 def test_separate_process_install_lock_blocks_then_releases(tmp_path: Path) -> None:
     catalog, sources = _catalog(tmp_path)
     root = tmp_path / "engines"
-    lock_path = root / "windowsml-ocr" / ".install.lock"
+    lock_path = root / "text-recognition" / ".install.lock"
     source_root = Path(__file__).parents[2] / "src"
     environment = dict(os.environ)
     environment["PYTHONPATH"] = os.pathsep.join(
@@ -1127,7 +1127,7 @@ def test_separate_process_install_lock_blocks_then_releases(tmp_path: Path) -> N
         with pytest.raises(EngineInstallBusyError, match="installation is active"):
             asyncio.run(
                 manager.install(
-                    "windowsml-ocr",
+                    "text-recognition",
                     cancel_event=asyncio.Event(),
                     report_progress=lambda _value: None,
                 )
@@ -1142,12 +1142,12 @@ def test_separate_process_install_lock_blocks_then_releases(tmp_path: Path) -> N
 
     asyncio.run(
         manager.install(
-            "windowsml-ocr",
+            "text-recognition",
             cancel_event=asyncio.Event(),
             report_progress=lambda _value: None,
         )
     )
-    assert manager.active_engine("windowsml-ocr") is not None
+    assert manager.active_engine("text-recognition") is not None
     assert lock_path.is_file()
 
 
@@ -1213,13 +1213,16 @@ def test_structuring_requirement_installation_persists_progress_and_completion(
         )
         installer = SystemRequirementInstaller(
             structuring,
-            enabled_requirement_ids={"windowsml-ocr", "speech-recognition", "ollama-runtime"},
+            enabled_requirement_ids={"text-recognition", "speech-recognition", "ollama-runtime"},
         )
         requirements = installer.requirements(
-            {"windowsml-ocr", "ollama-runtime", "capture-ollama-model"}
+            {"text-recognition", "ollama-runtime", "capture-ollama-model"}
         )
-        assert [row.requirement_id for row in requirements] == ["windowsml-ocr", "ollama-runtime"]
-        assert structuring.filters == [frozenset({"windowsml-ocr", "ollama-runtime"})]
+        assert [row.requirement_id for row in requirements] == [
+            "text-recognition",
+            "ollama-runtime",
+        ]
+        assert structuring.filters == [frozenset({"text-recognition", "ollama-runtime"})]
 
         clock = SystemClock()
         repository = InstallationRepository(tmp_path / "jobs", clock=clock, retention_hours=24)
@@ -1275,11 +1278,11 @@ def test_core_only_catalog_reports_models_unavailable_without_downloading(
     installer = SystemRequirementInstaller(
         FakeStructuringRequirementInstaller(),
         engine_manager=manager,
-        enabled_requirement_ids={"windowsml-ocr", "speech-recognition"},
+        enabled_requirement_ids={"text-recognition", "speech-recognition"},
     )
 
     requirements = {item.requirement_id: item for item in installer.requirements()}
-    for requirement_id in ("windowsml-ocr", "speech-recognition"):
+    for requirement_id in ("text-recognition", "speech-recognition"):
         requirement = requirements[requirement_id]
         assert requirement.status.value == "unavailable"
         assert requirement.artifact is None
@@ -1288,7 +1291,7 @@ def test_core_only_catalog_reports_models_unavailable_without_downloading(
     with pytest.raises(EngineCatalogError, match="unknown engine requirement"):
         asyncio.run(
             installer.install(
-                "windowsml-ocr",
+                "text-recognition",
                 cancel_event=asyncio.Event(),
                 report_progress=lambda _value: None,
             )
@@ -1328,14 +1331,14 @@ def test_requirements_list_a_worker_the_contract_cannot_describe_without_an_arti
     installer = SystemRequirementInstaller(
         FakeStructuringRequirementInstaller(),
         engine_manager=manager,
-        enabled_requirement_ids={"windowsml-ocr", "speech-recognition"},
+        enabled_requirement_ids={"text-recognition", "speech-recognition"},
     )
 
     items = installer.requirements()
 
     requirements = {item.requirement_id: item for item in items}
-    assert requirements["windowsml-ocr"].status.value == "installable"
-    assert requirements["windowsml-ocr"].artifact is None
+    assert requirements["text-recognition"].status.value == "installable"
+    assert requirements["text-recognition"].artifact is None
     assert requirements["speech-recognition"].status.value == "unavailable"
     RuntimeRequirementsV2(items=items)
 
@@ -1353,7 +1356,6 @@ def test_requirement_installer_forwards_nonzero_directml_device_to_model_probe(
         model_downloader=CopyModelDownloader(sources),
     )
     extraction = ExtractionRuntimeConfig(
-        windowsml_model_dir=tmp_path / "windowsml",
         temp_dir=tmp_path / "temp",
         max_pdf_pages=10,
         max_image_pixels=100_000,
@@ -1369,7 +1371,7 @@ def test_requirement_installer_forwards_nonzero_directml_device_to_model_probe(
 
     asyncio.run(
         installer.install(
-            "windowsml-ocr",
+            "text-recognition",
             cancel_event=asyncio.Event(),
             report_progress=lambda _value: None,
         )
@@ -1423,17 +1425,18 @@ def test_smoke_worker_mirror_maps_only_worker_transport(
     )
     asyncio.run(
         manager.install(
-            "windowsml-ocr",
+            "text-recognition",
             cancel_event=asyncio.Event(),
             report_progress=lambda _value: None,
         )
     )
 
     assert downloader.seen_urls == [
-        "http://127.0.0.1:43123/" + catalog.requirement("windowsml-ocr").worker_artifact().file_name
+        "http://127.0.0.1:43123/"
+        + catalog.requirement("text-recognition").worker_artifact().file_name
     ]
     assert model_downloader.seen_urls == [
-        item.url for item in catalog.requirement("windowsml-ocr").model_delivery().files
+        item.url for item in catalog.requirement("text-recognition").model_delivery().files
     ]
     assert all(url.startswith("https://") for url in model_downloader.seen_urls)
 
@@ -1448,7 +1451,7 @@ def test_pdf_ocr_e2e_local_worker_url_maps_only_ocr_worker_transport(
     speech["artifacts"][0]["requirementId"] = "speech-recognition"
     payload["requirements"].append(speech)
     catalog = EngineCatalog.from_dict(payload)
-    ocr_worker = catalog.requirement("windowsml-ocr").worker_artifact()
+    ocr_worker = catalog.requirement("text-recognition").worker_artifact()
     dedicated_url = f"http://127.0.0.1:43124/{ocr_worker.file_name}"
     monkeypatch.setenv("CAPTURE_PDF_OCR_E2E_LOCAL_WORKER_OPT_IN", "1")
     monkeypatch.setenv("CAPTURE_PDF_OCR_E2E_LOCAL_WORKER_URL", dedicated_url)
@@ -1486,7 +1489,7 @@ def test_pdf_ocr_e2e_local_worker_url_maps_only_ocr_worker_transport(
         downloader=downloader,
         model_downloader=model_downloader,
     )
-    for requirement_id in ("windowsml-ocr", "speech-recognition"):
+    for requirement_id in ("text-recognition", "speech-recognition"):
         asyncio.run(
             manager.install(
                 requirement_id,
@@ -1501,7 +1504,7 @@ def test_pdf_ocr_e2e_local_worker_url_maps_only_ocr_worker_transport(
     ]
     assert model_downloader.seen_urls == [
         item.url
-        for requirement_id in ("windowsml-ocr", "speech-recognition")
+        for requirement_id in ("text-recognition", "speech-recognition")
         for item in catalog.requirement(requirement_id).model_delivery().files
     ]
     assert all(url.startswith("https://") for url in model_downloader.seen_urls)
@@ -1524,7 +1527,7 @@ def test_pdf_ocr_e2e_local_worker_url_requires_opt_in_and_catalog_filename(
     )
     asyncio.run(
         manager_without_opt_in.install(
-            "windowsml-ocr",
+            "text-recognition",
             cancel_event=asyncio.Event(),
             report_progress=lambda _value: None,
         )
@@ -1541,7 +1544,7 @@ def test_pdf_ocr_e2e_local_worker_url_requires_opt_in_and_catalog_filename(
     with pytest.raises(EngineInstallationError, match="filename does not match catalog"):
         asyncio.run(
             manager_with_wrong_name.install(
-                "windowsml-ocr",
+                "text-recognition",
                 cancel_event=asyncio.Event(),
                 report_progress=lambda _value: None,
             )
@@ -1562,7 +1565,7 @@ def test_speaker_identification_is_listed_as_an_optional_unit(tmp_path: Path) ->
     installer = SystemRequirementInstaller(
         FakeStructuringRequirementInstaller(),
         engine_manager=manager,
-        enabled_requirement_ids={"windowsml-ocr", "speech-recognition", "speaker-diarization"},
+        enabled_requirement_ids={"text-recognition", "speech-recognition", "speaker-diarization"},
     )
 
     requirements = {item.requirement_id: item for item in installer.requirements()}
@@ -1572,7 +1575,7 @@ def test_speaker_identification_is_listed_as_an_optional_unit(tmp_path: Path) ->
     assert requirements["speaker-diarization"].status.value == "unavailable"
     assert requirements["speaker-diarization"].download_bytes is None
     assert requirements["speech-recognition"].optional is True
-    assert requirements["windowsml-ocr"].optional is False
+    assert requirements["text-recognition"].optional is False
 
 
 def _model_unit_catalog(tmp_path: Path) -> tuple[EngineCatalog, dict[str, Path]]:
@@ -1606,7 +1609,7 @@ def _prepare_local_ocr_models(
     sources: dict[str, Path],
 ) -> Path:
     local_root = tmp_path / "local-models"
-    for file in catalog.requirement(WINDOWSML_REQUIREMENT_ID).model_delivery().files:
+    for file in catalog.requirement(TEXT_RECOGNITION_REQUIREMENT_ID).model_delivery().files:
         destination = local_root / file.path
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(sources[file.path], destination)
@@ -1647,13 +1650,15 @@ def test_model_installations_select_the_source_per_requirement(
         downloader=CopyDownloader(sources),
         model_downloader=injected if inject_downloader else None,
     )
-    file_count = len(catalog.requirement(WINDOWSML_REQUIREMENT_ID).model_delivery().files)
+    file_count = len(catalog.requirement(TEXT_RECOGNITION_REQUIREMENT_ID).model_delivery().files)
 
     async def install_both() -> None:
         await manager.install(
-            WINDOWSML_REQUIREMENT_ID, cancel_event=asyncio.Event(), report_progress=lambda _: None
+            TEXT_RECOGNITION_REQUIREMENT_ID,
+            cancel_event=asyncio.Event(),
+            report_progress=lambda _: None,
         )
-        assert manager.is_installed(WINDOWSML_REQUIREMENT_ID)
+        assert manager.is_installed(TEXT_RECOGNITION_REQUIREMENT_ID)
         assert normal.calls == (0 if local_opt_in else file_count)
         assert injected.calls == (file_count if inject_downloader else 0)
 
@@ -1691,13 +1696,13 @@ def test_local_ocr_model_install_rejects_a_checksum_mismatch(
     ):
         asyncio.run(
             manager.install(
-                WINDOWSML_REQUIREMENT_ID,
+                TEXT_RECOGNITION_REQUIREMENT_ID,
                 cancel_event=asyncio.Event(),
                 report_progress=lambda _: None,
             )
         )
     assert normal.calls == 0
-    assert not manager.is_installed(WINDOWSML_REQUIREMENT_ID)
+    assert not manager.is_installed(TEXT_RECOGNITION_REQUIREMENT_ID)
 
 
 def _model_unit_manager(
@@ -1827,7 +1832,7 @@ def test_installed_models_only_unit_is_listed_as_a_ready_optional_unit(tmp_path:
     installer = SystemRequirementInstaller(
         FakeStructuringRequirementInstaller(),
         engine_manager=manager,
-        enabled_requirement_ids={"windowsml-ocr", "vertical-japanese-reader"},
+        enabled_requirement_ids={"text-recognition", "vertical-japanese-reader"},
     )
 
     def unit() -> object:
@@ -1864,16 +1869,16 @@ def test_install_counts_downloaded_bytes_up_to_the_size_it_lists(tmp_path: Path)
     installer = SystemRequirementInstaller(
         FakeStructuringRequirementInstaller(),
         engine_manager=manager,
-        enabled_requirement_ids={"windowsml-ocr"},
+        enabled_requirement_ids={"text-recognition"},
     )
-    requirement = catalog.requirement("windowsml-ocr")
+    requirement = catalog.requirement("text-recognition")
     expected = requirement.worker_artifact().bytes + requirement.model_delivery().extracted_bytes
 
-    listed = {item.requirement_id: item for item in installer.requirements()}["windowsml-ocr"]
+    listed = {item.requirement_id: item for item in installer.requirements()}["text-recognition"]
     downloaded: list[DownloadedBytes] = []
     asyncio.run(
         installer.install(
-            "windowsml-ocr",
+            "text-recognition",
             cancel_event=asyncio.Event(),
             report_progress=lambda _value: None,
             report_download=downloaded.append,
@@ -1941,26 +1946,26 @@ def test_uninstall_removes_the_installed_engine_and_repeating_it_changes_nothing
     installer = SystemRequirementInstaller(
         FakeStructuringRequirementInstaller(),
         engine_manager=manager,
-        enabled_requirement_ids={"windowsml-ocr"},
+        enabled_requirement_ids={"text-recognition"},
     )
     asyncio.run(
         installer.install(
-            "windowsml-ocr", cancel_event=asyncio.Event(), report_progress=lambda _value: None
+            "text-recognition", cancel_event=asyncio.Event(), report_progress=lambda _value: None
         )
     )
-    root = tmp_path / "engines" / "windowsml-ocr"
+    root = tmp_path / "engines" / "text-recognition"
     assert (root / "active.json").is_file()
-    assert installer.is_uninstallable("windowsml-ocr")
+    assert installer.is_uninstallable("text-recognition")
 
-    asyncio.run(installer.uninstall("windowsml-ocr"))
+    asyncio.run(installer.uninstall("text-recognition"))
 
-    assert manager.active_engine("windowsml-ocr") is None
+    assert manager.active_engine("text-recognition") is None
     assert [item.name for item in root.iterdir()] == [".install.lock"]
     assert manager.worker_client.shutdown_called  # type: ignore[attr-defined]
     (requirement,) = installer.requirements()
     assert requirement.status.value == "installable"
 
-    asyncio.run(installer.uninstall("windowsml-ocr"))
+    asyncio.run(installer.uninstall("text-recognition"))
     assert [item.name for item in root.iterdir()] == [".install.lock"]
 
 
@@ -1983,17 +1988,17 @@ def test_uninstall_frees_only_the_cached_downloads_no_other_unit_references(
     manager, _cache, _downloader = _cached_manager(tmp_path, catalog, sources)
     asyncio.run(
         manager.install(
-            "windowsml-ocr", cancel_event=asyncio.Event(), report_progress=lambda _value: None
+            "text-recognition", cancel_event=asyncio.Event(), report_progress=lambda _value: None
         )
     )
-    requirement = catalog.requirement("windowsml-ocr")
+    requirement = catalog.requirement("text-recognition")
     worker_sha256 = requirement.worker_artifact().sha256
     model_sha256s = [item.sha256 for item in requirement.model_delivery().files]
     cache_root = tmp_path / "cache"
     assert _cached(cache_root, worker_sha256)
     assert all(_cached(cache_root, sha256) for sha256 in model_sha256s)
 
-    asyncio.run(manager.uninstall("windowsml-ocr"))
+    asyncio.run(manager.uninstall("text-recognition"))
 
     assert not _cached(cache_root, worker_sha256)
     assert all(_cached(cache_root, sha256) for sha256 in model_sha256s)
@@ -2006,15 +2011,17 @@ def test_an_uninstalled_engine_installs_again(tmp_path: Path) -> None:
     def install() -> None:
         asyncio.run(
             manager.install(
-                "windowsml-ocr", cancel_event=asyncio.Event(), report_progress=lambda _value: None
+                "text-recognition",
+                cancel_event=asyncio.Event(),
+                report_progress=lambda _value: None,
             )
         )
 
     install()
-    asyncio.run(manager.uninstall("windowsml-ocr"))
+    asyncio.run(manager.uninstall("text-recognition"))
     install()
 
-    engine = manager.active_engine("windowsml-ocr")
+    engine = manager.active_engine("text-recognition")
     assert engine is not None
     assert engine.executable.read_bytes() == b"worker-engine-1"
     assert downloader.calls == 2
@@ -2027,7 +2034,7 @@ def test_a_crash_after_the_marker_is_removed_leaves_the_engine_not_installed(
     manager, _cache, _downloader = _cached_manager(tmp_path, catalog, sources)
     asyncio.run(
         manager.install(
-            "windowsml-ocr", cancel_event=asyncio.Event(), report_progress=lambda _value: None
+            "text-recognition", cancel_event=asyncio.Event(), report_progress=lambda _value: None
         )
     )
 
@@ -2036,13 +2043,13 @@ def test_a_crash_after_the_marker_is_removed_leaves_the_engine_not_installed(
 
     monkeypatch.setattr(engine_installation_module, "remove_unit_files", crash)
     with pytest.raises(EngineInstallationError):
-        asyncio.run(manager.uninstall("windowsml-ocr"))
-    assert manager.active_engine("windowsml-ocr") is None
-    assert (tmp_path / "engines" / "windowsml-ocr" / "versions").is_dir()
+        asyncio.run(manager.uninstall("text-recognition"))
+    assert manager.active_engine("text-recognition") is None
+    assert (tmp_path / "engines" / "text-recognition" / "versions").is_dir()
 
     monkeypatch.undo()
-    asyncio.run(manager.uninstall("windowsml-ocr"))
-    assert not (tmp_path / "engines" / "windowsml-ocr" / "versions").exists()
+    asyncio.run(manager.uninstall("text-recognition"))
+    assert not (tmp_path / "engines" / "text-recognition" / "versions").exists()
 
 
 def test_uninstall_removes_a_models_only_unit(tmp_path: Path) -> None:
@@ -2285,21 +2292,21 @@ def test_a_requirement_without_contents_ignores_the_variant(tmp_path: Path) -> N
         speech_variant="cpu",
         nvidia_driver_present=_reject_driver,
     )
-    installer = _requirements_installer(manager, "windowsml-ocr")
-    expected = catalog.requirement("windowsml-ocr").download_bytes
+    installer = _requirements_installer(manager, "text-recognition")
+    expected = catalog.requirement("text-recognition").download_bytes
 
-    listed = _listed(installer, "windowsml-ocr")
+    listed = _listed(installer, "text-recognition")
     assert listed.status.value == "installable"
     assert listed.download_bytes == expected
 
-    _install(manager, "windowsml-ocr")
+    _install(manager, "text-recognition")
 
     state = json.loads(
-        (tmp_path / "engines" / "windowsml-ocr" / "active.json").read_text(encoding="utf-8")
+        (tmp_path / "engines" / "text-recognition" / "active.json").read_text(encoding="utf-8")
     )
     assert state["stateVersion"] == "1"
     assert "contentId" not in state
-    legacy = manager.active_engine("windowsml-ocr")
+    legacy = manager.active_engine("text-recognition")
     assert legacy is not None and legacy.content_id is None
     legacy_client = manager.worker_client
     assert isinstance(legacy_client, FakeWorkerClient)
@@ -2312,7 +2319,7 @@ def test_a_requirement_without_contents_ignores_the_variant(tmp_path: Path) -> N
         "stateVersion",
         "workerProtocolVersion",
     }
-    assert _listed(installer, "windowsml-ocr").download_bytes == expected
+    assert _listed(installer, "text-recognition").download_bytes == expected
     assert downloader.calls == 1
 
 
@@ -2688,8 +2695,8 @@ def test_a_version_2_state_on_a_requirement_without_contents_is_not_ready(tmp_pa
         speech_variant="cpu",
         nvidia_driver_present=_reject_driver,
     )
-    _install(manager, "windowsml-ocr")
-    root = tmp_path / "engines" / "windowsml-ocr"
+    _install(manager, "text-recognition")
+    root = tmp_path / "engines" / "text-recognition"
     path = root / "active.json"
     payload = json.loads(path.read_text(encoding="utf-8"))
     assert payload["stateVersion"] == "1"
@@ -2700,9 +2707,9 @@ def test_a_version_2_state_on_a_requirement_without_contents_is_not_ready(tmp_pa
     assert parsed.content_id == "cpu"
     before = _tree_bytes(root)
 
-    assert manager.active_engine("windowsml-ocr") is None
+    assert manager.active_engine("text-recognition") is None
     assert _tree_bytes(root) == before
-    listed = _listed(_requirements_installer(manager, "windowsml-ocr"), "windowsml-ocr")
+    listed = _listed(_requirements_installer(manager, "text-recognition"), "text-recognition")
     assert listed.status.value == "installable"
 
 
@@ -2870,7 +2877,6 @@ _WAV = b"RIFF\x00\x00\x00\x00WAVEpayload"
 
 def _speech_config(tmp_path: Path, *, model: str, variant: str) -> ExtractionRuntimeConfig:
     return ExtractionRuntimeConfig(
-        windowsml_model_dir=tmp_path / "windowsml",
         temp_dir=tmp_path / "temp",
         max_pdf_pages=10,
         max_image_pixels=100_000,
@@ -3339,10 +3345,10 @@ def test_cancel_during_activation_or_cleanup_matches_disk_state(
             downloader=CopyDownloader(sources),
             model_downloader=CopyModelDownloader(sources),
         )
-        root = tmp_path / "engines" / "windowsml-ocr"
+        root = tmp_path / "engines" / "text-recognition"
         if upgrade:
             await manager.install(
-                "windowsml-ocr", cancel_event=asyncio.Event(), report_progress=lambda value: None
+                "text-recognition", cancel_event=asyncio.Event(), report_progress=lambda value: None
             )
             # Force a reinstall of the same version to exercise the directory swap.
             monkeypatch.setattr(manager, "active_engine", lambda requirement_id: None)
@@ -3381,7 +3387,7 @@ def test_cancel_during_activation_or_cleanup_matches_disk_state(
         job = service.create(
             idempotency_key="late-cancel",
             request_fingerprint="late-cancel",
-            requirement_id="windowsml-ocr",
+            requirement_id="text-recognition",
         )
         try:
             await asyncio.wait_for(started.wait(), 5)
@@ -3430,7 +3436,7 @@ def test_late_cancel_or_shutdown_finishes_active_unit(tmp_path, monkeypatch, uni
     async def scenario():
         if unit == "engine":
             catalog, sources = _catalog(tmp_path)
-            requirement_id = "windowsml-ocr"
+            requirement_id = "text-recognition"
         else:
             catalog, sources = _model_unit_catalog(tmp_path)
             requirement_id = "vertical-japanese-reader"

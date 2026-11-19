@@ -49,12 +49,12 @@ def _requirements_named(requirements: list[str], name: str) -> list[str]:
 def test_default_dev_dependencies_cover_ocr_typecheck_without_entering_core() -> None:
     project = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))
     base = project["project"]["dependencies"]
-    windowsml = project["project"]["optional-dependencies"]["windowsml"]
+    ocr = project["project"]["optional-dependencies"]["ocr"]
     dev = project["dependency-groups"]["dev"]
 
     for name, exact_requirement in OCR_TEST_DEPENDENCIES.items():
         assert _requirements_named(dev, name) == [exact_requirement]
-        assert _requirements_named(windowsml, name) == [exact_requirement]
+        assert _requirements_named(ocr, name) == [exact_requirement]
         assert _requirements_named(base, name) == []
     for name in PRODUCTION_ONLY_DEPENDENCIES:
         assert _requirements_named(dev, name) == []
@@ -117,7 +117,7 @@ def test_worker_module_import_does_not_bootstrap_http_application() -> None:
             "-c",
             (
                 "import sys; "
-                "import capture_runtime.ocr.infrastructure.ocr_windowsml_adapter; "
+                "import capture_runtime.ocr.infrastructure.ocr_onnx_adapter; "
                 "assert 'capture_runtime.app' not in sys.modules"
             ),
         ],

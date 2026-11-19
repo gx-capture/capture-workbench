@@ -228,7 +228,7 @@ def test_worker_client_propagates_diagnostics_only_to_private_ocr_failure(
         with pytest.raises(OcrWorkerFailure) as raised:
             await client.run(
                 InstalledEngine(
-                    requirement_id="windowsml-ocr",
+                    requirement_id="text-recognition",
                     artifact_version="engine-1",
                     executable=tmp_path / "ocr.exe",
                     model_dir=tmp_path,
@@ -266,10 +266,10 @@ def test_failure_artifact_is_bounded_private_and_atomic(tmp_path: Path) -> None:
         worker_sha256="b" * 64,
         provenance=OcrProvenanceV3(
             status="resolved",
-            engine="windowsml-ocr",
-            model="pp-ocrv6-medium-windowsml",
+            engine="text-recognition",
+            model="pp-ocrv6-medium",
             model_digest="sha256:" + "c" * 64,
-            device="windowsml-dml",
+            device="directml",
             profile_id="capture-workbench-ocr-pipeline-v1",
             profile_spec_sha256="d" * 64,
         ),

@@ -61,7 +61,7 @@ export function assertRawCaptureForFixture(
 
   assertEngine(
     capture['extractionEngine'],
-    fixture.sourceKind === 'audio' ? 'speech-recognition' : 'windowsml-ocr',
+    fixture.sourceKind === 'audio' ? 'speech-recognition' : 'text-recognition',
     'Extraction engine',
   );
 

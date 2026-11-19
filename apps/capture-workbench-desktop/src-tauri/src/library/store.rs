@@ -554,6 +554,7 @@ impl LibraryStore {
                     );
                 }
             } else {
+                evidence.validate_current_provenance()?;
                 document.ocr_evidence = Some(evidence.clone());
             }
         }
@@ -1164,6 +1165,91 @@ fn now_ms() -> Result<u64, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn historical_ocr_evidence_survives_reopen_export_and_text_edit() {
+        let directory = tempfile::tempdir().expect("app data");
+        let library = LibraryStore::open(directory.path()).expect("library");
+        let document = library
+            .create_source(LibrarySourceInput {
+                file_name: "legacy.pdf".into(),
+                media_type: "application/pdf".into(),
+                bytes: b"historical source".to_vec(),
+            })
+            .unwrap();
+        let historical = include_str!("../../../../../test-fixtures/ocr-evidence-v1-golden.json");
+        let mut evidence: crate::contracts::OcrEvidenceV1 =
+            serde_json::from_str(historical).unwrap();
+        evidence.provenance.model = Some("pp-ocrv6-medium-windowsml".into());
+        evidence.provenance.device = Some("windowsml-dml".into());
+        evidence.digest = evidence.content_digest().unwrap();
+        assert!(evidence.validate_current_provenance().is_err());
+
+        let index_path = library.root.join(INDEX_FILE_NAME);
+        let raw_path = library
+            .document_directory(&document.document_id)
+            .unwrap()
+            .join(RAW_FILE_NAME);
+        let mut index = library.lock_index().unwrap().clone();
+        index.documents[0].ocr_evidence = Some(evidence.clone());
+        let index_bytes = serde_json::to_vec(&index).unwrap();
+        fs::write(&index_path, &index_bytes).unwrap();
+        let raw = json!({
+            "extractionEngine": {
+                "engine": evidence.provenance.engine,
+                "model": evidence.provenance.model,
+                "device": evidence.provenance.device,
+            },
+            "diagnostics": {
+                "preflight": {"mode": "gpu-dml"},
+                "fallback": {"mode": "cpu-fallback", "reasonCode": "dml_provider_unavailable"},
+            },
+            "segments": [{
+                "segmentId": "page-1", "order": 0, "text": "recognized",
+                "locator": {"kind": "page", "page": 1},
+            }],
+        });
+        let raw_bytes = serde_json::to_vec(&raw).unwrap();
+        fs::write(&raw_path, &raw_bytes).unwrap();
+        drop(library);
+
+        let reopened = LibraryStore::open(directory.path()).expect("historical library");
+        let read_evidence = || {
+            reopened
+                .get(LibraryDocumentRequest {
+                    document_id: document.document_id.clone(),
+                })
+                .unwrap()
+                .ocr_evidence
+        };
+        assert_eq!(read_evidence().as_ref(), Some(&evidence));
+        let exported = reopened
+            .export(LibraryExportRequest {
+                document_id: document.document_id.clone(),
+                format: LibraryExportFormat::Json,
+                page_label: None,
+            })
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&exported.content).unwrap(),
+            raw
+        );
+        assert_eq!(fs::read(&index_path).unwrap(), index_bytes);
+        assert_eq!(fs::read(&raw_path).unwrap(), raw_bytes);
+
+        reopened
+            .save_edits(
+                &document.document_id,
+                LibraryEditMaps {
+                    ocr_pages: [("1".into(), "corrected".into())].into(),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(read_evidence().as_ref(), Some(&evidence));
+        assert_eq!(fs::read(&index_path).unwrap(), index_bytes);
+        assert_eq!(fs::read(&raw_path).unwrap(), raw_bytes);
+    }
     use serde_json::json;
 
     #[test]

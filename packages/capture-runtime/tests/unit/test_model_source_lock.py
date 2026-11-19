@@ -41,7 +41,7 @@ def test_approved_production_lock_is_canonical_model_enabled() -> None:
     assert whisper["expectedDevice"] == "cuda"
     assert len(whisper["expectedNormalizedOutputSha256"]) == 64
     assert [item["requirementId"] for item in lock["requirements"]] == [
-        "windowsml-ocr",
+        "text-recognition",
         "speech-recognition",
         "speaker-diarization",
         "vertical-japanese-reader",
@@ -75,7 +75,7 @@ def test_production_lock_pins_every_file_the_speaker_worker_needs() -> None:
         lambda payload: next(
             item
             for item in payload["requirements"][0]["files"]
-            if item["path"] == "provenance/commit-a.json"
+            if item["path"] == "provenance/text-recognition.json"
         ).update({"sha256": "0" * 64}),
         lambda payload: payload["fixtures"][0].update({"noticeSha256": "0" * 64}),
     ],
@@ -298,7 +298,7 @@ def test_approved_lock_generates_checksum_pinned_manifest_equivalent(
             lambda payload: payload["fixtures"][0].update(
                 {"url": "https://fixtures.example.test/latest/ocr.png"}
             ),
-            "Commit A raw URL",
+            "Text recognition raw URL",
         ),
         (
             lambda payload: payload["fixtures"][0].update(
@@ -308,7 +308,7 @@ def test_approved_lock_generates_checksum_pinned_manifest_equivalent(
                     "url": "https://fixtures.example.test/main/ocr.png",
                 }
             ),
-            "must bind Commit A",
+            "must bind the text recognition source commit",
         ),
         (
             lambda payload: payload["fixtures"][1].update({"id": payload["fixtures"][0]["id"]}),

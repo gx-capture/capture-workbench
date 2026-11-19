@@ -14,7 +14,7 @@ the run.
 Deliver engine models as checksum-pinned direct downloads after explicit
 consent, keep the installer small, and publish a model-enabled release only
 after every direct-model, source, runtime, UI, and consumer trust gate passes.
-The model-source snapshot and lock procedure (Commit A, then the lock) is in
+The model-source snapshot and lock procedure (source snapshot, then the lock) is in
 the [release runbook](../GUIDES/release-runbook.md).
 
 ## Non-Goals
@@ -42,7 +42,7 @@ top-level shape, and match the release and lock versions.
   catalog must also have `requirements: []`. Model-source approval and real
   fixtures are not required.
 - Model-enabled: `sourceLock.requirements` is non-empty. It must validate as the
-  exact approved set (today `windowsml-ocr`, `speech-recognition`,
+  exact approved set (today `text-recognition`, `speech-recognition`,
   `speaker-diarization` and `vertical-japanese-reader`); the generated catalog
   must contain each complete bound requirement; and the exact-SHA local model
   probe is mandatory before tagging.
@@ -89,11 +89,11 @@ explicitly approved and contains:
 First-party `pipeline.json`, license, NOTICE, and fixture bytes have a
 two-commit repository/commit binding contract:
 
-1. Commit A in `gx-capture/capture-workbench` adds the reviewed bytes only.
+1. source snapshot in `gx-capture/capture-workbench` adds the reviewed bytes only.
 2. A later Commit B adds/approves the source lock and references immutable raw
-   URLs containing the exact full Commit A SHA and repository identity.
+   URLs containing the exact full source snapshot SHA and repository identity.
 
-Commit B must follow Commit A. The source lock must not self-reference Commit B
+source-lock commit must follow source snapshot. The source lock must not self-reference source-lock commit
 because the commit identity does not exist until after the lock bytes are
 created. Upstream model weights remain user-directed upstream downloads; their
 legal gate is download/use plus attribution/NOTICE, not model-byte
@@ -162,7 +162,7 @@ Ordinary CI remains lightweight and does not download real weights.
 The local model verification runs on Windows after the source lock is approved
 and before tagging. It uses the exact checked-out `main` SHA, validates the
 lock, performs checksum-pinned online model installation/probes, requires OCR
-`windowsml-ocr` / `pp-ocrv6-medium-windowsml` / `windowsml-dml`, requires the
+`text-recognition` / `pp-ocrv6-medium` / `directml`, requires the
 lock-selected speech recognition provenance, compares normalized output exactly
 with each fixture expectation, and is paired with the localhost real-engines
 smoke (`capture-workbench-e2e:smoke-real-engines`). It writes only redacted local

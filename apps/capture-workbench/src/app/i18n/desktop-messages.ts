@@ -432,13 +432,13 @@ const ZH_TW: DesktopMessages = {
   engineColSize: '大小',
   engineColAction: '動作',
   requirementName: {
-    'windowsml-ocr': '文字辨識',
+    'text-recognition': '文字辨識',
     'speech-recognition': '錄音轉文字',
     'speaker-diarization': '說話者辨識',
     'vertical-japanese-reader': '直書日文',
   },
   requirementPurpose: {
-    'windowsml-ocr': '讀出掃描檔與照片的文字',
+    'text-recognition': '讀出掃描檔與照片的文字',
     'speech-recognition': '台灣華語與中英夾雜語音轉逐字稿',
     'speaker-diarization': '標出每段話是誰說的',
     'vertical-japanese-reader': '讀出直排日文頁面',
@@ -761,13 +761,13 @@ const EN: DesktopMessages = {
   engineColSize: 'Size',
   engineColAction: 'Action',
   requirementName: {
-    'windowsml-ocr': 'Text recognition',
+    'text-recognition': 'Text recognition',
     'speech-recognition': 'Speech to text',
     'speaker-diarization': 'Speaker identification',
     'vertical-japanese-reader': 'Vertical Japanese',
   },
   requirementPurpose: {
-    'windowsml-ocr': 'Read text from scans and photos',
+    'text-recognition': 'Read text from scans and photos',
     'speech-recognition':
       'Taiwan Mandarin and mixed Mandarin-English speech to transcript',
     'speaker-diarization': 'Mark who said each segment',

@@ -27,5 +27,5 @@ When DML is available, the single DML-first session still registers `CPUExecutio
 for unsupported kernels. A registered DML provider whose session cannot initialize or execute is
 an extraction error; the runtime does not create a second CPU-only pipeline. This makes
 provider/driver regressions visible without misrepresenting ONNX Runtime's per-kernel fallback.
-OCR provenance remains compatible: `windowsml-ocr`, `windowsml-dml`, and `cpu` are retained, with
-`windowsml-dml` meaning DML-first session configuration rather than an every-operator GPU claim.
+OCR provenance from 0.11 uses `text-recognition`, `directml`, and `cpu`. The runtime projects historical identities when reading records, with
+`directml` meaning DML-first session configuration rather than an every-operator GPU claim.

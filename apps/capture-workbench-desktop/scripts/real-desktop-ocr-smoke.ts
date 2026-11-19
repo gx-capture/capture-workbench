@@ -19,7 +19,7 @@ import { RELEASE_VERSION } from '../../../tools/release/release-intent.ts';
 //   CAPTURE_REAL_DESKTOP_APP_DATA: required in non-acceptance mode; host-owned app-data directory under %APPDATA%.
 //   APPDATA: required in non-acceptance mode to verify CAPTURE_REAL_DESKTOP_APP_DATA.
 //   CAPTURE_REAL_DESKTOP_EXECUTABLE: optional path to capture-workbench-desktop.exe (defaults to the release target binary).
-//   CAPTURE_REAL_DESKTOP_EXPECTED_OCR_DEVICE: optional expected OCR device (`windowsml-dml` or `cpu`; also `--expected-ocr-device`).
+//   CAPTURE_REAL_DESKTOP_EXPECTED_OCR_DEVICE: optional expected OCR device (`directml` or `cpu`; also `--expected-ocr-device`).
 //   CAPTURE_REAL_DESKTOP_TEARDOWN: optional teardown mode (`window-close` default, or `terminate-process`).
 //   E2E_ACCEPTANCE_RUN_ID: optional; when set, enables installed OCR-only acceptance mode with privacy-safe evidence.
 //   E2E_ACCEPTANCE_EVENT_ROOT: required in acceptance mode; directory for acceptance checkpoint journal events.
@@ -335,7 +335,7 @@ export async function requestDesktopTeardown(
   }
 }
 
-type OcrDevice = 'windowsml-dml' | 'cpu';
+type OcrDevice = 'directml' | 'cpu';
 type SourceKind = 'pdf' | 'image' | 'audio' | 'unknown';
 type DesktopOcrAcceptanceMode = 'ocr-only';
 type CdpBrowser = Awaited<ReturnType<typeof chromium.connectOverCDP>>;
@@ -369,7 +369,7 @@ interface RealDesktopSmokeEvidence {
 export interface AuthenticatedOcrPreflightObservation {
   readonly contractSha256: string;
   readonly workerSha256: string;
-  readonly mode: 'gpu-dml' | 'cpu-fallback';
+  readonly mode: 'gpu' | 'cpu-fallback';
 }
 
 interface PdfPageScopeEvidence {
@@ -861,7 +861,7 @@ export function assertRealDesktopSmokeEvidence(
   assert.ok(Number.isInteger(report?.rawOcrSegmentCount) && Number(report?.rawOcrSegmentCount) > 0);
   assert.ok(Number.isInteger(report?.expectedAnchorCount) && Number(report?.expectedAnchorCount) > 0);
   assert.equal(report?.matchedAnchorCount, report?.expectedAnchorCount);
-  assert.ok(report?.ocrDevice === 'windowsml-dml' || report?.ocrDevice === 'cpu');
+  assert.ok(report?.ocrDevice === 'directml' || report?.ocrDevice === 'cpu');
   assert.equal(report?.documentDeletedAfterVerification, true);
   if (report?.sourceSha256 !== undefined) {
     assert.match(report.sourceSha256, /^[a-f0-9]{64}$/u);
@@ -1025,7 +1025,7 @@ export async function main(options: {
     workerMirror = await startLocalCandidateWorkerMirror({
       candidateRoot,
       candidateId,
-      requirementId: 'windowsml-ocr',
+      requirementId: 'text-recognition',
     });
     if (localModelRoot === undefined) {
       throw new Error('Local candidate model root was unavailable.');
@@ -1034,7 +1034,7 @@ export async function main(options: {
       candidateRoot,
       candidateId,
       modelRoot: localModelRoot,
-      requirementId: 'windowsml-ocr',
+      requirementId: 'text-recognition',
     });
   }
   const runId = randomUUID();
@@ -1191,10 +1191,10 @@ export async function main(options: {
     }
     await checkpointJournal?.complete('runtime', 'runtime-ready');
     const computeObservation = await readOcrComputeModeFromSettings(page);
-    uiGpuBeforeImport = computeObservation.visible && computeObservation.mode === 'gpu-dml';
+    uiGpuBeforeImport = computeObservation.visible && computeObservation.mode === 'gpu';
     if (acceptance) {
       await checkpointJournal?.begin('ocr_compute', 'compute-preflight');
-      if (expectedOcrDevice !== 'windowsml-dml') {
+      if (expectedOcrDevice !== 'directml') {
         throw new Error('Capture Workbench exact-artifact acceptance requires DirectML OCR provenance.');
       }
       const readyPayload = await invokeTauriCommand(page, 'runtime_ready', {});
@@ -1202,8 +1202,8 @@ export async function main(options: {
       if (localInstalledRuntime && authenticatedOcrPreflight.contractSha256 !== localInstalledRuntime.contractSetSha256) {
         throw new Error('Authenticated Capture Runtime contract identity differs from the local candidate.');
       }
-      if (authenticatedOcrPreflight.mode !== 'gpu-dml') {
-        throw new Error('Authenticated Capture Runtime OCR preflight did not select GPU-DML.');
+      if (authenticatedOcrPreflight.mode !== 'gpu') {
+        throw new Error('Authenticated Capture Runtime OCR preflight did not select GPU.');
       }
       const readyUiState = await queryPackagedUiState(cdpPort);
       if (!uiGpuBeforeImport || !readyUiState?.sourceImportEnabled) {
@@ -1413,7 +1413,7 @@ export async function main(options: {
         profileSpecSha256: proof.profileSpecSha256,
         contractSetSha256: proof.contractSetSha256,
         requestedPageScope: proof.requestedPageScope === null ? null : [...proof.requestedPageScope],
-        device: authenticatedOcrPreflight.mode === 'gpu-dml' ? 'windowsml-dml' : 'cpu',
+        device: authenticatedOcrPreflight.mode === 'gpu' ? 'directml' : 'cpu',
       };
       semanticArtifactIdentity = await emitAcceptanceSemanticEvidence({
         sourceKind,
@@ -1991,7 +1991,7 @@ export function readImportedSourceSha256(detail: DurableLibraryDetailRecord): st
 }
 
 export function readDurableOcrProvenance(detail: DurableLibraryDetailRecord): {
-  readonly engine: 'windowsml-ocr';
+  readonly engine: 'text-recognition';
   readonly model: string;
   readonly device: OcrDevice;
   readonly digest: string;
@@ -2011,17 +2011,17 @@ export function readDurableOcrProvenance(detail: DurableLibraryDetailRecord): {
     readonly digest?: unknown;
   };
   if (
-    record.engine !== 'windowsml-ocr'
+    record.engine !== 'text-recognition'
     || typeof record.model !== 'string'
     || !record.model.trim()
-    || (record.device !== 'windowsml-dml' && record.device !== 'cpu')
+    || (record.device !== 'directml' && record.device !== 'cpu')
     || typeof record.digest !== 'string'
     || !record.digest.trim()
   ) {
     throw new Error('Packaged OCR checkpoint exposed unrecognized OCR provenance.');
   }
   return {
-    engine: 'windowsml-ocr',
+    engine: 'text-recognition',
     model: record.model,
     device: record.device,
     digest: record.digest.trim(),
@@ -2114,10 +2114,10 @@ export function assertDurableOcrCheckpoint(
     readonly workerSha256?: unknown;
   };
   assert.equal(provenanceRecord.status, 'resolved');
-  assert.equal(provenanceRecord.engine, 'windowsml-ocr');
+  assert.equal(provenanceRecord.engine, 'text-recognition');
   assert.ok(typeof provenanceRecord.model === 'string' && provenanceRecord.model.trim());
   assert.match(String(provenanceRecord.modelDigest ?? ''), /^sha256:[a-f0-9]{64}$/u);
-  assert.ok(provenanceRecord.device === 'windowsml-dml' || provenanceRecord.device === 'cpu');
+  assert.ok(provenanceRecord.device === 'directml' || provenanceRecord.device === 'cpu');
   assert.ok(typeof provenanceRecord.profileId === 'string' && provenanceRecord.profileId.trim());
   assert.match(String(provenanceRecord.profileSpecSha256 ?? ''), /^[a-f0-9]{64}$/u);
   assert.match(String(provenanceRecord.workerSha256 ?? ''), /^[a-f0-9]{64}$/u);
@@ -2127,7 +2127,7 @@ export async function readOcrProvenance(
   page: Page,
   documentId?: string,
 ): Promise<{
-  engine: 'windowsml-ocr';
+  engine: 'text-recognition';
   model: string;
   device: OcrDevice;
   digest: string;
@@ -2172,7 +2172,7 @@ export async function assertDiagnosticsMatchesDurableOcr(
   detail: DurableLibraryDetailRecord,
   documentId: string,
 ): Promise<{
-  readonly engine: 'windowsml-ocr';
+  readonly engine: 'text-recognition';
   readonly model: string;
   readonly device: OcrDevice;
   readonly digest: string;
@@ -2202,7 +2202,7 @@ export function parseOcrProvenance(attributes: {
   readonly model: string | null | undefined;
   readonly device: string | null | undefined;
 }): {
-  engine: 'windowsml-ocr';
+  engine: 'text-recognition';
   model: string;
   device: OcrDevice;
 } {
@@ -2210,9 +2210,9 @@ export function parseOcrProvenance(attributes: {
   const model = attributes.model?.trim() ?? '';
   const device = attributes.device?.trim() ?? '';
   if (
-    engine !== 'windowsml-ocr' ||
+    engine !== 'text-recognition' ||
     !model ||
-    (device !== 'windowsml-dml' && device !== 'cpu')
+    (device !== 'directml' && device !== 'cpu')
   ) {
     throw new Error('Standalone desktop UI did not display a recognized OCR device provenance.');
   }
@@ -2316,7 +2316,7 @@ export function parseAuthenticatedOcrPreflight(value: unknown): AuthenticatedOcr
     !/^[a-f0-9]{64}$/u.test(compute.contractSha256) ||
     typeof compute.workerSha256 !== 'string' ||
     !/^[a-f0-9]{64}$/u.test(compute.workerSha256) ||
-    (compute.mode !== 'gpu-dml' && compute.mode !== 'cpu-fallback')
+    (compute.mode !== 'gpu' && compute.mode !== 'cpu-fallback')
   ) {
     throw new Error('Authenticated Capture Runtime OCR compute evidence was invalid.');
   }
@@ -2343,8 +2343,8 @@ export function resolveExpectedOcrDevice(
       ? arguments_[optionIndexes[0] + 1]?.trim()
       : environmentValue?.trim();
   if (value === undefined || value === '') return undefined;
-  if (value !== 'windowsml-dml' && value !== 'cpu') {
-    throw new Error(`${option} must be windowsml-dml or cpu.`);
+  if (value !== 'directml' && value !== 'cpu') {
+    throw new Error(`${option} must be directml or cpu.`);
   }
   return value;
 }
@@ -2690,7 +2690,7 @@ interface OcrFirstRunSetupOptions {
 
 interface OcrComputeSettingsObservation {
   readonly visible: boolean;
-  readonly mode: 'gpu-dml' | 'cpu-fallback' | null;
+  readonly mode: 'gpu' | 'cpu-fallback' | null;
 }
 
 /**
@@ -2809,7 +2809,7 @@ export async function queryPackagedUiState(cdpPort: number): Promise<PackagedUiS
   }
 }
 
-export async function readWindowsMlOcrRequirementStatus(page: Page): Promise<string | null> {
+export async function readOcrRequirementStatus(page: Page): Promise<string | null> {
   const response = await invokeTauriCommand(page, 'runtime_requirements', {});
   if (response === null || typeof response !== 'object' || Array.isArray(response)) {
     return null;
@@ -2820,7 +2820,7 @@ export async function readWindowsMlOcrRequirementStatus(page: Page): Promise<str
     item !== null
     && typeof item === 'object'
     && !Array.isArray(item)
-    && (item as { readonly requirementId?: unknown }).requirementId === 'windowsml-ocr'
+    && (item as { readonly requirementId?: unknown }).requirementId === 'text-recognition'
   ));
   return typeof ocrItem?.status === 'string' ? ocrItem.status : null;
 }
@@ -2830,7 +2830,7 @@ interface RuntimeInstallationSummary {
   readonly errorCode: string | null;
 }
 
-async function readLatestWindowsMlOcrInstallation(
+async function readLatestOcrInstallation(
   page: Page,
 ): Promise<RuntimeInstallationSummary | undefined> {
   const response = await invokeTauriCommand(page, 'runtime_list_installations', {});
@@ -2847,7 +2847,7 @@ async function readLatestWindowsMlOcrInstallation(
     item !== null
     && typeof item === 'object'
     && !Array.isArray(item)
-    && (item as { readonly requirementId?: unknown }).requirementId === 'windowsml-ocr'
+    && (item as { readonly requirementId?: unknown }).requirementId === 'text-recognition'
   ));
   if (!latest || typeof latest.status !== 'string') return undefined;
   const errorObject = latest.error !== null && typeof latest.error === 'object' && !Array.isArray(latest.error)
@@ -2876,7 +2876,7 @@ export async function waitForPackagedRuntimeReadySignal(
     ) {
       return false;
     }
-    const requirementStatus = await readWindowsMlOcrRequirementStatus(page);
+    const requirementStatus = await readOcrRequirementStatus(page);
     return requirementStatus === 'ready';
   } catch {
     return false;
@@ -2987,7 +2987,7 @@ async function ensureCheckboxState(checkbox: Locator, checked: boolean, label: s
   }
 }
 
-async function waitForWindowsMlOcrInstallOnEnginesPage(
+async function waitForOcrInstallOnEnginesPage(
   page: Page,
   installTimeoutMs: number,
   options: Pick<OcrFirstRunSetupOptions, 'onInstallStarted' | 'onInstallProgress' | 'onInstallRetry'>,
@@ -2996,7 +2996,7 @@ async function waitForWindowsMlOcrInstallOnEnginesPage(
     await page.getByTestId('nav-settings').click();
     await page.getByTestId('page-settings-engines').waitFor({ state: 'visible', timeout: 30_000 });
   }
-  const ocrRow = page.locator('[data-testid="engine-row"][data-requirement-id="windowsml-ocr"]');
+  const ocrRow = page.locator('[data-testid="engine-row"][data-requirement-id="text-recognition"]');
   await ocrRow.waitFor({ state: 'visible', timeout: 30_000 });
   await options.onInstallProgress?.(page);
   let filesystemRetryCount = 0;
@@ -3007,7 +3007,7 @@ async function waitForWindowsMlOcrInstallOnEnginesPage(
       const status = await ocrRow.getAttribute('data-status');
       if (status === 'ready') return true;
       if (status !== null && terminalEngineStatuses.has(status)) {
-        const installation = await readLatestWindowsMlOcrInstallation(page).catch(() => undefined);
+        const installation = await readLatestOcrInstallation(page).catch(() => undefined);
         const errorCode = installation?.errorCode && safeDesktopDocumentErrorCodePattern.test(installation.errorCode)
           ? installation.errorCode
           : 'unknown';
@@ -3024,7 +3024,7 @@ async function waitForWindowsMlOcrInstallOnEnginesPage(
           await options.onInstallRetry?.(page);
           return undefined;
         }
-        const errorDetails = page.locator('[data-testid="engine-row-details"][data-requirement-id="windowsml-ocr"]');
+        const errorDetails = page.locator('[data-testid="engine-row-details"][data-requirement-id="text-recognition"]');
         if (!(await errorDetails.isVisible().catch(() => false))) {
           await ocrRow.getByTestId('engine-row-toggle').click().catch(() => undefined);
         }
@@ -3065,11 +3065,11 @@ export async function runOcrFirstRunSetup(
     async () => {
       const runtimeError = await visibleRuntimeError(page);
       if (runtimeError) throw new Error(runtimeError);
-      const status = await readWindowsMlOcrRequirementStatus(page);
+      const status = await readOcrRequirementStatus(page);
       return status ?? undefined;
     },
     readyTimeoutMs,
-    `Capture Workbench did not publish runtime requirements for windowsml-ocr. ${await runtimeSetupDiagnostics(page)}`,
+    `Capture Workbench did not publish runtime requirements for text-recognition. ${await runtimeSetupDiagnostics(page)}`,
   );
   if (requirementStatus === 'ready') {
     if (options.failIfAlreadyReady) {
@@ -3078,9 +3078,9 @@ export async function runOcrFirstRunSetup(
     return { installRequired: false };
   }
 
-  const latestInstallation = await readLatestWindowsMlOcrInstallation(page).catch(() => undefined);
+  const latestInstallation = await readLatestOcrInstallation(page).catch(() => undefined);
   if (latestInstallation && activeOrFailedInstallationStatuses.has(latestInstallation.status)) {
-    await waitForWindowsMlOcrInstallOnEnginesPage(page, installTimeoutMs, options);
+    await waitForOcrInstallOnEnginesPage(page, installTimeoutMs, options);
     return { installRequired: true };
   }
 
@@ -3108,7 +3108,7 @@ export async function runOcrFirstRunSetup(
     );
     await installButton.click();
     options.onInstallStarted?.();
-    await waitForWindowsMlOcrInstallOnEnginesPage(page, installTimeoutMs, options);
+    await waitForOcrInstallOnEnginesPage(page, installTimeoutMs, options);
     return { installRequired: true };
   }
 
@@ -3118,7 +3118,7 @@ export async function runOcrFirstRunSetup(
 
   await page.getByTestId('nav-settings').click();
   await page.getByTestId('page-settings-engines').waitFor({ state: 'visible', timeout: 15_000 });
-  const ocrRow = page.locator('[data-testid="engine-row"][data-requirement-id="windowsml-ocr"]');
+  const ocrRow = page.locator('[data-testid="engine-row"][data-requirement-id="text-recognition"]');
   await ocrRow.waitFor({ state: 'visible', timeout: 15_000 });
   const status = await ocrRow.getAttribute('data-status');
   if (status === 'ready') {
@@ -3135,7 +3135,7 @@ export async function runOcrFirstRunSetup(
     await rowInstall.click();
     options.onInstallStarted?.();
   }
-  await waitForWindowsMlOcrInstallOnEnginesPage(page, installTimeoutMs, options);
+  await waitForOcrInstallOnEnginesPage(page, installTimeoutMs, options);
   return { installRequired: true };
 }
 
@@ -3154,7 +3154,7 @@ export async function readOcrComputeModeFromSettings(page: Page): Promise<OcrCom
         const mode = await statusOrNotice.getAttribute('data-mode');
         return {
           visible: true,
-          mode: mode === 'gpu-dml' || mode === 'cpu-fallback' ? mode : null,
+          mode: mode === 'gpu' || mode === 'cpu-fallback' ? mode : null,
         };
       }
       const cpuDetected = section.getByTestId('compute-ocr-detected');

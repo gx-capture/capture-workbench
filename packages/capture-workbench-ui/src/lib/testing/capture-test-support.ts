@@ -29,7 +29,7 @@ export const READY: RuntimeReady = {
     runtimeVersion: RUNTIME_VERSION,
     contractSetVersion: '2',
     contractSha256: 'a'.repeat(64),
-    mode: 'gpu-dml',
+    mode: 'gpu',
     adapterClass: 'dedicated',
     reasonCode: null,
     userNoticeRequired: false,
@@ -63,7 +63,7 @@ export const RAW: RawCapture = {
   ],
   sourceText: 'page one',
   extractionEngine: {
-    engine: 'windowsml',
+    engine: 'text-recognition',
     model: 'ocr-v1',
     digest: `sha256:${'b'.repeat(64)}`,
   },

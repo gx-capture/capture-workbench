@@ -36,7 +36,7 @@ def _descriptor(archive: Path, manifest: bytes) -> EngineArtifactDescriptor:
     return EngineArtifactDescriptor.from_dict(
         {
             "role": "worker",
-            "requirementId": "windowsml-ocr",
+            "requirementId": "text-recognition",
             "artifactVersion": RUNTIME_VERSION,
             "workerProtocolVersion": "1",
             "platform": "windows",

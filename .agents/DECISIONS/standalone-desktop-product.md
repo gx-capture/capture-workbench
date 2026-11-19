@@ -13,10 +13,10 @@
 - Bearer tokens remain exclusively in the native host. The renderer invokes a
   constrained native runtime proxy and receives only redacted runtime values;
   tokens are absent from IPC contracts, library files, and diagnostics.
-- The WindowsML bundle descriptor is a release-versioned capture-runtime
+- The OCR bundle descriptor is a release-versioned capture-runtime
   constant, not a CI/Tauri/runtime environment-variable protocol. It is the
   single owner for the consented OCR download and checksum verification.
-- A missing remote WindowsML archive is an installer repair condition, not a
+- A missing remote OCR archive is an installer repair condition, not a
   Capture Workbench desktop release gate. The app does not bundle or launch the
   archive, while runtime requirement discovery and the consented installation
   path remain intact for OCR-capable installations.

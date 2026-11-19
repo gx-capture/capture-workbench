@@ -80,10 +80,10 @@
       "retired": false
     },
     {
-      "id": "ocr.compute-mode.gpu-dml",
-      "label": "DirectML GPU 模式",
-      "codeName": "OcrComputeMode.GPU_DML",
-      "enum": { "enumId": "OcrComputeMode", "value": "gpu-dml" },
+      "id": "ocr.compute-mode.gpu",
+      "label": "GPU 模式",
+      "codeName": "OcrComputeMode.GPU",
+      "enum": { "enumId": "OcrComputeMode", "value": "gpu" },
       "retired": false
     },
     {
@@ -122,10 +122,10 @@
       "retired": false
     },
     {
-      "id": "ocr.compute-reason.dml-provider-unavailable",
-      "label": "DirectML 提供者無法使用",
-      "codeName": "OcrComputeReasonCode.DML_PROVIDER_UNAVAILABLE",
-      "enum": { "enumId": "OcrComputeReasonCode", "value": "dml_provider_unavailable" },
+      "id": "ocr.compute-reason.gpu-provider-unavailable",
+      "label": "GPU 提供者無法使用",
+      "codeName": "OcrComputeReasonCode.GPU_PROVIDER_UNAVAILABLE",
+      "enum": { "enumId": "OcrComputeReasonCode", "value": "gpu_provider_unavailable" },
       "retired": false
     },
     {
@@ -542,10 +542,10 @@
       "retired": false
     },
     {
-      "id": "CaptureRequirementId.windowsml-ocr",
-      "label": "引擎需求：WindowsML 文件辨識",
-      "codeName": "CaptureRequirementId.windowsml-ocr",
-      "enum": { "enumId": "CaptureRequirementId", "value": "windowsml-ocr" },
+      "id": "CaptureRequirementId.text-recognition",
+      "label": "引擎需求：文字辨識",
+      "codeName": "CaptureRequirementId.text-recognition",
+      "enum": { "enumId": "CaptureRequirementId", "value": "text-recognition" },
       "retired": false
     },
     {

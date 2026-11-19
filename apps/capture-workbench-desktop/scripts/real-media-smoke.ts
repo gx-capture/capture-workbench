@@ -27,7 +27,7 @@ const evidencePath = join(outputDirectory, 'real-media-smoke.json');
 const maxInstallationWaitMs = 90 * 60_000;
 const maxCaptureWaitMs = 20 * 60_000;
 export const ownedRuntimeObserverTimeoutMs = 45_000;
-export const dependencyOrder = ['windowsml-ocr', 'speech-recognition'] as const;
+export const dependencyOrder = ['text-recognition', 'speech-recognition'] as const;
 
 const canonicalSourceLockPath = join(
   workspaceRoot,
@@ -130,7 +130,7 @@ interface MediaEvidence {
   readonly evidenceKind: 'real-core-first-media-diagnostic';
   readonly releaseGateSatisfied: false;
   readonly consumerE2e: false;
-  readonly dependencyOrder: readonly ['windowsml-ocr', 'speech-recognition'];
+  readonly dependencyOrder: readonly ['text-recognition', 'speech-recognition'];
   readonly pdf: {
     readonly extractionEngine: string;
     readonly model: string;
@@ -358,9 +358,9 @@ export function expectedProvenanceFromSourceLock(
     fixtures.find((fixture) => asObject(fixture)?.['kind'] === 'whisper'),
   );
   if (
-    ocr?.['expectedEngine'] !== 'windowsml-ocr' ||
-    ocr['expectedDevice'] !== 'windowsml-dml' ||
-    typeof ocr['expectedModel'] !== 'string'
+    ocr?.['expectedEngine'] !== 'text-recognition' ||
+    ocr['expectedDevice'] !== 'directml' ||
+    ocr['expectedModel'] !== 'pp-ocrv6-medium'
   ) {
     throw new Error('Canonical OCR fixture does not pin DirectML provenance.');
   }
@@ -396,12 +396,12 @@ export function assertRealMediaEvidence(
   assert.equal(report?.hostStructuring, true);
   assert.equal(report?.capturesDeletedAfterVerification, true);
   assert.equal(report?.ownedProcessCleanupVerified, true);
-  assert.equal(report?.pdf?.extractionEngine, 'windowsml-ocr');
-  assert.equal(report?.pdf?.device, 'windowsml-dml');
+  assert.equal(report?.pdf?.extractionEngine, 'text-recognition');
+  assert.equal(report?.pdf?.device, 'directml');
   assert.ok((report?.pdf?.segmentCount ?? 0) > 0);
   assert.ok((report?.pdf?.pageLocators ?? 0) > 0);
-  assert.equal(report?.image?.extractionEngine, 'windowsml-ocr');
-  assert.equal(report?.image?.device, 'windowsml-dml');
+  assert.equal(report?.image?.extractionEngine, 'text-recognition');
+  assert.equal(report?.image?.device, 'directml');
   assert.ok((report?.image?.segmentCount ?? 0) > 0);
   assert.ok((report?.image?.pageLocators ?? 0) > 0);
   assert.equal(report?.audio?.extractionEngine, 'speech-recognition');
@@ -590,9 +590,9 @@ async function captureAndVerify(
     throw new Error(`Real ${sourceKind} extraction returned no text.`);
   }
   if (sourceKind === 'pdf' || sourceKind === 'image') {
-    assert.equal(raw.extractionEngine.engine, 'windowsml-ocr');
+    assert.equal(raw.extractionEngine.engine, 'text-recognition');
     assert.equal(raw.extractionEngine.model, expectedProvenance.ocrModel);
-    assert.equal(raw.extractionEngine.device, 'windowsml-dml');
+    assert.equal(raw.extractionEngine.device, 'directml');
     assert.ok(raw.segments.some((segment) => segment.locator.kind === 'page'));
   } else {
     assert.equal(raw.extractionEngine.engine, 'speech-recognition');

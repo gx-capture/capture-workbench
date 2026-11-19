@@ -114,7 +114,7 @@ export {
 
 /** Approved current runtime contract-set identity; update only with a release. */
 export const CAPTURE_CONTRACT_SET_SHA256 =
-  '91ff5ff5cef6d68774cf036878843503f171044bf8c4a9f6a62e7fb418ce2380';
+  'e86337e809f8c1256a29870927940fc2dee5573478efc976210be36ea784e93b';
 
 export interface RuntimeDiscovery {
   readonly ready: RuntimeReady;

@@ -20,15 +20,15 @@
         <label
           class="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 border-t border-border py-3 cursor-pointer text-sm"
           data-testid="first-run-option"
-          data-requirement-id="windowsml-ocr"
+          data-requirement-id="text-recognition"
         >
           <input
             type="checkbox"
             class="size-4.5 accent-primary cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
             data-testid="first-run-checkbox-ocr"
-            [checked]="isSelected('windowsml-ocr')"
+            [checked]="isSelected('text-recognition')"
             [disabled]="features.installing()"
-            (change)="toggleRequirement('windowsml-ocr', $any($event.target).checked)"
+            (change)="toggleRequirement('text-recognition', $any($event.target).checked)"
           />
           <span class="flex flex-col">
             <span class="font-semibold text-foreground">{{ m().firstRunOcrLabel }}</span>

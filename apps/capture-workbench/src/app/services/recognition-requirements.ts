@@ -9,21 +9,21 @@ export type RecognitionFeature = 'ocr' | 'asr' | 'asr.speakers';
 export const FEATURE_REQUIREMENTS: Readonly<
   Record<RecognitionFeature, readonly CaptureRequirementId[]>
 > = {
-  ocr: ['windowsml-ocr'],
+  ocr: ['text-recognition'],
   asr: ['speech-recognition'],
   'asr.speakers': ['speaker-diarization'],
 };
 
 /** User-facing recognition requirements shown in settings and cards. */
 export const RECOGNITION_REQUIREMENTS: readonly CaptureRequirementId[] = [
-  'windowsml-ocr',
+  'text-recognition',
   'speech-recognition',
   'speaker-diarization',
   'vertical-japanese-reader',
 ];
 
 export const INSTALLATION_ORDER = new Map<CaptureRequirementId, number>([
-  ['windowsml-ocr', 0],
+  ['text-recognition', 0],
   ['speech-recognition', 1],
   ['speaker-diarization', 2],
   ['vertical-japanese-reader', 3],
@@ -135,7 +135,7 @@ const SPEECH_CAPTURE_REQUIREMENTS = new Set<CaptureRequirementId>([
 ]);
 
 const OCR_CAPTURE_REQUIREMENTS = new Set<CaptureRequirementId>([
-  'windowsml-ocr',
+  'text-recognition',
   'vertical-japanese-reader',
 ]);
 

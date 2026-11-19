@@ -25,7 +25,7 @@ function requirement(
     status,
     requiredFor: [],
     installStrategy: 'runtime-catalog',
-    optional: requirementId !== 'windowsml-ocr',
+    optional: requirementId !== 'text-recognition',
     ...(downloadBytes === undefined ? {} : { downloadBytes }),
   };
 }
@@ -36,13 +36,13 @@ describe('feature requirements and speech pack', () => {
   const requirements = [
     requirement('vertical-japanese-reader', 'installable', 120_000_000),
     requirement('speaker-diarization', 'installable', 300_000_000),
-    requirement('windowsml-ocr', 'ready', 144_000_000),
+    requirement('text-recognition', 'ready', 144_000_000),
     requirement('speech-recognition', 'installable', 2_800_000_000),
   ];
 
   it('maps each recognition feature to its own requirement', () => {
     expect(FEATURE_REQUIREMENTS).toEqual({
-      ocr: ['windowsml-ocr'],
+      ocr: ['text-recognition'],
       asr: ['speech-recognition'],
       'asr.speakers': ['speaker-diarization'],
     });
@@ -56,7 +56,7 @@ describe('feature requirements and speech pack', () => {
 
   it('never asks an ASR-only user for OCR when speech recognition is ready', () => {
     const asrOnly = [
-      requirement('windowsml-ocr', 'installable'),
+      requirement('text-recognition', 'installable'),
       requirement('speech-recognition', 'ready'),
       requirement('speaker-diarization', 'installable'),
     ];
@@ -75,7 +75,7 @@ describe('feature requirements and speech pack', () => {
     expect(
       selectRecognitionRequirements(requirements).map((item) => item.requirementId),
     ).toEqual([
-      'windowsml-ocr',
+      'text-recognition',
       'speech-recognition',
       'speaker-diarization',
       'vertical-japanese-reader',
@@ -118,16 +118,16 @@ describe('captureNeedsRequirement', () => {
     const image = document('persisting', 'image/png');
     const audio = document('processing', 'audio/mpeg');
     const video = document('persisting', 'video/mp4');
-    expect(captureNeedsRequirement('windowsml-ocr', [pdf])).toBe(true);
+    expect(captureNeedsRequirement('text-recognition', [pdf])).toBe(true);
     expect(captureNeedsRequirement('vertical-japanese-reader', [image])).toBe(true);
     expect(captureNeedsRequirement('speech-recognition', [pdf])).toBe(false);
     expect(captureNeedsRequirement('speech-recognition', [audio])).toBe(true);
     expect(captureNeedsRequirement('speaker-diarization', [video])).toBe(true);
-    expect(captureNeedsRequirement('windowsml-ocr', [audio])).toBe(false);
+    expect(captureNeedsRequirement('text-recognition', [audio])).toBe(false);
     expect(captureNeedsRequirement('ollama-runtime', [pdf])).toBe(true);
-    expect(captureNeedsRequirement('windowsml-ocr', [])).toBe(false);
+    expect(captureNeedsRequirement('text-recognition', [])).toBe(false);
     expect(
-      captureNeedsRequirement('windowsml-ocr', [
+      captureNeedsRequirement('text-recognition', [
         document('queued', 'application/pdf'),
         document('awaiting_confirmation', 'application/pdf'),
       ]),

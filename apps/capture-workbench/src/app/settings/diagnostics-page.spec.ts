@@ -141,7 +141,7 @@ describe('DiagnosticsPage', () => {
         documentId: docId,
         fileName: 'contract.pdf',
         extraction: {
-          engine: 'windowsml-ocr',
+          engine: 'text-recognition',
           model: 'ocr-v1',
           device: 'dml',
           digest: `sha256:${'d'.repeat(64)}`,
@@ -166,7 +166,7 @@ describe('DiagnosticsPage', () => {
     expect(el.querySelector('[data-testid="diagnostics-document-filename"]')?.textContent?.trim()).toBe('contract.pdf');
 
     const ext = el.querySelector('[data-testid="diagnostics-extraction-provenance"]');
-    expect(ext?.getAttribute('data-engine')).toBe('windowsml-ocr');
+    expect(ext?.getAttribute('data-engine')).toBe('text-recognition');
     expect(ext?.getAttribute('data-model')).toBe('ocr-v1');
     expect(ext?.getAttribute('data-device')).toBe('dml');
     expect(ext?.getAttribute('data-digest')).toBe(`sha256:${'d'.repeat(64)}`);

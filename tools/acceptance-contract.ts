@@ -112,7 +112,7 @@ export interface AcceptanceEvidenceSummary {
   readonly sourceLockSha256?: string;
   readonly modelFileCount?: number;
   readonly modelExtractedBytes?: number;
-  readonly authenticatedRuntimePreflight?: 'gpu-dml' | 'cpu-fallback';
+  readonly authenticatedRuntimePreflight?: 'gpu' | 'cpu-fallback' | 'gpu-dml';
   readonly uiGpuBeforeImport?: boolean;
   readonly cer?: number | null;
   readonly expectedAnchorCount?: number;
@@ -1141,7 +1141,7 @@ export function sanitizeAcceptanceEvidence(value: unknown): AcceptanceEvidenceSu
     sourceLockSha256?: string;
     modelFileCount?: number;
     modelExtractedBytes?: number;
-    authenticatedRuntimePreflight?: 'gpu-dml' | 'cpu-fallback';
+    authenticatedRuntimePreflight?: AcceptanceEvidenceSummary['authenticatedRuntimePreflight'];
     uiGpuBeforeImport?: boolean;
     cer?: number | null;
     expectedAnchorCount?: number;
@@ -1188,6 +1188,7 @@ export function sanitizeAcceptanceEvidence(value: unknown): AcceptanceEvidenceSu
   if (isSafeEvidenceCount(record.modelFileCount)) mutable.modelFileCount = record.modelFileCount;
   if (isSafeEvidenceCount(record.modelExtractedBytes)) mutable.modelExtractedBytes = record.modelExtractedBytes;
   if (
+    record.authenticatedRuntimePreflight === 'gpu' ||
     record.authenticatedRuntimePreflight === 'gpu-dml' ||
     record.authenticatedRuntimePreflight === 'cpu-fallback'
   ) {

@@ -281,7 +281,7 @@ def test_ocr_retains_document_ceiling(tmp_path: Path) -> None:
         request_id="size",
         operation="run",
         payload={
-            "requirementId": "windowsml-ocr",
+            "requirementId": "text-recognition",
             "artifactVersion": "fixture",
             "modelPath": str(model),
             "sourcePath": str(source),

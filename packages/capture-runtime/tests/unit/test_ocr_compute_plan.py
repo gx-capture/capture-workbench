@@ -111,7 +111,7 @@ def test_ordinary_ordinal_is_ort_device_id_when_preference_ranks_are_reversed() 
     selection = _plan(_snapshot(high=high, ordinary=ordinary))
 
     assert selection is not None
-    assert selection.execution_plan.mode is OcrComputeMode.GPU_DML
+    assert selection.execution_plan.mode is OcrComputeMode.GPU
     assert selection.execution_plan.dml_device_id == 1
     assert selection.execution_plan.high_performance_rank == 0
     assert selection.execution_plan.identity is not None
@@ -155,13 +155,13 @@ def test_positive_unavailable_dgpu_selects_usable_igpu() -> None:
     selection = _plan(_snapshot(high=(dgpu, igpu), ordinary=(igpu, dgpu)))
 
     assert selection is not None
-    assert selection.execution_plan.mode is OcrComputeMode.GPU_DML
+    assert selection.execution_plan.mode is OcrComputeMode.GPU
     assert selection.execution_plan.adapter_class is OcrAdapterClass.INTEGRATED
     assert selection.execution_plan.dml_device_id == 0
     assert selection.execution_plan.high_performance_rank == 1
     assert selection.execution_plan.identity is not None
     assert selection.execution_plan.identity.luid == "00000000000000aa"
-    assert selection.readiness.mode is OcrComputeMode.GPU_DML
+    assert selection.readiness.mode is OcrComputeMode.GPU
     assert selection.readiness.adapter_class is OcrAdapterClass.INTEGRATED
     assert selection.readiness.user_notice_required is False
 

@@ -44,7 +44,7 @@ def _raw_payload() -> dict[str, object]:
         },
         "segments": segments,
         "sourceText": "First\nSecond",
-        "extractionEngine": _engine("windowsml-ocr"),
+        "extractionEngine": _engine("text-recognition"),
         "warnings": [],
         "createdAt": created_at,
     }

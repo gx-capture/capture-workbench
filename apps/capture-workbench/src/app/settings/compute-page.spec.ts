@@ -125,7 +125,7 @@ function gpuPreflight(): OcrComputePreflight {
     contractSetVersion: '2',
     contractSha256: 'a'.repeat(64),
     workerSha256: 'f'.repeat(64),
-    mode: 'gpu-dml',
+    mode: 'gpu',
     adapterClass: 'dedicated',
     reasonCode: null,
     userNoticeRequired: false,

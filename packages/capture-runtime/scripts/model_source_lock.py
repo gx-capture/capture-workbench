@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import platform
 import subprocess
 import unicodedata
 from pathlib import Path, PurePosixPath
@@ -12,24 +13,25 @@ from typing import Any
 from urllib.parse import urlsplit
 
 LOCK_VERSION = "2"
-COMMIT_A_SHA = "3834db24e5d9bb321c17bd0b866d9bd38c780f0c"
+TEXT_RECOGNITION_SOURCE_COMMIT = "710cb3a8ec9c044b68ca1ee2060dbe3b3bcd0887"
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 # Release CI invokes this script with --no-project before installing the runtime.
 # Read the repository's declared owner without importing the runtime package.
 RELEASE_VERSION = json.loads(
     (REPOSITORY_ROOT / "release" / "version.json").read_text(encoding="utf-8")
 )["releaseVersion"]
-FIRST_PARTY_REPOSITORY_ROOT = "packages/capture-runtime/model-sources/commit-a"
+FIRST_PARTY_REPOSITORY_ROOT = "packages/capture-runtime/model-sources/text-recognition"
 FIRST_PARTY_ROOT = (
     "https://raw.githubusercontent.com/gx-capture/capture-workbench/"
-    f"{COMMIT_A_SHA}/packages/capture-runtime/model-sources/commit-a"
+    f"{TEXT_RECOGNITION_SOURCE_COMMIT}/{FIRST_PARTY_REPOSITORY_ROOT}"
 )
+TEXT_RECOGNITION_PROVENANCE = "provenance/text-recognition.json"
 MAX_ENTRIES = 4096
 # Admit pinned TEA primary (~4 GB), mini and aligner while bounding all downloads.
 MAX_SINGLE_FILE_BYTES = 4 * 1024**3
 MAX_TOTAL_BYTES = 8 * 1024**3
 MAX_SOURCE_LOCK_TOTAL_BYTES = 10 * 1024**3
-REQUIREMENT_IDS = ("windowsml-ocr", "speech-recognition")
+REQUIREMENT_IDS = ("text-recognition", "speech-recognition")
 # Units a host may leave uninstalled. A lock lists them after the required
 # ones, in this order, or leaves them out.
 OPTIONAL_REQUIREMENT_IDS = ("speaker-diarization", "vertical-japanese-reader")
@@ -128,7 +130,7 @@ def _first_party_url(value: object, relative: str, label: str) -> str:
     url, host = _https_url(value, label)
     expected = f"{FIRST_PARTY_ROOT}/{relative}"
     if host != "raw.githubusercontent.com" or url != expected:
-        raise ModelSourceLockError(f"{label} must bind the exact Commit A raw URL")
+        raise ModelSourceLockError(f"{label} must bind the exact Text recognition raw URL")
     return url
 
 
@@ -139,6 +141,23 @@ def _is_first_party_repository_url(value: str) -> bool:
         and parsed.hostname.lower() == "raw.githubusercontent.com"
         and parsed.path.startswith("/gx-capture/capture-workbench/")
     )
+
+
+def _read_first_party_git_blob(
+    revision: str, relative: str, label: str, repository_root: Path
+) -> bytes:
+    blob_path = f"{FIRST_PARTY_REPOSITORY_ROOT}/{relative}"
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repository_root), "cat-file", "blob", f"{revision}:{blob_path}"],
+            check=True,
+            capture_output=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise ModelSourceLockError(
+            f"{label} first-party Git blob is unavailable for {revision}:{relative}"
+        ) from error
+    return result.stdout
 
 
 def _first_party_git_blob(
@@ -152,18 +171,7 @@ def _first_party_git_blob(
 ) -> None:
     """Check lock metadata against the immutable first-party Git blob."""
 
-    blob_path = f"{FIRST_PARTY_REPOSITORY_ROOT}/{relative}"
-    try:
-        result = subprocess.run(
-            ["git", "-C", str(repository_root), "cat-file", "blob", f"{revision}:{blob_path}"],
-            check=True,
-            capture_output=True,
-        )
-    except (OSError, subprocess.CalledProcessError) as error:
-        raise ModelSourceLockError(
-            f"{label} first-party Git blob is unavailable for {revision}:{relative}"
-        ) from error
-    actual = result.stdout
+    actual = _read_first_party_git_blob(revision, relative, label, repository_root)
     actual_sha256 = hashlib.sha256(actual).hexdigest()
     if len(actual) != expected_bytes or actual_sha256 != expected_sha256:
         raise ModelSourceLockError(
@@ -197,8 +205,10 @@ def _derivation(value: object, label: str, *, known_paths: set[str]) -> None:
     )
     _text(payload["algorithm"], f"{label}.algorithm")
     _text(payload["generator"], f"{label}.generator")
-    if payload["sourceCommit"] != COMMIT_A_SHA:
-        raise ModelSourceLockError(f"{label}.sourceCommit must equal Commit A")
+    if payload["sourceCommit"] != TEXT_RECOGNITION_SOURCE_COMMIT:
+        raise ModelSourceLockError(
+            f"{label}.sourceCommit must equal the text recognition source commit"
+        )
     inputs = payload["inputs"]
     if not isinstance(inputs, list) or not inputs:
         raise ModelSourceLockError(f"{label}.inputs must be non-empty")
@@ -337,7 +347,7 @@ def _validate_requirement(
             raise ModelSourceLockError(
                 f"{requirement_id} entries must reference license and NOTICE"
             )
-    if requirement_id == "windowsml-ocr":
+    if requirement_id == "text-recognition":
         pipeline = next((item for item in validated if item["path"] == "model/pipeline.json"), None)
         if pipeline is None or pipeline["kind"] != "derived":
             raise ModelSourceLockError("OCR requirement needs derived model/pipeline.json")
@@ -393,22 +403,24 @@ def _validate_ocr_fixture(value: object) -> dict[str, Any]:
         fixture["bytes"] != OCR_FIXTURE_BYTES
         or fixture["sha256"] != OCR_FIXTURE_SHA256
         or fixture["mediaType"] != "image/png"
-        or fixture["expectedEngine"] != "windowsml-ocr"
-        or fixture["expectedModel"] != "pp-ocrv6-medium-windowsml"
-        or fixture["expectedDevice"] != "windowsml-dml"
+        or fixture["expectedEngine"] != "text-recognition"
+        or fixture["expectedModel"] != "pp-ocrv6-medium"
+        or fixture["expectedDevice"] != "directml"
         or fixture["expectedText"] != "CAPTURE OCR FIXTURE"
         or fixture["pdfBytes"] != OCR_PDF_BYTES
         or fixture["pdfSha256"] != OCR_PDF_SHA256
         or fixture["redistributable"] is not True
     ):
-        raise ModelSourceLockError("OCR fixture bytes/text/provenance are not the Commit A fixture")
+        raise ModelSourceLockError(
+            "OCR fixture bytes/text/provenance are not the text recognition fixture"
+        )
     revision = fixture["revision"]
-    if revision != COMMIT_A_SHA:
-        raise ModelSourceLockError("OCR fixture must bind Commit A")
+    if revision != TEXT_RECOGNITION_SOURCE_COMMIT:
+        raise ModelSourceLockError("OCR fixture must bind the text recognition source commit")
     for key in ("sha256", "licenseSha256", "noticeSha256", "pdfSha256"):
         _sha256(fixture[key], f"ocr fixture {key}")
     # The NOTICE names the release version, so its length changes with the
-    # version; the Commit A blob check below binds its bytes and SHA instead.
+    # version; the Text recognition blob check below binds its bytes and SHA instead.
     if fixture["licenseBytes"] != 1087:
         raise ModelSourceLockError("OCR fixture license bytes drifted")
     _first_party_url(fixture["url"], "fixtures/ocr-reference.png", "OCR fixture url")
@@ -565,7 +577,7 @@ def validate_source_lock(
         item for item in OPTIONAL_REQUIREMENT_IDS if item in optional_ids
     ):
         raise ModelSourceLockError(
-            "requirements must be ordered windowsml-ocr then speech-recognition, "
+            "requirements must be ordered text-recognition then speech-recognition, "
             "then any optional units in their fixed order"
         )
     validated_requirements: list[dict[str, Any]] = []
@@ -747,9 +759,60 @@ def cpu_speech_model_delivery(lock: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def repin_text_recognition(lock_path: Path) -> None:
+    """Refresh the OCR source lock against the committed first-party snapshot."""
+    lock = json.loads(lock_path.read_bytes())
+    requirement = next(
+        item
+        for item in lock["requirements"]
+        if any(file["path"] == "model/pipeline.json" for file in item["files"])
+    )
+    requirement["requirementId"] = "text-recognition"
+    revision = TEXT_RECOGNITION_SOURCE_COMMIT
+
+    def pin(relative: str) -> tuple[int, str, str]:
+        blob = _read_first_party_git_blob(revision, relative, relative, REPOSITORY_ROOT)
+        return len(blob), hashlib.sha256(blob).hexdigest(), f"{FIRST_PARTY_ROOT}/{relative}"
+
+    for item in requirement["files"]:
+        if item["kind"] == "provenance":
+            item["path"] = TEXT_RECOGNITION_PROVENANCE
+        elif item["path"] == "model/pipeline.json":
+            item["derivation"].update(
+                generator="packages/capture-runtime/scripts/generate_text_recognition_sources.py",
+                sourceCommit=revision,
+                toolVersions={
+                    "generator": "text-recognition-source-v2",
+                    "python": platform.python_version(),
+                },
+            )
+        else:
+            continue
+        item["bytes"], item["sha256"], item["url"] = pin(item["path"])
+        item["revision"] = revision
+
+    fixture = next(item for item in lock["fixtures"] if item["kind"] == "ocr")
+    fixture.update(
+        revision=revision,
+        expectedEngine="text-recognition",
+        expectedModel="pp-ocrv6-medium",
+        expectedDevice="directml",
+    )
+    fixture["bytes"], fixture["sha256"], fixture["url"] = pin("fixtures/ocr-reference.png")
+    fixture["pdfBytes"], fixture["pdfSha256"], fixture["pdfUrl"] = pin("fixtures/ocr-scanned.pdf")
+    fixture["licenseBytes"], fixture["licenseSha256"], fixture["licenseUrl"] = pin(
+        fixture["licensePath"]
+    )
+    fixture["noticeBytes"], fixture["noticeSha256"], fixture["noticeUrl"] = pin(
+        fixture["noticePath"]
+    )
+    validate_source_lock(lock, require_approved=False)
+    lock_path.write_bytes(canonical_json_bytes(lock))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("operation", choices=("classify", "validate"))
+    parser.add_argument("operation", choices=("classify", "repin-text-recognition", "validate"))
     parser.add_argument(
         "--lock",
         type=Path,
@@ -759,6 +822,11 @@ def main() -> None:
     )
     parser.add_argument("--output", type=Path)
     arguments = parser.parse_args()
+    if arguments.operation == "repin-text-recognition":
+        if arguments.output is not None:
+            parser.error("--output is supported only by classify")
+        repin_text_recognition(arguments.lock)
+        return
     lock = load_source_lock(arguments.lock, require_approved=arguments.operation == "validate")
     if arguments.operation == "classify":
         content = canonical_json_bytes({"releaseMode": release_mode(lock)})

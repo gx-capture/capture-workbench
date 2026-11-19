@@ -135,7 +135,6 @@ def _extract(
     extractor = StandaloneRuntimeCaptureExtractor(
         SystemClock(),
         ExtractionRuntimeConfig(
-            windowsml_model_dir=tmp_path / "windowsml",
             temp_dir=tmp_path / "temp",
             max_pdf_pages=10,
             max_image_pixels=100_000,

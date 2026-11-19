@@ -595,7 +595,7 @@ function prepareFirstRun(page: Page) {
   const chooseFiles = page.getByTestId('ocr-choose-files');
   const installProgress = page.getByTestId('ocr-install-progress');
   const installButton = page.getByTestId('first-run-install');
-  const requiredUnits = ['windowsml-ocr', 'speech-recognition'] as const;
+  const requiredUnits = ['text-recognition', 'speech-recognition'] as const;
   const terminalErrorStatuses = new Set([
     'failed',
     'cancelled',

@@ -24,7 +24,7 @@ const cpuZip = 'capture-engine-speech-recognition-cpu-1.0.0-windows-x64.zip';
 function catalog(speech: Record<string, unknown>) {
   return {
     requirements: [
-      { requirementId: 'windowsml-ocr', ...delivery('capture-engine-ocr.zip') },
+      { requirementId: 'text-recognition', ...delivery('capture-engine-ocr.zip') },
       { requirementId: 'speech-recognition', ...speech },
     ],
   };

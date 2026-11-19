@@ -22,11 +22,11 @@ import {
         >
           {{ cpuNotice() ?? defaults.cpuNotice }}
         </p>
-      } @else if (compute.mode === 'gpu-dml') {
+      } @else if (compute.mode === 'gpu') {
         <p
           class="runtime-compute-status"
           data-testid="ocr-compute-status"
-          data-mode="gpu-dml"
+          data-mode="gpu"
           role="status"
         >
           {{ gpuLabel() ?? defaults.gpuAcceleration }}

@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import struct
 import zlib
 from pathlib import Path
 from typing import Final
 
-RELEASE_VERSION: Final = "0.10.0"
+RELEASE_VERSION: Final[str] = json.loads(
+    (Path(__file__).resolve().parents[3] / "release" / "version.json").read_text(encoding="utf-8")
+)["releaseVersion"]
 DET_ONNX_BYTES: Final = 62032837
 DET_ONNX_SHA256: Final = "eb13b44b25bb36f89528b68720af8a61d9cf381176107f465db1757b65d086e1"
 DET_YAML_BYTES: Final = 886
@@ -261,7 +264,7 @@ def _license_text() -> bytes:
 
 def _notice_text() -> bytes:
     return (
-        b"Capture Workbench v0.10.0 Commit A notice\n\n"
+        b"Capture Workbench text recognition notice\n\n"
         b"These files contain no model weights. The fixed OCR\n"
         b"phrase is intentionally limited to `CAPTURE OCR FIXTURE`. PaddleOCR\n"
         b"and model-revision metadata identify user-directed upstream inputs; their\n"
@@ -300,9 +303,9 @@ def _provenance(
         },
         {
             "bytes": len(png),
-            "expectedDevice": "windowsml-dml",
-            "expectedEngine": "windowsml-ocr",
-            "expectedModel": "pp-ocrv6-medium-windowsml",
+            "expectedDevice": "directml",
+            "expectedEngine": "text-recognition",
+            "expectedModel": "pp-ocrv6-medium",
             "expectedText": OCR_TEXT,
             "kind": "ocr-fixture",
             "licensePath": "licenses/LICENSE.txt",
@@ -325,7 +328,7 @@ def _provenance(
     ]
     return _canonical_json(
         {
-            "algorithm": "capture-workbench-commit-a-fixtures-v1",
+            "algorithm": "capture-workbench-ocr-fixtures-v1",
             "files": files,
             "fixedUpstreamRevisions": {
                 "ndlocrLite": NDLOCR_LITE_REVISION,
@@ -335,7 +338,7 @@ def _provenance(
                 "whisperFallback": WHISPER_FALLBACK_REVISION,
                 "whisperPrimary": WHISPER_PRIMARY_REVISION,
             },
-            "generator": "packages/capture-runtime/scripts/generate_commit_a_fixtures.py",
+            "generator": "packages/capture-runtime/scripts/generate_text_recognition_sources.py",
             "licensePath": "licenses/LICENSE.txt",
             "noticePath": "licenses/NOTICE.txt",
             "sourceRepositories": {
@@ -344,7 +347,7 @@ def _provenance(
                 "paddleocrRecognition": REC_REPOSITORY,
             },
             "releaseVersion": RELEASE_VERSION,
-            "stage": "commit-a",
+            "stage": "text-recognition",
         }
     )
 
@@ -384,7 +387,7 @@ def build_files() -> dict[str, bytes]:
                 },
             ],
             "cpuFallback": "provider-missing-only",
-            "device": "windowsml-dml",
+            "device": "directml",
             "dictionary": {
                 "languageCoverage": "traditional-chinese-multilingual",
                 "path": "rec/ppocrv6_dict.txt",
@@ -400,7 +403,7 @@ def build_files() -> dict[str, bytes]:
                 "requireExecutionEvidence": True,
             },
             "failClosedOnDmlError": True,
-            "model": "pp-ocrv6-medium-windowsml",
+            "model": "pp-ocrv6-medium",
             "models": {
                 "det": {
                     "modelDir": "det",
@@ -452,7 +455,9 @@ def build_files() -> dict[str, bytes]:
         "licenses/LICENSE.txt": license_bytes,
         "licenses/NOTICE.txt": notice_bytes,
         "model/pipeline.json": pipeline,
-        "provenance/commit-a.json": _provenance(png, pdf, pipeline, license_bytes, notice_bytes),
+        "provenance/text-recognition.json": _provenance(
+            png, pdf, pipeline, license_bytes, notice_bytes
+        ),
     }
 
 
@@ -464,13 +469,13 @@ def _write_or_check(root: Path, *, check: bool) -> None:
         }
         if actual_paths != set(expected):
             raise SystemExit(
-                "Commit A fixture file set drifted: "
+                "Text recognition fixture file set drifted: "
                 f"expected {sorted(expected)}, found {sorted(actual_paths)}"
             )
         for relative, content in expected.items():
             target = root / relative
             if target.read_bytes() != content:
-                raise SystemExit(f"Commit A fixture bytes drifted: {relative}")
+                raise SystemExit(f"Text recognition fixture bytes drifted: {relative}")
         return
     for relative, content in expected.items():
         target = root / relative
@@ -483,12 +488,12 @@ def main() -> None:
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path(__file__).resolve().parents[1] / "model-sources" / "commit-a",
+        default=Path(__file__).resolve().parents[1] / "model-sources" / "text-recognition",
     )
     parser.add_argument(
         "--check",
         action="store_true",
-        help="verify tracked Commit A bytes without writing files",
+        help="verify tracked Text recognition bytes without writing files",
     )
     arguments = parser.parse_args()
     _write_or_check(arguments.output.resolve(), check=arguments.check)

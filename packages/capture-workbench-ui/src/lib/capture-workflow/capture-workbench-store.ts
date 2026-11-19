@@ -433,7 +433,7 @@ export class CaptureWorkbenchStore {
 
   private requirementIsNeeded(requirement: RuntimeRequirement): boolean {
     const enabled = this.resolvedConfig().enabledSources;
-    if (requirement.requirementId === 'windowsml-ocr') {
+    if (requirement.requirementId === 'text-recognition') {
       return enabled.includes('pdf') || enabled.includes('image');
     }
     if (requirement.requirementId === 'speech-recognition')

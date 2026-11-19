@@ -22,7 +22,7 @@ const DEFAULT_INSTALL_TIMELINE = {
 
 function scenarioRequirements(status: string): readonly Record<string, unknown>[] {
   return [
-    fakeRequirement('windowsml-ocr', 'WindowsML OCR', status, 296_000_000),
+    fakeRequirement('text-recognition', 'Text recognition', status, 296_000_000),
     fakeRequirement('speech-recognition', '本機語音轉文字', status, 10_500_000_000),
     fakeRequirement('speaker-diarization', '說話者辨識', status, 714_000_000),
   ];

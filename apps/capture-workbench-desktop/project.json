@@ -347,7 +347,7 @@
         "commands": [
           "corepack pnpm nx run capture-workbench-desktop:stage-product-runtime",
           "corepack pnpm nx run capture-workbench-desktop:build",
-          "node apps/capture-workbench-desktop/scripts/real-desktop-ocr-smoke.ts --expected-ocr-device windowsml-dml"
+          "node apps/capture-workbench-desktop/scripts/real-desktop-ocr-smoke.ts --expected-ocr-device directml"
         ],
         "parallel": false
       }

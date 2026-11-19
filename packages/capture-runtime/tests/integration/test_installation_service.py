@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 
 from capture_runtime.clock import SystemClock
+from capture_runtime.contracts import RuntimeInstallationStatus
 from capture_runtime.install_progress import DownloadedBytes, DownloadProgress
 from capture_runtime.provisioning.application.installation_service import (
     TERMINAL_INSTALLATION_STATUSES,
@@ -101,6 +103,38 @@ async def _wait_for_terminal(service: InstallationService, installation_id: str)
     raise AssertionError(f"installation did not finish: {installation_id}")
 
 
+@pytest.mark.parametrize("status", ["completed", "running"])
+def test_installation_repository_reads_historical_ocr_id(tmp_path: Path, status: str) -> None:
+    repository = InstallationRepository(tmp_path, clock=SystemClock(), retention_hours=24)
+    repository.initialize()
+    record, _ = repository.create_or_get(
+        idempotency_key="historical-install",
+        request_fingerprint="a" * 64,
+        requirement_id="text-recognition",
+    )
+    installation_id = record.job.installation_id
+    path = tmp_path / installation_id / "metadata.json"
+    historical = json.loads(path.read_bytes())
+    historical["job"]["requirementId"] = "windowsml-ocr"
+    historical["job"]["status"] = status
+    path.write_text(json.dumps(historical, indent=2), encoding="utf-8")
+    before = path.read_bytes()
+
+    repository.initialize()
+    job = repository.get(installation_id).job
+    assert repository.list() == [job]
+    assert job.requirement_id == "text-recognition"
+    if status == "completed":
+        assert job.status is RuntimeInstallationStatus.COMPLETED
+        assert path.read_bytes() == before
+    else:
+        assert job.status is RuntimeInstallationStatus.FAILED
+        assert job.error is not None and job.error.code == "runtime_restarted"
+        after = json.loads(path.read_bytes())
+        assert after["job"]["requirementId"] == "windowsml-ocr"
+        assert after["requestFingerprint"] == historical["requestFingerprint"]
+
+
 def test_engine_installation_failure_preserves_safe_runtime_message(tmp_path: Path) -> None:
     asyncio.run(_test_engine_installation_failure_preserves_safe_runtime_message(tmp_path))
 
@@ -114,7 +148,7 @@ async def _test_engine_installation_failure_preserves_safe_runtime_message(tmp_p
     job = service.create(
         idempotency_key="failure-key",
         request_fingerprint="failure-fingerprint",
-        requirement_id="windowsml-ocr",
+        requirement_id="text-recognition",
     )
 
     await _wait_for_terminal(service, job.installation_id)
@@ -171,7 +205,7 @@ async def _test_dependency_installations_are_serialized(tmp_path: Path) -> None:
     ocr = service.create(
         idempotency_key="ocr-key",
         request_fingerprint="ocr-fingerprint",
-        requirement_id="windowsml-ocr",
+        requirement_id="text-recognition",
     )
     speech = service.create(
         idempotency_key="speech-key",
@@ -186,8 +220,8 @@ async def _test_dependency_installations_are_serialized(tmp_path: Path) -> None:
 
     assert installer.max_active == 1
     assert installer.events == [
-        "start:windowsml-ocr",
-        "end:windowsml-ocr",
+        "start:text-recognition",
+        "end:text-recognition",
         "start:speech-recognition",
         "end:speech-recognition",
     ]
@@ -289,9 +323,9 @@ def test_uninstall_holds_new_captures_around_the_removal(tmp_path: Path) -> None
     events: list[str] = []
     service = _uninstall_service(tmp_path, events)
 
-    asyncio.run(service.uninstall("windowsml-ocr", captures=RecordingCaptureGate(events)))
+    asyncio.run(service.uninstall("text-recognition", captures=RecordingCaptureGate(events)))
 
-    assert events == ["hold", "release", "uninstall:windowsml-ocr", "resume"]
+    assert events == ["hold", "release", "uninstall:text-recognition", "resume"]
 
 
 def test_uninstall_refuses_while_a_capture_is_active_or_starts_meanwhile(tmp_path: Path) -> None:
@@ -300,12 +334,14 @@ def test_uninstall_refuses_while_a_capture_is_active_or_starts_meanwhile(tmp_pat
 
     with pytest.raises(RequirementInUseError):
         asyncio.run(
-            service.uninstall("windowsml-ocr", captures=RecordingCaptureGate(events, active=True))
+            service.uninstall(
+                "text-recognition", captures=RecordingCaptureGate(events, active=True)
+            )
         )
     with pytest.raises(RequirementInUseError):
         asyncio.run(
             service.uninstall(
-                "windowsml-ocr", captures=RecordingCaptureGate(events, holdable=False)
+                "text-recognition", captures=RecordingCaptureGate(events, holdable=False)
             )
         )
 
@@ -343,7 +379,7 @@ async def _test_uninstall_waits_for_another_installation(tmp_path: Path) -> None
         await service.uninstall("speech-recognition", captures=RecordingCaptureGate(events))
 
     uninstall = asyncio.create_task(
-        service.uninstall("windowsml-ocr", captures=RecordingCaptureGate(events))
+        service.uninstall("text-recognition", captures=RecordingCaptureGate(events))
     )
     await asyncio.sleep(0.01)
     assert not uninstall.done()
@@ -353,4 +389,4 @@ async def _test_uninstall_waits_for_another_installation(tmp_path: Path) -> None
     await service.shutdown()
 
     assert service.get(job.installation_id).status.value == "completed"
-    assert events == ["hold", "release", "uninstall:windowsml-ocr", "resume"]
+    assert events == ["hold", "release", "uninstall:text-recognition", "resume"]

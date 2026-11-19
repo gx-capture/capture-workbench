@@ -621,5 +621,170 @@
     "match": "word",
     "replacement": "pick_distinct_free_loopback_port",
     "allowed": []
+  },
+  {
+    "name": "windowsml-ocr",
+    "match": "word",
+    "replacement": "text-recognition",
+    "allowed": [
+      {
+        "glob": "packages/capture-runtime/src/capture_runtime/storage/common.py",
+        "reason": "Projects historical OCR identities from stored runtime records."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_streaming_api.py",
+        "reason": "Historical capture records and replay fixtures."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_structuring_session.py",
+        "reason": "Historical completed session fixture."
+      },
+      {
+        "glob": "packages/capture-runtime/src/capture_runtime/contracts/__init__.py",
+        "reason": "Rejects the historical ID with migration guidance."
+      },
+      {
+        "glob": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/system_requirement_installer.py",
+        "reason": "Rejects the historical ID in enabled requirements."
+      },
+      {
+        "glob": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/installation_repository.py",
+        "reason": "Reads historical installation jobs and preserves the stored ID during recovery."
+      },
+      {
+        "glob": "packages/capture-runtime/src/capture_runtime/provisioning/infrastructure/_engine_installation_residue.py",
+        "reason": "Exact managed directory name for upgrade cleanup."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_api.py",
+        "reason": "Historical-ID rejection fixtures."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_installation_service.py",
+        "reason": "Historical installation metadata fixtures."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/unit/test_app_data_lock.py",
+        "reason": "Historical installed directory and link fixtures."
+      }
+    ]
+  },
+  {
+    "name": "windowsml-dml",
+    "match": "word",
+    "replacement": "directml",
+    "allowed": [
+      {
+        "glob": "packages/capture-runtime/src/capture_runtime/storage/common.py",
+        "reason": "Projects historical OCR identities from stored runtime records."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_streaming_api.py",
+        "reason": "Historical capture records and replay fixtures."
+      }
+    ]
+  },
+  {
+    "name": "pp-ocrv6-medium-windowsml",
+    "match": "word",
+    "replacement": "pp-ocrv6-medium",
+    "allowed": [
+      {
+        "glob": "packages/capture-runtime/src/capture_runtime/storage/common.py",
+        "reason": "Projects historical OCR identities from stored runtime records."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_streaming_api.py",
+        "reason": "Historical capture records and replay fixtures."
+      }
+    ]
+  },
+  {
+    "name": "WindowsML OCR",
+    "match": "substring",
+    "replacement": "Text recognition",
+    "allowed": [
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_streaming_api.py",
+        "reason": "Historical capture records and replay fixtures."
+      }
+    ]
+  },
+  {
+    "name": "deterministic-windowsml-v1",
+    "match": "word",
+    "replacement": "deterministic-ocr-v1",
+    "allowed": [
+      {
+        "glob": "packages/capture-runtime/src/capture_runtime/storage/common.py",
+        "reason": "Projects historical OCR identities from stored runtime records."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_streaming_api.py",
+        "reason": "Historical capture records and replay fixtures."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_structuring_session.py",
+        "reason": "Historical completed session fixture."
+      }
+    ]
+  },
+  {
+    "name": "gpu-dml",
+    "match": "word",
+    "replacement": "gpu",
+    "allowed": []
+  },
+  {
+    "name": "dml_provider_unavailable",
+    "match": "word",
+    "replacement": "gpu_provider_unavailable",
+    "allowed": [
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_streaming_api.py",
+        "reason": "Historical capture records and replay fixtures."
+      }
+    ]
+  },
+  {
+    "name": "CAPTURE_WINDOWSML_MODEL_DIR",
+    "match": "word",
+    "replacement": "remove the setting",
+    "allowed": [
+      {
+        "glob": "packages/capture-runtime/src/capture_runtime/config.py",
+        "reason": "Rejects the removed environment variable at startup."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/unit/test_engine_adapters.py",
+        "reason": "Retired environment-variable rejection fixture."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/unit/test_ocr_vertical_routing.py",
+        "reason": "Verifies the removed parent setting does not reach the worker."
+      },
+      {
+        "glob": "packages/capture-runtime/tests/integration/test_recovery_release_and_ollama.py",
+        "reason": "Verifies the removed parent setting does not reach the worker."
+      }
+    ]
+  },
+  {
+    "name": "WindowsMLOcrAdapter",
+    "match": "word",
+    "replacement": "OnnxOcrAdapter",
+    "allowed": []
+  },
+  {
+    "name": "ocr_windowsml_adapter",
+    "match": "substring",
+    "replacement": "ocr_onnx_adapter",
+    "allowed": []
+  },
+  {
+    "name": "commit-a",
+    "match": "substring",
+    "replacement": "text-recognition source",
+    "allowed": []
   }
 ]

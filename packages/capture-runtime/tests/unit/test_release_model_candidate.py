@@ -202,7 +202,7 @@ def _candidate_catalog(
             )
         else:
             name = {
-                "windowsml-ocr": "capture-engine-ocr.zip",
+                "text-recognition": "capture-engine-ocr.zip",
                 "speech-recognition": "capture-engine-speech-recognition.zip",
             }[requirement_id]
             if requirement_id == "speech-recognition" and legacy_speech_files is not None:

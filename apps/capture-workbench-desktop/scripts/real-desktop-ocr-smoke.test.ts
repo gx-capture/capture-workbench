@@ -36,7 +36,7 @@ import {
   readDurableOcrProvenance,
   readOcrComputeModeFromSettings,
   readOcrProvenance,
-  readWindowsMlOcrRequirementStatus,
+  readOcrRequirementStatus,
   requestDesktopTeardown,
   realDesktopRuntimeReadyTimeoutMs,
   realDesktopTeardownTimeoutMs,
@@ -143,7 +143,7 @@ function phase1PageOnePdfSemanticFixture(): OcrSemanticEvidenceV1 {
     sourceSha256: '4'.repeat(64),
     captureId: 'capture-1',
     status: 'completed',
-    ocrDevice: 'windowsml-dml',
+    ocrDevice: 'directml',
     pageCount: 1,
     pages: [{
       page: 1,
@@ -162,10 +162,10 @@ function phase1PageOnePdfSemanticFixture(): OcrSemanticEvidenceV1 {
     provenance: {
       runtimeVersion: RELEASE_VERSION,
       contractSha256: '5'.repeat(64),
-      engine: 'windowsml-ocr',
-      model: 'pp-ocrv6-medium-windowsml',
+      engine: 'text-recognition',
+      model: 'pp-ocrv6-medium',
       modelDigest: `sha256:${'6'.repeat(64)}`,
-      device: 'windowsml-dml',
+      device: 'directml',
       profileId: 'capture-workbench-ocr-pipeline-v1',
       profileSpecSha256: '7'.repeat(64),
       workerSha256: '8'.repeat(64),
@@ -885,7 +885,7 @@ test('non-acceptance desktop OCR evidence requires OCR-only checkpoint invariant
     structuredBlockCount: 0,
     expectedAnchorCount: 4,
     matchedAnchorCount: 4,
-    ocrDevice: 'windowsml-dml',
+    ocrDevice: 'directml',
     documentDeletedAfterVerification: true,
   };
 
@@ -938,7 +938,7 @@ test('Phase 1 OCR-only acceptance keeps OCR semantic, projection, GPU, and clean
     structuredBlockCount: 0,
     expectedAnchorCount: 4,
     matchedAnchorCount: 4,
-    ocrDevice: 'windowsml-dml',
+    ocrDevice: 'directml',
     documentDeletedAfterVerification: true,
     ocrExecutionProof: proof,
   };
@@ -1380,21 +1380,21 @@ test('real desktop OCR cleanup owns only UUID-named smoke documents', () => {
 test('DirectML smoke CLI requirement rejects CPU provenance', () => {
   assert.equal(
     resolveExpectedOcrDevice(
-      ['--expected-ocr-device', 'windowsml-dml'],
+      ['--expected-ocr-device', 'directml'],
       'cpu',
     ),
-    'windowsml-dml',
+    'directml',
   );
   assert.doesNotThrow(() =>
-    assertExpectedOcrDevice('windowsml-dml', 'windowsml-dml'),
+    assertExpectedOcrDevice('directml', 'directml'),
   );
   assert.throws(
-    () => assertExpectedOcrDevice('cpu', 'windowsml-dml'),
-    /used cpu; expected windowsml-dml/u,
+    () => assertExpectedOcrDevice('cpu', 'directml'),
+    /used cpu; expected directml/u,
   );
   assert.throws(
     () => resolveExpectedOcrDevice(['--expected-ocr-device', 'unknown']),
-    /must be windowsml-dml or cpu/u,
+    /must be directml or cpu/u,
   );
 });
 
@@ -1880,14 +1880,14 @@ test('OCR screenshot evidence masks whole privacy-sensitive result panes and met
 test('real desktop OCR provenance requires the PaddleOCR engine', () => {
   assert.deepEqual(
     parseOcrProvenance({
-      engine: 'windowsml-ocr',
-      model: 'pp-ocrv6-medium-windowsml',
-      device: 'windowsml-dml',
+      engine: 'text-recognition',
+      model: 'pp-ocrv6-medium',
+      device: 'directml',
     }),
     {
-      engine: 'windowsml-ocr',
-      model: 'pp-ocrv6-medium-windowsml',
-      device: 'windowsml-dml',
+      engine: 'text-recognition',
+      model: 'pp-ocrv6-medium',
+      device: 'directml',
     },
   );
   assert.throws(
@@ -1961,7 +1961,7 @@ test('first-run OCR setup unchecks ASR and speakers, retries once on filesystem 
     },
     textContent: async () => null,
     evaluateAll: async () => (testId === 'engine-row'
-      ? [{ id: 'windowsml-ocr', status: ocrEngineStatus, text: 'OCR' }]
+      ? [{ id: 'text-recognition', status: ocrEngineStatus, text: 'OCR' }]
       : []),
   });
 
@@ -2006,19 +2006,19 @@ test('first-run OCR setup unchecks ASR and speakers, retries once on filesystem 
     url: () => (route === 'ocr' ? 'http://tauri.localhost/ocr' : 'http://tauri.localhost/settings/engines'),
     getByTestId: testIdLocator,
     locator: (selector: string) => {
-      if (selector === '[data-testid="engine-row"][data-requirement-id="windowsml-ocr"]') return engineRowLocator;
-      if (selector === '[data-testid="engine-row-details"][data-requirement-id="windowsml-ocr"]') return engineDetailsLocator;
+      if (selector === '[data-testid="engine-row"][data-requirement-id="text-recognition"]') return engineRowLocator;
+      if (selector === '[data-testid="engine-row-details"][data-requirement-id="text-recognition"]') return engineDetailsLocator;
       return {};
     },
     evaluate: async (_fn: unknown, payload: { readonly commandName?: string }) => {
       if (payload?.commandName === 'runtime_requirements') {
-        return { items: [{ requirementId: 'windowsml-ocr', status: 'installable' }] };
+        return { items: [{ requirementId: 'text-recognition', status: 'installable' }] };
       }
       if (payload?.commandName === 'runtime_list_installations') {
         return {
           items: ocrEngineStatus === 'failed'
             ? [{
-                requirementId: 'windowsml-ocr',
+                requirementId: 'text-recognition',
                 status: 'failed',
                 error: { code: 'installation_filesystem', message: 'Transient disk lock' },
               }]
@@ -2054,12 +2054,12 @@ test('first-run OCR setup handles already-ready, active-installation, dismissed-
     }),
     evaluate: async (_fn: unknown, payload: { readonly commandName?: string }) => (
       payload?.commandName === 'runtime_requirements'
-        ? { items: [{ requirementId: 'windowsml-ocr', status: 'ready' }] }
+        ? { items: [{ requirementId: 'text-recognition', status: 'ready' }] }
         : { items: [] }
     ),
   } as unknown as Page;
 
-  assert.equal(await readWindowsMlOcrRequirementStatus(readyPage), 'ready');
+  assert.equal(await readOcrRequirementStatus(readyPage), 'ready');
   assert.deepEqual(await runOcrFirstRunSetup(readyPage), { installRequired: false });
   await assert.rejects(
     () => runOcrFirstRunSetup(readyPage, { failIfAlreadyReady: true }),
@@ -2101,11 +2101,11 @@ test('first-run OCR setup handles already-ready, active-installation, dismissed-
       evaluateAll: async () => [],
     }),
     locator: (selector: string) => (
-      selector === '[data-testid="engine-row"][data-requirement-id="windowsml-ocr"]' ? dismissedRow : {}
+      selector === '[data-testid="engine-row"][data-requirement-id="text-recognition"]' ? dismissedRow : {}
     ),
     evaluate: async (_fn: unknown, payload: { readonly commandName?: string }) => (
       payload?.commandName === 'runtime_requirements'
-        ? { items: [{ requirementId: 'windowsml-ocr', status: 'installable' }] }
+        ? { items: [{ requirementId: 'text-recognition', status: 'installable' }] }
         : { items: [] }
     ),
   } as unknown as Page;
@@ -2145,8 +2145,8 @@ test('first-run OCR setup handles already-ready, active-installation, dismissed-
       evaluateAll: async () => [],
     }),
     locator: (selector: string) => {
-      if (selector === '[data-testid="engine-row"][data-requirement-id="windowsml-ocr"]') return failingRow;
-      if (selector === '[data-testid="engine-row-details"][data-requirement-id="windowsml-ocr"]') {
+      if (selector === '[data-testid="engine-row"][data-requirement-id="text-recognition"]') return failingRow;
+      if (selector === '[data-testid="engine-row-details"][data-requirement-id="text-recognition"]') {
         return {
           isVisible: async () => detailsShown,
           getByTestId: () => ({ textContent: async () => 'Checksum mismatch while downloading OCR pack' }),
@@ -2156,12 +2156,12 @@ test('first-run OCR setup handles already-ready, active-installation, dismissed-
     },
     evaluate: async (_fn: unknown, payload: { readonly commandName?: string }) => {
       if (payload?.commandName === 'runtime_requirements') {
-        return { items: [{ requirementId: 'windowsml-ocr', status: 'installable' }] };
+        return { items: [{ requirementId: 'text-recognition', status: 'installable' }] };
       }
       if (payload?.commandName === 'runtime_list_installations') {
         return {
           items: [{
-            requirementId: 'windowsml-ocr',
+            requirementId: 'text-recognition',
             status: 'failed',
             error: { code: 'download_failed', message: 'Checksum mismatch while downloading OCR pack' },
           }],
@@ -2181,7 +2181,7 @@ test('first-run OCR setup handles already-ready, active-installation, dismissed-
 
 test('Settings › Compute observation navigates cleanly and supports DML and CPU variants', async () => {
   for (const scenario of [
-    { targetTestId: 'ocr-compute-status', modeAttr: 'gpu-dml', expected: { visible: true, mode: 'gpu-dml' } },
+    { targetTestId: 'ocr-compute-status', modeAttr: 'gpu', expected: { visible: true, mode: 'gpu' } },
     { targetTestId: 'ocr-compute-notice', modeAttr: 'cpu-fallback', expected: { visible: true, mode: 'cpu-fallback' } },
     { targetTestId: 'compute-ocr-detected', modeAttr: null, expected: { visible: true, mode: 'cpu-fallback' } },
   ] as const) {
@@ -2234,9 +2234,9 @@ test('multi-page OCR result and diagnostics provenance verification', async () =
       getAttribute: async (attr: string) => {
         if (id === 'diagnostics-document' && attr === 'data-document-id') return 'doc-1';
         if (id === 'diagnostics-extraction-provenance') {
-          if (attr === 'data-engine') return 'windowsml-ocr';
-          if (attr === 'data-model') return 'pp-ocrv6-medium-windowsml';
-          if (attr === 'data-device') return 'windowsml-dml';
+          if (attr === 'data-engine') return 'text-recognition';
+          if (attr === 'data-model') return 'pp-ocrv6-medium';
+          if (attr === 'data-device') return 'directml';
           if (attr === 'data-digest') return 'a'.repeat(64);
         }
         return null;
@@ -2258,9 +2258,9 @@ test('multi-page OCR result and diagnostics provenance verification', async () =
   const provenance = await readOcrProvenance(fakePage, 'doc-1');
   assert.equal(route, 'diagnostics');
   assert.deepEqual(provenance, {
-    engine: 'windowsml-ocr',
-    model: 'pp-ocrv6-medium-windowsml',
-    device: 'windowsml-dml',
+    engine: 'text-recognition',
+    model: 'pp-ocrv6-medium',
+    device: 'directml',
     digest: 'a'.repeat(64),
   });
 
@@ -2276,17 +2276,17 @@ test('multi-page OCR result and diagnostics provenance verification', async () =
   const durable = readDurableOcrProvenance({
     raw: {
       extractionEngine: {
-        engine: 'windowsml-ocr',
-        model: 'pp-ocrv6-medium-windowsml',
-        device: 'windowsml-dml',
+        engine: 'text-recognition',
+        model: 'pp-ocrv6-medium',
+        device: 'directml',
         digest: 'a'.repeat(64),
       },
     },
   });
   assert.deepEqual(durable, {
-    engine: 'windowsml-ocr',
-    model: 'pp-ocrv6-medium-windowsml',
-    device: 'windowsml-dml',
+    engine: 'text-recognition',
+    model: 'pp-ocrv6-medium',
+    device: 'directml',
     digest: 'a'.repeat(64),
   });
 
@@ -2301,9 +2301,9 @@ test('multi-page OCR result and diagnostics provenance verification', async () =
       getAttribute: async (attr: string) => {
         if (id === 'diagnostics-document' && attr === 'data-document-id') return 'doc-1';
         if (id === 'diagnostics-extraction-provenance') {
-          if (attr === 'data-engine') return 'windowsml-ocr';
-          if (attr === 'data-model') return 'pp-ocrv6-medium-windowsml';
-          if (attr === 'data-device') return 'windowsml-dml';
+          if (attr === 'data-engine') return 'text-recognition';
+          if (attr === 'data-model') return 'pp-ocrv6-medium';
+          if (attr === 'data-device') return 'directml';
           if (attr === 'data-digest') return extractionDigest;
         }
         return null;
@@ -2315,9 +2315,9 @@ test('multi-page OCR result and diagnostics provenance verification', async () =
   const matchingDetail = {
     raw: {
       extractionEngine: {
-        engine: 'windowsml-ocr',
-        model: 'pp-ocrv6-medium-windowsml',
-        device: 'windowsml-dml',
+        engine: 'text-recognition',
+        model: 'pp-ocrv6-medium',
+        device: 'directml',
         digest: extractionDigest,
       },
     },
@@ -2340,9 +2340,9 @@ test('multi-page OCR result and diagnostics provenance verification', async () =
         ...matchingDetail,
         raw: {
           extractionEngine: {
-            engine: 'windowsml-ocr',
-            model: 'pp-ocrv6-medium-windowsml',
-            device: 'windowsml-dml',
+            engine: 'text-recognition',
+            model: 'pp-ocrv6-medium',
+            device: 'directml',
             digest: 'e'.repeat(64),
           },
         },
@@ -2424,7 +2424,7 @@ test('runtime error and diagnostics helpers inspect runtime-status and engine ro
       }
       if (id === 'engine-row') {
         return {
-          evaluateAll: async () => [{ id: 'windowsml-ocr', status: 'failed', text: 'OCR' }],
+          evaluateAll: async () => [{ id: 'text-recognition', status: 'failed', text: 'OCR' }],
         };
       }
       return { isVisible: async () => false };

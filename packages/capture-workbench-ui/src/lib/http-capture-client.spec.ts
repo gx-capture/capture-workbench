@@ -279,7 +279,7 @@ describe('HttpCaptureClient', () => {
       segments: [],
       sourceText: '',
       extractionEngine: {
-        engine: 'windowsml',
+        engine: 'text-recognition',
         model: 'test-ocr',
         digest: `sha256:${'b'.repeat(64)}`,
       },

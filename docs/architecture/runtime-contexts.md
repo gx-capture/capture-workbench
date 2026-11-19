@@ -44,6 +44,7 @@ flowchart LR
   n_capture_runtime_main_ --> n_capture_runtime_frozen_extraction_residue
   n_capture_runtime_main_ --> n_capture_runtime_app
   n_capture_runtime_main_ --> n_capture_runtime_config
+  n_capture_runtime_main_ --> n_capture_runtime_provisioning
   n_capture_runtime_main_ --> n_capture_runtime_storage
   n_capture_runtime_frozen_extraction_residue --> n_capture_runtime_provisioning
   n_capture_runtime_pdf_source --> n_capture_runtime_ocr
@@ -74,6 +75,7 @@ flowchart LR
   n_capture_runtime_capture --> n_capture_runtime_provisioning
   n_capture_runtime_capture --> n_capture_runtime_routes
   n_capture_runtime_capture --> n_capture_runtime_speech
+  n_capture_runtime_capture --> n_capture_runtime_storage
   n_capture_runtime_capture --> n_capture_runtime_structuring
   n_capture_runtime_capture --> n_capture_runtime_worker_client
   n_capture_runtime_capture --> n_capture_runtime_worker_probe

@@ -26,6 +26,17 @@ from capture_runtime.provisioning.infrastructure.engine_catalog import (
 from capture_runtime.worker_contracts import WORKER_PROTOCOL_VERSION
 
 
+def _write_catalog(output: Path, requirements: list[dict[str, object]]) -> None:
+    payload = {
+        "catalogVersion": "2",
+        "runtimeVersion": RUNTIME_VERSION,
+        "requirements": requirements,
+    }
+    EngineCatalog.from_dict(payload)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_bytes(canonical_json_bytes(payload))
+
+
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as source:
@@ -194,16 +205,17 @@ def speech_contents(
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--development-stub", action="store_true")
     parser.add_argument(
         "--release-base-url",
         default=(
             f"https://github.com/gx-capture/capture-workbench/releases/download/v{RUNTIME_VERSION}"
         ),
     )
-    parser.add_argument("--ocr-worker-archive", type=Path, required=True)
-    parser.add_argument("--ocr-worker-manifest", type=Path, required=True)
-    parser.add_argument("--speech-recognition-worker-archive", type=Path, required=True)
-    parser.add_argument("--speech-recognition-worker-manifest", type=Path, required=True)
+    parser.add_argument("--ocr-worker-archive", type=Path)
+    parser.add_argument("--ocr-worker-manifest", type=Path)
+    parser.add_argument("--speech-recognition-worker-archive", type=Path)
+    parser.add_argument("--speech-recognition-worker-manifest", type=Path)
     # Optional. Without these, speech stays one delivery. Release targets omit them.
     parser.add_argument("--speech-recognition-cpu-worker-archive", type=Path)
     parser.add_argument("--speech-recognition-cpu-worker-manifest", type=Path)
@@ -217,6 +229,34 @@ def main() -> None:
         help="Allow only the blocked private-Whisper preflight lock; never use for release output.",
     )
     arguments = parser.parse_args()
+    if arguments.development_stub:
+        _write_catalog(
+            arguments.output,
+            [
+                {
+                    "requirementId": requirement_id,
+                    "artifacts": [],
+                    "modelFiles": None,
+                    "unavailableReason": (
+                        f"A release catalog with an exact {description} worker and approved "
+                        "direct model source lock was not injected."
+                    ),
+                }
+                for requirement_id, description in (
+                    ("text-recognition", "OCR"),
+                    ("speech-recognition", "speech recognition"),
+                )
+            ],
+        )
+        return
+    for name in (
+        "ocr_worker_archive",
+        "ocr_worker_manifest",
+        "speech_recognition_worker_archive",
+        "speech_recognition_worker_manifest",
+    ):
+        if getattr(arguments, name) is None:
+            parser.error(f"--{name.replace('_', '-')} is required for a worker catalog")
     source_lock = (
         None
         if arguments.model_source_lock is None
@@ -233,7 +273,7 @@ def main() -> None:
             approval["status"] != "blocked"
             or approval["blockers"] != [PENDING_WHISPER_FREEZE_BLOCKER]
             or [item["requirementId"] for item in source_lock["requirements"]][:2]
-            != ["windowsml-ocr", "speech-recognition"]
+            != ["text-recognition", "speech-recognition"]
             or len(source_lock["fixtures"]) != 2
             or [item["kind"] for item in source_lock["fixtures"]] != ["ocr", "whisper"]
         ):
@@ -304,12 +344,12 @@ def main() -> None:
         if speech is None
         else [
             requirement(
-                requirement_id="windowsml-ocr",
+                requirement_id="text-recognition",
                 worker_archive=arguments.ocr_worker_archive,
                 worker_manifest=arguments.ocr_worker_manifest,
                 worker_entry_point="capture-engine-ocr.exe",
                 direct_model_files=(
-                    None if source_lock is None else model_delivery(source_lock, "windowsml-ocr")
+                    None if source_lock is None else model_delivery(source_lock, "text-recognition")
                 ),
                 release_base_url=arguments.release_base_url,
             ),
@@ -352,14 +392,7 @@ def main() -> None:
                 "unavailableReason": None,
             }
         )
-    payload = {
-        "catalogVersion": "2",
-        "runtimeVersion": RUNTIME_VERSION,
-        "requirements": requirements,
-    }
-    EngineCatalog.from_dict(payload)
-    arguments.output.parent.mkdir(parents=True, exist_ok=True)
-    arguments.output.write_bytes(canonical_json_bytes(payload))
+    _write_catalog(arguments.output, requirements)
 
 
 if __name__ == "__main__":

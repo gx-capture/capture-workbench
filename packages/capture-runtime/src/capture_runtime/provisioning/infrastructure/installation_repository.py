@@ -33,20 +33,30 @@ class InstallationRecord:
     job: RuntimeInstallationV2
     idempotency_key: str
     request_fingerprint: str
+    historical_requirement_id: str | None = None
 
     def dump(self) -> dict[str, object]:
+        job = dump_model(self.job)
+        if self.historical_requirement_id is not None:
+            job["requirementId"] = self.historical_requirement_id
         return {
-            "job": dump_model(self.job),
+            "job": job,
             "idempotencyKey": self.idempotency_key,
             "requestFingerprint": self.request_fingerprint,
         }
 
     @classmethod
     def load(cls, payload: dict[str, Any]) -> InstallationRecord:
+        job = payload["job"]
+        historical_requirement_id = None
+        if isinstance(job, dict) and job.get("requirementId") == "windowsml-ocr":
+            historical_requirement_id = job["requirementId"]
+            job = {**job, "requirementId": "text-recognition"}
         return cls(
-            job=RuntimeInstallationV2.model_validate(payload["job"]),
+            job=RuntimeInstallationV2.model_validate(job),
             idempotency_key=str(payload["idempotencyKey"]),
             request_fingerprint=str(payload["requestFingerprint"]),
+            historical_requirement_id=historical_requirement_id,
         )
 
 

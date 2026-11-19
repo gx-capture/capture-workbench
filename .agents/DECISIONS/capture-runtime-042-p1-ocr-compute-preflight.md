@@ -36,10 +36,10 @@ complete.
    GPU.
 3. A proven hardware adapter with an authoritative provider query that omits
    `DmlExecutionProvider` is an explicit CPU fallback with
-   `dml_provider_unavailable`; this is not a post-selection failure.
+   `gpu_provider_unavailable`; this is not a post-selection failure.
 4. Indeterminate or structurally invalid evidence yields readiness unavailable,
    never a CPU fallback or CPU notice.
-5. The preflight does not alter WindowsML pipeline behavior. A DML-selected
+5. The preflight does not alter OCR pipeline behavior. A DML-selected
    pipeline/session initialization or inference error remains fail-closed with
    no other-GPU or CPU-only retry for that operation.
 6. Every preflight payload carries API, schema, runtime, contract-set version,

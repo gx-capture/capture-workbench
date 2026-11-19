@@ -20,7 +20,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-windowsml = [
+ocr = [
   "onnxruntime-directml==1.24.4; sys_platform == 'win32'",
   "paddleocr==3.7.0",
   "paddlex[ocr-core]==3.7.1",

@@ -35,7 +35,7 @@ export const FIRST_RUN_DISMISSED_STORAGE_KEY =
   'capture-workbench.first-run-dismissed';
 
 const FIRST_RUN_REQUIREMENT_IDS: readonly CaptureRequirementId[] = [
-  'windowsml-ocr',
+  'text-recognition',
   'speech-recognition',
   'speaker-diarization',
 ];

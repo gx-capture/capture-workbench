@@ -114,7 +114,7 @@ def _assert_pending_preflight_lock(lock: dict[str, Any]) -> None:
         or not isinstance(requirements, list)
         or [item.get("requirementId") for item in requirements][:2]
         != [
-            "windowsml-ocr",
+            "text-recognition",
             "speech-recognition",
         ]
         or not isinstance(fixtures, list)
@@ -533,7 +533,7 @@ async def verify_candidate(
         results = []
         try:
             for requirement_id, fixture_kind in (
-                ("windowsml-ocr", "ocr"),
+                ("text-recognition", "ocr"),
                 ("speech-recognition", "whisper"),
             ):
                 await manager.install(

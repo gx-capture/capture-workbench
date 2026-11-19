@@ -332,7 +332,7 @@ class OcrPipeline:
                 or expected.page != expected_manifest[position].page
             ):
                 raise OcrProjectionError("OCR page results must be complete and ordered")
-            if not provenance.is_resolved or provenance.engine != "windowsml-ocr":
+            if not provenance.is_resolved or provenance.engine != "text-recognition":
                 raise OcrProjectionError("OCR engine provenance is incompatible")
             if observed_provenance is None:
                 observed_provenance = provenance
@@ -414,7 +414,7 @@ class OcrPipeline:
             if not isinstance(run, OcrEngineRun):
                 raise OcrProjectionError("OCR engine returned an invalid run")
             provenance = self._builder.coerce_provenance(run.provenance)
-            if not provenance.is_resolved or provenance.engine != "windowsml-ocr":
+            if not provenance.is_resolved or provenance.engine != "text-recognition":
                 raise OcrProjectionError("OCR engine provenance is incompatible")
             pages = tuple(
                 replace(page, provenance=page.provenance or provenance) for page in run.pages
@@ -851,7 +851,7 @@ class _OcrProjectionBuilder:
                 raise OcrProjectionError("OCR engine device identity is unavailable")
             return OcrProvenanceV3(
                 status="resolved",
-                engine="windowsml-ocr",
+                engine="text-recognition",
                 model=value.model,
                 model_digest=value.digest,
                 device=value.device,
@@ -882,7 +882,7 @@ class _OcrProjectionBuilder:
             )
             return OcrProvenanceV3(
                 status="resolved",
-                engine="windowsml-ocr",
+                engine="text-recognition",
                 model=model,
                 model_digest=digest,
                 device=device,

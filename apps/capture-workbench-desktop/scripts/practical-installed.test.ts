@@ -126,7 +126,7 @@ async function releaseFixture(
     runtimeVersion: RELEASE_VERSION,
     requirements: [
       {
-        requirementId: 'windowsml-ocr',
+        requirementId: 'text-recognition',
         artifacts: [
           {
             role: 'worker',
@@ -197,7 +197,7 @@ test('runtime release directory is verified against an independent digest, the m
   const good = await releaseFixture();
   t.after(() => rm(good.directory, { recursive: true, force: true }));
   const release = verifyRuntimeReleaseDirectory(good.directory, good.runtimeSha256, RELEASE_VERSION);
-  assert.equal(release.workers[0].requirementId, 'windowsml-ocr');
+  assert.equal(release.workers[0].requirementId, 'text-recognition');
   assert.equal(release.executable.sha256, good.runtimeSha256);
   assert.throws(() => verifyRuntimeReleaseDirectory(good.directory, sha('other'), RELEASE_VERSION), /expected release digest/u);
   assert.throws(() => verifyRuntimeReleaseDirectory(good.directory, good.runtimeSha256, '99.0.0'), /manifest/u);
@@ -403,7 +403,7 @@ function provenance(overrides: Record<string, unknown> = {}) {
       manifest: file,
       schema: file,
       catalog: file,
-      workers: [{ requirementId: 'windowsml-ocr', ...file, url: 'u' }],
+      workers: [{ requirementId: 'text-recognition', ...file, url: 'u' }],
     },
     overlaySha256: sha('overlay'),
     installer: file,
@@ -439,8 +439,8 @@ function evidence(overrides: Partial<PracticalOcrEvidence> = {}): PracticalOcrEv
     workerArchiveSha256: sha('archive'),
     fixture: { kind: 'image', sha256: sha('jpeg'), bytes: 10 },
     importedSourceSha256: sha('jpeg'),
-    runtime: { contractSetSha256: sha('contract'), workerExecutableSha256: sha('worker'), computeMode: 'gpu-dml' },
-    ocr: { engine: 'windowsml-ocr', model: 'pp-ocrv6-medium-windowsml', device: 'windowsml-dml', segmentCount: 3, characterCount: 40 },
+    runtime: { contractSetSha256: sha('contract'), workerExecutableSha256: sha('worker'), computeMode: 'gpu' },
+    ocr: { engine: 'text-recognition', model: 'pp-ocrv6-medium', device: 'directml', segmentCount: 3, characterCount: 40 },
     observedProcessImages: { runtimeExecutableSha256: [sha('runtime')], workerExecutableSha256: [sha('worker')] },
     durationsMs: { install: 1, runtimeReady: 1, ocr: 1 },
     cleanup: {

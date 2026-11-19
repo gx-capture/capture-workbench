@@ -3,7 +3,7 @@
 ## Approved decisions
 
 1. **OCR-only source of truth.** PDFium rasterizes every PDF page and image
-   normalization feeds the canonical PaddleOCR WindowsML worker. Embedded PDF
+   normalization feeds the canonical PaddleOCR OCR worker. Embedded PDF
    text is never inspected. There is no hybrid arbitration and no LLM route
    selection.
 2. **Version identity.** The existing authenticated `/v2` API remains API
@@ -57,14 +57,14 @@
    exposed and recording is enabled by the installed ORT, with that
    prediction's execution profile as the fallback when the graph option is
    unavailable; at least one `DmlExecutionProvider` node is required before
-   emitting `windowsml-dml`; missing/unreadable evidence or zero DML nodes
+   emitting `directml`; missing/unreadable evidence or zero DML nodes
    fails closed. The worker does not emit its header or recognized page frame
    until this provenance is resolved.
    When DML is not available, one explicit CPU-only session is allowed and its
    provenance is `cpu`. The internal evidence adapter is injectable for unit
    seams, while real acceptance must preserve and inspect ORT evidence.
 10. **Canonical Paddle profile identity.** The packaged
-    `model-sources/commit-a/model/pipeline.json` is the sole OCR profile
+    `model-sources/text-recognition/model/pipeline.json` is the sole OCR profile
     source. Canonical JSON bytes are copied to the runtime asset and model
     directory; their SHA-256 derives `profileSpecSha256`, and a hash-prefixed
     profile ID is derived from the same bytes. The profile fixes PP-OCRv6

@@ -474,7 +474,7 @@ function configure(options: { readonly ocrReady: boolean; readonly operation?: D
 
 function requirement(status: RuntimeRequirement['status']): RuntimeRequirement {
   return {
-    requirementId: 'windowsml-ocr',
+    requirementId: 'text-recognition',
     displayName: '文字辨識',
     status,
     kind: 'runtime',

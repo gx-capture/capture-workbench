@@ -22,8 +22,8 @@ describe('RuntimeStatusStore', () => {
           ...(status === 'installable' ? { ocrCompute: signal(null) } : {}),
           getRequirements: vi.fn(() => of([
             {
-              requirementId: 'windowsml-ocr',
-              displayName: 'WindowsML OCR',
+              requirementId: 'text-recognition',
+              displayName: 'Text recognition',
               status,
               kind: 'engine',
               requiredFor: ['capture'],
@@ -58,8 +58,8 @@ describe('RuntimeStatusStore', () => {
     const client = runtimeStub({
       getRequirements: vi.fn(() => of([
         {
-          requirementId: 'windowsml-ocr',
-          displayName: 'WindowsML OCR',
+          requirementId: 'text-recognition',
+          displayName: 'Text recognition',
           status: 'installable',
           kind: 'engine',
           requiredFor: ['capture'],
@@ -80,7 +80,7 @@ describe('RuntimeStatusStore', () => {
 
     expect(store.state()).toBe('ready');
     expect(TestBed.inject(RecognitionFeaturesStore).missingFor('ocr').map((item) => item.requirementId)).toEqual([
-      'windowsml-ocr',
+      'text-recognition',
     ]);
   });
 
@@ -175,7 +175,7 @@ function runtimeStub(overrides: Record<string, unknown> = {}) {
       contractSetVersion: '2',
       contractSha256: 'a'.repeat(64),
       workerSha256: 'f'.repeat(64),
-      mode: 'gpu-dml',
+      mode: 'gpu',
       adapterClass: 'dedicated',
       reasonCode: null,
       userNoticeRequired: false,

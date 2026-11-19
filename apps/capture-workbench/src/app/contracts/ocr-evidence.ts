@@ -59,6 +59,7 @@ export interface OcrEvidencePageV1 {
   readonly failure?: OcrEvidenceFailureV1;
 }
 
+/** Persisted provenance retains the identity strings recorded by its writer. */
 export interface OcrEvidenceProvenanceV1 {
   readonly status: 'resolved' | 'unavailable';
   readonly runtimeVersion: string;
@@ -307,7 +308,14 @@ function validateProvenance(value: unknown): OcrProvenance {
   const provenance = record(value, 'OCR provenance');
   if (provenance['status'] === 'resolved') {
     requireExactKeys(provenance, ['status', 'engine', 'model', 'modelDigest', 'device', 'profileId', 'profileSpecSha256'], 'resolved OCR provenance');
-    if (provenance['engine'] !== 'windowsml-ocr') invalid('OCR provenance engine');
+    if (provenance['engine'] !== 'text-recognition') invalid('OCR provenance engine');
+    if (
+      provenance['model'] === 'pp-ocrv6-medium-windowsml' ||
+      provenance['model'] === 'deterministic-windowsml-v1'
+    ) {
+      invalid('OCR provenance model');
+    }
+    if (provenance['device'] === 'windowsml-dml') invalid('OCR provenance device');
     nonEmpty(provenance['model'], 'OCR provenance model');
     if (typeof provenance['modelDigest'] !== 'string' || !MODEL_DIGEST.test(provenance['modelDigest'])) invalid('OCR provenance modelDigest');
     if (provenance['modelDigest'] === `sha256:${'0'.repeat(64)}`) invalid('OCR provenance modelDigest');

@@ -31,7 +31,7 @@ const readyPayload: RuntimeReady = {
     runtimeVersion: RUNTIME_VERSION,
     contractSetVersion: '2',
     contractSha256: 'a'.repeat(64),
-    mode: 'gpu-dml',
+    mode: 'gpu',
     adapterClass: 'dedicated',
     reasonCode: null,
     userNoticeRequired: false,
@@ -63,10 +63,10 @@ const ocrProjection: CaptureOcrProjection = {
     confidence: 0.9,
     provenance: {
       status: 'resolved',
-      engine: 'windowsml-ocr',
-      model: 'pp-ocrv6-medium-windowsml',
+      engine: 'text-recognition',
+      model: 'pp-ocrv6-medium',
       modelDigest: `sha256:${'b'.repeat(64)}`,
-      device: 'windowsml-dml',
+      device: 'directml',
       profileId: 'capture-workbench-ocr-pipeline-v1',
       profileSpecSha256: 'c'.repeat(64),
     },
@@ -76,10 +76,10 @@ const ocrProjection: CaptureOcrProjection = {
   contractSha256: 'a'.repeat(64),
   provenance: {
     status: 'resolved',
-    engine: 'windowsml-ocr',
-    model: 'pp-ocrv6-medium-windowsml',
+    engine: 'text-recognition',
+    model: 'pp-ocrv6-medium',
     modelDigest: `sha256:${'b'.repeat(64)}`,
-    device: 'windowsml-dml',
+    device: 'directml',
     profileId: 'capture-workbench-ocr-pipeline-v1',
     profileSpecSha256: 'c'.repeat(64),
   },
@@ -112,7 +112,7 @@ describe('DesktopRuntimeClientService', () => {
     expect(service.readiness.status()).toBe('resolved');
     expect(service.started()).toBe(true);
     expect(service.ready()).toBe(true);
-    expect(service.ocrCompute()?.mode).toBe('gpu-dml');
+    expect(service.ocrCompute()?.mode).toBe('gpu');
     expect(service.pdfPageNumbers()).toBeUndefined();
     expect(commands.invoke).toHaveBeenCalledWith('runtime_ready', {}, expect.any(AbortSignal));
 
@@ -389,8 +389,8 @@ describe('DesktopRuntimeClientService', () => {
 
   it('uninstalls a requirement through the native Tauri command', () => {
     const removed = {
-      requirementId: 'windowsml-ocr',
-      displayName: 'WindowsML OCR',
+      requirementId: 'text-recognition',
+      displayName: 'Text recognition',
       status: 'installable',
       kind: 'runtime',
       requiredFor: ['capture'],
@@ -416,12 +416,12 @@ describe('DesktopRuntimeClientService', () => {
 
     const service = TestBed.inject(DesktopRuntimeClientService);
     let requirement: unknown;
-    service.uninstallRequirement('windowsml-ocr').subscribe((value) => (requirement = value));
+    service.uninstallRequirement('text-recognition').subscribe((value) => (requirement = value));
 
     expect(requirement).toEqual(removed);
     expect(commands.invoke).toHaveBeenCalledWith(
       'runtime_uninstall_requirement',
-      { input: { requirementId: 'windowsml-ocr' } },
+      { input: { requirementId: 'text-recognition' } },
       undefined,
     );
   });

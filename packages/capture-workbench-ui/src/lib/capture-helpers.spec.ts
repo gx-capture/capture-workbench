@@ -42,7 +42,7 @@ const raw: RawCapture = {
   ],
   sourceText: 'one\ntwo',
   extractionEngine: {
-    engine: 'windowsml',
+    engine: 'text-recognition',
     model: 'ocr-v1',
     digest: `sha256:${'b'.repeat(64)}`,
   },

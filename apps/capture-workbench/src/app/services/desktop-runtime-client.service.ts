@@ -320,7 +320,7 @@ function isOcrComputePreflight(
     return false;
   }
   const mode = (value as { mode?: unknown }).mode;
-  return mode === 'gpu-dml' || mode === 'cpu-fallback';
+  return mode === 'gpu' || mode === 'cpu-fallback';
 }
 
 const MAX_PDF_PAGE_SELECTION = 500;

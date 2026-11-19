@@ -4,7 +4,7 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 
 function ocrFirstRunOption(page: Page) {
-  return page.locator('[data-testid="first-run-option"][data-requirement-id="windowsml-ocr"]');
+  return page.locator('[data-testid="first-run-option"][data-requirement-id="text-recognition"]');
 }
 
 async function observeInstallProgress(progressContainer: Locator): Promise<void> {
@@ -96,12 +96,12 @@ test('runs a first-run installation through its phases and starts over after a r
   await card.getByTestId('first-run-install').click();
   const progress = page.getByTestId('ocr-install-progress');
   await expect(progress).toBeVisible();
-  await expect(progress).toHaveAttribute('data-requirement-id', 'windowsml-ocr');
+  await expect(progress).toHaveAttribute('data-requirement-id', 'text-recognition');
   await expect(progress).toHaveCount(0, { timeout: 30_000 });
 
   await page.getByRole('navigation', { name: '主要功能' }).getByRole('link', { name: '設定' }).click();
   await expect(
-    page.locator('[data-testid="engine-row"][data-requirement-id="windowsml-ocr"]'),
+    page.locator('[data-testid="engine-row"][data-requirement-id="text-recognition"]'),
   ).toHaveAttribute('data-status', 'ready');
 
   // A load without the query keeps the scenario (cookie) and what the
@@ -109,7 +109,7 @@ test('runs a first-run installation through its phases and starts over after a r
   // installed, and the card that was answered stays away.
   await page.goto('/settings/engines');
   await expect(
-    page.locator('[data-testid="engine-row"][data-requirement-id="windowsml-ocr"]'),
+    page.locator('[data-testid="engine-row"][data-requirement-id="text-recognition"]'),
   ).toHaveAttribute('data-status', 'installable');
   await page.goto('/ocr');
   await expect(page.getByTestId('ocr-dropzone')).toBeVisible();
@@ -150,7 +150,7 @@ test('shows preparing immediately and monotonic progress on the /settings/engine
   await page.goto('/?scenario=first-run&speed=4&startDelay=2000');
   await page.goto('/settings/engines');
 
-  const row = page.locator('[data-testid="engine-row"][data-requirement-id="windowsml-ocr"]');
+  const row = page.locator('[data-testid="engine-row"][data-requirement-id="text-recognition"]');
   await expect(row).toHaveAttribute('data-status', 'installable');
   await row.getByTestId('engine-row-install').click();
 

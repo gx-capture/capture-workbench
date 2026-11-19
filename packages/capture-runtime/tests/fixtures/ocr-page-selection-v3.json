@@ -70,10 +70,10 @@
         "confidence": 0.9,
         "provenance": {
           "status": "resolved",
-          "engine": "windowsml-ocr",
-          "model": "pp-ocrv6-medium-windowsml",
+          "engine": "text-recognition",
+          "model": "pp-ocrv6-medium",
           "modelDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-          "device": "windowsml-dml",
+          "device": "directml",
           "profileId": "capture-workbench-ocr-pipeline-v1",
           "profileSpecSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
         },
@@ -116,10 +116,10 @@
         "confidence": 0.9,
         "provenance": {
           "status": "resolved",
-          "engine": "windowsml-ocr",
-          "model": "pp-ocrv6-medium-windowsml",
+          "engine": "text-recognition",
+          "model": "pp-ocrv6-medium",
           "modelDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-          "device": "windowsml-dml",
+          "device": "directml",
           "profileId": "capture-workbench-ocr-pipeline-v1",
           "profileSpecSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
         },
@@ -139,10 +139,10 @@
         "confidence": null,
         "provenance": {
           "status": "resolved",
-          "engine": "windowsml-ocr",
-          "model": "pp-ocrv6-medium-windowsml",
+          "engine": "text-recognition",
+          "model": "pp-ocrv6-medium",
           "modelDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-          "device": "windowsml-dml",
+          "device": "directml",
           "profileId": "capture-workbench-ocr-pipeline-v1",
           "profileSpecSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
         },
@@ -185,10 +185,10 @@
         "confidence": 0.9,
         "provenance": {
           "status": "resolved",
-          "engine": "windowsml-ocr",
-          "model": "pp-ocrv6-medium-windowsml",
+          "engine": "text-recognition",
+          "model": "pp-ocrv6-medium",
           "modelDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-          "device": "windowsml-dml",
+          "device": "directml",
           "profileId": "capture-workbench-ocr-pipeline-v1",
           "profileSpecSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
         },
@@ -200,10 +200,10 @@
     "contractSha256": "__CONTRACT_SET_SHA256__",
     "provenance": {
       "status": "resolved",
-      "engine": "windowsml-ocr",
-      "model": "pp-ocrv6-medium-windowsml",
+      "engine": "text-recognition",
+      "model": "pp-ocrv6-medium",
       "modelDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "device": "windowsml-dml",
+      "device": "directml",
       "profileId": "capture-workbench-ocr-pipeline-v1",
       "profileSpecSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
     },

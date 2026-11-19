@@ -158,10 +158,10 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
         { segmentId: 'page-3', order: 0, locator: { kind: 'page', page: 3 }, text: 'recognized page' },
       ],
       extractionEngine: {
-        engine: 'windowsml-ocr',
-        model: 'pp-ocrv6-medium-windowsml',
+        engine: 'text-recognition',
+        model: 'pp-ocrv6-medium',
         digest: `sha256:${'d'.repeat(64)}`,
-        device: 'windowsml-dml',
+        device: 'directml',
       },
     });
     editsByDocument.set(historyId, { schemaVersion: 1, updatedAtMs: 1,
@@ -262,8 +262,8 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
   });
   const ocrProvenance = {
     status: 'resolved',
-    engine: 'windowsml-ocr',
-    model: 'pp-ocrv6-medium-windowsml',
+    engine: 'text-recognition',
+    model: 'pp-ocrv6-medium',
     modelDigest: `sha256:${'d'.repeat(64)}`,
     device: 'RTX4060',
     profileId: 'profile-1',
@@ -327,10 +327,10 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
       })),
       sourceText: pageNumbers.map(pageText).join('\n'),
       extractionEngine: {
-        engine: 'windowsml-ocr',
-        model: 'pp-ocrv6-medium-windowsml',
+        engine: 'text-recognition',
+        model: 'pp-ocrv6-medium',
         digest: `sha256:${'d'.repeat(64)}`,
-        device: 'windowsml-dml',
+        device: 'directml',
       },
       createdAt: '2026-07-20T00:00:00Z',
     };
@@ -421,7 +421,7 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
             contractSetVersion: '2',
             contractSha256: 'a'.repeat(64),
             workerSha256: 'b'.repeat(64),
-            mode: 'gpu-dml',
+            mode: 'gpu',
             adapterClass: 'dedicated',
             reasonCode: null,
             userNoticeRequired: false,

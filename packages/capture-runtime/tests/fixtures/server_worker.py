@@ -22,7 +22,7 @@ def handle(
     if request.operation == "preflight":
         return {
             "contractSha256": request.payload["contractSha256"],
-            "mode": "gpu-dml",
+            "mode": "gpu",
             "adapterClass": "dedicated",
             "userNoticeRequired": False,
         }

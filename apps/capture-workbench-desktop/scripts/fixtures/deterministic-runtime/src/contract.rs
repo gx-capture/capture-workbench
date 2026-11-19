@@ -229,7 +229,7 @@ impl FixtureState {
     fn requirements(&self) -> Response {
         let uninstalled = self.uninstalled.lock().ok();
         let items = [
-            "windowsml-ocr",
+            "text-recognition",
             "speech-recognition",
             "ollama-runtime",
             "capture-ollama-model",
@@ -717,7 +717,7 @@ fn build_raw_capture(source: &Value, source_kind: &str, content: &[u8]) -> Value
     let (engine, model) = if source_kind == "audio" {
         ("speech-recognition", "deterministic-speech-recognition-v1")
     } else {
-        ("windowsml-ocr", "deterministic-windowsml-v1")
+        ("text-recognition", "deterministic-ocr-v1")
     };
     json!({
         "schemaVersion": SCHEMA_VERSION,
@@ -738,10 +738,10 @@ fn build_raw_capture(source: &Value, source_kind: &str, content: &[u8]) -> Value
 
 fn build_ocr(record: &CaptureRecord) -> Value {
     let provenance = json!({
-        "status": "resolved", "engine": "windowsml-ocr",
+        "status": "resolved", "engine": "text-recognition",
         "model": record.raw["extractionEngine"]["model"],
         "modelDigest": record.raw["extractionEngine"]["digest"],
-        "device": "fake", "profileId": "deterministic-windowsml-v1",
+        "device": "fake", "profileId": "deterministic-ocr-v1",
         "profileSpecSha256": sha256_hex(b"deterministic-ocr-profile"),
     });
     let pages = record.raw["segments"]
@@ -889,10 +889,10 @@ fn valid_requirement_id(value: &str) -> bool {
 
 fn known_requirement(requirement_id: &str, status: &str) -> Option<Value> {
     Some(match requirement_id {
-        "windowsml-ocr" => requirement(
-            "windowsml-ocr",
+        "text-recognition" => requirement(
+            "text-recognition",
             "ocr",
-            "WindowsML OCR",
+            "Text recognition",
             &["pdf", "image"],
             status,
         ),

@@ -134,7 +134,7 @@ export type PdfOcrE2eEvidence = {
   readonly sampledPageCount: number;
   readonly matchedExpectedCharacterCount: number;
   readonly matchMode: 'nfkc-whitespace-insensitive-exact-substring';
-  readonly extractionEngine: 'windowsml-ocr';
+  readonly extractionEngine: 'text-recognition';
   readonly model: string;
   readonly engineDigest: string;
   readonly device: string;
@@ -227,8 +227,8 @@ export function assertPdfOcrRawCapture(
 > {
   assert.equal(
     raw.extractionEngine.engine,
-    'windowsml-ocr',
-    'Real PDF OCR E2E requires windowsml-ocr provenance.',
+    'text-recognition',
+    'Real PDF OCR E2E requires text-recognition provenance.',
   );
   assert.match(raw.extractionEngine.model, /^pp-ocrv\d+/u);
   assert.match(raw.extractionEngine.digest, /^sha256:[a-f0-9]{64}$/u);
@@ -290,7 +290,7 @@ export function assertPdfOcrRawCapture(
       0,
     ),
     matchMode: 'nfkc-whitespace-insensitive-exact-substring',
-    extractionEngine: 'windowsml-ocr',
+    extractionEngine: 'text-recognition',
     model: raw.extractionEngine.model,
     engineDigest: raw.extractionEngine.digest,
     device: raw.extractionEngine.device,
@@ -460,13 +460,13 @@ async function installOcr(port: number, token: string): Promise<void> {
     readonly items: readonly RuntimeRequirement[];
   }>(port, token, '/v2/runtime/requirements');
   const ocr = requirements.items.find(
-    (item) => item.requirementId === 'windowsml-ocr',
+    (item) => item.requirementId === 'text-recognition',
   );
-  if (!ocr) throw new Error('Runtime did not expose windowsml-ocr.');
+  if (!ocr) throw new Error('Runtime did not expose text-recognition.');
   if (ocr.status === 'ready') return;
   if (ocr.status !== 'installable') {
     throw new Error(
-      `Runtime cannot install windowsml-ocr: ${ocr.status}${ocr.detail ? ` (${ocr.detail})` : ''}.`,
+      `Runtime cannot install text-recognition: ${ocr.status}${ocr.detail ? ` (${ocr.detail})` : ''}.`,
     );
   }
   const installation = await request<RuntimeInstallation>(
@@ -479,7 +479,7 @@ async function installOcr(port: number, token: string): Promise<void> {
         'content-type': 'application/json',
         'x-idempotency-key': randomUUID(),
       },
-      body: JSON.stringify({ requirementId: 'windowsml-ocr', consent: true }),
+      body: JSON.stringify({ requirementId: 'text-recognition', consent: true }),
     },
   );
   const deadline = Date.now() + installationTimeoutMs;
@@ -492,12 +492,12 @@ async function installOcr(port: number, token: string): Promise<void> {
     if (current.status === 'completed') return;
     if (!['queued', 'running'].includes(current.status)) {
       throw new Error(
-        `windowsml-ocr installation ended as ${current.status}: ${current.error?.message ?? 'no detail'}.`,
+        `text-recognition installation ended as ${current.status}: ${current.error?.message ?? 'no detail'}.`,
       );
     }
     await delay(1_000);
   }
-  throw new Error('windowsml-ocr installation timed out.');
+  throw new Error('text-recognition installation timed out.');
 }
 
 async function startPdfCapture(
@@ -762,7 +762,7 @@ export async function runPdfOcrE2e(
     options.packageKind === 'local-package'
       ? resolve(
           process.env.CAPTURE_PDF_OCR_E2E_LOCAL_MODEL_ROOT?.trim() ||
-            join(releaseRoot, '..', '..', 'model-sources', 'commit-a'),
+            join(releaseRoot, '..', '..', 'model-sources', 'text-recognition'),
         )
       : undefined;
   const token = randomBytes(32).toString('hex');

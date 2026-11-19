@@ -946,10 +946,10 @@ mod tests {
                 "status": "resolved",
                 "runtimeVersion": env!("CARGO_PKG_VERSION"),
                 "contractSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-                "engine": "windowsml-ocr",
-                "model": "pp-ocrv6-medium-windowsml",
+                "engine": "text-recognition",
+                "model": "pp-ocrv6-medium",
                 "modelDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
-                "device": "GPU",
+                "device": "directml",
                 "profileId": "profile-1",
                 "profileSpecSha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
                 "workerSha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"

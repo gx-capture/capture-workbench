@@ -8,7 +8,7 @@
       "type": "string"
     },
     "engine": {
-      "const": "windowsml-ocr",
+      "const": "text-recognition",
       "title": "Engine",
       "type": "string"
     },

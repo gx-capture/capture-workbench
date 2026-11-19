@@ -25,10 +25,10 @@ RASTER = {"width": 120, "height": 80, "scale": 1, "coordinateSystem": "pixel"}
 def _provenance() -> OcrProvenanceV3:
     return OcrProvenanceV3(
         status="resolved",
-        engine="windowsml-ocr",
+        engine="text-recognition",
         model="test-model",
         model_digest="sha256:" + "1" * 64,
-        device="windowsml-dml",
+        device="directml",
         profile_id="capture-workbench-ocr-pipeline-v1",
         profile_spec_sha256="c" * 64,
     )
@@ -63,10 +63,10 @@ def _frame(page: int, text: str = "hello") -> dict[str, Any]:
 def _final(pages: tuple[WorkerOcrPage, ...], **changes: Any) -> OcrWorkerRunResult:
     result = OcrWorkerRunResult(
         segments=(),
-        engine="windowsml-ocr",
+        engine="text-recognition",
         model="test-model",
         digest="sha256:" + "1" * 64,
-        device="windowsml-dml",
+        device="directml",
         warnings=(),
         pages=pages,
         ocr_provenance=_provenance(),

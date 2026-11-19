@@ -89,7 +89,7 @@ export function verifyRequirements(context) {
       assert.equal(requirements.status, 200);
       const requirementIds = requirements.body.items.map((item) => item.requirementId);
       assert.deepEqual(requirementIds, [
-        'windowsml-ocr',
+        'text-recognition',
         'speech-recognition',
         'ollama-runtime',
         'capture-ollama-model',

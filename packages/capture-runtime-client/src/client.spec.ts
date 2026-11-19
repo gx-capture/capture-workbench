@@ -36,7 +36,7 @@ const ready = {
     runtimeVersion: RUNTIME_VERSION,
     contractSetVersion: '2',
     contractSha256: CAPTURE_CONTRACT_SET_SHA256,
-    mode: 'gpu-dml',
+    mode: 'gpu',
     adapterClass: 'dedicated',
     reasonCode: null,
     userNoticeRequired: false,
@@ -70,10 +70,10 @@ const canonicalContractIndex = {
 
 const ocrEngine = {
   status: 'resolved',
-  engine: 'windowsml-ocr',
-  model: 'pp-ocrv6-medium-windowsml',
+  engine: 'text-recognition',
+  model: 'pp-ocrv6-medium',
   modelDigest: `sha256:${'a'.repeat(64)}`,
-  device: 'windowsml-dml',
+  device: 'directml',
   profileId: 'capture-workbench-ocr-pipeline-v1',
   profileSpecSha256: 'b'.repeat(64),
 };
@@ -544,7 +544,7 @@ describe('CaptureRuntimeClient', () => {
       pageProvenance !== undefined && pageProvenance.status === 'resolved'
         ? pageProvenance.engine
         : undefined,
-    ).toBe('windowsml-ocr');
+    ).toBe('text-recognition');
     expect(completed.pages[0]?.boxes?.[0]?.polygon).toEqual([
       { x: 10.5, y: 20.25 },
       { x: 310.75, y: 12.5 },
@@ -1439,8 +1439,8 @@ data: ${JSON.stringify(event)}
             ...ready,
             ocrCompute: {
               ...ready.ocrCompute,
-              mode: 'gpu-dml',
-              reasonCode: 'dml_provider_unavailable',
+              mode: 'gpu',
+              reasonCode: 'gpu_provider_unavailable',
               userNoticeRequired: true,
               noticeCode: 'ocr_cpu_fallback',
             },
@@ -1450,6 +1450,23 @@ data: ${JSON.stringify(event)}
         'RuntimeReady',
       ),
     ).rejects.toBeInstanceOf(CaptureRuntimeProtocolError);
+  });
+
+  it('accepts the current provider-unavailable fallback reason', async () => {
+    const fallback = {
+      ...ready.ocrCompute,
+      mode: 'cpu-fallback',
+      reasonCode: 'gpu_provider_unavailable',
+      userNoticeRequired: true,
+      noticeCode: 'ocr_cpu_fallback',
+    };
+    await expect(
+      decodeJson(
+        Response.json({ ...ready, ocrCompute: fallback }),
+        undefined,
+        'RuntimeReady',
+      ),
+    ).resolves.toMatchObject({ ocrCompute: fallback });
   });
 
   it('retries idempotent requests while refusing non-idempotent retries', async () => {

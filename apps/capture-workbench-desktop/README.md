@@ -94,7 +94,7 @@ real PDF and an existing app-data directory over the v2 ingestion and capture
 flow (`POST /v2/ingestions`, chunked `PUT /v2/ingestions/{id}/chunks/{i}`,
 `POST /v2/ingestions/{id}/finalize`, `POST /v2/captures`). This target is
 excluded from normal CI and opens no window. When the directory lacks them, the
-smoke installs the `windowsml-ocr` engine and the `qwen3.5-0.8b-v1` model
+smoke installs the `text-recognition` engine and the `qwen3.5-0.8b-v1` model
 through the runtime; a directory the desktop app has already prepared needs no
 download. Ollama itself must already be installed on `PATH` unless
 `CAPTURE_REAL_SMOKE_ALLOW_OLLAMA_INSTALL=1` is set, in which case the runtime
@@ -115,7 +115,7 @@ evidence (`tmp/capture-workbench-desktop/real-ollama-smoke/real-ollama-smoke.jso
 ## Opt-in staged-runtime three-media diagnostic
 
 This preliminary diagnostic starts a staged runtime, then installs
-`windowsml-ocr` and `speech-recognition` (forcing `cuda`) in host-controlled
+`text-recognition` and `speech-recognition` (forcing `cuda`) in host-controlled
 order and exercises a real scanned PDF, image, and audio file over the v2
 ingestion and capture flow (`POST /v2/ingestions`, chunked
 `PUT /v2/ingestions/{id}/chunks/{i}`, `POST /v2/ingestions/{id}/finalize`,

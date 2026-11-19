@@ -114,7 +114,7 @@ function createCatalog(
     catalogVersion: '2',
     runtimeVersion: RELEASE_VERSION,
     requirements: [{
-      requirementId: 'windowsml-ocr',
+      requirementId: 'text-recognition',
       artifacts: [{
         arch: 'x86_64',
         artifactVersion: RELEASE_VERSION,
@@ -124,7 +124,7 @@ function createCatalog(
         fileName: ARCHIVE_NAME,
         filesManifestSha256: sha256(filesManifest),
         platform: 'windows',
-        requirementId: 'windowsml-ocr',
+        requirementId: 'text-recognition',
         role: 'worker',
         sha256: sha256(archive),
         url: 'https://example.invalid/capture-engine-ocr.zip',
@@ -273,7 +273,7 @@ test('local candidate mirror serves the verified candidate archive when source d
     const mirror = await startLocalCandidateWorkerMirror({
       candidateRoot: fixture.candidateRoot,
       candidateId: fixture.candidateId,
-      requirementId: 'windowsml-ocr',
+      requirementId: 'text-recognition',
     });
     try {
       const response = await requestBytes(`${mirror.baseUrl}/${encodeURIComponent(fixture.archiveName)}`);
@@ -310,7 +310,7 @@ test('local candidate mirror accepts a candidate catalog under an ancestor junct
     const mirror = await startLocalCandidateWorkerMirror({
       candidateRoot: fixture.candidateRoot,
       candidateId: fixture.candidateId,
-      requirementId: 'windowsml-ocr',
+      requirementId: 'text-recognition',
     });
     try {
       assert.equal(mirror.identity.candidateId, fixture.candidateId);
@@ -333,7 +333,7 @@ test('local candidate mirror accepts canonical member paths with plus signs and 
     const mirror = await startLocalCandidateWorkerMirror({
       candidateRoot: fixture.candidateRoot,
       candidateId: fixture.candidateId,
-      requirementId: 'windowsml-ocr',
+      requirementId: 'text-recognition',
     });
     try {
       assert.equal(mirror.identity.workerExecutableFileName, 'capture-engine-ocr.exe');
@@ -397,7 +397,7 @@ test('local candidate mirror rejects malformed, missing, and duplicate entryPoin
         {
           candidateRoot: fixture.candidateRoot,
           candidateId,
-          requirementId: 'windowsml-ocr',
+          requirementId: 'text-recognition',
         },
         testCase.message,
         testCase.name,
@@ -415,7 +415,7 @@ test('local candidate mirror rejects wrong candidate IDs and self-binding drift'
       {
         candidateRoot: fixture.candidateRoot,
         candidateId: 'f'.repeat(64),
-        requirementId: 'windowsml-ocr',
+        requirementId: 'text-recognition',
       },
       /manifest identity is invalid/,
     );
@@ -427,7 +427,7 @@ test('local candidate mirror rejects wrong candidate IDs and self-binding drift'
       {
         candidateRoot: fixture.candidateRoot,
         candidateId: fixture.candidateId,
-        requirementId: 'windowsml-ocr',
+        requirementId: 'text-recognition',
       },
       /candidate ID is not bound/,
     );
@@ -444,7 +444,7 @@ test('local candidate mirror rejects duplicate requirements and descriptors', as
         const requirements = catalog.requirements as Array<Record<string, unknown>>;
         catalog.requirements = [...requirements, { ...requirements[0] }];
       },
-      message: /exactly one windowsml-ocr requirement/,
+      message: /exactly one text-recognition requirement/,
     },
     {
       name: 'duplicate worker descriptor',
@@ -468,7 +468,7 @@ test('local candidate mirror rejects duplicate requirements and descriptors', as
         {
           candidateRoot: fixture.candidateRoot,
           candidateId,
-          requirementId: 'windowsml-ocr',
+          requirementId: 'text-recognition',
         },
         testCase.message,
         testCase.name,
@@ -489,7 +489,7 @@ test('local candidate mirror rejects catalog, archive, and files-manifest identi
       {
         candidateRoot: catalogDrift.candidateRoot,
         candidateId,
-        requirementId: 'windowsml-ocr',
+        requirementId: 'text-recognition',
       },
       /catalog version is invalid/,
     );
@@ -509,7 +509,7 @@ test('local candidate mirror rejects catalog, archive, and files-manifest identi
         {
           candidateRoot: fixture.candidateRoot,
           candidateId: fixture.candidateId,
-          requirementId: 'windowsml-ocr',
+          requirementId: 'text-recognition',
         },
         /bytes do not match the candidate manifest/,
         `${drift} drift`,
@@ -554,7 +554,7 @@ test('local candidate mirror rejects cross-layer descriptor drift after candidat
         {
           candidateRoot: fixture.candidateRoot,
           candidateId,
-          requirementId: 'windowsml-ocr',
+          requirementId: 'text-recognition',
         },
         testCase.message,
         testCase.name,
@@ -597,7 +597,7 @@ test('local candidate mirror rejects a referenced runtime junction escaping the 
       {
         candidateRoot: fixture.candidateRoot,
         candidateId: fixture.candidateId,
-        requirementId: 'windowsml-ocr',
+        requirementId: 'text-recognition',
       },
       /must be a regular file|must not resolve through a link|escaped the runtime candidate root/,
     );
@@ -625,7 +625,7 @@ test('complete-body verifier rejects post-start truncation and same-length repla
       const mirror = await startLocalCandidateWorkerMirror({
         candidateRoot: fixture.candidateRoot,
         candidateId: fixture.candidateId,
-        requirementId: 'windowsml-ocr',
+        requirementId: 'text-recognition',
       });
       try {
         await mutation.apply(fixture);
@@ -665,7 +665,7 @@ test('streaming candidate archive verification has bounded external memory', asy
       const mirror = await module.startLocalCandidateWorkerMirror({
         candidateRoot: process.env.CANDIDATE_ROOT,
         candidateId: process.env.CANDIDATE_ID,
-        requirementId: 'windowsml-ocr',
+        requirementId: 'text-recognition',
       });
       if (global.gc) global.gc();
       const after = process.memoryUsage();

@@ -25,7 +25,7 @@ from capture_runtime.contracts import (
     StructuringSessionStatus,
     StructuringSessionV2,
 )
-from capture_runtime.storage.common import atomic_json
+from capture_runtime.storage.common import atomic_json, project_stored_ocr_identity
 from capture_runtime.structuring.domain.session import StructuringSemanticBlock
 from capture_runtime.structuring.domain.session.models import (
     SessionTransitionError,
@@ -569,7 +569,9 @@ class StructuringSessionRepository:
             )
         completed_payload = payload.get("completedDocument")
         completed_document = (
-            None if completed_payload is None else CaptureDocument.model_validate(completed_payload)
+            None
+            if completed_payload is None
+            else CaptureDocument.model_validate(project_stored_ocr_identity(completed_payload))
         )
         request_fingerprint = payload.get("requestFingerprint")
         if (

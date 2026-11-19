@@ -35,6 +35,33 @@ def dump_model(model: Any) -> Any:
     return model.model_dump(mode="json", by_alias=True)
 
 
+def project_stored_ocr_identity(payload: Any) -> Any:
+    """Project OCR fields in a decoded runtime record, leaving digests and text intact."""
+    if not isinstance(payload, dict):
+        return payload
+    projected = payload.copy()
+    for key in ("extractionEngine", "provenance"):
+        identity = payload.get(key)
+        if isinstance(identity, dict) and identity.get("engine") == "windowsml-ocr":
+            identity = {**identity, "engine": "text-recognition"}
+            if identity.get("model") == "pp-ocrv6-medium-windowsml":
+                identity["model"] = "pp-ocrv6-medium"
+            elif identity.get("model") == "deterministic-windowsml-v1":
+                identity["model"] = "deterministic-ocr-v1"
+            if identity.get("device") == "windowsml-dml":
+                identity["device"] = "directml"
+            projected[key] = identity
+    suggested = payload.get("suggestedUnits")
+    if isinstance(suggested, list):
+        projected["suggestedUnits"] = [
+            "text-recognition" if value == "windowsml-ocr" else value for value in suggested
+        ]
+    pages = payload.get("pages")
+    if isinstance(pages, list):
+        projected["pages"] = [project_stored_ocr_identity(page) for page in pages]
+    return projected
+
+
 def atomic_json(path: Path, payload: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
@@ -51,5 +78,6 @@ __all__ = [
     "TransitionRejectedError",
     "atomic_json",
     "dump_model",
+    "project_stored_ocr_identity",
     "record_identifier",
 ]

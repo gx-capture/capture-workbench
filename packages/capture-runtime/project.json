@@ -340,7 +340,7 @@
       },
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "uv sync --python 3.13 --extra windowsml --reinstall-package onnxruntime-directml"
+        "command": "uv sync --python 3.13 --extra ocr --reinstall-package onnxruntime-directml"
       }
     },
     "verify-onnxruntime-directml": {
@@ -520,18 +520,19 @@
         "command": "uv run --python 3.13 python scripts/model_source_lock.py validate"
       }
     },
-    "validate-commit-a-fixtures": {
+    "validate-text-recognition-sources": {
       "cache": true,
       "executor": "nx:run-commands",
       "inputs": [
-        "production"
+        "production",
+        "{workspaceRoot}/release/version.json"
       ],
       "metadata": {
-        "description": "Verifies reproducible project-owned Commit A OCR fixtures and provenance."
+        "description": "Verifies reproducible first-party text recognition sources and provenance."
       },
       "options": {
         "cwd": "packages/capture-runtime",
-        "command": "uv run --python 3.13 python scripts/generate_commit_a_fixtures.py --check"
+        "command": "uv run --python 3.13 python scripts/generate_text_recognition_sources.py --check"
       }
     },
     "classify-release-model-mode": {
