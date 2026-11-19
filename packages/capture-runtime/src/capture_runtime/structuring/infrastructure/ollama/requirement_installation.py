@@ -150,6 +150,15 @@ class OllamaRequirementInstaller:
             raise ModelOptionRejectedError(
                 "The model option is not in the release catalog"
             ) from error
+        async with self._lifecycle.lease(cancel_event):
+            await self._install_model_exclusive(option, cancel_event, report_progress)
+
+    async def _install_model_exclusive(
+        self,
+        option: StructuringModelOption,
+        cancel_event: asyncio.Event,
+        report_progress: Callable[[float], None],
+    ) -> None:
         executable = self._lifecycle.executable()
         if executable is None:
             raise ManualActionRequiredError("Install the Ollama application first")

@@ -57,7 +57,6 @@ class OllamaCaptureStructuringProvider:
             single_segment_profile_id=_QWEN_0_8B_PROFILE_ID,
         )
         self._engine_identity: CaptureEngine | None = None
-        self._structure_lock = asyncio.Lock()
 
     @property
     def engine_identity(self) -> CaptureEngine | None:
@@ -70,7 +69,7 @@ class OllamaCaptureStructuringProvider:
         target_language: str | None,
         cancel_event: asyncio.Event,
     ) -> object:
-        async with self._structure_lock:
+        async with self._lifecycle.lease(cancel_event):
             return await self._structure_exclusive(
                 raw,
                 target_language=target_language,

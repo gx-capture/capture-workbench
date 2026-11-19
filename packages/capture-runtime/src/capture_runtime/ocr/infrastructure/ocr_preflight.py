@@ -1058,7 +1058,6 @@ class NativeOcrAdapterMapLease(DxgiAdapterLease):
             _ocr_adapter_table(ordinary, high_performance=False),
         )
 
-
     def adapter_map(self) -> tuple[str, tuple[OcrGpuAdapter, ...]]:
         """Return the joined map digest and ordinary-ordinal map from this lease."""
 
@@ -1073,6 +1072,7 @@ class NativeOcrAdapterMapLease(DxgiAdapterLease):
         if joined is None:
             raise RuntimeError("native OCR adapter map is incomplete")
         return _adapter_map_digest(joined), joined
+
 
 def _native_adapter_tables() -> tuple[tuple[OcrGpuAdapter, ...], tuple[OcrGpuAdapter, ...]]:
     """Enumerate ordinary and HIGH_PERFORMANCE tables for one capability probe."""

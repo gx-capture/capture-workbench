@@ -118,6 +118,7 @@ def build_runtime_dependencies(
 
     runtime_clock = clock or SystemClock()
     runtime_contract_set = contract_set or load_contract_set()
+    # The owned structurer and model installer share this lifecycle's exclusive lease.
     lifecycle = IsolatedOllamaLifecycle(
         settings.ollama,
         process_controller=process_controller,

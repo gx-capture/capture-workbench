@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import shutil
 import subprocess
 import threading
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO, Protocol
@@ -17,6 +19,7 @@ from capture_runtime._windows_job import create_kill_on_close_job, terminate_and
 from capture_runtime.clock import Clock
 from capture_runtime.config import OllamaRuntimeConfig
 from capture_runtime.structuring.infrastructure.model_catalog import ActiveModelSelectionStore
+from capture_runtime.structuring.infrastructure.ollama.device_policy import resolve_device_policy
 from capture_runtime.structuring.infrastructure.ollama.listener_owner import (
     ListenerOwner,
     SystemListenerOwner,
@@ -312,6 +315,28 @@ class IsolatedOllamaLifecycle:
         self._clock = clock
         self._owned: OwnedProcess | None = None
         self._lock = threading.RLock()
+        self._lease_lock = asyncio.Lock()
+
+    @asynccontextmanager
+    async def lease(self, cancel_event: asyncio.Event) -> AsyncIterator[None]:
+        """Reserve process ownership through the caller's final cleanup."""
+
+        acquire = asyncio.create_task(self._lease_lock.acquire())
+        cancellation = asyncio.create_task(cancel_event.wait())
+        try:
+            await asyncio.wait((acquire, cancellation), return_when=asyncio.FIRST_COMPLETED)
+            if cancel_event.is_set():
+                raise asyncio.CancelledError
+            await acquire
+            yield
+        finally:
+            acquire.cancel()
+            cancellation.cancel()
+            # Both tasks may finish on the same loop turn. Return the lock
+            # even when cancellation won before the caller entered the lease.
+            if acquire.done() and not acquire.cancelled() and acquire.exception() is None:
+                self._lease_lock.release()
+            await asyncio.gather(acquire, cancellation, return_exceptions=True)
 
     def executable(self) -> str | None:
         return self._resolve_executable()
@@ -356,6 +381,7 @@ class IsolatedOllamaLifecycle:
                 raise RuntimeUnavailableError("Ollama executable is not installed")
             self.config.app_data_dir.mkdir(parents=True, exist_ok=True)
             self.config.models_dir.mkdir(parents=True, exist_ok=True)
+            device_policy = resolve_device_policy()
             for _ in range(5):
                 try:
                     port = self._port_selector()
@@ -363,7 +389,9 @@ class IsolatedOllamaLifecycle:
                     owned = self._controller.spawn(
                         executable,
                         ["serve"],
-                        environment=self.config.process_environment(f"127.0.0.1:{port}"),
+                        environment=device_policy.serve_environment(
+                            self.config.process_environment(f"127.0.0.1:{port}")
+                        ),
                         cwd=self.config.app_data_dir,
                         output_path=self.config.app_data_dir / "ollama.log",
                     )

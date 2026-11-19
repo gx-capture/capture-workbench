@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
-
 _DXGI_ADAPTER_FLAG_SOFTWARE = 0x2
 _DXGI_ERROR_NOT_FOUND = 0x887A0002
 _DXGI_FACTORY1_VTABLE_ENUM_ADAPTERS1 = 12
@@ -40,6 +39,7 @@ class GpuAdapter:
     adapter_class: GpuAdapterClass
     subsystem_id: int
     revision: int
+    dedicated_memory_bytes: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -150,7 +150,7 @@ def _classify_native_adapter(*, is_software: bool, uma: bool | None) -> GpuAdapt
 
 
 def _native_adapter_uma(adapter: ctypes.c_void_p) -> bool | None:
-    """Read the adapter's native UMA architecture flag without loading OCR."""
+    """Read the adapter's native D3D12 UMA architecture flag."""
 
     if sys.platform != "win32":
         return None
@@ -234,6 +234,7 @@ def _native_adapter_record(adapter: ctypes.c_void_p) -> GpuAdapter | None:
         subsystem_id=description.subsystem_id,
         revision=description.revision,
         description=description.description,
+        dedicated_memory_bytes=description.dedicated_video_memory,
     )
 
 

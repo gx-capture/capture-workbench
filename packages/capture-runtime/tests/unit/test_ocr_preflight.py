@@ -15,9 +15,15 @@ from capture_runtime.contracts import (
 from capture_runtime.contracts import (
     OcrComputePreflight as OcrComputePreflightContract,
 )
-from capture_runtime.gpu_inventory import _DXGI_FACTORY1_VTABLE_IS_CURRENT
+from capture_runtime.gpu_inventory import (
+    _DXGI_FACTORY1_VTABLE_IS_CURRENT,
+    GpuAdapter,
+    GpuAdapterClass,
+    _classify_native_adapter,
+)
 from capture_runtime.ocr.infrastructure.ocr_preflight import (
     NativeOcrAdapterMapLease,
+    NativeOcrGpuCapabilityProbe,
     OcrComputePreflight,
     OcrGpuAdapter,
     OcrGpuCapabilitySnapshot,
@@ -97,6 +103,58 @@ def test_no_adapter_reports_no_compatible_gpu_even_if_dml_is_registered() -> Non
     assert decision.mode is OcrComputeMode.CPU_FALLBACK
     assert decision.adapter_class is OcrAdapterClass.UNKNOWN
     assert decision.reason_code is OcrComputeReasonCode.NO_COMPATIBLE_GPU
+
+
+def _probe_native_adapter(
+    monkeypatch: pytest.MonkeyPatch, adapter_class: GpuAdapterClass
+) -> OcrGpuAdapter:
+    adapter = GpuAdapter("Test GPU", 0x1234, 2, "0000000000000001", adapter_class, 3, 0)
+    monkeypatch.setattr(NativeOcrAdapterMapLease, "__init__", lambda self: None)
+    monkeypatch.setattr(NativeOcrAdapterMapLease, "is_current", lambda self: True)
+    monkeypatch.setattr(NativeOcrAdapterMapLease, "close", lambda self: None)
+    monkeypatch.setattr(
+        NativeOcrAdapterMapLease,
+        "enumerate_adapters",
+        lambda self, *, high_performance=False: (adapter,),
+    )
+    snapshot = NativeOcrGpuCapabilityProbe(
+        provider_resolver=lambda: ("DmlExecutionProvider",),
+        version_resolver=lambda: None,
+    ).probe()
+    (ordinary,) = snapshot.ordinary_adapters
+    (high,) = snapshot.high_performance_adapters
+    assert ordinary.high_performance_rank is None
+    assert high.high_performance_rank == 0
+    assert (high.adapter_class, high.is_software) == (ordinary.adapter_class, ordinary.is_software)
+    return ordinary
+
+
+@pytest.mark.parametrize(
+    ("uma", "expected"),
+    [
+        (True, OcrAdapterClass.INTEGRATED),
+        (False, OcrAdapterClass.DEDICATED),
+        (None, OcrAdapterClass.UNKNOWN),
+    ],
+)
+def test_native_hardware_classification_uses_architecture_uma_evidence(
+    monkeypatch: pytest.MonkeyPatch, uma: bool | None, expected: OcrAdapterClass
+) -> None:
+    adapter = _probe_native_adapter(
+        monkeypatch, _classify_native_adapter(is_software=False, uma=uma)
+    )
+    assert adapter.adapter_class is expected
+    assert not adapter.is_software
+
+
+def test_native_hardware_classification_never_uses_software_memory_as_gpu_class(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = _probe_native_adapter(
+        monkeypatch, _classify_native_adapter(is_software=True, uma=False)
+    )
+    assert adapter.adapter_class is OcrAdapterClass.UNKNOWN
+    assert adapter.is_software
 
 
 @pytest.mark.parametrize("native_value", [0, 1])

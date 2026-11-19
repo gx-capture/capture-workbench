@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -43,6 +45,14 @@ class FakeLifecycle:
         self.starts = 0
         self.stops = 0
         self.running = False
+        self._lease_lock = asyncio.Lock()
+
+    @asynccontextmanager
+    async def lease(self, cancel_event: asyncio.Event) -> AsyncIterator[None]:
+        async with self._lease_lock:
+            if cancel_event.is_set():
+                raise asyncio.CancelledError
+            yield
 
     def start(self) -> int:
         self.starts += 1
