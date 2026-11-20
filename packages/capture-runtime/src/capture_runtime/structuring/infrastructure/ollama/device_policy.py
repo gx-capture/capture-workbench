@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ctypes
 import os
 import re
 import shutil
@@ -11,6 +12,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal
+from uuid import UUID
 
 from capture_runtime.gpu_inventory import GpuAdapter, GpuAdapterClass, read_gpu_inventory
 from capture_runtime.structuring.infrastructure.ollama.server_log import DiscoveredDevice
@@ -123,6 +125,41 @@ def _dedicated_sort_key(adapter: GpuAdapter) -> tuple[int, int, str]:
     return -adapter.dedicated_memory_bytes, vendor_rank, adapter.description
 
 
+def _known_program_folder(variable: str) -> str | None:
+    """Resolve a Windows known folder without relying on inherited variables."""
+    if sys.platform != "win32":
+        return None
+    folder_id = {
+        "ProgramFiles": "905e63b6-c1bf-494e-b29c-65b732d3d21a",
+        "ProgramW6432": "6d809377-6af0-444b-8957-a3773f02200e",
+    }[variable]
+    guid = (ctypes.c_ubyte * 16).from_buffer_copy(UUID(folder_id).bytes_le)
+    path = ctypes.c_wchar_p()
+    try:
+        shell = ctypes.WinDLL("shell32", use_last_error=True)
+        ole = ctypes.WinDLL("ole32", use_last_error=True)
+        lookup = shell.SHGetKnownFolderPath
+        lookup.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_uint32,
+            ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_wchar_p),
+        ]
+        lookup.restype = ctypes.c_long
+        free = ole.CoTaskMemFree
+        free.argtypes = [ctypes.c_void_p]
+        free.restype = None
+        try:
+            if lookup(ctypes.byref(guid), 0, None, ctypes.byref(path)) != 0:
+                return None
+            return path.value or None
+        finally:
+            if path:
+                free(ctypes.cast(path, ctypes.c_void_p))
+    except (AttributeError, OSError):
+        return None
+
+
 def _find_cuda_uuid(
     selected: GpuAdapter, adapters: tuple[GpuAdapter, ...]
 ) -> tuple[str | None, str | None]:
@@ -142,6 +179,15 @@ def _find_cuda_uuid(
             executable = str(fallback)
     if executable is None:
         return None, "nvidia-smi not found"
+    environment = dict(os.environ)
+    if sys.platform == "win32":
+        # NVML fails to initialise without these variables, observed with the
+        # host's minimal environment. Supply them only to the nvidia-smi child.
+        for variable in ("ProgramFiles", "ProgramW6432"):
+            if variable.upper() not in {key.upper() for key in environment}:
+                folder = _known_program_folder(variable)
+                if folder is not None:
+                    environment[variable] = folder
     try:
         result = subprocess.run(
             [
@@ -149,6 +195,7 @@ def _find_cuda_uuid(
                 "--query-gpu=uuid,pci.device_id",
                 "--format=csv,noheader,nounits",
             ],
+            env=environment,
             stdin=subprocess.DEVNULL,
             capture_output=True,
             encoding="utf-8",

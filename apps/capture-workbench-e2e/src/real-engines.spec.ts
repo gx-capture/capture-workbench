@@ -91,6 +91,7 @@ import { spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, rmSync, statSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
+import { assertOllamaCudaUuidPin } from '../../capture-workbench-desktop/scripts/real-ollama-smoke.ts';
 import { isAbsolute, join, resolve } from 'node:path';
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import {
@@ -1387,6 +1388,7 @@ test('runs full real-engine capture, editing, export, and restart journey on loc
       });
       if (nvidia.status === 0 && nvidia.stdout.trim() !== '') {
         assert.equal(structuringDevice, 'cuda', 'Owned Ollama must use the NVIDIA GPU.');
+        assertOllamaCudaUuidPin(await readFile(join(config.appDataDir, 'ollama', 'ollama.log'), 'utf8'));
       }
       if (structuringDevice === null || structuringDevice === 'cpu') {
         assert.equal(audioStructuring.deviceName ?? null, null);

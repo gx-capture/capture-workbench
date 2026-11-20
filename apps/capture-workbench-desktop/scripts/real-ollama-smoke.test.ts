@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  assertOllamaCudaUuidPin,
   buildRealOllamaSmokeEvidence,
   extractOllamaStructuringProvenance,
 } from './real-ollama-smoke.ts';
@@ -12,6 +13,17 @@ import {
   isTerminalCaptureStatus,
   validateWorkerMirrorUrl,
 } from './v2-capture-flow.ts';
+
+test('CUDA UUID pin check uses only the last printed server config', () => {
+  const uuid = 'GPU-12345678-1234-1234-1234-123456789abc';
+  const pinned = `msg="server config" env="map[CUDA_VISIBLE_DEVICES:${uuid} OLLAMA_DEBUG:INFO]"`;
+  assert.doesNotThrow(() => assertOllamaCudaUuidPin(pinned + '\nother output'));
+  for (const value of ['', '0', '-1', 'GPU-invalid', `${uuid}extra`]) {
+    assert.throws(() => assertOllamaCudaUuidPin(`${pinned}\nmsg="server config" env="map[CUDA_VISIBLE_DEVICES:${value}]"`));
+  }
+  assert.throws(() => assertOllamaCudaUuidPin('no config'));
+  assert.throws(() => assertOllamaCudaUuidPin('msg="server config" env="map[OLLAMA_DEBUG:INFO]"'));
+});
 
 const validDigest = `sha256:${'a'.repeat(64)}`;
 const validSourceSha256 = 'b'.repeat(64);

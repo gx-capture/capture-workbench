@@ -1,3 +1,4 @@
+import assert from 'node:assert/strict';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
@@ -67,6 +68,16 @@ export interface RealOllamaSmokeEvidence {
   readonly schemaVersion: unknown;
   readonly structuringEngine: StructuringProvenance;
   readonly workerMirrorUsed: boolean;
+}
+
+export function assertOllamaCudaUuidPin(log: string): void {
+  const lastConfig = log.split(/\r?\n/u).filter((line) => line.includes('server config')).at(-1);
+  assert.ok(lastConfig, 'Owned Ollama must print its server config.');
+  assert.match(
+    lastConfig,
+    /(?:^|\s|\[|")CUDA_VISIBLE_DEVICES:GPU-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}(?=[\s\]"]|$)/iu,
+    'Owned Ollama must pin CUDA_VISIBLE_DEVICES to a GPU UUID in its last server config.',
+  );
 }
 
 export function extractOllamaStructuringProvenance(payload: unknown): ExtractedOllamaResult {
@@ -180,6 +191,13 @@ async function main(): Promise<void> {
 
     const result = await request<unknown>(runtimePort, origin, token, `/v2/captures/${captureId}/result`);
     const extracted = extractOllamaStructuringProvenance(result);
+    const nvidia = spawnSync('nvidia-smi', ['--list-gpus'], {
+      encoding: 'utf8', timeout: 2_000, windowsHide: true,
+    });
+    if (nvidia.status === 0 && nvidia.stdout.trim() !== '') {
+      assert.equal(extracted.structuringEngine.device, 'cuda', 'Owned Ollama must use the NVIDIA GPU.');
+      assertOllamaCudaUuidPin(await readFile(join(appData, 'ollama', 'ollama.log'), 'utf8'));
+    }
     const evidence = buildRealOllamaSmokeEvidence({
       schemaVersion: extracted.schemaVersion,
       structuringEngine: extracted.structuringEngine,

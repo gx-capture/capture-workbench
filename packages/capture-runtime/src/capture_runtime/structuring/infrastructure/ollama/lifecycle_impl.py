@@ -471,7 +471,10 @@ class IsolatedOllamaLifecycle:
                         if device_policy.target == "cuda"
                         else "target is not cuda"
                     )
-                    _LOG.info(
+                    _LOG.log(
+                        logging.WARNING
+                        if device_policy.target == "cuda" and not pin_applied
+                        else logging.INFO,
                         "Starting owned Ollama: target=%s cuda_uuid_pin=%s reason=%s",
                         device_policy.target,
                         pin_applied,
