@@ -3,15 +3,9 @@
 from __future__ import annotations
 
 from importlib import import_module
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from capture_runtime.app import create_app
-    from capture_runtime.contracts import CaptureDocument, RawCapture
-    from capture_runtime.structuring.infrastructure.structuring_provider import (
-        CaptureStructuringProvider,
-    )
-
+# Keep public exports lazy even during static freezing: PyInstaller follows
+# TYPE_CHECKING imports and would pull the app into every engine worker.
 __all__ = [
     "CaptureDocument",
     "CaptureStructuringProvider",
