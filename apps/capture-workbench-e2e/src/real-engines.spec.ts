@@ -5,22 +5,27 @@
  * model installation, first start and restart with unchanged versions/<v>/verified-files.json.
  * Run smoke-real-engines-execution for every runtime/UI fix on that installed app
  * data from the same build. It checks catalog-bound readiness before any capture,
- * never installs, and proves stages 2-7 below (including the owned Ollama CUDA UUID).
- * Evidence is separate under tmp/capture-workbench-e2e/real-engines-<journey>.
+ * and proves the execution stages below (including the owned Ollama CUDA UUID).
+ * Evidence is separate under tmp/capture-workbench-e2e/real-engines-<journey>, with Playwright artifacts in its playwright/ subfolder.
  *
  * Drives the real Workbench UI (`capture-workbench:serve`) against the real
  * headless host (`capture-workbench-dev-host`) and the staged product (or
  * specified) `capture-runtime` with real recognition engines and Ollama
  * structuring:
+ * Installation
  *   1. First-run installation via UI (`/ocr` first-run card & `/settings/engines`),
- *      covering cancel + retry and reload re-attachment without duplicate installs.
+ *      covering cancel + retry and reload re-attachment without duplicate installs, and checking the installed speech pack.
+ *   2. Installing the structuring model.
+ *   3. Starting and restarting with persistent verification records.
+ * Execution
+ *   1. Checking catalog readiness, the installed speech pack and the active model.
  *   2. PDF and image OCR to `/history/:id/content`, verifying normalized text
  *      anchors, rendered source, `library_get` provenance (and exact OCR device
  *      when `CAPTURE_REAL_ENGINES_EXPECTED_OCR_DEVICE` is set), and
  *      `/settings/diagnostics`.
  *   3. Structuring model selection on `/settings/diagnostics`, audio transcription
  *      with speaker diarization and structuring on `/asr`, verifying the speech
- *      provenance of the installed pack (`tea-asr-1.1` on `cuda` with the NVIDIA
+ *      provenance of the installed pack (`tea-asr-1.1` on `cuda` by default with the NVIDIA
  *      driver, `tea-asr-1.1-mini` on `cpu` without) + Ollama structuring
  *      provenance with sha256 digests.
  *   4. Viewing, editing with a synthetic marker, reload persistence, exporting to
@@ -38,16 +43,21 @@
  *      document IDs remain absent from `library_list` and `library_get`.
  *
  * Explicit per-stage timeout placeholders (to be measured by the first real run):
+ * Installation
  *   - 01-install-engines:         45 minutes (cold real downloads; much faster with cache)
+ *   - 02-install-structuring-model: 25 minutes
+ *   - 03-installed-first-start-and-restart: 10 minutes
+ * Execution
+ *   - 01-check-installed-catalog: 10 minutes
  *   - 02-ocr-pdf-and-image:       10 minutes
- *   - 03-asr-and-structuring:     35 minutes (ASR + structuring; model install has its own 25 minute stage)
+ *   - 03-asr-and-structuring:     35 minutes
  *   - 04-edit-restore-and-export:  3 minutes
  *   - 05-restart-persistence:      5 minutes
  *   - 06-delete-documents:         2 minutes
  *   - 07-restart-after-deletion:   5 minutes
  *
- * Environment variables (missing/invalid entries are reported together upfront):
- *   Required media & expectations:
+ * Environment variables are validated before starting the host.
+ *   Required media & expectations for execution:
  *   - CAPTURE_REAL_ENGINES_PDF (or CAPTURE_REAL_MEDIA_PDF / CAPTURE_REAL_DESKTOP_OCR_PDF)
  *   - CAPTURE_REAL_ENGINES_PDF_EXPECTATIONS (optional override; defaults to `<pdf>.expected.json`)
  *   - CAPTURE_REAL_ENGINES_IMAGE (or CAPTURE_REAL_MEDIA_IMAGE / CAPTURE_REAL_DESKTOP_OCR_INPUT)
@@ -59,10 +69,11 @@
  *   - CAPTURE_REAL_ENGINES_TEMP_DIR: explicit temp directory for host/runtime/exports
  *   - CAPTURE_REAL_ENGINES_MODEL_OPTION_ID: e.g. `qwen3.5-0.8b-v1`, `qwen3.5-2b-v1`, `qwen3.5-4b-v1`
  *   Optional overrides & checks:
- *   - CAPTURE_REAL_ENGINES_EXPECTED_OCR_DEVICE: `directml` or `cpu`; when set,
+ *   - CAPTURE_REAL_ENGINES_EXPECTED_OCR_DEVICE (execution): `directml` or `cpu`; when set,
  *     both PDF and image extraction provenance and diagnostics must match exactly.
  *   - CAPTURE_REAL_ENGINES_RUNTIME_MANIFEST & CAPTURE_REAL_ENGINES_RUNTIME_EXECUTABLE (both or neither; default is staged product runtime)
  *   - CAPTURE_SMOKE_WORKER_MIRROR_OPT_IN / CAPTURE_SMOKE_WORKER_MIRROR_URL
+ *   - CAPTURE_SPEECH_RECOGNITION_VARIANT sets the expected pack (auto, cuda, or cpu).
  *   - CAPTURE_SPEECH_RECOGNITION_ALLOW_CPU_FALLBACK: explicit override.
  *     Defaults to false for this smoke so the installed pack's device is verified.
  *

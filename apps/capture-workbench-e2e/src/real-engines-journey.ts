@@ -5,6 +5,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, resolve } from 'node:path';
+import type { RuntimeInstallations, RuntimeRequirements } from '@gx-capture/capture-runtime-client';
 import { expect, type Locator, type Page } from '@playwright/test';
 import {
   canConnect,
@@ -68,10 +69,14 @@ function assertOllamaCudaUuidPin(log: string): void {
   );
 }
 
-/** What the installed speech pack records: the runtime picks the pack by the NVIDIA driver. */
-function expectedSpeechProvenance(): { readonly model: string; readonly device: string } {
+function expectedSpeechProvenance(): { readonly model: string; readonly device: 'cuda' | 'cpu' } {
+  const variant = readEnvFirst(['CAPTURE_SPEECH_RECOGNITION_VARIANT']) ?? 'auto';
+  assert.ok(variant === 'auto' || variant === 'cuda' || variant === 'cpu',
+    'CAPTURE_SPEECH_RECOGNITION_VARIANT must be auto, cuda or cpu.');
   const systemRoot = process.env['SystemRoot'] ?? process.env['WINDIR'] ?? 'C:\\Windows';
-  return existsSync(join(systemRoot, 'System32', 'nvcuda.dll'))
+  const useCuda = variant === 'cuda'
+    || (variant === 'auto' && existsSync(join(systemRoot, 'System32', 'nvcuda.dll')));
+  return useCuda
     ? { model: 'tea-asr-1.1', device: 'cuda' }
     : { model: 'tea-asr-1.1-mini', device: 'cpu' };
 }
@@ -96,7 +101,7 @@ interface ProgressiveAudioOracle {
 
 type AudioExpectation = RealTextExpectation | ProgressiveAudioOracle;
 
-interface SmokeConfig {
+interface ExecutionMedia {
   readonly pdfPath: string;
   readonly pdfExpectation: RealTextExpectation;
   readonly imagePath: string;
@@ -104,6 +109,9 @@ interface SmokeConfig {
   readonly audioPath: string;
   readonly audioExpectation: AudioExpectation;
   readonly expectedOcrDevice?: ExpectedOcrDevice;
+}
+
+interface SmokeConfig {
   readonly appDataDir: string;
   readonly tempDir: string;
   readonly modelOptionId: string;
@@ -309,7 +317,7 @@ async function loadAudioExpectation(filePath: string): Promise<AudioExpectation>
   return loadTextExpectation(filePath, 'Audio');
 }
 
-async function resolveSmokeConfig(): Promise<SmokeConfig> {
+async function resolveExecutionMedia(): Promise<ExecutionMedia> {
   const missingOrInvalid: string[] = [];
 
   const pdfPath = readEnvFirst([
@@ -386,6 +394,32 @@ async function resolveSmokeConfig(): Promise<SmokeConfig> {
     }
   }
 
+  if (missingOrInvalid.length > 0 || !pdfPath || !imagePath || !audioPath
+    || !pdfExpPath || !imageExpPath || !audioExpPath) {
+    throw new Error(
+      `Missing or invalid real-engines configuration:\n- ${missingOrInvalid.join('\n- ')}`,
+    );
+  }
+
+  const [pdfExpectation, imageExpectation, audioExpectation] = await Promise.all([
+    loadTextExpectation(pdfExpPath, 'PDF'),
+    loadTextExpectation(imageExpPath, 'Image'),
+    loadAudioExpectation(audioExpPath),
+  ]);
+
+  return {
+    pdfPath: pdfPath,
+    pdfExpectation,
+    imagePath: imagePath,
+    imageExpectation,
+    audioPath: audioPath,
+    audioExpectation,
+    ...(expectedOcrDevice !== undefined ? { expectedOcrDevice } : {}),
+  };
+}
+
+function resolveSmokeConfig(): SmokeConfig {
+  const missingOrInvalid: string[] = [];
   const appDataDir = readEnvFirst([
     'CAPTURE_REAL_ENGINES_APP_DATA',
     'CAPTURE_REAL_MEDIA_APP_DATA',
@@ -440,22 +474,16 @@ async function resolveSmokeConfig(): Promise<SmokeConfig> {
     );
   }
 
-  if (missingOrInvalid.length > 0) {
+  if (missingOrInvalid.length > 0 || !appDataDir || !tempDir || !modelOptionId) {
     throw new Error(
       `Missing or invalid real-engines configuration:\n- ${missingOrInvalid.join('\n- ')}`,
     );
   }
 
-  const [pdfExpectation, imageExpectation, audioExpectation] = await Promise.all([
-    loadTextExpectation(pdfExpPath!, 'PDF'),
-    loadTextExpectation(imageExpPath!, 'Image'),
-    loadAudioExpectation(audioExpPath!),
-  ]);
-
   const launcherEnv: Record<string, string> = {
-    TEMP: tempDir!,
-    TMP: tempDir!,
-    TMPDIR: tempDir!,
+    TEMP: tempDir,
+    TMP: tempDir,
+    TMPDIR: tempDir,
     CAPTURE_SPEECH_RECOGNITION_ALLOW_CPU_FALLBACK:
       readEnvFirst(['CAPTURE_SPEECH_RECOGNITION_ALLOW_CPU_FALLBACK']) ?? 'false',
   };
@@ -469,16 +497,9 @@ async function resolveSmokeConfig(): Promise<SmokeConfig> {
   }
 
   return {
-    pdfPath: pdfPath!,
-    pdfExpectation,
-    imagePath: imagePath!,
-    imageExpectation,
-    audioPath: audioPath!,
-    audioExpectation,
-    ...(expectedOcrDevice !== undefined ? { expectedOcrDevice } : {}),
-    appDataDir: appDataDir!,
-    tempDir: tempDir!,
-    modelOptionId: modelOptionId!,
+    appDataDir: appDataDir,
+    tempDir: tempDir,
+    modelOptionId: modelOptionId,
     runtimeManifestPath,
     runtimeExecutablePath,
     launcherEnv,
@@ -856,18 +877,27 @@ const REINSTALL_MESSAGE = 'Installed engines or model do not match this build. A
  * Installation history alone cannot prove this: it has no artifact digests.
  */
 async function assertInstalledRequirements(page: Page): Promise<void> {
-  const requirements = await invokeHost<{
-    readonly items: readonly { readonly requirementId: string; readonly status: string }[];
-  }>(page, 'runtime_requirements');
-  for (const id of [...ALL_RECOGNITION_UNITS, 'structuring-runtime', 'structuring-model']) {
-    assert.equal(requirements.items.find((item) => item.requirementId === id)?.status,
-      'ready', REINSTALL_MESSAGE);
+  const requirements = await invokeHost<RuntimeRequirements>(page, 'runtime_requirements');
+  for (const requirementId of [...ALL_RECOGNITION_UNITS, 'structuring-runtime', 'structuring-model']) {
+    const status = requirements.items.find((item) => item.requirementId === requirementId)?.status ?? 'missing';
+    assert.equal(status, 'ready', `${requirementId}: ${status}. ${REINSTALL_MESSAGE}`);
   }
-  const installations = await invokeHost<{
-    readonly items: readonly { readonly status: string }[];
-  }>(page, 'runtime_list_installations');
-  assert.ok(installations.items.every((item) => ['completed', 'cancelled', 'failed'].includes(item.status)),
-    REINSTALL_MESSAGE);
+  const installations = await invokeHost<RuntimeInstallations>(page, 'runtime_list_installations');
+  const blocking = installations.items.find((item) => item.status === 'queued' || item.status === 'running');
+  if (blocking) {
+    assert.fail(`${blocking.installationId}: ${blocking.status}. ${REINSTALL_MESSAGE}`);
+  }
+}
+
+function assertInstalledSpeechPack(appDataDir: string, expectedPack: 'cuda' | 'cpu'): void {
+  const activeStatePath = join(appDataDir, 'runtime', 'engines', 'speech-recognition', 'active.json');
+  const state = existsSync(activeStatePath)
+    ? JSON.parse(readFileSync(activeStatePath, 'utf8')) as { readonly contentId?: unknown }
+    : undefined;
+  const actualPack = state?.contentId === 'cuda' || state?.contentId === 'cpu'
+    ? state.contentId
+    : 'missing or invalid';
+  assert.equal(actualPack, expectedPack, `speech-recognition pack: ${actualPack}, expected ${expectedPack}. ${REINSTALL_MESSAGE}`);
 }
 
 /** The API does not expose verification records. Read only these records under app data. */
@@ -944,7 +974,9 @@ export async function runJourney(page: Page, journey: Journey): Promise<void> {
   const evidenceDir = join(workspaceRoot, 'tmp', 'capture-workbench-e2e', `real-engines-${journey}`);
   const evidencePath = join(evidenceDir, 'real-engines-evidence.json');
 
-  const config = await resolveSmokeConfig();
+  const config = resolveSmokeConfig();
+  const media = journey === 'execution' ? await resolveExecutionMedia() : undefined;
+  const expectedSpeech = expectedSpeechProvenance();
   if (journey === 'installation') {
     assert.ok(!existsSync(config.appDataDir) || readdirSync(config.appDataDir).length === 0,
       'Installation journey requires empty app data; choose a fresh directory.');
@@ -956,8 +988,9 @@ export async function runJourney(page: Page, journey: Journey): Promise<void> {
   mkdirSync(evidenceDir, { recursive: true });
 
   const exportTempDir = join(config.tempDir, `exports-${randomBytes(4).toString('hex')}`);
-  mkdirSync(exportTempDir, { recursive: true });
+  if (media) mkdirSync(exportTempDir, { recursive: true });
   const removeExportDir = (): void => {
+    if (!media) return;
     rmSync(exportTempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   };
   process.once('exit', () => {
@@ -1119,13 +1152,14 @@ export async function runJourney(page: Page, journey: Journey): Promise<void> {
             page.locator(`[data-testid="engine-row"][data-requirement-id="${requirementId}"]`),
           ).toHaveAttribute('data-status', 'ready');
         }
+        assertInstalledSpeechPack(config.appDataDir, expectedSpeech.device);
         proven.installation = true;
       });
 
-      await runStage(stages, 'install-structuring-model', MODEL_INSTALL_TIMEOUT_MS, async () => {
+      await runStage(stages, '02-install-structuring-model', MODEL_INSTALL_TIMEOUT_MS, async () => {
         await prepareModel(page, launcher.baseUrl, config.modelOptionId, true, proven);
       });
-      await runStage(stages, 'installed-first-start-and-restart', 2 * RESTART_STAGE_TIMEOUT_MS, async () => {
+      await runStage(stages, '03-installed-first-start-and-restart', 2 * RESTART_STAGE_TIMEOUT_MS, async () => {
         await assertInstalledRequirements(page);
         const records = verificationRecords(config.appDataDir);
         for (const requirementId of ALL_RECOGNITION_UNITS) {
@@ -1158,10 +1192,12 @@ export async function runJourney(page: Page, journey: Journey): Promise<void> {
       evidence.passed = true;
       return;
     }
-    await runStage(stages, 'check-installed-catalog', RUNTIME_READY_TIMEOUT_MS, async () => {
+    assert.ok(media);
+    await runStage(stages, '01-check-installed-catalog', 2 * RESTART_STAGE_TIMEOUT_MS, async () => {
       await page.goto(`${launcher.baseUrl}/settings/engines`);
       await waitForRuntimeReady(page);
       await assertInstalledRequirements(page);
+      assertInstalledSpeechPack(config.appDataDir, expectedSpeech.device);
       await prepareModel(page, launcher.baseUrl, config.modelOptionId, false, proven);
     });
 
@@ -1180,7 +1216,7 @@ export async function runJourney(page: Page, journey: Journey): Promise<void> {
 
       // PDF OCR
       pdfDocId = await queueFileAndAwaitCompletion(page, {
-        filePath: config.pdfPath,
+        filePath: media.pdfPath,
         chooseButtonTestId: 'ocr-choose-files',
         queueRowTestId: 'ocr-queue-row',
         timeoutMs: OCR_STAGE_TIMEOUT_MS,
@@ -1215,7 +1251,7 @@ export async function runJourney(page: Page, journey: Journey): Promise<void> {
         });
         pageTexts.push(await pageTextArea.inputValue());
       }
-      assertOrderedAnchors(pageTexts.join('\n'), config.pdfExpectation.rawTextIncludes, 'PDF OCR');
+      assertOrderedAnchors(pageTexts.join('\n'), media.pdfExpectation.rawTextIncludes, 'PDF OCR');
 
       const pdfDetail = await invokeHost<DesktopLibraryDetailRecord>(page, 'library_get', {
         request: { documentId: pdfDocId },
@@ -1224,7 +1260,7 @@ export async function runJourney(page: Page, journey: Journey): Promise<void> {
       const pdfExtractionSummary = assertOcrExtractionProvenance(
         pdfDetail,
         'PDF',
-        config.expectedOcrDevice,
+        media.expectedOcrDevice,
       );
       const pdfSegments = pdfDetail.raw?.segments ?? [];
       assert.ok(pdfSegments.length > 0, 'PDF record must contain raw segments.');
@@ -1247,7 +1283,7 @@ export async function runJourney(page: Page, journey: Journey): Promise<void> {
       await expect(page.getByTestId('ocr-choose-files')).toBeEnabled();
 
       imageDocId = await queueFileAndAwaitCompletion(page, {
-        filePath: config.imagePath,
+        filePath: media.imagePath,
         chooseButtonTestId: 'ocr-choose-files',
         queueRowTestId: 'ocr-queue-row',
         timeoutMs: OCR_STAGE_TIMEOUT_MS,
@@ -1270,7 +1306,7 @@ export async function runJourney(page: Page, journey: Journey): Promise<void> {
       const imageVisibleText = await pageTextArea.inputValue();
       assertOrderedAnchors(
         imageVisibleText,
-        config.imageExpectation.rawTextIncludes,
+        media.imageExpectation.rawTextIncludes,
         'Image OCR',
       );
 
@@ -1281,7 +1317,7 @@ export async function runJourney(page: Page, journey: Journey): Promise<void> {
       const imageExtractionSummary = assertOcrExtractionProvenance(
         imageDetail,
         'Image',
-        config.expectedOcrDevice,
+        media.expectedOcrDevice,
       );
       const imageSegments = imageDetail.raw?.segments ?? [];
       assert.ok(imageSegments.length > 0, 'Image record must contain raw segments.');
@@ -1298,7 +1334,7 @@ export async function runJourney(page: Page, journey: Journey): Promise<void> {
         },
       };
 
-      if (config.expectedOcrDevice !== undefined) {
+      if (media.expectedOcrDevice !== undefined) {
         proven.ocrDevice = true;
       }
     });
@@ -1329,7 +1365,7 @@ export async function runJourney(page: Page, journey: Journey): Promise<void> {
       }
 
       audioDocId = await queueFileAndAwaitCompletion(page, {
-        filePath: config.audioPath,
+        filePath: media.audioPath,
         chooseButtonTestId: 'asr-choose-files',
         queueRowTestId: 'asr-queue-row',
         timeoutMs: ASR_STAGE_TIMEOUT_MS,
@@ -1363,13 +1399,12 @@ export async function runJourney(page: Page, journey: Journey): Promise<void> {
         request: { documentId: audioDocId },
       });
       assert.equal(audioDetail.status, 'completed');
-      assertAudioAgainstExpectation(audioDetail, config.audioExpectation);
+      assertAudioAgainstExpectation(audioDetail, media.audioExpectation);
 
       const audioExtraction =
         audioDetail.result?.extractionEngine ?? audioDetail.raw?.extractionEngine;
       assert.ok(audioExtraction, 'Audio record must include extractionEngine provenance.');
       assert.equal(audioExtraction.engine, 'speech-recognition');
-      const expectedSpeech = expectedSpeechProvenance();
       assert.equal(audioExtraction.model, expectedSpeech.model);
       assert.equal(audioExtraction.device, expectedSpeech.device);
       assert.match(audioExtraction.digest, SHA256_DIGEST_PATTERN);

@@ -561,6 +561,9 @@ installation, the engine catalog, a worker or a model delivery, and before a
 release; `pnpm nx run capture-workbench-e2e:smoke-real-engines-execution` on the app data an installation journey of
 the same build left, for every runtime or UI fix and before a release (it
 checks that the installed engines match this build and never installs). A
+change to code or data that a worker packages changes that worker's archive,
+so the execution journey then needs a new installation journey first; other
+runtime changes leave the archives byte-identical (#478). A
 Desktop App run is only for WebView2 behaviour, native dialogs, drag and drop of
 native paths, the installer, process cleanup on exit and pixel baselines.
 

@@ -140,9 +140,14 @@ returns `UnknownCommand`.
    accepts `--app-data <abs-dir>` (preserved across exits) and
    `--runtime-manifest` / `--runtime-executable`, and
    `pnpm nx run capture-workbench-e2e:smoke-real-engines-installation` and `capture-workbench-e2e:smoke-real-engines-execution`
-   (`playwright.real-engines.config.ts`, `src/real-engines.spec.ts`) drives the
-   seven-stage localhost journey (first-run install with cancel/retry and reload
-   re-attach; PDF & image OCR with optional `CAPTURE_REAL_ENGINES_EXPECTED_OCR_DEVICE`
+   (`playwright.real-engines.config.ts`, `src/real-engines.spec.ts`) drive two
+   localhost journeys. Installation starts from an empty app data: first-run
+   engine install with cancel/retry and reload re-attach, the structuring model
+   install, and a first start after installation plus a restart that must keep
+   the verification records; it leaves a ready app data. Execution runs on the
+   app data an installation of the same build left, checks that the installed
+   engines match this build and never installs: PDF & image OCR with optional
+   `CAPTURE_REAL_ENGINES_EXPECTED_OCR_DEVICE`
    device check; speech transcription + diarization + Ollama structuring;
    edit/export/restore; host/runtime restart persistence confirming features,
    active model, all three documents, restored PDF state, and saved ASR edit
@@ -159,7 +164,8 @@ returns `UnknownCommand`.
    Forwarding the stripped variables without
    local workarounds awaits the Rust allowlist follow-up before a full
    `tea-asr-1.1-mini` / custom engine-cache run succeeds end to end.
-   `smoke-real-engines-execution` is where the real-engine model journey is verified, and
+   The structuring model is installed by `smoke-real-engines-installation` and
+   run by `smoke-real-engines-execution`, and
    the release runbook records the dev-server vs. Desktop App split; moving the
    layer-1 parts of the OCR Desktop smoke is still to do.
 
