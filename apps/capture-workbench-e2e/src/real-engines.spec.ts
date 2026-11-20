@@ -91,7 +91,6 @@ import { spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, rmSync, statSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
-import { assertOllamaCudaUuidPin } from '../../capture-workbench-desktop/scripts/real-ollama-smoke.ts';
 import { isAbsolute, join, resolve } from 'node:path';
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import {
@@ -145,6 +144,17 @@ const ALL_RECOGNITION_UNITS = [
 type ExpectedOcrDevice = 'directml' | 'cpu';
 
 const SHA256_DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/u;
+
+/** The owned Ollama's last printed server config pins CUDA to one GPU UUID. */
+function assertOllamaCudaUuidPin(log: string): void {
+  const lastConfig = log.split(/\r?\n/u).filter((line) => line.includes('server config')).at(-1);
+  assert.ok(lastConfig, 'Owned Ollama must print its server config.');
+  assert.match(
+    lastConfig,
+    /(?:^|\s|\[|")CUDA_VISIBLE_DEVICES:GPU-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}(?=[\s\]"]|$)/iu,
+    'Owned Ollama must pin CUDA_VISIBLE_DEVICES to a GPU UUID in its last server config.',
+  );
+}
 
 /** What the installed speech pack records: the runtime picks the pack by the NVIDIA driver. */
 function expectedSpeechProvenance(): { readonly model: string; readonly device: string } {
