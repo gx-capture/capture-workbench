@@ -350,22 +350,6 @@ function selectedSpeechPack(): SpeechPack {
   return existsSync(join(systemRoot, 'System32', 'nvcuda.dll')) ? 'cuda' : 'cpu';
 }
 
-function runtimeEnvironment(): NodeJS.ProcessEnv {
-  const env = { ...process.env };
-  for (const key of Object.keys(env)) {
-    const upper = key.toUpperCase();
-    if (!upper.startsWith('CAPTURE_WHISPER_')) continue;
-    delete env[key];
-    const replacement = upper === 'CAPTURE_WHISPER_PREFER_GPU'
-      ? 'CAPTURE_SPEECH_PREFER_GPU'
-      : upper === 'CAPTURE_WHISPER_ALLOW_CPU_FALLBACK'
-        ? 'CAPTURE_SPEECH_RECOGNITION_ALLOW_CPU_FALLBACK'
-        : 'CAPTURE_SPEECH_RECOGNITION_* settings';
-    process.stderr.write(`Ignoring retired ${key}. Use ${replacement}.\n`);
-  }
-  return env;
-}
-
 async function run(): Promise<void> {
   if (process.platform !== 'win32') throw new Error('Progressive audio oracle requires Windows x64.');
   if (!sourcePath || !outputPath) {
@@ -390,7 +374,9 @@ async function run(): Promise<void> {
   const child = spawn(runtimeExecutable, ['serve', '--host', '127.0.0.1', '--port', String(port)], {
     cwd: resolve(runtimeExecutable, '..'),
     env: {
-      ...runtimeEnvironment(),
+      // The runtime refuses retired variables at startup and names their
+      // replacement; waitForReady shows that error.
+      ...process.env,
       CAPTURE_HOST: '127.0.0.1',
       CAPTURE_PORT: String(port),
       CAPTURE_API_TOKEN: token,
