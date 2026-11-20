@@ -555,8 +555,12 @@ Check a new release like this:
 - Every runtime, engine, and desktop asset matches `releaseAssets` in `capture-release-manifest-v2.json` (size and SHA-256). Published v1 releases keep their original asset list and bytes.
 - That manifest's digest is recorded in `capture-release-manifest-v2.json.sha256` and `release-index/stable.json` `manifestSha256`.
 
-For local checks, the application-level journey with real engines is
-`pnpm nx run capture-workbench-e2e:smoke-real-engines` on the dev server; a
+For local checks, the application-level journeys with real engines run on the
+dev server: `pnpm nx run capture-workbench-e2e:smoke-real-engines-installation` on an empty app data after a change to
+installation, the engine catalog, a worker or a model delivery, and before a
+release; `pnpm nx run capture-workbench-e2e:smoke-real-engines-execution` on the app data an installation journey of
+the same build left, for every runtime or UI fix and before a release (it
+checks that the installed engines match this build and never installs). A
 Desktop App run is only for WebView2 behaviour, native dialogs, drag and drop of
 native paths, the installer, process cleanup on exit and pixel baselines.
 

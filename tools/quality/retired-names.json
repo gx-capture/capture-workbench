@@ -1,5 +1,11 @@
 [
   {
+    "name": "CAPTURE_REAL_ENGINES_REUSE_INSTALLED",
+    "match": "word",
+    "replacement": "smoke-real-engines-installation and smoke-real-engines-execution",
+    "allowed": []
+  },
+  {
     "name": "_publish-pypi.yml",
     "match": "substring",
     "replacement": "_verify-pypi-publication.yml",

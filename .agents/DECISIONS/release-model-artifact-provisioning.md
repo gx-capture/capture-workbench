@@ -10,7 +10,7 @@ The self-hosted `capture-directml` runner and GitHub candidate-receipt gate are
 removed. Model-enabled release verification is performed on the local Windows
 machine before tagging, using the exact checked-out `main` SHA, the canonical
 source lock, checksum-pinned online model downloads, the real engine probes,
-and the localhost real-engines smoke (`capture-workbench-e2e:smoke-real-engines`).
+and the localhost real-engine journeys (`capture-workbench-e2e:smoke-real-engines-installation`, `capture-workbench-e2e:smoke-real-engines-execution`).
 The GitHub release workflow does not
 re-run or attest to those model probes; it only builds and publishes the
 already locally verified source tree. The local evidence remains outside the

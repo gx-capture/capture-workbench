@@ -25,7 +25,7 @@
  *   --list prints the scenarios.
  *   --observe <process name> --observe-into <directory> only samples the
  *   devices of that process's trees (for example capture-workbench-dev-host.exe
- *   during smoke-real-engines) until the printed session stop file exists.
+ *   during the localhost real-engine journeys) until the printed session stop file exists.
  *
  * A local run keeps its tree (`pnpm run kept-run-trees -- --list`).
  * `--run-tree` reuses the shared installs, except for the fresh CPU pack.

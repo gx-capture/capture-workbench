@@ -166,7 +166,7 @@ lock, performs checksum-pinned online model installation/probes, requires OCR
 `text-recognition` / `pp-ocrv6-medium` / `directml`, requires the
 lock-selected speech recognition provenance, compares normalized output exactly
 with each fixture expectation, and is paired with the localhost real-engines
-smoke (`capture-workbench-e2e:smoke-real-engines`). It writes only redacted local
+journeys (`capture-workbench-e2e:smoke-real-engines-installation`, `capture-workbench-e2e:smoke-real-engines-execution`). It writes only redacted local
 evidence and does not upload a receipt or model bytes.
 
 The release candidate workflow (`release-candidate.yml`) validates and

@@ -12,7 +12,7 @@ export default defineConfig({
   ...nxE2EPreset(configFile, { testDir: './src' }),
   workers: 1,
   retries: 0,
-  // Each stage in real-engines.spec.ts enforces its own explicit timeout so a
+  // Each stage in real-engines-journey.ts enforces its own explicit timeout so a
   // hang fails naming the exact stage rather than a blanket test timeout.
   timeout: 0,
   outputDir: join(artifactRoot, 'playwright'),
@@ -30,13 +30,11 @@ export default defineConfig({
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
   },
-  projects: [
-    {
-      name: 'chromium-real-engines',
-      testMatch: /real-engines\.spec\.ts$/u,
-      use: {
-        ...devices['Desktop Chrome'],
-      },
-    },
-  ],
+  projects: (['installation', 'execution'] as const).map((journey) => ({
+    name: `chromium-real-engines-${journey}`,
+    testMatch: /real-engines\.spec\.ts$/u,
+    grep: new RegExp(`real-engine ${journey} journey`, 'u'),
+    outputDir: join(artifactRoot, journey, 'playwright'),
+    use: { ...devices['Desktop Chrome'] },
+  })),
 });

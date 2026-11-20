@@ -153,11 +153,12 @@ structuring, edit/export/restore, and restart persistence), run the dev-server
 smoke (`apps/capture-workbench-e2e/src/real-engines.spec.ts`):
 
 ```powershell
-corepack pnpm nx run capture-workbench-e2e:smoke-real-engines
+corepack pnpm nx run capture-workbench-e2e:smoke-real-engines-installation
+corepack pnpm nx run capture-workbench-e2e:smoke-real-engines-execution
 ```
 
 `smoke-real-media` forces the `cuda` pack and checks TEA-ASR 1.1 on CUDA;
-`smoke-real-engines` checks the installed pack (`tea-asr-1.1` on `cuda` with the
+`smoke-real-engines-execution` checks the installed pack (`tea-asr-1.1` on `cuda` with the
 NVIDIA driver, `tea-asr-1.1-mini` on `cpu` without it). A development
 transcription outside them uses TEA-ASR 1.1 mini on CUDA, as
 `.agents/RESEARCH/tea-asr-1.1-mini-gpu-2026-11-04.md` describes, by setting

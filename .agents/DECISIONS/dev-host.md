@@ -139,7 +139,7 @@ returns `UnknownCommand`.
 3. **Real engines on localhost** (Part A built): `apps/capture-workbench-e2e/dev-host-preview-server.ts`
    accepts `--app-data <abs-dir>` (preserved across exits) and
    `--runtime-manifest` / `--runtime-executable`, and
-   `pnpm nx run capture-workbench-e2e:smoke-real-engines`
+   `pnpm nx run capture-workbench-e2e:smoke-real-engines-installation` and `capture-workbench-e2e:smoke-real-engines-execution`
    (`playwright.real-engines.config.ts`, `src/real-engines.spec.ts`) drives the
    seven-stage localhost journey (first-run install with cancel/retry and reload
    re-attach; PDF & image OCR with optional `CAPTURE_REAL_ENGINES_EXPECTED_OCR_DEVICE`
@@ -159,7 +159,7 @@ returns `UnknownCommand`.
    Forwarding the stripped variables without
    local workarounds awaits the Rust allowlist follow-up before a full
    `tea-asr-1.1-mini` / custom engine-cache run succeeds end to end.
-   `smoke-real-engines` is where the real-engine model journey is verified, and
+   `smoke-real-engines-execution` is where the real-engine model journey is verified, and
    the release runbook records the dev-server vs. Desktop App split; moving the
    layer-1 parts of the OCR Desktop smoke is still to do.
 
