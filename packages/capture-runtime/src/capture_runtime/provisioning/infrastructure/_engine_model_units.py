@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import shutil
+import stat
 from collections.abc import Callable
 from pathlib import Path
 from uuid import uuid4
@@ -37,13 +38,60 @@ from ._engine_installation_download import (
     _file_operation,
 )
 from ._engine_installation_errors import EngineInstallationError
-from ._engine_installation_residue import remove_inactive_versions
+from ._engine_installation_residue import is_reparse_point, remove_inactive_versions
 from ._install_stop import InstallStop
 
 STATE_FILE_NAME = "active-model.json"
 STATE_VERSION = "1"
 
 ModelUnitSnapshot = tuple[tuple[str, int, int, int], ...]
+
+
+def remove_inactive_model_unit_versions(app_data: Path) -> None:
+    """Prune installed model units before serving, with the app-data lock held."""
+    engines = app_data / "engines"
+    try:
+        for parent in (app_data, engines):
+            metadata = parent.lstat()
+            if is_reparse_point(parent, metadata) or not stat.S_ISDIR(metadata.st_mode):
+                return
+        for root in engines.iterdir():
+            try:
+                metadata = root.lstat()
+                if is_reparse_point(root, metadata) or not stat.S_ISDIR(metadata.st_mode):
+                    continue
+                state_path = root / STATE_FILE_NAME
+                metadata = state_path.lstat()
+                if is_reparse_point(state_path, metadata) or not stat.S_ISREG(metadata.st_mode):
+                    continue
+                state = json.loads(state_path.read_text(encoding="utf-8"))
+                if not isinstance(state, dict) or set(state) != {
+                    "stateVersion",
+                    "requirementId",
+                    "artifactVersion",
+                    "manifestSha256",
+                }:
+                    continue
+                version = state["artifactVersion"]
+                digest = state["manifestSha256"]
+                if (
+                    state["stateVersion"] != STATE_VERSION
+                    or state["requirementId"] != root.name
+                    or not isinstance(version, str)
+                    or not version
+                    or not version[0].isascii()
+                    or not version[0].isalnum()
+                    or any(not c.isascii() or not (c.isalnum() or c in ".-_+") for c in version)
+                    or not isinstance(digest, str)
+                    or len(digest) != 64
+                    or any(c not in "0123456789abcdef" for c in digest)
+                ):
+                    continue
+                remove_inactive_versions(root, version)
+            except (OSError, ValueError):
+                continue
+    except OSError:
+        return
 
 
 def _delivery(requirement: EngineRequirementDescriptor) -> EngineModelDeliveryDescriptor:
@@ -228,7 +276,6 @@ async def install_model_unit(
             )
         # The state file makes the unit active; a cancel after it is too late.
         report_progress(1)
-        await _commit_operation(remove_inactive_versions, root, delivery.artifact_version)
     finally:
         # Left behind only by a cancel or a failure: the files it holds can be
         # gigabytes. The drain finishes the removal before a cancel propagates.
@@ -243,4 +290,5 @@ __all__ = [
     "model_unit_snapshot",
     "model_unit_state",
     "requirement_model_dir",
+    "remove_inactive_model_unit_versions",
 ]

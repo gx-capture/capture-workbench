@@ -290,3 +290,42 @@ def test_retired_ocr_cleanup_does_not_follow_links(tmp_path: Path, linked_parent
         runtime_main.remove_retired_ocr_installation(app_data)
     assert sentinel.read_bytes() == b"outside"
     assert link.is_symlink() == linked_parent
+
+
+@pytest.mark.parametrize("state_kind", ["valid", "missing", "invalid", "unsafe-version"])
+def test_main_cleans_only_inactive_installed_model_versions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, state_kind: str
+) -> None:
+    import json
+
+    monkeypatch.setenv("CAPTURE_APP_DATA_DIR", str(tmp_path))
+    root = tmp_path / "engines" / "reader"
+    active = root / "versions" / "active"
+    old = root / "versions" / "old"
+    temporary = root / "versions" / ".pending"
+    for directory in (active, old, temporary):
+        directory.mkdir(parents=True)
+        (directory / "verified-files.json").write_bytes(b"keep")
+    if state_kind != "missing":
+        state = {
+            "stateVersion": "1",
+            "requirementId": "reader",
+            "artifactVersion": "../unsafe" if state_kind == "unsafe-version" else "active",
+            "manifestSha256": "a" * 64,
+        }
+        (root / "active-model.json").write_text(
+            "[]" if state_kind == "invalid" else json.dumps(state), encoding="utf-8"
+        )
+
+    def create_app(_settings: object) -> object:
+        with pytest.raises(AppDataInUseError):
+            AppDataDirectoryLock.acquire(tmp_path)
+        assert old.exists() == (state_kind != "valid")
+        assert (active / "verified-files.json").read_bytes() == b"keep"
+        assert (temporary / "verified-files.json").read_bytes() == b"keep"
+        return object()
+
+    monkeypatch.setattr(runtime_main, "start_stale_extraction_sweep", lambda: None)
+    monkeypatch.setattr(runtime_main, "create_app", create_app)
+    monkeypatch.setattr(runtime_main.uvicorn, "run", lambda *_args, **_kwargs: None)
+    runtime_main.main(["serve"])

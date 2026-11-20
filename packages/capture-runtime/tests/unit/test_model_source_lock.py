@@ -122,44 +122,42 @@ def test_windows_autocrlf_checkout_preserves_canonical_source_lock(
         function(path)
 
     repository.mkdir()
-    try:
-        run_git("init")
-        run_git("config", "user.email", "checkout-test@example.invalid")
-        run_git("config", "user.name", "Canonical Checkout Test")
-        run_git("config", "core.autocrlf", "false")
-        attributes_target.write_bytes(attributes_source.read_bytes())
-        lock_target.parent.mkdir(parents=True)
-        lock_target.write_bytes(lock_source.read_bytes())
-        run_git("add", ".gitattributes", lock_relative.as_posix())
-        run_git("commit", "-m", "test: seed canonical release metadata")
+    run_git("init")
+    run_git("config", "user.email", "checkout-test@example.invalid")
+    run_git("config", "user.name", "Canonical Checkout Test")
+    run_git("config", "core.autocrlf", "false")
+    attributes_target.write_bytes(attributes_source.read_bytes())
+    lock_target.parent.mkdir(parents=True)
+    lock_target.write_bytes(lock_source.read_bytes())
+    run_git("add", ".gitattributes", lock_relative.as_posix())
+    run_git("commit", "-m", "test: seed canonical release metadata")
 
-        attributes_target.unlink()
-        lock_target.unlink()
-        run_git("config", "core.autocrlf", "true")
-        run_git("checkout", "--", ".gitattributes")
-        run_git("checkout", "--", lock_relative.as_posix())
+    attributes_target.unlink()
+    lock_target.unlink()
+    run_git("config", "core.autocrlf", "true")
+    run_git("checkout", "--", ".gitattributes")
+    run_git("checkout", "--", lock_relative.as_posix())
 
-        checked_out = lock_target.read_bytes()
-        assert b"\r" not in checked_out
-        assert checked_out == model_source_lock.canonical_json_bytes(json.loads(checked_out))
-        assert run_git("check-attr", "eol", "--", lock_relative.as_posix()).endswith(": eol: lf")
+    checked_out = lock_target.read_bytes()
+    assert b"\r" not in checked_out
+    assert checked_out == model_source_lock.canonical_json_bytes(json.loads(checked_out))
+    assert run_git("check-attr", "eol", "--", lock_relative.as_posix()).endswith(": eol: lf")
 
-        classification = repository / "release-model-mode.json"
-        subprocess.run(
-            [
-                sys.executable,
-                str(MODULE_PATH),
-                "classify",
-                "--lock",
-                str(lock_target),
-                "--output",
-                str(classification),
-            ],
-            check=True,
-        )
-        assert json.loads(classification.read_bytes()) == {"releaseMode": "model-enabled"}
-    finally:
-        shutil.rmtree(repository, onexc=remove_readonly)
+    classification = repository / "release-model-mode.json"
+    subprocess.run(
+        [
+            sys.executable,
+            str(MODULE_PATH),
+            "classify",
+            "--lock",
+            str(lock_target),
+            "--output",
+            str(classification),
+        ],
+        check=True,
+    )
+    assert json.loads(classification.read_bytes()) == {"releaseMode": "model-enabled"}
+    shutil.rmtree(repository, onexc=remove_readonly)
 
 
 def test_nonempty_blocked_source_lock_fails_closed() -> None:

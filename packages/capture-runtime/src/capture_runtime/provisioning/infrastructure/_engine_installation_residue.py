@@ -36,12 +36,12 @@ def remove_inactive_versions(root: Path, active_version: str) -> None:
                 continue
             try:
                 metadata = item.lstat()
-                if is_reparse_point(item, metadata) or not stat.S_ISDIR(metadata.st_mode):
+                if not is_reparse_point(item, metadata) and not stat.S_ISDIR(metadata.st_mode):
                     continue
                 _remove_retired_engine_tree(item)
             except (EngineInstallationError, OSError):
-                # Activation is committed; a locked old version can be retried later.
-                continue
+                # Models retry at startup; engines retry on their next activation.
+                _LOGGER.warning("Inactive version %s could not be completely removed", item.name)
     except OSError:
         # Cleanup must not fail an already active installation.
         return
@@ -86,8 +86,14 @@ def _remove_retired_engine_tree(path: Path) -> None:
     except FileNotFoundError:
         return
     if not is_reparse_point(path, metadata) and stat.S_ISDIR(metadata.st_mode):
+        failed = False
         for child in path.iterdir():
-            _remove_retired_engine_tree(child)
+            try:
+                _remove_retired_engine_tree(child)
+            except (EngineInstallationError, OSError):
+                failed = True
+        if failed:
+            raise EngineInstallationError("retired engine tree could not be completely removed")
         path.rmdir()
     else:
         remove_residue_path(path)
