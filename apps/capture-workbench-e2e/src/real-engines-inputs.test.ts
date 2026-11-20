@@ -1,5 +1,8 @@
+import '../../../tools/test-temp-root.ts';
+
 import assert from 'node:assert/strict';
-import { realpathSync } from 'node:fs';
+import { mkdirSync, realpathSync, symlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import test from 'node:test';
 
@@ -8,6 +11,7 @@ import {
   PROGRESSIVE_AUDIO_ORACLE_ENV,
   progressiveAudioPaths,
   requirePrivateDirectory,
+  requireMatchingProgressiveSpeech,
 } from './real-engines-inputs.ts';
 
 test('progressive recording and oracle are either both absent or both non-empty', () => {
@@ -37,4 +41,28 @@ test('private directory validation refuses workspace paths before they are creat
   const parent = dirname(workspace);
   const sibling = join(parent, 'synthetic-private-smoke');
   assert.equal(requirePrivateDirectory(sibling, workspace, 'App data'), sibling);
+});
+
+test('private directory validation refuses a junction into the workspace and a different-case path', {
+  skip: process.platform !== 'win32',
+}, () => {
+  const workspace = join(tmpdir(), 'SyntheticWorkspace');
+  mkdirSync(workspace);
+  const junction = join(tmpdir(), 'outside-alias');
+  symlinkSync(workspace, junction, 'junction');
+  for (const path of [join(junction, 'missing'), join(tmpdir(), 'syntheticworkspace', 'missing')]) {
+    assert.throws(() => requirePrivateDirectory(path, workspace, 'Temp'), /must be outside the workspace/u);
+  }
+});
+
+test('progressive capture preflight requires matching pack, device and model', () => {
+  const extraction = { device: 'cuda', model: 'synthetic-model' };
+  const oracle = { speechPack: 'cuda', extraction };
+  requireMatchingProgressiveSpeech(oracle, 'cuda', extraction);
+  assert.throws(() => requireMatchingProgressiveSpeech(oracle, 'cpu', extraction), /cpu pack, cuda device/u);
+  assert.throws(() => requireMatchingProgressiveSpeech(oracle, 'cuda', { ...extraction, device: 'cpu' }),
+    /cuda pack, cpu device/u);
+  assert.throws(() => requireMatchingProgressiveSpeech(oracle, 'cuda', { ...extraction, model: 'another-model' }),
+    /another-model/u);
+  assert.throws(() => requireMatchingProgressiveSpeech(oracle, 'cuda', undefined), /unknown device/u);
 });

@@ -160,7 +160,7 @@ test('progressive final check requires stored and displayed speech after the che
   verifyProgressiveFinal(oracle, raw, rendered);
   const earlyTail = { ...segments[1], locator: { kind: 'time', startMs: 290_000, endMs: 298_000 } };
   assert.throws(() => verifyProgressiveFinal(oracle, { ...raw, segments: [segments[0], earlyTail] }, rendered),
-    /requires text/u);
+    /speech after the checkpoint differs/u);
   assert.throws(() => verifyProgressiveFinal(oracle, raw, [
     rendered[0], { segmentId: 'segment-2', text: 'different tail' },
   ]), /Displayed final transcript/u);

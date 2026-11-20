@@ -8,14 +8,14 @@ import { createReadStream, existsSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import { lstat, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { spawn, spawnSync } from 'node:child_process';
-import { join, resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 
 import { setTimeout as delay } from 'node:timers/promises';
 
 import { firstValueFrom } from 'rxjs';
 
 import {
-  REAL_MODEL_AUDIO_SAMPLE_SECONDS,
+  FIRST_CHECKPOINT_MAX_COVERAGE_MS,
   deriveProgressiveAudioOracleEvidence,
   isCheckpointCoverage,
   progressiveAudioBudgetMs,
@@ -95,16 +95,20 @@ async function jsonRequest<T>(baseUrl: string, path: string, init: RequestInit =
 }
 
 // The runtime emits one JSON data line per SSE frame.
-export async function* captureEvents(response: Response): AsyncGenerator<JsonRecord> {
+export async function* captureEvents(response: Response, signal?: AbortSignal): AsyncGenerator<JsonRecord> {
   if (!response.ok || !response.body) {
     throw new Error(`Progressive audio oracle event stream failed: HTTP ${response.status}.`);
   }
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffered = '';
+  const abort = () => { void reader.cancel().catch(() => undefined); };
+  signal?.addEventListener('abort', abort, { once: true });
   try {
+    signal?.throwIfAborted();
     for (;;) {
       const chunk = await reader.read();
+      signal?.throwIfAborted();
       if (chunk.done) return;
       buffered += decoder.decode(chunk.value, { stream: true });
       let boundary = /\r?\n\r?\n/u.exec(buffered);
@@ -117,9 +121,82 @@ export async function* captureEvents(response: Response): AsyncGenerator<JsonRec
       }
     }
   } finally {
+    signal?.removeEventListener('abort', abort);
     await reader.cancel().catch(() => undefined);
     reader.releaseLock();
   }
+}
+
+export async function readLiveCheckpoint(options: {
+  readonly response: Promise<Response>;
+  readonly signal: AbortSignal;
+  readonly captureId: string;
+  readonly readPartial: () => Promise<JsonRecord>;
+  readonly readCapture: () => Promise<CaptureState>;
+}): Promise<{ readonly snapshot: JsonRecord; readonly durationMs: number }> {
+  try {
+    for await (const event of captureEvents(await options.response, options.signal)) {
+      const eventType = event['eventType'];
+      if (eventType === 'failed' || eventType === 'cancelled') {
+        throw new Error(`Progressive audio oracle extraction stopped: ${eventType}.`);
+      }
+      if (eventType === 'completed' || event['stage'] === 'awaiting_structuring') break;
+      const coveredUntilMs = event['coveredUntilMs'];
+      if (eventType !== 'checkpoint' || !isCheckpointCoverage(coveredUntilMs)) continue;
+      const snapshot = await options.readPartial();
+      const live = await options.readCapture();
+      if (snapshot['captureId'] !== options.captureId || snapshot['revision'] !== event['partialRevision']
+        || live.status !== 'extracting') {
+        throw new Error('Progressive audio oracle missed the live checkpoint revision.');
+      }
+      const durationMs = event['durationMs'];
+      if (typeof durationMs !== 'number' || !Number.isSafeInteger(durationMs)
+        || durationMs <= coveredUntilMs) {
+        throw new Error('Progressive audio oracle checkpoint did not include a valid recording duration.');
+      }
+      return { snapshot, durationMs };
+    }
+  } catch (error) {
+    if (options.signal.aborted) throw new Error('Progressive audio oracle live checkpoint deadline expired.');
+    throw error;
+  }
+  throw new Error('Progressive audio oracle extraction finished before a live five-minute checkpoint was observed.');
+}
+
+// Match the runtime's source sniffer. A recording's extension can disagree with its container.
+function recordingMediaType(bytes: Buffer): string | undefined {
+  const header = bytes.subarray(0, 12).toString('latin1');
+  const container = header.slice(8, 12);
+  if (header.startsWith('RIFF')) {
+    if (container === 'WAVE') return 'audio/wav';
+    if (container === 'AVI ') return 'video/x-msvideo';
+    return undefined;
+  }
+  if (header.startsWith('ID3')) return 'audio/mpeg';
+  const secondByte = bytes[1];
+  if (bytes[0] === 0xff && secondByte !== undefined && (secondByte & 0xe0) === 0xe0) {
+    return (secondByte & 0x06) === 0 ? 'audio/aac' : 'audio/mpeg';
+  }
+  if (header.startsWith('fLaC')) return 'audio/flac';
+  if (header.startsWith('OggS')) return 'audio/ogg';
+  const box = header.slice(4, 8);
+  if (header.length >= 12 && box === 'ftyp') return 'audio/mp4';
+  if (['moov', 'mdat', 'wide', 'free', 'skip', 'pnot'].includes(box)) return 'video/quicktime';
+  if (bytes.subarray(0, 4).toString('hex') === '1a45dfa3') return 'video/x-matroska';
+  if (bytes.subarray(0, 8).toString('hex') === '3026b2758e66cf11') return 'video/x-ms-asf';
+  if (header.startsWith('#!AMR')) return 'audio/amr';
+  if (header.startsWith('FORM') && (container === 'AIFF' || container === 'AIFC')) return 'audio/aiff';
+  if (header.startsWith('caff')) return 'audio/x-caf';
+  if (header.startsWith('FLV')) return 'video/x-flv';
+  if (bytes.subarray(0, 4).toString('hex') === '000001ba') return 'video/mpeg';
+  if (bytes[0] === 0x47 && bytes[188] === 0x47) return 'video/mp2t';
+  return undefined;
+}
+
+export function recordingIngestionMetadata(path: string, bytes: Buffer): { fileName: string; mediaType: string } {
+  const mediaType = recordingMediaType(bytes);
+  if (!mediaType) throw new Error('Progressive audio oracle source has an unsupported recording signature.');
+  return { fileName: basename(path), mediaType };
 }
 
 function asRecord(value: unknown): JsonRecord {
@@ -136,10 +213,16 @@ function requiredString(value: unknown): string {
   return value;
 }
 
-async function waitForReady(baseUrl: string, child: ReturnType<typeof spawn>): Promise<void> {
+async function waitForReady(
+  baseUrl: string,
+  child: ReturnType<typeof spawn>,
+  startupError: () => string,
+): Promise<void> {
   const deadline = Date.now() + 120_000;
   while (Date.now() < deadline) {
-    if (child.exitCode !== null) throw new Error('Progressive audio oracle runtime exited before readiness.');
+    if (child.exitCode !== null || child.signalCode !== null || !child.pid) {
+      throw new Error(`Progressive audio oracle runtime exited before readiness. ${startupError()}`.trim());
+    }
     try {
       const response = await request(baseUrl, '/v2/health/ready');
       if (response.ok) return;
@@ -148,7 +231,7 @@ async function waitForReady(baseUrl: string, child: ReturnType<typeof spawn>): P
     }
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 500));
   }
-  throw new Error('Progressive audio oracle runtime readiness timed out.');
+  throw new Error(`Progressive audio oracle runtime readiness timed out. ${startupError()}`.trim());
 }
 
 /** The selected pack's release archive or its published parts. */
@@ -267,6 +350,22 @@ function selectedSpeechPack(): SpeechPack {
   return existsSync(join(systemRoot, 'System32', 'nvcuda.dll')) ? 'cuda' : 'cpu';
 }
 
+function runtimeEnvironment(): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  for (const key of Object.keys(env)) {
+    const upper = key.toUpperCase();
+    if (!upper.startsWith('CAPTURE_WHISPER_')) continue;
+    delete env[key];
+    const replacement = upper === 'CAPTURE_WHISPER_PREFER_GPU'
+      ? 'CAPTURE_SPEECH_PREFER_GPU'
+      : upper === 'CAPTURE_WHISPER_ALLOW_CPU_FALLBACK'
+        ? 'CAPTURE_SPEECH_RECOGNITION_ALLOW_CPU_FALLBACK'
+        : 'CAPTURE_SPEECH_RECOGNITION_* settings';
+    process.stderr.write(`Ignoring retired ${key}. Use ${replacement}.\n`);
+  }
+  return env;
+}
+
 async function run(): Promise<void> {
   if (process.platform !== 'win32') throw new Error('Progressive audio oracle requires Windows x64.');
   if (!sourcePath || !outputPath) {
@@ -277,6 +376,7 @@ async function run(): Promise<void> {
     throw new Error('Progressive audio oracle source must be a regular file within the smoke limit.');
   }
   const source = await readFile(sourcePath);
+  const ingestionMetadata = recordingIngestionMetadata(sourcePath, source);
   const sourceSha256 = createHash('sha256').update(source).digest('hex');
   const port = await firstValueFrom(reserveLoopbackPort());
   const workerMirrorPort = await firstValueFrom(reserveLoopbackPort());
@@ -290,7 +390,7 @@ async function run(): Promise<void> {
   const child = spawn(runtimeExecutable, ['serve', '--host', '127.0.0.1', '--port', String(port)], {
     cwd: resolve(runtimeExecutable, '..'),
     env: {
-      ...process.env,
+      ...runtimeEnvironment(),
       CAPTURE_HOST: '127.0.0.1',
       CAPTURE_PORT: String(port),
       CAPTURE_API_TOKEN: token,
@@ -308,15 +408,22 @@ async function run(): Promise<void> {
       CAPTURE_SMOKE_WORKER_MIRROR_OPT_IN: '1',
       CAPTURE_SMOKE_WORKER_MIRROR_URL: `http://127.0.0.1:${workerMirrorPort}`,
     },
-    stdio: 'ignore',
+    stdio: ['ignore', 'ignore', 'pipe'],
     windowsHide: true,
   });
+  let startupDiagnostics = '';
+  let starting = true;
+  child.stderr.setEncoding('utf8').on('data', (chunk: string) => {
+    if (starting) startupDiagnostics = (startupDiagnostics + chunk).slice(-16_384);
+  });
+  child.on('error', (error) => { startupDiagnostics = error.message; });
   let ingestionId: string | undefined;
   let captureId: string | undefined;
   let workerMirror: Server | undefined;
   try {
     workerMirror = await startWorkerMirror(workerMirrorPort, pack);
-    await waitForReady(baseUrl, child);
+    await waitForReady(baseUrl, child, () => startupDiagnostics.trim().replaceAll(token, '[redacted]'));
+    starting = false;
     await installSpeechRecognition(baseUrl, child);
     const installed = asRecord(JSON.parse(await readFile(
       join(appData, 'runtime', 'engines', 'speech-recognition', 'active.json'), 'utf8',
@@ -329,8 +436,7 @@ async function run(): Promise<void> {
       body: JSON.stringify({
         clientRequestId: ingestionRequestId,
         kind: 'recording',
-        fileName: 'progressive-audio-oracle.wav',
-        mediaType: 'audio/wav',
+        ...ingestionMetadata,
         totalBytes: source.byteLength,
         sourceSha256,
       }),
@@ -357,7 +463,7 @@ async function run(): Promise<void> {
     });
     const captureRequestId = randomUUID();
     const checkpointSignal = AbortSignal.timeout(
-      progressiveAudioBudgetMs(REAL_MODEL_AUDIO_SAMPLE_SECONDS * 1000, pack),
+      progressiveAudioBudgetMs(FIRST_CHECKPOINT_MAX_COVERAGE_MS, pack),
     );
     const capture = await jsonRequest<CaptureRecord>(baseUrl, '/v2/captures', {
       method: 'POST',
@@ -372,34 +478,20 @@ async function run(): Promise<void> {
     });
     captureId = capture.captureId;
     const capturePath = `/v2/captures/${captureId}`;
-    const response = await request(baseUrl, `${capturePath}/events`, { signal: checkpointSignal });
-    let checkpoint: ReturnType<typeof readProgressiveAudioPartial> | undefined;
-    let durationMs: unknown;
-    for await (const event of captureEvents(response)) {
-      if (event['eventType'] === 'failed' || event['eventType'] === 'cancelled') {
-        throw new Error(`Progressive audio oracle extraction stopped: ${event['eventType']}.`);
-      }
-      if (event['eventType'] !== 'checkpoint' || !isCheckpointCoverage(event['coveredUntilMs'])) continue;
-      const snapshot = await jsonRequest<JsonRecord>(baseUrl, `${capturePath}/partial`, { signal: checkpointSignal });
-      const live = await jsonRequest<CaptureState>(baseUrl, capturePath, { signal: checkpointSignal });
-      if (snapshot['captureId'] !== captureId || snapshot['revision'] !== event['partialRevision']
-        || live.status !== 'extracting') {
-        throw new Error('Progressive audio oracle missed the live checkpoint revision.');
-      }
-      checkpoint = readProgressiveAudioPartial(snapshot, { sha256: sourceSha256, bytes: source.byteLength });
-      summarizeCheckpoint(checkpoint);
-      if (checkpoint.extraction.model !== model || checkpoint.extraction.device !== pack) {
-        throw new Error(`Progressive audio oracle expected ${pack} pack on ${pack} with ${model}, observed ${checkpoint.extraction.device} with ${checkpoint.extraction.model}.`);
-      }
-      durationMs = event['durationMs'];
-      break;
-    }
-    if (!checkpoint || typeof durationMs !== 'number' || !Number.isSafeInteger(durationMs)
-      || durationMs <= checkpoint.coveredUntilMs) {
-      throw new Error('Progressive audio oracle did not observe a live five-minute checkpoint with a measured duration.');
+    const { snapshot, durationMs } = await readLiveCheckpoint({
+      response: request(baseUrl, `${capturePath}/events`, { signal: checkpointSignal }),
+      signal: checkpointSignal,
+      captureId,
+      readPartial: () => jsonRequest<JsonRecord>(baseUrl, `${capturePath}/partial`, { signal: checkpointSignal }),
+      readCapture: () => jsonRequest<CaptureState>(baseUrl, capturePath, { signal: checkpointSignal }),
+    });
+    const checkpoint = readProgressiveAudioPartial(snapshot, { sha256: sourceSha256, bytes: source.byteLength });
+    summarizeCheckpoint(checkpoint);
+    if (checkpoint.extraction.model !== model || checkpoint.extraction.device !== pack) {
+      throw new Error(`Progressive audio oracle expected ${pack} pack on ${pack} with ${model}, observed ${checkpoint.extraction.device} with ${checkpoint.extraction.model}.`);
     }
 
-    const signal = AbortSignal.timeout(progressiveAudioBudgetMs(durationMs - checkpoint.coveredUntilMs, pack));
+    const signal = AbortSignal.timeout(progressiveAudioBudgetMs(durationMs, pack));
     for (;;) {
       const current = await jsonRequest<CaptureState>(baseUrl, capturePath, { signal });
       if (current.status === 'awaiting_structuring') break;

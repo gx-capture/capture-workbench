@@ -13,6 +13,7 @@ const desktopCspPort = 4311;
 const desktopCspURL = `http://127.0.0.1:${desktopCspPort}`;
 const previewPort = 4312;
 const previewURL = `http://127.0.0.1:${previewPort}`;
+const simulatedBackendTestIgnore = /(?:(?:preview|dev-host|real-engines)\.spec|real-engines-inputs\.test)\.ts$/u;
 
 /**
  * Read environment variables from file.
@@ -62,7 +63,7 @@ export default defineConfig({
       // dev-host and real-engines have their own configs (a dev host with the
       // fixture runtime; real engines and private inputs) and must not run with
       // the simulated backend.
-      testIgnore: /(?:preview|dev-host|real-engines)\.spec\.ts$/u,
+      testIgnore: simulatedBackendTestIgnore,
       use: { ...devices['Desktop Chrome'] },
     },
     ...(process.env['BASE_URL']
@@ -70,7 +71,7 @@ export default defineConfig({
       : [
           {
             name: 'chromium-desktop-csp',
-            testIgnore: /(?:preview|dev-host|real-engines)\.spec\.ts$/u,
+            testIgnore: simulatedBackendTestIgnore,
             use: { ...devices['Desktop Chrome'], baseURL: desktopCspURL },
           },
           {

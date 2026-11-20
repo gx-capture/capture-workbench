@@ -6,7 +6,9 @@
  * Run smoke-real-engines-execution for every runtime/UI fix on that installed app
  * data from the same build. It checks catalog-bound readiness before any capture,
  * and proves the execution stages below (including the owned Ollama CUDA UUID).
- * Evidence is separate under tmp/capture-workbench-e2e/real-engines-<journey>, with Playwright artifacts in its playwright/ subfolder.
+ * Digest-only evidence is under tmp/capture-workbench-e2e/real-engines-<journey>.
+ * Playwright's per-run folder is outside the workspace and holds videos of private transcripts.
+ * Delete that run folder after reading the result.
  *
  * Drives the real Workbench UI (`capture-workbench:serve`) against the real
  * headless host (`capture-workbench-dev-host`) and the staged product (or

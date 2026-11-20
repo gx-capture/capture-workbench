@@ -380,6 +380,8 @@ describe('AsrPage', () => {
     expect(el.querySelector('[data-testid="asr-live-heard"]')?.textContent?.trim()).toBe(
       '已聽到 12:04／41:30',
     );
+    expect(el.querySelector('[data-testid="asr-live-card"]')?.getAttribute('data-document-id'))
+      .toBe(liveCapture.documentId);
     const partialSection = el.querySelector('[data-testid="streaming-partial"]') as HTMLElement;
     expect(partialSection.dataset['coveredUntilMs']).toBe('724000');
     expect(partialSection.dataset['partialRevision']).toBe('3');

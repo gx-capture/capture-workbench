@@ -13,7 +13,12 @@ const tempDir = process.env['CAPTURE_REAL_ENGINES_TEMP_DIR']?.trim();
 if (!tempDir) throw new Error('CAPTURE_REAL_ENGINES_TEMP_DIR is required for private browser artifacts and temporary files.');
 const privateTemp = requirePrivateDirectory(tempDir, workspaceRoot, 'CAPTURE_REAL_ENGINES_TEMP_DIR');
 mkdirSync(privateTemp, { recursive: true });
-const artifactRoot = join(privateTemp, `playwright-real-engines-${randomUUID()}`);
+// Playwright workers inherit the run ID when they reload this config.
+const artifactRunId = process.env['CAPTURE_REAL_ENGINES_RUN_ID'] ??= randomUUID();
+if (!/^[\da-f-]{36}$/u.test(artifactRunId)) throw new Error('Invalid real-engines run ID.');
+const artifactRoot = requirePrivateDirectory(
+  join(privateTemp, `playwright-real-engines-${artifactRunId}`), workspaceRoot, 'Playwright run folder',
+);
 for (const key of ['TEMP', 'TMP', 'TMPDIR']) process.env[key] = privateTemp;
 
 export default defineConfig({

@@ -2,11 +2,9 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 
 export const PROGRESSIVE_AUDIO_SAMPLE_INTERVAL_MS = 5 * 60_000;
-// Both the oracle and progressive audio checks use the same exact 310-second
-// sample. This guarantees that the five-minute checkpoint is exercised before
-// terminal completion assertions.
-export const REAL_MODEL_AUDIO_SAMPLE_SECONDS = 5 * 60 + 10;
-const CHECKPOINT_MAX_MS = REAL_MODEL_AUDIO_SAMPLE_SECONDS * 1000 + 30_000;
+// Admit the five-minute boundary and up to 40 seconds of coverage drift
+// for a nearby checkpoint. The window excludes the next five-minute sample.
+export const FIRST_CHECKPOINT_MAX_COVERAGE_MS = PROGRESSIVE_AUDIO_SAMPLE_INTERVAL_MS + 40_000;
 const PROGRESSIVE_STARTUP_BUDGET_MS = 2 * 60_000;
 const CUDA_REALTIME_MULTIPLIER = 2;
 const CPU_REALTIME_MULTIPLIER = 6;
@@ -22,7 +20,7 @@ export function progressiveAudioBudgetMs(durationMs: number, device: SpeechPack)
 
 export function isCheckpointCoverage(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value)
-    && value >= PROGRESSIVE_AUDIO_SAMPLE_INTERVAL_MS && value <= CHECKPOINT_MAX_MS;
+    && value >= PROGRESSIVE_AUDIO_SAMPLE_INTERVAL_MS && value <= FIRST_CHECKPOINT_MAX_COVERAGE_MS;
 }
 
 const SHA256 = /^[a-f0-9]{64}$/u;
@@ -279,6 +277,7 @@ export function verifyProgressiveFinal(
   const tailIds = new Set(tail.map((segment) => segment.segmentId));
   assert.deepEqual(summarizeTranscript(segments.map((segment) => segment.text)), oracle.finalOutput,
     'Stored final transcript differs from the oracle.');
+  assert.ok(tail.length > 0, 'Stored speech after the checkpoint differs from the oracle.');
   assert.deepEqual(summarizeTranscript(tail.map((segment) => segment.text)), oracle.afterCheckpoint,
     'Stored speech after the checkpoint differs from the oracle.');
   assert.ok(rendered.length === segments.length && rendered.every((line, index) => line.segmentId === segments[index]?.segmentId),

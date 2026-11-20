@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { captureEvents, speechWorkerFileNames } from './progressive-audio-oracle.ts';
+import { captureEvents, readLiveCheckpoint, recordingIngestionMetadata, speechWorkerFileNames } from './progressive-audio-oracle.ts';
 
 function delivery(fileName: string, parts?: readonly string[]) {
   return {
@@ -92,5 +92,70 @@ test('the oracle reads a split checkpoint frame while the SSE response stays ope
     done: false, value: { eventType: 'checkpoint', partialRevision: 3 },
   });
   await events.return(undefined);
+  assert.equal(cancelled, true);
+});
+
+test('oracle ingestion uses the recording basename and runtime audio type', () => {
+  assert.deepEqual(recordingIngestionMetadata('fixtures/synthetic.M4A', Buffer.from('0000ftyp0000')), {
+    fileName: 'synthetic.M4A', mediaType: 'audio/mp4',
+  });
+  assert.deepEqual(recordingIngestionMetadata('fixtures/synthetic.wav', Buffer.from('fLaC')), {
+    fileName: 'synthetic.wav', mediaType: 'audio/flac',
+  });
+  assert.throws(() => recordingIngestionMetadata('fixtures/synthetic.pdf', Buffer.from('%PDF-')),
+    /unsupported recording signature/u);
+});
+
+const checkpointEvent = {
+  eventType: 'checkpoint', coveredUntilMs: 310_000, partialRevision: 3, durationMs: 600_000,
+};
+const snapshot = { captureId: 'synthetic-id', revision: 3, coveredUntilMs: 310_000 };
+
+function checkpointOptions(...events: object[]) {
+  return {
+    response: Promise.resolve(new Response(events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(''))),
+    signal: new AbortController().signal,
+    captureId: snapshot.captureId,
+    readPartial: async () => snapshot,
+    readCapture: async () => ({ status: 'extracting' }),
+  };
+}
+
+test('oracle reads the matching revision while extraction is active', async () => {
+  assert.deepEqual(await readLiveCheckpoint(checkpointOptions({ eventType: 'progress' }, checkpointEvent)), {
+    snapshot, durationMs: checkpointEvent.durationMs,
+  });
+});
+
+test('oracle rejects extraction finishing or failing before the checkpoint', async () => {
+  await assert.rejects(readLiveCheckpoint(checkpointOptions({
+    eventType: 'checkpoint', stage: 'awaiting_structuring',
+  })), /finished before a live five-minute checkpoint/u);
+  await assert.rejects(readLiveCheckpoint(checkpointOptions({ eventType: 'failed' })), /extraction stopped: failed/u);
+});
+
+test('oracle reports a missed revision if the snapshot advanced or extraction finished', async () => {
+  await assert.rejects(readLiveCheckpoint({
+    ...checkpointOptions(checkpointEvent),
+    readPartial: async () => ({ ...snapshot, revision: 4 }),
+  }), /missed the live checkpoint revision/u);
+  await assert.rejects(readLiveCheckpoint({
+    ...checkpointOptions(checkpointEvent),
+    readCapture: async () => ({ status: 'awaiting_structuring' }),
+  }), /missed the live checkpoint revision/u);
+});
+
+test('oracle enforces its deadline even when the stream stays open', { timeout: 1000 }, async () => {
+  const deadline = new AbortController();
+  let cancelled = false;
+  const stream = new ReadableStream({
+    pull() { deadline.abort(); },
+    cancel() { cancelled = true; },
+  });
+  await assert.rejects(readLiveCheckpoint({
+    ...checkpointOptions(),
+    response: Promise.resolve(new Response(stream)),
+    signal: deadline.signal,
+  }), /live checkpoint deadline expired/u);
   assert.equal(cancelled, true);
 });

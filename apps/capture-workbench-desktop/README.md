@@ -166,17 +166,17 @@ transcription outside them uses TEA-ASR 1.1 mini on CUDA, as
 GPU switch only selects the device; its fixed launch environment does not yet
 expose the model setting.
 
-For the progressive partial check, use the private 310-second Chinese WAV with
-speech before and after the five-minute checkpoint. Generate a digest-only
+For the progressive partial check, use a recording longer than five minutes with speech after the checkpoint,
+in a format the runtime decodes. Generate a digest-only
 oracle with `node apps/capture-workbench-desktop/scripts/progressive-audio-oracle.ts`
-using `CAPTURE_PROGRESSIVE_AUDIO_ORACLE_SOURCE` for the WAV and
+using `CAPTURE_PROGRESSIVE_AUDIO_ORACLE_SOURCE` for the recording and
 `CAPTURE_PROGRESSIVE_AUDIO_ORACLE_OUTPUT` for the JSON. Set
 `CAPTURE_SPEECH_RECOGNITION_VARIANT` to the installed pack (`cuda` or `cpu`),
 or use `auto` to select by NVIDIA driver availability. The generator uses the selected pack's default model and
 device with CPU fallback disabled.
 
 For `smoke-real-engines-execution`, set both
-`CAPTURE_REAL_ENGINES_PROGRESSIVE_AUDIO` to that WAV and
+`CAPTURE_REAL_ENGINES_PROGRESSIVE_AUDIO` to that recording and
 `CAPTURE_REAL_ENGINES_PROGRESSIVE_AUDIO_ORACLE` to its JSON oracle. The check
 logs a skip when both are unset. `CAPTURE_REAL_ENGINES_AUDIO_EXPECTATIONS`
 still supplies the expected text anchors for the separate speaker-identification

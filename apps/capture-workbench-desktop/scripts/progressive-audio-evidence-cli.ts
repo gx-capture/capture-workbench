@@ -26,7 +26,8 @@ export function runProgressiveEvidenceCommand(): void {
         const oracle = parseProgressiveAudioOracle(JSON.parse(readFileSync(request.oraclePath, 'utf8')));
         process.stdout.write(JSON.stringify({
           oracle,
-          partialBudgetMs: progressiveAudioBudgetMs(oracle.durationMs, oracle.extraction.device),
+          partialBudgetMs: progressiveAudioBudgetMs(oracle.firstCheckpoint.coveredUntilMs, oracle.extraction.device),
+          finalBudgetMs: progressiveAudioBudgetMs(oracle.durationMs, oracle.extraction.device),
         }));
         break;
       }

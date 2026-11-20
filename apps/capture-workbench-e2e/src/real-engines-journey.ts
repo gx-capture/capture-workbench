@@ -17,6 +17,7 @@ import {
   PROGRESSIVE_AUDIO_ENV,
   PROGRESSIVE_AUDIO_ORACLE_ENV,
   progressiveAudioPaths,
+  requireMatchingProgressiveSpeech,
   requirePrivateDirectory,
 } from './real-engines-inputs.ts';
 
@@ -112,6 +113,7 @@ interface ProgressiveAudioMedia {
   readonly audioPath: string;
   readonly oracle: ProgressiveAudioOracle;
   readonly partialBudgetMs: number;
+  readonly finalBudgetMs: number;
 }
 
 interface ExecutionMedia {
@@ -328,14 +330,14 @@ async function loadProgressiveAudio(): Promise<ProgressiveAudioMedia | undefined
   }
   assert.ok(isRegularFile(paths.audioPath), `${PROGRESSIVE_AUDIO_ENV} must name a regular file.`);
   assert.ok(isRegularFile(paths.oraclePath), `${PROGRESSIVE_AUDIO_ORACLE_ENV} must name a regular file.`);
-  const { oracle, partialBudgetMs } = JSON.parse(checkProgressiveEvidence({
+  const { oracle, partialBudgetMs, finalBudgetMs } = JSON.parse(checkProgressiveEvidence({
     action: 'read', oraclePath: paths.oraclePath,
-  })) as Pick<ProgressiveAudioMedia, 'oracle' | 'partialBudgetMs'>;
+  })) as Pick<ProgressiveAudioMedia, 'oracle' | 'partialBudgetMs' | 'finalBudgetMs'>;
   assert.equal(statSync(paths.audioPath).size, oracle.input.bytes, 'Progressive recording size differs from the oracle.');
   const hash = createHash('sha256');
   for await (const chunk of createReadStream(paths.audioPath)) hash.update(chunk);
   assert.equal(hash.digest('hex'), oracle.input.sha256, 'Progressive recording digest differs from the oracle.');
-  return { audioPath: paths.audioPath, oracle, partialBudgetMs };
+  return { audioPath: paths.audioPath, oracle, partialBudgetMs, finalBudgetMs };
 }
 
 async function resolveExecutionMedia(): Promise<ExecutionMedia> {
@@ -514,10 +516,6 @@ function resolveSmokeConfig(): SmokeConfig {
     workspaceRoot,
     'Runtime engine cache',
   );
-  const cacheOverride = readEnvFirst(['CAPTURE_ENGINE_CACHE_DIR']);
-  if (cacheOverride && cacheOverride.toLowerCase() !== 'off') {
-    requirePrivateDirectory(cacheOverride, workspaceRoot, 'CAPTURE_ENGINE_CACHE_DIR');
-  }
 
   const launcherEnv: Record<string, string> = {
     TEMP: privateTemp,
@@ -815,18 +813,16 @@ async function checkProgressiveRecording(
     filePath: media.audioPath,
     chooseButtonTestId: 'asr-choose-files',
     queueRowTestId: 'asr-queue-row',
-    timeoutMs: PROGRESSIVE_COMPLETION_ALLOWANCE_MS + partialBudgetMs,
+    timeoutMs: media.finalBudgetMs,
     whileRunning: async (id, row) => {
-      const detail = await invokeHost<DesktopLibraryDetailRecord>(page, 'library_get', {
-        request: { documentId: id },
-      });
-      const visibleCard = page.getByTestId('asr-live-card').filter({
-        has: page.getByRole('heading', { name: detail.fileName, exact: true }),
-      });
+      const visibleCard = page.locator(`[data-testid="asr-live-card"][data-document-id="${id}"]`);
       await expect.poll(async () => {
         const rowStatus = await row.getAttribute('data-user-status', { timeout: ACTION_TIMEOUT_MS });
-        assert.equal(rowStatus === 'done' || rowStatus === 'needs-attention' || rowStatus === 'cancelled',
-          false, 'Progressive recording stopped before the live checkpoint could be verified.');
+        if (rowStatus === 'done' || rowStatus === 'persisting') {
+          throw new Error('Missed the live checkpoint revision before extraction finished.');
+        }
+        assert.ok(rowStatus !== 'needs-attention' && rowStatus !== 'cancelled',
+          'Progressive recording stopped before the live checkpoint could be verified.');
         const visible = await visibleCard.getByTestId('streaming-partial').evaluateAll((cards) => {
           const card = cards.length === 1 ? cards[0] : undefined;
           if (!card || card.getClientRects().length === 0) return null;
@@ -837,30 +833,32 @@ async function checkProgressiveRecording(
               (line) => line.textContent ?? ''),
           };
         });
-        if (!visible || visible.revision < expected.partialRevision || visible.coverage < expected.coveredUntilMs) {
+        if (visible && visible.revision > expected.partialRevision) {
+          throw new Error('Missed the live checkpoint revision between UI polls.');
+        }
+        if (!visible || visible.revision < expected.partialRevision) {
           return false;
         }
         assert.equal(rowStatus, 'processing');
-        assert.equal(visible.revision, expected.partialRevision, 'Displayed partial revision differs from the oracle.');
         assert.equal(visible.coverage, expected.coveredUntilMs, 'Displayed partial coverage differs from the oracle.');
 
-        // The live card exposes a filename, while the queue and library expose
-        // document IDs. Require a unique active match before binding the card.
-        const list = await invokeHost<readonly DesktopLibrarySummaryRecord[]>(page, 'library_list', {
-          request: { query: '', status: '' },
+        const detail = await invokeHost<DesktopLibraryDetailRecord>(page, 'library_get', {
+          request: { documentId: id },
         });
-        const active = list.filter((item) => item.fileName === detail.fileName
-          && (item.status === 'processing' || item.status === 'persisting'));
-        assert.ok(active.length === 1 && active[0]?.documentId === id && active[0].captureId,
+        assert.ok(detail.documentId === id && detail.captureId,
           'Live partial could not be bound to the queued recording.');
-        const captureId = active[0].captureId;
+        const captureId = detail.captureId;
         const snapshot = await invokeHost<unknown>(page, 'runtime_get_partial', { input: { id: captureId } });
-        assert.ok(snapshot && typeof snapshot === 'object' && 'captureId' in snapshot
-          && snapshot.captureId === captureId, 'Host partial belongs to another capture.');
+        assert.ok(snapshot && typeof snapshot === 'object',
+          'Missed the live checkpoint revision before reading the host partial.');
+        assert.ok('captureId' in snapshot && snapshot.captureId === captureId,
+          'Host partial belongs to another capture.');
+        assert.ok('revision' in snapshot && snapshot.revision === expected.partialRevision,
+          'Missed the live checkpoint revision before reading the host partial.');
         const operation = await invokeHost<{ readonly status: string; readonly durationMs?: number }>(
           page, 'runtime_get_capture', { input: { id: captureId } },
         );
-        assert.equal(operation.status, 'extracting', 'Capture must still be extracting after the live snapshot is read.');
+        assert.equal(operation.status, 'extracting', 'Missed the live checkpoint revision before extraction finished.');
         assert.equal(operation.durationMs, oracle.durationMs, 'Live recording duration differs from the oracle.');
         checkProgressiveEvidence({ action: 'partial', oracle, snapshot, displayed: visible.text });
         assert.ok('extractionEngine' in snapshot, 'Host partial must include recognition provenance.');
@@ -1585,15 +1583,9 @@ export async function runJourney(page: Page, journey: Journey): Promise<void> {
       const oracle = progressive.oracle;
       const installedPack = assertInstalledSpeechPack(config.appDataDir, expectedSpeech.device);
       const observed = evidence.provenance.audio?.extraction;
-      if (oracle.speechPack !== installedPack || oracle.extraction.device !== observed?.device
-        || oracle.extraction.model !== observed?.model) {
-        throw new Error(
-          `Progressive audio oracle uses ${oracle.speechPack} pack, ${oracle.extraction.device} device and ${oracle.extraction.model} model; `
-          + `the installation uses ${installedPack} pack, ${observed?.device ?? 'unknown'} device and ${observed?.model ?? 'unknown'} model. Regenerate the oracle for this installation.`,
-        );
-      }
-      const partialBudget = progressive.partialBudgetMs;
-      await runStage(stages, '03-progressive-partial', partialBudget + PROGRESSIVE_COMPLETION_ALLOWANCE_MS, async () => {
+      requireMatchingProgressiveSpeech(oracle, installedPack, observed);
+      const stageBudget = progressive.partialBudgetMs + progressive.finalBudgetMs + PROGRESSIVE_COMPLETION_ALLOWANCE_MS;
+      await runStage(stages, '03-progressive-partial', stageBudget, async () => {
         await page.goto(`${launcher.baseUrl}/asr`);
         await waitForRuntimeReady(page);
         await page.getByTestId('asr-language-select').selectOption('zh');
