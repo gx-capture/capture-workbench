@@ -1,5 +1,6 @@
-import '../../../tools/test-temp-root.ts';
-
+// The `test` target preloads tools/test-temp-root.ts with `node --import`, so the
+// temporary directories below live in a private root removed on exit. An import here
+// would cross the Nx project boundary.
 import assert from 'node:assert/strict';
 import { mkdirSync, realpathSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
