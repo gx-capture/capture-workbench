@@ -762,8 +762,11 @@ candidate with `node tools/install-capture-workbench-dependencies.mts
   The cache holds only the archive, its parts and its files manifest, not the
   onedir tree; a worker probe checks `dist/workers/<worker>` against the files
   manifest and re-extracts it from the archive when it differs. Use
-  `--skip-nx-cache` to force a rebuild. `test_worker_cache_inputs.py` fails
-  when a module a worker imports is missing from its named input.
+  `--skip-nx-cache` to force a rebuild; in Nx 24 such a run also stores
+  nothing in the cache, so the next run without the flag builds again. To
+  probe without rebuilding the worker, add `--exclude-task-dependencies` to the
+  `verify-*-worker` run. `test_worker_cache_inputs.py` fails when a module a
+  worker imports is missing from its named input.
 - Pin upstream model and configuration digests from git blobs or a real download,
   never from a checkout with `autocrlf`: text files there are CRLF copies.
 - `capture-tools:promotion-registry-test` fails under Git Bash on Windows (its
