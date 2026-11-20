@@ -16,6 +16,9 @@ from unittest.mock import Mock
 import pytest
 
 from capture_runtime.constants import RUNTIME_VERSION
+from capture_runtime.provisioning.infrastructure import (
+    engine_installation as engine_installation_module,
+)
 from capture_runtime.provisioning.infrastructure.engine_catalog import EngineArtifactDescriptor
 from capture_runtime.provisioning.infrastructure.engine_installation import safe_extract_artifact
 
@@ -130,7 +133,13 @@ def test_worker_archive_rejects_case_collisions(tmp_path: Path) -> None:
 def test_worker_archive_is_reproducible(tmp_path: Path) -> None:
     source = tmp_path / "worker"
     source.mkdir()
-    payload = bytes(range(256)) * 100
+    # Real source text: unlike a repeating byte pattern, levels 6 and 9 compress
+    # it to different bytes, so the level check below can fail.
+    payload = Path(engine_installation_module.__file__).read_bytes()
+    level_6, level_9 = (zlib.compressobj(level=level, wbits=-15) for level in (6, 9))
+    assert (
+        level_6.compress(payload) + level_6.flush() != level_9.compress(payload) + level_9.flush()
+    )
     (source / "worker.exe").write_bytes(payload)
     archives = [tmp_path / "first.zip", tmp_path / "second.zip"]
     manifests = [tmp_path / "first.json", tmp_path / "second.json"]
@@ -145,7 +154,7 @@ def test_worker_archive_is_reproducible(tmp_path: Path) -> None:
             assert entry.external_attr == 0o100644 << 16
             assert entry.compress_type == zipfile.ZIP_DEFLATED
             # The level is not stored in ZIP metadata: check the compressed bytes.
-            compressor = zlib.compressobj(level=9, wbits=-15)
+            compressor = zlib.compressobj(level=worker_archive.ZIP_COMPRESSLEVEL, wbits=-15)
             expected = compressor.compress(packaged.read(entry)) + compressor.flush()
             raw = archives[0].read_bytes()
             name_length, extra_length = struct.unpack_from("<HH", raw, entry.header_offset + 26)

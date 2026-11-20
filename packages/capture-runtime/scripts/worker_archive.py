@@ -80,6 +80,8 @@ def build_worker_archive(source: Path, archive: Path, manifest_output: Path) -> 
     ) as destination:
         for relative, item in files:
             info = zipfile.ZipInfo(relative, ZIP_TIMESTAMP)
+            # MS-DOS creator (the win32 default, stated so other hosts match). The
+            # Unix mode bits stay: the installer's regular-file check reads them.
             info.create_system = 0
             info.compress_type = zipfile.ZIP_DEFLATED
             info.external_attr = 0o100644 << 16
