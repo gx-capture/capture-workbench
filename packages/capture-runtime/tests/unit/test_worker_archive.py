@@ -15,6 +15,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from capture_runtime.artifact_parts import split_archive
 from capture_runtime.constants import RUNTIME_VERSION
 from capture_runtime.provisioning.infrastructure import (
     engine_installation as engine_installation_module,
@@ -202,3 +203,94 @@ def test_worker_builder_passes_fixed_child_environment(
     assert run.call_args.args[0][1:3] == ["-m", "PyInstaller"]
     assert run.call_args.kwargs["env"]["SOURCE_DATE_EPOCH"] == "315532800"
     assert run.call_args.kwargs["env"]["PYTHONHASHSEED"] == "0"
+
+
+@pytest.fixture
+def split_worker(tmp_path: Path) -> tuple[Path, Path, Path]:
+    executable = tmp_path / "dist" / "workers" / "capture-engine-test" / "capture-engine-test.exe"
+    tree = executable.parent
+    (tree / "_internal").mkdir(parents=True)
+    executable.write_bytes(b"worker")
+    (tree / "_internal" / "dependency.dll").write_bytes(b"dependency")
+    archive = tmp_path / "dist" / "engines" / "worker.zip"
+    manifest = archive.with_name("worker-files.json")
+    worker_archive.build_worker_archive(tree, archive, manifest)
+    assert len(split_archive(archive, part_bytes=64)) > 1
+    assert not archive.exists()
+    return executable, archive, manifest
+
+
+@pytest.mark.parametrize("tree_state", ["matching", "missing", "extra-file", "changed-byte"])
+def test_ensure_worker_tree(
+    tmp_path: Path, split_worker: tuple[Path, Path, Path], tree_state: str
+) -> None:
+    executable, archive, manifest = split_worker
+    tree = executable.parent
+    dependency = tree / "_internal" / "dependency.dll"
+    os.utime(executable, ns=(1_000_000_000, 1_000_000_000))
+
+    if tree_state == "missing":
+        dependency.unlink()
+        dependency.parent.rmdir()
+        executable.unlink()
+        tree.rmdir()
+    elif tree_state == "extra-file":
+        (tree / "extra.txt").write_bytes(b"extra")
+    elif tree_state == "changed-byte":
+        dependency.write_bytes(b"dependencY")
+
+    before = {path: path.stat().st_mtime_ns for path in tree.rglob("*")}
+    worker_archive.ensure_worker_tree(tmp_path, executable, archive, manifest)
+
+    assert {
+        path.relative_to(tree).as_posix(): path.read_bytes()
+        for path in tree.rglob("*")
+        if path.is_file()
+    } == {
+        "capture-engine-test.exe": b"worker",
+        "_internal/dependency.dll": b"dependency",
+    }
+    if tree_state == "matching":
+        assert {path: path.stat().st_mtime_ns for path in tree.rglob("*")} == before
+    elif tree_state != "missing":
+        assert executable.stat().st_mtime_ns != before[executable]
+
+
+def test_ensure_worker_tree_refuses_outside_directory(
+    tmp_path: Path, split_worker: tuple[Path, Path, Path]
+) -> None:
+    executable, archive, manifest = split_worker
+    outside = tmp_path / executable.parent.name / executable.name
+    outside.parent.mkdir()
+    outside.write_bytes(b"leave this alone")
+
+    with pytest.raises(ValueError, match="worker executable must be in"):
+        worker_archive.ensure_worker_tree(tmp_path, outside, archive, manifest)
+
+    assert outside.read_bytes() == b"leave this alone"
+
+
+@pytest.mark.parametrize("junction_location", ["worker-root", "nested"])
+def test_ensure_worker_tree_never_follows_junctions(
+    tmp_path: Path, split_worker: tuple[Path, Path, Path], junction_location: str
+) -> None:
+    winapi = pytest.importorskip("_winapi")
+    executable, archive, manifest = split_worker
+    tree = executable.parent
+    outside = tmp_path / "outside-worker"
+    outside.mkdir()
+    sentinel = outside / "keep.txt"
+    sentinel.write_bytes(b"keep")
+    if junction_location == "worker-root":
+        tree.rename(tmp_path / "original-worker")
+        winapi.CreateJunction(str(outside), str(tree))
+        with pytest.raises(ValueError, match="worker path must be a plain directory"):
+            worker_archive.ensure_worker_tree(tmp_path, executable, archive, manifest)
+        assert tree.is_junction()
+    else:
+        link = tree / "junction"
+        winapi.CreateJunction(str(outside), str(link))
+        worker_archive.ensure_worker_tree(tmp_path, executable, archive, manifest)
+        assert not link.exists()
+        assert executable.read_bytes() == b"worker"
+    assert sentinel.read_bytes() == b"keep"

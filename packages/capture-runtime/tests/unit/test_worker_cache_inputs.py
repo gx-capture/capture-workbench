@@ -46,9 +46,7 @@ def import_closure(entry):
                 base = node.module or ""
                 if node.level:
                     owner = parts if path.name == "__init__.py" else parts[:-1]
-                    base = ".".join(
-                        owner[: len(owner) - node.level + 1] + ([base] if base else [])
-                    )
+                    base = ".".join(owner[: len(owner) - node.level + 1] + ([base] if base else []))
                 pending.append(base)
                 pending.extend(base + "." + alias.name for alias in node.names)
             elif isinstance(node, ast.Call) and node.args:
@@ -95,15 +93,21 @@ class WorkerCacheInputsTest(unittest.TestCase):
                 )
                 self.assertEqual([], missing)
 
-    def test_probe_dependencies_restore_their_onedir_trees(self):
-        for worker in ("speech-recognition", "speech-recognition-cpu", "diarization"):
-            build = f"build-{worker}-worker"
-            probe = PROJECT["targets"][f"verify-{worker}-worker"]
-            self.assertIn(build, probe["dependsOn"])
-            self.assertIn(
-                "{projectRoot}/dist/workers/capture-engine-" + worker,
-                PROJECT["targets"][build]["outputs"],
-            )
+    def test_worker_cache_restores_archives_and_probes_hash_their_worker(self):
+        for worker in WORKERS:
+            with self.subTest(worker=worker):
+                build = f"build-{worker}-worker"
+                target = PROJECT["targets"][build]
+                for output in target["outputs"]:
+                    self.assertNotIn("/dist/workers", output)
+                if worker == "ocr":
+                    continue
+                probe = PROJECT["targets"][f"verify-{worker}-worker"]
+                self.assertIn(build, probe["dependsOn"])
+                self.assertEqual(
+                    [*target["inputs"], "{projectRoot}/scripts/probe_packaged_worker.py"],
+                    probe["inputs"],
+                )
 
     def test_workers_do_not_hash_unrelated_core_or_other_entries(self):
         for worker in WORKERS:

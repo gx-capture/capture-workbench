@@ -755,6 +755,15 @@ candidate with `node tools/install-capture-workbench-dependencies.mts
   To check it, build a worker twice with `--skip-nx-cache` from the same
   commit, compare the files manifests first, then the archive and part SHA-256
   values and lengths, then the catalog's worker descriptors (issue #478).
+- Each worker build is cached on its own named input in
+  `packages/capture-runtime/project.json` (its entry's import closure, data and
+  notices, its spec and build script, and the shared archive inputs), so a
+  runtime change outside that closure restores the archive from the Nx cache.
+  The cache holds only the archive, its parts and its files manifest, not the
+  onedir tree; a worker probe checks `dist/workers/<worker>` against the files
+  manifest and re-extracts it from the archive when it differs. Use
+  `--skip-nx-cache` to force a rebuild. `test_worker_cache_inputs.py` fails
+  when a module a worker imports is missing from its named input.
 - Pin upstream model and configuration digests from git blobs or a real download,
   never from a checkout with `autocrlf`: text files there are CRLF copies.
 - `capture-tools:promotion-registry-test` fails under Git Bash on Windows (its
