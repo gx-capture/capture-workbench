@@ -241,11 +241,11 @@ class InstallationService:
 
             last_persisted = self._progress_clock()
 
-            def update_progress(job: InstallationJob, *, force: bool = False) -> None:
+            def update_progress(job: InstallationJob) -> None:
                 nonlocal last_persisted
                 now = self._progress_clock()
                 # One second matches Workbench polling without writing once per chunk.
-                persist = force or now - last_persisted >= 1.0
+                persist = now - last_persisted >= 1.0
                 self.repository.update_job(installation_id, _to_contract(job), persist=persist)
                 if persist:
                     last_persisted = now
@@ -254,23 +254,15 @@ class InstallationService:
                 job = _to_domain(self.get(installation_id))
                 if job.is_terminal:
                     return
-                previous = job.progress
                 job.update_progress(value, self._clock.now())
-                # Installers expose phase boundaries as fractions, not a separate phase field.
-                milestone = value in {0, 0.1, 0.25, 0.35, 0.75, 0.85, 0.95, 1}
-                update_progress(job, force=milestone and job.progress != previous)
+                update_progress(job)
 
             def downloaded(value: DownloadedBytes) -> None:
                 job = _to_domain(self.get(installation_id))
                 if job.is_terminal:
                     return
-                previous = (job.downloaded_bytes, job.download_bytes)
                 job.update_download(downloaded=value.done, total=value.total, now=self._clock.now())
-                finished = job.downloaded_bytes == job.download_bytes
-                update_progress(
-                    job,
-                    force=finished and previous != (job.downloaded_bytes, job.download_bytes),
-                )
+                update_progress(job)
 
             async with self._install_lock:
                 await self.installer.install(

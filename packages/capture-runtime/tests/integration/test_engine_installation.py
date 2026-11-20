@@ -1531,7 +1531,8 @@ def test_structuring_requirement_installation_persists_progress_and_completion(
             ]
             running = json.loads(metadata.read_text(encoding="utf-8"))["job"]
             assert running["status"] == "running"
-            assert running["progress"] == 0.25
+            # Progress is persisted at most once a second; reads see it at once.
+            assert service.get(installation_id).progress == 0.25
 
             task = service._tasks[installation_id]
             structuring.finish.set()
