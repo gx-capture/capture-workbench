@@ -166,10 +166,29 @@ transcription outside them uses TEA-ASR 1.1 mini on CUDA, as
 GPU switch only selects the device; its fixed launch environment does not yet
 expose the model setting.
 
-To also check progressive audio, first record a reference with
-`node apps/capture-workbench-desktop/scripts/progressive-audio-oracle.ts`
-(`CAPTURE_PROGRESSIVE_AUDIO_ORACLE_SOURCE` and `_OUTPUT`), then pass the output
-file as `CAPTURE_REAL_ENGINES_AUDIO_EXPECTATIONS` (or `CAPTURE_REAL_MEDIA_MODEL_AUDIO_ORACLE`).
+For the progressive partial check, use the private 310-second Chinese WAV with
+speech before and after the five-minute checkpoint. Generate a digest-only
+oracle with `node apps/capture-workbench-desktop/scripts/progressive-audio-oracle.ts`
+using `CAPTURE_PROGRESSIVE_AUDIO_ORACLE_SOURCE` for the WAV and
+`CAPTURE_PROGRESSIVE_AUDIO_ORACLE_OUTPUT` for the JSON. Set
+`CAPTURE_SPEECH_RECOGNITION_VARIANT` to the installed pack (`cuda` or `cpu`),
+or use `auto` to select by NVIDIA driver availability. The generator uses the selected pack's default model and
+device with CPU fallback disabled.
+
+For `smoke-real-engines-execution`, set both
+`CAPTURE_REAL_ENGINES_PROGRESSIVE_AUDIO` to that WAV and
+`CAPTURE_REAL_ENGINES_PROGRESSIVE_AUDIO_ORACLE` to its JSON oracle. The check
+logs a skip when both are unset. `CAPTURE_REAL_ENGINES_AUDIO_EXPECTATIONS`
+still supplies the expected text anchors for the separate speaker-identification
+recording. A successful live check is recorded as `proven.progressivePartial`
+with pack and extraction provenance in the smoke evidence.
+
+Keep `CAPTURE_REAL_ENGINES_APP_DATA` and `CAPTURE_REAL_ENGINES_TEMP_DIR` outside
+the workspace. The host copies source recordings into app data, and the temp
+directory holds browser artifacts and exports. The runtime's engine cache
+(under `LOCALAPPDATA/gx-capture/engine-cache` on Windows by default) must also
+resolve outside the workspace.
+
 The oracle installs the speech worker and model into a fresh kept run tree
 (`.kept-run-trees/audio-oracle-<time>` beside the checkout) and leaves it there;
 remove it when the machine is idle with

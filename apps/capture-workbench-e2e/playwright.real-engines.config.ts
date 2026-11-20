@@ -1,12 +1,20 @@
 import { defineConfig, devices } from '@playwright/test';
 import { nxE2EPreset } from '@nx/playwright/preset';
+import { mkdirSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { requirePrivateDirectory } from './src/real-engines-inputs.ts';
 
 const configFile = fileURLToPath(import.meta.url);
 const workspaceRoot = fileURLToPath(new URL('../..', import.meta.url));
 const upstreamURL = 'http://localhost:4200';
-const artifactRoot = join(workspaceRoot, 'tmp', 'capture-workbench-e2e');
+const tempDir = process.env['CAPTURE_REAL_ENGINES_TEMP_DIR']?.trim();
+if (!tempDir) throw new Error('CAPTURE_REAL_ENGINES_TEMP_DIR is required for private browser artifacts and temporary files.');
+const privateTemp = requirePrivateDirectory(tempDir, workspaceRoot, 'CAPTURE_REAL_ENGINES_TEMP_DIR');
+mkdirSync(privateTemp, { recursive: true });
+const artifactRoot = join(privateTemp, `playwright-real-engines-${randomUUID()}`);
+for (const key of ['TEMP', 'TMP', 'TMPDIR']) process.env[key] = privateTemp;
 
 export default defineConfig({
   ...nxE2EPreset(configFile, { testDir: './src' }),

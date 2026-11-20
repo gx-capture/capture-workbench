@@ -27,19 +27,21 @@
  *      with speaker diarization and structuring on `/asr`, verifying the speech
  *      provenance of the installed pack (`tea-asr-1.1` on `cuda` by default with the NVIDIA
  *      driver, `tea-asr-1.1-mini` on `cpu` without) + Ollama structuring
- *      provenance with sha256 digests.
+ *      provenance with sha256 digests. With the progressive media pair set,
+ *      a separate capture without speaker identification verifies the live
+ *      checkpoint and the final transcript against the oracle.
  *   4. Viewing, editing with a synthetic marker, reload persistence, exporting to
  *      disk, and restoring edits.
  *   5. Stopping the launcher (host + runtime + workers) and restarting on the same
- *      `--app-data` directory, verifying features, model, all three documents,
+ *      `--app-data` directory, verifying features, model, all documents,
  *      restored PDF state, and active ASR edit persist without re-installing.
- *   6. Deleting the image document and the recording from `/history`
+ *   6. Deleting the image document and the recordings from `/history`
  *      (`history-row-delete` -> `history-delete-dialog` /
  *      `history-delete-confirm`), verifying UI removal, absence from
  *      `library_list`, and `Capture library document was not found.` from
  *      `library_get`.
  *   7. Stopping and restarting the launcher once more on the same `--app-data`
- *      directory, verifying the PDF document still opens and both deleted
+ *      directory, verifying the PDF document still opens and all deleted
  *      document IDs remain absent from `library_list` and `library_get`.
  *
  * Explicit per-stage timeout placeholders (to be measured by the first real run):
@@ -51,6 +53,7 @@
  *   - 01-check-installed-catalog: 10 minutes
  *   - 02-ocr-pdf-and-image:       10 minutes
  *   - 03-asr-and-structuring:     35 minutes
+ *   - 03-progressive-partial:     scales with measured audio duration and device
  *   - 04-edit-restore-and-export:  3 minutes
  *   - 05-restart-persistence:      5 minutes
  *   - 06-delete-documents:         2 minutes
@@ -63,12 +66,14 @@
  *   - CAPTURE_REAL_ENGINES_IMAGE (or CAPTURE_REAL_MEDIA_IMAGE / CAPTURE_REAL_DESKTOP_OCR_INPUT)
  *   - CAPTURE_REAL_ENGINES_IMAGE_EXPECTATIONS (optional override; defaults to `<image>.expected.json`)
  *   - CAPTURE_REAL_ENGINES_AUDIO (or CAPTURE_REAL_MEDIA_AUDIO)
- *   - CAPTURE_REAL_ENGINES_AUDIO_EXPECTATIONS (or CAPTURE_REAL_MEDIA_MODEL_AUDIO_ORACLE; defaults to `<audio>.expected.json`)
+ *   - CAPTURE_REAL_ENGINES_AUDIO_EXPECTATIONS (defaults to `<audio>.expected.json`)
  *   Required runtime/storage directories & model selection:
  *   - CAPTURE_REAL_ENGINES_APP_DATA (or CAPTURE_REAL_MEDIA_APP_DATA): dedicated absolute directory (empty for installation, installed for execution) outside %APPDATA%/%LOCALAPPDATA%
- *   - CAPTURE_REAL_ENGINES_TEMP_DIR: explicit temp directory for host/runtime/exports
+ *   - CAPTURE_REAL_ENGINES_TEMP_DIR: absolute private temp directory for host/runtime/exports/browser artifacts
  *   - CAPTURE_REAL_ENGINES_MODEL_OPTION_ID: e.g. `qwen3.5-0.8b-v1`, `qwen3.5-2b-v1`, `qwen3.5-4b-v1`
  *   Optional overrides & checks:
+ *   - CAPTURE_REAL_ENGINES_PROGRESSIVE_AUDIO and CAPTURE_REAL_ENGINES_PROGRESSIVE_AUDIO_ORACLE
+ *     Optional pair for a private recording over five minutes and its digest-only oracle.
  *   - CAPTURE_REAL_ENGINES_EXPECTED_OCR_DEVICE (execution): `directml` or `cpu`; when set,
  *     both PDF and image extraction provenance and diagnostics must match exactly.
  *   - CAPTURE_REAL_ENGINES_RUNTIME_MANIFEST & CAPTURE_REAL_ENGINES_RUNTIME_EXECUTABLE (both or neither; default is staged product runtime)
@@ -83,11 +88,13 @@
  *   - `cancelAndRetry`: true when stage 1 cancelled and retried a real unit install
  *   - `modelInstallation`: true when the installation journey installed the Ollama structuring model
  *   - `ocrDevice`: true when `CAPTURE_REAL_ENGINES_EXPECTED_OCR_DEVICE` was set and matched
- *   - `deletion`: true when both UI deletions and the post-restart absence check passed
+ *   - `progressivePartial`: true when the live and final oracle comparisons passed
+ *   - `deletion`: true when all UI deletions and the post-restart absence check passed
  *
  * The runtime runs as the product runs it. The host starts it with the product's
  * launch policy (`launch_policy.rs`, `constants/launch.rs`), which clears the
  * environment and forwards a fixed list. So, as in the Desktop App:
+ *   - App data, temporary files and engine cache must resolve outside the workspace.
  *   - the speech model is the installed pack's default, not a development
  *     override: this smoke is on the release side of "Speech development tests"
  *     in AGENTS.md;

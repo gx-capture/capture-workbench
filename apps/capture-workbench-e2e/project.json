@@ -19,6 +19,12 @@
         "command": "corepack pnpm exec tsc -p apps/capture-workbench-e2e/tsconfig.json --noEmit"
       }
     },
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "node --test apps/capture-workbench-e2e/src/real-engines-inputs.test.ts"
+      }
+    },
     "e2e": {
       "executor": "nx:run-commands",
       "dependsOn": [{ "projects": ["capture-workbench"], "target": "build" }],
