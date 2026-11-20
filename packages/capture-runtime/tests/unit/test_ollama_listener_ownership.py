@@ -748,3 +748,81 @@ def test_corrective_start_reaps_interrupted_replacement(tmp_path: Path, blocker:
             assert not lifecycle.owns_running_process()
 
     asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("install", [False, True])
+@pytest.mark.parametrize("cancel_task", [False, True])
+def test_slow_policy_resolution_keeps_event_loop_and_cancellation_running(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    install: bool,
+    cancel_task: bool,
+) -> None:
+    from capture_runtime.structuring.infrastructure.ollama import lifecycle_impl
+
+    entered = threading.Event()
+    release = threading.Event()
+
+    def resolve() -> device_policy.OllamaDevicePolicy:
+        entered.set()
+        assert release.wait(5), "event loop did not release the policy lookup"
+        return device_policy.OllamaDevicePolicy("cuda", cuda_pin_reason="timeout")
+
+    monkeypatch.setattr(lifecycle_impl, "resolve_device_policy", resolve)
+    config = _ollama_config(tmp_path)
+    _record_installed_profile(config)
+    controller = FakeProcessController()
+    lifecycle = IsolatedOllamaLifecycle(
+        config,
+        clock=SystemClock(),
+        process_controller=controller,
+        executable_resolver=lambda: "fake-ollama",
+        port_selector=lambda: 12222,
+        listener_owner=SimpleNamespace(listener_pid=lambda port: 4242),
+    )
+
+    async def exercise() -> None:
+        cancellation = asyncio.Event()
+        if install:
+            installer = OllamaRequirementInstaller(lifecycle, clock=SystemClock())
+            operation = installer.install_model_option(
+                "qwen3.5-4b-v1",
+                cancel_event=cancellation,
+                report_progress=lambda _: None,
+            )
+        else:
+            provider = OllamaCaptureStructuringProvider(lifecycle, clock=SystemClock())
+            operation = provider.structure(_raw(), target_language=None, cancel_event=cancellation)
+        task = asyncio.create_task(operation)
+        try:
+            async with asyncio.timeout(3):
+                while not entered.is_set():
+                    await asyncio.sleep(0.001)
+                assert not task.done()
+                if cancel_task:
+                    task.cancel()
+                    await asyncio.sleep(0)
+                else:
+                    cancellation.set()
+                release.set()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+                # Cancelling an installation task (a runtime shutdown) is not the
+                # user's cancel of the job: its event stays clear, so the job is
+                # not recorded as cancelled. A capture's structuring is stopped
+                # through its own event.
+                assert cancellation.is_set() is not (install and cancel_task)
+        finally:
+            release.set()
+            await asyncio.gather(task, return_exceptions=True)
+
+    try:
+        asyncio.run(exercise())
+        if install and cancel_task:
+            # The launch finished, and the installer's cleanup stopped it.
+            assert len(controller.spawned) == len(controller.stopped)
+            assert not lifecycle.owns_running_process()
+        else:
+            assert not controller.spawned
+    finally:
+        lifecycle.stop()

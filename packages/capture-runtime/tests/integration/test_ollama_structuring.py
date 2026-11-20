@@ -63,7 +63,7 @@ class FakeLifecycle:
                 raise asyncio.CancelledError
             yield
 
-    def start(self) -> int:
+    def start(self, *, cancel_event: asyncio.Event | None = None) -> int:
         self.starts += 1
         self.running = True
         return 4242

@@ -56,6 +56,11 @@ class OllamaDevicePolicy:
     library_token: str | None = None
     cuda_pin_reason: str | None = None
 
+    def cuda_pin_applied(self, environment: Mapping[str, str]) -> bool:
+        return self.target == "cuda" and bool(
+            _GPU_UUID.fullmatch(environment.get("CUDA_VISIBLE_DEVICES", ""))
+        )
+
     def serve_environment(self, base: Mapping[str, str]) -> dict[str, str]:
         if self.target == "unmanaged":
             return dict(base)
@@ -239,6 +244,11 @@ def corrected_device_policy(
         policy,
         adapter_name=device.description,
         pci_bus=device.pci_id or policy.pci_bus,
+        cuda_pin_reason=(
+            None
+            if policy.target == "cuda" and _GPU_UUID.fullmatch(filter_id)
+            else policy.cuda_pin_reason
+        ),
         device_filter=filter_id,
         library_token=library,
     )

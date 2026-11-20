@@ -453,22 +453,19 @@ class IsolatedOllamaLifecycle:
             # corrective restart passes its corrected policy, which is kept.
             device_policy = policy or resolve_device_policy()
             output_path = self.config.app_data_dir / "ollama.log"
-            for attempt in range(5):
+            for _ in range(5):
                 try:
                     self._check_start_allowed(cancel_event)
-                    if (
-                        attempt
-                        and policy is None
-                        and device_policy.target == "cuda"
-                        and device_policy.cuda_uuid is None
-                    ):
-                        device_policy = resolve_device_policy()
                     try:
                         output_offset = output_path.stat().st_size
                     except FileNotFoundError:
                         output_offset = 0
                     port = self._port_selector()
                     self._host_url = f"http://127.0.0.1:{port}"
+                    environment = device_policy.serve_environment(
+                        self.config.process_environment(f"127.0.0.1:{port}")
+                    )
+                    pin_applied = device_policy.cuda_pin_applied(environment)
                     pin_reason = device_policy.cuda_pin_reason or (
                         "UUID unavailable"
                         if device_policy.target == "cuda"
@@ -477,15 +474,13 @@ class IsolatedOllamaLifecycle:
                     _LOG.info(
                         "Starting owned Ollama: target=%s cuda_uuid_pin=%s reason=%s",
                         device_policy.target,
-                        device_policy.cuda_uuid is not None,
-                        "applied" if device_policy.cuda_uuid else pin_reason,
+                        pin_applied,
+                        "applied" if pin_applied else pin_reason,
                     )
                     owned = self._controller.spawn(
                         executable,
                         ["serve"],
-                        environment=device_policy.serve_environment(
-                            self.config.process_environment(f"127.0.0.1:{port}")
-                        ),
+                        environment=environment,
                         cwd=self.config.app_data_dir,
                         output_path=output_path,
                     )

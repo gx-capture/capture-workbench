@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -224,5 +225,56 @@ def test_cuda_pin_timeout_is_logged_and_next_start_resolves_again(
         assert queries == 2
         assert controller.environments[1]["CUDA_VISIBLE_DEVICES"] == _UUID
         assert "target=cuda cuda_uuid_pin=True reason=applied" in caplog.text
+    finally:
+        lifecycle.stop()
+
+
+@pytest.mark.parametrize("corrective", [False, True])
+def test_listener_retries_keep_policy_and_corrective_restart_does_not_query(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    corrective: bool,
+) -> None:
+    from capture_runtime.structuring.infrastructure.ollama import lifecycle_impl
+    from capture_runtime.structuring.infrastructure.ollama.server_log import DiscoveredDevice
+
+    queries = 0
+    policy = device_policy.OllamaDevicePolicy("cuda", cuda_pin_reason="timeout")
+
+    def resolve() -> device_policy.OllamaDevicePolicy:
+        nonlocal queries
+        queries += 1
+        return policy
+
+    monkeypatch.setattr(lifecycle_impl, "resolve_device_policy", resolve)
+    controller = FakeProcessController()
+    ports = iter([12221, 12222])
+    lifecycle = IsolatedOllamaLifecycle(
+        _ollama_config(tmp_path),
+        clock=SystemClock(),
+        process_controller=controller,
+        executable_resolver=lambda: "fake-ollama",
+        port_selector=lambda: next(ports),
+        listener_owner=SimpleNamespace(listener_pid=lambda port: 999 if port == 12221 else 4242),
+    )
+    caplog.set_level("INFO")
+    try:
+        if corrective:
+            correction = device_policy.corrected_device_policy(
+                policy,
+                [DiscoveredDevice("cuda", _UUID, None, "GPU", "GPU", None, "GPU", ("cuda",))],
+            )
+            assert correction is not None
+            assert correction.cuda_pin_reason is None
+            asyncio.run(lifecycle.restart_for_device(correction, asyncio.Event()))
+            assert queries == 0
+            assert all(env["CUDA_VISIBLE_DEVICES"] == _UUID for env in controller.environments)
+            assert "target=cuda cuda_uuid_pin=True reason=applied" in caplog.text
+        else:
+            lifecycle.start()
+            assert queries == 1
+            assert all("CUDA_VISIBLE_DEVICES" not in env for env in controller.environments)
+        assert len(controller.environments) == 2
     finally:
         lifecycle.stop()

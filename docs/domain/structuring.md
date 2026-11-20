@@ -72,15 +72,8 @@ sequenceDiagram
 
 runtime 自己啟動的 Windows Ollama 供應者，把 `/api/tags` 回報的模型與摘要，和 runner 的執行證據合併。裝置不符的情形在允許的那一次修正重啟之後仍然存在，或無法導出修正時，結構化照常進行，並記錄實際執行的後端。未受管理（`unmanaged`）的執行，仍可回報觀察到的裝置證據。缺少證據時，兩個裝置欄位（`device`、`deviceName`）都是 null。外部 Ollama 回報模型與摘要，兩個裝置欄位是 null。runtime 在儲存完成的文件之前，會比對供應者身份與 `structuringEngine`。
 
-## Session context length
+## 工作階段的上下文長度
 
-Every batch uses the configured maximum `num_ctx` (default 8192) for the entire
-structuring session. Only `num_predict` adapts to each batch. Batch planning is
-unchanged. This applies to owned Ollama, external Ollama, and host providers.
-Ollama reloads its model when `num_ctx` changes; on Windows CUDA each reload can
-take tens of seconds.
+`num_ctx` 每個工作階段固定為 8192（`DEFAULT_STRUCTURING_NUM_CTX`），所有批次使用相同值；只有 `num_predict` 依批次調整。批次規劃規則不變，自有 Ollama、外部 Ollama 與主機供應者皆適用。Ollama 在 `num_ctx` 改變時會重新載入模型，Windows CUDA 每次重新載入可能耗費數十秒。
 
-Owned CUDA launches query `nvidia-smi` on PATH, then SystemRoot/System32, with a
-15-second timeout so an idle laptop GPU can wake. An unresolved UUID is retried
-on the next owned launch. Each launch logs its target, UUID pin status, and a
-sanitary failure reason without command output, credentials, or local paths.
+自有 CUDA 程序啟動時，先在 PATH 尋找 `nvidia-smi`，再檢查 SystemRoot/System32，查詢逾時為 15 秒，讓閒置的筆電 GPU 有時間喚醒。每次一般啟動只解析一次裝置策略；UUID 尚未取得時，於下一次一般啟動重新查詢。連接埠與擁有權重試沿用同一策略，修正重啟則保留傳入的策略。查詢在工作執行緒執行，讓事件迴圈繼續處理請求與取消。每次啟動依實際傳入的環境記錄目標、UUID 固定狀態及不含敏感資訊的失敗原因，不記錄命令輸出、憑證或本機路徑。

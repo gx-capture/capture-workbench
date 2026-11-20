@@ -162,8 +162,18 @@ class OllamaRequirementInstaller:
         executable = self._lifecycle.executable()
         if executable is None:
             raise ManualActionRequiredError("Install the Ollama application first")
-        self._lifecycle.start()
+        starting = asyncio.create_task(
+            asyncio.to_thread(self._lifecycle.start, cancel_event=cancel_event)
+        )
         try:
+            try:
+                await asyncio.shield(starting)
+            except asyncio.CancelledError:
+                # Let the launch finish, then the cleanup below stops it. Setting
+                # cancel_event here would record a runtime shutdown as the
+                # user's cancel of this installation job.
+                await asyncio.gather(starting, return_exceptions=True)
+                raise
             await self._wait_for_ollama_server(cancel_event)
             report_progress(0.1)
             environment = self._lifecycle.process_environment()

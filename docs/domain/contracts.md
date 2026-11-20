@@ -72,10 +72,7 @@ sequenceDiagram
 
 `CaptureEngine.device` 與 `CaptureEngine.deviceName` 都是可省略、可為 null 的非空字串。共用的 `device` 欄位記錄執行的後端，對 OCR、語音與主機自訂的值保持開放。runtime 自己啟動的 Windows Ollama 依觀察到的實際執行，記錄 `cuda`、`rocm`、`vulkan` 或 `cpu`；觀察到 GPU 時，把 GPU 的描述寫在 `deviceName`。`cpu`、無法確認執行裝置與外部 Ollama 的 `deviceName` 是 null；無法確認執行裝置與外部 Ollama 的 `device` 也是 null。舊文件的 `device` 為 `local` 或 `remote`，或兩個欄位都沒有，在 `schemaVersion` `"2"` 下仍可讀取。
 
-## Structuring generation options
+## 結構化生成選項
 
-`StructuringBatch.numCtx` retains its positive-integer wire shape and carries the
-session's configured maximum context length (default 8192) in every batch.
-`numPredict` remains adaptive per batch. Owned and external Ollama adapters use
-the same values as the host-provider session API. No schema or generated asset
-changes are required.
+`StructuringBatch.numCtx` 維持正整數的傳輸格式，每個工作階段固定為 8192（`DEFAULT_STRUCTURING_NUM_CTX`），所有批次使用相同值。
+`numPredict` 仍依各批次調整。自有與外部 Ollama 介接器使用的值，與主機供應者的工作階段 API 相同。

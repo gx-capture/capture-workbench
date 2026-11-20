@@ -102,8 +102,16 @@ class OllamaCaptureStructuringProvider:
         profile_id = _planning_profile_id(model_name)
         self.device_execution = None
         self._engine_identity = None
-        self._lifecycle.start()
+        starting = asyncio.create_task(
+            asyncio.to_thread(self._lifecycle.start, cancel_event=cancel_event)
+        )
         try:
+            try:
+                await asyncio.shield(starting)
+            except asyncio.CancelledError:
+                cancel_event.set()
+                await asyncio.gather(starting, return_exceptions=True)
+                raise
             engine_identity = await self._wait_until_ready(cancel_event, model_name)
             async with AsyncExitStack() as clients:
                 client = await clients.enter_async_context(self._generation_client())
