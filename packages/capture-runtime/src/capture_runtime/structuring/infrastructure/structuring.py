@@ -235,7 +235,7 @@ def structuring_batch_generation_options(
     max_num_ctx: int = DEFAULT_STRUCTURING_NUM_CTX,
     max_num_predict: int = DEFAULT_STRUCTURING_NUM_PREDICT,
 ) -> tuple[int, int]:
-    """每個工作階段固定為 8192（`DEFAULT_STRUCTURING_NUM_CTX`），輸出預算依批次調整。"""
+    """Return the session's max_num_ctx for every batch and adapt num_predict to the batch."""
 
     num_predict = min(
         max_num_predict,
