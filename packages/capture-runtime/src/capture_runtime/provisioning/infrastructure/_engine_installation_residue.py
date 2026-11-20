@@ -27,11 +27,24 @@ def resolved_child(root: Path, relative: str) -> Path:
 
 def remove_inactive_versions(root: Path, active_version: str) -> None:
     versions = root / "versions"
-    if not versions.is_dir():
+    try:
+        metadata = versions.lstat()
+        if is_reparse_point(versions, metadata) or not stat.S_ISDIR(metadata.st_mode):
+            return
+        for item in versions.iterdir():
+            if item.name == active_version or item.name.startswith("."):
+                continue
+            try:
+                metadata = item.lstat()
+                if is_reparse_point(item, metadata) or not stat.S_ISDIR(metadata.st_mode):
+                    continue
+                _remove_retired_engine_tree(item)
+            except (EngineInstallationError, OSError):
+                # Activation is committed; a locked old version can be retried later.
+                continue
+    except OSError:
+        # Cleanup must not fail an already active installation.
         return
-    for item in versions.iterdir():
-        if item.is_dir() and item.name != active_version and not item.name.startswith("."):
-            shutil.rmtree(item, ignore_errors=True)
 
 
 def is_reparse_point(path: Path, metadata: os.stat_result) -> bool:

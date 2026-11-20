@@ -37,6 +37,7 @@ from ._engine_installation_download import (
     _file_operation,
 )
 from ._engine_installation_errors import EngineInstallationError
+from ._engine_installation_residue import remove_inactive_versions
 from ._install_stop import InstallStop
 
 STATE_FILE_NAME = "active-model.json"
@@ -227,6 +228,7 @@ async def install_model_unit(
             )
         # The state file makes the unit active; a cancel after it is too late.
         report_progress(1)
+        await _commit_operation(remove_inactive_versions, root, delivery.artifact_version)
     finally:
         # Left behind only by a cancel or a failure: the files it holds can be
         # gigabytes. The drain finishes the removal before a cancel propagates.

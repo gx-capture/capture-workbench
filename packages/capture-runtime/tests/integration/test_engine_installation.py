@@ -4209,10 +4209,20 @@ def test_catalog_verification_changes_invalidate_record(tmp_path, field, models_
     assert resolved is None
 
 
-def test_model_unit_upgrade_keeps_one_verification_record(tmp_path):
+@pytest.mark.parametrize("removal_fails", [False, True])
+def test_model_unit_upgrade_keeps_one_verification_record(tmp_path, monkeypatch, removal_fails):
     catalog, sources = _model_unit_catalog(tmp_path)
     requirement_id = "vertical-japanese-reader"
-    for version in ("engine-1", "engine-2"):
+    original_rmdir = Path.rmdir
+
+    def fail_old_version_removal(path):
+        if path.name == "engine-1":
+            raise PermissionError("old version is in use")
+        return original_rmdir(path)
+
+    if removal_fails:
+        monkeypatch.setattr(Path, "rmdir", fail_old_version_removal)
+    for version in ("engine-1", "engine-2", "engine-2"):
         requirement = catalog.requirements[0]
         delivery = replace(requirement.model_delivery(), artifact_version=version)
         delivery = replace(
@@ -4232,3 +4242,12 @@ def test_model_unit_upgrade_keeps_one_verification_record(tmp_path):
         assert len(records) == 1
         assert json.loads(records[0].read_text())["binding"]["artifactVersion"] == version
         assert _record_test_manager(tmp_path, upgraded, sources).active_model_unit(requirement_id)
+
+        versions = records[0].parent.parent
+        expected = {version}
+        if removal_fails and version == "engine-2":
+            expected.add("engine-1")
+        assert {path.name for path in versions.iterdir()} == expected
+        assert (versions / version / "model").is_dir()
+        if version == "engine-2" and not removal_fails:
+            assert not (versions / "engine-1").exists()
