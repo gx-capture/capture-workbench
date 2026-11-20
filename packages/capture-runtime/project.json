@@ -385,6 +385,7 @@
       ],
       "outputs": [
         "{projectRoot}/dist/engines/capture-engine-ocr-*.zip",
+        "{projectRoot}/dist/engines/capture-engine-ocr-*.zip.[0-9]*",
         "{projectRoot}/dist/engines/capture-engine-ocr-*-files.json"
       ],
       "options": {
@@ -400,6 +401,7 @@
       ],
       "outputs": [
         "{projectRoot}/dist/engines/capture-engine-speech-recognition-[0-9]*.zip",
+        "{projectRoot}/dist/engines/capture-engine-speech-recognition-[0-9]*.zip.[0-9]*",
         "{projectRoot}/dist/engines/capture-engine-speech-recognition-[0-9]*-files.json"
       ],
       "options": {
@@ -421,6 +423,7 @@
       ],
       "outputs": [
         "{projectRoot}/dist/engines/capture-engine-diarization-*.zip",
+        "{projectRoot}/dist/engines/capture-engine-diarization-*.zip.[0-9]*",
         "{projectRoot}/dist/engines/capture-engine-diarization-*-files.json"
       ],
       "metadata": {
@@ -459,6 +462,7 @@
       ],
       "outputs": [
         "{projectRoot}/dist/engines/capture-engine-speech-recognition-cpu-*.zip",
+        "{projectRoot}/dist/engines/capture-engine-speech-recognition-cpu-*.zip.[0-9]*",
         "{projectRoot}/dist/engines/capture-engine-speech-recognition-cpu-*-files.json"
       ],
       "metadata": {

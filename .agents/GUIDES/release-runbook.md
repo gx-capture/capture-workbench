@@ -742,6 +742,12 @@ candidate with `node tools/install-capture-workbench-dependencies.mts
   `--skip-nx-cache`, or the cache restores them and the catalog step rejects them.
   The ignored `src-tauri/resources/capture-runtime-manifest.json` is re-staged by
   `capture-workbench-desktop:stage-core-runtime`.
+- Worker archives are built to be reproducible: the four worker builds run
+  PyInstaller with a fixed `SOURCE_DATE_EPOCH` and `PYTHONHASHSEED`, UPX is off,
+  and `scripts/worker_archive.py` writes explicit ZIP metadata and compression.
+  To check it, build a worker twice with `--skip-nx-cache` from the same
+  commit, compare the files manifests first, then the archive and part SHA-256
+  values and lengths, then the catalog's worker descriptors (issue #478).
 - Pin upstream model and configuration digests from git blobs or a real download,
   never from a checkout with `autocrlf`: text files there are CRLF copies.
 - `capture-tools:promotion-registry-test` fails under Git Bash on Windows (its

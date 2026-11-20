@@ -5,7 +5,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from worker_archive import build_worker_archive
+from worker_archive import build_worker_archive, worker_build_environment
 
 from capture_runtime.constants import RUNTIME_VERSION
 
@@ -32,6 +32,7 @@ def main() -> None:
             str(root / "pyinstaller" / "capture-engine-diarization.spec"),
         ],
         cwd=root,
+        env=worker_build_environment(),
         stdin=subprocess.DEVNULL,
         shell=False,
         check=True,

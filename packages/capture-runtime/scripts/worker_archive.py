@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import zipfile
 from pathlib import Path
 
@@ -12,6 +13,16 @@ from capture_runtime.provisioning.infrastructure.engine_installation import (
 )
 
 ZIP_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
+# zlib's default level, stated explicitly: writestr() with a prebuilt ZipInfo
+# ignores ZipFile(compresslevel=...). A higher level would slow the multi-GB
+# speech worker archive for little gain.
+ZIP_COMPRESSLEVEL = 6
+
+
+def worker_build_environment() -> dict[str, str]:
+    # PyInstaller otherwise stamps the PE header with the build time; Python hash
+    # randomisation can change ordering. Override inherited values in the child only.
+    return {**os.environ, "SOURCE_DATE_EPOCH": "315532800", "PYTHONHASHSEED": "0"}
 
 
 def sha256_file(path: Path) -> str:
@@ -65,17 +76,29 @@ def build_worker_archive(source: Path, archive: Path, manifest_output: Path) -> 
     manifest_output.write_bytes(manifest_bytes)
     archive.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(
-        archive, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9
+        archive, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=ZIP_COMPRESSLEVEL
     ) as destination:
         for relative, item in files:
             info = zipfile.ZipInfo(relative, ZIP_TIMESTAMP)
+            info.create_system = 0
             info.compress_type = zipfile.ZIP_DEFLATED
             info.external_attr = 0o100644 << 16
-            destination.writestr(info, item.read_bytes())
+            destination.writestr(
+                info,
+                item.read_bytes(),
+                compress_type=zipfile.ZIP_DEFLATED,
+                compresslevel=ZIP_COMPRESSLEVEL,
+            )
         info = zipfile.ZipInfo("files-manifest.json", ZIP_TIMESTAMP)
+        info.create_system = 0
         info.compress_type = zipfile.ZIP_DEFLATED
         info.external_attr = 0o100644 << 16
-        destination.writestr(info, manifest_bytes)
+        destination.writestr(
+            info,
+            manifest_bytes,
+            compress_type=zipfile.ZIP_DEFLATED,
+            compresslevel=ZIP_COMPRESSLEVEL,
+        )
     # One release asset must stay under 2 GB; larger archives ship as parts.
     split_archive(archive)
 

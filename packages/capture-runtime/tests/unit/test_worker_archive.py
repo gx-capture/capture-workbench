@@ -4,10 +4,14 @@ import asyncio
 import hashlib
 import importlib.util
 import json
+import os
+import struct
 import sys
 import zipfile
+import zlib
 from pathlib import Path
 from types import ModuleType
+from unittest.mock import Mock
 
 import pytest
 
@@ -121,3 +125,71 @@ def test_worker_archive_rejects_case_collisions(tmp_path: Path) -> None:
             tmp_path / "worker.zip",
             tmp_path / "files-manifest.json",
         )
+
+
+def test_worker_archive_is_reproducible(tmp_path: Path) -> None:
+    source = tmp_path / "worker"
+    source.mkdir()
+    payload = bytes(range(256)) * 100
+    (source / "worker.exe").write_bytes(payload)
+    archives = [tmp_path / "first.zip", tmp_path / "second.zip"]
+    manifests = [tmp_path / "first.json", tmp_path / "second.json"]
+    for archive, manifest in zip(archives, manifests, strict=True):
+        worker_archive.build_worker_archive(source, archive, manifest)
+    assert archives[0].read_bytes() == archives[1].read_bytes()
+    assert manifests[0].read_bytes() == manifests[1].read_bytes()
+    with zipfile.ZipFile(archives[0]) as packaged:
+        for entry in packaged.infolist():
+            assert entry.create_system == 0
+            assert entry.date_time == (1980, 1, 1, 0, 0, 0)
+            assert entry.external_attr == 0o100644 << 16
+            assert entry.compress_type == zipfile.ZIP_DEFLATED
+            # The level is not stored in ZIP metadata: check the compressed bytes.
+            compressor = zlib.compressobj(level=9, wbits=-15)
+            expected = compressor.compress(packaged.read(entry)) + compressor.flush()
+            raw = archives[0].read_bytes()
+            name_length, extra_length = struct.unpack_from("<HH", raw, entry.header_offset + 26)
+            offset = entry.header_offset + 30 + name_length + extra_length
+            assert raw[offset : offset + entry.compress_size] == expected
+
+
+def test_worker_build_environment_overrides_without_mutating_parent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SOURCE_DATE_EPOCH", "999")
+    monkeypatch.setenv("PYTHONHASHSEED", "random")
+    monkeypatch.setenv("WORKER_BUILD_TEST", "preserved")
+    environment = worker_archive.worker_build_environment()
+    assert environment["SOURCE_DATE_EPOCH"] == "315532800"
+    assert environment["PYTHONHASHSEED"] == "0"
+    assert environment["WORKER_BUILD_TEST"] == "preserved"
+    assert os.environ["SOURCE_DATE_EPOCH"] == "999"
+    assert os.environ["PYTHONHASHSEED"] == "random"
+
+
+@pytest.mark.parametrize(
+    "name", ["ocr", "speech_recognition", "speech_recognition_cpu", "diarization"]
+)
+def test_worker_builder_passes_fixed_child_environment(
+    name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec = importlib.util.spec_from_file_location(
+        f"build_{name}_worker", SCRIPT_PATH.with_name(f"build_{name}_worker.py")
+    )
+    assert spec is not None and spec.loader is not None
+    builder = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(builder)
+    monkeypatch.setattr(builder, "__file__", str(tmp_path / "scripts" / "build_worker.py"))
+    monkeypatch.setattr(builder.sys, "version_info", (3, 13))
+    monkeypatch.setattr(builder.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(builder.platform, "machine", lambda: "AMD64")
+    monkeypatch.setenv("SOURCE_DATE_EPOCH", "999")
+    monkeypatch.setenv("PYTHONHASHSEED", "random")
+    run = Mock()
+    monkeypatch.setattr(builder.subprocess, "run", run)
+    monkeypatch.setattr(builder, "build_worker_archive", Mock())
+    builder.main()
+    run.assert_called_once()
+    assert run.call_args.args[0][1:3] == ["-m", "PyInstaller"]
+    assert run.call_args.kwargs["env"]["SOURCE_DATE_EPOCH"] == "315532800"
+    assert run.call_args.kwargs["env"]["PYTHONHASHSEED"] == "0"
