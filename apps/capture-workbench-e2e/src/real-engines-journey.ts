@@ -5,7 +5,6 @@ import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, resolve } from 'node:path';
-import type { RuntimeInstallations, RuntimeRequirements } from '@gx-capture/capture-runtime-client';
 import { expect, type Locator, type Page } from '@playwright/test';
 import {
   canConnect,
@@ -873,16 +872,26 @@ async function verifyDiagnosticsProvenance(
 
 const REINSTALL_MESSAGE = 'Installed engines or model do not match this build. A reinstall is needed: run capture-workbench-e2e:smoke-real-engines-installation with fresh app data, then rerun execution.';
 
+/** The fields of the host's `runtime_requirements` response this check reads. */
+interface RuntimeRequirementsResponse {
+  readonly items: readonly { readonly requirementId: string; readonly status: string }[];
+}
+
+/** The fields of the host's `runtime_list_installations` response this check reads. */
+interface RuntimeInstallationsResponse {
+  readonly items: readonly { readonly installationId: string; readonly status: string }[];
+}
+
 /** Readiness validates active worker/model digests against the running runtime's catalog.
  * Installation history alone cannot prove this: it has no artifact digests.
  */
 async function assertInstalledRequirements(page: Page): Promise<void> {
-  const requirements = await invokeHost<RuntimeRequirements>(page, 'runtime_requirements');
+  const requirements = await invokeHost<RuntimeRequirementsResponse>(page, 'runtime_requirements');
   for (const requirementId of [...ALL_RECOGNITION_UNITS, 'structuring-runtime', 'structuring-model']) {
     const status = requirements.items.find((item) => item.requirementId === requirementId)?.status ?? 'missing';
     assert.equal(status, 'ready', `${requirementId}: ${status}. ${REINSTALL_MESSAGE}`);
   }
-  const installations = await invokeHost<RuntimeInstallations>(page, 'runtime_list_installations');
+  const installations = await invokeHost<RuntimeInstallationsResponse>(page, 'runtime_list_installations');
   const blocking = installations.items.find((item) => item.status === 'queued' || item.status === 'running');
   if (blocking) {
     assert.fail(`${blocking.installationId}: ${blocking.status}. ${REINSTALL_MESSAGE}`);
