@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from contextlib import suppress
+from time import monotonic
 from typing import Protocol
 
 from capture_runtime.clock import Clock
@@ -132,10 +134,12 @@ class InstallationService:
         *,
         installer: RequirementInstaller,
         clock: Clock,
+        progress_clock: Callable[[], float] = monotonic,
     ) -> None:
         self.repository = repository
         self.installer = installer
         self._clock = clock
+        self._progress_clock = progress_clock
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._cancellations: dict[str, asyncio.Event] = {}
         # Runtime-owned dependencies are intentionally installed one at a time to
@@ -235,19 +239,38 @@ class InstallationService:
             domain_job.mark_running(self._clock.now())
             self.repository.update_job(installation_id, _to_contract(domain_job))
 
+            last_persisted = self._progress_clock()
+
+            def update_progress(job: InstallationJob, *, force: bool = False) -> None:
+                nonlocal last_persisted
+                now = self._progress_clock()
+                # One second matches Workbench polling without writing once per chunk.
+                persist = force or now - last_persisted >= 1.0
+                self.repository.update_job(installation_id, _to_contract(job), persist=persist)
+                if persist:
+                    last_persisted = now
+
             def progress(value: float) -> None:
                 job = _to_domain(self.get(installation_id))
                 if job.is_terminal:
                     return
+                previous = job.progress
                 job.update_progress(value, self._clock.now())
-                self.repository.update_job(installation_id, _to_contract(job))
+                # Installers expose phase boundaries as fractions, not a separate phase field.
+                milestone = value in {0, 0.1, 0.25, 0.35, 0.75, 0.85, 0.95, 1}
+                update_progress(job, force=milestone and job.progress != previous)
 
             def downloaded(value: DownloadedBytes) -> None:
                 job = _to_domain(self.get(installation_id))
                 if job.is_terminal:
                     return
+                previous = (job.downloaded_bytes, job.download_bytes)
                 job.update_download(downloaded=value.done, total=value.total, now=self._clock.now())
-                self.repository.update_job(installation_id, _to_contract(job))
+                finished = job.downloaded_bytes == job.download_bytes
+                update_progress(
+                    job,
+                    force=finished and previous != (job.downloaded_bytes, job.download_bytes),
+                )
 
             async with self._install_lock:
                 await self.installer.install(

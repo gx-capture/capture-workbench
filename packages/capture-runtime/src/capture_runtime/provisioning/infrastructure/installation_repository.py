@@ -176,11 +176,14 @@ class InstallationRepository:
                 reverse=True,
             )
 
-    def update_job(self, installation_id: str, job: RuntimeInstallation) -> InstallationRecord:
+    def update_job(
+        self, installation_id: str, job: RuntimeInstallation, *, persist: bool = True
+    ) -> InstallationRecord:
         with self._lock:
             record = self.get(installation_id)
             record.job = job
-            self._persist(record)
+            if persist:
+                self._persist(record)
             return record
 
     def recover_interrupted(self) -> None:
