@@ -131,18 +131,61 @@ test('oracle rejects extraction finishing or failing before the checkpoint', asy
   await assert.rejects(readLiveCheckpoint(checkpointOptions({
     eventType: 'checkpoint', stage: 'awaiting_structuring',
   })), /finished before a live five-minute checkpoint/u);
-  await assert.rejects(readLiveCheckpoint(checkpointOptions({ eventType: 'failed' })), /extraction stopped: failed/u);
+  await assert.rejects(readLiveCheckpoint(checkpointOptions({
+    eventType: 'failed', error: { code: 'synthetic_failure' },
+  })), /extraction failed: code=synthetic_failure/u);
+  await assert.rejects(readLiveCheckpoint(checkpointOptions({ eventType: 'cancelled' })),
+    /extraction stopped \(cancelled\): code=unknown/u);
+});
+
+test('oracle reports a capture that failed or was cancelled at the checkpoint read, not a missed revision', async () => {
+  for (const [status, pattern] of [
+    ['failed', /extraction failed: code=synthetic_failure/u],
+    ['cancelled', /extraction stopped \(cancelled\): code=synthetic_failure/u],
+  ] as const) {
+    for (const readPartial of [
+      async () => ({ ...snapshot, revision: 4 }),
+      async () => { throw new Error('synthetic partial unavailable'); },
+    ]) {
+      const rejection = readLiveCheckpoint({
+        ...checkpointOptions(checkpointEvent),
+        readPartial,
+        readCapture: async () => ({ status, error: { code: 'synthetic_failure' } }),
+      });
+      await assert.rejects(rejection, pattern);
+      await assert.rejects(rejection, (error: Error) => !/missed/u.test(error.message));
+    }
+  }
 });
 
 test('oracle reports a missed revision if the snapshot advanced or extraction finished', async () => {
   await assert.rejects(readLiveCheckpoint({
     ...checkpointOptions(checkpointEvent),
     readPartial: async () => ({ ...snapshot, revision: 4 }),
-  }), /missed the live checkpoint revision/u);
+  }), /missed the live checkpoint revision: the partial is at revision 4/u);
   await assert.rejects(readLiveCheckpoint({
     ...checkpointOptions(checkpointEvent),
     readCapture: async () => ({ status: 'awaiting_structuring' }),
-  }), /missed the live checkpoint revision/u);
+  }), /missed the live checkpoint revision: the capture moved on to awaiting_structuring/u);
+  await assert.rejects(readLiveCheckpoint({
+    ...checkpointOptions(checkpointEvent),
+    readPartial: async () => { throw new Error('synthetic partial unavailable'); },
+    readCapture: async () => ({ status: 'completed' }),
+  }), /missed the live checkpoint revision: the capture moved on to completed/u);
+});
+
+test('oracle checks the capture id separately from the revision', async () => {
+  await assert.rejects(readLiveCheckpoint({
+    ...checkpointOptions(checkpointEvent),
+    readPartial: async () => ({ ...snapshot, captureId: 'another-capture' }),
+  }), /partial belongs to another capture/u);
+});
+
+test('oracle passes on a partial read error while extraction is still active', async () => {
+  await assert.rejects(readLiveCheckpoint({
+    ...checkpointOptions(checkpointEvent),
+    readPartial: async () => { throw new Error('synthetic partial unavailable'); },
+  }), /^Error: synthetic partial unavailable$/u);
 });
 
 test('oracle enforces its deadline even when the stream stays open', { timeout: 1000 }, async () => {

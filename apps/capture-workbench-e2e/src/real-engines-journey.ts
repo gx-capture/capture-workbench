@@ -20,6 +20,7 @@ import {
   requireMatchingProgressiveSpeech,
   requirePrivateDirectory,
 } from './real-engines-inputs.ts';
+import { liveCheckpointProblem, type LiveCaptureState } from './real-engines-checkpoint.ts';
 
 const workspaceRoot = resolve(import.meta.dirname, '..', '..', '..');
 const upstreamUrl = 'http://localhost:4200';
@@ -821,8 +822,13 @@ async function checkProgressiveRecording(
         if (rowStatus === 'done' || rowStatus === 'persisting') {
           throw new Error('Missed the live checkpoint revision before extraction finished.');
         }
-        assert.ok(rowStatus !== 'needs-attention' && rowStatus !== 'cancelled',
-          'Progressive recording stopped before the live checkpoint could be verified.');
+        if (rowStatus === 'needs-attention' || rowStatus === 'cancelled') {
+          const stopped = await invokeHost<DesktopLibraryDetailRecord>(page, 'library_get', {
+            request: { documentId: id },
+          });
+          throw new Error(`Progressive recording ${rowStatus === 'cancelled' ? 'stopped (cancelled)' : 'failed'} `
+            + `before the live checkpoint could be verified: code=${stopped.errorCode ?? 'unknown'}.`);
+        }
         const visible = await visibleCard.getByTestId('streaming-partial').evaluateAll((cards) => {
           const card = cards.length === 1 ? cards[0] : undefined;
           if (!card || card.getClientRects().length === 0) return null;
@@ -848,17 +854,24 @@ async function checkProgressiveRecording(
         assert.ok(detail.documentId === id && detail.captureId,
           'Live partial could not be bound to the queued recording.');
         const captureId = detail.captureId;
-        const snapshot = await invokeHost<unknown>(page, 'runtime_get_partial', { input: { id: captureId } });
-        assert.ok(snapshot && typeof snapshot === 'object',
-          'Missed the live checkpoint revision before reading the host partial.');
-        assert.ok('captureId' in snapshot && snapshot.captureId === captureId,
-          'Host partial belongs to another capture.');
-        assert.ok('revision' in snapshot && snapshot.revision === expected.partialRevision,
-          'Missed the live checkpoint revision before reading the host partial.');
-        const operation = await invokeHost<{ readonly status: string; readonly durationMs?: number }>(
+        // Read the partial first, then the capture: the capture's status says
+        // whether a partial that is missing or not at the revision means a
+        // failed, a cancelled or a moved-on capture.
+        let snapshot: unknown;
+        let partialError: unknown;
+        try {
+          snapshot = await invokeHost<unknown>(page, 'runtime_get_partial', { input: { id: captureId } });
+        } catch (error) {
+          partialError = error;
+        }
+        const operation = await invokeHost<LiveCaptureState & { readonly durationMs?: number }>(
           page, 'runtime_get_capture', { input: { id: captureId } },
         );
-        assert.equal(operation.status, 'extracting', 'Missed the live checkpoint revision before extraction finished.');
+        const problem = liveCheckpointProblem({
+          captureId, expectedRevision: expected.partialRevision, snapshot, capture: operation,
+        });
+        if (problem) throw new Error(problem, partialError === undefined ? undefined : { cause: partialError });
+        assert.ok(snapshot && typeof snapshot === 'object');
         assert.equal(operation.durationMs, oracle.durationMs, 'Live recording duration differs from the oracle.');
         checkProgressiveEvidence({ action: 'partial', oracle, snapshot, displayed: visible.text });
         assert.ok('extractionEngine' in snapshot, 'Host partial must include recognition provenance.');

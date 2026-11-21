@@ -127,6 +127,22 @@ export async function* captureEvents(response: Response, signal?: AbortSignal): 
   }
 }
 
+function failureCode(error: unknown): string {
+  const code = error !== null && typeof error === 'object' ? (error as JsonRecord)['code'] : undefined;
+  return typeof code === 'string' && code.length > 0 ? code : 'unknown';
+}
+
+/** A failed or cancelled capture, named with the runtime's error code; undefined otherwise. */
+function stoppedExtraction(status: unknown, error: unknown): Error | undefined {
+  if (status === 'failed') {
+    return new Error(`Progressive audio oracle extraction failed: code=${failureCode(error)}.`);
+  }
+  if (status === 'cancelled') {
+    return new Error(`Progressive audio oracle extraction stopped (cancelled): code=${failureCode(error)}.`);
+  }
+  return undefined;
+}
+
 export async function readLiveCheckpoint(options: {
   readonly response: Promise<Response>;
   readonly signal: AbortSignal;
@@ -137,17 +153,35 @@ export async function readLiveCheckpoint(options: {
   try {
     for await (const event of captureEvents(await options.response, options.signal)) {
       const eventType = event['eventType'];
-      if (eventType === 'failed' || eventType === 'cancelled') {
-        throw new Error(`Progressive audio oracle extraction stopped: ${eventType}.`);
-      }
+      const stopped = stoppedExtraction(eventType, event['error']);
+      if (stopped) throw stopped;
       if (eventType === 'completed' || event['stage'] === 'awaiting_structuring') break;
       const coveredUntilMs = event['coveredUntilMs'];
       if (eventType !== 'checkpoint' || !isCheckpointCoverage(coveredUntilMs)) continue;
-      const snapshot = await options.readPartial();
+      // Read the partial, then the capture: a partial that is unavailable or
+      // past the revision is a missed revision only if the capture moved on.
+      let snapshot: JsonRecord | undefined;
+      let partialError: unknown;
+      try {
+        snapshot = await options.readPartial();
+      } catch (error) {
+        partialError = error;
+      }
       const live = await options.readCapture();
-      if (snapshot['captureId'] !== options.captureId || snapshot['revision'] !== event['partialRevision']
-        || live.status !== 'extracting') {
-        throw new Error('Progressive audio oracle missed the live checkpoint revision.');
+      const liveStopped = stoppedExtraction(live.status, live.error);
+      if (liveStopped) throw liveStopped;
+      if (!snapshot) {
+        if (live.status === 'extracting') throw partialError;
+        throw new Error(`Progressive audio oracle missed the live checkpoint revision: the capture moved on to ${String(live.status)}.`);
+      }
+      if (snapshot['captureId'] !== options.captureId) {
+        throw new Error('Progressive audio oracle partial belongs to another capture.');
+      }
+      if (snapshot['revision'] !== event['partialRevision']) {
+        throw new Error(`Progressive audio oracle missed the live checkpoint revision: the partial is at revision ${String(snapshot['revision'])}.`);
+      }
+      if (live.status !== 'extracting') {
+        throw new Error(`Progressive audio oracle missed the live checkpoint revision: the capture moved on to ${String(live.status)}.`);
       }
       const durationMs = event['durationMs'];
       if (typeof durationMs !== 'number' || !Number.isSafeInteger(durationMs)
