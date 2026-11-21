@@ -201,6 +201,8 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
   });
   let documents: StoredDoc[] = [historyDocument()];
   const rawByDocument = new Map<string, unknown>();
+  // The structured document stored beside the raw result, as the host keeps both.
+  const resultByDocument = new Map<string, unknown>();
   const editsByDocument = new Map<string, Record<string, unknown>>();
   if (installOptions.editedResults) {
     rawByDocument.set(historyId, {
@@ -230,6 +232,7 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
     sessionStorage.setItem(libraryKey, JSON.stringify({
       documents,
       raw: [...rawByDocument.entries()],
+      results: [...resultByDocument.entries()],
       edits: [...editsByDocument.entries()],
     }));
   };
@@ -240,6 +243,7 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
         const parsed = JSON.parse(stored) as {
           documents?: StoredDoc[];
           raw?: readonly (readonly [string, unknown])[];
+          results?: readonly (readonly [string, unknown])[];
           edits?: readonly (readonly [string, Record<string, unknown>])[];
         };
         if (Array.isArray(parsed.documents) && parsed.documents.length > 0) {
@@ -250,11 +254,17 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
             rawByDocument.set(entry[0], entry[1]);
           }
         }
+        for (const entry of parsed.results ?? []) {
+          if (Array.isArray(entry) && typeof entry[0] === 'string') {
+            resultByDocument.set(entry[0], entry[1]);
+          }
+        }
         for (const [id, edits] of parsed.edits ?? []) editsByDocument.set(id, edits);
       }
     } catch {
       documents = [historyDocument()];
       rawByDocument.clear();
+      resultByDocument.clear();
       editsByDocument.clear();
     }
     if (!documents.some((item) => item.documentId === historyId)) {
@@ -1062,6 +1072,7 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
         return Promise.resolve({
           ...listedSummary(current),
           ...(rawByDocument.has(documentId) ? { raw: rawByDocument.get(documentId) } : {}),
+          ...(resultByDocument.has(documentId) ? { result: resultByDocument.get(documentId) } : {}),
           ...(editsByDocument.has(documentId) ? { edits: editsByDocument.get(documentId) } : {}),
         });
       }
@@ -1133,6 +1144,7 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
         const documentId = String(args.request?.['documentId'] ?? '');
         documents = documents.filter((item) => item.documentId !== documentId);
         rawByDocument.delete(documentId);
+        resultByDocument.delete(documentId);
         editsByDocument.delete(documentId);
         rememberLibrary();
         return Promise.resolve(null);
@@ -1166,6 +1178,11 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
         if (update['raw'] !== undefined && update['raw'] !== null) {
           if (rawByDocument.has(documentId)) editsByDocument.delete(documentId);
           rawByDocument.set(documentId, update['raw']);
+          if (update['result'] !== undefined && update['result'] !== null) {
+            resultByDocument.set(documentId, update['result']);
+          } else {
+            resultByDocument.delete(documentId);
+          }
           current.hasRaw = true;
         }
         if (typeof update['status'] === 'string') current.status = update['status'];
