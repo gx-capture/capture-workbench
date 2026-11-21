@@ -22,7 +22,7 @@
     "test": {
       "executor": "nx:run-commands",
       "options": {
-        "command": "node --import ./tools/test-temp-root.ts --test apps/capture-workbench-e2e/src/real-engines-inputs.test.ts apps/capture-workbench-e2e/src/real-engines-checkpoint.test.ts"
+        "command": "node --import ./tools/test-temp-root.ts --test apps/capture-workbench-e2e/src/real-engines-inputs.test.ts apps/capture-workbench-e2e/src/real-engines-checkpoint.test.ts apps/capture-workbench-e2e/src/real-engines-stage-limits.test.ts"
       }
     },
     "e2e": {

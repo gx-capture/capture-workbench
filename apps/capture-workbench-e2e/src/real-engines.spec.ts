@@ -49,7 +49,7 @@
  * Explicit per-stage timeout placeholders (to be measured by the first real run):
  * Installation
  *   - 01-install-engines:         45 minutes (cold real downloads; much faster with cache)
- *   - 02-install-structuring-model: 25 minutes
+ *   - 02-install-structuring-model: 40 minutes (measured 21.7)
  *   - 03-installed-first-start-and-restart: 10 minutes
  * Execution
  *   - 01-check-installed-catalog: 10 minutes

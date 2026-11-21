@@ -28,6 +28,12 @@ test('progressive budgets are whole milliseconds that grow with the recording an
   }
 });
 
+test('the CUDA budget is the startup allowance plus half the duration, rounded up', () => {
+  // 2 minutes + ceil(450 001 ms / 2): about 4x the measured decoding time of tea-asr-1.1 on CUDA.
+  assert.equal(progressiveAudioBudgetMs(450_001, 'cuda'), 120_000 + 225_001);
+  assert.equal(progressiveAudioBudgetMs(2_400_000, 'cuda'), 120_000 + 1_200_000);
+});
+
 const digest = 'a'.repeat(64);
 const extraction: ProgressiveAudioSampleInput['extraction'] = {
   engine: 'speech-recognition',
