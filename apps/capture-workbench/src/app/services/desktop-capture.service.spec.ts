@@ -1821,8 +1821,9 @@ describe('DesktopCaptureService', () => {
       });
       const createCapture = vi.fn(() => new Subject<CaptureOperation>());
       const getCapture = vi.fn(() => new Subject<CaptureOperation>());
+      const deleteDocument = vi.fn((_documentId: string): Observable<void> => of(undefined));
       const store = initializeCapture(
-        libraryStub({ list, updateCapture }),
+        libraryStub({ list, updateCapture, delete: deleteDocument }),
         runtimeStub({ createCapture, getCapture }),
       );
       // Only the service reads without arguments; the host's own list answers at once.
@@ -1839,6 +1840,7 @@ describe('DesktopCaptureService', () => {
         writes,
         createCapture,
         getCapture,
+        deleteDocument,
         failed,
         /** The library stores the document differently from now on. */
         store: (document: DesktopLibrarySummary) => {
@@ -1926,6 +1928,74 @@ describe('DesktopCaptureService', () => {
       expect(steps.writes.map((write) => write.update['status'])).toEqual(['processing']);
     });
 
+    describe('a cancel whose document is gone', () => {
+      /** A document that is stored under the id later waits and is started: no cancel is left for it. */
+      function expectNoCancelIsLeft(steps: ReturnType<typeof decisionSteps>, read: number) {
+        steps.store(summary);
+        steps.service.startDocument$(summary.documentId, steps.host).subscribe();
+        steps.answerRead(read);
+        expect(steps.writes.map((write) => write.update['status'])).toEqual(['processing']);
+      }
+      const answerWithoutTheDocument = (steps: ReturnType<typeof decisionSteps>, read: number) => {
+        steps.reads[read].next([]);
+        steps.reads[read].complete();
+      };
+
+      it('is dropped when the read during which it arrived does not list the document', () => {
+        const steps = decisionSteps(summary);
+        steps.service.startDocument$(summary.documentId, steps.host).subscribe();
+        steps.service.cancel(summary.documentId);
+        answerWithoutTheDocument(steps, 0);
+        expect(steps.writes).toEqual([]);
+
+        expectNoCancelIsLeft(steps, 1);
+      });
+
+      it('is dropped when it was kept across a failed read and the next read does not list the document', () => {
+        const steps = decisionSteps(summary);
+        steps.service.startDocument$(summary.documentId, steps.host).subscribe({ error: steps.failed });
+        steps.service.cancel(summary.documentId);
+        steps.reads[0].error('Capture library index cannot be read.');
+
+        steps.service.startDocument$(summary.documentId, steps.host).subscribe();
+        answerWithoutTheDocument(steps, 1);
+        expect(steps.writes).toEqual([]);
+
+        expectNoCancelIsLeft(steps, 2);
+      });
+
+      it('is dropped when the document is deleted through the library, without another decision', () => {
+        const steps = decisionSteps(summary);
+        const libraryStore = TestBed.inject(LibraryStore);
+        steps.service.startDocument$(summary.documentId, steps.host).subscribe({ error: steps.failed });
+        steps.service.cancel(summary.documentId);
+        steps.reads[0].error('Capture library index cannot be read.');
+        TestBed.tick();
+        // The failed read released the claim, so the library offers the deletion.
+        expect(libraryStore.canDelete(summary.documentId)).toBe(true);
+
+        libraryStore.delete(summary.documentId).subscribe();
+        expect(steps.deleteDocument).toHaveBeenCalledExactlyOnceWith(summary.documentId);
+
+        expectNoCancelIsLeft(steps, 1);
+      });
+
+      it('stays when the deletion through the library fails', () => {
+        const steps = decisionSteps(summary);
+        const libraryStore = TestBed.inject(LibraryStore);
+        steps.deleteDocument.mockReturnValueOnce(throwError(() => 'Capture library index cannot be written.'));
+        steps.service.startDocument$(summary.documentId, steps.host).subscribe({ error: steps.failed });
+        steps.service.cancel(summary.documentId);
+        steps.reads[0].error('Capture library index cannot be read.');
+
+        libraryStore.delete(summary.documentId).subscribe({ error: steps.failed });
+
+        steps.service.startDocument$(summary.documentId, steps.host).subscribe();
+        steps.answerRead(1);
+        expect(steps.createCapture).not.toHaveBeenCalled();
+        expect(steps.writes.map((write) => write.update)).toEqual([cancelled]);
+      });
+    });
 
     it.each(['retry$', 'restartLost$'] as const)(
       'does not let an older cancel that was never applied cancel an explicit %s',

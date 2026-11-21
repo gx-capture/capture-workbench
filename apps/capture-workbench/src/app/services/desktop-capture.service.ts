@@ -140,7 +140,9 @@ export class DesktopCaptureService {
    * Documents whose cancel was asked while an action for them was being
    * decided, and is not applied yet. It outlives a decision that fails: the
    * next decision for the document applies it, or drops it when the stored
-   * document has nothing left to cancel.
+   * document has nothing left to cancel or is gone. It does not outlive its
+   * document: a deletion through the library drops it too
+   * (`forgetDeletedDocument`).
    */
   private readonly unappliedCancels = new Set<string>();
 
@@ -285,6 +287,10 @@ export class DesktopCaptureService {
       return this.library.list().pipe(
         take(1),
         map((documents) => documents.find((item) => item.documentId === documentId)),
+        tap((stored) => {
+          // The document is gone: a cancel that is kept for it has nothing to apply to.
+          if (stored === undefined) this.unappliedCancels.delete(documentId);
+        }),
         switchMap((stored) => act(stored)),
         catchError((error: unknown) => {
           this.tellQueuesToLookAgainAfterPause();
@@ -368,6 +374,15 @@ export class DesktopCaptureService {
       }
       active.cancelWake.next();
     }
+  }
+
+  /**
+   * The document was deleted from the library: a cancel that is kept for it
+   * has nothing to apply to, and no decision for the document may follow that
+   * would drop it.
+   */
+  forgetDeletedDocument(documentId: string): void {
+    this.unappliedCancels.delete(documentId);
   }
 
   private isRecordingDocument(

@@ -90,6 +90,9 @@ export class LibraryStore {
   }
 
   delete(documentId: string): Observable<void> {
-    return this.library.delete(documentId).pipe(tap(() => this.refreshDocuments()));
+    return this.library.delete(documentId).pipe(tap(() => {
+      this.capture.forgetDeletedDocument(documentId);
+      this.refreshDocuments();
+    }));
   }
 }
