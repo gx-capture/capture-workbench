@@ -27,7 +27,10 @@ export interface FakeDesktopOptions {
    * (`installTimeline`: `startResponseMs` before the first partial, then
    * `preparingMs` per step). `runtime_get_capture_events` returns the events
    * after `lastEventId`, or an empty batch after a short wait when none
-   * arrived. A test can hold revisions with `__captureRecordingHold`.
+   * arrived. A test can hold revisions with `__captureRecordingHold`, read
+   * every answered events read in `__captureRecordingEventReads`, and hold
+   * the partial read that follows an empty events reply
+   * (`__captureRecordingHoldPartialAfterEmptyEvents`).
    */
   readonly recordingJourney?: boolean;
   /** Keep the fake library in sessionStorage so a reload still lists it. */
@@ -73,13 +76,34 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
     };
     __captureDropSources?: (fileName: string) => void;
     __captureNativeSourcesReady?: boolean;
-    /** Completed `runtime_get_capture_events` reads that found no new event (recording journey). */
-    __captureRecordingEmptyEventPolls?: number;
+    /**
+     * Every answered `runtime_get_capture_events` read, in order: the cursor
+     * it was asked with (0: from the start) and the events it returned as
+     * `[sequence, eventType, partialRevision]`. Recording journey only.
+     */
+    __captureRecordingEventReads?: {
+      readonly captureId: string;
+      readonly lastEventId: number;
+      readonly events: readonly (readonly [number, string, number | null])[];
+    }[];
     /**
      * Holds partial revisions from `fromRevision` on until called again
      * (null: publish on the simulated timeline). Recording journey only.
      */
     __captureRecordingHold?: (fromRevision: number | null) => void;
+    /**
+     * From now on, the first events read answered with an empty batch is
+     * noted and the next `runtime_get_partial` of its capture is not answered
+     * until `__captureRecordingReleasePartial`. Recording journey only.
+     */
+    __captureRecordingHoldPartialAfterEmptyEvents?: () => void;
+    /**
+     * Set while that partial read waits: the index in
+     * `__captureRecordingEventReads` of the empty reply it followed.
+     */
+    __captureRecordingHeldPartial?: { readonly emptyEventRead: number } | null;
+    /** Answers the held partial read with the capture's partial as it is then. */
+    __captureRecordingReleasePartial?: () => void;
   }
   const target = globalThis as unknown as TauriTestGlobal;
   let nextCallbackId = 1;
@@ -106,16 +130,19 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
   const pollCounts = new Map<string, number>();
   const statusFailures = new Map<string, number>();
   const statusNotFoundAnswered = new Set<string>();
-  /** The simulated failure for this status request, if any. */
-  const statusRequestFailure = (installationId: string): Error | null => {
+  // A failed host command rejects with its message as a plain string, the
+  // form the page gets from Tauri and from the dev-host bridge.
+  const commandFailed = (message: string): Promise<never> => Promise.reject(message);
+  /** The simulated failure message for this status request, if any. */
+  const statusRequestFailure = (installationId: string): string | null => {
     if (installOptions.answerInstallStatusNotFoundOnce && !statusNotFoundAnswered.has(installationId)) {
       statusNotFoundAnswered.add(installationId);
-      return new Error('Capture Runtime request was rejected with HTTP 404.');
+      return 'Capture Runtime request was rejected with HTTP 404.';
     }
     const failedSoFar = statusFailures.get(installationId) ?? 0;
     if (failedSoFar >= (installOptions.failInstallStatusChecks ?? 0)) return null;
     statusFailures.set(installationId, failedSoFar + 1);
-    return new Error('Capture Runtime response could not be read.');
+    return 'Capture Runtime response could not be read.';
   };
   const modelInstallations = new Map<string, Record<string, unknown>>();
   let nextModelInstallSeq = 1;
@@ -440,7 +467,9 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
     completedAtMs: number | null;
     readonly events: Record<string, unknown>[];
   }
-  // One id per recording capture; these commands answer for those ids.
+  // These commands answer for recording capture ids. An id names one capture
+  // for good: like the runtime's, it is random, so a page reload (which keeps
+  // the library and restarts this runtime) never hands an old id to a new capture.
   const recordingCaptureIdPrefix = 'capture-recording-';
   const recordingCommands: readonly string[] = [
     'runtime_get_capture_events',
@@ -451,13 +480,16 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
     'runtime_delete_capture',
   ];
   const recordingCaptures = new Map<string, RecordingCapture>();
-  let recordingCaptureCount = 0;
   // A test can hold partial revisions from this number on (null: none held).
   let recordingHeldRevision: number | null = null;
   let recordingHoldChangedAtMs = 0;
-  let recordingEmptyPolls = 0;
-  const recordingNotFound = (): Promise<never> => Promise.reject(
-    new Error('Capture Runtime request was rejected with HTTP 404.'),
+  const recordingEventReads: NonNullable<TauriTestGlobal['__captureRecordingEventReads']> = [];
+  // A test can hold the partial read after an empty events reply:
+  // 'armed' until that reply, then the capture whose next partial read waits.
+  let recordingPartialHold: 'armed' | { readonly captureId: string; readonly emptyEventRead: number } | null = null;
+  let answerHeldRecordingPartial: (() => void) | null = null;
+  const recordingNotFound = (): Promise<never> => commandFailed(
+    'Capture Runtime request was rejected with HTTP 404.',
   );
   const recordingSegment = (index: number): Record<string, unknown> => ({
     segmentId: `segment-${String(index + 1)}`,
@@ -575,11 +607,10 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
     updatedAt: new Date(capture.updatedAtMs).toISOString(),
   });
   const startRecording = (current: StoredDoc): Record<string, unknown> => {
-    recordingCaptureCount += 1;
     const nowMs = Date.now();
     const capture: RecordingCapture = {
-      captureId: `${recordingCaptureIdPrefix}${String(recordingCaptureCount)}`,
-      ingestionId: `ingestion-recording-${String(recordingCaptureCount)}`,
+      captureId: `${recordingCaptureIdPrefix}${crypto.randomUUID()}`,
+      ingestionId: `ingestion-recording-${crypto.randomUUID()}`,
       source: {
         sha256: 'c'.repeat(64),
         fileName: current.fileName,
@@ -612,30 +643,64 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
     const rawCursor = input?.lastEventId;
     const after = rawCursor === null || rawCursor === undefined ? 0 : Number(rawCursor);
     if (!Number.isInteger(after) || after < 0) {
-      return Promise.reject(new Error('Capture Runtime request was rejected with HTTP 422.'));
+      return commandFailed('Capture Runtime request was rejected with HTTP 422.');
     }
     const capture = readRecording(id);
     if (!capture) return recordingNotFound();
     const since = (): Record<string, unknown>[] => capture.events.filter(
       (event) => Number(event['sequence']) > after,
     );
+    const answered = (events: Record<string, unknown>[]): Record<string, unknown>[] => {
+      recordingEventReads.push({
+        captureId: id,
+        lastEventId: after,
+        events: events.map((event) => [
+          Number(event['sequence']),
+          String(event['eventType']),
+          typeof event['partialRevision'] === 'number' ? event['partialRevision'] : null,
+        ] as const),
+      });
+      if (events.length === 0 && recordingPartialHold === 'armed') {
+        recordingPartialHold = { captureId: id, emptyEventRead: recordingEventReads.length - 1 };
+      }
+      return events;
+    };
     const available = since();
-    if (available.length > 0) return Promise.resolve(available);
+    if (available.length > 0) return Promise.resolve(answered(available));
     return new Promise((resolve) => {
       setTimeout(() => {
-        advanceRecording(capture, Date.now());
-        const arrived = since();
-        if (arrived.length === 0) {
-          recordingEmptyPolls += 1;
-          target.__captureRecordingEmptyEventPolls = recordingEmptyPolls;
+        // A capture deleted during the wait publishes nothing more: the
+        // runtime's event stream ends there, and the host answers with the
+        // events it had read, here none.
+        if (recordingCaptures.get(id) !== capture) {
+          resolve(answered([]));
+          return;
         }
-        resolve(arrived);
+        advanceRecording(capture, Date.now());
+        resolve(answered(since()));
       }, recordingEmptyWaitMs);
+    });
+  };
+  // Answers a partial read, or keeps it waiting when a test holds it.
+  const recordingPartialRead = (id: string): Promise<unknown> => {
+    const answer = (): Promise<unknown> => {
+      const capture = readRecording(id);
+      // A capture this fake never started, or one deleted since, is not found.
+      if (!capture) return recordingNotFound();
+      // The host answers null where the runtime has no partial yet (409).
+      return Promise.resolve(capture.revision < 1 ? null : recordingPartial(capture));
+    };
+    const hold = recordingPartialHold;
+    if (hold === null || hold === 'armed' || hold.captureId !== id) return answer();
+    recordingPartialHold = null;
+    return new Promise((resolve) => {
+      answerHeldRecordingPartial = () => resolve(answer());
+      target.__captureRecordingHeldPartial = { emptyEventRead: hold.emptyEventRead };
     });
   };
   const recordingResult = (capture: RecordingCapture): Promise<unknown> => {
     if (capture.status !== 'completed') {
-      return Promise.reject(new Error('Capture Runtime request was rejected with HTTP 409.'));
+      return commandFailed('Capture Runtime request was rejected with HTTP 409.');
     }
     const segments = recordingSegments(recordingLines.length);
     const sourceText = recordingSourceText(recordingLines.length);
@@ -705,13 +770,23 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
   target.__captureStartedRequirementIds = [];
   target.__captureCreatedPdfPageNumbers = [];
   if (installOptions.recordingJourney) {
-    target.__captureRecordingEmptyEventPolls = 0;
+    target.__captureRecordingEventReads = recordingEventReads;
     target.__captureRecordingHold = (fromRevision) => {
       // Steps already due keep their times; a held revision is due from now on.
       const nowMs = Date.now();
       for (const capture of recordingCaptures.values()) advanceRecording(capture, nowMs);
       recordingHeldRevision = fromRevision;
       recordingHoldChangedAtMs = nowMs;
+    };
+    target.__captureRecordingHeldPartial = null;
+    target.__captureRecordingHoldPartialAfterEmptyEvents = () => {
+      recordingPartialHold = 'armed';
+    };
+    target.__captureRecordingReleasePartial = () => {
+      const answerHeld = answerHeldRecordingPartial;
+      answerHeldRecordingPartial = null;
+      target.__captureRecordingHeldPartial = null;
+      answerHeld?.();
     };
   }
   target.__captureDropSources = (fileName) => sendBatch(batchFor(fileName));
@@ -861,10 +936,10 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
         const id = String(args.input?.id ?? args.input?.installationId ?? '');
         const record = installations.get(id);
         if (!record) {
-          return Promise.reject(new Error('Capture Runtime request was rejected with HTTP 404.'));
+          return commandFailed('Capture Runtime request was rejected with HTTP 404.');
         }
         const failure = statusRequestFailure(id);
-        if (failure) return Promise.reject(failure);
+        if (failure) return commandFailed(failure);
         if (installOptions.installTimeline) {
           syncTimelineInstallation(record);
           return Promise.resolve({ ...record });
@@ -903,9 +978,7 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
           item['requirementId'] === requirementId
           && (item['status'] === 'queued' || item['status'] === 'running'));
         if (inUse) {
-          return Promise.reject(
-            new Error('Capture Runtime request was rejected with HTTP 409.'),
-          );
+          return commandFailed('Capture Runtime request was rejected with HTTP 409.');
         }
         return new Promise((resolve) => {
           setTimeout(() => {
@@ -942,13 +1015,13 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
         const id = String(args.input?.id ?? '');
         const record = modelInstallations.get(id);
         if (!record) {
-          return Promise.reject(new Error('Capture Runtime request was rejected with HTTP 404.'));
+          return commandFailed('Capture Runtime request was rejected with HTTP 404.');
         }
         const failure = statusRequestFailure(id);
         if (failure) {
           // A restarted runtime no longer has the model installation: later reads agree.
-          if (failure.message.includes('HTTP 404')) modelInstallations.delete(id);
-          return Promise.reject(failure);
+          if (failure.includes('HTTP 404')) modelInstallations.delete(id);
+          return commandFailed(failure);
         }
         // Each answered status request moves the download on by a tenth.
         if (record['status'] === 'running') {
@@ -1022,7 +1095,7 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
         const request = args.request ?? {};
         const token = String(request['selectionToken'] ?? '');
         const selection = selected.get(token);
-        if (!selection) return Promise.reject(new Error('Selected source is no longer available. Choose it again.'));
+        if (!selection) return commandFailed('Selected source is no longer available. Choose it again.');
         selected.delete(token);
         const { fileName, mediaType } = selection;
         const options = request['captureOptions'];
@@ -1068,7 +1141,7 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
       if (command === 'library_get') {
         const documentId = String(args.request?.['documentId'] ?? '');
         const current = documents.find((item) => item.documentId === documentId);
-        if (!current) return Promise.reject(new Error(`Unknown document: ${documentId}`));
+        if (!current) return commandFailed(`Unknown document: ${documentId}`);
         return Promise.resolve({
           ...listedSummary(current),
           ...(rawByDocument.has(documentId) ? { raw: rawByDocument.get(documentId) } : {}),
@@ -1087,13 +1160,13 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
             locator: { kind: string; page?: number; startMs?: number; endMs?: number } }[];
         } | undefined;
         if (!current || !raw || !['text', 'markdown', 'srt', 'vtt', 'json'].includes(format)) {
-          return Promise.reject(new Error('Export unavailable'));
+          return commandFailed('Export unavailable');
         }
         const recording = /^(audio|video)\//u.test(current.mediaType);
-        if (!recording && (format === 'srt' || format === 'vtt')) return Promise.reject(new Error('Recording required'));
+        if (!recording && (format === 'srt' || format === 'vtt')) return commandFailed('Recording required');
         if ((format === 'text' || format === 'markdown') &&
           (pageLabel.length > 40 || pageLabel.split('{page}').length !== 2)) {
-          return Promise.reject(new Error('Invalid page label'));
+          return commandFailed('Invalid page label');
         }
         const edits = editsByDocument.get(documentId) as {
           ocrPages: Record<string, string>; transcriptLines: Record<string, string>; speakerNames: Record<string, string>;
@@ -1129,8 +1202,8 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
       }
       if (command === 'library_save_edits') {
         const documentId = String(args.request?.['documentId'] ?? '');
-        if (!documents.some((item) => item.documentId === documentId)) return Promise.reject(new Error('Unknown document'));
-        if (!rawByDocument.has(documentId)) return Promise.reject(new Error('edits require a raw result.'));
+        if (!documents.some((item) => item.documentId === documentId)) return commandFailed('Unknown document');
+        if (!rawByDocument.has(documentId)) return commandFailed('edits require a raw result.');
         const maps = args.request?.['edits'] as {
           ocrPages: Record<string, string>; transcriptLines: Record<string, string>; speakerNames: Record<string, string>;
         };
@@ -1152,7 +1225,7 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
       if (command === 'library_source_bytes') {
         const documentId = String(args.request?.['documentId'] ?? '');
         const current = documents.find((item) => item.documentId === documentId);
-        if (!current) return Promise.reject(new Error(`Unknown document: ${documentId}`));
+        if (!current) return commandFailed(`Unknown document: ${documentId}`);
         if (current.mediaType === 'application/pdf') {
           const binary = atob(pdfFixtureBase64);
           const bytes = new Uint8Array(binary.length);
@@ -1174,16 +1247,16 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
         const update = args.update ?? {};
         const documentId = String(update['documentId'] ?? '');
         const current = documents.find((item) => item.documentId === documentId);
-        if (!current) return Promise.reject(new Error(`Unknown document: ${documentId}`));
+        if (!current) return commandFailed(`Unknown document: ${documentId}`);
+        // Like the host's library: raw and result are stored each on its own,
+        // and an update without one of them leaves the stored one as it is.
         if (update['raw'] !== undefined && update['raw'] !== null) {
           if (rawByDocument.has(documentId)) editsByDocument.delete(documentId);
           rawByDocument.set(documentId, update['raw']);
-          if (update['result'] !== undefined && update['result'] !== null) {
-            resultByDocument.set(documentId, update['result']);
-          } else {
-            resultByDocument.delete(documentId);
-          }
           current.hasRaw = true;
+        }
+        if (update['result'] !== undefined && update['result'] !== null) {
+          resultByDocument.set(documentId, update['result']);
         }
         if (typeof update['status'] === 'string') current.status = update['status'];
         if (typeof update['stage'] === 'string') current.stage = update['stage'];
@@ -1197,7 +1270,7 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
         const documentId = String(args.input?.documentId ?? '');
         const current = documents.find((item) => item.documentId === documentId);
         if (!current || !/^(audio|video)\//u.test(current.mediaType)) {
-          return Promise.reject(new Error('Progressive capture is available only for recordings.'));
+          return commandFailed('Progressive capture is available only for recordings.');
         }
         return Promise.resolve(startRecording(current));
       }
@@ -1208,20 +1281,17 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
         && recordingCommands.includes(command)
       ) {
         if (command === 'runtime_get_capture_events') return recordingEvents(args.input);
+        if (command === 'runtime_get_partial') return recordingPartialRead(recordingCaptureId);
         if (command === 'runtime_delete_capture') {
           // The runtime forgets a deleted capture, so later reads of its id
-          // are not found; the host answers null for a delete the runtime
-          // rejects as not found.
+          // are not found and nothing more is published for it; the host
+          // answers null for a delete the runtime rejects as not found.
           recordingCaptures.delete(recordingCaptureId);
           return Promise.resolve(null);
         }
         const capture = readRecording(recordingCaptureId);
         // A capture this fake never started is not found, as at the runtime.
         if (!capture) return recordingNotFound();
-        if (command === 'runtime_get_partial') {
-          // The host answers null where the runtime has no partial yet (409).
-          return Promise.resolve(capture.revision < 1 ? null : recordingPartial(capture));
-        }
         if (command === 'runtime_get_result') return recordingResult(capture);
         if (
           command === 'runtime_cancel_capture'
@@ -1256,7 +1326,7 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
       if (installOptions.ocrJourney && command === 'runtime_delete_capture') {
         return Promise.resolve(null);
       }
-      return Promise.reject(new Error(`Unexpected command: ${command}`));
+      return commandFailed(`Unexpected command: ${command}`);
     },
   };
 }

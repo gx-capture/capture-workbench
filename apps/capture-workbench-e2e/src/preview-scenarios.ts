@@ -54,7 +54,7 @@ export const PREVIEW_SCENARIOS: Readonly<Record<string, PreviewScenario>> = {
   },
   'live-transcript': {
     label: '轉錄進行中（逐步顯示逐字稿）',
-    description: '語音轉文字已安裝。在錄音轉逐字稿選擇檔案後，模擬執行環境依自己的時間軸分三句逐步發布逐字稿（句與句之間的查詢沒有新事件），然後經過等待結構化、結構化並完成。第一句在 startDelay 之後出現，其後每一句相隔安裝準備階段的時間（受 speed 縮放）。',
+    description: '語音轉文字已安裝。在錄音轉逐字稿選擇檔案後，模擬執行環境依自己的時間軸分三句逐步發布逐字稿，然後經過等待結構化、結構化並完成；查詢時若還沒有新事件，回覆為空，畫面保留已發布的句子。模擬執行環境在開始後 startDelay 發布第一句，其後每隔安裝準備階段的時間（受 speed 縮放）發布一句，畫面在下一次查詢後顯示。',
     requirements: scenarioRequirements('ready'),
     options: {
       cudaAvailable: true,
