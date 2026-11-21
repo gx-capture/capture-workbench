@@ -1,8 +1,8 @@
-// The `test` target preloads tools/test-temp-root.ts with `node --import`, so the
-// temporary directories below live in a private root removed on exit. An import here
-// would cross the Nx project boundary.
+// The `test` target preloads tools/test-temp-root.ts with `node --import` (an import
+// here would cross the Nx project boundary). The test still creates and removes its own
+// directory, so a direct `node --test` run leaves nothing behind and can be repeated.
 import assert from 'node:assert/strict';
-import { mkdirSync, realpathSync, symlinkSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import test from 'node:test';
@@ -47,12 +47,17 @@ test('private directory validation refuses workspace paths before they are creat
 test('private directory validation refuses a junction into the workspace and a different-case path', {
   skip: process.platform !== 'win32',
 }, () => {
-  const workspace = join(tmpdir(), 'SyntheticWorkspace');
-  mkdirSync(workspace);
-  const junction = join(tmpdir(), 'outside-alias');
-  symlinkSync(workspace, junction, 'junction');
-  for (const path of [join(junction, 'missing'), join(tmpdir(), 'syntheticworkspace', 'missing')]) {
-    assert.throws(() => requirePrivateDirectory(path, workspace, 'Temp'), /must be outside the workspace/u);
+  const root = mkdtempSync(join(tmpdir(), 'real-engines-inputs-'));
+  try {
+    const workspace = join(root, 'SyntheticWorkspace');
+    mkdirSync(workspace);
+    const junction = join(root, 'outside-alias');
+    symlinkSync(workspace, junction, 'junction');
+    for (const path of [join(junction, 'missing'), join(root, 'syntheticworkspace', 'missing')]) {
+      assert.throws(() => requirePrivateDirectory(path, workspace, 'Temp'), /must be outside the workspace/u);
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
