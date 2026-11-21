@@ -307,107 +307,175 @@ const LIVE_TRANSCRIPT_STEP_MS = previewScenarioConfig(
 ).installOptions.installTimeline?.preparingMs ?? 0;
 /** A wait that covers `steps` steps of the simulated runtime, plus a fixed margin. */
 const liveTranscriptWaitMs = (steps: number): number => steps * LIVE_TRANSCRIPT_STEP_MS + 10_000;
+const CAPTURE_NOT_FOUND = 'Capture Runtime request was rejected with HTTP 404.';
+// The simulated runtime's event log of one recording, as `[sequence, eventType, partialRevision]`:
+// sequences start at 1 with `accepted` and are separate from partial revisions.
+const RECORDING_EVENT_LOG: readonly RecordedEvent[] = [
+  [1, 'accepted', null],
+  [2, 'input_checkpoint', null],
+  [3, 'segment', 1],
+  [4, 'segment', 2],
+  [5, 'segment', 3],
+  [6, 'checkpoint', 3],
+  [7, 'completed', null],
+];
 
-/** Queue status, live-card lines, and completed empty event polls, read in one page turn. */
-async function liveTranscriptSnapshot(page: Page, documentId: string): Promise<{
-  readonly status: string | null;
-  readonly lines: readonly string[];
-  readonly emptyPolls: number;
+type RecordedEvent = readonly [sequence: number, eventType: string, partialRevision: number | null];
+interface RecordedEventRead {
+  readonly captureId: string;
+  readonly lastEventId: number;
+  readonly events: readonly RecordedEvent[];
+}
+/** What the recording journey of the simulated backend (fake-desktop.ts) gives a test. */
+interface RecordingJourneyGlobal {
+  readonly __TAURI_INTERNALS__: { readonly invoke: (command: string, args?: unknown) => Promise<unknown> };
+  readonly __captureRecordingEventReads?: readonly RecordedEventRead[];
+  readonly __captureRecordingHold?: (fromRevision: number | null) => void;
+  readonly __captureRecordingHoldPartialAfterEmptyEvents?: () => void;
+  readonly __captureRecordingHeldPartial?: { readonly emptyEventRead: number } | null;
+  readonly __captureRecordingReleasePartial?: () => void;
+  /** Every state of the live card's lines since `watchLiveCardLines`, consecutive repeats dropped. */
+  __liveCardLineStates?: string[];
+  __liveCardLineWatch?: MutationObserver;
+}
+
+/**
+ * One command sent to the simulated host from the page. A failed command must
+ * reject with its message as a plain string, as Tauri and the dev-host bridge do.
+ */
+async function hostCommand(page: Page, command: string, args: unknown): Promise<{
+  readonly value?: unknown;
+  readonly rejection?: string;
 }> {
-  return page.evaluate((id) => {
-    const row = document.querySelector(`[data-testid="asr-queue-row"][data-document-id="${id}"]`);
-    const card = document.querySelector(`[data-testid="asr-live-card"][data-document-id="${id}"]`);
-    const lines = [...(card?.querySelectorAll('[data-testid="asr-live-line"] p') ?? [])].map(
-      (node) => (node.textContent ?? '').replace(/\s+/gu, ' ').trim(),
-    );
-    const emptyPolls = (
-      globalThis as unknown as { readonly __captureRecordingEmptyEventPolls?: number }
-    ).__captureRecordingEmptyEventPolls ?? 0;
-    return { status: row?.getAttribute('data-user-status') ?? null, lines, emptyPolls };
-  }, documentId);
+  return page.evaluate(async ([name, input]) => {
+    const { invoke } = (globalThis as unknown as RecordingJourneyGlobal).__TAURI_INTERNALS__;
+    try {
+      return { value: await invoke(name, input) };
+    } catch (error) {
+      return { rejection: typeof error === 'string' ? error : `not a plain string: ${String(error)}` };
+    }
+  }, [command, args] as const);
 }
 
 /** Holds the simulated runtime's partial revisions from `fromRevision` on (null: none). */
 async function holdRevisionsFrom(page: Page, fromRevision: number | null): Promise<void> {
   await page.evaluate((revision) => {
-    const hold = (globalThis as unknown as {
-      readonly __captureRecordingHold?: (fromRevision: number | null) => void;
-    }).__captureRecordingHold;
+    const hold = (globalThis as unknown as RecordingJourneyGlobal).__captureRecordingHold;
     if (!hold) throw new Error('The simulated backend has no recording journey.');
     hold(revision);
   }, fromRevision);
 }
 
+/** The events reads answered for the capture so far, in order. */
+async function eventReadsOf(page: Page, captureId: string): Promise<readonly RecordedEventRead[]> {
+  return page.evaluate((id) => (
+    (globalThis as unknown as RecordingJourneyGlobal).__captureRecordingEventReads ?? []
+  ).filter((read) => read.captureId === id), captureId);
+}
+
+/** For each read, the last sequence the earlier replies gave (0 before any). */
+function lastSequenceGivenBefore(reads: readonly RecordedEventRead[]): number[] {
+  return reads.map((_, index) => Math.max(
+    0,
+    ...reads.slice(0, index).flatMap((read) => read.events.map(([sequence]) => sequence)),
+  ));
+}
+
 /**
- * While the next revision is held, waits for two events polls that found
- * nothing new to complete (the second starts only after the Workbench handled
- * the first) and checks every sample in between: the card keeps exactly the
- * shown lines and the capture is still processing.
+ * Records every state of the live card's lines from now on. A mutation
+ * observer sees each change of the page, so no state can pass between two
+ * looks, as it could between the samples of a poll.
  */
-async function expectCardKeptThroughEmptyPolls(
-  page: Page,
-  documentId: string,
-  shown: readonly string[],
-): Promise<void> {
-  const before = (await liveTranscriptSnapshot(page, documentId)).emptyPolls;
-  const departures: string[] = [];
-  await expect.poll(async () => {
-    const { status, lines, emptyPolls } = await liveTranscriptSnapshot(page, documentId);
-    if (status !== 'processing' || JSON.stringify(lines) !== JSON.stringify(shown)) {
-      departures.push(`${String(status)}: ${JSON.stringify(lines)}`);
-    }
-    return emptyPolls - before;
-  }, { timeout: liveTranscriptWaitMs(1), intervals: [100] }).toBeGreaterThanOrEqual(2);
-  expect(departures).toEqual([]);
-}
-
-/** The capture's events from the simulated runtime, read twice to resume after a cursor. */
-async function recordingEventLog(page: Page, captureId: string): Promise<{
-  readonly all: readonly (readonly [number, string, number | null])[];
-  readonly resumed: readonly number[];
-  readonly afterLast: number;
-}> {
-  return page.evaluate(async (id) => {
-    interface Event { readonly sequence: number; readonly eventType: string; readonly partialRevision?: number | null }
-    const { invoke } = (globalThis as unknown as {
-      readonly __TAURI_INTERNALS__: { readonly invoke: (command: string, args?: unknown) => Promise<unknown> };
-    }).__TAURI_INTERNALS__;
-    const events = async (lastEventId: number | null): Promise<readonly Event[]> => (
-      await invoke('runtime_get_capture_events', { input: { id, lastEventId } }) as readonly Event[]
-    );
-    const all = await events(null);
-    const last = all.at(-1)?.sequence ?? 0;
-    return {
-      all: all.map((event) => [event.sequence, event.eventType, event.partialRevision ?? null] as const),
-      resumed: (await events(last - 1)).map((event) => event.sequence),
-      afterLast: (await events(last)).length,
+async function watchLiveCardLines(page: Page, documentId: string): Promise<void> {
+  await page.evaluate((id) => {
+    const target = globalThis as unknown as RecordingJourneyGlobal;
+    const read = (): string => {
+      const card = document.querySelector(`[data-testid="asr-live-card"][data-document-id="${id}"]`);
+      return card === null ? 'no card' : JSON.stringify(
+        [...card.querySelectorAll('[data-testid="asr-live-line"] p')].map(
+          (node) => (node.textContent ?? '').replace(/\s+/gu, ' ').trim(),
+        ),
+      );
     };
-  }, captureId);
-}
-
-/** The runtime capture id the library holds for the document. */
-async function recordingCaptureId(page: Page, documentId: string): Promise<string> {
-  return page.evaluate(async (id) => {
-    const { invoke } = (globalThis as unknown as {
-      readonly __TAURI_INTERNALS__: { readonly invoke: (command: string, args?: unknown) => Promise<unknown> };
-    }).__TAURI_INTERNALS__;
-    const detail = await invoke('library_get', { request: { documentId: id } }) as { readonly captureId?: string };
-    return String(detail.captureId);
+    const states = [read()];
+    target.__liveCardLineStates = states;
+    target.__liveCardLineWatch?.disconnect();
+    target.__liveCardLineWatch = new MutationObserver(() => {
+      const state = read();
+      if (state !== states[states.length - 1]) states.push(state);
+    });
+    target.__liveCardLineWatch.observe(
+      document.body,
+      { subtree: true, childList: true, characterData: true, attributes: true },
+    );
   }, documentId);
 }
 
-/** The simulated runtime's answer to reading the capture: its status, or the error. */
-async function runtimeCaptureAnswer(page: Page, captureId: string): Promise<string> {
-  return page.evaluate(async (id) => {
-    const { invoke } = (globalThis as unknown as {
-      readonly __TAURI_INTERNALS__: { readonly invoke: (command: string, args?: unknown) => Promise<unknown> };
-    }).__TAURI_INTERNALS__;
-    try {
-      return String((await invoke('runtime_get_capture', { input: { id } }) as { readonly status?: string }).status);
-    } catch (error) {
-      return error instanceof Error ? error.message : String(error);
+/**
+ * An empty events reply leaves the published lines on the card, with the
+ * exact order of events under the test's control:
+ *
+ * 1. the next revision is held, so the simulated runtime has nothing new;
+ * 2. the Workbench's next events read is answered with an empty batch, and
+ *    the partial read the Workbench sends after it is not answered;
+ * 3. while that read waits, nothing can put lines back on the card, so the
+ *    card's states since the watch started must be the shown lines only.
+ *
+ * The caller then releases the partial read and the next revision. A card
+ * that clears on an empty reply and restores itself from the next partial
+ * read stays empty during step 3 and fails here.
+ */
+async function expectCardKeptAfterAnEmptyEventsReply(
+  page: Page,
+  documentId: string,
+  captureId: string,
+  shown: readonly string[],
+): Promise<void> {
+  const readsBefore = (await eventReadsOf(page, captureId)).length;
+  await page.evaluate(() => {
+    const target = globalThis as unknown as RecordingJourneyGlobal;
+    if (!target.__captureRecordingHoldPartialAfterEmptyEvents) {
+      throw new Error('The simulated backend has no recording journey.');
     }
-  }, captureId);
+    target.__captureRecordingHoldPartialAfterEmptyEvents();
+  });
+  // Waiting only: the assertion below does not depend on when this is seen.
+  await expect.poll(async () => page.evaluate(() => (
+    (globalThis as unknown as RecordingJourneyGlobal).__captureRecordingHeldPartial ?? null
+  )), { timeout: liveTranscriptWaitMs(1) }).not.toBeNull();
+
+  const observed = await page.evaluate(async (id) => {
+    // Two frames: the page has rendered whatever the empty reply caused.
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+    });
+    const target = globalThis as unknown as RecordingJourneyGlobal;
+    const row = document.querySelector(`[data-testid="asr-queue-row"][data-document-id="${id}"]`);
+    return {
+      held: target.__captureRecordingHeldPartial ?? null,
+      lineStates: [...(target.__liveCardLineStates ?? [])],
+      status: row?.getAttribute('data-user-status') ?? null,
+    };
+  }, documentId);
+  const reads = await eventReadsOf(page, captureId);
+  const lastGiven = Math.max(0, ...reads.flatMap((read) => read.events.map(([sequence]) => sequence)));
+
+  // The held partial read follows the last events read, which the Workbench
+  // sent after this check began, with the last sequence it was given, and
+  // which was answered with no event.
+  expect(reads.length).toBeGreaterThan(readsBefore);
+  expect(observed.held).toEqual({ emptyEventRead: reads.length - 1 });
+  expect(reads[reads.length - 1]).toEqual({ captureId, lastEventId: lastGiven, events: [] });
+  // Through that reply and while the partial read waits: only the shown lines.
+  expect(observed.lineStates).toEqual([JSON.stringify(shown)]);
+  expect(observed.status).toBe('processing');
+}
+
+/** Answers the partial read `expectCardKeptAfterAnEmptyEventsReply` left waiting. */
+async function releaseHeldPartialRead(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    (globalThis as unknown as RecordingJourneyGlobal).__captureRecordingReleasePartial?.();
+  });
 }
 
 test('shows the live transcript growing across partial revisions while the recording is still processing', async ({ page }) => {
@@ -432,35 +500,164 @@ test('shows the live transcript growing across partial revisions while the recor
   await expect(card).toHaveAttribute('data-document-id', documentId);
   await expect(lineText).toHaveText([LIVE_TRANSCRIPT_LINES[0]], { timeout: liveTranscriptWaitMs(1) });
   await expect(row).toHaveAttribute('data-user-status', 'processing');
-  await expectCardKeptThroughEmptyPolls(page, documentId, LIVE_TRANSCRIPT_LINES.slice(0, 1));
-  const captureId = await recordingCaptureId(page, documentId);
-  expect(await runtimeCaptureAnswer(page, captureId)).toBe('extracting');
+  await watchLiveCardLines(page, documentId);
+  const stored = await hostCommand(page, 'library_get', { request: { documentId } });
+  expect(stored.value).toMatchObject({ status: 'processing', captureId: expect.stringMatching(/^capture-recording-/u) });
+  const captureId = (stored.value as { readonly captureId: string }).captureId;
+  expect(await hostCommand(page, 'runtime_get_capture', { input: { id: captureId } }))
+    .toMatchObject({ value: { status: 'extracting' } });
 
-  // Sequences start with `accepted`, are separate from partial revisions, and
-  // a read after a sequence resumes right after it.
-  expect(await recordingEventLog(page, captureId)).toEqual({
-    all: [[1, 'accepted', null], [2, 'input_checkpoint', null], [3, 'segment', 1]],
-    resumed: [3],
-    afterLast: 0,
-  });
+  await expectCardKeptAfterAnEmptyEventsReply(page, documentId, captureId, LIVE_TRANSCRIPT_LINES.slice(0, 1));
+  // What the Workbench itself read so far: the log from its start, each event once.
+  expect((await eventReadsOf(page, captureId)).flatMap((read) => read.events))
+    .toEqual(RECORDING_EVENT_LOG.slice(0, 3));
 
+  // The held read is answered first, then the second sentence is published.
+  await releaseHeldPartialRead(page);
   await holdRevisionsFrom(page, 3);
   await expect(lineText).toHaveText(LIVE_TRANSCRIPT_LINES.slice(0, 2), { timeout: liveTranscriptWaitMs(1) });
   await expect(row).toHaveAttribute('data-user-status', 'processing');
-  await expectCardKeptThroughEmptyPolls(page, documentId, LIVE_TRANSCRIPT_LINES.slice(0, 2));
+  // The Workbench resumed right after the last sequence it had: the second sentence alone.
+  await expect.poll(() => eventReadsOf(page, captureId), { timeout: liveTranscriptWaitMs(1) })
+    .toContainEqual({ captureId, lastEventId: 3, events: [RECORDING_EVENT_LOG[3]] });
+  await watchLiveCardLines(page, documentId);
+  await expectCardKeptAfterAnEmptyEventsReply(page, documentId, captureId, LIVE_TRANSCRIPT_LINES.slice(0, 2));
 
   // The third sentence, then structuring and completion, on the simulated timeline.
+  await releaseHeldPartialRead(page);
   await holdRevisionsFrom(page, null);
   await expect(row).toHaveAttribute('data-user-status', 'done', {
     timeout: liveTranscriptWaitMs(4),
   });
   await expect(page.getByTestId('asr-live-card')).toHaveCount(0);
+  // From the two sentences to its end the card never lost a line: it left
+  // as it was or after it showed the third sentence too (at high speeds the
+  // recording can complete between two reads of the Workbench).
+  const twoLines = JSON.stringify(LIVE_TRANSCRIPT_LINES.slice(0, 2));
+  expect([
+    [twoLines, 'no card'],
+    [twoLines, JSON.stringify(LIVE_TRANSCRIPT_LINES), 'no card'],
+  ]).toContainEqual(await page.evaluate(() => (
+    (globalThis as unknown as RecordingJourneyGlobal).__liveCardLineStates ?? []
+  )));
+
+  // Every events request of the Workbench used the last sequence it was given,
+  // and together they read the runtime's log once, in order, with all three
+  // sentences.
+  const reads = await eventReadsOf(page, captureId);
+  const received = reads.flatMap((read) => read.events);
+  expect(reads.map((read) => read.lastEventId)).toEqual(lastSequenceGivenBefore(reads));
+  expect(received).toEqual(RECORDING_EVENT_LOG.slice(0, received.length));
+  expect(received.length).toBeGreaterThanOrEqual(5);
+
+  // The library holds the raw transcript and, apart from it, the structured result.
+  const kept = await hostCommand(page, 'library_get', { request: { documentId } });
+  expect(kept.value).toMatchObject({
+    status: 'completed',
+    raw: { sourceText: LIVE_TRANSCRIPT_LINES.join('\n') },
+    result: {
+      targetText: LIVE_TRANSCRIPT_LINES.join('\n'),
+      blocks: LIVE_TRANSCRIPT_LINES.map((line, order) => ({ type: 'transcript', order, targetText: line })),
+      structuringEngine: { engine: 'structuring-runtime' },
+    },
+  });
+  expect(kept.value).not.toHaveProperty('captureId');
+  // The Workbench deleted the runtime capture after it kept the result, and
+  // the runtime no longer knows it.
+  expect(await hostCommand(page, 'runtime_get_capture', { input: { id: captureId } }))
+    .toEqual({ rejection: CAPTURE_NOT_FOUND });
+  // The finished recording stays finished: nothing reads the deleted capture again.
+  await expect(row).toHaveAttribute('data-user-status', 'done');
+
   await row.getByTestId('asr-row-view').click();
   await expect(page).toHaveURL(new RegExp(`/history/${documentId}/content$`, 'u'));
   await expect(page.getByTestId('result-line-text')).toHaveText([...LIVE_TRANSCRIPT_LINES], {
     timeout: 15_000,
   });
-  // The Workbench deleted the runtime capture after it kept the result, and
-  // the runtime no longer knows it.
-  expect(await runtimeCaptureAnswer(page, captureId)).toBe('Capture Runtime request was rejected with HTTP 404.');
+});
+
+test('the simulated runtime never reuses a recording capture id and publishes nothing after a delete', async ({ page }) => {
+  await page.goto(`/?scenario=live-transcript&speed=${String(LIVE_TRANSCRIPT_SPEED)}&startDelay=0`);
+  // No queue page: only this test starts captures and reads them.
+  await page.goto('/settings/engines');
+  await expect(page.getByTestId('engine-row')).toHaveCount(3);
+
+  const picked = await hostCommand(page, 'library_select_sources', { request: { kind: 'recordings' } });
+  const { selectionToken } = (picked.value as { readonly selections: readonly { readonly selectionToken: string }[] })
+    .selections[0];
+  const imported = await hostCommand(page, 'library_import_selection', { request: { selectionToken } });
+  const { documentId } = imported.value as { readonly documentId: string };
+  const startCapture = async (): Promise<{ readonly captureId: string; readonly lastEventSequence: number }> => (
+    (await hostCommand(page, 'runtime_start_recording_capture', { input: { documentId } })).value
+  ) as { readonly captureId: string; readonly lastEventSequence: number };
+  const captureAnswer = (id: string) => hostCommand(page, 'runtime_get_capture', { input: { id } });
+
+  // No revision is published, so an events read after the last event waits.
+  await holdRevisionsFrom(page, 1);
+  const first = await startCapture();
+  expect(first.lastEventSequence).toBe(2);
+  const answeredAfterDelete = await page.evaluate(async ([id, lastEventId]) => {
+    const target = globalThis as unknown as RecordingJourneyGlobal;
+    const { invoke } = target.__TAURI_INTERNALS__;
+    const waiting = invoke('runtime_get_capture_events', { input: { id, lastEventId } });
+    await invoke('runtime_delete_capture', { input: { id } });
+    // The first revision is due from now on: a capture that still ran would publish it.
+    target.__captureRecordingHold?.(null);
+    return waiting;
+  }, [first.captureId, first.lastEventSequence] as const);
+  expect(answeredAfterDelete).toEqual([]);
+  expect(await eventReadsOf(page, first.captureId))
+    .toEqual([{ captureId: first.captureId, lastEventId: 2, events: [] }]);
+  expect(await captureAnswer(first.captureId)).toEqual({ rejection: CAPTURE_NOT_FOUND });
+  expect(await hostCommand(page, 'runtime_get_partial', { input: { id: first.captureId } }))
+    .toEqual({ rejection: CAPTURE_NOT_FOUND });
+  expect(await hostCommand(page, 'runtime_get_capture_events', { input: { id: first.captureId, lastEventId: 0 } }))
+    .toEqual({ rejection: CAPTURE_NOT_FOUND });
+
+  // Another recording starts: its id is new and the deleted one stays unknown.
+  const second = await startCapture();
+  expect(second.captureId).not.toBe(first.captureId);
+  expect(await captureAnswer(first.captureId)).toEqual({ rejection: CAPTURE_NOT_FOUND });
+  expect(await captureAnswer(second.captureId)).toMatchObject({ value: { captureId: second.captureId } });
+
+  // A reload keeps the library and restarts the simulated runtime: the ids of
+  // captures it no longer has stay unknown, whatever starts afterwards.
+  await page.reload();
+  await expect(page.getByTestId('engine-row')).toHaveCount(3);
+  expect(await hostCommand(page, 'library_get', { request: { documentId } }))
+    .toMatchObject({ value: { documentId } });
+  const third = await startCapture();
+  expect([first.captureId, second.captureId]).not.toContain(third.captureId);
+  expect(await captureAnswer(first.captureId)).toEqual({ rejection: CAPTURE_NOT_FOUND });
+  expect(await captureAnswer(second.captureId)).toEqual({ rejection: CAPTURE_NOT_FOUND });
+  expect(await captureAnswer(third.captureId)).toMatchObject({ value: { captureId: third.captureId } });
+});
+
+test('the simulated library stores the raw and the structured result each on its own', async ({ page }) => {
+  await page.goto('/?scenario=live-transcript');
+  await page.goto('/settings/engines');
+  await expect(page.getByTestId('engine-row')).toHaveCount(3);
+
+  const picked = await hostCommand(page, 'library_select_sources', { request: { kind: 'recordings' } });
+  const { selectionToken } = (picked.value as { readonly selections: readonly { readonly selectionToken: string }[] })
+    .selections[0];
+  const imported = await hostCommand(page, 'library_import_selection', { request: { selectionToken } });
+  const { documentId } = imported.value as { readonly documentId: string };
+  const update = (fields: Record<string, unknown>) => hostCommand(page, 'library_update_capture', {
+    update: { documentId, status: 'completed', stage: 'completed', ...fields },
+  });
+  const storedResults = async (): Promise<unknown> => {
+    const { raw, result } = (await hostCommand(page, 'library_get', { request: { documentId } }))
+      .value as { readonly raw?: unknown; readonly result?: unknown };
+    return { raw, result };
+  };
+
+  await update({ raw: { sourceText: 'first raw' }, result: { targetText: 'first result' } });
+  expect(await storedResults()).toEqual({ raw: { sourceText: 'first raw' }, result: { targetText: 'first result' } });
+  // A raw without a result replaces the raw only.
+  await update({ raw: { sourceText: 'second raw' } });
+  expect(await storedResults()).toEqual({ raw: { sourceText: 'second raw' }, result: { targetText: 'first result' } });
+  // A result without a raw replaces the result only.
+  await update({ result: { targetText: 'second result' } });
+  expect(await storedResults()).toEqual({ raw: { sourceText: 'second raw' }, result: { targetText: 'second result' } });
 });
