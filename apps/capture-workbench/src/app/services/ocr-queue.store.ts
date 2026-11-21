@@ -247,6 +247,8 @@ export class OcrQueueStore {
       if (document.status !== 'processing' && document.status !== 'persisting') continue;
       if (this.reattached.has(document.documentId)) continue;
       if (this.capture.isDocumentClaimed(document.documentId)) continue;
+      // Asked for again when its pause ends: not remembered as reattached before.
+      if (this.capture.isDecisionPaused(document.documentId)) continue;
       this.reattached.add(document.documentId);
       this.capture.reattach$(document, this.host)
         .pipe(takeUntilDestroyed(this.destroyRef))

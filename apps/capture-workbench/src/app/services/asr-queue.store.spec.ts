@@ -171,6 +171,7 @@ describe('AsrQueueStore', () => {
       recordingOperations,
       streamingPartials,
       isDocumentClaimed: vi.fn((id: string) => busyIds().has(id)),
+      isDecisionPaused: vi.fn(() => false),
       failedDecisions: signal(0),
       startDocument$: vi.fn(() => startDocSubject),
       reattach$: vi.fn((): Observable<void> => of(undefined)),
@@ -844,17 +845,27 @@ describe('AsrQueueStore', () => {
       TestBed.tick();
       expect(reads).toHaveLength(1);
 
-      reads[0].error('Capture library index cannot be read.');
-      expect(runtimeStatus.message()).toBe('Capture library index cannot be read.');
-      expect(runtime.getCapture).not.toHaveBeenCalled();
+      vi.useFakeTimers();
+      try {
+        reads[0].error('Capture library index cannot be read.');
+        expect(runtimeStatus.message()).toBe('Capture library index cannot be read.');
+        expect(runtime.getCapture).not.toHaveBeenCalled();
 
-      // The queue looks at its list again: the recovery is not given up.
-      docs.set([{ ...running }]);
-      TestBed.tick();
-      expect(reads).toHaveLength(2);
-      answer(reads[1], [running]);
+        // The queue looks at its list again, within the pause of the recording: it does not ask.
+        docs.set([{ ...running }]);
+        TestBed.tick();
+        expect(reads).toHaveLength(1);
 
-      expect(runtime.getCapture).toHaveBeenCalledExactlyOnceWith('capture-running');
+        // After the pause the recovery is decided again: it was not given up.
+        vi.advanceTimersByTime(FAILED_DECISION_PAUSE_MS);
+        TestBed.tick();
+        expect(reads).toHaveLength(2);
+        answer(reads[1], [running]);
+
+        expect(runtime.getCapture).toHaveBeenCalledExactlyOnceWith('capture-running');
+      } finally {
+        vi.useRealTimers();
+      }
     });
     it('does not start a recording whose cancel was asked while a read that then failed was pending', () => {
       const waiting = makeRecording();
@@ -864,12 +875,18 @@ describe('AsrQueueStore', () => {
       expect(reads).toHaveLength(1);
 
       store.cancel(waiting.documentId);
-      reads[0].error('Capture library index cannot be read.');
-      expect(library.updateCapture).not.toHaveBeenCalled();
+      vi.useFakeTimers();
+      try {
+        reads[0].error('Capture library index cannot be read.');
+        expect(library.updateCapture).not.toHaveBeenCalled();
 
-      // The queue looks at its list again and the stored document still waits.
-      docs.set([{ ...waiting }]);
-      TestBed.tick();
+        // The queue looks at its list again after the pause, and the stored document still waits.
+        docs.set([{ ...waiting }]);
+        vi.advanceTimersByTime(FAILED_DECISION_PAUSE_MS);
+        TestBed.tick();
+      } finally {
+        vi.useRealTimers();
+      }
       expect(reads).toHaveLength(2);
       answer(reads[1], [waiting]);
       TestBed.tick();

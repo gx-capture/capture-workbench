@@ -1804,6 +1804,10 @@ describe('DesktopCaptureService', () => {
   });
 
   describe('the steps of a decision', () => {
+    // A decision that fails pauses its document; the tests end the pause themselves.
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => vi.useRealTimers());
+
     const lost = {
       ...summary, status: 'recovery_required', captureId: 'capture-lost', recoveryCode: 'capture_recovery_required',
     } satisfies DesktopLibrarySummary;
@@ -1876,6 +1880,8 @@ describe('DesktopCaptureService', () => {
       steps.service.startDocument$(summary.documentId, steps.host).subscribe({ error: steps.failed });
       steps.service.cancel(summary.documentId);
       steps.reads[0].error('Capture library index cannot be read.');
+      // The next decision is one a queue asks for when the pause of the document is over.
+      vi.advanceTimersByTime(FAILED_DECISION_PAUSE_MS);
       expect(steps.failed).toHaveBeenCalledTimes(1);
       expect(steps.service.isDocumentClaimed(summary.documentId)).toBe(false);
       expect(steps.writes).toEqual([]);
@@ -1898,6 +1904,7 @@ describe('DesktopCaptureService', () => {
       expect(steps.writes).toHaveLength(1);
 
       steps.writes[0].answer.error('Capture library index cannot be written.');
+      vi.advanceTimersByTime(FAILED_DECISION_PAUSE_MS);
       expect(steps.failed).toHaveBeenCalledExactlyOnceWith('Capture library index cannot be written.');
       expect(steps.service.isDocumentClaimed(summary.documentId)).toBe(false);
 
@@ -1956,6 +1963,7 @@ describe('DesktopCaptureService', () => {
         steps.service.startDocument$(summary.documentId, steps.host).subscribe({ error: steps.failed });
         steps.service.cancel(summary.documentId);
         steps.reads[0].error('Capture library index cannot be read.');
+        vi.advanceTimersByTime(FAILED_DECISION_PAUSE_MS);
 
         steps.service.startDocument$(summary.documentId, steps.host).subscribe();
         answerWithoutTheDocument(steps, 1);
@@ -1970,6 +1978,7 @@ describe('DesktopCaptureService', () => {
         steps.service.startDocument$(summary.documentId, steps.host).subscribe({ error: steps.failed });
         steps.service.cancel(summary.documentId);
         steps.reads[0].error('Capture library index cannot be read.');
+        vi.advanceTimersByTime(FAILED_DECISION_PAUSE_MS);
         TestBed.tick();
         // The failed read released the claim, so the library offers the deletion.
         expect(libraryStore.canDelete(summary.documentId)).toBe(true);
@@ -1987,6 +1996,7 @@ describe('DesktopCaptureService', () => {
         steps.service.startDocument$(summary.documentId, steps.host).subscribe({ error: steps.failed });
         steps.service.cancel(summary.documentId);
         steps.reads[0].error('Capture library index cannot be read.');
+        vi.advanceTimersByTime(FAILED_DECISION_PAUSE_MS);
 
         libraryStore.delete(summary.documentId).subscribe({ error: steps.failed });
 
@@ -2042,9 +2052,6 @@ describe('DesktopCaptureService', () => {
     });
 
     describe('that ended in an error', () => {
-      beforeEach(() => vi.useFakeTimers());
-      afterEach(() => vi.useRealTimers());
-
       it.each([
         ['the read failed', (steps: ReturnType<typeof decisionSteps>) => {
           steps.service.startDocument$(summary.documentId, steps.host).subscribe({ error: steps.failed });
@@ -2067,6 +2074,64 @@ describe('DesktopCaptureService', () => {
 
         vi.advanceTimersByTime(1);
         expect(steps.service.failedDecisions()).toBe(before + 1);
+      });
+
+      it('pauses each document for its own time when two fail at staggered times', () => {
+        const steps = decisionSteps(summary);
+        const first = summary.documentId;
+        const second = 'b'.repeat(32);
+        /** What a queue does when it looks at its documents: it asks for both. */
+        const queuesLook = () => {
+          for (const documentId of [first, second]) {
+            steps.service.startDocument$(documentId, steps.host).subscribe({ error: steps.failed });
+          }
+        };
+        const failRead = (index: number) => steps.reads[index].error('Capture library index cannot be read.');
+        const told = steps.service.failedDecisions();
+        const half = FAILED_DECISION_PAUSE_MS / 2;
+
+        steps.service.startDocument$(first, steps.host).subscribe({ error: steps.failed });
+        failRead(0);
+        vi.advanceTimersByTime(half);
+        steps.service.startDocument$(second, steps.host).subscribe({ error: steps.failed });
+        failRead(1);
+
+        // The pause of the first document is over; the second has paused for half its time.
+        vi.advanceTimersByTime(half);
+        expect(steps.service.failedDecisions()).toBe(told + 1);
+        queuesLook();
+        expect(steps.reads).toHaveLength(3);
+        failRead(2);
+
+        // The pause of the second is over; the first, which failed again, has paused for half its time.
+        vi.advanceTimersByTime(half);
+        expect(steps.service.failedDecisions()).toBe(told + 2);
+        queuesLook();
+        expect(steps.reads).toHaveLength(4);
+        steps.reads[3].next([{ ...summary, documentId: second }]);
+        steps.reads[3].complete();
+        expect(steps.writes.map((write) => write.update)).toEqual([
+          expect.objectContaining({ documentId: second, status: 'processing' }),
+        ]);
+
+        vi.advanceTimersByTime(half);
+        expect(steps.service.failedDecisions()).toBe(told + 3);
+        queuesLook();
+        // The first document is read again; the second is claimed by its capture.
+        expect(steps.reads).toHaveLength(5);
+      });
+
+      it('ends the pause of a document for which the user asks again', () => {
+        const steps = decisionSteps({ ...summary, status: 'failed' });
+        const told = steps.service.failedDecisions();
+        steps.service.startDocument$(summary.documentId, steps.host).subscribe({ error: steps.failed });
+        steps.reads[0].error('Capture library index cannot be read.');
+
+        steps.service.retry$(summary.documentId, steps.host).subscribe();
+        expect(steps.reads).toHaveLength(2);
+        // The request is being decided: the queues have nothing to look at again.
+        vi.advanceTimersByTime(10 * FAILED_DECISION_PAUSE_MS);
+        expect(steps.service.failedDecisions()).toBe(told);
       });
 
       it('does not tell the queues to look again when a request was declined or a capture ended', () => {

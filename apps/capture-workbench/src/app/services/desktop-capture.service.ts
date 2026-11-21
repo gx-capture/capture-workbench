@@ -17,6 +17,7 @@ import {
   type Observable,
   of,
   Subject,
+  type Subscription,
   switchMap,
   take,
   takeUntil,
@@ -117,10 +118,10 @@ export class DesktopCaptureService {
   readonly oneShotOperations = signal<ReadonlyMap<string, DesktopCaptureOperation>>(new Map());
 
   /**
-   * Increases, after a pause, each time a decision ended in an error: the
-   * stored document could not be read, or the write it led to failed. No
-   * capture ran and nothing else changed, so a queue that reads this signal
-   * looks at its documents again and decides anew.
+   * Increases each time the pause of a document ends whose decision ended in
+   * an error: the stored document could not be read, or the write it led to
+   * failed. No capture ran and nothing else changed, so a queue that reads
+   * this signal looks at its documents again and decides anew.
    */
   readonly failedDecisions = signal(0);
 
@@ -145,6 +146,12 @@ export class DesktopCaptureService {
    * (`forgetDeletedDocument`).
    */
   private readonly unappliedCancels = new Set<string>();
+  /**
+   * Documents whose last decision ended in an error, each with the timer of
+   * its own pause: a document that failed later is not asked for sooner
+   * because the pause of another one ended.
+   */
+  private readonly decisionPauses = new Map<string, Subscription>();
 
   /**
    * Reports whether the document is claimed: a capture runs for it, a batch
@@ -156,6 +163,16 @@ export class DesktopCaptureService {
     return this.activeCaptures.has(documentId)
       || this.awaitingTurn.has(documentId)
       || this.deciding.has(documentId);
+  }
+
+  /**
+   * Reports whether a decision for the document ended in an error less than
+   * `FAILED_DECISION_PAUSE_MS` ago. Until the pause is over a queue does not
+   * ask for the document again, and what it asks is ignored; a retry or
+   * restart the user asks for ends the pause.
+   */
+  isDecisionPaused(documentId: string): boolean {
+    return this.decisionPauses.has(documentId);
   }
 
   /** Enqueues sources while preserving the existing sequential capture policy. */
@@ -270,10 +287,11 @@ export class DesktopCaptureService {
    * A cancel that arrives meanwhile is kept (`unappliedCancels`) and wins
    * over whatever the read allows. When the decision ends in an error (the
    * read or the write it led to failed) the claim is released, the cancel
-   * stays for the next decision, and the queues are told to look again after
-   * a pause (`failedDecisions`). An explicit retry or restart is a new
-   * request of the user: an older cancel that was never applied does not
-   * cancel it.
+   * stays for the next decision, and the document pauses
+   * (`isDecisionPaused`): no decision is made for it until the queues are
+   * told to look again (`failedDecisions`). An explicit retry or restart is
+   * a new request of the user: it ends the pause, and an older cancel that
+   * was never applied does not cancel it.
    */
   private decideFromStoredDocument$(
     documentId: string,
@@ -282,6 +300,8 @@ export class DesktopCaptureService {
   ): Observable<void> {
     return defer(() => {
       if (!this.runtime.ready() || this.isDocumentClaimed(documentId)) return EMPTY;
+      if (request.explicit) this.endDecisionPause(documentId);
+      else if (this.isDecisionPaused(documentId)) return EMPTY;
       this.deciding.add(documentId);
       if (request.explicit) this.unappliedCancels.delete(documentId);
       return this.library.list().pipe(
@@ -293,7 +313,7 @@ export class DesktopCaptureService {
         }),
         switchMap((stored) => act(stored)),
         catchError((error: unknown) => {
-          this.tellQueuesToLookAgainAfterPause();
+          this.pauseDecisions(documentId);
           return throwError(() => error);
         }),
         // Also when the read fails or is unsubscribed: nothing stays claimed.
@@ -302,10 +322,20 @@ export class DesktopCaptureService {
     });
   }
 
-  private tellQueuesToLookAgainAfterPause(): void {
-    timer(FAILED_DECISION_PAUSE_MS)
+  /** Starts the pause of the document; when it ends, the queues are told to look again. */
+  private pauseDecisions(documentId: string): void {
+    this.endDecisionPause(documentId);
+    this.decisionPauses.set(documentId, timer(FAILED_DECISION_PAUSE_MS)
       .pipe(takeUntilDestroyed(this.destroyRef))
-      .subscribe(() => this.failedDecisions.update((count) => count + 1));
+      .subscribe(() => {
+        this.decisionPauses.delete(documentId);
+        this.failedDecisions.update((count) => count + 1);
+      }));
+  }
+
+  private endDecisionPause(documentId: string): void {
+    this.decisionPauses.get(documentId)?.unsubscribe();
+    this.decisionPauses.delete(documentId);
   }
 
   /**

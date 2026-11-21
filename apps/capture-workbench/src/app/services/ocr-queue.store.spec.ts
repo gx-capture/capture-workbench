@@ -10,7 +10,7 @@ import { OcrQueueStore } from './ocr-queue.store';
 import { DesktopLibraryService, type DesktopSourceSelection, type DesktopSourceSelectionBatch } from './desktop-library.service';
 import type { DesktopCaptureOperation } from './desktop-runtime-client.service';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
-import { DesktopCaptureService } from './desktop-capture.service';
+import { DesktopCaptureService, FAILED_DECISION_PAUSE_MS } from './desktop-capture.service';
 import { DesktopFormattingService } from './desktop-formatting.service';
 import { isFeatureReady, type RecognitionFeature } from './recognition-requirements';
 import { LibraryStore } from './library.store';
@@ -326,6 +326,58 @@ describe('OcrQueueStore', () => {
       expect(harness.runtime.createCapture).toHaveBeenCalledTimes(1);
       expect(harness.docs[0]).toMatchObject({ status: 'canceled', captureId: undefined });
     });
+  });
+
+  it('asks again for each of two files only after its own pause when their stored state cannot be read', () => {
+    const harness = configure({ ocrReady: true });
+    const first = doc({ documentId: '1'.repeat(32), createdAtMs: 1, status: 'processing', captureId: 'capture-first' });
+    const second = doc({ documentId: '2'.repeat(32), createdAtMs: 2, status: 'processing', captureId: 'capture-second' });
+    // The library lists the newest file first; the queue works in import order.
+    harness.docs.push(second, first);
+    const reads: Subject<DesktopLibrarySummary[]>[] = [];
+    harness.library.list.mockImplementation(() => {
+      const read = new Subject<DesktopLibrarySummary[]>();
+      reads.push(read);
+      return read;
+    });
+    const failRead = (index: number) => reads[index].error('Capture library index cannot be read.');
+    const half = FAILED_DECISION_PAUSE_MS / 2;
+
+    vi.useFakeTimers();
+    try {
+      harness.store.attach();
+      TestBed.tick();
+      // One read per file, the first file's first.
+      expect(reads).toHaveLength(2);
+      failRead(0);
+      vi.advanceTimersByTime(half);
+      failRead(1);
+      TestBed.tick();
+      expect(reads).toHaveLength(2);
+
+      // The pause of the first file is over: only it is asked for again.
+      vi.advanceTimersByTime(half);
+      TestBed.tick();
+      expect(reads).toHaveLength(3);
+      failRead(2);
+
+      // The pause of the second file is over: only it is asked for again, and its capture is recovered.
+      vi.advanceTimersByTime(half);
+      TestBed.tick();
+      expect(reads).toHaveLength(4);
+      reads[3].next([second, first]);
+      reads[3].complete();
+      expect(harness.runtime.getCapture).toHaveBeenCalledExactlyOnceWith('capture-second');
+
+      vi.advanceTimersByTime(half);
+      TestBed.tick();
+      expect(reads).toHaveLength(5);
+      reads[4].next([second, first]);
+      reads[4].complete();
+      expect(harness.runtime.getCapture).toHaveBeenLastCalledWith('capture-first');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('drops a document the workspace deletes and lists one the workspace imports', async () => {

@@ -376,6 +376,8 @@ export class AsrQueueStore {
           || document.status === 'recovery_required')
         && document.captureId
         && !this.capture.isDocumentClaimed(document.documentId)
+        // Asked for again when its pause ends: not remembered as attempted before.
+        && !this.capture.isDecisionPaused(document.documentId)
         && !this.capture.busyIds().has(document.documentId)
         && !this.attemptedReattachments.has(document.captureId)
       ) {
