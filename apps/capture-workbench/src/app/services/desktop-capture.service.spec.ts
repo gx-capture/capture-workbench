@@ -18,6 +18,8 @@ import {
 import { isCaptureLost } from './capture-operation-status';
 import { DesktopLibraryService, type DesktopSourceSelection } from './desktop-library.service';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
+import { LibraryStore } from './library.store';
+
 
 const summary: DesktopLibrarySummary = {
   documentId: 'a'.repeat(32),
@@ -1720,6 +1722,35 @@ describe('DesktopCaptureService', () => {
         expect(updateCapture).toHaveBeenCalledTimes(1);
       },
     );
+    it('still reads the runtime for a row stored as a lost capture, also when raw text is kept beside it', () => {
+      // Such a row does not hold the terminal data of its capture: the raw text
+      // can be that of an earlier capture, so nothing is restored from it.
+      const lostRow = {
+        ...summary, fileName: 'fixture.mp3', mediaType: 'audio/mpeg', status: 'recovery_required',
+        stage: 'extracting', captureId: 'capture-lost', recoveryCode: 'capture_recovery_required', hasRaw: true,
+      } satisfies DesktopLibrarySummary;
+      const updateCapture = vi.fn((update: Record<string, unknown>) =>
+        of(applyDurableCaptureUpdate(lostRow, update)));
+      const getCapture = vi.fn(() =>
+        throwError(() => 'Capture Runtime request was rejected with HTTP 404.'));
+      const deleteCapture = vi.fn(() => of(undefined));
+      const store = initializeCapture(
+        libraryStub({ list: vi.fn(() => of([lostRow])), updateCapture }),
+        runtimeStub({ getCapture, deleteCapture }),
+      );
+
+      store.service.reattach$(lostRow, store.host).subscribe();
+      TestBed.tick();
+
+      expect(getCapture).toHaveBeenCalledExactlyOnceWith('capture-lost');
+      expect(deleteCapture).not.toHaveBeenCalled();
+      expect(captureUpdates(updateCapture)).toEqual([
+        expect.objectContaining({
+          status: 'recovery_required', captureId: 'capture-lost', recoveryCode: 'capture_recovery_required',
+        }),
+      ]);
+    });
+
   });
 
   describe('the steps of a decision', () => {
@@ -2173,76 +2204,218 @@ describe('DesktopCaptureService', () => {
     });
   });
 
-  describe('a claimed document', () => {
-    const CLAIMS = [
+  describe('every entry against every state of a document', () => {
+    const STATES = [
       'its stored state is being read',
       'a capture runs for it',
       'its terminal writes are in flight',
       'a batch has scheduled it',
+      'its cleanup is pending after a refused unlink',
     ] as const;
-    const ENTRIES = ['startDocument$', 'reattach$', 'retry$', 'restartLost$'] as const;
+    type State = (typeof STATES)[number];
+    const ENTRIES = ['startDocument$', 'reattach$', 'retry$', 'restartLost$', 'cancel', 'delete'] as const;
+    type Entry = (typeof ENTRIES)[number];
+    const CLAIMED: readonly State[] = STATES.slice(0, 4);
 
-    /** A document in the given claim, with every library and runtime call counted. */
-    function claimedDocument(claim: (typeof CLAIMS)[number]) {
+    /** What an entry did, counted from the moment the state was reached. */
+    interface Effect {
+      /** Reads of the stored document by the capture service. */
+      readonly decisionReads: number;
+      /** Statuses written to the library. */
+      readonly writes: readonly string[];
+      readonly capturesCreated: number;
+      readonly captureReads: number;
+      readonly runtimeCancels: number;
+      readonly uploadCancels: number;
+      readonly runtimeDeletes: number;
+    }
+    const NOTHING: Effect = {
+      decisionReads: 0, writes: [], capturesCreated: 0, captureReads: 0,
+      runtimeCancels: 0, uploadCancels: 0, runtimeDeletes: 0,
+    };
+    /** The one cell of a claimed state that does something, and the cells of the unclaimed cleanup state. */
+    function expectedEffect(state: State, entry: Entry): Effect {
+      if (state === 'a capture runs for it' && entry === 'cancel') {
+        // The upload is still in flight: its native cancel is asked for.
+        return { ...NOTHING, uploadCancels: 1 };
+      }
+      if (state !== 'its cleanup is pending after a refused unlink') return NOTHING;
+      if (entry === 'cancel' || entry === 'delete') return NOTHING;
+      // Start and restart are declined after the read; reattach and retry only clean up.
+      return entry === 'startDocument$' || entry === 'restartLost$'
+        ? { ...NOTHING, decisionReads: 1 }
+        : { ...NOTHING, decisionReads: 1, runtimeDeletes: 1, writes: ['completed'] };
+    }
+
+    /** A document in the given state, over the real library store's delete guard. */
+    function documentIn(state: State) {
       const pending = new Subject<never>();
-      const batch = claim === 'a batch has scheduled it';
+      const batch = state === 'a batch has scheduled it';
       const documentId = batch ? '2'.repeat(32) : summary.documentId;
-      const list = vi.fn((): Observable<readonly DesktopLibrarySummary[]> => of([summary]));
-      const updateCapture = vi.fn((): Observable<DesktopLibrarySummary> => of(summary));
+      const cleanupRow = {
+        ...summary, status: 'recovery_required', stage: 'completed', captureId: 'capture-1',
+        recoveryCode: 'runtime_cleanup_failed',
+      } satisfies DesktopLibrarySummary;
+      let stored: readonly DesktopLibrarySummary[] =
+        state === 'its cleanup is pending after a refused unlink' ? [cleanupRow]
+          : batch ? [{ ...summary, documentId: '1'.repeat(32) }, { ...summary, documentId }]
+            : [summary];
+      let decisionReads = 0;
+      // Only the capture service reads without arguments; the list of the library store answers at once.
+      const list = vi.fn((...listArguments: unknown[]): Observable<readonly DesktopLibrarySummary[]> => {
+        if (listArguments.length > 0) return of(stored);
+        decisionReads += 1;
+        return state === 'its stored state is being read' ? pending : of(stored);
+      });
+      const writes: string[] = [];
+      const updateCapture = vi.fn((update: Record<string, unknown>): Observable<DesktopLibrarySummary> => {
+        writes.push(String(update['status']));
+        stored = stored.map((item) => item.documentId === update['documentId']
+          ? applyDurableCaptureUpdate(item, update)
+          : item);
+        return of(stored.find((item) => item.documentId === update['documentId']) ?? summary);
+      });
       const importSelection = vi.fn((input: DesktopSourceSelection) => of({
         ...summary, documentId: input.fileName === 'first.pdf' ? '1'.repeat(32) : '2'.repeat(32),
       }));
       const createCapture = vi.fn((): Observable<CaptureOperation> =>
-        claim === 'its terminal writes are in flight' ? of(cancelledOperation) : pending);
+        state === 'its terminal writes are in flight' ? of(cancelledOperation) : pending);
       const getCapture = vi.fn(() => of(runningOperation));
       const cancelCapture = vi.fn(() => of(cancelledOperation));
-      // The result is kept; the runtime cleanup that follows does not answer.
-      const deleteCapture = vi.fn((): Observable<undefined> => pending);
+      const cancelUpload = vi.fn(() => of(undefined));
+      // In flight: the result is kept and the runtime cleanup that follows does not answer.
+      const deleteCapture = vi.fn((): Observable<undefined> =>
+        state === 'its terminal writes are in flight' ? pending : of(undefined));
       const store = initializeCapture(
         libraryStub({ list, updateCapture, importSelection }),
-        runtimeStub({ createCapture, getCapture, cancelCapture, deleteCapture }),
+        runtimeStub({ createCapture, getCapture, cancelCapture, cancelUpload, deleteCapture }),
       );
-      if (claim === 'its stored state is being read') list.mockImplementation(() => pending);
       if (batch) {
         store.service.addSelections$([selection('first.pdf'), selection('second.pdf')], store.host).subscribe();
-      } else {
+      } else if (state !== 'its cleanup is pending after a refused unlink') {
         store.service.startDocument$(documentId, store.host).subscribe();
       }
+      const libraryStore = TestBed.inject(LibraryStore);
       TestBed.tick();
-      const calls = () => [list, updateCapture, createCapture, getCapture, cancelCapture, deleteCapture]
-        .map((call) => call.mock.calls.length);
-      return { store, documentId, calls, updateCapture, cancelCapture, deleteCapture };
+      const count = (): Effect => ({
+        decisionReads,
+        writes: [...writes],
+        capturesCreated: createCapture.mock.calls.length,
+        captureReads: getCapture.mock.calls.length,
+        runtimeCancels: cancelCapture.mock.calls.length,
+        uploadCancels: cancelUpload.mock.calls.length,
+        runtimeDeletes: deleteCapture.mock.calls.length,
+      });
+      const before = count();
+      return {
+        ...store,
+        documentId,
+        libraryStore,
+        list,
+        updateCapture,
+        cancelCapture,
+        deleteCapture,
+        /** What happened since the state was reached. */
+        effect: (): Effect => {
+          const now = count();
+          return {
+            decisionReads: now.decisionReads - before.decisionReads,
+            writes: now.writes.slice(before.writes.length),
+            capturesCreated: now.capturesCreated - before.capturesCreated,
+            captureReads: now.captureReads - before.captureReads,
+            runtimeCancels: now.runtimeCancels - before.runtimeCancels,
+            uploadCancels: now.uploadCancels - before.uploadCancels,
+            runtimeDeletes: now.runtimeDeletes - before.runtimeDeletes,
+          };
+        },
+      };
     }
 
-    it.each(CLAIMS.flatMap((claim) => ENTRIES.map((entry) => [claim, entry] as const)))(
-      'while %s, %s does nothing',
-      (claim, entry) => {
-        const { store, documentId, calls } = claimedDocument(claim);
-        expect(store.service.isDocumentClaimed(documentId)).toBe(true);
-        const before = calls();
+    it.each(STATES.flatMap((state) => ENTRIES.map((entry) => [state, entry] as const)))(
+      'while %s, %s does what the state allows and no more',
+      (state, entry) => {
+        const { service, host, documentId, libraryStore, effect } = documentIn(state);
+        expect(service.isDocumentClaimed(documentId)).toBe(CLAIMED.includes(state));
         // What an outdated row could ask for: it still shows a running capture.
         const row = { ...summary, documentId, status: 'processing', captureId: 'capture-1' } satisfies DesktopLibrarySummary;
 
-        (entry === 'reattach$'
-          ? store.service.reattach$(row, store.host)
-          : store.service[entry](documentId, store.host)
-        ).subscribe();
+        const actions: Record<Entry, () => void> = {
+          'startDocument$': () => service.startDocument$(documentId, host).subscribe(),
+          'reattach$': () => service.reattach$(row, host).subscribe(),
+          'retry$': () => service.retry$(documentId, host).subscribe(),
+          'restartLost$': () => service.restartLost$(documentId, host).subscribe(),
+          cancel: () => service.cancel(documentId),
+          // The delete of the library is offered through this guard alone.
+          delete: () => expect(libraryStore.canDelete(documentId)).toBe(false),
+        };
+        actions[entry]();
+        TestBed.tick();
+        libraryStore.refreshDocuments();
         TestBed.tick();
 
-        expect(calls()).toEqual(before);
-        expect(store.service.isDocumentClaimed(documentId)).toBe(true);
+        expect(effect()).toEqual(expectedEffect(state, entry));
+        // A claim outlasts every entry; the cleanup state is never claimed afterwards.
+        expect(service.isDocumentClaimed(documentId)).toBe(CLAIMED.includes(state));
+        // Deletion stays refused in every state: by the claim, or by the link of the cleanup row
+        // until a reattach or retry has removed it.
+        const unlinked = !CLAIMED.includes(state) && (entry === 'reattach$' || entry === 'retry$');
+        expect(libraryStore.canDelete(documentId)).toBe(unlinked);
       },
     );
 
-    it('is claimed from the call on, and free again when the request is declined', () => {
+    it('offers deletion again once a decision that held the document has declined', () => {
+      const { service, host, documentId, libraryStore, list } =
+        documentIn('its cleanup is pending after a refused unlink');
+      const finished = { ...summary, status: 'completed' } satisfies DesktopLibrarySummary;
+      const listed = new Subject<readonly DesktopLibrarySummary[]>();
+      list.mockImplementation((...listArguments: unknown[]) =>
+        listArguments.length > 0 ? of([finished]) : listed);
+      libraryStore.refreshDocuments();
+      TestBed.tick();
+      expect(libraryStore.canDelete(documentId)).toBe(true);
+
+      // Held by nothing but the pending read of the stored document.
+      service.startDocument$(documentId, host).subscribe();
+      expect(libraryStore.canDelete(documentId)).toBe(false);
+
+      listed.next([finished]);
+      TestBed.tick();
+      expect(libraryStore.canDelete(documentId)).toBe(true);
+    });
+
+    it('keeps the result when a cancel arrives while the terminal writes are in flight', () => {
+      const { service, documentId, updateCapture, cancelCapture, deleteCapture } =
+        documentIn('its terminal writes are in flight');
+      expect(deleteCapture).toHaveBeenCalledTimes(1);
+      const writesBefore = updateCapture.mock.calls.length;
+
+      service.cancel(documentId);
+      TestBed.tick();
+
+      expect(cancelCapture).not.toHaveBeenCalled();
+      expect(updateCapture).toHaveBeenCalledTimes(writesBefore);
+      expect(service.isDocumentClaimed(documentId)).toBe(true);
+    });
+  });
+
+
+  describe('a claimed document', () => {
+    it('is claimed from the subscription to an entry on, not by calling it, and free again when the request is declined', () => {
       const listed = new Subject<readonly DesktopLibrarySummary[]>();
       const list = vi.fn((): Observable<readonly DesktopLibrarySummary[]> => of([summary]));
       const store = initializeCapture(libraryStub({ list }), runtimeStub());
       list.mockImplementation(() => listed);
+      const readsBefore = list.mock.calls.length;
       expect(store.service.isDocumentClaimed(summary.documentId)).toBe(false);
 
-      store.service.startDocument$(summary.documentId, store.host).subscribe();
+      // The entries are cold: calling one claims, reads and writes nothing.
+      const request$ = store.service.startDocument$(summary.documentId, store.host);
+      expect(store.service.isDocumentClaimed(summary.documentId)).toBe(false);
+      expect(list).toHaveBeenCalledTimes(readsBefore);
+
+      request$.subscribe();
       expect(store.service.isDocumentClaimed(summary.documentId)).toBe(true);
+      expect(list).toHaveBeenCalledTimes(readsBefore + 1);
 
       listed.next([{ ...summary, status: 'completed' }]);
       expect(store.service.isDocumentClaimed(summary.documentId)).toBe(false);
@@ -2346,19 +2519,6 @@ describe('DesktopCaptureService', () => {
       );
     });
 
-    it('keeps the result when a cancel arrives while the terminal writes are in flight', () => {
-      const { store, documentId, updateCapture, cancelCapture, deleteCapture } =
-        claimedDocument('its terminal writes are in flight');
-      expect(deleteCapture).toHaveBeenCalledTimes(1);
-      const writesBefore = updateCapture.mock.calls.length;
-
-      store.service.cancel(documentId);
-      TestBed.tick();
-
-      expect(cancelCapture).not.toHaveBeenCalled();
-      expect(updateCapture).toHaveBeenCalledTimes(writesBefore);
-      expect(store.service.isDocumentClaimed(documentId)).toBe(true);
-    });
   });
 
   describe('restart', () => {
@@ -2504,6 +2664,7 @@ function libraryStub(overrides: Record<string, unknown> = {}) {
 function runtimeStub(overrides: Record<string, unknown> = {}) {
   return Object.assign({
     ready: signal(true),
+    started: signal(true),
     ocrCompute: signal<OcrComputePreflight | null>({
       apiVersion: '2.0',
       schemaVersion: '1',

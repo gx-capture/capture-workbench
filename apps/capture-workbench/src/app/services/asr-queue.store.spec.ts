@@ -485,7 +485,7 @@ describe('AsrQueueStore', () => {
     });
   });
 
-  it('reattaches once per capture id after a 404 and allows explicit retry and restart', () => {
+  it('reattaches once per capture id, also when the recovery has ended and the list changes, and passes explicit retry and restart on', () => {
     const document = makeRecording({ status: 'processing', captureId: 'lost' });
     const { store, capture, docs, busyIds } = setup({ initialDocs: [document] });
     const recovery = new Subject<void>();
