@@ -236,15 +236,24 @@ pub(super) fn request_sse_within(
     wait: EventWait,
     max_response_bytes: u64,
 ) -> Result<Value, String> {
+    // One deadline covers the connection, the request, the headers and the
+    // body, so neither a slow connect nor headers that trickle in or never come
+    // stretch a call past the bound.
+    let deadline = Instant::now() + wait.bound;
+    let remaining = || {
+        deadline
+            .saturating_duration_since(Instant::now())
+            .max(Duration::from_millis(1))
+    };
     let port = loopback_port(&config.base_url)?;
     let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
-    let mut stream = TcpStream::connect_timeout(&address, REQUEST_TIMEOUT)
+    // Only a failed connection means the runtime is gone. The Workbench's next
+    // capture and partial requests, which use the ordinary request timeout,
+    // report a runtime that accepts connections but stops answering.
+    let mut stream = TcpStream::connect_timeout(&address, remaining())
         .map_err(|_| "Capture Runtime is unavailable.".to_string())?;
     stream
-        .set_read_timeout(Some(REQUEST_TIMEOUT))
-        .map_err(|_| "Capture Runtime connection cannot be configured.".to_string())?;
-    stream
-        .set_write_timeout(Some(REQUEST_TIMEOUT))
+        .set_write_timeout(Some(remaining()))
         .map_err(|_| "Capture Runtime connection cannot be configured.".to_string())?;
     let mut headers = format!(
         "GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nOrigin: http://tauri.localhost\r\nAuthorization: Bearer {}\r\nAccept: text/event-stream\r\nConnection: close\r\n",
@@ -257,30 +266,26 @@ pub(super) fn request_sse_within(
     stream
         .write_all(headers.as_bytes())
         .map_err(|_| "Capture Runtime request could not be sent.".to_string())?;
-    let started = Instant::now();
     let mut events = sse::EventStream::new();
     let mut received: u64 = 0;
     let mut buffer = [0_u8; 16 * 1024];
-    while !events.ended() {
-        // Until the headers arrive, a silent runtime is an error as for any
-        // request; afterwards silence only ends the wait.
-        let read_timeout = if events.headers_received() {
-            let left = wait.bound.saturating_sub(started.elapsed());
-            if left.is_zero() {
-                break;
-            }
-            if events.has_complete_event() {
-                left.min(wait.quiet)
-            } else {
-                left
-            }
+    // At the deadline the call returns the complete events so far, possibly
+    // none, also when the headers have not arrived: no event can be returned
+    // before its status is known, and an empty batch costs the Workbench one
+    // more poll after its usual pause, not a hot loop.
+    while !events.ended() && Instant::now() < deadline {
+        let read_timeout = if events.has_complete_event() {
+            remaining().min(wait.quiet)
         } else {
-            REQUEST_TIMEOUT
+            remaining()
         };
         stream
-            .set_read_timeout(Some(read_timeout.max(Duration::from_millis(1))))
+            .set_read_timeout(Some(read_timeout))
             .map_err(|_| "Capture Runtime connection cannot be configured.".to_string())?;
         match stream.read(&mut buffer) {
+            Ok(0) if !events.headers_received() => {
+                return Err("Capture Runtime response was malformed.".into());
+            }
             Ok(0) => events.finish(),
             Ok(count) => {
                 received += count as u64;
@@ -292,15 +297,12 @@ pub(super) fn request_sse_within(
                 events.push(&buffer[..count])?;
             }
             Err(error) if error.kind() == ErrorKind::Interrupted => {}
-            Err(error)
-                if events.headers_received()
-                    && matches!(error.kind(), ErrorKind::TimedOut | ErrorKind::WouldBlock) =>
-            {
+            Err(error) if matches!(error.kind(), ErrorKind::TimedOut | ErrorKind::WouldBlock) => {
                 if events.has_complete_event() {
                     break;
                 }
             }
-            Err(error) => return Err(read_failure_message(&error)),
+            Err(_) => return Err("Capture Runtime response could not be read.".into()),
         }
     }
     events.events(&config.token)
@@ -678,15 +680,74 @@ mod tests {
         }
 
         #[test]
-        fn batches_events_that_arrive_within_the_quiet_period() {
+        fn batches_events_while_each_gap_is_shorter_than_the_quiet_period() {
+            // Each gap is two thirds of the quiet period, and the last events
+            // arrive after a quiet period counted from the first one would have
+            // expired: a timer that is not reset by each read returns too early.
+            let gap = WAIT.quiet * 2 / 3;
             let (port, server) = serve(vec![
                 (Duration::ZERO, format!("{OPEN_HEADERS}{}", event(1))),
-                (WAIT.quiet / 3, event(2)),
-                (WAIT.quiet / 3, event(3)),
+                (gap, event(2)),
+                (gap, event(3)),
+                (gap, event(4)),
             ]);
             let (events, _) = read(port, WAIT, 1 << 20);
-            assert_eq!(sequences(&events.expect("events")), [1, 2, 3]);
+            assert_eq!(sequences(&events.expect("events")), [1, 2, 3, 4]);
             server.join().expect("server");
+        }
+
+        #[test]
+        fn silent_or_trickling_headers_return_no_events_at_the_bound() {
+            let wait = EventWait {
+                quiet: Duration::from_millis(50),
+                bound: Duration::from_millis(400),
+            };
+            let (port, silent) = serve(Vec::new());
+            let (events, elapsed) = read(port, wait, 1 << 20);
+            assert_eq!(events.expect("silent headers"), serde_json::json!([]));
+            assert!(
+                elapsed >= wait.bound && elapsed < wait.bound * 3,
+                "returned after {elapsed:?}"
+            );
+            silent.join().expect("server");
+
+            // Header fragments that keep arriving do not extend the wait.
+            let mut writes = vec![(Duration::ZERO, "HTTP/1.1 200 OK\r\n".to_string())];
+            writes.extend((0..40).map(|index| {
+                (
+                    Duration::from_millis(50),
+                    format!("X-Fragment-{index}: 1\r\n"),
+                )
+            }));
+            let (port, trickling) = serve(writes);
+            let (events, elapsed) = read(port, wait, 1 << 20);
+            assert_eq!(events.expect("trickling headers"), serde_json::json!([]));
+            assert!(
+                elapsed >= wait.bound && elapsed < wait.bound * 3,
+                "returned after {elapsed:?}"
+            );
+            trickling.join().expect("server");
+        }
+
+        #[test]
+        fn a_connection_closed_before_complete_headers_is_malformed() {
+            for response in ["", "HTTP/1.1 200 OK\r\nContent-Type: text/event"] {
+                let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("listener");
+                let port = listener.local_addr().expect("address").port();
+                let server = thread::spawn(move || {
+                    let (mut stream, _) = listener.accept().expect("accept");
+                    let mut request = [0_u8; 4096];
+                    let _ = stream.read(&mut request).expect("request");
+                    stream.write_all(response.as_bytes()).expect("response");
+                });
+                let (events, elapsed) = read(port, WAIT, 1 << 20);
+                assert_eq!(
+                    events.expect_err("premature close"),
+                    "Capture Runtime response was malformed."
+                );
+                assert!(elapsed < WAIT.bound, "returned after {elapsed:?}");
+                server.join().expect("server");
+            }
         }
 
         #[test]
