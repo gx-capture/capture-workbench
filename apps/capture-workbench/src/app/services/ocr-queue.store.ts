@@ -226,7 +226,7 @@ export class OcrQueueStore {
       if (!isOcrMediaType(document.mediaType)) continue;
       if (document.status !== 'queued' || document.captureId) continue;
       if (this.pendingStart.has(document.documentId)) continue;
-      if (this.capture.hasActiveCapture(document.documentId)) continue;
+      if (this.capture.isDocumentClaimed(document.documentId)) continue;
       this.pendingStart.add(document.documentId);
       this.capture.startDocument$(document.documentId, this.host)
         .pipe(takeUntilDestroyed(this.destroyRef))
@@ -242,7 +242,7 @@ export class OcrQueueStore {
       if (!isOcrMediaType(document.mediaType) || !document.captureId) continue;
       if (document.status !== 'processing' && document.status !== 'persisting') continue;
       if (this.reattached.has(document.documentId)) continue;
-      if (this.capture.hasActiveCapture(document.documentId)) continue;
+      if (this.capture.isDocumentClaimed(document.documentId)) continue;
       this.reattached.add(document.documentId);
       this.capture.reattach$(document, this.host)
         .pipe(takeUntilDestroyed(this.destroyRef))

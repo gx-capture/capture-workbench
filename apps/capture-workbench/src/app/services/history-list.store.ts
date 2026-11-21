@@ -29,7 +29,7 @@ export class HistoryListStore {
     document,
     this.capture.busyIds().has(document.documentId),
     this.capture.oneShotOperations().get(document.documentId) ?? this.capture.recordingOperations().get(document.documentId),
-    this.capture.hasActiveCapture(document.documentId),
+    this.capture.isDocumentClaimed(document.documentId),
   )));
   readonly rows = computed(() => filterHistoryRows(this.allRows(), {
     type: this.typeFilter(), status: this.statusFilter(), search: this.search(),

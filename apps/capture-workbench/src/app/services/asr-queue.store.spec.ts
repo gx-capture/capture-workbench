@@ -170,7 +170,7 @@ describe('AsrQueueStore', () => {
       busyIds,
       recordingOperations,
       streamingPartials,
-      hasActiveCapture: vi.fn((id: string) => busyIds().has(id)),
+      isDocumentClaimed: vi.fn((id: string) => busyIds().has(id)),
       startDocument$: vi.fn(() => startDocSubject),
       reattach$: vi.fn((): Observable<void> => of(undefined)),
       retry$: vi.fn(() => of(undefined)),
@@ -812,7 +812,7 @@ describe('AsrQueueStore', () => {
       TestBed.tick();
       // One read: the recovery's. The waiting recording is not even considered.
       expect(reads).toHaveLength(1);
-      expect(service.hasActiveCapture(interrupted.documentId)).toBe(true);
+      expect(service.isDocumentClaimed(interrupted.documentId)).toBe(true);
 
       answer(reads[0], [interrupted, waiting]);
       TestBed.tick();

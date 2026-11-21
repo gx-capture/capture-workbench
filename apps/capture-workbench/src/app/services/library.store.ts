@@ -86,7 +86,7 @@ export class LibraryStore {
     const document = (this.allDocuments() ?? []).find((item) => item.documentId === documentId);
     return document !== undefined && !document.captureId
       && !this.capture.busyIds().has(documentId)
-      && !this.capture.hasActiveCapture(documentId);
+      && !this.capture.isDocumentClaimed(documentId);
   }
 
   delete(documentId: string): Observable<void> {

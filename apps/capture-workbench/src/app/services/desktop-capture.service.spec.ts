@@ -1473,7 +1473,7 @@ describe('DesktopCaptureService', () => {
     expect(createCapture).toHaveBeenCalledTimes(1);
     // The second document waits for its turn: nothing else may start it.
     const lifecycle = store.service;
-    expect(lifecycle.hasActiveCapture('2'.repeat(32))).toBe(true);
+    expect(lifecycle.isDocumentClaimed('2'.repeat(32))).toBe(true);
     pending.complete();
   });
 
@@ -1498,8 +1498,8 @@ describe('DesktopCaptureService', () => {
     expect(createCapture).toHaveBeenNthCalledWith(2, '2'.repeat(32), expect.any(String), undefined);
     secondCapture.complete();
     TestBed.tick();
-    expect(lifecycle.hasActiveCapture('1'.repeat(32))).toBe(false);
-    expect(lifecycle.hasActiveCapture('2'.repeat(32))).toBe(false);
+    expect(lifecycle.isDocumentClaimed('1'.repeat(32))).toBe(false);
+    expect(lifecycle.isDocumentClaimed('2'.repeat(32))).toBe(false);
   });
 
   it('does not reattach a finished recording from a document list read before it finished', async () => {
@@ -1722,7 +1722,7 @@ describe('DesktopCaptureService', () => {
       'while %s, %s does nothing',
       (claim, entry) => {
         const { store, documentId, calls } = claimedDocument(claim);
-        expect(store.service.hasActiveCapture(documentId)).toBe(true);
+        expect(store.service.isDocumentClaimed(documentId)).toBe(true);
         const before = calls();
         // What an outdated row could ask for: it still shows a running capture.
         const row = { ...summary, documentId, status: 'processing', captureId: 'capture-1' } satisfies DesktopLibrarySummary;
@@ -1734,7 +1734,7 @@ describe('DesktopCaptureService', () => {
         TestBed.tick();
 
         expect(calls()).toEqual(before);
-        expect(store.service.hasActiveCapture(documentId)).toBe(true);
+        expect(store.service.isDocumentClaimed(documentId)).toBe(true);
       },
     );
 
@@ -1743,13 +1743,13 @@ describe('DesktopCaptureService', () => {
       const list = vi.fn((): Observable<readonly DesktopLibrarySummary[]> => of([summary]));
       const store = initializeCapture(libraryStub({ list }), runtimeStub());
       list.mockImplementation(() => listed);
-      expect(store.service.hasActiveCapture(summary.documentId)).toBe(false);
+      expect(store.service.isDocumentClaimed(summary.documentId)).toBe(false);
 
       store.service.startDocument$(summary.documentId, store.host).subscribe();
-      expect(store.service.hasActiveCapture(summary.documentId)).toBe(true);
+      expect(store.service.isDocumentClaimed(summary.documentId)).toBe(true);
 
       listed.next([{ ...summary, status: 'completed' }]);
-      expect(store.service.hasActiveCapture(summary.documentId)).toBe(false);
+      expect(store.service.isDocumentClaimed(summary.documentId)).toBe(false);
     });
 
     it('is free again when the read of its stored state fails', () => {
@@ -1762,7 +1762,7 @@ describe('DesktopCaptureService', () => {
         .subscribe({ error: failed });
 
       expect(failed).toHaveBeenCalledExactlyOnceWith('Capture library index cannot be read.');
-      expect(store.service.hasActiveCapture(summary.documentId)).toBe(false);
+      expect(store.service.isDocumentClaimed(summary.documentId)).toBe(false);
     });
 
     it('ignores a cancel when nothing is claimed', () => {
@@ -1817,7 +1817,7 @@ describe('DesktopCaptureService', () => {
         expect(updates[updates.length - 1]).toEqual({
           documentId: summary.documentId, status: 'canceled', stage: 'cancelled', clearCaptureId: true,
         });
-        expect(store.service.hasActiveCapture(summary.documentId)).toBe(false);
+        expect(store.service.isDocumentClaimed(summary.documentId)).toBe(false);
       },
     );
 
@@ -1861,7 +1861,7 @@ describe('DesktopCaptureService', () => {
 
       expect(cancelCapture).not.toHaveBeenCalled();
       expect(updateCapture).toHaveBeenCalledTimes(writesBefore);
-      expect(store.service.hasActiveCapture(documentId)).toBe(true);
+      expect(store.service.isDocumentClaimed(documentId)).toBe(true);
     });
   });
 
@@ -1942,7 +1942,7 @@ describe('DesktopCaptureService', () => {
 
     listed.next([summary]);
     expect(createCapture).toHaveBeenCalledTimes(1);
-    expect(store.service.hasActiveCapture(summary.documentId)).toBe(true);
+    expect(store.service.isDocumentClaimed(summary.documentId)).toBe(true);
     created.complete();
   });
 });

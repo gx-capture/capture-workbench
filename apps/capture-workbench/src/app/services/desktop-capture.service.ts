@@ -129,7 +129,7 @@ export class DesktopCaptureService {
    * state. Nothing else may start, recover, restart or delete it meanwhile,
    * and a recording queue counts it as occupying its turn.
    */
-  hasActiveCapture(documentId: string): boolean {
+  isDocumentClaimed(documentId: string): boolean {
     return this.activeCaptures.has(documentId)
       || this.awaitingTurn.has(documentId)
       || this.decisions.has(documentId);
@@ -238,7 +238,7 @@ export class DesktopCaptureService {
    * decided from that list.
    *
    * The decision claims the document from the subscription on, as a running
-   * capture does (`hasActiveCapture`): one decision or capture runs per
+   * capture does (`isDocumentClaimed`): one decision or capture runs per
    * document at a time, and a claimed document accepts no other entry. Every
    * write of a capture is acknowledged before its claim ends, so this read is
    * never older than those writes. A cancel that arrives meanwhile is kept in
@@ -249,7 +249,7 @@ export class DesktopCaptureService {
     act: (stored: DesktopLibrarySummary | undefined, decision: PendingDecision) => Observable<void>,
   ): Observable<void> {
     return defer(() => {
-      if (!this.runtime.ready() || this.hasActiveCapture(documentId)) return EMPTY;
+      if (!this.runtime.ready() || this.isDocumentClaimed(documentId)) return EMPTY;
       const decision: PendingDecision = { cancelRequested: false };
       this.decisions.set(documentId, decision);
       return this.library.list().pipe(

@@ -1934,5 +1934,11 @@
     "match": "word",
     "replacement": "deleted",
     "allowed": []
+  },
+  {
+    "name": "hasActiveCapture",
+    "match": "word",
+    "replacement": "isDocumentClaimed",
+    "allowed": []
   }
 ]

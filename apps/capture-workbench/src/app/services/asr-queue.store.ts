@@ -296,7 +296,7 @@ export class AsrQueueStore {
   cancel(documentId: string): void {
     if (this.pendingCancellationIds.has(documentId)) return;
     const target = this.documents().find((item) => item.documentId === documentId);
-    if (target?.status === 'queued' && !this.capture.hasActiveCapture(documentId)) {
+    if (target?.status === 'queued' && !this.capture.isDocumentClaimed(documentId)) {
       this.pendingCancellationIds.add(documentId);
       this.library
         .updateCapture({
@@ -373,7 +373,7 @@ export class AsrQueueStore {
           || document.status === 'persisting'
           || document.status === 'recovery_required')
         && document.captureId
-        && !this.capture.hasActiveCapture(document.documentId)
+        && !this.capture.isDocumentClaimed(document.documentId)
         && !this.capture.busyIds().has(document.documentId)
         && !this.attemptedReattachments.has(document.captureId)
       ) {
@@ -404,7 +404,7 @@ export class AsrQueueStore {
     const running = recordings.some(
       (document) =>
         busyIds.has(document.documentId)
-        || this.capture.hasActiveCapture(document.documentId)
+        || this.capture.isDocumentClaimed(document.documentId)
         || this.startingIds.has(document.documentId)
         || ((document.status === 'processing' || document.status === 'persisting')
           && Boolean(document.captureId)),

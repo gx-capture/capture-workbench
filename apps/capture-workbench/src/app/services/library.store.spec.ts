@@ -40,7 +40,7 @@ describe('LibraryStore', () => {
           useValue: {
             busyIds: signal(new Set([busy.documentId])),
             // A capture runs, a batch scheduled one, or a decision reads the stored document.
-            hasActiveCapture: (documentId: string) => documentId === claimed.documentId,
+            isDocumentClaimed: (documentId: string) => documentId === claimed.documentId,
           },
         },
       ],

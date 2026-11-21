@@ -24,7 +24,7 @@ describe('HistoryListStore', () => {
     TestBed.configureTestingModule({ providers: [
       { provide: DesktopRuntimeClientService, useValue: { started: signal(true) } },
       { provide: DesktopLibraryService, useValue: library },
-      { provide: DesktopCaptureService, useValue: { busyIds, oneShotOperations: signal(new Map()), recordingOperations: signal(new Map()), hasActiveCapture: (id: string) => activeIds().has(id) } },
+      { provide: DesktopCaptureService, useValue: { busyIds, oneShotOperations: signal(new Map()), recordingOperations: signal(new Map()), isDocumentClaimed: (id: string) => activeIds().has(id) } },
       { provide: Router, useValue: router },
     ] });
     const store = TestBed.inject(HistoryListStore);
