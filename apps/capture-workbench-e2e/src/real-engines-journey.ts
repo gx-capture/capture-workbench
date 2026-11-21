@@ -20,7 +20,14 @@ import {
   requireMatchingProgressiveSpeech,
   requirePrivateDirectory,
 } from './real-engines-inputs.ts';
-import { liveCheckpointProblem, type LiveCaptureState } from './real-engines-checkpoint.ts';
+import {
+  liveCheckpointProblem,
+  persistedCaptureState,
+  shownPastCheckpointProblem,
+  sinceCaptureStart,
+  type LiveCaptureState,
+} from './real-engines-checkpoint.ts';
+import { MODEL_INSTALL_TIMEOUT_MS } from './real-engines-stage-limits.ts';
 
 const workspaceRoot = resolve(import.meta.dirname, '..', '..', '..');
 const upstreamUrl = 'http://localhost:4200';
@@ -50,9 +57,6 @@ const ASR_STAGE_TIMEOUT_MS = 35 * 60_000; // measured by the first real run
 // Allow the same fixed completion overhead as the OCR stage for model startup,
 // structuring and rendering, in addition to the duration-based extraction budget.
 const PROGRESSIVE_COMPLETION_ALLOWANCE_MS = 10 * 60_000;
-// The structuring model's installation took 21.7 minutes on fresh app data,
-// 87 % of the former 25-minute limit.
-const MODEL_INSTALL_TIMEOUT_MS = 40 * 60_000;
 const EDIT_EXPORT_STAGE_TIMEOUT_MS = 3 * 60_000; // measured by the first real run
 const DELETE_STAGE_TIMEOUT_MS = 2 * 60_000;
 const RESTART_STAGE_TIMEOUT_MS = 5 * 60_000; // measured by the first real run
@@ -819,9 +823,22 @@ async function checkProgressiveRecording(
     timeoutMs: media.finalBudgetMs,
     whileRunning: async (id, row) => {
       const visibleCard = page.locator(`[data-testid="asr-live-card"][data-document-id="${id}"]`);
-      // Timings only (no text): how soon the live card shows a partial after
-      // the recording was queued, and when it shows the checkpoint revision.
-      const queuedAt = Date.now();
+      // The runtime's current state of this recording's capture, or the
+      // persisted document's state once the runtime no longer knows it.
+      const readCapture = async (): Promise<LiveCaptureState> => {
+        const detail = await invokeHost<DesktopLibraryDetailRecord>(page, 'library_get', {
+          request: { documentId: id },
+        });
+        if (!detail.captureId) return persistedCaptureState(detail);
+        return invokeHost<LiveCaptureState>(page, 'runtime_get_capture', { input: { id: detail.captureId } })
+          .catch(() => persistedCaptureState(detail));
+      };
+      // Timings only (no text), from the runtime's capture start: when the live
+      // card first shows a partial, and when it shows the checkpoint revision.
+      const logShown = async (shownAt: number, event: string): Promise<void> => {
+        const elapsed = sinceCaptureStart(await readCapture(), shownAt);
+        logStage('03-progressive-partial', `${event} ${elapsed === undefined ? 'at an unknown time' : `${elapsed}ms`} after the capture started`);
+      };
       let firstShown = false;
       await expect.poll(async () => {
         const rowStatus = await row.getAttribute('data-user-status', { timeout: ACTION_TIMEOUT_MS });
@@ -845,18 +862,20 @@ async function checkProgressiveRecording(
               (line) => line.textContent ?? ''),
           };
         });
+        const shownAt = Date.now();
         if (visible && !firstShown) {
           firstShown = true;
-          logStage('03-progressive-partial', `first live partial shown after ${Date.now() - queuedAt}ms `
-            + `(revision ${visible.revision}, covered ${visible.coverage}ms)`);
+          await logShown(shownAt, `first live partial (revision ${visible.revision}, covered ${visible.coverage}ms) shown`);
         }
         if (visible && visible.revision > expected.partialRevision) {
-          throw new Error(`Missed the live checkpoint revision between UI polls (shown ${visible.revision}).`);
+          throw new Error(shownPastCheckpointProblem({
+            expectedRevision: expected.partialRevision, shownRevision: visible.revision, capture: await readCapture(),
+          }));
         }
         if (!visible || visible.revision < expected.partialRevision) {
           return false;
         }
-        logStage('03-progressive-partial', `checkpoint revision shown after ${Date.now() - queuedAt}ms`);
+        await logShown(shownAt, 'checkpoint revision shown');
         assert.equal(rowStatus, 'processing');
         assert.equal(visible.coverage, expected.coveredUntilMs, 'Displayed partial coverage differs from the oracle.');
 

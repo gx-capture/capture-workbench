@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { liveCheckpointProblem } from './real-engines-checkpoint.ts';
+import {
+  liveCheckpointProblem,
+  persistedCaptureState,
+  shownPastCheckpointProblem,
+  sinceCaptureStart,
+} from './real-engines-checkpoint.ts';
 
 const captureId = 'synthetic-capture';
 const atCheckpoint = { captureId, revision: 3 };
@@ -46,4 +51,34 @@ test('the capture id is checked separately from the revision', () => {
 
 test('a missing partial while extracting is not a missed revision', () => {
   assert.equal(read(undefined, { status: 'extracting' }), 'Host partial is unavailable while extraction is active.');
+});
+
+test('a card past the checkpoint reports a capture that failed or was cancelled meanwhile, not a missed revision', () => {
+  // The row said processing when it was read; the capture state read afterwards decides.
+  const failed = shownPastCheckpointProblem({
+    expectedRevision: 3, shownRevision: 5, capture: { status: 'failed', error: { code: 'synthetic_failure' } },
+  });
+  assert.match(failed, /extraction failed .*code=synthetic_failure/u);
+  assert.doesNotMatch(failed, /Missed/u);
+  const cancelled = shownPastCheckpointProblem({
+    expectedRevision: 3, shownRevision: 4, capture: persistedCaptureState({ status: 'canceled', errorCode: 'synthetic_cancel' }),
+  });
+  assert.match(cancelled, /stopped \(cancelled\).*code=synthetic_cancel/u);
+  for (const status of ['extracting', 'awaiting_structuring']) {
+    assert.match(shownPastCheckpointProblem({ expectedRevision: 3, shownRevision: 4, capture: { status } }),
+      new RegExp(`Missed the live checkpoint revision between UI polls: the card shows revision 4, expected 3; the capture is ${status}`, 'u'));
+  }
+});
+
+test('the persisted state uses the runtime terms and keeps the error code', () => {
+  assert.deepEqual(persistedCaptureState({ status: 'canceled' }), { status: 'cancelled', error: null });
+  assert.deepEqual(persistedCaptureState({ status: 'failed', errorCode: 'synthetic_failure' }),
+    { status: 'failed', error: { code: 'synthetic_failure' } });
+});
+
+test('timings count from the runtime capture start', () => {
+  const createdAt = '2030-01-01T00:00:00.000Z';
+  assert.equal(sinceCaptureStart({ status: 'extracting', createdAt }, Date.parse(createdAt) + 24_000), 24_000);
+  assert.equal(sinceCaptureStart({ status: 'extracting' }, 1), undefined);
+  assert.equal(sinceCaptureStart({ status: 'extracting', createdAt: 'not a time' }, 1), undefined);
 });
