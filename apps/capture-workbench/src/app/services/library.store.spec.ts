@@ -5,6 +5,7 @@ import { provideRouter } from '@angular/router';
 import { of, Subject, type Observable } from 'rxjs';
 import { App } from '../app';
 import type { DesktopLibraryDetail, DesktopLibrarySummary } from '../contracts';
+import { DesktopCaptureService } from './desktop-capture.service';
 import { DesktopLibraryService, type DesktopSourceSelection, type DesktopSourceSelectionBatch } from './desktop-library.service';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
 import { LibraryStore } from './library.store';
@@ -22,6 +23,38 @@ const summary: DesktopLibrarySummary = {
 };
 
 describe('LibraryStore', () => {
+  it('offers deletion only for a document that is neither claimed nor linked to a runtime capture', () => {
+    const free = { ...summary, documentId: '1'.repeat(32), status: 'completed' } satisfies DesktopLibrarySummary;
+    const claimed = { ...summary, documentId: '2'.repeat(32) } satisfies DesktopLibrarySummary;
+    const linked = {
+      ...summary, documentId: '3'.repeat(32), status: 'recovery_required', captureId: 'capture-1',
+      recoveryCode: 'runtime_cleanup_failed',
+    } satisfies DesktopLibrarySummary;
+    const busy = { ...summary, documentId: '4'.repeat(32), status: 'processing' } satisfies DesktopLibrarySummary;
+    TestBed.configureTestingModule({
+      providers: [
+        { provide: DesktopLibraryService, useValue: { list: () => of([free, claimed, linked, busy]) } },
+        { provide: DesktopRuntimeClientService, useValue: { started: signal(true) } },
+        {
+          provide: DesktopCaptureService,
+          useValue: {
+            busyIds: signal(new Set([busy.documentId])),
+            // A capture runs, a batch scheduled one, or a decision reads the stored document.
+            hasActiveCapture: (documentId: string) => documentId === claimed.documentId,
+          },
+        },
+      ],
+    });
+    const store = TestBed.inject(LibraryStore);
+    TestBed.tick();
+
+    expect(store.canDelete(free.documentId)).toBe(true);
+    expect(store.canDelete(claimed.documentId)).toBe(false);
+    expect(store.canDelete(linked.documentId)).toBe(false);
+    expect(store.canDelete(busy.documentId)).toBe(false);
+    expect(store.canDelete('5'.repeat(32))).toBe(false);
+  });
+
   it('refreshes the selected document after processing and runtime ID updates', () => {
     const pendingCapture = new Subject<CaptureOperation>();
     const list = vi.fn(() => of<readonly DesktopLibrarySummary[]>([summary]));

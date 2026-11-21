@@ -1,7 +1,7 @@
 import type { DesktopLibraryStatus, DesktopLibrarySummary } from '../contracts';
 import { setDesktopLocale } from '../i18n/desktop-messages';
 import { describeAsrDocument } from './asr-queue';
-import { canCaptureAgain, committedTerminalStatus } from './capture-operation-status';
+import { canCaptureAgain, committedTerminalStatus, isCaptureLost } from './capture-operation-status';
 import { describeOcrDocument } from './ocr-queue';
 
 const STATUSES: readonly DesktopLibraryStatus[] = [
@@ -91,6 +91,36 @@ describe('canCaptureAgain', () => {
         });
         return canCaptureAgain(document) !== offersRetryOrRestart(row.userStatus);
       });
+    expect(disagreements).toEqual([]);
+  });
+});
+
+describe('isCaptureLost', () => {
+  beforeEach(() => setDesktopLocale('zh-TW'));
+
+  // Every stored state, with and without a runtime capture.
+  const states = STATUSES.flatMap((status) => [undefined, 'capture_recovery_required', 'runtime_cleanup_failed', 'cancel_failed']
+    .flatMap((recoveryCode) => [undefined, 'capture-1'].map((captureId) => ({ status, recoveryCode, captureId }))));
+
+  it('holds exactly where the text recognition queue offers a restart', () => {
+    const disagreements = states.filter((state) => {
+      const document = stored(state);
+      const row = describeOcrDocument({
+        document, busy: false, ocrReady: true, installPercent: null,
+      });
+      return isCaptureLost(document) !== (row.userStatus === 'needs-attention' && row.interrupted);
+    });
+    expect(disagreements).toEqual([]);
+  });
+
+  it('holds exactly where the recording queue offers a restart', () => {
+    const disagreements = states.filter((state) => {
+      const document = stored({ ...state, fileName: 'meeting.m4a', mediaType: 'audio/mp4' });
+      const row = describeAsrDocument({
+        document, busy: false, speechReady: true, installPercent: null,
+      });
+      return isCaptureLost(document) !== (row.userStatus === 'needs-attention' && row.interrupted);
+    });
     expect(disagreements).toEqual([]);
   });
 });

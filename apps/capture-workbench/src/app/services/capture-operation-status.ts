@@ -77,6 +77,19 @@ export function terminalStage(status: TerminalLibraryStatus): string {
 }
 
 /**
+ * Whether the stored document says its capture was lost: it was interrupted
+ * without a runtime capture, or its runtime capture could not be found again.
+ * These are the states in which a queue row offers a restart.
+ */
+export function isCaptureLost(document: DesktopLibrarySummary): boolean {
+  if (document.status === 'processing' || document.status === 'persisting') {
+    return !document.captureId;
+  }
+  return (document.status === 'failed' || document.status === 'recovery_required')
+    && document.recoveryCode === 'capture_recovery_required';
+}
+
+/**
  * Whether a document without a runtime capture can be captured again when the
  * user asks: the states in which a queue row offers retry or restart. A
  * waiting document starts by itself, and a document that holds its result is

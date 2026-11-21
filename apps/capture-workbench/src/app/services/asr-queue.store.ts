@@ -152,9 +152,10 @@ export class AsrQueueStore {
         return false;
       }
       const op = ops.get(document.documentId);
+      // Busy means a capture runs. A document that is only claimed while its
+      // stored state is read has no capture yet, and gets no live card.
       return (
         busyIds.has(document.documentId)
-        || this.capture.hasActiveCapture(document.documentId)
         || (op !== undefined && isActiveStreaming(op))
         || (document.captureId !== undefined
           && partials.get(document.documentId)?.captureId === document.captureId)
@@ -378,13 +379,19 @@ export class AsrQueueStore {
       ) {
         // Mark before subscribing: recovery can synchronously refresh the library.
         // A failed capture requires an explicit retry/restart, even after busy clears.
-        this.attemptedReattachments.add(document.captureId);
+        const captureId = document.captureId;
+        this.attemptedReattachments.add(captureId);
         this.capture
           .reattach$(document, this.host)
           .pipe(takeUntilDestroyed(this.destroyRef))
           .subscribe({
-            error: (error: unknown) =>
-              this.runtimeStatus.message.set(errorMessage(error)),
+            // A capture's own failures are stored with the document. An error
+            // here means the stored document could not be read, so nothing was
+            // attempted: the next look at the list may try again.
+            error: (error: unknown) => {
+              this.attemptedReattachments.delete(captureId);
+              this.runtimeStatus.message.set(errorMessage(error));
+            },
           });
       }
     }

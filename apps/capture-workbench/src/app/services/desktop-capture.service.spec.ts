@@ -1673,6 +1673,255 @@ describe('DesktopCaptureService', () => {
     ]);
   });
 
+  describe('a claimed document', () => {
+    const CLAIMS = [
+      'its stored state is being read',
+      'a capture runs for it',
+      'its terminal writes are in flight',
+      'a batch has scheduled it',
+    ] as const;
+    const ENTRIES = ['startDocument$', 'reattach$', 'retry$', 'restartLost$'] as const;
+
+    /** A document in the given claim, with every library and runtime call counted. */
+    function claimedDocument(claim: (typeof CLAIMS)[number]) {
+      const pending = new Subject<never>();
+      const batch = claim === 'a batch has scheduled it';
+      const documentId = batch ? '2'.repeat(32) : summary.documentId;
+      const list = vi.fn((): Observable<readonly DesktopLibrarySummary[]> => of([summary]));
+      const updateCapture = vi.fn((): Observable<DesktopLibrarySummary> => of(summary));
+      const importSelection = vi.fn((input: DesktopSourceSelection) => of({
+        ...summary, documentId: input.fileName === 'first.pdf' ? '1'.repeat(32) : '2'.repeat(32),
+      }));
+      const createCapture = vi.fn((): Observable<CaptureOperation> =>
+        claim === 'its terminal writes are in flight' ? of(cancelledOperation) : pending);
+      const getCapture = vi.fn(() => of(runningOperation));
+      const cancelCapture = vi.fn(() => of(cancelledOperation));
+      // The result is kept; the runtime cleanup that follows does not answer.
+      const deleteCapture = vi.fn((): Observable<undefined> => pending);
+      const store = initializeCapture(
+        libraryStub({ list, updateCapture, importSelection }),
+        runtimeStub({ createCapture, getCapture, cancelCapture, deleteCapture }),
+      );
+      if (claim === 'its stored state is being read') list.mockImplementation(() => pending);
+      if (batch) {
+        store.service.addSelections$([selection('first.pdf'), selection('second.pdf')], store.host).subscribe();
+      } else {
+        store.service.startDocument$(documentId, store.host).subscribe();
+      }
+      TestBed.tick();
+      const calls = () => [list, updateCapture, createCapture, getCapture, cancelCapture, deleteCapture]
+        .map((call) => call.mock.calls.length);
+      return { store, documentId, calls, updateCapture, cancelCapture, deleteCapture };
+    }
+
+    it.each(CLAIMS.flatMap((claim) => ENTRIES.map((entry) => [claim, entry] as const)))(
+      'while %s, %s does nothing',
+      (claim, entry) => {
+        const { store, documentId, calls } = claimedDocument(claim);
+        expect(store.service.hasActiveCapture(documentId)).toBe(true);
+        const before = calls();
+        // What an outdated row could ask for: it still shows a running capture.
+        const row = { ...summary, documentId, status: 'processing', captureId: 'capture-1' } satisfies DesktopLibrarySummary;
+
+        (entry === 'reattach$'
+          ? store.service.reattach$(row, store.host)
+          : store.service[entry](documentId, store.host)
+        ).subscribe();
+        TestBed.tick();
+
+        expect(calls()).toEqual(before);
+        expect(store.service.hasActiveCapture(documentId)).toBe(true);
+      },
+    );
+
+    it('is claimed from the call on, and free again when the request is declined', () => {
+      const listed = new Subject<readonly DesktopLibrarySummary[]>();
+      const list = vi.fn((): Observable<readonly DesktopLibrarySummary[]> => of([summary]));
+      const store = initializeCapture(libraryStub({ list }), runtimeStub());
+      list.mockImplementation(() => listed);
+      expect(store.service.hasActiveCapture(summary.documentId)).toBe(false);
+
+      store.service.startDocument$(summary.documentId, store.host).subscribe();
+      expect(store.service.hasActiveCapture(summary.documentId)).toBe(true);
+
+      listed.next([{ ...summary, status: 'completed' }]);
+      expect(store.service.hasActiveCapture(summary.documentId)).toBe(false);
+    });
+
+    it('is free again when the read of its stored state fails', () => {
+      const list = vi.fn((): Observable<readonly DesktopLibrarySummary[]> => of([summary]));
+      const store = initializeCapture(libraryStub({ list }), runtimeStub());
+      list.mockImplementation(() => throwError(() => 'Capture library index cannot be read.'));
+      const failed = vi.fn();
+
+      store.service.reattach$({ ...summary, status: 'processing', captureId: 'capture-1' }, store.host)
+        .subscribe({ error: failed });
+
+      expect(failed).toHaveBeenCalledExactlyOnceWith('Capture library index cannot be read.');
+      expect(store.service.hasActiveCapture(summary.documentId)).toBe(false);
+    });
+
+    it('ignores a cancel when nothing is claimed', () => {
+      const cancelCapture = vi.fn(() => of(cancelledOperation));
+      const cancelUpload = vi.fn(() => of(undefined));
+      const updateCapture = vi.fn(() => of(summary));
+      const store = initializeCapture(
+        libraryStub({ updateCapture }),
+        runtimeStub({ cancelCapture, cancelUpload }),
+      );
+
+      store.service.cancel(summary.documentId);
+      TestBed.tick();
+
+      expect(cancelCapture).not.toHaveBeenCalled();
+      expect(cancelUpload).not.toHaveBeenCalled();
+      expect(updateCapture).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['the start of a waiting document', 'startDocument$', { ...summary }, ['canceled']],
+      ['the retry of a failed document', 'retry$', { ...summary, status: 'failed' }, ['canceled']],
+      ['the restart of a document whose capture was lost', 'restartLost$', {
+        ...summary, status: 'recovery_required', captureId: 'capture-lost', recoveryCode: 'capture_recovery_required',
+      }, ['queued', 'canceled']],
+    ] satisfies [string, 'startDocument$' | 'retry$' | 'restartLost$', DesktopLibrarySummary, string[]][])(
+      'lets a cancel win while %s is being decided',
+      (_decision, entry, storedDocument, writtenStatuses) => {
+        const listed = new Subject<readonly DesktopLibrarySummary[]>();
+        const list = vi.fn((): Observable<readonly DesktopLibrarySummary[]> => of([storedDocument]));
+        const updateCapture = vi.fn((update: Record<string, unknown>) =>
+          of(applyDurableCaptureUpdate(storedDocument, update)));
+        const createCapture = vi.fn(() => of(completedOperation));
+        const getCapture = vi.fn(() => of(runningOperation));
+        const store = initializeCapture(
+          libraryStub({ list, updateCapture }),
+          runtimeStub({ createCapture, getCapture }),
+        );
+        list.mockImplementation(() => listed);
+
+        store.service[entry](summary.documentId, store.host).subscribe();
+        store.service.cancel(summary.documentId);
+        // The read was sent before the cancel.
+        listed.next([storedDocument]);
+        listed.complete();
+        TestBed.tick();
+
+        expect(createCapture).not.toHaveBeenCalled();
+        expect(getCapture).not.toHaveBeenCalled();
+        const updates = captureUpdates(updateCapture);
+        expect(updates.map((update) => update['status'])).toEqual(writtenStatuses);
+        expect(updates[updates.length - 1]).toEqual({
+          documentId: summary.documentId, status: 'canceled', stage: 'cancelled', clearCaptureId: true,
+        });
+        expect(store.service.hasActiveCapture(summary.documentId)).toBe(false);
+      },
+    );
+
+    it('cancels through the runtime a capture whose recovery was being decided', () => {
+      const running = { ...summary, status: 'processing', captureId: 'capture-1' } satisfies DesktopLibrarySummary;
+      const listed = new Subject<readonly DesktopLibrarySummary[]>();
+      const list = vi.fn((): Observable<readonly DesktopLibrarySummary[]> => of([running]));
+      const updateCapture = vi.fn((update: Record<string, unknown>) =>
+        of(applyDurableCaptureUpdate(running, update)));
+      const createCapture = vi.fn(() => of(completedOperation));
+      const getCapture = vi.fn(() => of(runningOperation));
+      const cancelCapture = vi.fn(() => of(cancelledOperation));
+      const store = initializeCapture(
+        libraryStub({ list, updateCapture }),
+        runtimeStub({ createCapture, getCapture, cancelCapture }),
+      );
+      list.mockImplementation(() => listed);
+
+      store.service.reattach$(running, store.host).subscribe();
+      store.service.cancel(summary.documentId);
+      listed.next([running]);
+      listed.complete();
+      TestBed.tick();
+
+      expect(createCapture).not.toHaveBeenCalled();
+      expect(cancelCapture).toHaveBeenCalledExactlyOnceWith('capture-1');
+      const updates = captureUpdates(updateCapture);
+      expect(updates[updates.length - 1]).toEqual(
+        expect.objectContaining({ status: 'canceled', clearCaptureId: true }),
+      );
+    });
+
+    it('keeps the result when a cancel arrives while the terminal writes are in flight', () => {
+      const { store, documentId, updateCapture, cancelCapture, deleteCapture } =
+        claimedDocument('its terminal writes are in flight');
+      expect(deleteCapture).toHaveBeenCalledTimes(1);
+      const writesBefore = updateCapture.mock.calls.length;
+
+      store.service.cancel(documentId);
+      TestBed.tick();
+
+      expect(cancelCapture).not.toHaveBeenCalled();
+      expect(updateCapture).toHaveBeenCalledTimes(writesBefore);
+      expect(store.service.hasActiveCapture(documentId)).toBe(true);
+    });
+  });
+
+  describe('restart', () => {
+    const restartOf = (storedDocuments: DesktopLibrarySummary[]) => {
+      const updateCapture = vi.fn((update: Record<string, unknown>) =>
+        of(applyDurableCaptureUpdate(storedDocuments[0] ?? summary, update)));
+      const created = new Subject<CaptureOperation>();
+      const createCapture = vi.fn(() => created);
+      const getCapture = vi.fn(() => of(runningOperation));
+      const deleteCapture = vi.fn(() => of(undefined));
+      const store = initializeCapture(
+        libraryStub({ list: vi.fn(() => of(storedDocuments)), updateCapture }),
+        runtimeStub({ createCapture, getCapture, deleteCapture }),
+      );
+      const refreshDocuments = vi.spyOn(store.host, 'refreshDocuments');
+      store.service.restartLost$(summary.documentId, store.host).subscribe();
+      TestBed.tick();
+      return { updateCapture, createCapture, getCapture, deleteCapture, refreshDocuments, created };
+    };
+
+    it.each([
+      ['was interrupted without a capture', { ...summary, status: 'processing' }],
+      ['lost its capture', {
+        ...summary, status: 'recovery_required', captureId: 'capture-lost', recoveryCode: 'capture_recovery_required',
+      }],
+    ] satisfies [string, DesktopLibrarySummary][])(
+      'clears the link and starts again for a stored document that %s',
+      (_state, storedDocument) => {
+        const { updateCapture, createCapture, getCapture, created } = restartOf([storedDocument]);
+
+        expect(captureUpdates(updateCapture)[0]).toEqual({
+          documentId: summary.documentId, status: 'queued', stage: 'uploading', clearCaptureId: true,
+        });
+        expect(createCapture).toHaveBeenCalledTimes(1);
+        expect(getCapture).not.toHaveBeenCalled();
+        created.complete();
+      },
+    );
+
+    it.each([
+      ['holds its result', [{ ...summary, status: 'completed' }]],
+      ['waits for its runtime cleanup', [{
+        ...summary, status: 'recovery_required', stage: 'completed', captureId: 'capture-1',
+        recoveryCode: 'runtime_cleanup_failed',
+      }]],
+      ['is linked to a capture that may still run', [{ ...summary, status: 'processing', captureId: 'capture-1' }]],
+      ['waits in the queue', [{ ...summary }]],
+      ['was deleted', []],
+    ] satisfies [string, DesktopLibrarySummary[]][])(
+      'leaves a stored document that %s as it is',
+      (_state, storedDocuments) => {
+        const { updateCapture, createCapture, getCapture, deleteCapture, refreshDocuments } =
+          restartOf(storedDocuments);
+
+        expect(updateCapture).not.toHaveBeenCalled();
+        expect(createCapture).not.toHaveBeenCalled();
+        expect(getCapture).not.toHaveBeenCalled();
+        expect(deleteCapture).not.toHaveBeenCalled();
+        expect(refreshDocuments).toHaveBeenCalled();
+      },
+    );
+  });
+
   it('decides once per document while its stored state is being read', () => {
     const listed = new Subject<readonly DesktopLibrarySummary[]>();
     const list = vi.fn((): Observable<readonly DesktopLibrarySummary[]> => of([summary]));

@@ -47,6 +47,7 @@ import {
 import {
   canCaptureAgain,
   committedTerminalStatus,
+  isCaptureLost,
   isActiveOneShotOperation,
   isActiveStreaming,
   isOcrCheckpoint,
@@ -81,6 +82,12 @@ interface ActiveCapture {
   readonly cancelWake: Subject<void>;
 }
 
+/** An action for a document that is being decided from its stored state. */
+interface PendingDecision {
+  /** A cancel arrived while the decision was pending. */
+  cancelRequested: boolean;
+}
+
 export interface DesktopCaptureHost {
   readonly selectedId: WritableSignal<string | null>;
   readonly requestedRequirements: WritableSignal<ReadonlySet<CaptureRequirementId>>;
@@ -109,15 +116,23 @@ export class DesktopCaptureService {
   private readonly activeCaptures = new Map<string, ActiveCapture>();
   /** Documents of a batch that are imported and wait for their turn. */
   private readonly awaitingTurn = new Set<string>();
-  /** Documents whose stored state is being read to decide an action. */
-  private readonly decidingIds = new Set<string>();
+  /**
+   * Documents for which an action is being decided from their stored state:
+   * from the call of the entry until the action it led to has ended, was
+   * declined or failed.
+   */
+  private readonly decisions = new Map<string, PendingDecision>();
 
   /**
-   * Reports whether a capture runs for the document or a batch has already
-   * scheduled one, so that nothing else starts it in the meantime.
+   * Reports whether the document is claimed: a capture runs for it, a batch
+   * has scheduled one, or an action for it is being decided from its stored
+   * state. Nothing else may start, recover, restart or delete it meanwhile,
+   * and a recording queue counts it as occupying its turn.
    */
   hasActiveCapture(documentId: string): boolean {
-    return this.activeCaptures.has(documentId) || this.awaitingTurn.has(documentId);
+    return this.activeCaptures.has(documentId)
+      || this.awaitingTurn.has(documentId)
+      || this.decisions.has(documentId);
   }
 
   /** Enqueues sources while preserving the existing sequential capture policy. */
@@ -155,9 +170,9 @@ export class DesktopCaptureService {
     documentId: string,
     host: DesktopCaptureHost,
   ): Observable<void> {
-    return this.decideFromStoredDocument$(documentId, (stored) =>
+    return this.decideFromStoredDocument$(documentId, (stored, decision) =>
       stored?.status === 'queued'
-        ? this.captureExisting$(documentId, host)
+        ? this.startUnlessCancelled$(documentId, host, decision)
         : this.declineOutdatedRequest$(host));
   }
 
@@ -171,29 +186,33 @@ export class DesktopCaptureService {
     document: DesktopLibrarySummary,
     host: DesktopCaptureHost,
   ): Observable<void> {
-    return this.decideFromStoredDocument$(document.documentId, (stored) =>
+    return this.decideFromStoredDocument$(document.documentId, (stored, decision) =>
       stored?.captureId
-        ? this.recoverCapture$(stored, host)
+        ? this.recoverCapture$(stored, host, decision)
         : this.declineOutdatedRequest$(host));
   }
 
   /**
-   * A restart lost the runtime operation. Clear the stale id and start again.
-   * Unlike `retry$`, this does not try to recover that id.
+   * Starts again a document whose runtime operation was lost: clears the stale
+   * id without trying to recover it, unlike `retry$`. The stored document
+   * decides: the link is cleared only while it still says the capture is lost.
    */
   restartLost$(
     documentId: string,
     host: DesktopCaptureHost,
   ): Observable<void> {
-    return this.library.updateCapture({
-      documentId,
-      status: 'queued',
-      stage: 'uploading',
-      clearCaptureId: true,
-    }).pipe(
-      tap(() => host.reloadDocumentState(documentId)),
-      switchMap(() => this.captureExisting$(documentId, host)),
-    );
+    return this.decideFromStoredDocument$(documentId, (stored, decision) =>
+      stored && isCaptureLost(stored)
+        ? this.library.updateCapture({
+          documentId,
+          status: 'queued',
+          stage: 'uploading',
+          clearCaptureId: true,
+        }).pipe(
+          tap(() => host.reloadDocumentState(documentId)),
+          switchMap(() => this.startUnlessCancelled$(documentId, host, decision)),
+        )
+        : this.declineOutdatedRequest$(host));
   }
 
   /** Resumes a recoverable capture or starts a capture for the selected document. */
@@ -201,13 +220,13 @@ export class DesktopCaptureService {
     documentId: string,
     host: DesktopCaptureHost,
   ): Observable<void> {
-    return this.decideFromStoredDocument$(documentId, (stored) => {
-      if (stored?.captureId) return this.recoverCapture$(stored, host);
+    return this.decideFromStoredDocument$(documentId, (stored, decision) => {
+      if (stored?.captureId) return this.recoverCapture$(stored, host, decision);
       // Without a runtime capture there is nothing to resume. A new capture
       // starts only from a state in which a retry is offered: never for a
       // document that holds its result, as a row read before its cleanup can ask.
       return stored && canCaptureAgain(stored)
-        ? this.captureExisting$(documentId, host)
+        ? this.startUnlessCancelled$(documentId, host, decision)
         : this.declineOutdatedRequest$(host);
     });
   }
@@ -216,29 +235,29 @@ export class DesktopCaptureService {
    * Reads the stored document and lets `act` decide from it. A caller's
    * document list can be older than this service's last write for the
    * document (its reload has not answered yet), so no start or recovery is
-   * decided from that list. One decision or capture runs per document at a
-   * time, and every write of a capture is acknowledged before the capture
-   * ends, so this read is never older than those writes.
+   * decided from that list.
+   *
+   * The decision claims the document from the subscription on, as a running
+   * capture does (`hasActiveCapture`): one decision or capture runs per
+   * document at a time, and a claimed document accepts no other entry. Every
+   * write of a capture is acknowledged before its claim ends, so this read is
+   * never older than those writes. A cancel that arrives meanwhile is kept in
+   * the decision and wins over whatever the read allows.
    */
   private decideFromStoredDocument$(
     documentId: string,
-    act: (stored: DesktopLibrarySummary | undefined) => Observable<void>,
+    act: (stored: DesktopLibrarySummary | undefined, decision: PendingDecision) => Observable<void>,
   ): Observable<void> {
     return defer(() => {
-      if (
-        !this.runtime.ready()
-        || this.activeCaptures.has(documentId)
-        || this.decidingIds.has(documentId)
-      ) {
-        return EMPTY;
-      }
-      this.decidingIds.add(documentId);
+      if (!this.runtime.ready() || this.hasActiveCapture(documentId)) return EMPTY;
+      const decision: PendingDecision = { cancelRequested: false };
+      this.decisions.set(documentId, decision);
       return this.library.list().pipe(
         take(1),
-        // Ends after `act` took over, so the document is never unclaimed in between.
-        finalize(() => this.decidingIds.delete(documentId)),
         map((documents) => documents.find((item) => item.documentId === documentId)),
-        switchMap((stored) => act(stored)),
+        switchMap((stored) => act(stored, decision)),
+        // Also when the read fails: nothing stays claimed.
+        finalize(() => this.decisions.delete(documentId)),
       );
     });
   }
@@ -251,10 +270,42 @@ export class DesktopCaptureService {
     });
   }
 
-  /** Requests cancellation and wakes the polling loop without changing terminal rules. */
+  /**
+   * Starts the capture a decision allowed, unless a cancel arrived while it
+   * was decided: then no capture starts and the document is stored as
+   * cancelled, as a cancel during the upload would leave it.
+   */
+  private startUnlessCancelled$(
+    documentId: string,
+    host: DesktopCaptureHost,
+    decision: PendingDecision,
+  ): Observable<void> {
+    return defer(() => decision.cancelRequested
+      ? this.library.updateCapture({
+        documentId,
+        status: 'canceled',
+        stage: 'cancelled',
+        clearCaptureId: true,
+      }).pipe(
+        tap(() => host.reloadDocumentState(documentId)),
+        map(() => undefined),
+      )
+      : this.captureExisting$(documentId, host));
+  }
+
+  /**
+   * Requests cancellation. A running capture is woken without changing the
+   * terminal rules; a decision in flight keeps the request, so that it does
+   * not start, and cancels through the runtime what it recovers.
+   */
   cancel(documentId: string): void {
     const active = this.activeCaptures.get(documentId);
-    if (active && !active.cancelRequested) {
+    if (!active) {
+      const decision = this.decisions.get(documentId);
+      if (decision) decision.cancelRequested = true;
+      return;
+    }
+    if (!active.cancelRequested) {
       active.cancelRequested = true;
       if (!active.captureId && active.clientRequestId) {
         this.runtime.cancelUpload(active.clientRequestId).pipe(
@@ -534,6 +585,7 @@ export class DesktopCaptureService {
   private recoverCapture$(
     document: DesktopLibrarySummary,
     host: DesktopCaptureHost,
+    decision: PendingDecision,
   ): Observable<void> {
     return defer(() => {
       if (
@@ -550,7 +602,8 @@ export class DesktopCaptureService {
         streaming: isRecordingMediaType(document.mediaType),
         lastEventSequence: 0,
         rawPersisted: false,
-        cancelRequested: false,
+        // A cancel that arrived while the recovery was decided is sent to the runtime first.
+        cancelRequested: decision.cancelRequested,
         cancelSent: false,
         lastStage: document.stage,
         terminalCommitted,

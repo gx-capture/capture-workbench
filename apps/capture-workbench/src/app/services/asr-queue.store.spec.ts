@@ -498,7 +498,8 @@ describe('AsrQueueStore', () => {
     expect(capture.reattach$).toHaveBeenCalledExactlyOnceWith(document, expect.anything());
 
     docs.set([{ ...document, status: 'recovery_required' }]);
-    recovery.error({ status: 404, message: 'Capture not found' });
+    // The capture service stores a capture it cannot find with the document and completes.
+    recovery.complete();
     TestBed.tick();
     // Further refreshes and busy changes must not retry the missing runtime capture.
     docs.set([{ ...document, status: 'recovery_required', updatedAtMs: 200 }]);
@@ -775,6 +776,89 @@ describe('AsrQueueStore', () => {
 
       expect(docs()[0].status).toBe('queued');
       expect(runtime.startRecordingCapture).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('while the capture service reads the stored document', () => {
+    /** The queue over the real capture service, whose reads of the library the test answers. */
+    function decisionsTheTestAnswers(initialDocs: readonly DesktopLibrarySummary[]) {
+      const harness = setup({ initialDocs, realCapture: true });
+      const reads: Subject<readonly DesktopLibrarySummary[]>[] = [];
+      harness.library.list.mockImplementation(() => {
+        const read = new Subject<readonly DesktopLibrarySummary[]>();
+        reads.push(read);
+        return read;
+      });
+      return {
+        ...harness,
+        reads,
+        service: TestBed.inject(DesktopCaptureService),
+        answer: (read: Subject<readonly DesktopLibrarySummary[]>, documents: readonly DesktopLibrarySummary[]) => {
+          read.next(documents);
+          read.complete();
+        },
+      };
+    }
+
+    it('starts no recording while the recovery of another is being decided', () => {
+      const interrupted = makeRecording({
+        documentId: '1'.repeat(32), status: 'recovery_required', captureId: 'capture-interrupted',
+        recoveryCode: 'cancel_failed', createdAtMs: 1,
+      });
+      const waiting = makeRecording({ documentId: '2'.repeat(32), createdAtMs: 2 });
+      const { store, runtime, reads, service, answer } = decisionsTheTestAnswers([interrupted, waiting]);
+
+      store.attach();
+      TestBed.tick();
+      // One read: the recovery's. The waiting recording is not even considered.
+      expect(reads).toHaveLength(1);
+      expect(service.hasActiveCapture(interrupted.documentId)).toBe(true);
+
+      answer(reads[0], [interrupted, waiting]);
+      TestBed.tick();
+
+      expect(runtime.getCapture).toHaveBeenCalledExactlyOnceWith('capture-interrupted');
+      expect(service.busyIds().has(interrupted.documentId)).toBe(true);
+      expect(reads).toHaveLength(1);
+      expect(runtime.startRecordingCapture).not.toHaveBeenCalled();
+    });
+
+    it('lets a cancel win over a start that is being decided', () => {
+      const waiting = makeRecording();
+      const { store, runtime, library, reads, answer } = decisionsTheTestAnswers([waiting]);
+      store.attach();
+      TestBed.tick();
+      expect(reads).toHaveLength(1);
+
+      store.cancel(waiting.documentId);
+      // The read was sent before the cancel: its answer still says waiting.
+      answer(reads[0], [waiting]);
+      TestBed.tick();
+
+      expect(runtime.startRecordingCapture).not.toHaveBeenCalled();
+      expect(library.updateCapture.mock.calls.map(([update]) => update)).toEqual([{
+        documentId: waiting.documentId, status: 'canceled', stage: 'cancelled', clearCaptureId: true,
+      }]);
+    });
+
+    it('tries a recovery again after the read of the stored document failed', () => {
+      const running = makeRecording({ status: 'processing', captureId: 'capture-running' });
+      const { store, docs, runtime, runtimeStatus, reads, answer } = decisionsTheTestAnswers([running]);
+      store.attach();
+      TestBed.tick();
+      expect(reads).toHaveLength(1);
+
+      reads[0].error('Capture library index cannot be read.');
+      expect(runtimeStatus.message()).toBe('Capture library index cannot be read.');
+      expect(runtime.getCapture).not.toHaveBeenCalled();
+
+      // The queue looks at its list again: the recovery is not given up.
+      docs.set([{ ...running }]);
+      TestBed.tick();
+      expect(reads).toHaveLength(2);
+      answer(reads[1], [running]);
+
+      expect(runtime.getCapture).toHaveBeenCalledExactlyOnceWith('capture-running');
     });
   });
 });
