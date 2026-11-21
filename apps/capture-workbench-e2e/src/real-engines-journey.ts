@@ -50,7 +50,9 @@ const ASR_STAGE_TIMEOUT_MS = 35 * 60_000; // measured by the first real run
 // Allow the same fixed completion overhead as the OCR stage for model startup,
 // structuring and rendering, in addition to the duration-based extraction budget.
 const PROGRESSIVE_COMPLETION_ALLOWANCE_MS = 10 * 60_000;
-const MODEL_INSTALL_TIMEOUT_MS = 25 * 60_000; // measured by the first real run
+// The structuring model's installation took 21.7 minutes on fresh app data,
+// 87 % of the former 25-minute limit.
+const MODEL_INSTALL_TIMEOUT_MS = 40 * 60_000;
 const EDIT_EXPORT_STAGE_TIMEOUT_MS = 3 * 60_000; // measured by the first real run
 const DELETE_STAGE_TIMEOUT_MS = 2 * 60_000;
 const RESTART_STAGE_TIMEOUT_MS = 5 * 60_000; // measured by the first real run

@@ -6,16 +6,21 @@ export const PROGRESSIVE_AUDIO_SAMPLE_INTERVAL_MS = 5 * 60_000;
 // for a nearby checkpoint. The window excludes the next five-minute sample.
 export const FIRST_CHECKPOINT_MAX_COVERAGE_MS = PROGRESSIVE_AUDIO_SAMPLE_INTERVAL_MS + 40_000;
 const PROGRESSIVE_STARTUP_BUDGET_MS = 2 * 60_000;
-const CUDA_REALTIME_MULTIPLIER = 2;
+// Measured with tea-asr-1.1 on CUDA (RTX 4060 laptop GPU): the five-minute
+// checkpoint after about 35 s, a 7.5-minute recording in 75 s and a 40-minute
+// one in 295 s (about 8x real time). Half the recording's duration leaves
+// about 4x headroom.
+const CUDA_REALTIME_MULTIPLIER = 0.5;
+// Not yet measured on the cpu pack (tea-asr-1.1 mini on the CPU).
 const CPU_REALTIME_MULTIPLIER = 6;
 
 export type SpeechPack = 'cuda' | 'cpu';
 
-// Allow a cold worker start plus slower-than-real-time decoding, especially on CPU.
-// The first real-engine run should calibrate these provisional allowances.
+// Allow a cold worker start plus the decoding time for the recording's length.
+// Whole milliseconds: the budget feeds AbortSignal.timeout.
 export function progressiveAudioBudgetMs(durationMs: number, device: SpeechPack): number {
   return PROGRESSIVE_STARTUP_BUDGET_MS
-    + durationMs * (device === 'cuda' ? CUDA_REALTIME_MULTIPLIER : CPU_REALTIME_MULTIPLIER);
+    + Math.ceil(durationMs * (device === 'cuda' ? CUDA_REALTIME_MULTIPLIER : CPU_REALTIME_MULTIPLIER));
 }
 
 export function isCheckpointCoverage(value: unknown): value is number {

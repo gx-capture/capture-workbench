@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   deriveProgressiveAudioOracleEvidence,
   parseProgressiveAudioOracle,
+  progressiveAudioBudgetMs,
   readProgressiveAudioPartial,
   summarizeCheckpoint,
   summarizeTranscript,
@@ -12,6 +13,20 @@ import {
   PROGRESSIVE_AUDIO_SAMPLE_INTERVAL_MS,
   type ProgressiveAudioSampleInput,
 } from './progressive-audio-evidence.ts';
+
+test('progressive budgets are whole milliseconds that grow with the recording and give the CPU more time', () => {
+  for (const durationMs of [1, 300_001, 450_003, 2_400_001]) {
+    for (const pack of ['cuda', 'cpu'] as const) {
+      const budget = progressiveAudioBudgetMs(durationMs, pack);
+      assert.ok(Number.isSafeInteger(budget), `${pack} budget for ${durationMs} ms is not whole`);
+      assert.ok(budget >= progressiveAudioBudgetMs(durationMs - 1, pack));
+      assert.ok(budget > durationMs / 10, 'a budget must exceed ten times real-time decoding');
+      // AbortSignal.timeout refuses fractional delays.
+      assert.doesNotThrow(() => AbortSignal.timeout(budget));
+    }
+    assert.ok(progressiveAudioBudgetMs(durationMs, 'cpu') > progressiveAudioBudgetMs(durationMs, 'cuda'));
+  }
+});
 
 const digest = 'a'.repeat(64);
 const extraction: ProgressiveAudioSampleInput['extraction'] = {
