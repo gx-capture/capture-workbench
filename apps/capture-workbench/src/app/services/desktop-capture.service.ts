@@ -16,7 +16,6 @@ import {
   merge,
   type Observable,
   of,
-  race,
   Subject,
   switchMap,
   take,
@@ -771,14 +770,12 @@ export class DesktopCaptureService {
         if (active.cancelRequested && !active.cancelSent) {
           return this.sendCancellation$(operation.captureId, active);
         }
-        return race(
+        return this.readUntilCancelRequested$(
           timer(700).pipe(
             switchMap(() => this.runtime.getCapture(operation.captureId)),
           ),
-          active.cancelWake.pipe(
-            take(1),
-            switchMap(() => this.sendCancellation$(operation.captureId, active)),
-          ),
+          operation.captureId,
+          active,
         );
       }),
       switchMap((next) => this.persistRawDuringExtraction$(documentId, next, active, host)),

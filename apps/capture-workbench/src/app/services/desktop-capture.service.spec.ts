@@ -863,6 +863,56 @@ describe('DesktopCaptureService', () => {
     }
   });
 
+  it.each([
+    ['answers', (polled: Subject<CaptureOperation>) => {
+      polled.next(operation({ captureId: 'capture-1', status: 'awaiting_structuring' }));
+      polled.complete();
+    }],
+    ['is rejected', (polled: Subject<CaptureOperation>) => polled.error('Capture Runtime is unavailable.')],
+  ] as const)(
+    'stores what the cancel answered when a poll that was sent before it %s first',
+    async (_reply, replyToPoll) => {
+      let stored: DesktopLibrarySummary = summary;
+      const polled = new Subject<CaptureOperation>();
+      const cancelReply = new Subject<CaptureOperation>();
+      const getCapture = vi.fn(() => polled);
+      const cancelCapture = vi.fn(() => cancelReply);
+      const store = initializeCapture(
+        libraryStub({
+          list: vi.fn(() => of([stored])),
+          updateCapture: vi.fn((update: Record<string, unknown>) => {
+            stored = applyDurableCaptureUpdate(stored, update);
+            return of(stored);
+          }),
+        }),
+        runtimeStub({ createCapture: vi.fn(() => of(runningOperation)), getCapture, cancelCapture }),
+      );
+
+      vi.useFakeTimers();
+      try {
+        store.service.startDocument$(summary.documentId, store.host).subscribe();
+        vi.advanceTimersByTime(700);
+      } finally {
+        vi.useRealTimers();
+      }
+      expect(getCapture).toHaveBeenCalledTimes(1);
+      store.service.cancel(summary.documentId);
+      TestBed.tick();
+      expect(cancelCapture).toHaveBeenCalledExactlyOnceWith('capture-1');
+
+      replyToPoll(polled);
+      TestBed.tick();
+      await settleCaptureLifecycle();
+      cancelReply.next(cancelledOperation);
+      cancelReply.complete();
+      TestBed.tick();
+      await settleCaptureLifecycle();
+
+      expect(getCapture).toHaveBeenCalledTimes(1);
+      expect(stored).toMatchObject({ status: 'canceled', stage: 'cancelled', captureId: undefined });
+    },
+  );
+
   it('lets an already-terminal runtime response win a cancel/complete race', async () => {
     const created = new Subject<CaptureOperation>();
     const cancelCapture = vi.fn(() => of(cancelledOperation));
