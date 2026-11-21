@@ -362,7 +362,7 @@ async function expectCardKeptThroughEmptyPolls(
 }
 
 /** The capture's events from the simulated runtime, read twice to resume after a cursor. */
-async function recordingEventLog(page: Page, documentId: string): Promise<{
+async function recordingEventLog(page: Page, captureId: string): Promise<{
   readonly all: readonly (readonly [number, string, number | null])[];
   readonly resumed: readonly number[];
   readonly afterLast: number;
@@ -372,10 +372,8 @@ async function recordingEventLog(page: Page, documentId: string): Promise<{
     const { invoke } = (globalThis as unknown as {
       readonly __TAURI_INTERNALS__: { readonly invoke: (command: string, args?: unknown) => Promise<unknown> };
     }).__TAURI_INTERNALS__;
-    const detail = await invoke('library_get', { request: { documentId: id } }) as { readonly captureId?: string };
-    const captureId = String(detail.captureId);
     const events = async (lastEventId: number | null): Promise<readonly Event[]> => (
-      await invoke('runtime_get_capture_events', { input: { id: captureId, lastEventId } }) as readonly Event[]
+      await invoke('runtime_get_capture_events', { input: { id, lastEventId } }) as readonly Event[]
     );
     const all = await events(null);
     const last = all.at(-1)?.sequence ?? 0;
@@ -384,7 +382,32 @@ async function recordingEventLog(page: Page, documentId: string): Promise<{
       resumed: (await events(last - 1)).map((event) => event.sequence),
       afterLast: (await events(last)).length,
     };
+  }, captureId);
+}
+
+/** The runtime capture id the library holds for the document. */
+async function recordingCaptureId(page: Page, documentId: string): Promise<string> {
+  return page.evaluate(async (id) => {
+    const { invoke } = (globalThis as unknown as {
+      readonly __TAURI_INTERNALS__: { readonly invoke: (command: string, args?: unknown) => Promise<unknown> };
+    }).__TAURI_INTERNALS__;
+    const detail = await invoke('library_get', { request: { documentId: id } }) as { readonly captureId?: string };
+    return String(detail.captureId);
   }, documentId);
+}
+
+/** The simulated runtime's answer to reading the capture: its status, or the error. */
+async function runtimeCaptureAnswer(page: Page, captureId: string): Promise<string> {
+  return page.evaluate(async (id) => {
+    const { invoke } = (globalThis as unknown as {
+      readonly __TAURI_INTERNALS__: { readonly invoke: (command: string, args?: unknown) => Promise<unknown> };
+    }).__TAURI_INTERNALS__;
+    try {
+      return String((await invoke('runtime_get_capture', { input: { id } }) as { readonly status?: string }).status);
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+  }, captureId);
 }
 
 test('shows the live transcript growing across partial revisions while the recording is still processing', async ({ page }) => {
@@ -410,10 +433,12 @@ test('shows the live transcript growing across partial revisions while the recor
   await expect(lineText).toHaveText([LIVE_TRANSCRIPT_LINES[0]], { timeout: liveTranscriptWaitMs(1) });
   await expect(row).toHaveAttribute('data-user-status', 'processing');
   await expectCardKeptThroughEmptyPolls(page, documentId, LIVE_TRANSCRIPT_LINES.slice(0, 1));
+  const captureId = await recordingCaptureId(page, documentId);
+  expect(await runtimeCaptureAnswer(page, captureId)).toBe('extracting');
 
   // Sequences start with `accepted`, are separate from partial revisions, and
   // a read after a sequence resumes right after it.
-  expect(await recordingEventLog(page, documentId)).toEqual({
+  expect(await recordingEventLog(page, captureId)).toEqual({
     all: [[1, 'accepted', null], [2, 'input_checkpoint', null], [3, 'segment', 1]],
     resumed: [3],
     afterLast: 0,
@@ -435,4 +460,7 @@ test('shows the live transcript growing across partial revisions while the recor
   await expect(page.getByTestId('result-line-text')).toHaveText([...LIVE_TRANSCRIPT_LINES], {
     timeout: 15_000,
   });
+  // The Workbench deleted the runtime capture after it kept the result, and
+  // the runtime no longer knows it.
+  expect(await runtimeCaptureAnswer(page, captureId)).toBe('Capture Runtime request was rejected with HTTP 404.');
 });

@@ -1208,6 +1208,13 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
         && recordingCommands.includes(command)
       ) {
         if (command === 'runtime_get_capture_events') return recordingEvents(args.input);
+        if (command === 'runtime_delete_capture') {
+          // The runtime forgets a deleted capture, so later reads of its id
+          // are not found; the host answers null for a delete the runtime
+          // rejects as not found.
+          recordingCaptures.delete(recordingCaptureId);
+          return Promise.resolve(null);
+        }
         const capture = readRecording(recordingCaptureId);
         // A capture this fake never started is not found, as at the runtime.
         if (!capture) return recordingNotFound();
@@ -1216,13 +1223,6 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
           return Promise.resolve(capture.revision < 1 ? null : recordingPartial(capture));
         }
         if (command === 'runtime_get_result') return recordingResult(capture);
-        if (command === 'runtime_delete_capture') {
-          // The runtime forgets a deleted capture. This fake keeps it readable:
-          // after a recording completes, the Workbench can reattach it from a
-          // library list read before completion, and a not-found answer turns
-          // the finished recording into recovery_required.
-          return Promise.resolve(null);
-        }
         if (
           command === 'runtime_cancel_capture'
           && capture.status !== 'completed'
