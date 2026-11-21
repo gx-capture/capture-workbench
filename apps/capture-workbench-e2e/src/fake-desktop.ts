@@ -22,11 +22,12 @@ export interface FakeDesktopOptions {
   /** Script capture commands so one OCR file can reach raw text. */
   readonly ocrJourney?: boolean;
   /**
-   * Script one recording capture: partial transcripts arrive in steps,
-   * and `runtime_get_capture_events` returns only the events after
-   * `lastEventId`, including an empty batch between revisions.
-   * Step timing follows `installTimeline` (`startResponseMs` before the
-   * first partial, then `preparingMs` between partials).
+   * Script recording captures: the simulated runtime publishes partial
+   * revisions, then structures and completes, on its own timeline
+   * (`installTimeline`: `startResponseMs` before the first partial, then
+   * `preparingMs` per step). `runtime_get_capture_events` returns the events
+   * after `lastEventId`, or an empty batch after a short wait when none
+   * arrived. A test can hold revisions with `__captureRecordingHold`.
    */
   readonly recordingJourney?: boolean;
   /** Keep the fake library in sessionStorage so a reload still lists it. */
@@ -72,8 +73,13 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
     };
     __captureDropSources?: (fileName: string) => void;
     __captureNativeSourcesReady?: boolean;
-    /** Empty `runtime_get_capture_events` replies after a partial was already delivered. */
-    __captureRecordingEmptyEventBatches?: number;
+    /** Completed `runtime_get_capture_events` reads that found no new event (recording journey). */
+    __captureRecordingEmptyEventPolls?: number;
+    /**
+     * Holds partial revisions from `fromRevision` on until called again
+     * (null: publish on the simulated timeline). Recording journey only.
+     */
+    __captureRecordingHold?: (fromRevision: number | null) => void;
   }
   const target = globalThis as unknown as TauriTestGlobal;
   let nextCallbackId = 1;
@@ -380,180 +386,268 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
       createdAt: '2026-07-20T00:00:00Z',
     };
   };
-  // preview.spec.ts asserts these sentences, one revision at a time.
+  // preview.spec.ts asserts these sentences, one partial revision each.
   const recordingLines = [
     '這是第一句虛構逐字稿。',
     '這是第二句虛構逐字稿。',
     '這是第三句虛構逐字稿。',
   ];
-  const recordingCaptureId = 'capture-recording-1';
+  const recordingLineMs = 1200;
+  const recordingDurationMs = recordingLines.length * recordingLineMs;
   const recordingStepMs = Math.max(1, installOptions.installTimeline?.preparingMs ?? 400);
   const recordingStartMs = Math.max(0, installOptions.installTimeline?.startResponseMs ?? 0);
+  // How long an events read waits for something new before it answers with an empty batch.
   const recordingEmptyWaitMs = Math.max(20, Math.min(250, Math.round(recordingStepMs / 4)));
-  let recordingStarted = false;
-  let recordingCancelled = false;
-  let recordingStartedAt = 0;
-  let deliveredRevision = 0;
-  let recordingOweEmpty = false;
-  let recordingReportedAwaiting = false;
-  let recordingEmptyBetween = 0;
-  let recordingFileName = 'sample-recording.mp3';
-  let recordingMediaType = 'audio/mpeg';
-  let recordingBytes = 12;
   const recordingEngine = {
     engine: 'speech-recognition',
     model: 'fixture-speech',
     digest: `sha256:${'e'.repeat(64)}`,
     device: installOptions.cudaAvailable ? 'cuda' : 'cpu',
   };
-  const recordingSource = (): Record<string, unknown> => ({
-    sha256: 'c'.repeat(64),
-    fileName: recordingFileName,
-    mediaType: recordingMediaType,
-    bytes: recordingBytes,
+  // The simulated runtime's own timeline after a recording capture starts:
+  // one partial revision per line, then runtime structuring and completion.
+  // Each step is due `afterMs` after the previous one, whoever reads.
+  const recordingSteps: readonly { readonly step: string; readonly afterMs: number }[] = [
+    ...recordingLines.map((_, index) => ({
+      step: 'revision',
+      afterMs: index === 0 ? recordingStartMs : recordingStepMs,
+    })),
+    { step: 'awaiting_structuring', afterMs: recordingStepMs },
+    { step: 'structuring', afterMs: Math.round(recordingStepMs / 2) },
+    { step: 'completed', afterMs: Math.round(recordingStepMs / 2) },
+  ];
+  interface RecordingCapture {
+    readonly captureId: string;
+    readonly ingestionId: string;
+    readonly source: Record<string, unknown>;
+    readonly createdAtMs: number;
+    status: string;
+    progress: number;
+    revision: number;
+    nextStep: number;
+    lastStepAtMs: number;
+    updatedAtMs: number;
+    completedAtMs: number | null;
+    readonly events: Record<string, unknown>[];
+  }
+  // One id per recording capture; these commands answer for those ids.
+  const recordingCaptureIdPrefix = 'capture-recording-';
+  const recordingCommands: readonly string[] = [
+    'runtime_get_capture_events',
+    'runtime_get_partial',
+    'runtime_get_result',
+    'runtime_get_capture',
+    'runtime_cancel_capture',
+    'runtime_delete_capture',
+  ];
+  const recordingCaptures = new Map<string, RecordingCapture>();
+  let recordingCaptureCount = 0;
+  // A test can hold partial revisions from this number on (null: none held).
+  let recordingHeldRevision: number | null = null;
+  let recordingHoldChangedAtMs = 0;
+  let recordingEmptyPolls = 0;
+  const recordingNotFound = (): Promise<never> => Promise.reject(
+    new Error('Capture Runtime request was rejected with HTTP 404.'),
+  );
+  const recordingSegment = (index: number): Record<string, unknown> => ({
+    segmentId: `segment-${String(index + 1)}`,
+    order: index,
+    locator: { kind: 'time', startMs: index * recordingLineMs, endMs: (index + 1) * recordingLineMs },
+    text: recordingLines[index],
   });
   const recordingSegments = (count: number): Record<string, unknown>[] => (
-    recordingLines.slice(0, count).map((text, index): Record<string, unknown> => ({
-      segmentId: `segment-${index + 1}`,
-      order: index,
-      locator: { kind: 'time', startMs: index * 1200, endMs: (index + 1) * 1200 },
-      text,
-    }))
+    recordingLines.slice(0, count).map((_, index) => recordingSegment(index))
   );
   const recordingSourceText = (count: number): string => recordingLines.slice(0, count).join('\n');
-  const revisionDue = (): number => {
-    if (!recordingStarted || recordingCancelled) return deliveredRevision;
-    const elapsed = Date.now() - recordingStartedAt;
-    if (elapsed < recordingStartMs) return 0;
-    const steps = Math.floor((elapsed - recordingStartMs) / recordingStepMs);
-    return Math.min(recordingLines.length, steps + 1);
-  };
-  const recordingStatus = (): string => {
-    if (recordingCancelled) return 'cancelled';
-    const elapsed = Date.now() - recordingStartedAt;
-    const steps = elapsed < recordingStartMs
-      ? -1
-      : Math.floor((elapsed - recordingStartMs) / recordingStepMs);
-    if (deliveredRevision < recordingLines.length) return 'extracting';
-    if (!recordingReportedAwaiting) {
-      if (steps < recordingLines.length) return 'extracting';
-      recordingReportedAwaiting = true;
-      return 'awaiting_structuring';
-    }
-    if (steps < recordingLines.length + 1) return 'awaiting_structuring';
-    return 'completed';
-  };
-  const recordingOperation = (): Record<string, unknown> => {
-    const status = recordingStatus();
-    const coveredUntilMs = deliveredRevision * 1200;
-    return {
+  // Like the runtime's event log: sequences start at 1 with `accepted`, and an
+  // event carries the operation's progress when it does not state its own.
+  const appendRecordingEvent = (
+    capture: RecordingCapture,
+    eventType: string,
+    stage: string,
+    atMs: number,
+    fields: Record<string, unknown> = {},
+  ): void => {
+    const sequence = capture.events.length + 1;
+    capture.events.push({
       protocolVersion: '2',
-      captureId: recordingCaptureId,
-      ingestionId: 'ingestion-recording-1',
+      eventId: `${capture.captureId}/${String(sequence)}`,
+      sequence,
+      captureId: capture.captureId,
       kind: 'recording',
-      status,
-      progress: status === 'completed' || status === 'awaiting_structuring'
-        ? 1
-        : deliveredRevision / recordingLines.length,
-      partialRevision: deliveredRevision,
-      lastEventSequence: deliveredRevision,
-      source: recordingSource(),
-      createdAt: '2026-07-20T00:00:00Z',
-      updatedAt: '2026-07-20T00:00:00Z',
-      durationMs: recordingLines.length * 1200,
-      coveredUntilMs,
-      ...(status === 'completed' ? { completedAt: '2026-07-20T00:00:01Z' } : {}),
-    };
+      eventType,
+      stage,
+      progress: capture.progress,
+      segments: [],
+      createdAt: new Date(atMs).toISOString(),
+      ...fields,
+    });
   };
-  const recordingPartial = (revision: number): Record<string, unknown> => ({
-    protocolVersion: '2',
-    captureId: recordingCaptureId,
-    source: recordingSource(),
-    revision,
-    coveredUntilMs: revision * 1200,
-    segments: recordingSegments(revision),
-    sourceText: recordingSourceText(revision),
-    extractionEngine: recordingEngine,
-    updatedAt: '2026-07-20T00:00:00Z',
-  });
-  const recordingEvent = (revision: number): Record<string, unknown> => ({
-    protocolVersion: '2',
-    eventId: `${recordingCaptureId}/${revision}`,
-    sequence: revision,
-    captureId: recordingCaptureId,
-    kind: 'recording',
-    eventType: 'segment',
-    stage: 'extracting',
-    progress: revision / recordingLines.length,
-    partialRevision: revision,
-    coveredUntilMs: revision * 1200,
-    segments: recordingSegments(revision),
-    createdAt: '2026-07-20T00:00:00Z',
-    durationMs: recordingLines.length * 1200,
-  });
-  const recordingEmptyBatch = (): Promise<unknown[]> => new Promise((resolve) => {
-    setTimeout(() => {
-      if (deliveredRevision > 0) {
-        recordingEmptyBetween += 1;
-        target.__captureRecordingEmptyEventBatches = recordingEmptyBetween;
+  // Progress values follow the runtime's status transitions.
+  const applyRecordingStep = (capture: RecordingCapture, step: string, atMs: number): void => {
+    if (step === 'revision') {
+      capture.revision += 1;
+      appendRecordingEvent(capture, 'segment', 'extracting', atMs, {
+        partialRevision: capture.revision,
+        coveredUntilMs: capture.revision * recordingLineMs,
+        segments: [recordingSegment(capture.revision - 1)],
+        durationMs: recordingDurationMs,
+      });
+    } else if (step === 'awaiting_structuring') {
+      capture.status = 'awaiting_structuring';
+      capture.progress = 0.9;
+      appendRecordingEvent(capture, 'checkpoint', 'awaiting_structuring', atMs, {
+        partialRevision: capture.revision,
+      });
+    } else if (step === 'structuring') {
+      capture.status = 'structuring';
+      capture.progress = 0.95;
+    } else {
+      capture.status = 'completed';
+      capture.progress = 1;
+      capture.completedAtMs = atMs;
+      appendRecordingEvent(capture, 'completed', 'completed', atMs);
+    }
+  };
+  // Applies every step due by `nowMs`; the result depends only on the time
+  // and the hold, never on how often or by which command the capture is read.
+  const advanceRecording = (capture: RecordingCapture, nowMs: number): void => {
+    while (capture.status !== 'completed' && capture.status !== 'cancelled') {
+      const next = recordingSteps[capture.nextStep];
+      if (!next) return;
+      if (
+        next.step === 'revision'
+        && recordingHeldRevision !== null
+        && capture.revision + 1 >= recordingHeldRevision
+      ) {
+        return;
       }
-      resolve([]);
-    }, recordingEmptyWaitMs);
+      const dueMs = Math.max(capture.lastStepAtMs + next.afterMs, recordingHoldChangedAtMs);
+      if (dueMs > nowMs) return;
+      applyRecordingStep(capture, next.step, dueMs);
+      capture.nextStep += 1;
+      capture.lastStepAtMs = dueMs;
+      capture.updatedAtMs = dueMs;
+    }
+  };
+  const readRecording = (id: string): RecordingCapture | undefined => {
+    const capture = recordingCaptures.get(id);
+    if (capture) advanceRecording(capture, Date.now());
+    return capture;
+  };
+  const recordingOperation = (capture: RecordingCapture): Record<string, unknown> => ({
+    protocolVersion: '2',
+    captureId: capture.captureId,
+    ingestionId: capture.ingestionId,
+    kind: 'recording',
+    status: capture.status,
+    progress: capture.progress,
+    partialRevision: capture.revision,
+    lastEventSequence: capture.events.length,
+    source: capture.source,
+    createdAt: new Date(capture.createdAtMs).toISOString(),
+    updatedAt: new Date(capture.updatedAtMs).toISOString(),
+    durationMs: recordingDurationMs,
+    coveredUntilMs: capture.revision * recordingLineMs,
+    ...(capture.completedAtMs === null
+      ? {}
+      : { completedAt: new Date(capture.completedAtMs).toISOString() }),
   });
+  const recordingPartial = (capture: RecordingCapture): Record<string, unknown> => ({
+    protocolVersion: '2',
+    captureId: capture.captureId,
+    source: capture.source,
+    revision: capture.revision,
+    coveredUntilMs: capture.revision * recordingLineMs,
+    segments: recordingSegments(capture.revision),
+    sourceText: recordingSourceText(capture.revision),
+    extractionEngine: recordingEngine,
+    updatedAt: new Date(capture.updatedAtMs).toISOString(),
+  });
+  const startRecording = (current: StoredDoc): Record<string, unknown> => {
+    recordingCaptureCount += 1;
+    const nowMs = Date.now();
+    const capture: RecordingCapture = {
+      captureId: `${recordingCaptureIdPrefix}${String(recordingCaptureCount)}`,
+      ingestionId: `ingestion-recording-${String(recordingCaptureCount)}`,
+      source: {
+        sha256: 'c'.repeat(64),
+        fileName: current.fileName,
+        mediaType: current.mediaType,
+        bytes: current.byteLength,
+      },
+      createdAtMs: nowMs,
+      status: 'waiting_input',
+      progress: 0,
+      revision: 0,
+      nextStep: 0,
+      lastStepAtMs: nowMs,
+      updatedAtMs: nowMs,
+      completedAtMs: null,
+      events: [],
+    };
+    appendRecordingEvent(capture, 'accepted', 'queued', nowMs);
+    capture.status = 'extracting';
+    capture.progress = 0.1;
+    appendRecordingEvent(capture, 'input_checkpoint', 'extracting', nowMs);
+    recordingCaptures.set(capture.captureId, capture);
+    return recordingOperation(capture);
+  };
+  // Like the fixed host (#479): the events after `lastEventId` that exist now;
+  // when there are none, a short wait and then whatever arrived, possibly none.
   const recordingEvents = (
     input: { readonly id?: string; readonly lastEventId?: number | null } | undefined,
   ): Promise<unknown> => {
     const id = String(input?.id ?? '');
-    if (!recordingStarted || id !== recordingCaptureId) {
-      return Promise.reject(new Error('Capture Runtime request was rejected with HTTP 404.'));
-    }
     const rawCursor = input?.lastEventId;
-    const after = rawCursor === null || rawCursor === undefined ? -1 : Number(rawCursor);
-    if (!Number.isInteger(after) || after < -1) {
+    const after = rawCursor === null || rawCursor === undefined ? 0 : Number(rawCursor);
+    if (!Number.isInteger(after) || after < 0) {
       return Promise.reject(new Error('Capture Runtime request was rejected with HTTP 422.'));
     }
-    const nextRevision = Math.min(revisionDue(), deliveredRevision + 1);
-    const pending: Record<string, unknown>[] = [];
-    for (let revision = after + 1; revision <= nextRevision; revision += 1) {
-      pending.push(recordingEvent(revision));
-    }
-    // One empty reply after each delivery, even when the next revision is already due,
-    // so a poll cannot skip the gap the live card has to survive.
-    const withhold = recordingOweEmpty && pending.length > 0;
-    if (pending.length === 0 || withhold) {
-      if (withhold) recordingOweEmpty = false;
-      return recordingEmptyBatch();
-    }
-    deliveredRevision = nextRevision;
-    recordingOweEmpty = true;
-    return Promise.resolve(pending);
+    const capture = readRecording(id);
+    if (!capture) return recordingNotFound();
+    const since = (): Record<string, unknown>[] => capture.events.filter(
+      (event) => Number(event['sequence']) > after,
+    );
+    const available = since();
+    if (available.length > 0) return Promise.resolve(available);
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        advanceRecording(capture, Date.now());
+        const arrived = since();
+        if (arrived.length === 0) {
+          recordingEmptyPolls += 1;
+          target.__captureRecordingEmptyEventPolls = recordingEmptyPolls;
+        }
+        resolve(arrived);
+      }, recordingEmptyWaitMs);
+    });
   };
-  const recordingResult = (): Promise<unknown> => {
-    const operation = recordingOperation();
-    if (operation['status'] !== 'completed') {
+  const recordingResult = (capture: RecordingCapture): Promise<unknown> => {
+    if (capture.status !== 'completed') {
       return Promise.reject(new Error('Capture Runtime request was rejected with HTTP 409.'));
     }
     const segments = recordingSegments(recordingLines.length);
     const sourceText = recordingSourceText(recordingLines.length);
-    const source = recordingSource();
-    const raw = {
-      schemaVersion: '2',
-      diagnosticOnly: true,
-      source,
-      segments,
-      sourceText,
-      extractionEngine: recordingEngine,
-      createdAt: '2026-07-20T00:00:00Z',
-    };
+    const createdAt = new Date(capture.createdAtMs).toISOString();
+    const completedAt = new Date(capture.completedAtMs ?? capture.updatedAtMs).toISOString();
     return Promise.resolve({
-      operation,
-      raw,
+      operation: recordingOperation(capture),
+      raw: {
+        schemaVersion: '2',
+        diagnosticOnly: true,
+        source: capture.source,
+        segments,
+        sourceText,
+        extractionEngine: recordingEngine,
+        createdAt,
+      },
       result: {
         schemaVersion: '2',
-        source,
+        source: capture.source,
         rawSegments: segments,
         blocks: segments.map((segment, index) => ({
-          blockId: `block-${index + 1}`,
+          blockId: `block-${String(index + 1)}`,
           order: index,
           type: 'transcript',
           sourceSegmentId: segment['segmentId'],
@@ -565,12 +659,12 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
         targetText: sourceText,
         extractionEngine: recordingEngine,
         structuringEngine: {
-          engine: 'ollama',
-          model: 'qwen3.5:0.8b',
+          engine: 'structuring-runtime',
+          model: 'fixture-structuring',
           digest: `sha256:${'f'.repeat(64)}`,
         },
-        createdAt: '2026-07-20T00:00:00Z',
-        completedAt: '2026-07-20T00:00:01Z',
+        createdAt,
+        completedAt,
       },
     });
   };
@@ -600,7 +694,16 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
   target.__captureInvokedCommands = [];
   target.__captureStartedRequirementIds = [];
   target.__captureCreatedPdfPageNumbers = [];
-  if (installOptions.recordingJourney) target.__captureRecordingEmptyEventBatches = 0;
+  if (installOptions.recordingJourney) {
+    target.__captureRecordingEmptyEventPolls = 0;
+    target.__captureRecordingHold = (fromRevision) => {
+      // Steps already due keep their times; a held revision is due from now on.
+      const nowMs = Date.now();
+      for (const capture of recordingCaptures.values()) advanceRecording(capture, nowMs);
+      recordingHeldRevision = fromRevision;
+      recordingHoldChangedAtMs = nowMs;
+    };
+  }
   target.__captureDropSources = (fileName) => sendBatch(batchFor(fileName));
   target.__TAURI_INTERNALS__ = {
     metadata: {
@@ -1079,51 +1182,41 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
         if (!current || !/^(audio|video)\//u.test(current.mediaType)) {
           return Promise.reject(new Error('Progressive capture is available only for recordings.'));
         }
-        recordingFileName = current.fileName;
-        recordingMediaType = current.mediaType;
-        recordingBytes = current.byteLength;
-        recordingStarted = true;
-        recordingCancelled = false;
-        recordingStartedAt = Date.now();
-        deliveredRevision = 0;
-        recordingOweEmpty = false;
-        recordingReportedAwaiting = false;
-        recordingEmptyBetween = 0;
-        target.__captureRecordingEmptyEventBatches = 0;
-        return Promise.resolve(recordingOperation());
+        return Promise.resolve(startRecording(current));
       }
-      if (installOptions.recordingJourney && command === 'runtime_get_capture_events') {
-        return recordingEvents(args.input);
-      }
-      if (installOptions.recordingJourney && command === 'runtime_get_partial') {
-        const id = String(args.input?.id ?? '');
-        if (!recordingStarted || id !== recordingCaptureId) {
-          return Promise.reject(new Error('Capture Runtime request was rejected with HTTP 404.'));
+      const recordingCaptureId = String(args.input?.id ?? '');
+      if (
+        installOptions.recordingJourney
+        && recordingCaptureId.startsWith(recordingCaptureIdPrefix)
+        && recordingCommands.includes(command)
+      ) {
+        if (command === 'runtime_get_capture_events') return recordingEvents(args.input);
+        const capture = readRecording(recordingCaptureId);
+        // A capture this fake never started is not found, as at the runtime.
+        if (!capture) return recordingNotFound();
+        if (command === 'runtime_get_partial') {
+          // The host answers null where the runtime has no partial yet (409).
+          return Promise.resolve(capture.revision < 1 ? null : recordingPartial(capture));
         }
-        // 409 from the runtime: no partial has been published yet. An empty events
-        // batch leaves the last partial in place.
-        if (deliveredRevision < 1) return Promise.resolve(null);
-        return Promise.resolve(recordingPartial(deliveredRevision));
-      }
-      if (installOptions.recordingJourney && command === 'runtime_get_result') {
-        const id = String(args.input?.id ?? '');
-        if (!recordingStarted || id !== recordingCaptureId) {
-          return Promise.reject(new Error('Capture Runtime request was rejected with HTTP 404.'));
+        if (command === 'runtime_get_result') return recordingResult(capture);
+        if (command === 'runtime_delete_capture') {
+          // The runtime forgets a deleted capture. This fake keeps it readable:
+          // after a recording completes, the Workbench can reattach it from a
+          // library list read before completion, and a not-found answer turns
+          // the finished recording into recovery_required.
+          return Promise.resolve(null);
         }
-        return recordingResult();
-      }
-      if (installOptions.recordingJourney && command === 'runtime_cancel_capture') {
-        const id = String(args.input?.id ?? '');
-        if (recordingStarted && id === recordingCaptureId) {
-          recordingCancelled = true;
-          return Promise.resolve(recordingOperation());
+        if (
+          command === 'runtime_cancel_capture'
+          && capture.status !== 'completed'
+          && capture.status !== 'cancelled'
+        ) {
+          const nowMs = Date.now();
+          capture.status = 'cancelled';
+          capture.updatedAtMs = nowMs;
+          appendRecordingEvent(capture, 'cancelled', 'cancelled', nowMs);
         }
-      }
-      if (installOptions.recordingJourney && command === 'runtime_get_capture') {
-        const id = String(args.input?.id ?? '');
-        if (recordingStarted && id === recordingCaptureId) {
-          return Promise.resolve(recordingOperation());
-        }
+        return Promise.resolve(recordingOperation(capture));
       }
       if (installOptions.ocrJourney && command === 'runtime_create_capture') {
         ocrPolls = 0;
@@ -1143,7 +1236,7 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
       if (installOptions.ocrJourney && command === 'runtime_get_ocr') {
         return Promise.resolve(ocrProjection());
       }
-      if ((installOptions.ocrJourney || installOptions.recordingJourney) && command === 'runtime_delete_capture') {
+      if (installOptions.ocrJourney && command === 'runtime_delete_capture') {
         return Promise.resolve(null);
       }
       return Promise.reject(new Error(`Unexpected command: ${command}`));

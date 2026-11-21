@@ -296,23 +296,23 @@ const LIVE_TRANSCRIPT_LINES = [
   '這是第二句虛構逐字稿。',
   '這是第三句虛構逐字稿。',
 ] as const;
-// Half speed stretches the preparing phase, the gap between partials, so the
-// two-sentence state is long enough to look at; the waits below follow it.
-const LIVE_TRANSCRIPT_SPEED = 0.5;
+// The test holds revisions itself, so the speed only sets how long the
+// unheld steps take; the waits below follow it.
+const LIVE_TRANSCRIPT_SPEED = 1;
 const LIVE_TRANSCRIPT_STEP_MS = previewScenarioConfig(
   'live-transcript',
   LIVE_TRANSCRIPT_SPEED,
   'synthetic-runtime-version',
   '',
 ).installOptions.installTimeline?.preparingMs ?? 0;
-/** A wait that covers `steps` partial revisions of the journey, plus a fixed margin. */
+/** A wait that covers `steps` steps of the simulated runtime, plus a fixed margin. */
 const liveTranscriptWaitMs = (steps: number): number => steps * LIVE_TRANSCRIPT_STEP_MS + 10_000;
 
-/** Queue status, live-card lines, and empty event replies, read in one page turn. */
+/** Queue status, live-card lines, and completed empty event polls, read in one page turn. */
 async function liveTranscriptSnapshot(page: Page, documentId: string): Promise<{
   readonly status: string | null;
   readonly lines: readonly string[];
-  readonly emptyBatches: number;
+  readonly emptyPolls: number;
 }> {
   return page.evaluate((id) => {
     const row = document.querySelector(`[data-testid="asr-queue-row"][data-document-id="${id}"]`);
@@ -320,24 +320,82 @@ async function liveTranscriptSnapshot(page: Page, documentId: string): Promise<{
     const lines = [...(card?.querySelectorAll('[data-testid="asr-live-line"] p') ?? [])].map(
       (node) => (node.textContent ?? '').replace(/\s+/gu, ' ').trim(),
     );
-    const emptyBatches = (
-      globalThis as unknown as { readonly __captureRecordingEmptyEventBatches?: number }
-    ).__captureRecordingEmptyEventBatches ?? 0;
+    const emptyPolls = (
+      globalThis as unknown as { readonly __captureRecordingEmptyEventPolls?: number }
+    ).__captureRecordingEmptyEventPolls ?? 0;
+    return { status: row?.getAttribute('data-user-status') ?? null, lines, emptyPolls };
+  }, documentId);
+}
+
+/** Holds the simulated runtime's partial revisions from `fromRevision` on (null: none). */
+async function holdRevisionsFrom(page: Page, fromRevision: number | null): Promise<void> {
+  await page.evaluate((revision) => {
+    const hold = (globalThis as unknown as {
+      readonly __captureRecordingHold?: (fromRevision: number | null) => void;
+    }).__captureRecordingHold;
+    if (!hold) throw new Error('The simulated backend has no recording journey.');
+    hold(revision);
+  }, fromRevision);
+}
+
+/**
+ * While the next revision is held, waits for two events polls that found
+ * nothing new to complete (the second starts only after the Workbench handled
+ * the first) and checks every sample in between: the card keeps exactly the
+ * shown lines and the capture is still processing.
+ */
+async function expectCardKeptThroughEmptyPolls(
+  page: Page,
+  documentId: string,
+  shown: readonly string[],
+): Promise<void> {
+  const before = (await liveTranscriptSnapshot(page, documentId)).emptyPolls;
+  const departures: string[] = [];
+  await expect.poll(async () => {
+    const { status, lines, emptyPolls } = await liveTranscriptSnapshot(page, documentId);
+    if (status !== 'processing' || JSON.stringify(lines) !== JSON.stringify(shown)) {
+      departures.push(`${String(status)}: ${JSON.stringify(lines)}`);
+    }
+    return emptyPolls - before;
+  }, { timeout: liveTranscriptWaitMs(1), intervals: [100] }).toBeGreaterThanOrEqual(2);
+  expect(departures).toEqual([]);
+}
+
+/** The capture's events from the simulated runtime, read twice to resume after a cursor. */
+async function recordingEventLog(page: Page, documentId: string): Promise<{
+  readonly all: readonly (readonly [number, string, number | null])[];
+  readonly resumed: readonly number[];
+  readonly afterLast: number;
+}> {
+  return page.evaluate(async (id) => {
+    interface Event { readonly sequence: number; readonly eventType: string; readonly partialRevision?: number | null }
+    const { invoke } = (globalThis as unknown as {
+      readonly __TAURI_INTERNALS__: { readonly invoke: (command: string, args?: unknown) => Promise<unknown> };
+    }).__TAURI_INTERNALS__;
+    const detail = await invoke('library_get', { request: { documentId: id } }) as { readonly captureId?: string };
+    const captureId = String(detail.captureId);
+    const events = async (lastEventId: number | null): Promise<readonly Event[]> => (
+      await invoke('runtime_get_capture_events', { input: { id: captureId, lastEventId } }) as readonly Event[]
+    );
+    const all = await events(null);
+    const last = all.at(-1)?.sequence ?? 0;
     return {
-      status: row?.getAttribute('data-user-status') ?? null,
-      lines,
-      emptyBatches,
+      all: all.map((event) => [event.sequence, event.eventType, event.partialRevision ?? null] as const),
+      resumed: (await events(last - 1)).map((event) => event.sequence),
+      afterLast: (await events(last)).length,
     };
   }, documentId);
 }
 
 test('shows the live transcript growing across partial revisions while the recording is still processing', async ({ page }) => {
-  test.setTimeout(2 * liveTranscriptWaitMs(LIVE_TRANSCRIPT_LINES.length + 2));
+  test.setTimeout(2 * liveTranscriptWaitMs(LIVE_TRANSCRIPT_LINES.length + 4));
   // startDelay=0 publishes the first sentence as soon as the capture starts.
   await page.goto(`/?scenario=live-transcript&speed=${String(LIVE_TRANSCRIPT_SPEED)}&startDelay=0`);
   await page.goto('/asr');
 
   await expect(page.getByTestId('asr-choose-files')).toBeEnabled();
+  // The first revision follows the simulated timeline; the test publishes the next ones.
+  await holdRevisionsFrom(page, 2);
   await page.getByTestId('asr-choose-files').click();
 
   const row = page.getByTestId('asr-queue-row').filter({ hasText: 'sample-recording.mp3' });
@@ -347,47 +405,29 @@ test('shows the live transcript growing across partial revisions while the recor
 
   const card = page.locator(`[data-testid="asr-live-card"][data-document-id="${documentId}"]`);
   const lineText = card.getByTestId('asr-live-line').locator('p');
-  await expect(card).toBeVisible();
+  await expect(card).toBeVisible({ timeout: liveTranscriptWaitMs(1) });
   await expect(card).toHaveAttribute('data-document-id', documentId);
-  await expect(lineText.first()).toHaveText(LIVE_TRANSCRIPT_LINES[0], { timeout: liveTranscriptWaitMs(1) });
+  await expect(lineText).toHaveText([LIVE_TRANSCRIPT_LINES[0]], { timeout: liveTranscriptWaitMs(1) });
+  await expect(row).toHaveAttribute('data-user-status', 'processing');
+  await expectCardKeptThroughEmptyPolls(page, documentId, LIVE_TRANSCRIPT_LINES.slice(0, 1));
 
-  let sawSingleRevision = false;
-  await expect.poll(async () => {
-    const { status, lines, emptyBatches } = await liveTranscriptSnapshot(page, documentId);
-    const singleRevision = lines.length === 1 && lines[0] === LIVE_TRANSCRIPT_LINES[0];
-    const secondRevision = lines.length === 2
-      && lines[0] === LIVE_TRANSCRIPT_LINES[0]
-      && lines[1] === LIVE_TRANSCRIPT_LINES[1];
-    if (status === 'processing' && singleRevision) sawSingleRevision = true;
-    if (lines.length === 0 && sawSingleRevision) {
-      throw new Error('The live transcript was cleared while the recording was still in progress.');
-    }
-    if (status === 'done' || status === 'needs-attention' || status === 'cancelled') {
-      throw new Error(
-        `Recording reached ${status} before two partial revisions and an empty event batch were shown together.`,
-      );
-    }
-    if (status === 'processing' && lines.length > 2 && !secondRevision) {
-      throw new Error(
-        `Live transcript jumped to ${String(lines.length)} lines before the second revision was observed.`,
-      );
-    }
-    // Same read: still processing, both revisions have been shown, and an empty
-    // event batch was already counted, so that batch did not clear the card.
-    if (
-      status === 'processing'
-      && sawSingleRevision
-      && secondRevision
-      && emptyBatches >= 1
-    ) {
-      return 'grew';
-    }
-    return 'waiting';
-  }, { timeout: liveTranscriptWaitMs(2), intervals: [100] }).toBe('grew');
+  // Sequences start with `accepted`, are separate from partial revisions, and
+  // a read after a sequence resumes right after it.
+  expect(await recordingEventLog(page, documentId)).toEqual({
+    all: [[1, 'accepted', null], [2, 'input_checkpoint', null], [3, 'segment', 1]],
+    resumed: [3],
+    afterLast: 0,
+  });
 
-  // The third sentence, then awaiting structuring, then completion.
+  await holdRevisionsFrom(page, 3);
+  await expect(lineText).toHaveText(LIVE_TRANSCRIPT_LINES.slice(0, 2), { timeout: liveTranscriptWaitMs(1) });
+  await expect(row).toHaveAttribute('data-user-status', 'processing');
+  await expectCardKeptThroughEmptyPolls(page, documentId, LIVE_TRANSCRIPT_LINES.slice(0, 2));
+
+  // The third sentence, then structuring and completion, on the simulated timeline.
+  await holdRevisionsFrom(page, null);
   await expect(row).toHaveAttribute('data-user-status', 'done', {
-    timeout: liveTranscriptWaitMs(LIVE_TRANSCRIPT_LINES.length),
+    timeout: liveTranscriptWaitMs(4),
   });
   await expect(page.getByTestId('asr-live-card')).toHaveCount(0);
   await row.getByTestId('asr-row-view').click();
