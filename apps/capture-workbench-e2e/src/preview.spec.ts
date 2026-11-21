@@ -288,3 +288,99 @@ test('keeps engine purpose readable without horizontal overflow on /settings/eng
     await assertPurposeFitsTwoLines(page);
   }
 });
+
+// Sentences published one revision at a time by the recording journey in fake-desktop.ts.
+const LIVE_TRANSCRIPT_LINES = [
+  '這是第一句虛構逐字稿。',
+  '這是第二句虛構逐字稿。',
+  '這是第三句虛構逐字稿。',
+] as const;
+
+/** Queue status, live-card lines, and empty event replies, read in one page turn. */
+async function liveTranscriptSnapshot(page: Page, documentId: string): Promise<{
+  readonly status: string | null;
+  readonly lines: readonly string[];
+  readonly emptyBatches: number;
+}> {
+  return page.evaluate((id) => {
+    const row = document.querySelector(`[data-testid="asr-queue-row"][data-document-id="${id}"]`);
+    const card = document.querySelector(`[data-testid="asr-live-card"][data-document-id="${id}"]`);
+    const lines = [...(card?.querySelectorAll('[data-testid="asr-live-line"] p') ?? [])].map(
+      (node) => (node.textContent ?? '').replace(/\s+/gu, ' ').trim(),
+    );
+    const emptyBatches = (
+      globalThis as unknown as { readonly __captureRecordingEmptyEventBatches?: number }
+    ).__captureRecordingEmptyEventBatches ?? 0;
+    return {
+      status: row?.getAttribute('data-user-status') ?? null,
+      lines,
+      emptyBatches,
+    };
+  }, documentId);
+}
+
+test('shows the live transcript growing across partial revisions while the recording is still processing', async ({ page }) => {
+  test.setTimeout(60_000);
+  // Half speed stretches the preparing phase to 4s, the gap between partials.
+  // startDelay=0 publishes the first sentence as soon as the capture starts.
+  await page.goto('/?scenario=live-transcript&speed=0.5&startDelay=0');
+  await page.goto('/asr');
+
+  await expect(page.getByTestId('asr-choose-files')).toBeEnabled();
+  await page.getByTestId('asr-choose-files').click();
+
+  const row = page.getByTestId('asr-queue-row').filter({ hasText: 'sample-recording.mp3' });
+  await expect(row).toHaveAttribute('data-document-id', /^[0-9a-f]{32}$/u);
+  const documentId = await row.getAttribute('data-document-id');
+  if (documentId === null) {
+    throw new Error('Recording row is missing a document id.');
+  }
+
+  const card = page.locator(`[data-testid="asr-live-card"][data-document-id="${documentId}"]`);
+  const lineText = card.getByTestId('asr-live-line').locator('p');
+  await expect(card).toBeVisible();
+  await expect(card).toHaveAttribute('data-document-id', documentId);
+  await expect(lineText.first()).toHaveText(LIVE_TRANSCRIPT_LINES[0], { timeout: 15_000 });
+
+  let sawSingleRevision = false;
+  await expect.poll(async () => {
+    const { status, lines, emptyBatches } = await liveTranscriptSnapshot(page, documentId);
+    const singleRevision = lines.length === 1 && lines[0] === LIVE_TRANSCRIPT_LINES[0];
+    const secondRevision = lines.length === 2
+      && lines[0] === LIVE_TRANSCRIPT_LINES[0]
+      && lines[1] === LIVE_TRANSCRIPT_LINES[1];
+    if (status === 'processing' && singleRevision) sawSingleRevision = true;
+    if (lines.length === 0 && sawSingleRevision) {
+      throw new Error('The live transcript was cleared while the recording was still in progress.');
+    }
+    if (status === 'done' || status === 'needs-attention' || status === 'cancelled') {
+      throw new Error(
+        `Recording reached ${status} before two partial revisions and an empty event batch were shown together.`,
+      );
+    }
+    if (status === 'processing' && lines.length > 2 && !secondRevision) {
+      throw new Error(
+        `Live transcript jumped to ${String(lines.length)} lines before the second revision was observed.`,
+      );
+    }
+    // Same read: still processing, both revisions have been shown, and an empty
+    // event batch was already counted, so that batch did not clear the card.
+    if (
+      status === 'processing'
+      && sawSingleRevision
+      && secondRevision
+      && emptyBatches >= 1
+    ) {
+      return 'grew';
+    }
+    return 'waiting';
+  }, { timeout: 20_000, intervals: [100] }).toBe('grew');
+
+  await expect(row).toHaveAttribute('data-user-status', 'done', { timeout: 20_000 });
+  await expect(page.getByTestId('asr-live-card')).toHaveCount(0);
+  await row.getByTestId('asr-row-view').click();
+  await expect(page).toHaveURL(new RegExp(`/history/${documentId}/content$`, 'u'));
+  await expect(page.getByTestId('result-line-text')).toHaveText([...LIVE_TRANSCRIPT_LINES], {
+    timeout: 15_000,
+  });
+});

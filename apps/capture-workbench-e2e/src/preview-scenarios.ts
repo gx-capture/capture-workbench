@@ -52,6 +52,18 @@ export const PREVIEW_SCENARIOS: Readonly<Record<string, PreviewScenario>> = {
       installTimeline: DEFAULT_INSTALL_TIMELINE,
     },
   },
+  'live-transcript': {
+    label: '轉錄進行中（逐步顯示逐字稿）',
+    description: '語音轉文字已安裝。在錄音轉逐字稿選擇檔案後，模擬逐字稿分三句逐步出現，句與句之間會有一次沒有新事件的查詢，然後進入等待結構化並完成。第一句在 startDelay 之後出現，其後每一句相隔安裝準備階段的時間（受 speed 縮放）。',
+    requirements: scenarioRequirements('ready'),
+    options: {
+      cudaAvailable: true,
+      persistLibrary: true,
+      ocrJourney: true,
+      recordingJourney: true,
+      installTimeline: DEFAULT_INSTALL_TIMELINE,
+    },
+  },
   'no-gpu': {
     label: '無 NVIDIA GPU',
     description: '三個辨識功能皆已安裝，但模擬沒有 CUDA GPU 的電腦環境，可供檢視 CPU 運算狀態。',

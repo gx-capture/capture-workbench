@@ -21,6 +21,14 @@ export interface FakeDesktopOptions {
   readonly initialRunningInstallations?: readonly Record<string, unknown>[];
   /** Script capture commands so one OCR file can reach raw text. */
   readonly ocrJourney?: boolean;
+  /**
+   * Script one recording capture: partial transcripts arrive in steps,
+   * and `runtime_get_capture_events` returns only the events after
+   * `lastEventId`, including an empty batch between revisions.
+   * Step timing follows `installTimeline` (`startResponseMs` before the
+   * first partial, then `preparingMs` between partials).
+   */
+  readonly recordingJourney?: boolean;
   /** Keep the fake library in sessionStorage so a reload still lists it. */
   readonly persistLibrary?: boolean;
   /** Simulated installation phases with visible elapsed-time progress. */
@@ -64,6 +72,8 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
     };
     __captureDropSources?: (fileName: string) => void;
     __captureNativeSourcesReady?: boolean;
+    /** Empty `runtime_get_capture_events` replies after a partial was already delivered. */
+    __captureRecordingEmptyEventBatches?: number;
   }
   const target = globalThis as unknown as TauriTestGlobal;
   let nextCallbackId = 1;
@@ -75,7 +85,10 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
   const batchFor = (fileName: string) => {
     const selectionToken = (++sequence).toString(16).padStart(32, '0');
     const item = { selectionToken, fileName, byteLength: 12,
-      mediaType: fileName.endsWith('.png') ? 'image/png' : fileName.endsWith('.jpg') || fileName.endsWith('.jpeg') ? 'image/jpeg' : 'application/pdf' };
+      mediaType: fileName.endsWith('.png') ? 'image/png'
+        : fileName.endsWith('.jpg') || fileName.endsWith('.jpeg') ? 'image/jpeg'
+        : installOptions.recordingJourney && fileName.endsWith('.mp3') ? 'audio/mpeg'
+        : 'application/pdf' };
     selected.set(selectionToken, item);
     return { selections: [item], rejected: [] };
   };
@@ -367,6 +380,200 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
       createdAt: '2026-07-20T00:00:00Z',
     };
   };
+  // preview.spec.ts asserts these sentences, one revision at a time.
+  const recordingLines = [
+    '這是第一句虛構逐字稿。',
+    '這是第二句虛構逐字稿。',
+    '這是第三句虛構逐字稿。',
+  ];
+  const recordingCaptureId = 'capture-recording-1';
+  const recordingStepMs = Math.max(1, installOptions.installTimeline?.preparingMs ?? 400);
+  const recordingStartMs = Math.max(0, installOptions.installTimeline?.startResponseMs ?? 0);
+  const recordingEmptyWaitMs = Math.max(20, Math.min(250, Math.round(recordingStepMs / 4)));
+  let recordingStarted = false;
+  let recordingCancelled = false;
+  let recordingStartedAt = 0;
+  let deliveredRevision = 0;
+  let recordingOweEmpty = false;
+  let recordingReportedAwaiting = false;
+  let recordingEmptyBetween = 0;
+  let recordingFileName = 'sample-recording.mp3';
+  let recordingMediaType = 'audio/mpeg';
+  let recordingBytes = 12;
+  const recordingEngine = {
+    engine: 'speech-recognition',
+    model: 'fixture-speech',
+    digest: `sha256:${'e'.repeat(64)}`,
+    device: installOptions.cudaAvailable ? 'cuda' : 'cpu',
+  };
+  const recordingSource = (): Record<string, unknown> => ({
+    sha256: 'c'.repeat(64),
+    fileName: recordingFileName,
+    mediaType: recordingMediaType,
+    bytes: recordingBytes,
+  });
+  const recordingSegments = (count: number): Record<string, unknown>[] => (
+    recordingLines.slice(0, count).map((text, index): Record<string, unknown> => ({
+      segmentId: `segment-${index + 1}`,
+      order: index,
+      locator: { kind: 'time', startMs: index * 1200, endMs: (index + 1) * 1200 },
+      text,
+    }))
+  );
+  const recordingSourceText = (count: number): string => recordingLines.slice(0, count).join('\n');
+  const revisionDue = (): number => {
+    if (!recordingStarted || recordingCancelled) return deliveredRevision;
+    const elapsed = Date.now() - recordingStartedAt;
+    if (elapsed < recordingStartMs) return 0;
+    const steps = Math.floor((elapsed - recordingStartMs) / recordingStepMs);
+    return Math.min(recordingLines.length, steps + 1);
+  };
+  const recordingStatus = (): string => {
+    if (recordingCancelled) return 'cancelled';
+    const elapsed = Date.now() - recordingStartedAt;
+    const steps = elapsed < recordingStartMs
+      ? -1
+      : Math.floor((elapsed - recordingStartMs) / recordingStepMs);
+    if (deliveredRevision < recordingLines.length) return 'extracting';
+    if (!recordingReportedAwaiting) {
+      if (steps < recordingLines.length) return 'extracting';
+      recordingReportedAwaiting = true;
+      return 'awaiting_structuring';
+    }
+    if (steps < recordingLines.length + 1) return 'awaiting_structuring';
+    return 'completed';
+  };
+  const recordingOperation = (): Record<string, unknown> => {
+    const status = recordingStatus();
+    const coveredUntilMs = deliveredRevision * 1200;
+    return {
+      protocolVersion: '2',
+      captureId: recordingCaptureId,
+      ingestionId: 'ingestion-recording-1',
+      kind: 'recording',
+      status,
+      progress: status === 'completed' || status === 'awaiting_structuring'
+        ? 1
+        : deliveredRevision / recordingLines.length,
+      partialRevision: deliveredRevision,
+      lastEventSequence: deliveredRevision,
+      source: recordingSource(),
+      createdAt: '2026-07-20T00:00:00Z',
+      updatedAt: '2026-07-20T00:00:00Z',
+      durationMs: recordingLines.length * 1200,
+      coveredUntilMs,
+      ...(status === 'completed' ? { completedAt: '2026-07-20T00:00:01Z' } : {}),
+    };
+  };
+  const recordingPartial = (revision: number): Record<string, unknown> => ({
+    protocolVersion: '2',
+    captureId: recordingCaptureId,
+    source: recordingSource(),
+    revision,
+    coveredUntilMs: revision * 1200,
+    segments: recordingSegments(revision),
+    sourceText: recordingSourceText(revision),
+    extractionEngine: recordingEngine,
+    updatedAt: '2026-07-20T00:00:00Z',
+  });
+  const recordingEvent = (revision: number): Record<string, unknown> => ({
+    protocolVersion: '2',
+    eventId: `${recordingCaptureId}/${revision}`,
+    sequence: revision,
+    captureId: recordingCaptureId,
+    kind: 'recording',
+    eventType: 'segment',
+    stage: 'extracting',
+    progress: revision / recordingLines.length,
+    partialRevision: revision,
+    coveredUntilMs: revision * 1200,
+    segments: recordingSegments(revision),
+    createdAt: '2026-07-20T00:00:00Z',
+    durationMs: recordingLines.length * 1200,
+  });
+  const recordingEmptyBatch = (): Promise<unknown[]> => new Promise((resolve) => {
+    setTimeout(() => {
+      if (deliveredRevision > 0) {
+        recordingEmptyBetween += 1;
+        target.__captureRecordingEmptyEventBatches = recordingEmptyBetween;
+      }
+      resolve([]);
+    }, recordingEmptyWaitMs);
+  });
+  const recordingEvents = (
+    input: { readonly id?: string; readonly lastEventId?: number | null } | undefined,
+  ): Promise<unknown> => {
+    const id = String(input?.id ?? '');
+    if (!recordingStarted || id !== recordingCaptureId) {
+      return Promise.reject(new Error('Capture Runtime request was rejected with HTTP 404.'));
+    }
+    const rawCursor = input?.lastEventId;
+    const after = rawCursor === null || rawCursor === undefined ? -1 : Number(rawCursor);
+    if (!Number.isInteger(after) || after < -1) {
+      return Promise.reject(new Error('Capture Runtime request was rejected with HTTP 422.'));
+    }
+    const nextRevision = Math.min(revisionDue(), deliveredRevision + 1);
+    const pending: Record<string, unknown>[] = [];
+    for (let revision = after + 1; revision <= nextRevision; revision += 1) {
+      pending.push(recordingEvent(revision));
+    }
+    // One empty reply after each delivery, even when the next revision is already due,
+    // so a poll cannot skip the gap the live card has to survive.
+    const withhold = recordingOweEmpty && pending.length > 0;
+    if (pending.length === 0 || withhold) {
+      if (withhold) recordingOweEmpty = false;
+      return recordingEmptyBatch();
+    }
+    deliveredRevision = nextRevision;
+    recordingOweEmpty = true;
+    return Promise.resolve(pending);
+  };
+  const recordingResult = (): Promise<unknown> => {
+    const operation = recordingOperation();
+    if (operation['status'] !== 'completed') {
+      return Promise.reject(new Error('Capture Runtime request was rejected with HTTP 409.'));
+    }
+    const segments = recordingSegments(recordingLines.length);
+    const sourceText = recordingSourceText(recordingLines.length);
+    const source = recordingSource();
+    const raw = {
+      schemaVersion: '2',
+      diagnosticOnly: true,
+      source,
+      segments,
+      sourceText,
+      extractionEngine: recordingEngine,
+      createdAt: '2026-07-20T00:00:00Z',
+    };
+    return Promise.resolve({
+      operation,
+      raw,
+      result: {
+        schemaVersion: '2',
+        source,
+        rawSegments: segments,
+        blocks: segments.map((segment, index) => ({
+          blockId: `block-${index + 1}`,
+          order: index,
+          type: 'transcript',
+          sourceSegmentId: segment['segmentId'],
+          locator: segment['locator'],
+          sourceText: segment['text'],
+          targetText: segment['text'],
+        })),
+        sourceText,
+        targetText: sourceText,
+        extractionEngine: recordingEngine,
+        structuringEngine: {
+          engine: 'ollama',
+          model: 'qwen3.5:0.8b',
+          digest: `sha256:${'f'.repeat(64)}`,
+        },
+        createdAt: '2026-07-20T00:00:00Z',
+        completedAt: '2026-07-20T00:00:01Z',
+      },
+    });
+  };
 
   for (const initial of installOptions.initialRunningInstallations ?? []) {
     const id = String(initial['installationId']);
@@ -393,6 +600,7 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
   target.__captureInvokedCommands = [];
   target.__captureStartedRequirementIds = [];
   target.__captureCreatedPdfPageNumbers = [];
+  if (installOptions.recordingJourney) target.__captureRecordingEmptyEventBatches = 0;
   target.__captureDropSources = (fileName) => sendBatch(batchFor(fileName));
   target.__TAURI_INTERNALS__ = {
     metadata: {
@@ -415,6 +623,8 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
           readonly installationId?: string;
           readonly requirementId?: string;
           readonly optionId?: string;
+          readonly documentId?: string;
+          readonly lastEventId?: number | null;
         };
         readonly request?: Record<string, unknown>;
         readonly update?: Record<string, unknown>;
@@ -678,7 +888,13 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
       if (command === 'library_list') {
         return Promise.resolve(documents.map((item) => listedSummary(item)));
       }
-      if (command === 'library_select_sources') return Promise.resolve(batchFor('charge.pdf'));
+      if (command === 'library_select_sources') {
+        const kind = String(args.request?.['kind'] ?? '');
+        const fileName = installOptions.recordingJourney && kind === 'recordings'
+          ? 'sample-recording.mp3'
+          : 'charge.pdf';
+        return Promise.resolve(batchFor(fileName));
+      }
       if (command === 'library_watch_native_sources') {
         sourceChannel = args.onEvent;
         target.__captureNativeSourcesReady = true;
@@ -703,6 +919,21 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
         const pdfPageNumbers = options !== null && typeof options === 'object'
           ? (options as { readonly pdfPageNumbers?: unknown }).pdfPageNumbers
           : undefined;
+        const spokenLanguage = options !== null && typeof options === 'object'
+          ? (options as { readonly spokenLanguage?: unknown }).spokenLanguage
+          : undefined;
+        const identifySpeakers = options !== null && typeof options === 'object'
+          ? (options as { readonly identifySpeakers?: unknown }).identifySpeakers
+          : undefined;
+        const captureOptions: Record<string, unknown> = {};
+        if (typeof pdfPageCount === 'number') captureOptions['pdfPageCount'] = pdfPageCount;
+        else if (Array.isArray(pdfPageNumbers)) captureOptions['pdfPageNumbers'] = pdfPageNumbers;
+        if (installOptions.recordingJourney && typeof spokenLanguage === 'string') {
+          captureOptions['spokenLanguage'] = spokenLanguage;
+        }
+        if (installOptions.recordingJourney && typeof identifySpeakers === 'boolean') {
+          captureOptions['identifySpeakers'] = identifySpeakers;
+        }
         const document: StoredDoc = {
           documentId: selection.selectionToken,
           fileName,
@@ -712,11 +943,7 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
           updatedAtMs: Date.now(),
           status: 'queued',
           stage: 'uploading',
-          ...(typeof pdfPageCount === 'number'
-            ? { captureOptions: { pdfPageCount } }
-            : Array.isArray(pdfPageNumbers)
-              ? { captureOptions: { pdfPageNumbers } }
-              : {}),
+          ...(Object.keys(captureOptions).length > 0 ? { captureOptions } : {}),
         };
         documents = [
           document,
@@ -846,6 +1073,58 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
         rememberLibrary();
         return Promise.resolve(listedSummary(current));
       }
+      if (installOptions.recordingJourney && command === 'runtime_start_recording_capture') {
+        const documentId = String(args.input?.documentId ?? '');
+        const current = documents.find((item) => item.documentId === documentId);
+        if (!current || !/^(audio|video)\//u.test(current.mediaType)) {
+          return Promise.reject(new Error('Progressive capture is available only for recordings.'));
+        }
+        recordingFileName = current.fileName;
+        recordingMediaType = current.mediaType;
+        recordingBytes = current.byteLength;
+        recordingStarted = true;
+        recordingCancelled = false;
+        recordingStartedAt = Date.now();
+        deliveredRevision = 0;
+        recordingOweEmpty = false;
+        recordingReportedAwaiting = false;
+        recordingEmptyBetween = 0;
+        target.__captureRecordingEmptyEventBatches = 0;
+        return Promise.resolve(recordingOperation());
+      }
+      if (installOptions.recordingJourney && command === 'runtime_get_capture_events') {
+        return recordingEvents(args.input);
+      }
+      if (installOptions.recordingJourney && command === 'runtime_get_partial') {
+        const id = String(args.input?.id ?? '');
+        if (!recordingStarted || id !== recordingCaptureId) {
+          return Promise.reject(new Error('Capture Runtime request was rejected with HTTP 404.'));
+        }
+        // 409 from the runtime: no partial has been published yet. An empty events
+        // batch leaves the last partial in place.
+        if (deliveredRevision < 1) return Promise.resolve(null);
+        return Promise.resolve(recordingPartial(deliveredRevision));
+      }
+      if (installOptions.recordingJourney && command === 'runtime_get_result') {
+        const id = String(args.input?.id ?? '');
+        if (!recordingStarted || id !== recordingCaptureId) {
+          return Promise.reject(new Error('Capture Runtime request was rejected with HTTP 404.'));
+        }
+        return recordingResult();
+      }
+      if (installOptions.recordingJourney && command === 'runtime_cancel_capture') {
+        const id = String(args.input?.id ?? '');
+        if (recordingStarted && id === recordingCaptureId) {
+          recordingCancelled = true;
+          return Promise.resolve(recordingOperation());
+        }
+      }
+      if (installOptions.recordingJourney && command === 'runtime_get_capture') {
+        const id = String(args.input?.id ?? '');
+        if (recordingStarted && id === recordingCaptureId) {
+          return Promise.resolve(recordingOperation());
+        }
+      }
       if (installOptions.ocrJourney && command === 'runtime_create_capture') {
         ocrPolls = 0;
         const input = (args.input ?? {}) as { readonly pdfPageNumbers?: readonly number[] };
@@ -864,7 +1143,7 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
       if (installOptions.ocrJourney && command === 'runtime_get_ocr') {
         return Promise.resolve(ocrProjection());
       }
-      if (installOptions.ocrJourney && command === 'runtime_delete_capture') {
+      if ((installOptions.ocrJourney || installOptions.recordingJourney) && command === 'runtime_delete_capture') {
         return Promise.resolve(null);
       }
       return Promise.reject(new Error(`Unexpected command: ${command}`));
