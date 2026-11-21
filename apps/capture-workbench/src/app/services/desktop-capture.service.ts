@@ -47,6 +47,7 @@ import {
 import {
   canCaptureAgain,
   committedTerminalStatus,
+  holdsTerminalData,
   isCaptureLost,
   isActiveOneShotOperation,
   isActiveStreaming,
@@ -595,8 +596,11 @@ export class DesktopCaptureService {
       ) {
         return EMPTY;
       }
+      // A document that holds its terminal data is only cleaned up: its
+      // runtime capture is never read, so a capture that is gone cannot turn
+      // kept data into a lost capture.
+      const terminalCommitted = holdsTerminalData(document);
       const committedStatus = committedTerminalStatus(document);
-      const terminalCommitted = committedStatus !== undefined;
       const active: ActiveCapture = {
         captureId: document.captureId,
         streaming: isRecordingMediaType(document.mediaType),
@@ -617,7 +621,7 @@ export class DesktopCaptureService {
       this.activeCaptures.set(document.documentId, active);
       this.markBusy(document.documentId, true);
 
-      const work$ = committedStatus !== undefined
+      const work$ = terminalCommitted
         ? this.retryRuntimeCleanup$(document, committedStatus)
         : active.streaming
           ? this.runtime.getCapture(document.captureId).pipe(
@@ -1041,19 +1045,28 @@ export class DesktopCaptureService {
 
   /**
    * Deletes the runtime capture of a document that already holds its terminal
-   * data and unlinks it. The document keeps the terminal status it stored.
+   * data and unlinks it. The document gets the terminal status it says its
+   * capture ended in; when it does not say, it keeps what it stores and only
+   * the link is removed.
    */
   private retryRuntimeCleanup$(
     document: DesktopLibrarySummary,
-    committedStatus: TerminalLibraryStatus,
+    committedStatus: TerminalLibraryStatus | undefined,
   ): Observable<DesktopLibrarySummary> {
     const captureId = document.captureId;
     if (!captureId) return EMPTY;
+    const stage = committedStatus ? terminalStage(committedStatus) : document.stage;
     return this.runtime.deleteCapture(captureId).pipe(
       switchMap(() => this.library.updateCapture({
         documentId: document.documentId,
-        status: committedStatus,
-        stage: terminalStage(committedStatus),
+        ...(committedStatus
+          ? { status: committedStatus }
+          : {
+            status: document.status,
+            recoveryCode: document.recoveryCode,
+            recoveryMessage: document.recoveryMessage,
+          }),
+        stage,
         clearCaptureId: true,
         errorCode: document.errorCode,
         errorMessage: document.errorMessage,
@@ -1062,7 +1075,7 @@ export class DesktopCaptureService {
         documentId: document.documentId,
         captureId,
         status: 'recovery_required',
-        stage: terminalStage(committedStatus),
+        stage,
         errorCode: document.errorCode,
         errorMessage: document.errorMessage,
         recoveryCode: 'runtime_cleanup_failed',
@@ -1077,14 +1090,16 @@ export class DesktopCaptureService {
     error: unknown,
   ): Observable<DesktopLibrarySummary> {
     if (active.captureId) {
-      if (active.terminalCommitted && active.terminalStatus) {
+      if (active.terminalCommitted) {
         return this.library.updateCapture({
           documentId,
           captureId: active.captureId,
           status: 'recovery_required',
           // The stage of a cleanup row names the terminal status the document
-          // holds: the cleanup retry restores the status from it.
-          stage: terminalStage(active.terminalStatus),
+          // holds: the cleanup retry restores the status from it. A row that
+          // never said how its capture ended keeps the stage it stores.
+          stage: active.terminalStatus ? terminalStage(active.terminalStatus) : active.lastStage,
+
           errorCode: active.terminalErrorCode,
           errorMessage: active.terminalErrorMessage,
           recoveryCode: 'runtime_cleanup_failed',

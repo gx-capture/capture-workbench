@@ -48,10 +48,25 @@ function terminalStatusFromStage(stage?: string): TerminalLibraryStatus | undefi
 }
 
 /**
- * The terminal status whose data the stored document already holds: its own
+ * Whether the stored document holds the terminal data of its capture, so that
+ * only the runtime cleanup is left to do: it is stored as ended, as an OCR
+ * result to confirm, or as a refused cleanup.
+ */
+export function holdsTerminalData(document: DesktopLibrarySummary): boolean {
+  return document.status === 'completed'
+    || document.status === 'failed'
+    || document.status === 'canceled'
+    || (document.status === 'awaiting_confirmation' && document.hasRaw === true)
+    || document.recoveryCode === 'runtime_cleanup_failed';
+}
+
+/**
+ * The terminal status the stored document says its capture ended in: its own
  * terminal status, or, while only the runtime cleanup is still to do, the one
- * its stage names. Undefined when the document does not say: then the runtime
- * capture is asked, and no status is guessed.
+ * its stage names. Earlier versions stored the cleanup row of a recording with
+ * the last event's stage, which need not be terminal; then the document's own
+ * data decides: a stored terminal error means failed, a kept result completed.
+ * Undefined when the document does not say; no status is guessed.
  */
 export function committedTerminalStatus(
   document: DesktopLibrarySummary,
@@ -63,10 +78,16 @@ export function committedTerminalStatus(
   ) {
     return document.status;
   }
-  return document.recoveryCode === 'runtime_cleanup_failed'
-    ? terminalStatusFromStage(document.stage)
-    : undefined;
+  if (document.status === 'awaiting_confirmation' && document.hasRaw === true) {
+    return 'awaiting_confirmation';
+  }
+  if (document.recoveryCode !== 'runtime_cleanup_failed') return undefined;
+  const namedByStage = terminalStatusFromStage(document.stage);
+  if (namedByStage) return namedByStage;
+  if (document.errorCode) return 'failed';
+  return document.hasRaw === true ? 'completed' : undefined;
 }
+
 
 /** Converts a library terminal status to the runtime stage spelling. */
 export function terminalStage(status: TerminalLibraryStatus): string {

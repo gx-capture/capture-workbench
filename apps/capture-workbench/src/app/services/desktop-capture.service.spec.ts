@@ -6,6 +6,7 @@ import type { CaptureOperation, CaptureRequirementId, OcrComputePreflight } from
 import { finalize, of, Subject, throwError, type Observable } from 'rxjs';
 import type { DesktopLibraryDetail, DesktopLibrarySummary } from '../contracts';
 import { DesktopCaptureService, type DesktopCaptureHost } from './desktop-capture.service';
+import { isCaptureLost } from './capture-operation-status';
 import { DesktopLibraryService, type DesktopSourceSelection } from './desktop-library.service';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
 
@@ -1642,39 +1643,74 @@ describe('DesktopCaptureService', () => {
     },
   );
 
-  it('asks the runtime about a cleanup row whose stage names no terminal status', () => {
-    // As written before the stage of a cleanup row was always the terminal one.
-    const cleanupRow = {
+  describe('a linked document that holds terminal data', () => {
+    // Earlier versions stored a refused unlink of a recording with the last
+    // event's stage, which need not be terminal.
+    const cleanupRowWithLastEventStage = (evidence: Partial<DesktopLibrarySummary>) => ({
       ...summary,
       fileName: 'fixture.mp3',
       mediaType: 'audio/mpeg',
       status: 'recovery_required',
       stage: 'extracting',
-      captureId: 'capture-unknown-end',
+      captureId: 'capture-kept',
       recoveryCode: 'runtime_cleanup_failed',
-    } satisfies DesktopLibrarySummary;
-    const updateCapture = vi.fn((update: Record<string, unknown>) =>
-      of(applyDurableCaptureUpdate(cleanupRow, update)));
-    const getCapture = vi.fn(() =>
-      throwError(() => 'Capture Runtime request was rejected with HTTP 404.'));
-    const deleteCapture = vi.fn(() => of(undefined));
-    const store = initializeCapture(
-      libraryStub({ list: vi.fn(() => of([cleanupRow])), updateCapture }),
-      runtimeStub({ getCapture, deleteCapture }),
+      recoveryMessage: 'Capture library index cannot be written.',
+      ...evidence,
+    } satisfies DesktopLibrarySummary);
+
+    it.each([
+      ['a cleanup row with a kept result', cleanupRowWithLastEventStage({ hasRaw: true }),
+        { status: 'completed', stage: 'completed' }],
+      ['a cleanup row with a stored terminal error',
+        cleanupRowWithLastEventStage({ errorCode: 'speech_failed', errorMessage: 'no speech' }),
+        { status: 'failed', stage: 'failed', errorCode: 'speech_failed', errorMessage: 'no speech' }],
+      ['a cleanup row that does not say how its capture ended', cleanupRowWithLastEventStage({}),
+        { status: 'recovery_required', stage: 'extracting', recoveryCode: 'runtime_cleanup_failed',
+          recoveryMessage: 'Capture library index cannot be written.' }],
+      ['a completed document that was never unlinked',
+        { ...summary, status: 'completed', stage: 'completed', captureId: 'capture-kept', hasRaw: true },
+        { status: 'completed', stage: 'completed' }],
+      ['an OCR result to confirm that was never unlinked',
+        { ...summary, status: 'awaiting_confirmation', stage: 'awaiting_structuring', captureId: 'capture-kept', hasRaw: true },
+        { status: 'awaiting_confirmation', stage: 'awaiting_structuring' }],
+    ] satisfies [string, DesktopLibrarySummary, Record<string, unknown>][])(
+      'only cleans up %s, whose runtime capture is gone',
+      (_row, storedDocument, written) => {
+        let stored: DesktopLibrarySummary = storedDocument;
+        const updateCapture = vi.fn((update: Record<string, unknown>) => {
+          stored = applyDurableCaptureUpdate(stored, update);
+          return of(stored);
+        });
+        // The runtime no longer knows the capture; the host answers its delete as done.
+        const getCapture = vi.fn(() =>
+          throwError(() => 'Capture Runtime request was rejected with HTTP 404.'));
+        const deleteCapture = vi.fn(() => of(undefined));
+        const createCapture = vi.fn(() => of(completedOperation));
+        const store = initializeCapture(
+          libraryStub({ list: vi.fn(() => of([stored])), updateCapture }),
+          runtimeStub({ getCapture, deleteCapture, createCapture }),
+        );
+
+        store.service.reattach$(storedDocument, store.host).subscribe();
+        TestBed.tick();
+
+        expect(getCapture).not.toHaveBeenCalled();
+        expect(deleteCapture).toHaveBeenCalledExactlyOnceWith('capture-kept');
+        expect(captureUpdates(updateCapture)).toEqual([
+          expect.objectContaining({ documentId: summary.documentId, clearCaptureId: true, ...written }),
+        ]);
+        expect(captureUpdates(updateCapture)[0]).not.toHaveProperty('captureId');
+        // Nothing marks the capture as lost, so no row offers a restart over the kept data.
+        expect(stored.recoveryCode).not.toBe('capture_recovery_required');
+        expect(isCaptureLost(stored)).toBe(false);
+        expect(stored.captureId).toBeUndefined();
+
+        store.service.restartLost$(summary.documentId, store.host).subscribe();
+        TestBed.tick();
+        expect(createCapture).not.toHaveBeenCalled();
+        expect(updateCapture).toHaveBeenCalledTimes(1);
+      },
     );
-
-    store.service.reattach$(cleanupRow, store.host).subscribe();
-    TestBed.tick();
-
-    expect(getCapture).toHaveBeenCalledExactlyOnceWith('capture-unknown-end');
-    expect(deleteCapture).not.toHaveBeenCalled();
-    expect(captureUpdates(updateCapture)).toEqual([
-      expect.objectContaining({
-        status: 'recovery_required',
-        captureId: 'capture-unknown-end',
-        recoveryCode: 'capture_recovery_required',
-      }),
-    ]);
   });
 
   describe('a claimed document', () => {

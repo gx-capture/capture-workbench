@@ -1,7 +1,12 @@
 import type { DesktopLibraryStatus, DesktopLibrarySummary } from '../contracts';
 import { setDesktopLocale } from '../i18n/desktop-messages';
 import { describeAsrDocument } from './asr-queue';
-import { canCaptureAgain, committedTerminalStatus, isCaptureLost } from './capture-operation-status';
+import {
+  canCaptureAgain,
+  committedTerminalStatus,
+  holdsTerminalData,
+  isCaptureLost,
+} from './capture-operation-status';
 import { describeOcrDocument } from './ocr-queue';
 
 const STATUSES: readonly DesktopLibraryStatus[] = [
@@ -42,20 +47,52 @@ describe('committedTerminalStatus', () => {
     }))).toBe(status);
   });
 
+  // Earlier versions stored a refused unlink of a recording with the last
+  // event's stage. The document's own data then says how the capture ended.
+  it.each([
+    ['a kept result', { hasRaw: true }, 'completed'],
+    ['a terminal error', { errorCode: 'speech_failed' }, 'failed'],
+    ['a terminal error beside older data', { errorCode: 'speech_failed', hasRaw: true }, 'failed'],
+  ] as const)('is read from %s when the stage of a cleanup row is not terminal', (_evidence, evidence, status) => {
+    expect(committedTerminalStatus(stored({
+      status: 'recovery_required', recoveryCode: 'runtime_cleanup_failed', stage: 'extracting',
+      captureId: 'capture-1', ...evidence,
+    }))).toBe(status);
+  });
+
   it.each(['extracting', 'structuring', 'uploading', undefined] as const)(
-    'is not guessed for a cleanup row whose stage %s is not terminal',
+    'is not guessed for a cleanup row with the stage %s and neither a result nor an error',
     (stage) => {
-      expect(committedTerminalStatus(stored({
+      const row = stored({
         status: 'recovery_required', recoveryCode: 'runtime_cleanup_failed', stage, captureId: 'capture-1',
-      }))).toBeUndefined();
+      });
+      expect(committedTerminalStatus(row)).toBeUndefined();
+      // Its terminal data is kept all the same: only the runtime cleanup is left.
+      expect(holdsTerminalData(row)).toBe(true);
     },
   );
 
+  it('is the stored status of an OCR result that waits for confirmation', () => {
+    const row = stored({ status: 'awaiting_confirmation', stage: 'awaiting_structuring', hasRaw: true, captureId: 'capture-1' });
+    expect(committedTerminalStatus(row)).toBe('awaiting_confirmation');
+    expect(holdsTerminalData(row)).toBe(true);
+  });
+
   it.each(['queued', 'processing', 'persisting', 'recovery_required', 'awaiting_confirmation'] as const)(
-    'is unknown for a document stored as %s without a pending cleanup',
+    'is unknown for a document stored as %s without a result or a pending cleanup',
     (status) => {
-      expect(committedTerminalStatus(stored({ status, stage: 'completed', captureId: 'capture-1' })))
-        .toBeUndefined();
+      const row = stored({ status, stage: 'completed', captureId: 'capture-1' });
+      expect(committedTerminalStatus(row)).toBeUndefined();
+      expect(holdsTerminalData(row)).toBe(false);
+    },
+  );
+
+  it.each(['processing', 'persisting', 'recovery_required'] as const)(
+    'is unknown for a document stored as %s that only holds raw text of a capture that did not end',
+    (status) => {
+      const row = stored({ status, stage: 'structuring', hasRaw: true, captureId: 'capture-1' });
+      expect(committedTerminalStatus(row)).toBeUndefined();
+      expect(holdsTerminalData(row)).toBe(false);
     },
   );
 });
