@@ -1501,6 +1501,60 @@ describe('DesktopCaptureService', () => {
     expect(lifecycle.hasActiveCapture('1'.repeat(32))).toBe(false);
     expect(lifecycle.hasActiveCapture('2'.repeat(32))).toBe(false);
   });
+
+  it('does not reattach a finished recording from a document list read before it finished', async () => {
+    const captureId = 'capture-recording-finished';
+    // The only list the Workbench read while the recording ran.
+    const running = {
+      ...summary,
+      fileName: 'fixture.mp3',
+      mediaType: 'audio/mpeg',
+      status: 'processing',
+      stage: 'extracting',
+      captureId,
+    } satisfies DesktopLibrarySummary;
+    const recording = (status: CaptureOperation['status']) =>
+      operation({ captureId, status, kind: 'recording' });
+    // Like the runtime: a deleted capture is not found.
+    let deleted = false;
+    const unlessDeleted = <T>(value: T): Observable<T> => deleted
+      ? throwError(() => new Error('Capture Runtime request was rejected with HTTP 404.'))
+      : of(value);
+    const getCapture = vi.fn(() => unlessDeleted(recording('completed')));
+    const deleteCapture = vi.fn(() => {
+      deleted = true;
+      return of(undefined);
+    });
+    const updateCapture = vi.fn((update: Record<string, unknown>) =>
+      of(applyDurableCaptureUpdate(running, update)));
+    const store = initializeCapture(
+      libraryStub({ list: vi.fn(() => of([running])), updateCapture }),
+      runtimeStub({
+        startRecordingCapture: vi.fn(() => of(recording('extracting'))),
+        getCaptureEvents: vi.fn(() => unlessDeleted([])),
+        getPartial: vi.fn(() => unlessDeleted(null)),
+        getCapture,
+        getResult: vi.fn(() => unlessDeleted({ operation: recording('completed'), raw, result })),
+        deleteCapture,
+      }),
+    );
+
+    store.service.startDocument$(running.documentId, store.host).subscribe();
+    TestBed.tick();
+    await settleCaptureLifecycle();
+    expect(deleteCapture).toHaveBeenCalledExactlyOnceWith(captureId);
+    expect(captureUpdates(updateCapture)).toContainEqual(
+      expect.objectContaining({ status: 'completed', clearCaptureId: true }),
+    );
+    const readsBeforeReattach = getCapture.mock.calls.length;
+
+    store.service.reattach$(running, store.host).subscribe();
+    TestBed.tick();
+    await settleCaptureLifecycle();
+
+    expect(getCapture).toHaveBeenCalledTimes(readsBeforeReattach);
+    expect(captureUpdates(updateCapture).map((update) => update['status'])).not.toContain('recovery_required');
+  });
 });
 
 function initializeCapture(

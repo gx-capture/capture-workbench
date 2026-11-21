@@ -109,6 +109,12 @@ export class DesktopCaptureService {
   private readonly activeCaptures = new Map<string, ActiveCapture>();
   /** Documents of a batch that are imported and wait for their turn. */
   private readonly awaitingTurn = new Set<string>();
+  /**
+   * Runtime operations this service deleted and unlinked from their document.
+   * A document list read before that still names them, and the runtime no
+   * longer knows them, so recovery must not reattach them.
+   */
+  private readonly releasedCaptureIds = new Set<string>();
 
   /**
    * Reports whether a capture runs for the document or a batch has already
@@ -464,7 +470,10 @@ export class DesktopCaptureService {
         errorCode: operation.error?.code,
         errorMessage: operation.error?.message,
       })),
-      tap(() => this.clearStreamingPartial(documentId)),
+      tap(() => {
+        this.releasedCaptureIds.add(operation.captureId);
+        this.clearStreamingPartial(documentId);
+      }),
       map(() => undefined),
     );
   }
@@ -478,6 +487,7 @@ export class DesktopCaptureService {
         !this.runtime.ready()
         || !document.captureId
         || this.activeCaptures.has(document.documentId)
+        || this.releasedCaptureIds.has(document.captureId)
       ) {
         return EMPTY;
       }
@@ -734,6 +744,7 @@ export class DesktopCaptureService {
         stage,
         clearCaptureId: true,
       }))),
+      tap(() => this.releasedCaptureIds.add(operation.captureId)),
     );
   }
 
@@ -909,7 +920,7 @@ export class DesktopCaptureService {
         clearCaptureId: true,
         errorCode: operation.error?.code,
         errorMessage: operation.error?.message,
-      })),
+      }).pipe(tap(() => this.releasedCaptureIds.add(operation.captureId)))),
       catchError((error) => this.library.updateCapture({
         documentId,
         captureId: operation.captureId,
@@ -934,7 +945,7 @@ export class DesktopCaptureService {
         clearCaptureId: true,
         errorCode: document.errorCode,
         errorMessage: document.errorMessage,
-      })),
+      }).pipe(tap(() => this.releasedCaptureIds.add(captureId)))),
       catchError((error) => this.library.updateCapture({
         documentId: document.documentId,
         captureId,
