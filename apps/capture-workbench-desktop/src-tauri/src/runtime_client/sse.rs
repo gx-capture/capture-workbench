@@ -104,7 +104,12 @@ impl EventStream {
                 self.decoded_until = self.raw.len();
             }
             Framing::Length(length) => {
-                let end = (body_start + length).min(self.raw.len());
+                let end = body_start
+                    .checked_add(length)
+                    .ok_or_else(|| {
+                        "Capture Runtime response Content-Length was invalid.".to_string()
+                    })?
+                    .min(self.raw.len());
                 self.body
                     .extend_from_slice(&self.raw[self.decoded_until..end]);
                 self.decoded_until = end;
@@ -127,11 +132,11 @@ impl EventStream {
                     self.ended = true;
                     return Ok(());
                 }
-                let chunk_start = size_end + 2;
-                let chunk_end = chunk_start
-                    .checked_add(size)
-                    .ok_or_else(|| "Capture Runtime chunk size overflowed.".to_string())?;
-                let Some(framing) = remaining.get(chunk_end..chunk_end + 2) else {
+                let overflow = || "Capture Runtime chunk size overflowed.".to_string();
+                let chunk_start = size_end.checked_add(2).ok_or_else(overflow)?;
+                let chunk_end = chunk_start.checked_add(size).ok_or_else(overflow)?;
+                let framing_end = chunk_end.checked_add(2).ok_or_else(overflow)?;
+                let Some(framing) = remaining.get(chunk_end..framing_end) else {
                     return Ok(());
                 };
                 if framing != b"\r\n" {
@@ -139,7 +144,10 @@ impl EventStream {
                 }
                 self.body
                     .extend_from_slice(&remaining[chunk_start..chunk_end]);
-                self.decoded_until += chunk_end + 2;
+                self.decoded_until = self
+                    .decoded_until
+                    .checked_add(framing_end)
+                    .ok_or_else(overflow)?;
             },
         }
         Ok(())
@@ -314,6 +322,33 @@ mod tests {
             .push(b"zz secret-token\r\n")
             .expect_err("malformed chunk");
         assert!(!error.contains("secret-token"));
+    }
+
+    #[test]
+    fn huge_chunk_sizes_and_lengths_are_framing_errors_without_response_bytes() {
+        for size in ["ffffffffffffffff", "fffffffffffffffffffff"] {
+            let mut stream = EventStream::new();
+            stream.push(HEADERS).expect("headers");
+            let error = stream
+                .push(format!("{size}\r\nsecret-token\r\n").as_bytes())
+                .expect_err("huge chunk");
+            assert!(error.starts_with("Capture Runtime chunk size"), "{error}");
+            assert!(!error.contains("secret-token"));
+        }
+        let mut stream = EventStream::new();
+        let error = stream
+            .push(
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\nsecret-token",
+                    usize::MAX
+                )
+                .as_bytes(),
+            )
+            .expect_err("huge length");
+        assert_eq!(
+            error,
+            "Capture Runtime response Content-Length was invalid."
+        );
     }
 
     #[test]
