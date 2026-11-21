@@ -13,7 +13,8 @@ const desktopCspPort = 4311;
 const desktopCspURL = `http://127.0.0.1:${desktopCspPort}`;
 const previewPort = 4312;
 const previewURL = `http://127.0.0.1:${previewPort}`;
-const simulatedBackendTestIgnore = /(?:(?:preview|dev-host|real-engines)\.spec|real-engines-inputs\.test)\.ts$/u;
+// Every *.test.ts under src/ is a Node test (node --test), not a Playwright spec.
+const simulatedBackendTestIgnore = /(?:(?:preview|dev-host|real-engines)\.spec|\.test)\.ts$/u;
 
 /**
  * Read environment variables from file.
