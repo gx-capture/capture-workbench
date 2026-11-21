@@ -2125,30 +2125,58 @@ describe('DesktopCaptureService', () => {
       expect(service.isDocumentClaimed(summary.documentId)).toBe(false);
     });
 
-    it('is sent first for a recording too', () => {
+    describe('for a recording', () => {
       const recordingDocument = {
         ...running, fileName: 'fixture.mp3', mediaType: 'audio/mpeg',
       } satisfies DesktopLibrarySummary;
-      const cancelledRecording = operation({ captureId: 'capture-1', status: 'cancelled', kind: 'recording' });
-      const calls: string[] = [];
-      const called = <T>(name: string, value: T) => vi.fn(() => {
-        calls.push(name);
-        return of(value);
-      });
-      const { service, host, answerRead, stored } = recovery(recordingDocument, {
-        cancelCapture: called('cancel', cancelledRecording),
-        getCaptureEvents: called('events', []),
-        getPartial: called('partial', null),
-        getCapture: called('capture', cancelledRecording),
-      });
+      const recording = (status: CaptureOperation['status']) =>
+        operation({ captureId: 'capture-1', status, kind: 'recording' });
 
-      service.reattach$(recordingDocument, host).subscribe();
-      service.cancel(summary.documentId);
-      answerRead();
-      TestBed.tick();
+      function recordingRecovery(cancelReply: CaptureOperation, laterRead: Observable<CaptureOperation>) {
+        const calls: string[] = [];
+        const called = <T>(name: string, reply: Observable<T>) => vi.fn(() => {
+          calls.push(name);
+          return reply;
+        });
+        const test = recovery(recordingDocument, {
+          cancelCapture: called('cancel', of(cancelReply)),
+          getCaptureEvents: called('events', of([])),
+          getPartial: called('partial', of(null)),
+          getCapture: called('capture', laterRead),
+        });
+        test.service.reattach$(recordingDocument, test.host).subscribe();
+        test.service.cancel(summary.documentId);
+        test.answerRead();
+        TestBed.tick();
+        return { ...test, calls };
+      }
 
-      expect(calls).toEqual(['cancel', 'events', 'partial', 'capture']);
-      expect(stored()).toMatchObject({ status: 'canceled', captureId: undefined });
+      it.each([
+        ['cancelled', 'canceled'],
+        ['completed', 'completed'],
+        ['failed', 'failed'],
+      ] as const)(
+        'is sent first, and a capture it answers as %s is stored without another read',
+        async (ended, storedStatus) => {
+          // Any read after the cancel was answered would fail.
+          const { calls, stored, deleteCapture } = recordingRecovery(
+            recording(ended),
+            throwError(() => 'Capture Runtime is unavailable.'),
+          );
+          await settleCaptureLifecycle();
+
+          expect(calls).toEqual(['cancel']);
+          expect(deleteCapture).toHaveBeenCalledExactlyOnceWith('capture-1');
+          expect(stored()).toMatchObject({ status: storedStatus, stage: ended, captureId: undefined });
+        },
+      );
+
+      it('goes on reading a capture that the cancel answers as still running', () => {
+        const { calls, stored } = recordingRecovery(recording('extracting'), of(recording('cancelled')));
+
+        expect(calls).toEqual(['cancel', 'events', 'partial', 'capture']);
+        expect(stored()).toMatchObject({ status: 'canceled', captureId: undefined });
+      });
     });
 
     it('is not sent for a document that holds its result: only the cleanup runs', () => {
@@ -2214,7 +2242,8 @@ describe('DesktopCaptureService', () => {
         function readAndCancelUnanswered() {
           const read = new Subject<CaptureOperation>();
           const cancelReply = new Subject<CaptureOperation>();
-          const getCapture = vi.fn((): Observable<CaptureOperation> => of(cancelled));
+          // Any read after the first one would fail.
+          const getCapture = vi.fn((): Observable<CaptureOperation> => throwError(() => notFound));
           getCapture.mockImplementationOnce(() => read);
           const cancelCapture = vi.fn(() => cancelReply);
           const test = recovery(document, {

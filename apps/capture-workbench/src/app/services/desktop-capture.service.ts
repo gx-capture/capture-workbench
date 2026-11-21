@@ -685,11 +685,13 @@ export class DesktopCaptureService {
               active.lastStage = operation.status;
               this.rememberRecordingOperation(document.documentId, operation);
             }),
-            switchMap((operation) => this.waitForStreamingTerminal$(
-              document.documentId,
-              operation,
-              active,
-            )),
+            // A capture that the runtime answers a cancel with as ended is
+            // stored as answered. Reading it again adds nothing, and a read
+            // that fails would store an accepted cancel as a failed one, or
+            // leave a result that is complete unsaved.
+            switchMap((operation) => active.cancelSent && !isActiveStreaming(operation)
+              ? of(operation)
+              : this.waitForStreamingTerminal$(document.documentId, operation, active)),
             switchMap((operation) => this.persistStreamingTerminal$(
               document.documentId,
               operation,
