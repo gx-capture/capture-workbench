@@ -7,7 +7,8 @@ import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream, existsSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import { lstat, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
+import { once } from 'node:events';
 import { basename, join, resolve } from 'node:path';
 
 import { setTimeout as delay } from 'node:timers/promises';
@@ -247,14 +248,32 @@ function requiredString(value: unknown): string {
   return value;
 }
 
-async function waitForReady(
+type RuntimeChild = Pick<ChildProcess, 'exitCode' | 'signalCode' | 'pid' | 'stderr'>;
+
+// A child's 'exit' can come before its last stderr chunk. Wait briefly for
+// stderr to end so the runtime's startup error is not lost.
+async function stderrEnded(child: RuntimeChild, waitMs: number): Promise<void> {
+  const stderr = child.stderr;
+  if (!stderr || stderr.readableEnded || stderr.destroyed) return;
+  const stop = new AbortController();
+  await Promise.race([
+    once(stderr, 'end', { signal: stop.signal }),
+    once(stderr, 'close', { signal: stop.signal }),
+    delay(waitMs, undefined, { signal: stop.signal }),
+  ]).catch(() => undefined);
+  stop.abort();
+}
+
+export async function waitForReady(
   baseUrl: string,
-  child: ReturnType<typeof spawn>,
+  child: RuntimeChild,
   startupError: () => string,
+  stderrWaitMs = 500,
 ): Promise<void> {
   const deadline = Date.now() + 120_000;
   while (Date.now() < deadline) {
     if (child.exitCode !== null || child.signalCode !== null || !child.pid) {
+      await stderrEnded(child, stderrWaitMs);
       throw new Error(`Progressive audio oracle runtime exited before readiness. ${startupError()}`.trim());
     }
     try {

@@ -1,7 +1,54 @@
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { PassThrough } from 'node:stream';
 import test from 'node:test';
 
-import { captureEvents, readLiveCheckpoint, recordingIngestionMetadata, speechWorkerFileNames } from './progressive-audio-oracle.ts';
+import {
+  captureEvents,
+  readLiveCheckpoint,
+  recordingIngestionMetadata,
+  speechWorkerFileNames,
+  waitForReady,
+} from './progressive-audio-oracle.ts';
+
+// Never contacted: every child below has exited before the first readiness request.
+const unusedBaseUrl = 'http://127.0.0.1:9';
+
+function collectText(stream: NodeJS.ReadableStream): () => string {
+  let text = '';
+  stream.setEncoding('utf8');
+  stream.on('data', (chunk: string) => { text += chunk; });
+  return () => text;
+}
+
+test('the oracle keeps a startup error written by a child that exits at once', { timeout: 10_000 }, async () => {
+  const child = spawn(process.execPath, ['-e', "process.stderr.write('synthetic startup error'); process.exit(3)"], {
+    stdio: ['ignore', 'ignore', 'pipe'],
+    windowsHide: true,
+  });
+  const startupError = collectText(child.stderr);
+  await once(child, 'exit');
+  await assert.rejects(waitForReady(unusedBaseUrl, child, startupError),
+    /exited before readiness\. synthetic startup error$/u);
+});
+
+test('the oracle waits for stderr that ends after the exit was seen', { timeout: 2_000 }, async () => {
+  const stderr = new PassThrough();
+  const startupError = collectText(stderr);
+  setTimeout(() => stderr.end('synthetic late error'), 50);
+  await assert.rejects(waitForReady(unusedBaseUrl, { exitCode: 1, signalCode: null, pid: 1, stderr }, startupError),
+    /exited before readiness\. synthetic late error$/u);
+});
+
+test('the oracle bounds its wait for stderr that never ends', { timeout: 2_000 }, async () => {
+  const stderr = new PassThrough();
+  const startupError = collectText(stderr);
+  stderr.write('synthetic partial error');
+  await assert.rejects(waitForReady(unusedBaseUrl, { exitCode: 1, signalCode: null, pid: 1, stderr }, startupError, 50),
+    /exited before readiness\. synthetic partial error$/u);
+  stderr.destroy();
+});
 
 function delivery(fileName: string, parts?: readonly string[]) {
   return {
