@@ -2,6 +2,7 @@
 // supplies the simulated desktop backend. These tests never install the fake
 // themselves; the page works only when the server injected it.
 import { expect, test, type Locator, type Page } from '@playwright/test';
+import { previewScenarioConfig } from './preview-scenarios.ts';
 
 function ocrFirstRunOption(page: Page) {
   return page.locator('[data-testid="first-run-option"][data-requirement-id="text-recognition"]');
@@ -295,6 +296,17 @@ const LIVE_TRANSCRIPT_LINES = [
   '這是第二句虛構逐字稿。',
   '這是第三句虛構逐字稿。',
 ] as const;
+// Half speed stretches the preparing phase, the gap between partials, so the
+// two-sentence state is long enough to look at; the waits below follow it.
+const LIVE_TRANSCRIPT_SPEED = 0.5;
+const LIVE_TRANSCRIPT_STEP_MS = previewScenarioConfig(
+  'live-transcript',
+  LIVE_TRANSCRIPT_SPEED,
+  'synthetic-runtime-version',
+  '',
+).installOptions.installTimeline?.preparingMs ?? 0;
+/** A wait that covers `steps` partial revisions of the journey, plus a fixed margin. */
+const liveTranscriptWaitMs = (steps: number): number => steps * LIVE_TRANSCRIPT_STEP_MS + 10_000;
 
 /** Queue status, live-card lines, and empty event replies, read in one page turn. */
 async function liveTranscriptSnapshot(page: Page, documentId: string): Promise<{
@@ -320,10 +332,9 @@ async function liveTranscriptSnapshot(page: Page, documentId: string): Promise<{
 }
 
 test('shows the live transcript growing across partial revisions while the recording is still processing', async ({ page }) => {
-  test.setTimeout(60_000);
-  // Half speed stretches the preparing phase to 4s, the gap between partials.
+  test.setTimeout(2 * liveTranscriptWaitMs(LIVE_TRANSCRIPT_LINES.length + 2));
   // startDelay=0 publishes the first sentence as soon as the capture starts.
-  await page.goto('/?scenario=live-transcript&speed=0.5&startDelay=0');
+  await page.goto(`/?scenario=live-transcript&speed=${String(LIVE_TRANSCRIPT_SPEED)}&startDelay=0`);
   await page.goto('/asr');
 
   await expect(page.getByTestId('asr-choose-files')).toBeEnabled();
@@ -331,16 +342,14 @@ test('shows the live transcript growing across partial revisions while the recor
 
   const row = page.getByTestId('asr-queue-row').filter({ hasText: 'sample-recording.mp3' });
   await expect(row).toHaveAttribute('data-document-id', /^[0-9a-f]{32}$/u);
-  const documentId = await row.getAttribute('data-document-id');
-  if (documentId === null) {
-    throw new Error('Recording row is missing a document id.');
-  }
+  // The attribute was just asserted to be present.
+  const documentId = String(await row.getAttribute('data-document-id'));
 
   const card = page.locator(`[data-testid="asr-live-card"][data-document-id="${documentId}"]`);
   const lineText = card.getByTestId('asr-live-line').locator('p');
   await expect(card).toBeVisible();
   await expect(card).toHaveAttribute('data-document-id', documentId);
-  await expect(lineText.first()).toHaveText(LIVE_TRANSCRIPT_LINES[0], { timeout: 15_000 });
+  await expect(lineText.first()).toHaveText(LIVE_TRANSCRIPT_LINES[0], { timeout: liveTranscriptWaitMs(1) });
 
   let sawSingleRevision = false;
   await expect.poll(async () => {
@@ -374,9 +383,12 @@ test('shows the live transcript growing across partial revisions while the recor
       return 'grew';
     }
     return 'waiting';
-  }, { timeout: 20_000, intervals: [100] }).toBe('grew');
+  }, { timeout: liveTranscriptWaitMs(2), intervals: [100] }).toBe('grew');
 
-  await expect(row).toHaveAttribute('data-user-status', 'done', { timeout: 20_000 });
+  // The third sentence, then awaiting structuring, then completion.
+  await expect(row).toHaveAttribute('data-user-status', 'done', {
+    timeout: liveTranscriptWaitMs(LIVE_TRANSCRIPT_LINES.length),
+  });
   await expect(page.getByTestId('asr-live-card')).toHaveCount(0);
   await row.getByTestId('asr-row-view').click();
   await expect(page).toHaveURL(new RegExp(`/history/${documentId}/content$`, 'u'));
