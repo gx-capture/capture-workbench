@@ -1525,10 +1525,14 @@ describe('DesktopCaptureService', () => {
       deleted = true;
       return of(undefined);
     });
-    const updateCapture = vi.fn((update: Record<string, unknown>) =>
-      of(applyDurableCaptureUpdate(running, update)));
+    // What the library stores, as against the list the caller holds.
+    let stored: DesktopLibrarySummary = { ...running, status: 'queued', stage: 'uploading', captureId: undefined };
+    const updateCapture = vi.fn((update: Record<string, unknown>) => {
+      stored = applyDurableCaptureUpdate(stored, update);
+      return of(stored);
+    });
     const store = initializeCapture(
-      libraryStub({ list: vi.fn(() => of([running])), updateCapture }),
+      libraryStub({ list: vi.fn(() => of([stored])), updateCapture }),
       runtimeStub({
         startRecordingCapture: vi.fn(() => of(recording('extracting'))),
         getCaptureEvents: vi.fn(() => unlessDeleted([])),
@@ -1546,7 +1550,9 @@ describe('DesktopCaptureService', () => {
     expect(captureUpdates(updateCapture)).toContainEqual(
       expect.objectContaining({ status: 'completed', clearCaptureId: true }),
     );
+    expect(stored).toMatchObject({ status: 'completed', captureId: undefined });
     const readsBeforeReattach = getCapture.mock.calls.length;
+    const refreshDocuments = vi.spyOn(store.host, 'refreshDocuments');
 
     store.service.reattach$(running, store.host).subscribe();
     TestBed.tick();
@@ -1554,6 +1560,54 @@ describe('DesktopCaptureService', () => {
 
     expect(getCapture).toHaveBeenCalledTimes(readsBeforeReattach);
     expect(captureUpdates(updateCapture).map((update) => update['status'])).not.toContain('recovery_required');
+    expect(stored).toMatchObject({ status: 'completed', captureId: undefined });
+    // The caller's list was outdated, so it is told to read it again.
+    expect(refreshDocuments).toHaveBeenCalled();
+  });
+
+  it.each([
+    ['is capturing', [{ ...summary, status: 'processing', captureId: 'capture-1' }]],
+    ['has a result', [{ ...summary, status: 'completed' }]],
+    ['was cancelled', [{ ...summary, status: 'canceled' }]],
+    ['was deleted', []],
+  ] satisfies [string, DesktopLibrarySummary[]][])(
+    'does not start a document that no longer waits because it %s',
+    (_reason, storedDocuments) => {
+      const createCapture = vi.fn(() => of(completedOperation));
+      const updateCapture = vi.fn(() => of(summary));
+      const store = initializeCapture(
+        libraryStub({ list: vi.fn(() => of(storedDocuments)), updateCapture }),
+        runtimeStub({ createCapture }),
+      );
+      const refreshDocuments = vi.spyOn(store.host, 'refreshDocuments');
+
+      store.service.startDocument$(summary.documentId, store.host).subscribe();
+      TestBed.tick();
+
+      expect(createCapture).not.toHaveBeenCalled();
+      expect(updateCapture).not.toHaveBeenCalled();
+      expect(refreshDocuments).toHaveBeenCalled();
+    },
+  );
+
+  it('decides once per document while its stored state is being read', () => {
+    const listed = new Subject<readonly DesktopLibrarySummary[]>();
+    const list = vi.fn((): Observable<readonly DesktopLibrarySummary[]> => of([summary]));
+    const created = new Subject<CaptureOperation>();
+    const createCapture = vi.fn(() => created);
+    const store = initializeCapture(libraryStub({ list }), runtimeStub({ createCapture }));
+    list.mockImplementation(() => listed);
+    const readsBefore = list.mock.calls.length;
+
+    store.service.startDocument$(summary.documentId, store.host).subscribe();
+    store.service.startDocument$(summary.documentId, store.host).subscribe();
+    store.service.retry$(summary.documentId, store.host).subscribe();
+    expect(list).toHaveBeenCalledTimes(readsBefore + 1);
+
+    listed.next([summary]);
+    expect(createCapture).toHaveBeenCalledTimes(1);
+    expect(store.service.hasActiveCapture(summary.documentId)).toBe(true);
+    created.complete();
   });
 });
 

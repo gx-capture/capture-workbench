@@ -2,8 +2,10 @@ import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { Router } from '@angular/router';
 import type {
+  CaptureEvent,
   CaptureOperation,
   CaptureRequirementId,
+  CaptureResult,
   PartialCapture,
   RuntimeInstallation,
   RuntimeRequirement,
@@ -35,6 +37,8 @@ function requirement(
     downloadBytes: 2_800_000_000,
   };
 }
+
+type StoredCaptureUpdate = Parameters<DesktopLibraryService['updateCapture']>[0];
 
 function makeRecording(
   overrides: Partial<DesktopLibrarySummary> = {},
@@ -130,7 +134,12 @@ describe('AsrQueueStore', () => {
     const runtime = {
       ready,
       ocrCompute: signal(null),
-      startRecordingCapture: vi.fn(() => new Subject<CaptureOperation>()),
+      startRecordingCapture: vi.fn((): Observable<CaptureOperation> => new Subject<CaptureOperation>()),
+      getCaptureEvents: vi.fn((): Observable<readonly CaptureEvent[]> => of([])),
+      getPartial: vi.fn((): Observable<PartialCapture | null> => of(null)),
+      getCapture: vi.fn<(captureId: string) => Observable<CaptureOperation>>(() => new Subject<CaptureOperation>()),
+      getResult: vi.fn<(captureId: string) => Observable<CaptureResult>>(() => new Subject<CaptureResult>()),
+      deleteCapture: vi.fn<(captureId: string) => Observable<void>>(() => of(undefined)),
     };
 
     const library = {
@@ -144,7 +153,10 @@ describe('AsrQueueStore', () => {
           }),
         })),
       discardSelections: vi.fn(() => of(undefined)),
-      updateCapture: vi.fn(() => of(makeRecording({ status: 'canceled' }))),
+      // What the library stores: the listed documents, unless a test keeps its own.
+      list: vi.fn((): Observable<readonly DesktopLibrarySummary[]> => of(docs())),
+      updateCapture: vi.fn<(update: StoredCaptureUpdate) => Observable<DesktopLibrarySummary>>(() =>
+        of(makeRecording({ status: 'canceled' }))),
       get: vi.fn((documentId: string) =>
         of({
           ...(docs().find((d) => d.documentId === documentId) ?? makeRecording({ documentId })),
@@ -555,5 +567,165 @@ describe('AsrQueueStore', () => {
     expect(store.liveCapture()?.lines).toEqual([]);
     busyIds.set(new Set());
     expect(store.liveCapture()).toBeNull();
+  });
+
+  describe('with a document list older than the last library write', () => {
+    const captureId = 'capture-recording';
+    const notFound = 'Capture Runtime request was rejected with HTTP 404.';
+    const recording = (status: CaptureOperation['status']) => ({
+      protocolVersion: '2', captureId, ingestionId: 'ingestion-recording', kind: 'recording',
+      status, partialRevision: 0, lastEventSequence: 0,
+      createdAt: '2026-11-21T00:00:00Z', updatedAt: '2026-11-21T00:00:00Z',
+    } as CaptureOperation);
+
+    /**
+     * The queue over the real capture service. The library stores what the
+     * service writes; the queue's document list changes only when the test
+     * sets it, as while the reload the service asked for has not answered.
+     * The runtime forgets a deleted capture, and the capture ends when the
+     * test says so.
+     */
+    function captureOverAnUnansweredListReload(options: { readonly failFirstUnlink?: boolean } = {}) {
+      const queued = makeRecording({ captureOptions: { identifySpeakers: false } });
+      const harness = setup({ initialDocs: [queued], realCapture: true });
+      let stored = queued;
+      let unlinkFailures = options.failFirstUnlink ? 1 : 0;
+      const writes: StoredCaptureUpdate[] = [];
+      harness.library.list.mockImplementation(() => of([stored]));
+      harness.library.updateCapture.mockImplementation((update) => {
+        if (update.clearCaptureId && update.status === 'completed' && unlinkFailures > 0) {
+          unlinkFailures -= 1;
+          return throwError(() => 'Capture library index cannot be written.');
+        }
+        writes.push(update);
+        // Like the host: the link changes only when asked, the error and recovery fields always.
+        stored = {
+          ...stored,
+          status: update.status,
+          stage: update.stage,
+          captureId: update.clearCaptureId ? undefined : update.captureId ?? stored.captureId,
+          errorCode: update.errorCode,
+          errorMessage: update.errorMessage,
+          recoveryCode: update.recoveryCode,
+          recoveryMessage: update.recoveryMessage,
+          hasRaw: stored.hasRaw || update.raw !== undefined,
+          updatedAtMs: stored.updatedAtMs + 1,
+        };
+        return of(stored);
+      });
+      let deleted = false;
+      const ended = new Subject<CaptureOperation>();
+      // Only the first start is answered: a second one would be a second capture.
+      harness.runtime.startRecordingCapture.mockImplementationOnce(() => of(recording('extracting')));
+      harness.runtime.getCapture
+        .mockImplementation(() => deleted ? throwError(() => notFound) : of(recording('completed')))
+        .mockImplementationOnce(() => ended);
+      harness.runtime.getResult.mockImplementation(() => of({
+        operation: recording('completed'),
+        raw: { sourceText: 'transcript' },
+        result: { targetText: 'transcript' },
+      } as unknown as CaptureResult));
+      harness.runtime.deleteCapture.mockImplementation(() => {
+        deleted = true;
+        return of(undefined);
+      });
+      return {
+        ...harness,
+        stored: () => stored,
+        writes,
+        endCapture: () => {
+          ended.next(recording('completed'));
+          ended.complete();
+        },
+      };
+    }
+
+    it('does not read the deleted capture of a finished recording, which stays completed', () => {
+      const { store, docs, runtime, libraryStore, stored, writes, endCapture } =
+        captureOverAnUnansweredListReload();
+      store.attach();
+      TestBed.tick();
+      // The last list answer before the capture ends: running, linked to its capture.
+      expect(stored()).toMatchObject({ status: 'processing', captureId });
+      docs.set([stored()]);
+      TestBed.tick();
+      libraryStore.refreshDocuments.mockClear();
+
+      endCapture();
+      // Busy cleared; the list still says the recording runs.
+      TestBed.tick();
+
+      expect(runtime.deleteCapture).toHaveBeenCalledExactlyOnceWith(captureId);
+      expect(runtime.getCapture).toHaveBeenCalledTimes(1);
+      expect(writes.map((write) => write.status)).not.toContain('recovery_required');
+      expect(stored()).toMatchObject({ status: 'completed', captureId: undefined, recoveryCode: undefined });
+      // The outdated list is asked for again, and the row then shows the result.
+      expect(libraryStore.refreshDocuments).toHaveBeenCalled();
+      docs.set([stored()]);
+      TestBed.tick();
+      expect(store.rows()[0].userStatus).toBe('done');
+      expect(runtime.getCapture).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps the cleanup state of a failed unlink and only retries the cleanup', () => {
+      const { store, docs, runtime, stored, writes, endCapture } =
+        captureOverAnUnansweredListReload({ failFirstUnlink: true });
+      store.attach();
+      TestBed.tick();
+      docs.set([stored()]);
+      TestBed.tick();
+
+      endCapture();
+      // The result is kept and the capture deleted, but the unlink was refused.
+      expect(writes[writes.length - 1]).toMatchObject({
+        status: 'recovery_required', captureId, recoveryCode: 'runtime_cleanup_failed',
+      });
+      TestBed.tick();
+
+      // No read of the deleted capture, so nothing replaces the cleanup state
+      // with a lost capture; the cleanup alone is retried and now succeeds.
+      expect(runtime.getCapture).toHaveBeenCalledTimes(1);
+      expect(writes.map((write) => write.recoveryCode)).not.toContain('capture_recovery_required');
+      expect(runtime.deleteCapture).toHaveBeenCalledTimes(2);
+      expect(stored()).toMatchObject({ status: 'completed', captureId: undefined, recoveryCode: undefined });
+    });
+
+    it('does not start a second capture for a row that still says waiting', () => {
+      const { store, runtime, libraryStore, stored, endCapture } =
+        captureOverAnUnansweredListReload();
+      store.attach();
+      TestBed.tick();
+      expect(runtime.startRecordingCapture).toHaveBeenCalledTimes(1);
+      libraryStore.refreshDocuments.mockClear();
+
+      // No list answer arrived while the capture ran: the row still says waiting.
+      endCapture();
+      TestBed.tick();
+
+      expect(runtime.startRecordingCapture).toHaveBeenCalledTimes(1);
+      expect(stored()).toMatchObject({ status: 'completed', captureId: undefined });
+      expect(libraryStore.refreshDocuments).toHaveBeenCalled();
+    });
+
+    it('does not start a recording that was cancelled while it waited', () => {
+      const waiting = makeRecording();
+      const { store, docs, runtime, library, requirements } = setup({
+        initialDocs: [waiting], speechStatus: 'installable', realCapture: true,
+      });
+      library.list.mockImplementation(() => of([{ ...waiting, status: 'canceled' as const }]));
+      store.attach();
+      TestBed.tick();
+
+      store.cancel(waiting.documentId);
+      // Speech becomes ready before the list reload answers.
+      requirements.set([
+        requirement('speech-recognition', 'ready'),
+        requirement('speaker-diarization', 'installable'),
+      ]);
+      TestBed.tick();
+
+      expect(docs()[0].status).toBe('queued');
+      expect(runtime.startRecordingCapture).not.toHaveBeenCalled();
+    });
   });
 });

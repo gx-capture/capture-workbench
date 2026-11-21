@@ -271,6 +271,63 @@ describe('OcrQueueStore', () => {
     expect(harness.rows()[0]?.pageLabel).toBe('12');
   });
 
+  describe('with a document list older than the capture service\'s last write', () => {
+    /** A waiting file whose capture ran and ended while no list reload was answered. */
+    async function endedCaptureOverUnansweredListReloads() {
+      const harness = configure({
+        ocrReady: false,
+        // The shortest capture: the runtime answers that it ended, here cancelled.
+        operation: { ...runningOperation(), status: 'cancelled' },
+      });
+      harness.docs.push(doc({}));
+      harness.store.attach();
+      TestBed.tick();
+      expect(harness.rows()[0]?.userStatus).toBe('waiting');
+      const waitingList = harness.documents();
+
+      harness.holdListReloads();
+      harness.requirements.set([requirement('ready')]);
+      TestBed.tick();
+      await settle();
+      expect(harness.runtime.createCapture).toHaveBeenCalledTimes(1);
+      expect(harness.runtime.deleteCapture).toHaveBeenCalledExactlyOnceWith('capture-1');
+      expect(harness.docs[0]).toMatchObject({ status: 'canceled', captureId: undefined });
+      return { harness, waitingList };
+    }
+
+    /** Anything that makes the queue look at its list again, here the requirements answering again. */
+    async function lookAgain(harness: ReturnType<typeof configure>): Promise<void> {
+      harness.requirements.set([requirement('ready')]);
+      TestBed.tick();
+      await settle();
+    }
+
+    it('does not start a second capture for a row that still says waiting', async () => {
+      const { harness, waitingList } = await endedCaptureOverUnansweredListReloads();
+      expect(harness.documents()).toBe(waitingList);
+
+      await lookAgain(harness);
+
+      expect(harness.runtime.createCapture).toHaveBeenCalledTimes(1);
+      expect(harness.docs[0]).toMatchObject({ status: 'canceled', captureId: undefined });
+      harness.answerListReloads();
+      TestBed.tick();
+      expect(harness.rows()[0]?.userStatus).toBe('cancelled');
+    });
+
+    it('does not read the deleted capture of a file whose row still says running', async () => {
+      const { harness } = await endedCaptureOverUnansweredListReloads();
+      // A list answer from while the capture ran arrives after it ended.
+      harness.documents.set([doc({ status: 'processing', stage: 'extracting', captureId: 'capture-1' })]);
+
+      await lookAgain(harness);
+
+      expect(harness.runtime.getCapture).not.toHaveBeenCalled();
+      expect(harness.runtime.createCapture).toHaveBeenCalledTimes(1);
+      expect(harness.docs[0]).toMatchObject({ status: 'canceled', captureId: undefined });
+    });
+  });
+
   it('drops a document the workspace deletes and lists one the workspace imports', async () => {
     const docs: DesktopLibrarySummary[] = [
       doc({ documentId: 'a'.repeat(32), fileName: 'kept.pdf', status: 'queued' }),
@@ -389,8 +446,10 @@ function configure(options: { readonly ocrReady: boolean; readonly operation?: D
   const requirements = signal<readonly RuntimeRequirement[]>([
     requirement(options.ocrReady ? 'ready' : 'installable'),
   ]);
+  // A list reload answers at once, unless a test holds the answers back.
+  let listReloadsAnswered = true;
   const refreshDocuments = (): void => {
-    documents.set([...docs]);
+    if (listReloadsAnswered) documents.set([...docs]);
   };
   const library = {
     list: vi.fn(() => of([...docs])),
@@ -467,6 +526,14 @@ function configure(options: { readonly ocrReady: boolean; readonly operation?: D
     runtime,
     requirements,
     docs,
+    documents,
+    holdListReloads: (): void => {
+      listReloadsAnswered = false;
+    },
+    answerListReloads: (): void => {
+      listReloadsAnswered = true;
+      refreshDocuments();
+    },
     created,
     rows: () => TestBed.inject(OcrQueueStore).rows(),
   };

@@ -109,12 +109,8 @@ export class DesktopCaptureService {
   private readonly activeCaptures = new Map<string, ActiveCapture>();
   /** Documents of a batch that are imported and wait for their turn. */
   private readonly awaitingTurn = new Set<string>();
-  /**
-   * Runtime operations this service deleted and unlinked from their document.
-   * A document list read before that still names them, and the runtime no
-   * longer knows them, so recovery must not reattach them.
-   */
-  private readonly releasedCaptureIds = new Set<string>();
+  /** Documents whose stored state is being read to decide an action. */
+  private readonly decidingIds = new Set<string>();
 
   /**
    * Reports whether a capture runs for the document or a batch has already
@@ -150,20 +146,35 @@ export class DesktopCaptureService {
     );
   }
 
-  /** Starts a capture for a file that is already in the library. */
+  /**
+   * Starts a capture for a document that waits in the library. The stored
+   * document decides: one that no longer waits (already captured, cancelled
+   * or deleted since the caller's list was read) is not started again.
+   */
   startDocument$(
     documentId: string,
     host: DesktopCaptureHost,
   ): Observable<void> {
-    return this.captureExisting$(documentId, host);
+    return this.decideFromStoredDocument$(documentId, (stored) =>
+      stored?.status === 'queued'
+        ? this.captureExisting$(documentId, host)
+        : this.declineOutdatedRequest$(host));
   }
 
-  /** Re-attaches to a runtime operation the library still points at. */
+  /**
+   * Re-attaches to the runtime operation the library points at. The stored
+   * document decides, not the caller's copy: no operation is read when the
+   * link is gone, and a document whose result is already kept only retries
+   * the runtime cleanup.
+   */
   reattach$(
     document: DesktopLibrarySummary,
     host: DesktopCaptureHost,
   ): Observable<void> {
-    return document.captureId ? this.recoverCapture$(document, host) : EMPTY;
+    return this.decideFromStoredDocument$(document.documentId, (stored) =>
+      stored?.captureId
+        ? this.recoverCapture$(stored, host)
+        : this.declineOutdatedRequest$(host));
   }
 
   /**
@@ -190,11 +201,49 @@ export class DesktopCaptureService {
     documentId: string,
     host: DesktopCaptureHost,
   ): Observable<void> {
-    const document = host.documents().find((item) => item.documentId === documentId)
-      ?? (host.selected()?.documentId === documentId ? host.selected() : undefined);
-    return document?.captureId
-      ? this.recoverCapture$(document, host)
-      : this.captureExisting$(documentId, host);
+    return this.decideFromStoredDocument$(documentId, (stored) =>
+      stored?.captureId
+        ? this.recoverCapture$(stored, host)
+        : this.captureExisting$(documentId, host));
+  }
+
+  /**
+   * Reads the stored document and lets `act` decide from it. A caller's
+   * document list can be older than this service's last write for the
+   * document (its reload has not answered yet), so no start or recovery is
+   * decided from that list. One decision or capture runs per document at a
+   * time, and every write of a capture is acknowledged before the capture
+   * ends, so this read is never older than those writes.
+   */
+  private decideFromStoredDocument$(
+    documentId: string,
+    act: (stored: DesktopLibrarySummary | undefined) => Observable<void>,
+  ): Observable<void> {
+    return defer(() => {
+      if (
+        !this.runtime.ready()
+        || this.activeCaptures.has(documentId)
+        || this.decidingIds.has(documentId)
+      ) {
+        return EMPTY;
+      }
+      this.decidingIds.add(documentId);
+      return this.library.list().pipe(
+        take(1),
+        // Ends after `act` took over, so the document is never unclaimed in between.
+        finalize(() => this.decidingIds.delete(documentId)),
+        map((documents) => documents.find((item) => item.documentId === documentId)),
+        switchMap((stored) => act(stored)),
+      );
+    });
+  }
+
+  /** The caller acted on an outdated document list: nothing to do but refresh it. */
+  private declineOutdatedRequest$(host: DesktopCaptureHost): Observable<void> {
+    return defer(() => {
+      host.refreshDocuments();
+      return EMPTY;
+    });
   }
 
   /** Requests cancellation and wakes the polling loop without changing terminal rules. */
@@ -470,10 +519,7 @@ export class DesktopCaptureService {
         errorCode: operation.error?.code,
         errorMessage: operation.error?.message,
       })),
-      tap(() => {
-        this.releasedCaptureIds.add(operation.captureId);
-        this.clearStreamingPartial(documentId);
-      }),
+      tap(() => this.clearStreamingPartial(documentId)),
       map(() => undefined),
     );
   }
@@ -487,7 +533,6 @@ export class DesktopCaptureService {
         !this.runtime.ready()
         || !document.captureId
         || this.activeCaptures.has(document.documentId)
-        || this.releasedCaptureIds.has(document.captureId)
       ) {
         return EMPTY;
       }
@@ -744,7 +789,6 @@ export class DesktopCaptureService {
         stage,
         clearCaptureId: true,
       }))),
-      tap(() => this.releasedCaptureIds.add(operation.captureId)),
     );
   }
 
@@ -920,7 +964,7 @@ export class DesktopCaptureService {
         clearCaptureId: true,
         errorCode: operation.error?.code,
         errorMessage: operation.error?.message,
-      }).pipe(tap(() => this.releasedCaptureIds.add(operation.captureId)))),
+      })),
       catchError((error) => this.library.updateCapture({
         documentId,
         captureId: operation.captureId,
@@ -945,7 +989,7 @@ export class DesktopCaptureService {
         clearCaptureId: true,
         errorCode: document.errorCode,
         errorMessage: document.errorMessage,
-      }).pipe(tap(() => this.releasedCaptureIds.add(captureId)))),
+      })),
       catchError((error) => this.library.updateCapture({
         documentId: document.documentId,
         captureId,
