@@ -2427,59 +2427,75 @@ describe('DesktopCaptureService', () => {
 
   describe('the live lines of an earlier capture', () => {
     const earlierLines = { captureId: 'capture-earlier', revision: 1, sourceText: 'earlier lines' } as PartialCapture;
-    const lostDocument = {
-      ...summary, status: 'recovery_required', captureId: 'capture-earlier', recoveryCode: 'capture_recovery_required',
+    const recording = {
+      ...summary, fileName: 'fixture.mp3', mediaType: 'audio/mpeg',
+    } satisfies DesktopLibrarySummary;
+    const lostRecording = {
+      ...recording, status: 'recovery_required', captureId: 'capture-earlier', recoveryCode: 'capture_recovery_required',
     } satisfies DesktopLibrarySummary;
     const ENTRIES = ['startDocument$', 'retry$', 'restartLost$'] as const;
 
     function withEarlierLines(storedDocument: DesktopLibrarySummary) {
+      /** Whether the earlier lines were still shown, each time a new recording capture was handed to the runtime. */
+      const shownAtStart: boolean[] = [];
+      const startRecordingCapture = vi.fn(() => {
+        shownAtStart.push(store.service.streamingPartials().has(summary.documentId));
+        return new Subject<CaptureOperation>();
+      });
       const createCapture = vi.fn(() => new Subject<CaptureOperation>());
       const getCapture = vi.fn(() => new Subject<CaptureOperation>());
       const updateCapture = vi.fn((update: Record<string, unknown>) =>
         of(applyDurableCaptureUpdate(storedDocument, update)));
       const store = initializeCapture(
         libraryStub({ list: vi.fn(() => of([storedDocument])), updateCapture }),
-        runtimeStub({ createCapture, getCapture }),
+        runtimeStub({ startRecordingCapture, createCapture, getCapture }),
       );
       store.service.streamingPartials.set(new Map([[summary.documentId, earlierLines]]));
-      return { ...store, createCapture, getCapture };
+      return { ...store, shownAtStart, startRecordingCapture, createCapture, getCapture };
     }
 
     it.each([
-      ['a waiting document starts', 'startDocument$', { ...summary }],
-      ['a failed document is captured again', 'retry$', { ...summary, status: 'failed' }],
-      ['a document whose capture was lost is restarted', 'restartLost$', lostDocument],
+      ['a waiting recording starts', 'startDocument$', recording],
+      ['a failed recording is captured again', 'retry$', { ...recording, status: 'failed' }],
+      ['a recording whose capture was lost is restarted', 'restartLost$', lostRecording],
     ] satisfies [string, (typeof ENTRIES)[number], DesktopLibrarySummary][])(
-      'are cleared when %s',
+      'are already cleared when the new capture is handed to the runtime, as %s',
       (_transition, entry, storedDocument) => {
-        const { service, host, createCapture } = withEarlierLines(storedDocument);
+        const { service, host, shownAtStart, startRecordingCapture } = withEarlierLines(storedDocument);
 
         service[entry](summary.documentId, host).subscribe();
         TestBed.tick();
 
-        expect(createCapture).toHaveBeenCalledTimes(1);
+        expect(startRecordingCapture).toHaveBeenCalledExactlyOnceWith(
+          expect.objectContaining({ documentId: summary.documentId }),
+        );
+        // Read inside the start: the runtime never gets a capture whose document still shows the old lines.
+        expect(shownAtStart).toEqual([false]);
         expect(service.streamingPartials().has(summary.documentId)).toBe(false);
       },
     );
 
     it.each(ENTRIES)('are kept when %s is declined', (entry) => {
-      const { service, host, createCapture } = withEarlierLines({ ...summary, status: 'completed' });
+      const { service, host, startRecordingCapture, createCapture } =
+        withEarlierLines({ ...recording, status: 'completed' });
 
       service[entry](summary.documentId, host).subscribe();
       TestBed.tick();
 
+      expect(startRecordingCapture).not.toHaveBeenCalled();
       expect(createCapture).not.toHaveBeenCalled();
       expect(service.streamingPartials().get(summary.documentId)).toBe(earlierLines);
     });
 
     it('are kept when a retry resumes the capture they belong to', () => {
-      const linked = { ...summary, status: 'processing', captureId: 'capture-earlier' } satisfies DesktopLibrarySummary;
-      const { service, host, createCapture, getCapture } = withEarlierLines(linked);
+      const linked = { ...recording, status: 'processing', captureId: 'capture-earlier' } satisfies DesktopLibrarySummary;
+      const { service, host, startRecordingCapture, createCapture, getCapture } = withEarlierLines(linked);
 
       service.retry$(summary.documentId, host).subscribe();
       TestBed.tick();
 
       expect(getCapture).toHaveBeenCalledExactlyOnceWith('capture-earlier');
+      expect(startRecordingCapture).not.toHaveBeenCalled();
       expect(createCapture).not.toHaveBeenCalled();
       expect(service.streamingPartials().get(summary.documentId)).toBe(earlierLines);
     });
