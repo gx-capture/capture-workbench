@@ -204,6 +204,10 @@ export class AsrQueueStore {
         if (!this.runtime.ready()) return;
         const recordings = this.documents();
         const busyIds = this.capture.busyIds();
+        // A decision that ended in an error changed nothing the queue can see:
+        // this signal makes it look again, after the service's pause.
+        this.capture.failedDecisions();
+
         const speechReady = this.speechReady();
         this.loadCompletedDetails(recordings);
         this.reattachRunning(recordings);

@@ -16,7 +16,7 @@ import { desktopMessages, setDesktopLocale } from '../i18n/desktop-messages';
 import { AsrQueueStore } from './asr-queue.store';
 import { DesktopLibraryService, type DesktopSourceSelection } from './desktop-library.service';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
-import { DesktopCaptureService } from './desktop-capture.service';
+import { DesktopCaptureService, STORED_DOCUMENT_RETRY_PAUSE_MS } from './desktop-capture.service';
 import { DesktopFormattingService } from './desktop-formatting.service';
 import { RuntimeStatusStore } from './runtime-status.store';
 import { LibraryStore } from './library.store';
@@ -171,6 +171,7 @@ describe('AsrQueueStore', () => {
       recordingOperations,
       streamingPartials,
       isDocumentClaimed: vi.fn((id: string) => busyIds().has(id)),
+      failedDecisions: signal(0),
       startDocument$: vi.fn(() => startDocSubject),
       reattach$: vi.fn((): Observable<void> => of(undefined)),
       retry$: vi.fn(() => of(undefined)),
@@ -860,5 +861,97 @@ describe('AsrQueueStore', () => {
 
       expect(runtime.getCapture).toHaveBeenCalledExactlyOnceWith('capture-running');
     });
+    it('does not start a recording whose cancel was asked while a read that then failed was pending', () => {
+      const waiting = makeRecording();
+      const { store, docs, runtime, library, reads, answer } = decisionsTheTestAnswers([waiting]);
+      store.attach();
+      TestBed.tick();
+      expect(reads).toHaveLength(1);
+
+      store.cancel(waiting.documentId);
+      reads[0].error('Capture library index cannot be read.');
+      expect(library.updateCapture).not.toHaveBeenCalled();
+
+      // The queue looks at its list again and the stored document still waits.
+      docs.set([{ ...waiting }]);
+      TestBed.tick();
+      expect(reads).toHaveLength(2);
+      answer(reads[1], [waiting]);
+      TestBed.tick();
+
+      expect(runtime.startRecordingCapture).not.toHaveBeenCalled();
+      expect(library.updateCapture.mock.calls.map(([update]) => update)).toEqual([{
+        documentId: waiting.documentId, status: 'canceled', stage: 'cancelled', clearCaptureId: true,
+      }]);
+    });
+
+    describe('after a read of the stored document failed', () => {
+      beforeEach(() => vi.useFakeTimers());
+      afterEach(() => vi.useRealTimers());
+
+      it('looks again by itself after a pause, so the next waiting recording is not stranded', () => {
+        const interrupted = makeRecording({
+          documentId: '1'.repeat(32), status: 'recovery_required', captureId: 'capture-interrupted',
+          recoveryCode: 'cancel_failed', createdAtMs: 1,
+        });
+        const waiting = makeRecording({ documentId: '2'.repeat(32), createdAtMs: 2 });
+        const { store, runtime, reads, answer } = decisionsTheTestAnswers([interrupted, waiting]);
+        // The runtime no longer knows the interrupted capture.
+        runtime.getCapture.mockImplementation(() =>
+          throwError(() => 'Capture Runtime request was rejected with HTTP 404.'));
+        store.attach();
+        TestBed.tick();
+        expect(reads).toHaveLength(1);
+
+        reads[0].error('Capture library index cannot be read.');
+        TestBed.tick();
+        // Not at once: a read that keeps failing must not be repeated in a loop.
+        expect(reads).toHaveLength(1);
+
+        vi.advanceTimersByTime(STORED_DOCUMENT_RETRY_PAUSE_MS);
+        TestBed.tick();
+        // The recovery is decided again, without anyone refreshing the list.
+        expect(reads).toHaveLength(2);
+        answer(reads[1], [interrupted, waiting]);
+        TestBed.tick();
+        expect(runtime.getCapture).toHaveBeenCalledExactlyOnceWith('capture-interrupted');
+
+        // The recovery ended (its capture is lost), and the waiting recording gets its turn.
+        expect(reads).toHaveLength(3);
+        answer(reads[2], [interrupted, waiting]);
+        expect(runtime.startRecordingCapture).toHaveBeenCalledExactlyOnceWith(
+          expect.objectContaining({ documentId: waiting.documentId }),
+        );
+      });
+
+      it('repeats a read that keeps failing only once per pause', () => {
+        const waiting = makeRecording();
+        const { store, runtime, reads } = decisionsTheTestAnswers([waiting]);
+        store.attach();
+        TestBed.tick();
+
+        reads[0].error('Capture library index cannot be read.');
+        TestBed.tick();
+        TestBed.tick();
+        vi.advanceTimersByTime(STORED_DOCUMENT_RETRY_PAUSE_MS - 1);
+        TestBed.tick();
+        expect(reads).toHaveLength(1);
+
+        vi.advanceTimersByTime(1);
+        TestBed.tick();
+        expect(reads).toHaveLength(2);
+        reads[1].error('Capture library index cannot be read.');
+        TestBed.tick();
+        vi.advanceTimersByTime(STORED_DOCUMENT_RETRY_PAUSE_MS - 1);
+        TestBed.tick();
+        expect(reads).toHaveLength(2);
+
+        vi.advanceTimersByTime(1);
+        TestBed.tick();
+        expect(reads).toHaveLength(3);
+        expect(runtime.startRecordingCapture).not.toHaveBeenCalled();
+      });
+    });
+
   });
 });

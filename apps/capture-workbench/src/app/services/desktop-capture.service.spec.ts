@@ -5,7 +5,11 @@ import { RUNTIME_VERSION, type CaptureOcrProjection } from '@gx-capture/capture-
 import type { CaptureOperation, CaptureRequirementId, OcrComputePreflight } from '@gx-capture/capture-workbench-ui';
 import { finalize, of, Subject, throwError, type Observable } from 'rxjs';
 import type { DesktopLibraryDetail, DesktopLibrarySummary } from '../contracts';
-import { DesktopCaptureService, type DesktopCaptureHost } from './desktop-capture.service';
+import {
+  DesktopCaptureService,
+  STORED_DOCUMENT_RETRY_PAUSE_MS,
+  type DesktopCaptureHost,
+} from './desktop-capture.service';
 import { isCaptureLost } from './capture-operation-status';
 import { DesktopLibraryService, type DesktopSourceSelection } from './desktop-library.service';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
@@ -1711,6 +1715,216 @@ describe('DesktopCaptureService', () => {
         expect(updateCapture).toHaveBeenCalledTimes(1);
       },
     );
+  });
+
+  describe('the steps of a decision', () => {
+    const lost = {
+      ...summary, status: 'recovery_required', captureId: 'capture-lost', recoveryCode: 'capture_recovery_required',
+    } satisfies DesktopLibrarySummary;
+
+    /** A service whose reads of the stored document and whose library writes the test answers. */
+    function decisionSteps(initiallyStored: DesktopLibrarySummary) {
+      let storedDocument = initiallyStored;
+      const reads: Subject<readonly DesktopLibrarySummary[]>[] = [];
+      const writes: { readonly update: Record<string, unknown>; readonly answer: Subject<DesktopLibrarySummary> }[] = [];
+      const list = vi.fn((): Observable<readonly DesktopLibrarySummary[]> => of([storedDocument]));
+      const updateCapture = vi.fn((update: Record<string, unknown>) => {
+        const answer = new Subject<DesktopLibrarySummary>();
+        writes.push({ update, answer });
+        return answer;
+      });
+      const createCapture = vi.fn(() => new Subject<CaptureOperation>());
+      const getCapture = vi.fn(() => new Subject<CaptureOperation>());
+      const store = initializeCapture(
+        libraryStub({ list, updateCapture }),
+        runtimeStub({ createCapture, getCapture }),
+      );
+      // Only the service reads without arguments; the host's own list answers at once.
+      list.mockImplementation((...listArguments: unknown[]) => {
+        if (listArguments.length > 0) return of([storedDocument]);
+        const read = new Subject<readonly DesktopLibrarySummary[]>();
+        reads.push(read);
+        return read;
+      });
+      const failed = vi.fn();
+      return {
+        ...store,
+        reads,
+        writes,
+        createCapture,
+        getCapture,
+        failed,
+        /** The library stores the document differently from now on. */
+        store: (document: DesktopLibrarySummary) => {
+          storedDocument = document;
+        },
+        answerRead: (index: number) => {
+          reads[index].next([storedDocument]);
+          reads[index].complete();
+        },
+        answerWrite: (index: number) => {
+          writes[index].answer.next(applyDurableCaptureUpdate(storedDocument, writes[index].update));
+          writes[index].answer.complete();
+        },
+      };
+    }
+    const cancelled = { documentId: summary.documentId, status: 'canceled', stage: 'cancelled', clearCaptureId: true };
+
+    it('releases the claim when the read is unsubscribed before it answers', () => {
+      const steps = decisionSteps(summary);
+      const subscription = steps.service.startDocument$(summary.documentId, steps.host).subscribe();
+      expect(steps.service.isDocumentClaimed(summary.documentId)).toBe(true);
+
+      subscription.unsubscribe();
+      expect(steps.service.isDocumentClaimed(summary.documentId)).toBe(false);
+      // An answer that still arrives starts nothing.
+      steps.reads[0].next([summary]);
+      expect(steps.writes).toEqual([]);
+      expect(steps.createCapture).not.toHaveBeenCalled();
+    });
+
+    it('keeps a cancel across a failed read and applies it at the next decision', () => {
+      const steps = decisionSteps(summary);
+      steps.service.startDocument$(summary.documentId, steps.host).subscribe({ error: steps.failed });
+      steps.service.cancel(summary.documentId);
+      steps.reads[0].error('Capture library index cannot be read.');
+      expect(steps.failed).toHaveBeenCalledTimes(1);
+      expect(steps.service.isDocumentClaimed(summary.documentId)).toBe(false);
+      expect(steps.writes).toEqual([]);
+
+      steps.service.startDocument$(summary.documentId, steps.host).subscribe();
+      steps.answerRead(1);
+
+      expect(steps.createCapture).not.toHaveBeenCalled();
+      expect(steps.writes.map((write) => write.update)).toEqual([cancelled]);
+    });
+
+    it('keeps a cancel across a failed cancel write and applies it at the next decision', () => {
+      const steps = decisionSteps(summary);
+      steps.service.startDocument$(summary.documentId, steps.host).subscribe({ error: steps.failed });
+      steps.service.cancel(summary.documentId);
+      steps.answerRead(0);
+      expect(steps.writes.map((write) => write.update)).toEqual([cancelled]);
+      // A second cancel while the write is in flight changes nothing.
+      steps.service.cancel(summary.documentId);
+      expect(steps.writes).toHaveLength(1);
+
+      steps.writes[0].answer.error('Capture library index cannot be written.');
+      expect(steps.failed).toHaveBeenCalledExactlyOnceWith('Capture library index cannot be written.');
+      expect(steps.service.isDocumentClaimed(summary.documentId)).toBe(false);
+
+      steps.service.startDocument$(summary.documentId, steps.host).subscribe();
+      steps.answerRead(1);
+      expect(steps.createCapture).not.toHaveBeenCalled();
+      expect(steps.writes.map((write) => write.update)).toEqual([cancelled, cancelled]);
+      steps.answerWrite(1);
+
+      // Applied: a later start of the document, were it to wait again, is a start.
+      steps.service.startDocument$(summary.documentId, steps.host).subscribe();
+      steps.answerRead(2);
+      expect(steps.writes[2].update).toEqual(expect.objectContaining({ status: 'processing' }));
+    });
+
+    it('drops a cancel that the stored document makes pointless', () => {
+      const finished = { ...summary, status: 'completed' } satisfies DesktopLibrarySummary;
+      const steps = decisionSteps(finished);
+      steps.service.startDocument$(summary.documentId, steps.host).subscribe();
+      steps.service.cancel(summary.documentId);
+      steps.answerRead(0);
+      expect(steps.writes).toEqual([]);
+
+      // Nothing was left to cancel. Were the document to wait again, it would start.
+      steps.store(summary);
+      steps.service.startDocument$(summary.documentId, steps.host).subscribe();
+      steps.answerRead(1);
+      expect(steps.writes.map((write) => write.update['status'])).toEqual(['processing']);
+    });
+
+
+    it.each(['retry$', 'restartLost$'] as const)(
+      'does not let an older cancel that was never applied cancel an explicit %s',
+      (entry) => {
+        const steps = decisionSteps(lost);
+        steps.service.reattach$(lost, steps.host).subscribe({ error: steps.failed });
+        steps.service.cancel(summary.documentId);
+        steps.reads[0].error('Capture library index cannot be read.');
+
+        steps.service[entry](summary.documentId, steps.host).subscribe();
+        steps.answerRead(1);
+
+        expect(steps.writes.map((write) => write.update['status'])).not.toContain('canceled');
+        expect(steps.service.isDocumentClaimed(summary.documentId)).toBe(true);
+      },
+    );
+
+    it('lets a cancel win that arrives while a restart clears the link', () => {
+      const steps = decisionSteps(lost);
+      steps.service.restartLost$(summary.documentId, steps.host).subscribe();
+      steps.answerRead(0);
+      expect(steps.writes.map((write) => write.update['status'])).toEqual(['queued']);
+
+      steps.service.cancel(summary.documentId);
+      steps.answerWrite(0);
+
+      expect(steps.createCapture).not.toHaveBeenCalled();
+      expect(steps.writes.map((write) => write.update)).toEqual([
+        { documentId: summary.documentId, status: 'queued', stage: 'uploading', clearCaptureId: true },
+        cancelled,
+      ]);
+    });
+
+    it('releases the claim and starts nothing when a restart cannot clear the link', () => {
+      const steps = decisionSteps(lost);
+      steps.service.restartLost$(summary.documentId, steps.host).subscribe({ error: steps.failed });
+      steps.answerRead(0);
+
+      steps.writes[0].answer.error('Capture library index cannot be written.');
+
+      expect(steps.failed).toHaveBeenCalledExactlyOnceWith('Capture library index cannot be written.');
+      expect(steps.createCapture).not.toHaveBeenCalled();
+      expect(steps.service.isDocumentClaimed(summary.documentId)).toBe(false);
+    });
+
+    describe('that ended in an error', () => {
+      beforeEach(() => vi.useFakeTimers());
+      afterEach(() => vi.useRealTimers());
+
+      it.each([
+        ['the read failed', (steps: ReturnType<typeof decisionSteps>) => {
+          steps.service.startDocument$(summary.documentId, steps.host).subscribe({ error: steps.failed });
+          steps.reads[0].error('Capture library index cannot be read.');
+        }],
+        ['the cancel write failed', (steps: ReturnType<typeof decisionSteps>) => {
+          steps.service.startDocument$(summary.documentId, steps.host).subscribe({ error: steps.failed });
+          steps.service.cancel(summary.documentId);
+          steps.answerRead(0);
+          steps.writes[0].answer.error('Capture library index cannot be written.');
+        }],
+      ] as const)('tells the queues to look again after a pause when %s', (_step, fail) => {
+        const steps = decisionSteps(summary);
+        const before = steps.service.failedDecisions();
+
+        fail(steps);
+        expect(steps.failed).toHaveBeenCalledTimes(1);
+        vi.advanceTimersByTime(STORED_DOCUMENT_RETRY_PAUSE_MS - 1);
+        expect(steps.service.failedDecisions()).toBe(before);
+
+        vi.advanceTimersByTime(1);
+        expect(steps.service.failedDecisions()).toBe(before + 1);
+      });
+
+      it('does not tell the queues to look again when a request was declined or a capture ended', () => {
+        const finished = { ...summary, status: 'completed' } satisfies DesktopLibrarySummary;
+        const steps = decisionSteps(finished);
+        const before = steps.service.failedDecisions();
+
+        steps.service.startDocument$(summary.documentId, steps.host).subscribe();
+        steps.answerRead(0);
+        vi.advanceTimersByTime(10 * STORED_DOCUMENT_RETRY_PAUSE_MS);
+
+        expect(steps.service.failedDecisions()).toBe(before);
+      });
+    });
   });
 
   describe('a claimed document', () => {

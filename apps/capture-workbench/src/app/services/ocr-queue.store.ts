@@ -103,7 +103,11 @@ export class OcrQueueStore {
 
   private readonly workEffect = effect(() => {
     if (!this.attached() || !this.runtime.started()) return;
+    // A decision that ended in an error changed nothing the queue can see:
+    // this signal makes it look again, after the service's pause.
+    this.capture.failedDecisions();
     // Waiting files start in the order they were imported, the order the queue shows.
+
     const documents = inImportOrder(this.sharedDocuments());
     if (this.features.isFeatureReady('ocr')) this.startWaiting(documents);
     this.reattachRunning(documents);
