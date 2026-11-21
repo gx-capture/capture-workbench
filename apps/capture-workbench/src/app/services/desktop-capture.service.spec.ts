@@ -2,7 +2,12 @@ import { signal } from '@angular/core';
 import { rxResource } from '@angular/core/rxjs-interop';
 import { TestBed } from '@angular/core/testing';
 import { RUNTIME_VERSION, type CaptureOcrProjection } from '@gx-capture/capture-runtime-client';
-import type { CaptureOperation, CaptureRequirementId, OcrComputePreflight } from '@gx-capture/capture-workbench-ui';
+import type {
+  CaptureOperation,
+  CaptureRequirementId,
+  OcrComputePreflight,
+  PartialCapture,
+} from '@gx-capture/capture-workbench-ui';
 import { finalize, of, Subject, throwError, type Observable } from 'rxjs';
 import type { DesktopLibraryDetail, DesktopLibrarySummary } from '../contracts';
 import {
@@ -2105,6 +2110,66 @@ describe('DesktopCaptureService', () => {
       expect(cancelCapture).toHaveBeenCalledExactlyOnceWith('capture-1');
       expect(getCapture).not.toHaveBeenCalled();
       expect(stored()).toMatchObject({ status: 'canceled', captureId: undefined });
+    });
+  });
+
+  describe('the live lines of an earlier capture', () => {
+    const earlierLines = { captureId: 'capture-earlier', revision: 1, sourceText: 'earlier lines' } as PartialCapture;
+    const lostDocument = {
+      ...summary, status: 'recovery_required', captureId: 'capture-earlier', recoveryCode: 'capture_recovery_required',
+    } satisfies DesktopLibrarySummary;
+    const ENTRIES = ['startDocument$', 'retry$', 'restartLost$'] as const;
+
+    function withEarlierLines(storedDocument: DesktopLibrarySummary) {
+      const createCapture = vi.fn(() => new Subject<CaptureOperation>());
+      const getCapture = vi.fn(() => new Subject<CaptureOperation>());
+      const updateCapture = vi.fn((update: Record<string, unknown>) =>
+        of(applyDurableCaptureUpdate(storedDocument, update)));
+      const store = initializeCapture(
+        libraryStub({ list: vi.fn(() => of([storedDocument])), updateCapture }),
+        runtimeStub({ createCapture, getCapture }),
+      );
+      store.service.streamingPartials.set(new Map([[summary.documentId, earlierLines]]));
+      return { ...store, createCapture, getCapture };
+    }
+
+    it.each([
+      ['a waiting document starts', 'startDocument$', { ...summary }],
+      ['a failed document is captured again', 'retry$', { ...summary, status: 'failed' }],
+      ['a document whose capture was lost is restarted', 'restartLost$', lostDocument],
+    ] satisfies [string, (typeof ENTRIES)[number], DesktopLibrarySummary][])(
+      'are cleared when %s',
+      (_transition, entry, storedDocument) => {
+        const { service, host, createCapture } = withEarlierLines(storedDocument);
+
+        service[entry](summary.documentId, host).subscribe();
+        TestBed.tick();
+
+        expect(createCapture).toHaveBeenCalledTimes(1);
+        expect(service.streamingPartials().has(summary.documentId)).toBe(false);
+      },
+    );
+
+    it.each(ENTRIES)('are kept when %s is declined', (entry) => {
+      const { service, host, createCapture } = withEarlierLines({ ...summary, status: 'completed' });
+
+      service[entry](summary.documentId, host).subscribe();
+      TestBed.tick();
+
+      expect(createCapture).not.toHaveBeenCalled();
+      expect(service.streamingPartials().get(summary.documentId)).toBe(earlierLines);
+    });
+
+    it('are kept when a retry resumes the capture they belong to', () => {
+      const linked = { ...summary, status: 'processing', captureId: 'capture-earlier' } satisfies DesktopLibrarySummary;
+      const { service, host, createCapture, getCapture } = withEarlierLines(linked);
+
+      service.retry$(summary.documentId, host).subscribe();
+      TestBed.tick();
+
+      expect(getCapture).toHaveBeenCalledExactlyOnceWith('capture-earlier');
+      expect(createCapture).not.toHaveBeenCalled();
+      expect(service.streamingPartials().get(summary.documentId)).toBe(earlierLines);
     });
   });
 

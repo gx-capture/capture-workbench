@@ -325,7 +325,6 @@ export class AsrQueueStore {
 
   retry(documentId: string): void {
     if (!this.runtime.ready() || !this.speechReady()) return;
-    this.clearPartial(documentId);
     this.capture
       .retry$(documentId, this.host)
       .pipe(takeUntilDestroyed(this.destroyRef))
@@ -337,7 +336,6 @@ export class AsrQueueStore {
 
   restart(documentId: string): void {
     if (!this.runtime.ready() || !this.speechReady()) return;
-    this.clearPartial(documentId);
     this.capture
       .restartLost$(documentId, this.host)
       .pipe(takeUntilDestroyed(this.destroyRef))
@@ -422,7 +420,6 @@ export class AsrQueueStore {
     );
     if (!next) return;
     this.startingIds.add(next.documentId);
-    this.clearPartial(next.documentId);
     this.capture
       .startDocument$(next.documentId, this.host)
       .pipe(
@@ -435,14 +432,6 @@ export class AsrQueueStore {
       });
   }
 
-  private clearPartial(documentId: string): void {
-    this.capture.streamingPartials.update((current) => {
-      if (!current.has(documentId)) return current;
-      const next = new Map(current);
-      next.delete(documentId);
-      return next;
-    });
-  }
 
   private loadCompletedDetails(
     recordings: readonly DesktopLibrarySummary[],

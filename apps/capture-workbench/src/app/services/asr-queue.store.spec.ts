@@ -521,34 +521,6 @@ describe('AsrQueueStore', () => {
     expect(capture.reattach$).toHaveBeenCalledTimes(2);
   });
 
-  it('clears a previous partial before starting a queued recording', () => {
-    const document = makeRecording();
-    const { store, capture, streamingPartials } = setup({ initialDocs: [document] });
-    streamingPartials.set(new Map([[document.documentId, {
-      captureId: 'previous', revision: 1, sourceText: 'old transcript',
-    } as PartialCapture]]));
-    capture.startDocument$.mockImplementation(() => {
-      expect(streamingPartials().has(document.documentId)).toBe(false);
-      return new Subject<void>();
-    });
-
-    store.attach();
-    TestBed.tick();
-    expect(capture.startDocument$).toHaveBeenCalledTimes(1);
-    expect(streamingPartials().has(document.documentId)).toBe(false);
-  });
-
-  it.each(['retry', 'restart'] as const)('clears the previous partial on explicit %s', (action) => {
-    const document = makeRecording({ status: 'recovery_required', captureId: 'old' });
-    const { store, streamingPartials } = setup({ initialDocs: [document] });
-    streamingPartials.set(new Map([[document.documentId, {
-      captureId: 'old', revision: 1, sourceText: 'old transcript',
-    } as PartialCapture]]));
-
-    store[action](document.documentId);
-    expect(streamingPartials().has(document.documentId)).toBe(false);
-  });
-
   it('ignores late partials from an earlier capture of the same recording', () => {
     const document = makeRecording({ status: 'processing', captureId: 'current' });
     const { store, streamingPartials, busyIds, docs } = setup({ initialDocs: [document] });
@@ -740,6 +712,29 @@ describe('AsrQueueStore', () => {
       expect(stored()).toMatchObject({ status: 'completed', captureId: undefined });
       expect(libraryStore.refreshDocuments).toHaveBeenCalled();
     });
+
+    it.each(['retry', 'restart'] as const)(
+      'leaves the live lines when %s is pressed for a recording whose capture runs',
+      (action) => {
+        const { store, docs, stored, library } = captureOverAnUnansweredListReload();
+        store.attach();
+        TestBed.tick();
+        docs.set([stored()]);
+        const service = TestBed.inject(DesktopCaptureService);
+        service.streamingPartials.set(new Map([[stored().documentId, {
+          captureId, revision: 1, coveredUntilMs: 1_000, sourceText: 'first line',
+        } as PartialCapture]]));
+        expect(store.liveCapture()?.lines.map((line) => line.text)).toEqual(['first line']);
+        const readsBefore = library.list.mock.calls.length;
+
+        // The capture service ignores the request: the document is claimed.
+        store[action](stored().documentId);
+        TestBed.tick();
+
+        expect(library.list).toHaveBeenCalledTimes(readsBefore);
+        expect(store.liveCapture()?.lines.map((line) => line.text)).toEqual(['first line']);
+      },
+    );
 
     it('does not start a second capture for a row that still says waiting', () => {
       const { store, runtime, libraryStore, stored, endCapture } =

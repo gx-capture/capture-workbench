@@ -456,8 +456,13 @@ export class DesktopCaptureService {
       };
       this.activeCaptures.set(documentId, active);
       this.markBusy(documentId, true);
+      // A new capture starts here, and only here: the live lines of an
+      // earlier capture of the document end with it. A request that is
+      // ignored or declined never gets this far and leaves them.
+      this.clearStreamingPartial(documentId);
 
       const work$ = this.library.updateCapture({
+
         documentId,
         status: 'processing',
         stage: 'uploading',
