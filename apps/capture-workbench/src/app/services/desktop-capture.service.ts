@@ -90,7 +90,7 @@ interface ActiveCapture {
  * decision ended in an error, so that a failure that lasts is not repeated in
  * a loop.
  */
-export const STORED_DOCUMENT_RETRY_PAUSE_MS = 2_000;
+export const FAILED_DECISION_PAUSE_MS = 2_000;
 
 export interface DesktopCaptureHost {
   readonly selectedId: WritableSignal<string | null>;
@@ -296,7 +296,7 @@ export class DesktopCaptureService {
   }
 
   private tellQueuesToLookAgainAfterPause(): void {
-    timer(STORED_DOCUMENT_RETRY_PAUSE_MS)
+    timer(FAILED_DECISION_PAUSE_MS)
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe(() => this.failedDecisions.update((count) => count + 1));
   }

@@ -12,7 +12,7 @@ import { finalize, of, Subject, throwError, type Observable } from 'rxjs';
 import type { DesktopLibraryDetail, DesktopLibrarySummary } from '../contracts';
 import {
   DesktopCaptureService,
-  STORED_DOCUMENT_RETRY_PAUSE_MS,
+  FAILED_DECISION_PAUSE_MS,
   type DesktopCaptureHost,
 } from './desktop-capture.service';
 import { isCaptureLost } from './capture-operation-status';
@@ -1942,7 +1942,7 @@ describe('DesktopCaptureService', () => {
 
         fail(steps);
         expect(steps.failed).toHaveBeenCalledTimes(1);
-        vi.advanceTimersByTime(STORED_DOCUMENT_RETRY_PAUSE_MS - 1);
+        vi.advanceTimersByTime(FAILED_DECISION_PAUSE_MS - 1);
         expect(steps.service.failedDecisions()).toBe(before);
 
         vi.advanceTimersByTime(1);
@@ -1956,7 +1956,7 @@ describe('DesktopCaptureService', () => {
 
         steps.service.startDocument$(summary.documentId, steps.host).subscribe();
         steps.answerRead(0);
-        vi.advanceTimersByTime(10 * STORED_DOCUMENT_RETRY_PAUSE_MS);
+        vi.advanceTimersByTime(10 * FAILED_DECISION_PAUSE_MS);
 
         expect(steps.service.failedDecisions()).toBe(before);
       });

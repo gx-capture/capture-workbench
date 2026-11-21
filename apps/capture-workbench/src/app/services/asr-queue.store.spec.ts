@@ -16,7 +16,7 @@ import { desktopMessages, setDesktopLocale } from '../i18n/desktop-messages';
 import { AsrQueueStore } from './asr-queue.store';
 import { DesktopLibraryService, type DesktopSourceSelection } from './desktop-library.service';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
-import { DesktopCaptureService, STORED_DOCUMENT_RETRY_PAUSE_MS } from './desktop-capture.service';
+import { DesktopCaptureService, FAILED_DECISION_PAUSE_MS } from './desktop-capture.service';
 import { DesktopFormattingService } from './desktop-formatting.service';
 import { RuntimeStatusStore } from './runtime-status.store';
 import { LibraryStore } from './library.store';
@@ -903,7 +903,7 @@ describe('AsrQueueStore', () => {
         // Not at once: a read that keeps failing must not be repeated in a loop.
         expect(reads).toHaveLength(1);
 
-        vi.advanceTimersByTime(STORED_DOCUMENT_RETRY_PAUSE_MS);
+        vi.advanceTimersByTime(FAILED_DECISION_PAUSE_MS);
         TestBed.tick();
         // The recovery is decided again, without anyone refreshing the list.
         expect(reads).toHaveLength(2);
@@ -928,7 +928,7 @@ describe('AsrQueueStore', () => {
         reads[0].error('Capture library index cannot be read.');
         TestBed.tick();
         TestBed.tick();
-        vi.advanceTimersByTime(STORED_DOCUMENT_RETRY_PAUSE_MS - 1);
+        vi.advanceTimersByTime(FAILED_DECISION_PAUSE_MS - 1);
         TestBed.tick();
         expect(reads).toHaveLength(1);
 
@@ -937,7 +937,7 @@ describe('AsrQueueStore', () => {
         expect(reads).toHaveLength(2);
         reads[1].error('Capture library index cannot be read.');
         TestBed.tick();
-        vi.advanceTimersByTime(STORED_DOCUMENT_RETRY_PAUSE_MS - 1);
+        vi.advanceTimersByTime(FAILED_DECISION_PAUSE_MS - 1);
         TestBed.tick();
         expect(reads).toHaveLength(2);
 
