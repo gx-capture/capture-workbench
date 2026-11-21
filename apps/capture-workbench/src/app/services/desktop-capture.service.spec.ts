@@ -1569,6 +1569,10 @@ describe('DesktopCaptureService', () => {
     ['is capturing', [{ ...summary, status: 'processing', captureId: 'capture-1' }]],
     ['has a result', [{ ...summary, status: 'completed' }]],
     ['was cancelled', [{ ...summary, status: 'canceled' }]],
+    ['waits for its runtime cleanup', [{
+      ...summary, status: 'recovery_required', stage: 'completed', captureId: 'capture-1',
+      recoveryCode: 'runtime_cleanup_failed',
+    }]],
     ['was deleted', []],
   ] satisfies [string, DesktopLibrarySummary[]][])(
     'does not start a document that no longer waits because it %s',
