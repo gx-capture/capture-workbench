@@ -13,12 +13,14 @@ import {
   from,
   ignoreElements,
   map,
+  merge,
   type Observable,
   of,
   race,
   Subject,
   switchMap,
   take,
+  takeUntil,
   tap,
   throwError,
   timer,
@@ -832,13 +834,26 @@ export class DesktopCaptureService {
     active: ActiveCapture,
   ): Observable<DesktopCaptureOperation> {
     if (active.cancelRequested) return this.sendCancellation$(captureId, active);
-    return race(
-      this.runtime.getCapture(captureId),
-      active.cancelWake.pipe(
-        take(1),
-        switchMap(() => this.sendCancellation$(captureId, active)),
-      ),
-    );
+    return this.readUntilCancelRequested$(this.runtime.getCapture(captureId), captureId, active);
+  }
+
+  /**
+   * The answer of `read$`, unless a cancel is requested before it arrives:
+   * then the read is abandoned and the runtime's answer to the cancel is the
+   * state. A read that was sent before the cancel can answer after the runtime
+   * accepted it, with the capture as it was; that answer, or its failure,
+   * must not decide what is stored.
+   */
+  private readUntilCancelRequested$(
+    read$: Observable<DesktopCaptureOperation>,
+    captureId: string,
+    active: ActiveCapture,
+  ): Observable<DesktopCaptureOperation> {
+    const cancelRequested$ = active.cancelWake.pipe(take(1));
+    return merge(
+      read$.pipe(takeUntil(cancelRequested$)),
+      cancelRequested$.pipe(switchMap(() => this.sendCancellation$(captureId, active))),
+    ).pipe(take(1));
   }
 
   private sendCancellation$(

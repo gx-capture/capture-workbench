@@ -2142,6 +2142,73 @@ describe('DesktopCaptureService', () => {
       expect(getCapture).not.toHaveBeenCalled();
       expect(stored()).toMatchObject({ status: 'canceled', captureId: undefined });
     });
+
+    describe.each([
+      [
+        'a one-shot capture',
+        running,
+        // A read that was answered before the cancel: the OCR result waited for its structuring.
+        operation({ captureId: 'capture-1', status: 'awaiting_structuring' }),
+        cancelledOperation,
+      ],
+      [
+        'a recording',
+        { ...running, fileName: 'fixture.mp3', mediaType: 'audio/mpeg' },
+        operation({ captureId: 'capture-1', status: 'extracting', kind: 'recording' }),
+        operation({ captureId: 'capture-1', status: 'cancelled', kind: 'recording' }),
+      ],
+    ] satisfies [string, DesktopLibrarySummary, CaptureOperation, CaptureOperation][])(
+      'that arrives for %s while the first read of the capture is unanswered',
+      (_kind, document, answeredBeforeTheCancel, cancelled) => {
+        /** The first read of the capture and the cancel are both sent, and neither is answered. */
+        function readAndCancelUnanswered() {
+          const read = new Subject<CaptureOperation>();
+          const cancelReply = new Subject<CaptureOperation>();
+          const getCapture = vi.fn((): Observable<CaptureOperation> => of(cancelled));
+          getCapture.mockImplementationOnce(() => read);
+          const cancelCapture = vi.fn(() => cancelReply);
+          const test = recovery(document, {
+            getCapture,
+            cancelCapture,
+            getCaptureEvents: vi.fn(() => of([])),
+            getPartial: vi.fn(() => of(null)),
+          });
+          test.service.reattach$(document, test.host).subscribe();
+          test.answerRead();
+          expect(getCapture).toHaveBeenCalledTimes(1);
+          test.service.cancel(summary.documentId);
+          TestBed.tick();
+          expect(cancelCapture).toHaveBeenCalledExactlyOnceWith('capture-1');
+          return {
+            ...test,
+            answerCaptureRead: () => { read.next(answeredBeforeTheCancel); read.complete(); },
+            rejectCaptureRead: () => read.error(notFound),
+            answerCancel: () => { cancelReply.next(cancelled); cancelReply.complete(); },
+          };
+        }
+
+        it.each([
+          ['the read answers before the cancel', ['answerCaptureRead', 'answerCancel']],
+          ['the cancel answers before the read', ['answerCancel', 'answerCaptureRead']],
+          ['the read is rejected before the cancel answers', ['rejectCaptureRead', 'answerCancel']],
+        ] satisfies [string, ('answerCaptureRead' | 'rejectCaptureRead' | 'answerCancel')[]][])(
+          'stores what the cancel answered when %s',
+          async (_order, replies) => {
+            const test = readAndCancelUnanswered();
+
+            for (const reply of replies) {
+              test[reply]();
+              TestBed.tick();
+              await settleCaptureLifecycle();
+            }
+
+            expect(test.stored()).toMatchObject({ status: 'canceled', stage: 'cancelled', captureId: undefined });
+            expect(test.deleteCapture).toHaveBeenCalledExactlyOnceWith('capture-1');
+            expect(test.service.isDocumentClaimed(summary.documentId)).toBe(false);
+          },
+        );
+      },
+    );
   });
 
   describe('the live lines of an earlier capture', () => {
