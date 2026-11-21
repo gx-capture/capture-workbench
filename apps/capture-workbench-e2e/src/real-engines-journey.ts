@@ -819,6 +819,10 @@ async function checkProgressiveRecording(
     timeoutMs: media.finalBudgetMs,
     whileRunning: async (id, row) => {
       const visibleCard = page.locator(`[data-testid="asr-live-card"][data-document-id="${id}"]`);
+      // Timings only (no text): how soon the live card shows a partial after
+      // the recording was queued, and when it shows the checkpoint revision.
+      const queuedAt = Date.now();
+      let firstShown = false;
       await expect.poll(async () => {
         const rowStatus = await row.getAttribute('data-user-status', { timeout: ACTION_TIMEOUT_MS });
         if (rowStatus === 'done' || rowStatus === 'persisting') {
@@ -841,12 +845,18 @@ async function checkProgressiveRecording(
               (line) => line.textContent ?? ''),
           };
         });
+        if (visible && !firstShown) {
+          firstShown = true;
+          logStage('03-progressive-partial', `first live partial shown after ${Date.now() - queuedAt}ms `
+            + `(revision ${visible.revision}, covered ${visible.coverage}ms)`);
+        }
         if (visible && visible.revision > expected.partialRevision) {
-          throw new Error('Missed the live checkpoint revision between UI polls.');
+          throw new Error(`Missed the live checkpoint revision between UI polls (shown ${visible.revision}).`);
         }
         if (!visible || visible.revision < expected.partialRevision) {
           return false;
         }
+        logStage('03-progressive-partial', `checkpoint revision shown after ${Date.now() - queuedAt}ms`);
         assert.equal(rowStatus, 'processing');
         assert.equal(visible.coverage, expected.coveredUntilMs, 'Displayed partial coverage differs from the oracle.');
 
