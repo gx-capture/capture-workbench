@@ -18,6 +18,7 @@ import {
 import { isCaptureLost } from './capture-operation-status';
 import { DesktopLibraryService, type DesktopSourceSelection } from './desktop-library.service';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
+import { HistoryListStore } from './history-list.store';
 import { LibraryStore } from './library.store';
 
 
@@ -2544,8 +2545,13 @@ describe('DesktopCaptureService', () => {
         : { ...NOTHING, decisionReads: 1, runtimeDeletes: 1, writes: ['completed'] };
     }
 
-    /** A document in the given state, over the real library store's delete guard. */
-    function documentIn(state: State) {
+    /**
+     * A document in the given state, over the real library store and the real
+     * history list. With `deleteAsked`, the user asked to delete the document
+     * before the state was reached, so the confirmation is open where a row
+     * could still offer it.
+     */
+    function documentIn(state: State, earlier: { readonly deleteAsked: boolean } = { deleteAsked: false }) {
       const pending = new Subject<never>();
       const batch = state === 'a batch has scheduled it';
       const documentId = batch ? '2'.repeat(32) : summary.documentId;
@@ -2583,10 +2589,17 @@ describe('DesktopCaptureService', () => {
       // In flight: the result is kept and the runtime cleanup that follows does not answer.
       const deleteCapture = vi.fn((): Observable<undefined> =>
         state === 'its terminal writes are in flight' ? pending : of(undefined));
+      const deleteDocument = vi.fn((_documentId: string): Observable<void> => of(undefined));
       const store = initializeCapture(
-        libraryStub({ list, updateCapture, importSelection }),
+        libraryStub({ list, updateCapture, importSelection, delete: deleteDocument }),
         runtimeStub({ createCapture, getCapture, cancelCapture, cancelUpload, deleteCapture }),
       );
+      const history = TestBed.inject(HistoryListStore);
+      if (earlier.deleteAsked) {
+        TestBed.tick();
+        const row = history.rows().find((item) => item.documentId === documentId);
+        if (row) history.askDelete(row);
+      }
       if (batch) {
         store.service.addSelections$([selection('first.pdf'), selection('second.pdf')], store.host).subscribe();
       } else if (state !== 'its cleanup is pending after a refused unlink') {
@@ -2608,6 +2621,8 @@ describe('DesktopCaptureService', () => {
         ...store,
         documentId,
         libraryStore,
+        history,
+        deleteDocument,
         list,
         updateCapture,
         cancelCapture,
@@ -2631,8 +2646,14 @@ describe('DesktopCaptureService', () => {
     it.each(STATES.flatMap((state) => ENTRIES.map((entry) => [state, entry] as const)))(
       'while %s, %s does what the state allows and no more',
       (state, entry) => {
-        const { service, host, documentId, libraryStore, effect } = documentIn(state);
+        const { service, host, documentId, libraryStore, history, deleteDocument, effect } =
+          documentIn(state, { deleteAsked: entry === 'delete' });
         expect(service.isDocumentClaimed(documentId)).toBe(CLAIMED.includes(state));
+        if (entry === 'delete') {
+          // The confirmation is open for a document that was free when the user asked. The
+          // cleanup row was linked all along: the history list never offered its deletion.
+          expect(history.pendingDelete()?.documentId).toBe(CLAIMED.includes(state) ? documentId : undefined);
+        }
         // What an outdated row could ask for: it still shows a running capture.
         const row = { ...summary, documentId, status: 'processing', captureId: 'capture-1' } satisfies DesktopLibrarySummary;
 
@@ -2642,8 +2663,8 @@ describe('DesktopCaptureService', () => {
           'retry$': () => service.retry$(documentId, host).subscribe(),
           'restartLost$': () => service.restartLost$(documentId, host).subscribe(),
           cancel: () => service.cancel(documentId),
-          // The delete of the library is offered through this guard alone.
-          delete: () => expect(libraryStore.canDelete(documentId)).toBe(false),
+          // The user confirms the deletion that was asked before the state was reached.
+          delete: () => history.confirmDelete(),
         };
         actions[entry]();
         TestBed.tick();
@@ -2651,6 +2672,9 @@ describe('DesktopCaptureService', () => {
         TestBed.tick();
 
         expect(effect()).toEqual(expectedEffect(state, entry));
+        // No entry deletes the document from the library: a confirmation is refused and closed.
+        expect(deleteDocument).not.toHaveBeenCalled();
+        expect(history.pendingDelete()).toBeNull();
         // A claim outlasts every entry; the cleanup state is never claimed afterwards.
         expect(service.isDocumentClaimed(documentId)).toBe(CLAIMED.includes(state));
         // Deletion stays refused in every state: by the claim, or by the link of the cleanup row
