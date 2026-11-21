@@ -669,9 +669,11 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
     if (available.length > 0) return Promise.resolve(answered(available));
     return new Promise((resolve) => {
       setTimeout(() => {
-        // A capture deleted during the wait publishes nothing more: the
-        // runtime's event stream ends there, and the host answers with the
-        // events it had read, here none.
+        // Simulated outcome: a capture deleted during the wait publishes
+        // nothing more, and the waiting read is answered with no event. The
+        // real host has other outcomes too: the runtime records a
+        // cancellation before it removes a capture that still runs, so a
+        // waiting read can return that event, or fail when the stream breaks.
         if (recordingCaptures.get(id) !== capture) {
           resolve(answered([]));
           return;

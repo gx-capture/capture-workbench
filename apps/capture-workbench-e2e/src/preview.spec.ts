@@ -334,7 +334,7 @@ interface RecordingJourneyGlobal {
   readonly __captureRecordingHoldPartialAfterEmptyEvents?: () => void;
   readonly __captureRecordingHeldPartial?: { readonly emptyEventRead: number } | null;
   readonly __captureRecordingReleasePartial?: () => void;
-  /** Every state of the live card's lines since `watchLiveCardLines`, consecutive repeats dropped. */
+  /** The states of the live card's lines that `watchLiveCardLines` recorded, consecutive repeats dropped. */
   __liveCardLineStates?: string[];
   __liveCardLineWatch?: MutationObserver;
 }
@@ -382,9 +382,13 @@ function lastSequenceGivenBefore(reads: readonly RecordedEventRead[]): number[] 
 }
 
 /**
- * Records every state of the live card's lines from now on. A mutation
- * observer sees each change of the page, so no state can pass between two
- * looks, as it could between the samples of a poll.
+ * Records the states of the live card's lines from now on, as a mutation
+ * observer delivers them. The lines are read once per delivery, so changes
+ * the page makes within one task appear as the state they end in; a state
+ * that lasts from one task to the next is recorded, whereas a poll could
+ * sample around it. The checks below do not rest on that alone: they hold
+ * the partial read, the only thing that could put lines back, so a card that
+ * lost its lines stays without them and is recorded.
  */
 async function watchLiveCardLines(page: Page, documentId: string): Promise<void> {
   await page.evaluate((id) => {
@@ -411,27 +415,8 @@ async function watchLiveCardLines(page: Page, documentId: string): Promise<void>
   }, documentId);
 }
 
-/**
- * An empty events reply leaves the published lines on the card, with the
- * exact order of events under the test's control:
- *
- * 1. the next revision is held, so the simulated runtime has nothing new;
- * 2. the Workbench's next events read is answered with an empty batch, and
- *    the partial read the Workbench sends after it is not answered;
- * 3. while that read waits, nothing can put lines back on the card, so the
- *    card's states since the watch started must be the shown lines only.
- *
- * The caller then releases the partial read and the next revision. A card
- * that clears on an empty reply and restores itself from the next partial
- * read stays empty during step 3 and fails here.
- */
-async function expectCardKeptAfterAnEmptyEventsReply(
-  page: Page,
-  documentId: string,
-  captureId: string,
-  shown: readonly string[],
-): Promise<void> {
-  const readsBefore = (await eventReadsOf(page, captureId)).length;
+/** From now on the partial read that follows the next empty events reply is not answered. */
+async function holdPartialReadAfterNextEmptyEventsReply(page: Page): Promise<void> {
   await page.evaluate(() => {
     const target = globalThis as unknown as RecordingJourneyGlobal;
     if (!target.__captureRecordingHoldPartialAfterEmptyEvents) {
@@ -439,7 +424,29 @@ async function expectCardKeptAfterAnEmptyEventsReply(
     }
     target.__captureRecordingHoldPartialAfterEmptyEvents();
   });
-  // Waiting only: the assertion below does not depend on when this is seen.
+}
+
+/** Answers the partial read that is being held. */
+async function releaseHeldPartialRead(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    (globalThis as unknown as RecordingJourneyGlobal).__captureRecordingReleasePartial?.();
+  });
+}
+
+/**
+ * Waits until a partial read is held after an empty events reply, then checks
+ * the card while it waits: the Workbench's last events read used the last
+ * sequence it was given and got no event, and since the watch started the
+ * card showed the given lines only. Returns how many events reads were
+ * answered for the capture.
+ */
+async function expectCardKeptWhilePartialReadIsHeld(
+  page: Page,
+  documentId: string,
+  captureId: string,
+  shown: readonly string[],
+): Promise<number> {
+  // Waiting only: the assertions below do not depend on when this is seen.
   await expect.poll(async () => page.evaluate(() => (
     (globalThis as unknown as RecordingJourneyGlobal).__captureRecordingHeldPartial ?? null
   )), { timeout: liveTranscriptWaitMs(1) }).not.toBeNull();
@@ -460,22 +467,49 @@ async function expectCardKeptAfterAnEmptyEventsReply(
   const reads = await eventReadsOf(page, captureId);
   const lastGiven = Math.max(0, ...reads.flatMap((read) => read.events.map(([sequence]) => sequence)));
 
-  // The held partial read follows the last events read, which the Workbench
-  // sent after this check began, with the last sequence it was given, and
-  // which was answered with no event.
-  expect(reads.length).toBeGreaterThan(readsBefore);
+  // The held partial read follows the last events read.
   expect(observed.held).toEqual({ emptyEventRead: reads.length - 1 });
   expect(reads[reads.length - 1]).toEqual({ captureId, lastEventId: lastGiven, events: [] });
-  // Through that reply and while the partial read waits: only the shown lines.
   expect(observed.lineStates).toEqual([JSON.stringify(shown)]);
   expect(observed.status).toBe('processing');
+  return reads.length;
 }
 
-/** Answers the partial read `expectCardKeptAfterAnEmptyEventsReply` left waiting. */
-async function releaseHeldPartialRead(page: Page): Promise<void> {
-  await page.evaluate(() => {
-    (globalThis as unknown as RecordingJourneyGlobal).__captureRecordingReleasePartial?.();
-  });
+/**
+ * Empty events replies leave the published lines on the card, with the exact
+ * order of events under the test's control:
+ *
+ * 1. the next revision is held, so the simulated runtime has nothing new;
+ * 2. the Workbench's next events read is answered with an empty batch, and
+ *    the partial read the Workbench sends after it is not answered;
+ * 3. while that read waits, nothing can put lines back on the card, so the
+ *    card's recorded states must be the shown lines only;
+ * 4. the read is answered and the very next events read is again answered
+ *    empty, with the partial read after it held and the card checked again.
+ *
+ * So the card kept its lines through two consecutive empty replies. A card
+ * that clears on an empty reply, the first or a repeated one, and restores
+ * itself from the next partial read stays empty during step 3 or 4 and fails
+ * here. The second partial read is left held: the caller releases it and the
+ * next revision.
+ */
+async function expectCardKeptThroughTwoEmptyEventsReplies(
+  page: Page,
+  documentId: string,
+  captureId: string,
+  shown: readonly string[],
+): Promise<void> {
+  const readsBefore = (await eventReadsOf(page, captureId)).length;
+  await holdPartialReadAfterNextEmptyEventsReply(page);
+  const readsAtFirst = await expectCardKeptWhilePartialReadIsHeld(page, documentId, captureId, shown);
+  // The first empty reply answered a read the Workbench sent after this check began.
+  expect(readsAtFirst).toBeGreaterThan(readsBefore);
+  // Armed again before the held read is answered: the next events read cannot slip by.
+  await holdPartialReadAfterNextEmptyEventsReply(page);
+  await releaseHeldPartialRead(page);
+  const readsAtSecond = await expectCardKeptWhilePartialReadIsHeld(page, documentId, captureId, shown);
+  // One more events read, also empty: nothing was published or read in between.
+  expect(readsAtSecond).toBe(readsAtFirst + 1);
 }
 
 test('shows the live transcript growing across partial revisions while the recording is still processing', async ({ page }) => {
@@ -507,7 +541,7 @@ test('shows the live transcript growing across partial revisions while the recor
   expect(await hostCommand(page, 'runtime_get_capture', { input: { id: captureId } }))
     .toMatchObject({ value: { status: 'extracting' } });
 
-  await expectCardKeptAfterAnEmptyEventsReply(page, documentId, captureId, LIVE_TRANSCRIPT_LINES.slice(0, 1));
+  await expectCardKeptThroughTwoEmptyEventsReplies(page, documentId, captureId, LIVE_TRANSCRIPT_LINES.slice(0, 1));
   // What the Workbench itself read so far: the log from its start, each event once.
   expect((await eventReadsOf(page, captureId)).flatMap((read) => read.events))
     .toEqual(RECORDING_EVENT_LOG.slice(0, 3));
@@ -521,7 +555,7 @@ test('shows the live transcript growing across partial revisions while the recor
   await expect.poll(() => eventReadsOf(page, captureId), { timeout: liveTranscriptWaitMs(1) })
     .toContainEqual({ captureId, lastEventId: 3, events: [RECORDING_EVENT_LOG[3]] });
   await watchLiveCardLines(page, documentId);
-  await expectCardKeptAfterAnEmptyEventsReply(page, documentId, captureId, LIVE_TRANSCRIPT_LINES.slice(0, 2));
+  await expectCardKeptThroughTwoEmptyEventsReplies(page, documentId, captureId, LIVE_TRANSCRIPT_LINES.slice(0, 2));
 
   // The third sentence, then structuring and completion, on the simulated timeline.
   await releaseHeldPartialRead(page);
