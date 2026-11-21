@@ -34,7 +34,6 @@ import type {
 import type { CaptureOcrProjection } from '@gx-capture/capture-runtime-client';
 import type {
   DesktopLibraryDetail,
-  DesktopLibraryStatus,
   DesktopLibrarySummary,
   OcrEvidenceExpectedIdentity,
   OcrEvidenceV1,
@@ -46,12 +45,13 @@ import {
   type DesktopCaptureOperation,
 } from './desktop-runtime-client.service';
 import {
+  canCaptureAgain,
   committedTerminalStatus,
-  hasCommittedTerminalData,
   isActiveOneShotOperation,
   isActiveStreaming,
   isOcrCheckpoint,
   terminalLibraryStatus,
+  type TerminalLibraryStatus,
   terminalStage,
 } from './capture-operation-status';
 import { errorMessage } from './desktop-errors';
@@ -69,7 +69,7 @@ interface ActiveCapture {
   cancelSent: boolean;
   lastStage?: string;
   terminalCommitted?: boolean;
-  terminalStatus?: DesktopLibraryStatus;
+  terminalStatus?: TerminalLibraryStatus;
   terminalErrorCode?: string;
   terminalErrorMessage?: string;
   /** Readiness identity captured by the host before the runtime operation starts. */
@@ -201,10 +201,15 @@ export class DesktopCaptureService {
     documentId: string,
     host: DesktopCaptureHost,
   ): Observable<void> {
-    return this.decideFromStoredDocument$(documentId, (stored) =>
-      stored?.captureId
-        ? this.recoverCapture$(stored, host)
-        : this.captureExisting$(documentId, host));
+    return this.decideFromStoredDocument$(documentId, (stored) => {
+      if (stored?.captureId) return this.recoverCapture$(stored, host);
+      // Without a runtime capture there is nothing to resume. A new capture
+      // starts only from a state in which a retry is offered: never for a
+      // document that holds its result, as a row read before its cleanup can ask.
+      return stored && canCaptureAgain(stored)
+        ? this.captureExisting$(documentId, host)
+        : this.declineOutdatedRequest$(host);
+    });
   }
 
   /**
@@ -489,6 +494,8 @@ export class DesktopCaptureService {
   ): Observable<void> {
     active.terminalStatus = operation.status === 'completed' ? 'completed'
       : operation.status === 'cancelled' ? 'canceled' : 'failed';
+    // The status read can say the capture ended before any event did.
+    active.lastStage = operation.status;
     active.terminalErrorCode = operation.error?.code;
     active.terminalErrorMessage = operation.error?.message;
     const terminalData$: Observable<CaptureResult | null> = operation.status === 'completed'
@@ -536,7 +543,8 @@ export class DesktopCaptureService {
       ) {
         return EMPTY;
       }
-      const terminalCommitted = hasCommittedTerminalData(document);
+      const committedStatus = committedTerminalStatus(document);
+      const terminalCommitted = committedStatus !== undefined;
       const active: ActiveCapture = {
         captureId: document.captureId,
         streaming: isRecordingMediaType(document.mediaType),
@@ -546,7 +554,7 @@ export class DesktopCaptureService {
         cancelSent: false,
         lastStage: document.stage,
         terminalCommitted,
-        terminalStatus: terminalCommitted ? committedTerminalStatus(document) : undefined,
+        terminalStatus: committedStatus,
         terminalErrorCode: terminalCommitted ? document.errorCode : undefined,
         terminalErrorMessage: terminalCommitted ? document.errorMessage : undefined,
         cancelWake: new Subject<void>(),
@@ -556,8 +564,8 @@ export class DesktopCaptureService {
       this.activeCaptures.set(document.documentId, active);
       this.markBusy(document.documentId, true);
 
-      const work$ = terminalCommitted
-        ? this.retryRuntimeCleanup$(document)
+      const work$ = committedStatus !== undefined
+        ? this.retryRuntimeCleanup$(document, committedStatus)
         : active.streaming
           ? this.runtime.getCapture(document.captureId).pipe(
             tap((operation) => {
@@ -978,14 +986,21 @@ export class DesktopCaptureService {
     );
   }
 
-  private retryRuntimeCleanup$(document: DesktopLibrarySummary): Observable<DesktopLibrarySummary> {
+  /**
+   * Deletes the runtime capture of a document that already holds its terminal
+   * data and unlinks it. The document keeps the terminal status it stored.
+   */
+  private retryRuntimeCleanup$(
+    document: DesktopLibrarySummary,
+    committedStatus: TerminalLibraryStatus,
+  ): Observable<DesktopLibrarySummary> {
     const captureId = document.captureId;
     if (!captureId) return EMPTY;
     return this.runtime.deleteCapture(captureId).pipe(
       switchMap(() => this.library.updateCapture({
         documentId: document.documentId,
-        status: committedTerminalStatus(document),
-        stage: document.stage,
+        status: committedStatus,
+        stage: terminalStage(committedStatus),
         clearCaptureId: true,
         errorCode: document.errorCode,
         errorMessage: document.errorMessage,
@@ -994,7 +1009,7 @@ export class DesktopCaptureService {
         documentId: document.documentId,
         captureId,
         status: 'recovery_required',
-        stage: document.stage,
+        stage: terminalStage(committedStatus),
         errorCode: document.errorCode,
         errorMessage: document.errorMessage,
         recoveryCode: 'runtime_cleanup_failed',
@@ -1009,12 +1024,14 @@ export class DesktopCaptureService {
     error: unknown,
   ): Observable<DesktopLibrarySummary> {
     if (active.captureId) {
-      if (active.terminalCommitted) {
+      if (active.terminalCommitted && active.terminalStatus) {
         return this.library.updateCapture({
           documentId,
           captureId: active.captureId,
           status: 'recovery_required',
-          stage: active.lastStage ?? terminalStage(active.terminalStatus),
+          // The stage of a cleanup row names the terminal status the document
+          // holds: the cleanup retry restores the status from it.
+          stage: terminalStage(active.terminalStatus),
           errorCode: active.terminalErrorCode,
           errorMessage: active.terminalErrorMessage,
           recoveryCode: 'runtime_cleanup_failed',

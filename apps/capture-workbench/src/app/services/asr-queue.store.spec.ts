@@ -593,7 +593,8 @@ describe('AsrQueueStore', () => {
       const writes: StoredCaptureUpdate[] = [];
       harness.library.list.mockImplementation(() => of([stored]));
       harness.library.updateCapture.mockImplementation((update) => {
-        if (update.clearCaptureId && update.status === 'completed' && unlinkFailures > 0) {
+        // The unlink is the write that clears the link once the capture has ended.
+        if (update.clearCaptureId && update.status !== 'processing' && unlinkFailures > 0) {
           unlinkFailures -= 1;
           return throwError(() => 'Capture library index cannot be written.');
         }
@@ -633,8 +634,9 @@ describe('AsrQueueStore', () => {
         ...harness,
         stored: () => stored,
         writes,
-        endCapture: () => {
-          ended.next(recording('completed'));
+        /** The capture's status read answers with the end, ahead of any event that says so. */
+        endCapture: (end: Partial<CaptureOperation> = { status: 'completed' }) => {
+          ended.next({ ...recording('completed'), ...end });
           ended.complete();
         },
       };
@@ -688,6 +690,53 @@ describe('AsrQueueStore', () => {
       expect(writes.map((write) => write.recoveryCode)).not.toContain('capture_recovery_required');
       expect(runtime.deleteCapture).toHaveBeenCalledTimes(2);
       expect(stored()).toMatchObject({ status: 'completed', captureId: undefined, recoveryCode: undefined });
+    });
+
+    it('keeps a failed recording failed when its refused unlink is retried', () => {
+      const { store, docs, stored, writes, endCapture } =
+        captureOverAnUnansweredListReload({ failFirstUnlink: true });
+      store.attach();
+      TestBed.tick();
+      docs.set([stored()]);
+      TestBed.tick();
+
+      // The status read says failed; the last event the Workbench read still said extracting.
+      endCapture({ status: 'failed', error: { code: 'speech_failed', message: 'no speech' } });
+      expect(writes[writes.length - 1]).toMatchObject({
+        status: 'recovery_required', stage: 'failed', captureId,
+        recoveryCode: 'runtime_cleanup_failed', errorCode: 'speech_failed',
+      });
+      TestBed.tick();
+
+      expect(stored()).toMatchObject({
+        status: 'failed', stage: 'failed', captureId: undefined,
+        errorCode: 'speech_failed', recoveryCode: undefined,
+      });
+    });
+
+    it('does not capture a finished recording again when retry is pressed on its outdated cleanup row', () => {
+      const { store, docs, runtime, libraryStore, stored, endCapture } =
+        captureOverAnUnansweredListReload({ failFirstUnlink: true });
+      store.attach();
+      TestBed.tick();
+      docs.set([stored()]);
+      TestBed.tick();
+      endCapture();
+      // The row shows the refused cleanup and offers retry.
+      const cleanupRow = stored();
+      expect(cleanupRow).toMatchObject({ status: 'recovery_required', recoveryCode: 'runtime_cleanup_failed' });
+      docs.set([cleanupRow]);
+      TestBed.tick();
+      // The queue's own retry of the cleanup succeeded; the list reload has not answered.
+      expect(stored()).toMatchObject({ status: 'completed', captureId: undefined });
+      expect(docs()[0]).toBe(cleanupRow);
+      libraryStore.refreshDocuments.mockClear();
+
+      store.retry(cleanupRow.documentId);
+
+      expect(runtime.startRecordingCapture).toHaveBeenCalledTimes(1);
+      expect(stored()).toMatchObject({ status: 'completed', captureId: undefined });
+      expect(libraryStore.refreshDocuments).toHaveBeenCalled();
     });
 
     it('does not start a second capture for a row that still says waiting', () => {

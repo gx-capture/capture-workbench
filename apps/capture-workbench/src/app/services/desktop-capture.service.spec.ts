@@ -63,7 +63,7 @@ describe('DesktopCaptureService', () => {
     });
     const store = initializeCapture(library, client);
 
-    store.service.retry$(summary.documentId, store.host).subscribe();
+    store.service.startDocument$(summary.documentId, store.host).subscribe();
     TestBed.tick();
     await settleCaptureLifecycle();
 
@@ -121,7 +121,7 @@ describe('DesktopCaptureService', () => {
       runtimeStub({ getOcr, deleteCapture }),
     );
 
-    store.service.retry$(summary.documentId, store.host).subscribe();
+    store.service.startDocument$(summary.documentId, store.host).subscribe();
     TestBed.tick();
     await settleCaptureLifecycle();
 
@@ -167,7 +167,7 @@ describe('DesktopCaptureService', () => {
       runtimeStub({ createCapture: vi.fn(() => of(terminal)), getOcr, deleteCapture }),
     );
 
-    store.service.retry$(summary.documentId, store.host).subscribe();
+    store.service.startDocument$(summary.documentId, store.host).subscribe();
     TestBed.tick();
     await settleCaptureLifecycle();
 
@@ -223,7 +223,7 @@ describe('DesktopCaptureService', () => {
       }),
     );
 
-    store.service.retry$(summary.documentId, store.host).subscribe();
+    store.service.startDocument$(summary.documentId, store.host).subscribe();
     TestBed.tick();
     await settleCaptureLifecycle();
 
@@ -265,7 +265,7 @@ describe('DesktopCaptureService', () => {
       runtimeStub({ createCapture: vi.fn(() => of(terminal)), getOcr, deleteCapture }),
     );
 
-    store.service.retry$(summary.documentId, store.host).subscribe();
+    store.service.startDocument$(summary.documentId, store.host).subscribe();
     TestBed.tick();
     await settleCaptureLifecycle();
 
@@ -306,7 +306,7 @@ describe('DesktopCaptureService', () => {
       }),
     );
 
-    store.service.retry$(summary.documentId, store.host).subscribe();
+    store.service.startDocument$(summary.documentId, store.host).subscribe();
     TestBed.tick();
     await settleCaptureLifecycle();
 
@@ -330,7 +330,7 @@ describe('DesktopCaptureService', () => {
       }),
     );
 
-    store.service.retry$(summary.documentId, store.host).subscribe();
+    store.service.startDocument$(summary.documentId, store.host).subscribe();
     TestBed.tick();
 
     expect(createCapture).toHaveBeenCalledWith(
@@ -359,7 +359,7 @@ describe('DesktopCaptureService', () => {
 
     vi.useFakeTimers();
     try {
-      store.service.retry$(summary.documentId, store.host).subscribe();
+      store.service.startDocument$(summary.documentId, store.host).subscribe();
       vi.advanceTimersByTime(700);
       TestBed.tick();
       vi.useRealTimers();
@@ -457,7 +457,7 @@ describe('DesktopCaptureService', () => {
 
     vi.useFakeTimers();
     try {
-      store.service.retry$(summary.documentId, store.host).subscribe();
+      store.service.startDocument$(summary.documentId, store.host).subscribe();
       TestBed.tick();
       for (let index = 0; index < 3; index += 1) {
         vi.advanceTimersByTime(700);
@@ -565,7 +565,7 @@ describe('DesktopCaptureService', () => {
 
     vi.useFakeTimers();
     try {
-      store.service.retry$(summary.documentId, store.host).subscribe();
+      store.service.startDocument$(summary.documentId, store.host).subscribe();
       TestBed.tick();
       for (let index = 0; index < 3; index += 1) {
         vi.advanceTimersByTime(700);
@@ -644,7 +644,7 @@ describe('DesktopCaptureService', () => {
 
       vi.useFakeTimers();
       try {
-        store.service.retry$(summary.documentId, store.host).subscribe();
+        store.service.startDocument$(summary.documentId, store.host).subscribe();
         TestBed.tick();
         for (let index = 0; index < 3; index += 1) {
           vi.advanceTimersByTime(700);
@@ -775,7 +775,7 @@ describe('DesktopCaptureService', () => {
         updateCapture,
       }), client);
 
-      store.service.retry$(summary.documentId, store.host).subscribe();
+      store.service.startDocument$(summary.documentId, store.host).subscribe();
       const requestId = mediaType === 'audio/mpeg'
         ? startRecordingCapture.mock.calls[0][0].clientRequestId
         : createCapture.mock.calls[0][1];
@@ -811,7 +811,7 @@ describe('DesktopCaptureService', () => {
     });
     const store = initializeCapture(library, client);
 
-    store.service.retry$(summary.documentId, store.host).subscribe();
+    store.service.startDocument$(summary.documentId, store.host).subscribe();
     store.service.cancel(summary.documentId);
     store.service.cancel(summary.documentId);
     created.next(runningOperation);
@@ -836,7 +836,7 @@ describe('DesktopCaptureService', () => {
 
     vi.useFakeTimers();
     try {
-      store.service.retry$(summary.documentId, store.host).subscribe();
+      store.service.startDocument$(summary.documentId, store.host).subscribe();
       vi.advanceTimersByTime(700);
       expect(getCapture).toHaveBeenCalledWith('capture-1');
       expect(cancelCapture).not.toHaveBeenCalled();
@@ -862,7 +862,7 @@ describe('DesktopCaptureService', () => {
     });
     const store = initializeCapture(libraryStub(), client);
 
-    store.service.retry$(summary.documentId, store.host).subscribe();
+    store.service.startDocument$(summary.documentId, store.host).subscribe();
     store.service.cancel(summary.documentId);
     created.next(completedOperation);
     created.complete();
@@ -889,7 +889,7 @@ describe('DesktopCaptureService', () => {
       }),
     );
 
-    store.service.retry$(summary.documentId, store.host).subscribe();
+    store.service.startDocument$(summary.documentId, store.host).subscribe();
     TestBed.tick();
 
     expect(getRaw).toHaveBeenCalledWith('capture-1');
@@ -917,7 +917,7 @@ describe('DesktopCaptureService', () => {
       }),
     );
 
-    store.service.retry$(summary.documentId, store.host).subscribe();
+    store.service.startDocument$(summary.documentId, store.host).subscribe();
     TestBed.tick();
 
     expect(captureUpdates(updateCapture)).toContainEqual(
@@ -942,7 +942,7 @@ describe('DesktopCaptureService', () => {
     });
     const store = initializeCapture(libraryStub({ updateCapture }), client);
 
-    store.service.retry$(summary.documentId, store.host).subscribe();
+    store.service.startDocument$(summary.documentId, store.host).subscribe();
     store.service.cancel(summary.documentId);
     TestBed.tick();
 
@@ -974,7 +974,7 @@ describe('DesktopCaptureService', () => {
     });
     const store = initializeCapture(libraryStub({ updateCapture }), client);
 
-    store.service.retry$(summary.documentId, store.host).subscribe();
+    store.service.startDocument$(summary.documentId, store.host).subscribe();
     TestBed.tick();
     await settleCaptureLifecycle();
 
@@ -1004,7 +1004,7 @@ describe('DesktopCaptureService', () => {
     });
     const store = initializeCapture(libraryStub({ updateCapture }), client);
 
-    store.service.retry$(summary.documentId, store.host).subscribe();
+    store.service.startDocument$(summary.documentId, store.host).subscribe();
     TestBed.tick();
     await settleCaptureLifecycle();
 
@@ -1076,7 +1076,7 @@ describe('DesktopCaptureService', () => {
         runtimeStub({ createCapture, getCapture, getOcr, deleteCapture }),
       );
 
-      store.service.retry$(summary.documentId, store.host).subscribe();
+      store.service.startDocument$(summary.documentId, store.host).subscribe();
       TestBed.tick();
       await settleCaptureLifecycle();
 
@@ -1126,7 +1126,7 @@ describe('DesktopCaptureService', () => {
     });
     const store = initializeCapture(libraryStub({ updateCapture }), client);
 
-    store.service.retry$(summary.documentId, store.host).subscribe();
+    store.service.startDocument$(summary.documentId, store.host).subscribe();
     TestBed.tick();
     await settleCaptureLifecycle();
 
@@ -1168,7 +1168,7 @@ describe('DesktopCaptureService', () => {
         }),
       );
 
-      store.service.retry$(summary.documentId, store.host).subscribe();
+      store.service.startDocument$(summary.documentId, store.host).subscribe();
       TestBed.tick();
       await settleCaptureLifecycle();
 
@@ -1286,7 +1286,7 @@ describe('DesktopCaptureService', () => {
       }),
     );
 
-    firstStore.service.retry$(summary.documentId, firstStore.host).subscribe();
+    firstStore.service.startDocument$(summary.documentId, firstStore.host).subscribe();
     TestBed.tick();
     await settleCaptureLifecycle();
 
@@ -1590,6 +1590,89 @@ describe('DesktopCaptureService', () => {
     },
   );
 
+  it.each([
+    ['holds its result', [{ ...summary, status: 'completed' }]],
+    ['holds an OCR result to confirm', [{ ...summary, status: 'awaiting_confirmation', hasRaw: true }]],
+    ['waits in the queue', [{ ...summary, status: 'queued' }]],
+    ['was deleted', []],
+  ] satisfies [string, DesktopLibrarySummary[]][])(
+    'does not start a capture on retry for a stored document that %s',
+    (_state, storedDocuments) => {
+      const createCapture = vi.fn(() => of(completedOperation));
+      const updateCapture = vi.fn(() => of(summary));
+      const store = initializeCapture(
+        libraryStub({ list: vi.fn(() => of(storedDocuments)), updateCapture }),
+        runtimeStub({ createCapture }),
+      );
+      const refreshDocuments = vi.spyOn(store.host, 'refreshDocuments');
+
+      store.service.retry$(summary.documentId, store.host).subscribe();
+      TestBed.tick();
+
+      expect(createCapture).not.toHaveBeenCalled();
+      expect(updateCapture).not.toHaveBeenCalled();
+      expect(refreshDocuments).toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ['failed', { ...summary, status: 'failed', errorCode: 'capture_failed' }],
+    ['was cancelled', { ...summary, status: 'canceled' }],
+    ['lost its capture', { ...summary, status: 'processing' }],
+    ['needs recovery without a capture', { ...summary, status: 'recovery_required' }],
+  ] satisfies [string, DesktopLibrarySummary][])(
+    'starts a new capture on retry for a stored document that %s',
+    (_state, storedDocument) => {
+      const created = new Subject<CaptureOperation>();
+      const createCapture = vi.fn(() => created);
+      const store = initializeCapture(
+        libraryStub({ list: vi.fn(() => of([storedDocument])) }),
+        runtimeStub({ createCapture }),
+      );
+
+      store.service.retry$(summary.documentId, store.host).subscribe();
+      TestBed.tick();
+
+      expect(createCapture).toHaveBeenCalledTimes(1);
+      created.complete();
+    },
+  );
+
+  it('asks the runtime about a cleanup row whose stage names no terminal status', () => {
+    // As written before the stage of a cleanup row was always the terminal one.
+    const cleanupRow = {
+      ...summary,
+      fileName: 'fixture.mp3',
+      mediaType: 'audio/mpeg',
+      status: 'recovery_required',
+      stage: 'extracting',
+      captureId: 'capture-unknown-end',
+      recoveryCode: 'runtime_cleanup_failed',
+    } satisfies DesktopLibrarySummary;
+    const updateCapture = vi.fn((update: Record<string, unknown>) =>
+      of(applyDurableCaptureUpdate(cleanupRow, update)));
+    const getCapture = vi.fn(() =>
+      throwError(() => 'Capture Runtime request was rejected with HTTP 404.'));
+    const deleteCapture = vi.fn(() => of(undefined));
+    const store = initializeCapture(
+      libraryStub({ list: vi.fn(() => of([cleanupRow])), updateCapture }),
+      runtimeStub({ getCapture, deleteCapture }),
+    );
+
+    store.service.reattach$(cleanupRow, store.host).subscribe();
+    TestBed.tick();
+
+    expect(getCapture).toHaveBeenCalledExactlyOnceWith('capture-unknown-end');
+    expect(deleteCapture).not.toHaveBeenCalled();
+    expect(captureUpdates(updateCapture)).toEqual([
+      expect.objectContaining({
+        status: 'recovery_required',
+        captureId: 'capture-unknown-end',
+        recoveryCode: 'capture_recovery_required',
+      }),
+    ]);
+  });
+
   it('decides once per document while its stored state is being read', () => {
     const listed = new Subject<readonly DesktopLibrarySummary[]>();
     const list = vi.fn((): Observable<readonly DesktopLibrarySummary[]> => of([summary]));
@@ -1601,7 +1684,7 @@ describe('DesktopCaptureService', () => {
 
     store.service.startDocument$(summary.documentId, store.host).subscribe();
     store.service.startDocument$(summary.documentId, store.host).subscribe();
-    store.service.retry$(summary.documentId, store.host).subscribe();
+    store.service.startDocument$(summary.documentId, store.host).subscribe();
     expect(list).toHaveBeenCalledTimes(readsBefore + 1);
 
     listed.next([summary]);
@@ -1661,8 +1744,9 @@ function selection(fileName: string): DesktopSourceSelection {
 
 function libraryStub(overrides: Record<string, unknown> = {}) {
   return Object.assign({
+    // The library stores the document the tests capture, waiting.
     list: vi.fn((_search: string, _filter: string, _signal: AbortSignal) =>
-      of<readonly DesktopLibrarySummary[]>([])),
+      of<readonly DesktopLibrarySummary[]>([summary])),
     get: vi.fn((_documentId: string, _signal: AbortSignal) => of<DesktopLibraryDetail>(summary)),
     updateCapture: vi.fn(() => of(summary)),
   }, overrides);

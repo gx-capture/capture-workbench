@@ -25,44 +25,67 @@ export function isActiveStreaming(operation: CaptureOperation): boolean {
     || operation.status === 'structuring';
 }
 
+/** The library statuses a capture can end in; `awaiting_confirmation` ends an OCR checkpoint. */
+export type TerminalLibraryStatus = Extract<
+  DesktopLibraryStatus,
+  'completed' | 'failed' | 'canceled' | 'awaiting_confirmation'
+>;
+
 /** Maps a runtime terminal operation to the library's persisted status vocabulary. */
-export function terminalLibraryStatus(operation: DesktopCaptureOperation): DesktopLibraryStatus {
+export function terminalLibraryStatus(operation: DesktopCaptureOperation): TerminalLibraryStatus {
   if (operation.status === 'completed') return 'completed';
   if (operation.status === 'cancelled') return 'canceled';
   return 'failed';
 }
 
-/** Derives a terminal library status from a persisted runtime stage. */
-export function terminalStatusFromStage(stage?: string): DesktopLibraryStatus {
+/** The terminal library status a persisted runtime stage names, if the stage is terminal. */
+function terminalStatusFromStage(stage?: string): TerminalLibraryStatus | undefined {
+  if (stage === 'completed') return 'completed';
   if (stage === 'cancelled') return 'canceled';
   if (stage === 'failed') return 'failed';
   if (stage === 'awaiting_structuring') return 'awaiting_confirmation';
-  return 'completed';
+  return undefined;
 }
 
-/** Indicates whether a document already contains terminal data during recovery. */
-export function hasCommittedTerminalData(document: DesktopLibrarySummary): boolean {
-  return document.recoveryCode === 'runtime_cleanup_failed'
-    || document.status === 'completed'
-    || document.status === 'failed'
-    || document.status === 'canceled';
-}
-
-/** Preserves an existing terminal status while recovering runtime cleanup. */
-export function committedTerminalStatus(document: DesktopLibrarySummary): DesktopLibraryStatus {
-  return document.status === 'completed'
+/**
+ * The terminal status whose data the stored document already holds: its own
+ * terminal status, or, while only the runtime cleanup is still to do, the one
+ * its stage names. Undefined when the document does not say: then the runtime
+ * capture is asked, and no status is guessed.
+ */
+export function committedTerminalStatus(
+  document: DesktopLibrarySummary,
+): TerminalLibraryStatus | undefined {
+  if (
+    document.status === 'completed'
     || document.status === 'failed'
     || document.status === 'canceled'
-    ? document.status
-    : terminalStatusFromStage(document.stage);
+  ) {
+    return document.status;
+  }
+  return document.recoveryCode === 'runtime_cleanup_failed'
+    ? terminalStatusFromStage(document.stage)
+    : undefined;
 }
 
 /** Converts a library terminal status to the runtime stage spelling. */
-export function terminalStage(status?: DesktopLibraryStatus): string {
+export function terminalStage(status: TerminalLibraryStatus): string {
   if (status === 'canceled') return 'cancelled';
   if (status === 'failed') return 'failed';
   if (status === 'awaiting_confirmation') return 'awaiting_structuring';
   return 'completed';
+}
+
+/**
+ * Whether a document without a runtime capture can be captured again when the
+ * user asks: the states in which a queue row offers retry or restart. A
+ * waiting document starts by itself, and a document that holds its result is
+ * finished.
+ */
+export function canCaptureAgain(document: DesktopLibrarySummary): boolean {
+  return document.status !== 'queued'
+    && document.status !== 'completed'
+    && !(document.status === 'awaiting_confirmation' && document.hasRaw === true);
 }
 
 /** Maps a runtime stage to its workspace label. */
