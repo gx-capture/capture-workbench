@@ -1826,7 +1826,7 @@ describe('DesktopCaptureService', () => {
       });
       const createCapture = vi.fn(() => new Subject<CaptureOperation>());
       const getCapture = vi.fn(() => new Subject<CaptureOperation>());
-      const deleteDocument = vi.fn((_documentId: string): Observable<void> => of(undefined));
+      const deleteDocument = vi.fn((): Observable<void> => of(undefined));
       const store = initializeCapture(
         libraryStub({ list, updateCapture, delete: deleteDocument }),
         runtimeStub({ createCapture, getCapture }),
@@ -2589,7 +2589,7 @@ describe('DesktopCaptureService', () => {
       // In flight: the result is kept and the runtime cleanup that follows does not answer.
       const deleteCapture = vi.fn((): Observable<undefined> =>
         state === 'its terminal writes are in flight' ? pending : of(undefined));
-      const deleteDocument = vi.fn((_documentId: string): Observable<void> => of(undefined));
+      const deleteDocument = vi.fn((): Observable<void> => of(undefined));
       const store = initializeCapture(
         libraryStub({ list, updateCapture, importSelection, delete: deleteDocument }),
         runtimeStub({ createCapture, getCapture, cancelCapture, cancelUpload, deleteCapture }),
