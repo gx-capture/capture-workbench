@@ -1927,6 +1927,187 @@ describe('DesktopCaptureService', () => {
     });
   });
 
+  describe('a cancel for a linked capture that is being recovered', () => {
+    const running = { ...summary, status: 'processing', captureId: 'capture-1' } satisfies DesktopLibrarySummary;
+    const notFound = 'Capture Runtime request was rejected with HTTP 404.';
+
+    /** A recovery of `storedDocument`, whose first read of the stored document the test answers. */
+    function recovery(
+      storedDocument: DesktopLibrarySummary,
+      runtime: Record<string, unknown>,
+    ) {
+      let stored = storedDocument;
+      const listed = new Subject<readonly DesktopLibrarySummary[]>();
+      const list = vi.fn((): Observable<readonly DesktopLibrarySummary[]> => of([stored]));
+      const updateCapture = vi.fn((update: Record<string, unknown>) => {
+        stored = applyDurableCaptureUpdate(stored, update);
+        return of(stored);
+      });
+      const createCapture = vi.fn(() => of(completedOperation));
+      const deleteCapture = vi.fn(() => of(undefined));
+      const store = initializeCapture(
+        libraryStub({ list, updateCapture }),
+        runtimeStub({ createCapture, deleteCapture, ...runtime }),
+      );
+      list.mockImplementationOnce(() => listed);
+      return {
+        ...store,
+        updateCapture,
+        createCapture,
+        deleteCapture,
+        stored: () => stored,
+        answerRead: () => {
+          listed.next([stored]);
+          listed.complete();
+        },
+      };
+    }
+
+    it.each([
+      ['does not answer', (): Observable<CaptureOperation> => new Subject<CaptureOperation>()],
+      ['is rejected', (): Observable<CaptureOperation> => throwError(() => notFound)],
+      ['would say the capture runs', (): Observable<CaptureOperation> => of(runningOperation)],
+    ] as const)(
+      'is sent to the runtime first, also when a read of the capture %s',
+      (_read, readCapture) => {
+        const getCapture = vi.fn(readCapture);
+        const cancelCapture = vi.fn(() => of(cancelledOperation));
+        const { service, host, answerRead, stored, createCapture } =
+          recovery(running, { getCapture, cancelCapture });
+
+        service.reattach$(running, host).subscribe();
+        service.cancel(summary.documentId);
+        answerRead();
+        TestBed.tick();
+
+        expect(cancelCapture).toHaveBeenCalledExactlyOnceWith('capture-1');
+        expect(getCapture).not.toHaveBeenCalled();
+        expect(createCapture).not.toHaveBeenCalled();
+        expect(stored()).toMatchObject({ status: 'canceled', captureId: undefined });
+      },
+    );
+
+    it('is sent at once when it arrives while the first read of the capture is held', () => {
+      const getCapture = vi.fn((): Observable<CaptureOperation> => new Subject<CaptureOperation>());
+      const cancelCapture = vi.fn(() => of(cancelledOperation));
+      const { service, host, answerRead, stored } = recovery(running, { getCapture, cancelCapture });
+      service.reattach$(running, host).subscribe();
+      answerRead();
+      expect(getCapture).toHaveBeenCalledTimes(1);
+      expect(cancelCapture).not.toHaveBeenCalled();
+
+      service.cancel(summary.documentId);
+      TestBed.tick();
+
+      expect(cancelCapture).toHaveBeenCalledExactlyOnceWith('capture-1');
+      expect(stored()).toMatchObject({ status: 'canceled', captureId: undefined });
+    });
+
+    it('keeps the result of a capture that had already ended when the cancel reached the runtime', async () => {
+      const getCapture = vi.fn((): Observable<CaptureOperation> => new Subject<CaptureOperation>());
+      // The runtime answers a cancel of an ended capture with the capture as it ended.
+      const cancelCapture = vi.fn(() => of(completedOperation));
+      const { service, host, answerRead, stored, deleteCapture } =
+        recovery(running, { getCapture, cancelCapture });
+
+      service.reattach$(running, host).subscribe();
+      service.cancel(summary.documentId);
+      answerRead();
+      TestBed.tick();
+      await settleCaptureLifecycle();
+
+      expect(cancelCapture).toHaveBeenCalledExactlyOnceWith('capture-1');
+      expect(deleteCapture).toHaveBeenCalledExactlyOnceWith('capture-1');
+      expect(stored()).toMatchObject({ status: 'completed', captureId: undefined });
+    });
+
+    it('keeps the link and marks the cancel as failed when the runtime rejects it', () => {
+      const getCapture = vi.fn((): Observable<CaptureOperation> => new Subject<CaptureOperation>());
+      const cancelCapture = vi.fn(() => throwError(() => 'Capture Runtime is unavailable.'));
+      const { service, host, answerRead, stored, deleteCapture } =
+        recovery(running, { getCapture, cancelCapture });
+
+      service.reattach$(running, host).subscribe();
+      service.cancel(summary.documentId);
+      answerRead();
+      TestBed.tick();
+
+      expect(deleteCapture).not.toHaveBeenCalled();
+      expect(stored()).toMatchObject({
+        status: 'recovery_required', captureId: 'capture-1', recoveryCode: 'cancel_failed',
+      });
+      expect(service.isDocumentClaimed(summary.documentId)).toBe(false);
+    });
+
+    it('is sent first for a recording too', () => {
+      const recordingDocument = {
+        ...running, fileName: 'fixture.mp3', mediaType: 'audio/mpeg',
+      } satisfies DesktopLibrarySummary;
+      const cancelledRecording = operation({ captureId: 'capture-1', status: 'cancelled', kind: 'recording' });
+      const calls: string[] = [];
+      const called = <T>(name: string, value: T) => vi.fn(() => {
+        calls.push(name);
+        return of(value);
+      });
+      const { service, host, answerRead, stored } = recovery(recordingDocument, {
+        cancelCapture: called('cancel', cancelledRecording),
+        getCaptureEvents: called('events', []),
+        getPartial: called('partial', null),
+        getCapture: called('capture', cancelledRecording),
+      });
+
+      service.reattach$(recordingDocument, host).subscribe();
+      service.cancel(summary.documentId);
+      answerRead();
+      TestBed.tick();
+
+      expect(calls).toEqual(['cancel', 'events', 'partial', 'capture']);
+      expect(stored()).toMatchObject({ status: 'canceled', captureId: undefined });
+    });
+
+    it('is not sent for a document that holds its result: only the cleanup runs', () => {
+      const cleanupRow = {
+        ...summary, status: 'recovery_required', stage: 'completed', captureId: 'capture-1',
+        recoveryCode: 'runtime_cleanup_failed',
+      } satisfies DesktopLibrarySummary;
+      const getCapture = vi.fn(() => of(runningOperation));
+      const cancelCapture = vi.fn(() => of(cancelledOperation));
+      const { service, host, answerRead, stored, deleteCapture } =
+        recovery(cleanupRow, { getCapture, cancelCapture });
+
+      service.reattach$(cleanupRow, host).subscribe();
+      service.cancel(summary.documentId);
+      answerRead();
+      TestBed.tick();
+
+      expect(cancelCapture).not.toHaveBeenCalled();
+      expect(getCapture).not.toHaveBeenCalled();
+      expect(deleteCapture).toHaveBeenCalledExactlyOnceWith('capture-1');
+      expect(stored()).toMatchObject({ status: 'completed', captureId: undefined });
+    });
+
+    it('is kept when a start is declined because the stored document is linked, and sent by the recovery', () => {
+      const getCapture = vi.fn((): Observable<CaptureOperation> => new Subject<CaptureOperation>());
+      const cancelCapture = vi.fn(() => of(cancelledOperation));
+      const { service, host, answerRead, stored, updateCapture } =
+        recovery(running, { getCapture, cancelCapture });
+
+      // The row still said waiting; the stored document is linked to a capture.
+      service.startDocument$(summary.documentId, host).subscribe();
+      service.cancel(summary.documentId);
+      answerRead();
+      expect(updateCapture).not.toHaveBeenCalled();
+      expect(cancelCapture).not.toHaveBeenCalled();
+
+      service.reattach$(running, host).subscribe();
+      TestBed.tick();
+
+      expect(cancelCapture).toHaveBeenCalledExactlyOnceWith('capture-1');
+      expect(getCapture).not.toHaveBeenCalled();
+      expect(stored()).toMatchObject({ status: 'canceled', captureId: undefined });
+    });
+  });
+
   describe('a claimed document', () => {
     const CLAIMS = [
       'its stored state is being read',

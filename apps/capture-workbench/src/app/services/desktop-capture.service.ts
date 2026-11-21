@@ -674,7 +674,7 @@ export class DesktopCaptureService {
       const work$ = terminalCommitted
         ? this.retryRuntimeCleanup$(document, committedStatus)
         : active.streaming
-          ? this.runtime.getCapture(document.captureId).pipe(
+          ? this.recoveredOperation$(document.captureId, active).pipe(
             tap((operation) => {
               active.lastStage = operation.status;
               this.rememberRecordingOperation(document.documentId, operation);
@@ -691,7 +691,7 @@ export class DesktopCaptureService {
               host,
             )),
           )
-          : this.runtime.getCapture(document.captureId).pipe(
+          : this.recoveredOperation$(document.captureId, active).pipe(
             tap((operation) => {
               this.rememberSourceIdentity(active, operation);
               this.rememberOneShotOperation(document.documentId, operation);
@@ -814,10 +814,33 @@ export class DesktopCaptureService {
     );
   }
 
+  /**
+   * The state of the runtime capture a recovery attaches to. A cancel goes to
+   * the runtime first, whether it was asked while the recovery was decided or
+   * arrives while the capture is being read: the runtime answers it with the
+   * capture as it is then, cancelled or already ended, and that answer is
+   * the state. So a read that does not answer or fails cannot hold a cancel
+   * back while the capture goes on running.
+   */
+  private recoveredOperation$(
+    captureId: string,
+    active: ActiveCapture,
+  ): Observable<DesktopCaptureOperation> {
+    if (active.cancelRequested) return this.sendCancellation$(captureId, active);
+    return race(
+      this.runtime.getCapture(captureId),
+      active.cancelWake.pipe(
+        take(1),
+        switchMap(() => this.sendCancellation$(captureId, active)),
+      ),
+    );
+  }
+
   private sendCancellation$(
     captureId: string,
     active: ActiveCapture,
   ): Observable<DesktopCaptureOperation> {
+
     active.cancelSent = true;
     return this.runtime.cancelCapture(captureId);
   }
