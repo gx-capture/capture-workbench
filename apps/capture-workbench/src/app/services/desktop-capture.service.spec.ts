@@ -2192,14 +2192,84 @@ describe('DesktopCaptureService', () => {
         steps.service.cancel(summary.documentId);
         steps.reads[0].error('Capture library index cannot be read.');
         vi.advanceTimersByTime(FAILED_DECISION_PAUSE_MS);
+        TestBed.tick();
 
         libraryStore.delete(summary.documentId).subscribe({ error: steps.failed });
+        steps.answerRead(1);
 
         steps.service.startDocument$(summary.documentId, steps.host).subscribe();
-        steps.answerRead(1);
+        steps.answerRead(2);
         expect(steps.createCapture).not.toHaveBeenCalled();
         expect(steps.writes.map((write) => write.update)).toEqual([cancelled]);
       });
+
+      it('drops an older cancel when a failed delete no longer lists the document', () => {
+        const steps = decisionSteps(summary);
+        const libraryStore = TestBed.inject(LibraryStore);
+        const cleanupError = new Error('Capture library source cannot be deleted.');
+        steps.deleteDocument.mockReturnValueOnce(throwError(() => cleanupError));
+        steps.service.startDocument$(summary.documentId, steps.host).subscribe({ error: steps.failed });
+        steps.service.cancel(summary.documentId);
+        steps.reads[0].error('Capture library index cannot be read.');
+        vi.advanceTimersByTime(FAILED_DECISION_PAUSE_MS);
+        TestBed.tick();
+
+        libraryStore.delete(summary.documentId).subscribe({ error: steps.failed });
+        answerWithoutTheDocument(steps, 1);
+
+        expect(steps.failed).toHaveBeenLastCalledWith(cleanupError);
+        expect(libraryStore.allDocuments()).toEqual([]);
+        expectNoCancelIsLeft(steps, 2);
+      });
+
+      it('does not let a queue pass take a stale snapshot during deletion and keep a late cancel', () => {
+        const steps = decisionSteps(summary);
+        const libraryStore = TestBed.inject(LibraryStore);
+        const response = new Subject<void>();
+        steps.deleteDocument.mockReturnValueOnce(response);
+        TestBed.tick();
+        libraryStore.delete(summary.documentId).subscribe();
+        steps.service.startDocument$(summary.documentId, steps.host).subscribe({ error: steps.failed });
+
+        response.next();
+        response.complete();
+        // The click came from a queue row rendered before the acknowledgement.
+        steps.service.cancel(summary.documentId);
+        steps.reads[0]?.next([summary]);
+
+        expect(steps.reads).toHaveLength(0);
+        expect(steps.writes).toEqual([]);
+        expect(steps.createCapture).not.toHaveBeenCalled();
+        expectNoCancelIsLeft(steps, 0);
+      });
+    });
+
+    it('declines capture entries and does not keep a new cancel while a delete is pending', () => {
+      const steps = decisionSteps(summary);
+      const libraryStore = TestBed.inject(LibraryStore);
+      const response = new Subject<void>();
+      const documentId = summary.documentId;
+      steps.deleteDocument.mockReturnValueOnce(response);
+      TestBed.tick();
+      const deletion = libraryStore.delete(documentId).subscribe();
+
+      steps.service.startDocument$(documentId, steps.host).subscribe();
+      steps.service.reattach$(summary, steps.host).subscribe();
+      steps.service.retry$(documentId, steps.host).subscribe();
+      steps.service.restartLost$(documentId, steps.host).subscribe();
+      steps.service.cancelDocument$(documentId, steps.host).subscribe();
+      steps.service.cancel(documentId);
+
+      expect(steps.reads).toHaveLength(0);
+      expect(steps.writes).toEqual([]);
+      expect(steps.createCapture).not.toHaveBeenCalled();
+      expect(steps.getCapture).not.toHaveBeenCalled();
+
+      // Without an acknowledgement there was no delete to clear a kept cancel.
+      deletion.unsubscribe();
+      steps.service.startDocument$(documentId, steps.host).subscribe();
+      steps.answerRead(0);
+      expect(steps.writes.map((write) => write.update['status'])).toEqual(['processing']);
     });
 
     // Each entry on a row that offers it: Retry on an ordinary failure, Start again on a lost capture.

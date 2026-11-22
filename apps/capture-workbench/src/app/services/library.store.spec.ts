@@ -23,6 +23,82 @@ const summary: DesktopLibrarySummary = {
 };
 
 describe('LibraryStore', () => {
+  function setupDeletion() {
+    const response = new Subject<void>();
+    const deleteDocument = vi.fn(() => response);
+    const list = vi.fn((): Observable<readonly DesktopLibrarySummary[]> => of([summary]));
+    TestBed.configureTestingModule({
+      providers: [
+        { provide: DesktopLibraryService, useValue: { list, delete: deleteDocument } },
+        { provide: DesktopRuntimeClientService, useValue: { started: signal(true) } },
+      ],
+    });
+    const store = TestBed.inject(LibraryStore);
+    const capture = TestBed.inject(DesktopCaptureService);
+    const forget = vi.spyOn(capture, 'forgetDeletedDocument');
+    TestBed.tick();
+    list.mockClear();
+    return { store, capture, response, deleteDocument, list, forget };
+  }
+
+  it.each(['acknowledgement', 'unsubscription'])('claims from subscription until %s', (settlement) => {
+    const { store, capture, response, deleteDocument, list, forget } = setupDeletion();
+    const deletion = store.delete(summary.documentId);
+    expect(capture.isDocumentClaimed(summary.documentId)).toBe(false);
+    expect(deleteDocument).not.toHaveBeenCalled();
+
+    const subscription = deletion.subscribe();
+    expect(capture.isDocumentClaimed(summary.documentId)).toBe(true);
+    expect(store.canDelete(summary.documentId)).toBe(false);
+    store.delete(summary.documentId).subscribe();
+    expect(deleteDocument).toHaveBeenCalledExactlyOnceWith(summary.documentId);
+
+    if (settlement === 'acknowledgement') {
+      list.mockReturnValue(of([]));
+      response.next();
+      response.complete();
+      expect(forget).toHaveBeenCalledExactlyOnceWith(summary.documentId);
+      expect(store.allDocuments()).toEqual([]);
+    } else {
+      subscription.unsubscribe();
+      expect(response.observed).toBe(false);
+      expect(forget).not.toHaveBeenCalled();
+      expect(store.canDelete(summary.documentId)).toBe(true);
+    }
+    expect(capture.isDocumentClaimed(summary.documentId)).toBe(false);
+  });
+
+  it.each([
+    ['row gone', []],
+    ['row present', [summary]],
+    ['list read failed', null],
+  ] as const)('preserves the delete error when %s', (_outcome, documents) => {
+    const { store, capture, response, list, forget } = setupDeletion();
+    const verification = new Subject<readonly DesktopLibrarySummary[]>();
+    list.mockReturnValueOnce(verification);
+    const deletionFailed = new Error('Host deletion failed');
+    const error = vi.fn();
+    store.delete(summary.documentId).subscribe({ error });
+    response.error(deletionFailed);
+
+    expect(list).toHaveBeenCalledTimes(1);
+    expect(capture.isDocumentClaimed(summary.documentId)).toBe(true);
+    expect(error).not.toHaveBeenCalled();
+    if (documents === null) verification.error(new Error('Library list failed'));
+    else verification.next(documents);
+
+    expect(error).toHaveBeenCalledExactlyOnceWith(deletionFailed);
+    expect(capture.isDocumentClaimed(summary.documentId)).toBe(false);
+    expect(verification.observed).toBe(false);
+    if (documents?.length === 0) {
+      expect(forget).toHaveBeenCalledExactlyOnceWith(summary.documentId);
+      expect(store.allDocuments()).toEqual([]);
+    } else {
+      expect(forget).not.toHaveBeenCalled();
+      expect(store.allDocuments()).toEqual([summary]);
+    }
+  });
+
   it('offers deletion only for a document that is neither claimed nor linked to a runtime capture', () => {
     const free = { ...summary, documentId: '1'.repeat(32), status: 'completed' } satisfies DesktopLibrarySummary;
     const claimed = { ...summary, documentId: '2'.repeat(32) } satisfies DesktopLibrarySummary;

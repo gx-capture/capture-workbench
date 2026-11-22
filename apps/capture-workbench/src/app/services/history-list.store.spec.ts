@@ -1,7 +1,7 @@
 import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { Router } from '@angular/router';
-import { BehaviorSubject, of, Subject } from 'rxjs';
+import { BehaviorSubject, defer, of, Subject, type Observable } from 'rxjs';
 import type { DesktopLibrarySummary } from '../contracts';
 import { desktopMessages, setDesktopLocale } from '../i18n/desktop-messages';
 import { DesktopLibraryService } from './desktop-library.service';
@@ -17,14 +17,24 @@ describe('HistoryListStore', () => {
       { documentId: 'a', fileName: 'report.pdf', mediaType: 'application/pdf', byteLength: 1, createdAtMs: 1, updatedAtMs: 2, status: 'completed' },
       { documentId: 'b', fileName: 'meeting.mp3', mediaType: 'audio/mpeg', byteLength: 1, createdAtMs: 1, updatedAtMs: 3, status: 'queued' },
     ]);
-    const library = { list: vi.fn(() => allDocuments), delete: vi.fn(() => of(undefined)) };
+    const library = {
+      list: vi.fn((): Observable<readonly DesktopLibrarySummary[]> => allDocuments),
+      delete: vi.fn(() => of(undefined)),
+    };
     const router = { navigate: vi.fn() };
     const busyIds = signal<ReadonlySet<string>>(new Set());
     const activeIds = signal<ReadonlySet<string>>(new Set());
     TestBed.configureTestingModule({ providers: [
       { provide: DesktopRuntimeClientService, useValue: { started: signal(true) } },
       { provide: DesktopLibraryService, useValue: library },
-      { provide: DesktopCaptureService, useValue: { busyIds, oneShotOperations: signal(new Map()), recordingOperations: signal(new Map()), isDocumentClaimed: (id: string) => activeIds().has(id), forgetDeletedDocument: vi.fn() } },
+      { provide: DesktopCaptureService, useValue: {
+        busyIds,
+        oneShotOperations: signal(new Map()),
+        recordingOperations: signal(new Map()),
+        isDocumentClaimed: (id: string) => activeIds().has(id),
+        claimDocumentForDeletion$: deferDeletion,
+        forgetDeletedDocument: vi.fn(),
+      } },
       { provide: Router, useValue: router },
     ] });
     const store = TestBed.inject(HistoryListStore);
@@ -79,6 +89,22 @@ describe('HistoryListStore', () => {
     expect(store.deleting()).toBe(false);
     expect(refreshDocuments).not.toHaveBeenCalled();
   });
+  it('removes the row while showing an error when host cleanup fails after deletion', () => {
+    const { store, library, allDocuments } = setup();
+    const response = new Subject<undefined>();
+    library.delete.mockReturnValueOnce(response);
+    const row = store.rows()[0];
+    if (!row) throw new Error('missing row');
+    store.askDelete(row);
+    store.confirmDelete();
+    library.list.mockReturnValueOnce(of(allDocuments.value.filter((item) => item.documentId !== row.documentId)));
+    response.error(new Error('Host file cleanup failed'));
+
+    expect(store.rows().map((item) => item.documentId)).not.toContain(row.documentId);
+    expect(store.pendingDelete()).toBeNull();
+    expect(store.deleting()).toBe(false);
+    expect(store.error()).toBe(desktopMessages().historyDeleteFailed);
+  });
   it.each(['removed', 'captureId', 'active capture'] as const)('rechecks a document that is %s while confirmation is open', (change) => {
     const { store, allDocuments, library, activeIds } = setup();
     const row = store.rows()[0];
@@ -115,7 +141,7 @@ describe('HistoryListStore', () => {
     store.open(row.documentId);
     expect(store.error()).toBe('');
   });
-  it('clears transient state while retaining filters and ignores a late failure after leaving', () => {
+  it('unsubscribes the pending delete when leaving and retains filters', () => {
     const { store, library } = setup();
     const response = new Subject<undefined>();
     library.delete.mockReturnValue(response);
@@ -126,6 +152,8 @@ describe('HistoryListStore', () => {
     store.confirmDelete();
     store.error.set('old error');
     store.clearTransientState();
+    expect(response.observed).toBe(false);
+    expect(store.deleting()).toBe(false);
     response.error(new Error('late host error'));
     expect(store.pendingDelete()).toBeNull();
     expect(store.error()).toBe('');
@@ -172,3 +200,7 @@ describe('HistoryListStore', () => {
     }
   });
 });
+
+function deferDeletion(_documentId: string, remove: () => ReturnType<DesktopLibraryService['delete']>) {
+  return defer(remove);
+}

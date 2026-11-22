@@ -142,6 +142,7 @@ export class DesktopCaptureService {
    * was declined or failed.
    */
   private readonly deciding = new Map<string, DocumentDecisionRequest>();
+  private readonly deletingDocuments = signal<ReadonlySet<string>>(new Set());
   /**
    * Documents whose cancel was asked while an action for them was being
    * decided, and is not applied yet. It outlives a decision that fails: the
@@ -160,14 +161,30 @@ export class DesktopCaptureService {
 
   /**
    * Reports whether the document is claimed: a capture runs for it, a batch
-   * has scheduled one, or an action for it is being decided from its stored
-   * state. Nothing else may start, recover, restart or delete it meanwhile,
+   * has scheduled one, a decision is in progress, or the library is deleting
+   * it. Nothing else may start, recover, restart or delete it meanwhile,
    * and a recording queue counts it as occupying its turn.
    */
   isDocumentClaimed(documentId: string): boolean {
     return this.activeCaptures.has(documentId)
       || this.awaitingTurn.has(documentId)
-      || this.deciding.has(documentId);
+      || this.deciding.has(documentId)
+      || this.deletingDocuments().has(documentId);
+  }
+
+  /** Claims an unclaimed document for deletion until the operation settles. */
+  claimDocumentForDeletion$(documentId: string, remove: () => Observable<void>): Observable<void> {
+    return defer(() => {
+      if (this.isDocumentClaimed(documentId)) return EMPTY;
+      this.deletingDocuments.update((ids) => new Set(ids).add(documentId));
+      return defer(remove).pipe(finalize(() => {
+        this.deletingDocuments.update((ids) => {
+          const remaining = new Set(ids);
+          remaining.delete(documentId);
+          return remaining;
+        });
+      }));
+    });
   }
 
   /**
@@ -423,6 +440,7 @@ export class DesktopCaptureService {
    * keeps the request for the document's turn.
    */
   cancel(documentId: string): void {
+    if (this.deletingDocuments().has(documentId)) return;
     const active = this.activeCaptures.get(documentId);
     if (!active) {
       const decision = this.deciding.get(documentId);

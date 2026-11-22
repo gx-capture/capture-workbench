@@ -1,6 +1,6 @@
 import { inject, Injectable, signal } from '@angular/core';
 import { rxResource } from '@angular/core/rxjs-interop';
-import { tap, type Observable } from 'rxjs';
+import { catchError, concatWith, defer, EMPTY, ignoreElements, take, tap, throwError, type Observable } from 'rxjs';
 import type {
   DesktopLibraryDetail,
   DesktopLibraryEdits,
@@ -90,9 +90,32 @@ export class LibraryStore {
   }
 
   delete(documentId: string): Observable<void> {
-    return this.library.delete(documentId).pipe(tap(() => {
-      this.capture.forgetDeletedDocument(documentId);
-      this.refreshDocuments();
-    }));
+    return defer(() => {
+      if (!this.canDelete(documentId)) return EMPTY;
+      return this.capture.claimDocumentForDeletion$(documentId, () =>
+        this.library.delete(documentId).pipe(
+          tap(() => {
+            this.capture.forgetDeletedDocument(documentId);
+            this.documentsResource.update((documents) => documents.filter((item) => item.documentId !== documentId));
+            this.refreshDocuments();
+          }),
+          catchError((deleteError: unknown) => {
+            const failure = throwError(() => deleteError);
+            return defer(() => this.library.list()).pipe(
+              take(1),
+              tap((documents) => {
+                if (documents.some((item) => item.documentId === documentId)) return;
+                this.capture.forgetDeletedDocument(documentId);
+                // Publish the authoritative list while the deletion still owns its claim.
+                this.documentsResource.set(documents);
+              }),
+              catchError(() => failure),
+              ignoreElements(),
+              concatWith(failure),
+            );
+          }),
+        ),
+      );
+    });
   }
 }
