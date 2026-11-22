@@ -145,11 +145,13 @@ export class DesktopCaptureService {
   private readonly deletingDocuments = signal<ReadonlySet<string>>(new Set());
   /**
    * Documents whose cancel was asked while an action for them was being
-   * decided, and is not applied yet. It outlives a decision that fails: the
-   * next decision for the document applies it, or drops it when the stored
-   * document has nothing left to cancel or is gone. It does not outlive its
-   * document: a deletion through the library drops it too
-   * (`forgetDeletedDocument`).
+   * decided, or while they waited their turn in a batch (`awaitingTurn`), and
+   * is not applied yet. A batch applies it at the document's turn. It
+   * outlives a decision or a turn whose cancel write fails, and a batch that
+   * ends before the document's turn came: the next decision for the document
+   * applies it, or drops it when the stored document has nothing left to
+   * cancel or is gone. It does not outlive its document: a deletion through
+   * the library drops it too (`forgetDeletedDocument`).
    */
   private readonly unappliedCancels = new Set<string>();
   /**
@@ -204,10 +206,11 @@ export class DesktopCaptureService {
   ): Observable<void> {
     return defer(() => {
       const batchClaims = new Set<string>();
+      // Only the claim ends here. A kept cancel stays until it is applied: a
+      // document whose turn never came is still stored as waiting, and the
+      // queues would otherwise start what the user cancelled.
       const release = (documentId: string): void => {
-        if (!batchClaims.delete(documentId)) return;
-        this.unappliedCancels.delete(documentId);
-        this.awaitingTurn.delete(documentId);
+        if (batchClaims.delete(documentId)) this.awaitingTurn.delete(documentId);
       };
       return from(selections).pipe(
         concatMap((selection) => this.library.importSelection(selection).pipe(
@@ -506,7 +509,16 @@ export class DesktopCaptureService {
     host.selectedId.set(document.documentId);
     host.refreshDocuments();
     if (this.unappliedCancels.has(document.documentId)) {
-      return this.persistWaitingCancel$(document.documentId, host);
+      return this.persistWaitingCancel$(document.documentId, host).pipe(
+        catchError((error: unknown) => {
+          // The batch goes on with the next document. The cancel stays kept
+          // and the document pauses as after any failed decision; once the
+          // pause ends, the next decision for it applies the cancel.
+          host.setMessage(errorMessage(error));
+          this.pauseDecisions(document.documentId);
+          return EMPTY;
+        }),
+      );
     }
     if (isRecordingMediaType(document.mediaType) && !isFeatureReady(host.requirements(), 'asr')) {
       host.requestedRequirements.update(

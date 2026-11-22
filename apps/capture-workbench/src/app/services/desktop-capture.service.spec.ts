@@ -1626,8 +1626,9 @@ describe('DesktopCaptureService', () => {
     const secondId = '2'.repeat(32);
     const thirdId = '3'.repeat(32);
 
-    function startBatch() {
+    function startBatch(cancelWriteFailsOnceFor?: string) {
       const firstCapture = new Subject<CaptureOperation>();
+      let cancelWriteFailed = false;
       const stored = new Map<string, DesktopLibrarySummary>();
       const selections = [selection('first.pdf'), selection('second.pdf'), selection('third.pdf')];
       const ids = [firstId, secondId, thirdId];
@@ -1642,6 +1643,10 @@ describe('DesktopCaptureService', () => {
         const documentId = String(update['documentId']);
         const document = stored.get(documentId);
         if (document === undefined) throw new Error('Unexpected document update');
+        if (documentId === cancelWriteFailsOnceFor && update['status'] === 'canceled' && !cancelWriteFailed) {
+          cancelWriteFailed = true;
+          return throwError(() => new Error('Capture library index cannot be written.'));
+        }
         const updated = applyDurableCaptureUpdate(document, update);
         stored.set(documentId, updated);
         return of(updated);
@@ -1708,17 +1713,62 @@ describe('DesktopCaptureService', () => {
       expect(createCapture.mock.calls.map(([documentId]) => documentId)).toEqual([firstId, secondId, thirdId]);
     });
 
-    it('discards an unapplied cancel when the batch is unsubscribed', async () => {
+    it('keeps the cancel of a document whose turn never came when the batch is torn down', async () => {
       const { service, host, batch, stored, createCapture } = startBatch();
       service.cancel(thirdId);
       batch.unsubscribe();
       expect(service.isDocumentClaimed(thirdId)).toBe(false);
       expect(stored.get(thirdId)?.status).toBe('queued');
 
-      await lastValueFrom(service.startDocument$(thirdId, host));
+      // The queues start a waiting document by themselves: the kept cancel wins.
+      await lastValueFrom(service.startDocument$(thirdId, host), { defaultValue: undefined });
       TestBed.tick();
 
-      expect(createCapture.mock.calls.map(([documentId]) => documentId)).toEqual([firstId, thirdId]);
+      expect(createCapture.mock.calls.map(([documentId]) => documentId)).toEqual([firstId]);
+      expect(stored.get(thirdId)).toMatchObject({ status: 'canceled', stage: 'cancelled', captureId: undefined });
+    });
+
+    it('goes on with the batch when the cancel write at a turn fails, and keeps that cancel', async () => {
+      vi.useFakeTimers();
+      try {
+        const { service, host, batchFinished, firstCapture, stored, createCapture } = startBatch(secondId);
+        service.cancel(secondId);
+        service.cancel(thirdId);
+        let batchError: unknown;
+        let batchCompleted = false;
+        batchFinished.subscribe({
+          error: (error: unknown) => { batchError = error; },
+          complete: () => { batchCompleted = true; },
+        });
+        firstCapture.next(completedOperation);
+        firstCapture.complete();
+        // Lets the first capture end; far shorter than the pause of a failed decision.
+        await vi.advanceTimersByTimeAsync(100);
+        TestBed.tick();
+
+        expect(batchError).toBeUndefined();
+        expect(batchCompleted).toBe(true);
+        expect(host.setMessage).toHaveBeenCalledWith('Capture library index cannot be written.');
+        // The batch went on: the third document is stored cancelled at its turn.
+        expect(stored.get(thirdId)).toMatchObject({ status: 'canceled', stage: 'cancelled', captureId: undefined });
+        expect(stored.get(secondId)?.status).toBe('queued');
+        expect(service.isDocumentClaimed(secondId)).toBe(false);
+        expect(service.isDecisionPaused(secondId)).toBe(true);
+
+        // A queue asks while the pause lasts: nothing happens.
+        service.startDocument$(secondId, host).subscribe();
+        expect(stored.get(secondId)?.status).toBe('queued');
+
+        // The pause ends and the queue decides again: the kept cancel is applied.
+        vi.advanceTimersByTime(FAILED_DECISION_PAUSE_MS);
+        service.startDocument$(secondId, host).subscribe();
+        TestBed.tick();
+
+        expect(stored.get(secondId)).toMatchObject({ status: 'canceled', stage: 'cancelled', captureId: undefined });
+        expect(createCapture.mock.calls.map(([documentId]) => documentId)).toEqual([firstId]);
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 
