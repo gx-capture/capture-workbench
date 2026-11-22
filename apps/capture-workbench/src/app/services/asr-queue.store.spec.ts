@@ -508,6 +508,56 @@ describe('AsrQueueStore', () => {
     expect(capture.reattach$).toHaveBeenCalledTimes(2);
   });
 
+  it('does not resume a recording whose cancel the runtime refused after the user cancelled it', () => {
+    // The row still says waiting; the library already links the recording to a capture.
+    const waitingRow = makeRecording();
+    let stored: DesktopLibrarySummary = makeRecording({ status: 'processing', captureId: 'linked' });
+    const { store, docs, library, runtime } = setup({
+      initialDocs: [waitingRow], speechStatus: 'installable', realCapture: true,
+    });
+    library.list.mockImplementation(() => of([stored]));
+    library.updateCapture.mockImplementation((update) => {
+      stored = {
+        ...stored,
+        status: update.status,
+        stage: update.stage,
+        captureId: update.clearCaptureId ? undefined : update.captureId ?? stored.captureId,
+        recoveryCode: update.recoveryCode,
+      };
+      return of(stored);
+    });
+    const cancelCapture = vi.fn(() => throwError(() => new Error('Cancel refused')));
+    const runtimeWithCancel = Object.assign(runtime, { cancelCapture });
+    store.attach();
+    TestBed.tick();
+
+    store.cancel(waitingRow.documentId);
+    expect(cancelCapture).toHaveBeenCalledExactlyOnceWith('linked');
+    expect(stored).toMatchObject({
+      status: 'recovery_required', recoveryCode: 'cancel_failed', captureId: 'linked',
+    });
+
+    docs.set([stored]);
+    TestBed.tick();
+    // The user asked to cancel: the queue does not reattach and resume the capture by itself.
+    expect(runtimeWithCancel.getCapture).not.toHaveBeenCalled();
+    expect(cancelCapture).toHaveBeenCalledOnce();
+  });
+
+  it('leaves a recording whose cancel failed to an explicit retry when the window loads', () => {
+    const cancelFailed = makeRecording({
+      status: 'recovery_required', captureId: 'linked', recoveryCode: 'cancel_failed',
+    });
+    const { store, capture } = setup({ initialDocs: [cancelFailed] });
+
+    store.attach();
+    TestBed.tick();
+    expect(capture.reattach$).not.toHaveBeenCalled();
+
+    store.retry(cancelFailed.documentId);
+    expect(capture.retry$).toHaveBeenCalledExactlyOnceWith(cancelFailed.documentId, expect.anything());
+  });
+
   it('ignores late partials from an earlier capture of the same recording', () => {
     const document = makeRecording({ status: 'processing', captureId: 'current' });
     const { store, streamingPartials, busyIds, docs } = setup({ initialDocs: [document] });
@@ -789,7 +839,7 @@ describe('AsrQueueStore', () => {
     it('starts no recording while the recovery of another is being decided', () => {
       const interrupted = makeRecording({
         documentId: '1'.repeat(32), status: 'recovery_required', captureId: 'capture-interrupted',
-        recoveryCode: 'cancel_failed', createdAtMs: 1,
+        recoveryCode: 'capture_recovery_required', createdAtMs: 1,
       });
       const waiting = makeRecording({ documentId: '2'.repeat(32), createdAtMs: 2 });
       const { store, runtime, reads, service, answer } = decisionsTheTestAnswers([interrupted, waiting]);
@@ -893,7 +943,7 @@ describe('AsrQueueStore', () => {
       it('looks again by itself after a pause, so the next waiting recording is not stranded', () => {
         const interrupted = makeRecording({
           documentId: '1'.repeat(32), status: 'recovery_required', captureId: 'capture-interrupted',
-          recoveryCode: 'cancel_failed', createdAtMs: 1,
+          recoveryCode: 'capture_recovery_required', createdAtMs: 1,
         });
         const waiting = makeRecording({ documentId: '2'.repeat(32), createdAtMs: 2 });
         const { store, runtime, reads, answer } = decisionsTheTestAnswers([interrupted, waiting]);

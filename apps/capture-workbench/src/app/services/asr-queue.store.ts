@@ -360,6 +360,10 @@ export class AsrQueueStore {
           || document.status === 'persisting'
           || document.status === 'recovery_required')
         && document.captureId
+        // The user asked to cancel this capture and the runtime refused it:
+        // resuming it by itself would run on what the user cancelled. Only
+        // the user's explicit retry reads it again.
+        && document.recoveryCode !== 'cancel_failed'
         && !this.capture.isDocumentClaimed(document.documentId)
         // Asked for again when its pause ends: not remembered as attempted before.
         && !this.capture.isDecisionPaused(document.documentId)
