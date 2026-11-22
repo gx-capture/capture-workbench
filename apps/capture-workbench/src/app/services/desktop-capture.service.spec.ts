@@ -3340,6 +3340,8 @@ describe('DesktopCaptureService', () => {
       expect(runtime.cancelUpload).not.toHaveBeenCalled();
 
       // If the document later waits again, the acknowledged cancel no longer applies.
+      // The reload no longer cancels: the new capture reloads the document too.
+      reload.mockRestore();
       runtime.ready.set(true);
       service.startDocument$(summary.documentId, host).subscribe();
       expect(runtime.createCapture).toHaveBeenCalledOnce();
