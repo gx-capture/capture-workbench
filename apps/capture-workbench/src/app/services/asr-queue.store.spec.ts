@@ -652,6 +652,8 @@ describe('AsrQueueStore', () => {
     function captureOverAnUnansweredListReload(options: {
       readonly failFirstUnlink?: boolean;
       readonly initial?: Partial<DesktopLibrarySummary>;
+      /** The first status read says the capture still runs; the next one waits for `endCapture`. */
+      readonly runningAtFirstRead?: boolean;
     } = {}) {
       let stored = makeRecording({ captureOptions: { identifySpeakers: false }, ...options.initial });
       const harness = setup({ initialDocs: [stored], realCapture: true });
@@ -685,8 +687,11 @@ describe('AsrQueueStore', () => {
       // Only the first start is answered: a second one would be a second capture.
       harness.runtime.startRecordingCapture.mockImplementationOnce(() => of(recording('extracting')));
       harness.runtime.getCapture
-        .mockImplementation(() => deleted ? throwError(() => notFound) : of(recording('completed')))
-        .mockImplementationOnce(() => ended);
+        .mockImplementation(() => deleted ? throwError(() => notFound) : of(recording('completed')));
+      if (options.runningAtFirstRead) {
+        harness.runtime.getCapture.mockImplementationOnce(() => of(recording('extracting')));
+      }
+      harness.runtime.getCapture.mockImplementationOnce(() => ended);
       harness.runtime.getResult.mockImplementation(() => of({
         operation: recording('completed'),
         raw: { sourceText: 'transcript' },
@@ -766,6 +771,38 @@ describe('AsrQueueStore', () => {
       TestBed.tick();
       expect(reattach).toHaveBeenCalledTimes(1);
       expect(runtime.deleteCapture).toHaveBeenCalledExactlyOnceWith(captureId);
+    });
+
+    it('shows the live card of a reconnected recording once the list has its processing row', () => {
+      const { store, docs, runtime, stored, endCapture } = captureOverAnUnansweredListReload({
+        initial: {
+          status: 'recovery_required',
+          stage: 'extracting',
+          captureId,
+          recoveryCode: 'capture_recovery_required',
+          recoveryMessage: 'Interrupted',
+        },
+        runningAtFirstRead: true,
+      });
+      store.attach();
+      TestBed.tick();
+
+      // The automatic reattach found it running; the next status read waits.
+      expect(runtime.getCapture).toHaveBeenCalledTimes(2);
+      expect(stored()).toMatchObject({ status: 'processing', captureId, recoveryCode: undefined });
+      // The list has not answered yet: the queue still sees a row that needs recovery.
+      expect(store.liveCapture()).toBeNull();
+
+      docs.set([stored()]);
+      TestBed.tick();
+      expect(store.liveCapture()).toMatchObject({ documentId: stored().documentId });
+
+      endCapture();
+      TestBed.tick();
+      docs.set([stored()]);
+      TestBed.tick();
+      expect(stored()).toMatchObject({ status: 'completed', captureId: undefined });
+      expect(store.liveCapture()).toBeNull();
     });
 
     it('does not read the deleted capture of a finished recording, which stays completed', () => {
