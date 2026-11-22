@@ -1581,11 +1581,15 @@ describe('DesktopCaptureService', () => {
 
   it('imports the entire batch before waiting for the first capture', () => {
     const pending = new Subject<CaptureOperation>();
-    const imported = vi.fn((input: DesktopSourceSelection) => of({
-      ...summary, documentId: input.fileName === 'first.pdf' ? '1'.repeat(32) : '2'.repeat(32),
-    }));
+    const documents = ['first.pdf', 'second.pdf'].map((fileName, index) =>
+      ({ ...summary, fileName, documentId: String(index + 1).repeat(32) }));
+    const imported = vi.fn((input: DesktopSourceSelection) =>
+      of(documents.find((document) => document.fileName === input.fileName)));
     const createCapture = vi.fn(() => pending);
-    const store = initializeCapture(libraryStub({ importSelection: imported }), runtimeStub({ createCapture }));
+    const store = initializeCapture(libraryStub({
+      importSelection: imported,
+      list: () => of(documents),
+    }), runtimeStub({ createCapture }));
     store.service.addSelections$([selection('first.pdf'), selection('second.pdf')], store.host).subscribe();
     TestBed.tick();
     expect(imported).toHaveBeenCalledTimes(2);
@@ -1599,13 +1603,17 @@ describe('DesktopCaptureService', () => {
   it('starts the next document of a batch when the previous capture ends, and then holds none', () => {
     const firstCapture = new Subject<CaptureOperation>();
     const secondCapture = new Subject<CaptureOperation>();
-    const imported = vi.fn((input: DesktopSourceSelection) => of({
-      ...summary, documentId: input.fileName === 'first.pdf' ? '1'.repeat(32) : '2'.repeat(32),
-    }));
+    const documents = ['first.pdf', 'second.pdf'].map((fileName, index) =>
+      ({ ...summary, fileName, documentId: String(index + 1).repeat(32) }));
+    const imported = vi.fn((input: DesktopSourceSelection) =>
+      of(documents.find((document) => document.fileName === input.fileName)));
     const createCapture = vi.fn()
       .mockReturnValueOnce(firstCapture)
       .mockReturnValueOnce(secondCapture);
-    const store = initializeCapture(libraryStub({ importSelection: imported }), runtimeStub({ createCapture }));
+    const store = initializeCapture(libraryStub({
+      importSelection: imported,
+      list: () => of(documents),
+    }), runtimeStub({ createCapture }));
     const lifecycle = store.service;
     store.service.addSelections$([selection('first.pdf'), selection('second.pdf')], store.host).subscribe();
     TestBed.tick();
@@ -1621,13 +1629,18 @@ describe('DesktopCaptureService', () => {
     expect(lifecycle.isDocumentClaimed('2'.repeat(32))).toBe(false);
   });
 
-  describe('cancelling a document waiting in a batch', () => {
+  describe('deciding at a document’s turn in a batch', () => {
     const firstId = '1'.repeat(32);
     const secondId = '2'.repeat(32);
     const thirdId = '3'.repeat(32);
 
-    function startBatch(cancelWriteFailsOnceFor?: string) {
+    function startBatch({ cancelWriteFailsOnceFor, holdSecondImport = false }: {
+      cancelWriteFailsOnceFor?: string;
+      holdSecondImport?: boolean;
+    } = {}) {
       const firstCapture = new Subject<CaptureOperation>();
+      const secondImport = new Subject<DesktopLibrarySummary>();
+      const cancelAnswer = new Subject<CaptureOperation>();
       let cancelWriteFailed = false;
       const stored = new Map<string, DesktopLibrarySummary>();
       const selections = [selection('first.pdf'), selection('second.pdf'), selection('third.pdf')];
@@ -1637,7 +1650,7 @@ describe('DesktopCaptureService', () => {
         if (documentId === undefined) throw new Error('Unexpected selection');
         const document = { ...summary, documentId, fileName: input.fileName };
         stored.set(documentId, document);
-        return of(document);
+        return holdSecondImport && documentId === secondId ? secondImport : of(document);
       });
       const updateCapture = vi.fn((update: Record<string, unknown>) => {
         const documentId = String(update['documentId']);
@@ -1651,18 +1664,108 @@ describe('DesktopCaptureService', () => {
         stored.set(documentId, updated);
         return of(updated);
       });
-      const createCapture = vi.fn<(documentId: string) => Observable<CaptureOperation>>(() =>
-        of(completedOperation)).mockReturnValueOnce(firstCapture);
-      const runtime = runtimeStub({ createCapture });
+      const createCapture = vi.fn((documentId: string): Observable<CaptureOperation> =>
+        documentId === firstId ? firstCapture : of(completedOperation));
+      const cancelCapture = vi.fn(() => cancelAnswer);
+      const runtime = runtimeStub({ createCapture, cancelCapture });
+      const list = vi.fn((): Observable<readonly DesktopLibrarySummary[]> => of([...stored.values()]));
       const { service, host } = initializeCapture(
-        libraryStub({ importSelection, updateCapture, list: () => of([...stored.values()]) }),
+        libraryStub({ importSelection, updateCapture, list }),
         runtime,
       );
       const batchFinished = new Subject<void>();
       const batch = service.addSelections$(selections, host).subscribe(batchFinished);
       TestBed.tick();
-      return { service, host, batch, batchFinished, firstCapture, stored, updateCapture, createCapture, runtime };
+      const answerSecondImport = () => {
+        secondImport.next({ ...summary, documentId: secondId, fileName: 'second.pdf' });
+        secondImport.complete();
+      };
+      return {
+        service, host, batch, batchFinished, firstCapture, stored, updateCapture,
+        createCapture, runtime, list, answerSecondImport, cancelAnswer, cancelCapture,
+      };
     }
+
+    it('skips a document the queue finished before its import answered', async () => {
+      const test = startBatch({ holdSecondImport: true });
+      await lastValueFrom(test.service.startDocument$(secondId, test.host));
+      expect(test.stored.get(secondId)?.status).toBe('completed');
+      expect(test.service.isDocumentClaimed(secondId)).toBe(false);
+
+      test.answerSecondImport();
+      const finished = lastValueFrom(test.batchFinished);
+      test.firstCapture.complete();
+      await finished;
+
+      expect(test.createCapture.mock.calls.map(([id]) => id)).toEqual([secondId, firstId, thirdId]);
+      expect(test.stored.get(secondId)?.status).toBe('completed');
+    });
+
+    it('skips a document the queue still owns and leaves its pending runtime cancel in flight', async () => {
+      const test = startBatch({ holdSecondImport: true });
+      test.createCapture.mockReturnValueOnce(of(runningOperation));
+      const queue = lastValueFrom(test.service.startDocument$(secondId, test.host));
+      expect(test.stored.get(secondId)).toMatchObject({
+        status: 'processing', captureId: runningOperation.captureId,
+      });
+      test.service.cancel(secondId);
+      expect(test.cancelCapture).toHaveBeenCalledExactlyOnceWith(runningOperation.captureId);
+      const select = vi.spyOn(test.host.selectedId, 'set');
+      const queueWrites = () => captureUpdates(test.updateCapture).filter((update) => update['documentId'] === secondId);
+      const before = queueWrites();
+
+      test.answerSecondImport();
+      const finished = lastValueFrom(test.batchFinished);
+      test.firstCapture.complete();
+      await finished;
+
+      expect(test.createCapture.mock.calls.map(([id]) => id)).toEqual([secondId, firstId, thirdId]);
+      expect(queueWrites()).toEqual(before);
+      expect(select).not.toHaveBeenCalledWith(secondId);
+      expect(test.service.isDocumentClaimed(secondId)).toBe(true);
+      expect(test.cancelCapture).toHaveBeenCalledExactlyOnceWith(runningOperation.captureId);
+
+      test.cancelAnswer.next(cancelledOperation);
+      test.cancelAnswer.complete();
+      await queue;
+      expect(test.stored.get(secondId)?.status).toBe('canceled');
+      expect(test.service.isDocumentClaimed(secondId)).toBe(false);
+    });
+
+    it('leaves a kept cancel with the queue decision that owns the document at the import reply', async () => {
+      const test = startBatch({ holdSecondImport: true });
+      const queueRead = new Subject<readonly DesktopLibrarySummary[]>();
+      test.list.mockReturnValueOnce(queueRead);
+      const queue = lastValueFrom(test.service.startDocument$(secondId, test.host));
+      test.service.cancel(secondId);
+
+      test.answerSecondImport();
+      const finished = lastValueFrom(test.batchFinished);
+      test.firstCapture.complete();
+      await finished;
+
+      expect(test.stored.get(secondId)?.status).toBe('queued');
+      expect(test.service.isDocumentClaimed(secondId)).toBe(true);
+      queueRead.next([...test.stored.values()]);
+      await queue;
+      expect(test.stored.get(secondId)?.status).toBe('canceled');
+      expect(test.service.isDocumentClaimed(secondId)).toBe(false);
+      expect(test.createCapture.mock.calls.map(([id]) => id)).toEqual([firstId, thirdId]);
+    });
+
+    it('skips a document deleted from storage before its turn', async () => {
+      const test = startBatch();
+      test.service.cancel(secondId);
+      test.stored.delete(secondId);
+      const finished = lastValueFrom(test.batchFinished);
+      test.firstCapture.complete();
+      await finished;
+
+      expect(test.createCapture.mock.calls.map(([id]) => id)).toEqual([firstId, thirdId]);
+      expect(captureUpdates(test.updateCapture).some((update) => update['documentId'] === secondId)).toBe(false);
+      expect(test.service.isDocumentClaimed(secondId)).toBe(false);
+      expect(test.service.isDecisionPaused(secondId)).toBe(false);
+    });
 
     it.each([
       ['third', thirdId, secondId],
@@ -1731,7 +1834,8 @@ describe('DesktopCaptureService', () => {
     it('goes on with the batch when the cancel write at a turn fails, and keeps that cancel', async () => {
       vi.useFakeTimers();
       try {
-        const { service, host, batchFinished, firstCapture, stored, createCapture } = startBatch(secondId);
+        const { service, host, batchFinished, firstCapture, stored, createCapture } =
+          startBatch({ cancelWriteFailsOnceFor: secondId });
         service.cancel(secondId);
         service.cancel(thirdId);
         let batchError: unknown;

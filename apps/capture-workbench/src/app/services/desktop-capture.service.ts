@@ -90,7 +90,7 @@ interface ActiveCapture {
   readonly cancelWake: Subject<void>;
 }
 
-type DocumentDecisionRequest = 'automatic' | 'retry-or-restart' | 'cancel';
+type DocumentDecisionRequest = 'automatic' | 'batch-turn' | 'retry-or-restart' | 'cancel';
 
 /**
  * How long the queues wait before they look at their documents again after a
@@ -222,7 +222,9 @@ export class DesktopCaptureService {
       };
       return from(selections).pipe(
         concatMap((selection) => this.library.importSelection(selection).pipe(
-          tap(({ documentId }) => {
+          map(({ documentId }) => documentId),
+          filter((documentId) => !this.isDocumentClaimed(documentId)),
+          tap((documentId) => {
             // Hold each imported document while the rest of the batch is imported.
             batchClaims.add(documentId);
             this.awaitingTurn.add(documentId);
@@ -230,10 +232,17 @@ export class DesktopCaptureService {
           catchError((error: unknown) => { host.setMessage(errorMessage(error)); return EMPTY; }),
         )),
         toArray(),
-        switchMap((documents) => from(documents).pipe(
-          concatMap((document) => this.continueImported$(document, host).pipe(
-            finalize(() => release(document.documentId)),
-          )),
+        switchMap((documentIds) => from(documentIds).pipe(
+          concatMap((documentId) => {
+            // Hand off synchronously to the decision before calling the host.
+            release(documentId);
+            return this.decideFromStoredDocument$(documentId, (stored) =>
+              stored?.status === 'queued' && !stored.captureId
+                ? this.continueImported$(stored, host)
+                : this.declineOutdatedRequest$(stored, host), 'batch-turn').pipe(
+              catchError((error: unknown) => { host.setMessage(errorMessage(error)); return EMPTY; }),
+            );
+          }),
         )),
         finalize(() => {
           for (const documentId of batchClaims) release(documentId);
@@ -355,9 +364,10 @@ export class DesktopCaptureService {
     request: DocumentDecisionRequest = 'automatic',
   ): Observable<void> {
     return defer(() => {
-      if (this.isDocumentClaimed(documentId) || (request !== 'cancel' && !this.runtime.ready())) return EMPTY;
-      if (request !== 'automatic') this.endDecisionPause(documentId);
-      else if (this.isDecisionPaused(documentId)) return EMPTY;
+      if (this.isDocumentClaimed(documentId)) return EMPTY;
+      if ((request === 'automatic' || request === 'retry-or-restart') && !this.runtime.ready()) return EMPTY;
+      if (request === 'cancel' || request === 'retry-or-restart') this.endDecisionPause(documentId);
+      if (request === 'automatic' && this.isDecisionPaused(documentId)) return EMPTY;
       this.deciding.set(documentId, request);
       if (request === 'retry-or-restart') this.unappliedCancels.delete(documentId);
       if (request === 'cancel') this.unappliedCancels.add(documentId);
@@ -486,7 +496,7 @@ export class DesktopCaptureService {
     host: DesktopCaptureHost,
     mediaType?: string,
   ): boolean {
-    // A new import is not in the library list yet, so the caller's media type wins.
+    // A batch turn has the stored media type even if the host list has not refreshed.
     if (mediaType !== undefined) return isRecordingMediaType(mediaType);
     const document = host.documents().find((item) => item.documentId === documentId)
       ?? (host.selected()?.documentId === documentId ? host.selected() : undefined);
@@ -517,16 +527,7 @@ export class DesktopCaptureService {
     host.selectedId.set(document.documentId);
     host.refreshDocuments();
     if (this.unappliedCancels.has(document.documentId)) {
-      return this.persistWaitingCancel$(document.documentId, host).pipe(
-        catchError((error: unknown) => {
-          // The batch goes on with the next document. The cancel stays kept
-          // and the document pauses as after any failed decision; once the
-          // pause ends, the next decision for it applies the cancel.
-          host.setMessage(errorMessage(error));
-          this.pauseDecisions(document.documentId);
-          return EMPTY;
-        }),
-      );
+      return this.persistWaitingCancel$(document.documentId, host);
     }
     if (isRecordingMediaType(document.mediaType) && !isFeatureReady(host.requirements(), 'asr')) {
       host.requestedRequirements.update(
