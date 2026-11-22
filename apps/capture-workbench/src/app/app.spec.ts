@@ -15,7 +15,7 @@ import type {
   RuntimeInstallation,
   RuntimeRequirement,
 } from '@gx-capture/capture-workbench-ui';
-import { defer, EMPTY, of, Subject, type Observable } from 'rxjs';
+import { defer, EMPTY, NEVER, of, Subject, type Observable } from 'rxjs';
 import { App } from './app';
 import { appRoutes } from './app.routes';
 import type { DesktopLibraryDetail, DesktopLibrarySummary } from './contracts';
@@ -498,14 +498,20 @@ describe('App native drops', () => {
   });
 
   it('asks for Whisper only when an allowed audio source is selected', () => {
+    const voiceDoc: DesktopLibrarySummary = {
+      ...summary,
+      fileName: 'voice.wav',
+      mediaType: 'audio/wav',
+    };
+    // The host lists a document once its import has answered; the batch's
+    // turn reads the stored document before it checks the requirements.
+    let imported: readonly DesktopLibrarySummary[] = [];
     const library = libraryStub({
-      importSelection: vi.fn(() =>
-        of({
-          ...summary,
-          fileName: 'voice.wav',
-          mediaType: 'audio/wav',
-        }),
-      ),
+      importSelection: vi.fn(() => defer(() => {
+        imported = [voiceDoc];
+        return of(voiceDoc);
+      })),
+      list: vi.fn(() => defer(() => of(imported))),
     });
     const client = runtimeStub({
       getRequirements: vi.fn(() => of([{
@@ -593,7 +599,7 @@ describe('App native drops', () => {
     expect(getResult).toHaveBeenCalledWith(completedOperation.captureId);
   });
 
-  it('streams a newly imported recording before the library list includes it', () => {
+  it('streams a newly imported recording before the cached library list includes it', () => {
     const audioDoc: DesktopLibrarySummary = {
       ...summary,
       fileName: 'interview.wav',
@@ -601,9 +607,21 @@ describe('App native drops', () => {
     };
     const startRecordingCapture = vi.fn(() => of(completedOperation));
     const createCapture = vi.fn(() => of(completedOperation));
+    // The host lists the document once its import has answered, but the
+    // Workbench's cached list (the library store's read, which passes an
+    // abort signal) has not reloaded since: its reloads stay unanswered, and
+    // only the stored-document read of the batch's turn sees the recording.
+    let imported = false;
     const library = libraryStub({
-      importSelection: vi.fn(() => of(audioDoc)),
-      list: vi.fn(() => of([])),
+      importSelection: vi.fn(() => defer(() => {
+        imported = true;
+        return of(audioDoc);
+      })),
+      list: vi.fn((...args: [query?: string, status?: string, abortSignal?: AbortSignal]):
+        Observable<readonly DesktopLibrarySummary[]> => {
+        if (!imported) return of([]);
+        return args[2] ? NEVER : of([audioDoc]);
+      }),
       get: vi.fn(() => of<DesktopLibraryDetail>(audioDoc)),
     });
     const client = runtimeStub({
