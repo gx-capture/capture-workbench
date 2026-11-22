@@ -23,6 +23,7 @@ import {
   takeUntil,
   tap,
   throwError,
+  throwIfEmpty,
   timer,
   toArray,
 } from 'rxjs';
@@ -73,6 +74,7 @@ interface ActiveCapture {
   rawPersisted: boolean;
   cancelRequested: boolean;
   cancelSent: boolean;
+  cancelAnswered: boolean;
   lastStage?: string;
   terminalCommitted?: boolean;
   terminalStatus?: TerminalLibraryStatus;
@@ -520,6 +522,7 @@ export class DesktopCaptureService {
         rawPersisted: false,
         cancelRequested: false,
         cancelSent: false,
+        cancelAnswered: false,
         cancelWake: new Subject<void>(),
         ocrCompute: this.runtime.ocrCompute(),
         pdfPageNumbers,
@@ -647,8 +650,8 @@ export class DesktopCaptureService {
       // The poll finished; nobody asked to cancel it.
       if (!active.cancelSent) return of(answered);
       // The cancel's answer is the recording. When it has ended, store it:
-      // reading events, the partial or the status again can only turn an
-      // accepted cancel into a failed one. A read that was still in flight
+      // reading events, the partial or the status again could leave the
+      // terminal data unsaved. A read that was still in flight
       // was abandoned with the cancel, so it is not this answer. A capture
       // the runtime says is still running is read again, as before. A cancel
       // the runtime rejects never reaches here.
@@ -756,6 +759,7 @@ export class DesktopCaptureService {
         // A cancel that is kept for the document passes to the capture that is recovered.
         cancelRequested: this.unappliedCancels.delete(document.documentId),
         cancelSent: false,
+        cancelAnswered: false,
         lastStage: document.stage,
         terminalCommitted,
         terminalStatus: committedStatus,
@@ -778,8 +782,7 @@ export class DesktopCaptureService {
             }),
             // A capture that the runtime answers a cancel with as ended is
             // stored as answered. Reading it again adds nothing, and a read
-            // that fails would store an accepted cancel as a failed one, or
-            // leave a result that is complete unsaved.
+            // that fails could leave a result that is complete unsaved.
             switchMap((operation) => active.cancelSent && !isActiveStreaming(operation)
               ? of(operation)
               : this.waitForStreamingTerminal$(document.documentId, operation, active)),
@@ -950,9 +953,11 @@ export class DesktopCaptureService {
     captureId: string,
     active: ActiveCapture,
   ): Observable<DesktopCaptureOperation> {
-
     active.cancelSent = true;
-    return this.runtime.cancelCapture(captureId);
+    return this.runtime.cancelCapture(captureId).pipe(
+      throwIfEmpty(() => new Error('Capture Runtime returned no cancel response.')),
+      tap(() => { active.cancelAnswered = true; }),
+    );
   }
 
   private persistTerminal$(
@@ -1294,7 +1299,9 @@ export class DesktopCaptureService {
         captureId: active.captureId,
         status: 'recovery_required',
         stage: active.lastStage ?? 'recovery_required',
-        recoveryCode: active.cancelSent ? 'cancel_failed' : 'capture_recovery_required',
+        recoveryCode: active.cancelSent && !active.cancelAnswered
+          ? 'cancel_failed'
+          : 'capture_recovery_required',
         recoveryMessage: errorMessage(error),
       });
     }

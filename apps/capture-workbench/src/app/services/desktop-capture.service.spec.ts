@@ -2431,6 +2431,98 @@ describe('DesktopCaptureService', () => {
     );
   });
 
+  describe.each([
+    { path: 'running recording', recording: true, recovered: false },
+    { path: 'recovered recording', recording: true, recovered: true },
+    { path: 'running one-shot', recording: false, recovered: false },
+    { path: 'recovered one-shot', recording: false, recovered: true },
+  ])('cancel failure classification for a $path', ({ recording, recovered }) => {
+    it.each([
+      { step: 'result fetch', stage: 'completed', recoveryCode: 'capture_recovery_required' },
+      { step: 'poll', stage: 'extracting', recoveryCode: 'capture_recovery_required' },
+      { step: 'cancel rejection', stage: 'extracting', recoveryCode: 'cancel_failed' },
+      { step: 'cancel without an answer', stage: 'extracting', recoveryCode: 'cancel_failed' },
+    ])('keeps the link after $step', async ({ step, stage, recoveryCode }) => {
+      const document = recording
+        ? { ...summary, fileName: 'fixture.mp3', mediaType: 'audio/mpeg' }
+        : summary;
+      let stored: DesktopLibrarySummary = recovered
+        ? { ...document, status: 'processing', stage: 'extracting', captureId: 'capture-1' }
+        : document;
+      const running = operation({
+        captureId: 'capture-1', status: 'extracting', kind: recording ? 'recording' : 'pdf',
+      });
+      const firstRead = new Subject<CaptureOperation>();
+      const laterRead = new Subject<CaptureOperation>();
+      const cancelReply = new Subject<CaptureOperation>();
+      const resultReply = new Subject<{ operation: CaptureOperation; raw: typeof raw; result: typeof result }>();
+      const getCapture = vi.fn(() => laterRead).mockReturnValueOnce(firstRead);
+      const cancelCapture = vi.fn(() => cancelReply);
+      const getResult = vi.fn(() => resultReply);
+      const deleteCapture = vi.fn(() => of(undefined));
+      const { service, host } = initializeCapture(
+        libraryStub({
+          list: vi.fn(() => of([stored])),
+          updateCapture: vi.fn((update: Record<string, unknown>) => {
+            stored = applyDurableCaptureUpdate(stored, update);
+            return of(stored);
+          }),
+        }),
+        runtimeStub({
+          createCapture: vi.fn(() => of(running)),
+          startRecordingCapture: vi.fn(() => of(running)),
+          getCaptureEvents: vi.fn(() => of([])),
+          getPartial: vi.fn(() => of(null)),
+          getCapture,
+          cancelCapture,
+          getResult,
+          deleteCapture,
+        }),
+      );
+
+      vi.useFakeTimers();
+      try {
+        const capture$ = recovered
+          ? service.reattach$(stored, host)
+          : service.startDocument$(document.documentId, host);
+        capture$.subscribe();
+        vi.advanceTimersByTime(700);
+        expect(getCapture).toHaveBeenCalledExactlyOnceWith('capture-1');
+
+        service.cancel(document.documentId);
+        expect(cancelCapture).toHaveBeenCalledExactlyOnceWith('capture-1');
+        firstRead.error(new Error('Read abandoned by the cancel.'));
+        expect(stored.status).toBe('processing');
+
+        if (step === 'result fetch') {
+          cancelReply.next({ ...running, status: 'completed' });
+          cancelReply.complete();
+          await vi.waitFor(() => expect(getResult).toHaveBeenCalledExactlyOnceWith('capture-1'));
+          expect(getCapture).toHaveBeenCalledTimes(1);
+          resultReply.error(new Error('Result unavailable.'));
+        } else if (step === 'poll') {
+          cancelReply.next(running);
+          cancelReply.complete();
+          vi.advanceTimersByTime(700);
+          expect(getCapture).toHaveBeenCalledTimes(2);
+          laterRead.error(new Error('Poll unavailable.'));
+        } else if (step === 'cancel rejection') {
+          cancelReply.error(new Error('Cancel unavailable.'));
+        } else {
+          cancelReply.complete();
+        }
+        expect(stored).toMatchObject({
+          status: 'recovery_required', stage, captureId: 'capture-1', recoveryCode,
+        });
+        expect(cancelCapture).toHaveBeenCalledTimes(1);
+        expect(deleteCapture).not.toHaveBeenCalled();
+        expect(service.isDocumentClaimed(document.documentId)).toBe(false);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
   describe('a cancel of a recording that is running', () => {
     const document = {
       ...summary, fileName: 'fixture.mp3', mediaType: 'audio/mpeg',
