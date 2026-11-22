@@ -1,6 +1,6 @@
 import { inject, Injectable, signal } from '@angular/core';
 import { rxResource } from '@angular/core/rxjs-interop';
-import { catchError, concatWith, defer, EMPTY, ignoreElements, take, tap, throwError, type Observable } from 'rxjs';
+import { catchError, defer, EMPTY, of, switchMap, take, tap, throwError, type Observable } from 'rxjs';
 import type {
   DesktopLibraryDetail,
   DesktopLibraryEdits,
@@ -94,25 +94,24 @@ export class LibraryStore {
       if (!this.canDelete(documentId)) return EMPTY;
       return this.capture.claimDocumentForDeletion$(documentId, () =>
         this.library.delete(documentId).pipe(
+          // After an error one list read decides. The host removes the row
+          // before the document's files; when only the files remain, the
+          // document is deleted and the host removes what is left at a later
+          // start. A document that is still listed keeps everything.
+          catchError((deleteError: unknown) => this.library.list().pipe(
+            take(1),
+            switchMap((documents) => documents.some((item) => item.documentId === documentId)
+              ? throwError(() => deleteError)
+              : of(undefined)),
+            // A failed read reports the delete's own error.
+            catchError(() => throwError(() => deleteError)),
+          )),
+          // Still within the claim. Only this document leaves the list: a
+          // refresh that answered meanwhile is newer than the read above.
           tap(() => {
             this.capture.forgetDeletedDocument(documentId);
             this.documentsResource.update((documents) => documents.filter((item) => item.documentId !== documentId));
             this.refreshDocuments();
-          }),
-          catchError((deleteError: unknown) => {
-            const failure = throwError(() => deleteError);
-            return defer(() => this.library.list()).pipe(
-              take(1),
-              tap((documents) => {
-                if (documents.some((item) => item.documentId === documentId)) return;
-                this.capture.forgetDeletedDocument(documentId);
-                // Publish the authoritative list while the deletion still owns its claim.
-                this.documentsResource.set(documents);
-              }),
-              catchError(() => failure),
-              ignoreElements(),
-              concatWith(failure),
-            );
           }),
         ),
       );

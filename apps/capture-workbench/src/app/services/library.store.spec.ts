@@ -69,7 +69,6 @@ describe('LibraryStore', () => {
   });
 
   it.each([
-    ['row gone', []],
     ['row present', [summary]],
     ['list read failed', null],
   ] as const)('preserves the delete error when %s', (_outcome, documents) => {
@@ -90,13 +89,39 @@ describe('LibraryStore', () => {
     expect(error).toHaveBeenCalledExactlyOnceWith(deletionFailed);
     expect(capture.isDocumentClaimed(summary.documentId)).toBe(false);
     expect(verification.observed).toBe(false);
-    if (documents?.length === 0) {
-      expect(forget).toHaveBeenCalledExactlyOnceWith(summary.documentId);
-      expect(store.allDocuments()).toEqual([]);
-    } else {
-      expect(forget).not.toHaveBeenCalled();
-      expect(store.allDocuments()).toEqual([summary]);
-    }
+    expect(forget).not.toHaveBeenCalled();
+    expect(store.allDocuments()).toEqual([summary]);
+  });
+
+  it('treats a delete error whose document is gone as a deletion, without replacing a newer list', () => {
+    const { store, capture, response, list, forget } = setupDeletion();
+    const imported = { ...summary, documentId: 'b'.repeat(32), fileName: 'imported.pdf' } satisfies DesktopLibrarySummary;
+    const deletion = { next: vi.fn(), error: vi.fn(), complete: vi.fn() };
+    store.delete(summary.documentId).subscribe(deletion);
+    // A refresh while the delete runs already lists a newly imported document.
+    list.mockReturnValueOnce(of([summary, imported]));
+    store.refreshDocuments();
+    TestBed.tick();
+    expect(store.allDocuments()).toEqual([summary, imported]);
+
+    // The read after the error was taken before that import.
+    const verification = new Subject<readonly DesktopLibrarySummary[]>();
+    list.mockReturnValueOnce(verification);
+    list.mockReturnValue(of([imported]));
+    response.error(new Error('Capture library source cannot be deleted.'));
+    expect(capture.isDocumentClaimed(summary.documentId)).toBe(true);
+    verification.next([]);
+
+    // The row is gone and the host removes the files it left at a later start.
+    expect(deletion.error).not.toHaveBeenCalled();
+    expect(deletion.next).toHaveBeenCalledOnce();
+    expect(deletion.complete).toHaveBeenCalledOnce();
+    expect(forget).toHaveBeenCalledExactlyOnceWith(summary.documentId);
+    expect(store.allDocuments()).toEqual([imported]);
+    expect(capture.isDocumentClaimed(summary.documentId)).toBe(false);
+    TestBed.tick();
+    // A refresh follows, as after an acknowledged delete.
+    expect(list).toHaveBeenCalledTimes(3);
   });
 
   it('offers deletion only for a document that is neither claimed nor linked to a runtime capture', () => {

@@ -2267,7 +2267,8 @@ describe('DesktopCaptureService', () => {
         libraryStore.delete(summary.documentId).subscribe({ error: steps.failed });
         answerWithoutTheDocument(steps, 1);
 
-        expect(steps.failed).toHaveBeenLastCalledWith(cleanupError);
+        // The document is gone: the delete counts as done, without its error.
+        expect(steps.failed).not.toHaveBeenCalledWith(cleanupError);
         expect(libraryStore.allDocuments()).toEqual([]);
         expectNoCancelIsLeft(steps, 2);
       });

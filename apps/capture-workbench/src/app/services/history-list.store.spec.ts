@@ -89,7 +89,7 @@ describe('HistoryListStore', () => {
     expect(store.deleting()).toBe(false);
     expect(refreshDocuments).not.toHaveBeenCalled();
   });
-  it('removes the row while showing an error when host cleanup fails after deletion', () => {
+  it('shows a deletion whose row is gone as deleted although the host could not remove its files yet', () => {
     const { store, library, allDocuments } = setup();
     const response = new Subject<undefined>();
     library.delete.mockReturnValueOnce(response);
@@ -103,7 +103,7 @@ describe('HistoryListStore', () => {
     expect(store.rows().map((item) => item.documentId)).not.toContain(row.documentId);
     expect(store.pendingDelete()).toBeNull();
     expect(store.deleting()).toBe(false);
-    expect(store.error()).toBe(desktopMessages().historyDeleteFailed);
+    expect(store.error()).toBe('');
   });
   it.each(['removed', 'captureId', 'active capture'] as const)('rechecks a document that is %s while confirmation is open', (change) => {
     const { store, allDocuments, library, activeIds } = setup();
