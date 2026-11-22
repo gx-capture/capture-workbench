@@ -104,8 +104,7 @@ export class OcrQueueStore {
 
   private readonly workEffect = effect(() => {
     if (!this.attached() || !this.runtime.started()) return;
-    // A decision that ended in an error changed nothing the queue can see:
-    // this signal makes it look again, after the service's pause.
+    // Look again when a failed decision or unrecorded failure has finished pausing.
     this.capture.failedDecisions();
     // Waiting files start in the order they were imported, the order the queue shows.
 
@@ -116,6 +115,10 @@ export class OcrQueueStore {
 
   /** Safe to call more than once. The document list itself lives on `LibraryStore`. */
   attach(): void {
+    if (this.attached()) return;
+    this.capture.unrecordedFailures$
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe((captureId) => this.attemptedReattachments.delete(captureId));
     this.attached.set(true);
   }
 

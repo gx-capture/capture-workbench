@@ -836,7 +836,10 @@ describe('DesktopCaptureService', () => {
     expect(getCapture).not.toHaveBeenCalled();
   });
 
-  it('interrupts an in-flight poll and sends cancellation immediately', () => {
+  it.each([
+    ['between polls', 1],
+    ['during an in-flight poll', 700],
+  ] as const)('sends one-shot cancellation immediately %s', (_moment, elapsed) => {
     const polled = new Subject<CaptureOperation>();
     const cancelCapture = vi.fn(() => of(cancelledOperation));
     const getCapture = vi.fn(() => polled);
@@ -850,14 +853,16 @@ describe('DesktopCaptureService', () => {
     vi.useFakeTimers();
     try {
       store.service.startDocument$(summary.documentId, store.host).subscribe();
-      vi.advanceTimersByTime(700);
-      expect(getCapture).toHaveBeenCalledWith('capture-1');
+      vi.advanceTimersByTime(elapsed);
+      const expectedPolls = elapsed === 700 ? 1 : 0;
+      expect(getCapture).toHaveBeenCalledTimes(expectedPolls);
       expect(cancelCapture).not.toHaveBeenCalled();
 
       store.service.cancel(summary.documentId);
-      TestBed.tick();
-
-      expect(cancelCapture).toHaveBeenCalledOnce();
+      expect(cancelCapture).toHaveBeenCalledExactlyOnceWith('capture-1');
+      vi.advanceTimersByTime(700);
+      expect(cancelCapture).toHaveBeenCalledTimes(1);
+      expect(getCapture).toHaveBeenCalledTimes(expectedPolls);
       expect(client.cancelUpload).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
@@ -3091,7 +3096,7 @@ describe('DesktopCaptureService', () => {
         test.service.startDocument$(document.documentId, test.host).subscribe();
         expect(test.calls).toEqual(['events', 'partial', 'capture']);
         test.service.cancel(document.documentId);
-        expect(test.cancelCapture).not.toHaveBeenCalled();
+        expect(test.cancelCapture).toHaveBeenCalledExactlyOnceWith('capture-1');
         vi.advanceTimersByTime(500);
         expect(test.cancelCapture).toHaveBeenCalledExactlyOnceWith('capture-1');
         expect(test.calls).toEqual(['events', 'partial', 'capture', 'cancel']);
@@ -3629,6 +3634,48 @@ describe('DesktopCaptureService', () => {
       expect(statuses).toEqual(['completed', 'completed']);
       expect(test.getCaptureEvents).not.toHaveBeenCalled();
     });
+
+    it.each([false, true])(
+      'pauses a linked recording whose end and recovery record both fail (cancel pending: %s)',
+      (cancelPending) => {
+        const linked = { ...recordingDoc, status: 'processing' } satisfies DesktopLibrarySummary;
+        const test = setupReconnect(linked);
+        const terminalWrite = new Subject<DesktopLibrarySummary>();
+        const failure = new Error('Capture library index cannot be written.');
+        test.updateCapture.mockReturnValueOnce(terminalWrite)
+          .mockReturnValueOnce(throwError(() => failure));
+        test.cancelCapture.mockReturnValue(of(recordingOp('completed')));
+
+        vi.useFakeTimers();
+        try {
+          test.service.reattach$(linked, test.host).subscribe();
+          expect(test.updateCapture).toHaveBeenCalledTimes(1);
+          if (cancelPending) test.service.cancel(linked.documentId);
+          terminalWrite.error(failure);
+
+          expect(test.host.setMessage).toHaveBeenCalledExactlyOnceWith(failure.message);
+          expect(test.stored()).toEqual(linked);
+          expect(test.service.isDocumentClaimed(linked.documentId)).toBe(false);
+          expect(test.service.isDecisionPaused(linked.documentId)).toBe(true);
+          expect(test.updateCapture).toHaveBeenCalledTimes(2);
+
+          vi.advanceTimersByTime(FAILED_DECISION_PAUSE_MS - 1);
+          test.service.reattach$(linked, test.host).subscribe();
+          expect(test.getCapture).toHaveBeenCalledTimes(1);
+          expect(test.cancelCapture).not.toHaveBeenCalled();
+
+          vi.advanceTimersByTime(1);
+          expect(test.service.failedDecisions()).toBe(1);
+          test.service.reattach$(linked, test.host).subscribe();
+          expect(test.getCapture).toHaveBeenCalledTimes(cancelPending ? 1 : 2);
+          expect(test.cancelCapture).toHaveBeenCalledTimes(cancelPending ? 1 : 0);
+          expect(test.stored()).toMatchObject({ status: 'completed', captureId: undefined });
+          expect(test.service.isDocumentClaimed(linked.documentId)).toBe(false);
+        } finally {
+          vi.useRealTimers();
+        }
+      },
+    );
 
     it('does not write processing when the first read returns 404', () => {
       const test = setupReconnect();

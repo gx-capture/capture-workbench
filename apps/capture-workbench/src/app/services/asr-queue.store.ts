@@ -190,6 +190,9 @@ export class AsrQueueStore {
   attach(): void {
     if (this.attached) return;
     this.attached = true;
+    this.capture.unrecordedFailures$
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe((captureId) => this.attemptedReattachments.delete(captureId));
     effect(
       () => {
         if (this.runtime.ready()) {
@@ -203,8 +206,7 @@ export class AsrQueueStore {
         if (!this.runtime.ready()) return;
         const recordings = this.documents();
         const busyIds = this.capture.busyIds();
-        // A decision that ended in an error changed nothing the queue can see:
-        // this signal makes it look again, after the service's pause.
+        // Look again when a failed decision or unrecorded failure has finished pausing.
         this.capture.failedDecisions();
 
         const speechReady = this.speechReady();

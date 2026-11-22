@@ -510,6 +510,44 @@ describe('OcrQueueStore', () => {
     });
   });
 
+  it('reattaches the same OCR capture after both its terminal write and recovery record fail', () => {
+    const harness = configure({ ocrReady: false });
+    const ended = { ...runningOperation(), status: 'cancelled' } satisfies DesktopCaptureOperation;
+    const initial = doc({ status: 'processing', captureId: ended.captureId });
+    const failure = new Error('Capture library index cannot be written.');
+    harness.docs.push(initial);
+    harness.runtime.getCapture.mockReturnValue(of(ended));
+    const applyUpdate = harness.library.updateCapture.getMockImplementation();
+    if (!applyUpdate) throw new Error('Expected the library to implement capture updates.');
+    harness.library.updateCapture.mockImplementation((update) => {
+      if (update.status === 'canceled' || update.status === 'recovery_required') {
+        return throwError(() => failure);
+      }
+      return applyUpdate(update);
+    });
+
+    vi.useFakeTimers();
+    try {
+      harness.store.attach();
+      TestBed.tick();
+      expect(harness.runtime.getCapture).toHaveBeenCalledExactlyOnceWith(ended.captureId);
+      expect(harness.docs[0]).toMatchObject({ status: 'persisting', captureId: ended.captureId });
+      expect(harness.store.importError()).toBe(failure.message);
+
+      vi.advanceTimersByTime(FAILED_DECISION_PAUSE_MS - 1);
+      TestBed.tick();
+      expect(harness.runtime.getCapture).toHaveBeenCalledTimes(1);
+
+      harness.library.updateCapture.mockImplementation(applyUpdate);
+      vi.advanceTimersByTime(1);
+      TestBed.tick();
+      expect(harness.runtime.getCapture.mock.calls).toEqual([[ended.captureId], [ended.captureId]]);
+      expect(harness.docs[0]).toMatchObject({ status: 'canceled', captureId: undefined });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('asks again for each of two files only after its own pause when their stored state cannot be read', () => {
     const harness = configure({ ocrReady: true });
     const first = doc({ documentId: '1'.repeat(32), createdAtMs: 1, status: 'processing', captureId: 'capture-first' });

@@ -77,6 +77,8 @@ interface ActiveCapture {
   cancelSent: boolean;
   cancelAnswered: boolean;
   lastStage?: string;
+  /** A linked in-flight row was read on reattach or acknowledged by a write. */
+  linkedInFlight: boolean;
   terminalCommitted?: boolean;
   terminalStatus?: TerminalLibraryStatus;
   terminalErrorCode?: string;
@@ -123,12 +125,13 @@ export class DesktopCaptureService {
   readonly oneShotOperations = signal<ReadonlyMap<string, DesktopCaptureOperation>>(new Map());
 
   /**
-   * Increases each time the pause of a document ends whose decision ended in
-   * an error: the stored document could not be read, or the write it led to
-   * failed. No capture ran and nothing else changed, so a queue that reads
-   * this signal looks at its documents again and decides anew.
+   * Increases when a document's pause ends after a failed decision or
+   * an unrecorded failure of a linked capture. The queues then look again.
    */
   readonly failedDecisions = signal(0);
+  private readonly unrecordedFailures = new Subject<string>();
+  /** Linked captures the queues can try again once their document's pause ends. */
+  readonly unrecordedFailures$ = this.unrecordedFailures.asObservable();
 
   private readonly runtime = inject(DesktopRuntimeClientService);
   private readonly library = inject(DesktopLibraryService);
@@ -576,6 +579,7 @@ export class DesktopCaptureService {
         cancelRequested: false,
         cancelSent: false,
         cancelAnswered: false,
+        linkedInFlight: false,
         cancelWake: new Subject<void>(),
         ocrCompute: this.runtime.ocrCompute(),
         pdfPageNumbers,
@@ -624,7 +628,10 @@ export class DesktopCaptureService {
           status: 'processing',
           stage: operation.status,
         }).pipe(
-          tap(() => host.reloadDocumentState(documentId)),
+          tap(() => {
+            active.linkedInFlight = true;
+            host.reloadDocumentState(documentId);
+          }),
           map(() => operation),
         );
       }),
@@ -661,7 +668,10 @@ export class DesktopCaptureService {
           status: 'processing',
           stage: operation.status,
         }).pipe(
-          tap(() => host.reloadDocumentState(documentId)),
+          tap(() => {
+            active.linkedInFlight = true;
+            host.reloadDocumentState(documentId);
+          }),
           map(() => operation),
         );
       }),
@@ -678,11 +688,19 @@ export class DesktopCaptureService {
     return of(initial).pipe(
       switchMap((operation) => this.advanceStreaming$(documentId, operation, active)),
       expand((operation) => isActiveStreaming(operation)
-        ? timer(500).pipe(switchMap(() => this.advanceStreaming$(documentId, operation, active)))
+        ? this.waitForStreamingPoll$(active).pipe(
+          switchMap(() => this.advanceStreaming$(documentId, operation, active)),
+        )
         : EMPTY),
       filter((operation) => !isActiveStreaming(operation)),
       take(1),
     );
+  }
+
+  private waitForStreamingPoll$(active: ActiveCapture): Observable<number | void> {
+    if (active.cancelSent) return timer(500);
+    if (active.cancelRequested) return of(undefined);
+    return merge(timer(500), active.cancelWake).pipe(take(1));
   }
 
   private advanceStreaming$(
@@ -814,6 +832,7 @@ export class DesktopCaptureService {
         cancelSent: false,
         cancelAnswered: false,
         lastStage: document.stage,
+        linkedInFlight: document.status === 'processing' || document.status === 'persisting',
         terminalCommitted,
         terminalStatus: committedStatus,
         terminalErrorCode: terminalCommitted ? document.errorCode : undefined,
@@ -842,7 +861,10 @@ export class DesktopCaptureService {
                 status: 'processing',
                 stage: operation.status,
               }).pipe(
-                tap(() => host.reloadDocumentState(document.documentId)),
+                tap(() => {
+                  active.linkedInFlight = true;
+                  host.reloadDocumentState(document.documentId);
+                }),
                 ignoreElements(),
                 // This write only lets the queue show the live transcript. A
                 // library that cannot store it does not stop the recording
@@ -882,7 +904,13 @@ export class DesktopCaptureService {
       tap(() => host.reloadDocumentState(documentId)),
       catchError((error) => this.persistLifecycleFailure$(documentId, active, error).pipe(
         tap(() => host.reloadDocumentState(documentId)),
-        catchError((failureError) => {
+        catchError((failureError: unknown) => {
+          if (active.captureId && active.linkedInFlight && !active.terminalCommitted) {
+            if (active.cancelRequested && !active.cancelAnswered) this.unappliedCancels.add(documentId);
+            this.pauseDecisions(documentId);
+            this.unrecordedFailures.next(active.captureId);
+            host.reloadDocumentState(documentId);
+          }
           host.setMessage(errorMessage(failureError));
           return EMPTY;
         }),
@@ -928,6 +956,7 @@ export class DesktopCaptureService {
       status: 'processing',
       stage: operation.status,
     }).pipe(
+      tap(() => { active.linkedInFlight = true; }),
       switchMap(() => {
         if (active.cancelRequested && !active.cancelSent) {
           return this.sendCancellation$(operation.captureId, active);
@@ -1047,6 +1076,7 @@ export class DesktopCaptureService {
       status: 'persisting',
       stage: operation.status,
     }).pipe(
+      tap(() => { active.linkedInFlight = true; }),
       switchMap(() => this.persistTerminalData$(documentId, operation, active)),
       tap(() => {
         active.terminalCommitted = true;

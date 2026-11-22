@@ -173,6 +173,7 @@ describe('AsrQueueStore', () => {
       isDocumentClaimed: vi.fn((id: string) => busyIds().has(id)),
       isDecisionPaused: vi.fn(() => false),
       failedDecisions: signal(0),
+      unrecordedFailures$: new Subject<string>(),
       startDocument$: vi.fn(() => startDocSubject),
       reattach$: vi.fn((): Observable<void> => of(undefined)),
       retry$: vi.fn(() => of(undefined)),
@@ -712,6 +713,51 @@ describe('AsrQueueStore', () => {
         },
       };
     }
+
+    it('reattaches after both writes fail and gives the next waiting recording its turn', () => {
+      const harness = captureOverAnUnansweredListReload({
+        initial: { documentId: '1'.repeat(32), status: 'processing', captureId, createdAtMs: 1 },
+      });
+      const waiting = makeRecording({ documentId: '2'.repeat(32), createdAtMs: 2 });
+      const failure = new Error('Capture library index cannot be written.');
+      harness.docs.set([harness.stored(), waiting]);
+      harness.library.list.mockImplementation(() => of([harness.stored(), waiting]));
+      harness.library.updateCapture.mockReturnValueOnce(throwError(() => failure))
+        .mockReturnValueOnce(throwError(() => failure));
+      const service = TestBed.inject(DesktopCaptureService);
+      const reattach = vi.spyOn(service, 'reattach$');
+
+      vi.useFakeTimers();
+      try {
+        harness.store.attach();
+        TestBed.tick();
+        harness.endCapture();
+        TestBed.tick();
+
+        expect(harness.stored()).toMatchObject({ status: 'processing', captureId });
+        expect(harness.runtimeStatus.message()).toBe(failure.message);
+        expect(service.isDocumentClaimed(harness.stored().documentId)).toBe(false);
+        expect(harness.runtime.startRecordingCapture).not.toHaveBeenCalled();
+        vi.advanceTimersByTime(FAILED_DECISION_PAUSE_MS - 1);
+        TestBed.tick();
+        expect(reattach).toHaveBeenCalledTimes(1);
+
+        vi.advanceTimersByTime(1);
+        TestBed.tick();
+        expect(reattach).toHaveBeenCalledTimes(2);
+        expect(harness.runtime.getCapture.mock.calls).toEqual([[captureId], [captureId]]);
+        expect(harness.stored()).toMatchObject({ status: 'completed', captureId: undefined });
+
+        // Answer the queue's pending list reload with the committed row.
+        harness.docs.set([harness.stored(), waiting]);
+        TestBed.tick();
+        expect(harness.runtime.startRecordingCapture).toHaveBeenCalledExactlyOnceWith(
+          expect.objectContaining({ documentId: waiting.documentId }),
+        );
+      } finally {
+        vi.useRealTimers();
+      }
+    });
 
     it.each(['completed', 'failed', 'canceled'] as const)(
       'cleans up a linked %s recording loaded at boot without changing its status',
