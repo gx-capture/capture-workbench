@@ -1309,6 +1309,43 @@ describe('DesktopCaptureService', () => {
     },
   );
 
+  it('pauses a retried OCR capture that its raw write stored as processing when the next write and the recovery record fail', () => {
+    const recovery = {
+      ...summary,
+      status: 'recovery_required',
+      stage: 'extracting',
+      captureId: 'capture-1',
+      recoveryCode: 'capture_recovery_required',
+      recoveryMessage: 'Interrupted',
+    } satisfies DesktopLibrarySummary;
+    let stored: DesktopLibrarySummary = recovery;
+    const failure = new Error('Capture library index cannot be written.');
+    // Only the raw write is stored; every later write fails.
+    const updateCapture = vi.fn((update: Record<string, unknown>) => {
+      if (update['raw'] === undefined) return throwError(() => failure);
+      stored = applyDurableCaptureUpdate(stored, update);
+      return of(stored);
+    });
+    const store = initializeCapture(
+      libraryStub({ list: vi.fn(() => of([stored])), updateCapture }),
+      runtimeStub({
+        getCapture: vi.fn(() => of(operation({ captureId: 'capture-1', status: 'structuring' }))),
+        getRaw: vi.fn(() => of(raw)),
+      }),
+    );
+    const unrecorded: string[] = [];
+    store.service.unrecordedFailures$.subscribe((captureId) => unrecorded.push(captureId));
+
+    store.service.retry$(recovery.documentId, store.host).subscribe();
+    TestBed.tick();
+
+    expect(updateCapture).toHaveBeenCalledTimes(3);
+    expect(stored).toMatchObject({ status: 'processing', captureId: 'capture-1' });
+    expect(store.service.isDocumentClaimed(recovery.documentId)).toBe(false);
+    expect(store.service.isDecisionPaused(recovery.documentId)).toBe(true);
+    expect(unrecorded).toEqual(['capture-1']);
+  });
+
   it('keeps cleanup-only recovery durable when both post-commit library writes fail', async () => {
     const terminal = operation({
       captureId: 'capture-double-write',

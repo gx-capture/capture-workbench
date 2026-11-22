@@ -1001,6 +1001,7 @@ export class DesktopCaptureService {
         }).pipe(
           tap(() => {
             active.rawPersisted = true;
+            active.linkedInFlight = true;
             host.reloadDocumentState(documentId);
           }),
           map(() => operation),
