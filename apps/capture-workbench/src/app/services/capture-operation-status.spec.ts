@@ -96,6 +96,14 @@ describe('committedTerminalStatus', () => {
     },
   );
 
+  // Earlier versions stored a capture they could not recover as failed with
+  // capture_recovery_required: it holds no terminal data, so Retry reads its capture.
+  it('is unknown for a failed document that still needs its capture recovered', () => {
+    const row = stored({ status: 'failed', recoveryCode: 'capture_recovery_required', captureId: 'capture-1' });
+    expect(committedTerminalStatus(row)).toBeUndefined();
+    expect(holdsTerminalData(row)).toBe(false);
+  });
+
   it('is the stored status of an OCR result that waits for confirmation', () => {
     const row = stored({ status: 'awaiting_confirmation', stage: 'awaiting_structuring', hasRaw: true, captureId: 'capture-1' });
     expect(committedTerminalStatus(row)).toBe('awaiting_confirmation');

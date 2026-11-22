@@ -3679,7 +3679,7 @@ describe('DesktopCaptureService', () => {
         ...summary, status: 'recovery_required', recoveryCode: 'capture_recovery_required',
       }],
     ] satisfies [string, DesktopLibrarySummary][])(
-      'clears the link and starts again for a stored document that %s',
+      'queues and starts a new capture for an unlinked stored document that %s',
       (_state, storedDocument) => {
         const { updateCapture, createCapture, getCapture, created } = restartOf([storedDocument]);
 
