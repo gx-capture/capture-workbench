@@ -1,6 +1,6 @@
 import { inject, Injectable, signal } from '@angular/core';
 import { rxResource } from '@angular/core/rxjs-interop';
-import { catchError, defer, EMPTY, of, switchMap, take, tap, throwError, type Observable } from 'rxjs';
+import { catchError, defer, EMPTY, of, switchMap, take, tap, throwError, throwIfEmpty, type Observable } from 'rxjs';
 import type {
   DesktopLibraryDetail,
   DesktopLibraryEdits,
@@ -100,6 +100,8 @@ export class LibraryStore {
           // start. A document that is still listed keeps everything.
           catchError((deleteError: unknown) => this.library.list().pipe(
             take(1),
+            // A read that completes without a list decides nothing: the delete's error stands.
+            throwIfEmpty(() => deleteError),
             switchMap((documents) => documents.some((item) => item.documentId === documentId)
               ? throwError(() => deleteError)
               : of(undefined)),

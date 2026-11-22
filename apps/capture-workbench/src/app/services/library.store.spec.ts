@@ -71,6 +71,7 @@ describe('LibraryStore', () => {
   it.each([
     ['row present', [summary]],
     ['list read failed', null],
+    ['list read completed without a list', 'no list'],
   ] as const)('preserves the delete error when %s', (_outcome, documents) => {
     const { store, capture, response, list, forget } = setupDeletion();
     const verification = new Subject<readonly DesktopLibrarySummary[]>();
@@ -84,6 +85,7 @@ describe('LibraryStore', () => {
     expect(capture.isDocumentClaimed(summary.documentId)).toBe(true);
     expect(error).not.toHaveBeenCalled();
     if (documents === null) verification.error(new Error('Library list failed'));
+    else if (documents === 'no list') verification.complete();
     else verification.next(documents);
 
     expect(error).toHaveBeenCalledExactlyOnceWith(deletionFailed);

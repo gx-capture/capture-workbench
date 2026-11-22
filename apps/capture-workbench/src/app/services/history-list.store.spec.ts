@@ -91,11 +91,13 @@ describe('HistoryListStore', () => {
 
     expect(response.observed).toBe(true);
     expect(capture.isDocumentClaimed('a')).toBe(true);
+    expect(store.deleting()).toBe(true);
 
     library.list.mockReturnValue(of([waiting]));
     response.next();
     response.complete();
     TestBed.tick();
+    expect(store.deleting()).toBe(false);
     expect(capture.isDocumentClaimed('a')).toBe(false);
     expect(store.rows().map((item) => item.documentId)).toEqual(['b']);
     expect(store.pendingDelete()).toBeNull();
@@ -228,7 +230,9 @@ describe('HistoryListStore', () => {
     store.clearTransientState();
     // The host is still deleting: the delete, owned by the library, waits for its answer.
     expect(response.observed).toBe(true);
+    expect(store.deleting()).toBe(true);
     response.error(new Error('late host error'));
+    expect(store.deleting()).toBe(false);
     expect(store.pendingDelete()).toBeNull();
     expect(store.error()).toBe('');
     expect(store.typeFilter()).toBe('asr');
