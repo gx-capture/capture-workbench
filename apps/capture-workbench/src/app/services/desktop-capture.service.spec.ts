@@ -3095,6 +3095,9 @@ describe('DesktopCaptureService', () => {
       try {
         test.service.startDocument$(document.documentId, test.host).subscribe();
         expect(test.calls).toEqual(['events', 'partial', 'capture']);
+        // Halfway through the wait for the next poll.
+        vi.advanceTimersByTime(250);
+        expect(test.calls).toEqual(['events', 'partial', 'capture']);
         test.service.cancel(document.documentId);
         expect(test.cancelCapture).toHaveBeenCalledExactlyOnceWith('capture-1');
         vi.advanceTimersByTime(500);
@@ -3157,6 +3160,32 @@ describe('DesktopCaptureService', () => {
         expect(test.stored().recoveryCode).toBeUndefined();
         expect(test.deleteCapture).toHaveBeenCalledExactlyOnceWith('capture-1');
         expect(test.service.isDocumentClaimed(document.documentId)).toBe(false);
+      },
+    );
+
+    it.each([
+      ['just before', true],
+      ['just after', false],
+    ] as const)(
+      'sends one cancel and no extra poll when the cancel comes %s the poll timer fires',
+      (_moment, cancelFirst) => {
+        const test = runningRecording({ laterStatuses: [recording('extracting')] });
+        const poll = ['events', 'partial', 'capture'];
+        vi.useFakeTimers();
+        try {
+          // Timers due at the same moment fire in the order they were set.
+          const cancelAtTheTimer = () => setTimeout(() => test.service.cancel(document.documentId), 500);
+          if (cancelFirst) cancelAtTheTimer();
+          test.service.startDocument$(document.documentId, test.host).subscribe();
+          if (!cancelFirst) cancelAtTheTimer();
+          vi.advanceTimersByTime(500);
+          expect(test.calls).toEqual(cancelFirst ? [...poll, 'cancel'] : [...poll, ...poll, 'cancel']);
+          vi.advanceTimersByTime(1000);
+          expect(test.cancelCapture).toHaveBeenCalledExactlyOnceWith('capture-1');
+          expect(test.calls).toEqual(cancelFirst ? [...poll, 'cancel'] : [...poll, ...poll, 'cancel']);
+        } finally {
+          vi.useRealTimers();
+        }
       },
     );
 
