@@ -790,7 +790,14 @@ export class DesktopCaptureService {
                 stage: operation.status,
               }).pipe(
                 tap(() => host.reloadDocumentState(document.documentId)),
-                switchMap(() => this.waitForStreamingTerminal$(document.documentId, operation, active)),
+                ignoreElements(),
+                // This write only lets the queue show the live transcript. A
+                // library that cannot store it does not stop the recording
+                // being followed: the row keeps what it stored, and the end is
+                // stored as before. A cancel asked while the write was pending
+                // is sent by the first poll after it settles, either way.
+                catchError(() => EMPTY),
+                concatWith(defer(() => this.waitForStreamingTerminal$(document.documentId, operation, active))),
               )),
             switchMap((operation) => this.persistStreamingTerminal$(
               document.documentId,

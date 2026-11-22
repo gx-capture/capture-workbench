@@ -3354,7 +3354,44 @@ describe('DesktopCaptureService', () => {
       expect(getCapture).not.toHaveBeenCalled();
     });
 
-    it('fails the lifecycle and releases the claim if writing processing fails', () => {
+    it.each(['stored', 'rejected'] as const)(
+      'sends a cancel asked while the processing write is pending once the write is %s',
+      async (outcome) => {
+        const test = setupReconnect(recordingDoc, { holdProcessingWrite: true });
+        test.getCapture.mockImplementationOnce(() => {
+          test.calls.push('capture');
+          return of(recordingOp('extracting'));
+        });
+
+        test.service.reattach$(recordingDoc, test.host).subscribe();
+        TestBed.tick();
+        test.service.cancel(recordingDoc.documentId);
+        TestBed.tick();
+        // The write is local to the library: the cancel waits for it to settle.
+        expect(test.calls).toEqual(['capture', 'write:processing']);
+        expect(test.cancelCapture).not.toHaveBeenCalled();
+
+        if (outcome === 'stored') test.answerProcessingWrite();
+        else test.failProcessingWrite(new Error('Capture library index cannot be written.'));
+        TestBed.tick();
+        await settleCaptureLifecycle();
+
+        expect(test.cancelCapture).toHaveBeenCalledExactlyOnceWith('capture-1');
+        // Nothing is written after the cancel's answer but its end and the unlink.
+        expect(test.calls).toEqual([
+          'capture', 'write:processing', 'cancel', 'write:canceled', 'delete', 'write:canceled',
+        ]);
+        expect(test.stored()).toMatchObject({
+          status: 'canceled',
+          stage: 'cancelled',
+          captureId: undefined,
+          recoveryCode: undefined,
+        });
+        expect(test.service.isDocumentClaimed(recordingDoc.documentId)).toBe(false);
+      },
+    );
+
+    it('follows the recording and stores its end when the processing write fails', async () => {
       const test = setupReconnect(recordingDoc, { holdProcessingWrite: true });
       test.getCapture.mockImplementationOnce(() => {
         test.calls.push('capture');
@@ -3363,20 +3400,22 @@ describe('DesktopCaptureService', () => {
 
       test.service.reattach$(recordingDoc, test.host).subscribe();
       TestBed.tick();
-      expect(test.service.isDocumentClaimed(recordingDoc.documentId)).toBe(true);
-
       test.failProcessingWrite(new Error('Capture library index cannot be written.'));
       TestBed.tick();
+      await settleCaptureLifecycle();
 
-      expect(test.getCaptureEvents).not.toHaveBeenCalled();
-      expect(test.getPartial).not.toHaveBeenCalled();
-      expect(test.getCapture).toHaveBeenCalledTimes(1);
+      // The row kept what it stored until the end was written; the claim held throughout.
+      expect(test.calls).toEqual([
+        'capture', 'write:processing', 'events', 'partial', 'capture',
+        'write:completed', 'delete', 'write:completed',
+      ]);
+      expect(captureUpdates(test.updateCapture).map((update) => update['status']))
+        .not.toContain('recovery_required');
       expect(test.stored()).toMatchObject({
-        status: 'recovery_required',
-        stage: 'extracting',
-        captureId: 'capture-1',
-        recoveryCode: 'capture_recovery_required',
-        recoveryMessage: 'Capture library index cannot be written.',
+        status: 'completed',
+        stage: 'completed',
+        captureId: undefined,
+        recoveryCode: undefined,
       });
       expect(test.service.isDocumentClaimed(recordingDoc.documentId)).toBe(false);
     });
