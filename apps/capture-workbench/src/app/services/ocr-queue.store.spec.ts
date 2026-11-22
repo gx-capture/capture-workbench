@@ -2,7 +2,7 @@ import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 import type { CaptureRequirementId, RuntimeInstallation, RuntimeRequirement } from '@gx-capture/capture-workbench-ui';
-import { of, Subject, throwError } from 'rxjs';
+import { type Observable, of, Subject, throwError } from 'rxjs';
 import { App } from '../app';
 import type { DesktopCaptureOptions, DesktopLibraryExport, DesktopLibrarySummary } from '../contracts';
 import { desktopMessages, setDesktopLocale } from '../i18n/desktop-messages';
@@ -278,19 +278,20 @@ describe('OcrQueueStore', () => {
     expect(harness.runtime.cancelCapture).toHaveBeenCalledWith('capture-1');
   });
 
-  it('retries a failed file and restarts a file whose runtime operation is gone', async () => {
+  it('waits for explicit retry after reload and restarts only after that read finds the capture gone', async () => {
     const harness = configure({ ocrReady: true });
     harness.docs.push(doc({ status: 'failed', documentId: 'c'.repeat(32), fileName: 'failed.pdf' }));
     harness.docs.push(doc({
       status: 'recovery_required',
       documentId: 'd'.repeat(32),
-      fileName: 'lost.pdf',
-      captureId: 'capture-lost',
+      fileName: 'recoverable.pdf',
+      captureId: 'capture-1',
       recoveryCode: 'capture_recovery_required',
     }));
     harness.store.attach();
     TestBed.tick();
     await settle();
+    expect(harness.runtime.getCapture).not.toHaveBeenCalled();
 
     harness.store.retry('c'.repeat(32));
     await settle();
@@ -302,6 +303,16 @@ describe('OcrQueueStore', () => {
     expect(harness.runtime.getCapture).not.toHaveBeenCalled();
 
     harness.runtime.createCapture.mockClear();
+    harness.runtime.getCapture.mockImplementationOnce(() =>
+      throwError(() => 'Capture Runtime request was rejected with HTTP 404.'));
+    harness.store.retry('d'.repeat(32));
+    await settle();
+    expect(harness.runtime.getCapture).toHaveBeenCalledExactlyOnceWith('capture-1');
+    expect(harness.runtime.createCapture).not.toHaveBeenCalled();
+    expect(harness.rows().find((row) => row.documentId === 'd'.repeat(32))).toMatchObject({
+      userStatus: 'needs-attention', interrupted: true,
+    });
+
     harness.store.restart('d'.repeat(32));
     await settle();
 
@@ -310,7 +321,7 @@ describe('OcrQueueStore', () => {
       status: 'queued',
       clearCaptureId: true,
     }));
-    expect(harness.runtime.getCapture).not.toHaveBeenCalled();
+    expect(harness.runtime.getCapture).toHaveBeenCalledTimes(1);
     expect(harness.runtime.createCapture).toHaveBeenCalledWith(
       'd'.repeat(32),
       expect.any(String),
@@ -582,12 +593,14 @@ function configure(options: { readonly ocrReady: boolean; readonly operation?: D
       readonly clearCaptureId?: boolean;
       readonly captureId?: string;
       readonly stage?: string;
+      readonly recoveryCode?: string;
     }) => {
       const index = docs.findIndex((item) => item.documentId === update.documentId);
       const current = index >= 0 ? docs[index] : undefined;
       const next: DesktopLibrarySummary = {
         ...(current ?? doc({ documentId: update.documentId })),
         status: update.status,
+        recoveryCode: update.recoveryCode,
         ...(update.stage === undefined ? {} : { stage: update.stage }),
         ...(update.clearCaptureId
           ? { captureId: undefined }
@@ -606,7 +619,7 @@ function configure(options: { readonly ocrReady: boolean; readonly operation?: D
     pdfPageNumbers: signal<readonly number[] | undefined>(undefined),
     ocrCompute: signal(null),
     createCapture: vi.fn(() => options.operation ? of(options.operation) : created),
-    getCapture: vi.fn(() => new Subject<DesktopCaptureOperation>()),
+    getCapture: vi.fn((): Observable<DesktopCaptureOperation> => new Subject<DesktopCaptureOperation>()),
     cancelCapture: vi.fn(() => new Subject<DesktopCaptureOperation>()),
     cancelUpload: vi.fn(() => of(undefined)),
     getRaw: vi.fn(() => of(null)),

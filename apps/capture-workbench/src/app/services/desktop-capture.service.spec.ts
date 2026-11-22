@@ -1467,6 +1467,7 @@ describe('DesktopCaptureService', () => {
       recoveryCode: 'capture_recovery_required',
     } satisfies DesktopLibrarySummary;
     const createCapture = vi.fn(() => of(completedOperation));
+    const getResult = vi.fn(() => of({ operation: completedOperation, raw, result }));
     const getCapture = vi.fn(() => of(operation({
       ...completedOperation,
       captureId: 'capture-recovery',
@@ -1476,7 +1477,7 @@ describe('DesktopCaptureService', () => {
       list: vi.fn(() => of([recovery])),
       get: vi.fn(() => of<DesktopLibraryDetail>(recovery)),
     });
-    const client = runtimeStub({ createCapture, getCapture, deleteCapture });
+    const client = runtimeStub({ createCapture, getCapture, getResult, deleteCapture });
     const store = initializeCapture(library, client);
 
     store.service.retry$(recovery.documentId, store.host).subscribe();
@@ -1485,7 +1486,62 @@ describe('DesktopCaptureService', () => {
 
     expect(createCapture).not.toHaveBeenCalled();
     expect(getCapture).toHaveBeenCalledWith('capture-recovery');
+    expect(getResult).toHaveBeenCalledExactlyOnceWith('capture-recovery');
+    expect(captureUpdates(library.updateCapture)).toContainEqual(
+      expect.objectContaining({ status: 'completed', result }),
+    );
     expect(deleteCapture).toHaveBeenCalledWith('capture-recovery');
+  });
+
+  it('follows the linked one-shot capture on Retry until the runtime reports it ended', () => {
+    const recovery: DesktopLibrarySummary = {
+      ...summary, status: 'recovery_required', captureId: 'capture-1',
+      recoveryCode: 'capture_recovery_required',
+    };
+    const getCapture = vi.fn(() => of(cancelledOperation)).mockReturnValueOnce(of(runningOperation));
+    const createCapture = vi.fn();
+    const library = libraryStub({ list: vi.fn(() => of([recovery])) });
+    const { service, host } = initializeCapture(library, runtimeStub({ getCapture, createCapture }));
+
+    vi.useFakeTimers();
+    try {
+      service.retry$(recovery.documentId, host).subscribe();
+      expect(getCapture).toHaveBeenCalledExactlyOnceWith('capture-1');
+      expect(captureUpdates(library.updateCapture)).toContainEqual(
+        expect.objectContaining({ status: 'processing', captureId: 'capture-1' }),
+      );
+
+      vi.advanceTimersByTime(700);
+      expect(getCapture.mock.calls).toEqual([['capture-1'], ['capture-1']]);
+      expect(captureUpdates(library.updateCapture)).toContainEqual(
+        expect.objectContaining({ status: 'canceled', clearCaptureId: true }),
+      );
+      expect(createCapture).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stores an ended recording on Retry without polling it again', () => {
+    const recovery: DesktopLibrarySummary = {
+      ...summary, fileName: 'fixture.mp3', mediaType: 'audio/mpeg',
+      status: 'recovery_required', captureId: 'capture-1', recoveryCode: 'capture_recovery_required',
+    };
+    const ended = operation({ ...completedOperation, captureId: 'capture-1', kind: 'recording' });
+    const getCapture = vi.fn(() => of(ended));
+    const getCaptureEvents = vi.fn(() => throwError(() => new Error('Events unavailable.')));
+    const getResult = vi.fn(() => of({ operation: ended, raw, result }));
+    const library = libraryStub({ list: vi.fn(() => of([recovery])) });
+    const { service, host } = initializeCapture(library, runtimeStub({ getCapture, getCaptureEvents, getResult }));
+
+    service.retry$(recovery.documentId, host).subscribe();
+
+    expect(getCapture).toHaveBeenCalledExactlyOnceWith('capture-1');
+    expect(getCaptureEvents).not.toHaveBeenCalled();
+    expect(getResult).toHaveBeenCalledExactlyOnceWith('capture-1');
+    expect(captureUpdates(library.updateCapture)).toContainEqual(
+      expect.objectContaining({ status: 'completed', raw, result }),
+    );
   });
 
   it('retries only DELETE for a cleanup recovery and treats success as clearable', () => {
@@ -1685,8 +1741,6 @@ describe('DesktopCaptureService', () => {
   it.each([
     ['failed', { ...summary, status: 'failed', errorCode: 'capture_failed' }],
     ['was cancelled', { ...summary, status: 'canceled' }],
-    ['lost its capture', { ...summary, status: 'processing' }],
-    ['needs recovery without a capture', { ...summary, status: 'recovery_required' }],
   ] satisfies [string, DesktopLibrarySummary][])(
     'starts a new capture on retry for a stored document that %s',
     (_state, storedDocument) => {
@@ -1773,34 +1827,73 @@ describe('DesktopCaptureService', () => {
         expect(updateCapture).toHaveBeenCalledTimes(1);
       },
     );
-    it('still reads the runtime for a row stored as a lost capture, also when raw text is kept beside it', () => {
+    it('records a capture-status 404 on Retry even when earlier raw text is kept', () => {
       // Such a row does not hold the terminal data of its capture: the raw text
       // can be that of an earlier capture, so nothing is restored from it.
-      const lostRow = {
+      let stored: DesktopLibrarySummary = {
         ...summary, fileName: 'fixture.mp3', mediaType: 'audio/mpeg', status: 'recovery_required',
         stage: 'extracting', captureId: 'capture-lost', recoveryCode: 'capture_recovery_required', hasRaw: true,
-      } satisfies DesktopLibrarySummary;
-      const updateCapture = vi.fn((update: Record<string, unknown>) =>
-        of(applyDurableCaptureUpdate(lostRow, update)));
+      };
+      const updateCapture = vi.fn((update: Record<string, unknown>) => {
+        stored = applyDurableCaptureUpdate(stored, update);
+        return of(stored);
+      });
       const getCapture = vi.fn(() =>
         throwError(() => 'Capture Runtime request was rejected with HTTP 404.'));
       const deleteCapture = vi.fn(() => of(undefined));
+      const startRecordingCapture = vi.fn(() => new Subject<CaptureOperation>());
       const store = initializeCapture(
-        libraryStub({ list: vi.fn(() => of([lostRow])), updateCapture }),
-        runtimeStub({ getCapture, deleteCapture }),
+        libraryStub({ list: vi.fn(() => of([stored])), updateCapture }),
+        runtimeStub({ getCapture, deleteCapture, startRecordingCapture }),
       );
 
-      store.service.reattach$(lostRow, store.host).subscribe();
+      store.service.retry$(summary.documentId, store.host).subscribe();
       TestBed.tick();
 
       expect(getCapture).toHaveBeenCalledExactlyOnceWith('capture-lost');
       expect(deleteCapture).not.toHaveBeenCalled();
-      expect(captureUpdates(updateCapture)).toEqual([
-        expect.objectContaining({
-          status: 'recovery_required', captureId: 'capture-lost', recoveryCode: 'capture_recovery_required',
-        }),
-      ]);
+      expect(stored).toMatchObject({
+        status: 'recovery_required', captureId: undefined, recoveryCode: 'capture_recovery_required', hasRaw: true,
+      });
+      expect(isCaptureLost(stored)).toBe(true);
+
+      // A second, stale Retry click must not start a replacement.
+      store.service.retry$(summary.documentId, store.host).subscribe();
+      expect(getCapture).toHaveBeenCalledTimes(1);
+      expect(startRecordingCapture).not.toHaveBeenCalled();
+      store.service.restartLost$(summary.documentId, store.host).subscribe();
+      expect(startRecordingCapture).toHaveBeenCalledOnce();
     });
+
+    it.each(['recovery_required', 'failed'] as const)(
+      'keeps a linked %s row retryable after a capture read fails without a 404',
+      (status) => {
+        const linked: DesktopLibrarySummary = {
+          ...summary, status, captureId: 'capture-1', recoveryCode: 'capture_recovery_required',
+        };
+        const updateCapture = vi.fn((update: Record<string, unknown>) =>
+          of(applyDurableCaptureUpdate(linked, update)));
+        const getCapture = vi.fn(() => throwError(() => new Error('Capture Runtime is unavailable.')));
+        const deleteCapture = vi.fn(() => of(undefined));
+        const createCapture = vi.fn();
+        const { service, host } = initializeCapture(
+          libraryStub({ list: vi.fn(() => of([linked])), updateCapture }),
+          runtimeStub({ getCapture, deleteCapture, createCapture }),
+        );
+
+        service.retry$(linked.documentId, host).subscribe();
+
+        expect(getCapture).toHaveBeenCalledExactlyOnceWith('capture-1');
+        expect(createCapture).not.toHaveBeenCalled();
+        expect(deleteCapture).not.toHaveBeenCalled();
+        expect(captureUpdates(updateCapture)).toEqual([
+          expect.objectContaining({
+            status: 'recovery_required', captureId: 'capture-1', recoveryCode: 'capture_recovery_required',
+          }),
+        ]);
+        expect(captureUpdates(updateCapture)[0]).not.toHaveProperty('clearCaptureId');
+      },
+    );
 
   });
 
@@ -1810,7 +1903,7 @@ describe('DesktopCaptureService', () => {
     afterEach(() => vi.useRealTimers());
 
     const lost = {
-      ...summary, status: 'recovery_required', captureId: 'capture-lost', recoveryCode: 'capture_recovery_required',
+      ...summary, status: 'recovery_required', recoveryCode: 'capture_recovery_required',
     } satisfies DesktopLibrarySummary;
 
     /** A service whose reads of the stored document and whose library writes the test answers. */
@@ -2497,9 +2590,11 @@ describe('DesktopCaptureService', () => {
         if (step === 'result fetch') {
           cancelReply.next({ ...running, status: 'completed' });
           cancelReply.complete();
+          if (!recording) vi.useRealTimers();
           await vi.waitFor(() => expect(getResult).toHaveBeenCalledExactlyOnceWith('capture-1'));
           expect(getCapture).toHaveBeenCalledTimes(1);
-          resultReply.error(new Error('Result unavailable.'));
+          // An unavailable result can answer 404 even after the capture was found.
+          resultReply.error(new Error('Capture Runtime request was rejected with HTTP 404.'));
         } else if (step === 'poll') {
           cancelReply.next(running);
           cancelReply.complete();
@@ -2971,7 +3066,7 @@ describe('DesktopCaptureService', () => {
       ...summary, fileName: 'fixture.mp3', mediaType: 'audio/mpeg',
     } satisfies DesktopLibrarySummary;
     const lostRecording = {
-      ...recording, status: 'recovery_required', captureId: 'capture-earlier', recoveryCode: 'capture_recovery_required',
+      ...recording, status: 'recovery_required', recoveryCode: 'capture_recovery_required',
     } satisfies DesktopLibrarySummary;
     const ENTRIES = ['startDocument$', 'retry$', 'restartLost$'] as const;
 
@@ -3028,7 +3123,7 @@ describe('DesktopCaptureService', () => {
     });
 
     it('are kept when a retry resumes the capture they belong to', () => {
-      const linked = { ...recording, status: 'processing', captureId: 'capture-earlier' } satisfies DesktopLibrarySummary;
+      const linked = { ...lostRecording, captureId: 'capture-earlier' } satisfies DesktopLibrarySummary;
       const { service, host, startRecordingCapture, createCapture, getCapture } = withEarlierLines(linked);
 
       service.retry$(summary.documentId, host).subscribe();
@@ -3315,7 +3410,7 @@ describe('DesktopCaptureService', () => {
       ['the start of a waiting document', 'startDocument$', { ...summary }, ['canceled']],
       ['the retry of a failed document', 'retry$', { ...summary, status: 'failed' }, ['canceled']],
       ['the restart of a document whose capture was lost', 'restartLost$', {
-        ...summary, status: 'recovery_required', captureId: 'capture-lost', recoveryCode: 'capture_recovery_required',
+        ...summary, status: 'recovery_required', recoveryCode: 'capture_recovery_required',
       }, ['queued', 'canceled']],
     ] satisfies [string, 'startDocument$' | 'retry$' | 'restartLost$', DesktopLibrarySummary, string[]][])(
       'lets a cancel win while %s is being decided',
@@ -3575,8 +3670,9 @@ describe('DesktopCaptureService', () => {
 
     it.each([
       ['was interrupted without a capture', { ...summary, status: 'processing' }],
+      ['needs recovery without a capture or recovery code', { ...summary, status: 'recovery_required' }],
       ['lost its capture', {
-        ...summary, status: 'recovery_required', captureId: 'capture-lost', recoveryCode: 'capture_recovery_required',
+        ...summary, status: 'recovery_required', recoveryCode: 'capture_recovery_required',
       }],
     ] satisfies [string, DesktopLibrarySummary][])(
       'clears the link and starts again for a stored document that %s',
@@ -3599,6 +3695,9 @@ describe('DesktopCaptureService', () => {
         recoveryCode: 'runtime_cleanup_failed',
       }]],
       ['is linked to a capture that may still run', [{ ...summary, status: 'processing', captureId: 'capture-1' }]],
+      ['needs recovery and still links to its capture', [{
+        ...summary, status: 'recovery_required', captureId: 'capture-1', recoveryCode: 'capture_recovery_required',
+      }]],
       ['waits in the queue', [{ ...summary }]],
       ['was deleted', []],
     ] satisfies [string, DesktopLibrarySummary[]][])(
@@ -3666,7 +3765,16 @@ function initializeCapture(
   const host: DesktopCaptureHost = {
     selectedId,
     requestedRequirements: signal<ReadonlySet<CaptureRequirementId>>(new Set()),
-    requirements: () => [],
+    requirements: () => [{
+      requirementId: 'speech-recognition',
+      displayName: 'Speech recognition',
+      status: 'ready',
+      kind: 'speech-recognition',
+      requiredFor: ['capture'],
+      installStrategy: 'runtime-catalog',
+      detail: null,
+      downloadBytes: null,
+    }],
     documents: () => documents.value(),
     selected: () => selected.value(),
     refreshDocuments: () => documents.reload(),

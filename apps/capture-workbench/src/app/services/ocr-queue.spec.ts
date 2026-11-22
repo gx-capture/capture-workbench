@@ -47,7 +47,7 @@ describe('OCR queue presentation', () => {
       status: 'recovery_required',
       captureId: 'capture-1',
       recoveryCode: 'capture_recovery_required',
-    })).interrupted).toBe(true);
+    })).interrupted).toBe(false);
     expect(view(doc({
       status: 'recovery_required',
       captureId: 'capture-1',
@@ -57,6 +57,19 @@ describe('OCR queue presentation', () => {
     expect(view(doc({ status: 'canceled' })).userStatus).toBe('cancelled');
     expect(view(doc({ status: 'canceled' })).statusText).toBe('已取消');
   });
+
+  it.each(['failed', 'recovery_required'] as const)(
+    'offers retry on a linked %s recovery row and restart after the link is gone',
+    (status) => {
+      const recovery = { status, recoveryCode: 'capture_recovery_required', hasRaw: true };
+      expect(view(doc({ ...recovery, captureId: 'capture-1' }))).toMatchObject({
+        userStatus: 'needs-attention', interrupted: false,
+      });
+      expect(view(doc(recovery))).toMatchObject({
+        userStatus: 'needs-attention', interrupted: true,
+      });
+    },
+  );
 
   it('shows page progress only as the processing step', () => {
     const described = view(doc({ status: 'processing', captureId: 'capture-1' }), {

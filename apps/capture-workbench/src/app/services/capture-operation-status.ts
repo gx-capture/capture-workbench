@@ -60,11 +60,12 @@ function terminalStatusFromStage(
 /**
  * Whether the stored document holds the terminal data of its capture, so that
  * only the runtime cleanup is left to do: it is stored as ended, as an OCR
- * result to confirm, or as a refused cleanup.
+ * result to confirm, or as a refused cleanup. A legacy failed row marked
+ * `capture_recovery_required` still needs to recover its terminal state.
  */
 export function holdsTerminalData(document: DesktopLibrarySummary): boolean {
   return document.status === 'completed'
-    || document.status === 'failed'
+    || (document.status === 'failed' && document.recoveryCode !== 'capture_recovery_required')
     || document.status === 'canceled'
     || (document.status === 'awaiting_confirmation' && document.hasRaw === true)
     || document.recoveryCode === 'runtime_cleanup_failed';
@@ -84,7 +85,7 @@ export function committedTerminalStatus(
 ): TerminalLibraryStatus | undefined {
   if (
     document.status === 'completed'
-    || document.status === 'failed'
+    || (document.status === 'failed' && document.recoveryCode !== 'capture_recovery_required')
     || document.status === 'canceled'
   ) {
     return document.status;
@@ -114,11 +115,14 @@ export function terminalStage(status: TerminalLibraryStatus): string {
  * These are the states in which a queue row offers a restart.
  */
 export function isCaptureLost(document: DesktopLibrarySummary): boolean {
+  if (document.captureId) return false;
   if (document.status === 'processing' || document.status === 'persisting') {
-    return !document.captureId;
+    return true;
   }
-  return (document.status === 'failed' || document.status === 'recovery_required')
-    && document.recoveryCode === 'capture_recovery_required';
+  if (document.status === 'recovery_required') {
+    return document.recoveryCode !== 'runtime_cleanup_failed';
+  }
+  return document.status === 'failed' && document.recoveryCode === 'capture_recovery_required';
 }
 
 /**

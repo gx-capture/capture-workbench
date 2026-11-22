@@ -149,4 +149,25 @@ describe('ASR queue selectors', () => {
     expect(interruptedView.interrupted).toBe(true);
     expect(interruptedView.statusText).toBe('已中斷');
   });
+
+  it.each(['failed', 'recovery_required'] as const)(
+    'offers retry on a linked %s recovery row and restart after the link is gone',
+    (status) => {
+      const recovery = makeRecording({
+        status, recoveryCode: 'capture_recovery_required', recoveryMessage: 'Read failed.',
+      });
+      const view = (captureId?: string) => describeAsrDocument({
+        document: { ...recovery, captureId },
+        busy: false,
+        speechReady: true,
+        installPercent: null,
+      });
+      expect(view('capture-1')).toMatchObject({
+        userStatus: 'needs-attention', interrupted: false, errorMessage: 'Read failed.',
+      });
+      expect(view()).toMatchObject({
+        userStatus: 'needs-attention', interrupted: true, errorMessage: '',
+      });
+    },
+  );
 });

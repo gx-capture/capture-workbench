@@ -3,7 +3,7 @@ import type { DesktopLibrarySummary } from '../contracts';
 import { desktopMessages } from '../i18n/desktop-messages';
 import type { DesktopCaptureOperation } from './desktop-runtime-client.service';
 import { captureStatusChipVariant, type CaptureStatusChipVariant, type CaptureUserStatus } from './capture-user-status';
-import { isActiveOneShotOperation, stageLabel } from './capture-operation-status';
+import { isActiveOneShotOperation, isCaptureLost, stageLabel } from './capture-operation-status';
 
 export interface OcrQueueView {
   readonly documentId: string;
@@ -182,17 +182,11 @@ function describeStatus(
   ) {
     return { userStatus: 'processing', interrupted: false };
   }
-  if (document.status === 'processing' || document.status === 'persisting') {
+  if (isCaptureLost(document)) {
     return { userStatus: 'needs-attention', interrupted: true };
   }
   if (document.status === 'canceled') {
     return { userStatus: 'cancelled', interrupted: false };
-  }
-  if (document.status === 'failed' || document.status === 'recovery_required') {
-    return {
-      userStatus: 'needs-attention',
-      interrupted: document.recoveryCode === 'capture_recovery_required',
-    };
   }
   if (
     document.status === 'completed'

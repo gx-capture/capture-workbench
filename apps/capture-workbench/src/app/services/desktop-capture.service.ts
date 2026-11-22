@@ -61,7 +61,7 @@ import {
   type TerminalLibraryStatus,
   terminalStage,
 } from './capture-operation-status';
-import { errorMessage } from './desktop-errors';
+import { errorMessage, isRuntimeNotFound } from './desktop-errors';
 import { isRecordingMediaType, isPdfMediaType } from './capture-media-types';
 import { isFeatureReady, selectFeatureMissing } from './recognition-requirements';
 import { desktopMessages } from '../i18n/desktop-messages';
@@ -69,6 +69,7 @@ import { desktopMessages } from '../i18n/desktop-messages';
 interface ActiveCapture {
   clientRequestId?: string;
   captureId?: string;
+  captureNotFound?: boolean;
   streaming: boolean;
   lastEventSequence: number;
   rawPersisted: boolean;
@@ -237,9 +238,7 @@ export class DesktopCaptureService {
   }
 
   /**
-   * Starts again a document whose runtime operation was lost: clears the stale
-   * id without trying to recover it, unlike `retry$`. The stored document
-   * decides: the link is cleared only while it still says the capture is lost.
+   * Starts again only while the stored document says its capture is lost.
    */
   restartLost$(
     documentId: string,
@@ -267,9 +266,10 @@ export class DesktopCaptureService {
     return this.decideFromStoredDocument$(documentId, (stored) => {
       if (stored?.captureId) return this.recoverCapture$(stored, host);
       // Without a runtime capture there is nothing to resume. A new capture
-      // starts only from a state in which a retry is offered: never for a
-      // document that holds its result, as a row read before its cleanup can ask.
-      return stored && canCaptureAgain(stored)
+      // starts only from a state in which Retry is offered. Reconnecting
+      // above needs the runtime, while starting a recording also needs speech.
+      return stored && canCaptureAgain(stored) && !isCaptureLost(stored)
+        && (!isRecordingMediaType(stored.mediaType) || isFeatureReady(host.requirements(), 'asr'))
         ? this.startUnlessCancelled$(documentId, host)
         : this.declineOutdatedRequest$(stored, host);
     }, 'retry-or-restart');
@@ -684,7 +684,7 @@ export class DesktopCaptureService {
           });
         }
       }),
-      switchMap(() => this.runtime.getCapture(operation.captureId)),
+      switchMap(() => this.readCapture$(operation.captureId, active)),
       tap((next) => this.rememberRecordingOperation(documentId, next)),
     );
   }
@@ -780,10 +780,8 @@ export class DesktopCaptureService {
               active.lastStage = operation.status;
               this.rememberRecordingOperation(document.documentId, operation);
             }),
-            // A capture that the runtime answers a cancel with as ended is
-            // stored as answered. Reading it again adds nothing, and a read
-            // that fails could leave a result that is complete unsaved.
-            switchMap((operation) => active.cancelSent && !isActiveStreaming(operation)
+            // The initial read or cancel reply already tells us how it ended.
+            switchMap((operation) => !isActiveStreaming(operation)
               ? of(operation)
               : this.waitForStreamingTerminal$(document.documentId, operation, active)),
             switchMap((operation) => this.persistStreamingTerminal$(
@@ -868,7 +866,7 @@ export class DesktopCaptureService {
         }
         return this.readUntilCancelRequested$(
           timer(700).pipe(
-            switchMap(() => this.runtime.getCapture(operation.captureId)),
+            switchMap(() => this.readCapture$(operation.captureId, active)),
           ),
           operation.captureId,
           active,
@@ -927,7 +925,17 @@ export class DesktopCaptureService {
     active: ActiveCapture,
   ): Observable<DesktopCaptureOperation> {
     if (active.cancelRequested) return this.sendCancellation$(captureId, active);
-    return this.readUntilCancelRequested$(this.runtime.getCapture(captureId), captureId, active);
+    return this.readUntilCancelRequested$(this.readCapture$(captureId, active), captureId, active);
+  }
+
+  /** Only a capture-status read can confirm the capture itself is absent. */
+  private readCapture$(
+    captureId: string,
+    active: ActiveCapture,
+  ): Observable<DesktopCaptureOperation> {
+    return this.runtime.getCapture(captureId).pipe(
+      tap({ error: (error: unknown) => { active.captureNotFound = isRuntimeNotFound(error); } }),
+    );
   }
 
   /**
@@ -1296,7 +1304,7 @@ export class DesktopCaptureService {
       }
       return this.library.updateCapture({
         documentId,
-        captureId: active.captureId,
+        ...(active.captureNotFound ? { clearCaptureId: true } : { captureId: active.captureId }),
         status: 'recovery_required',
         stage: active.lastStage ?? 'recovery_required',
         recoveryCode: active.cancelSent && !active.cancelAnswered

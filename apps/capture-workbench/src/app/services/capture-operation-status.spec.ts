@@ -159,6 +159,15 @@ describe('canCaptureAgain', () => {
 describe('isCaptureLost', () => {
   beforeEach(() => setDesktopLocale('zh-TW'));
 
+  it.each(['failed', 'recovery_required'] as const)(
+    'requires an absent capture link on a %s recovery row, regardless of previously saved raw data',
+    (status) => {
+      const recovery = { status, recoveryCode: 'capture_recovery_required', hasRaw: true };
+      expect(isCaptureLost(stored({ ...recovery, captureId: 'capture-1' }))).toBe(false);
+      expect(isCaptureLost(stored(recovery))).toBe(true);
+    },
+  );
+
   // Every stored state, with and without a runtime capture.
   const states = STATUSES.flatMap((status) => [undefined, 'capture_recovery_required', 'runtime_cleanup_failed', 'cancel_failed']
     .flatMap((recoveryCode) => [undefined, 'capture-1'].map((captureId) => ({ status, recoveryCode, captureId }))));

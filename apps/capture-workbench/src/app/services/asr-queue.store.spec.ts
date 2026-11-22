@@ -504,18 +504,21 @@ describe('AsrQueueStore', () => {
     TestBed.tick();
     expect(capture.reattach$).toHaveBeenCalledExactlyOnceWith(document, expect.anything());
 
-    docs.set([{ ...document, status: 'recovery_required' }]);
-    // The capture service stores a capture it cannot find with the document and completes.
+    const recoveryRow = { ...document, status: 'recovery_required', recoveryCode: 'capture_recovery_required' } as const;
+    docs.set([recoveryRow]);
+    // The first read failed without confirming the capture was absent.
     recovery.complete();
     TestBed.tick();
-    // Further refreshes and busy changes must not retry the missing runtime capture.
-    docs.set([{ ...document, status: 'recovery_required', updatedAtMs: 200 }]);
+    // Further refreshes and busy changes must not retry the same runtime capture.
+    docs.set([{ ...recoveryRow, updatedAtMs: 200 }]);
     busyIds.set(new Set());
     TestBed.tick();
     expect(capture.reattach$).toHaveBeenCalledTimes(1);
 
     store.retry(document.documentId);
     expect(capture.retry$).toHaveBeenCalledExactlyOnceWith(document.documentId, expect.anything());
+    docs.set([{ ...recoveryRow, captureId: undefined }]);
+    TestBed.tick();
     store.restart(document.documentId);
     TestBed.tick();
     expect(capture.restartLost$).toHaveBeenCalledExactlyOnceWith(document.documentId, expect.anything());
@@ -525,6 +528,37 @@ describe('AsrQueueStore', () => {
     docs.set([{ ...document, captureId: 'replacement' }]);
     TestBed.tick();
     expect(capture.reattach$).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not auto-reattach an unlinked recovery row on load', () => {
+    const lost = makeRecording({ status: 'recovery_required', recoveryCode: 'capture_recovery_required' });
+    const { store, capture } = setup({ initialDocs: [{ ...lost, captureId: undefined }] });
+
+    store.attach();
+    TestBed.tick();
+
+    expect(capture.reattach$).not.toHaveBeenCalled();
+    expect(store.rows()).toEqual([expect.objectContaining({
+      documentId: lost.documentId, userStatus: 'needs-attention', interrupted: true,
+    })]);
+  });
+
+  it('can reconnect on explicit Retry even when speech recognition is unavailable', () => {
+    const linked = makeRecording({
+      status: 'recovery_required', captureId: 'linked', recoveryCode: 'cancel_failed',
+    });
+    const { store, runtime } = setup({
+      initialDocs: [linked], speechStatus: 'installable', realCapture: true,
+    });
+
+    store.attach();
+    TestBed.tick();
+    expect(runtime.getCapture).not.toHaveBeenCalled();
+
+    store.retry(linked.documentId);
+
+    expect(runtime.getCapture).toHaveBeenCalledExactlyOnceWith('linked');
+    expect(runtime.startRecordingCapture).not.toHaveBeenCalled();
   });
 
   it('does not resume a recording whose cancel the runtime refused after the user cancelled it', () => {
@@ -965,7 +999,7 @@ describe('AsrQueueStore', () => {
           recoveryCode: 'capture_recovery_required', createdAtMs: 1,
         });
         const waiting = makeRecording({ documentId: '2'.repeat(32), createdAtMs: 2 });
-        const { store, runtime, reads, answer } = decisionsTheTestAnswers([interrupted, waiting]);
+        const { store, runtime, library, reads, answer } = decisionsTheTestAnswers([interrupted, waiting]);
         // The runtime no longer knows the interrupted capture.
         runtime.getCapture.mockImplementation(() =>
           throwError(() => 'Capture Runtime request was rejected with HTTP 404.'));
@@ -985,10 +1019,16 @@ describe('AsrQueueStore', () => {
         answer(reads[1], [interrupted, waiting]);
         TestBed.tick();
         expect(runtime.getCapture).toHaveBeenCalledExactlyOnceWith('capture-interrupted');
+        expect(library.updateCapture).toHaveBeenCalledWith(expect.objectContaining({
+          documentId: interrupted.documentId,
+          status: 'recovery_required',
+          clearCaptureId: true,
+          recoveryCode: 'capture_recovery_required',
+        }));
 
         // The recovery ended (its capture is lost), and the waiting recording gets its turn.
         expect(reads).toHaveLength(3);
-        answer(reads[2], [interrupted, waiting]);
+        answer(reads[2], [{ ...interrupted, captureId: undefined }, waiting]);
         expect(runtime.startRecordingCapture).toHaveBeenCalledExactlyOnceWith(
           expect.objectContaining({ documentId: waiting.documentId }),
         );

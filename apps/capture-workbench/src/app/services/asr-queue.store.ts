@@ -309,7 +309,7 @@ export class AsrQueueStore {
   }
 
   retry(documentId: string): void {
-    if (!this.runtime.ready() || !this.speechReady()) return;
+    if (!this.runtime.ready()) return;
     this.capture
       .retry$(documentId, this.host)
       .pipe(takeUntilDestroyed(this.destroyRef))
