@@ -769,6 +769,7 @@ describe('AsrQueueStore', () => {
       expect(stored()).toMatchObject({ status: 'recovery_required', recoveryCode: 'runtime_cleanup_failed', captureId });
       docs.set([stored()]);
       TestBed.tick();
+      expect(store.rows()[0]).toMatchObject({ userStatus: 'needs-attention', interrupted: false });
       expect(reattach).toHaveBeenCalledTimes(1);
       expect(runtime.deleteCapture).toHaveBeenCalledExactlyOnceWith(captureId);
     });
