@@ -1,7 +1,7 @@
 import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { Router } from '@angular/router';
-import { BehaviorSubject, defer, of, Subject, type Observable } from 'rxjs';
+import { BehaviorSubject, defer, EMPTY, of, Subject, type Observable } from 'rxjs';
 import type { DesktopLibrarySummary } from '../contracts';
 import { desktopMessages, setDesktopLocale } from '../i18n/desktop-messages';
 import { DesktopLibraryService } from './desktop-library.service';
@@ -24,6 +24,7 @@ describe('HistoryListStore', () => {
     const router = { navigate: vi.fn() };
     const busyIds = signal<ReadonlySet<string>>(new Set());
     const activeIds = signal<ReadonlySet<string>>(new Set());
+    const claimDocumentForDeletion$ = vi.fn(deferDeletion);
     TestBed.configureTestingModule({ providers: [
       { provide: DesktopRuntimeClientService, useValue: { started: signal(true) } },
       { provide: DesktopLibraryService, useValue: library },
@@ -32,16 +33,59 @@ describe('HistoryListStore', () => {
         oneShotOperations: signal(new Map()),
         recordingOperations: signal(new Map()),
         isDocumentClaimed: (id: string) => activeIds().has(id),
-        claimDocumentForDeletion$: deferDeletion,
+        claimDocumentForDeletion$,
         forgetDeletedDocument: vi.fn(),
       } },
       { provide: Router, useValue: router },
     ] });
     const store = TestBed.inject(HistoryListStore);
+    const capture = { claimDocumentForDeletion$ };
     const refreshDocuments = vi.spyOn(TestBed.inject(LibraryStore), 'refreshDocuments');
     TestBed.tick();
-    return { store, allDocuments, refreshDocuments, library, router, busyIds, activeIds };
+    return { store, allDocuments, refreshDocuments, library, router, busyIds, activeIds, capture };
   }
+
+  /** The history list over the real capture service: its claims are the ones the queues see. */
+  function setupWithCapture() {
+    setDesktopLocale('zh-TW');
+    const completed: DesktopLibrarySummary = { documentId: 'a', fileName: 'report.pdf', mediaType: 'application/pdf', byteLength: 1, createdAtMs: 1, updatedAtMs: 2, status: 'completed' };
+    const waiting: DesktopLibrarySummary = { documentId: 'b', fileName: 'meeting.mp3', mediaType: 'audio/mpeg', byteLength: 1, createdAtMs: 1, updatedAtMs: 3, status: 'queued' };
+    const response = new Subject<void>();
+    const library = {
+      list: vi.fn((): Observable<readonly DesktopLibrarySummary[]> => of([completed, waiting])),
+      delete: vi.fn(() => response),
+    };
+    TestBed.configureTestingModule({ providers: [
+      { provide: DesktopRuntimeClientService, useValue: { started: signal(true) } },
+      { provide: DesktopLibraryService, useValue: library },
+      { provide: Router, useValue: { navigate: vi.fn() } },
+    ] });
+    const store = TestBed.inject(HistoryListStore);
+    const capture = TestBed.inject(DesktopCaptureService);
+    TestBed.tick();
+    return { store, capture, library, response, completed, waiting };
+  }
+
+  it('keeps the claim of a delete after leaving the page until the host answers', () => {
+    const { store, capture, library, response, waiting } = setupWithCapture();
+    const row = store.rows().find((item) => item.documentId === 'a');
+    if (!row) throw new Error('missing row');
+    store.askDelete(row);
+    store.confirmDelete();
+    store.clearTransientState();
+
+    expect(response.observed).toBe(true);
+    expect(capture.isDocumentClaimed('a')).toBe(true);
+
+    library.list.mockReturnValue(of([waiting]));
+    response.next();
+    response.complete();
+    TestBed.tick();
+    expect(capture.isDocumentClaimed('a')).toBe(false);
+    expect(store.rows().map((item) => item.documentId)).toEqual(['b']);
+    expect(store.pendingDelete()).toBeNull();
+    expect(store.error()).toBe('');
+  });
   it('retains filters on the root instance and opens with a reload-safe origin', () => {
     const { store, router } = setup();
     store.typeFilter.set('asr');
@@ -105,6 +149,21 @@ describe('HistoryListStore', () => {
     expect(store.deleting()).toBe(false);
     expect(store.error()).toBe('');
   });
+  it('closes the confirmation when the library declines the delete, and the row stays', () => {
+    const { store, library, capture } = setup();
+    const row = store.rows()[0];
+    if (!row) throw new Error('missing row');
+    store.askDelete(row);
+    // The library declines a document that became claimed: nothing is deleted.
+    capture.claimDocumentForDeletion$.mockReturnValueOnce(EMPTY);
+    store.confirmDelete();
+
+    expect(library.delete).not.toHaveBeenCalled();
+    expect(store.pendingDelete()).toBeNull();
+    expect(store.deleting()).toBe(false);
+    expect(store.error()).toBe('');
+    expect(store.rows().map((item) => item.documentId)).toContain(row.documentId);
+  });
   it.each(['removed', 'captureId', 'active capture'] as const)('rechecks a document that is %s while confirmation is open', (change) => {
     const { store, allDocuments, library, activeIds } = setup();
     const row = store.rows()[0];
@@ -141,7 +200,7 @@ describe('HistoryListStore', () => {
     store.open(row.documentId);
     expect(store.error()).toBe('');
   });
-  it('unsubscribes the pending delete when leaving and retains filters', () => {
+  it('keeps the delete running when leaving, ignores its late failure and retains filters', () => {
     const { store, library } = setup();
     const response = new Subject<undefined>();
     library.delete.mockReturnValue(response);
@@ -152,8 +211,8 @@ describe('HistoryListStore', () => {
     store.confirmDelete();
     store.error.set('old error');
     store.clearTransientState();
-    expect(response.observed).toBe(false);
-    expect(store.deleting()).toBe(false);
+    // The host is still deleting: the delete, owned by the library, waits for its answer.
+    expect(response.observed).toBe(true);
     response.error(new Error('late host error'));
     expect(store.pendingDelete()).toBeNull();
     expect(store.error()).toBe('');

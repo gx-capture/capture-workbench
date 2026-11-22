@@ -2,7 +2,7 @@ import { DOCUMENT } from '@angular/common';
 import { computed, DestroyRef, inject, Injectable, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { Router } from '@angular/router';
-import { finalize, Subject, takeUntil } from 'rxjs';
+import { finalize } from 'rxjs';
 import { desktopMessages } from '../i18n/desktop-messages';
 import { DesktopCaptureService } from './desktop-capture.service';
 import { LibraryStore } from './library.store';
@@ -15,7 +15,7 @@ export class HistoryListStore {
   private readonly router = inject(Router);
   private readonly document = inject(DOCUMENT);
   private readonly destroyRef = inject(DestroyRef);
-  private readonly leaveHistory = new Subject<void>();
+  private transientGeneration = 0;
   private focusAfterClose: { readonly documentId: string | null } | null = null;
   readonly typeFilter = signal<HistoryFilters['type']>('all');
   readonly statusFilter = signal<HistoryFilters['status']>('all');
@@ -57,7 +57,7 @@ export class HistoryListStore {
   }
 
   clearTransientState(): void {
-    this.leaveHistory.next();
+    this.transientGeneration += 1;
     this.error.set('');
     this.pendingDelete.set(null);
     this.focusAfterClose = null;
@@ -83,17 +83,27 @@ export class HistoryListStore {
       return;
     }
     this.deleting.set(true);
+    // Leaving the page only stops this page's updates: the delete belongs to
+    // the library and keeps the document claimed until the host answers.
+    const generation = this.transientGeneration;
     this.library.delete(pending.documentId).pipe(
-      takeUntil(this.leaveHistory),
       takeUntilDestroyed(this.destroyRef),
       finalize(() => this.deleting.set(false)),
     ).subscribe({
       next: () => {
+        if (generation !== this.transientGeneration) return;
         this.focusAfterClose = { documentId: null };
         this.pendingDelete.set(null);
       },
       error: () => {
+        if (generation !== this.transientGeneration) return;
         this.error.set(desktopMessages().historyDeleteFailed);
+        this.pendingDelete.set(null);
+      },
+      // Also when the library declined the delete (the document became
+      // claimed meanwhile): nothing was deleted and the row stays.
+      complete: () => {
+        if (generation !== this.transientGeneration) return;
         this.pendingDelete.set(null);
       },
     });
