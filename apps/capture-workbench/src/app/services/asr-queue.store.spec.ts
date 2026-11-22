@@ -369,29 +369,48 @@ describe('AsrQueueStore', () => {
     expect(capture.startDocument$).toHaveBeenCalledExactlyOnceWith(first.documentId, expect.anything());
   });
 
-  it('holds the queue turn during cancellation and shows a failed write', () => {
-    const waiting = makeRecording();
-    const { store, library, runtime, runtimeStatus, requirements } = setup({
-      initialDocs: [waiting], speechStatus: 'installable', realCapture: true,
-    });
-    const cancellation = new Subject<DesktopLibrarySummary>();
-    library.updateCapture.mockReturnValue(cancellation);
-    store.attach();
-    TestBed.tick();
+  it.each(['success', 'failure'] as const)(
+    'holds the queue turn while a waiting cancellation settles with %s',
+    (outcome) => {
+      const waiting = makeRecording({ documentId: '1'.repeat(32), createdAtMs: 100 });
+      const next = makeRecording({ documentId: '2'.repeat(32), createdAtMs: 200 });
+      const { store, library, runtime, runtimeStatus, requirements, docs } = setup({
+        initialDocs: [next, waiting], speechStatus: 'installable', realCapture: true,
+      });
+      const cancellation = new Subject<DesktopLibrarySummary>();
+      library.updateCapture.mockReturnValueOnce(cancellation);
+      store.attach();
+      TestBed.tick();
 
-    store.cancel(waiting.documentId);
-    requirements.set([requirement('speech-recognition', 'ready')]);
-    TestBed.tick();
-    store.cancel(waiting.documentId);
-    expect(library.updateCapture).toHaveBeenCalledOnce();
-    expect(runtime.startRecordingCapture).not.toHaveBeenCalled();
+      store.cancel(waiting.documentId);
+      requirements.set([requirement('speech-recognition', 'ready')]);
+      TestBed.tick();
+      store.cancel(waiting.documentId);
+      expect(library.updateCapture).toHaveBeenCalledOnce();
+      // Neither the cancelled recording nor the next waiting one starts before the cancel settles.
+      expect(runtime.startRecordingCapture).not.toHaveBeenCalled();
 
-    cancellation.error(new Error('Cancel failed'));
-    expect(runtimeStatus.message()).toBe('Cancel failed');
-    const service = TestBed.inject(DesktopCaptureService);
-    expect(service.isDocumentClaimed(waiting.documentId)).toBe(false);
-    expect(service.isDecisionPaused(waiting.documentId)).toBe(true);
-  });
+      const service = TestBed.inject(DesktopCaptureService);
+      if (outcome === 'success') {
+        const cancelled = { ...waiting, status: 'canceled', stage: 'cancelled' } satisfies DesktopLibrarySummary;
+        cancellation.next(cancelled);
+        cancellation.complete();
+        docs.set([next, cancelled]);
+        TestBed.tick();
+        expect(runtimeStatus.message()).toBe('');
+        expect(runtime.startRecordingCapture).toHaveBeenCalledExactlyOnceWith(
+          expect.objectContaining({ documentId: next.documentId }),
+        );
+      } else {
+        cancellation.error(new Error('Cancel failed'));
+        TestBed.tick();
+        expect(runtimeStatus.message()).toBe('Cancel failed');
+        expect(service.isDecisionPaused(waiting.documentId)).toBe(true);
+        expect(runtime.startRecordingCapture).not.toHaveBeenCalled();
+      }
+      expect(service.isDocumentClaimed(waiting.documentId)).toBe(false);
+    },
+  );
 
   it('derives compact speaker install labels and delegates installation', () => {
     const { store, features, requirements } = setup();

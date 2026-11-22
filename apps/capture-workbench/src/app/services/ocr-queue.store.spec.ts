@@ -2,7 +2,7 @@ import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 import type { CaptureRequirementId, RuntimeInstallation, RuntimeRequirement } from '@gx-capture/capture-workbench-ui';
-import { of, Subject } from 'rxjs';
+import { of, Subject, throwError } from 'rxjs';
 import { App } from '../app';
 import type { DesktopCaptureOptions, DesktopLibraryExport, DesktopLibrarySummary } from '../contracts';
 import { desktopMessages, setDesktopLocale } from '../i18n/desktop-messages';
@@ -217,6 +217,24 @@ describe('OcrQueueStore', () => {
       status: 'canceled', stage: 'cancelled', captureId: undefined,
     });
     expect(harness.rows()[0]?.userStatus).toBe('cancelled');
+    expect(harness.runtime.cancelCapture).not.toHaveBeenCalled();
+    expect(harness.runtime.createCapture).not.toHaveBeenCalled();
+  });
+
+  it.each(['read', 'write'] as const)('shows a failed %s of a waiting cancel', (failure) => {
+    const harness = configure({ ocrReady: false });
+    const waiting = doc({});
+    harness.docs.push(waiting);
+    harness.store.attach();
+    TestBed.tick();
+    const error = new Error('Library unavailable');
+    if (failure === 'read') harness.library.list.mockReturnValueOnce(throwError(() => error));
+    else harness.library.updateCapture.mockReturnValueOnce(throwError(() => error));
+
+    harness.store.cancel(waiting.documentId);
+
+    expect(harness.store.importError()).toBe('Library unavailable');
+    expect(harness.docs[0]).toBe(waiting);
     expect(harness.runtime.cancelCapture).not.toHaveBeenCalled();
     expect(harness.runtime.createCapture).not.toHaveBeenCalled();
   });
