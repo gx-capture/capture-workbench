@@ -2101,11 +2101,15 @@ describe('DesktopCaptureService', () => {
       });
     });
 
-    it.each(['retry$', 'restartLost$'] as const)(
+    // Each entry on a row that offers it: Retry on an ordinary failure, Start again on a lost capture.
+    it.each([
+      ['retry$', { ...summary, status: 'failed' }],
+      ['restartLost$', lost],
+    ] as const satisfies readonly (readonly ['retry$' | 'restartLost$', DesktopLibrarySummary])[])(
       'does not let an older cancel that was never applied cancel an explicit %s',
-      (entry) => {
-        const steps = decisionSteps(lost);
-        steps.service.reattach$(lost, steps.host).subscribe({ error: steps.failed });
+      (entry, storedDocument) => {
+        const steps = decisionSteps(storedDocument);
+        steps.service.reattach$(storedDocument, steps.host).subscribe({ error: steps.failed });
         steps.service.cancel(summary.documentId);
         steps.reads[0].error('Capture library index cannot be read.');
 
