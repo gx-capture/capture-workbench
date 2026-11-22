@@ -720,8 +720,26 @@ describe('AsrQueueStore', () => {
       });
       const waiting = makeRecording({ documentId: '2'.repeat(32), createdAtMs: 2 });
       const failure = new Error('Capture library index cannot be written.');
+      // The library keeps each document's own row: the waiting recording's
+      // writes do not land on the stranded one, and a read sees them.
+      let waitingStored: DesktopLibrarySummary = waiting;
+      const applyToStranded = harness.library.updateCapture.getMockImplementation();
+      if (!applyToStranded) throw new Error('Expected the library to implement capture updates.');
+      harness.library.updateCapture.mockImplementation((update) => {
+        if (update.documentId !== waiting.documentId) return applyToStranded(update);
+        waitingStored = {
+          ...waitingStored,
+          status: update.status,
+          stage: update.stage,
+          captureId: update.clearCaptureId ? undefined : update.captureId ?? waitingStored.captureId,
+        };
+        return of(waitingStored);
+      });
+      // The waiting recording's upload stays unanswered: its capture holds the turn.
+      harness.runtime.startRecordingCapture.mockReset()
+        .mockImplementation(() => new Subject<CaptureOperation>());
       harness.docs.set([harness.stored(), waiting]);
-      harness.library.list.mockImplementation(() => of([harness.stored(), waiting]));
+      harness.library.list.mockImplementation(() => of([harness.stored(), waitingStored]));
       harness.library.updateCapture.mockReturnValueOnce(throwError(() => failure))
         .mockReturnValueOnce(throwError(() => failure));
       const service = TestBed.inject(DesktopCaptureService);
