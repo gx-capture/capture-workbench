@@ -34,7 +34,18 @@ export interface HistoryFilters {
   readonly search: string;
 }
 
-export function historyRow(document: DesktopLibrarySummary, busy: boolean, operation?: DesktopCaptureOperation, active = false): HistoryRow {
+/**
+ * `active`: a capture, a batch or a decision claims the document, shown as in
+ * progress. `beingDeleted`: the library deletes it; the row keeps its stored
+ * status and offers no second delete.
+ */
+export function historyRow(
+  document: DesktopLibrarySummary,
+  busy: boolean,
+  operation?: DesktopCaptureOperation,
+  active = false,
+  beingDeleted = false,
+): HistoryRow {
   const kind = isRecordingMediaType(document.mediaType) ? 'asr' : 'ocr';
   const described = kind === 'asr'
     ? describeAsrDocument({ document, operation, busy: busy || active, speechReady: true, installPercent: null })
@@ -48,7 +59,7 @@ export function historyRow(document: DesktopLibrarySummary, busy: boolean, opera
     extent: 'durationLabel' in described ? described.durationLabel : described.pageLabel,
     updatedAtMs: document.updatedAtMs,
     updatedAt: formatHistoryDate(document.updatedAtMs),
-    canDelete: !busy && !active && !document.captureId,
+    canDelete: !busy && !active && !beingDeleted && !document.captureId,
   };
 }
 

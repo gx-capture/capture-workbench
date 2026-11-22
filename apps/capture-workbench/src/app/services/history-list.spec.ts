@@ -77,6 +77,10 @@ describe('history list', () => {
     expect(historyRow(document(), false, undefined, true).canDelete).toBe(false);
     expect(historyRow(document({ captureId: 'capture' }), false).canDelete).toBe(false);
   });
+  it('keeps the stored status of a row being deleted and offers no second delete', () => {
+    const stored = historyRow(document(), false);
+    expect(historyRow(document(), false, undefined, false, true)).toEqual({ ...stored, canDelete: false });
+  });
   it('formats updatedAt as YYYY/MM/DD HH:mm in local 24-hour time regardless of locale', () => {
     const timestamp = new Date(2026, 10, 16, 14, 5).getTime();
     expect(formatHistoryDate(timestamp)).toBe('2026/11/16 14:05');

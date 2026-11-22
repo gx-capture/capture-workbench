@@ -33,6 +33,7 @@ describe('HistoryListStore', () => {
         oneShotOperations: signal(new Map()),
         recordingOperations: signal(new Map()),
         isDocumentClaimed: (id: string) => activeIds().has(id),
+        isDocumentBeingDeleted: () => false,
         claimDocumentForDeletion$,
         forgetDeletedDocument: vi.fn(),
       } },
@@ -65,6 +66,20 @@ describe('HistoryListStore', () => {
     TestBed.tick();
     return { store, capture, library, response, completed, waiting };
   }
+
+  it.each(['a', 'b'])('shows row %s with its stored status while it is being deleted', (documentId) => {
+    const { store, capture } = setupWithCapture();
+    const before = store.rows().find((row) => row.documentId === documentId);
+    if (!before) throw new Error('missing row');
+    store.statusFilter.set(before.userStatus);
+    store.askDelete(before);
+    store.confirmDelete();
+    expect(capture.isDocumentClaimed(documentId)).toBe(true);
+
+    // A deletion is not a capture in progress: the row keeps its status and its filter.
+    const during = store.rows().find((row) => row.documentId === documentId);
+    expect(during).toMatchObject({ userStatus: before.userStatus, statusText: before.statusText, canDelete: false });
+  });
 
   it('keeps the claim of a delete after leaving the page until the host answers', () => {
     const { store, capture, library, response, waiting } = setupWithCapture();

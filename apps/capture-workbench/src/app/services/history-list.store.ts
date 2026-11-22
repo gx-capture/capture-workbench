@@ -25,12 +25,17 @@ export class HistoryListStore {
   readonly pendingDelete = signal<HistoryRow | null>(null);
   readonly dialogState = computed(() => this.pendingDelete() ? 'open' : 'closed');
   readonly hasDocuments = computed(() => (this.library.allDocuments() ?? []).length > 0);
-  private readonly allRows = computed(() => (this.library.allDocuments() ?? []).map((document) => historyRow(
-    document,
-    this.capture.busyIds().has(document.documentId),
-    this.capture.oneShotOperations().get(document.documentId) ?? this.capture.recordingOperations().get(document.documentId),
-    this.capture.isDocumentClaimed(document.documentId),
-  )));
+  private readonly allRows = computed(() => (this.library.allDocuments() ?? []).map((document) => {
+    // A deletion claims the document too, but it is not a capture in progress.
+    const beingDeleted = this.capture.isDocumentBeingDeleted(document.documentId);
+    return historyRow(
+      document,
+      this.capture.busyIds().has(document.documentId),
+      this.capture.oneShotOperations().get(document.documentId) ?? this.capture.recordingOperations().get(document.documentId),
+      !beingDeleted && this.capture.isDocumentClaimed(document.documentId),
+      beingDeleted,
+    );
+  }));
   readonly rows = computed(() => filterHistoryRows(this.allRows(), {
     type: this.typeFilter(), status: this.statusFilter(), search: this.search(),
   }));

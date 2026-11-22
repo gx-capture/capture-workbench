@@ -174,6 +174,14 @@ export class DesktopCaptureService {
       || this.deletingDocuments().has(documentId);
   }
 
+  /**
+   * Reports whether the library is deleting the document. This claim is not
+   * a capture: a row being deleted keeps the status it has stored.
+   */
+  isDocumentBeingDeleted(documentId: string): boolean {
+    return this.deletingDocuments().has(documentId);
+  }
+
   /** Claims an unclaimed document for deletion until the operation settles. */
   claimDocumentForDeletion$(documentId: string, remove: () => Observable<void>): Observable<void> {
     return defer(() => {
