@@ -47,6 +47,30 @@ describe('committedTerminalStatus', () => {
     }))).toBe(status);
   });
 
+  it.each([
+    ['PDF', { fileName: 'file.pdf', mediaType: 'application/pdf' }, 'a raw result', { hasRaw: true }, 'awaiting_confirmation'],
+    ['PDF', { fileName: 'file.pdf', mediaType: 'application/pdf' }, 'a stored error', { errorCode: 'ocr_failed' }, 'awaiting_confirmation'],
+    ['PDF', { fileName: 'file.pdf', mediaType: 'application/pdf' }, 'neither', {}, 'awaiting_confirmation'],
+    ['image', { fileName: 'page.png', mediaType: 'image/png' }, 'a raw result', { hasRaw: true }, 'awaiting_confirmation'],
+    ['image', { fileName: 'page.png', mediaType: 'image/png' }, 'a stored error', { errorCode: 'ocr_failed' }, 'awaiting_confirmation'],
+    ['image', { fileName: 'page.png', mediaType: 'image/png' }, 'neither', {}, 'awaiting_confirmation'],
+    ['recording', { fileName: 'meeting.m4a', mediaType: 'audio/mp4' }, 'a raw result', { hasRaw: true }, 'completed'],
+    ['recording', { fileName: 'meeting.m4a', mediaType: 'audio/mp4' }, 'a stored error', { errorCode: 'speech_failed' }, 'failed'],
+    ['recording', { fileName: 'meeting.m4a', mediaType: 'audio/mp4' }, 'neither', {}, undefined],
+  ] as const)(
+    'reads cleanup row of %s with stage awaiting_structuring and %s as %s',
+    (_kind, media, _evidenceLabel, evidence, expected) => {
+      expect(committedTerminalStatus(stored({
+        ...media,
+        status: 'recovery_required',
+        recoveryCode: 'runtime_cleanup_failed',
+        stage: 'awaiting_structuring',
+        captureId: 'capture-1',
+        ...evidence,
+      }))).toBe(expected);
+    },
+  );
+
   // Earlier versions stored a refused unlink of a recording with the last
   // event's stage. The document's own data then says how the capture ended.
   it.each([

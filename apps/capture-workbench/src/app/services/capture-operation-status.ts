@@ -2,6 +2,7 @@
 import type { CaptureOperation } from '@gx-capture/capture-workbench-ui';
 import type { DesktopLibraryStatus, DesktopLibrarySummary } from '../contracts';
 import { desktopMessages } from '../i18n/desktop-messages';
+import { isRecordingMediaType } from './capture-media-types';
 import type { DesktopCaptureOperation } from './desktop-runtime-client.service';
 
 /** Identifies non-terminal one-shot capture operations. */
@@ -38,12 +39,21 @@ export function terminalLibraryStatus(operation: DesktopCaptureOperation): Termi
   return 'failed';
 }
 
-/** The terminal library status a persisted runtime stage names, if the stage is terminal. */
-function terminalStatusFromStage(stage?: string): TerminalLibraryStatus | undefined {
+/**
+ * The terminal library status a persisted runtime stage names, if the stage is
+ * terminal for that media type: `awaiting_structuring` ends an OCR checkpoint,
+ * and says nothing about how a recording ended.
+ */
+function terminalStatusFromStage(
+  stage: string | undefined,
+  mediaType: string,
+): TerminalLibraryStatus | undefined {
   if (stage === 'completed') return 'completed';
   if (stage === 'cancelled') return 'canceled';
   if (stage === 'failed') return 'failed';
-  if (stage === 'awaiting_structuring') return 'awaiting_confirmation';
+  if (stage === 'awaiting_structuring' && !isRecordingMediaType(mediaType)) {
+    return 'awaiting_confirmation';
+  }
   return undefined;
 }
 
@@ -63,8 +73,9 @@ export function holdsTerminalData(document: DesktopLibrarySummary): boolean {
 /**
  * The terminal status the stored document says its capture ended in: its own
  * terminal status, or, while only the runtime cleanup is still to do, the one
- * its stage names. Earlier versions stored the cleanup row of a recording with
- * the last event's stage, which need not be terminal; then the document's own
+ * its stage names (`awaiting_structuring` only for OCR media). Earlier versions
+ * stored the cleanup row of a recording with the last event's stage, which need
+ * not be terminal (or could be `awaiting_structuring`); then the document's own
  * data decides: a stored terminal error means failed, a kept result completed.
  * Undefined when the document does not say; no status is guessed.
  */
@@ -82,7 +93,7 @@ export function committedTerminalStatus(
     return 'awaiting_confirmation';
   }
   if (document.recoveryCode !== 'runtime_cleanup_failed') return undefined;
-  const namedByStage = terminalStatusFromStage(document.stage);
+  const namedByStage = terminalStatusFromStage(document.stage, document.mediaType);
   if (namedByStage) return namedByStage;
   if (document.errorCode) return 'failed';
   return document.hasRaw === true ? 'completed' : undefined;
