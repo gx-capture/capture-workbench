@@ -8,7 +8,7 @@ import type {
   OcrComputePreflight,
   PartialCapture,
 } from '@gx-capture/capture-workbench-ui';
-import { finalize, map, of, Subject, throwError, type Observable } from 'rxjs';
+import { finalize, lastValueFrom, map, of, Subject, throwError, type Observable } from 'rxjs';
 import type { DesktopLibraryDetail, DesktopLibrarySummary } from '../contracts';
 import {
   DesktopCaptureService,
@@ -1619,6 +1619,107 @@ describe('DesktopCaptureService', () => {
     TestBed.tick();
     expect(lifecycle.isDocumentClaimed('1'.repeat(32))).toBe(false);
     expect(lifecycle.isDocumentClaimed('2'.repeat(32))).toBe(false);
+  });
+
+  describe('cancelling a document waiting in a batch', () => {
+    const firstId = '1'.repeat(32);
+    const secondId = '2'.repeat(32);
+    const thirdId = '3'.repeat(32);
+
+    function startBatch() {
+      const firstCapture = new Subject<CaptureOperation>();
+      const stored = new Map<string, DesktopLibrarySummary>();
+      const selections = [selection('first.pdf'), selection('second.pdf'), selection('third.pdf')];
+      const ids = [firstId, secondId, thirdId];
+      const importSelection = vi.fn((input: DesktopSourceSelection) => {
+        const documentId = ids[selections.indexOf(input)];
+        if (documentId === undefined) throw new Error('Unexpected selection');
+        const document = { ...summary, documentId, fileName: input.fileName };
+        stored.set(documentId, document);
+        return of(document);
+      });
+      const updateCapture = vi.fn((update: Record<string, unknown>) => {
+        const documentId = String(update['documentId']);
+        const document = stored.get(documentId);
+        if (document === undefined) throw new Error('Unexpected document update');
+        const updated = applyDurableCaptureUpdate(document, update);
+        stored.set(documentId, updated);
+        return of(updated);
+      });
+      const createCapture = vi.fn((_documentId: string): Observable<CaptureOperation> =>
+        of(completedOperation)).mockReturnValueOnce(firstCapture);
+      const runtime = runtimeStub({ createCapture });
+      const { service, host } = initializeCapture(
+        libraryStub({ importSelection, updateCapture, list: () => of([...stored.values()]) }),
+        runtime,
+      );
+      const batchFinished = new Subject<void>();
+      const batch = service.addSelections$(selections, host).subscribe(batchFinished);
+      TestBed.tick();
+      return { service, host, batch, batchFinished, firstCapture, stored, updateCapture, createCapture, runtime };
+    }
+
+    it.each([
+      ['third', thirdId, secondId],
+      ['second', secondId, thirdId],
+    ])('skips the %s document and still captures the other waiting document', async (
+      _position, cancelledId, capturedId,
+    ) => {
+      const { service, batchFinished, firstCapture, stored, updateCapture, createCapture, runtime } = startBatch();
+      expect(service.isDocumentClaimed(cancelledId)).toBe(true);
+      service.cancel(cancelledId);
+      service.cancel(cancelledId);
+      expect(stored.get(cancelledId)?.status).toBe('queued');
+      expect(createCapture.mock.calls.map(([documentId]) => documentId)).toEqual([firstId]);
+
+      const finished = lastValueFrom(batchFinished);
+      firstCapture.next(completedOperation);
+      firstCapture.complete();
+      await finished;
+      TestBed.tick();
+
+      expect(createCapture.mock.calls.map(([documentId]) => documentId)).toEqual([firstId, capturedId]);
+      expect(stored.get(capturedId)?.status).toBe('completed');
+      expect(updateCapture.mock.calls.map(([update]) => update)
+        .filter((update) => update['documentId'] === cancelledId)).toEqual([
+        { documentId: cancelledId, status: 'canceled', stage: 'cancelled', clearCaptureId: true },
+      ]);
+      expect(stored.get(cancelledId)).toMatchObject({
+        status: 'canceled', stage: 'cancelled', captureId: undefined,
+      });
+      expect(runtime.cancelUpload).not.toHaveBeenCalled();
+      expect(runtime.cancelCapture).not.toHaveBeenCalled();
+      expect(service.isDocumentClaimed(cancelledId)).toBe(false);
+    });
+
+    it('captures the cancelled document on an explicit Retry', async () => {
+      const { service, host, batchFinished, firstCapture, stored, createCapture } = startBatch();
+      service.cancel(thirdId);
+      const finished = lastValueFrom(batchFinished);
+      firstCapture.next(completedOperation);
+      firstCapture.complete();
+      await finished;
+      expect(stored.get(thirdId)?.status).toBe('canceled');
+      expect(createCapture.mock.calls.map(([documentId]) => documentId)).toEqual([firstId, secondId]);
+
+      await lastValueFrom(service.retry$(thirdId, host));
+      TestBed.tick();
+
+      expect(createCapture.mock.calls.map(([documentId]) => documentId)).toEqual([firstId, secondId, thirdId]);
+    });
+
+    it('discards an unapplied cancel when the batch is unsubscribed', async () => {
+      const { service, host, batch, stored, createCapture } = startBatch();
+      service.cancel(thirdId);
+      batch.unsubscribe();
+      expect(service.isDocumentClaimed(thirdId)).toBe(false);
+      expect(stored.get(thirdId)?.status).toBe('queued');
+
+      await lastValueFrom(service.startDocument$(thirdId, host));
+      TestBed.tick();
+
+      expect(createCapture.mock.calls.map(([documentId]) => documentId)).toEqual([firstId, thirdId]);
+    });
   });
 
   it('does not reattach a finished recording from a document list read before it finished', async () => {

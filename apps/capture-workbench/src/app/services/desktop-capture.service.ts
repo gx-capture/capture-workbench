@@ -185,25 +185,33 @@ export class DesktopCaptureService {
     selections: readonly DesktopSourceSelection[],
     host: DesktopCaptureHost,
   ): Observable<void> {
-    return from(selections).pipe(
-      concatMap((selection) => this.library.importSelection(selection).pipe(
-        catchError((error: unknown) => { host.setMessage(errorMessage(error)); return EMPTY; }),
-      )),
-      toArray(),
-      switchMap((documents) => {
-        // The whole batch is in the library now. Hold every document until its
-        // turn: the OCR queue would otherwise start the waiting ones at once.
-        for (const document of documents) this.awaitingTurn.add(document.documentId);
-        return from(documents).pipe(
-          concatMap((document) => this.continueImported$(document, host).pipe(
-            finalize(() => this.awaitingTurn.delete(document.documentId)),
-          )),
-          finalize(() => {
-            for (const document of documents) this.awaitingTurn.delete(document.documentId);
+    return defer(() => {
+      const batchClaims = new Set<string>();
+      const release = (documentId: string): void => {
+        if (!batchClaims.delete(documentId)) return;
+        this.unappliedCancels.delete(documentId);
+        this.awaitingTurn.delete(documentId);
+      };
+      return from(selections).pipe(
+        concatMap((selection) => this.library.importSelection(selection).pipe(
+          tap(({ documentId }) => {
+            // Hold each imported document while the rest of the batch is imported.
+            batchClaims.add(documentId);
+            this.awaitingTurn.add(documentId);
           }),
-        );
-      }),
-    );
+          catchError((error: unknown) => { host.setMessage(errorMessage(error)); return EMPTY; }),
+        )),
+        toArray(),
+        switchMap((documents) => from(documents).pipe(
+          concatMap((document) => this.continueImported$(document, host).pipe(
+            finalize(() => release(document.documentId)),
+          )),
+        )),
+        finalize(() => {
+          for (const documentId of batchClaims) release(documentId);
+        }),
+      );
+    });
   }
 
   /**
@@ -411,13 +419,16 @@ export class DesktopCaptureService {
   /**
    * Requests cancellation. A running capture is woken without changing the
    * terminal rules; a decision in flight keeps the request, so that it does
-   * not start, and cancels through the runtime what it recovers.
+   * not start, and cancels through the runtime what it recovers. A batch
+   * keeps the request for the document's turn.
    */
   cancel(documentId: string): void {
     const active = this.activeCaptures.get(documentId);
     if (!active) {
       const decision = this.deciding.get(documentId);
-      if (decision && decision !== 'cancel') this.unappliedCancels.add(documentId);
+      if (this.awaitingTurn.has(documentId) || (decision && decision !== 'cancel')) {
+        this.unappliedCancels.add(documentId);
+      }
       return;
     }
     if (!active.cancelRequested) {
@@ -469,13 +480,16 @@ export class DesktopCaptureService {
     active.lastStage = event.stage;
   }
 
-  /** Selects the imported file and starts it, unless its recognition requirement is missing. */
+  /** Selects the imported file, then applies a waiting cancel or checks whether capture can start. */
   private continueImported$(
     document: DesktopLibrarySummary,
     host: DesktopCaptureHost,
   ): Observable<void> {
     host.selectedId.set(document.documentId);
     host.refreshDocuments();
+    if (this.unappliedCancels.has(document.documentId)) {
+      return this.persistWaitingCancel$(document.documentId, host);
+    }
     if (isRecordingMediaType(document.mediaType) && !isFeatureReady(host.requirements(), 'asr')) {
       host.requestedRequirements.update(
         (current) => new Set([...current, 'speech-recognition']),
