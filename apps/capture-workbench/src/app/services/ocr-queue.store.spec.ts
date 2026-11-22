@@ -302,6 +302,11 @@ describe('OcrQueueStore', () => {
     );
     expect(harness.runtime.getCapture).not.toHaveBeenCalled();
 
+    // Still linked to its capture: offered Retry, not shown as interrupted.
+    expect(harness.rows().find((row) => row.documentId === 'd'.repeat(32))).toMatchObject({
+      userStatus: 'needs-attention', interrupted: false,
+    });
+
     harness.runtime.createCapture.mockClear();
     harness.runtime.getCapture.mockImplementationOnce(() =>
       throwError(() => 'Capture Runtime request was rejected with HTTP 404.'));
@@ -309,6 +314,12 @@ describe('OcrQueueStore', () => {
     await settle();
     expect(harness.runtime.getCapture).toHaveBeenCalledExactlyOnceWith('capture-1');
     expect(harness.runtime.createCapture).not.toHaveBeenCalled();
+    // The runtime answered that it does not have the capture: the link is removed.
+    const lostRow = harness.docs.find((stored) => stored.documentId === 'd'.repeat(32));
+    expect(lostRow).toMatchObject({
+      status: 'recovery_required', recoveryCode: 'capture_recovery_required',
+    });
+    expect(lostRow?.captureId).toBeUndefined();
     expect(harness.rows().find((row) => row.documentId === 'd'.repeat(32))).toMatchObject({
       userStatus: 'needs-attention', interrupted: true,
     });
