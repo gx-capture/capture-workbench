@@ -1646,7 +1646,7 @@ describe('DesktopCaptureService', () => {
         stored.set(documentId, updated);
         return of(updated);
       });
-      const createCapture = vi.fn((_documentId: string): Observable<CaptureOperation> =>
+      const createCapture = vi.fn<(documentId: string) => Observable<CaptureOperation>>(() =>
         of(completedOperation)).mockReturnValueOnce(firstCapture);
       const runtime = runtimeStub({ createCapture });
       const { service, host } = initializeCapture(
