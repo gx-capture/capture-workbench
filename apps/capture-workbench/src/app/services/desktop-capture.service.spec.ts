@@ -3140,6 +3140,248 @@ describe('DesktopCaptureService', () => {
     });
   });
 
+  describe('reconnecting a recording', () => {
+    const recordingDoc = {
+      ...summary,
+      fileName: 'fixture.mp3',
+      mediaType: 'audio/mpeg',
+      status: 'recovery_required',
+      stage: 'extracting',
+      captureId: 'capture-1',
+      recoveryCode: 'capture_recovery_required',
+      recoveryMessage: 'Interrupted',
+    } satisfies DesktopLibrarySummary;
+    const recordingOp = (status: CaptureOperation['status']) =>
+      operation({ captureId: 'capture-1', status, kind: 'recording' });
+
+    function setupReconnect(
+      storedDocument: DesktopLibrarySummary = recordingDoc,
+      options: { readonly holdProcessingWrite?: boolean } = {},
+    ) {
+      let stored = storedDocument;
+      const calls: string[] = [];
+      const processingWrite = new Subject<void>();
+      let holdProcessing = options.holdProcessingWrite ?? false;
+      const updateCapture = vi.fn((update: Record<string, unknown>) => {
+        calls.push(`write:${String(update['status'])}`);
+        const apply = () => {
+          stored = applyDurableCaptureUpdate(stored, update);
+          return stored;
+        };
+        if (holdProcessing && update['status'] === 'processing') {
+          holdProcessing = false;
+          return processingWrite.pipe(map(apply));
+        }
+        return of(apply());
+      });
+      const getCaptureEvents = vi.fn(() => {
+        calls.push('events');
+        return of([]);
+      });
+      const getPartial = vi.fn(() => {
+        calls.push('partial');
+        return of(null);
+      });
+      const getCapture = vi.fn(() => {
+        calls.push('capture');
+        return of(recordingOp('completed'));
+      });
+      const cancelCapture = vi.fn(() => {
+        calls.push('cancel');
+        return of(recordingOp('cancelled'));
+      });
+      const deleteCapture = vi.fn(() => {
+        calls.push('delete');
+        return of(undefined);
+      });
+      const store = initializeCapture(
+        libraryStub({ list: vi.fn(() => of([stored])), updateCapture }),
+        runtimeStub({
+          getCaptureEvents,
+          getPartial,
+          getCapture,
+          cancelCapture,
+          deleteCapture,
+          getResult: vi.fn(() => of({ operation: recordingOp('completed'), raw, result })),
+        }),
+      );
+      const reload = vi.spyOn(store.host, 'reloadDocumentState');
+      return {
+        ...store,
+        calls,
+        updateCapture,
+        getCapture,
+        getCaptureEvents,
+        getPartial,
+        cancelCapture,
+        deleteCapture,
+        reload,
+        stored: () => stored,
+        answerProcessingWrite: () => {
+          processingWrite.next();
+          processingWrite.complete();
+        },
+        failProcessingWrite: (error: unknown) => {
+          processingWrite.error(error);
+        },
+      };
+    }
+
+    it('writes processing once before the first poll when still running and clears recovery fields', async () => {
+      const test = setupReconnect(recordingDoc, { holdProcessingWrite: true });
+      test.getCapture
+        .mockImplementationOnce(() => {
+          test.calls.push('capture');
+          return of(recordingOp('extracting'));
+        })
+        .mockImplementationOnce(() => {
+          test.calls.push('capture');
+          return of(recordingOp('structuring'));
+        })
+        .mockImplementationOnce(() => {
+          test.calls.push('capture');
+          return of(recordingOp('completed'));
+        });
+
+      vi.useFakeTimers();
+      try {
+        test.service.reattach$(recordingDoc, test.host).subscribe();
+        TestBed.tick();
+
+        // First read answered still running; processing write is held before polling begins.
+        expect(test.calls).toEqual(['capture', 'write:processing']);
+        expect(test.getCaptureEvents).not.toHaveBeenCalled();
+        expect(test.getPartial).not.toHaveBeenCalled();
+        expect(test.updateCapture).toHaveBeenCalledExactlyOnceWith({
+          documentId: recordingDoc.documentId,
+          captureId: 'capture-1',
+          status: 'processing',
+          stage: 'extracting',
+        });
+
+        test.answerProcessingWrite();
+        TestBed.tick();
+
+        expect(test.stored()).toMatchObject({
+          status: 'processing',
+          stage: 'extracting',
+          captureId: 'capture-1',
+          recoveryCode: undefined,
+          recoveryMessage: undefined,
+        });
+        expect(test.reload).toHaveBeenCalledWith(recordingDoc.documentId);
+        expect(test.calls).toEqual([
+          'capture', 'write:processing', 'events', 'partial', 'capture',
+        ]);
+
+        await vi.advanceTimersByTimeAsync(500);
+        TestBed.tick();
+      } finally {
+        vi.useRealTimers();
+      }
+      await settleCaptureLifecycle();
+
+      const processingWrites = captureUpdates(test.updateCapture)
+        .filter((update) => update['status'] === 'processing');
+      expect(processingWrites).toHaveLength(1);
+      expect(test.stored()).toMatchObject({
+        status: 'completed',
+        stage: 'completed',
+        captureId: undefined,
+      });
+    });
+
+    it('does not write processing when the first read says the capture already ended', async () => {
+      const test = setupReconnect();
+
+      test.service.reattach$(recordingDoc, test.host).subscribe();
+      TestBed.tick();
+      await settleCaptureLifecycle();
+
+      const statuses = captureUpdates(test.updateCapture).map((update) => update['status']);
+      expect(statuses).not.toContain('processing');
+      expect(statuses).toEqual(['completed', 'completed']);
+      expect(test.getCaptureEvents).not.toHaveBeenCalled();
+    });
+
+    it('does not write processing when the first read returns 404', () => {
+      const test = setupReconnect();
+      test.getCapture.mockImplementationOnce(() => {
+        test.calls.push('capture');
+        return throwError(() => new Error('Capture Runtime request was rejected with HTTP 404.'));
+      });
+
+      test.service.reattach$(recordingDoc, test.host).subscribe();
+      TestBed.tick();
+
+      const statuses = captureUpdates(test.updateCapture).map((update) => update['status']);
+      expect(statuses).toEqual(['recovery_required']);
+      expect(test.stored()).toMatchObject({
+        status: 'recovery_required',
+        recoveryCode: 'capture_recovery_required',
+        captureId: undefined,
+      });
+      expect(test.getCaptureEvents).not.toHaveBeenCalled();
+    });
+
+    it('does not write processing when a kept cancel ends the capture', async () => {
+      let stored: DesktopLibrarySummary = recordingDoc;
+      const listed = new Subject<readonly DesktopLibrarySummary[]>();
+      const list = vi.fn(() => listed);
+      const updateCapture = vi.fn((update: Record<string, unknown>) => {
+        stored = applyDurableCaptureUpdate(stored, update);
+        return of(stored);
+      });
+      const getCapture = vi.fn(() => of(recordingOp('extracting')));
+      const getCaptureEvents = vi.fn(() => of([]));
+      const cancelCapture = vi.fn(() => of(recordingOp('cancelled')));
+      const deleteCapture = vi.fn(() => of(undefined));
+      const store = initializeCapture(
+        libraryStub({ list, updateCapture }),
+        runtimeStub({ getCapture, getCaptureEvents, cancelCapture, deleteCapture }),
+      );
+
+      store.service.reattach$(recordingDoc, store.host).subscribe();
+      store.service.cancel(recordingDoc.documentId);
+      listed.next([recordingDoc]);
+      listed.complete();
+      TestBed.tick();
+      await settleCaptureLifecycle();
+
+      const statuses = captureUpdates(updateCapture).map((update) => update['status']);
+      expect(statuses).not.toContain('processing');
+      expect(statuses).toEqual(['canceled', 'canceled']);
+      expect(getCapture).not.toHaveBeenCalled();
+    });
+
+    it('fails the lifecycle and releases the claim if writing processing fails', () => {
+      const test = setupReconnect(recordingDoc, { holdProcessingWrite: true });
+      test.getCapture.mockImplementationOnce(() => {
+        test.calls.push('capture');
+        return of(recordingOp('extracting'));
+      });
+
+      test.service.reattach$(recordingDoc, test.host).subscribe();
+      TestBed.tick();
+      expect(test.service.isDocumentClaimed(recordingDoc.documentId)).toBe(true);
+
+      test.failProcessingWrite(new Error('Capture library index cannot be written.'));
+      TestBed.tick();
+
+      expect(test.getCaptureEvents).not.toHaveBeenCalled();
+      expect(test.getPartial).not.toHaveBeenCalled();
+      expect(test.getCapture).toHaveBeenCalledTimes(1);
+      expect(test.stored()).toMatchObject({
+        status: 'recovery_required',
+        stage: 'extracting',
+        captureId: 'capture-1',
+        recoveryCode: 'capture_recovery_required',
+        recoveryMessage: 'Capture library index cannot be written.',
+      });
+      expect(test.service.isDocumentClaimed(recordingDoc.documentId)).toBe(false);
+    });
+  });
+
   describe('every entry against every state of a document', () => {
     const STATES = [
       'its stored state is being read',

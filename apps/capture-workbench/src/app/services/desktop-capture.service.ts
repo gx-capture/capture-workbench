@@ -783,7 +783,15 @@ export class DesktopCaptureService {
             // The initial read or cancel reply already tells us how it ended.
             switchMap((operation) => !isActiveStreaming(operation)
               ? of(operation)
-              : this.waitForStreamingTerminal$(document.documentId, operation, active)),
+              : this.library.updateCapture({
+                documentId: document.documentId,
+                captureId: operation.captureId,
+                status: 'processing',
+                stage: operation.status,
+              }).pipe(
+                tap(() => host.reloadDocumentState(document.documentId)),
+                switchMap(() => this.waitForStreamingTerminal$(document.documentId, operation, active)),
+              )),
             switchMap((operation) => this.persistStreamingTerminal$(
               document.documentId,
               operation,
