@@ -3289,6 +3289,178 @@ describe('DesktopCaptureService', () => {
 
   });
 
+  describe('cancelling from the stored document', () => {
+    function cancellationOf(stored = summary) {
+      const list = vi.fn((): Observable<readonly DesktopLibrarySummary[]> => of([stored]));
+      const updateCapture = vi.fn((update: Record<string, unknown>): Observable<DesktopLibrarySummary> =>
+        of(applyDurableCaptureUpdate(stored, update)));
+      const runtime = runtimeStub();
+      const { service, host } = initializeCapture(libraryStub({ list, updateCapture }), runtime);
+      list.mockClear();
+      return { service, host, list, updateCapture, runtime };
+    }
+
+    it('claims on subscription, coalesces cancels during the read and write, and refreshes on acknowledgment', () => {
+      const { service, host, list, updateCapture, runtime } = cancellationOf();
+      runtime.ready.set(false);
+      const read = new Subject<readonly DesktopLibrarySummary[]>();
+      const write = new Subject<DesktopLibrarySummary>();
+      list.mockReturnValueOnce(read);
+      updateCapture.mockReturnValueOnce(write);
+      const reload = vi.spyOn(host, 'reloadDocumentState').mockImplementation(() => {
+        service.cancel(summary.documentId);
+      });
+      const cancel$ = service.cancelDocument$(summary.documentId, host);
+      expect(service.isDocumentClaimed(summary.documentId)).toBe(false);
+      expect(list).not.toHaveBeenCalled();
+
+      cancel$.subscribe();
+      expect(service.isDocumentClaimed(summary.documentId)).toBe(true);
+      service.cancel(summary.documentId);
+      runtime.ready.set(true);
+      service.startDocument$(summary.documentId, host).subscribe();
+      runtime.ready.set(false);
+      expect(list).toHaveBeenCalledOnce();
+      expect(updateCapture).not.toHaveBeenCalled();
+
+      read.next([summary]);
+      expect(updateCapture).toHaveBeenCalledExactlyOnceWith({
+        documentId: summary.documentId, status: 'canceled', stage: 'cancelled', clearCaptureId: true,
+      });
+      expect(service.isDocumentClaimed(summary.documentId)).toBe(true);
+      service.cancel(summary.documentId);
+      expect(reload).not.toHaveBeenCalled();
+      write.next({ ...summary, status: 'canceled', stage: 'cancelled' });
+      write.complete();
+
+      expect(reload).toHaveBeenCalledExactlyOnceWith(summary.documentId);
+      expect(service.isDocumentClaimed(summary.documentId)).toBe(false);
+      expect(service.isDecisionPaused(summary.documentId)).toBe(false);
+      expect(runtime.cancelCapture).not.toHaveBeenCalled();
+      expect(runtime.cancelUpload).not.toHaveBeenCalled();
+
+      // If the document later waits again, the acknowledged cancel no longer applies.
+      runtime.ready.set(true);
+      service.startDocument$(summary.documentId, host).subscribe();
+      expect(runtime.createCapture).toHaveBeenCalledOnce();
+    });
+
+    it('cancels a linked capture before reading its runtime status', () => {
+      const { service, host, updateCapture, runtime } = cancellationOf({
+        ...summary, status: 'processing', captureId: 'capture-1',
+      });
+      const reply = new Subject<CaptureOperation>();
+      runtime.cancelCapture.mockReturnValueOnce(reply);
+
+      service.cancelDocument$(summary.documentId, host).subscribe();
+      service.cancel(summary.documentId);
+      expect(service.isDocumentClaimed(summary.documentId)).toBe(true);
+      expect(runtime.cancelCapture).toHaveBeenCalledExactlyOnceWith('capture-1');
+      expect(runtime.getCapture).not.toHaveBeenCalled();
+      expect(updateCapture).not.toHaveBeenCalled();
+
+      reply.next(cancelledOperation);
+      reply.complete();
+
+      expect(updateCapture).toHaveBeenLastCalledWith(expect.objectContaining({
+        status: 'canceled', stage: 'cancelled', clearCaptureId: true,
+      }));
+      expect(runtime.deleteCapture).toHaveBeenCalledExactlyOnceWith('capture-1');
+      expect(service.isDocumentClaimed(summary.documentId)).toBe(false);
+    });
+
+    it('keeps a linked cancellation until the runtime is ready for recovery', () => {
+      const linked = { ...summary, status: 'processing', captureId: 'capture-1' } satisfies DesktopLibrarySummary;
+      const { service, host, updateCapture, runtime } = cancellationOf(linked);
+      const refresh = vi.spyOn(host, 'refreshDocuments');
+      runtime.ready.set(false);
+
+      service.cancelDocument$(summary.documentId, host).subscribe();
+
+      expect(refresh).toHaveBeenCalledOnce();
+      expect(updateCapture).not.toHaveBeenCalled();
+      expect(runtime.cancelCapture).not.toHaveBeenCalled();
+      expect(service.isDocumentClaimed(summary.documentId)).toBe(false);
+
+      runtime.ready.set(true);
+      service.reattach$(linked, host).subscribe();
+      expect(runtime.cancelCapture).toHaveBeenCalledExactlyOnceWith('capture-1');
+      expect(runtime.getCapture).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['linked with terminal data', [{ ...summary, status: 'awaiting_confirmation', hasRaw: true, captureId: 'capture-1' }]],
+      ['ended', [{ ...summary, status: 'completed' }]],
+      ['cancelled', [{ ...summary, status: 'canceled' }]],
+      ['cleanup failed', [{
+        ...summary, status: 'recovery_required', recoveryCode: 'runtime_cleanup_failed', captureId: 'capture-1',
+      }]],
+      ['gone', []],
+    ] satisfies [string, DesktopLibrarySummary[]][])('only refreshes when the document is %s', (_state, documents) => {
+      const { service, host, list, updateCapture, runtime } = cancellationOf();
+      list.mockReturnValueOnce(of(documents));
+      const refresh = vi.spyOn(host, 'refreshDocuments');
+
+      service.cancelDocument$(summary.documentId, host).subscribe();
+
+      expect(refresh).toHaveBeenCalledOnce();
+      expect(updateCapture).not.toHaveBeenCalled();
+      expect(runtime.createCapture).not.toHaveBeenCalled();
+      expect(runtime.cancelCapture).not.toHaveBeenCalled();
+      expect(runtime.getCapture).not.toHaveBeenCalled();
+      expect(runtime.deleteCapture).not.toHaveBeenCalled();
+      expect(service.isDocumentClaimed(summary.documentId)).toBe(false);
+      expect(service.isDecisionPaused(summary.documentId)).toBe(false);
+
+      service.startDocument$(summary.documentId, host).subscribe();
+      expect(runtime.createCapture).toHaveBeenCalledOnce();
+    });
+
+    it.each(['read', 'write'] as const)('keeps the cancel after a failed %s until the next decision', (failure) => {
+      vi.useFakeTimers();
+      try {
+        const { service, host, list, updateCapture, runtime } = cancellationOf();
+        const error = new Error('Library unavailable');
+        const onError = vi.fn();
+        if (failure === 'read') list.mockReturnValueOnce(throwError(() => error));
+        else updateCapture.mockReturnValueOnce(throwError(() => error));
+
+        service.cancelDocument$(summary.documentId, host).subscribe({ error: onError });
+        expect(onError).toHaveBeenCalledExactlyOnceWith(error);
+        expect(service.isDocumentClaimed(summary.documentId)).toBe(false);
+        expect(service.isDecisionPaused(summary.documentId)).toBe(true);
+        expect(updateCapture).toHaveBeenCalledTimes(failure === 'read' ? 0 : 1);
+        service.startDocument$(summary.documentId, host).subscribe();
+        expect(list).toHaveBeenCalledOnce();
+
+        vi.advanceTimersByTime(FAILED_DECISION_PAUSE_MS);
+        service.startDocument$(summary.documentId, host).subscribe();
+
+        expect(runtime.createCapture).not.toHaveBeenCalled();
+        expect(updateCapture).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'canceled' }));
+        expect(service.isDecisionPaused(summary.documentId)).toBe(false);
+        expect(service.isDocumentClaimed(summary.documentId)).toBe(false);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('ends a failed decision pause when the user cancels explicitly', () => {
+      const { service, host, list, updateCapture, runtime } = cancellationOf();
+      const error = new Error('Library unavailable');
+      list.mockReturnValueOnce(throwError(() => error));
+      service.startDocument$(summary.documentId, host).subscribe({ error: vi.fn() });
+      expect(service.isDecisionPaused(summary.documentId)).toBe(true);
+
+      service.cancelDocument$(summary.documentId, host).subscribe();
+
+      expect(updateCapture).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ status: 'canceled' }));
+      expect(runtime.createCapture).not.toHaveBeenCalled();
+      expect(service.isDocumentClaimed(summary.documentId)).toBe(false);
+      expect(service.isDecisionPaused(summary.documentId)).toBe(false);
+    });
+  });
+
   describe('restart', () => {
     const restartOf = (storedDocuments: DesktopLibrarySummary[]) => {
       const updateCapture = vi.fn((update: Record<string, unknown>) =>

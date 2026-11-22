@@ -87,6 +87,8 @@ interface ActiveCapture {
   readonly cancelWake: Subject<void>;
 }
 
+type DocumentDecisionRequest = 'automatic' | 'retry-or-restart' | 'cancel';
+
 /**
  * How long the queues wait before they look at their documents again after a
  * decision ended in an error, so that a failure that lasts is not repeated in
@@ -136,7 +138,7 @@ export class DesktopCaptureService {
    * from the subscription to the entry until the action it led to has ended,
    * was declined or failed.
    */
-  private readonly deciding = new Set<string>();
+  private readonly deciding = new Map<string, DocumentDecisionRequest>();
   /**
    * Documents whose cancel was asked while an action for them was being
    * decided, and is not applied yet. It outlives a decision that fails: the
@@ -168,8 +170,8 @@ export class DesktopCaptureService {
   /**
    * Reports whether a decision for the document ended in an error less than
    * `FAILED_DECISION_PAUSE_MS` ago. Until the pause is over a queue does not
-   * ask for the document again, and what it asks is ignored; a retry or
-   * restart the user asks for ends the pause.
+   * ask for the document again, and what it asks is ignored. A cancel,
+   * retry or restart the user asks for ends the pause.
    */
   isDecisionPaused(documentId: string): boolean {
     return this.decisionPauses.has(documentId);
@@ -252,7 +254,7 @@ export class DesktopCaptureService {
           tap(() => host.reloadDocumentState(documentId)),
           switchMap(() => this.startUnlessCancelled$(documentId, host)),
         )
-        : this.declineOutdatedRequest$(stored, host), { explicit: true });
+        : this.declineOutdatedRequest$(stored, host), 'retry-or-restart');
   }
 
   /** Resumes a recoverable capture or starts a capture for the selected document. */
@@ -268,7 +270,23 @@ export class DesktopCaptureService {
       return stored && canCaptureAgain(stored)
         ? this.startUnlessCancelled$(documentId, host)
         : this.declineOutdatedRequest$(stored, host);
-    }, { explicit: true });
+    }, 'retry-or-restart');
+  }
+
+  /** Cancels an unclaimed document according to the state stored in the library. */
+  cancelDocument$(
+    documentId: string,
+    host: DesktopCaptureHost,
+  ): Observable<void> {
+    return this.decideFromStoredDocument$(documentId, (stored) => {
+      if (stored && !holdsTerminalData(stored)) {
+        if (stored.captureId && this.runtime.ready()) return this.recoverCapture$(stored, host);
+        if (stored.status === 'queued' && !stored.captureId) {
+          return this.persistWaitingCancel$(documentId, host);
+        }
+      }
+      return this.declineOutdatedRequest$(stored, host);
+    }, 'cancel');
   }
 
   /**
@@ -289,21 +307,22 @@ export class DesktopCaptureService {
    * read or the write it led to failed) the claim is released, the cancel
    * stays for the next decision, and the document pauses
    * (`isDecisionPaused`): no decision is made for it until the queues are
-   * told to look again (`failedDecisions`). An explicit retry or restart is
-   * a new request of the user: it ends the pause, and an older cancel that
-   * was never applied does not cancel it.
+   * told to look again (`failedDecisions`). An explicit request ends the
+   * pause. A cancel keeps the intent until it is applied or no longer
+   * needed, while a retry or restart supersedes an older cancel.
    */
   private decideFromStoredDocument$(
     documentId: string,
     act: (stored: DesktopLibrarySummary | undefined) => Observable<void>,
-    request: { readonly explicit: boolean } = { explicit: false },
+    request: DocumentDecisionRequest = 'automatic',
   ): Observable<void> {
     return defer(() => {
-      if (!this.runtime.ready() || this.isDocumentClaimed(documentId)) return EMPTY;
-      if (request.explicit) this.endDecisionPause(documentId);
+      if (this.isDocumentClaimed(documentId) || (request !== 'cancel' && !this.runtime.ready())) return EMPTY;
+      if (request !== 'automatic') this.endDecisionPause(documentId);
       else if (this.isDecisionPaused(documentId)) return EMPTY;
-      this.deciding.add(documentId);
-      if (request.explicit) this.unappliedCancels.delete(documentId);
+      this.deciding.set(documentId, request);
+      if (request === 'retry-or-restart') this.unappliedCancels.delete(documentId);
+      if (request === 'cancel') this.unappliedCancels.add(documentId);
       return this.library.list().pipe(
         take(1),
         map((documents) => documents.find((item) => item.documentId === documentId)),
@@ -349,8 +368,8 @@ export class DesktopCaptureService {
     host: DesktopCaptureHost,
   ): Observable<void> {
     return defer(() => {
-      const cancellable = stored !== undefined
-        && (stored.status === 'queued' || (Boolean(stored.captureId) && !holdsTerminalData(stored)));
+      const cancellable = stored !== undefined && !holdsTerminalData(stored)
+        && (stored.status === 'queued' || Boolean(stored.captureId));
       if (stored !== undefined && !cancellable) this.unappliedCancels.delete(stored.documentId);
       host.refreshDocuments();
       return EMPTY;
@@ -368,19 +387,23 @@ export class DesktopCaptureService {
     host: DesktopCaptureHost,
   ): Observable<void> {
     return defer(() => this.unappliedCancels.has(documentId)
-      ? this.library.updateCapture({
-        documentId,
-        status: 'canceled',
-        stage: 'cancelled',
-        clearCaptureId: true,
-      }).pipe(
-        tap(() => {
-          this.unappliedCancels.delete(documentId);
-          host.reloadDocumentState(documentId);
-        }),
-        map(() => undefined),
-      )
+      ? this.persistWaitingCancel$(documentId, host)
       : this.captureExisting$(documentId, host));
+  }
+
+  private persistWaitingCancel$(documentId: string, host: DesktopCaptureHost): Observable<void> {
+    return this.library.updateCapture({
+      documentId,
+      status: 'canceled',
+      stage: 'cancelled',
+      clearCaptureId: true,
+    }).pipe(
+      tap(() => {
+        this.unappliedCancels.delete(documentId);
+        host.reloadDocumentState(documentId);
+      }),
+      map(() => undefined),
+    );
   }
 
   /**
@@ -391,7 +414,8 @@ export class DesktopCaptureService {
   cancel(documentId: string): void {
     const active = this.activeCaptures.get(documentId);
     if (!active) {
-      if (this.deciding.has(documentId)) this.unappliedCancels.add(documentId);
+      const decision = this.deciding.get(documentId);
+      if (decision && decision !== 'cancel') this.unappliedCancels.add(documentId);
       return;
     }
     if (!active.cancelRequested) {

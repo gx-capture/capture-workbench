@@ -177,6 +177,7 @@ describe('AsrQueueStore', () => {
       reattach$: vi.fn((): Observable<void> => of(undefined)),
       retry$: vi.fn(() => of(undefined)),
       restartLost$: vi.fn(() => of(undefined)),
+      cancelDocument$: vi.fn(() => of(undefined)),
       cancel: vi.fn(),
     };
 
@@ -368,41 +369,29 @@ describe('AsrQueueStore', () => {
     expect(capture.startDocument$).toHaveBeenCalledExactlyOnceWith(first.documentId, expect.anything());
   });
 
-  it.each(['success', 'failure'] as const)(
-    'reserves a waiting cancellation until it settles with %s',
-    (outcome) => {
-      const running = makeRecording({ documentId: '1'.repeat(32), status: 'processing', captureId: 'active' });
-      const waiting = makeRecording({ documentId: '2'.repeat(32), createdAtMs: 200 });
-      const { store, library, capture, docs, busyIds } = setup({ initialDocs: [waiting, running] });
-      const cancellation = new Subject<DesktopLibrarySummary>();
-      library.updateCapture.mockReturnValue(cancellation);
-      busyIds.set(new Set([running.documentId]));
-      store.attach();
-      TestBed.tick();
+  it('holds the queue turn during cancellation and shows a failed write', () => {
+    const waiting = makeRecording();
+    const { store, library, runtime, runtimeStatus, requirements } = setup({
+      initialDocs: [waiting], speechStatus: 'installable', realCapture: true,
+    });
+    const cancellation = new Subject<DesktopLibrarySummary>();
+    library.updateCapture.mockReturnValue(cancellation);
+    store.attach();
+    TestBed.tick();
 
-      store.cancel(waiting.documentId);
-      docs.set([waiting, { ...running, status: 'completed' }]);
-      busyIds.set(new Set());
-      TestBed.tick();
-      expect(capture.startDocument$).not.toHaveBeenCalled();
-      store.cancel(waiting.documentId);
-      expect(library.updateCapture).toHaveBeenCalledTimes(1);
+    store.cancel(waiting.documentId);
+    requirements.set([requirement('speech-recognition', 'ready')]);
+    TestBed.tick();
+    store.cancel(waiting.documentId);
+    expect(library.updateCapture).toHaveBeenCalledOnce();
+    expect(runtime.startRecordingCapture).not.toHaveBeenCalled();
 
-      if (outcome === 'success') {
-        cancellation.next({ ...waiting, status: 'canceled' });
-        docs.set([{ ...waiting, status: 'canceled' }]);
-        cancellation.complete();
-        TestBed.tick();
-        expect(capture.startDocument$).not.toHaveBeenCalled();
-        // A later explicit retry is eligible again after the reservation is released.
-      } else {
-        cancellation.error(new Error('Cancel failed'));
-      }
-      docs.set([{ ...waiting, updatedAtMs: 300 }]);
-      TestBed.tick();
-      expect(capture.startDocument$).toHaveBeenCalledExactlyOnceWith(waiting.documentId, expect.anything());
-    },
-  );
+    cancellation.error(new Error('Cancel failed'));
+    expect(runtimeStatus.message()).toBe('Cancel failed');
+    const service = TestBed.inject(DesktopCaptureService);
+    expect(service.isDocumentClaimed(waiting.documentId)).toBe(false);
+    expect(service.isDecisionPaused(waiting.documentId)).toBe(true);
+  });
 
   it('derives compact speaker install labels and delegates installation', () => {
     const { store, features, requirements } = setup();
@@ -434,18 +423,15 @@ describe('AsrQueueStore', () => {
   it('supports cancel on queued & running rows, retry, restart, view in /history, and txt export', () => {
     const queuedDoc = makeRecording({ documentId: '1'.repeat(32), status: 'queued' });
     const doneDoc = makeRecording({ documentId: '2'.repeat(32), status: 'completed' });
-    const { store, library, capture, libraryStore, formatting, router } = setup({
+    const { store, library, capture, libraryStore, formatting, router, busyIds } = setup({
       initialDocs: [queuedDoc, doneDoc],
     });
 
     store.cancel(queuedDoc.documentId);
-    expect(library.updateCapture).toHaveBeenCalledWith({
-      documentId: queuedDoc.documentId,
-      status: 'canceled',
-      stage: 'cancelled',
-      clearCaptureId: true,
-    });
+    expect(capture.cancelDocument$).toHaveBeenCalledExactlyOnceWith(queuedDoc.documentId, expect.anything());
+    expect(library.updateCapture).not.toHaveBeenCalled();
 
+    busyIds.set(new Set(['3'.repeat(32)]));
     store.cancel('3'.repeat(32));
     expect(capture.cancel).toHaveBeenCalledWith('3'.repeat(32));
 
@@ -754,16 +740,19 @@ describe('AsrQueueStore', () => {
       expect(libraryStore.refreshDocuments).toHaveBeenCalled();
     });
 
-    it('does not start a recording that was cancelled while it waited', () => {
+    it.each(['canceled', 'completed'] as const)('preserves a stored %s recording when its row still says waiting', (status) => {
       const waiting = makeRecording();
-      const { store, docs, runtime, library, requirements } = setup({
+      const { store, docs, runtime, library, libraryStore, requirements } = setup({
         initialDocs: [waiting], speechStatus: 'installable', realCapture: true,
       });
-      library.list.mockImplementation(() => of([{ ...waiting, status: 'canceled' as const }]));
+      library.list.mockImplementation(() => of([{ ...waiting, status }]));
       store.attach();
       TestBed.tick();
 
+      libraryStore.refreshDocuments.mockClear();
       store.cancel(waiting.documentId);
+      expect(library.updateCapture).not.toHaveBeenCalled();
+      expect(libraryStore.refreshDocuments).toHaveBeenCalledOnce();
       // Speech becomes ready before the list reload answers.
       requirements.set([
         requirement('speech-recognition', 'ready'),

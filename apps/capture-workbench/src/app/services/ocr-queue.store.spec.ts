@@ -201,6 +201,47 @@ describe('OcrQueueStore', () => {
     expect(harness.rows().map((row) => row.fileName)).toEqual(['scan.png']);
   });
 
+  it('cancels a waiting document and refreshes its row', () => {
+    const harness = configure({ ocrReady: false });
+    const waiting = doc({});
+    harness.docs.push(waiting);
+    harness.store.attach();
+    TestBed.tick();
+    const capture = TestBed.inject(DesktopCaptureService);
+    const cancelDocument = vi.spyOn(capture, 'cancelDocument$');
+
+    harness.store.cancel(waiting.documentId);
+
+    expect(cancelDocument).toHaveBeenCalledExactlyOnceWith(waiting.documentId, expect.anything());
+    expect(harness.docs[0]).toMatchObject({
+      status: 'canceled', stage: 'cancelled', captureId: undefined,
+    });
+    expect(harness.rows()[0]?.userStatus).toBe('cancelled');
+    expect(harness.runtime.cancelCapture).not.toHaveBeenCalled();
+    expect(harness.runtime.createCapture).not.toHaveBeenCalled();
+  });
+
+  it('preserves a completed document when its visible row still says waiting', () => {
+    const harness = configure({ ocrReady: false });
+    const waiting = doc({});
+    harness.docs.push(waiting);
+    harness.store.attach();
+    TestBed.tick();
+    const completed = { ...waiting, status: 'completed', hasRaw: true } satisfies DesktopLibrarySummary;
+    harness.docs[0] = completed;
+    harness.holdListReloads();
+    expect(harness.documents()[0]).toBe(waiting);
+    const refresh = vi.spyOn(TestBed.inject(LibraryStore), 'refreshDocuments');
+
+    harness.store.cancel(waiting.documentId);
+
+    expect(harness.library.list).toHaveBeenCalledOnce();
+    expect(refresh).toHaveBeenCalledOnce();
+    expect(harness.library.updateCapture).not.toHaveBeenCalled();
+    expect(harness.runtime.cancelCapture).not.toHaveBeenCalled();
+    expect(harness.docs[0]).toBe(completed);
+  });
+
   it('cancels a running capture', async () => {
     const harness = configure({ ocrReady: true });
     harness.store.attach();

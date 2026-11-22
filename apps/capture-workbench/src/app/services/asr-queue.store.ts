@@ -68,7 +68,6 @@ export class AsrQueueStore {
   private readonly loadedUpdatedAt = new Map<string, number>();
   private readonly loadingDetails = new Set<string>();
   private readonly startingIds = new Set<string>();
-  private readonly pendingCancellationIds = new Set<string>();
   private readonly attemptedReattachments = new Set<string>();
   private attached = false;
 
@@ -298,29 +297,15 @@ export class AsrQueueStore {
   }
 
   cancel(documentId: string): void {
-    if (this.pendingCancellationIds.has(documentId)) return;
-    const target = this.documents().find((item) => item.documentId === documentId);
-    if (target?.status === 'queued' && !this.capture.isDocumentClaimed(documentId)) {
-      this.pendingCancellationIds.add(documentId);
-      this.library
-        .updateCapture({
-          documentId,
-          status: 'canceled',
-          stage: 'cancelled',
-          clearCaptureId: true,
-        })
-        .pipe(
-          finalize(() => this.pendingCancellationIds.delete(documentId)),
-          takeUntilDestroyed(this.destroyRef),
-        )
-        .subscribe({
-          next: () => this.libraryStore.refreshDocuments(),
-          error: (error: unknown) =>
-            this.runtimeStatus.message.set(errorMessage(error)),
-        });
+    if (this.capture.isDocumentClaimed(documentId)) {
+      this.capture.cancel(documentId);
       return;
     }
-    this.capture.cancel(documentId);
+    this.capture.cancelDocument$(documentId, this.host)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        error: (error: unknown) => this.host.setMessage(errorMessage(error)),
+      });
   }
 
   retry(documentId: string): void {
@@ -417,7 +402,6 @@ export class AsrQueueStore {
     const next = recordings.find(
       (document) =>
         document.status === 'queued'
-        && !this.pendingCancellationIds.has(document.documentId)
         && !this.startingIds.has(document.documentId),
     );
     if (!next) return;

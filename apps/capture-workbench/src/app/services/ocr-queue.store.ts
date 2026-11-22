@@ -123,7 +123,15 @@ export class OcrQueueStore {
   }
 
   cancel(documentId: string): void {
-    this.capture.cancel(documentId);
+    if (this.capture.isDocumentClaimed(documentId)) {
+      this.capture.cancel(documentId);
+      return;
+    }
+    this.capture.cancelDocument$(documentId, this.host)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        error: (error: unknown) => this.host.setMessage(errorMessage(error)),
+      });
   }
 
   retry(documentId: string): void {
