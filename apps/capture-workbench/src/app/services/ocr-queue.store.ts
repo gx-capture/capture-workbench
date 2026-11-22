@@ -7,6 +7,7 @@ import { desktopMessages } from '../i18n/desktop-messages';
 import { DesktopLibraryService, type DesktopSourceSelection, type DesktopSourceSelectionBatch } from './desktop-library.service';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
 import { DesktopCaptureService, type DesktopCaptureHost } from './desktop-capture.service';
+import { holdsTerminalData } from './capture-operation-status';
 import { LibraryExportService } from './library-export.service';
 import { LibraryStore } from './library.store';
 import { errorMessage } from './desktop-errors';
@@ -38,7 +39,7 @@ export class OcrQueueStore {
 
   private readonly attached = signal(false);
   private readonly pendingStart = new Set<string>();
-  private readonly reattached = new Set<string>();
+  private readonly attemptedReattachments = new Set<string>();
 
   /** The page selection field. A drop and the file button both read it. */
   readonly pageListText = signal('');
@@ -251,17 +252,23 @@ export class OcrQueueStore {
 
   private reattachRunning(documents: readonly DesktopLibrarySummary[]): void {
     for (const document of documents) {
-      if (!isOcrMediaType(document.mediaType) || !document.captureId) continue;
-      if (document.status !== 'processing' && document.status !== 'persisting') continue;
-      if (this.reattached.has(document.documentId)) continue;
+      const { captureId } = document;
+      if (!isOcrMediaType(document.mediaType) || !captureId) continue;
+      if (document.recoveryCode === 'cancel_failed') continue;
+      if (
+        document.status !== 'processing'
+        && document.status !== 'persisting'
+        && !holdsTerminalData(document)
+      ) continue;
+      if (this.attemptedReattachments.has(captureId)) continue;
       if (this.capture.isDocumentClaimed(document.documentId)) continue;
       // Asked for again when its pause ends: not remembered as reattached before.
       if (this.capture.isDecisionPaused(document.documentId)) continue;
-      this.reattached.add(document.documentId);
+      this.attemptedReattachments.add(captureId);
       this.capture.reattach$(document, this.host)
         .pipe(takeUntilDestroyed(this.destroyRef))
         .subscribe({
-          error: () => this.reattached.delete(document.documentId),
+          error: () => this.attemptedReattachments.delete(captureId),
         });
     }
   }

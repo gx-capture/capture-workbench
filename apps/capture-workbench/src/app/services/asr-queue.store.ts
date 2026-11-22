@@ -34,7 +34,7 @@ import { DesktopCaptureService } from './desktop-capture.service';
 import { LibraryExportService } from './library-export.service';
 import { errorMessage } from './desktop-errors';
 import { formatApproximateBytes } from './desktop-formatting.service';
-import { isActiveStreaming } from './capture-operation-status';
+import { holdsTerminalData, isActiveStreaming } from './capture-operation-status';
 import { isRecordingMediaType } from './capture-media-types';
 import { isFeatureReady } from './recognition-requirements';
 import { RuntimeStatusStore } from './runtime-status.store';
@@ -358,7 +358,8 @@ export class AsrQueueStore {
       if (
         (document.status === 'processing'
           || document.status === 'persisting'
-          || document.status === 'recovery_required')
+          || document.status === 'recovery_required'
+          || holdsTerminalData(document))
         && document.captureId
         // The user asked to cancel this capture and the runtime refused it:
         // resuming it by itself would run on what the user cancelled. Only
@@ -378,9 +379,7 @@ export class AsrQueueStore {
           .reattach$(document, this.host)
           .pipe(takeUntilDestroyed(this.destroyRef))
           .subscribe({
-            // A capture's own failures are stored with the document. An error
-            // here means the stored document could not be read, so nothing was
-            // attempted: the next look at the list may try again.
+            // If the decision errors, the service pauses it before another attempt.
             error: (error: unknown) => {
               this.attemptedReattachments.delete(captureId);
               this.runtimeStatus.message.set(errorMessage(error));

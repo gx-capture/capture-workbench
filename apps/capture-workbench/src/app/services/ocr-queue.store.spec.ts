@@ -352,6 +352,107 @@ describe('OcrQueueStore', () => {
     expect(harness.rows()[0]?.pageLabel).toBe('12');
   });
 
+  describe('when the library list loads at boot', () => {
+    const captureId = 'capture-1';
+
+    it.each([
+      ['completed', {}],
+      ['failed', {}],
+      ['canceled', {}],
+      ['awaiting_confirmation', { hasRaw: true }],
+    ] as const)('cleans up a linked %s file without changing its status', (status, fields) => {
+      const harness = configure({ ocrReady: false });
+      const initial = doc({ status, captureId, ...fields });
+      harness.docs.push(initial);
+      harness.answerListReloads();
+      const reattach = vi.spyOn(TestBed.inject(DesktopCaptureService), 'reattach$');
+      harness.store.attach();
+      TestBed.tick();
+
+      expect(reattach).toHaveBeenCalledExactlyOnceWith(initial, expect.anything());
+      expect(harness.runtime.deleteCapture).toHaveBeenCalledExactlyOnceWith(captureId);
+      expect(harness.runtime.getCapture).not.toHaveBeenCalled();
+      expect(harness.docs[0]).toMatchObject({ status, captureId: undefined, ...fields });
+
+      harness.documents.set([{ ...initial }]);
+      TestBed.tick();
+      harness.answerListReloads();
+      TestBed.tick();
+      expect(reattach).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(['isDocumentClaimed', 'isDecisionPaused'] as const)(
+      'skips a linked terminal file while %s is true',
+      (guard) => {
+        const harness = configure({ ocrReady: false });
+        harness.docs.push(doc({ status: 'canceled', captureId }));
+        harness.answerListReloads();
+        const service = TestBed.inject(DesktopCaptureService);
+        const blocked = vi.spyOn(service, guard).mockReturnValue(true);
+        const reattach = vi.spyOn(service, 'reattach$');
+        harness.store.attach();
+        TestBed.tick();
+        expect(reattach).not.toHaveBeenCalled();
+
+        blocked.mockRestore();
+        harness.answerListReloads();
+        TestBed.tick();
+        expect(harness.runtime.deleteCapture).toHaveBeenCalledExactlyOnceWith(captureId);
+      },
+    );
+
+    it('retries a stored cleanup record and restores its terminal status', () => {
+      const harness = configure({ ocrReady: false });
+      harness.docs.push(doc({ status: 'recovery_required', recoveryCode: 'runtime_cleanup_failed',
+        stage: 'awaiting_structuring', hasRaw: true, captureId }));
+      harness.answerListReloads();
+      harness.store.attach();
+      TestBed.tick();
+
+      expect(harness.runtime.deleteCapture).toHaveBeenCalledExactlyOnceWith(captureId);
+      expect(harness.runtime.getCapture).not.toHaveBeenCalled();
+      expect(harness.docs[0]).toMatchObject({
+        status: 'awaiting_confirmation', hasRaw: true, captureId: undefined, recoveryCode: undefined,
+      });
+    });
+
+    it.each(['cancel_failed', 'capture_recovery_required'] as const)(
+      'leaves a linked %s record for the user to retry',
+      (recoveryCode) => {
+        const harness = configure({ ocrReady: false });
+        harness.docs.push(doc({ status: 'recovery_required', recoveryCode, hasRaw: true, captureId }));
+        harness.answerListReloads();
+        const reattach = vi.spyOn(TestBed.inject(DesktopCaptureService), 'reattach$');
+        harness.store.attach();
+        TestBed.tick();
+
+        expect(reattach).not.toHaveBeenCalled();
+        expect(harness.rows()[0]).toMatchObject({ userStatus: 'needs-attention', interrupted: false });
+      },
+    );
+
+    it.each(['delete', 'unlink'] as const)('keeps a failed boot %s available for Retry without looping', (step) => {
+      const harness = configure({ ocrReady: false });
+      harness.docs.push(doc({ status: 'awaiting_confirmation', hasRaw: true, captureId }));
+      harness.answerListReloads();
+      const failure = throwError(() => new Error('Cleanup failed'));
+      if (step === 'delete') harness.runtime.deleteCapture.mockReturnValueOnce(failure);
+      else harness.library.updateCapture.mockReturnValueOnce(failure);
+      const reattach = vi.spyOn(TestBed.inject(DesktopCaptureService), 'reattach$');
+      harness.store.attach();
+      TestBed.tick();
+
+      expect(harness.docs[0]).toMatchObject({
+        status: 'recovery_required', recoveryCode: 'runtime_cleanup_failed', captureId, hasRaw: true,
+      });
+      harness.answerListReloads();
+      TestBed.tick();
+      expect(harness.rows()[0]).toMatchObject({ userStatus: 'needs-attention', interrupted: false });
+      expect(reattach).toHaveBeenCalledTimes(1);
+      expect(harness.runtime.deleteCapture).toHaveBeenCalledExactlyOnceWith(captureId);
+    });
+  });
+
   describe('with a document list older than the capture service\'s last write', () => {
     /** A waiting file whose capture ran and ended while no list reload was answered. */
     async function endedCaptureOverUnansweredListReloads() {

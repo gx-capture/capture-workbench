@@ -649,10 +649,12 @@ describe('AsrQueueStore', () => {
      * The runtime forgets a deleted capture, and the capture ends when the
      * test says so.
      */
-    function captureOverAnUnansweredListReload(options: { readonly failFirstUnlink?: boolean } = {}) {
-      const queued = makeRecording({ captureOptions: { identifySpeakers: false } });
-      const harness = setup({ initialDocs: [queued], realCapture: true });
-      let stored = queued;
+    function captureOverAnUnansweredListReload(options: {
+      readonly failFirstUnlink?: boolean;
+      readonly initial?: Partial<DesktopLibrarySummary>;
+    } = {}) {
+      let stored = makeRecording({ captureOptions: { identifySpeakers: false }, ...options.initial });
+      const harness = setup({ initialDocs: [stored], realCapture: true });
       let unlinkFailures = options.failFirstUnlink ? 1 : 0;
       const writes: StoredCaptureUpdate[] = [];
       harness.library.list.mockImplementation(() => of([stored]));
@@ -705,6 +707,66 @@ describe('AsrQueueStore', () => {
         },
       };
     }
+
+    it.each(['completed', 'failed', 'canceled'] as const)(
+      'cleans up a linked %s recording loaded at boot without changing its status',
+      (status) => {
+        const { store, docs, runtime, stored } =
+          captureOverAnUnansweredListReload({ initial: { status, captureId } });
+        const reattach = vi.spyOn(TestBed.inject(DesktopCaptureService), 'reattach$');
+        const initial = stored();
+        store.attach();
+        TestBed.tick();
+
+        expect(reattach).toHaveBeenCalledExactlyOnceWith(initial, expect.anything());
+        expect(runtime.deleteCapture).toHaveBeenCalledExactlyOnceWith(captureId);
+        expect(runtime.getCapture).not.toHaveBeenCalled();
+        expect(stored()).toMatchObject({ status, captureId: undefined });
+
+        docs.set([{ ...initial }]);
+        TestBed.tick();
+        docs.set([stored()]);
+        TestBed.tick();
+        expect(reattach).toHaveBeenCalledTimes(1);
+      },
+    );
+
+    it.each(['isDocumentClaimed', 'isDecisionPaused'] as const)(
+      'skips a linked terminal recording while %s is true',
+      (guard) => {
+        const { store, docs, runtime, stored } =
+          captureOverAnUnansweredListReload({ initial: { status: 'canceled', captureId } });
+        const service = TestBed.inject(DesktopCaptureService);
+        const blocked = vi.spyOn(service, guard).mockReturnValue(true);
+        const reattach = vi.spyOn(service, 'reattach$');
+        store.attach();
+        TestBed.tick();
+        expect(reattach).not.toHaveBeenCalled();
+
+        blocked.mockRestore();
+        docs.set([{ ...stored() }]);
+        TestBed.tick();
+        expect(runtime.deleteCapture).toHaveBeenCalledExactlyOnceWith(captureId);
+      },
+    );
+
+    it.each(['delete', 'unlink'] as const)('keeps a failed boot %s available for Retry without looping', (step) => {
+      const { store, docs, runtime, stored } =
+        captureOverAnUnansweredListReload({
+          initial: { status: 'completed', captureId },
+          failFirstUnlink: step === 'unlink',
+        });
+      if (step === 'delete') runtime.deleteCapture.mockReturnValueOnce(throwError(() => new Error('Delete failed')));
+      const reattach = vi.spyOn(TestBed.inject(DesktopCaptureService), 'reattach$');
+      store.attach();
+      TestBed.tick();
+
+      expect(stored()).toMatchObject({ status: 'recovery_required', recoveryCode: 'runtime_cleanup_failed', captureId });
+      docs.set([stored()]);
+      TestBed.tick();
+      expect(reattach).toHaveBeenCalledTimes(1);
+      expect(runtime.deleteCapture).toHaveBeenCalledExactlyOnceWith(captureId);
+    });
 
     it('does not read the deleted capture of a finished recording, which stays completed', () => {
       const { store, docs, runtime, libraryStore, stored, writes, endCapture } =
