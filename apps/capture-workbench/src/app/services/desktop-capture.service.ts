@@ -610,7 +610,39 @@ export class DesktopCaptureService {
     operation: CaptureOperation,
     active: ActiveCapture,
   ): Observable<CaptureOperation> {
-    const events$ = this.runtime.getCaptureEvents(
+    // A later poll just reads. The cancel was already sent, and its answer was not terminal.
+    if (active.cancelSent) return this.readStreamingCapture$(documentId, operation, active);
+    const answered$ = active.cancelRequested
+      ? this.sendCancellation$(operation.captureId, active)
+      : this.readUntilCancelRequested$(
+        this.readStreamingCapture$(documentId, operation, active),
+        operation.captureId,
+        active,
+      );
+    return answered$.pipe(switchMap((answered) => {
+      // The poll finished; nobody asked to cancel it.
+      if (!active.cancelSent) return of(answered);
+      // The cancel's answer is the recording. When it has ended, store it:
+      // reading events, the partial or the status again can only turn an
+      // accepted cancel into a failed one. A read that was still in flight
+      // was abandoned with the cancel, so it is not this answer. A capture
+      // the runtime says is still running is read again, as before. A cancel
+      // the runtime rejects never reaches here.
+      if (!isActiveStreaming(answered)) {
+        this.rememberRecordingOperation(documentId, answered);
+        return of(answered);
+      }
+      return this.readStreamingCapture$(documentId, operation, active);
+    }));
+  }
+
+  /** Events, the live partial and the capture status of a recording that is still running. */
+  private readStreamingCapture$(
+    documentId: string,
+    operation: CaptureOperation,
+    active: ActiveCapture,
+  ): Observable<CaptureOperation> {
+    return this.runtime.getCaptureEvents(
       operation.captureId,
       active.lastEventSequence,
     ).pipe(
@@ -625,16 +657,6 @@ export class DesktopCaptureService {
           });
         }
       }),
-    );
-    if (!active.cancelRequested || active.cancelSent) {
-      return events$.pipe(
-        switchMap(() => this.runtime.getCapture(operation.captureId)),
-        tap((next) => this.rememberRecordingOperation(documentId, next)),
-      );
-    }
-    active.cancelSent = true;
-    return this.runtime.cancelCapture(operation.captureId).pipe(
-      switchMap(() => events$),
       switchMap(() => this.runtime.getCapture(operation.captureId)),
       tap((next) => this.rememberRecordingOperation(documentId, next)),
     );

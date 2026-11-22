@@ -2411,10 +2411,15 @@ describe('DesktopCaptureService', () => {
           async (_order, replies) => {
             const test = readAndCancelUnanswered();
 
-            for (const reply of replies) {
+            for (const [index, reply] of replies.entries()) {
               test[reply]();
               TestBed.tick();
               await settleCaptureLifecycle();
+              // The read got there first and the cancel answer is still held.
+              if (index === 0 && reply !== 'answerCancel') {
+                expect(test.updateCapture).not.toHaveBeenCalled();
+                expect(test.deleteCapture).not.toHaveBeenCalled();
+              }
             }
 
             expect(test.stored()).toMatchObject({ status: 'canceled', stage: 'cancelled', captureId: undefined });
@@ -2424,6 +2429,354 @@ describe('DesktopCaptureService', () => {
         );
       },
     );
+  });
+
+  describe('a cancel of a recording that is running', () => {
+    const document = {
+      ...summary, fileName: 'fixture.mp3', mediaType: 'audio/mpeg',
+    } satisfies DesktopLibrarySummary;
+    const recording = (
+      status: CaptureOperation['status'],
+      error?: CaptureOperation['error'],
+    ) => operation({
+      captureId: 'capture-1', status, kind: 'recording', ...(error ? { error } : {}),
+    });
+    const failedRecording = recording('failed', { code: 'speech_failed', message: 'no speech' });
+
+    /**
+     * A recording whose first poll can be finished or held.
+     * `laterStatus` is what a status read after that first one answers; an unexpected one fails.
+     */
+    function runningRecording(input: {
+      readonly holdStatus: boolean;
+      readonly laterStatus?: Observable<CaptureOperation>;
+    }) {
+      const calls: string[] = [];
+      const statusRead = new Subject<CaptureOperation>();
+      const cancelReply = new Subject<CaptureOperation>();
+      let storedDocument: DesktopLibrarySummary = document;
+      const updateCapture = vi.fn((update: Record<string, unknown>) => {
+        storedDocument = applyDurableCaptureUpdate(storedDocument, update);
+        return of(storedDocument);
+      });
+      const getCapture = vi.fn((): Observable<CaptureOperation> => {
+        calls.push('capture');
+        return input.laterStatus ?? throwError(() => 'status read after the cancel');
+      });
+      getCapture.mockImplementationOnce(() => {
+        calls.push('capture');
+        return input.holdStatus ? statusRead : of(recording('extracting'));
+      });
+      const cancelCapture = vi.fn(() => {
+        calls.push('cancel');
+        return cancelReply;
+      });
+      const deleteCapture = vi.fn(() => {
+        calls.push('delete');
+        return of(undefined);
+      });
+      const getResult = vi.fn(() => {
+        calls.push('result');
+        return of({ operation: recording('completed'), raw, result });
+      });
+      const store = initializeCapture(
+        libraryStub({ list: vi.fn(() => of([storedDocument])), updateCapture }),
+        runtimeStub({
+          startRecordingCapture: vi.fn(() => of(recording('extracting'))),
+          getCaptureEvents: vi.fn(() => {
+            calls.push('events');
+            return of([]);
+          }),
+          getPartial: vi.fn(() => {
+            calls.push('partial');
+            return of(null);
+          }),
+          getCapture,
+          cancelCapture,
+          getResult,
+          deleteCapture,
+        }),
+      );
+      return {
+        ...store,
+        calls,
+        updateCapture,
+        cancelCapture,
+        deleteCapture,
+        getResult,
+        stored: () => storedDocument,
+        answerCancel: (answered: CaptureOperation) => {
+          cancelReply.next(answered);
+          cancelReply.complete();
+        },
+        failCancel: () => cancelReply.error('Capture Runtime is unavailable.'),
+        answerStatus: (answered: CaptureOperation) => {
+          statusRead.next(answered);
+          statusRead.complete();
+        },
+        failStatus: () => statusRead.error('Capture Runtime is unavailable.'),
+      };
+    }
+
+    /** The first poll has finished and the next one has not started; then the user cancels. */
+    function cancelBetweenPolls(test: ReturnType<typeof runningRecording>) {
+      vi.useFakeTimers();
+      try {
+        test.service.startDocument$(document.documentId, test.host).subscribe();
+        expect(test.calls).toEqual(['events', 'partial', 'capture']);
+        test.service.cancel(document.documentId);
+        expect(test.cancelCapture).not.toHaveBeenCalled();
+        vi.advanceTimersByTime(500);
+        expect(test.cancelCapture).toHaveBeenCalledExactlyOnceWith('capture-1');
+        expect(test.calls).toEqual(['events', 'partial', 'capture', 'cancel']);
+      } finally {
+        vi.useRealTimers();
+      }
+    }
+
+    /** The status read of the first poll is still unanswered when the user cancels. */
+    function cancelDuringStatusRead(test: ReturnType<typeof runningRecording>) {
+      test.service.startDocument$(document.documentId, test.host).subscribe();
+      TestBed.tick();
+      expect(test.calls).toEqual(['events', 'partial', 'capture']);
+      test.service.cancel(document.documentId);
+      TestBed.tick();
+      expect(test.cancelCapture).toHaveBeenCalledExactlyOnceWith('capture-1');
+      expect(test.calls).toEqual(['events', 'partial', 'capture', 'cancel']);
+    }
+
+    /** Nothing the status read does is written, and the runtime capture is not deleted. */
+    async function expectStatusReadIgnored(test: ReturnType<typeof runningRecording>, reply: () => void) {
+      const writes = test.updateCapture.mock.calls.length;
+      const callsBefore = [...test.calls];
+      reply();
+      TestBed.tick();
+      await settleCaptureLifecycle();
+      expect(test.calls).toEqual(callsBefore);
+      expect(test.updateCapture).toHaveBeenCalledTimes(writes);
+      expect(test.deleteCapture).not.toHaveBeenCalled();
+      expect(test.getResult).not.toHaveBeenCalled();
+      expect(test.stored()).toMatchObject({ status: 'processing', captureId: 'capture-1' });
+      expect(test.stored().recoveryCode).toBeUndefined();
+      expect(test.service.isDocumentClaimed(document.documentId)).toBe(true);
+    }
+
+    it.each([
+      ['cancelled', { status: 'canceled', stage: 'cancelled' }, ['delete']],
+      ['completed', { status: 'completed', stage: 'completed' }, ['result', 'delete']],
+      ['failed', {
+        status: 'failed', stage: 'failed', errorCode: 'speech_failed', errorMessage: 'no speech',
+      }, ['delete']],
+    ] as const)(
+      'stores a cancel the runtime answers as %s and does not read the recording again',
+      async (ended, storedRow, readsAfter) => {
+        const test = runningRecording({ holdStatus: false });
+        const answered = ended === 'failed' ? failedRecording : recording(ended);
+        cancelBetweenPolls(test);
+
+        const before = test.calls.length;
+        test.answerCancel(answered);
+        TestBed.tick();
+        await settleCaptureLifecycle();
+
+        expect(test.calls.slice(before)).toEqual(readsAfter);
+        expect(test.stored()).toMatchObject({ ...storedRow, captureId: undefined });
+        expect(test.stored().recoveryCode).toBeUndefined();
+        expect(test.deleteCapture).toHaveBeenCalledExactlyOnceWith('capture-1');
+        expect(test.service.isDocumentClaimed(document.documentId)).toBe(false);
+      },
+    );
+
+    it('stores the cancel when the status read that was already sent answers after it', async () => {
+      const test = runningRecording({ holdStatus: true });
+      cancelDuringStatusRead(test);
+
+      const before = test.calls.length;
+      test.answerCancel(recording('cancelled'));
+      TestBed.tick();
+      await settleCaptureLifecycle();
+      expect(test.calls.slice(before)).toEqual(['delete']);
+      expect(test.stored()).toMatchObject({ status: 'canceled', stage: 'cancelled', captureId: undefined });
+
+      test.answerStatus(recording('completed'));
+      TestBed.tick();
+      await settleCaptureLifecycle();
+
+      expect(test.calls.slice(before)).toEqual(['delete']);
+      expect(test.getResult).not.toHaveBeenCalled();
+      expect(test.stored()).toMatchObject({ status: 'canceled', stage: 'cancelled', captureId: undefined });
+      expect(test.stored().recoveryCode).toBeUndefined();
+    });
+
+    it('stores the cancel when the status read that was already sent answers before it', async () => {
+      const test = runningRecording({ holdStatus: true });
+      cancelDuringStatusRead(test);
+      await expectStatusReadIgnored(test, () => test.answerStatus(recording('completed')));
+
+      const before = test.calls.length;
+      test.answerCancel(recording('cancelled'));
+      TestBed.tick();
+      await settleCaptureLifecycle();
+
+      expect(test.calls.slice(before)).toEqual(['delete']);
+      expect(test.getResult).not.toHaveBeenCalled();
+      expect(test.stored()).toMatchObject({ status: 'canceled', stage: 'cancelled', captureId: undefined });
+      expect(test.stored().recoveryCode).toBeUndefined();
+    });
+
+    it('stores the cancel when the status read that was already sent fails after it', async () => {
+      const test = runningRecording({ holdStatus: true });
+      cancelDuringStatusRead(test);
+
+      const before = test.calls.length;
+      test.answerCancel(recording('completed'));
+      TestBed.tick();
+      await settleCaptureLifecycle();
+      expect(test.calls.slice(before)).toEqual(['result', 'delete']);
+      expect(test.stored()).toMatchObject({ status: 'completed', stage: 'completed', captureId: undefined });
+
+      test.failStatus();
+      TestBed.tick();
+      await settleCaptureLifecycle();
+
+      expect(test.calls.slice(before)).toEqual(['result', 'delete']);
+      expect(test.stored()).toMatchObject({ status: 'completed', stage: 'completed', captureId: undefined });
+      expect(test.stored().recoveryCode).toBeUndefined();
+    });
+
+    it('stores the cancel when the status read that was already sent fails before it', async () => {
+      const test = runningRecording({ holdStatus: true });
+      cancelDuringStatusRead(test);
+      await expectStatusReadIgnored(test, () => test.failStatus());
+
+      const before = test.calls.length;
+      test.answerCancel(recording('cancelled'));
+      TestBed.tick();
+      await settleCaptureLifecycle();
+
+      expect(test.calls.slice(before)).toEqual(['delete']);
+      expect(test.stored()).toMatchObject({ status: 'canceled', stage: 'cancelled', captureId: undefined });
+      expect(test.stored().recoveryCode).toBeUndefined();
+    });
+
+    it('goes on reading a recording the cancel answers as still running', async () => {
+      const test = runningRecording({
+        holdStatus: false,
+        laterStatus: of(recording('cancelled')),
+      });
+      cancelBetweenPolls(test);
+
+      const before = test.calls.length;
+      test.answerCancel(recording('extracting'));
+      TestBed.tick();
+      await settleCaptureLifecycle();
+
+      expect(test.calls.slice(before)).toEqual(['events', 'partial', 'capture', 'delete']);
+      expect(test.stored()).toMatchObject({ status: 'canceled', stage: 'cancelled', captureId: undefined });
+      expect(test.stored().recoveryCode).toBeUndefined();
+      expect(test.getResult).not.toHaveBeenCalled();
+    });
+
+    it('goes on reading when a status read that was already sent answers before a cancel that is still running', async () => {
+      const test = runningRecording({
+        holdStatus: true,
+        laterStatus: of(recording('cancelled')),
+      });
+      cancelDuringStatusRead(test);
+      await expectStatusReadIgnored(test, () => test.answerStatus(recording('completed')));
+
+      const before = test.calls.length;
+      test.answerCancel(recording('extracting'));
+      TestBed.tick();
+      await settleCaptureLifecycle();
+
+      expect(test.calls.slice(before)).toEqual(['events', 'partial', 'capture', 'delete']);
+      expect(test.getResult).not.toHaveBeenCalled();
+      expect(test.stored()).toMatchObject({ status: 'canceled', stage: 'cancelled', captureId: undefined });
+      expect(test.stored().recoveryCode).toBeUndefined();
+    });
+
+    it('goes on reading when a status read that was already sent fails before a cancel that is still running', async () => {
+      const test = runningRecording({
+        holdStatus: true,
+        laterStatus: of(recording('cancelled')),
+      });
+      cancelDuringStatusRead(test);
+      await expectStatusReadIgnored(test, () => test.failStatus());
+
+      const before = test.calls.length;
+      test.answerCancel(recording('extracting'));
+      TestBed.tick();
+      await settleCaptureLifecycle();
+
+      expect(test.calls.slice(before)).toEqual(['events', 'partial', 'capture', 'delete']);
+      expect(test.stored()).toMatchObject({ status: 'canceled', stage: 'cancelled', captureId: undefined });
+      expect(test.stored().recoveryCode).toBeUndefined();
+    });
+
+    it('keeps the link and marks the cancel as failed when the runtime rejects it', async () => {
+      const test = runningRecording({ holdStatus: false });
+      cancelBetweenPolls(test);
+
+      const before = test.calls.length;
+      test.failCancel();
+      TestBed.tick();
+      await settleCaptureLifecycle();
+
+      expect(test.calls.slice(before)).toEqual([]);
+      expect(test.deleteCapture).not.toHaveBeenCalled();
+      expect(test.getResult).not.toHaveBeenCalled();
+      expect(test.stored()).toMatchObject({
+        status: 'recovery_required',
+        captureId: 'capture-1',
+        recoveryCode: 'cancel_failed',
+      });
+      expect(test.service.isDocumentClaimed(document.documentId)).toBe(false);
+    });
+
+    it('marks the cancel as failed when the status read that was already sent answers before the runtime rejects it', async () => {
+      const test = runningRecording({ holdStatus: true });
+      cancelDuringStatusRead(test);
+      await expectStatusReadIgnored(test, () => test.answerStatus(recording('completed')));
+
+      const before = test.calls.length;
+      test.failCancel();
+      TestBed.tick();
+      await settleCaptureLifecycle();
+
+      expect(test.calls.slice(before)).toEqual([]);
+      expect(test.deleteCapture).not.toHaveBeenCalled();
+      expect(test.getResult).not.toHaveBeenCalled();
+      expect(test.stored()).toMatchObject({
+        status: 'recovery_required',
+        captureId: 'capture-1',
+        recoveryCode: 'cancel_failed',
+      });
+    });
+
+    it('marks the cancel as failed when the status read that was already sent fails after the runtime rejects it', async () => {
+      const test = runningRecording({ holdStatus: true });
+      cancelDuringStatusRead(test);
+
+      const before = test.calls.length;
+      test.failCancel();
+      TestBed.tick();
+      await settleCaptureLifecycle();
+      expect(test.stored()).toMatchObject({
+        status: 'recovery_required', captureId: 'capture-1', recoveryCode: 'cancel_failed',
+      });
+      expect(test.deleteCapture).not.toHaveBeenCalled();
+
+      test.failStatus();
+      TestBed.tick();
+      await settleCaptureLifecycle();
+
+      expect(test.calls.slice(before)).toEqual([]);
+      expect(test.deleteCapture).not.toHaveBeenCalled();
+      expect(test.stored()).toMatchObject({
+        status: 'recovery_required', captureId: 'capture-1', recoveryCode: 'cancel_failed',
+      });
+    });
   });
 
   describe('the live lines of an earlier capture', () => {
