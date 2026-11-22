@@ -379,7 +379,10 @@ export class AsrQueueStore {
           .reattach$(document, this.host)
           .pipe(takeUntilDestroyed(this.destroyRef))
           .subscribe({
-            // If the decision errors, the service pauses it before another attempt.
+            // A capture's own failures are stored with the document. An error
+            // here means the stored document could not be read, so nothing was
+            // attempted: the capture may be tried again, after the pause the
+            // service starts for a failed decision.
             error: (error: unknown) => {
               this.attemptedReattachments.delete(captureId);
               this.runtimeStatus.message.set(errorMessage(error));

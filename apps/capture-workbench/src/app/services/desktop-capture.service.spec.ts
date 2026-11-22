@@ -3393,18 +3393,32 @@ describe('DesktopCaptureService', () => {
 
     it('follows the recording and stores its end when the processing write fails', async () => {
       const test = setupReconnect(recordingDoc, { holdProcessingWrite: true });
-      test.getCapture.mockImplementationOnce(() => {
-        test.calls.push('capture');
-        return of(recordingOp('extracting'));
-      });
+      const nextStatus = new Subject<ReturnType<typeof recordingOp>>();
+      test.getCapture
+        .mockImplementationOnce(() => {
+          test.calls.push('capture');
+          return of(recordingOp('extracting'));
+        })
+        .mockImplementationOnce(() => {
+          test.calls.push('capture');
+          return nextStatus;
+        });
 
       test.service.reattach$(recordingDoc, test.host).subscribe();
       TestBed.tick();
       test.failProcessingWrite(new Error('Capture library index cannot be written.'));
       TestBed.tick();
+
+      // While the recording is followed, the row keeps what it stored and the claim holds.
+      expect(test.calls).toEqual(['capture', 'write:processing', 'events', 'partial', 'capture']);
+      expect(test.stored()).toBe(recordingDoc);
+      expect(test.service.isDocumentClaimed(recordingDoc.documentId)).toBe(true);
+
+      nextStatus.next(recordingOp('completed'));
+      nextStatus.complete();
+      TestBed.tick();
       await settleCaptureLifecycle();
 
-      // The row kept what it stored until the end was written; the claim held throughout.
       expect(test.calls).toEqual([
         'capture', 'write:processing', 'events', 'partial', 'capture',
         'write:completed', 'delete', 'write:completed',
