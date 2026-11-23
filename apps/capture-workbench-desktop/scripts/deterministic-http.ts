@@ -190,7 +190,8 @@ export function createIngestion(context, fixture) {
   );
 }
 
-export function verifyRuntimeCapture(context, fixture, structuringMode = 'runtime') {
+export function verifyRuntimeCapture(context, fixture) {
+  const structuringMode = 'runtime';
   return createIngestion(context, fixture).pipe(
     concatMap((ingestionId) => {
       const clientRequestId = randomUUID();
@@ -241,10 +242,74 @@ export function verifyRuntimeCapture(context, fixture, structuringMode = 'runtim
   );
 }
 
+/**
+ * A host-structured document capture, as the desktop host starts one: like the
+ * product runtime, the fixture answers a repeated create with the same capture
+ * and a different request under the same key with 409 `idempotency_conflict`,
+ * stops the capture at the `awaiting_structuring` checkpoint with its raw text
+ * and OCR projection, has no result for it, and the capture ends when the host
+ * deletes it after storing them.
+ */
 export function verifyHostStructuring(context, fixture) {
-  // The installed fake completes host-mode requests immediately, like its UI flow.
-  return verifyRuntimeCapture(context, fixture, 'host');
+  const kind = fixtureKind(fixture);
+  assert.notEqual(kind, 'recording', 'Host structuring is verified with a document fixture.');
+  return createIngestion(context, fixture).pipe(
+    concatMap((ingestionId) => {
+      const clientRequestId = randomUUID();
+      const payload = {
+        protocolVersion: '2', clientRequestId, ingestionId, structuringMode: 'host', startPolicy: 'eager',
+      };
+      const start = (body: object = payload) => requestJson({
+        ...context, method: 'POST', path: '/v2/captures',
+        headers: { 'content-type': 'application/json', 'x-idempotency-key': clientRequestId },
+        body: JSON.stringify(body),
+      });
+      return start().pipe(
+        concatMap((created) => {
+          validateJob(created, 202, ingestionId, kind, checkpointJob);
+          const captureId = created.body.captureId;
+          const path = `/v2/captures/${captureId}`;
+          return start().pipe(
+            tap((repeated) => {
+              validateJob(repeated, 202, ingestionId, kind, checkpointJob);
+              assert.equal(repeated.body.captureId, captureId);
+            }),
+            concatMap(() => start({ ...payload, targetLanguage: 'en' })),
+            tap((conflict) => assertApiError(conflict, 409, 'idempotency_conflict')),
+            concatMap(() => requestJson({ ...context, path })),
+            tap((status) => validateJob(status, 200, ingestionId, kind, checkpointJob)),
+            concatMap(() => requestJson({ ...context, path: `${path}/raw` })),
+            tap((raw) => validateRaw(fixture, raw)),
+            concatMap(() => requestJson({ ...context, path: `${path}/ocr` })),
+            tap((ocr) => {
+              assert.equal(ocr.status, 200);
+              assert.equal(ocr.body.captureId, captureId);
+              assert.equal(ocr.body.status, 'completed');
+              assert.equal(ocr.body.pages.length, fixture.expectedSegments);
+            }),
+            concatMap(() => requestJson({ ...context, path: `${path}/result` })),
+            tap((result) => assertApiError(result, 409, 'result_unavailable')),
+            concatMap(() => requestJson({ ...context, method: 'DELETE', path })),
+            tap((deleted) => assert.equal(deleted.status, 204)),
+            concatMap(() => requestJson({ ...context, path })),
+            map((gone) => {
+              assertApiError(gone, 404, 'capture_not_found');
+              return {
+                fileName: fixture.fileName, captureId, structuringMode: 'host',
+                status: 'awaiting_structuring', segments: fixture.expectedSegments,
+                idempotency: true, ocrCompleted: true, resultUnavailable: true, deleted: true,
+              };
+            }),
+          );
+        }),
+      );
+    }),
+  );
 }
+
+/** What a capture reports when it has completed, and when it waits at the host-structuring checkpoint. */
+const completedJob = { status: 'completed', progress: 1, finished: true };
+const checkpointJob = { status: 'awaiting_structuring', progress: 0.9, finished: false };
 
 function fixtureKind(fixture) {
   return fixture.mediaType === 'application/pdf' ? 'pdf'
@@ -298,7 +363,7 @@ export function validateReady(response) {
   assert.equal(compute.noticeCode, 'ocr_cpu_fallback');
 }
 
-function validateJob(response, expectedStatus, ingestionId, kind) {
+function validateJob(response, expectedStatus, ingestionId, kind, expected = completedJob) {
   assert.equal(response.status, expectedStatus);
   assert.deepEqual(Object.keys(response.body).sort(), [
     'captureId', 'completedAt', 'createdAt', 'error', 'ingestionId', 'kind',
@@ -309,12 +374,14 @@ function validateJob(response, expectedStatus, ingestionId, kind) {
   assert.equal(response.body.protocolVersion, '2');
   assert.equal(response.body.ingestionId, ingestionId);
   assert.equal(response.body.kind, kind);
-  assert.equal(response.body.status, 'completed');
-  assert.equal(response.body.progress, 1);
+  assert.equal(response.body.status, expected.status);
+  assert.equal(response.body.progress, expected.progress);
   assert.equal(response.body.partialRevision, 0);
   assert.equal(response.body.lastEventSequence, 1);
   assert.equal(response.body.error, null);
   assertJobTimestamps(response.body);
+  if (expected.finished) assert.equal(typeof response.body.completedAt, 'string');
+  else assert.equal(response.body.completedAt, null);
 }
 
 function validateRaw(fixture, response) {

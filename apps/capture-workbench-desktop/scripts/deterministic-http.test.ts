@@ -123,52 +123,154 @@ test('ingestion uses ordered one-MiB chunks, matching request ids, digests and f
   ]);
 });
 
-test('capture helpers consume operation/raw/result envelopes for every fixture and host mode', async (t) => {
-  for (const fixture of DETERMINISTIC_FIXTURES) {
-    for (const mode of ['runtime', 'host']) {
-      let operation;
-      let capturePayload;
-      const context = await serve(t, (request, bytes) => {
-        if (request.url === '/v2/ingestions') {
-          const body = JSON.parse(bytes.toString('utf8'));
-          return { status: 201, body: { protocolVersion: '2', ingestionId: 'upload', kind: body.kind, status: 'open' } };
-        }
-        if (request.method === 'PUT') return { status: 200, body: { ingestionId: 'upload', nextOffset: bytes.length, nextChunkIndex: 1 } };
-        if (request.url.endsWith('/finalize')) return { status: 200, body: { ingestionId: 'upload', status: 'ready', finalizedSha256: digest(fixture.content) } };
-        const { raw, result } = captureResult(fixture);
-        if (request.method === 'POST' && request.url === '/v2/captures') {
-          assert.equal(request.headers['content-type'], 'application/json');
-          const body = JSON.parse(bytes.toString('utf8'));
-          assert.equal(body.protocolVersion, '2');
-          assert.equal(body.ingestionId, 'upload');
-          assert.equal(body.structuringMode, mode);
-          assert.equal(body.startPolicy, 'eager');
-          assert.equal(body.clientRequestId, request.headers['x-idempotency-key']);
-          if (capturePayload && JSON.stringify(body) !== capturePayload) {
-            return { status: 409, body: { error: { code: 'idempotency_conflict', message: 'Metadata conflicts.' } } };
-          }
-          capturePayload = JSON.stringify(body);
-          operation = {
-            protocolVersion: '2', captureId: 'capture', ingestionId: 'upload',
-            kind: fixture.mediaType === 'application/pdf' ? 'pdf' : fixture.locatorKind === 'time' ? 'recording' : 'image',
-            status: 'completed', progress: 1, partialRevision: 0, lastEventSequence: 1,
-            source: raw.source, error: null, createdAt: raw.createdAt,
-            updatedAt: result.completedAt, completedAt: result.completedAt,
-          };
-          return { status: 202, body: operation };
-        }
-        assert.equal(request.method, 'GET');
-        if (request.url === '/v2/captures/capture') return { status: 200, body: operation };
-        assert.equal(request.url, '/v2/captures/capture/result');
-        return { status: 200, body: { operation, raw, result } };
-      });
-      const evidence = await firstValueFrom(mode === 'host'
-        ? verifyHostStructuring(context, fixture) : verifyRuntimeCapture(context, fixture));
-      assert.equal(evidence.structuringMode, mode);
-      assert.equal(evidence.segments, fixture.expectedSegments);
-      assert.equal(evidence.textProjection, true);
-    }
+/** Answers the ingestion requests of `createIngestion`, or returns undefined for any other request. */
+function ingestionAnswer(fixture, request, bytes) {
+  if (request.url === '/v2/ingestions') {
+    const body = JSON.parse(bytes.toString('utf8'));
+    return { status: 201, body: { protocolVersion: '2', ingestionId: 'upload', kind: body.kind, status: 'open' } };
   }
+  if (request.method === 'PUT') return { status: 200, body: { ingestionId: 'upload', nextOffset: bytes.length, nextChunkIndex: 1 } };
+  if (request.url.endsWith('/finalize')) return { status: 200, body: { ingestionId: 'upload', status: 'ready', finalizedSha256: digest(fixture.content) } };
+  return undefined;
+}
+
+function fixtureKind(fixture) {
+  return fixture.mediaType === 'application/pdf' ? 'pdf' : fixture.locatorKind === 'time' ? 'recording' : 'image';
+}
+
+function assertCaptureStart(request, bytes, structuringMode) {
+  assert.equal(request.headers['content-type'], 'application/json');
+  const body = JSON.parse(bytes.toString('utf8'));
+  assert.equal(body.protocolVersion, '2');
+  assert.equal(body.ingestionId, 'upload');
+  assert.equal(body.structuringMode, structuringMode);
+  assert.equal(body.startPolicy, 'eager');
+  assert.equal(body.clientRequestId, request.headers['x-idempotency-key']);
+  return body;
+}
+
+test('a runtime-structured capture is read through its operation/raw/result envelope for every fixture', async (t) => {
+  for (const fixture of DETERMINISTIC_FIXTURES) {
+    let operation;
+    let capturePayload;
+    const context = await serve(t, (request, bytes) => {
+      const ingestion = ingestionAnswer(fixture, request, bytes);
+      if (ingestion) return ingestion;
+      const { raw, result } = captureResult(fixture);
+      if (request.method === 'POST' && request.url === '/v2/captures') {
+        const body = assertCaptureStart(request, bytes, 'runtime');
+        if (capturePayload && JSON.stringify(body) !== capturePayload) {
+          return { status: 409, body: { error: { code: 'idempotency_conflict', message: 'Metadata conflicts.' } } };
+        }
+        capturePayload = JSON.stringify(body);
+        operation = {
+          protocolVersion: '2', captureId: 'capture', ingestionId: 'upload', kind: fixtureKind(fixture),
+          status: 'completed', progress: 1, partialRevision: 0, lastEventSequence: 1,
+          source: raw.source, error: null, createdAt: raw.createdAt,
+          updatedAt: result.completedAt, completedAt: result.completedAt,
+        };
+        return { status: 202, body: operation };
+      }
+      assert.equal(request.method, 'GET');
+      if (request.url === '/v2/captures/capture') return { status: 200, body: operation };
+      assert.equal(request.url, '/v2/captures/capture/result');
+      return { status: 200, body: { operation, raw, result } };
+    });
+    const evidence = await firstValueFrom(verifyRuntimeCapture(context, fixture));
+    assert.equal(evidence.structuringMode, 'runtime');
+    assert.equal(evidence.segments, fixture.expectedSegments);
+    assert.equal(evidence.textProjection, true);
+  }
+});
+
+/**
+ * A runtime that serves a host-structured capture as the product runtime does:
+ * it waits at the checkpoint (or reports `status`), answers a repeated create
+ * with the same capture and a different request under the same key with 409
+ * `idempotency_conflict`, serves raw and OCR, has no result, and is gone after
+ * the delete. `idempotency` replaces those answers with a faulty runtime's.
+ */
+async function serveHostStructuredCapture(
+  t, fixture, calls: string[], status = 'awaiting_structuring',
+  idempotency: 'kept' | 'new-capture-on-replay' | 'conflict-accepted' = 'kept',
+) {
+  let deleted = false;
+  let createPayload: string | undefined;
+  let creates = 0;
+  return serve(t, (request, bytes) => {
+    const ingestion = ingestionAnswer(fixture, request, bytes);
+    if (ingestion) return ingestion;
+    calls.push(`${request.method} ${request.url}`);
+    const { raw } = captureResult(fixture);
+    const operation = {
+      protocolVersion: '2', captureId: 'capture', ingestionId: 'upload', kind: fixtureKind(fixture),
+      status, progress: status === 'completed' ? 1 : 0.9, partialRevision: 0, lastEventSequence: 1,
+      source: raw.source, error: null, createdAt: raw.createdAt, updatedAt: raw.createdAt,
+      completedAt: status === 'completed' ? raw.createdAt : null,
+    };
+    if (request.method === 'POST' && request.url === '/v2/captures') {
+      const body = JSON.stringify(assertCaptureStart(request, bytes, 'host'));
+      creates += 1;
+      if (createPayload !== undefined && body !== createPayload && idempotency !== 'conflict-accepted') {
+        return { status: 409, body: { error: { code: 'idempotency_conflict', message: 'Metadata conflicts.' } } };
+      }
+      createPayload ??= body;
+      const replayedAsNew = idempotency === 'new-capture-on-replay' && creates > 1;
+      return { status: 202, body: replayedAsNew ? { ...operation, captureId: `capture-${creates}` } : operation };
+    }
+    if (request.method === 'DELETE') {
+      deleted = true;
+      return { status: 204, body: '' };
+    }
+    if (deleted) return { status: 404, body: { error: { code: 'capture_not_found', message: 'Gone.' } } };
+    if (request.url === '/v2/captures/capture') return { status: 200, body: operation };
+    if (request.url === '/v2/captures/capture/raw') return { status: 200, body: raw };
+    if (request.url === '/v2/captures/capture/ocr') {
+      return { status: 200, body: { captureId: 'capture', status: 'completed', pages: raw.segments.map(() => ({})) } };
+    }
+    assert.equal(request.url, '/v2/captures/capture/result');
+    return { status: 409, body: { error: { code: 'result_unavailable', message: 'No result yet.' } } };
+  });
+}
+
+test('a host-structured document capture is read at its checkpoint and deleted, with no result', async (t) => {
+  for (const fixture of DETERMINISTIC_FIXTURES.filter((candidate) => candidate.locatorKind === 'page')) {
+    const calls: string[] = [];
+    const context = await serveHostStructuredCapture(t, fixture, calls);
+    const evidence = await firstValueFrom(verifyHostStructuring(context, fixture));
+    assert.deepEqual(evidence, {
+      fileName: fixture.fileName, captureId: 'capture', structuringMode: 'host',
+      status: 'awaiting_structuring', segments: fixture.expectedSegments,
+      idempotency: true, ocrCompleted: true, resultUnavailable: true, deleted: true,
+    });
+    // The create, its replay and a different request under the same key.
+    assert.deepEqual(calls, [
+      'POST /v2/captures', 'POST /v2/captures', 'POST /v2/captures',
+      'GET /v2/captures/capture', 'GET /v2/captures/capture/raw',
+      'GET /v2/captures/capture/ocr', 'GET /v2/captures/capture/result',
+      'DELETE /v2/captures/capture', 'GET /v2/captures/capture',
+    ]);
+  }
+});
+
+test('a host-structured capture whose create is not idempotent is rejected', async (t) => {
+  const fixture = DETERMINISTIC_FIXTURES[1];
+  const replayed = await serveHostStructuredCapture(t, fixture, [], 'awaiting_structuring', 'new-capture-on-replay');
+  await assert.rejects(firstValueFrom(verifyHostStructuring(replayed, fixture)), {
+    code: 'ERR_ASSERTION', actual: 'capture-2', expected: 'capture',
+  });
+  const accepted = await serveHostStructuredCapture(t, fixture, [], 'awaiting_structuring', 'conflict-accepted');
+  await assert.rejects(firstValueFrom(verifyHostStructuring(accepted, fixture)), {
+    code: 'ERR_ASSERTION', actual: 202, expected: 409,
+  });
+});
+
+test('a host-structured capture reported completed is not the product runtime’s checkpoint', async (t) => {
+  const fixture = DETERMINISTIC_FIXTURES[1];
+  const context = await serveHostStructuredCapture(t, fixture, [], 'completed');
+  await assert.rejects(firstValueFrom(verifyHostStructuring(context, fixture)), {
+    code: 'ERR_ASSERTION', actual: 'completed', expected: 'awaiting_structuring',
+  });
 });
 
 function captureResult(fixture) {
