@@ -1303,17 +1303,21 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
       }
       if (command === 'library_update_capture') {
         const update = args.update ?? {};
+        // Serialized fields of the host's LibraryCaptureUpdate.
+        const allowedFields = new Set([
+          'documentId', 'captureId', 'clearCaptureId', 'status', 'stage', 'raw',
+          'result', 'errorCode', 'errorMessage', 'ocrEvidence', 'captureOptions',
+        ]);
+        const unknownField = Object.keys(update).find((field) => !allowedFields.has(field));
+        if (unknownField !== undefined) return commandFailed(`unknown field \`${unknownField}\``);
         const documentId = String(update['documentId'] ?? '');
         const current = documents.find((item) => item.documentId === documentId);
         if (!current) return commandFailed(`Unknown document: ${documentId}`);
         const status = String(update['status'] ?? '');
-        // Like the host: the statuses and recovery fields of earlier versions
-        // are only read; an update that carries one is refused.
+        // Like the host: statuses of earlier versions are only read.
         if (status === 'persisting' || status === 'recovery_required') {
           return commandFailed('Capture library updates do not store the statuses of earlier versions.');
         }
-        const recoveryField = ['recoveryCode', 'recoveryMessage'].find((field) => field in update);
-        if (recoveryField) return commandFailed(`unknown field \`${recoveryField}\``);
         if (update['clearCaptureId'] === true && typeof update['captureId'] === 'string') {
           return commandFailed('Capture library update cannot set and clear a runtime identifier together.');
         }

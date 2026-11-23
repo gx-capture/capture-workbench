@@ -702,6 +702,8 @@ test('the simulated library stores the raw and the structured result each on its
   }
   expect(await update({ recoveryCode: 'runtime_cleanup_failed' })).toEqual({ rejection: 'unknown field `recoveryCode`' });
   expect(await update({ recoveryMessage: null })).toEqual({ rejection: 'unknown field `recoveryMessage`' });
+  expect(await update({ clear_capture_id: true })).toEqual({ rejection: 'unknown field `clear_capture_id`' });
+  expect(await update({ unexpectedField: null })).toEqual({ rejection: 'unknown field `unexpectedField`' });
   expect((await hostCommand(page, 'library_get', { request: { documentId } })).value).toMatchObject({ status: 'completed' });
 });
 
