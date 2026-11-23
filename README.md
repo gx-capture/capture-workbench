@@ -239,6 +239,17 @@ corepack pnpm nx run capture-workbench-desktop:test-scripts
 corepack pnpm nx run capture-workbench-e2e:e2e
 ```
 
+The browser journeys run only through their Nx targets:
+`capture-workbench-e2e:e2e` (simulated desktop backend) and
+`capture-workbench-e2e:e2e-dev-host` (dev host with the deterministic fixture
+runtime). Both build what they need and preload `tools/test-temp-root.ts`, so
+a run leaves nothing in the shared temp directory. A direct `playwright test`
+is not supported: the dev-host config refuses it, and the simulated one then
+runs in the shared temp directory, where the Workbench dev server's Nx leaves
+a socket directory behind. When the run's private temp path is too long for an
+Nx socket, the run stops and asks for `NX_SOCKET_DIR` set to a short
+directory; a configured `NX_SOCKET_DIR` is always used.
+
 ### Localhost preview
 
 To calibrate screens or review screen behaviour in an ordinary browser,

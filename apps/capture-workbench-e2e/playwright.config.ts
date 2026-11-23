@@ -1,11 +1,23 @@
+// The browser journeys against the simulated desktop backend. Run them with
+// `pnpm nx run capture-workbench-e2e:e2e`, the only supported entry point: it
+// builds the Workbench and preloads tools/test-temp-root.ts, so the run leaves
+// nothing in the shared temp directory. A direct `playwright test` with this
+// config runs without that preload, in the shared temp directory, where the
+// Workbench dev server's Nx leaves a socket directory behind. Nx infers no
+// Playwright targets for this project (nx.json has no Playwright plugin); the
+// dev-host journeys have their own target and config.
 import { defineConfig, devices } from '@playwright/test';
-import { nxE2EPreset } from '@nx/playwright/preset';
 import { fileURLToPath } from 'node:url';
+import { privateTempRun } from './private-temp-run.ts';
 
 // For CI, you may want to set BASE_URL to the deployed application.
 const baseURL = process.env['BASE_URL'] || 'http://localhost:4200';
 const configFile = fileURLToPath(import.meta.url);
 const workspaceRoot = fileURLToPath(new URL('../..', import.meta.url));
+// Under the e2e target, the coordinator, the workers, the Workbench dev server
+// and the other web servers use the run's private temp root.
+const run = privateTempRun(workspaceRoot);
+const { nxE2EPreset } = await import('@nx/playwright/preset');
 // The production build served with the desktop app's CSP
 // (desktop-csp-server.ts). The dev server sends no CSP, so only this project
 // sees what the packaged app's policy blocks.
@@ -33,6 +45,7 @@ export default defineConfig({
     : [
         {
           command: 'corepack pnpm nx run capture-workbench:serve',
+          env: run?.devServerEnvironment ?? {},
           url: baseURL,
           reuseExistingServer: !process.env['CI'],
           timeout: 120_000,
