@@ -37,7 +37,7 @@ describe('HistoryListPage', () => {
   });
   it('binds filters and row actions with named links and headers', () => {
     const { fixture, element, store } = setup();
-    const row = { documentId: 'a', fileName: 'fixture.pdf', kind: 'ocr', userStatus: 'done', statusText: '完成', extent: '3', updatedAtMs: 1, updatedAt: 'Jan 1', canDelete: true } as const;
+    const row = { documentId: 'a', fileName: 'fixture.pdf', kind: 'ocr', userStatus: 'done', statusText: '完成', failureReason: null, extent: '3', updatedAtMs: 1, updatedAt: 'Jan 1', canDelete: true } as const;
     store.rows.set([row]);
     fixture.detectChanges();
     const type = element.querySelector<HTMLSelectElement>('[data-testid="history-type-filter"]');
@@ -57,9 +57,19 @@ describe('HistoryListPage', () => {
     expect(store.open).toHaveBeenCalledWith('a');
     expect(store.askDelete).toHaveBeenCalledWith(row);
   });
+  it('shows why this run could not start or end a row under its status', () => {
+    const { fixture, element, store } = setup();
+    const row = { documentId: 'a', fileName: 'fixture.pdf', kind: 'ocr', userStatus: 'needs-attention', statusText: '已中斷', failureReason: 'the disk is full', extent: '1', updatedAtMs: 1, updatedAt: 'Jan 1', canDelete: true } as const;
+    store.rows.set([row]);
+    fixture.detectChanges();
+    expect(element.querySelector('[data-testid="history-row-reason"]')?.textContent?.trim()).toBe('the disk is full');
+    store.rows.set([{ ...row, failureReason: null }]);
+    fixture.detectChanges();
+    expect(element.querySelector('[data-testid="history-row-reason"]')).toBeNull();
+  });
   it('disables forbidden row deletion and all row deletion while a request is in flight', () => {
     const { fixture, element, store } = setup();
-    const row = { documentId: 'a', fileName: 'fixture.pdf', kind: 'ocr', userStatus: 'done', statusText: '完成', extent: '1', updatedAtMs: 1, updatedAt: 'Jan 1', canDelete: false } as const;
+    const row = { documentId: 'a', fileName: 'fixture.pdf', kind: 'ocr', userStatus: 'done', statusText: '完成', failureReason: null, extent: '1', updatedAtMs: 1, updatedAt: 'Jan 1', canDelete: false } as const;
     store.rows.set([row]);
     fixture.detectChanges();
     const button = () => element.querySelector<HTMLButtonElement>('[data-testid="history-row-delete"]');
@@ -81,7 +91,7 @@ describe('HistoryListPage', () => {
   });
   it('renders the named confirmation and binds both buttons', async () => {
     const { fixture, store } = setup();
-    store.pendingDelete.set({ documentId: 'a', fileName: 'fixture.pdf', kind: 'ocr', userStatus: 'done', statusText: '完成', extent: '1', updatedAtMs: 1, updatedAt: '2026/11/16 14:05', canDelete: true });
+    store.pendingDelete.set({ documentId: 'a', fileName: 'fixture.pdf', kind: 'ocr', userStatus: 'done', statusText: '完成', failureReason: null, extent: '1', updatedAtMs: 1, updatedAt: '2026/11/16 14:05', canDelete: true });
     fixture.detectChanges();
     await fixture.whenStable();
     const dialog = document.querySelector<HTMLElement>('[data-testid="history-delete-dialog"]');

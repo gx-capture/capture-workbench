@@ -1,4 +1,4 @@
-// Maps capture operations and stages to activity, library status and display labels.
+// Maps capture operations and stored documents to activity, library status and display labels.
 import type { CaptureOperation } from '@gx-capture/capture-workbench-ui';
 import type { DesktopLibraryStatus, DesktopLibrarySummary } from '../contracts';
 import { desktopMessages } from '../i18n/desktop-messages';
@@ -58,83 +58,73 @@ function terminalStatusFromStage(
 }
 
 /**
- * Whether the stored document holds the terminal data of its capture, so that
- * only the runtime cleanup is left to do: it is stored as ended, as an OCR
- * result to confirm, or as a refused cleanup. A legacy failed row marked
- * `capture_recovery_required` still needs to recover its terminal state.
- */
-export function holdsTerminalData(document: DesktopLibrarySummary): boolean {
-  return document.status === 'completed'
-    || (document.status === 'failed' && document.recoveryCode !== 'capture_recovery_required')
-    || document.status === 'canceled'
-    || (document.status === 'awaiting_confirmation' && document.hasRaw === true)
-    || document.recoveryCode === 'runtime_cleanup_failed';
-}
-
-/**
- * The terminal status the stored document says its capture ended in: its own
- * terminal status, or, while only the runtime cleanup is still to do, the one
- * its stage names (`awaiting_structuring` only for OCR media). Earlier versions
- * stored the cleanup row of a recording with the last event's stage, which need
- * not be terminal (or could be `awaiting_structuring`); then the document's own
- * data decides: a stored terminal error means failed, a kept result completed.
- * Undefined when the document does not say; no status is guessed.
+ * How a row of an earlier version ended whose terminal data was saved but
+ * whose runtime cleanup failed (`recovery_required` with
+ * `runtime_cleanup_failed`; nothing writes it any more): the status its stage
+ * names, or, for a stage that is not terminal, a stored error means failed and
+ * a kept raw result completed. Undefined for every other row, and when the row
+ * does not say; no status is guessed.
  */
 export function committedTerminalStatus(
   document: DesktopLibrarySummary,
 ): TerminalLibraryStatus | undefined {
-  if (
-    document.status === 'completed'
-    || (document.status === 'failed' && document.recoveryCode !== 'capture_recovery_required')
-    || document.status === 'canceled'
-  ) {
-    return document.status;
+  if (document.status !== 'recovery_required' || document.recoveryCode !== 'runtime_cleanup_failed') {
+    return undefined;
   }
-  if (document.status === 'awaiting_confirmation' && document.hasRaw === true) {
-    return 'awaiting_confirmation';
-  }
-  if (document.recoveryCode !== 'runtime_cleanup_failed') return undefined;
   const namedByStage = terminalStatusFromStage(document.stage, document.mediaType);
   if (namedByStage) return namedByStage;
   if (document.errorCode) return 'failed';
   return document.hasRaw === true ? 'completed' : undefined;
 }
 
-
-/** Converts a library terminal status to the runtime stage spelling. */
-export function terminalStage(status: TerminalLibraryStatus): string {
-  if (status === 'canceled') return 'cancelled';
-  if (status === 'failed') return 'failed';
-  if (status === 'awaiting_confirmation') return 'awaiting_structuring';
-  return 'completed';
+/**
+ * Imported and waiting for its capture: queued, without a runtime capture and
+ * without a raw result. An earlier version's Start again stored `queued` and
+ * kept the raw result; such a row is never captured again in place.
+ */
+export function isWaiting(document: DesktopLibrarySummary): boolean {
+  return document.status === 'queued' && !document.captureId && document.hasRaw !== true;
 }
 
 /**
- * Whether the stored document says its capture was lost: it was interrupted
- * without a runtime capture, or its runtime capture could not be found again.
- * These are the states in which a queue row offers a restart.
+ * Whether the stored document says a capture was in progress, or needed
+ * recovery, when no attempt of this app run owns it: the run that started it
+ * ended (the app closed, the window reloaded) or this run's attempt ended
+ * before its last write was stored. The link is only an address for cleanup
+ * and is never followed. A terminal status is shown as it is, link or not.
+ *
+ * `persisting`, `recovery_required` and `capture_recovery_required` are read
+ * here only because earlier versions stored them.
  */
-export function isCaptureLost(document: DesktopLibrarySummary): boolean {
-  if (document.captureId) return false;
-  if (document.status === 'processing' || document.status === 'persisting') {
-    return true;
+export function isInterrupted(document: DesktopLibrarySummary, ownedByThisRun: boolean): boolean {
+  if (ownedByThisRun) return false;
+  switch (document.status) {
+    case 'processing':
+    case 'persisting':
+      return true;
+    case 'queued':
+      return Boolean(document.captureId) || document.hasRaw === true;
+    case 'recovery_required':
+      return committedTerminalStatus(document) === undefined;
+    case 'awaiting_confirmation':
+      return document.hasRaw !== true || isRecordingMediaType(document.mediaType);
+    case 'failed':
+      return document.recoveryCode === 'capture_recovery_required';
+    default:
+      return false;
   }
-  if (document.status === 'recovery_required') {
-    return document.recoveryCode !== 'runtime_cleanup_failed';
-  }
-  return document.status === 'failed' && document.recoveryCode === 'capture_recovery_required';
 }
 
 /**
- * Whether a document without a runtime capture can be captured again when the
- * user asks: the states in which a queue row offers retry or restart. A
- * waiting document starts by itself, and a document that holds its result is
- * finished.
+ * Whether the user's Start again may capture the stored document again: it
+ * failed, was cancelled or was interrupted, and holds no raw result. A
+ * document with a result is never captured again in place; to capture that
+ * file again it is deleted and imported again.
  */
-export function canCaptureAgain(document: DesktopLibrarySummary): boolean {
-  return document.status !== 'queued'
-    && document.status !== 'completed'
-    && !(document.status === 'awaiting_confirmation' && document.hasRaw === true);
+export function canStartAgain(document: DesktopLibrarySummary): boolean {
+  if (document.hasRaw === true) return false;
+  const status = committedTerminalStatus(document) ?? document.status;
+  return status === 'failed' || status === 'canceled' || isInterrupted(document, false);
 }
 
 /** Maps a runtime stage to its workspace label. */

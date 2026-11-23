@@ -10,9 +10,10 @@ import {
 import { rxResource, toSignal } from '@angular/core/rxjs-interop';
 import { ActivatedRoute } from '@angular/router';
 import { defer, map, Observable, of, Subject, throwError, timer, type Subscription } from 'rxjs';
-import type { DesktopLibraryDetail, DesktopLibraryEdits } from '../contracts';
+import type { DesktopLibraryDetail, DesktopLibraryEdits, DesktopLibrarySummary } from '../contracts';
 import { desktopMessages } from '../i18n/desktop-messages';
 import { DesktopLibraryService } from './desktop-library.service';
+import { DesktopCaptureService } from './desktop-capture.service';
 import { LibraryStore } from './library.store';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
 import { DesktopFormattingService } from './desktop-formatting.service';
@@ -36,7 +37,7 @@ import {
   isNotFoundError,
   resultKind,
   resultSpeakersList,
-  resultStatusText,
+  resultRowState,
   type ResultDetailsView,
   type ResultKind,
   type ResultSeekRequest,
@@ -62,6 +63,7 @@ export class ResultReviewStore {
   private readonly route = inject(ActivatedRoute, { optional: true });
   private readonly library = inject(LibraryStore);
   private readonly libraryAdapter = inject(DesktopLibraryService);
+  private readonly capture = inject(DesktopCaptureService);
   private readonly runtime = inject(DesktopRuntimeClientService, { optional: true });
   private readonly formatting = inject(DesktopFormattingService);
   private readonly pdfRenderer = inject(PdfPageRenderer);
@@ -82,6 +84,20 @@ export class ResultReviewStore {
     this.runtime ? this.runtime.started() : true,
   );
 
+  /**
+   * The open document as the library list shows it. Every library write of
+   * a capture (its terminal write, a Start again, a Cancel) is in the list
+   * at once (`LibraryStore.applyDocumentState`), so a new value here means a
+   * committed change; a list reload that changes nothing keeps the old one.
+   */
+  private readonly listed = computed<DesktopLibrarySummary | null>(() => {
+    const documentId = this.documentId();
+    return (this.library.allDocuments() ?? []).find((item) => item.documentId === documentId) ?? null;
+  }, { equal: sameStoredState });
+
+  /** The listed state the detail in hand was read for. */
+  private detailReadFor: DesktopLibrarySummary | null = null;
+
   private readonly detailResource = rxResource<
     DesktopLibraryDetail | null,
     { readonly documentId: string } | undefined
@@ -91,8 +107,24 @@ export class ResultReviewStore {
       const documentId = this.documentId();
       return this.runtimeReady() && documentId ? { documentId } : undefined;
     },
-    stream: ({ params, abortSignal }) =>
-      this.library.get(params.documentId, abortSignal),
+    stream: ({ params, abortSignal }) => {
+      this.detailReadFor = untracked(this.listed);
+      return this.library.get(params.documentId, abortSignal);
+    },
+  });
+
+  /**
+   * Reads the detail again when a change of the open document has been
+   * committed after the detail in hand was read; a change during a read is
+   * read once that read has answered. The view stays while it is read.
+   */
+  private readonly readCommittedChange = effect(() => {
+    const listed = this.listed();
+    const status = this.detailResource.status();
+    if (status !== 'resolved' && status !== 'error') return;
+    untracked(() => {
+      if (listed !== this.detailReadFor) this.detailResource.reload();
+    });
   });
 
   readonly detail = computed<DesktopLibraryDetail | null>(() =>
@@ -101,7 +133,8 @@ export class ResultReviewStore {
 
   readonly loading = computed(() => {
     if (!this.documentId()) return false;
-    return !this.runtimeReady() || this.detailResource.isLoading();
+    // A detail read again keeps the view: only a first read shows the loading text.
+    return !this.runtimeReady() || (this.detailResource.isLoading() && this.detail() === null);
   });
 
   readonly notFound = computed(() => {
@@ -136,15 +169,40 @@ export class ResultReviewStore {
 
   readonly hasResult = computed(() => this.detail()?.raw !== undefined);
 
-  readonly statusText = computed(() => {
-    const d = this.detail();
-    return d ? resultStatusText(d) : '';
+  /**
+   * What is stored for the open document: the list's row once it shows the
+   * document, since a committed write is there before the detail is read
+   * again, else the detail.
+   */
+  private readonly stored = computed(() => {
+    const detail = this.detail();
+    return detail ? this.listed() ?? detail : null;
   });
 
+  /** The open document's row, the same as its queue row: status and reason come from it. */
+  private readonly rowState = computed(() => {
+    const d = this.stored();
+    if (!d) return null;
+    const { documentId } = d;
+    const unstored = this.capture.unstoredOutcomes();
+    return resultRowState(d, {
+      owned: this.capture.busyIds().has(documentId),
+      cancelling: this.capture.cancellingIds().has(documentId),
+      unstored: unstored.has(documentId),
+      failureReason: unstored.get(documentId) ?? null,
+    });
+  });
+
+  readonly statusText = computed(() => this.rowState()?.statusText ?? '');
+
+  /**
+   * Why a document holds no result: why this run could not start or end its
+   * capture, when its row shows that, else the stored error of its last attempt.
+   */
   readonly noResultReason = computed<string | null>(() => {
-    const d = this.detail();
+    const d = this.stored();
     if (!d || this.hasResult()) return null;
-    return d.recoveryMessage ?? d.errorMessage ?? null;
+    return this.rowState()?.failureReason ?? d.errorMessage ?? null;
   });
 
   private session: EditSession | null = null;
@@ -441,7 +499,7 @@ export class ResultReviewStore {
   readonly details = computed<ResultDetailsView | null>(() => {
     const d = this.detail();
     if (!d) return null;
-    return buildResultDetails(d, this.pages().length, this.formatting);
+    return buildResultDetails(d, this.pages().length, this.formatting, this.statusText());
   });
 
   private readonly resetOnDocumentChange = effect(() => {
@@ -471,6 +529,7 @@ export class ResultReviewStore {
     // Reference effect so Angular keeps it alive for the store's lifetime.
     void this.resetOnDocumentChange;
     void this.syncEdits;
+    void this.readCommittedChange;
     this.destroyRef.onDestroy(() => {
       if (this.session) this.leaveEdits(this.session);
       this.destroyed = true;
@@ -677,4 +736,17 @@ export class ResultReviewStore {
       this.blobUrlState.set(null);
     }
   }
+}
+
+/** Whether two list rows of a document say the same about what is stored. */
+function sameStoredState(left: DesktopLibrarySummary | null, right: DesktopLibrarySummary | null): boolean {
+  if (left === null || right === null) return left === right;
+  return left.documentId === right.documentId
+    && left.updatedAtMs === right.updatedAtMs
+    && left.status === right.status
+    && left.stage === right.stage
+    && left.captureId === right.captureId
+    && left.hasRaw === right.hasRaw
+    && left.errorCode === right.errorCode
+    && left.errorMessage === right.errorMessage;
 }

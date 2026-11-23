@@ -82,11 +82,11 @@ describe('AsrPage', () => {
       install: vi.fn(),
       installSpeakers: vi.fn(),
       cancel: vi.fn(),
-      retry: vi.fn(),
-      restart: vi.fn(),
+      startAgain: vi.fn(),
       view: vi.fn(),
       exportTxt: vi.fn(),
       exportBusyIds: signal(new Set<string>()),
+      cancellingIds: signal<ReadonlySet<string>>(new Set()),
     };
 
     const progressUnavailable = signal<ReadonlySet<CaptureRequirementId>>(new Set());
@@ -319,10 +319,15 @@ describe('AsrPage', () => {
         needsInstall: false,
         installPercent: null,
         interrupted: false,
+        canCancel: true,
+        cancelling: false,
+        canStartAgain: false,
+        canView: false,
         speakerCount: null,
         playbackUnavailable: false,
         canExport: false,
         errorMessage: '',
+        failureReason: null,
       },
       {
         documentId: '2'.repeat(32),
@@ -335,10 +340,15 @@ describe('AsrPage', () => {
         needsInstall: false,
         installPercent: null,
         interrupted: false,
+        canCancel: true,
+        cancelling: false,
+        canStartAgain: false,
+        canView: false,
         speakerCount: null,
         playbackUnavailable: false,
         canExport: false,
         errorMessage: '',
+        failureReason: null,
       },
       {
         documentId: '3'.repeat(32),
@@ -351,10 +361,15 @@ describe('AsrPage', () => {
         needsInstall: false,
         installPercent: null,
         interrupted: false,
+        canCancel: false,
+        cancelling: false,
+        canStartAgain: false,
+        canView: true,
         speakerCount: 3,
         playbackUnavailable: true,
         canExport: true,
         errorMessage: '',
+        failureReason: null,
       },
       {
         documentId: '4'.repeat(32),
@@ -367,10 +382,15 @@ describe('AsrPage', () => {
         needsInstall: false,
         installPercent: null,
         interrupted: true,
+        canCancel: false,
+        cancelling: false,
+        canStartAgain: true,
+        canView: false,
         speakerCount: null,
         playbackUnavailable: false,
         canExport: false,
         errorMessage: '',
+        failureReason: null,
       },
     ];
 
@@ -407,6 +427,34 @@ describe('AsrPage', () => {
     (renderedRows[2].querySelector('[data-testid="asr-row-export"]') as HTMLButtonElement).click();
     expect(queue.exportTxt).toHaveBeenCalledWith('3'.repeat(32));
     (renderedRows[3].querySelector('[data-testid="asr-row-restart"]') as HTMLButtonElement).click();
-    expect(queue.restart).toHaveBeenCalledWith('4'.repeat(32));
+    expect(queue.startAgain).toHaveBeenCalledWith('4'.repeat(32));
+
+    // While a cancel is being applied to the running recording, its Cancel buttons wait.
+    const cancelButtons = () => [
+      el.querySelector('[data-testid="asr-live-cancel"]'),
+      renderedRows[0].querySelector('[data-testid="asr-row-cancel"]'),
+      renderedRows[1].querySelector('[data-testid="asr-row-cancel"]'),
+    ].map((button) => (button as HTMLButtonElement).disabled);
+    // One action per row state: only the interrupted recording offers Start again, only the finished one View.
+    expect(renderedRows.map((item) => [
+      item.querySelector('[data-testid="asr-row-cancel"]') !== null,
+      item.querySelector('[data-testid="asr-row-restart"]') !== null,
+      item.querySelector('[data-testid="asr-row-view"]') !== null,
+    ])).toEqual([[true, false, false], [true, false, false], [false, false, true], [false, true, false]]);
+    expect(cancelButtons()).toEqual([false, false, false]);
+    queue.cancellingIds.set(new Set([liveCapture.documentId]));
+    queue.rows.set(rows.map((item, index) => index === 0
+      ? { ...item, statusText: '取消中', cancelling: true }
+      : item));
+    fixture.detectChanges();
+    expect(cancelButtons()).toEqual([true, true, false]);
+    expect(renderedRows[0].querySelector('[data-testid="asr-row-chip"]')?.textContent?.trim()).toBe('取消中');
+
+    // An interrupted recording that holds a result is looked at, never captured again in place.
+    queue.rows.set(rows.map((item, index) => index === 3 ? { ...item, canStartAgain: false, canView: true } : item));
+    fixture.detectChanges();
+    const keptRow = el.querySelectorAll('[data-testid="asr-queue-row"]')[3];
+    expect(keptRow?.querySelector('[data-testid="asr-row-restart"]')).toBeNull();
+    expect(keptRow?.querySelector('[data-testid="asr-row-view"]')).not.toBeNull();
   });
 });

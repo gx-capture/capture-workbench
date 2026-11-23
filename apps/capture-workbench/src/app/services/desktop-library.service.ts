@@ -81,9 +81,14 @@ export class DesktopLibraryService {
     });
   }
 
+  /**
+   * Stores a capture's state. `persisting`, `recovery_required` and the
+   * recovery fields are only read: earlier versions stored them, and the host
+   * refuses an update that carries one.
+   */
   updateCapture(input: {
     readonly documentId: string;
-    readonly status: DesktopLibraryStatus;
+    readonly status: Exclude<DesktopLibraryStatus, 'persisting' | 'recovery_required'>;
     readonly captureId?: string;
     readonly clearCaptureId?: boolean;
     readonly stage?: string;
@@ -91,8 +96,6 @@ export class DesktopLibraryService {
     readonly result?: CaptureDocument;
     readonly errorCode?: string;
     readonly errorMessage?: string;
-    readonly recoveryCode?: string;
-    readonly recoveryMessage?: string;
     readonly ocrEvidence?: OcrEvidenceV1;
   }): Observable<DesktopLibrarySummary> {
     return this.commands
@@ -122,26 +125,33 @@ export class DesktopLibraryService {
   }
 }
 
+/**
+ * Redacts the stored error. The recovery message an earlier version stored
+ * is left out: nothing shows it. Its recovery code is only compared with the
+ * codes `capture-operation-status.ts` knows.
+ */
 function sanitizeSummary(summary: DesktopLibrarySummary): DesktopLibrarySummary {
+  const shown: DesktopLibrarySummary & { recoveryMessage?: unknown } = { ...summary };
+  delete shown.recoveryMessage;
   return {
-    ...summary,
+    ...shown,
     ...(summary.errorCode === undefined
       ? {}
       : { errorCode: redactSensitiveMessage(summary.errorCode) }),
     ...(summary.errorMessage === undefined
       ? {}
       : { errorMessage: redactSensitiveMessage(summary.errorMessage) }),
-    ...(summary.recoveryCode === undefined
-      ? {}
-      : { recoveryCode: redactSensitiveMessage(summary.recoveryCode) }),
-    ...(summary.recoveryMessage === undefined
-      ? {}
-      : { recoveryMessage: redactSensitiveMessage(summary.recoveryMessage) }),
   };
 }
 
+/**
+ * The host answers a document without a raw or structured result with
+ * `null` for it; the detail leaves it out, so "holds a result" means the
+ * same whatever the host serialized.
+ */
 function sanitizeDetail(detail: DesktopLibraryDetail): DesktopLibraryDetail {
-  return sanitizeSummary(detail) as DesktopLibraryDetail;
+  const { raw, result, ...stored } = sanitizeSummary(detail) as DesktopLibraryDetail;
+  return { ...stored, ...(raw == null ? {} : { raw }), ...(result == null ? {} : { result }) };
 }
 
 function redactSensitiveMessage(value: string | undefined): string | undefined {

@@ -195,10 +195,6 @@ export class DesktopRuntimeClientService {
     return this.commands.invoke('runtime_get_result', { input: { id: captureId } }, signal);
   }
 
-  cancelCapture(captureId: string, signal?: AbortSignal): Observable<CaptureOperation> {
-    return this.commands.invoke('runtime_cancel_capture', { input: { id: captureId } }, signal);
-  }
-
   getRaw(captureId: string, signal?: AbortSignal): Observable<RawCapture | null> {
     return this.commands.invoke('runtime_get_raw', { input: { id: captureId } }, signal);
   }

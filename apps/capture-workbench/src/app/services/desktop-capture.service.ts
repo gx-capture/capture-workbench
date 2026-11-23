@@ -1,11 +1,11 @@
-import { DestroyRef, Injectable, inject, signal, type WritableSignal } from '@angular/core';
-import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { Injectable, inject, signal, type WritableSignal } from '@angular/core';
 
 import {
   EMPTY,
+  ReplaySubject,
+  Subject,
   catchError,
   concatMap,
-  concatWith,
   defer,
   expand,
   filter,
@@ -14,10 +14,9 @@ import {
   ignoreElements,
   map,
   merge,
+  mergeMap,
   type Observable,
   of,
-  Subject,
-  type Subscription,
   switchMap,
   take,
   takeUntil,
@@ -25,24 +24,16 @@ import {
   throwError,
   throwIfEmpty,
   timer,
-  toArray,
 } from 'rxjs';
 import type {
   CaptureEvent,
   CaptureOperation,
   CaptureRequirementId,
-  CaptureResult,
   OcrComputePreflight,
   PartialCapture,
   RuntimeRequirement,
 } from '@gx-capture/capture-workbench-ui';
-import type { CaptureOcrProjection } from '@gx-capture/capture-runtime-client';
-import type {
-  DesktopLibraryDetail,
-  DesktopLibrarySummary,
-  OcrEvidenceExpectedIdentity,
-  OcrEvidenceV1,
-} from '../contracts';
+import type { DesktopLibrarySummary, OcrEvidenceExpectedIdentity } from '../contracts';
 import { buildOcrEvidence } from '../contracts';
 import { DesktopLibraryService, type DesktopSourceSelection } from './desktop-library.service';
 import {
@@ -50,139 +41,135 @@ import {
   type DesktopCaptureOperation,
 } from './desktop-runtime-client.service';
 import {
-  canCaptureAgain,
-  committedTerminalStatus,
-  holdsTerminalData,
-  isCaptureLost,
+  canStartAgain,
   isActiveOneShotOperation,
   isActiveStreaming,
   isOcrCheckpoint,
+  isWaiting,
   terminalLibraryStatus,
-  type TerminalLibraryStatus,
-  terminalStage,
 } from './capture-operation-status';
-import { errorMessage, isRuntimeNotFound } from './desktop-errors';
+import { errorMessage } from './desktop-errors';
 import { isRecordingMediaType, isPdfMediaType } from './capture-media-types';
-import { isFeatureReady, selectFeatureMissing } from './recognition-requirements';
+import { isFeatureReady } from './recognition-requirements';
+import { inImportOrder } from './ocr-queue';
 import { desktopMessages } from '../i18n/desktop-messages';
 
-interface ActiveCapture {
-  clientRequestId?: string;
-  captureId?: string;
-  captureNotFound?: boolean;
-  streaming: boolean;
-  lastEventSequence: number;
-  rawPersisted: boolean;
-  cancelRequested: boolean;
-  cancelSent: boolean;
-  cancelAnswered: boolean;
-  lastStage?: string;
-  /** A linked in-flight row was read on reattach or acknowledged by a write. */
-  linkedInFlight: boolean;
-  terminalCommitted?: boolean;
-  terminalStatus?: TerminalLibraryStatus;
-  terminalErrorCode?: string;
-  terminalErrorMessage?: string;
+/**
+ * One capture of one document by this app run, from before its first library
+ * write until its terminal write has answered. Nothing follows a runtime
+ * capture that another run started.
+ */
+interface CaptureAttempt {
+  readonly documentId: string;
+  readonly clientRequestId: string;
+  readonly streaming: boolean;
+  /** The stored document the attempt was admitted from: media type and options. */
+  readonly stored: DesktopLibrarySummary;
   /** Readiness identity captured by the host before the runtime operation starts. */
-  ocrCompute?: OcrComputePreflight | null;
+  readonly ocrCompute: OcrComputePreflight | null;
+  /** PDF page selection the capture was started with, or undefined for all pages / non-PDFs. */
+  readonly pdfPageNumbers?: readonly number[];
+  captureId?: string;
   /** Source identity received from the runtime operation, never from OCR output. */
   sourceSha256?: string;
-  /** PDF page selection the capture was started with, or undefined for all pages / non-PDFs. */
-  pdfPageNumbers?: readonly number[];
-  readonly cancelWake: Subject<void>;
+  lastEventSequence: number;
+  uploadStarted: boolean;
+  cancelRequested: boolean;
+  /** Set when the terminal write is sent: a Cancel after it does nothing. */
+  terminalWriteSent: boolean;
+  /** Emits once on Cancel: every runtime read in flight is abandoned. */
+  readonly cancelled: ReplaySubject<void>;
+  /** The runtime delete a Cancel sent; emits once that delete has answered, whatever the answer. */
+  cancelDelete?: ReplaySubject<void>;
 }
 
-type DocumentDecisionRequest = 'automatic' | 'batch-turn' | 'retry-or-restart' | 'cancel';
+/** A decision being made from a document's stored state; a Cancel meanwhile is applied by it. */
+interface DocumentDecision {
+  cancelRequested: boolean;
+}
 
-/**
- * How long the queues wait before they look at their documents again after a
- * decision ended in an error, so that a failure that lasts is not repeated in
- * a loop.
- */
-export const FAILED_DECISION_PAUSE_MS = 2_000;
+type CaptureUpdate = Parameters<DesktopLibraryService['updateCapture']>[0];
+
+/** Ends the steps of an attempt that a Cancel stopped. */
+const CANCELLED = new Error('Capture was cancelled.');
 
 export interface DesktopCaptureHost {
   readonly selectedId: WritableSignal<string | null>;
   readonly requestedRequirements: WritableSignal<ReadonlySet<CaptureRequirementId>>;
   readonly requirements: () => readonly RuntimeRequirement[];
-  readonly documents: () => readonly DesktopLibrarySummary[];
-  readonly selected: () => DesktopLibraryDetail | null;
   readonly refreshDocuments: () => void;
-  readonly reloadDocumentState: (documentId: string) => void;
+  /** Shows the summary a library write returned in the document list at once. */
+  readonly applyDocumentState: (summary: DesktopLibrarySummary) => void;
   readonly setMessage: (message: string) => void;
-  /** The user asked for speakers to be told apart in audio. */
-  readonly identifySpeakers: () => boolean;
 }
 
 @Injectable({ providedIn: 'root' })
-/** Owns capture lifecycle side effects for the shell and the OCR and recording queue stores. */
+/**
+ * Owns the captures this app run starts, for the shell and the OCR and
+ * recording queue stores. A capture belongs to the run that started it: a
+ * stored runtime link is only an address for cleanup, never followed again.
+ * Captures run one at a time, recordings and documents together, and only
+ * the admission (`admitWaiting$`) starts one; everything else makes a
+ * document waiting or stops it.
+ */
 export class DesktopCaptureService {
+  /**
+   * Documents with a capture attempt of this run: what "owned by this run"
+   * means. A document leaves it only after the list shows the outcome of the
+   * attempt's last write.
+   */
   readonly busyIds = signal<ReadonlySet<string>>(new Set());
   readonly streamingPartials = signal<ReadonlyMap<string, PartialCapture>>(new Map());
   /** Live streaming operations, so the ASR queue can show audio time progress. */
   readonly recordingOperations = signal<ReadonlyMap<string, CaptureOperation>>(new Map());
   /** Live one-shot operations, so a queue can show page progress that the library does not store. */
   readonly oneShotOperations = signal<ReadonlyMap<string, DesktopCaptureOperation>>(new Map());
-
+  private readonly unstored = signal<ReadonlyMap<string, string | null>>(new Map());
   /**
-   * Increases when a document's pause ends after a failed decision or
-   * an unrecorded failure of a linked capture. The queues then look again.
+   * Documents whose start or cancel in this run ended without its outcome
+   * being stored. The row can still say `queued`, and the admission would
+   * pick it again and again, or start what the user cancelled: it passes
+   * them by until the user's Start again or Cancel succeeds. Such a row
+   * does not wait: it needs the user. Memory only: the next app run starts
+   * without it, and nothing of it is stored.
+   *
+   * Each entry keeps the reason its row shows: the error of the admission's
+   * read or of the attempt's last write, or null when the page where the
+   * user gave the Start again or Cancel shows that error itself.
    */
-  readonly failedDecisions = signal(0);
-  private readonly unrecordedFailures = new Subject<string>();
-  /** Linked captures the queues can try again once their document's pause ends. */
-  readonly unrecordedFailures$ = this.unrecordedFailures.asObservable();
+  readonly unstoredOutcomes = this.unstored.asReadonly();
+  private readonly cancelling = signal<ReadonlySet<string>>(new Set());
+  /**
+   * Documents whose running attempt is being cancelled: from the user's
+   * Cancel until the attempt has ended (the runtime delete answered and the
+   * cancelled state was written). A second Cancel does nothing meanwhile.
+   */
+  readonly cancellingIds = this.cancelling.asReadonly();
 
   private readonly runtime = inject(DesktopRuntimeClientService);
   private readonly library = inject(DesktopLibraryService);
-  private readonly destroyRef = inject(DestroyRef);
-  private readonly activeCaptures = new Map<string, ActiveCapture>();
-  /** Documents of a batch that are imported and wait for their turn. */
-  private readonly awaitingTurn = new Set<string>();
+  private readonly attempts = new Map<string, CaptureAttempt>();
   /**
    * Documents for which an action is being decided from their stored state:
    * from the subscription to the entry until the action it led to has ended,
    * was declined or failed.
    */
-  private readonly deciding = new Map<string, DocumentDecisionRequest>();
+  private readonly deciding = new Map<string, DocumentDecision>();
   private readonly deletingDocuments = signal<ReadonlySet<string>>(new Set());
-  /**
-   * Documents whose cancel was asked while an action for them was being
-   * decided, or while they waited their turn in a batch (`awaitingTurn`), and
-   * is not applied yet. A batch applies it at the document's turn. It
-   * outlives a decision or a turn whose cancel write fails, and a batch that
-   * ends before the document's turn came: the next decision for the document
-   * applies it, or drops it when the stored document has nothing left to
-   * cancel or is gone. It does not outlive its document: a deletion through
-   * the library drops it too (`forgetDeletedDocument`).
-   */
-  private readonly unappliedCancels = new Set<string>();
-  /**
-   * Documents whose last decision ended in an error, each with the timer of
-   * its own pause: a document that failed later is not asked for sooner
-   * because the pause of another one ended.
-   */
-  private readonly decisionPauses = new Map<string, Subscription>();
+  /** Asks the admission to look again: a claim ended or an import stored waiting documents. */
+  private readonly admissionRequests = new Subject<void>();
+  /** The admission is deciding about, or capturing, a document. */
+  private admitting = false;
 
   /**
-   * Reports whether the document is claimed: a capture runs for it, a batch
-   * has scheduled one, a decision is in progress, or the library is deleting
-   * it. Nothing else may start, recover, restart or delete it meanwhile,
-   * and a recording queue counts it as occupying its turn.
+   * Reports whether the document is claimed: a capture runs for it, a
+   * decision is in progress, or the library is deleting it. Nothing else may
+   * start or delete it meanwhile.
    */
   isDocumentClaimed(documentId: string): boolean {
-    return this.activeCaptures.has(documentId)
-      || this.awaitingTurn.has(documentId)
+    return this.attempts.has(documentId)
       || this.deciding.has(documentId)
       || this.deletingDocuments().has(documentId);
-  }
-
-  /**
-   * Reports whether the library is deleting the document. This claim is not
-   * a capture: a row being deleted keeps the status it has stored.
-   */
-  isDocumentBeingDeleted(documentId: string): boolean {
-    return this.deletingDocuments().has(documentId);
   }
 
   /** Claims an unclaimed document for deletion until the operation settles. */
@@ -196,1256 +183,674 @@ export class DesktopCaptureService {
           remaining.delete(documentId);
           return remaining;
         });
+        // A document the delete kept can be the next to start.
+        this.admissionRequests.next();
       }));
     });
   }
 
   /**
-   * Reports whether a decision for the document ended in an error less than
-   * `FAILED_DECISION_PAUSE_MS` ago. Until the pause is over a queue does not
-   * ask for the document again, and what it asks is ignored. A cancel,
-   * retry or restart the user asks for ends the pause.
+   * Asks the runtime to delete a capture, without waiting for the answer and
+   * without storing anything about it. Skipped while the runtime is not
+   * ready; the runtime's retention removes what is left.
    */
-  isDecisionPaused(documentId: string): boolean {
-    return this.decisionPauses.has(documentId);
+  deleteRuntimeCapture(captureId: string): void {
+    if (!this.runtime.ready()) return;
+    this.runtime.deleteCapture(captureId).pipe(take(1), catchError(() => EMPTY)).subscribe();
   }
 
-  /** Enqueues sources while preserving the existing sequential capture policy. */
+  /**
+   * Once per app run, when the runtime is ready: asks the runtime to delete
+   * the capture of every linked document this run does not own. The runs
+   * that started them have ended, so whatever still runs there is stopped.
+   * Nothing is stored about it: the rows keep their link, and are shown
+   * interrupted, until Start again or Delete. Only a capture this run
+   * created is skipped; a row a decision is reading keeps no capture of
+   * this run, and the decision may decline.
+   */
+  deleteLinkedRuntimeCaptures$(): Observable<void> {
+    return this.library.list().pipe(
+      take(1),
+      tap((documents) => {
+        const created = new Set([...this.attempts.values()].map((attempt) => attempt.captureId));
+        for (const document of documents) {
+          if (document.captureId && !created.has(document.captureId)) {
+            this.deleteRuntimeCapture(document.captureId);
+          }
+        }
+      }),
+      ignoreElements(),
+    );
+  }
+
+  /**
+   * The one place that starts a capture, wired once from the app shell and
+   * running from app start: at most one attempt of this run exists at a
+   * time, for recordings and documents together. While none is active it
+   * takes the oldest waiting document (`isWaiting`, in import order) whose
+   * feature is ready and that is not in `unstoredOutcomes`, reads it fresh
+   * and starts it. It looks again when `changes$` emits (the document list,
+   * the requirements or the runtime's readiness changed), when an attempt
+   * or any other claim on a document has ended, and after an import.
+   */
+  admitWaiting$(host: DesktopCaptureHost, changes$: Observable<unknown>): Observable<void> {
+    return merge(changes$, this.admissionRequests).pipe(
+      // A newer look replaces one whose list read has not answered yet.
+      switchMap(() => this.admitting || !this.runtime.ready() ? EMPTY : this.nextWaiting$(host)),
+      mergeMap((documentId) => this.admit$(documentId, host)),
+    );
+  }
+
+  /**
+   * Imports dropped sources as waiting documents; the admission starts them
+   * in their turn. A document whose feature is missing asks for it.
+   */
   addSelections$(
     selections: readonly DesktopSourceSelection[],
     host: DesktopCaptureHost,
   ): Observable<void> {
-    return defer(() => {
-      const batchClaims = new Set<string>();
-      // Only the claim ends here. A kept cancel stays until it is applied: a
-      // document whose turn never came is still stored as waiting, and the
-      // queues would otherwise start what the user cancelled.
-      const release = (documentId: string): void => {
-        if (batchClaims.delete(documentId)) this.awaitingTurn.delete(documentId);
-      };
-      return from(selections).pipe(
-        concatMap((selection) => this.library.importSelection(selection).pipe(
-          map(({ documentId }) => documentId),
-          filter((documentId) => !this.isDocumentClaimed(documentId)),
-          tap((documentId) => {
-            // Hold each imported document while the rest of the batch is imported.
-            batchClaims.add(documentId);
-            this.awaitingTurn.add(documentId);
-          }),
-          catchError((error: unknown) => { host.setMessage(errorMessage(error)); return EMPTY; }),
-        )),
-        toArray(),
-        switchMap((documentIds) => from(documentIds).pipe(
-          concatMap((documentId) => {
-            // Hand off synchronously to the decision before calling the host.
-            release(documentId);
-            return this.decideFromStoredDocument$(documentId, (stored) =>
-              stored?.status === 'queued' && !stored.captureId
-                ? this.continueImported$(stored, host)
-                : this.declineOutdatedRequest$(stored, host), 'batch-turn').pipe(
-              catchError((error: unknown) => { host.setMessage(errorMessage(error)); return EMPTY; }),
-            );
-          }),
-        )),
-        finalize(() => {
-          for (const documentId of batchClaims) release(documentId);
+    return from(selections).pipe(
+      concatMap((selection) => this.library.importSelection(selection).pipe(
+        tap((document) => {
+          host.selectedId.set(document.documentId);
+          this.requestMissingFeature(document, host);
         }),
-      );
-    });
+        catchError((error: unknown) => { host.setMessage(errorMessage(error)); return EMPTY; }),
+      )),
+      ignoreElements(),
+      finalize(() => {
+        host.refreshDocuments();
+        this.admissionRequests.next();
+      }),
+    );
   }
 
   /**
-   * Starts a capture for a document that waits in the library. The stored
-   * document decides: one that no longer waits (already captured, cancelled
-   * or deleted since the caller's list was read) is not started again.
+   * The user's Start again for a document that failed, was cancelled or was
+   * interrupted and holds no raw result (`canStartAgain`), read fresh. It is
+   * stored waiting again, as a fresh import is (no link, no error), and the
+   * admission starts it in its turn. The runtime capture an old link names
+   * is deleted, without waiting for the answer. A row still stored waiting
+   * whose start or cancel this run could not store needs no write: it only
+   * leaves `unstoredOutcomes`.
    */
-  startDocument$(
+  startAgain$(
     documentId: string,
     host: DesktopCaptureHost,
   ): Observable<void> {
-    return this.decideFromStoredDocument$(documentId, (stored) =>
-      stored?.status === 'queued'
-        ? this.startUnlessCancelled$(documentId, host)
-        : this.declineOutdatedRequest$(stored, host));
-  }
-
-  /**
-   * Re-attaches to the runtime operation the library points at. The stored
-   * document decides, not the caller's copy: no operation is read when the
-   * link is gone, and a document whose result is already kept only retries
-   * the runtime cleanup.
-   */
-  reattach$(
-    document: DesktopLibrarySummary,
-    host: DesktopCaptureHost,
-  ): Observable<void> {
-    return this.decideFromStoredDocument$(document.documentId, (stored) =>
-      stored?.captureId
-        ? this.recoverCapture$(stored, host)
-        : this.declineOutdatedRequest$(stored, host));
-  }
-
-  /**
-   * Starts again only while the stored document says its capture is lost.
-   */
-  restartLost$(
-    documentId: string,
-    host: DesktopCaptureHost,
-  ): Observable<void> {
-    return this.decideFromStoredDocument$(documentId, (stored) =>
-      stored && isCaptureLost(stored)
-        ? this.library.updateCapture({
+    return defer(() => !this.runtime.ready()
+      ? EMPTY
+      : this.decideFromStoredDocument$(documentId, host, (stored) => {
+        if (stored && isWaiting(stored) && this.unstoredOutcomes().has(documentId)) {
+          this.forgetUnstoredOutcome(documentId);
+          return EMPTY;
+        }
+        if (!stored || !canStartAgain(stored)) return this.declineOutdatedRequest$(host);
+        if (stored.captureId) this.deleteRuntimeCapture(stored.captureId);
+        return this.write$(host, {
           documentId,
           status: 'queued',
           stage: 'uploading',
           clearCaptureId: true,
         }).pipe(
-          tap(() => host.reloadDocumentState(documentId)),
-          switchMap(() => this.startUnlessCancelled$(documentId, host)),
-        )
-        : this.declineOutdatedRequest$(stored, host), 'retry-or-restart');
+          // The user's Start again ends the pass-by of an earlier unstored outcome.
+          tap(() => this.forgetUnstoredOutcome(documentId)),
+          map(() => undefined),
+        );
+      }));
   }
 
-  /** Resumes a recoverable capture or starts a capture for the selected document. */
-  retry$(
-    documentId: string,
-    host: DesktopCaptureHost,
-  ): Observable<void> {
-    return this.decideFromStoredDocument$(documentId, (stored) => {
-      if (stored?.captureId) return this.recoverCapture$(stored, host);
-      // Without a runtime capture there is nothing to resume. A new capture
-      // starts only from a state in which Retry is offered. Reconnecting
-      // above needs the runtime, while starting a recording also needs speech.
-      return stored && canCaptureAgain(stored) && !isCaptureLost(stored)
-        && (!isRecordingMediaType(stored.mediaType) || isFeatureReady(host.requirements(), 'asr'))
-        ? this.startUnlessCancelled$(documentId, host)
-        : this.declineOutdatedRequest$(stored, host);
-    }, 'retry-or-restart');
-  }
-
-  /** Cancels an unclaimed document according to the state stored in the library. */
-  cancelDocument$(
-    documentId: string,
-    host: DesktopCaptureHost,
-  ): Observable<void> {
-    return this.decideFromStoredDocument$(documentId, (stored) => {
-      if (stored && !holdsTerminalData(stored)) {
-        if (stored.captureId && this.runtime.ready()) return this.recoverCapture$(stored, host);
-        if (stored.status === 'queued' && !stored.captureId) {
-          return this.persistWaitingCancel$(documentId, host);
-        }
+  /**
+   * The user's Cancel. The running capture is deleted at the runtime and
+   * then stored cancelled; a decision in progress stores the document
+   * cancelled instead of starting it; a waiting document is stored cancelled
+   * without a runtime request. Once the terminal write of a capture has been
+   * sent, a Cancel does nothing.
+   */
+  cancel$(documentId: string, host: DesktopCaptureHost): Observable<void> {
+    return defer(() => {
+      if (this.deletingDocuments().has(documentId)) return EMPTY;
+      const attempt = this.attempts.get(documentId);
+      if (attempt) {
+        this.cancelAttempt(attempt);
+        return EMPTY;
       }
-      return this.declineOutdatedRequest$(stored, host);
-    }, 'cancel');
+      const decision = this.deciding.get(documentId);
+      if (decision) {
+        decision.cancelRequested = true;
+        return EMPTY;
+      }
+      return this.decideFromStoredDocument$(documentId, host, (stored) =>
+        stored && isWaiting(stored)
+          ? this.storeCancelled$(documentId, host)
+          : this.declineOutdatedRequest$(host)).pipe(
+        // A cancel whose read or write failed is remembered: the row can
+        // still say `queued`, and the admission must not start it.
+        tap({ error: () => this.rememberUnstoredOutcome(documentId) }),
+      );
+    });
+  }
+
+  /** The oldest document the admission may start, from a fresh read of the library. */
+  private nextWaiting$(host: DesktopCaptureHost): Observable<string> {
+    return this.library.list().pipe(
+      take(1),
+      map((documents) => inImportOrder(documents).find((document) =>
+        this.startable(document, host) && !this.isDocumentClaimed(document.documentId))?.documentId),
+      filter((documentId): documentId is string => documentId !== undefined),
+      // A failed read starts nothing; the next change looks again.
+      catchError(() => EMPTY),
+    );
+  }
+
+  /**
+   * Waiting, its feature ready, and no start or cancel of it left unstored
+   * in this run. A document whose feature is not ready does not hold up the
+   * next one: it starts when its feature becomes ready.
+   */
+  private startable(document: DesktopLibrarySummary, host: DesktopCaptureHost): boolean {
+    return isWaiting(document)
+      && this.featureReady(document, host)
+      && !this.unstoredOutcomes().has(document.documentId);
+  }
+
+  /** Decides from the stored document and captures it; ends the admission's turn. */
+  private admit$(documentId: string, host: DesktopCaptureHost): Observable<void> {
+    return defer(() => {
+      if (this.admitting) return EMPTY;
+      this.admitting = true;
+      return this.decideFromStoredDocument$(documentId, host, (stored) =>
+        stored && this.startable(stored, host)
+          ? this.capture$(stored, host)
+          : this.declineOutdatedRequest$(host)).pipe(
+        // Only the read of the stored document can fail here: the document
+        // is passed by, and the next one is not held up. Its row shows why.
+        catchError((error: unknown) => {
+          this.rememberUnstoredOutcome(documentId, errorMessage(error));
+          return EMPTY;
+        }),
+        finalize(() => {
+          this.admitting = false;
+          this.admissionRequests.next();
+        }),
+      );
+    });
   }
 
   /**
    * Reads the stored document and lets `act` decide from it. A caller's
    * document list can be older than this service's last write for the
-   * document (its reload has not answered yet), so no start or recovery is
-   * decided from that list.
+   * document (its reload has not answered yet), so nothing is decided from
+   * that list.
    *
    * The decision claims the document from the subscription on, as a running
    * capture does (`isDocumentClaimed`): one decision or capture runs per
    * document at a time, and a claimed document accepts no other entry. The
    * entries are cold: nothing is claimed, read or written before a caller
-   * subscribes. Every write of a capture is acknowledged before its claim
-   * ends, so this read is never older than those writes.
-   *
-   * A cancel that arrives meanwhile is kept (`unappliedCancels`) and wins
-   * over whatever the read allows. When the decision ends in an error (the
-   * read or the write it led to failed) the claim is released, the cancel
-   * stays for the next decision, and the document pauses
-   * (`isDecisionPaused`): no decision is made for it until the queues are
-   * told to look again (`failedDecisions`). An explicit request ends the
-   * pause. A cancel keeps the intent until it is applied or no longer
-   * needed, while a retry or restart supersedes an older cancel.
+   * subscribes. A Cancel that arrives while the document is read wins over a
+   * start: the document is stored cancelled.
    */
   private decideFromStoredDocument$(
     documentId: string,
+    host: DesktopCaptureHost,
     act: (stored: DesktopLibrarySummary | undefined) => Observable<void>,
-    request: DocumentDecisionRequest = 'automatic',
   ): Observable<void> {
     return defer(() => {
       if (this.isDocumentClaimed(documentId)) return EMPTY;
-      if ((request === 'automatic' || request === 'retry-or-restart') && !this.runtime.ready()) return EMPTY;
-      if (request === 'cancel' || request === 'retry-or-restart') this.endDecisionPause(documentId);
-      if (request === 'automatic' && this.isDecisionPaused(documentId)) return EMPTY;
-      this.deciding.set(documentId, request);
-      if (request === 'retry-or-restart') this.unappliedCancels.delete(documentId);
-      if (request === 'cancel') this.unappliedCancels.add(documentId);
+      const decision: DocumentDecision = { cancelRequested: false };
+      this.deciding.set(documentId, decision);
       return this.library.list().pipe(
         take(1),
         map((documents) => documents.find((item) => item.documentId === documentId)),
-        tap((stored) => {
-          // The document is gone: a cancel that is kept for it has nothing to apply to.
-          if (stored === undefined) this.unappliedCancels.delete(documentId);
-        }),
-        switchMap((stored) => act(stored)),
-        catchError((error: unknown) => {
-          this.pauseDecisions(documentId);
-          return throwError(() => error);
-        }),
+        switchMap((stored) => decision.cancelRequested && stored
+          && (isWaiting(stored) || canStartAgain(stored))
+          ? this.storeCancelled$(documentId, host)
+          : act(stored)),
+        // A cancel given meanwhile that this decision could not apply is
+        // remembered: the row can still say `queued`, and the admission
+        // must not start it.
+        tap({ error: () => { if (decision.cancelRequested) this.rememberUnstoredOutcome(documentId); } }),
         // Also when the read fails or is unsubscribed: nothing stays claimed.
-        finalize(() => this.deciding.delete(documentId)),
+        finalize(() => {
+          this.deciding.delete(documentId);
+          this.admissionRequests.next();
+        }),
       );
     });
   }
 
-  /** Starts the pause of the document; when it ends, the queues are told to look again. */
-  private pauseDecisions(documentId: string): void {
-    this.endDecisionPause(documentId);
-    this.decisionPauses.set(documentId, timer(FAILED_DECISION_PAUSE_MS)
-      .pipe(takeUntilDestroyed(this.destroyRef))
-      .subscribe(() => {
-        this.decisionPauses.delete(documentId);
-        this.failedDecisions.update((count) => count + 1);
-      }));
-  }
-
-  private endDecisionPause(documentId: string): void {
-    this.decisionPauses.get(documentId)?.unsubscribe();
-    this.decisionPauses.delete(documentId);
-  }
-
-  /**
-   * The caller acted on an outdated document list: nothing to do but refresh
-   * it. A cancel that is kept for the document is dropped when the stored
-   * document has nothing left to cancel: it neither waits nor is linked to a
-   * runtime capture that may still run.
-   */
-  private declineOutdatedRequest$(
-    stored: DesktopLibrarySummary | undefined,
-    host: DesktopCaptureHost,
-  ): Observable<void> {
+  /** The caller acted on an outdated document list: nothing to do but refresh it. */
+  private declineOutdatedRequest$(host: DesktopCaptureHost): Observable<void> {
     return defer(() => {
-      const cancellable = stored !== undefined && !holdsTerminalData(stored)
-        && (stored.status === 'queued' || Boolean(stored.captureId));
-      if (stored !== undefined && !cancellable) this.unappliedCancels.delete(stored.documentId);
       host.refreshDocuments();
       return EMPTY;
     });
   }
 
-  /**
-   * Starts the capture a decision allowed, unless a cancel is kept for the
-   * document: then no capture starts and the document is stored as cancelled,
-   * as a cancel during the upload would leave it. The cancel counts as
-   * applied once that write is acknowledged.
-   */
-  private startUnlessCancelled$(
-    documentId: string,
-    host: DesktopCaptureHost,
-  ): Observable<void> {
-    return defer(() => this.unappliedCancels.has(documentId)
-      ? this.persistWaitingCancel$(documentId, host)
-      : this.captureExisting$(documentId, host));
-  }
-
-  private persistWaitingCancel$(documentId: string, host: DesktopCaptureHost): Observable<void> {
-    return this.library.updateCapture({
+  /** Stores a document that has no capture running as cancelled. */
+  private storeCancelled$(documentId: string, host: DesktopCaptureHost): Observable<void> {
+    return this.write$(host, {
       documentId,
       status: 'canceled',
       stage: 'cancelled',
       clearCaptureId: true,
     }).pipe(
-      tap(() => {
-        this.unappliedCancels.delete(documentId);
-        host.reloadDocumentState(documentId);
+      // A failed write leaves the row `queued`: the admission must not pick it.
+      tap({
+        next: () => this.forgetUnstoredOutcome(documentId),
+        error: () => this.rememberUnstoredOutcome(documentId),
       }),
       map(() => undefined),
     );
   }
 
   /**
-   * Requests cancellation. A running capture is woken without changing the
-   * terminal rules; a decision in flight keeps the request, so that it does
-   * not start, and cancels through the runtime what it recovers. A batch
-   * keeps the request for the document's turn.
+   * A dropped document waits for a feature that is not installed: ask for
+   * it, as the pages do. The admission starts the document once it is ready.
    */
-  cancel(documentId: string): void {
-    if (this.deletingDocuments().has(documentId)) return;
-    const active = this.activeCaptures.get(documentId);
-    if (!active) {
-      const decision = this.deciding.get(documentId);
-      if (this.awaitingTurn.has(documentId) || (decision && decision !== 'cancel')) {
-        this.unappliedCancels.add(documentId);
-      }
-      return;
-    }
-    if (!active.cancelRequested) {
-      active.cancelRequested = true;
-      if (!active.captureId && active.clientRequestId) {
-        this.runtime.cancelUpload(active.clientRequestId).pipe(
-          take(1),
-          catchError(() => EMPTY),
-        ).subscribe();
-      }
-      active.cancelWake.next();
-    }
+  private requestMissingFeature(document: DesktopLibrarySummary, host: DesktopCaptureHost): void {
+    const messages = desktopMessages();
+    const recording = isRecordingMediaType(document.mediaType);
+    const missing: readonly [CaptureRequirementId, string] | undefined = recording
+      ? (isFeatureReady(host.requirements(), 'asr') ? undefined : ['speech-recognition', messages.speechRequirementNeeded])
+      : (isFeatureReady(host.requirements(), 'ocr') ? undefined : ['text-recognition', messages.needsSetup]);
+    if (!missing) return;
+    const [requirementId, message] = missing;
+    host.requestedRequirements.update((current) => new Set([...current, requirementId]));
+    host.setMessage(message);
+  }
+
+  private featureReady(stored: DesktopLibrarySummary, host: DesktopCaptureHost): boolean {
+    return isFeatureReady(host.requirements(), isRecordingMediaType(stored.mediaType) ? 'asr' : 'ocr');
   }
 
   /**
-   * The document was deleted from the library: a cancel that is kept for it
-   * has nothing to apply to, and no decision for the document may follow that
-   * would drop it.
+   * Starts an attempt for the stored document and ends it with one terminal
+   * write: the result, the runtime's failure, a failure of this run, or the
+   * cancel. A failure of that write ends the attempt too: nothing is tried
+   * again by itself.
    */
-  forgetDeletedDocument(documentId: string): void {
-    this.unappliedCancels.delete(documentId);
-  }
-
-  private isRecordingDocument(
-    documentId: string,
-    host: DesktopCaptureHost,
-    mediaType?: string,
-  ): boolean {
-    // A batch turn has the stored media type even if the host list has not refreshed.
-    if (mediaType !== undefined) return isRecordingMediaType(mediaType);
-    const document = host.documents().find((item) => item.documentId === documentId)
-      ?? (host.selected()?.documentId === documentId ? host.selected() : undefined);
-    return isRecordingMediaType(document?.mediaType ?? '');
-  }
-
-  private isPdfDocument(
-    documentId: string,
-    host: DesktopCaptureHost,
-    mediaType?: string,
-  ): boolean {
-    if (mediaType !== undefined) return isPdfMediaType(mediaType);
-    const document = host.documents().find((item) => item.documentId === documentId)
-      ?? (host.selected()?.documentId === documentId ? host.selected() : undefined);
-    return isPdfMediaType(document?.mediaType ?? '');
-  }
-
-  private applyStreamingEvent(active: ActiveCapture, event: CaptureEvent): void {
-    active.lastEventSequence = Math.max(active.lastEventSequence, event.sequence);
-    active.lastStage = event.stage;
-  }
-
-  /** Selects the imported file, then applies a waiting cancel or checks whether capture can start. */
-  private continueImported$(
-    document: DesktopLibrarySummary,
-    host: DesktopCaptureHost,
-  ): Observable<void> {
-    host.selectedId.set(document.documentId);
-    host.refreshDocuments();
-    if (this.unappliedCancels.has(document.documentId)) {
-      return this.persistWaitingCancel$(document.documentId, host);
-    }
-    if (isRecordingMediaType(document.mediaType) && !isFeatureReady(host.requirements(), 'asr')) {
-      host.requestedRequirements.update(
-        (current) => new Set([...current, 'speech-recognition']),
-      );
-      host.setMessage(desktopMessages().speechRequirementNeeded);
-      return EMPTY;
-    }
-    if (
-      isRecordingMediaType(document.mediaType)
-      && host.identifySpeakers()
-      && !isFeatureReady(host.requirements(), 'asr.speakers')
-    ) {
-      host.requestedRequirements.update(
-        (current) => new Set([...current, 'speaker-diarization']),
-      );
-      host.setMessage(desktopMessages().speakerRequirementNeeded);
-      return EMPTY;
-    }
-    if (
-      !isRecordingMediaType(document.mediaType)
-      && selectFeatureMissing(host.requirements(), 'ocr').length > 0
-    ) {
-      host.requestedRequirements.update(
-        (current) => new Set([...current, 'text-recognition']),
-      );
-      host.setMessage(desktopMessages().needsSetup);
-      return EMPTY;
-    }
-    return this.captureExisting$(document.documentId, host, document.mediaType);
-  }
-
-  private captureExisting$(
-    documentId: string,
-    host: DesktopCaptureHost,
-    mediaType?: string,
-  ): Observable<void> {
+  private capture$(stored: DesktopLibrarySummary, host: DesktopCaptureHost): Observable<void> {
     return defer(() => {
-      if (!this.runtime.ready() || this.activeCaptures.has(documentId)) return EMPTY;
-      const pdfPageNumbers = this.pdfPageNumbersFor(documentId, host, mediaType);
-      const active: ActiveCapture = {
+      const { documentId } = stored;
+      if (!this.runtime.ready() || this.attempts.has(documentId)) return EMPTY;
+      const attempt: CaptureAttempt = {
+        documentId,
         clientRequestId: crypto.randomUUID(),
-        streaming: this.isRecordingDocument(documentId, host, mediaType),
-        lastEventSequence: 0,
-        rawPersisted: false,
-        cancelRequested: false,
-        cancelSent: false,
-        cancelAnswered: false,
-        linkedInFlight: false,
-        cancelWake: new Subject<void>(),
+        streaming: isRecordingMediaType(stored.mediaType),
+        stored,
         ocrCompute: this.runtime.ocrCompute(),
-        pdfPageNumbers,
+        pdfPageNumbers: this.pdfPageNumbersFor(stored),
+        lastEventSequence: 0,
+        uploadStarted: false,
+        cancelRequested: false,
+        terminalWriteSent: false,
+        cancelled: new ReplaySubject<void>(1),
       };
-      this.activeCaptures.set(documentId, active);
+      this.attempts.set(documentId, attempt);
       this.markBusy(documentId, true);
-      // A new capture starts here, and only here: the live lines of an
-      // earlier capture of the document end with it. A request that is
-      // ignored or declined never gets this far and leaves them.
+      // The live lines of an earlier capture of the document end here.
       this.clearStreamingPartial(documentId);
 
-      const work$ = this.library.updateCapture({
-
+      return this.write$(host, {
         documentId,
         status: 'processing',
         stage: 'uploading',
         clearCaptureId: true,
       }).pipe(
-        tap(() => host.reloadDocumentState(documentId)),
-        switchMap(() => active.streaming
-          ? this.captureStreaming$(documentId, active, host)
-          : this.captureOneShot$(documentId, active, host, pdfPageNumbers)),
+        switchMap(() => attempt.streaming
+          ? this.captureRecording$(attempt, host)
+          : this.captureDocument$(attempt, host)),
+        catchError((error: unknown) => {
+          if (attempt.terminalWriteSent) return throwError(() => error);
+          // A create that fails after a Cancel ends as cancelled too.
+          return attempt.cancelRequested
+            ? this.endCancelled$(attempt, host)
+            : this.terminalWrite$(attempt, host, {
+              documentId,
+              status: 'failed',
+              stage: 'failed',
+              clearCaptureId: true,
+              errorCode: 'capture_failed',
+              errorMessage: errorMessage(error),
+            });
+        }),
+        // The terminal write failed: the row shows why.
+        catchError((error: unknown) => {
+          this.rememberUnstoredOutcome(documentId, errorMessage(error));
+          return EMPTY;
+        }),
+        finalize(() => {
+          attempt.cancelled.complete();
+          this.attempts.delete(documentId);
+          this.forgetOneShotOperation(documentId);
+          this.forgetRecordingOperation(documentId);
+          this.clearStreamingPartial(documentId);
+          this.cancelling.update((ids) => withoutMember(ids, documentId));
+          this.markBusy(documentId, false);
+        }),
       );
-
-      return this.trackCaptureLifecycle$(documentId, active, work$, host);
     });
   }
 
-  private captureOneShot$(
-    documentId: string,
-    active: ActiveCapture,
+  /**
+   * Requests the cancel of a running attempt. The runtime delete is sent at
+   * once when the capture is known; during the upload, the upload is
+   * cancelled and the create's answer decides. Reads in flight are abandoned.
+   */
+  private cancelAttempt(attempt: CaptureAttempt): void {
+    if (attempt.cancelRequested || attempt.terminalWriteSent) return;
+    attempt.cancelRequested = true;
+    this.cancelling.update((ids) => new Set(ids).add(attempt.documentId));
+    if (attempt.captureId) {
+      this.sendCancelDelete(attempt);
+    } else if (attempt.uploadStarted) {
+      this.runtime.cancelUpload(attempt.clientRequestId).pipe(
+        take(1),
+        catchError(() => EMPTY),
+      ).subscribe();
+    }
+    attempt.cancelled.next();
+  }
+
+  /** Sends the one runtime delete of a cancelled attempt whose capture is known. */
+  private sendCancelDelete(attempt: CaptureAttempt): void {
+    if (attempt.cancelDelete || !attempt.captureId) return;
+    const answered = new ReplaySubject<void>(1);
+    attempt.cancelDelete = answered;
+    this.runtime.deleteCapture(attempt.captureId).pipe(
+      take(1),
+      ignoreElements(),
+      catchError(() => EMPTY),
+    ).subscribe({ complete: () => answered.next() });
+  }
+
+  /**
+   * The cancel's end: once the runtime delete has answered (the runtime
+   * stops the worker before it answers, and the host bounds the wait), the
+   * document is stored cancelled without its link, whatever the answer.
+   * Nothing of the capture is fetched or saved.
+   */
+  private endCancelled$(attempt: CaptureAttempt, host: DesktopCaptureHost): Observable<void> {
+    return defer(() => {
+      this.sendCancelDelete(attempt);
+      const deleted$: Observable<unknown> = attempt.cancelDelete ?? of(undefined);
+      return deleted$.pipe(
+        take(1),
+        switchMap(() => this.terminalWrite$(attempt, host, {
+          documentId: attempt.documentId,
+          status: 'canceled',
+          stage: 'cancelled',
+          clearCaptureId: true,
+        })),
+      );
+    });
+  }
+
+  /**
+   * The attempt's one terminal write; after it, the runtime capture is
+   * deleted without waiting, unless a cancel already deleted it.
+   */
+  private terminalWrite$(
+    attempt: CaptureAttempt,
     host: DesktopCaptureHost,
-    pdfPageNumbers?: readonly number[],
+    update: CaptureUpdate,
   ): Observable<void> {
-    if (active.cancelRequested) return throwError(() => new Error('Upload was cancelled.'));
-    const clientRequestId = active.clientRequestId ??= crypto.randomUUID();
-    return this.runtime.createCapture(documentId, clientRequestId, pdfPageNumbers).pipe(
+    return defer(() => {
+      attempt.terminalWriteSent = true;
+      return this.write$(host, update).pipe(
+        finalize(() => {
+          if (attempt.captureId && !attempt.cancelDelete) this.deleteRuntimeCapture(attempt.captureId);
+        }),
+        map(() => undefined),
+      );
+    });
+  }
+
+  /** A library write whose answer the list shows at once. */
+  private write$(host: DesktopCaptureHost, update: CaptureUpdate): Observable<DesktopLibrarySummary> {
+    return this.library.updateCapture(update).pipe(tap((summary) => host.applyDocumentState(summary)));
+  }
+
+  /** A runtime read of a running attempt, abandoned when the attempt is cancelled. */
+  private untilCancelled$<T>(attempt: CaptureAttempt, read$: Observable<T>): Observable<T> {
+    return read$.pipe(takeUntil(attempt.cancelled), throwIfEmpty(() => CANCELLED));
+  }
+
+  /**
+   * Creates the runtime capture; its answer is checked for a cancel in both
+   * outcomes. A capture created after a cancel is deleted and never linked.
+   */
+  private create$<T extends CaptureOperation>(
+    attempt: CaptureAttempt,
+    create: () => Observable<T>,
+    host: DesktopCaptureHost,
+  ): Observable<T> {
+    return defer(() => {
+      if (attempt.cancelRequested) return throwError(() => CANCELLED);
+      attempt.uploadStarted = true;
+      return create().pipe(
+        take(1),
+        throwIfEmpty(() => new Error('Capture Runtime returned no capture.')),
+        switchMap((operation) => {
+          attempt.captureId = operation.captureId;
+          if (attempt.cancelRequested) return throwError(() => CANCELLED);
+          return this.write$(host, {
+            documentId: attempt.documentId,
+            captureId: operation.captureId,
+            status: 'processing',
+            stage: operation.status,
+          }).pipe(map(() => operation));
+        }),
+      );
+    });
+  }
+
+  private captureDocument$(attempt: CaptureAttempt, host: DesktopCaptureHost): Observable<void> {
+    return this.create$(
+      attempt,
+      () => this.runtime.createCapture(attempt.documentId, attempt.clientRequestId, attempt.pdfPageNumbers).pipe(
+        tap((operation) => {
+          this.rememberSourceIdentity(attempt, operation);
+          this.rememberOneShotOperation(attempt.documentId, operation);
+        }),
+      ),
+      host,
+    ).pipe(
+      switchMap((operation) => this.untilCancelled$(attempt, this.followDocument$(attempt, operation))),
       switchMap((operation) => {
-        active.captureId = operation.captureId;
-        this.rememberSourceIdentity(active, operation);
-        this.rememberOneShotOperation(documentId, operation);
-        active.lastStage = operation.status;
-        return this.library.updateCapture({
-          documentId,
-          captureId: operation.captureId,
-          status: 'processing',
-          stage: operation.status,
-        }).pipe(
-          tap(() => {
-            active.linkedInFlight = true;
-            host.reloadDocumentState(documentId);
-          }),
-          map(() => operation),
-        );
+        if (isOcrCheckpoint(operation)) {
+          return this.storeOcrCheckpoint$(attempt, operation, host);
+        }
+        if (operation.status === 'failed' || operation.status === 'cancelled') {
+          return this.storeRuntimeEnd$(attempt, operation, host);
+        }
+        return throwError(() => new Error(
+          `Capture Runtime returned unsupported terminal status: ${operation.status}`,
+        ));
       }),
-      switchMap((operation) => this.waitForTerminal$(documentId, operation, active, host)),
-      switchMap((operation) => this.persistOneShot$(documentId, operation, active, host)),
-      map(() => undefined),
     );
   }
 
-  private captureStreaming$(
-    documentId: string,
-    active: ActiveCapture,
-    host: DesktopCaptureHost,
-  ): Observable<void> {
-    if (active.cancelRequested) return throwError(() => new Error('Upload was cancelled.'));
-    const clientRequestId = active.clientRequestId ??= crypto.randomUUID();
-    const options = this.captureOptionsFor(documentId, host);
-    return this.runtime.startRecordingCapture({
-      documentId,
-      clientRequestId,
-      structuringMode: 'runtime',
-      identifySpeakers:
-        (options?.identifySpeakers ?? host.identifySpeakers())
-        && isFeatureReady(host.requirements(), 'asr.speakers'),
-      ...(options?.spokenLanguage ? { spokenLanguage: options.spokenLanguage } : {}),
-    }).pipe(
-      switchMap((operation) => {
-        active.captureId = operation.captureId;
-        active.lastStage = operation.status;
-        this.rememberRecordingOperation(documentId, operation);
-        return this.library.updateCapture({
-          documentId,
-          captureId: operation.captureId,
-          status: 'processing',
-          stage: operation.status,
-        }).pipe(
-          tap(() => {
-            active.linkedInFlight = true;
-            host.reloadDocumentState(documentId);
-          }),
-          map(() => operation),
-        );
-      }),
-      switchMap((operation) => this.waitForStreamingTerminal$(documentId, operation, active)),
-      switchMap((operation) => this.persistStreamingTerminal$(documentId, operation, active, host)),
-    );
-  }
-
-  private waitForStreamingTerminal$(
-    documentId: string,
-    initial: CaptureOperation,
-    active: ActiveCapture,
-  ): Observable<CaptureOperation> {
+  /** Polls an OCR capture until it reaches its checkpoint or ends. */
+  private followDocument$(
+    attempt: CaptureAttempt,
+    initial: DesktopCaptureOperation,
+  ): Observable<DesktopCaptureOperation> {
+    const settled = (operation: DesktopCaptureOperation): boolean =>
+      !isActiveOneShotOperation(operation) || isOcrCheckpoint(operation);
     return of(initial).pipe(
-      switchMap((operation) => this.advanceStreaming$(documentId, operation, active)),
-      expand((operation) => isActiveStreaming(operation)
-        ? this.waitForStreamingPoll$(active).pipe(
-          switchMap(() => this.advanceStreaming$(documentId, operation, active)),
+      expand((operation) => settled(operation)
+        ? EMPTY
+        : timer(700).pipe(
+          switchMap(() => this.runtime.getCapture(operation.captureId)),
+          tap((next) => {
+            this.rememberSourceIdentity(attempt, next);
+            this.rememberOneShotOperation(attempt.documentId, next);
+          }),
+        )),
+      filter(settled),
+      take(1),
+    );
+  }
+
+  /**
+   * The OCR checkpoint: raw text and verified completed evidence are stored
+   * with `awaiting_confirmation` and without the link, in one write.
+   */
+  private storeOcrCheckpoint$(
+    attempt: CaptureAttempt,
+    operation: DesktopCaptureOperation,
+    host: DesktopCaptureHost,
+  ): Observable<void> {
+    return this.untilCancelled$(attempt, defer(() => this.runtime.getRaw(operation.captureId)).pipe(
+      take(1),
+      switchMap((raw) => raw
+        ? this.runtime.getOcr(operation.captureId).pipe(take(1), map((projection) => ({ raw, projection })))
+        : throwError(() => new Error(desktopMessages().missingRawResult))),
+      switchMap(({ raw, projection }) => {
+        if (projection.status !== 'completed' || projection.pages.some((page) => page.status === 'failed')) {
+          return throwError(() => new Error('Capture Runtime OCR checkpoint is not complete.'));
+        }
+        return buildOcrEvidence({
+          projection,
+          expected: this.expectedOcrIdentity(operation, attempt),
+          requestedPages: attempt.pdfPageNumbers ?? null,
+        }).pipe(map((ocrEvidence) => ({ raw, ocrEvidence })));
+      }),
+    )).pipe(
+      switchMap(({ raw, ocrEvidence }) => this.terminalWrite$(attempt, host, {
+        documentId: attempt.documentId,
+        status: 'awaiting_confirmation',
+        stage: operation.status,
+        clearCaptureId: true,
+        raw,
+        ocrEvidence,
+      })),
+    );
+  }
+
+  /** A capture the runtime ended as failed or cancelled: nothing of it is saved. */
+  private storeRuntimeEnd$(
+    attempt: CaptureAttempt,
+    operation: CaptureOperation,
+    host: DesktopCaptureHost,
+  ): Observable<void> {
+    return this.terminalWrite$(attempt, host, {
+      documentId: attempt.documentId,
+      status: terminalLibraryStatus(operation),
+      stage: operation.status,
+      clearCaptureId: true,
+      errorCode: operation.error?.code,
+      errorMessage: operation.error?.message,
+    });
+  }
+
+  private captureRecording$(attempt: CaptureAttempt, host: DesktopCaptureHost): Observable<void> {
+    const options = attempt.stored.captureOptions;
+    return this.create$(
+      attempt,
+      () => this.runtime.startRecordingCapture({
+        documentId: attempt.documentId,
+        clientRequestId: attempt.clientRequestId,
+        structuringMode: 'runtime',
+        // The import stores the user's choice with the recording.
+        identifySpeakers:
+          (options?.identifySpeakers ?? false)
+          && isFeatureReady(host.requirements(), 'asr.speakers'),
+        ...(options?.spokenLanguage ? { spokenLanguage: options.spokenLanguage } : {}),
+      }).pipe(tap((operation) => this.rememberRecordingOperation(attempt.documentId, operation))),
+      host,
+    ).pipe(
+      switchMap((operation) => this.untilCancelled$(attempt, this.followRecording$(attempt, operation))),
+      switchMap((operation) => operation.status === 'completed'
+        ? this.untilCancelled$(attempt, defer(() => this.runtime.getResult(operation.captureId)).pipe(take(1))).pipe(
+          switchMap((terminal) => this.terminalWrite$(attempt, host, {
+            documentId: attempt.documentId,
+            status: 'completed',
+            stage: operation.status,
+            clearCaptureId: true,
+            raw: terminal.raw,
+            result: terminal.result,
+          })),
         )
+        : this.storeRuntimeEnd$(attempt, operation, host)),
+    );
+  }
+
+  /** Reads events, the live partial and the status of a recording until it ends. */
+  private followRecording$(
+    attempt: CaptureAttempt,
+    initial: CaptureOperation,
+  ): Observable<CaptureOperation> {
+    return this.readRecording$(attempt, initial.captureId).pipe(
+      expand((operation) => isActiveStreaming(operation)
+        ? timer(500).pipe(switchMap(() => this.readRecording$(attempt, operation.captureId)))
         : EMPTY),
       filter((operation) => !isActiveStreaming(operation)),
       take(1),
     );
   }
 
-  private waitForStreamingPoll$(active: ActiveCapture): Observable<number | void> {
-    if (active.cancelSent) return timer(500);
-    if (active.cancelRequested) return of(undefined);
-    return merge(timer(500), active.cancelWake).pipe(take(1));
-  }
-
-  private advanceStreaming$(
-    documentId: string,
-    operation: CaptureOperation,
-    active: ActiveCapture,
-  ): Observable<CaptureOperation> {
-    // A later poll just reads. The cancel was already sent, and its answer was not terminal.
-    if (active.cancelSent) return this.readStreamingCapture$(documentId, operation, active);
-    const answered$ = active.cancelRequested
-      ? this.sendCancellation$(operation.captureId, active)
-      : this.readUntilCancelRequested$(
-        this.readStreamingCapture$(documentId, operation, active),
-        operation.captureId,
-        active,
-      );
-    return answered$.pipe(switchMap((answered) => {
-      // The poll finished; nobody asked to cancel it.
-      if (!active.cancelSent) return of(answered);
-      // The cancel's answer is the recording. When it has ended, store it:
-      // reading events, the partial or the status again could leave the
-      // terminal data unsaved. A read that was still in flight
-      // was abandoned with the cancel, so it is not this answer. A capture
-      // the runtime says is still running is read again, as before. A cancel
-      // the runtime rejects never reaches here.
-      if (!isActiveStreaming(answered)) {
-        this.rememberRecordingOperation(documentId, answered);
-        return of(answered);
-      }
-      return this.readStreamingCapture$(documentId, operation, active);
-    }));
-  }
-
-  /** Events, the live partial and the capture status of a recording that is still running. */
-  private readStreamingCapture$(
-    documentId: string,
-    operation: CaptureOperation,
-    active: ActiveCapture,
-  ): Observable<CaptureOperation> {
-    return this.runtime.getCaptureEvents(
-      operation.captureId,
-      active.lastEventSequence,
-    ).pipe(
-      tap((events) => events.forEach((event) => this.applyStreamingEvent(active, event))),
-      switchMap(() => this.runtime.getPartial(operation.captureId)),
+  private readRecording$(attempt: CaptureAttempt, captureId: string): Observable<CaptureOperation> {
+    return defer(() => this.runtime.getCaptureEvents(captureId, attempt.lastEventSequence)).pipe(
+      tap((events) => events.forEach((event) => this.applyStreamingEvent(attempt, event))),
+      switchMap(() => this.runtime.getPartial(captureId)),
       tap((partial) => {
         if (partial) {
-          this.streamingPartials.update((current) => {
-            const next = new Map(current);
-            next.set(documentId, partial);
-            return next;
-          });
+          this.streamingPartials.update((current) => new Map(current).set(attempt.documentId, partial));
         }
       }),
-      switchMap(() => this.readCapture$(operation.captureId, active)),
-      tap((next) => this.rememberRecordingOperation(documentId, next)),
+      switchMap(() => this.runtime.getCapture(captureId)),
+      tap((next) => this.rememberRecordingOperation(attempt.documentId, next)),
     );
   }
 
-  private persistStreamingTerminal$(
-    documentId: string,
-    operation: CaptureOperation,
-    active: ActiveCapture,
-    host: DesktopCaptureHost,
-  ): Observable<void> {
-    active.terminalStatus = operation.status === 'completed' ? 'completed'
-      : operation.status === 'cancelled' ? 'canceled' : 'failed';
-    // The status read can say the capture ended before any event did.
-    active.lastStage = operation.status;
-    active.terminalErrorCode = operation.error?.code;
-    active.terminalErrorMessage = operation.error?.message;
-    const terminalData$: Observable<CaptureResult | null> = operation.status === 'completed'
-      ? this.runtime.getResult(operation.captureId)
-      : of(null);
-    return terminalData$.pipe(
-      switchMap((terminalData) => this.library.updateCapture({
-        documentId,
-        captureId: operation.captureId,
-        status: active.terminalStatus ?? 'failed',
-        stage: operation.status,
-        errorCode: operation.error?.code,
-        errorMessage: operation.error?.message,
-        ...(terminalData
-          ? { raw: terminalData.raw, result: terminalData.result }
-          : {}),
-      })),
-      tap(() => {
-        active.terminalCommitted = true;
-        host.reloadDocumentState(documentId);
-      }),
-      switchMap(() => this.runtime.deleteCapture(operation.captureId)),
-      switchMap(() => this.library.updateCapture({
-        documentId,
-        status: active.terminalStatus ?? 'failed',
-        stage: operation.status,
-        clearCaptureId: true,
-        errorCode: operation.error?.code,
-        errorMessage: operation.error?.message,
-      })),
-      tap(() => this.clearStreamingPartial(documentId)),
-      map(() => undefined),
-    );
-  }
-
-  private recoverCapture$(
-    document: DesktopLibrarySummary,
-    host: DesktopCaptureHost,
-  ): Observable<void> {
-    return defer(() => {
-      if (
-        !this.runtime.ready()
-        || !document.captureId
-        || this.activeCaptures.has(document.documentId)
-      ) {
-        return EMPTY;
-      }
-      // A document that holds its terminal data is only cleaned up: its
-      // runtime capture is never read, so a capture that is gone cannot turn
-      // kept data into a lost capture.
-      const terminalCommitted = holdsTerminalData(document);
-      const committedStatus = committedTerminalStatus(document);
-      const active: ActiveCapture = {
-        captureId: document.captureId,
-        streaming: isRecordingMediaType(document.mediaType),
-        lastEventSequence: 0,
-        rawPersisted: false,
-        // A cancel that is kept for the document passes to the capture that is recovered.
-        cancelRequested: this.unappliedCancels.delete(document.documentId),
-        cancelSent: false,
-        cancelAnswered: false,
-        lastStage: document.stage,
-        linkedInFlight: document.status === 'processing' || document.status === 'persisting',
-        terminalCommitted,
-        terminalStatus: committedStatus,
-        terminalErrorCode: terminalCommitted ? document.errorCode : undefined,
-        terminalErrorMessage: terminalCommitted ? document.errorMessage : undefined,
-        cancelWake: new Subject<void>(),
-        ocrCompute: this.runtime.ocrCompute(),
-        pdfPageNumbers: this.pdfPageNumbersFor(document.documentId, host, document.mediaType),
-      };
-      this.activeCaptures.set(document.documentId, active);
-      this.markBusy(document.documentId, true);
-
-      const work$ = terminalCommitted
-        ? this.retryRuntimeCleanup$(document, committedStatus)
-        : active.streaming
-          ? this.recoveredOperation$(document.captureId, active).pipe(
-            tap((operation) => {
-              active.lastStage = operation.status;
-              this.rememberRecordingOperation(document.documentId, operation);
-            }),
-            // The initial read or cancel reply already tells us how it ended.
-            switchMap((operation) => !isActiveStreaming(operation)
-              ? of(operation)
-              : this.library.updateCapture({
-                documentId: document.documentId,
-                captureId: operation.captureId,
-                status: 'processing',
-                stage: operation.status,
-              }).pipe(
-                tap(() => {
-                  active.linkedInFlight = true;
-                  host.reloadDocumentState(document.documentId);
-                }),
-                ignoreElements(),
-                // This write only lets the queue show the live transcript. A
-                // library that cannot store it does not stop the recording
-                // being followed: the row keeps what it stored, and the end is
-                // stored as before. A cancel asked while the write was pending
-                // is sent by the first poll after it settles, either way.
-                catchError(() => EMPTY),
-                concatWith(defer(() => this.waitForStreamingTerminal$(document.documentId, operation, active))),
-              )),
-            switchMap((operation) => this.persistStreamingTerminal$(
-              document.documentId,
-              operation,
-              active,
-              host,
-            )),
-          )
-          : this.recoveredOperation$(document.captureId, active).pipe(
-            tap((operation) => {
-              this.rememberSourceIdentity(active, operation);
-              this.rememberOneShotOperation(document.documentId, operation);
-              active.lastStage = operation.status;
-            }),
-            switchMap((operation) => this.waitForTerminal$(document.documentId, operation, active, host)),
-            switchMap((operation) => this.persistOneShot$(document.documentId, operation, active, host)),
-          );
-      return this.trackCaptureLifecycle$(document.documentId, active, work$, host);
-    });
-  }
-
-  private trackCaptureLifecycle$(
-    documentId: string,
-    active: ActiveCapture,
-    work$: Observable<unknown>,
-    host: DesktopCaptureHost,
-  ): Observable<void> {
-    return work$.pipe(
-      tap(() => host.reloadDocumentState(documentId)),
-      catchError((error) => this.persistLifecycleFailure$(documentId, active, error).pipe(
-        tap(() => host.reloadDocumentState(documentId)),
-        catchError((failureError: unknown) => {
-          if (active.captureId && active.linkedInFlight && !active.terminalCommitted) {
-            if (active.cancelRequested && !active.cancelAnswered) this.unappliedCancels.add(documentId);
-            this.pauseDecisions(documentId);
-            this.unrecordedFailures.next(active.captureId);
-            host.reloadDocumentState(documentId);
-          }
-          host.setMessage(errorMessage(failureError));
-          return EMPTY;
-        }),
-      )),
-      finalize(() => {
-        active.cancelWake.complete();
-        this.activeCaptures.delete(documentId);
-        this.forgetOneShotOperation(documentId);
-        this.forgetRecordingOperation(documentId);
-        this.markBusy(documentId, false);
-      }),
-      map(() => undefined),
-    );
-  }
-
-  private waitForTerminal$(
-    documentId: string,
-    initial: DesktopCaptureOperation,
-    active: ActiveCapture,
-    host: DesktopCaptureHost,
-  ): Observable<DesktopCaptureOperation> {
-    return of(initial).pipe(
-      switchMap((operation) => this.persistRawDuringExtraction$(documentId, operation, active, host)),
-      tap((operation) => active.lastStage = operation.status),
-      expand((operation) => {
-        if (!isActiveOneShotOperation(operation) || isOcrCheckpoint(operation)) return EMPTY;
-        return this.advanceCapture$(documentId, operation, active, host);
-      }),
-      filter((operation) => !isActiveOneShotOperation(operation) || isOcrCheckpoint(operation)),
-      take(1),
-    );
-  }
-
-  private advanceCapture$(
-    documentId: string,
-    operation: DesktopCaptureOperation,
-    active: ActiveCapture,
-    host: DesktopCaptureHost,
-  ): Observable<DesktopCaptureOperation> {
-    return this.library.updateCapture({
-      documentId,
-      captureId: operation.captureId,
-      status: 'processing',
-      stage: operation.status,
-    }).pipe(
-      tap(() => { active.linkedInFlight = true; }),
-      switchMap(() => {
-        if (active.cancelRequested && !active.cancelSent) {
-          return this.sendCancellation$(operation.captureId, active);
-        }
-        return this.readUntilCancelRequested$(
-          timer(700).pipe(
-            switchMap(() => this.readCapture$(operation.captureId, active)),
-          ),
-          operation.captureId,
-          active,
-        );
-      }),
-      switchMap((next) => this.persistRawDuringExtraction$(documentId, next, active, host)),
-      tap((next) => {
-        this.rememberOneShotOperation(documentId, next);
-        active.lastStage = next.status;
-      }),
-    );
-  }
-
-  private persistRawDuringExtraction$(
-    documentId: string,
-    operation: DesktopCaptureOperation,
-    active: ActiveCapture,
-    host: DesktopCaptureHost,
-  ): Observable<DesktopCaptureOperation> {
-    if (
-      active.rawPersisted
-      || operation.status !== 'structuring'
-    ) {
-      return of(operation);
-    }
-    return this.runtime.getRaw(operation.captureId).pipe(
-      switchMap((raw) => {
-        if (!raw) return of(operation);
-        return this.library.updateCapture({
-          documentId,
-          captureId: operation.captureId,
-          status: 'processing',
-          stage: operation.status,
-          raw,
-        }).pipe(
-          tap(() => {
-            active.rawPersisted = true;
-            active.linkedInFlight = true;
-            host.reloadDocumentState(documentId);
-          }),
-          map(() => operation),
-        );
-      }),
-    );
-  }
-
-  /**
-   * The state of the runtime capture a recovery attaches to. A cancel goes to
-   * the runtime first, whether it was asked while the recovery was decided or
-   * arrives while the capture is being read: the runtime answers it with the
-   * capture as it is then, cancelled or already ended, and that answer is
-   * the state. So a read that does not answer or fails cannot hold a cancel
-   * back while the capture goes on running.
-   */
-  private recoveredOperation$(
-    captureId: string,
-    active: ActiveCapture,
-  ): Observable<DesktopCaptureOperation> {
-    if (active.cancelRequested) return this.sendCancellation$(captureId, active);
-    return this.readUntilCancelRequested$(this.readCapture$(captureId, active), captureId, active);
-  }
-
-  /** Only a capture-status read can confirm the capture itself is absent. */
-  private readCapture$(
-    captureId: string,
-    active: ActiveCapture,
-  ): Observable<DesktopCaptureOperation> {
-    return this.runtime.getCapture(captureId).pipe(
-      tap({ error: (error: unknown) => { active.captureNotFound = isRuntimeNotFound(error); } }),
-    );
-  }
-
-  /**
-   * The answer of `read$`, unless a cancel is requested before it arrives:
-   * then the read is abandoned and the runtime's answer to the cancel is the
-   * state. A read that was sent before the cancel can answer after the runtime
-   * accepted it, with the capture as it was; that answer, or its failure,
-   * must not decide what is stored.
-   */
-  private readUntilCancelRequested$(
-    read$: Observable<DesktopCaptureOperation>,
-    captureId: string,
-    active: ActiveCapture,
-  ): Observable<DesktopCaptureOperation> {
-    const cancelRequested$ = active.cancelWake.pipe(take(1));
-    return merge(
-      read$.pipe(takeUntil(cancelRequested$)),
-      cancelRequested$.pipe(switchMap(() => this.sendCancellation$(captureId, active))),
-    ).pipe(take(1));
-  }
-
-  private sendCancellation$(
-    captureId: string,
-    active: ActiveCapture,
-  ): Observable<DesktopCaptureOperation> {
-    active.cancelSent = true;
-    return this.runtime.cancelCapture(captureId).pipe(
-      throwIfEmpty(() => new Error('Capture Runtime returned no cancel response.')),
-      tap(() => { active.cancelAnswered = true; }),
-    );
-  }
-
-  private persistTerminal$(
-    documentId: string,
-    operation: DesktopCaptureOperation,
-    active: ActiveCapture,
-  ): Observable<DesktopLibrarySummary> {
-    return this.library.updateCapture({
-      documentId,
-      captureId: operation.captureId,
-      status: 'persisting',
-      stage: operation.status,
-    }).pipe(
-      tap(() => { active.linkedInFlight = true; }),
-      switchMap(() => this.persistTerminalData$(documentId, operation, active)),
-      tap(() => {
-        active.terminalCommitted = true;
-        active.terminalStatus = terminalLibraryStatus(operation);
-        active.terminalErrorCode = operation.error?.code;
-        active.terminalErrorMessage = operation.error?.message;
-      }),
-      switchMap(() => this.cleanupAfterCommit$(documentId, operation)),
-    );
-  }
-
-  private persistOneShot$(
-    documentId: string,
-    operation: DesktopCaptureOperation,
-    active: ActiveCapture,
-    host: DesktopCaptureHost,
-  ): Observable<DesktopLibrarySummary> {
-    return isOcrCheckpoint(operation)
-      ? this.persistOcrCheckpoint$(documentId, operation, active, host)
-      : this.persistTerminal$(documentId, operation, active);
-  }
-
-  private persistOcrCheckpoint$(
-    documentId: string,
-    operation: DesktopCaptureOperation,
-    active: ActiveCapture,
-    host: DesktopCaptureHost,
-  ): Observable<DesktopLibrarySummary> {
-    const stage = operation.status;
-    return this.settleOne$(this.runtime.getRaw(operation.captureId)).pipe(
-      switchMap((raw) => {
-        if (!raw) {
-          return throwError(() => new Error('Capture Runtime OCR checkpoint raw projection is unavailable.'));
-        }
-        return this.settleOne$(this.runtime.getOcr(operation.captureId)).pipe(
-          switchMap((projection) => {
-            if (
-              projection.status !== 'completed'
-              || projection.pages.some((page) => page.status === 'failed')
-            ) {
-              return throwError(() => new Error('Capture Runtime OCR checkpoint is not complete.'));
-            }
-            return buildOcrEvidence({
-              projection,
-              expected: this.expectedOcrIdentity(operation, active, projection.status),
-              requestedPages: active.pdfPageNumbers ?? null,
-            }).pipe(map((ocrEvidence) => ({ raw, ocrEvidence })));
-          }),
-        );
-      }),
-      switchMap(({ raw, ocrEvidence }) => this.settleOne$(this.library.updateCapture({
-        documentId,
-        captureId: operation.captureId,
-        status: ocrEvidence.status,
-        stage,
-        raw,
-        ocrEvidence,
-      }))),
-      tap(() => {
-        active.terminalCommitted = true;
-        active.terminalStatus = 'awaiting_confirmation';
-        active.lastStage = stage;
-        host.reloadDocumentState(documentId);
-      }),
-      switchMap(() => this.settleOne$(this.runtime.deleteCapture(operation.captureId))),
-      switchMap(() => this.settleOne$(this.library.updateCapture({
-        documentId,
-        status: 'awaiting_confirmation',
-        stage,
-        clearCaptureId: true,
-      }))),
-    );
-  }
-
-  private persistTerminalData$(
-    documentId: string,
-    operation: DesktopCaptureOperation,
-    active: ActiveCapture,
-    ocrEvidence?: OcrEvidenceV1,
-  ): Observable<DesktopLibrarySummary> {
-    if (
-      ocrEvidence === undefined
-      && (operation.status === 'completed' || operation.status === 'failed')
-    ) {
-      this.rememberSourceIdentity(active, operation);
-      return this.settleOne$(this.runtime.getOcr(operation.captureId)).pipe(
-        switchMap((projection) => buildOcrEvidence({
-          projection,
-          expected: this.expectedOcrIdentity(operation, active),
-          requestedPages: active.pdfPageNumbers ?? null,
-        })),
-        switchMap((evidence) => this.persistTerminalData$(
-          documentId,
-          operation,
-          active,
-          evidence,
-        )),
-      );
-    }
-    if (operation.status === 'completed') {
-      if (active.rawPersisted) {
-        return this.runtime.getResult(operation.captureId).pipe(
-          switchMap(({ result }) => this.library.updateCapture({
-            documentId,
-            captureId: operation.captureId,
-            status: 'completed' as const,
-            stage: operation.status,
-            result,
-            ...(ocrEvidence === undefined ? {} : { ocrEvidence }),
-          })),
-        );
-      }
-      return this.runtime.getRaw(operation.captureId).pipe(
-        switchMap((raw) => {
-          if (!raw) {
-            return throwError(() => new Error(desktopMessages().missingRawResult));
-          }
-          return this.runtime.getResult(operation.captureId).pipe(
-            switchMap(({ result }) => {
-              const update = {
-                documentId,
-                captureId: operation.captureId,
-                status: 'completed' as const,
-                stage: operation.status,
-                result,
-                ...(ocrEvidence === undefined ? {} : { ocrEvidence }),
-                ...(active.rawPersisted ? {} : { raw }),
-              };
-              return this.library.updateCapture(update).pipe(
-                tap(() => {
-                  if (!active.rawPersisted) active.rawPersisted = true;
-                }),
-              );
-            }),
-          );
-        }),
-      );
-    }
-    if (operation.status === 'failed' || operation.status === 'cancelled') {
-      if (active.rawPersisted) {
-        return this.library.updateCapture({
-          documentId,
-          captureId: operation.captureId,
-          status: terminalLibraryStatus(operation),
-          stage: operation.status,
-          ...(ocrEvidence === undefined ? {} : { ocrEvidence }),
-          errorCode: operation.error?.code,
-          errorMessage: operation.error?.message,
-        });
-      }
-      return this.runtime.getRaw(operation.captureId).pipe(
-        switchMap((raw) => {
-          const update = {
-            documentId,
-            captureId: operation.captureId,
-            status: terminalLibraryStatus(operation),
-            stage: operation.status,
-            ...(ocrEvidence === undefined ? {} : { ocrEvidence }),
-            errorCode: operation.error?.code,
-            errorMessage: operation.error?.message,
-            ...(active.rawPersisted || !raw ? {} : { raw }),
-          };
-          return this.library.updateCapture(update).pipe(
-            tap(() => {
-              if (raw) active.rawPersisted = true;
-            }),
-          );
-        }),
-      );
-    }
-    return throwError(() => new Error(`Capture Runtime returned unsupported terminal status: ${operation.status}`));
+  private applyStreamingEvent(attempt: CaptureAttempt, event: CaptureEvent): void {
+    attempt.lastEventSequence = Math.max(attempt.lastEventSequence, event.sequence);
   }
 
   private expectedOcrIdentity(
     operation: DesktopCaptureOperation,
-    active: ActiveCapture,
-    terminalStatus: CaptureOcrProjection['status'] = operation.status === 'failed' ? 'failed' : 'completed',
+    attempt: CaptureAttempt,
   ): OcrEvidenceExpectedIdentity {
-    const compute = active.ocrCompute;
+    const compute = attempt.ocrCompute;
     if (!compute) {
       throw new Error('OCR evidence identity unavailable: runtime OCR readiness is missing.');
     }
-    const sourceSha256 = active.sourceSha256 ?? operation.source?.sha256;
+    const sourceSha256 = attempt.sourceSha256 ?? operation.source?.sha256;
     if (!sourceSha256) {
       throw new Error('OCR evidence identity unavailable: capture source identity is missing.');
     }
     if (!compute.workerSha256) {
       throw new Error('OCR evidence identity unavailable: OCR worker identity is missing.');
     }
-    if (terminalStatus !== 'completed' && terminalStatus !== 'failed') {
-      throw new Error(`OCR evidence is unsupported for terminal status: ${terminalStatus}`);
-    }
     return {
       captureId: operation.captureId,
       sourceSha256,
       runtimeVersion: compute.runtimeVersion,
       contractSetSha256: compute.contractSetSha256,
-      terminalStatus,
+      terminalStatus: 'completed',
       workerSha256: compute.workerSha256,
     };
   }
 
   private rememberSourceIdentity(
-    active: ActiveCapture,
+    attempt: CaptureAttempt,
     operation: DesktopCaptureOperation,
   ): void {
     const sourceSha256 = operation.source?.sha256;
     if (sourceSha256 === undefined) return;
-    if (active.sourceSha256 !== undefined && active.sourceSha256 !== sourceSha256) {
+    if (attempt.sourceSha256 !== undefined && attempt.sourceSha256 !== sourceSha256) {
       throw new Error('OCR evidence identity mismatch: capture source changed.');
     }
-    active.sourceSha256 = sourceSha256;
+    attempt.sourceSha256 = sourceSha256;
   }
 
-  /** Settle one-shot streams before handing values to the next lifecycle stage. */
-  private settleOne$<T>(source$: Observable<T>): Observable<T> {
-    return defer(() => {
-      let value!: T;
-      let emitted = false;
-      return source$.pipe(
-        take(1),
-        tap((next) => {
-          value = next;
-          emitted = true;
-        }),
-        ignoreElements(),
-        concatWith(defer(() => emitted
-          ? of(value)
-          : throwError(() => new Error('Capture lifecycle source completed without a value.')))),
-      );
-    });
-  }
-
-  private cleanupAfterCommit$(
-    documentId: string,
-    operation: DesktopCaptureOperation,
-  ): Observable<DesktopLibrarySummary> {
-    const terminalStatus = terminalLibraryStatus(operation);
-    return this.runtime.deleteCapture(operation.captureId).pipe(
-      switchMap(() => this.library.updateCapture({
-        documentId,
-        status: terminalStatus,
-        stage: operation.status,
-        clearCaptureId: true,
-        errorCode: operation.error?.code,
-        errorMessage: operation.error?.message,
-      })),
-      catchError((error) => this.library.updateCapture({
-        documentId,
-        captureId: operation.captureId,
-        status: 'recovery_required',
-        stage: operation.status,
-        errorCode: operation.error?.code,
-        errorMessage: operation.error?.message,
-        recoveryCode: 'runtime_cleanup_failed',
-        recoveryMessage: errorMessage(error),
-      })),
-    );
-  }
-
-  /**
-   * Deletes the runtime capture of a document that already holds its terminal
-   * data and unlinks it. The document gets the terminal status it says its
-   * capture ended in; when it does not say, it keeps what it stores and only
-   * the link is removed.
-   */
-  private retryRuntimeCleanup$(
-    document: DesktopLibrarySummary,
-    committedStatus: TerminalLibraryStatus | undefined,
-  ): Observable<DesktopLibrarySummary> {
-    const captureId = document.captureId;
-    if (!captureId) return EMPTY;
-    const stage = committedStatus ? terminalStage(committedStatus) : document.stage;
-    return this.runtime.deleteCapture(captureId).pipe(
-      switchMap(() => this.library.updateCapture({
-        documentId: document.documentId,
-        ...(committedStatus
-          ? { status: committedStatus }
-          : {
-            status: document.status,
-            recoveryCode: document.recoveryCode,
-            recoveryMessage: document.recoveryMessage,
-          }),
-        stage,
-        clearCaptureId: true,
-        errorCode: document.errorCode,
-        errorMessage: document.errorMessage,
-      })),
-      catchError((error) => this.library.updateCapture({
-        documentId: document.documentId,
-        captureId,
-        status: 'recovery_required',
-        stage,
-        errorCode: document.errorCode,
-        errorMessage: document.errorMessage,
-        recoveryCode: 'runtime_cleanup_failed',
-        recoveryMessage: errorMessage(error),
-      })),
-    );
-  }
-
-  private persistLifecycleFailure$(
-    documentId: string,
-    active: ActiveCapture,
-    error: unknown,
-  ): Observable<DesktopLibrarySummary> {
-    if (active.captureId) {
-      if (active.terminalCommitted) {
-        return this.library.updateCapture({
-          documentId,
-          captureId: active.captureId,
-          status: 'recovery_required',
-          // The stage of a cleanup row names the terminal status the document
-          // holds: the cleanup retry restores the status from it. A row that
-          // never said how its capture ended keeps the stage it stores.
-          stage: active.terminalStatus ? terminalStage(active.terminalStatus) : active.lastStage,
-
-          errorCode: active.terminalErrorCode,
-          errorMessage: active.terminalErrorMessage,
-          recoveryCode: 'runtime_cleanup_failed',
-          recoveryMessage: errorMessage(error),
-        });
-      }
-      return this.library.updateCapture({
-        documentId,
-        ...(active.captureNotFound ? { clearCaptureId: true } : { captureId: active.captureId }),
-        status: 'recovery_required',
-        stage: active.lastStage ?? 'recovery_required',
-        recoveryCode: active.cancelSent && !active.cancelAnswered
-          ? 'cancel_failed'
-          : 'capture_recovery_required',
-        recoveryMessage: errorMessage(error),
-      });
-    }
-    if (active.cancelRequested && errorMessage(error) === 'Upload was cancelled.') {
-      return this.library.updateCapture({
-        documentId,
-        status: 'canceled',
-        stage: 'cancelled',
-        clearCaptureId: true,
-      });
-    }
-    return this.library.updateCapture({
-      documentId,
-      status: 'failed',
-      stage: 'failed',
-      clearCaptureId: true,
-      errorCode: 'capture_failed',
-      errorMessage: errorMessage(error),
-    });
-  }
-
-  private captureOptionsFor(
-    documentId: string,
-    host: DesktopCaptureHost,
-  ) {
-    const document = host.documents().find((item) => item.documentId === documentId)
-      ?? (host.selected()?.documentId === documentId ? host.selected() : undefined);
-    return document?.captureOptions;
-  }
-
-  private pdfPageNumbersFor(
-    documentId: string,
-    host: DesktopCaptureHost,
-    mediaType?: string,
-  ): readonly number[] | undefined {
-    if (!this.isPdfDocument(documentId, host, mediaType)) return undefined;
-    const options = this.captureOptionsFor(documentId, host);
+  /** The PDF pages to capture, from the stored document's options. */
+  private pdfPageNumbersFor(stored: DesktopLibrarySummary): readonly number[] | undefined {
+    if (!isPdfMediaType(stored.mediaType)) return undefined;
+    const options = stored.captureOptions;
     const pageNumbers = options?.pdfPageNumbers;
     if (Array.isArray(pageNumbers) && pageNumbers.length > 0) {
       return [...pageNumbers];
@@ -1458,37 +863,27 @@ export class DesktopCaptureService {
   }
 
   private rememberRecordingOperation(documentId: string, operation: CaptureOperation): void {
-    this.recordingOperations.update((current) => {
-      const next = new Map(current);
-      next.set(documentId, operation);
-      return next;
-    });
+    this.recordingOperations.update((current) => new Map(current).set(documentId, operation));
   }
 
   private forgetRecordingOperation(documentId: string): void {
-    this.recordingOperations.update((current) => {
-      if (!current.has(documentId)) return current;
-      const next = new Map(current);
-      next.delete(documentId);
-      return next;
-    });
+    this.recordingOperations.update((current) => withoutKey(current, documentId));
   }
 
   private rememberOneShotOperation(documentId: string, operation: DesktopCaptureOperation): void {
-    this.oneShotOperations.update((current) => {
-      const next = new Map(current);
-      next.set(documentId, operation);
-      return next;
-    });
+    this.oneShotOperations.update((current) => new Map(current).set(documentId, operation));
   }
 
   private forgetOneShotOperation(documentId: string): void {
-    this.oneShotOperations.update((current) => {
-      if (!current.has(documentId)) return current;
-      const next = new Map(current);
-      next.delete(documentId);
-      return next;
-    });
+    this.oneShotOperations.update((current) => withoutKey(current, documentId));
+  }
+
+  private rememberUnstoredOutcome(documentId: string, reason: string | null = null): void {
+    this.unstored.update((outcomes) => new Map(outcomes).set(documentId, reason));
+  }
+
+  private forgetUnstoredOutcome(documentId: string): void {
+    this.unstored.update((outcomes) => withoutKey(outcomes, documentId));
   }
 
   private markBusy(documentId: string, busy: boolean): void {
@@ -1500,11 +895,20 @@ export class DesktopCaptureService {
   }
 
   private clearStreamingPartial(documentId: string): void {
-    this.streamingPartials.update((current) => {
-      if (!current.has(documentId)) return current;
-      const next = new Map(current);
-      next.delete(documentId);
-      return next;
-    });
+    this.streamingPartials.update((current) => withoutKey(current, documentId));
   }
+}
+
+function withoutMember(current: ReadonlySet<string>, member: string): ReadonlySet<string> {
+  if (!current.has(member)) return current;
+  const next = new Set(current);
+  next.delete(member);
+  return next;
+}
+
+function withoutKey<T>(current: ReadonlyMap<string, T>, key: string): ReadonlyMap<string, T> {
+  if (!current.has(key)) return current;
+  const next = new Map(current);
+  next.delete(key);
+  return next;
 }

@@ -131,19 +131,49 @@ describe('DesktopLibraryService native source import', () => {
     expect(imported.fileName).toBe('fixture.pdf');
   });
 
+  it('leaves out a raw or structured result the host answers as null, and keeps a stored one', async () => {
+    // The host serializes a document without a result as `raw: null, result: null`.
+    const missing = configure({ raw: null, result: null } as unknown as Partial<DesktopLibrarySummary>);
+    const detail = await firstValueFrom(missing.service.get(summary.documentId));
+    expect(detail).not.toHaveProperty('raw');
+    expect(detail).not.toHaveProperty('result');
+    expect(detail.documentId).toBe(summary.documentId);
+
+    TestBed.resetTestingModule();
+    const raw = { sourceText: 'recognized', segments: [] };
+    const result = { targetText: 'recognized', blocks: [] };
+    const stored = configure({ raw, result } as unknown as Partial<DesktopLibrarySummary>);
+    expect(await firstValueFrom(stored.service.get(summary.documentId))).toMatchObject({ raw, result });
+  });
+
   it('redacts credential-shaped persisted error fields before the UI sees them', async () => {
     const { service } = configure({
+      errorCode: 'token=secret-token',
       errorMessage: 'Bearer secret-token',
-      recoveryMessage: 'token=secret-token',
     });
 
     const imported = await firstValueFrom(
       service.importSelection(selection('scan.png')),
     );
 
+    expect(imported.errorCode).toBe('token= [redacted]');
     expect(imported.errorMessage).toBe('Bearer [redacted]');
-    expect(imported.recoveryMessage).toBe('token= [redacted]');
     expect(JSON.stringify(imported)).not.toContain('secret-token');
+  });
+
+  it('leaves out the recovery message an earlier version stored, which nothing shows', async () => {
+    // Earlier versions stored a recovery code and message; only the code is read.
+    const { service } = configure({
+      status: 'recovery_required',
+      recoveryCode: 'runtime_cleanup_failed',
+      recoveryMessage: 'token=secret-token',
+    } as unknown as Partial<DesktopLibrarySummary>);
+
+    const detail = await firstValueFrom(service.get(summary.documentId));
+
+    expect(detail).toMatchObject({ status: 'recovery_required', recoveryCode: 'runtime_cleanup_failed' });
+    expect(detail).not.toHaveProperty('recoveryMessage');
+    expect(JSON.stringify(detail)).not.toContain('secret-token');
   });
 
   it('routes picker, native channel and explicit discard through token commands', async () => {

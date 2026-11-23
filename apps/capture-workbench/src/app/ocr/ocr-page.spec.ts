@@ -95,6 +95,10 @@ describe('OcrPage queue', () => {
 
     (waiting.querySelector('[data-testid="ocr-row-install"]') as HTMLButtonElement).click();
     expect(installRequirement).toHaveBeenCalledWith('text-recognition');
+    // A waiting file really waits for its turn: it can be cancelled.
+    const cancel = vi.spyOn(TestBed.inject(OcrQueueStore), 'cancel').mockImplementation(() => undefined);
+    (waiting.querySelector('[data-testid="ocr-row-cancel"]') as HTMLButtonElement).click();
+    expect(cancel).toHaveBeenCalledExactlyOnceWith('b'.repeat(32));
 
     const doneExport = row(page, 'done.pdf').querySelector(
       '[data-testid="ocr-row-export-txt"]',
@@ -106,6 +110,105 @@ describe('OcrPage queue', () => {
     expect(emptyExport.disabled).toBe(true);
     expect(row(page, 'done.pdf').querySelector('[data-testid="ocr-row-view"]')?.getAttribute('href'))
       .toBe(`/history/${'c'.repeat(32)}`);
+  });
+
+  it('keeps the Cancel of a running file from being pressed again while its cancel is applied', async () => {
+    const running = doc({ documentId: 'b'.repeat(32), fileName: 'running.pdf', status: 'processing', captureId: 'capture-1' });
+    const waiting = doc({ documentId: 'c'.repeat(32), fileName: 'waiting.pdf', status: 'queued', createdAtMs: 2 });
+    const requirements = signal<readonly RuntimeRequirement[]>([requirement('text-recognition', 'ready', 144_000_000)]);
+    const cancellingIds = signal<ReadonlySet<string>>(new Set());
+    TestBed.configureTestingModule({
+      imports: [OcrPage],
+      providers: [
+        provideRouter([]),
+        { provide: DesktopLibraryService, useValue: {} },
+        { provide: DesktopRuntimeClientService, useValue: { started: signal(true), ready: signal(true) } },
+        {
+          provide: RecognitionFeaturesStore,
+          useValue: {
+            requirements,
+            installing: signal(false),
+            firstRunInstallableRequirements: signal([]),
+            showFirstRunCard: signal(false),
+            startingRequirementId: signal(null),
+            isProgressUnavailable: () => false,
+            activeInstallation: signal<RuntimeInstallation | null>(null),
+            isFeatureReady: (feature: RecognitionFeature) => isFeatureReady(requirements(), feature),
+            requestedRequirements: signal(new Set()),
+          },
+        },
+        { provide: LibraryStore, useValue: { allDocuments: signal([waiting, running]), refreshDocuments: vi.fn() } },
+        {
+          provide: DesktopCaptureService,
+          useValue: {
+            busyIds: signal<ReadonlySet<string>>(new Set([running.documentId])),
+            oneShotOperations: signal(new Map()),
+            unstoredOutcomes: signal<ReadonlyMap<string, string | null>>(new Map()),
+            cancellingIds,
+          },
+        },
+        OcrQueueStore,
+      ],
+    });
+    const fixture = TestBed.createComponent(OcrPage);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    const page = fixture.nativeElement as HTMLElement;
+    const cancelDisabled = () => ['running.pdf', 'waiting.pdf'].map((name) =>
+      (row(page, name).querySelector('[data-testid="ocr-row-cancel"]') as HTMLButtonElement).disabled);
+    expect(cancelDisabled()).toEqual([false, false]);
+
+    cancellingIds.set(new Set([running.documentId]));
+    fixture.detectChanges();
+
+    expect(cancelDisabled()).toEqual([true, false]);
+  });
+
+  it('shows why this run could not start or end a row under its status', async () => {
+    const passedBy = doc({ documentId: 'b'.repeat(32), fileName: 'passed-by.pdf', status: 'queued' });
+    const requirements = signal<readonly RuntimeRequirement[]>([requirement('text-recognition', 'ready', 144_000_000)]);
+    TestBed.configureTestingModule({
+      imports: [OcrPage],
+      providers: [
+        provideRouter([]),
+        { provide: DesktopLibraryService, useValue: {} },
+        { provide: DesktopRuntimeClientService, useValue: { started: signal(true), ready: signal(true) } },
+        {
+          provide: RecognitionFeaturesStore,
+          useValue: {
+            requirements,
+            installing: signal(false),
+            firstRunInstallableRequirements: signal([]),
+            showFirstRunCard: signal(false),
+            startingRequirementId: signal(null),
+            isProgressUnavailable: () => false,
+            activeInstallation: signal<RuntimeInstallation | null>(null),
+            isFeatureReady: (feature: RecognitionFeature) => isFeatureReady(requirements(), feature),
+            requestedRequirements: signal(new Set()),
+          },
+        },
+        { provide: LibraryStore, useValue: { allDocuments: signal([passedBy]), refreshDocuments: vi.fn() } },
+        {
+          provide: DesktopCaptureService,
+          useValue: {
+            busyIds: signal<ReadonlySet<string>>(new Set()),
+            oneShotOperations: signal(new Map()),
+            unstoredOutcomes: signal<ReadonlyMap<string, string | null>>(new Map([[passedBy.documentId, 'Capture library list failed.']])),
+            cancellingIds: signal<ReadonlySet<string>>(new Set()),
+          },
+        },
+        OcrQueueStore,
+      ],
+    });
+    const fixture = TestBed.createComponent(OcrPage);
+    fixture.detectChanges();
+    await fixture.whenStable();
+    const page = fixture.nativeElement as HTMLElement;
+
+    expect(row(page, 'passed-by.pdf').querySelector('[data-testid="ocr-row-status"]')?.textContent)
+      .toContain('需要處理');
+    expect(row(page, 'passed-by.pdf').querySelector('[data-testid="ocr-row-reason"]')?.textContent?.trim())
+      .toBe('Capture library list failed.');
   });
 
   it('shows the install percentage on a waiting row and hides the install button', async () => {

@@ -144,12 +144,17 @@
               </td>
               <td hlmTd class="px-3 py-4 tabular-nums text-foreground whitespace-nowrap">{{ row.extent }}</td>
               <td hlmTd class="px-3 py-4 align-middle">
-                <span
-                  class="inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold whitespace-nowrap self-start"
-                  [class]="chipClass(row.userStatus)"
-                >
-                  {{ row.statusText }}
-                </span>
+                <div class="flex flex-col items-start gap-1">
+                  <span
+                    class="inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold whitespace-nowrap self-start"
+                    [class]="chipClass(row.userStatus)"
+                  >
+                    {{ row.statusText }}
+                  </span>
+                  @if (row.failureReason) {
+                    <span class="text-xs text-destructive" data-testid="history-row-reason">{{ row.failureReason }}</span>
+                  }
+                </div>
               </td>
               <td hlmTd class="px-3 py-4 tabular-nums text-muted-foreground whitespace-nowrap">{{ row.updatedAt }}</td>
               <td hlmTd class="px-3 py-4 text-right whitespace-nowrap">

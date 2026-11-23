@@ -32,10 +32,11 @@ describe('HistoryListStore', () => {
         busyIds,
         oneShotOperations: signal(new Map()),
         recordingOperations: signal(new Map()),
+        cancellingIds: signal<ReadonlySet<string>>(new Set()),
+        unstoredOutcomes: signal<ReadonlyMap<string, string | null>>(new Map()),
         isDocumentClaimed: (id: string) => activeIds().has(id),
-        isDocumentBeingDeleted: () => false,
         claimDocumentForDeletion$,
-        forgetDeletedDocument: vi.fn(),
+        deleteRuntimeCapture: vi.fn(),
       } },
       { provide: Router, useValue: router },
     ] });
@@ -181,7 +182,7 @@ describe('HistoryListStore', () => {
     expect(store.error()).toBe('');
     expect(store.rows().map((item) => item.documentId)).toContain(row.documentId);
   });
-  it.each(['removed', 'captureId', 'active capture'] as const)('rechecks a document that is %s while confirmation is open', (change) => {
+  it.each(['removed', 'active capture'] as const)('rechecks a document that is %s while confirmation is open', (change) => {
     const { store, allDocuments, library, activeIds } = setup();
     const row = store.rows()[0];
     if (!row) throw new Error('missing row');
@@ -190,9 +191,7 @@ describe('HistoryListStore', () => {
       activeIds.set(new Set([row.documentId]));
     } else {
       const documents = allDocuments.value;
-      allDocuments.next(change === 'removed'
-        ? documents.filter((document) => document.documentId !== row.documentId)
-        : documents.map((document) => document.documentId === row.documentId ? { ...document, captureId: 'capture' } : document));
+      allDocuments.next(documents.filter((document) => document.documentId !== row.documentId));
     }
     store.confirmDelete();
     expect(library.delete).not.toHaveBeenCalled();

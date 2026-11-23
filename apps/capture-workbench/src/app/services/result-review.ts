@@ -1,10 +1,11 @@
 import type { RawCapture } from '@gx-capture/capture-workbench-ui';
-import type { DesktopLibraryDetail, DesktopLibraryEdits } from '../contracts';
+import type { DesktopLibraryDetail, DesktopLibraryEdits, DesktopLibrarySummary } from '../contracts';
 import { desktopMessages } from '../i18n/desktop-messages';
 import { detailDurationMs } from './asr-queue';
 import { formatRecordingTime, transcriptLines, type TranscriptLine } from './recording-transcript';
 import { isRecordingMediaType, isPdfMediaType } from './capture-media-types';
 import { groupRawOcrPages, type OcrPageText } from './ocr-queue';
+import { captureRowState, type CaptureRowInput, type CaptureRowState } from './capture-user-status';
 
 type CaptureSpeaker = NonNullable<RawCapture['speakers']>[number];
 
@@ -92,26 +93,13 @@ export function isNotFoundError(error: unknown): boolean {
   return /not\s*found|unknown document/iu.test(message);
 }
 
-/** Maps a library item's persisted state to the user-facing status vocabulary. */
-export function resultStatusText(detail: DesktopLibraryDetail): string {
-  const messages = desktopMessages();
-  if (detail.status === 'queued') return messages.captureStatusWaiting;
-  if (detail.status === 'processing' || detail.status === 'persisting') {
-    return detail.captureId ? messages.captureStatusProcessing : messages.captureInterrupted;
-  }
-  if (detail.status === 'canceled') return messages.captureStatusCancelled;
-  if (detail.status === 'failed' || detail.status === 'recovery_required') {
-    return detail.recoveryCode === 'capture_recovery_required'
-      ? messages.captureInterrupted
-      : messages.captureStatusNeedsAttention;
-  }
-  if (
-    detail.status === 'completed'
-    || (detail.status === 'awaiting_confirmation' && (detail.hasRaw === true || detail.raw !== undefined))
-  ) {
-    return messages.captureStatusDone;
-  }
-  return messages.captureStatusNeedsAttention;
+/** The document's row, as its queue shows it: from what is stored and what this run does with it. */
+export function resultRowState(
+  detail: DesktopLibrarySummary & Pick<DesktopLibraryDetail, 'raw'>,
+  run: Omit<CaptureRowInput, 'document'>,
+): CaptureRowState {
+  const document = { ...detail, hasRaw: detail.hasRaw === true || detail.raw !== undefined };
+  return captureRowState({ ...run, document });
 }
 
 /** Resolves the speaker list from structured result first, falling back to raw capture. */
@@ -149,6 +137,7 @@ export function buildResultDetails(
     formatBytes(bytes: number): string;
     formatDate(milliseconds: number): string;
   },
+  statusLabel: string,
 ): ResultDetailsView {
   const kind = resultKind(detail.mediaType);
   const durationMs = kind === 'asr' ? detailDurationMs(detail) : null;
@@ -164,7 +153,7 @@ export function buildResultDetails(
     fileName: detail.fileName,
     mediaType: detail.mediaType,
     sizeLabel: formatting.formatBytes(detail.byteLength),
-    statusLabel: resultStatusText(detail),
+    statusLabel,
     pageCount,
     durationLabel: durationMs !== null ? formatRecordingTime(durationMs) : null,
     createdAtLabel: formatting.formatDate(detail.createdAtMs),

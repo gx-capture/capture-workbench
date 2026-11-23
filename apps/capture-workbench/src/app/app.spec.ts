@@ -15,7 +15,7 @@ import type {
   RuntimeInstallation,
   RuntimeRequirement,
 } from '@gx-capture/capture-workbench-ui';
-import { defer, EMPTY, NEVER, of, Subject, type Observable } from 'rxjs';
+import { defer, EMPTY, NEVER, of, Subject, throwError, type Observable } from 'rxjs';
 import { App } from './app';
 import { appRoutes } from './app.routes';
 import type { DesktopLibraryDetail, DesktopLibrarySummary } from './contracts';
@@ -427,7 +427,7 @@ async function renderShell(
           selectedId: signal<string | null>(null),
           selected: signal(null),
           refreshDocuments: vi.fn(),
-          reloadDocumentState: vi.fn(),
+          applyDocumentState: vi.fn(),
         },
       },
       { provide: RecognitionFeaturesStore, useValue: features },
@@ -550,9 +550,11 @@ describe('App native drops', () => {
     );
     const deleteCapture = vi.fn(() => of(undefined));
     const startInstallation = vi.fn();
+    const stored = storedDocuments([]);
     const library = libraryStub({
-      importSelection: vi.fn(() => of(audioDoc)),
-      list: vi.fn(() => of([audioDoc])),
+      importSelection: vi.fn(() => stored.import(audioDoc)),
+      list: stored.list,
+      updateCapture: stored.updateCapture,
       get: vi.fn(() => of<DesktopLibraryDetail>(audioDoc)),
     });
     const client = runtimeStub({
@@ -610,18 +612,20 @@ describe('App native drops', () => {
     // The host lists the document once its import has answered, but the
     // Workbench's cached list (the library store's read, which passes an
     // abort signal) has not reloaded since: its reloads stay unanswered, and
-    // only the stored-document read of the batch's turn sees the recording.
+    // only the admission's reads of the stored documents see the recording.
     let imported = false;
+    const stored = storedDocuments([]);
     const library = libraryStub({
       importSelection: vi.fn(() => defer(() => {
         imported = true;
-        return of(audioDoc);
+        return stored.import(audioDoc);
       })),
       list: vi.fn((...args: [query?: string, status?: string, abortSignal?: AbortSignal]):
         Observable<readonly DesktopLibrarySummary[]> => {
         if (!imported) return of([]);
-        return args[2] ? NEVER : of([audioDoc]);
+        return args[2] ? NEVER : stored.list();
       }),
+      updateCapture: stored.updateCapture,
       get: vi.fn(() => of<DesktopLibraryDetail>(audioDoc)),
     });
     const client = runtimeStub({
@@ -650,7 +654,8 @@ describe('App native drops', () => {
 
     expect(startRecordingCapture).toHaveBeenCalledOnce();
     expect(startRecordingCapture).toHaveBeenCalledWith(expect.objectContaining({ documentId: audioDoc.documentId }));
-    expect(TestBed.inject(LibraryStore).allDocuments()).toEqual([]);
+    // No reload answered: the list shows the row from what the capture's writes returned.
+    expect(TestBed.inject(LibraryStore).allDocuments().map((item) => item.documentId)).toEqual([audioDoc.documentId]);
     expect(createCapture).not.toHaveBeenCalled();
   });
 
@@ -696,6 +701,58 @@ describe('App native drops', () => {
     expect(library.importSelection).toHaveBeenCalledWith(batch.selections[0]);
     fixture.destroy();
     expect(dropped.observed).toBe(false);
+  });
+
+  it('starts the documents imported before the restart one at a time, without any page visit', () => {
+    const waiting = (documentId: string, fileName: string, mediaType: string, createdAtMs: number) =>
+      ({ ...summary, documentId, fileName, mediaType, createdAtMs }) satisfies DesktopLibrarySummary;
+    const stored = storedDocuments([
+      waiting('1'.repeat(32), 'first.pdf', 'application/pdf', 1),
+      waiting('2'.repeat(32), 'second.wav', 'audio/wav', 2),
+      waiting('3'.repeat(32), 'third.pdf', 'application/pdf', 3),
+    ]);
+    const library = libraryStub({ list: stored.list, updateCapture: stored.updateCapture });
+    const createCapture = vi.fn(() => new Subject<CaptureOperation>());
+    const startRecordingCapture = vi.fn(() => new Subject<CaptureOperation>());
+    const runtime = runtimeStub({
+      createCapture,
+      startRecordingCapture,
+      getRequirements: vi.fn(() => of(['text-recognition', 'speech-recognition'].map((requirementId) => ({
+        requirementId, displayName: requirementId, status: 'ready', kind: requirementId,
+        requiredFor: ['capture'], installStrategy: 'runtime-catalog',
+      })))),
+    });
+
+    renderDropShell(library, runtime);
+
+    expect(createCapture.mock.calls.map((call) => (call as unknown[])[0])).toEqual(['1'.repeat(32)]);
+    expect(startRecordingCapture).not.toHaveBeenCalled();
+
+    // Visiting both queue pages starts nothing more.
+    TestBed.inject(OcrQueueStore).attach();
+    TestBed.inject(AsrQueueStore).attach();
+    TestBed.tick();
+
+    expect(createCapture).toHaveBeenCalledOnce();
+    expect(startRecordingCapture).not.toHaveBeenCalled();
+  });
+
+  it('asks the runtime once, when it is first ready, to delete the capture of every linked row', () => {
+    const linked = { ...summary, status: 'processing', captureId: 'capture-earlier-run' } satisfies DesktopLibrarySummary;
+    const library = libraryStub({ list: vi.fn(() => of<readonly DesktopLibrarySummary[]>([linked, summary])) });
+    const runtime = runtimeStub({ ready: signal(false) });
+    renderDropShell(library, runtime);
+    expect(runtime.deleteCapture).not.toHaveBeenCalled();
+
+    runtime.ready.set(true);
+    TestBed.tick();
+    runtime.ready.set(false);
+    TestBed.tick();
+    runtime.ready.set(true);
+    TestBed.tick();
+
+    expect(runtime.deleteCapture).toHaveBeenCalledExactlyOnceWith('capture-earlier-run');
+    expect(library.updateCapture).not.toHaveBeenCalled();
   });
 
   it('discards a refused batch when the runtime is unavailable', () => {
@@ -789,6 +846,32 @@ const completedOperation: CaptureOperation = {
 };
 const raw = { sourceText: 'OCR text' };
 const result = { targetText: 'translated text' };
+
+/** The library as the host stores it, as far as the admission reads it: status, stage and link. */
+function storedDocuments(initial: readonly DesktopLibrarySummary[]) {
+  const rows = new Map(initial.map((row) => [row.documentId, row]));
+  return {
+    rows,
+    import: (row: DesktopLibrarySummary) => defer(() => {
+      rows.set(row.documentId, row);
+      return of(row);
+    }),
+    list: vi.fn(() => defer(() => of<readonly DesktopLibrarySummary[]>([...rows.values()].reverse()))),
+    updateCapture: vi.fn((update: Parameters<DesktopLibraryService['updateCapture']>[0]) => defer(() => {
+      const current = rows.get(update.documentId);
+      if (!current) return throwError(() => new Error('Capture library document was not found.'));
+      const next: DesktopLibrarySummary = {
+        ...current,
+        status: update.status,
+        stage: update.stage,
+        captureId: update.clearCaptureId ? undefined : update.captureId ?? current.captureId,
+        hasRaw: current.hasRaw === true || update.raw !== undefined,
+      };
+      rows.set(update.documentId, next);
+      return of(next);
+    })),
+  };
+}
 
 function libraryStub(overrides: Record<string, unknown> = {}) {
   return Object.assign({

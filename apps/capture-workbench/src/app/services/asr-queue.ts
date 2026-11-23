@@ -4,9 +4,8 @@ import type {
 } from '@gx-capture/capture-workbench-ui';
 import type { DesktopLibraryDetail, DesktopLibrarySummary } from '../contracts';
 import { desktopMessages } from '../i18n/desktop-messages';
-import type { CaptureUserStatus } from './capture-user-status';
+import { captureRowState, type CaptureRowInput, type CaptureRowState } from './capture-user-status';
 import { formatRecordingTime } from './recording-transcript';
-import { isActiveStreaming, isCaptureLost } from './capture-operation-status';
 import { isRecordingMediaType } from './capture-media-types';
 import { playbackUnavailable } from './recording-playback';
 import { inImportOrder } from './ocr-queue';
@@ -38,20 +37,16 @@ export interface AsrLiveCaptureView {
   readonly partialRevision: number | null;
 }
 
-export interface AsrQueueView {
+export interface AsrQueueView extends CaptureRowState {
   readonly documentId: string;
   readonly fileName: string;
   readonly mediaType: string;
   readonly byteLength: number;
   readonly durationLabel: string;
-  readonly userStatus: CaptureUserStatus;
-  readonly statusText: string;
   readonly needsInstall: boolean;
   readonly installPercent: number | null;
-  readonly interrupted: boolean;
   readonly speakerCount: number | null;
   readonly playbackUnavailable: boolean;
-  readonly canExport: boolean;
   readonly errorMessage: string;
 }
 
@@ -62,38 +57,15 @@ export function sortAsrDocumentsOldestFirst(
   return inImportOrder(documents).filter((document) => isRecordingMediaType(document.mediaType));
 }
 
-export function asrStatusText(
-  status: CaptureUserStatus,
-  interrupted = false,
-): string {
-  const messages = desktopMessages();
-  switch (status) {
-    case 'waiting':
-      return messages.captureStatusWaiting;
-    case 'processing':
-      return messages.captureStatusProcessing;
-    case 'done':
-      return messages.captureStatusDone;
-    case 'cancelled':
-      return messages.captureStatusCancelled;
-    default:
-      return interrupted
-        ? messages.captureInterrupted
-        : messages.captureStatusNeedsAttention;
-  }
-}
-
-export function describeAsrDocument(input: {
-  readonly document: DesktopLibrarySummary;
+/** A recording's row: its stored document, what this run does with it, and its live operation. */
+export function describeAsrDocument(input: CaptureRowInput & {
   readonly detail?: DesktopLibraryDetail;
   readonly operation?: CaptureOperation;
-  readonly busy: boolean;
   readonly speechReady: boolean;
   readonly installPercent: number | null;
 }): AsrQueueView {
   const { document, detail } = input;
-  const opActive = input.operation !== undefined && isActiveStreaming(input.operation);
-  const described = describeStatus(document, input.busy || opActive);
+  const described = captureRowState(input);
   const waiting = described.userStatus === 'waiting';
   const durationMs =
     (described.userStatus === 'processing' ? validDuration(input.operation?.durationMs) : null)
@@ -104,26 +76,21 @@ export function describeAsrDocument(input: {
       : null;
 
   return {
+    ...described,
     documentId: document.documentId,
     fileName: document.fileName,
     mediaType: document.mediaType,
     byteLength: document.byteLength,
     durationLabel: durationMs === null ? '—' : formatRecordingTime(durationMs),
-    userStatus: described.userStatus,
-    statusText: asrStatusText(described.userStatus, described.interrupted),
     needsInstall: waiting && !input.speechReady,
     installPercent: waiting && !input.speechReady ? input.installPercent : null,
-    interrupted: described.interrupted,
     speakerCount,
     playbackUnavailable:
       described.userStatus === 'done' && playbackUnavailable(document.byteLength),
-    canExport:
-      described.userStatus === 'done'
-      && (document.status === 'completed' || detail?.result !== undefined),
-    errorMessage:
-      described.userStatus === 'needs-attention' && !described.interrupted
-        ? (document.recoveryMessage ?? document.errorMessage ?? '')
-        : '',
+    errorMessage: described.failureReason
+      ?? (described.userStatus === 'needs-attention' && !described.interrupted
+        ? (document.errorMessage ?? '')
+        : ''),
   };
 }
 
@@ -187,32 +154,6 @@ export function buildLiveTranscriptLines(
       partial: true,
     },
   ];
-}
-
-function describeStatus(
-  document: DesktopLibrarySummary,
-  active: boolean,
-): { readonly userStatus: CaptureUserStatus; readonly interrupted: boolean } {
-  if (active) return { userStatus: 'processing', interrupted: false };
-  if (
-    (document.status === 'processing' || document.status === 'persisting')
-    && document.captureId
-  ) {
-    return { userStatus: 'processing', interrupted: false };
-  }
-  if (isCaptureLost(document)) {
-    return { userStatus: 'needs-attention', interrupted: true };
-  }
-  if (document.status === 'canceled') {
-    return { userStatus: 'cancelled', interrupted: false };
-  }
-  if (document.status === 'completed') {
-    return { userStatus: 'done', interrupted: false };
-  }
-  if (document.status === 'queued') {
-    return { userStatus: 'waiting', interrupted: false };
-  }
-  return { userStatus: 'needs-attention', interrupted: false };
 }
 
 function computeLivePercent(

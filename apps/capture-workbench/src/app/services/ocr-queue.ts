@@ -2,22 +2,24 @@ import type { RawCapture } from '@gx-capture/capture-workbench-ui';
 import type { DesktopLibrarySummary } from '../contracts';
 import { desktopMessages } from '../i18n/desktop-messages';
 import type { DesktopCaptureOperation } from './desktop-runtime-client.service';
-import { captureStatusChipVariant, type CaptureStatusChipVariant, type CaptureUserStatus } from './capture-user-status';
-import { isActiveOneShotOperation, isCaptureLost, stageLabel } from './capture-operation-status';
+import {
+  captureRowState,
+  captureStatusChipVariant,
+  type CaptureRowInput,
+  type CaptureRowState,
+  type CaptureStatusChipVariant,
+} from './capture-user-status';
+import { stageLabel } from './capture-operation-status';
 
-export interface OcrQueueView {
+export interface OcrQueueView extends CaptureRowState {
   readonly documentId: string;
   readonly fileName: string;
   readonly pageLabel: string;
-  readonly userStatus: CaptureUserStatus;
-  readonly statusText: string;
   readonly progressText: string;
   readonly progressPercent: number | null;
   readonly chipVariant: CaptureStatusChipVariant;
   readonly needsInstall: boolean;
   readonly installPercent: number | null;
-  readonly interrupted: boolean;
-  readonly canExport: boolean;
 }
 
 /**
@@ -89,22 +91,6 @@ function parsePositivePageNumber(token: string): number | null {
   return page;
 }
 
-export function ocrStatusText(status: CaptureUserStatus): string {
-  const messages = desktopMessages();
-  switch (status) {
-    case 'waiting':
-      return messages.captureStatusWaiting;
-    case 'processing':
-      return messages.captureStatusProcessing;
-    case 'done':
-      return messages.captureStatusDone;
-    case 'cancelled':
-      return messages.captureStatusCancelled;
-    default:
-      return messages.captureStatusNeedsAttention;
-  }
-}
-
 export interface OcrPageText {
   readonly page: number;
   readonly text: string;
@@ -139,26 +125,23 @@ export function groupRawOcrPages(
     }));
 }
 
-export function describeOcrDocument(input: {
-  readonly document: DesktopLibrarySummary;
+/** A document's row: its stored document, what this run does with it, and its live operation. */
+export function describeOcrDocument(input: CaptureRowInput & {
   readonly operation?: DesktopCaptureOperation;
-  readonly busy: boolean;
   readonly ocrReady: boolean;
   readonly installPercent: number | null;
 }): OcrQueueView {
   const { document } = input;
-  const operationActive = input.operation !== undefined && isActiveOneShotOperation(input.operation);
-  const described = describeStatus(document, input.busy || operationActive);
+  const described = captureRowState(input);
   const waiting = described.userStatus === 'waiting';
   const percent = typeof input.operation?.progress === 'number' && Number.isFinite(input.operation.progress)
     ? Math.round(Math.min(Math.max(input.operation.progress, 0), 1) * 100)
     : null;
   return {
+    ...described,
     documentId: document.documentId,
     fileName: document.fileName,
     pageLabel: pageLabel(document, input.operation),
-    userStatus: described.userStatus,
-    statusText: ocrStatusText(described.userStatus),
     progressText: described.userStatus === 'processing'
       ? progressText(input.operation)
       : '',
@@ -166,38 +149,7 @@ export function describeOcrDocument(input: {
     chipVariant: captureStatusChipVariant(described.userStatus),
     needsInstall: waiting && !input.ocrReady,
     installPercent: waiting && !input.ocrReady ? input.installPercent : null,
-    interrupted: described.interrupted,
-    canExport: described.userStatus === 'done' && document.hasRaw === true,
   };
-}
-
-function describeStatus(
-  document: DesktopLibrarySummary,
-  active: boolean,
-): { readonly userStatus: CaptureUserStatus; readonly interrupted: boolean } {
-  if (active) return { userStatus: 'processing', interrupted: false };
-  if (
-    (document.status === 'processing' || document.status === 'persisting')
-    && document.captureId
-  ) {
-    return { userStatus: 'processing', interrupted: false };
-  }
-  if (isCaptureLost(document)) {
-    return { userStatus: 'needs-attention', interrupted: true };
-  }
-  if (document.status === 'canceled') {
-    return { userStatus: 'cancelled', interrupted: false };
-  }
-  if (
-    document.status === 'completed'
-    || (document.status === 'awaiting_confirmation' && document.hasRaw === true)
-  ) {
-    return { userStatus: 'done', interrupted: false };
-  }
-  if (document.status === 'queued') {
-    return { userStatus: 'waiting', interrupted: false };
-  }
-  return { userStatus: 'needs-attention', interrupted: false };
 }
 
 function pageLabel(

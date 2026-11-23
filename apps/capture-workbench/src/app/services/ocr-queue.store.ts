@@ -7,7 +7,6 @@ import { desktopMessages } from '../i18n/desktop-messages';
 import { DesktopLibraryService, type DesktopSourceSelection, type DesktopSourceSelectionBatch } from './desktop-library.service';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
 import { DesktopCaptureService, type DesktopCaptureHost } from './desktop-capture.service';
-import { holdsTerminalData } from './capture-operation-status';
 import { LibraryExportService } from './library-export.service';
 import { LibraryStore } from './library.store';
 import { errorMessage } from './desktop-errors';
@@ -26,7 +25,10 @@ import {
 } from './ocr-queue';
 
 @Injectable({ providedIn: 'root' })
-/** Import, waiting queue, start, cancel, retry and progress for the OCR page. */
+/**
+ * Import, waiting queue, Cancel, Start again and progress for the OCR page.
+ * The capture service's admission starts waiting files.
+ */
 export class OcrQueueStore {
   private readonly library = inject(DesktopLibraryService);
   private readonly capture = inject(DesktopCaptureService);
@@ -38,8 +40,6 @@ export class OcrQueueStore {
   private readonly destroyRef = inject(DestroyRef);
 
   private readonly attached = signal(false);
-  private readonly pendingStart = new Set<string>();
-  private readonly attemptedReattachments = new Set<string>();
 
   /** The page selection field. A drop and the file button both read it. */
   readonly pageListText = signal('');
@@ -54,12 +54,9 @@ export class OcrQueueStore {
     selectedId: signal<string | null>(null),
     requestedRequirements: this.features.requestedRequirements,
     requirements: () => this.features.requirements(),
-    documents: () => this.sharedDocuments(),
-    selected: () => null,
     refreshDocuments: () => this.refreshShared(),
-    reloadDocumentState: () => this.refreshShared(),
+    applyDocumentState: (summary) => this.libraryStore.applyDocumentState(summary),
     setMessage: (message) => this.importError.set(message),
-    identifySpeakers: () => false,
   };
 
   readonly rows = computed(() => inImportOrder(this.sharedDocuments())
@@ -67,7 +64,10 @@ export class OcrQueueStore {
     .map((document) => describeOcrDocument({
       document,
       operation: this.capture.oneShotOperations().get(document.documentId),
-      busy: this.capture.busyIds().has(document.documentId),
+      owned: this.capture.busyIds().has(document.documentId),
+      cancelling: this.capture.cancellingIds().has(document.documentId),
+      unstored: this.capture.unstoredOutcomes().has(document.documentId),
+      failureReason: this.capture.unstoredOutcomes().get(document.documentId) ?? null,
       ocrReady: this.features.isFeatureReady('ocr'),
       installPercent: this.ocrInstallPercent(),
     })));
@@ -102,23 +102,8 @@ export class OcrQueueStore {
     this.refreshShared();
   });
 
-  private readonly workEffect = effect(() => {
-    if (!this.attached() || !this.runtime.started()) return;
-    // Look again when a failed decision or unrecorded failure has finished pausing.
-    this.capture.failedDecisions();
-    // Waiting files start in the order they were imported, the order the queue shows.
-
-    const documents = inImportOrder(this.sharedDocuments());
-    if (this.features.isFeatureReady('ocr')) this.startWaiting(documents);
-    this.reattachRunning(documents);
-  });
-
   /** Safe to call more than once. The document list itself lives on `LibraryStore`. */
   attach(): void {
-    if (this.attached()) return;
-    this.capture.unrecordedFailures$
-      .pipe(takeUntilDestroyed(this.destroyRef))
-      .subscribe((captureId) => this.attemptedReattachments.delete(captureId));
     this.attached.set(true);
   }
 
@@ -126,28 +111,22 @@ export class OcrQueueStore {
     this.features.installRequirement('text-recognition');
   }
 
+  /**
+   * A failed Cancel or Start again is shown on this page's error line, where
+   * the user gave it; the next action clears it.
+   */
   cancel(documentId: string): void {
-    if (this.capture.isDocumentClaimed(documentId)) {
-      this.capture.cancel(documentId);
-      return;
-    }
-    this.capture.cancelDocument$(documentId, this.host)
-      .pipe(takeUntilDestroyed(this.destroyRef))
-      .subscribe({
-        error: (error: unknown) => this.host.setMessage(errorMessage(error)),
-      });
-  }
-
-  retry(documentId: string): void {
-    this.capture.retry$(documentId, this.host)
+    this.importError.set('');
+    this.capture.cancel$(documentId, this.host)
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
         error: (error: unknown) => this.importError.set(errorMessage(error)),
       });
   }
 
-  restart(documentId: string): void {
-    this.capture.restartLost$(documentId, this.host)
+  startAgain(documentId: string): void {
+    this.importError.set('');
+    this.capture.startAgain$(documentId, this.host)
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
         error: (error: unknown) => this.importError.set(errorMessage(error)),
@@ -179,8 +158,8 @@ export class OcrQueueStore {
   }
 
   /**
-   * Saves each accepted selection as a waiting document. Capture starts later, when OCR is ready.
-   * The host reads the file and checks its size.
+   * Saves each accepted selection as a waiting document; the admission starts it in its turn,
+   * once OCR is ready. The host reads the file and checks its size.
    */
   importSelections(batch: DesktopSourceSelectionBatch): void {
     const pageList = this.parsedPageList();
@@ -235,44 +214,5 @@ export class OcrQueueStore {
 
   private refreshShared(): void {
     this.libraryStore.refreshDocuments();
-  }
-
-  private startWaiting(documents: readonly DesktopLibrarySummary[]): void {
-    for (const document of documents) {
-      if (!isOcrMediaType(document.mediaType)) continue;
-      if (document.status !== 'queued' || document.captureId) continue;
-      if (this.pendingStart.has(document.documentId)) continue;
-      if (this.capture.isDocumentClaimed(document.documentId)) continue;
-      this.pendingStart.add(document.documentId);
-      this.capture.startDocument$(document.documentId, this.host)
-        .pipe(takeUntilDestroyed(this.destroyRef))
-        .subscribe({
-          error: () => this.pendingStart.delete(document.documentId),
-          complete: () => this.pendingStart.delete(document.documentId),
-        });
-    }
-  }
-
-  private reattachRunning(documents: readonly DesktopLibrarySummary[]): void {
-    for (const document of documents) {
-      const { captureId } = document;
-      if (!isOcrMediaType(document.mediaType) || !captureId) continue;
-      if (document.recoveryCode === 'cancel_failed') continue;
-      if (
-        document.status !== 'processing'
-        && document.status !== 'persisting'
-        && !holdsTerminalData(document)
-      ) continue;
-      if (this.attemptedReattachments.has(captureId)) continue;
-      if (this.capture.isDocumentClaimed(document.documentId)) continue;
-      // Asked for again when its pause ends: not remembered as reattached before.
-      if (this.capture.isDecisionPaused(document.documentId)) continue;
-      this.attemptedReattachments.add(captureId);
-      this.capture.reattach$(document, this.host)
-        .pipe(takeUntilDestroyed(this.destroyRef))
-        .subscribe({
-          error: () => this.attemptedReattachments.delete(captureId),
-        });
-    }
   }
 }

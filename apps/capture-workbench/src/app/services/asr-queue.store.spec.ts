@@ -10,13 +10,13 @@ import type {
   RuntimeInstallation,
   RuntimeRequirement,
 } from '@gx-capture/capture-workbench-ui';
-import { finalize, of, Subject, throwError, type Observable } from 'rxjs';
+import { of, Subject, throwError, type Observable } from 'rxjs';
 import type { DesktopLibraryExport, DesktopLibrarySummary } from '../contracts';
 import { desktopMessages, setDesktopLocale } from '../i18n/desktop-messages';
 import { AsrQueueStore } from './asr-queue.store';
 import { DesktopLibraryService, type DesktopSourceSelection } from './desktop-library.service';
 import { DesktopRuntimeClientService } from './desktop-runtime-client.service';
-import { DesktopCaptureService, FAILED_DECISION_PAUSE_MS } from './desktop-capture.service';
+import { DesktopCaptureService } from './desktop-capture.service';
 import { DesktopFormattingService } from './desktop-formatting.service';
 import { RuntimeStatusStore } from './runtime-status.store';
 import { LibraryStore } from './library.store';
@@ -79,7 +79,8 @@ describe('AsrQueueStore', () => {
 
   it('keeps the live operation duration while a recording is running', () => {
     const document = makeRecording({ status: 'processing', captureId: 'running', durationMs: 90_000 });
-    const { store, library, recordingOperations } = setup({ initialDocs: [document] });
+    const { store, library, recordingOperations, busyIds } = setup({ initialDocs: [document] });
+    busyIds.set(new Set([document.documentId]));
     recordingOperations.set(new Map([[document.documentId, {
       captureId: 'running', status: 'extracting', durationMs: 125_000,
     } as CaptureOperation]]));
@@ -113,6 +114,40 @@ describe('AsrQueueStore', () => {
     expect(library.get).toHaveBeenCalledExactlyOnceWith(document.documentId);
     expect(store.rows()[0].speakerCount).toBe(2);
     expect(store.rows()[0].durationLabel).toBe('1:30');
+  });
+
+  it('loads the speaker count of an earlier version’s row shown done, and offers its export', () => {
+    const document = makeRecording({
+      status: 'recovery_required', recoveryCode: 'runtime_cleanup_failed', stage: 'completed', hasRaw: true,
+    });
+    const { store, library } = setup({ initialDocs: [document] });
+    library.get.mockReturnValue(of({
+      ...document,
+      result: { speakers: [{ speakerId: 'one' }, { speakerId: 'two' }] },
+    }));
+    store.attach();
+    TestBed.tick();
+
+    expect(library.get).toHaveBeenCalledExactlyOnceWith(document.documentId);
+    expect(store.rows()[0]).toMatchObject({ userStatus: 'done', speakerCount: 2, canExport: true });
+  });
+
+  it('loads the speaker count again when a completed recording is stored anew', () => {
+    const document = makeRecording({ status: 'completed', durationMs: 90_000 });
+    const { store, library, docs } = setup({ initialDocs: [document] });
+    library.get.mockReturnValueOnce(of({ ...document, result: { speakers: [{ speakerId: 'one' }] } }));
+    store.attach();
+    TestBed.tick();
+    expect(store.rows()[0].speakerCount).toBe(1);
+
+    // Captured again in this run: the list shows the newer write, nothing else is told.
+    const again = { ...document, updatedAtMs: 200 };
+    library.get.mockReturnValueOnce(of({ ...again, result: { speakers: [{ speakerId: 'one' }, { speakerId: 'two' }] } }));
+    docs.set([again]);
+    TestBed.tick();
+
+    expect(library.get).toHaveBeenCalledTimes(2);
+    expect(store.rows()[0].speakerCount).toBe(2);
   });
 
   function setup(options: {
@@ -165,21 +200,14 @@ describe('AsrQueueStore', () => {
         of({ fileName: 'meeting.txt', mediaType: 'text/plain', content: 'transcript' })),
     };
 
-    const startDocSubject = new Subject<void>();
     const capture = {
       busyIds,
+      cancellingIds: signal<ReadonlySet<string>>(new Set()),
+      unstoredOutcomes: signal<ReadonlyMap<string, string | null>>(new Map()),
       recordingOperations,
       streamingPartials,
-      isDocumentClaimed: vi.fn((id: string) => busyIds().has(id)),
-      isDecisionPaused: vi.fn(() => false),
-      failedDecisions: signal(0),
-      unrecordedFailures$: new Subject<string>(),
-      startDocument$: vi.fn(() => startDocSubject),
-      reattach$: vi.fn((): Observable<void> => of(undefined)),
-      retry$: vi.fn(() => of(undefined)),
-      restartLost$: vi.fn(() => of(undefined)),
-      cancelDocument$: vi.fn(() => of(undefined)),
-      cancel: vi.fn(),
+      startAgain$: vi.fn(() => of(undefined)),
+      cancel$: vi.fn(() => of(undefined)),
     };
 
     const runtimeStatus = { message: signal('') };
@@ -189,7 +217,7 @@ describe('AsrQueueStore', () => {
       selected: signal(null),
       get: library.get,
       refreshDocuments: vi.fn(),
-      reloadDocumentState: vi.fn(),
+      applyDocumentState: vi.fn(),
       export: library.export,
     };
 
@@ -298,7 +326,7 @@ describe('AsrQueueStore', () => {
     expect(store.importError()).toContain('(1)');
   });
 
-  it('keeps files queued while speech is not installed and starts oldest-first once ready', () => {
+  it('shows waiting files oldest first, asking for speech recognition while it is not installed', () => {
     const older = makeRecording({
       documentId: '1'.repeat(32),
       fileName: 'older.mp3',
@@ -311,7 +339,7 @@ describe('AsrQueueStore', () => {
       createdAtMs: 200,
       status: 'queued',
     });
-    const { store, requirements, capture } = setup({
+    const { store, requirements } = setup({
       speechStatus: 'installable',
       initialDocs: [newer, older],
     });
@@ -319,7 +347,6 @@ describe('AsrQueueStore', () => {
     store.attach();
     TestBed.tick();
 
-    expect(capture.startDocument$).not.toHaveBeenCalled();
     expect(store.rows().map((row) => row.fileName)).toEqual(['older.mp3', 'newer.mp3']);
     expect(store.rows()[0].needsInstall).toBe(true);
 
@@ -329,11 +356,10 @@ describe('AsrQueueStore', () => {
     ]);
     TestBed.tick();
 
-    expect(capture.startDocument$).toHaveBeenCalledTimes(1);
-    expect(capture.startDocument$).toHaveBeenCalledWith(
-      older.documentId,
-      expect.anything(),
-    );
+    expect(store.rows().map((row) => [row.fileName, row.userStatus, row.needsInstall])).toEqual([
+      ['older.mp3', 'waiting', false],
+      ['newer.mp3', 'waiting', false],
+    ]);
   });
 
   it('continues importing after a failed selection and reports the error', () => {
@@ -358,60 +384,16 @@ describe('AsrQueueStore', () => {
     expect(libraryStore.refreshDocuments).toHaveBeenCalledTimes(1);
   });
 
-  it('shows and starts equal-timestamp recordings in import order', () => {
+  it('shows equal-timestamp recordings in import order', () => {
     const first = makeRecording({ documentId: '1'.repeat(32), fileName: 'first.mp3' });
     const second = makeRecording({ documentId: '2'.repeat(32), fileName: 'second.mp3' });
-    const { store, capture } = setup({ initialDocs: [second, first] });
+    const { store } = setup({ initialDocs: [second, first] });
 
     store.attach();
     TestBed.tick();
 
     expect(store.rows().map((row) => row.documentId)).toEqual([first.documentId, second.documentId]);
-    expect(capture.startDocument$).toHaveBeenCalledExactlyOnceWith(first.documentId, expect.anything());
   });
-
-  it.each(['success', 'failure'] as const)(
-    'holds the queue turn while a waiting cancellation settles with %s',
-    (outcome) => {
-      const waiting = makeRecording({ documentId: '1'.repeat(32), createdAtMs: 100 });
-      const next = makeRecording({ documentId: '2'.repeat(32), createdAtMs: 200 });
-      const { store, library, runtime, runtimeStatus, requirements, docs } = setup({
-        initialDocs: [next, waiting], speechStatus: 'installable', realCapture: true,
-      });
-      const cancellation = new Subject<DesktopLibrarySummary>();
-      library.updateCapture.mockReturnValueOnce(cancellation);
-      store.attach();
-      TestBed.tick();
-
-      store.cancel(waiting.documentId);
-      requirements.set([requirement('speech-recognition', 'ready')]);
-      TestBed.tick();
-      store.cancel(waiting.documentId);
-      expect(library.updateCapture).toHaveBeenCalledOnce();
-      // Neither the cancelled recording nor the next waiting one starts before the cancel settles.
-      expect(runtime.startRecordingCapture).not.toHaveBeenCalled();
-
-      const service = TestBed.inject(DesktopCaptureService);
-      if (outcome === 'success') {
-        const cancelled = { ...waiting, status: 'canceled', stage: 'cancelled' } satisfies DesktopLibrarySummary;
-        cancellation.next(cancelled);
-        cancellation.complete();
-        docs.set([next, cancelled]);
-        TestBed.tick();
-        expect(runtimeStatus.message()).toBe('');
-        expect(runtime.startRecordingCapture).toHaveBeenCalledExactlyOnceWith(
-          expect.objectContaining({ documentId: next.documentId }),
-        );
-      } else {
-        cancellation.error(new Error('Cancel failed'));
-        TestBed.tick();
-        expect(runtimeStatus.message()).toBe('Cancel failed');
-        expect(service.isDecisionPaused(waiting.documentId)).toBe(true);
-        expect(runtime.startRecordingCapture).not.toHaveBeenCalled();
-      }
-      expect(service.isDocumentClaimed(waiting.documentId)).toBe(false);
-    },
-  );
 
   it('derives compact speaker install labels and delegates installation', () => {
     const { store, features, requirements } = setup();
@@ -440,7 +422,7 @@ describe('AsrQueueStore', () => {
     expect(store.optionalSpeakerInstall()?.label).toBe('Installing speaker identification 25%');
   });
 
-  it('supports cancel on queued & running rows, retry, restart, view in /history, and txt export', () => {
+  it('supports cancel on queued & running rows, start again, view in /history, and txt export', () => {
     const queuedDoc = makeRecording({ documentId: '1'.repeat(32), status: 'queued' });
     const doneDoc = makeRecording({ documentId: '2'.repeat(32), status: 'completed' });
     const { store, library, capture, libraryStore, formatting, router, busyIds } = setup({
@@ -448,18 +430,15 @@ describe('AsrQueueStore', () => {
     });
 
     store.cancel(queuedDoc.documentId);
-    expect(capture.cancelDocument$).toHaveBeenCalledExactlyOnceWith(queuedDoc.documentId, expect.anything());
+    expect(capture.cancel$).toHaveBeenCalledExactlyOnceWith(queuedDoc.documentId, expect.anything());
     expect(library.updateCapture).not.toHaveBeenCalled();
 
     busyIds.set(new Set(['3'.repeat(32)]));
     store.cancel('3'.repeat(32));
-    expect(capture.cancel).toHaveBeenCalledWith('3'.repeat(32));
+    expect(capture.cancel$).toHaveBeenLastCalledWith('3'.repeat(32), expect.anything());
 
-    store.retry(doneDoc.documentId);
-    expect(capture.retry$).toHaveBeenCalledWith(doneDoc.documentId, expect.anything());
-
-    store.restart(doneDoc.documentId);
-    expect(capture.restartLost$).toHaveBeenCalledWith(doneDoc.documentId, expect.anything());
+    store.startAgain(doneDoc.documentId);
+    expect(capture.startAgain$).toHaveBeenCalledWith(doneDoc.documentId, expect.anything());
 
     store.view(doneDoc.documentId);
     expect(libraryStore.selectedId()).toBeNull();
@@ -470,762 +449,51 @@ describe('AsrQueueStore', () => {
     expect(formatting.downloadText).toHaveBeenCalledWith('meeting.txt', 'transcript', 'text/plain');
   });
 
-  it('starts through the public service API with the recording options saved at import', () => {
-    const document = makeRecording({
-      captureOptions: { spokenLanguage: 'ja', identifySpeakers: true },
-    });
-    const { store, runtime } = setup({
-      initialDocs: [document], speakersStatus: 'ready', realCapture: true,
-    });
-    store.setSpokenLanguage('en');
-    store.setIdentifySpeakers(false);
+  it.each(['Start again', 'Cancel'] as const)('shows a failed %s on this page and clears it on the next action', (action) => {
+    const document = makeRecording({ status: 'failed' });
+    const { store, capture, runtimeStatus } = setup({ initialDocs: [document] });
+    const act = () => action === 'Start again' ? store.startAgain(document.documentId) : store.cancel(document.documentId);
+    const entry = action === 'Start again' ? capture.startAgain$ : capture.cancel$;
+    entry.mockReturnValueOnce(throwError(() => new Error('Capture library list failed.')));
 
-    store.attach();
-    TestBed.tick();
+    act();
+    expect(store.importError()).toBe('Capture library list failed.');
+    expect(runtimeStatus.message()).toBe('');
 
-    expect(runtime.startRecordingCapture).toHaveBeenCalledExactlyOnceWith({
-      documentId: document.documentId,
-      clientRequestId: expect.any(String),
-      structuringMode: 'runtime',
-      spokenLanguage: 'ja',
-      identifySpeakers: true,
-    });
+    act();
+    expect(store.importError()).toBe('');
   });
 
-  it('reattaches once per capture id, also when the recovery has ended and the list changes, and passes explicit retry and restart on', () => {
-    const document = makeRecording({ status: 'processing', captureId: 'lost' });
-    const { store, capture, docs, busyIds } = setup({ initialDocs: [document] });
-    const recovery = new Subject<void>();
-    capture.reattach$.mockImplementation(() => {
-      busyIds.set(new Set([document.documentId]));
-      return recovery.pipe(finalize(() => busyIds.set(new Set())));
-    });
+  it('shows the live card only for the recording this run captures', () => {
+    const document = makeRecording({ status: 'processing', captureId: 'capture-1' });
+    const { store, streamingPartials, busyIds } = setup({ initialDocs: [document] });
+    streamingPartials.set(new Map([[document.documentId, {
+      captureId: 'capture-1', revision: 5, coveredUntilMs: 90_000, sourceText: 'live transcript',
+    } as PartialCapture]]));
+    expect(store.liveCapture()).toBeNull();
 
-    store.attach();
-    TestBed.tick();
-    expect(capture.reattach$).toHaveBeenCalledExactlyOnceWith(document, expect.anything());
-
-    const recoveryRow = { ...document, status: 'recovery_required', recoveryCode: 'capture_recovery_required' } as const;
-    docs.set([recoveryRow]);
-    // The first read failed without confirming the capture was absent.
-    recovery.complete();
-    TestBed.tick();
-    // Further refreshes and busy changes must not retry the same runtime capture.
-    docs.set([{ ...recoveryRow, updatedAtMs: 200 }]);
-    busyIds.set(new Set());
-    TestBed.tick();
-    expect(capture.reattach$).toHaveBeenCalledTimes(1);
-
-    store.retry(document.documentId);
-    expect(capture.retry$).toHaveBeenCalledExactlyOnceWith(document.documentId, expect.anything());
-    docs.set([{ ...recoveryRow, captureId: undefined }]);
-    TestBed.tick();
-    store.restart(document.documentId);
-    TestBed.tick();
-    expect(capture.restartLost$).toHaveBeenCalledExactlyOnceWith(document.documentId, expect.anything());
-    expect(capture.reattach$).toHaveBeenCalledTimes(1);
-
-    capture.reattach$.mockReturnValue(of(undefined));
-    docs.set([{ ...document, captureId: 'replacement' }]);
-    TestBed.tick();
-    expect(capture.reattach$).toHaveBeenCalledTimes(2);
-  });
-
-  it('does not auto-reattach an unlinked recovery row on load', () => {
-    const lost = makeRecording({ status: 'recovery_required', recoveryCode: 'capture_recovery_required' });
-    const { store, capture } = setup({ initialDocs: [{ ...lost, captureId: undefined }] });
-
-    store.attach();
-    TestBed.tick();
-
-    expect(capture.reattach$).not.toHaveBeenCalled();
-    expect(store.rows()).toEqual([expect.objectContaining({
-      documentId: lost.documentId, userStatus: 'needs-attention', interrupted: true,
-    })]);
-  });
-
-  it('can reconnect on explicit Retry even when speech recognition is unavailable', () => {
-    const linked = makeRecording({
-      status: 'recovery_required', captureId: 'linked', recoveryCode: 'cancel_failed',
-    });
-    const { store, runtime } = setup({
-      initialDocs: [linked], speechStatus: 'installable', realCapture: true,
-    });
-
-    store.attach();
-    TestBed.tick();
-    expect(runtime.getCapture).not.toHaveBeenCalled();
-
-    store.retry(linked.documentId);
-
-    expect(runtime.getCapture).toHaveBeenCalledExactlyOnceWith('linked');
-    expect(runtime.startRecordingCapture).not.toHaveBeenCalled();
-  });
-
-  it('does not resume a recording whose cancel the runtime refused after the user cancelled it', () => {
-    // The row still says waiting; the library already links the recording to a capture.
-    const waitingRow = makeRecording();
-    let stored: DesktopLibrarySummary = makeRecording({ status: 'processing', captureId: 'linked' });
-    const { store, docs, library, runtime } = setup({
-      initialDocs: [waitingRow], speechStatus: 'installable', realCapture: true,
-    });
-    library.list.mockImplementation(() => of([stored]));
-    library.updateCapture.mockImplementation((update) => {
-      stored = {
-        ...stored,
-        status: update.status,
-        stage: update.stage,
-        captureId: update.clearCaptureId ? undefined : update.captureId ?? stored.captureId,
-        recoveryCode: update.recoveryCode,
-      };
-      return of(stored);
-    });
-    const cancelCapture = vi.fn(() => throwError(() => new Error('Cancel refused')));
-    const runtimeWithCancel = Object.assign(runtime, { cancelCapture });
-    store.attach();
-    TestBed.tick();
-
-    store.cancel(waitingRow.documentId);
-    expect(cancelCapture).toHaveBeenCalledExactlyOnceWith('linked');
-    expect(stored).toMatchObject({
-      status: 'recovery_required', recoveryCode: 'cancel_failed', captureId: 'linked',
-    });
-
-    docs.set([stored]);
-    TestBed.tick();
-    // The user asked to cancel: the queue does not reattach and resume the capture by itself.
-    expect(runtimeWithCancel.getCapture).not.toHaveBeenCalled();
-    expect(cancelCapture).toHaveBeenCalledOnce();
-  });
-
-  it('leaves a recording whose cancel failed to an explicit retry when the window loads', () => {
-    const cancelFailed = makeRecording({
-      status: 'recovery_required', captureId: 'linked', recoveryCode: 'cancel_failed',
-    });
-    const { store, capture } = setup({ initialDocs: [cancelFailed] });
-
-    store.attach();
-    TestBed.tick();
-    expect(capture.reattach$).not.toHaveBeenCalled();
-
-    store.retry(cancelFailed.documentId);
-    expect(capture.retry$).toHaveBeenCalledExactlyOnceWith(cancelFailed.documentId, expect.anything());
-  });
-
-  it('ignores late partials from an earlier capture of the same recording', () => {
-    const document = makeRecording({ status: 'processing', captureId: 'current' });
-    const { store, streamingPartials, busyIds, docs } = setup({ initialDocs: [document] });
     busyIds.set(new Set([document.documentId]));
-    const stale = { captureId: 'previous', revision: 5, coveredUntilMs: 90_000,
-      sourceText: 'old transcript' } as PartialCapture;
-    streamingPartials.set(new Map([[document.documentId, stale]]));
-
-    expect(store.liveCapture()?.lines).toEqual([]);
-    expect(store.liveCapture()?.partialRevision).toBeNull();
-    expect(store.liveCapture()?.coveredUntilMs).toBe(0);
-
-    streamingPartials.set(new Map([[document.documentId, { ...stale, captureId: 'current' }]]));
-    expect(store.liveCapture()?.lines[0].text).toBe('old transcript');
+    expect(store.liveCapture()?.lines[0].text).toBe('live transcript');
     expect(store.liveCapture()?.partialRevision).toBe(5);
 
-    docs.set([{ ...document, captureId: undefined }]);
-    expect(store.liveCapture()?.lines).toEqual([]);
     busyIds.set(new Set());
     expect(store.liveCapture()).toBeNull();
   });
 
-  describe('with a document list older than the last library write', () => {
-    const captureId = 'capture-recording';
-    const notFound = 'Capture Runtime request was rejected with HTTP 404.';
-    const recording = (status: CaptureOperation['status']) => ({
-      protocolVersion: '2', captureId, ingestionId: 'ingestion-recording', kind: 'recording',
-      status, partialRevision: 0, lastEventSequence: 0,
-      createdAt: '2026-11-21T00:00:00Z', updatedAt: '2026-11-21T00:00:00Z',
-    } as CaptureOperation);
-
-    /**
-     * The queue over the real capture service. The library stores what the
-     * service writes; the queue's document list changes only when the test
-     * sets it, as while the reload the service asked for has not answered.
-     * The runtime forgets a deleted capture, and the capture ends when the
-     * test says so.
-     */
-    function captureOverAnUnansweredListReload(options: {
-      readonly failFirstUnlink?: boolean;
-      readonly initial?: Partial<DesktopLibrarySummary>;
-      /** The first status read says the capture still runs; the next one waits for `endCapture`. */
-      readonly runningAtFirstRead?: boolean;
-    } = {}) {
-      let stored = makeRecording({ captureOptions: { identifySpeakers: false }, ...options.initial });
-      const harness = setup({ initialDocs: [stored], realCapture: true });
-      let unlinkFailures = options.failFirstUnlink ? 1 : 0;
-      const writes: StoredCaptureUpdate[] = [];
-      harness.library.list.mockImplementation(() => of([stored]));
-      harness.library.updateCapture.mockImplementation((update) => {
-        // The unlink is the write that clears the link once the capture has ended.
-        if (update.clearCaptureId && update.status !== 'processing' && unlinkFailures > 0) {
-          unlinkFailures -= 1;
-          return throwError(() => 'Capture library index cannot be written.');
-        }
-        writes.push(update);
-        // Like the host: the link changes only when asked, the error and recovery fields always.
-        stored = {
-          ...stored,
-          status: update.status,
-          stage: update.stage,
-          captureId: update.clearCaptureId ? undefined : update.captureId ?? stored.captureId,
-          errorCode: update.errorCode,
-          errorMessage: update.errorMessage,
-          recoveryCode: update.recoveryCode,
-          recoveryMessage: update.recoveryMessage,
-          hasRaw: stored.hasRaw || update.raw !== undefined,
-          updatedAtMs: stored.updatedAtMs + 1,
-        };
-        return of(stored);
-      });
-      let deleted = false;
-      const ended = new Subject<CaptureOperation>();
-      // Only the first start is answered: a second one would be a second capture.
-      harness.runtime.startRecordingCapture.mockImplementationOnce(() => of(recording('extracting')));
-      harness.runtime.getCapture
-        .mockImplementation(() => deleted ? throwError(() => notFound) : of(recording('completed')));
-      if (options.runningAtFirstRead) {
-        harness.runtime.getCapture.mockImplementationOnce(() => of(recording('extracting')));
-      }
-      harness.runtime.getCapture.mockImplementationOnce(() => ended);
-      harness.runtime.getResult.mockImplementation(() => of({
-        operation: recording('completed'),
-        raw: { sourceText: 'transcript' },
-        result: { targetText: 'transcript' },
-      } as unknown as CaptureResult));
-      harness.runtime.deleteCapture.mockImplementation(() => {
-        deleted = true;
-        return of(undefined);
-      });
-      return {
-        ...harness,
-        stored: () => stored,
-        writes,
-        /** The capture's status read answers with the end, ahead of any event that says so. */
-        endCapture: (end: Partial<CaptureOperation> = { status: 'completed' }) => {
-          ended.next({ ...recording('completed'), ...end });
-          ended.complete();
-        },
-      };
-    }
-
-    it('reattaches after both writes fail and gives the next waiting recording its turn', () => {
-      const harness = captureOverAnUnansweredListReload({
-        initial: { documentId: '1'.repeat(32), status: 'processing', captureId, createdAtMs: 1 },
-      });
-      const waiting = makeRecording({ documentId: '2'.repeat(32), createdAtMs: 2 });
-      const failure = new Error('Capture library index cannot be written.');
-      // The library keeps each document's own row: the waiting recording's
-      // writes do not land on the stranded one, and a read sees them.
-      let waitingStored: DesktopLibrarySummary = waiting;
-      const applyToStranded = harness.library.updateCapture.getMockImplementation();
-      if (!applyToStranded) throw new Error('Expected the library to implement capture updates.');
-      harness.library.updateCapture.mockImplementation((update) => {
-        if (update.documentId !== waiting.documentId) return applyToStranded(update);
-        waitingStored = {
-          ...waitingStored,
-          status: update.status,
-          stage: update.stage,
-          captureId: update.clearCaptureId ? undefined : update.captureId ?? waitingStored.captureId,
-        };
-        return of(waitingStored);
-      });
-      // The waiting recording's upload stays unanswered: its capture holds the turn.
-      harness.runtime.startRecordingCapture.mockReset()
-        .mockImplementation(() => new Subject<CaptureOperation>());
-      harness.docs.set([harness.stored(), waiting]);
-      harness.library.list.mockImplementation(() => of([harness.stored(), waitingStored]));
-      harness.library.updateCapture.mockReturnValueOnce(throwError(() => failure))
-        .mockReturnValueOnce(throwError(() => failure));
-      const service = TestBed.inject(DesktopCaptureService);
-      const reattach = vi.spyOn(service, 'reattach$');
-
-      vi.useFakeTimers();
-      try {
-        harness.store.attach();
-        TestBed.tick();
-        harness.endCapture();
-        TestBed.tick();
-
-        expect(harness.stored()).toMatchObject({ status: 'processing', captureId });
-        expect(harness.runtimeStatus.message()).toBe(failure.message);
-        expect(service.isDocumentClaimed(harness.stored().documentId)).toBe(false);
-        expect(harness.runtime.startRecordingCapture).not.toHaveBeenCalled();
-        vi.advanceTimersByTime(FAILED_DECISION_PAUSE_MS - 1);
-        TestBed.tick();
-        expect(reattach).toHaveBeenCalledTimes(1);
-
-        vi.advanceTimersByTime(1);
-        TestBed.tick();
-        expect(reattach).toHaveBeenCalledTimes(2);
-        expect(harness.runtime.getCapture.mock.calls).toEqual([[captureId], [captureId]]);
-        expect(harness.stored()).toMatchObject({ status: 'completed', captureId: undefined });
-
-        // Answer the queue's pending list reload with the committed row.
-        harness.docs.set([harness.stored(), waiting]);
-        TestBed.tick();
-        expect(harness.runtime.startRecordingCapture).toHaveBeenCalledExactlyOnceWith(
-          expect.objectContaining({ documentId: waiting.documentId }),
-        );
-      } finally {
-        vi.useRealTimers();
-      }
+  it.each(['canceled', 'completed'] as const)('preserves a stored %s recording when its row still says waiting', (status) => {
+    const waiting = makeRecording();
+    const { store, docs, library, libraryStore } = setup({
+      initialDocs: [waiting], realCapture: true,
     });
+    library.list.mockImplementation(() => of([{ ...waiting, status }]));
+    store.attach();
+    TestBed.tick();
 
-    it.each(['completed', 'failed', 'canceled'] as const)(
-      'cleans up a linked %s recording loaded at boot without changing its status',
-      (status) => {
-        const { store, docs, runtime, stored } =
-          captureOverAnUnansweredListReload({ initial: { status, captureId } });
-        const reattach = vi.spyOn(TestBed.inject(DesktopCaptureService), 'reattach$');
-        const initial = stored();
-        store.attach();
-        TestBed.tick();
+    libraryStore.refreshDocuments.mockClear();
+    store.cancel(waiting.documentId);
 
-        expect(reattach).toHaveBeenCalledExactlyOnceWith(initial, expect.anything());
-        expect(runtime.deleteCapture).toHaveBeenCalledExactlyOnceWith(captureId);
-        expect(runtime.getCapture).not.toHaveBeenCalled();
-        expect(stored()).toMatchObject({ status, captureId: undefined });
-
-        docs.set([{ ...initial }]);
-        TestBed.tick();
-        docs.set([stored()]);
-        TestBed.tick();
-        expect(reattach).toHaveBeenCalledTimes(1);
-      },
-    );
-
-    it.each(['isDocumentClaimed', 'isDecisionPaused'] as const)(
-      'skips a linked terminal recording while %s is true',
-      (guard) => {
-        const { store, docs, runtime, stored } =
-          captureOverAnUnansweredListReload({ initial: { status: 'canceled', captureId } });
-        const service = TestBed.inject(DesktopCaptureService);
-        const blocked = vi.spyOn(service, guard).mockReturnValue(true);
-        const reattach = vi.spyOn(service, 'reattach$');
-        store.attach();
-        TestBed.tick();
-        expect(reattach).not.toHaveBeenCalled();
-
-        blocked.mockRestore();
-        docs.set([{ ...stored() }]);
-        TestBed.tick();
-        expect(runtime.deleteCapture).toHaveBeenCalledExactlyOnceWith(captureId);
-      },
-    );
-
-    it.each(['delete', 'unlink'] as const)('keeps a failed boot %s available for Retry without looping', (step) => {
-      const { store, docs, runtime, stored } =
-        captureOverAnUnansweredListReload({
-          initial: { status: 'completed', captureId },
-          failFirstUnlink: step === 'unlink',
-        });
-      if (step === 'delete') runtime.deleteCapture.mockReturnValueOnce(throwError(() => new Error('Delete failed')));
-      const reattach = vi.spyOn(TestBed.inject(DesktopCaptureService), 'reattach$');
-      store.attach();
-      TestBed.tick();
-
-      expect(stored()).toMatchObject({ status: 'recovery_required', recoveryCode: 'runtime_cleanup_failed', captureId });
-      docs.set([stored()]);
-      TestBed.tick();
-      expect(store.rows()[0]).toMatchObject({ userStatus: 'needs-attention', interrupted: false });
-      expect(reattach).toHaveBeenCalledTimes(1);
-      expect(runtime.deleteCapture).toHaveBeenCalledExactlyOnceWith(captureId);
-    });
-
-    it('shows the live card of a reconnected recording once the list has its processing row', () => {
-      const { store, docs, runtime, stored, endCapture } = captureOverAnUnansweredListReload({
-        initial: {
-          status: 'recovery_required',
-          stage: 'extracting',
-          captureId,
-          recoveryCode: 'capture_recovery_required',
-          recoveryMessage: 'Interrupted',
-        },
-        runningAtFirstRead: true,
-      });
-      store.attach();
-      TestBed.tick();
-
-      // The automatic reattach found it running; the next status read waits.
-      expect(runtime.getCapture).toHaveBeenCalledTimes(2);
-      expect(stored()).toMatchObject({ status: 'processing', captureId, recoveryCode: undefined });
-      // The list has not answered yet: the queue still sees a row that needs recovery.
-      expect(store.liveCapture()).toBeNull();
-
-      docs.set([stored()]);
-      TestBed.tick();
-      expect(store.liveCapture()).toMatchObject({ documentId: stored().documentId });
-
-      endCapture();
-      TestBed.tick();
-      docs.set([stored()]);
-      TestBed.tick();
-      expect(stored()).toMatchObject({ status: 'completed', captureId: undefined });
-      expect(store.liveCapture()).toBeNull();
-    });
-
-    it('does not read the deleted capture of a finished recording, which stays completed', () => {
-      const { store, docs, runtime, libraryStore, stored, writes, endCapture } =
-        captureOverAnUnansweredListReload();
-      store.attach();
-      TestBed.tick();
-      // The last list answer before the capture ends: running, linked to its capture.
-      expect(stored()).toMatchObject({ status: 'processing', captureId });
-      docs.set([stored()]);
-      TestBed.tick();
-      libraryStore.refreshDocuments.mockClear();
-
-      endCapture();
-      // Busy cleared; the list still says the recording runs.
-      TestBed.tick();
-
-      expect(runtime.deleteCapture).toHaveBeenCalledExactlyOnceWith(captureId);
-      expect(runtime.getCapture).toHaveBeenCalledTimes(1);
-      expect(writes.map((write) => write.status)).not.toContain('recovery_required');
-      expect(stored()).toMatchObject({ status: 'completed', captureId: undefined, recoveryCode: undefined });
-      // The outdated list is asked for again, and the row then shows the result.
-      expect(libraryStore.refreshDocuments).toHaveBeenCalled();
-      docs.set([stored()]);
-      TestBed.tick();
-      expect(store.rows()[0].userStatus).toBe('done');
-      expect(runtime.getCapture).toHaveBeenCalledTimes(1);
-    });
-
-    it('keeps the cleanup state of a failed unlink and only retries the cleanup', () => {
-      const { store, docs, runtime, stored, writes, endCapture } =
-        captureOverAnUnansweredListReload({ failFirstUnlink: true });
-      store.attach();
-      TestBed.tick();
-      docs.set([stored()]);
-      TestBed.tick();
-
-      endCapture();
-      // The result is kept and the capture deleted, but the unlink was refused.
-      expect(writes[writes.length - 1]).toMatchObject({
-        status: 'recovery_required', captureId, recoveryCode: 'runtime_cleanup_failed',
-      });
-      TestBed.tick();
-
-      // No read of the deleted capture, so nothing replaces the cleanup state
-      // with a lost capture; the cleanup alone is retried and now succeeds.
-      expect(runtime.getCapture).toHaveBeenCalledTimes(1);
-      expect(writes.map((write) => write.recoveryCode)).not.toContain('capture_recovery_required');
-      expect(runtime.deleteCapture).toHaveBeenCalledTimes(2);
-      expect(stored()).toMatchObject({ status: 'completed', captureId: undefined, recoveryCode: undefined });
-    });
-
-    it('keeps a failed recording failed when its refused unlink is retried', () => {
-      const { store, docs, stored, writes, endCapture } =
-        captureOverAnUnansweredListReload({ failFirstUnlink: true });
-      store.attach();
-      TestBed.tick();
-      docs.set([stored()]);
-      TestBed.tick();
-
-      // The status read says failed; the last event the Workbench read still said extracting.
-      endCapture({ status: 'failed', error: { code: 'speech_failed', message: 'no speech' } });
-      expect(writes[writes.length - 1]).toMatchObject({
-        status: 'recovery_required', stage: 'failed', captureId,
-        recoveryCode: 'runtime_cleanup_failed', errorCode: 'speech_failed',
-      });
-      TestBed.tick();
-
-      expect(stored()).toMatchObject({
-        status: 'failed', stage: 'failed', captureId: undefined,
-        errorCode: 'speech_failed', recoveryCode: undefined,
-      });
-    });
-
-    it('does not capture a finished recording again when retry is pressed on its outdated cleanup row', () => {
-      const { store, docs, runtime, libraryStore, stored, endCapture } =
-        captureOverAnUnansweredListReload({ failFirstUnlink: true });
-      store.attach();
-      TestBed.tick();
-      docs.set([stored()]);
-      TestBed.tick();
-      endCapture();
-      // The row shows the refused cleanup and offers retry.
-      const cleanupRow = stored();
-      expect(cleanupRow).toMatchObject({ status: 'recovery_required', recoveryCode: 'runtime_cleanup_failed' });
-      docs.set([cleanupRow]);
-      TestBed.tick();
-      // The queue's own retry of the cleanup succeeded; the list reload has not answered.
-      expect(stored()).toMatchObject({ status: 'completed', captureId: undefined });
-      expect(docs()[0]).toBe(cleanupRow);
-      libraryStore.refreshDocuments.mockClear();
-
-      store.retry(cleanupRow.documentId);
-
-      expect(runtime.startRecordingCapture).toHaveBeenCalledTimes(1);
-      expect(stored()).toMatchObject({ status: 'completed', captureId: undefined });
-      expect(libraryStore.refreshDocuments).toHaveBeenCalled();
-    });
-
-    it.each(['retry', 'restart'] as const)(
-      'leaves the live lines when %s is pressed for a recording whose capture runs',
-      (action) => {
-        const { store, docs, stored, library } = captureOverAnUnansweredListReload();
-        store.attach();
-        TestBed.tick();
-        docs.set([stored()]);
-        const service = TestBed.inject(DesktopCaptureService);
-        service.streamingPartials.set(new Map([[stored().documentId, {
-          captureId, revision: 1, coveredUntilMs: 1_000, sourceText: 'first line',
-        } as PartialCapture]]));
-        expect(store.liveCapture()?.lines.map((line) => line.text)).toEqual(['first line']);
-        const readsBefore = library.list.mock.calls.length;
-
-        // The capture service ignores the request: the document is claimed.
-        store[action](stored().documentId);
-        TestBed.tick();
-
-        expect(library.list).toHaveBeenCalledTimes(readsBefore);
-        expect(store.liveCapture()?.lines.map((line) => line.text)).toEqual(['first line']);
-      },
-    );
-
-    it('does not start a second capture for a row that still says waiting', () => {
-      const { store, runtime, libraryStore, stored, endCapture } =
-        captureOverAnUnansweredListReload();
-      store.attach();
-      TestBed.tick();
-      expect(runtime.startRecordingCapture).toHaveBeenCalledTimes(1);
-      libraryStore.refreshDocuments.mockClear();
-
-      // No list answer arrived while the capture ran: the row still says waiting.
-      endCapture();
-      TestBed.tick();
-
-      expect(runtime.startRecordingCapture).toHaveBeenCalledTimes(1);
-      expect(stored()).toMatchObject({ status: 'completed', captureId: undefined });
-      expect(libraryStore.refreshDocuments).toHaveBeenCalled();
-    });
-
-    it.each(['canceled', 'completed'] as const)('preserves a stored %s recording when its row still says waiting', (status) => {
-      const waiting = makeRecording();
-      const { store, docs, runtime, library, libraryStore, requirements } = setup({
-        initialDocs: [waiting], speechStatus: 'installable', realCapture: true,
-      });
-      library.list.mockImplementation(() => of([{ ...waiting, status }]));
-      store.attach();
-      TestBed.tick();
-
-      libraryStore.refreshDocuments.mockClear();
-      store.cancel(waiting.documentId);
-      expect(library.updateCapture).not.toHaveBeenCalled();
-      expect(libraryStore.refreshDocuments).toHaveBeenCalledOnce();
-      // Speech becomes ready before the list reload answers.
-      requirements.set([
-        requirement('speech-recognition', 'ready'),
-        requirement('speaker-diarization', 'installable'),
-      ]);
-      TestBed.tick();
-
-      expect(docs()[0].status).toBe('queued');
-      expect(runtime.startRecordingCapture).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('while the capture service reads the stored document', () => {
-    /** The queue over the real capture service, whose reads of the library the test answers. */
-    function decisionsTheTestAnswers(initialDocs: readonly DesktopLibrarySummary[]) {
-      const harness = setup({ initialDocs, realCapture: true });
-      const reads: Subject<readonly DesktopLibrarySummary[]>[] = [];
-      harness.library.list.mockImplementation(() => {
-        const read = new Subject<readonly DesktopLibrarySummary[]>();
-        reads.push(read);
-        return read;
-      });
-      return {
-        ...harness,
-        reads,
-        service: TestBed.inject(DesktopCaptureService),
-        answer: (read: Subject<readonly DesktopLibrarySummary[]>, documents: readonly DesktopLibrarySummary[]) => {
-          read.next(documents);
-          read.complete();
-        },
-      };
-    }
-
-    it('starts no recording while the recovery of another is being decided', () => {
-      const interrupted = makeRecording({
-        documentId: '1'.repeat(32), status: 'recovery_required', captureId: 'capture-interrupted',
-        recoveryCode: 'capture_recovery_required', createdAtMs: 1,
-      });
-      const waiting = makeRecording({ documentId: '2'.repeat(32), createdAtMs: 2 });
-      const { store, runtime, reads, service, answer } = decisionsTheTestAnswers([interrupted, waiting]);
-
-      store.attach();
-      TestBed.tick();
-      // One read: the recovery's. The waiting recording is not even considered.
-      expect(reads).toHaveLength(1);
-      expect(service.isDocumentClaimed(interrupted.documentId)).toBe(true);
-
-      answer(reads[0], [interrupted, waiting]);
-      TestBed.tick();
-
-      expect(runtime.getCapture).toHaveBeenCalledExactlyOnceWith('capture-interrupted');
-      expect(service.busyIds().has(interrupted.documentId)).toBe(true);
-      expect(reads).toHaveLength(1);
-      expect(runtime.startRecordingCapture).not.toHaveBeenCalled();
-    });
-
-    it('lets a cancel win over a start that is being decided', () => {
-      const waiting = makeRecording();
-      const { store, runtime, library, reads, answer } = decisionsTheTestAnswers([waiting]);
-      store.attach();
-      TestBed.tick();
-      expect(reads).toHaveLength(1);
-
-      store.cancel(waiting.documentId);
-      // The read was sent before the cancel: its answer still says waiting.
-      answer(reads[0], [waiting]);
-      TestBed.tick();
-
-      expect(runtime.startRecordingCapture).not.toHaveBeenCalled();
-      expect(library.updateCapture.mock.calls.map(([update]) => update)).toEqual([{
-        documentId: waiting.documentId, status: 'canceled', stage: 'cancelled', clearCaptureId: true,
-      }]);
-    });
-
-    it('tries a recovery again after the read of the stored document failed', () => {
-      const running = makeRecording({ status: 'processing', captureId: 'capture-running' });
-      const { store, docs, runtime, runtimeStatus, reads, answer } = decisionsTheTestAnswers([running]);
-      store.attach();
-      TestBed.tick();
-      expect(reads).toHaveLength(1);
-
-      vi.useFakeTimers();
-      try {
-        reads[0].error('Capture library index cannot be read.');
-        expect(runtimeStatus.message()).toBe('Capture library index cannot be read.');
-        expect(runtime.getCapture).not.toHaveBeenCalled();
-
-        // The queue looks at its list again, within the pause of the recording: it does not ask.
-        docs.set([{ ...running }]);
-        TestBed.tick();
-        expect(reads).toHaveLength(1);
-
-        // After the pause the recovery is decided again: it was not given up.
-        vi.advanceTimersByTime(FAILED_DECISION_PAUSE_MS);
-        TestBed.tick();
-        expect(reads).toHaveLength(2);
-        answer(reads[1], [running]);
-
-        expect(runtime.getCapture).toHaveBeenCalledExactlyOnceWith('capture-running');
-      } finally {
-        vi.useRealTimers();
-      }
-    });
-    it('does not start a recording whose cancel was asked while a read that then failed was pending', () => {
-      const waiting = makeRecording();
-      const { store, docs, runtime, library, reads, answer } = decisionsTheTestAnswers([waiting]);
-      store.attach();
-      TestBed.tick();
-      expect(reads).toHaveLength(1);
-
-      store.cancel(waiting.documentId);
-      vi.useFakeTimers();
-      try {
-        reads[0].error('Capture library index cannot be read.');
-        expect(library.updateCapture).not.toHaveBeenCalled();
-
-        // The queue looks at its list again after the pause, and the stored document still waits.
-        docs.set([{ ...waiting }]);
-        vi.advanceTimersByTime(FAILED_DECISION_PAUSE_MS);
-        TestBed.tick();
-      } finally {
-        vi.useRealTimers();
-      }
-      expect(reads).toHaveLength(2);
-      answer(reads[1], [waiting]);
-      TestBed.tick();
-
-      expect(runtime.startRecordingCapture).not.toHaveBeenCalled();
-      expect(library.updateCapture.mock.calls.map(([update]) => update)).toEqual([{
-        documentId: waiting.documentId, status: 'canceled', stage: 'cancelled', clearCaptureId: true,
-      }]);
-    });
-
-    describe('after a read of the stored document failed', () => {
-      beforeEach(() => vi.useFakeTimers());
-      afterEach(() => vi.useRealTimers());
-
-      it('looks again by itself after a pause, so the next waiting recording is not stranded', () => {
-        const interrupted = makeRecording({
-          documentId: '1'.repeat(32), status: 'recovery_required', captureId: 'capture-interrupted',
-          recoveryCode: 'capture_recovery_required', createdAtMs: 1,
-        });
-        const waiting = makeRecording({ documentId: '2'.repeat(32), createdAtMs: 2 });
-        const { store, runtime, library, reads, answer } = decisionsTheTestAnswers([interrupted, waiting]);
-        // The runtime no longer knows the interrupted capture.
-        runtime.getCapture.mockImplementation(() =>
-          throwError(() => 'Capture Runtime request was rejected with HTTP 404.'));
-        store.attach();
-        TestBed.tick();
-        expect(reads).toHaveLength(1);
-
-        reads[0].error('Capture library index cannot be read.');
-        TestBed.tick();
-        // Not at once: a read that keeps failing must not be repeated in a loop.
-        expect(reads).toHaveLength(1);
-
-        vi.advanceTimersByTime(FAILED_DECISION_PAUSE_MS);
-        TestBed.tick();
-        // The recovery is decided again, without anyone refreshing the list.
-        expect(reads).toHaveLength(2);
-        answer(reads[1], [interrupted, waiting]);
-        TestBed.tick();
-        expect(runtime.getCapture).toHaveBeenCalledExactlyOnceWith('capture-interrupted');
-        expect(library.updateCapture).toHaveBeenCalledWith(expect.objectContaining({
-          documentId: interrupted.documentId,
-          status: 'recovery_required',
-          clearCaptureId: true,
-          recoveryCode: 'capture_recovery_required',
-        }));
-
-        // The recovery ended (its capture is lost), and the waiting recording gets its turn.
-        expect(reads).toHaveLength(3);
-        answer(reads[2], [{ ...interrupted, captureId: undefined }, waiting]);
-        expect(runtime.startRecordingCapture).toHaveBeenCalledExactlyOnceWith(
-          expect.objectContaining({ documentId: waiting.documentId }),
-        );
-      });
-
-      it('repeats a read that keeps failing only once per pause', () => {
-        const waiting = makeRecording();
-        const { store, runtime, reads } = decisionsTheTestAnswers([waiting]);
-        store.attach();
-        TestBed.tick();
-
-        reads[0].error('Capture library index cannot be read.');
-        TestBed.tick();
-        TestBed.tick();
-        vi.advanceTimersByTime(FAILED_DECISION_PAUSE_MS - 1);
-        TestBed.tick();
-        expect(reads).toHaveLength(1);
-
-        vi.advanceTimersByTime(1);
-        TestBed.tick();
-        expect(reads).toHaveLength(2);
-        reads[1].error('Capture library index cannot be read.');
-        TestBed.tick();
-        vi.advanceTimersByTime(FAILED_DECISION_PAUSE_MS - 1);
-        TestBed.tick();
-        expect(reads).toHaveLength(2);
-
-        vi.advanceTimersByTime(1);
-        TestBed.tick();
-        expect(reads).toHaveLength(3);
-        expect(runtime.startRecordingCapture).not.toHaveBeenCalled();
-      });
-    });
-
+    expect(library.updateCapture).not.toHaveBeenCalled();
+    expect(libraryStore.refreshDocuments).toHaveBeenCalledOnce();
+    expect(docs()[0].status).toBe('queued');
   });
 });

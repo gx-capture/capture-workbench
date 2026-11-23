@@ -175,6 +175,7 @@
           size="sm"
           type="button"
           data-testid="asr-live-cancel"
+          [disabled]="queue.cancellingIds().has(live.documentId)"
           [attr.aria-label]="m().captureCancelNamed(live.fileName)"
           (click)="queue.cancel(live.documentId)"
         >
@@ -344,7 +345,7 @@
                       </span>
                     }
                     @if (row.errorMessage) {
-                      <span class="text-xs text-destructive">
+                      <span class="text-xs text-destructive" data-testid="asr-row-reason">
                         {{ row.errorMessage }}
                       </span>
                     }
@@ -364,20 +365,21 @@
                         {{ m().offerInstall }}
                       </button>
                     }
-                    @if (row.userStatus === 'processing' || row.userStatus === 'waiting') {
+                    @if (row.canCancel) {
                       <button
                         hlmBtn
                         variant="outline"
                         size="sm"
                         type="button"
                         data-testid="asr-row-cancel"
+                        [disabled]="row.cancelling"
                         [attr.aria-label]="m().captureCancelNamed(row.fileName)"
                         (click)="queue.cancel(row.documentId)"
                       >
                         {{ m().cancel }}
                       </button>
                     }
-                    @if (row.userStatus === 'needs-attention' && row.interrupted) {
+                    @if (row.canStartAgain) {
                       <button
                         hlmBtn
                         variant="outline"
@@ -385,25 +387,12 @@
                         type="button"
                         data-testid="asr-row-restart"
                         [attr.aria-label]="m().captureRestartNamed(row.fileName)"
-                        (click)="queue.restart(row.documentId)"
+                        (click)="queue.startAgain(row.documentId)"
                       >
                         {{ m().captureRestart }}
                       </button>
                     }
-                    @if ((row.userStatus === 'needs-attention' && !row.interrupted) || row.userStatus === 'cancelled') {
-                      <button
-                        hlmBtn
-                        variant="outline"
-                        size="sm"
-                        type="button"
-                        data-testid="asr-row-retry"
-                        [attr.aria-label]="m().captureRetryNamed(row.fileName)"
-                        (click)="queue.retry(row.documentId)"
-                      >
-                        {{ m().captureRetry }}
-                      </button>
-                    }
-                    @if (row.userStatus === 'done') {
+                    @if (row.canView) {
                       <button
                         hlmBtn
                         variant="outline"
@@ -415,6 +404,8 @@
                       >
                         {{ m().captureView }}
                       </button>
+                    }
+                    @if (row.userStatus === 'done') {
                       <button
                         hlmBtn
                         variant="outline"

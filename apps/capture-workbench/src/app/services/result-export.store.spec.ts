@@ -21,6 +21,7 @@ describe('ResultExportStore', () => {
   function setup(mediaType = 'application/pdf') {
     const payload = { fileName: 'host-name.txt', content: 'host text', mediaType: 'text/plain' };
     const library = {
+      allDocuments: signal([]),
       get: vi.fn((documentId: string) => of({ documentId, fileName: 'input.pdf', mediaType,
         status: 'completed', byteLength: 8, createdAtMs: 1, updatedAtMs: 1,
         raw: { sourceText: 'recognized', segments: [
