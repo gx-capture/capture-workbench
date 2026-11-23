@@ -694,4 +694,171 @@ test('the simulated library stores the raw and the structured result each on its
   // A result without a raw replaces the result only.
   await update({ result: { targetText: 'second result' } });
   expect(await storedResults()).toEqual({ raw: { sourceText: 'second raw' }, result: { targetText: 'second result' } });
+  // As the host: an earlier version's status or recovery field is only read, never written.
+  for (const status of ['persisting', 'recovery_required']) {
+    expect(await update({ status })).toEqual({
+      rejection: 'Capture library updates do not store the statuses of earlier versions.',
+    });
+  }
+  expect(await update({ recoveryCode: 'runtime_cleanup_failed' })).toEqual({ rejection: 'unknown field `recoveryCode`' });
+  expect(await update({ recoveryMessage: null })).toEqual({ rejection: 'unknown field `recoveryMessage`' });
+  expect((await hostCommand(page, 'library_get', { request: { documentId } })).value).toMatchObject({ status: 'completed' });
+});
+
+/** The capture id of every runtime delete the page sent, in order (fake-desktop.ts records them). */
+async function deletedCaptureIds(page: Page): Promise<readonly string[]> {
+  return page.evaluate(() => [
+    ...(globalThis as unknown as { readonly __captureDeletedCaptureIds: readonly string[] }).__captureDeletedCaptureIds,
+  ]);
+}
+
+/** Picks the scenario's recording and waits until its running capture is linked in the library. */
+async function startHeldRecording(page: Page): Promise<{
+  readonly row: Locator;
+  readonly documentId: string;
+  readonly captureId: string;
+}> {
+  await page.goto(`/?scenario=live-transcript&speed=${String(LIVE_TRANSCRIPT_SPEED)}&startDelay=0`);
+  await page.goto('/asr');
+  await expect(page.getByTestId('asr-choose-files')).toBeEnabled();
+  // The first revision is published; the capture then keeps running until the test acts.
+  await holdRevisionsFrom(page, 2);
+  await page.getByTestId('asr-choose-files').click();
+  const row = page.getByTestId('asr-queue-row').filter({ hasText: 'sample-recording.mp3' });
+  await expect(row).toHaveAttribute('data-user-status', 'processing');
+  const documentId = String(await row.getAttribute('data-document-id'));
+  const linked = async (): Promise<string> => {
+    const stored = await hostCommand(page, 'library_get', { request: { documentId } });
+    return String((stored.value as { readonly captureId?: string } | undefined)?.captureId ?? '');
+  };
+  await expect.poll(linked, { timeout: liveTranscriptWaitMs(1) }).toMatch(/^capture-recording-/u);
+  return { row, documentId, captureId: await linked() };
+}
+
+// The simulated runtime starts again with the page, so the capture is gone
+// after the reload: this journey proves only what the page does. That the
+// real runtime's capture is stopped and never read again is dev-host journey 3.
+test('a reload while a recording runs shows it interrupted, asks to delete its old link, and Start again captures it', async ({ page }) => {
+  test.setTimeout(2 * liveTranscriptWaitMs(LIVE_TRANSCRIPT_LINES.length + 4));
+  const { row, documentId, captureId } = await startHeldRecording(page);
+
+  // The window reloads: the run that started the capture has ended.
+  await page.reload();
+  await expect(row).toHaveAttribute('data-user-status', 'needs-attention');
+  await expect(row.getByTestId('asr-row-chip')).toHaveText('已中斷');
+  await expect(row.getByTestId('asr-row-cancel')).toHaveCount(0);
+  await expect(row.getByTestId('asr-row-view')).toHaveCount(0);
+  await expect(page.getByTestId('asr-live-card')).toHaveCount(0);
+  // The new run asks the runtime to delete the capture the row still links.
+  await expect.poll(() => deletedCaptureIds(page)).toContain(captureId);
+  expect(await hostCommand(page, 'library_get', { request: { documentId } }))
+    .toMatchObject({ value: { status: 'processing', captureId } });
+
+  await row.getByTestId('asr-row-restart').click();
+  await expect(row).toHaveAttribute('data-user-status', 'done', { timeout: liveTranscriptWaitMs(LIVE_TRANSCRIPT_LINES.length + 4) });
+  const kept = (await hostCommand(page, 'library_get', { request: { documentId } })).value;
+  expect(kept).toMatchObject({ status: 'completed', raw: { sourceText: LIVE_TRANSCRIPT_LINES.join('\n') } });
+  expect(kept).not.toHaveProperty('captureId');
+});
+
+test('the result view opened from History while its recording runs shows the result when the capture ends', async ({ page }) => {
+  test.setTimeout(2 * liveTranscriptWaitMs(LIVE_TRANSCRIPT_LINES.length + 4));
+  const { documentId } = await startHeldRecording(page);
+
+  // Navigation inside the app: a page load would end the run that owns the capture.
+  await page.getByTestId('nav-history').click();
+  await page.getByTestId('history-row').filter({ hasText: 'sample-recording.mp3' })
+    .getByTestId('history-row-view').click();
+  const resultUrl = new RegExp(`/history/${documentId}/content`, 'u');
+  await expect(page).toHaveURL(resultUrl);
+  await expect(page.getByTestId('result-pending-status')).toHaveText('處理中');
+
+  // The recording runs to its end while the view stays open.
+  await holdRevisionsFrom(page, null);
+  await expect(page.getByTestId('result-line-text')).toHaveText([...LIVE_TRANSCRIPT_LINES], {
+    timeout: liveTranscriptWaitMs(LIVE_TRANSCRIPT_LINES.length + 4),
+  });
+  await expect(page.getByTestId('result-no-result')).toHaveCount(0);
+  await expect(page).toHaveURL(resultUrl);
+  await page.getByTestId('result-nav-details').click();
+  await expect(page.getByTestId('result-detail-status')).toHaveText('完成');
+});
+
+test('Cancel of a running recording sends one runtime delete and stores it cancelled', async ({ page }) => {
+  test.setTimeout(2 * liveTranscriptWaitMs(2));
+  const { row, documentId, captureId } = await startHeldRecording(page);
+
+  await row.getByTestId('asr-row-cancel').click();
+
+  await expect(row).toHaveAttribute('data-user-status', 'cancelled');
+  await expect(row.getByTestId('asr-row-restart')).toBeVisible();
+  await expect(page.getByTestId('asr-live-card')).toHaveCount(0);
+  expect(await deletedCaptureIds(page)).toEqual([captureId]);
+  // Cancel is the runtime delete above; no host command that cancels was sent.
+  expect((await fakeDesktopLog(page)).commands.filter((command) => /cancel/u.test(command))).toEqual([]);
+  const stored = (await hostCommand(page, 'library_get', { request: { documentId } })).value;
+  expect(stored).toMatchObject({ status: 'canceled', stage: 'cancelled' });
+  expect(stored).not.toHaveProperty('captureId');
+  // The host answers a document without raw text with `raw: null`.
+  expect(stored).toHaveProperty('raw', null);
+  expect(await hostCommand(page, 'runtime_get_capture', { input: { id: captureId } }))
+    .toEqual({ rejection: CAPTURE_NOT_FOUND });
+});
+
+test('rows another run left behind: interrupted ones offer Start again unless they hold a result', async ({ page }) => {
+  await page.goto('/?scenario=earlier-run');
+  await page.goto('/ocr');
+  const row = (fileName: string) => page.getByTestId('ocr-queue-row').filter({ hasText: fileName });
+  const actions = (fileName: string) => row(fileName).locator('td').last().getByRole('button').or(
+    row(fileName).locator('td').last().getByRole('link'),
+  );
+
+  await expect(row('left-running.pdf').getByTestId('ocr-row-status')).toHaveText('已中斷');
+  await expect(actions('left-running.pdf')).toHaveText(['重新開始']);
+  // An earlier version kept a raw result: never captured again in place.
+  await expect(row('kept-result.pdf').getByTestId('ocr-row-status')).toHaveText('已中斷');
+  await expect(actions('kept-result.pdf')).toHaveText(['檢視']);
+  // An earlier version's failed cleanup is shown by how the capture ended, without its recovery message.
+  await expect(row('cleanup-failed.pdf').getByTestId('ocr-row-status')).toHaveText('需要處理');
+  await expect(actions('cleanup-failed.pdf')).toHaveText(['重新開始']);
+  await expect(page.getByText('The runtime capture could not be deleted.')).toHaveCount(0);
+  await expect.poll(() => deletedCaptureIds(page))
+    .toEqual(expect.arrayContaining(['capture-earlier-run', 'capture-earlier-cleanup']));
+
+  // Start again captures the interrupted file in this run: one write keeps text and evidence.
+  const commandsBefore = (await fakeDesktopLog(page)).commands.length;
+  await row('left-running.pdf').getByTestId('ocr-row-restart').click();
+  await expect(row('left-running.pdf')).toHaveAttribute('data-user-status', 'done', { timeout: 15_000 });
+  const documentId = String(await row('left-running.pdf').getAttribute('data-document-id'));
+  const kept = (await hostCommand(page, 'library_get', { request: { documentId } })).value;
+  expect(kept).toMatchObject({
+    status: 'awaiting_confirmation',
+    hasRaw: true,
+    raw: { sourceText: expect.any(String) },
+    ocrEvidence: { status: 'completed', captureId: expect.stringMatching(/^capture-/u) },
+  });
+  expect(kept).not.toHaveProperty('captureId');
+  // Start again, the attempt's start and its link, then the one checkpoint write.
+  expect((await fakeDesktopLog(page)).commands.slice(commandsBefore)
+    .filter((command) => command === 'library_update_capture')).toHaveLength(4);
+});
+
+test('History deletes an interrupted row that still holds a link, and its runtime capture', async ({ page }) => {
+  await page.goto('/?scenario=earlier-run');
+  await page.goto('/history');
+  const linked = page.getByTestId('history-row').filter({ hasText: 'left-running.pdf' });
+  await expect(linked).toContainText('已中斷');
+  await expect(linked.getByTestId('history-row-delete')).toBeEnabled();
+  // The start of this run already asked the runtime to delete it once.
+  await expect.poll(() => deletedCaptureIds(page)).toContain('capture-earlier-run');
+  const before = (await deletedCaptureIds(page)).filter((id) => id === 'capture-earlier-run').length;
+
+  await linked.getByTestId('history-row-delete').click();
+  await page.getByTestId('history-delete-confirm').click();
+
+  await expect(linked).toHaveCount(0);
+  expect(await hostCommand(page, 'library_get', { request: { documentId: 'e'.repeat(32) } }))
+    .toEqual({ rejection: `Unknown document: ${'e'.repeat(32)}` });
+  await expect.poll(async () => (await deletedCaptureIds(page)).filter((id) => id === 'capture-earlier-run').length)
+    .toBe(before + 1);
 });

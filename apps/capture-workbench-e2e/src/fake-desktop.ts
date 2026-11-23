@@ -19,7 +19,10 @@ export interface FakeDesktopOptions {
   /** Once a status request was answered 404, answer each installation listing this much later. */
   readonly slowListingAfterNotFoundMs?: number;
   readonly initialRunningInstallations?: readonly Record<string, unknown>[];
-  /** Script capture commands so one OCR file can reach raw text. */
+  /**
+   * Script OCR captures: each create gets its own capture id and reaches its
+   * checkpoint after a few status reads; a delete forgets the capture.
+   */
   readonly ocrJourney?: boolean;
   /**
    * Script recording captures: the simulated runtime publishes partial
@@ -35,6 +38,13 @@ export interface FakeDesktopOptions {
   readonly recordingJourney?: boolean;
   /** Keep the fake library in sessionStorage so a reload still lists it. */
   readonly persistLibrary?: boolean;
+  /**
+   * Start the library with documents another app run left behind: one
+   * stored processing with its runtime link (interrupted, Start again), one
+   * an earlier version stored waiting with its raw text (interrupted, View
+   * only), and an earlier version's failed cleanup after a failure.
+   */
+  readonly earlierRunRows?: boolean;
   /** Simulated installation phases with visible elapsed-time progress. */
   readonly installTimeline?: {
     readonly startResponseMs?: number;
@@ -74,6 +84,8 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
       };
       transformCallback: (...args: unknown[]) => number;
     };
+    /** The capture id of every `runtime_delete_capture`, in order. */
+    __captureDeletedCaptureIds: string[];
     __captureDropSources?: (fileName: string) => void;
     __captureNativeSourcesReady?: boolean;
     /**
@@ -210,6 +222,10 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
     status: string;
     stage?: string;
     captureId?: string;
+    errorCode?: string;
+    errorMessage?: string;
+    recoveryCode?: string;
+    recoveryMessage?: string;
     captureOptions?: Record<string, unknown>;
     hasRaw?: boolean;
     pageCount?: number;
@@ -231,6 +247,27 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
   // The structured document stored beside the raw result, as the host keeps both.
   const resultByDocument = new Map<string, unknown>();
   const editsByDocument = new Map<string, Record<string, unknown>>();
+  // OCR evidence, write-once once completed, as the host keeps it.
+  const evidenceByDocument = new Map<string, Record<string, unknown>>();
+  if (installOptions.earlierRunRows) {
+    const earlier = (documentId: string, fileName: string, fields: Partial<StoredDoc>): StoredDoc => ({
+      documentId, fileName, mediaType: 'application/pdf', byteLength: 12, createdAtMs: 2, updatedAtMs: 2,
+      status: 'processing', ...fields,
+    });
+    documents.push(
+      earlier('e'.repeat(32), 'left-running.pdf', { stage: 'extracting', captureId: 'capture-earlier-run' }),
+      earlier('f'.repeat(32), 'kept-result.pdf', { status: 'queued', stage: 'uploading' }),
+      earlier('c'.repeat(32), 'cleanup-failed.pdf', {
+        status: 'recovery_required', stage: 'failed', captureId: 'capture-earlier-cleanup',
+        errorCode: 'capture_failed', errorMessage: 'The capture failed.',
+        recoveryCode: 'runtime_cleanup_failed', recoveryMessage: 'The runtime capture could not be deleted.',
+      }),
+    );
+    rawByDocument.set('f'.repeat(32), {
+      sourceText: '先前版本保留的文字',
+      segments: [{ segmentId: 'page-1', order: 0, locator: { kind: 'page', page: 1 }, text: '先前版本保留的文字' }],
+    });
+  }
   if (installOptions.editedResults) {
     rawByDocument.set(historyId, {
       sourceText: 'recognized page',
@@ -261,6 +298,7 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
       raw: [...rawByDocument.entries()],
       results: [...resultByDocument.entries()],
       edits: [...editsByDocument.entries()],
+      evidence: [...evidenceByDocument.entries()],
     }));
   };
   if (installOptions.persistLibrary) {
@@ -272,6 +310,7 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
           raw?: readonly (readonly [string, unknown])[];
           results?: readonly (readonly [string, unknown])[];
           edits?: readonly (readonly [string, Record<string, unknown>])[];
+          evidence?: readonly (readonly [string, Record<string, unknown>])[];
         };
         if (Array.isArray(parsed.documents) && parsed.documents.length > 0) {
           documents = parsed.documents;
@@ -287,12 +326,14 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
           }
         }
         for (const [id, edits] of parsed.edits ?? []) editsByDocument.set(id, edits);
+        for (const [id, evidence] of parsed.evidence ?? []) evidenceByDocument.set(id, evidence);
       }
     } catch {
       documents = [historyDocument()];
       rawByDocument.clear();
       resultByDocument.clear();
       editsByDocument.clear();
+      evidenceByDocument.clear();
     }
     if (!documents.some((item) => item.documentId === historyId)) {
       documents = [historyDocument(), ...documents];
@@ -325,13 +366,19 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
     }
     return summary;
   };
-  let ocrPolls = 0;
-  let activeOcrPages: readonly number[] | null = null;
-  const ocrCaptureId = 'capture-ocr-1';
+  // OCR captures this simulated runtime knows, by id. Every create gets a new
+  // id, as at the runtime; a delete forgets the capture, and an id this
+  // runtime does not know is not found.
+  interface OcrCapture {
+    polls: number;
+    readonly pages: readonly number[] | null;
+  }
+  const ocrCaptures = new Map<string, OcrCapture>();
+  const ocrCaptureIdPrefix = 'capture-ocr-';
   const sourceSha = 'a'.repeat(64);
-  const ocrJob = (status: string): Record<string, unknown> => ({
+  const ocrJob = (ocrCaptureId: string, status: string): Record<string, unknown> => ({
     protocolVersion: '2',
-    ingestionId: 'ingestion-ocr-1',
+    ingestionId: `ingestion-${ocrCaptureId}`,
     captureId: ocrCaptureId,
     partialRevision: 0,
     lastEventSequence: 0,
@@ -357,8 +404,8 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
     profileId: 'profile-1',
     profileSpecSha256: 'e'.repeat(64),
   };
-  const ocrProjection = (): Record<string, unknown> => {
-    const pageNumbers = activeOcrPages ?? [1];
+  const ocrProjection = (ocrCaptureId: string, capture: OcrCapture): Record<string, unknown> => {
+    const pageNumbers = capture.pages ?? [1];
     return {
       apiVersion: '2.0',
       schemaVersion: '3',
@@ -395,8 +442,8 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
       createdAt: '2026-07-20T00:00:00Z',
     };
   };
-  const ocrRaw = (): Record<string, unknown> => {
-    const pageNumbers = activeOcrPages ?? [1, 2];
+  const ocrRaw = (capture: OcrCapture): Record<string, unknown> => {
+    const pageNumbers = capture.pages ?? [1, 2];
     const pageText = (page: number) => page === 1 ? '第一頁' : page === 2 ? '第二頁' : `第 ${page} 頁`;
     return {
       schemaVersion: '2',
@@ -476,7 +523,6 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
     'runtime_get_partial',
     'runtime_get_result',
     'runtime_get_capture',
-    'runtime_cancel_capture',
     'runtime_delete_capture',
   ];
   const recordingCaptures = new Map<string, RecordingCapture>();
@@ -488,7 +534,7 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
   // 'armed' until that reply, then the capture whose next partial read waits.
   let recordingPartialHold: 'armed' | { readonly captureId: string; readonly emptyEventRead: number } | null = null;
   let answerHeldRecordingPartial: (() => void) | null = null;
-  const recordingNotFound = (): Promise<never> => commandFailed(
+  const captureNotFound = (): Promise<never> => commandFailed(
     'Capture Runtime request was rejected with HTTP 404.',
   );
   const recordingSegment = (index: number): Record<string, unknown> => ({
@@ -646,7 +692,7 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
       return commandFailed('Capture Runtime request was rejected with HTTP 422.');
     }
     const capture = readRecording(id);
-    if (!capture) return recordingNotFound();
+    if (!capture) return captureNotFound();
     const since = (): Record<string, unknown>[] => capture.events.filter(
       (event) => Number(event['sequence']) > after,
     );
@@ -688,7 +734,7 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
     const answer = (): Promise<unknown> => {
       const capture = readRecording(id);
       // A capture this fake never started, or one deleted since, is not found.
-      if (!capture) return recordingNotFound();
+      if (!capture) return captureNotFound();
       // The host answers null where the runtime has no partial yet (409).
       return Promise.resolve(capture.revision < 1 ? null : recordingPartial(capture));
     };
@@ -771,6 +817,7 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
   target.__captureInvokedCommands = [];
   target.__captureStartedRequirementIds = [];
   target.__captureCreatedPdfPageNumbers = [];
+  target.__captureDeletedCaptureIds = [];
   if (installOptions.recordingJourney) {
     target.__captureRecordingEventReads = recordingEventReads;
     target.__captureRecordingHold = (fromRevision) => {
@@ -820,6 +867,9 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
         readonly update?: Record<string, unknown>;
         readonly onEvent?: { onmessage?: (batch: unknown) => void };
       };
+      if (command === 'runtime_delete_capture') {
+        target.__captureDeletedCaptureIds.push(String(args.input?.id ?? ''));
+      }
       if (command === 'desktop_runtime_status') {
         return Promise.resolve({ status: 'ready', detail: 'Capture Runtime 已準備完成。' });
       }
@@ -1146,9 +1196,12 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
         if (!current) return commandFailed(`Unknown document: ${documentId}`);
         return Promise.resolve({
           ...listedSummary(current),
-          ...(rawByDocument.has(documentId) ? { raw: rawByDocument.get(documentId) } : {}),
-          ...(resultByDocument.has(documentId) ? { result: resultByDocument.get(documentId) } : {}),
+          // As the host does: a missing raw text or result is answered as `null`,
+          // missing edits and evidence are left out.
+          raw: rawByDocument.get(documentId) ?? null,
+          result: resultByDocument.get(documentId) ?? null,
           ...(editsByDocument.has(documentId) ? { edits: editsByDocument.get(documentId) } : {}),
+          ...(evidenceByDocument.has(documentId) ? { ocrEvidence: evidenceByDocument.get(documentId) } : {}),
         });
       }
       if (command === 'library_export') {
@@ -1216,8 +1269,11 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
         return Promise.resolve(edits);
       }
       if (command === 'library_delete') {
+        // Like the host, a linked document is deleted too; its runtime
+        // capture is the Workbench's to delete.
         const documentId = String(args.request?.['documentId'] ?? '');
         documents = documents.filter((item) => item.documentId !== documentId);
+        evidenceByDocument.delete(documentId);
         rawByDocument.delete(documentId);
         resultByDocument.delete(documentId);
         editsByDocument.delete(documentId);
@@ -1250,20 +1306,62 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
         const documentId = String(update['documentId'] ?? '');
         const current = documents.find((item) => item.documentId === documentId);
         if (!current) return commandFailed(`Unknown document: ${documentId}`);
-        // Like the host's library: raw and result are stored each on its own,
-        // and an update without one of them leaves the stored one as it is.
+        const status = String(update['status'] ?? '');
+        // Like the host: the statuses and recovery fields of earlier versions
+        // are only read; an update that carries one is refused.
+        if (status === 'persisting' || status === 'recovery_required') {
+          return commandFailed('Capture library updates do not store the statuses of earlier versions.');
+        }
+        const recoveryField = ['recoveryCode', 'recoveryMessage'].find((field) => field in update);
+        if (recoveryField) return commandFailed(`unknown field \`${recoveryField}\``);
+        if (update['clearCaptureId'] === true && typeof update['captureId'] === 'string') {
+          return commandFailed('Capture library update cannot set and clear a runtime identifier together.');
+        }
+        // Like the host: evidence states the update's status, or `completed`
+        // on an OCR checkpoint; completed evidence is write-once, failed
+        // evidence can be replaced. A refused write changes nothing.
+        const evidence = update['ocrEvidence'];
+        if (evidence !== undefined && evidence !== null) {
+          const incoming = evidence as Record<string, unknown>;
+          const evidenceStatus = incoming['status'];
+          if (evidenceStatus !== status && !(evidenceStatus === 'completed' && status === 'awaiting_confirmation')) {
+            return commandFailed('OCR evidence status must match the terminal library update.');
+          }
+          const existing = evidenceByDocument.get(documentId);
+          if (existing && JSON.stringify(existing) !== JSON.stringify(incoming) && existing['status'] !== 'failed') {
+            return commandFailed('OCR evidence is write-once and conflicts with existing evidence.');
+          }
+          evidenceByDocument.set(documentId, incoming);
+        }
+        // Raw and result are stored each on its own, and an update without
+        // one of them leaves the stored one as it is. A different raw result
+        // resets the edits made on the old one.
         if (update['raw'] !== undefined && update['raw'] !== null) {
-          if (rawByDocument.has(documentId)) editsByDocument.delete(documentId);
+          if (JSON.stringify(rawByDocument.get(documentId)) !== JSON.stringify(update['raw'])) {
+            editsByDocument.delete(documentId);
+          }
           rawByDocument.set(documentId, update['raw']);
           current.hasRaw = true;
         }
         if (update['result'] !== undefined && update['result'] !== null) {
           resultByDocument.set(documentId, update['result']);
         }
-        if (typeof update['status'] === 'string') current.status = update['status'];
-        if (typeof update['stage'] === 'string') current.stage = update['stage'];
-        if (typeof update['captureId'] === 'string') current.captureId = update['captureId'];
         if (update['clearCaptureId'] === true) delete current.captureId;
+        else if (typeof update['captureId'] === 'string') current.captureId = update['captureId'];
+        // Status, stage and error fields are written as the update states
+        // them: an omitted one is cleared, and so are an earlier version's
+        // recovery fields.
+        const text = (field: string): string | undefined =>
+          typeof update[field] === 'string' ? String(update[field]) : undefined;
+        current.status = status;
+        current.stage = text('stage');
+        current.errorCode = text('errorCode');
+        current.errorMessage = text('errorMessage');
+        for (const field of ['stage', 'errorCode', 'errorMessage'] as const) {
+          if (current[field] === undefined) delete current[field];
+        }
+        delete current.recoveryCode;
+        delete current.recoveryMessage;
         current.updatedAtMs = Date.now();
         rememberLibrary();
         return Promise.resolve(listedSummary(current));
@@ -1276,56 +1374,51 @@ export function installFakeDesktop(config: FakeDesktopConfig): void {
         }
         return Promise.resolve(startRecording(current));
       }
-      const recordingCaptureId = String(args.input?.id ?? '');
+      const runtimeCaptureId = String(args.input?.id ?? '');
       if (
         installOptions.recordingJourney
-        && recordingCaptureId.startsWith(recordingCaptureIdPrefix)
+        && runtimeCaptureId.startsWith(recordingCaptureIdPrefix)
         && recordingCommands.includes(command)
       ) {
         if (command === 'runtime_get_capture_events') return recordingEvents(args.input);
-        if (command === 'runtime_get_partial') return recordingPartialRead(recordingCaptureId);
+        if (command === 'runtime_get_partial') return recordingPartialRead(runtimeCaptureId);
         if (command === 'runtime_delete_capture') {
           // The runtime forgets a deleted capture, so later reads of its id
           // are not found and nothing more is published for it; the host
           // answers null for a delete the runtime rejects as not found.
-          recordingCaptures.delete(recordingCaptureId);
+          recordingCaptures.delete(runtimeCaptureId);
           return Promise.resolve(null);
         }
-        const capture = readRecording(recordingCaptureId);
+        const capture = readRecording(runtimeCaptureId);
         // A capture this fake never started is not found, as at the runtime.
-        if (!capture) return recordingNotFound();
+        if (!capture) return captureNotFound();
         if (command === 'runtime_get_result') return recordingResult(capture);
-        if (
-          command === 'runtime_cancel_capture'
-          && capture.status !== 'completed'
-          && capture.status !== 'cancelled'
-        ) {
-          const nowMs = Date.now();
-          capture.status = 'cancelled';
-          capture.updatedAtMs = nowMs;
-          appendRecordingEvent(capture, 'cancelled', 'cancelled', nowMs);
-        }
         return Promise.resolve(recordingOperation(capture));
       }
       if (installOptions.ocrJourney && command === 'runtime_create_capture') {
-        ocrPolls = 0;
         const input = (args.input ?? {}) as { readonly pdfPageNumbers?: readonly number[] };
-        activeOcrPages = Array.isArray(input.pdfPageNumbers) ? [...input.pdfPageNumbers] : null;
-        target.__captureCreatedPdfPageNumbers.push(activeOcrPages);
-        return Promise.resolve(ocrJob('extracting'));
+        const pages = Array.isArray(input.pdfPageNumbers) ? [...input.pdfPageNumbers] : null;
+        target.__captureCreatedPdfPageNumbers.push(pages);
+        const ocrCaptureId = `${ocrCaptureIdPrefix}${crypto.randomUUID()}`;
+        ocrCaptures.set(ocrCaptureId, { polls: 0, pages });
+        return Promise.resolve(ocrJob(ocrCaptureId, 'extracting'));
       }
-      if (installOptions.ocrJourney && command === 'runtime_get_capture') {
-        ocrPolls += 1;
-        if (ocrPolls <= 4) return Promise.resolve(ocrJob('extracting'));
-        return Promise.resolve(ocrJob('awaiting_structuring'));
+      if (
+        installOptions.ocrJourney
+        && runtimeCaptureId.startsWith(ocrCaptureIdPrefix)
+        && ['runtime_get_capture', 'runtime_get_raw', 'runtime_get_ocr'].includes(command)
+      ) {
+        const capture = ocrCaptures.get(runtimeCaptureId);
+        if (!capture) return captureNotFound();
+        if (command === 'runtime_get_raw') return Promise.resolve(ocrRaw(capture));
+        if (command === 'runtime_get_ocr') return Promise.resolve(ocrProjection(runtimeCaptureId, capture));
+        capture.polls += 1;
+        return Promise.resolve(ocrJob(runtimeCaptureId, capture.polls <= 4 ? 'extracting' : 'awaiting_structuring'));
       }
-      if (installOptions.ocrJourney && command === 'runtime_get_raw') {
-        return Promise.resolve(ocrRaw());
-      }
-      if (installOptions.ocrJourney && command === 'runtime_get_ocr') {
-        return Promise.resolve(ocrProjection());
-      }
-      if (installOptions.ocrJourney && command === 'runtime_delete_capture') {
+      if (command === 'runtime_delete_capture') {
+        // The runtime stops and forgets the capture; the host answers null
+        // also for one the runtime does not know.
+        ocrCaptures.delete(runtimeCaptureId);
         return Promise.resolve(null);
       }
       return commandFailed(`Unexpected command: ${command}`);

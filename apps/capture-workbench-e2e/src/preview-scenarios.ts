@@ -64,6 +64,18 @@ export const PREVIEW_SCENARIOS: Readonly<Record<string, PreviewScenario>> = {
       installTimeline: DEFAULT_INSTALL_TIMELINE,
     },
   },
+  'earlier-run': {
+    label: '上次執行留下的檔案（已中斷）',
+    description: '三個辨識功能皆已安裝。文件轉文字的佇列裡有上次執行留下的檔案：一份停在處理中並保有執行環境連結（已中斷，可重新開始）、一份先前版本以等待中保留了文字（已中斷，只能檢視）、一份先前版本清除失敗的失敗紀錄（需要處理，可重新開始）。啟動時 Workbench 請執行環境刪除這些連結的擷取。',
+    requirements: scenarioRequirements('ready'),
+    options: {
+      cudaAvailable: true,
+      persistLibrary: true,
+      ocrJourney: true,
+      earlierRunRows: true,
+      installTimeline: DEFAULT_INSTALL_TIMELINE,
+    },
+  },
   'no-gpu': {
     label: '無 NVIDIA GPU',
     description: '三個辨識功能皆已安裝，但模擬沒有 CUDA GPU 的電腦環境，可供檢視 CPU 運算狀態。',
