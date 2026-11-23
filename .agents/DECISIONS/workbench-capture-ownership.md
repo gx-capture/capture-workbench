@@ -7,7 +7,7 @@ A capture belongs to the app run that started it. The Workbench only tracks capt
 ## Why
 
 - Runtime captures are ephemeral: the runtime does not resume unfinished captures after it stops and prunes them after 24 hours.
-- Runtime `DELETE` stops the worker first and then removes the capture.
+- Runtime `DELETE` cancels the work first and then removes the capture; with real engines the worker process was seen to exit one to two seconds after the answer.
 - The source file stays in the library, so any capture can be started again.
 - Keeping ephemeral captures durable across failures on both sides made one service change thirty times in a day, with each review finding a gap next to the last fix.
 
@@ -31,7 +31,7 @@ A capture belongs to the app run that started it. The Workbench only tracks capt
 ## Known leftovers
 
 - A reload during an upload can leave a capture the library never learned of (it runs to completion unseen until 24-hour retention removes it).
-- A runtime delete that is refused or times out leaves the capture at the runtime, and the old worker may still run while the next capture starts.
+- A runtime delete that is refused or times out leaves the capture at the runtime, and the old worker may still run while the next capture starts. After an answered delete the next capture can also start while the old worker process is still exiting.
 - When reading the stored link fails during a delete, the delete proceeds with the link from the displayed list, so a capture linked after the list loaded can stay at the runtime until retention removes it.
 
 ## Not built on purpose
