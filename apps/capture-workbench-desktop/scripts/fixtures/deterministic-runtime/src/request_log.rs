@@ -125,12 +125,18 @@ fn entry(method: &str, path: &str, response: &Response) -> Value {
         "GET" | "POST" | "PUT" | "DELETE" | "OPTIONS" | "HEAD" | "PATCH" => method,
         _ => "OTHER",
     };
+    let route = route_template(path);
     let mut value = json!({
         "timestamp": SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis(),
         "method": method,
-        "route": route_template(path),
+        "route": route,
         "status": response.status,
     });
+    // Only a capture the fixture issued, named by the route that resolved it
+    // for an authorized request; never an id read from the path.
+    if let Some(capture_id) = response.capture_id() {
+        value["captureId"] = capture_id.into();
+    }
     if !(200..300).contains(&response.status) {
         value["errorCode"] = response
             .body
@@ -225,7 +231,7 @@ mod tests {
     }
 
     #[test]
-    fn entries_never_include_ids_queries_headers_bodies_or_messages() {
+    fn ingestion_entries_omit_identifiers_and_sensitive_request_data() {
         let response = api_error(409, "chunk_conflict", "Bearer private-body");
         let value = entry(
             "PUT",
@@ -251,6 +257,29 @@ mod tests {
             route_template("/v2/ingestions/id/finalize?private"),
             "/v2/ingestions/{ingestionId}/finalize"
         );
+    }
+
+    #[test]
+    fn capture_entries_name_only_the_capture_the_route_resolved() {
+        let resolved = Response::empty(200).for_capture("capture-42");
+        let value = entry(
+            "GET",
+            "/v2/captures/capture-42/events?token=private",
+            &resolved,
+        );
+        assert_eq!(value["route"], "/v2/captures/{captureId}/events");
+        assert_eq!(value["captureId"], "capture-42");
+        assert!(!value.to_string().contains("private"));
+        // A path shaped like a fixture id is not enough: an unknown capture or
+        // a denied request has no resolved id, and its entry names none.
+        for response in [
+            api_error(404, "capture_not_found", "Capture job was not found."),
+            api_error(401, "unauthorized", "A valid Bearer token is required."),
+        ] {
+            assert!(entry("GET", "/v2/captures/capture-42", &response)
+                .get("captureId")
+                .is_none());
+        }
     }
 
     #[test]

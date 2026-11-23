@@ -308,6 +308,40 @@ fn the_capture_controls_apply_to_a_host_structured_capture() {
 }
 
 #[test]
+fn a_renewed_hold_keeps_a_host_structured_capture_at_the_checkpoint() {
+    let state = controlled_fixture(CaptureControl::fixed(HOLD));
+    let id = upload(&state, "pdf", "application/pdf", PDF);
+    let created = exchange(&state, start_request(&id, "host"), 202);
+    assert_eq!(created["status"], "extracting");
+    let capture_id = created["captureId"].as_str().unwrap();
+    let path = format!("/v2/captures/{capture_id}");
+
+    state
+        .settings
+        .capture_control
+        .set(CaptureControlSettings::default());
+    let checkpoint = get(&state, &path, 200);
+    assert_eq!(checkpoint["status"], "awaiting_structuring");
+    assert_eq!(checkpoint["lastEventSequence"], 1);
+    let raw = get(&state, &format!("{path}/raw"), 200);
+    let ocr = get(&state, &format!("{path}/ocr"), 200);
+
+    state.settings.capture_control.set(HOLD);
+    assert_eq!(get(&state, &path, 200), checkpoint);
+    let cancelled = post(&state, &format!("{path}/cancel"), 200);
+    assert_eq!(cancelled["status"], "cancelled");
+    assert_eq!(cancelled["progress"], 0.9);
+    assert_eq!(cancelled["lastEventSequence"], 2);
+    assert_eq!(get(&state, &path, 200), cancelled);
+    assert_eq!(get(&state, &format!("{path}/raw"), 200), raw);
+    assert_eq!(get(&state, &format!("{path}/ocr"), 200), ocr);
+    assert_eq!(
+        event_ids_and_types(&events_after(&state, capture_id, "1")),
+        [(2, "cancelled".to_owned())]
+    );
+}
+
+#[test]
 fn a_cancel_at_the_checkpoint_keeps_the_extraction_and_appends_its_event() {
     let state = fixture();
     let id = upload(&state, "pdf", "application/pdf", PDF);
@@ -416,6 +450,110 @@ fn an_unavailable_delete_leaves_the_capture_intact_until_retried() {
         get(&state, &path, 404)["error"]["code"],
         "capture_not_found"
     );
+}
+
+/// Held, released, a delete refused, held again: only a request that answered
+/// with the capture's state saw the checkpoint, so only such a request latches
+/// it. Without a read in between, the renewed hold reports extracting again.
+#[test]
+fn a_refused_delete_does_not_latch_the_checkpoint() {
+    let released = CaptureControlSettings {
+        delete_unavailable: true,
+        ..CaptureControlSettings::default()
+    };
+    let held = CaptureControlSettings {
+        delete_unavailable: true,
+        ..HOLD
+    };
+    for read_before_delete in [false, true] {
+        let state = controlled_fixture(CaptureControl::fixed(held));
+        let id = upload(&state, "pdf", "application/pdf", PDF);
+        let created = exchange(&state, start_request(&id, "host"), 202);
+        assert_eq!(created["status"], "extracting");
+        let path = format!("/v2/captures/{}", created["captureId"].as_str().unwrap());
+
+        state.settings.capture_control.set(released);
+        if read_before_delete {
+            assert_eq!(get(&state, &path, 200)["status"], "awaiting_structuring");
+        }
+        exchange(
+            &state,
+            json_request("DELETE", &path, None, Value::Null),
+            503,
+        );
+
+        state.settings.capture_control.set(held);
+        let expected = if read_before_delete {
+            "awaiting_structuring"
+        } else {
+            "extracting"
+        };
+        assert_eq!(
+            get(&state, &path, 200)["status"],
+            expected,
+            "read before the delete: {read_before_delete}"
+        );
+    }
+}
+
+/// A status read refused with 503 shows no state either, so it latches nothing.
+#[test]
+fn a_refused_status_read_does_not_latch_the_checkpoint() {
+    let state = controlled_fixture(CaptureControl::fixed(HOLD));
+    let id = upload(&state, "pdf", "application/pdf", PDF);
+    let created = exchange(&state, start_request(&id, "host"), 202);
+    let path = format!("/v2/captures/{}", created["captureId"].as_str().unwrap());
+
+    state.settings.capture_control.set(CaptureControlSettings {
+        capture_status_unavailable: true,
+        ..CaptureControlSettings::default()
+    });
+    get(&state, &path, 503);
+
+    state.settings.capture_control.set(HOLD);
+    assert_eq!(get(&state, &path, 200)["status"], "extracting");
+}
+
+/// The request log names a capture only when the route resolved it: a capture
+/// the fixture issued, reached by a request that passed authorization.
+#[test]
+fn only_an_authorized_request_for_an_issued_capture_names_it_for_the_request_log() {
+    const TOKEN: &str = "fixture-test-credential-unused-by-routing";
+    const HOST: &str = "127.0.0.1:4310";
+    let state = fixture();
+    let id = upload(&state, "pdf", "application/pdf", PDF);
+    let created = exchange(&state, start_request(&id, "host"), 202);
+    let capture_id = created["captureId"].as_str().unwrap();
+    let policy = crate::http::LocalRequestPolicy::new(TOKEN, HOST);
+    let request = |path: &str, token: &str| {
+        let mut request = json_request("GET", path, None, Value::Null);
+        request.headers.insert("host".into(), HOST.into());
+        request
+            .headers
+            .insert("authorization".into(), format!("Bearer {token}"));
+        request
+    };
+
+    let authorized = crate::answer(
+        &policy,
+        &state,
+        request(&format!("/v2/captures/{capture_id}/events"), TOKEN),
+    );
+    assert_eq!(authorized.status, 200);
+    assert_eq!(authorized.capture_id(), Some(capture_id));
+
+    // Shaped like the fixture's ids, but never issued.
+    let unknown = crate::answer(&policy, &state, request("/v2/captures/capture-999", TOKEN));
+    assert_eq!(unknown.status, 404);
+    assert_eq!(unknown.capture_id(), None);
+
+    let denied = crate::answer(
+        &policy,
+        &state,
+        request(&format!("/v2/captures/{capture_id}"), "another-credential"),
+    );
+    assert_eq!(denied.status, 401);
+    assert_eq!(denied.capture_id(), None);
 }
 
 fn json_request(method: &str, path: &str, key: Option<&str>, body: Value) -> Request {

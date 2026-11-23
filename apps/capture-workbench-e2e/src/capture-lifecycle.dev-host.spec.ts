@@ -49,6 +49,7 @@ interface RuntimeRequest {
   readonly timestamp: number;
   readonly method: string;
   readonly route: string;
+  readonly captureId?: string;
   readonly status: number;
 }
 
@@ -474,8 +475,7 @@ function allowedDuringCancelOfWaiting(
  * Since `mark`, while one capture runs held and the user cancels a waiting
  * row: every host command the page sent is one `allowedDuringCancelOfWaiting`
  * names, its one library write is the cancelled write, and every request the
- * runtime logged is a status read (its log names no capture, so a status read
- * stands for the running one): no other runtime command or request.
+ * runtime logged is a status read for the running capture.
  */
 function expectOnlyCancelOfWaitingSince(
   host: JourneyHost,
@@ -488,8 +488,9 @@ function expectOnlyCancelOfWaitingSince(
   expect(sent.filter((command) => command.command === 'library_update_capture').map((command) => command.write))
     .toEqual([cancelledWrite(cancel.cancelled)]);
   expect(host.runtimeLog().slice(mark.runtimeLog)
-    .filter((entry) => !(entry.method === 'GET' && entry.route === runtimeCapture))
-    .map((entry) => `${entry.method} ${entry.route} ${entry.status}`)).toEqual([]);
+    .filter((entry) => !(entry.method === 'GET' && entry.route === runtimeCapture
+      && entry.captureId === cancel.runningCapture))
+    .map((entry) => `${entry.method} ${entry.route} ${entry.captureId ?? ''} ${entry.status}`)).toEqual([]);
 }
 
 const terminalStatuses = new Set(['completed', 'failed', 'canceled', 'awaiting_confirmation']);

@@ -66,6 +66,9 @@ struct CaptureRecord {
     /// Requested with `structuringMode: "host"`: the host structures the raw
     /// text, so the capture waits at the checkpoint instead of completing.
     host_structured: bool,
+    /// A host-structured capture was seen at its checkpoint; it stays there
+    /// whatever the hold says later.
+    checkpoint_reached: bool,
     /// Set when a cancel reached the capture before it ended, with how far
     /// the capture had come.
     cancelled: Option<CancelledAt>,
@@ -149,14 +152,25 @@ fn not_ready(host_structured: bool, read: CaptureRead) -> Response {
 }
 
 impl CaptureRecord {
+    /// Latches the checkpoint the first time a request sees a host-structured
+    /// capture past the hold, so a hold applied later no longer moves it back.
+    fn observe_extraction(&mut self, held: bool) {
+        if self.host_structured && !held && !self.failed && self.cancelled.is_none() {
+            self.checkpoint_reached = true;
+        }
+    }
+
     fn state(&self, held: bool) -> CaptureState {
         if let Some(at) = self.cancelled {
             CaptureState::Cancelled(at)
         } else if self.failed {
             CaptureState::Failed
+        } else if self.checkpoint_reached {
+            CaptureState::AwaitingStructuring
         } else if held {
             CaptureState::Extracting
         } else if self.host_structured {
+            // Past the hold even before a request latched it.
             CaptureState::AwaitingStructuring
         } else {
             CaptureState::Completed
@@ -289,7 +303,9 @@ impl FixtureState {
     }
 
     pub fn route(&self, request: Request) -> Response {
-        match (request.method.as_str(), request.path.as_str()) {
+        // Resolved before the answer, so a delete still names the capture it removed.
+        let capture_id = self.issued_capture(&request.path);
+        let response = match (request.method.as_str(), request.path.as_str()) {
             ("GET", "/v2/health/ready") => self.ready(),
             ("GET", "/v2/runtime/requirements") => self.requirements(),
             ("GET", "/v2/runtime/structuring-model-options") => self.model_options(),
@@ -315,6 +331,10 @@ impl FixtureState {
             }
             _ if request.path.starts_with("/v2/captures/") => self.route_capture(&request),
             _ => api_error(404, "not_found", "Resource was not found."),
+        };
+        match capture_id {
+            Some(capture_id) => response.for_capture(&capture_id),
+            None => response,
         }
     }
 
@@ -523,7 +543,7 @@ impl FixtureState {
             Err(message) => return api_error(500, "runtime_unavailable", &message),
         };
         let held = control.hold_captures;
-        let record = CaptureRecord {
+        let mut record = CaptureRecord {
             capture_id: capture_id.clone(),
             ingestion_id: ingestion.ingestion_id,
             kind: ingestion.kind,
@@ -531,9 +551,11 @@ impl FixtureState {
             result: build_result(&raw, target_language),
             raw,
             host_structured: payload["structuringMode"] == "host",
+            checkpoint_reached: false,
             cancelled: None,
             failed: control.fail_captures,
         };
+        record.observe_extraction(held);
         let Ok(mut captures) = self.captures.lock() else {
             return api_error(500, "runtime_unavailable", "Capture state is unavailable.");
         };
@@ -546,6 +568,18 @@ impl FixtureState {
             },
         );
         Response::json(202, record.wire(held))
+    }
+
+    /// The capture a request under `/v2/captures/{captureId}` is about, when
+    /// the fixture issued it; never an id taken from the path's shape alone.
+    fn issued_capture(&self, path: &str) -> Option<String> {
+        let relative = path.strip_prefix("/v2/captures/")?;
+        let capture_id = relative.split('/').next()?;
+        self.captures
+            .lock()
+            .ok()?
+            .contains_key(capture_id)
+            .then(|| capture_id.to_owned())
     }
 
     fn route_capture(&self, request: &Request) -> Response {
@@ -562,15 +596,30 @@ impl FixtureState {
         let Some(record) = captures.get_mut(capture_id) else {
             return api_error(404, "capture_not_found", "Capture job was not found.");
         };
+        // A refused request answers without the capture's state, so it saw no
+        // checkpoint and latches none, and it leaves the capture unchanged.
+        match (request.method.as_str(), suffix) {
+            ("GET", "") if control.capture_status_unavailable => {
+                return api_error(
+                    503,
+                    "runtime_unavailable",
+                    "Capture status is temporarily unavailable.",
+                )
+            }
+            ("DELETE", "") if control.delete_unavailable => {
+                return api_error(
+                    503,
+                    "runtime_unavailable",
+                    "Capture deletion is temporarily unavailable.",
+                )
+            }
+            _ => {}
+        }
+        record.observe_extraction(held);
         let host_structured = record.host_structured;
         let not_made = move |read| not_ready(host_structured, read);
         let state = record.state(held);
         match (request.method.as_str(), suffix) {
-            ("GET", "") if control.capture_status_unavailable => api_error(
-                503,
-                "runtime_unavailable",
-                "Capture status is temporarily unavailable.",
-            ),
             ("GET", "") => Response::json(200, record.wire(held)),
             ("POST", "cancel") => {
                 // A capture that has not ended (held running, or waiting at the
@@ -683,11 +732,6 @@ impl FixtureState {
                     .collect::<String>();
                 Response::event_stream(stream)
             }
-            ("DELETE", "") if control.delete_unavailable => api_error(
-                503,
-                "runtime_unavailable",
-                "Capture deletion is temporarily unavailable.",
-            ),
             ("DELETE", "") => {
                 let ingestion_id = record.ingestion_id.clone();
                 captures.remove(capture_id);
@@ -713,17 +757,19 @@ impl FixtureState {
     }
 
     fn capture_response(&self, capture_id: &str, status: u16) -> Response {
-        let record = self
-            .captures
-            .lock()
-            .ok()
-            .and_then(|items| items.get(capture_id).cloned());
         let held = match self.settings.capture_control.current() {
             Ok(control) => control.hold_captures,
             Err(message) => return api_error(500, "runtime_unavailable", &message),
         };
-        match record {
-            Some(record) => Response::json(status, record.wire(held)),
+        let mut captures = self.captures.lock().ok();
+        match captures
+            .as_mut()
+            .and_then(|items| items.get_mut(capture_id))
+        {
+            Some(record) => {
+                record.observe_extraction(held);
+                Response::json(status, record.wire(held))
+            }
             None => api_error(404, "capture_not_found", "Capture job was not found."),
         }
     }
