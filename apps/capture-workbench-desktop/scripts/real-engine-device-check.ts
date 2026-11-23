@@ -26,6 +26,9 @@
  *   --observe <process name> --observe-into <directory> only samples the
  *   devices of that process's trees (for example capture-workbench-dev-host.exe
  *   during the localhost real-engine journeys) until the printed session stop file exists.
+ *   With --observe-app-data <app data directory> each sample names the engine
+ *   worker it belongs to (text-recognition, speech-recognition,
+ *   speaker-diarization), as the scenarios' samples do.
  *
  * A local run keeps its tree (`pnpm run kept-run-trees -- --list`).
  * `--run-tree` reuses the shared installs, except for the fresh CPU pack.
@@ -134,6 +137,7 @@ async function main(): Promise<void> {
       list: { type: 'boolean' },
       observe: { type: 'string' },
       'observe-into': { type: 'string' },
+      'observe-app-data': { type: 'string' },
     },
     allowPositionals: false,
   });
@@ -146,7 +150,8 @@ async function main(): Promise<void> {
   const adapters = discoverAdapters();
   if (values.observe) {
     if (!values['observe-into']) throw new Error('--observe needs --observe-into <directory>.');
-    await observeProcesses(values.observe, resolve(values['observe-into']), adapters);
+    const appData = values['observe-app-data'];
+    await observeProcesses(values.observe, resolve(values['observe-into']), adapters, appData ? resolve(appData) : undefined);
     return;
   }
   const driverPresent = existsSync(join(process.env['SystemRoot'] ?? 'C:\\Windows', 'System32', 'nvcuda.dll'));
@@ -583,7 +588,7 @@ while ($true) {
 `;
 
 function startSamplers(
-  root: { readonly pid: number; readonly appData: string } | { readonly processName: string },
+  root: { readonly pid: number; readonly appData: string } | { readonly processName: string; readonly appData?: string },
   evidenceDirectory: string,
   nvidiaPresent: boolean,
 ): Samplers {
@@ -593,7 +598,8 @@ function startSamplers(
     spawn(
       'powershell.exe',
       ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', scriptPath,
-        ...('pid' in root ? ['-RootPid', String(root.pid), '-EngineRoot', join(root.appData, 'runtime', 'engines')] : ['-RootName', root.processName]),
+        ...('pid' in root ? ['-RootPid', String(root.pid)] : ['-RootName', root.processName]),
+        ...(root.appData ? ['-EngineRoot', join(root.appData, 'runtime', 'engines')] : []),
         '-Out', join(evidenceDirectory, 'windows-devices.csv'),
         ...(nvidiaPresent ? ['-NvidiaOut', join(evidenceDirectory, 'nvidia.csv')] : []),
         '-IntervalSeconds', String(sampleIntervalSeconds)],
@@ -615,14 +621,22 @@ function startSamplers(
 /**
  * Samples the devices used by every process tree rooted at a process of this
  * name (for example the dev host during the localhost smoke) until the file
- * `stop` appears in the directory, then writes observation.json there.
+ * `stop` appears in the directory, then writes observation.json there. With
+ * the app data the trees run on, a sample of an engine worker names it.
  */
-async function observeProcesses(processName: string, parent: string, adapters: readonly GpuAdapter[]): Promise<void> {
+async function observeProcesses(
+  processName: string,
+  parent: string,
+  adapters: readonly GpuAdapter[],
+  appData?: string,
+): Promise<void> {
   await mkdir(parent, { recursive: true });
   const directory = await mkdtemp(join(parent, 'session-'));
   const stopFile = join(directory, 'stop');
   const nvidiaPresent = spawnSync('nvidia-smi', ['-L'], { windowsHide: true, stdio: 'ignore' }).status === 0;
-  const samplers = startSamplers({ processName }, directory, nvidiaPresent);
+  const samplers = startSamplers(appData ? { processName, appData } : { processName }, directory, nvidiaPresent);
+  // The adapters of this session, for reading the samples of a part of it later.
+  await writeFile(join(directory, 'adapters.json'), `${JSON.stringify(adapters, null, 2)}\n`, 'utf8');
   process.stdout.write(`Sampling the devices of ${processName} into ${directory}; create ${stopFile} to stop.\n`);
   try {
     while (!existsSync(stopFile)) await delay(1_000);
