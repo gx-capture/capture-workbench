@@ -126,6 +126,11 @@
     "production-bundle-check": {
       "executor": "nx:run-commands",
       "dependsOn": ["build"],
+      "inputs": [
+        "default",
+        "^default",
+        "{workspaceRoot}/tools/verify-capture-workbench-production-bundle.ts"
+      ],
       "options": {
         "command": "node tools/verify-capture-workbench-production-bundle.ts"
       }
