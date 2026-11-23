@@ -26,10 +26,16 @@ export function uninstallFailureMessage(error: unknown): string {
   return errorMessage(error);
 }
 
-/** Removes bearer and token-shaped values from user-visible diagnostics. */
-export function redactSensitiveMessage(message: string): string {
+/**
+ * Removes bearer and token-shaped values from user-visible diagnostics. A
+ * missing message stays missing; the host stores an absent error as `null`,
+ * which also comes back as `undefined`.
+ */
+export function redactSensitiveMessage(message: string): string;
+export function redactSensitiveMessage(message: string | undefined): string | undefined;
+export function redactSensitiveMessage(message: string | undefined): string | undefined {
   return message
-    .replace(/Bearer\s+[^\s,;]+/giu, 'Bearer [redacted]')
+    ?.replace(/Bearer\s+[^\s,;]+/giu, 'Bearer [redacted]')
     .replace(
       /(?:authorization|bearerToken|access_token|token)\s*[:=]\s*["']?[^"'\s,;}]+/giu,
       (match) => `${match.slice(0, match.search(/[:=]/u) + 1)} [redacted]`,

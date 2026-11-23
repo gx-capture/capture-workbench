@@ -14,6 +14,7 @@ import type {
   OcrEvidenceV1,
 } from '../contracts';
 import { DesktopTauriCommandService } from './desktop-tauri-command.service';
+import { redactSensitiveMessage } from './desktop-errors';
 import { desktopMessages } from '../i18n/desktop-messages';
 
 export interface DesktopSourceSelection {
@@ -152,13 +153,4 @@ function sanitizeSummary(summary: DesktopLibrarySummary): DesktopLibrarySummary 
 function sanitizeDetail(detail: DesktopLibraryDetail): DesktopLibraryDetail {
   const { raw, result, ...stored } = sanitizeSummary(detail) as DesktopLibraryDetail;
   return { ...stored, ...(raw == null ? {} : { raw }), ...(result == null ? {} : { result }) };
-}
-
-function redactSensitiveMessage(value: string | undefined): string | undefined {
-  return value
-    ?.replace(/Bearer\s+[^\s,;]+/giu, 'Bearer [redacted]')
-    .replace(
-      /(?:authorization|bearerToken|access_token|token)\s*[:=]\s*["']?[^"'\s,;}]+/giu,
-      (match) => `${match.slice(0, match.search(/[:=]/u) + 1)} [redacted]`,
-    );
 }

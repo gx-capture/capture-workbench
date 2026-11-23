@@ -161,6 +161,18 @@ describe('DesktopLibraryService native source import', () => {
     expect(JSON.stringify(imported)).not.toContain('secret-token');
   });
 
+  it('reads an error the host stored as null as no error', async () => {
+    // The host serializes a document without an error as `errorCode: null, errorMessage: null`.
+    const { service } = configure(
+      { errorCode: null, errorMessage: null } as unknown as Partial<DesktopLibrarySummary>,
+    );
+
+    const imported = await firstValueFrom(service.importSelection(selection('scan.png')));
+
+    expect(imported.errorCode).toBeUndefined();
+    expect(imported.errorMessage).toBeUndefined();
+  });
+
   it('leaves out the recovery message an earlier version stored, which nothing shows', async () => {
     // Earlier versions stored a recovery code and message; only the code is read.
     const { service } = configure({
