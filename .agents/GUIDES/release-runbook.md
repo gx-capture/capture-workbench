@@ -499,26 +499,38 @@ Check a new release like this:
 
 - The executable and schema bytes match `capture-runtime-manifest.json` (`sha256`, `schemaSha256`).
 - Each engine archive, split part, and `*-files.json` matches
-  `capture-engine-catalog.json` (`sha256`, `parts[].sha256`,
-  `filesManifestSha256`). A requirement is either the legacy delivery
-  (`requirementId`, `artifacts`, `modelFiles`, `unavailableReason`) or
-  `requirementId` plus `contents` (each of `cuda` and `cpu` has those
-  delivery fields). A `contents` requirement counts as complete only when
-  each content is. Releases up to 0.9.0 published the legacy shape. From
-  0.10.0 `speech-recognition` must be `contents` with exactly `cuda` and
-  `cpu`:
-  - `build-release-artifacts` (`release.py`), the candidate verifier and the
-    local release consumer smoke fail a model-enabled release whose speech
-    requirement is the legacy delivery or has a single content.
-  - `build-release-artifacts`, the local release consumer smoke and the
-    practical installed check verify every content's worker archive, its
-    parts and its `*-files.json` manifest; the consumer smoke also requires
-    exactly those asset names. The real-media smoke only requires every
-    content of the embedded catalog to be complete.
-  - Re-checking a published legacy release still works: the practical
-    installed check and the real-media smoke read both shapes, and the tag
-    audit (`audit-release-tag.ts`), `resolve-capture-release.ts` and
-    `verify-release-candidate.ts` do not read the speech requirement's shape.
+  `capture-engine-catalog.json`, and a new model-enabled release's
+  `speech-recognition` requirement must use `contents` with exactly `cuda` and
+  `cpu`. Two checks verify this on the local release output, before
+  publication; neither reads the published GitHub assets:
+  - `capture-runtime:build-release-artifacts`
+    (`packages/capture-runtime/src/capture_runtime/release.py`) validates the
+    local engine directory: every delivery of every requirement is complete;
+    each worker archive and part matches the catalog's size and sha256 and
+    has exactly one matching `*-files.json`, equal to the archive's inner
+    manifest; and the directory holds no uncatalogued archive or manifest.
+  - `capture-runtime:local-release-consumer-smoke`
+    (`tools/local-release-consumer-smoke.ts`, catalog shapes tested in
+    `tools/release/engine-catalog-parts.test.ts`) verifies the local release
+    directory and then a copy downloaded from a loopback mirror: each worker
+    archive, its parts and its `*-files.json` manifest against the catalog
+    digests. It also requires exactly the canonical asset names: a missing or
+    extra file fails it.
+  - Both, and the model-candidate verifier, reject a legacy or single-content
+    speech requirement.
+  - Re-checking a published legacy release (up to 0.9.0) still works, and each
+    check that reads both shapes proves only its own part. The practical
+    installed OCR rehearsal (`practical-installed-ocr.ts`), given a runtime
+    release directory, checks its executable, manifest and schema and
+    verifies the bytes of the OCR worker the installer selected, not every
+    content's archive or manifest. The
+    real-media smoke only requires each delivery of the embedded catalog to be
+    complete (worker artifacts and model files listed, no unavailable reason);
+    it reads no archive bytes. The tag audit (`audit-release-tag.ts`),
+    `resolve-capture-release.ts` and `verify-release-candidate.ts` do not read
+    the speech requirement's shape. The model-candidate verifier
+    (`verify_release_model_candidate.py`) requires the two packs explicitly
+    and installs both (below).
   - When the full local model check (`pnpm nx run
     capture-runtime:verify-release-model-candidate`) is required: whenever
     `release-model-source-lock.json`, an engine worker or a model delivery
@@ -711,22 +723,32 @@ candidate with `node tools/install-capture-workbench-dependencies.mts
   provenance record the release version), and copy `text-recognition/model/pipeline.json` to
   `src/capture_runtime/assets/ocr-profile.json`. The lock's approval record
   changes only with the owner's consent.
-- Version management has two stages: ordinary source/tests reference a scoped
-  owner, then code updates the explicit owner/native metadata list. Preview with
-  `pnpm nx run capture-tools:release-version-plan --args="--version <version>"` and apply
-  with `pnpm nx run capture-tools:release-version-sync --args="--version <version>"`.
-  `release/version.json` is the release intent; package metadata and packaged
-  Python constants are explicit mirrors. The updater never scans/replaces the
-  tree, rewrites locks, or approves model provenance and contract hashes.
-  Its `followUp` lists package-manager lock refresh, model-source approval and
-  existing contract/engine/profile generators. After those steps, run
-  `pnpm nx run capture-tools:release-version-check`; this validates source,
-  generated identities, local Cargo/uv lock versions and the existing inventory.
-  Passing this check is not candidate publication or installed acceptance.
-  Keep negative versions and historical byte/digest evidence independent;
-  ordinary current-version fixtures reference the scoped shared constant.
+- Version management: preview with
+  `pnpm nx run capture-tools:release-version-plan --args="--version <version>"`
+  and apply with
+  `pnpm nx run capture-tools:release-version-sync --args="--version <version>"`
+  (`release/version.json` is the release intent). The updater never rewrites
+  locks or approves model provenance and contract hashes. When the version
+  changes, its `followUp` lists the steps that remain, in this order:
+  1. Refresh the Python and Cargo locks with their package managers,
+     keeping external dependency resolutions.
+  2. Prepare and verify the model-source snapshot and lock through the
+     existing model approval workflow (the snapshot bullet above); never
+     rewrite approval or provenance.
+  3. Run `pnpm nx run capture-runtime:generate-contracts` and the existing
+     engine/profile generators for the selected source lock.
+  4. Recompute and review the contract and receipt identities from canonical
+     bytes, then run `pnpm nx run capture-tools:release-version-check`.
+
+  The check verifies the version owners and derived declarations, the
+  generated versions and identities, the local Cargo and uv lock versions and
+  the release inventory; it fails on a mismatch and otherwise prints one
+  success line. Passing it is not candidate publication or installed
+  acceptance. Keep negative versions and historical byte/digest evidence
+  independent.
 - Pull requests run only the quick `checks` job of `ci.yml` (lint, type
-  checks, unit tests); docs-only ones run nothing. Only `main` runs the full
+  checks, unit tests, and `capture-workbench:production-bundle-check` when the
+  Workbench is affected); docs-only ones run nothing. Only `main` runs the full
   verification, so a build, packaging, or installer failure first shows on
   `main`'s push run: run the affected build targets locally before merging such
   a change, and fix `main` before dispatching a candidate. Tests never assert

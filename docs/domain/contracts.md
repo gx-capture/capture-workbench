@@ -24,7 +24,7 @@
 ## 不變條件
 
 - 合約集的雜湊就是相容性的依據：雜湊相同的 runtime 與 SDK 相容。版本號只固定格式，不參與比對，所以發新版不會改變雜湊。
-- 重構不改合約：每個 PR 的合約集雜湊都要和 main 相同，兩種 SDK 的產生檔也不變（`capture-runtime:check-contracts`）。
+- 重構維持對外合約不變；`capture-runtime:check-contracts` 只驗證產生檔可由目前原始碼重現（本身不判斷是否允許變更合約）。有意的合約變更須經發布的合約影響分類與消費端關卡（見 [release runbook 的 Workflow map](../../.agents/GUIDES/release-runbook.md#workflow-map)）。
 - 合約的每個列舉值都對應到概念集 `vocabulary/capture-vocabulary-v1.json` 的一個概念（`tests/unit/test_ubiquitous_language.py`）。概念集不進合約集，不影響雜湊。
 
 ```mermaid
