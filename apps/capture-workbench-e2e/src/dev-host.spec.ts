@@ -283,12 +283,9 @@ test('refuses unauthorized proxy requests, omits CORS and tokens, and bridges er
 
 test('launcher prints only its ready line and keeps tokens out of stdout/stderr', async () => {
   const port = await reserveFreePort();
-  // Under the run's private temp root (playwright.dev-host.config.ts), which
-  // is removed when the run ends.
-  const childTempRoot = join(
-    process.env['CAPTURE_DEV_HOST_TEMP_ROOT'] ?? tmpdir(),
-    `launcher-check-${port}`,
-  );
+  // Under the run's private temp root (tools/test-temp-root.ts, preloaded by
+  // the e2e-dev-host target), which is removed when the run ends.
+  const childTempRoot = join(tmpdir(), `launcher-check-${port}`);
   mkdirSync(childTempRoot, { recursive: true });
 
   const child = spawn(
@@ -358,10 +355,7 @@ test('launcher prints only its ready line and keeps tokens out of stdout/stderr'
 
 test('the dev host stops when the launcher is killed without a chance to clean up', async () => {
   const port = await reserveFreePort();
-  const childTempRoot = join(
-    process.env['CAPTURE_DEV_HOST_TEMP_ROOT'] ?? tmpdir(),
-    `launcher-kill-${port}`,
-  );
+  const childTempRoot = join(tmpdir(), `launcher-kill-${port}`);
   mkdirSync(childTempRoot, { recursive: true });
 
   const child = spawn(

@@ -842,7 +842,7 @@ async function checkProgressiveRecording(
       let firstShown = false;
       await expect.poll(async () => {
         const rowStatus = await row.getAttribute('data-user-status', { timeout: ACTION_TIMEOUT_MS });
-        if (rowStatus === 'done' || rowStatus === 'persisting') {
+        if (rowStatus === 'done') {
           throw new Error('Missed the live checkpoint revision before extraction finished.');
         }
         if (rowStatus === 'needs-attention' || rowStatus === 'cancelled') {

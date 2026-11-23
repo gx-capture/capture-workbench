@@ -42,7 +42,7 @@
     "e2e-dev-host": {
       "executor": "nx:run-commands",
       "metadata": {
-        "description": "Runs the dev-host Playwright E2E journey (dev-host.spec.ts) against the Workbench dev server and capture-workbench-dev-host with the deterministic fixture runtime."
+        "description": "Runs the dev-host Playwright E2E journeys (every file ending in dev-host.spec.ts: the proxy, launcher and OCR library journeys, and the capture lifecycle) against the Workbench dev server and capture-workbench-dev-host with the deterministic fixture runtime."
       },
       "dependsOn": [
         { "projects": ["capture-workbench"], "target": "build" },
@@ -56,7 +56,7 @@
         "{workspaceRoot}/release/version.json"
       ],
       "options": {
-        "command": "corepack pnpm exec playwright test --config apps/capture-workbench-e2e/playwright.dev-host.config.ts"
+        "command": "node --import ./tools/test-temp-root.ts node_modules/@playwright/test/cli.js test --config apps/capture-workbench-e2e/playwright.dev-host.config.ts"
       }
     },
     "preview": {

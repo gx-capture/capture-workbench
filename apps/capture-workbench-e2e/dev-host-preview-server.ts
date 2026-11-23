@@ -451,10 +451,30 @@ function installDevHostBridge(): void {
       unregisterCallback: (id: number) => void;
       convertFileSrc: (filePath: string, protocol?: string) => string;
     };
+    __captureDevHostDropQueuedSources?: () => Promise<void>;
+  }
+  interface SourceChannel {
+    readonly onmessage?: (batch: unknown) => void;
   }
   const target = globalThis as unknown as DevHostGlobal;
   let nextCallbackId = 1;
   const callbacks = new Map<number, (eventData: unknown) => void>();
+  // The dev host has no window to drop files on. A test queues paths with
+  // `/__host/selection` and calls `__captureDevHostDropQueuedSources()`: the
+  // host inspects them as it inspects a native drop (kind `all`), and the batch
+  // reaches the Workbench through the channel it watches drops on.
+  let sourceChannel: SourceChannel | undefined;
+  target.__captureDevHostDropQueuedSources = (): Promise<void> => {
+    const channel = sourceChannel;
+    if (!channel) {
+      return Promise.reject('The Workbench does not watch native drops yet.');
+    }
+    return target.__TAURI_INTERNALS__
+      .invoke('library_select_sources', { request: { kind: 'all' } })
+      .then((batch) => {
+        channel.onmessage?.(batch);
+      });
+  };
 
   target.isTauri = true;
   target.__TAURI_INTERNALS__ = {
@@ -475,6 +495,16 @@ function installDevHostBridge(): void {
     convertFileSrc: (filePath: string, protocol = 'asset'): string =>
       `${protocol}://localhost/${encodeURIComponent(filePath)}`,
     invoke: (command: string, rawArgs?: unknown): Promise<unknown> => {
+      if (
+        command === 'library_watch_native_sources'
+        && typeof rawArgs === 'object'
+        && rawArgs !== null
+        && 'onEvent' in rawArgs
+        && typeof rawArgs.onEvent === 'object'
+        && rawArgs.onEvent !== null
+      ) {
+        sourceChannel = rawArgs.onEvent as SourceChannel;
+      }
       const body = JSON.stringify(rawArgs === undefined ? {} : rawArgs);
       return fetch(`/__host/invoke/${encodeURIComponent(command)}`, {
         method: 'POST',
