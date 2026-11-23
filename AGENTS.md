@@ -35,30 +35,9 @@
 
 # Speech development tests
 
-Speech recognition ships as two packs, the `cuda` and `cpu` contents of
-`speech-recognition`, and what runs by default follows the installed pack. A
-machine with the NVIDIA driver (`System32\nvcuda.dll`) installs `cuda`: TEA-ASR 1.1
-on CUDA, and that same checkpoint on CPU after a classified GPU failure. A machine
-without it installs `cpu`: TEA-ASR 1.1 mini on CPU. `CAPTURE_SPEECH_RECOGNITION_VARIANT`
-(`auto`, `cuda`, `cpu`) overrides the choice at install time; the installed pack
-is never re-detected. An explicit `CAPTURE_SPEECH_RECOGNITION_MODEL=tea-asr-1.1`
-on a `cpu` installation fails the capture with `requirement_unavailable`; mini
-runs on either pack. Do not "fix" the `cpu` pack back to TEA-ASR 1.1.
+What runs by default follows the installed pack (`cuda` or `cpu` content of `speech-recognition`), and the installed pack is never re-detected; see [speech.md](docs/domain/speech.md#已安裝的內容) for pack selection, `CAPTURE_SPEECH_RECOGNITION_VARIANT`, and `requirement_unavailable` on `cpu`. Do not "fix" the `cpu` pack back to TEA-ASR 1.1.
 
-A development test that transcribes real audio uses TEA-ASR 1.1 mini on CUDA
-and checks provenance `tea-asr-1.1-mini` with device `cuda`. Set
-`CAPTURE_SPEECH_RECOGNITION_MODEL=tea-asr-1.1-mini` and
-`CAPTURE_SPEECH_RECOGNITION_ALLOW_CPU_FALLBACK=false`. Follow
-`.agents/RESEARCH/tea-asr-1.1-mini-gpu-2026-11-04.md`. Release smokes and the
-private speech fixture stay on `tea-asr-1.1` / `cuda`, and those smokes force the
-`cuda` pack: the candidate verifier and `real-media-smoke` set the variant. The
-localhost installation journey checks that the installed speech pack matches the
-variant override or the NVIDIA driver default. The localhost execution journey
-checks the pack before capture and verifies speech provenance from that pack
-(`tea-asr-1.1` / `cuda` or `tea-asr-1.1-mini` / `cpu`). The `cpu` pack has no frozen transcript: the
-candidate verifier also installs the candidate's own `cpu` pack and checks
-provenance `tea-asr-1.1-mini` / `cpu`, and its release evidence is one manual
-mini transcription on CPU, recorded in the release runbook.
+A development test that transcribes real audio uses TEA-ASR 1.1 mini on CUDA and checks provenance `tea-asr-1.1-mini` with device `cuda`. Set `CAPTURE_SPEECH_RECOGNITION_MODEL=tea-asr-1.1-mini` and `CAPTURE_SPEECH_RECOGNITION_ALLOW_CPU_FALLBACK=false`. Follow `.agents/RESEARCH/tea-asr-1.1-mini-gpu-2026-11-04.md`. Release smokes and the private speech fixture stay on `tea-asr-1.1` / `cuda`, and those smokes force the `cuda` pack: the candidate verifier and `real-media-smoke` set the variant. The localhost installation journey checks that the installed speech pack matches the variant override or the NVIDIA driver default. The localhost execution journey checks the pack before capture and verifies speech provenance from that pack (`tea-asr-1.1` / `cuda` or `tea-asr-1.1-mini` / `cpu`). The `cpu` pack has no frozen transcript: the candidate verifier also installs the candidate's own `cpu` pack and checks provenance `tea-asr-1.1-mini` / `cpu`, and its release evidence is one manual mini transcription on CPU, recorded in the release runbook. See [verification-evidence.md](.agents/GUIDES/verification-evidence.md) and `.agents/GUIDES/release-runbook.md` for entry points and device checks.
 
 # Architecture
 
@@ -71,10 +50,10 @@ mini transcription on CPU, recorded in the release runbook.
 
 # Verification in two layers
 
+- Before changing test doubles, verification targets, or evidence assertions under `apps/capture-workbench-e2e/`, `apps/capture-workbench-desktop/scripts/`, or `.github/workflows/ci.yml`, read [verification-evidence.md](.agents/GUIDES/verification-evidence.md). Also read it when choosing evidence for a change to `apps/capture-workbench/src/app/services/desktop-capture.service.ts`, `packages/capture-runtime/src/capture_runtime/provisioning/`, or speech or OCR device selection. Correct any affected guide statement in the same change.
 - Layer 1 is the dev server, frontend and backend: whatever can be verified there is verified there first. Layer 2 is the Desktop App, only for what layer 1 cannot prove: WebView2 behaviour, native dialogs and drag and drop of native paths, the installer, process cleanup on exit, pixel baselines. Before planning or asking for a Desktop App run, list what the run must prove and move every item layer 1 can prove to layer 1. A Desktop App run needs a build, opens windows on the user's machine and takes long; a dev-server run is headless, cheap and repeatable.
-- Calibrate screens and discuss screen behaviour on the dev server first: `pnpm nx run capture-workbench-e2e:preview` serves the Workbench at `http://localhost:4300` with the simulated desktop backend of the browser e2e (`apps/capture-workbench-e2e/src/fake-desktop.ts`); scenarios are listed at `/__preview`, with the query parameters that change the simulated timing (`speed`, `startDelay`). Record a run with headless Playwright against that URL.
-- A new screen state that people need to look at becomes a scenario in `apps/capture-workbench-e2e/src/preview-scenarios.ts` or an option of the simulated backend, not a one-off script.
-- Real engines do not by themselves need the Desktop App. The backend is verified at the runtime API (`apps/capture-workbench-desktop/scripts/real-media-smoke.ts`: installation, OCR and transcription; `real-ollama-smoke.ts`: structuring with the real model). For renderer-plus-host verification against the deterministic fixture runtime without the Desktop App, `pnpm nx run capture-workbench-e2e:preview-dev-host` serves the Workbench against the dev host with the deterministic fixture runtime via `apps/capture-workbench-e2e/dev-host-preview-server.ts` (`capture-workbench-dev-host`, built via `pnpm nx run capture-workbench-desktop:build-dev-host`), and `pnpm nx run capture-workbench-e2e:e2e-dev-host` runs the Playwright `chromium-dev-host` project against it. For renderer-plus-host verification with real engines on localhost, `pnpm nx run capture-workbench-e2e:smoke-real-engines-installation` runs the manual installation journey on empty app data for installation/catalog/worker/model delivery changes and before release; it proves downloads, verification, cancel/retry/re-attachment, model installation and first start/restart with persistent verification records. `pnpm nx run capture-workbench-e2e:smoke-real-engines-execution` runs the execution journey for every runtime/UI fix and before release on installed app data from the same build; it fails with reinstall guidance when catalog-bound requirement readiness or the selected installed model does not match, never installs, and proves OCR, speech/speakers, structuring, device checks, edit/restore/export, persistence, deletion and restart after deletion. Both journeys run (`apps/capture-workbench-e2e/src/real-engines.spec.ts`) against `capture-workbench-dev-host` and the staged product runtime. The installation journey installs the structuring model, and the execution journey runs it. A change to code or data that a worker packages changes that worker's archive, so execution then needs a fresh installation journey first; other runtime changes leave the archives byte-identical ([#478](https://github.com/gx-capture/capture-workbench/issues/478)). Slice 3 of `.agents/DECISIONS/dev-host.md` (tracked in [#418](https://github.com/gx-capture/capture-workbench/issues/418)) still moves the layer-1 parts of the OCR Desktop smoke there.
+- Calibrate screens and discuss screen behaviour on the dev server first: `pnpm nx run capture-workbench-e2e:preview` serves the Workbench at `http://localhost:4300` with the simulated desktop backend (`apps/capture-workbench-e2e/src/fake-desktop.ts`); scenarios are listed at `/__preview` with the query parameters that change the simulated timing (`speed`, `startDelay`). Record a run with headless Playwright against that URL. A new screen state that people need to look at becomes a scenario in `apps/capture-workbench-e2e/src/preview-scenarios.ts` or an option of the simulated backend, not a one-off script.
+- Real engines do not by themselves need the Desktop App. See [verification-evidence.md](.agents/GUIDES/verification-evidence.md) and `.agents/DECISIONS/dev-host.md` for choosing between the runtime API smokes, the deterministic dev-host E2E (`capture-workbench-e2e:e2e-dev-host`), and the localhost real-engine journeys (`capture-workbench-e2e:smoke-real-engines-installation` and `capture-workbench-e2e:smoke-real-engines-execution`).
 
 # Release and CI guidance
 
