@@ -160,17 +160,17 @@ pub(crate) fn validate_document_id(value: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// The status a capture update stores. `persisting` and `recovery_required`
+/// are only read: earlier versions stored them, and no update writes them.
 pub(crate) fn validate_status(value: &str) -> Result<(), String> {
+    if matches!(value, "persisting" | "recovery_required") {
+        return Err(
+            "Capture library updates do not store the statuses of earlier versions.".into(),
+        );
+    }
     if !matches!(
         value,
-        "queued"
-            | "processing"
-            | "persisting"
-            | "recovery_required"
-            | "awaiting_confirmation"
-            | "completed"
-            | "failed"
-            | "canceled"
+        "queued" | "processing" | "awaiting_confirmation" | "completed" | "failed" | "canceled"
     ) {
         return Err("Capture library status is invalid.".into());
     }

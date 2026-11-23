@@ -837,8 +837,11 @@ pub(crate) struct LibraryImportSourceRequest {
     pub capture_options: Option<LibraryCaptureOptions>,
 }
 
+/// A capture's state as the Workbench stores it. The recovery fields earlier
+/// versions stored are only read (`DesktopLibrarySummary`); an update that
+/// carries one is refused, as is any other field it does not name.
 #[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct LibraryCaptureUpdate {
     pub document_id: String,
     pub capture_id: Option<String>,
@@ -850,8 +853,6 @@ pub(crate) struct LibraryCaptureUpdate {
     pub result: Option<Value>,
     pub error_code: Option<String>,
     pub error_message: Option<String>,
-    pub recovery_code: Option<String>,
-    pub recovery_message: Option<String>,
     #[serde(default)]
     pub ocr_evidence: Option<OcrEvidenceV1>,
     /// Present only when the caller is replacing the options stored at import.

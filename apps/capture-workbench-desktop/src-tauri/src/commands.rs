@@ -422,15 +422,6 @@ pub(crate) async fn runtime_get_partial(
 }
 
 #[tauri::command]
-pub(crate) async fn runtime_cancel_capture(
-    state: tauri::State<'_, DesktopState>,
-    input: RuntimeIdInput,
-) -> Result<serde_json::Value, String> {
-    let state = state.inner().clone();
-    run_blocking(move || host_api::runtime_cancel_capture(&state, input)).await
-}
-
-#[tauri::command]
 pub(crate) async fn runtime_get_raw(
     state: tauri::State<'_, DesktopState>,
     input: RuntimeIdInput,

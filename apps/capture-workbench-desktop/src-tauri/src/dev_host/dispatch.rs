@@ -492,14 +492,6 @@ mod handlers {
         json_result(host_api::runtime_get_partial(&context.state, input))
     }
 
-    pub(super) fn runtime_cancel_capture(
-        args: Value,
-        context: &HostContext,
-    ) -> Result<HostResponse, HostError> {
-        let InputArgs { input }: InputArgs<RuntimeIdInput> = parse_args(args)?;
-        json_result(host_api::runtime_cancel_capture(&context.state, input))
-    }
-
     pub(super) fn runtime_get_raw(
         args: Value,
         context: &HostContext,

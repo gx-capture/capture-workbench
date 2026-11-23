@@ -500,10 +500,6 @@ pub(crate) fn capture(state: &DesktopState, input: RuntimeIdInput) -> Result<Val
     capture_value(state, "GET", &input.id, "", None)
 }
 
-pub(crate) fn cancel_capture(state: &DesktopState, input: RuntimeIdInput) -> Result<Value, String> {
-    capture_value(state, "POST", &input.id, "/cancel", None)
-}
-
 pub(crate) fn raw_capture(state: &DesktopState, input: RuntimeIdInput) -> Result<Value, String> {
     null_for_http_rejection(capture_value(state, "GET", &input.id, "/raw", None), 409)
 }

@@ -224,13 +224,6 @@ pub(crate) fn runtime_get_partial(
     runtime_client::capture_partial(state, input)
 }
 
-pub(crate) fn runtime_cancel_capture(
-    state: &DesktopState,
-    input: RuntimeIdInput,
-) -> Result<Value, String> {
-    runtime_client::cancel_capture(state, input)
-}
-
 pub(crate) fn runtime_get_raw(
     state: &DesktopState,
     input: RuntimeIdInput,

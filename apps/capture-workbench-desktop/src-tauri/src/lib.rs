@@ -56,7 +56,6 @@ macro_rules! for_each_desktop_command {
                 runtime_get_capture,
                 runtime_get_capture_events,
                 runtime_get_partial,
-                runtime_cancel_capture,
                 runtime_get_raw,
                 runtime_get_ocr,
                 runtime_get_result,

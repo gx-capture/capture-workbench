@@ -533,7 +533,9 @@ impl LibraryStore {
         let directory = self.document_directory(&document.document_id)?;
         if let Some(evidence) = &update.ocr_evidence {
             evidence.validate()?;
-            if evidence.status != update.status {
+            let status_matches = evidence.status == update.status
+                || (evidence.status == "completed" && update.status == "awaiting_confirmation");
+            if !status_matches {
                 return Err("OCR evidence status must match the terminal library update.".into());
             }
             let effective_options = update
@@ -547,15 +549,17 @@ impl LibraryStore {
                     .or_else(|| options.pdf_page_count.map(|count| (1..=count).collect()))
             });
             validate_evidence_requested_pages(evidence, requested_pages.as_deref())?;
-            if let Some(existing) = &document.ocr_evidence {
-                if existing != evidence {
+            match &document.ocr_evidence {
+                Some(existing) if existing == evidence => {}
+                Some(existing) if existing.status != "failed" => {
                     return Err(
                         "OCR evidence is write-once and conflicts with existing evidence.".into(),
                     );
                 }
-            } else {
-                evidence.validate_current_provenance()?;
-                document.ocr_evidence = Some(evidence.clone());
+                _ => {
+                    evidence.validate_current_provenance()?;
+                    document.ocr_evidence = Some(evidence.clone());
+                }
             }
         }
         if update.clear_capture_id {
@@ -567,8 +571,10 @@ impl LibraryStore {
         document.stage = update.stage;
         document.error_code = update.error_code;
         document.error_message = update.error_message;
-        document.recovery_code = update.recovery_code;
-        document.recovery_message = update.recovery_message;
+        // An update states every field; the recovery fields of an earlier
+        // version's row no longer apply once the row is written again.
+        document.recovery_code = None;
+        document.recovery_message = None;
         if update.capture_options.is_some() {
             document.capture_options = update.capture_options.clone();
         }
@@ -911,9 +917,6 @@ impl LibraryStore {
             .iter()
             .position(|document| document.document_id == request.document_id)
             .ok_or_else(|| "Capture library document was not found.".to_string())?;
-        if index.documents[position].capture_id.is_some() {
-            return Err("Capture library document still owns an active runtime capture.".into());
-        }
         let directory = self.document_directory(&request.document_id)?;
         let tombstone = directory.with_extension("deleting");
         fs::rename(&directory, &tombstone).map_err(|error| {
@@ -1166,6 +1169,48 @@ fn now_ms() -> Result<u64, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::library::tests::{evidence_update, failed_zero_page_evidence, recovery_source};
+
+    #[test]
+    fn failed_ocr_evidence_is_not_replaced_by_evidence_with_historical_provenance() {
+        let directory = tempfile::tempdir().expect("app data");
+        let library = LibraryStore::open(directory.path()).expect("library");
+        let document = recovery_source(&library);
+        let failed = failed_zero_page_evidence();
+        library
+            .update_capture(evidence_update(
+                &document.document_id,
+                "failed",
+                Some(failed.clone()),
+            ))
+            .expect("failed evidence");
+        let historical = include_str!("../../../../../test-fixtures/ocr-evidence-v1-golden.json");
+        let mut replacement: crate::contracts::OcrEvidenceV1 =
+            serde_json::from_str(historical).unwrap();
+        replacement.provenance.model = Some("pp-ocrv6-medium-windowsml".into());
+        replacement.provenance.device = Some("windowsml-dml".into());
+        replacement.digest = replacement.content_digest().unwrap();
+        let replacement_status = replacement.status.clone();
+
+        let error = library
+            .update_capture(evidence_update(
+                &document.document_id,
+                &replacement_status,
+                Some(replacement),
+            ))
+            .expect_err("a replacement must use current provenance");
+
+        assert_eq!(error, "New OCR evidence must use current provenance.");
+        assert_eq!(
+            library
+                .get(LibraryDocumentRequest {
+                    document_id: document.document_id,
+                })
+                .unwrap()
+                .ocr_evidence,
+            Some(failed)
+        );
+    }
 
     #[test]
     fn historical_ocr_evidence_survives_reopen_export_and_text_edit() {
@@ -1252,6 +1297,149 @@ mod tests {
         assert_eq!(fs::read(&raw_path).unwrap(), raw_bytes);
     }
     use serde_json::json;
+
+    /// A library whose index holds a `recovery_required` and a `persisting`
+    /// row, written to the index as earlier versions wrote them.
+    fn library_with_earlier_versions_rows(
+        directory: &Path,
+    ) -> (LibraryStore, DesktopLibrarySummary, DesktopLibrarySummary) {
+        let library = LibraryStore::open(directory).expect("library");
+        let cleanup = recovery_source(&library);
+        let persisting = recovery_source(&library);
+        let mut index = serde_json::to_value(&*library.lock_index().unwrap()).unwrap();
+        for document in index["documents"].as_array_mut().unwrap() {
+            let earlier = if document["documentId"] == cleanup.document_id.as_str() {
+                json!({
+                    "status": "recovery_required", "stage": "completed", "captureId": "capture-earlier",
+                    "recoveryCode": "runtime_cleanup_failed",
+                    "recoveryMessage": "The runtime capture could not be deleted.",
+                })
+            } else {
+                json!({ "status": "persisting", "stage": "persisting", "captureId": "capture-persisting" })
+            };
+            for (field, value) in earlier.as_object().unwrap() {
+                document[field] = value.clone();
+            }
+        }
+        fs::write(
+            library.root.join(INDEX_FILE_NAME),
+            serde_json::to_vec(&index).unwrap(),
+        )
+        .unwrap();
+        drop(library);
+        let reopened = LibraryStore::open(directory).expect("earlier library");
+        let listed = reopened.list(LibraryListRequest::default()).unwrap();
+        let find = |id: &str| {
+            listed
+                .iter()
+                .find(|item| item.document_id == id)
+                .unwrap()
+                .clone()
+        };
+        let (cleanup, persisting) = (find(&cleanup.document_id), find(&persisting.document_id));
+        (reopened, cleanup, persisting)
+    }
+
+    #[test]
+    fn rows_earlier_versions_stored_are_read_and_listed_as_stored() {
+        let directory = tempfile::tempdir().expect("app data");
+        let (library, cleanup, persisting) = library_with_earlier_versions_rows(directory.path());
+
+        assert_eq!(
+            (
+                cleanup.status.as_str(),
+                cleanup.stage.as_deref(),
+                cleanup.capture_id.as_deref(),
+                cleanup.recovery_code.as_deref(),
+                cleanup.recovery_message.as_deref(),
+            ),
+            (
+                "recovery_required",
+                Some("completed"),
+                Some("capture-earlier"),
+                Some("runtime_cleanup_failed"),
+                Some("The runtime capture could not be deleted."),
+            )
+        );
+        assert_eq!(
+            (persisting.status.as_str(), persisting.capture_id.as_deref()),
+            ("persisting", Some("capture-persisting"))
+        );
+        let detail = library
+            .get(LibraryDocumentRequest {
+                document_id: cleanup.document_id.clone(),
+            })
+            .unwrap();
+        assert_eq!(
+            serde_json::to_value(&detail.summary).unwrap(),
+            serde_json::to_value(&cleanup).unwrap()
+        );
+        assert_eq!(
+            library
+                .list(LibraryListRequest {
+                    query: None,
+                    status: Some("recovery_required".into()),
+                })
+                .unwrap()
+                .len(),
+            1
+        );
+
+        // A new write, the Start again of such a row, states every field: the
+        // earlier version's recovery fields are cleared with the link.
+        let queued = library
+            .update_capture(LibraryCaptureUpdate {
+                clear_capture_id: true,
+                stage: Some("uploading".into()),
+                ..evidence_update(&cleanup.document_id, "queued", None)
+            })
+            .unwrap();
+        assert_eq!(
+            (
+                queued.status.as_str(),
+                queued.capture_id,
+                queued.recovery_code,
+                queued.recovery_message,
+            ),
+            ("queued", None, None, None)
+        );
+    }
+
+    #[test]
+    fn a_new_update_cannot_store_an_earlier_versions_status_or_recovery_fields() {
+        let directory = tempfile::tempdir().expect("app data");
+        let (library, cleanup, persisting) = library_with_earlier_versions_rows(directory.path());
+        let stored =
+            || serde_json::to_value(library.list(LibraryListRequest::default()).unwrap()).unwrap();
+        let before = stored();
+
+        for status in ["persisting", "recovery_required"] {
+            for document in [&cleanup, &persisting] {
+                let error = library
+                    .update_capture(evidence_update(&document.document_id, status, None))
+                    .expect_err("an earlier version's status is not written");
+                assert_eq!(
+                    error,
+                    "Capture library updates do not store the statuses of earlier versions."
+                );
+            }
+        }
+        assert_eq!(stored(), before);
+
+        for field in ["recoveryCode", "recoveryMessage"] {
+            let mut update = json!({
+                "documentId": cleanup.document_id, "clearCaptureId": true,
+                "status": "failed", "stage": "failed",
+            });
+            update[field] = json!("runtime_cleanup_failed");
+            let refused = serde_json::from_value::<LibraryCaptureUpdate>(update.clone())
+                .map(|_| ())
+                .expect_err("an update carries no recovery field");
+            assert!(refused.to_string().contains(field), "{field}: {refused}");
+            update[field] = serde_json::Value::Null;
+            assert!(serde_json::from_value::<LibraryCaptureUpdate>(update).is_err());
+        }
+    }
 
     #[test]
     fn export_reads_saved_edits_and_restores_recognized_text() {
