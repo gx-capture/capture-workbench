@@ -309,10 +309,9 @@ function validateProvenance(value: unknown): OcrProvenance {
   if (provenance['status'] === 'resolved') {
     requireExactKeys(provenance, ['status', 'engine', 'model', 'modelDigest', 'device', 'profileId', 'profileSpecSha256'], 'resolved OCR provenance');
     if (provenance['engine'] !== 'text-recognition') invalid('OCR provenance engine');
-    if (
-      provenance['model'] === 'pp-ocrv6-medium-windowsml' ||
-      provenance['model'] === 'deterministic-windowsml-v1'
-    ) {
+    // Model names of the engine's earlier naming all carry this word; no
+    // current model does.
+    if (typeof provenance['model'] === 'string' && provenance['model'].includes('windowsml')) {
       invalid('OCR provenance model');
     }
     if (provenance['device'] === 'windowsml-dml') invalid('OCR provenance device');
